@@ -256,38 +256,44 @@ const REQUEUE_HELD_CLAIM_SQL = `UPDATE job_queue
       )
   WHERE id = ? AND status = 'processing'`;
 
-const ACTIVATE_PROMPT_ROW_SQL = `UPDATE sdk_messages
+const ACTIVATE_PROMPT_ROW_BY_ID_SQL = `UPDATE sdk_messages
   SET send_status = 'enqueued'
-  WHERE id = COALESCE(
-    (
-      SELECT id FROM sdk_messages
-      WHERE id = ? AND session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-        AND send_status IN ('deferred', 'enqueued')
-    ),
-    (
-      SELECT id FROM sdk_messages
-      WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-        AND send_status IN ('deferred', 'enqueued')
-      ORDER BY timestamp ASC, rowid ASC LIMIT 1
-    )
+  WHERE id = (
+    SELECT id FROM sdk_messages
+    WHERE id = ? AND session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+      AND send_status IN ('deferred', 'enqueued')
   )
   AND send_status IN ('deferred', 'enqueued')
   RETURNING id AS db_id`;
 
-const RETRY_PROMPT_ROW_SQL = `UPDATE sdk_messages
+const ACTIVATE_PROMPT_ROW_BY_UUID_SQL = `UPDATE sdk_messages
   SET send_status = 'enqueued'
-  WHERE id = COALESCE(
-    (
-      SELECT id FROM sdk_messages
-      WHERE id = ? AND session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-        AND send_status = 'failed'
-    ),
-    (
-      SELECT id FROM sdk_messages
-      WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-        AND send_status = 'failed'
-      ORDER BY timestamp ASC, rowid ASC LIMIT 1
-    )
+  WHERE id = (
+    SELECT id FROM sdk_messages
+    WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+      AND send_status IN ('deferred', 'enqueued')
+    ORDER BY timestamp ASC, rowid ASC LIMIT 1
+  )
+  AND send_status IN ('deferred', 'enqueued')
+  RETURNING id AS db_id`;
+
+const RETRY_PROMPT_ROW_BY_ID_SQL = `UPDATE sdk_messages
+  SET send_status = 'enqueued'
+  WHERE id = (
+    SELECT id FROM sdk_messages
+    WHERE id = ? AND session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+      AND send_status = 'failed'
+  )
+  AND send_status = 'failed'
+  RETURNING id AS db_id`;
+
+const RETRY_PROMPT_ROW_BY_UUID_SQL = `UPDATE sdk_messages
+  SET send_status = 'enqueued'
+  WHERE id = (
+    SELECT id FROM sdk_messages
+    WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+      AND send_status = 'failed'
+    ORDER BY timestamp ASC, rowid ASC LIMIT 1
   )
   AND send_status = 'failed'
   RETURNING id AS db_id`;
@@ -745,14 +751,14 @@ function normalizeActivateUuids(ctx: ActivatePromptsArgs): ActivatePromptsCtx {
 function commitActivatePrompts(ctx: ActivatePromptsCtx): ActivatePromptsCommittedCtx {
   const activated: ActivatedPromptEntry[] = [];
   const txn = ctx.db.transaction(() => {
-    const rowStmt = ctx.db.prepare(ACTIVATE_PROMPT_ROW_SQL);
+    const rowByIdStmt = ctx.db.prepare(ACTIVATE_PROMPT_ROW_BY_ID_SQL);
+    const rowByUuidStmt = ctx.db.prepare(ACTIVATE_PROMPT_ROW_BY_UUID_SQL);
     ctx.uuids.forEach((messageUuid, index) => {
-      const rows = rowStmt.all(
-        ctx.rowIds[index] ?? null,
-        ctx.sessionId,
-        messageUuid,
-        ctx.sessionId,
-        messageUuid
+      const rowId = ctx.rowIds[index];
+      const rows = (
+        rowId !== undefined
+          ? rowByIdStmt.all(rowId, ctx.sessionId, messageUuid)
+          : rowByUuidStmt.all(ctx.sessionId, messageUuid)
       ) as Array<{ db_id: string }>;
       const row = rows[0];
       if (!row) return;
@@ -809,15 +815,11 @@ function validateRetryPromptUuid(ctx: RetryPromptArgs): RetryPromptCtx {
 function commitRetryPrompt(ctx: RetryPromptCtx): RetryPromptCtx {
   const retried = withBusyRetry(() =>
     ctx.db.transaction(() => {
-      const rows = ctx.db
-        .prepare(RETRY_PROMPT_ROW_SQL)
-        .all(
-          ctx.dbId ?? null,
-          ctx.sessionId,
-          ctx.messageUuid,
-          ctx.sessionId,
-          ctx.messageUuid
-        ) as Array<{
+      const rows = (
+        ctx.dbId !== undefined
+          ? ctx.db.prepare(RETRY_PROMPT_ROW_BY_ID_SQL).all(ctx.dbId, ctx.sessionId, ctx.messageUuid)
+          : ctx.db.prepare(RETRY_PROMPT_ROW_BY_UUID_SQL).all(ctx.sessionId, ctx.messageUuid)
+      ) as Array<{
         db_id: string;
       }>;
       const row = rows[0];

@@ -1317,5 +1317,58 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         { id: 'db-retry-picked', send_status: 'enqueued' },
       ]);
     });
+
+    it('retryPrompt returns null when the explicitly selected row went stale, instead of falling back', async () => {
+      insertStatusRow('retry-stale', 'failed', 'db-retry-stale');
+      insertStatusRow('retry-stale', 'failed', 'db-retry-other');
+      db.prepare(`UPDATE sdk_messages SET send_status = 'enqueued' WHERE id = ?`).run(
+        'db-retry-stale'
+      );
+
+      const retried = await retryPrompt({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuid: 'retry-stale',
+        dbId: 'db-retry-stale',
+        origin: 'chat',
+      });
+
+      expect(retried).toBeNull();
+      expect(rowStatus('retry-stale')).toBeUndefined();
+      const statuses = db
+        .prepare(`SELECT id, send_status FROM sdk_messages WHERE sdk_uuid = ? ORDER BY rowid ASC`)
+        .all('retry-stale') as Array<{ id: string; send_status: string }>;
+      expect(statuses).toEqual([
+        { id: 'db-retry-stale', send_status: 'enqueued' },
+        { id: 'db-retry-other', send_status: 'failed' },
+      ]);
+    });
+
+    it('activatePrompts skips an explicitly selected row that went stale instead of falling back', async () => {
+      insertStatusRow('act-stale', 'deferred', 'db-act-stale');
+      insertStatusRow('act-stale', 'deferred', 'db-act-other');
+      db.prepare(`UPDATE sdk_messages SET send_status = 'consumed' WHERE id = ?`).run(
+        'db-act-stale'
+      );
+
+      const { activated } = await activatePrompts({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuids: ['act-stale'],
+        dbIds: ['db-act-stale'],
+        origin: 'recovery',
+      });
+
+      expect(activated).toEqual([]);
+      const statuses = db
+        .prepare(`SELECT id, send_status FROM sdk_messages WHERE sdk_uuid = ? ORDER BY rowid ASC`)
+        .all('act-stale') as Array<{ id: string; send_status: string }>;
+      expect(statuses).toEqual([
+        { id: 'db-act-stale', send_status: 'consumed' },
+        { id: 'db-act-other', send_status: 'deferred' },
+      ]);
+    });
   });
 });
