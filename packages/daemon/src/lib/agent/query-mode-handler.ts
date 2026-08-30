@@ -234,15 +234,18 @@ export class QueryModeHandler {
 
   private async activateFlushDeliverables(
     deliverables: string[],
+    flushMessages: FlushMessage[],
     origin: MessageDeliveryOrigin
   ): Promise<void> {
     if (deliverables.length === 0) return;
     const db = this.ctx.db;
+    const dbIdByUuid = new Map(flushMessages.map((message) => [message.uuid, message.dbId]));
     const { activated } = await activatePrompts({
       db: db.getDatabase(),
       jobQueue: db.getJobQueueRepo(),
       sessionId: this.ctx.session.id,
       messageUuids: deliverables,
+      dbIds: deliverables.map((uuid) => dbIdByUuid.get(uuid)),
       origin,
       publishStatusChanged: (messageIds) =>
         this.ctx.internalEventBus.publish('messages.statusChanged', {
@@ -312,7 +315,7 @@ export class QueryModeHandler {
         deliverables = await this.deferTaskDeliverables(flushMessages, deliverables);
         if (deliverables.length === 0) return { clearedContext: false };
       }
-      await this.activateFlushDeliverables(deliverables, origin);
+      await this.activateFlushDeliverables(deliverables, flushMessages, origin);
       return { clearedContext };
     } finally {
       clearBoundaryOwner?.release();
