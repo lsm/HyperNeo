@@ -73,7 +73,10 @@ export class SessionManager {
   private toolsConfigManager: ToolsConfigManager;
   private messagePersistence: MessagePersistence;
   private spaceRuntimeMcpProvider?: SpaceRuntimeMcpProvider;
-  private workflowMcpProvisioning = new Map<string, Promise<void>>();
+  private workflowMcpProvisioning = new Map<
+    string,
+    { session: AgentSession; promise: Promise<void> }
+  >();
   private workflowMcpProvisioned = new WeakSet<AgentSession>();
 
   constructor(
@@ -471,16 +474,24 @@ export class SessionManager {
     const sessionId = session.getSessionData().id;
     const existing = this.workflowMcpProvisioning.get(sessionId);
     if (existing) {
-      await existing;
-      return;
+      if (existing.session === session) {
+        await existing.promise;
+        return;
+      }
+      await existing.promise.catch(() => {});
+      const cached = this.getCachedSession(sessionId);
+      if (cached !== session) {
+        if (cached) await this.provisionWorkflowMcpServers(cached, options);
+        return;
+      }
     }
 
     const provisioning = provider.provisionWorkflowSession(session, options).finally(() => {
-      if (this.workflowMcpProvisioning.get(sessionId) === provisioning) {
+      if (this.workflowMcpProvisioning.get(sessionId)?.promise === provisioning) {
         this.workflowMcpProvisioning.delete(sessionId);
       }
     });
-    this.workflowMcpProvisioning.set(sessionId, provisioning);
+    this.workflowMcpProvisioning.set(sessionId, { session, promise: provisioning });
     await provisioning;
     if (session.getSessionData().config.mcpServers?.['node-agent']) {
       this.workflowMcpProvisioned.add(session);
@@ -522,7 +533,7 @@ export class SessionManager {
     if (!session) return null;
     const inFlight = this.workflowMcpProvisioning.get(sessionId);
     if (inFlight) {
-      await inFlight.catch(() => {});
+      await inFlight.promise.catch(() => {});
       return this.sessionCache.getAsync(sessionId);
     }
     return session;
@@ -618,7 +629,7 @@ export class SessionManager {
   ): Promise<void> {
     const inFlight = this.workflowMcpProvisioning.get(sessionId);
     if (inFlight) {
-      await inFlight.catch(() => {});
+      await inFlight.promise.catch(() => {});
     }
     return this.sessionLifecycle.archiveResources(sessionId, trigger);
   }
@@ -626,7 +637,7 @@ export class SessionManager {
   async deleteSessionResources(sessionId: string, trigger: DeleteResourcesTrigger): Promise<void> {
     const inFlight = this.workflowMcpProvisioning.get(sessionId);
     if (inFlight) {
-      await inFlight.catch(() => {});
+      await inFlight.promise.catch(() => {});
     }
     return this.sessionLifecycle.deleteResources(sessionId, trigger);
   }

@@ -7,7 +7,7 @@ import type { Database } from '../../../../src/storage/database';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { AuthManager } from '../../../../src/lib/auth-manager';
 import type { SettingsManager } from '../../../../src/lib/settings-manager';
-import type { MessageHub, Session } from '@hyperneo/shared';
+import type { MessageHub, McpServerConfig, Session } from '@hyperneo/shared';
 import { DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import type { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
@@ -359,6 +359,137 @@ describe('SessionManager', () => {
         startQuery: false,
       });
       expect(session!.getSessionData().config.mcpServers).toHaveProperty('node-agent');
+    });
+
+    it('provisions the replacement instance when a reset swaps it during in-flight provisioning', async () => {
+      const makeWorkerFake = (id: string) => {
+        const data: Session = {
+          id,
+          title: 'Worker',
+          workspacePath: '/test',
+          status: 'active',
+          config: {},
+          metadata: {},
+          context: { spaceId: 's1', taskId: 't1' },
+        };
+        return {
+          getSessionData: mock(() => data),
+          mergeRuntimeMcpServers: mock((additional: Record<string, McpServerConfig>) => {
+            data.config = {
+              ...data.config,
+              mcpServers: { ...(data.config.mcpServers ?? {}), ...additional },
+            };
+          }),
+          cleanup: mock(async () => {}),
+        } as unknown as AgentSession;
+      };
+      const sessionId = 'space:s1:task:t1:exec:e5';
+      const instanceA = makeWorkerFake(sessionId);
+      const instanceB = makeWorkerFake(sessionId);
+      sessionManager.registerSession(instanceA);
+
+      let releaseProvisioning: (() => void) | undefined;
+      let signalProvisioningStarted: (() => void) | undefined;
+      const provisioningStarted = new Promise<void>((resolve) => {
+        signalProvisioningStarted = resolve;
+      });
+      let awaitingFirstCall = true;
+      const provider = {
+        reattachMemberSpaceTools: mock(async () => {}),
+        provisionWorkflowSession: mock(
+          (session: AgentSession) =>
+            new Promise<void>((resolve) => {
+              if (awaitingFirstCall) {
+                awaitingFirstCall = false;
+                signalProvisioningStarted!();
+                releaseProvisioning = resolve;
+                return;
+              }
+              session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+              resolve();
+            })
+        ),
+      };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      const first = sessionManager.getSessionAsync(sessionId);
+      await provisioningStarted;
+      sessionManager.registerSession(instanceB);
+      const second = sessionManager.getSessionAsync(sessionId);
+
+      releaseProvisioning!();
+      const [firstSession, secondSession] = await Promise.all([first, second]);
+
+      expect(secondSession).toBe(instanceB);
+      expect(provider.provisionWorkflowSession).toHaveBeenNthCalledWith(2, instanceB, {});
+      expect(instanceB.getSessionData().config.mcpServers).toHaveProperty('node-agent');
+      expect(firstSession).toBe(instanceA);
+    });
+
+    it('provisions the cache-current instance when the requested instance is displaced mid-await', async () => {
+      const makeWorkerFake = (id: string) => {
+        const data: Session = {
+          id,
+          title: 'Worker',
+          workspacePath: '/test',
+          status: 'active',
+          config: {},
+          metadata: {},
+          context: { spaceId: 's1', taskId: 't1' },
+        };
+        return {
+          getSessionData: mock(() => data),
+          mergeRuntimeMcpServers: mock((additional: Record<string, McpServerConfig>) => {
+            data.config = {
+              ...data.config,
+              mcpServers: { ...(data.config.mcpServers ?? {}), ...additional },
+            };
+          }),
+          cleanup: mock(async () => {}),
+        } as unknown as AgentSession;
+      };
+      const sessionId = 'space:s1:task:t1:exec:e6';
+      const instanceA = makeWorkerFake(sessionId);
+      const instanceB = makeWorkerFake(sessionId);
+      const instanceC = makeWorkerFake(sessionId);
+      sessionManager.registerSession(instanceA);
+
+      let releaseProvisioning: (() => void) | undefined;
+      let signalProvisioningStarted: (() => void) | undefined;
+      const provisioningStarted = new Promise<void>((resolve) => {
+        signalProvisioningStarted = resolve;
+      });
+      let awaitingFirstCall = true;
+      const provider = {
+        reattachMemberSpaceTools: mock(async () => {}),
+        provisionWorkflowSession: mock(
+          (session: AgentSession) =>
+            new Promise<void>((resolve) => {
+              if (awaitingFirstCall) {
+                awaitingFirstCall = false;
+                signalProvisioningStarted!();
+                releaseProvisioning = resolve;
+                return;
+              }
+              session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+              resolve();
+            })
+        ),
+      };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      const first = sessionManager.getSessionAsync(sessionId);
+      await provisioningStarted;
+      sessionManager.registerSession(instanceB);
+      const second = sessionManager.getSessionAsync(sessionId);
+      sessionManager.registerSession(instanceC);
+
+      releaseProvisioning!();
+      await Promise.all([first, second]);
+
+      expect(provider.provisionWorkflowSession).toHaveBeenNthCalledWith(2, instanceC, {});
+      expect(instanceC.getSessionData().config.mcpServers).toHaveProperty('node-agent');
+      expect(instanceB.getSessionData().config.mcpServers?.['node-agent']).toBeUndefined();
     });
   });
 
