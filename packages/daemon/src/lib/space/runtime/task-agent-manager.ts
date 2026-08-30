@@ -2339,6 +2339,12 @@ export class TaskAgentManager {
 
     try {
       this.sanitizeSDKSessionTranscriptForRehydration(agentSession, workspacePath);
+      if (agentSession.getSessionData().status === 'archived') {
+        log.warn(
+          `TaskAgentManager.restorePostApprovalWorkerSession: session ${sessionId} archived during provisioning — skipping query startup`
+        );
+        return sessionId;
+      }
       if (options.startQuery !== false) {
         await agentSession.startStreamingQuery();
         if (options.replayPendingMessages !== false) {
@@ -3820,6 +3826,13 @@ export class TaskAgentManager {
     }
 
     this.sanitizeSDKSessionTranscriptForRehydration(agentSession, workspacePath);
+
+    if (agentSession.getSessionData().status === 'archived') {
+      log.warn(
+        `TaskAgentManager.rehydrateSubSession: session ${subSessionId} archived during provisioning — skipping query startup`
+      );
+      return agentSession;
+    }
 
     try {
       if (options.startQuery !== false) {

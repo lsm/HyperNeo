@@ -630,6 +630,7 @@ export class SessionManager {
   ): Promise<void> {
     const inFlight = this.workflowMcpProvisioning.get(sessionId);
     if (inFlight) {
+      await this.sessionLifecycle.update(sessionId, { status: 'archived' });
       await inFlight.promise.catch(() => {});
     }
     return this.sessionLifecycle.archiveResources(sessionId, trigger);
@@ -638,6 +639,7 @@ export class SessionManager {
   async deleteSessionResources(sessionId: string, trigger: DeleteResourcesTrigger): Promise<void> {
     const inFlight = this.workflowMcpProvisioning.get(sessionId);
     if (inFlight) {
+      await this.sessionLifecycle.update(sessionId, { status: 'archived' });
       await inFlight.promise.catch(() => {});
     }
     return this.sessionLifecycle.deleteResources(sessionId, trigger);

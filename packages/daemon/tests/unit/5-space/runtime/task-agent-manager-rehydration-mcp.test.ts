@@ -246,6 +246,28 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(restoreSpy).toHaveBeenCalledTimes(0);
   });
 
+  test('skips query startup when the session archives during provisioning', async () => {
+    const { tam } = makeManager();
+    (
+      tam as unknown as { config: { workflowRunRepo: { getRun: () => unknown } } }
+    ).config.workflowRunRepo.getRun = () => ({ id: RUN_ID, status: 'in_progress' });
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    const merge = fake.agentSession.mergeRuntimeMcpServers.bind(fake.agentSession);
+    fake.agentSession.mergeRuntimeMcpServers = (additional: Record<string, McpServerConfig>) => {
+      merge(additional);
+      (fake.state.session as { status?: string }).status = 'archived';
+    };
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => makeFakeAgentSession('never').agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    await tam.provisionWorkflowSession(fake.agentSession, {});
+
+    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(fake.state.calls).not.toContain('startStreamingQuery');
+    expect(fake.state.calls).not.toContain('replayPendingMessagesForImmediateMode');
+  });
+
   test('provisioning with replayPendingMessages:false starts the query without replaying', async () => {
     const { tam } = makeManager();
     (
