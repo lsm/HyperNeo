@@ -4,7 +4,6 @@ import type { MessageHub } from '@hyperneo/shared';
 import { Logger } from '../../logger.ts';
 import { isRateLimitError } from '../../space/runtime/rate-limit-detector.ts';
 import { type CredentialStore } from '../../credentials/credential-store.js';
-import { verifySignature } from '../../github/webhook-handler.ts';
 import type {
   ExternalEventExtensionContext,
   HttpExternalEventExtension,
@@ -45,9 +44,8 @@ import {
   normalizeGitHubReaction,
   normalizeGitHubReview,
   normalizeGitHubStatus,
-  normalizeGitHubWebhook,
-  repoFromPayload,
   toExternalEvent,
+  repoFromPayload,
   type GitHubPollingRepo,
 } from './github-normalizer.ts';
 import {
@@ -55,6 +53,13 @@ import {
   type GitHubWatchedRepo,
   type PollCursor,
 } from './github-repository.ts';
+import {
+  runGithubWebhookAdmission,
+  type WebhookAdmissionContext,
+  type WebhookAdmissionDeps,
+  type WebhookAdmissionInput,
+  type WebhookPrResolution,
+} from './webhook-admission-pipeline.ts';
 
 const log = new Logger('github-event-extension');
 const DEFAULT_POLL_INTERVAL_MS = 120_000;
@@ -684,79 +689,61 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
   }
 
   private async handleWebhook(req: Request): Promise<Response> {
-    if (!this.context)
-      return Response.json({ error: 'GitHub extension not started' }, { status: 503 });
-    const global = await this.context.config.getGlobalConfig(this.sourceId);
-    const webhooksEnabled = global.globallyEnabled && global.capabilities.webhooks !== false;
-
     const signature = req.headers.get('X-Hub-Signature-256');
     const eventType = req.headers.get('X-GitHub-Event');
     const deliveryId = req.headers.get('X-GitHub-Delivery');
-    if (!signature) return Response.json({ error: 'Missing signature header' }, { status: 401 });
-    if (!eventType || !deliveryId)
-      return Response.json({ error: 'Missing GitHub event headers' }, { status: 400 });
-
-    const raw = await req.text();
-    const signatureMatchedRepos: GitHubWatchedRepo[] = [];
-    for (const repo of this.repo.listWebhookValidationRepos()) {
-      if (repo.webhookSecret && (await verifySignature(raw, signature, repo.webhookSecret))) {
-        signatureMatchedRepos.push(repo);
-      }
-    }
-    if (signatureMatchedRepos.length === 0) {
-      return Response.json({ error: 'Invalid signature' }, { status: 401 });
-    }
-    if (!webhooksEnabled) {
-      return Response.json(
-        { message: 'Event ignored', reason: 'github_extension_disabled' },
-        { status: 202 }
-      );
-    }
-
-    let payload: unknown;
-    try {
-      payload = JSON.parse(raw);
-    } catch {
-      return Response.json({ error: 'Invalid JSON payload' }, { status: 400 });
-    }
-
-    if (eventType === 'status') {
-      return await this.handleStatusWebhook(deliveryId, payload, signatureMatchedRepos);
-    }
-
-    if (eventType === 'deployment' || eventType === 'deployment_status') {
-      return await this.handleDeploymentWebhook(
-        eventType,
-        deliveryId,
-        payload,
-        signatureMatchedRepos
-      );
-    }
-
-    const normalized = normalizeGitHubWebhook(eventType, deliveryId, payload);
-    if (!normalized)
-      return Response.json({ message: 'Event ignored', deliveryId }, { status: 202 });
-
-    const validForRepo = signatureMatchedRepos.filter(
-      (r) =>
-        r.owner.toLowerCase() === normalized.repoOwner.toLowerCase() &&
-        r.repo.toLowerCase() === normalized.repoName.toLowerCase()
-    );
-    if (validForRepo.length === 0)
-      return Response.json({ error: 'Repository is not watched' }, { status: 404 });
-
-    let published = 0;
     const tokenLoginSnapshot = this.cachedTokenStatus()?.login ?? '';
-    for (const repo of validForRepo) {
-      if (!repo.enabled) continue;
-      const spaceConfig = await this.context.config.getSpaceConfig(repo.spaceId, this.sourceId);
-      if (spaceConfig && !spaceConfig.enabled) continue;
-      if (await this.publishEvent(repo.spaceId, normalized, this.context, tokenLoginSnapshot))
-        published++;
-      this.repo.markWebhookReceived(repo.id);
-    }
+    let dropped = 0;
 
-    return Response.json({ message: 'Webhook received', deliveryId, spaces: published });
+    const deps: WebhookAdmissionDeps = {
+      getContext: async () => {
+        const context = this.context;
+        if (!context) return null;
+        return {
+          getGlobalConfig: () => context.config.getGlobalConfig(this.sourceId),
+          getSpaceConfig: (spaceId: string) =>
+            context.config.getSpaceConfig(spaceId, this.sourceId),
+          publishEvent: async (spaceId: string, event) => {
+            const ok = await this.publishEvent(spaceId, event, context, tokenLoginSnapshot);
+            if (!ok) dropped++;
+          },
+        } as WebhookAdmissionContext;
+      },
+      listWebhookValidationRepos: () => this.repo.listWebhookValidationRepos(),
+      resolvePrNumbers: async (repo, sha) =>
+        this.resolveWebhookPrNumbers(eventType ?? '', repo, sha),
+      markWebhookReceived: (repoId: string) => this.repo.markWebhookReceived(repoId),
+    };
+
+    const input: WebhookAdmissionInput = {
+      signature,
+      eventType,
+      deliveryId,
+      readRaw: () => req.text(),
+    };
+
+    const result = await runGithubWebhookAdmission(deps, input);
+    const spaces = result.body.spaces;
+    if (typeof spaces === 'number' && dropped > 0) {
+      result.body.spaces = spaces - dropped;
+    }
+    return Response.json(result.body, { status: result.status });
+  }
+
+  private async resolveWebhookPrNumbers(
+    eventType: string,
+    repo: GitHubPollingRepo,
+    sha: string
+  ): Promise<WebhookPrResolution> {
+    if (eventType === 'status') {
+      const prNumbers = await this.resolvePullRequestNumbersForCommit(repo.owner, repo.repo, sha);
+      return { prNumbers, rateLimited: false, resolutionFailed: false };
+    }
+    if (Date.now() < this.rateLimitedUntil) {
+      return { prNumbers: [], rateLimited: true, resolutionFailed: false };
+    }
+    const { prNumbers, sawError } = await this.resolveDeploymentPrNumbers(repo, sha);
+    return { prNumbers, rateLimited: false, resolutionFailed: sawError };
   }
 
   private async handleDeploymentWebhook(
@@ -873,32 +860,6 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     return Response.json({ message: 'Webhook received', deliveryId, spaces: published });
   }
 
-  private async resolveDeploymentPrNumbers(
-    repo: GitHubPollingRepo,
-    sha: string
-  ): Promise<{ prNumbers: number[]; sawError: boolean }> {
-    if (!sha) return { prNumbers: [], sawError: false };
-    const repoPath = gitHubRepoPath(repo.owner, repo.repo);
-    const result = await this.fetchDeploymentPrList(
-      `/repos/${repoPath}/commits/${encodeURIComponent(sha)}/pulls?per_page=100`
-    );
-    if (result.kind === 'error') return { prNumbers: [], sawError: true };
-    return { prNumbers: pickPrNumbersByHeadSha(result.pulls, sha), sawError: false };
-  }
-
-  private async fetchDeploymentPrList(
-    path: string
-  ): Promise<{ kind: 'ok'; pulls: unknown } | { kind: 'error' }> {
-    try {
-      const response = await this.githubFetch(path, {
-        signal: AbortSignal.timeout(DEPLOYMENT_PR_RESOLUTION_TIMEOUT_MS),
-      });
-      return { kind: 'ok', pulls: await response.json() };
-    } catch {
-      return { kind: 'error' };
-    }
-  }
-
   private async handleStatusWebhook(
     deliveryId: string,
     payload: unknown,
@@ -962,6 +923,32 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     }
 
     return Response.json({ message: 'Webhook received', deliveryId, spaces: published });
+  }
+
+  private async resolveDeploymentPrNumbers(
+    repo: GitHubPollingRepo,
+    sha: string
+  ): Promise<{ prNumbers: number[]; sawError: boolean }> {
+    if (!sha) return { prNumbers: [], sawError: false };
+    const repoPath = gitHubRepoPath(repo.owner, repo.repo);
+    const result = await this.fetchDeploymentPrList(
+      `/repos/${repoPath}/commits/${encodeURIComponent(sha)}/pulls?per_page=100`
+    );
+    if (result.kind === 'error') return { prNumbers: [], sawError: true };
+    return { prNumbers: pickPrNumbersByHeadSha(result.pulls, sha), sawError: false };
+  }
+
+  private async fetchDeploymentPrList(
+    path: string
+  ): Promise<{ kind: 'ok'; pulls: unknown } | { kind: 'error' }> {
+    try {
+      const response = await this.githubFetch(path, {
+        signal: AbortSignal.timeout(DEPLOYMENT_PR_RESOLUTION_TIMEOUT_MS),
+      });
+      return { kind: 'ok', pulls: await response.json() };
+    } catch {
+      return { kind: 'error' };
+    }
   }
 
   private async resolvePullRequestNumbersForCommit(
