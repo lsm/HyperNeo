@@ -639,6 +639,25 @@ export class PromptContentConflictError extends Error {
   }
 }
 
+export function verifyPromptContent(args: {
+  db: BunDatabase;
+  sessionId: string;
+  messageUuid: string;
+  message: SDKMessage;
+}): void {
+  const row = args.db.prepare(PROMPT_ROW_BY_UUID_SQL).get(args.sessionId, args.messageUuid) as
+    | EnsurePromptRow
+    | undefined;
+  if (!row) return;
+  const stored = JSON.parse(row.sdkMessage) as SDKMessage;
+  if (canonicalJson(stored) !== canonicalJson(args.message)) {
+    throw new PromptContentConflictError(
+      `prompt handoff: message ${args.messageUuid} in session ${args.sessionId} ` +
+        'already exists with different content'
+    );
+  }
+}
+
 function checkPromptContent(ctx: EnsurePromptCtx): EnsurePromptSettledCtx {
   if (ctx.existing === null) {
     return { ...ctx, created: true, ensureStatus: ctx.hold === 'manual' ? 'deferred' : 'enqueued' };

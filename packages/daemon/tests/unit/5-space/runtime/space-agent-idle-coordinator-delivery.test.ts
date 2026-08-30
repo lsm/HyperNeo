@@ -336,7 +336,7 @@ describe('idle coordinator message consumption (issue #2963)', () => {
     );
     db.getSDKMessageRepo().markDeliveryFailedByUuid(SESSION_ID, 'msg-fail-1');
 
-    const outcome = await harness.escalate('msg-fail-1', 'retry a dead-lettered escalation');
+    const outcome = await harness.escalate('msg-fail-1', 'dead-lettered escalation');
     expect(outcome).toEqual({ state: 'accepted', messageId: 'msg-fail-1', sessionId: SESSION_ID });
     expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-fail-1')?.sendStatus).toBe(
       'enqueued'

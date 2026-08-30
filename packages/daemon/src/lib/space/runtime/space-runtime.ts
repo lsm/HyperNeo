@@ -5445,47 +5445,24 @@ export class SpaceRuntime {
           state.awaitingResumeSince = now;
           state.awaitingResumeLastProgressDbId = lastMessageDbId;
         }
+        const resumeDelivery = this.classifyRecoveryPromptDelivery(
+          sessionId,
+          state.awaitingResumeMessageId
+        );
+        if (resumeDelivery === 'pending') {
+          state.awaitingResumeParked = true;
+          return 'handled';
+        }
+        if (resumeDelivery === 'consumed' && state.awaitingResumeParked) {
+          state.awaitingResumeSince = now;
+          state.awaitingResumeParked = false;
+          return 'handled';
+        }
         if (
+          resumeDelivery !== 'dead' &&
           state.awaitingResumeSince !== null &&
           now - state.awaitingResumeSince > COMPACT_RESULT_TIMEOUT_MS
         ) {
-          const resumeDelivery = this.classifyRecoveryPromptDelivery(
-            sessionId,
-            state.awaitingResumeMessageId
-          );
-          if (resumeDelivery === 'pending') {
-            state.awaitingResumeParked = true;
-            return 'handled';
-          }
-          if (resumeDelivery === 'dead') {
-            state.awaitingResume = false;
-            state.awaitingResumeAfterDbId = null;
-            state.awaitingResumeSince = null;
-            state.awaitingResumeMessageId = null;
-            state.awaitingResumeLastProgressDbId = null;
-            state.awaitingResumeParked = false;
-            state.continueNagAttempts += 1;
-            if (state.continueNagAttempts >= MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS) {
-              const reason = `Context-overflow recovery: the resume nag dead-lettered ${state.continueNagAttempts} time(s) without being consumed for agent ${execution.agentName}.`;
-              await this.escalatePromptTooLongBlocked(
-                runId,
-                spaceId,
-                canonicalTask,
-                execution,
-                now,
-                reason,
-                manager
-              );
-              return 'blocked';
-            }
-            state.continueNagPending = true;
-            return 'handled';
-          }
-          if (state.awaitingResumeParked) {
-            state.awaitingResumeSince = now;
-            state.awaitingResumeParked = false;
-            return 'handled';
-          }
           const reason = `Context-overflow recovery timed out: the resumed turn did not produce a result within ${COMPACT_RESULT_TIMEOUT_MS / 1000}s for agent ${execution.agentName}.`;
           await this.escalatePromptTooLongBlocked(
             runId,
@@ -5498,15 +5475,35 @@ export class SpaceRuntime {
           );
           return 'blocked';
         }
+        if (resumeDelivery === 'dead') {
+          state.awaitingResume = false;
+          state.awaitingResumeAfterDbId = null;
+          state.awaitingResumeSince = null;
+          state.awaitingResumeMessageId = null;
+          state.awaitingResumeLastProgressDbId = null;
+          state.awaitingResumeParked = false;
+          state.continueNagAttempts += 1;
+          if (state.continueNagAttempts >= MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS) {
+            const reason = `Context-overflow recovery: the resume nag dead-lettered ${state.continueNagAttempts} time(s) without being consumed for agent ${execution.agentName}.`;
+            await this.escalatePromptTooLongBlocked(
+              runId,
+              spaceId,
+              canonicalTask,
+              execution,
+              now,
+              reason,
+              manager
+            );
+            return 'blocked';
+          }
+          state.continueNagPending = true;
+          return 'handled';
+        }
         return 'handled';
       }
     }
 
-    if (
-      state.awaitingContinue &&
-      state.awaitingContinueSince !== null &&
-      now - state.awaitingContinueSince > COMPACT_RESULT_TIMEOUT_MS
-    ) {
+    if (state.awaitingContinue && state.awaitingContinueSince !== null) {
       const compactDelivery = this.classifyRecoveryPromptDelivery(
         sessionId,
         state.awaitingContinueMessageId
@@ -5514,6 +5511,27 @@ export class SpaceRuntime {
       if (compactDelivery === 'pending') {
         state.awaitingContinueParked = true;
         return 'handled';
+      }
+      if (compactDelivery === 'consumed' && state.awaitingContinueParked) {
+        state.awaitingContinueSince = now;
+        state.awaitingContinueParked = false;
+        return 'handled';
+      }
+      if (
+        compactDelivery !== 'dead' &&
+        now - state.awaitingContinueSince > COMPACT_RESULT_TIMEOUT_MS
+      ) {
+        const reason = `Context-overflow recovery timed out: the /compact turn did not produce a result within ${COMPACT_RESULT_TIMEOUT_MS / 1000}s for agent ${execution.agentName}.`;
+        await this.escalatePromptTooLongBlocked(
+          runId,
+          spaceId,
+          canonicalTask,
+          execution,
+          now,
+          reason,
+          manager
+        );
+        return 'blocked';
       }
       if (compactDelivery === 'dead') {
         state.awaitingContinue = false;
@@ -5524,22 +5542,7 @@ export class SpaceRuntime {
         state.compactRetryPending = true;
         return 'handled';
       }
-      if (state.awaitingContinueParked) {
-        state.awaitingContinueSince = now;
-        state.awaitingContinueParked = false;
-        return 'handled';
-      }
-      const reason = `Context-overflow recovery timed out: the /compact turn did not produce a result within ${COMPACT_RESULT_TIMEOUT_MS / 1000}s for agent ${execution.agentName}.`;
-      await this.escalatePromptTooLongBlocked(
-        runId,
-        spaceId,
-        canonicalTask,
-        execution,
-        now,
-        reason,
-        manager
-      );
-      return 'blocked';
+      return 'handled';
     }
 
     if (overflowed || compactJustFailed || state.compactRetryPending) {
@@ -5801,13 +5804,31 @@ export class SpaceRuntime {
       }
 
       if (state.lastAction === 'nag' && state.lastActionAt !== null) {
-        const elapsedSinceNag = now - state.lastActionAt;
-        if (elapsedSinceNag < nagGraceMs) {
+        const nagDelivery = this.classifyRecoveryPromptDelivery(
+          execution.agentSessionId,
+          state.lastRuntimeNagMessageId
+        );
+        if (nagDelivery === 'pending') {
           log.debug(
-            `SpaceRuntime: delaying restart for stuck agent execution ${execution.id}; ` +
-              `runtime nag grace has ${nagGraceMs - elapsedSinceNag}ms remaining`
+            `SpaceRuntime: runtime nag for stuck agent execution ${execution.id} is still ` +
+              `awaiting consumption; holding the restart grace`
           );
           continue;
+        }
+        if (nagDelivery === 'dead') {
+          log.warn(
+            `SpaceRuntime: runtime nag for stuck agent execution ${execution.id} ` +
+              `dead-lettered without being consumed; proceeding to restart`
+          );
+        } else {
+          const elapsedSinceNag = now - state.lastActionAt;
+          if (elapsedSinceNag < nagGraceMs) {
+            log.debug(
+              `SpaceRuntime: delaying restart for stuck agent execution ${execution.id}; ` +
+                `runtime nag grace has ${nagGraceMs - elapsedSinceNag}ms remaining`
+            );
+            continue;
+          }
         }
       }
 

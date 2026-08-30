@@ -326,6 +326,71 @@ describe('deliverInjectedMessage', () => {
     }
   });
 
+  it('rejects a failed row reused with different content and preserves the stored message', async () => {
+    const db = await makeDb();
+    try {
+      const { deps } = makeBranchDeps(db);
+      const target = makeTargetSession();
+      db.saveUserMessage(SESSION_ID, makeSdkUserMessage(), 'enqueued');
+      db.getSDKMessageRepo().markDeliveryFailedByUuid(SESSION_ID, MESSAGE_ID);
+
+      const conflicting: SDKUserMessage = {
+        ...makeSdkUserMessage(),
+        message: { role: 'user', content: [{ type: 'text', text: 'conflicting content' }] },
+      };
+      await expect(
+        deliverInjectedMessage(deps, {
+          session: target.session,
+          sessionId: SESSION_ID,
+          messageId: MESSAGE_ID,
+          sdkUserMessage: conflicting,
+          existing: { sendStatus: 'failed' },
+        })
+      ).rejects.toThrow('different content');
+
+      expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, MESSAGE_ID)?.sendStatus).toBe(
+        'failed'
+      );
+      const stored = db
+        .getDatabase()
+        .prepare(`SELECT sdk_message FROM sdk_messages WHERE sdk_uuid = ?`)
+        .get(MESSAGE_ID) as { sdk_message: string };
+      expect(stored.sdk_message).toContain('shell step');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('rejects a deferred row reused with different content and preserves the stored message', async () => {
+    const db = await makeDb();
+    try {
+      const { deps } = makeBranchDeps(db);
+      const target = makeTargetSession();
+      db.saveUserMessage(SESSION_ID, makeSdkUserMessage(), 'enqueued');
+      db.getSDKMessageRepo().markDeliveryDeferredByUuid(SESSION_ID, MESSAGE_ID);
+
+      const conflicting: SDKUserMessage = {
+        ...makeSdkUserMessage(),
+        message: { role: 'user', content: [{ type: 'text', text: 'conflicting content' }] },
+      };
+      await expect(
+        deliverInjectedMessage(deps, {
+          session: target.session,
+          sessionId: SESSION_ID,
+          messageId: MESSAGE_ID,
+          sdkUserMessage: conflicting,
+          existing: { sendStatus: 'deferred' },
+        })
+      ).rejects.toThrow('different content');
+
+      expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, MESSAGE_ID)?.sendStatus).toBe(
+        'deferred'
+      );
+    } finally {
+      db.close();
+    }
+  });
+
   it('recreates the delivery job for a transient enqueued row with no active job', async () => {
     const db = await makeDb();
     try {

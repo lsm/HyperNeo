@@ -5,6 +5,7 @@ import {
   activatePrompts,
   ensurePrompt,
   retryPrompt,
+  verifyPromptContent,
 } from '../../../lib/agent/message-delivery-outbox.ts';
 import type {
   ContextClearBoundaryOwner,
@@ -117,6 +118,17 @@ function planHandoffMechanism(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
         ? 'activate'
         : 'ensure';
   return { ...ctx, mechanism, handoff: null };
+}
+
+function verifyHandoffContent(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
+  if (ctx.mechanism === 'ensure') return ctx;
+  verifyPromptContent({
+    db: ctx.db,
+    sessionId: ctx.sessionId,
+    messageUuid: ctx.messageId,
+    message: ctx.message,
+  });
+  return ctx;
 }
 
 function deliverableHandoff(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
@@ -275,6 +287,7 @@ async function publishEnqueuedIfChanged(ctx: MailboxHandoffCtx): Promise<Mailbox
 const runHandoff = (superpipe({})('prompt-mailbox-handoff') as PipelineAPI)
   .input(['ctx'])
   .pipe(planHandoffMechanism, 'ctx', 'ctx')
+  .pipe(verifyHandoffContent, 'ctx', 'ctx')
   .pipe(applyRetryHandoff, 'ctx', 'ctx')
   .pipe(applyActivateHandoff, 'ctx', 'ctx')
   .pipe(applyEnsureHandoff, 'ctx', 'ctx')

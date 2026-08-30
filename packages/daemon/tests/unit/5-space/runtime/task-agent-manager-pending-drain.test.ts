@@ -4,6 +4,7 @@ import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
+import { formatPendingRowForNodeAgent } from '../../../../src/lib/space/runtime/pending-envelope';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRecord } from '../../../../src/storage/repositories/pending-agent-message-repository';
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository';
@@ -1111,12 +1112,23 @@ describe('pending drain through the v2 injection shell', () => {
   }> {
     const db = await createTestDb();
     db.createSession(createTestSession(V2_SESSION_ID));
-    const sdkUserMessage: SDKUserMessage = {
+    const storedMessage = formatPendingRowForNodeAgent(
+      makeRecord({
+        id: 'row-v2',
+        workflowRunId: V2_RUN_ID,
+        workflowNodeId: V2_NODE_ID,
+        message: 'queued v2 note',
+      }),
+      AGENT_NAME
+    );
+    const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean; inputKind: string } = {
       type: 'user',
       uuid: 'row-v2',
       session_id: V2_SESSION_ID,
       parent_tool_use_id: null,
-      message: { role: 'user', content: [{ type: 'text', text: 'queued v2 note' }] },
+      isSynthetic: true,
+      inputKind: 'task',
+      message: { role: 'user', content: [{ type: 'text', text: storedMessage }] },
     };
     db.saveUserMessage(V2_SESSION_ID, sdkUserMessage, 'enqueued');
     if (deliveryContent.sendStatus === 'failed') {

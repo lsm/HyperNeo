@@ -86,6 +86,8 @@ function seedDeliveryRow(db: Database, messageId: string, text: string, status: 
       uuid: messageId,
       session_id: SESSION_ID,
       parent_tool_use_id: null,
+      isSynthetic: true,
+      inputKind: 'task',
       message: { role: 'user', content: [{ type: 'text', text }] },
     },
     'enqueued'
