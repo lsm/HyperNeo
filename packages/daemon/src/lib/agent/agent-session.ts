@@ -1256,6 +1256,7 @@ export class AgentSession
             })
             .catch(() => {});
         }
+        this.db.getJobQueueRepo()?.rescheduleSessionDeliveries?.(this.session.id, Date.now());
       } catch (error) {
         this.logger.warn('Failed to cancel the parked delivery for the retry episode:', error);
       }
