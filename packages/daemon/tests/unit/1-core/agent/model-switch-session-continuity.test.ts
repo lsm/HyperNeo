@@ -10,6 +10,8 @@ import {
 import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { Session, ModelInfo } from '@hyperneo/shared';
 import type { MessageHub } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { createTestDb, createTestSession } from '../../../helpers/database';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
@@ -509,6 +511,62 @@ describe('QueryLifecycleManager restart() — session continuity (sdkSessionId)'
         }),
         expect.any(Object)
       );
+    },
+    { timeout: 5000 }
+  );
+
+  it(
+    'TODO(message-delivery redesign, #1686): a model-switch restart currently re-feeds a UUID whose durable consumed marker exists — flip refedToTransport to false when the redesign fixes it',
+    async () => {
+      const db = await createTestDb();
+      try {
+        const session = createTestSession(mockContext.session.id);
+        db.createSession(session);
+        const sdkRepo = db.getSDKMessageRepo();
+        const uuid = 'uuid-consumed-resubmit';
+        sdkRepo.saveUserMessage(
+          mockContext.session.id,
+          {
+            type: 'user',
+            uuid,
+            message: { role: 'user', content: 'turn one prompt' },
+          } as unknown as SDKMessage,
+          'enqueued'
+        );
+        expect(sdkRepo.markDeliveryConsumedByUuid(mockContext.session.id, uuid)).not.toBeNull();
+
+        const admission = messageQueue.admitWithId(uuid, 'turn one prompt', false, {
+          durable: true,
+        });
+        let settled = false;
+        void admission.then(() => {
+          settled = true;
+        });
+        messageQueue.start();
+        const firstTransport = messageQueue.messageGenerator(mockContext.session.id);
+        const firstSubmission = await firstTransport.next();
+        expect(firstSubmission.value.message.uuid).toBe(uuid);
+        expect(settled).toBe(false);
+
+        manager = new QueryLifecycleManager({ ...mockContext, db });
+        await manager.restart();
+
+        void messageQueue.requeueYielded(uuid);
+        messageQueue.start();
+        const secondTransport = messageQueue.messageGenerator(mockContext.session.id);
+        const secondSubmission = await Promise.race([
+          secondTransport.next(),
+          new Promise<{ done: true; value: undefined }>((resolve) =>
+            setTimeout(() => resolve({ done: true, value: undefined }), 250)
+          ),
+        ]);
+        const refedToTransport = !(
+          secondSubmission.done === true && secondSubmission.value === undefined
+        );
+        expect(refedToTransport).toBe(true);
+      } finally {
+        db.close();
+      }
     },
     { timeout: 5000 }
   );
