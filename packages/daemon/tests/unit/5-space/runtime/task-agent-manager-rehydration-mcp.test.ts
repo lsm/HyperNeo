@@ -1,13 +1,14 @@
-import { describe, test, expect, afterEach, spyOn } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import type { McpServerConfig } from '@hyperneo/shared';
 import type { AgentSession as AgentSessionType } from '../../../../src/lib/agent/agent-session.ts';
+import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
-import type { McpServerConfig } from '@hyperneo/shared';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
+import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 
 const SPACE_ID = 'space-rehydrate-mcp';
 const RUN_ID = 'run-rehydrate-mcp';
@@ -18,6 +19,7 @@ const SUB_SESSION_ID = `space:${SPACE_ID}:task:${TASK_ID}:exec:${EXEC_ID}`;
 interface FakeSessionState {
   session: {
     id: string;
+    status: 'active' | 'archived';
     workspacePath?: string | null;
     config: { mcpServers?: Record<string, McpServerConfig> };
   };
@@ -32,7 +34,7 @@ function makeFakeAgentSession(
   options: { failStart?: boolean; beforeStart?: () => Promise<void> } = {}
 ) {
   const state: FakeSessionState = {
-    session: { id, config: {} },
+    session: { id, status: 'active', config: {} },
     calls: [],
     metadataUpdates: [],
     startSawCallback: false,
@@ -190,6 +192,20 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
 
     expect(tam.isSessionAlive(SUB_SESSION_ID)).toBe(true);
     expect(tam.isSessionAlive('space:space-1:task:task-x:exec:exec-x')).toBe(false);
+  });
+
+  test('isSessionAlive rejects an archived cached worker', async () => {
+    const { tam } = makeManager();
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    fake.state.session.status = 'archived';
+    (
+      tam.config as unknown as {
+        sessionManager: { getCachedSession: (id: string) => unknown };
+      }
+    ).sessionManager.getCachedSession = (id: string) =>
+      id === SUB_SESSION_ID ? fake.agentSession : null;
+
+    expect(tam.isSessionAlive(SUB_SESSION_ID)).toBe(false);
   });
 
   test('rehydrated sub-session starts with node-agent merged and the self-heal callback wired', async () => {

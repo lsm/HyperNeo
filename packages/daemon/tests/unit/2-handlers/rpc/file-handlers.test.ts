@@ -1,8 +1,8 @@
-import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
-import { MessageHub } from '@hyperneo/shared';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { MessageHub } from '@hyperneo/shared';
+import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { setupFileHandlers } from '../../../../src/lib/rpc-handlers/file-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -60,6 +60,7 @@ function createMockSessionManager(): {
 
   const sessionManager = {
     getSessionAsync: getSessionAsyncMock,
+    getSessionForControl: getSessionAsyncMock,
   } as unknown as SessionManager;
 
   return { sessionManager, getSessionAsyncMock };

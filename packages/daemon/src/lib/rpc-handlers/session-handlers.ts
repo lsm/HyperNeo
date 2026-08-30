@@ -1167,11 +1167,6 @@ export function setupSessionHandlers(
       throw new Error('sessionId and messageDbId are required');
     }
 
-    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
-    if (!agentSession) {
-      throw new Error('Session not found');
-    }
-
     const db = sessionManager.getDatabase();
     const message = db.getMessageByStatusAndDbId(targetSessionId, 'deferred', messageDbId);
 
@@ -1180,6 +1175,12 @@ export function setupSessionHandlers(
     }
 
     const messageUuid = message.uuid;
+    const agentSession = isMessageDeliveryV2Enabled()
+      ? await sessionManager.getSessionForControl(targetSessionId)
+      : await sessionManager.getSessionAsync(targetSessionId);
+    if (!agentSession) {
+      throw new Error('Session not found');
+    }
 
     db.updateMessageStatus([message.dbId], 'enqueued');
     await internalEventBus.publish('messages.statusChanged', {
@@ -1237,11 +1238,6 @@ export function setupSessionHandlers(
       return { retried: false };
     }
 
-    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
-    if (!agentSession) {
-      throw new Error('Session not found');
-    }
-
     const message = db.getMessageByStatusAndDbId(targetSessionId, 'failed', messageDbId);
 
     if (!message || !isSDKUserMessage(message) || !message.uuid) {
@@ -1253,6 +1249,12 @@ export function setupSessionHandlers(
       return { retried: false };
     }
     const messageUuid = message.uuid;
+    const agentSession = isMessageDeliveryV2Enabled()
+      ? await sessionManager.getSessionForControl(targetSessionId)
+      : await sessionManager.getSessionAsync(targetSessionId);
+    if (!agentSession) {
+      throw new Error('Session not found');
+    }
 
     const rollbackToFailed = async () => {
       const rolledBack = db

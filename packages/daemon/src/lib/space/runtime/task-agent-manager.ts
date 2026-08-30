@@ -2617,6 +2617,8 @@ export class TaskAgentManager {
   }
 
   private isAgentSessionAlive(session: AgentSession): boolean {
+    const status = session.getSessionData().status;
+    if (status === 'archived' || status === 'ended') return false;
     const state = session.getProcessingState();
     return (
       state.status === 'idle' ||

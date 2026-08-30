@@ -1915,6 +1915,65 @@ describe('SessionManager', () => {
       expect(sessionManager.getCleanupState()).toBe(CleanupState.CLEANED);
     });
 
+    it('waits for workflow provisioning before cleaning the worker', async () => {
+      const sessionId = 'space:s1:task:t1:exec:cleanup';
+      const worker = {
+        getSessionData: mock(() => ({
+          id: sessionId,
+          status: 'active',
+          config: {},
+        })),
+        mergeRuntimeMcpServers: mock(() => {}),
+        isQueryActiveOrStarting: mock(() => false),
+        getTrackedAgentRootPids: mock(() => []),
+        cleanup: mock(async () => {}),
+      } as unknown as AgentSession;
+      sessionManager.registerSession(worker);
+      const blockedSessionId = 'space:s1:task:t1:exec:blocked';
+      const blockedWorker = {
+        ...worker,
+        getSessionData: mock(() => ({
+          id: blockedSessionId,
+          status: 'active',
+          config: {},
+        })),
+        cleanup: mock(async () => {}),
+      } as unknown as AgentSession;
+      sessionManager.registerSession(blockedWorker);
+
+      let releaseProvisioning: (() => void) | undefined;
+      let signalProvisioningStarted: (() => void) | undefined;
+      const provisioningStarted = new Promise<void>((resolve) => {
+        signalProvisioningStarted = resolve;
+      });
+      const provider = {
+        reattachMemberSpaceTools: mock(async () => {}),
+        provisionWorkflowSession: mock(
+          () =>
+            new Promise<void>((resolve) => {
+              signalProvisioningStarted?.();
+              releaseProvisioning = resolve;
+            })
+        ),
+      };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      const lookup = sessionManager.getSessionAsync(sessionId);
+      await provisioningStarted;
+      const cleanup = sessionManager.cleanup();
+      await Promise.resolve();
+
+      expect(worker.cleanup).not.toHaveBeenCalled();
+      await sessionManager.getSessionAsync(blockedSessionId);
+      expect(provider.provisionWorkflowSession).toHaveBeenCalledTimes(1);
+
+      releaseProvisioning?.();
+      await Promise.all([lookup, cleanup]);
+
+      expect(worker.cleanup).toHaveBeenCalledTimes(1);
+      expect(sessionManager.getCleanupState()).toBe(CleanupState.CLEANED);
+    });
+
     it('should unsubscribe from event bus', async () => {
       await sessionManager.cleanup();
 

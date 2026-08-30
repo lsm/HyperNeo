@@ -481,6 +481,7 @@ export class SessionManager {
     session: AgentSession,
     options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
   ): Promise<void> {
+    if (this.cleanupState !== CleanupState.IDLE) return;
     if (!this.isWorkflowSubSession(session)) return;
     if (this.workflowMcpProvisioned.has(session)) {
       if (this.provisioningSatisfies(session, options)) return;
@@ -507,6 +508,8 @@ export class SessionManager {
       }
     }
 
+    if (this.cleanupState !== CleanupState.IDLE) return;
+
     let replaySucceeded = false;
     const provisioning = provider
       .provisionWorkflowSession(session, {
@@ -522,6 +525,7 @@ export class SessionManager {
       });
     this.workflowMcpProvisioning.set(sessionId, { session, promise: provisioning });
     await provisioning;
+    if (this.cleanupState !== CleanupState.IDLE) return;
     if (session.getSessionData().config.mcpServers?.['node-agent']) {
       this.workflowMcpProvisioned.add(session);
       if (options.startQuery !== false && session.isQueryActiveOrStarting()) {
@@ -873,6 +877,13 @@ export class SessionManager {
       }
       this.internalEventBusUnsubscribers = [];
       this.sessionResetSubscribers = [];
+
+      const provisioning = Array.from(this.workflowMcpProvisioning.values(), ({ promise }) =>
+        promise.catch((error) => {
+          this.logger.error('[SessionManager] Error awaiting workflow provisioning:', error);
+        })
+      );
+      await Promise.all(provisioning);
 
       const cleanupPromises: Promise<void>[] = [];
       for (const [sessionId, agentSession] of this.sessionCache.entries()) {

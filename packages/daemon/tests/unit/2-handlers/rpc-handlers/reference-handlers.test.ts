@@ -1,14 +1,14 @@
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
-import { MessageHub } from '@hyperneo/shared';
-import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { MessageHub } from '@hyperneo/shared';
 
 import {
-  setupReferenceHandlers,
-  type ReferenceHandlerDeps,
-  type TaskRepoForReference,
   type GoalRepoForReference,
+  type ReferenceHandlerDeps,
+  setupReferenceHandlers,
+  type TaskRepoForReference,
 } from '../../../../src/lib/rpc-handlers/reference-handlers';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
@@ -56,8 +56,10 @@ function makeSessionManager(opts: { workspacePath: string; roomId?: string; exis
       }
     : null;
 
+  const getSessionAsync = mock(async () => session);
   return {
-    getSessionAsync: mock(async () => session),
+    getSessionAsync,
+    getSessionForControl: getSessionAsync,
   };
 }
 
