@@ -521,7 +521,9 @@ describe('TaskAgentManager indexed rehydrate revalidation', () => {
       }
     ).rehydrateSubSession.bind(fixture.manager);
 
-    const restored = await rehydrate(fixture.sessionId);
+    const pending = rehydrate(fixture.sessionId);
+    fixture.releaseLock();
+    const restored = await pending;
 
     expect(restored).toBe(fixture.session);
     expect(fixture.startStreamingQuery).toHaveBeenCalledTimes(1);
