@@ -23,12 +23,14 @@ function makeRowDeps(
 ) {
   const publishStatusChanged = mock(async () => {});
   const saveUserMessage = mock(() => opts.savedDbId ?? 'db-id');
+  const getDeliverySendStatus = mock((): string | null => null);
   const reopenDeliveryByUuid = mock(() => opts.reopenDbId ?? null);
   const markDeliveryDeferredByUuid = mock(() => opts.deferredDbId ?? null);
   const markDeliveryFailedByUuid = mock(() => opts.failedDbId ?? null);
   const deps: InjectionDeliveryRowDeps = {
     publishStatusChanged,
     saveUserMessage,
+    getDeliverySendStatus,
     reopenDeliveryByUuid,
     markDeliveryDeferredByUuid,
     markDeliveryFailedByUuid,
@@ -37,6 +39,7 @@ function makeRowDeps(
     deps,
     publishStatusChanged,
     saveUserMessage,
+    getDeliverySendStatus,
     reopenDeliveryByUuid,
     markDeliveryDeferredByUuid,
     markDeliveryFailedByUuid,
@@ -173,12 +176,12 @@ describe('settleDeliveryRowStatus', () => {
 });
 
 describe('deliverInjectedMessage', () => {
-  function makeJobQueue(throwOnEnqueue = false) {
+  function makeJobQueue(throwOnEnqueue = false, signalOnEnqueue = true) {
     const jobQueueEnqueue = mock(
       (args: { payload?: { sessionId?: string; messageUuid?: string; origin?: string } }) => {
         if (throwOnEnqueue) throw new Error('job queue unavailable');
         const uuid = args?.payload?.messageUuid;
-        if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
+        if (uuid && signalOnEnqueue) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
         return { id: 'job-1' };
       }
     );
@@ -191,13 +194,13 @@ describe('deliverInjectedMessage', () => {
     };
   }
 
-  function makeTargetSession() {
+  function makeTargetSession(provider = 'anthropic') {
     const ensureQueryStarted = mock(async () => {});
     const enqueueWithId = mock(async () => {});
     const setQueuedIfIdle = mock(async () => true);
     const session = {
       stateManager: { setQueuedIfIdle, getState: () => ({ status: 'idle' }) },
-      getSessionData: () => ({ config: { provider: 'anthropic' } }),
+      getSessionData: () => ({ config: { provider } }),
       ensureQueryStarted,
       messageQueue: { enqueueWithId },
     };
@@ -326,5 +329,103 @@ describe('deliverInjectedMessage', () => {
       { type: 'text', text: 'shell step' },
     ]);
     expect(jobQueueEnqueue).not.toHaveBeenCalled();
+  });
+
+  describe('consumption completing before waiter registration', () => {
+    const GAP_DEADLINE_MS = 5_000;
+
+    function armGapConsumption(rows: ReturnType<typeof makeRowDeps>): void {
+      let rowStatus: string | null = 'enqueued';
+      rows.publishStatusChanged.mockImplementation(async () => {
+        rowStatus = 'consumed';
+        signalDeliveryConsumed(SESSION_ID, MESSAGE_ID);
+      });
+      rows.getDeliverySendStatus.mockImplementation(() => rowStatus);
+    }
+
+    function withDeadline<T>(promise: Promise<T>): Promise<T> {
+      return Promise.race([
+        promise,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('inject did not resolve')), GAP_DEADLINE_MS)
+        ),
+      ]);
+    }
+
+    it('default hold path resolves from persisted status instead of timing out', async () => {
+      const rows = makeRowDeps({ savedDbId: 'saved-db' });
+      armGapConsumption(rows);
+      const { jobQueue, jobQueueEnqueue } = makeJobQueue(false, false);
+      const target = makeTargetSession();
+
+      const dbId = await withDeadline(
+        deliverInjectedMessage(
+          { ...rows.deps, jobQueue: jobQueue as never },
+          {
+            session: target.session,
+            sessionId: SESSION_ID,
+            messageId: MESSAGE_ID,
+            sdkUserMessage: makeSdkUserMessage(),
+            enqueuePayload: 'shell step',
+            deliveryV2Enabled: true,
+            rowExists: false,
+          }
+        )
+      );
+
+      expect(dbId).toBe('saved-db');
+      expect(rows.getDeliverySendStatus).toHaveBeenCalled();
+      expect(rows.markDeliveryFailedByUuid).not.toHaveBeenCalled();
+      expect(jobQueueEnqueue).toHaveBeenCalledTimes(1);
+    });
+
+    it('acp hold path resolves from persisted status instead of holding for 12 minutes', async () => {
+      const rows = makeRowDeps();
+      armGapConsumption(rows);
+      const { jobQueue, jobQueueEnqueue } = makeJobQueue(false, false);
+      const target = makeTargetSession('acp');
+
+      const dbId = await withDeadline(
+        deliverInjectedMessage(
+          { ...rows.deps, jobQueue: jobQueue as never },
+          {
+            session: target.session,
+            sessionId: SESSION_ID,
+            messageId: MESSAGE_ID,
+            sdkUserMessage: makeSdkUserMessage(),
+            enqueuePayload: 'shell step',
+            deliveryV2Enabled: true,
+            rowExists: true,
+          }
+        )
+      );
+
+      expect(dbId).toBe(MESSAGE_ID);
+      expect(rows.getDeliverySendStatus).toHaveBeenCalled();
+      expect(jobQueueEnqueue).toHaveBeenCalledTimes(1);
+    });
+
+    it('acp hold path still resolves from the waiter when consumption lands after registration', async () => {
+      const rows = makeRowDeps();
+      rows.getDeliverySendStatus.mockImplementation(() => 'enqueued');
+      const { jobQueue, jobQueueEnqueue } = makeJobQueue();
+      const target = makeTargetSession('acp');
+
+      const dbId = await deliverInjectedMessage(
+        { ...rows.deps, jobQueue: jobQueue as never },
+        {
+          session: target.session,
+          sessionId: SESSION_ID,
+          messageId: MESSAGE_ID,
+          sdkUserMessage: makeSdkUserMessage(),
+          enqueuePayload: 'shell step',
+          deliveryV2Enabled: true,
+          rowExists: true,
+        }
+      );
+
+      expect(dbId).toBe(MESSAGE_ID);
+      expect(jobQueueEnqueue).toHaveBeenCalledTimes(1);
+    });
   });
 });

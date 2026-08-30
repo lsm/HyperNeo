@@ -1419,6 +1419,34 @@ describe('awaitDeliveryConsumption — terminalize a fresh job on timeout (no-st
   });
 });
 
+describe('awaitDeliveryConsumption — lost wakeup (persisted sendStatus re-check)', () => {
+  it('resolves from getSendStatus when the consumption signal fired before waiter registration', async () => {
+    signalDeliveryConsumed('sess', 'gap-consumed');
+    await awaitDeliveryConsumption({
+      sessionId: 'sess',
+      messageUuid: 'gap-consumed',
+      deliver: async () => {},
+      getSendStatus: () => 'consumed',
+      timeoutMs: 25,
+    });
+  });
+
+  it('still rejects and terminalizes when getSendStatus never reports consumed', async () => {
+    const terminalize = mock(() => {});
+    await expect(
+      awaitDeliveryConsumption({
+        sessionId: 'sess',
+        messageUuid: 'gap-stuck',
+        deliver: async () => {},
+        getSendStatus: () => 'enqueued',
+        timeoutMs: 25,
+        terminalizeOnTimeout: terminalize,
+      })
+    ).rejects.toThrow('not consumed within timeout');
+    expect(terminalize).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('message-delivery v2 — steer park bound (dead-letter after MAX_STEER_PARKS)', () => {
   let db: Database;
   let repo: JobQueueRepository;

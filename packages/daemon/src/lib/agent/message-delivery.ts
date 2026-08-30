@@ -443,14 +443,31 @@ export async function awaitDeliveryConsumption(args: {
   deliver: () => Promise<void>;
   terminalizeOnTimeout?: () => void;
   timeoutMs?: number;
+  getSendStatus?: () => string | null | undefined;
 }): Promise<void> {
   const consumed = waitForDeliveryConsumption(args.sessionId, args.messageUuid);
   let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
+  let statusPoll: ReturnType<typeof setInterval> | undefined;
+  const alreadyConsumed = new Promise<void>((resolve) => {
+    if (!args.getSendStatus) return;
+    const check = () => {
+      try {
+        if (args.getSendStatus!() !== 'consumed') return;
+        if (statusPoll) clearInterval(statusPoll);
+        resolve();
+      } catch {
+        if (statusPoll) clearInterval(statusPoll);
+      }
+    };
+    statusPoll = setInterval(check, MESSAGE_DELIVERY_PARK_MS);
+    check();
+  });
   try {
     await args.deliver();
     const consumptionTimeoutMs = deliveryConsumptionTimeoutOrDefault(args.timeoutMs);
     await Promise.race([
       consumed.promise,
+      alreadyConsumed,
       new Promise<void>((_, reject) => {
         consumptionTimeout = setTimeout(
           () => reject(new Error('delivery not consumed within timeout')),
@@ -463,6 +480,7 @@ export async function awaitDeliveryConsumption(args: {
     throw err;
   } finally {
     if (consumptionTimeout) clearTimeout(consumptionTimeout);
+    if (statusPoll) clearInterval(statusPoll);
     consumed.cancel();
   }
 }
