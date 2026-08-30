@@ -10982,6 +10982,74 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     await extension.stop();
   });
 
+  test('a credential change after a failed refresh clears the retry deadline', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          return new Response('{"message": "server error"}', { status: 500 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const aware = extension as unknown as {
+      selfEchoLoginRefresh: Promise<void> | null;
+      resetRateLimitObservation(): void;
+    };
+    const { ext, context } = publishCapture(extension);
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    await aware.selfEchoLoginRefresh;
+    expect(userCalls).toBe(1);
+
+    aware.resetRateLimitObservation();
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    await aware.selfEchoLoginRefresh;
+    expect(userCalls).toBe(2);
+    await extension.stop();
+  });
+
+  test('an in-flight failed refresh for an obsolete credential cannot reinstate the deadline', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    let releaseFailure: (() => void) | null = null;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          if (userCalls === 1) {
+            return new Promise<Response>((resolve) => {
+              releaseFailure = () =>
+                resolve(new Response('{"message": "server error"}', { status: 500 }));
+            });
+          }
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const aware = extension as unknown as {
+      selfEchoLoginRefresh: Promise<void> | null;
+      resetRateLimitObservation(): void;
+    };
+    const { ext, context } = publishCapture(extension);
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    expect(userCalls).toBe(1);
+    expect(releaseFailure).toBeTypeOf('function');
+
+    aware.resetRateLimitObservation();
+    releaseFailure!();
+    await aware.selfEchoLoginRefresh;
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+    await aware.selfEchoLoginRefresh;
+    expect(userCalls).toBe(2);
+    await extension.stop();
+  });
+
   test('publishEvent suppresses the identity refresh while rate-limited', async () => {
     const db = setupDb();
     let userCalls = 0;

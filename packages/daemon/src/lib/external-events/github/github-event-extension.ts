@@ -1367,14 +1367,22 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
 
   private selfEchoLoginRefresh: Promise<void> | null = null;
   private selfEchoLoginRetryAt = 0;
+  private selfEchoLoginRetryGeneration = -1;
 
   private triggerSelfEchoLoginRefresh(): void {
     if (this.selfEchoLoginRefresh) return;
     if (Date.now() < this.rateLimitedUntil) return;
-    if (Date.now() < this.selfEchoLoginRetryAt) return;
+    if (
+      Date.now() < this.selfEchoLoginRetryAt &&
+      this.selfEchoLoginRetryGeneration === this.credentialGeneration
+    ) {
+      return;
+    }
+    const generationBefore = this.credentialGeneration;
     this.selfEchoLoginRefresh = this.resolveTokenStatus(false)
       .then((status) => {
         this.selfEchoLoginRetryAt = status.login ? 0 : Date.now() + SELF_ECHO_LOGIN_RETRY_MS;
+        this.selfEchoLoginRetryGeneration = status.login ? -1 : generationBefore;
       })
       .finally(() => {
         this.selfEchoLoginRefresh = null;
