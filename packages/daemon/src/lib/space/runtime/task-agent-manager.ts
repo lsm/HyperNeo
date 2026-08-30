@@ -44,7 +44,7 @@ import type { ToolContinuationRecoveryRepository } from '../../../storage/reposi
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { validateImageSizes } from '../../session/message-persistence.ts';
-import type { SessionManager } from '../../session-manager.ts';
+import { CleanupState, type SessionManager } from '../../session-manager.ts';
 import type { SkillsManager } from '../../skills-manager.ts';
 import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
@@ -2176,6 +2176,29 @@ export class TaskAgentManager {
     }
   }
 
+  private sessionManagerCleaningUp(): boolean {
+    const getCleanupState = (this.config.sessionManager as { getCleanupState?: () => CleanupState })
+      .getCleanupState;
+    const state = getCleanupState?.();
+    return state !== undefined && state !== CleanupState.IDLE;
+  }
+
+  private restoredWorkerDeliveryAdmitted(session: AgentSession): boolean {
+    if (session.getSessionData().config?.queryMode === 'manual') return false;
+    return !this.sessionManagerCleaningUp();
+  }
+
+  getRestoredRateLimitRetryAt(sessionId: string): number | null {
+    const cooldown = this.readPersistedRateLimitCooldown(sessionId);
+    if (!cooldown) return null;
+    const session =
+      this.agentSessionIndex.get(sessionId) ??
+      this.config.sessionManager.getCachedSession?.(sessionId) ??
+      null;
+    if (session?.getRateLimitWatchdogState().retryAt != null) return null;
+    return cooldown.retryAt;
+  }
+
   async restorePostApprovalWorkerSession(
     taskId: string,
     hintSessionId?: string,
@@ -2192,10 +2215,18 @@ export class TaskAgentManager {
     return this.withSessionRestoreLock(identity.sessionId, async () => {
       const indexed = this.agentSessionIndex.get(identity.sessionId);
       if (indexed && (indexed === suppliedSession || !suppliedSession)) {
-        if (options.startQuery !== false && !indexed.isQueryActiveOrStarting()) {
+        if (
+          options.startQuery !== false &&
+          !indexed.isQueryActiveOrStarting() &&
+          this.restoredWorkerDeliveryAdmitted(indexed)
+        ) {
           await indexed.startStreamingQuery();
         }
-        if (options.startQuery !== false && options.replayPendingMessages !== false) {
+        if (
+          options.startQuery !== false &&
+          options.replayPendingMessages !== false &&
+          !this.sessionManagerCleaningUp()
+        ) {
           const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
           options.onReplaySettled?.(replayed);
         }
@@ -2363,12 +2394,16 @@ export class TaskAgentManager {
         );
         return sessionId;
       }
-      if (options.startQuery !== false) {
+      if (options.startQuery !== false && this.restoredWorkerDeliveryAdmitted(agentSession)) {
         await agentSession.startStreamingQuery();
-        if (options.replayPendingMessages !== false) {
-          const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
-          options.onReplaySettled?.(replayed);
-        }
+      }
+      if (
+        options.startQuery !== false &&
+        options.replayPendingMessages !== false &&
+        !this.sessionManagerCleaningUp()
+      ) {
+        const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+        options.onReplaySettled?.(replayed);
       }
     } catch (err) {
       this.subSessions.get(taskId)?.delete(sessionId);
@@ -2378,7 +2413,11 @@ export class TaskAgentManager {
       }
       throw err;
     }
-    if (options.startQuery !== false && options.replayPendingMessages !== false) {
+    if (
+      options.startQuery !== false &&
+      options.replayPendingMessages !== false &&
+      this.restoredWorkerDeliveryAdmitted(agentSession)
+    ) {
       void this.flushPendingMessagesForTarget(task.workflowRunId, agentName, sessionId).catch(
         (err) => {
           log.warn(
@@ -3881,12 +3920,16 @@ export class TaskAgentManager {
     }
 
     try {
-      if (options.startQuery !== false) {
+      if (options.startQuery !== false && this.restoredWorkerDeliveryAdmitted(agentSession)) {
         await agentSession.startStreamingQuery();
-        if (options.replayPendingMessages !== false) {
-          const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
-          options.onReplaySettled?.(replayed);
-        }
+      }
+      if (
+        options.startQuery !== false &&
+        options.replayPendingMessages !== false &&
+        !this.sessionManagerCleaningUp()
+      ) {
+        const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+        options.onReplaySettled?.(replayed);
       }
     } catch (err) {
       this.detachSessionBookkeeping(subSessionId);
@@ -3900,7 +3943,11 @@ export class TaskAgentManager {
       throw err;
     }
 
-    if (options.startQuery !== false && options.replayPendingMessages !== false) {
+    if (
+      options.startQuery !== false &&
+      options.replayPendingMessages !== false &&
+      this.restoredWorkerDeliveryAdmitted(agentSession)
+    ) {
       void this.flushPendingMessagesForTarget(
         workflowRunId,
         execution.agentName,

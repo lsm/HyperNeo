@@ -31,6 +31,7 @@ import { Logger } from '../logger.ts';
 export interface MessageDeliveryHandlerDeps {
   jobQueue: JobQueueRepository;
   getSession(sessionId: string): Promise<MessageDeliverySession | null>;
+  getSessionCooldownRetryAt?(sessionId: string): number | null;
   getMessageContent(sessionId: string, messageUuid: string): DeliveryLoadResult | null;
   isSessionArchived?(sessionId: string): boolean;
   markDeliveryFailed?(sessionId: string, messageUuid: string): string | null;
@@ -71,6 +72,12 @@ export function createMessageDeliveryHandler(deps: MessageDeliveryHandlerDeps): 
     const session = await deps.getSession(payload.sessionId);
     if (!session) {
       throw new Error(`message_delivery: session ${payload.sessionId} not found`);
+    }
+    const cooldownRetryAt = deps.getSessionCooldownRetryAt?.(payload.sessionId) ?? null;
+    if (cooldownRetryAt !== null) {
+      if (!claimCurrent()) return { outcome: 'stale_attempt' };
+      deps.jobQueue.requeueParked(job.id, cooldownRetryAt, job.claimToken);
+      return { parked: 'rate_limit_cooldown', retryAt: cooldownRetryAt };
     }
     const loaded = deps.getMessageContent(payload.sessionId, payload.messageUuid);
     if (loaded === null) {

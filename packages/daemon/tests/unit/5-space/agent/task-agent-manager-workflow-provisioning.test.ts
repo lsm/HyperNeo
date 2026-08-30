@@ -162,3 +162,95 @@ describe('TaskAgentManager workflow session provisioning', () => {
     );
   });
 });
+
+function makeRestoreManager(input: { queryMode?: string; cleanupState?: string }) {
+  const startStreamingQuery = mock(async () => {});
+  const replay = mock(async () => true);
+  const session = {
+    getSessionData: () => ({ id: SESSION_ID, config: { queryMode: input.queryMode } }),
+    isQueryActiveOrStarting: () => false,
+    startStreamingQuery,
+    replayPendingMessagesForImmediateMode: replay,
+  } as unknown as AgentSession;
+  const manager = Object.create(TaskAgentManager.prototype) as TaskAgentManager;
+  Object.defineProperty(manager, 'config', {
+    value: {
+      sessionManager: {
+        getCachedSession: () => session,
+        getCleanupState: () => input.cleanupState,
+      },
+    },
+  });
+  Object.defineProperty(manager, 'readPostApprovalWorkerIdentity', {
+    value: () => ({ sessionId: SESSION_ID, agentName: 'worker' }),
+  });
+  Object.defineProperty(manager, 'withSessionRestoreLock', {
+    value: (_sessionId: string, run: () => Promise<string | null>) => run(),
+  });
+  Object.defineProperty(manager, 'agentSessionIndex', {
+    value: new Map([[SESSION_ID, session]]),
+  });
+  return { manager, startStreamingQuery, replay };
+}
+
+describe('TaskAgentManager restored worker query admission', () => {
+  it('starts the query and replays pending messages for an admitted worker', async () => {
+    const { manager, startStreamingQuery, replay } = makeRestoreManager({});
+
+    await manager.restorePostApprovalWorkerSession(TASK_ID, SESSION_ID);
+
+    expect(startStreamingQuery).toHaveBeenCalledTimes(1);
+    expect(replay).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a manual-mode worker dormant while still settling replay provisioning', async () => {
+    const { manager, startStreamingQuery, replay } = makeRestoreManager({
+      queryMode: 'manual',
+    });
+
+    await manager.restorePostApprovalWorkerSession(TASK_ID, SESSION_ID);
+
+    expect(startStreamingQuery).not.toHaveBeenCalled();
+    expect(replay).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips query startup and replay while the session manager is cleaning up', async () => {
+    const { manager, startStreamingQuery, replay } = makeRestoreManager({
+      cleanupState: 'cleaning',
+    });
+
+    await manager.restorePostApprovalWorkerSession(TASK_ID, SESSION_ID);
+
+    expect(startStreamingQuery).not.toHaveBeenCalled();
+    expect(replay).not.toHaveBeenCalled();
+  });
+});
+
+function makeCooldownManager(input: { watchdogRetryAt?: number | null }) {
+  const session = {
+    getRateLimitWatchdogState: () => ({ retryAt: input.watchdogRetryAt ?? null }),
+  } as unknown as AgentSession;
+  const manager = Object.create(TaskAgentManager.prototype) as TaskAgentManager;
+  Object.defineProperty(manager, 'config', {
+    value: { sessionManager: { getCachedSession: () => session } },
+  });
+  Object.defineProperty(manager, 'readPersistedRateLimitCooldown', {
+    value: () => ({ retryAt: 1234 }),
+  });
+  Object.defineProperty(manager, 'agentSessionIndex', { value: new Map() });
+  return manager;
+}
+
+describe('TaskAgentManager restored rate-limit cooldown lookup', () => {
+  it('returns the persisted retry time when no live watchdog owns the cooldown', () => {
+    const { manager } = makeCooldownManager({});
+
+    expect(manager.getRestoredRateLimitRetryAt(SESSION_ID)).toBe(1234);
+  });
+
+  it('returns null while a live watchdog cooldown is armed', () => {
+    const { manager } = makeCooldownManager({ watchdogRetryAt: 5678 });
+
+    expect(manager.getRestoredRateLimitRetryAt(SESSION_ID)).toBeNull();
+  });
+});

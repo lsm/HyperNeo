@@ -955,6 +955,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           }
           return session;
         },
+        getSessionCooldownRetryAt: (sessionId: string) =>
+          taskAgentManager?.getRestoredRateLimitRetryAt(sessionId) ?? null,
         getMessageContent: (sessionId: string, messageUuid: string) =>
           reactiveDb?.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageUuid) ?? null,
         isSessionArchived: (sessionId: string) =>
