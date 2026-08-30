@@ -15,7 +15,7 @@ export interface RateLimitManualRetryDb {
 export interface RateLimitManualRetryCtx {
   db: RateLimitManualRetryDb;
   sessionId: string;
-  episodeMessageUuid: string;
+  episodeMessageUuid?: string;
   clearCooldown: () => Promise<void>;
   cleared: boolean;
   released: boolean;

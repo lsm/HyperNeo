@@ -169,6 +169,10 @@ export class RateLimitWatchdog {
     return this.persistedCooldownArm ? this.persistedEpisodeMessageUuid : null;
   }
 
+  isPersistedCooldownArmed(): boolean {
+    return this.persistedCooldownArm;
+  }
+
   private querySuperseded(queryGeneration?: number): boolean {
     return (
       queryGeneration !== undefined &&

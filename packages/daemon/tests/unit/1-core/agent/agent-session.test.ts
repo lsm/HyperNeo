@@ -1238,6 +1238,7 @@ describe('AgentSession', () => {
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel,
         retryNow,
+        isPersistedCooldownArmed: () => true,
         getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
       } as never;
 
@@ -1265,6 +1266,7 @@ describe('AgentSession', () => {
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
         retryNow: mock(() => true),
+        isPersistedCooldownArmed: () => true,
         getPersistedEpisodeMessageUuid: () => 'msg-steer-episode',
       } as never;
 
@@ -1309,6 +1311,7 @@ describe('AgentSession', () => {
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
         retryNow: mock(() => true),
+        isPersistedCooldownArmed: () => true,
         getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
       } as never;
 
@@ -1319,6 +1322,32 @@ describe('AgentSession', () => {
         processingState: JSON.stringify({ status: 'idle' }),
       });
       expect(order).toEqual(['persist-idle', 'reschedule']);
+    });
+
+    it('retryNowAfterRateLimit releases the active turn for a legacy persisted cooldown', async () => {
+      const rescheduleDelivery = mock(() => true);
+      mockDb.getJobQueueRepo = mock(
+        () =>
+          ({
+            rescheduleDelivery,
+            getActiveTurnDeliveryMessageUuid: mock(() => 'msg-owning-turn'),
+          }) as never
+      );
+      (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
+        cancel: mock(() => {}),
+        retryNow: mock(() => true),
+        isPersistedCooldownArmed: () => true,
+        getPersistedEpisodeMessageUuid: () => null,
+      } as never;
+
+      const resumed = await agentSession.retryNowAfterRateLimit();
+
+      expect(resumed).toBe(true);
+      expect(rescheduleDelivery).toHaveBeenCalledWith(
+        'test-session-id',
+        'msg-owning-turn',
+        expect.any(Number)
+      );
     });
 
     it('retryNowAfterRateLimit refuses to release when the cooldown row survives', async () => {
@@ -1338,6 +1367,7 @@ describe('AgentSession', () => {
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
         retryNow: mock(() => true),
+        isPersistedCooldownArmed: () => true,
         getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
       } as never;
 
@@ -1353,6 +1383,7 @@ describe('AgentSession', () => {
       (agentSession as unknown as { rateLimitWatchdog: unknown }).rateLimitWatchdog = {
         cancel: mock(() => {}),
         retryNow: mock(() => true),
+        isPersistedCooldownArmed: () => true,
         getPersistedEpisodeMessageUuid: () => 'msg-persisted-episode',
       } as never;
 
