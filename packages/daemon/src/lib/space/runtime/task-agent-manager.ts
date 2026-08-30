@@ -4396,7 +4396,12 @@ export class TaskAgentManager {
       ctx.workflowNodeId
     );
     session.mergeRuntimeMcpServers(rebuilt);
-    if (!rebuilt['space-actions']) {
+    if (
+      !rebuilt['space-actions'] &&
+      (session.session.config?.mcpServers as Record<string, McpServerConfig> | undefined)?.[
+        'space-actions'
+      ]
+    ) {
       session.detachRuntimeMcpServer('space-actions');
     }
 

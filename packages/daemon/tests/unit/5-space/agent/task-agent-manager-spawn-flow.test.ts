@@ -329,6 +329,10 @@ function bindLiveSessionForSync(tam: TaskAgentManager, failReinjectWith?: Error)
     mergeRuntimeMcpServers: (servers: Record<string, unknown>) => {
       serverRestores.push(servers);
     },
+    detachRuntimeMcpServer: (name: string) => {
+      const servers = live.session.config.mcpServers as Record<string, unknown>;
+      if (name in servers) delete servers[name];
+    },
   } as unknown as AgentSession;
   const internal = tam as unknown as {
     agentSessionIndex: Map<string, AgentSession>;
