@@ -44,6 +44,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { AgentSession } from '../../agent/agent-session.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
+import { emitActionTypedEvent } from '../actions/dispatch-telemetry.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers.ts';
 import { requireAgentFamily } from '../agents/agent-family-resolver.ts';
@@ -1010,6 +1011,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         });
       } catch {}
     }
+    try {
+      emitActionTypedEvent({
+        actionName: toolName,
+        spaceId,
+        agentName: myAgentName,
+        sessionId: mySessionId,
+        taskId,
+        timestamp: Date.now(),
+      });
+    } catch {}
   }
 
   function seedLongHorizonTemplateSubscriptions(

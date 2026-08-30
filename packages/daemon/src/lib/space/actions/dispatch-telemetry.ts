@@ -13,6 +13,43 @@ export interface RateAdmissionOptions {
 
 export type RateAdmission = () => boolean;
 
+export interface TypedTelemetryEvent {
+  actionName: string;
+  role?: string;
+  spaceId: string;
+  agentName?: string | null;
+  sessionId?: string | null;
+  taskId?: string;
+  workflowRunId?: string;
+  timestamp: number;
+}
+
+export function emitActionTypedEvent(event: TypedTelemetryEvent): void {
+  try {
+    const metadata: Record<string, string | number | boolean | null> = {
+      action: event.actionName,
+      spaceId: event.spaceId,
+    };
+    const optional: Record<string, string | number | undefined> = {
+      role: event.role,
+      agentName: event.agentName ?? undefined,
+      sessionId: event.sessionId ?? undefined,
+      taskId: event.taskId,
+      workflowRunId: event.workflowRunId,
+    };
+    for (const [key, value] of Object.entries(optional)) {
+      if (value !== undefined) metadata[key] = value;
+    }
+    emitStructuredLogEvent({
+      level: 'info',
+      args: ['action.typed'],
+      source: 'logger',
+      module: 'hyperneo:daemon:space-actions.typed',
+      metadata,
+    });
+  } catch {}
+}
+
 export function emitActionDispatchedEvent(event: DispatchTelemetryEvent): void {
   try {
     const metadata: Record<string, string | number | boolean | null> = {

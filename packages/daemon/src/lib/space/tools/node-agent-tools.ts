@@ -11,6 +11,7 @@ import type {
   MarkCompleteInput,
 } from './task-agent-tool-schemas.ts';
 import { Logger } from '../../logger.ts';
+import { emitActionTypedEvent } from '../actions/dispatch-telemetry.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import { ChannelResolver } from '../runtime/channel-resolver.ts';
 import type { AgentMessageRouter } from '../runtime/agent-message-router.ts';
@@ -142,18 +143,28 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
     paramsSummary: Record<string, unknown>,
     taskId?: string
   ): void {
-    if (!config.auditLogRepo || config.disableAuditLogWrites) {
-      return;
+    if (config.auditLogRepo && !config.disableAuditLogWrites) {
+      try {
+        config.auditLogRepo.createEntry({
+          agentName: myAgentName,
+          sessionId: mySessionId,
+          toolName,
+          paramsSummary: JSON.stringify(paramsSummary),
+          spaceId,
+          taskId: taskId ?? config.taskId,
+          workflowRunId,
+        });
+      } catch {}
     }
     try {
-      config.auditLogRepo.createEntry({
+      emitActionTypedEvent({
+        actionName: toolName,
+        spaceId,
         agentName: myAgentName,
         sessionId: mySessionId,
-        toolName,
-        paramsSummary: JSON.stringify(paramsSummary),
-        spaceId,
         taskId: taskId ?? config.taskId,
         workflowRunId,
+        timestamp: Date.now(),
       });
     } catch {}
   }
