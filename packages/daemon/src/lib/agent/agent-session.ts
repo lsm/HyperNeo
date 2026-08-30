@@ -2773,6 +2773,14 @@ export class AgentSession
   }
 
   private async publishToolResultConsumed(sessionId: string, uuids: string[]): Promise<void> {
+    if (this.session.config.provider === 'acp') {
+      const kickoffOnly = uuids.length === 1;
+      if (kickoffOnly) return;
+      for (const uuid of uuids.slice(1)) {
+        await this.publishToolResultConsumed(sessionId, [uuid]);
+      }
+      return;
+    }
     for (const uuid of uuids) {
       const row = this.db.getMessageByStatusAndUuid?.(sessionId, 'consumed', uuid);
       if (!row || row.type !== 'user') continue;
