@@ -105,9 +105,9 @@ Acceptance for a smoke binary: HTTP 200 on `/`, `/ws` handshake, migrations, gra
 
 ```bash
 cd "$REPO_ROOT"  # any directory is fine; the script does not chdir when DENO_SMOKE_BIN is set
-DENO_SMOKE_BIN="$REPO_ROOT/packages/daemon/dist/bin/hyperneo-deno-darwin-x64" \
+DENO_SMOKE_BIN="$REPO_ROOT/packages/daemon/dist/bin/hyperneo-deno" \
   DENO_SMOKE_PORT=9283 ./scripts/deno-smoke.sh
-# [deno-smoke] booting pre-built binary: $REPO_ROOT/packages/daemon/dist/bin/hyperneo-deno-darwin-x64
+# [deno-smoke] booting pre-built binary: $REPO_ROOT/packages/daemon/dist/bin/hyperneo-deno
 # [deno-smoke] HTTP GET / -> 200
 # [deno-smoke] WebSocket /ws handshake OPEN
 # [deno-smoke] sqlite tables: 98 (> 80)
