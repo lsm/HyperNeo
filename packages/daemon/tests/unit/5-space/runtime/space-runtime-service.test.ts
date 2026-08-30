@@ -809,6 +809,36 @@ describe('SpaceRuntimeService', () => {
       expect(promptArg.length).toBeGreaterThan(0);
     });
 
+    describe('space-actions dispatcher attach (HYPERNEO_SPACE_ACTIONS_DISPATCHER)', () => {
+      const FLAG = 'HYPERNEO_SPACE_ACTIONS_DISPATCHER';
+      const previous = process.env[FLAG];
+      afterEach(() => {
+        if (previous === undefined) delete process.env[FLAG];
+        else process.env[FLAG] = previous;
+      });
+
+      test('coordinator: no space-actions by default; attaches alongside when the flag is on', async () => {
+        const session = makeSession();
+        const sessionManager = makeSessionManager(session);
+        const svc = new SpaceRuntimeService(buildConfigWithSession(sessionManager));
+
+        delete process.env[FLAG];
+        await svc.setupSpaceAgentSession(mockSpace);
+        process.env[FLAG] = '1';
+        await svc.setupSpaceAgentSession(mockSpace);
+
+        const mergeMock = session.mergeRuntimeMcpServers as Mock<
+          typeof session.mergeRuntimeMcpServers
+        >;
+        const [firstArg] = mergeMock.mock.calls[0];
+        expect(firstArg).toHaveProperty('space-agent-tools');
+        expect(firstArg).not.toHaveProperty('space-actions');
+        const [secondArg] = mergeMock.mock.calls[1];
+        expect(secondArg).toHaveProperty('space-agent-tools');
+        expect(secondArg).toHaveProperty('space-actions');
+      });
+    });
+
     test('provisions the coordinator space:chat session with the 24-tool sdkToolsPreset (Task #794)', async () => {
       const session = makeSession();
       const sessionManager = makeSessionManager(session);
@@ -2505,6 +2535,61 @@ describe('SpaceRuntimeService', () => {
       expect(additional).toHaveProperty('space-agent-tools');
       expect(additional).not.toHaveProperty('db-query');
       expect(agent.setRuntimeSystemPrompt).not.toHaveBeenCalled();
+    });
+
+    describe('space-actions dispatcher attach (HYPERNEO_SPACE_ACTIONS_DISPATCHER)', () => {
+      const FLAG = 'HYPERNEO_SPACE_ACTIONS_DISPATCHER';
+      const previous = process.env[FLAG];
+      afterEach(() => {
+        if (previous === undefined) delete process.env[FLAG];
+        else process.env[FLAG] = previous;
+      });
+
+      test('member session: no space-actions by default; attaches alongside when the flag is on', async () => {
+        const agent = makeMemberAgentSession();
+        const sessionManager = makeSessionManager(agent);
+        const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+
+        delete process.env[FLAG];
+        await svc.attachSpaceToolsToMemberSession(makeMemberSession());
+        process.env[FLAG] = '1';
+        await svc.attachSpaceToolsToMemberSession(makeMemberSession());
+
+        const mergeMock = agent.mergeRuntimeMcpServers as Mock<typeof agent.mergeRuntimeMcpServers>;
+        const [firstArg] = mergeMock.mock.calls[0];
+        expect(firstArg).toHaveProperty('space-agent-tools');
+        expect(firstArg).not.toHaveProperty('space-actions');
+        const [secondArg] = mergeMock.mock.calls[1];
+        expect(secondArg).toHaveProperty('space-agent-tools');
+        expect(secondArg).toHaveProperty('space-actions');
+      });
+
+      test('long-term agent session: attaches space-actions alongside when the flag is on', async () => {
+        process.env[FLAG] = '1';
+        const agent = makeMemberAgentSession({
+          id: longTermAgentSessionId(mockSpace.id, 'agent-1'),
+          metadata: {
+            promptProvenance: {
+              source: 'test',
+              hash: 'hash',
+              agentId: 'agent-1',
+              agentName: 'Long Term',
+            },
+          },
+        });
+        const sessionManager = makeSessionManager(agent);
+        const svc = new SpaceRuntimeService(buildMemberConfig({ sessionManager }));
+
+        await (
+          svc as unknown as {
+            attachLongTermAgentMcpServersForSession(session: Session): Promise<void>;
+          }
+        ).attachLongTermAgentMcpServersForSession(agent.getSessionData());
+
+        const serverNames = Object.keys(agent.getSessionData().config.mcpServers ?? {});
+        expect(serverNames).toContain('space-agent-tools');
+        expect(serverNames).toContain('space-actions');
+      });
     });
 
     test('re-attaches the slot context reset policy onto the fresh session instance', async () => {
