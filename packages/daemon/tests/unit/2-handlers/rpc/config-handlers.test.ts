@@ -334,6 +334,33 @@ describe('SDK Config RPC Handlers', () => {
       expect(sessionManagerData.getSessionAsyncMock).toHaveBeenCalledWith('session-123');
     });
 
+    it('reports restart failure when workflow provisioning is skipped for a dormant worker', async () => {
+      const handler = messageHubData.handlers.get('config.systemPrompt.update');
+      expect(handler).toBeDefined();
+
+      const { agentSession, mocks } = createMockAgentSession();
+      mocks.isQueryActiveOrStarting.mockReturnValueOnce(false);
+      const workerData = { id: 'space:s1:task:t1:exec:e1', config: {}, status: 'active' };
+      const workerSession = {
+        ...mocks,
+        getSessionData: () => workerData,
+      } as unknown as AgentSession;
+      sessionManagerData.getSessionAsyncMock.mockResolvedValue(workerSession);
+
+      const result = (await handler!(
+        {
+          sessionId: 'space:s1:task:t1:exec:e1',
+          systemPrompt: 'New prompt',
+          restartQuery: true,
+        },
+        {}
+      )) as { success: boolean; applied: boolean; error?: string };
+
+      expect(result.success).toBe(false);
+      expect(result.applied).toBe(false);
+      expect(result.error).toContain('not resumable');
+    });
+
     it('handles restart failure', async () => {
       const handler = messageHubData.handlers.get('config.systemPrompt.update');
       expect(handler).toBeDefined();

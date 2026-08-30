@@ -1982,13 +1982,12 @@ describe('Session RPC Handlers — session.sdkResumeChoice', () => {
       {} as SpaceManager
     );
 
-    const result = (await messageHubData.handlers.get('session.sdkResumeChoice')!(
-      { sessionId: 'gone-session', choice: 'leave_as_is', messageUuid: 'uuid-2' },
-      {}
-    )) as { success: boolean; error?: string };
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('Session not found');
+    await expect(
+      messageHubData.handlers.get('session.sdkResumeChoice')!(
+        { sessionId: 'gone-session', choice: 'leave_as_is', messageUuid: 'uuid-2' },
+        {}
+      )
+    ).rejects.toThrow('Session not found');
     expect(db.updateHyperNeoActionMessageByUuid).toHaveBeenLastCalledWith(
       'gone-session',
       'uuid-2',
@@ -2023,13 +2022,12 @@ describe('Session RPC Handlers — session.sdkResumeChoice', () => {
       {} as SpaceManager
     );
 
-    const result = (await messageHubData.handlers.get('session.sdkResumeChoice')!(
-      { sessionId: 'space:s1:task:t1:exec:e1', choice: 'leave_as_is', messageUuid: 'uuid-3' },
-      {}
-    )) as { success: boolean; error?: string };
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('not resumable');
+    await expect(
+      messageHubData.handlers.get('session.sdkResumeChoice')!(
+        { sessionId: 'space:s1:task:t1:exec:e1', choice: 'leave_as_is', messageUuid: 'uuid-3' },
+        {}
+      )
+    ).rejects.toThrow('not resumable');
     expect(worker.calls).toEqual([]);
   });
 
@@ -2059,13 +2057,12 @@ describe('Session RPC Handlers — session.sdkResumeChoice', () => {
       {} as SpaceManager
     );
 
-    const result = (await messageHubData.handlers.get('session.sdkResumeChoice')!(
-      { sessionId: 'space:s1:task:t1:exec:e2', choice: 'start_fresh', messageUuid: 'uuid-5' },
-      {}
-    )) as { success: boolean; error?: string };
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('not resumable');
+    await expect(
+      messageHubData.handlers.get('session.sdkResumeChoice')!(
+        { sessionId: 'space:s1:task:t1:exec:e2', choice: 'start_fresh', messageUuid: 'uuid-5' },
+        {}
+      )
+    ).rejects.toThrow('not resumable');
     expect(db.updateSession).not.toHaveBeenCalled();
     expect(data.sdkSessionId).toBe('sdk-old');
   });

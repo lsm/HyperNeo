@@ -29,6 +29,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import type { AgentSession } from '../agent/agent-session.ts';
 import type { SessionManager } from '../session-manager.ts';
+import { isWorkflowSubSessionIdentity } from '../session/sub-session-identity.ts';
 import {
   validateSystemPromptConfig,
   validateToolsConfig,
@@ -51,7 +52,17 @@ async function restartQueryForConfig(
   if (agentSession.isQueryActiveOrStarting()) {
     return agentSession.resetQuery({ restartQuery: true });
   }
-  await sessionManager.getSessionAsync(sessionId);
+  const current = await sessionManager.getSessionAsync(sessionId);
+  const currentData = current?.getSessionData();
+  if (
+    !currentData ||
+    (isWorkflowSubSessionIdentity(sessionId) && !currentData.config.mcpServers?.['node-agent'])
+  ) {
+    return {
+      success: false,
+      error: `Session ${sessionId} is not resumable — workflow provisioning skipped`,
+    };
+  }
   return { success: true };
 }
 

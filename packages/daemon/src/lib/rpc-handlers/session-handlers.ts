@@ -1361,10 +1361,7 @@ export function setupSessionHandlers(
         { added: [failedMessage], timestamp: Date.now() },
         { channel: `session:${targetSessionId}` }
       );
-      return {
-        success: false,
-        error: errorText,
-      };
+      throw new Error(errorText);
     }
 
     db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, resolvedMessage);
