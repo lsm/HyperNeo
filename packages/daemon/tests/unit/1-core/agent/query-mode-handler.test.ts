@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { ClearConversationCancelledError } from '../../../../src/lib/agent/agent-session';
+import {
+  admitAcrossContextClearBoundary,
+  clearContextClearBoundariesForTest,
+  withContextClearBoundary,
+} from '../../../../src/lib/agent/message-delivery';
 import type { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import {
   QueryModeHandler,
@@ -116,6 +121,324 @@ describe('QueryModeHandler', () => {
     it('should create handler with dependencies', () => {
       handler = createHandler();
       expect(handler).toBeDefined();
+    });
+  });
+
+  describe('clear_then_flush boundary hold (v2)', () => {
+    let jobQueue: JobQueueRepository;
+    let jobsDb: Database;
+
+    beforeEach(() => {
+      jobsDb = new DatabaseImpl(':memory:');
+      jobsDb.exec(`
+        CREATE TABLE job_queue (
+          id TEXT PRIMARY KEY,
+          queue TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          payload TEXT NOT NULL DEFAULT '{}',
+          result TEXT, error TEXT,
+          priority INTEGER NOT NULL DEFAULT 0,
+          max_retries INTEGER NOT NULL DEFAULT 3,
+          retry_count INTEGER NOT NULL DEFAULT 0,
+          run_at INTEGER NOT NULL,
+          created_at INTEGER NOT NULL,
+          started_at INTEGER,
+          heartbeat_at INTEGER, completed_at INTEGER
+        );
+        CREATE UNIQUE INDEX uq_message_delivery_active_turn
+          ON job_queue (queue, json_extract(payload, '$.sessionId'))
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.role') = 'turn'
+            AND status IN ('pending', 'processing');
+      `);
+      jobQueue = new JobQueueRepository(jobsDb as never);
+      mockDb = {
+        getUserMessagesByStatus: getUserMessagesByStatusSpy,
+        updateMessageStatus: updateMessageStatusSpy,
+        getJobQueueRepo: () => jobQueue,
+      } as unknown as Database;
+    });
+
+    afterEach(() => {
+      jobsDb.close();
+      clearContextClearBoundariesForTest();
+    });
+
+    it('defers the flush instead of clearing unprotected when the boundary stays busy', async () => {
+      const previousTimeout = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+      process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
+      try {
+        getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
+          byStatusResult(
+            status === 'deferred'
+              ? [
+                  {
+                    dbId: 'db-task',
+                    uuid: 'uuid-task',
+                    type: 'user',
+                    isSynthetic: true,
+                    inputKind: 'task',
+                    message: { role: 'user', content: 'the older task row' },
+                  },
+                  {
+                    dbId: 'db-human',
+                    uuid: 'uuid-human',
+                    type: 'user',
+                    isSynthetic: false,
+                    inputKind: 'human',
+                    message: { role: 'user', content: 'an ordinary follow-up' },
+                  },
+                ]
+              : []
+          )
+        );
+        const outerHolder = withContextClearBoundary(
+          'test-session-id',
+          () => new Promise<void>(() => {})
+        );
+        const clearSpy = mock(async () => {});
+        handler = new QueryModeHandler({
+          ...createContext(),
+          session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
+          slotResetsContext: () => true,
+          clearConversationContext: clearSpy,
+        });
+        const flushing = handler.handleQueryTrigger();
+
+        await expect(flushing).resolves.toBeTruthy();
+        expect(clearSpy).not.toHaveBeenCalled();
+        expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-task'], 'deferred');
+        expect(
+          jobsDb
+            .prepare(
+              `SELECT COUNT(*) AS n FROM job_queue
+                WHERE queue = 'message_delivery'
+                  AND json_extract(payload, '$.messageUuid') = 'uuid-task'`
+            )
+            .get()
+        ).toEqual({ n: 0 });
+        expect(
+          jobsDb
+            .prepare(
+              `SELECT COUNT(*) AS n FROM job_queue
+                WHERE queue = 'message_delivery'
+                  AND json_extract(payload, '$.messageUuid') = 'uuid-human'`
+            )
+            .get()
+        ).toEqual({ n: 1 });
+        void outerHolder;
+      } finally {
+        if (previousTimeout === undefined)
+          delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+        else process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = previousTimeout;
+        clearContextClearBoundariesForTest();
+      }
+    });
+
+    it('recomputes the defer set from the refreshed plan so already-owned rows keep their live jobs', async () => {
+      const previousTimeout = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+      process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
+      try {
+        getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
+          byStatusResult(
+            status === 'deferred'
+              ? [
+                  {
+                    dbId: 'db-task-a',
+                    uuid: 'uuid-task-a',
+                    type: 'user',
+                    isSynthetic: true,
+                    inputKind: 'task',
+                    message: { role: 'user', content: 'row that acquires its own job' },
+                  },
+                  {
+                    dbId: 'db-task-b',
+                    uuid: 'uuid-task-b',
+                    type: 'user',
+                    isSynthetic: true,
+                    inputKind: 'task',
+                    message: { role: 'user', content: 'row that stays deferred' },
+                  },
+                ]
+              : []
+          )
+        );
+        let releaseOuter!: () => void;
+        const outerGate = new Promise<void>((resolve) => {
+          releaseOuter = resolve;
+        });
+        const outerHolder = withContextClearBoundary('test-session-id', () => outerGate);
+        const clearSpy = mock(async () => {});
+        handler = new QueryModeHandler({
+          ...createContext(),
+          session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
+          slotResetsContext: () => true,
+          clearConversationContext: clearSpy,
+        });
+        const flushing = handler.handleQueryTrigger();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        jobQueue.enqueue({
+          queue: 'message_delivery',
+          payload: {
+            sessionId: 'test-session-id',
+            messageUuid: 'uuid-task-a',
+            role: 'turn',
+            origin: 'space_inject',
+            parentToolUseId: null,
+          },
+          maxRetries: 8,
+        });
+
+        releaseOuter();
+        await outerHolder;
+        await expect(flushing).resolves.toBeTruthy();
+
+        expect(clearSpy).not.toHaveBeenCalled();
+        expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-task-b'], 'deferred');
+        const deferredCalls = updateMessageStatusSpy.mock.calls.filter(
+          (call) => call[1] === 'deferred'
+        );
+        expect(deferredCalls).toHaveLength(1);
+      } finally {
+        if (previousTimeout === undefined)
+          delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+        else process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = previousTimeout;
+        clearContextClearBoundariesForTest();
+      }
+    });
+
+    it('re-defers task deliverables when a delivery job appears during the boundary wait', async () => {
+      const previousTimeout = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+      process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
+      try {
+        getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
+          byStatusResult(
+            status === 'deferred'
+              ? [
+                  {
+                    dbId: 'db-task',
+                    uuid: 'uuid-task',
+                    type: 'user',
+                    isSynthetic: true,
+                    inputKind: 'task',
+                    message: { role: 'user', content: 'the older task row' },
+                  },
+                ]
+              : []
+          )
+        );
+        let releaseOuter!: () => void;
+        const outerGate = new Promise<void>((resolve) => {
+          releaseOuter = resolve;
+        });
+        const outerHolder = withContextClearBoundary('test-session-id', () => outerGate);
+        const clearSpy = mock(async () => {});
+        handler = new QueryModeHandler({
+          ...createContext(),
+          session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
+          slotResetsContext: () => true,
+          clearConversationContext: clearSpy,
+        });
+        const flushing = handler.handleQueryTrigger();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        jobQueue.enqueue({
+          queue: 'message_delivery',
+          payload: {
+            sessionId: 'test-session-id',
+            messageUuid: 'uuid-chat',
+            role: 'turn',
+            origin: 'chat',
+            parentToolUseId: null,
+          },
+          maxRetries: 8,
+        });
+
+        releaseOuter();
+        await outerHolder;
+        await expect(flushing).resolves.toBeTruthy();
+
+        expect(clearSpy).not.toHaveBeenCalled();
+        expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-task'], 'deferred');
+        expect(
+          jobsDb
+            .prepare(
+              `SELECT COUNT(*) AS n FROM job_queue
+                WHERE queue = 'message_delivery'
+                  AND json_extract(payload, '$.messageUuid') = 'uuid-task'`
+            )
+            .get()
+        ).toEqual({ n: 0 });
+      } finally {
+        if (previousTimeout === undefined)
+          delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+        else process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = previousTimeout;
+        clearContextClearBoundariesForTest();
+      }
+    });
+
+    it('admissions wait behind the clear boundary until the flush delivery job is enqueued', async () => {
+      const previousTimeout = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+      process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
+      try {
+        getUserMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
+          byStatusResult(
+            status === 'deferred'
+              ? [
+                  {
+                    dbId: 'db-task',
+                    uuid: 'uuid-task',
+                    type: 'user',
+                    isSynthetic: true,
+                    inputKind: 'task',
+                    message: { role: 'user', content: 'the older deferred row' },
+                  },
+                ]
+              : []
+          )
+        );
+        let releaseClear!: () => void;
+        const clearGate = new Promise<void>((resolve) => {
+          releaseClear = resolve;
+        });
+        const clearSpy = mock(async () => {
+          await clearGate;
+        });
+        handler = new QueryModeHandler({
+          ...createContext(),
+          session: { ...mockSession, sdkSessionId: 'prior-sdk-session' },
+          slotResetsContext: () => true,
+          clearConversationContext: clearSpy,
+        });
+        const flushing = handler.handleQueryTrigger();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        await expect(
+          admitAcrossContextClearBoundary('test-session-id', undefined, async () => 'sent')
+        ).resolves.toEqual({ kind: 'boundary_wait' });
+        expect(
+          jobsDb
+            .prepare(`SELECT COUNT(*) AS n FROM job_queue WHERE queue = 'message_delivery'`)
+            .get()
+        ).toEqual({ n: 0 });
+
+        releaseClear();
+        await expect(flushing).resolves.toBeTruthy();
+        expect(
+          jobsDb
+            .prepare(`SELECT COUNT(*) AS n FROM job_queue WHERE queue = 'message_delivery'`)
+            .get()
+        ).toEqual({ n: 1 });
+        await expect(
+          admitAcrossContextClearBoundary('test-session-id', undefined, async () => 'sent')
+        ).resolves.toEqual({ kind: 'admitted', result: 'sent' });
+      } finally {
+        if (previousTimeout === undefined)
+          delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+        else process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = previousTimeout;
+        clearContextClearBoundariesForTest();
+      }
     });
   });
 

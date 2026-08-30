@@ -172,6 +172,7 @@ import { LimitErrorLlmClassifier } from './limit-error-llm-classifier.ts';
 import {
   ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   BATCH_DELIVERY_MAX_CHARS,
+  admitAcrossContextClearBoundary,
   buildBatchedDeliveryContent,
   classifyReclaimTermination,
   type DriveTurnOutcome,
@@ -186,6 +187,8 @@ import {
   signalDeliveryConsumed,
   steerAckTimeoutMs,
   throwIfDeliveryAborted,
+  acquireContextClearBoundary,
+  type ContextClearBoundaryOwner,
   waitForDeliveryAbort,
   withSessionLock,
 } from './message-delivery.ts';
@@ -939,7 +942,20 @@ export class AgentSession
     return await this.lifecycleManager.reset({ restartAfter: restartQuery });
   }
 
-  async clearConversationContext(): Promise<void> {
+  async clearConversationContext(boundaryOwner?: ContextClearBoundaryOwner): Promise<void> {
+    if (boundaryOwner) {
+      await this.runClearConversationFlow();
+      return;
+    }
+    const owner = await acquireContextClearBoundary(this.session.id);
+    try {
+      await this.runClearConversationFlow();
+    } finally {
+      owner.release();
+    }
+  }
+
+  private async runClearConversationFlow(): Promise<void> {
     const pastSdkSessionIds = this.nextPastSdkSessionIds();
     const lastSdkCost = this.session.metadata?.lastSdkCost || 0;
     if (lastSdkCost > 0 || pastSdkSessionIds) {
@@ -2431,7 +2447,6 @@ export class AgentSession
     observer?: MessageDeliveryAttemptObserver,
     deliveryClaimToken?: string | null
   ): Promise<DriveTurnOutcome> {
-    const turnStartedAt = Date.now();
     this.logger.debug(
       `delivery-turn: driving (uuid=${messageUuid} alreadyConsumed=${alreadyConsumed} ` +
         `queueRunning=${this.messageQueue.isRunning()} queueSize=${this.messageQueue.size()} ` +
@@ -2452,27 +2467,44 @@ export class AgentSession
         this.logger.warn('Failed to record delivery turn-end marker at turn end:', error);
       }
     };
-    const started = await withSessionLock(
-      this.session.id,
-      () =>
-        runDeliveryTurnAdmission(
-          this.buildDeliveryTurnAdmissionDeps(
-            recordTurnEndMarker,
-            claimGuard,
-            deliveryClaimToken ?? undefined
-          ),
-          {
-            messageUuid,
-            content,
-            alreadyConsumed,
-            batchUuids,
-            signal,
-            attemptObserver: observer,
-            claimToken: deliveryClaimToken ?? undefined,
-          }
-        ),
-      signal
+    let turnStartedAt = Date.now();
+    const boundary = await admitAcrossContextClearBoundary(this.session.id, signal, () =>
+      withSessionLock(
+        this.session.id,
+        () => {
+          turnStartedAt = Date.now();
+          return runDeliveryTurnAdmission(
+            this.buildDeliveryTurnAdmissionDeps(
+              recordTurnEndMarker,
+              claimGuard,
+              deliveryClaimToken ?? undefined
+            ),
+            {
+              messageUuid,
+              content,
+              alreadyConsumed,
+              batchUuids,
+              signal,
+              attemptObserver: observer,
+              claimToken: deliveryClaimToken ?? undefined,
+            }
+          );
+        },
+        signal
+      )
     );
+    if (boundary.kind === 'boundary_wait') {
+      this.logger.warn(
+        `delivery-turn: waiting for the context-clear boundary (uuid=${messageUuid}); parking job`
+      );
+      void this.stateManager.setQueuedIfIdle(messageUuid).catch(() => {});
+      return {
+        outcome: 'blocked',
+        retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS,
+        reason: 'context_clear_boundary',
+      };
+    }
+    const started = boundary.result;
     if (started.kind === 'blocked') {
       this.logger.warn(
         `delivery-turn: blocked on sdk_resume_choice (uuid=${messageUuid}); parking job`
@@ -2988,37 +3020,46 @@ export class AgentSession
     signal?: AbortSignal,
     observer?: MessageDeliveryAttemptObserver
   ): Promise<FeedSteerOutcome> {
-    const action = await withSessionLock(
-      this.session.id,
-      async () => {
-        const decision = resolveSteerAdmission({
-          claimCurrent: claimGuard ? claimGuard() : true,
-          status: this.stateManager.getState().status,
-          deliveryValid: this.messageDeliveryValid(messageUuid),
-          hasLiveQuery: !!this.queryPromise,
-          provider: this.session.config.provider ?? '',
-          queueOwnsMessage: this.messageQueue.hasPendingOrInFlight(messageUuid),
-        });
-        if (decision.action === 'aborted') return { kind: 'aborted' as const };
-        if (decision.action === 'park') return { kind: 'park' as const };
-        if (decision.action === 'promote') return { kind: 'promote' as const };
-        const generation = this.getQueryGeneration();
-        observer?.reportStage('query_ready', { generation });
-        if (decision.action === 'awaiting_acceptance') {
-          return { kind: 'awaiting_acceptance' as const };
-        }
-        const acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
-          durable: true,
-        });
-        return {
-          kind: 'feed' as const,
-          acknowledgment,
-          generation,
-          clearEpoch: this.messageQueue.getClearEpoch?.() ?? 0,
-        };
-      },
-      signal
+    const boundary = await admitAcrossContextClearBoundary(this.session.id, signal, () =>
+      withSessionLock(
+        this.session.id,
+        async () => {
+          const decision = resolveSteerAdmission({
+            claimCurrent: claimGuard ? claimGuard() : true,
+            status: this.stateManager.getState().status,
+            deliveryValid: this.messageDeliveryValid(messageUuid),
+            hasLiveQuery: !!this.queryPromise,
+            provider: this.session.config.provider ?? '',
+            queueOwnsMessage: this.messageQueue.hasPendingOrInFlight(messageUuid),
+          });
+          if (decision.action === 'aborted') return { kind: 'aborted' as const };
+          if (decision.action === 'park') return { kind: 'park' as const };
+          if (decision.action === 'promote') return { kind: 'promote' as const };
+          const generation = this.getQueryGeneration();
+          observer?.reportStage('query_ready', { generation });
+          if (decision.action === 'awaiting_acceptance') {
+            return { kind: 'awaiting_acceptance' as const };
+          }
+          const acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
+            durable: true,
+          });
+          return {
+            kind: 'feed' as const,
+            acknowledgment,
+            generation,
+            clearEpoch: this.messageQueue.getClearEpoch?.() ?? 0,
+          };
+        },
+        signal
+      )
     );
+    if (boundary.kind === 'boundary_wait') {
+      this.logger.warn(
+        `delivery-steer: waiting for the context-clear boundary (uuid=${messageUuid}); parking`
+      );
+      return { outcome: 'park' };
+    }
+    const action = boundary.result;
     if (action.kind === 'promote') {
       return { outcome: 'promote' };
     }

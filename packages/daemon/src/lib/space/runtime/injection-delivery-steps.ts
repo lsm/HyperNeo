@@ -2,6 +2,7 @@ import type { MessageOrigin } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import {
   awaitDeliveryConsumption,
+  type ContextClearBoundaryOwner,
   deliverAndMarkQueued,
   deliveryConsumptionTimeoutMs,
 } from '../../../lib/agent/message-delivery.ts';
@@ -100,6 +101,7 @@ export interface DeliverInjectedMessageArgs {
   sdkUserMessage: SDKUserMessage;
   rowExists: boolean;
   origin?: MessageOrigin;
+  boundaryOwner?: ContextClearBoundaryOwner;
 }
 
 export async function deliverInjectedMessage(
@@ -119,17 +121,22 @@ export async function deliverInjectedMessage(
     messageUuid: args.messageId,
     timeoutMs: deliveryConsumptionTimeoutMs(args.session.getSessionData?.().config?.provider),
     getSendStatus: () => deps.getDeliverySendStatus(args.sessionId, args.messageId),
-    deliver: () =>
-      deliverAndMarkQueued({
-        jobQueue: deps.jobQueue,
-        stateManager: args.session.stateManager,
-        sessionId: args.sessionId,
-        messageUuid: args.messageId,
-        origin: 'space_inject',
-        onEnqueueFailure: () => {
-          failDeliveryRowInBackground(deps, args.sessionId, args.messageId);
-        },
-      }),
+    deliver: async () => {
+      try {
+        await deliverAndMarkQueued({
+          jobQueue: deps.jobQueue,
+          stateManager: args.session.stateManager,
+          sessionId: args.sessionId,
+          messageUuid: args.messageId,
+          origin: 'space_inject',
+          onEnqueueFailure: () => {
+            failDeliveryRowInBackground(deps, args.sessionId, args.messageId);
+          },
+        });
+      } finally {
+        args.boundaryOwner?.release();
+      }
+    },
     ...(!args.rowExists
       ? {
           terminalizeOnTimeout: () => {

@@ -249,7 +249,7 @@ export function steerAckTimeoutMs(): number {
 
 export type DriveTurnOutcome =
   | { outcome: 'completed' }
-  | { outcome: 'blocked'; retryAt: number }
+  | { outcome: 'blocked'; retryAt: number; reason?: 'sdk_resume_choice' | 'context_clear_boundary' }
   | { outcome: 'recovery_pending'; retryAt: number }
   | { outcome: 'aborted' }
   | { outcome: 'turn_terminated' };
@@ -533,6 +533,274 @@ export async function withSessionLock<T>(
   }
 }
 
+const COORDINATION_ACQUIRE_TIMEOUT_MS = 8_000;
+
+export function getCoordinationAcquireTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number.parseInt(env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS ?? '', 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : COORDINATION_ACQUIRE_TIMEOUT_MS;
+}
+
+export class SessionCoordinationStallError extends Error {
+  constructor(sessionId: string, waitedMs: number, holderAgeMs: number) {
+    super(
+      `Session ${sessionId} is still completing a prior operation ` +
+        `(waited ${Math.round(waitedMs / 1000)}s, prior holder age ` +
+        `${Math.round(holderAgeMs / 1000)}s). Try again shortly.`
+    );
+    this.name = 'SessionCoordinationStallError';
+  }
+}
+
+type ContextClearBoundaryHold = {
+  sessionId: string;
+  prev: Promise<unknown> | null;
+  tail: Promise<void>;
+  token: object;
+  release: () => void;
+  abandon: () => void;
+};
+
+const sessionContextClearBoundaries = new Map<string, Promise<void>>();
+const sessionContextClearBoundaryHolders = new Map<string, { token: object; armedAt: number }>();
+
+function armContextClearBoundary(sessionId: string): ContextClearBoundaryHold {
+  const prev = sessionContextClearBoundaries.get(sessionId) ?? null;
+  let releaseHeld!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseHeld = resolve;
+  });
+  const tail = prev ? prev.then(() => held) : held;
+  sessionContextClearBoundaries.set(sessionId, tail);
+  const token = {};
+  const release = () => {
+    releaseHeld();
+    if (sessionContextClearBoundaries.get(sessionId) === tail) {
+      sessionContextClearBoundaries.delete(sessionId);
+    }
+    if (sessionContextClearBoundaryHolders.get(sessionId)?.token === token) {
+      sessionContextClearBoundaryHolders.delete(sessionId);
+    }
+  };
+  return {
+    sessionId,
+    prev,
+    tail,
+    token,
+    release,
+    abandon: () => {
+      releaseHeld();
+      void tail.then(() => {
+        if (sessionContextClearBoundaries.get(sessionId) === tail) {
+          sessionContextClearBoundaries.delete(sessionId);
+        }
+      });
+      if (sessionContextClearBoundaryHolders.get(sessionId)?.token === token) {
+        sessionContextClearBoundaryHolders.delete(sessionId);
+      }
+    },
+  };
+}
+
+function markContextClearBoundaryHolder(hold: ContextClearBoundaryHold): void {
+  sessionContextClearBoundaryHolders.set(hold.sessionId, {
+    token: hold.token,
+    armedAt: Date.now(),
+  });
+}
+
+type ContextClearBoundaryAdmissionCtx = {
+  sessionId: string;
+  fn: () => Promise<unknown>;
+  signal?: AbortSignal;
+  hold: ContextClearBoundaryHold;
+  timedOut: boolean;
+  holderAgeMs: number;
+  admissionStarted: boolean;
+  result: unknown;
+};
+
+async function awaitContextClearBoundaryTurn(
+  hold: ContextClearBoundaryHold,
+  signal?: AbortSignal
+): Promise<number | null> {
+  if (!hold.prev) {
+    markContextClearBoundaryHolder(hold);
+    return null;
+  }
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<'deadline'>((resolve) => {
+    deadlineTimer = setTimeout(() => resolve('deadline'), getCoordinationAcquireTimeoutMs());
+  });
+  const aborted = waitForDeliveryAbort(signal);
+  try {
+    const winner = await Promise.race([
+      hold.prev.then(() => 'acquired' as const),
+      deadline,
+      aborted.promise.then(() => 'aborted' as const),
+    ]);
+    if (winner === 'deadline') {
+      const holder = sessionContextClearBoundaryHolders.get(hold.sessionId);
+      return holder ? Date.now() - holder.armedAt : 0;
+    }
+    throwIfDeliveryAborted(signal);
+  } finally {
+    clearTimeout(deadlineTimer);
+    aborted.cancel();
+  }
+  markContextClearBoundaryHolder(hold);
+  return null;
+}
+
+async function awaitBoundaryTurnStage(
+  ctx: ContextClearBoundaryAdmissionCtx
+): Promise<ContextClearBoundaryAdmissionCtx> {
+  const timeoutHolderAgeMs = await awaitContextClearBoundaryTurn(ctx.hold, ctx.signal);
+  if (timeoutHolderAgeMs !== null) {
+    ctx.timedOut = true;
+    ctx.holderAgeMs = timeoutHolderAgeMs;
+    return ctx;
+  }
+  return ctx;
+}
+
+export interface ContextClearBoundaryOwner {
+  release: () => void;
+}
+
+export async function acquireContextClearBoundary(
+  sessionId: string,
+  signal?: AbortSignal
+): Promise<ContextClearBoundaryOwner> {
+  throwIfDeliveryAborted(signal);
+  const hold = armContextClearBoundary(sessionId);
+  let timeoutHolderAgeMs: number | null;
+  try {
+    timeoutHolderAgeMs = await awaitContextClearBoundaryTurn(hold, signal);
+  } catch (error) {
+    hold.abandon();
+    throw error;
+  }
+  if (timeoutHolderAgeMs !== null) {
+    hold.abandon();
+    throw new SessionCoordinationStallError(
+      sessionId,
+      getCoordinationAcquireTimeoutMs(),
+      timeoutHolderAgeMs
+    );
+  }
+  return hold;
+}
+
+async function runUnderBoundaryStage(
+  ctx: ContextClearBoundaryAdmissionCtx
+): Promise<ContextClearBoundaryAdmissionCtx> {
+  ctx.admissionStarted = true;
+  try {
+    ctx.result = await ctx.fn();
+  } finally {
+    ctx.hold.release();
+  }
+  return ctx;
+}
+
+const runContextClearBoundaryAdmission = (
+  superpipe({ timedOut: (ctx: ContextClearBoundaryAdmissionCtx) => ctx.timedOut })(
+    'context-clear-boundary-admission'
+  ) as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(awaitBoundaryTurnStage, 'ctx', 'ctx')
+  .pipe('!timedOut', 'ctx')
+  .pipe(runUnderBoundaryStage, 'ctx', 'ctx')
+  .endAsync('ctx') as (
+  input: ContextClearBoundaryAdmissionCtx
+) => Promise<ContextClearBoundaryAdmissionCtx>;
+
+async function runContextClearBoundary<T>(
+  sessionId: string,
+  fn: () => Promise<T>,
+  signal?: AbortSignal,
+  armedHold?: ContextClearBoundaryHold
+): Promise<{ kind: 'admitted'; result: T } | { kind: 'boundary_wait'; holderAgeMs: number }> {
+  throwIfDeliveryAborted(signal);
+  const ctx: ContextClearBoundaryAdmissionCtx = {
+    sessionId,
+    fn,
+    signal,
+    hold: armedHold ?? armContextClearBoundary(sessionId),
+    timedOut: false,
+    holderAgeMs: 0,
+    admissionStarted: false,
+    result: undefined,
+  };
+  try {
+    const settled = await runContextClearBoundaryAdmission(ctx);
+    if (settled.timedOut) {
+      return { kind: 'boundary_wait', holderAgeMs: settled.holderAgeMs };
+    }
+    return { kind: 'admitted', result: settled.result as T };
+  } finally {
+    if (!ctx.admissionStarted) {
+      ctx.hold.abandon();
+    }
+  }
+}
+
+export async function withContextClearBoundary<T>(
+  sessionId: string,
+  fn: () => Promise<T>,
+  signal?: AbortSignal
+): Promise<T> {
+  throwIfDeliveryAborted(signal);
+  const hold = armContextClearBoundary(sessionId);
+  if (!hold.prev) {
+    markContextClearBoundaryHolder(hold);
+    try {
+      return await fn();
+    } finally {
+      hold.release();
+    }
+  }
+  const outcome = await runContextClearBoundary(sessionId, fn, signal, hold);
+  if (outcome.kind === 'boundary_wait') {
+    throw new SessionCoordinationStallError(
+      sessionId,
+      getCoordinationAcquireTimeoutMs(),
+      outcome.holderAgeMs
+    );
+  }
+  return outcome.result;
+}
+
+export type ContextClearBoundaryAdmission<T> =
+  | { kind: 'admitted'; result: T }
+  | { kind: 'boundary_wait' };
+
+export async function admitAcrossContextClearBoundary<T>(
+  sessionId: string,
+  signal: AbortSignal | undefined,
+  admit: () => Promise<T>
+): Promise<ContextClearBoundaryAdmission<T>> {
+  try {
+    const result = await withContextClearBoundary(sessionId, admit, signal);
+    return { kind: 'admitted', result };
+  } catch (error) {
+    if (error instanceof SessionCoordinationStallError) {
+      return { kind: 'boundary_wait' };
+    }
+    throw error;
+  }
+}
+
+export function clearContextClearBoundariesForTest(): void {
+  sessionContextClearBoundaries.clear();
+  sessionContextClearBoundaryHolders.clear();
+}
+
+export function hasContextClearBoundaryForTest(sessionId: string): boolean {
+  return sessionContextClearBoundaries.has(sessionId);
+}
+
 const sessionOperationLocks = new Map<string, Promise<unknown>>();
 
 const sessionOperationLockArmedAt = new Map<string, number>();
@@ -635,6 +903,7 @@ async function awaitOperationLockSlotStage(ctx: OperationLockCtx): Promise<Opera
 
 async function reclaimLeakedOperationLockStage(ctx: OperationLockCtx): Promise<OperationLockCtx> {
   if (!ctx.timedOut || ctx.holderAgeMs < getSessionOperationLockLeakCeilingMs()) return ctx;
+  if (sessionOperationLocks.get(ctx.sessionId) !== ctx.registeredTail) return ctx;
   if (currentOperationLockHolderArmedAt(ctx.sessionId) !== ctx.observedArmedAt) return ctx;
   operationLockLog.error(
     `message-delivery operation-lock: holder for session ${ctx.sessionId} exceeded ` +

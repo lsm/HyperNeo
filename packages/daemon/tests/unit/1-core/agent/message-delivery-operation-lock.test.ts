@@ -90,4 +90,28 @@ describe('withSessionOperationLock', () => {
 
     await expect(slow).resolves.toBe('slow');
   });
+
+  it('a timed-out waiter with a successor does not reclaim the successor chain', async () => {
+    process.env.HYPERNEO_OPERATION_LOCK_ACQUIRE_TIMEOUT_MS = '20';
+    process.env.HYPERNEO_OPERATION_LOCK_LEAK_CEILING_MS = '60';
+
+    const stuck = withSessionOperationLock('s', () => new Promise<string>(() => {}));
+    await tick(50);
+
+    const ran: string[] = [];
+    const waiterA = withSessionOperationLock('s', async () => {
+      ran.push('A');
+      return 'A';
+    });
+    await tick(0);
+    const waiterB = withSessionOperationLock('s', async () => {
+      ran.push('B');
+      return 'B';
+    });
+
+    await expect(waiterA).rejects.toBeInstanceOf(DOMException);
+    await expect(waiterB).resolves.toBe('B');
+    expect(ran).toEqual(['B']);
+    void stuck;
+  });
 });
