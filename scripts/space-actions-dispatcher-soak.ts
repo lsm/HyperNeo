@@ -73,6 +73,7 @@ function aggregateActionEvent(totals: Map<string, ActionSummary>, event: LogEven
     if (outcome === 'dispatched') row.dispatched++;
     else if (outcome === 'denied') row.denied++;
     else if (outcome === 'failed') row.failed++;
+    else row.failed++;
     row.diff = row.typed + row.denied + row.failed;
     totals.set(action, row);
   }

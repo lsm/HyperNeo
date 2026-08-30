@@ -91,6 +91,29 @@ describe('aggregateActionDispatchedTelemetry', () => {
     expect(Object.values(totals)).toHaveLength(1);
   });
 
+  it('treats unrecognized dispatcher outcomes as failed', () => {
+    const events = [
+      dispatchedEvent('list_sessions', 'success'),
+      dispatchedEvent('update_task', 'dispatched'),
+    ];
+
+    const totals = aggregateActionDispatchedTelemetry(events);
+    expect(totals['list_sessions']).toEqual({
+      typed: 0,
+      dispatched: 0,
+      denied: 0,
+      failed: 1,
+      diff: 1,
+    });
+    expect(totals['update_task']).toEqual({
+      typed: 0,
+      dispatched: 1,
+      denied: 0,
+      failed: 0,
+      diff: 0,
+    });
+  });
+
   it('ignores events missing action or outcome metadata', () => {
     const events = [
       {
