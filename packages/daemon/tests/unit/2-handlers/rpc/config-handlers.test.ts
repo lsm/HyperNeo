@@ -1,8 +1,8 @@
-import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
-import { MessageHub, type Session } from '@hyperneo/shared';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { MessageHub, Session } from '@hyperneo/shared';
+import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { setupConfigHandlers } from '../../../../src/lib/rpc-handlers/config-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -386,7 +386,7 @@ describe('SDK Config RPC Handlers', () => {
       );
 
       expect(reapply).toHaveBeenCalledTimes(1);
-      expect(reapply).toHaveBeenCalledWith(agentSession.getSessionData().config);
+      expect(reapply).toHaveBeenCalledWith({ systemPrompt: 'New prompt' });
     });
 
     it('handles restart failure', async () => {

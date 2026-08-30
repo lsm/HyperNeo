@@ -2,12 +2,12 @@ import type { Session } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import type { Logger } from '../logger.ts';
 import {
   DETERMINISTIC_DIGEST_UUID_PREFIX,
   type RenderPendingDigestOutcome,
 } from '../space/runtime/render-pending-digest-pipeline.ts';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import type { Logger } from '../logger.ts';
 import { ClearConversationCancelledError } from './agent-session.ts';
 import {
   acquireContextClearBoundary,
@@ -403,23 +403,24 @@ export class QueryModeHandler {
     return { replayedWork, clearedContext, replayFailed };
   }
 
-  async replayPendingMessagesForAutomaticTurnEnd(): Promise<void> {
-    if (this.ctx.session.config.queryMode === 'manual') return;
-    if (this.ctx.stateManager?.getState().status === 'waiting_for_input') return;
-    await this.replayPendingMessagesForImmediateMode();
+  async replayPendingMessagesForAutomaticTurnEnd(): Promise<boolean> {
+    if (this.ctx.session.config.queryMode === 'manual') return true;
+    if (this.ctx.stateManager?.getState().status === 'waiting_for_input') return true;
+    return this.replayPendingMessagesForImmediateMode();
   }
 
-  async replayPendingMessagesForImmediateMode(): Promise<void> {
+  async replayPendingMessagesForImmediateMode(): Promise<boolean> {
     const { clearedContext, replayFailed } = await this.sendEnqueuedMessagesOnTurnEnd();
-    if (replayFailed) return;
+    if (replayFailed) return false;
     if (!clearedContext) {
       const jobQueue = this.ctx.db.getJobQueueRepo?.();
       if (jobQueue?.activeDeliveryMessageUuids?.(this.ctx.session.id).size) {
         this.schedulePostSettlementFlush();
-        return;
+        return true;
       }
     }
-    await this.handleQueryTrigger({ skipContextReset: clearedContext });
+    const replay = await this.handleQueryTrigger({ skipContextReset: clearedContext });
+    return replay.success;
   }
 
   private postSettlementFlushScheduled = false;

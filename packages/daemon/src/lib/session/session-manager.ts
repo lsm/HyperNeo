@@ -1,50 +1,53 @@
 import type {
-  Session,
   ImageContent,
-  MessageHub,
   MessageDeliveryMode,
-  MessageOrigin,
+  MessageHub,
   MessageImage,
+  MessageOrigin,
+  Session,
 } from '@hyperneo/shared';
 import { generateUUID, matchesDraftOrComposition } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Database } from '../../storage/database.ts';
+import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
+import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import {
   AgentSession,
   type AgentSessionRuntimeOptions,
   RECENTLY_EXITED_ROOT_PID_RETENTION_MS,
 } from '../agent/agent-session.ts';
 import type { AuthManager } from '../auth-manager.ts';
-import type { SettingsManager } from '../settings-manager.ts';
-import { WorktreeManager } from '../worktree-manager.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { handleSessionTitleGeneration } from '../job-handlers/session-title.handler.ts';
+import { SESSION_TITLE_GENERATION } from '../job-queue-constants.ts';
 import { Logger } from '../logger.ts';
 import { listProcesses, type ProcessSnapshot } from '../process-watchdog.ts';
+import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
-import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
-import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
-import { SESSION_TITLE_GENERATION } from '../job-queue-constants.ts';
-import { handleSessionTitleGeneration } from '../job-handlers/session-title.handler.ts';
-
-import { SessionCache } from './session-cache.ts';
-import {
-  SessionLifecycle,
-  type SessionLifecycleConfig,
-  type CreateSessionParams,
-  type ArchiveResourcesTrigger,
-  type DeleteResourcesTrigger,
-} from './session-lifecycle.ts';
-import { ToolsConfigManager } from './tools-config.ts';
+import { WorktreeManager } from '../worktree-manager.ts';
 import { MessagePersistence } from './message-persistence.ts';
 import { ReferenceResolver } from './reference-resolver.ts';
+import { SessionCache } from './session-cache.ts';
+import {
+  type ArchiveResourcesTrigger,
+  type CreateSessionParams,
+  type DeleteResourcesTrigger,
+  SessionLifecycle,
+  type SessionLifecycleConfig,
+} from './session-lifecycle.ts';
 import { isWorkflowSubSessionIdentity } from './sub-session-identity.ts';
+import { ToolsConfigManager } from './tools-config.ts';
 
 export interface SpaceRuntimeMcpProvider {
   reattachMemberSpaceTools(sessionId: string): Promise<void>;
   reattachWorkflowMcpServers?(session: AgentSession, missing: string[]): Promise<void>;
   provisionWorkflowSession?(
     session: AgentSession,
-    options?: { startQuery?: boolean; replayPendingMessages?: boolean }
+    options?: {
+      startQuery?: boolean;
+      replayPendingMessages?: boolean;
+      onReplaySettled?: (succeeded: boolean) => void;
+    }
   ): Promise<void>;
 }
 
@@ -504,11 +507,19 @@ export class SessionManager {
       }
     }
 
-    const provisioning = provider.provisionWorkflowSession(session, options).finally(() => {
-      if (this.workflowMcpProvisioning.get(sessionId)?.promise === provisioning) {
-        this.workflowMcpProvisioning.delete(sessionId);
-      }
-    });
+    let replaySucceeded = false;
+    const provisioning = provider
+      .provisionWorkflowSession(session, {
+        ...options,
+        onReplaySettled: (succeeded) => {
+          replaySucceeded = succeeded;
+        },
+      })
+      .finally(() => {
+        if (this.workflowMcpProvisioning.get(sessionId)?.promise === provisioning) {
+          this.workflowMcpProvisioning.delete(sessionId);
+        }
+      });
     this.workflowMcpProvisioning.set(sessionId, { session, promise: provisioning });
     await provisioning;
     if (session.getSessionData().config.mcpServers?.['node-agent']) {
@@ -516,7 +527,11 @@ export class SessionManager {
       if (options.startQuery !== false && session.isQueryActiveOrStarting()) {
         this.workflowQueryStarted.add(session);
       }
-      if (options.startQuery !== false && options.replayPendingMessages !== false) {
+      if (
+        options.startQuery !== false &&
+        options.replayPendingMessages !== false &&
+        replaySucceeded
+      ) {
         this.workflowReplayCompleted.add(session);
       }
     }
@@ -763,7 +778,7 @@ export class SessionManager {
   private async preserveRootPids(agentSession: AgentSession): Promise<void> {
     const split = agentSession.getTrackedAgentRootPidsSplit();
 
-    let startTimeByPid = new Map<number, number>();
+    const startTimeByPid = new Map<number, number>();
     let now = Date.now();
     if (split.live.length > 0) {
       try {
@@ -820,7 +835,6 @@ export class SessionManager {
       const currentStartTime = now - snap.elapsedSeconds * 1000;
       if (Math.abs(currentStartTime - meta.startTime) > 1000) {
         this.evictedLiveRootPids.delete(pid);
-        continue;
       }
     }
 

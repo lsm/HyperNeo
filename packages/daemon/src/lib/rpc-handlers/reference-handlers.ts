@@ -1,19 +1,19 @@
+import { join, normalize, relative } from 'node:path';
 import type {
   MessageHub,
-  ReferenceType,
   ReferenceSearchResult,
+  ReferenceType,
   ResolvedReference,
 } from '@hyperneo/shared';
-import type { SessionManager } from '../session-manager.ts';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
-import { TaskRepository } from '../../storage/repositories/task-repository.ts';
 import { GoalRepository } from '../../storage/repositories/goal-repository.ts';
-import type { ShortIdAllocator } from '../short-id-allocator.ts';
+import { TaskRepository } from '../../storage/repositories/task-repository.ts';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { FileIndex } from '../file-index.ts';
 import { FileManager } from '../file-manager.ts';
 import { Logger } from '../logger.ts';
-import { join, normalize, relative } from 'node:path';
+import type { SessionManager } from '../session-manager.ts';
+import type { ShortIdAllocator } from '../short-id-allocator.ts';
 
 const log = new Logger('reference-handlers');
 
@@ -232,7 +232,7 @@ async function resolveSessionContext(
   sessionId: string,
   deps: ReferenceHandlerDeps
 ): Promise<{ workspacePath: string | undefined; roomId: string | null }> {
-  const agentSession = await deps.sessionManager.getSessionAsync(sessionId);
+  const agentSession = await deps.sessionManager.getSessionForControl(sessionId);
   if (!agentSession) {
     return { workspacePath: deps.workspaceRoot, roomId: null };
   }

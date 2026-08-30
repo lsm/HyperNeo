@@ -36,11 +36,11 @@ import {
   identifyOrphanedSDKFiles,
   scanSDKSessionFiles,
 } from '../sdk-session-file-manager.ts';
-import type { SessionManager } from '../session-manager.ts';
 import { validateImageSizes } from '../session/message-persistence.ts';
+import { isWorkflowSubSessionIdentity } from '../session/sub-session-identity.ts';
+import type { SessionManager } from '../session-manager.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
-import { isWorkflowSubSessionIdentity } from '../session/sub-session-identity.ts';
 
 const log = new Logger('session-handlers');
 
@@ -1167,7 +1167,7 @@ export function setupSessionHandlers(
       throw new Error('sessionId and messageDbId are required');
     }
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -1237,7 +1237,7 @@ export function setupSessionHandlers(
       return { retried: false };
     }
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }

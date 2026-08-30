@@ -1,16 +1,16 @@
-import { describe, expect, it, beforeEach, mock, afterEach, spyOn } from 'bun:test';
-import { SessionManager, CleanupState } from '../../../../src/lib/session/session-manager';
-import { AgentSession } from '../../../../src/lib/agent/agent-session';
-import * as processWatchdog from '../../../../src/lib/process-watchdog';
-import type { ProcessSnapshot } from '../../../../src/lib/process-watchdog';
-import type { Database } from '../../../../src/storage/database';
-import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
-import type { AuthManager } from '../../../../src/lib/auth-manager';
-import type { SettingsManager } from '../../../../src/lib/settings-manager';
-import type { MessageHub, McpServerConfig, Session } from '@hyperneo/shared';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import type { McpServerConfig, MessageHub, Session } from '@hyperneo/shared';
 import { DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
-import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { AgentSession } from '../../../../src/lib/agent/agent-session';
+import type { AuthManager } from '../../../../src/lib/auth-manager';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
+import type { ProcessSnapshot } from '../../../../src/lib/process-watchdog';
+import * as processWatchdog from '../../../../src/lib/process-watchdog';
+import { CleanupState, SessionManager } from '../../../../src/lib/session/session-manager';
+import type { SettingsManager } from '../../../../src/lib/settings-manager';
+import type { Database } from '../../../../src/storage/database';
 import type { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
+import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 
 describe('SessionManager', () => {
   let sessionManager: SessionManager;
@@ -284,15 +284,24 @@ describe('SessionManager', () => {
 
       const provider = {
         reattachMemberSpaceTools: mock(async () => {}),
-        provisionWorkflowSession: mock(async (session: AgentSession) => {
-          session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
-        }),
+        provisionWorkflowSession: mock(
+          async (
+            session: AgentSession,
+            options?: { onReplaySettled?: (succeeded: boolean) => void }
+          ) => {
+            session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+            options?.onReplaySettled?.(true);
+          }
+        ),
       };
       sessionManager.setSpaceRuntimeMcpProvider(provider);
 
       const session = await sessionManager.getSessionAsync(mockSession.id);
 
-      expect(provider.provisionWorkflowSession).toHaveBeenCalledWith(session, {});
+      expect(provider.provisionWorkflowSession).toHaveBeenCalledWith(
+        session,
+        expect.objectContaining({ onReplaySettled: expect.any(Function) })
+      );
       expect(session!.getSessionData().config.mcpServers).toHaveProperty('node-agent');
     });
 
@@ -351,17 +360,24 @@ describe('SessionManager', () => {
 
       const provider = {
         reattachMemberSpaceTools: mock(async () => {}),
-        provisionWorkflowSession: mock(async (session: AgentSession) => {
-          session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
-        }),
+        provisionWorkflowSession: mock(
+          async (
+            session: AgentSession,
+            options?: { onReplaySettled?: (succeeded: boolean) => void }
+          ) => {
+            session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+            options?.onReplaySettled?.(true);
+          }
+        ),
       };
       sessionManager.setSpaceRuntimeMcpProvider(provider);
 
       const session = await sessionManager.getSessionAsync(mockSession.id, { startQuery: false });
 
-      expect(provider.provisionWorkflowSession).toHaveBeenCalledWith(session, {
-        startQuery: false,
-      });
+      expect(provider.provisionWorkflowSession).toHaveBeenCalledWith(
+        session,
+        expect.objectContaining({ startQuery: false })
+      );
       expect(session!.getSessionData().config.mcpServers).toHaveProperty('node-agent');
     });
 
@@ -379,9 +395,15 @@ describe('SessionManager', () => {
 
       const provider = {
         reattachMemberSpaceTools: mock(async () => {}),
-        provisionWorkflowSession: mock(async (session: AgentSession) => {
-          session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
-        }),
+        provisionWorkflowSession: mock(
+          async (
+            session: AgentSession,
+            options?: { onReplaySettled?: (succeeded: boolean) => void }
+          ) => {
+            session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+            options?.onReplaySettled?.(true);
+          }
+        ),
       };
       sessionManager.setSpaceRuntimeMcpProvider(provider);
 
@@ -389,9 +411,10 @@ describe('SessionManager', () => {
         replayPendingMessages: false,
       });
 
-      expect(provider.provisionWorkflowSession).toHaveBeenCalledWith(session, {
-        replayPendingMessages: false,
-      });
+      expect(provider.provisionWorkflowSession).toHaveBeenCalledWith(
+        session,
+        expect.objectContaining({ replayPendingMessages: false })
+      );
       expect(session!.getSessionData().config.mcpServers).toHaveProperty('node-agent');
     });
 
@@ -428,15 +451,49 @@ describe('SessionManager', () => {
 
       const provider = {
         reattachMemberSpaceTools: mock(async () => {}),
-        provisionWorkflowSession: mock(async (session: AgentSession) => {
-          session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
-        }),
+        provisionWorkflowSession: mock(
+          async (
+            session: AgentSession,
+            options?: { onReplaySettled?: (succeeded: boolean) => void }
+          ) => {
+            session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+            options?.onReplaySettled?.(true);
+          }
+        ),
       };
       sessionManager.setSpaceRuntimeMcpProvider(provider);
 
       await sessionManager.getSessionAsync(sessionId, { replayPendingMessages: false });
       await sessionManager.getSessionAsync(sessionId, {});
       await sessionManager.getSessionAsync(sessionId, {});
+
+      expect(provider.provisionWorkflowSession).toHaveBeenCalledTimes(2);
+    });
+
+    it('retries replay when workflow provisioning reports failure', async () => {
+      const sessionId = 'space:s1:task:t1:exec:e12';
+      const worker = makeWorkerFake(sessionId);
+      sessionManager.registerSession(worker);
+      let replayAttempts = 0;
+
+      const provider = {
+        reattachMemberSpaceTools: mock(async () => {}),
+        provisionWorkflowSession: mock(
+          async (
+            session: AgentSession,
+            options?: { onReplaySettled?: (succeeded: boolean) => void }
+          ) => {
+            session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+            replayAttempts += 1;
+            options?.onReplaySettled?.(replayAttempts > 1);
+          }
+        ),
+      };
+      sessionManager.setSpaceRuntimeMcpProvider(provider);
+
+      await sessionManager.getSessionAsync(sessionId);
+      await sessionManager.getSessionAsync(sessionId);
+      await sessionManager.getSessionAsync(sessionId);
 
       expect(provider.provisionWorkflowSession).toHaveBeenCalledTimes(2);
     });
@@ -455,9 +512,15 @@ describe('SessionManager', () => {
 
       const provider = {
         reattachMemberSpaceTools: mock(async () => {}),
-        provisionWorkflowSession: mock(async (session: AgentSession) => {
-          session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
-        }),
+        provisionWorkflowSession: mock(
+          async (
+            session: AgentSession,
+            options?: { onReplaySettled?: (succeeded: boolean) => void }
+          ) => {
+            session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+            options?.onReplaySettled?.(true);
+          }
+        ),
       };
       sessionManager.setSpaceRuntimeMcpProvider(provider);
 
@@ -488,9 +551,15 @@ describe('SessionManager', () => {
 
       const provider = {
         reattachMemberSpaceTools: mock(async () => {}),
-        provisionWorkflowSession: mock(async (session: AgentSession) => {
-          session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
-        }),
+        provisionWorkflowSession: mock(
+          async (
+            session: AgentSession,
+            options?: { onReplaySettled?: (succeeded: boolean) => void }
+          ) => {
+            session.mergeRuntimeMcpServers({ 'node-agent': { type: 'sdk' } as never });
+            options?.onReplaySettled?.(true);
+          }
+        ),
       };
       sessionManager.setSpaceRuntimeMcpProvider(provider);
 
@@ -498,7 +567,11 @@ describe('SessionManager', () => {
       await sessionManager.getSessionAsync(mockSession.id, {});
 
       expect(provider.provisionWorkflowSession).toHaveBeenCalledTimes(2);
-      expect(provider.provisionWorkflowSession).toHaveBeenNthCalledWith(2, expect.anything(), {});
+      expect(provider.provisionWorkflowSession).toHaveBeenNthCalledWith(
+        2,
+        expect.anything(),
+        expect.objectContaining({ onReplaySettled: expect.any(Function) })
+      );
     });
 
     it('provisions the replacement instance when a reset swaps it during in-flight provisioning', async () => {
@@ -540,7 +613,11 @@ describe('SessionManager', () => {
       const [firstSession, secondSession] = await Promise.all([first, second]);
 
       expect(secondSession).toBe(instanceB);
-      expect(provider.provisionWorkflowSession).toHaveBeenNthCalledWith(2, instanceB, {});
+      expect(provider.provisionWorkflowSession).toHaveBeenNthCalledWith(
+        2,
+        instanceB,
+        expect.objectContaining({ onReplaySettled: expect.any(Function) })
+      );
       expect(instanceB.getSessionData().config.mcpServers).toHaveProperty('node-agent');
       expect(firstSession).toBe(instanceB);
     });
@@ -585,7 +662,11 @@ describe('SessionManager', () => {
       releaseProvisioning!();
       await Promise.all([first, second]);
 
-      expect(provider.provisionWorkflowSession).toHaveBeenNthCalledWith(2, instanceC, {});
+      expect(provider.provisionWorkflowSession).toHaveBeenNthCalledWith(
+        2,
+        instanceC,
+        expect.objectContaining({ onReplaySettled: expect.any(Function) })
+      );
       expect(instanceC.getSessionData().config.mcpServers).toHaveProperty('node-agent');
       expect(instanceB.getSessionData().config.mcpServers?.['node-agent']).toBeUndefined();
     });
@@ -681,8 +762,16 @@ describe('SessionManager', () => {
       const result = await lookup;
 
       expect(result).toBe(instanceB);
-      expect(provider.provisionWorkflowSession).toHaveBeenNthCalledWith(1, instanceA, {});
-      expect(provider.provisionWorkflowSession).toHaveBeenNthCalledWith(2, instanceB, {});
+      expect(provider.provisionWorkflowSession).toHaveBeenNthCalledWith(
+        1,
+        instanceA,
+        expect.objectContaining({ onReplaySettled: expect.any(Function) })
+      );
+      expect(provider.provisionWorkflowSession).toHaveBeenNthCalledWith(
+        2,
+        instanceB,
+        expect.objectContaining({ onReplaySettled: expect.any(Function) })
+      );
       expect(instanceB.getSessionData().config.mcpServers).toHaveProperty('node-agent');
     });
   });

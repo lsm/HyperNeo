@@ -43,6 +43,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
+import { validateImageSizes } from '../../session/message-persistence.ts';
 import type { SessionManager } from '../../session-manager.ts';
 import type { SkillsManager } from '../../skills-manager.ts';
 import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
@@ -79,6 +80,11 @@ import { WorkflowHookStateRepository } from '../../../storage/repositories/workf
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 import { Logger } from '../../logger.ts';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager.ts';
+import {
+  buildExecutionBaseSessionId,
+  buildPostApprovalSessionId,
+  taskIdFromSubSessionIdentity,
+} from '../../session/sub-session-identity.ts';
 import { extractReplyToSessionId } from '../agent-message-envelope.ts';
 import {
   buildCustomAgentTaskMessage,
@@ -112,12 +118,6 @@ import {
   settleDeliveryRowStatus,
 } from './injection-delivery-steps.ts';
 import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
-import { SpaceAgentLateSettlements } from './space-agent-message-delivery.ts';
-import {
-  collectActiveSpaceDeliveryIds,
-  runSpaceAgentPendingDrain,
-  type SpaceAgentPendingDrainDeps,
-} from './space-agent-pending-drain.ts';
 import { derivePendingQueueTargetNames } from './pending-drain-gates.ts';
 import {
   formatPendingRowForNodeAgent,
@@ -127,6 +127,12 @@ import {
 import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
+import { SpaceAgentLateSettlements } from './space-agent-message-delivery.ts';
+import {
+  collectActiveSpaceDeliveryIds,
+  runSpaceAgentPendingDrain,
+  type SpaceAgentPendingDrainDeps,
+} from './space-agent-pending-drain.ts';
 import {
   isSpawnFlowReusedSession,
   isSpawnFlowWaitConcurrent,
@@ -136,19 +142,14 @@ import {
 import {
   assembleNodeAgentSessionInit,
   buildSlotOverrides,
-  findAvailableSessionId,
   explicitTaskWorkspace,
+  findAvailableSessionId,
   resolveSpawnWorkspace,
   resolveTaskWorkspace,
   resolveWorkflowNodeSlot,
 } from './spawn-slot-resolution.ts';
-import {
-  buildExecutionBaseSessionId,
-  buildPostApprovalSessionId,
-  taskIdFromSubSessionIdentity,
-} from '../../session/sub-session-identity.ts';
-import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
 import { stagedRun } from './staged-run.ts';
+import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
 import {
   clearAllRetryableHookActionTimers,
   QUEUED_RETRYABLE_ACTION_STATE_KEY,
@@ -2179,7 +2180,11 @@ export class TaskAgentManager {
     taskId: string,
     hintSessionId?: string,
     suppliedSession?: AgentSession,
-    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
+    options: {
+      startQuery?: boolean;
+      replayPendingMessages?: boolean;
+      onReplaySettled?: (succeeded: boolean) => void;
+    } = {}
   ): Promise<string | null> {
     const identity = this.readPostApprovalWorkerIdentity(taskId, hintSessionId);
     if (!identity) return null;
@@ -2191,7 +2196,8 @@ export class TaskAgentManager {
           await indexed.startStreamingQuery();
         }
         if (options.startQuery !== false && options.replayPendingMessages !== false) {
-          await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
+          const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
+          options.onReplaySettled?.(replayed);
         }
         return identity.sessionId;
       }
@@ -2210,7 +2216,11 @@ export class TaskAgentManager {
     taskId: string,
     identity: { sessionId: string; agentName: string; nodeId?: string; agentId?: string },
     suppliedSession?: AgentSession,
-    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
+    options: {
+      startQuery?: boolean;
+      replayPendingMessages?: boolean;
+      onReplaySettled?: (succeeded: boolean) => void;
+    } = {}
   ): Promise<string | null> {
     const { sessionId, agentName, nodeId, agentId } = identity;
 
@@ -2356,7 +2366,8 @@ export class TaskAgentManager {
       if (options.startQuery !== false) {
         await agentSession.startStreamingQuery();
         if (options.replayPendingMessages !== false) {
-          await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+          const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+          options.onReplaySettled?.(replayed);
         }
       }
     } catch (err) {
@@ -3456,7 +3467,11 @@ export class TaskAgentManager {
 
   async provisionWorkflowSession(
     session: AgentSession,
-    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
+    options: {
+      startQuery?: boolean;
+      replayPendingMessages?: boolean;
+      onReplaySettled?: (succeeded: boolean) => void;
+    } = {}
   ): Promise<void> {
     interface WorkflowProvisioningState {
       sessionId: string;
@@ -3615,7 +3630,11 @@ export class TaskAgentManager {
   private async rehydrateSubSession(
     subSessionId: string,
     suppliedSession?: AgentSession,
-    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
+    options: {
+      startQuery?: boolean;
+      replayPendingMessages?: boolean;
+      onReplaySettled?: (succeeded: boolean) => void;
+    } = {}
   ): Promise<AgentSession | null> {
     const inFlight = this.rehydrateInFlight.get(subSessionId);
     if (inFlight) {
@@ -3631,7 +3650,8 @@ export class TaskAgentManager {
           await indexed.startStreamingQuery();
         }
         if (options.startQuery !== false && options.replayPendingMessages !== false) {
-          await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
+          const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
+          options.onReplaySettled?.(replayed);
         }
         return indexed;
       }
@@ -3655,7 +3675,11 @@ export class TaskAgentManager {
   private async performSubSessionRehydrate(
     subSessionId: string,
     suppliedSession?: AgentSession,
-    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
+    options: {
+      startQuery?: boolean;
+      replayPendingMessages?: boolean;
+      onReplaySettled?: (succeeded: boolean) => void;
+    } = {}
   ): Promise<AgentSession | null> {
     const alreadyIndexed = this.agentSessionIndex.get(subSessionId);
     if (alreadyIndexed && (alreadyIndexed === suppliedSession || !suppliedSession)) {
@@ -3858,7 +3882,8 @@ export class TaskAgentManager {
       if (options.startQuery !== false) {
         await agentSession.startStreamingQuery();
         if (options.replayPendingMessages !== false) {
-          await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+          const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
+          options.onReplaySettled?.(replayed);
         }
       }
     } catch (err) {
@@ -3999,15 +4024,16 @@ export class TaskAgentManager {
 
   private async replayPendingMessagesAfterRuntimeProvisioning(
     session: AgentSession
-  ): Promise<void> {
+  ): Promise<boolean> {
     const replay = (
       session as AgentSession & {
-        replayPendingMessagesForImmediateMode?: () => Promise<void>;
+        replayPendingMessagesForImmediateMode?: () => Promise<boolean>;
       }
     ).replayPendingMessagesForImmediateMode;
     if (typeof replay === 'function') {
-      await replay.call(session);
+      return replay.call(session);
     }
+    return true;
   }
 
   private hasActiveDeliveryJob(sessionId: string): boolean {

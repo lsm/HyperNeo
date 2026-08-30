@@ -1,60 +1,64 @@
-import type { MessageHub, Session } from '@hyperneo/shared';
 import type {
-  GetModelSettingsRequest,
-  UpdateModelSettingsRequest,
-  GetSystemPromptRequest,
-  UpdateSystemPromptRequest,
-  GetToolsConfigRequest,
-  UpdateToolsConfigRequest,
-  GetAgentsConfigRequest,
-  UpdateAgentsConfigRequest,
-  GetSandboxConfigRequest,
-  UpdateSandboxConfigRequest,
-  GetMcpConfigRequest,
-  UpdateMcpConfigRequest,
   AddMcpServerRequest,
-  RemoveMcpServerRequest,
-  GetOutputFormatRequest,
-  UpdateOutputFormatRequest,
-  GetBetasConfigRequest,
-  UpdateBetasConfigRequest,
-  GetEnvConfigRequest,
-  UpdateEnvConfigRequest,
-  GetPermissionsConfigRequest,
-  UpdatePermissionsConfigRequest,
+  GetAgentsConfigRequest,
   GetAllConfigRequest,
+  GetBetasConfigRequest,
+  GetEnvConfigRequest,
+  GetMcpConfigRequest,
+  GetModelSettingsRequest,
+  GetOutputFormatRequest,
+  GetPermissionsConfigRequest,
+  GetSandboxConfigRequest,
+  GetSystemPromptRequest,
+  GetToolsConfigRequest,
+  MessageHub,
+  RemoveMcpServerRequest,
+  Session,
+  UpdateAgentsConfigRequest,
+  UpdateBetasConfigRequest,
   UpdateBulkConfigRequest,
+  UpdateEnvConfigRequest,
+  UpdateMcpConfigRequest,
+  UpdateModelSettingsRequest,
+  UpdateOutputFormatRequest,
+  UpdatePermissionsConfigRequest,
+  UpdateSandboxConfigRequest,
+  UpdateSystemPromptRequest,
+  UpdateToolsConfigRequest,
 } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import { Logger } from '../logger.ts';
 import type { AgentSession } from '../agent/agent-session.ts';
-import type { SessionManager } from '../session-manager.ts';
-import { isWorkflowSubSessionIdentity } from '../session/sub-session-identity.ts';
 import {
-  validateSystemPromptConfig,
-  validateToolsConfig,
   validateAgentsConfig,
-  validateSandboxConfig,
+  validateBetasConfig,
+  validateEnvConfig,
   validateMcpServerConfig,
   validateMcpServersConfig,
   validateOutputFormat,
-  validateBetasConfig,
-  validateEnvConfig,
+  validateSandboxConfig,
+  validateSystemPromptConfig,
+  validateToolsConfig,
 } from '../config-validators.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
+import { isWorkflowSubSessionIdentity } from '../session/sub-session-identity.ts';
+import type { SessionManager } from '../session-manager.ts';
 
 const log = new Logger('config-handlers');
 
 async function restartQueryForConfig(
   sessionManager: SessionManager,
   sessionId: string,
-  agentSession: AgentSession
+  agentSession: AgentSession,
+  configDelta: Partial<Session['config']>,
+  applyUserMcpUpdate?: (session: AgentSession) => Promise<void>
 ): Promise<{ success: boolean; error?: string }> {
   if (agentSession.isQueryActiveOrStarting()) {
     return agentSession.resetQuery({ restartQuery: true });
   }
   const current = await sessionManager.getSessionAsync(sessionId);
   if (current && current !== agentSession) {
-    await current.updateConfig(agentSession.getSessionData().config);
+    if (applyUserMcpUpdate) await applyUserMcpUpdate(current);
+    if (Object.keys(configDelta).length > 0) await current.updateConfig(configDelta);
   }
   const currentData = current?.getSessionData();
   if (
@@ -174,10 +178,16 @@ export function setupConfigHandlers(
       return { success: false, applied: false, error: validation.error };
     }
 
-    await agentSession.updateConfig({ systemPrompt });
+    const configUpdate = { systemPrompt };
+    await agentSession.updateConfig(configUpdate);
 
     if (restartQuery) {
-      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
+      const result = await restartQueryForConfig(
+        sessionManager,
+        sessionId,
+        agentSession,
+        configUpdate
+      );
       if (!result.success) {
         return {
           success: false,
@@ -228,7 +238,12 @@ export function setupConfigHandlers(
     await agentSession.updateConfig(configUpdate);
 
     if (restartQuery) {
-      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
+      const result = await restartQueryForConfig(
+        sessionManager,
+        sessionId,
+        agentSession,
+        configUpdate
+      );
       if (!result.success) {
         return {
           success: false,
@@ -267,10 +282,16 @@ export function setupConfigHandlers(
       return { success: false, applied: false, error: validation.error };
     }
 
-    await agentSession.updateConfig({ agents });
+    const configUpdate = { agents };
+    await agentSession.updateConfig(configUpdate);
 
     if (restartQuery) {
-      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
+      const result = await restartQueryForConfig(
+        sessionManager,
+        sessionId,
+        agentSession,
+        configUpdate
+      );
       if (!result.success) {
         return {
           success: false,
@@ -309,10 +330,16 @@ export function setupConfigHandlers(
       return { success: false, applied: false, error: validation.error };
     }
 
-    await agentSession.updateConfig({ sandbox });
+    const configUpdate = { sandbox };
+    await agentSession.updateConfig(configUpdate);
 
     if (restartQuery) {
-      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
+      const result = await restartQueryForConfig(
+        sessionManager,
+        sessionId,
+        agentSession,
+        configUpdate
+      );
       if (!result.success) {
         return {
           success: false,
@@ -361,12 +388,19 @@ export function setupConfigHandlers(
     if (mcpServers !== undefined) {
       await agentSession.updateUserMcpServers(mcpServers);
     }
+    const configUpdate = strictMcpConfig === undefined ? {} : { strictMcpConfig };
     if (strictMcpConfig !== undefined) {
-      await agentSession.updateConfig({ strictMcpConfig });
+      await agentSession.updateConfig(configUpdate);
     }
 
     if (restartQuery) {
-      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
+      const result = await restartQueryForConfig(
+        sessionManager,
+        sessionId,
+        agentSession,
+        configUpdate,
+        mcpServers === undefined ? undefined : (current) => current.updateUserMcpServers(mcpServers)
+      );
       if (!result.success) {
         return {
           success: false,
@@ -406,7 +440,21 @@ export function setupConfigHandlers(
     await agentSession.updateUserMcpServers(updatedServers);
 
     if (restartQuery) {
-      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
+      const result = await restartQueryForConfig(
+        sessionManager,
+        sessionId,
+        agentSession,
+        {},
+        async (current) => {
+          const currentServers = current.getSessionData().config.mcpServers ?? {};
+          const subprocessServers = Object.fromEntries(
+            Object.entries(currentServers).filter(
+              ([, cfg]) => (cfg as { type?: string }).type !== 'sdk'
+            )
+          );
+          await current.updateUserMcpServers({ ...subprocessServers, [name]: config });
+        }
+      );
       if (!result.success) {
         return {
           success: false,
@@ -448,7 +496,22 @@ export function setupConfigHandlers(
     await agentSession.updateUserMcpServers(currentSubprocessServers);
 
     if (restartQuery) {
-      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
+      const result = await restartQueryForConfig(
+        sessionManager,
+        sessionId,
+        agentSession,
+        {},
+        async (current) => {
+          const currentServers = current.getSessionData().config.mcpServers ?? {};
+          const subprocessServers = Object.fromEntries(
+            Object.entries(currentServers).filter(
+              ([, cfg]) => (cfg as { type?: string }).type !== 'sdk'
+            )
+          );
+          delete subprocessServers[name];
+          await current.updateUserMcpServers(subprocessServers);
+        }
+      );
       if (!result.success) {
         return {
           success: false,
@@ -489,12 +552,16 @@ export function setupConfigHandlers(
       }
     }
 
-    await agentSession.updateConfig({
-      outputFormat: outputFormat || undefined,
-    });
+    const configUpdate = { outputFormat: outputFormat || undefined };
+    await agentSession.updateConfig(configUpdate);
 
     if (restartQuery) {
-      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
+      const result = await restartQueryForConfig(
+        sessionManager,
+        sessionId,
+        agentSession,
+        configUpdate
+      );
       if (!result.success) {
         return {
           success: false,
@@ -533,10 +600,16 @@ export function setupConfigHandlers(
       return { success: false, applied: false, error: validation.error };
     }
 
-    await agentSession.updateConfig({ betas });
+    const configUpdate = { betas };
+    await agentSession.updateConfig(configUpdate);
 
     if (restartQuery) {
-      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
+      const result = await restartQueryForConfig(
+        sessionManager,
+        sessionId,
+        agentSession,
+        configUpdate
+      );
       if (!result.success) {
         return {
           success: false,
@@ -583,7 +656,7 @@ export function setupConfigHandlers(
     await agentSession.updateConfig(settings);
 
     if (restartQuery) {
-      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
+      const result = await restartQueryForConfig(sessionManager, sessionId, agentSession, settings);
       if (!result.success) {
         return {
           success: false,
@@ -719,7 +792,12 @@ export function setupConfigHandlers(
       await agentSession.updateConfig(configToUpdate as Partial<Session['config']>);
 
       if (restartQuery) {
-        const result = await restartQueryForConfig(sessionManager, sessionId, agentSession);
+        const result = await restartQueryForConfig(
+          sessionManager,
+          sessionId,
+          agentSession,
+          configToUpdate
+        );
         if (result.success) {
           results.applied.push(...remainingKeys);
         } else {

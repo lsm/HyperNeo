@@ -1905,7 +1905,11 @@ export class SpaceRuntimeService {
 
   async provisionWorkflowSession(
     session: AgentSession,
-    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
+    options: {
+      startQuery?: boolean;
+      replayPendingMessages?: boolean;
+      onReplaySettled?: (succeeded: boolean) => void;
+    } = {}
   ): Promise<void> {
     if (!this.taskAgentManager) return;
     await this.taskAgentManager.provisionWorkflowSession(session, options);
@@ -2169,7 +2173,7 @@ export class SpaceRuntimeService {
   }
 
   private async replayPendingMessagesAfterRuntimeProvisioning(session: {
-    replayPendingMessagesForImmediateMode?: () => Promise<void>;
+    replayPendingMessagesForImmediateMode?: () => Promise<boolean>;
   }): Promise<void> {
     if (typeof session.replayPendingMessagesForImmediateMode === 'function') {
       await session.replayPendingMessagesForImmediateMode();

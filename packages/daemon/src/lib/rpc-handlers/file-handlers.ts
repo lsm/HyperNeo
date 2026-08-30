@@ -1,7 +1,11 @@
-import type { MessageHub } from '@hyperneo/shared';
-import type { SessionManager } from '../session-manager.ts';
-import type { ReadFileRequest, ListFilesRequest, GetFileTreeRequest } from '@hyperneo/shared';
+import type {
+  GetFileTreeRequest,
+  ListFilesRequest,
+  MessageHub,
+  ReadFileRequest,
+} from '@hyperneo/shared';
 import { FileManager } from '../file-manager.ts';
+import type { SessionManager } from '../session-manager.ts';
 
 export function setupFileHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {
   const getBoundWorkspacePath = (targetSessionId: string): string => {
@@ -21,7 +25,7 @@ export function setupFileHandlers(messageHub: MessageHub, sessionManager: Sessio
       encoding,
     } = data as ReadFileRequest & { sessionId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -39,7 +43,7 @@ export function setupFileHandlers(messageHub: MessageHub, sessionManager: Sessio
       recursive,
     } = data as ListFilesRequest & { sessionId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -57,7 +61,7 @@ export function setupFileHandlers(messageHub: MessageHub, sessionManager: Sessio
       maxDepth,
     } = data as GetFileTreeRequest & { sessionId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }

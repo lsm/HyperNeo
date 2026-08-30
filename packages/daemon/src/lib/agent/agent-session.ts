@@ -804,9 +804,9 @@ export class AgentSession
     });
   }
 
-  async replayPendingMessagesForImmediateMode(): Promise<void> {
+  async replayPendingMessagesForImmediateMode(): Promise<boolean> {
     this.reconcilerProvisioned = true;
-    await this.queryModeHandler.replayPendingMessagesForAutomaticTurnEnd();
+    return this.queryModeHandler.replayPendingMessagesForAutomaticTurnEnd();
   }
 
   async replayAllPendingMessages(): Promise<void> {
