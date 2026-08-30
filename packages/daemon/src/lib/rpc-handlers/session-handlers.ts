@@ -1345,9 +1345,14 @@ export function setupSessionHandlers(
       }
     } catch (err) {
       log.warn(`session.sdkResumeChoice: restart after choice failed: ${err}`);
+      const errorText = err instanceof Error ? err.message : String(err);
+      db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, {
+        ...resolvedMessage,
+        error: errorText,
+      });
       return {
         success: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorText,
       };
     }
 
