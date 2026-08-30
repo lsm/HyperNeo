@@ -1355,8 +1355,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     if (
       this.lastTokenStatus !== null &&
       this.lastTokenStatusGeneration === this.credentialGeneration &&
-      Date.now() - this.lastTokenStatusAt < TOKEN_STATUS_CACHE_TTL_MS &&
-      credentialFingerprint(this.lastResolvedToken) === this.lastTokenStatus.validatedFingerprint
+      credentialFingerprint(this.lastResolvedToken) === this.lastTokenStatus.validatedFingerprint &&
+      (Date.now() - this.lastTokenStatusAt < TOKEN_STATUS_CACHE_TTL_MS ||
+        Date.now() < this.rateLimitedUntil)
     ) {
       return this.lastTokenStatus;
     }

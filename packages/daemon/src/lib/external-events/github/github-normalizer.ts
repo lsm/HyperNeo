@@ -226,7 +226,10 @@ export function normalizeGitHubWebhook(
   } else if (eventType === 'pull_request_review') {
     const pr = asObject(root.pull_request);
     const review = asObject(root.review);
-    actor = userFrom(review.user ?? root.sender);
+    actor =
+      action === 'dismissed'
+        ? userFrom(root.sender ?? review.user)
+        : userFrom(review.user ?? root.sender);
     prNumber = getNumber(pr.number);
     body = getString(review.body);
     const reviewId = idString(review.id);

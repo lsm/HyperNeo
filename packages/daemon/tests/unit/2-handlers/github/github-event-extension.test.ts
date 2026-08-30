@@ -10608,6 +10608,30 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     };
   }
 
+  function reviewWebhookPayload(
+    action: string,
+    reviewerLogin: string,
+    senderLogin: string
+  ): Record<string, unknown> {
+    return {
+      action,
+      repository: baseRepo,
+      sender: { login: senderLogin, type: 'User' },
+      pull_request: {
+        number: 7,
+        html_url: 'https://github.com/acme/widgets/pull/7',
+        user: { login: 'author', type: 'User' },
+      },
+      review: {
+        id: 42,
+        user: { login: reviewerLogin, type: 'User' },
+        state: 'APPROVED',
+        html_url: 'https://github.com/acme/widgets/pull/7#pullrequestreview-42',
+        submitted_at: '2026-01-01T00:00:00Z',
+      },
+    };
+  }
+
   test("webhook: the token's own comment is dropped as self-echo while other logins still publish", async () => {
     const db = setupDb();
     const { service, received } = setupExternalEventService(db);
@@ -10671,6 +10695,50 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     expect(
       (await deliverWebhook(extension, 'pull_request', prWebhookPayload('octocat', 'collaborator')))
         .spaces
+    ).toBe(0);
+    expect(received).toHaveLength(1);
+    await extension.stop();
+  });
+
+  test('webhook: pull_request_review dismissal compares the sender, not the dismissed review author', async () => {
+    const db = setupDb();
+    const { service, received } = setupExternalEventService(db);
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: selfUserFetch('octocat'),
+    });
+    await extension.start({
+      publisher: service,
+      config: new StaticExternalEventExtensionConfigStore({ globallyEnabled: true }),
+      onSourceConfigChanged() {},
+    });
+    extension.repo.upsertWatchedRepo({
+      spaceId: 'space-1',
+      owner: 'acme',
+      repo: 'widgets',
+      webhookSecret: 'secret',
+    });
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
+
+    expect(
+      (
+        await deliverWebhook(
+          extension,
+          'pull_request_review',
+          reviewWebhookPayload('dismissed', 'octocat', 'collaborator')
+        )
+      ).spaces
+    ).toBe(1);
+    expect(received).toHaveLength(1);
+    expect(received[0].payload.actor).toBe('collaborator');
+
+    expect(
+      (
+        await deliverWebhook(
+          extension,
+          'pull_request_review',
+          reviewWebhookPayload('dismissed', 'collaborator', 'octocat')
+        )
+      ).spaces
     ).toBe(0);
     expect(received).toHaveLength(1);
     await extension.stop();
@@ -10789,6 +10857,35 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     await extension.stop();
   });
 
+  test('publishEvent retains the last known login for filtering during rate-limit backoff', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const rateAware = extension as unknown as {
+      rateLimitedUntil: number;
+      lastTokenStatusAt: number;
+    };
+    const { published, ext, context } = publishCapture(extension);
+    expect(await resolveOwnLogin(extension)).toBe('octocat');
+    rateAware.lastTokenStatusAt = Date.now() - (5 * 60 * 1000 + 1_000);
+    rateAware.rateLimitedUntil = Date.now() + 60_000;
+
+    await ext.publishEvent('space-1', selfCommentEvent('octocat'), context);
+
+    expect(published).toHaveLength(0);
+    await Promise.resolve();
+    expect(userCalls).toBe(1);
+    await extension.stop();
+  });
+
   test('publishEvent suppresses the identity refresh while rate-limited', async () => {
     const db = setupDb();
     let userCalls = 0;
@@ -10816,7 +10913,7 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
   test('webhook: a cold identity cache admits consistently across spaces watching the same repo', async () => {
     const db = setupDb();
     db.prepare(
-      `INSERT OR IGNORE INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-2', 'space-2', 'Space', '/tmp', 'active', 1, 1)`
+      `INSERT OR IGNORE INTO spaces (id, slug, name, workspace_path, status, created_at, updated_at) VALUES ('space-2', 'space-2', 'Space', '/tmp-2', 'active', 1, 1)`
     ).run();
     const { service, received } = setupExternalEventService(db);
     const extension = new GitHubEventExtension(db, 'token', {
