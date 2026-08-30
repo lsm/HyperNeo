@@ -36,6 +36,11 @@ import {
   identifyOrphanedSDKFiles,
   scanSDKSessionFiles,
 } from '../sdk-session-file-manager.ts';
+import { validateImageSizes } from '../session/message-persistence.ts';
+import {
+  hasRuntimeNodeAgentServer,
+  isWorkflowSubSessionIdentity,
+} from '../session/sub-session-identity.ts';
 import type { SessionManager } from '../session-manager.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
@@ -177,7 +182,9 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('session.listRuntimeMcpServers', async (data) => {
     const { sessionId } = data as ListRuntimeMcpServersRequest;
-    const agentSession = await sessionManager.getSessionAsync(sessionId);
+    const agentSession = await sessionManager.getSessionAsync(sessionId, {
+      startQuery: false,
+    });
     if (!agentSession) {
       throw new Error(`Session not found: ${sessionId}`);
     }
@@ -259,7 +266,7 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('session.get', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
 
     if (!agentSession) {
       throw new Error('Session not found');
@@ -288,7 +295,7 @@ export function setupSessionHandlers(
   messageHub.onRequest('session.validate', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
     try {
-      const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+      const agentSession = await sessionManager.getSessionForControl(targetSessionId);
       return { valid: agentSession !== null, error: null };
     } catch (error) {
       return {
@@ -300,7 +307,7 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('session.getSkillMcpServers', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error(`Session not found: ${targetSessionId}`);
     }
@@ -474,12 +481,10 @@ export function setupSessionHandlers(
       confirmed?: boolean;
     };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
-    if (!agentSession) {
+    const session = sessionManager.getSessionFromDB(targetSessionId);
+    if (!session) {
       throw new Error('Session not found');
     }
-
-    const session = agentSession.getSessionData();
 
     const hadWorktree = !!session.worktree;
     const roomIdForArchive = session.context?.roomId;
@@ -554,6 +559,10 @@ export function setupSessionHandlers(
       throw new Error('Invalid deliveryMode');
     }
 
+    if (images && images.length > 0) {
+      validateImageSizes(images);
+    }
+
     const agentSession = await sessionManager.getSessionAsync(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
@@ -575,8 +584,7 @@ export function setupSessionHandlers(
   messageHub.onRequest('client.interrupt', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
-    if (!agentSession) {
+    if (!sessionManager.getCachedSession(targetSessionId)) {
       throw new Error('Session not found');
     }
 
@@ -592,7 +600,7 @@ export function setupSessionHandlers(
   messageHub.onRequest('session.model.get', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -629,7 +637,7 @@ export function setupSessionHandlers(
       throw new Error('Missing required field: provider');
     }
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -653,7 +661,7 @@ export function setupSessionHandlers(
       coordinatorMode: boolean;
     };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -688,7 +696,7 @@ export function setupSessionHandlers(
       sandboxEnabled: boolean;
     };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -728,7 +736,7 @@ export function setupSessionHandlers(
       level: string;
     };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -754,7 +762,7 @@ export function setupSessionHandlers(
   messageHub.onRequest('session.thinking.get', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -838,7 +846,7 @@ export function setupSessionHandlers(
   messageHub.onRequest('agent.getState', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -940,9 +948,21 @@ export function setupSessionHandlers(
       restartQuery?: boolean;
     };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = restartQuery
+      ? await sessionManager.getSessionAsync(targetSessionId, { startQuery: false })
+      : await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
+    }
+    const resetData = agentSession.getSessionData();
+    if (
+      restartQuery &&
+      isWorkflowSubSessionIdentity(resetData.id) &&
+      !hasRuntimeNodeAgentServer(resetData.config)
+    ) {
+      throw new Error(
+        `Workflow session ${targetSessionId} is not resumable — provisioning skipped`
+      );
     }
 
     const result = await agentSession.resetQuery({ restartQuery, hardReset: true });
@@ -959,9 +979,20 @@ export function setupSessionHandlers(
   messageHub.onRequest('session.restart', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId, {
+      startQuery: false,
+    });
     if (!agentSession) {
       throw new Error('Session not found');
+    }
+    const restartData = agentSession.getSessionData();
+    if (
+      isWorkflowSubSessionIdentity(restartData.id) &&
+      !hasRuntimeNodeAgentServer(restartData.config)
+    ) {
+      throw new Error(
+        `Workflow session ${targetSessionId} is not resumable — provisioning skipped`
+      );
     }
 
     try {
@@ -986,7 +1017,7 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('session.cancelRateLimitRetry', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -996,12 +1027,14 @@ export function setupSessionHandlers(
 
   messageHub.onRequest('session.retryNowAfterRateLimit', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionAsync(targetSessionId, {
+      startQuery: false,
+    });
     if (!agentSession) {
       throw new Error('Session not found');
     }
-    await agentSession.retryNowAfterRateLimit();
-    return { success: true };
+    const resumed = await agentSession.retryNowAfterRateLimit();
+    return { success: resumed };
   });
 
   messageHub.onRequest('session.query.trigger', async (data) => {
@@ -1010,6 +1043,15 @@ export function setupSessionHandlers(
     const agentSession = await sessionManager.getSessionAsync(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
+    }
+    const triggerData = agentSession.getSessionData();
+    if (
+      isWorkflowSubSessionIdentity(triggerData.id) &&
+      !hasRuntimeNodeAgentServer(triggerData.config)
+    ) {
+      throw new Error(
+        `Workflow session ${targetSessionId} is not resumable — provisioning skipped`
+      );
     }
 
     await agentSession.replayAllPendingMessages();
@@ -1023,7 +1065,7 @@ export function setupSessionHandlers(
       status: 'deferred' | 'enqueued' | 'consumed';
     };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -1054,7 +1096,7 @@ export function setupSessionHandlers(
       throw new Error('Invalid limit: must be an integer between 1 and 1000');
     }
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -1082,7 +1124,7 @@ export function setupSessionHandlers(
       throw new Error('sessionId and messageDbId are required');
     }
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -1116,7 +1158,7 @@ export function setupSessionHandlers(
       throw new Error('sessionId and messageDbId are required');
     }
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
     if (!agentSession) {
       throw new Error('Session not found');
     }
@@ -1150,11 +1192,6 @@ export function setupSessionHandlers(
       throw new Error('sessionId and messageDbId are required');
     }
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
-    if (!agentSession) {
-      throw new Error('Session not found');
-    }
-
     const db = sessionManager.getDatabase();
     const message = db.getMessageByStatusAndDbId(targetSessionId, 'deferred', messageDbId);
 
@@ -1163,6 +1200,10 @@ export function setupSessionHandlers(
     }
 
     const messageUuid = message.uuid;
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
+    if (!agentSession) {
+      throw new Error('Session not found');
+    }
 
     db.updateMessageStatus([message.dbId], 'enqueued');
     await internalEventBus.publish('messages.statusChanged', {
@@ -1220,11 +1261,6 @@ export function setupSessionHandlers(
       return { retried: false };
     }
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
-    if (!agentSession) {
-      throw new Error('Session not found');
-    }
-
     const message = db.getMessageByStatusAndDbId(targetSessionId, 'failed', messageDbId);
 
     if (!message || !isSDKUserMessage(message) || !message.uuid) {
@@ -1240,7 +1276,7 @@ export function setupSessionHandlers(
     const rollbackToFailed = async () => {
       const rolledBack = db
         .getSDKMessageRepo()
-        .markDeliveryFailedByUuid(targetSessionId, message.uuid!);
+        .markDeliveryFailedByUuid(targetSessionId, messageUuid);
       if (rolledBack) {
         await internalEventBus.publish('messages.statusChanged', {
           sessionId: targetSessionId,
@@ -1251,6 +1287,11 @@ export function setupSessionHandlers(
     };
 
     try {
+      const agentSession = await sessionManager.getSessionForControl(targetSessionId);
+      if (!agentSession) {
+        throw new Error('Session not found');
+      }
+
       await internalEventBus.publish('messages.statusChanged', {
         sessionId: targetSessionId,
         messageIds: [reopenedId],
@@ -1295,19 +1336,7 @@ export function setupSessionHandlers(
       throw new Error(`Invalid choice: ${choice}. Must be 'start_fresh' or 'leave_as_is'`);
     }
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
-    if (!agentSession) {
-      throw new Error('Session not found');
-    }
-
     const db = sessionManager.getDatabase();
-
-    if (choice === 'start_fresh') {
-      db.updateSession(targetSessionId, { sdkSessionId: undefined, sdkOriginPath: undefined });
-      const session = agentSession.getSessionData();
-      session.sdkSessionId = undefined;
-      session.sdkOriginPath = undefined;
-    }
 
     const resolvedMessage: HyperNeoActionMessage = {
       type: 'hyperneo_action',
@@ -1319,6 +1348,74 @@ export function setupSessionHandlers(
       timestamp: Date.now(),
     };
 
+    let identityRollback:
+      | {
+          session: Session;
+          sdkSessionId: string | undefined;
+          sdkOriginPath: string | undefined;
+        }
+      | undefined;
+    try {
+      const current = await sessionManager.getSessionAsync(targetSessionId, {
+        startQuery: false,
+      });
+      if (!current) {
+        throw new Error(`Session not found: ${targetSessionId}`);
+      }
+      const currentData = current.getSessionData();
+      if (
+        isWorkflowSubSessionIdentity(currentData.id) &&
+        !hasRuntimeNodeAgentServer(currentData.config)
+      ) {
+        throw new Error(
+          `Workflow session ${targetSessionId} is not resumable — provisioning skipped`
+        );
+      }
+      if (choice === 'start_fresh') {
+        identityRollback = {
+          session: currentData,
+          sdkSessionId: currentData.sdkSessionId,
+          sdkOriginPath: currentData.sdkOriginPath,
+        };
+      }
+      await current.restart({
+        beforeStart: () => {
+          if (!identityRollback) return;
+          db.updateSession(targetSessionId, {
+            sdkSessionId: undefined,
+            sdkOriginPath: undefined,
+          });
+          currentData.sdkSessionId = undefined;
+          currentData.sdkOriginPath = undefined;
+        },
+      });
+      identityRollback = undefined;
+      if (currentData.config.queryMode !== 'manual') {
+        await current.replayPendingMessagesForImmediateMode();
+      }
+    } catch (err) {
+      if (identityRollback) {
+        const { session, sdkSessionId, sdkOriginPath } = identityRollback;
+        db.updateSession(targetSessionId, { sdkSessionId, sdkOriginPath });
+        session.sdkSessionId = sdkSessionId;
+        session.sdkOriginPath = sdkOriginPath;
+      }
+      log.warn(`session.sdkResumeChoice: restart after choice failed: ${err}`);
+      const errorText = err instanceof Error ? err.message : String(err);
+      const failedMessage: HyperNeoActionMessage = {
+        ...resolvedMessage,
+        resolved: false,
+        error: errorText,
+      };
+      db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, failedMessage);
+      messageHub.event(
+        'state.sdkMessages.delta',
+        { added: [failedMessage], timestamp: Date.now() },
+        { channel: `session:${targetSessionId}` }
+      );
+      throw new Error(errorText);
+    }
+
     db.updateHyperNeoActionMessageByUuid(targetSessionId, messageUuid, resolvedMessage);
 
     messageHub.event(
@@ -1326,15 +1423,6 @@ export function setupSessionHandlers(
       { added: [resolvedMessage], timestamp: Date.now() },
       { channel: `session:${targetSessionId}` }
     );
-
-    try {
-      await agentSession.restart();
-      if (agentSession.getSessionData().config.queryMode !== 'manual') {
-        await agentSession.replayPendingMessagesForImmediateMode();
-      }
-    } catch (err) {
-      log.warn(`session.sdkResumeChoice: restart after choice failed: ${err}`);
-    }
 
     return { success: true };
   });

@@ -394,6 +394,7 @@ export type HyperNeoActionMessage = {
   action: 'sdk_resume_choice';
   resolved: boolean;
   chosenOption?: 'start_fresh' | 'leave_as_is';
+  error?: string;
   timestamp: number;
 };
 

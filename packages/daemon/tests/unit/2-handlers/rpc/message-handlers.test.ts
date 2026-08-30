@@ -1,12 +1,11 @@
-import { describe, test, expect, beforeEach, mock, afterEach } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import type { Database } from '../../../../src/storage/database';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import type { MessageHub, Session } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import { MessageHub } from '@hyperneo/shared';
+import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { setupMessageHandlers } from '../../../../src/lib/rpc-handlers/message-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { AgentSession } from '../../../../src/lib/agent/agent-session';
-import type { Session } from '@hyperneo/shared';
+import type { Database } from '../../../../src/storage/database';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -78,6 +77,7 @@ function createMockSessionManager(): {
   sessionManager: SessionManager;
   mocks: {
     getSessionAsync: ReturnType<typeof mock>;
+    getSessionForControl: ReturnType<typeof mock>;
     getSession: ReturnType<typeof mock>;
     getSessionFromDB: ReturnType<typeof mock>;
     markOutputRemoved: ReturnType<typeof mock>;
@@ -86,8 +86,10 @@ function createMockSessionManager(): {
 } {
   const agentSessionData = createMockAgentSession();
 
+  const getSessionAsync = mock(async () => agentSessionData.agentSession);
   const mocks = {
-    getSessionAsync: mock(async () => agentSessionData.agentSession),
+    getSessionAsync,
+    getSessionForControl: getSessionAsync,
     getSession: mock(() => agentSessionData.agentSession),
     getSessionFromDB: mock(
       () =>

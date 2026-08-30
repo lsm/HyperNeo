@@ -95,6 +95,8 @@ function createMockAgentSession(): {
 
   const agentSession = {
     ...mocks,
+    getSessionData: mock(() => ({ id: 'rewind-session', config: {} })),
+    replayPendingMessagesForImmediateMode: mock(async () => {}),
   } as unknown as AgentSession;
 
   return { agentSession, mocks };
@@ -110,6 +112,7 @@ function createMockSessionManager(): {
 
   const sessionManager = {
     getSessionAsync: getSessionAsyncMock,
+    getSessionForControl: getSessionAsyncMock,
   } as unknown as SessionManager;
 
   return { sessionManager, getSessionAsyncMock };
@@ -193,6 +196,47 @@ describe('Rewind RPC Handlers', () => {
     });
   });
 
+  it('previews leave deferred messages deferred', async () => {
+    const handler = messageHubData.handlers.get('rewind.preview');
+    expect(handler).toBeDefined();
+
+    const { agentSession, mocks } = createMockAgentSession();
+    const replay = mock(async () => {});
+    (agentSession as unknown as Record<string, unknown>).replayPendingMessagesForImmediateMode =
+      replay;
+    sessionManagerData.getSessionAsyncMock.mockResolvedValue(agentSession);
+
+    await handler!({ sessionId: 'session-123', checkpointId: 'checkpoint-1' }, {});
+
+    expect(mocks.previewRewind).toHaveBeenCalledTimes(1);
+    expect(replay).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty selective preview without provisioning', async () => {
+    const handler = messageHubData.handlers.get('rewind.previewSelective');
+    expect(handler).toBeDefined();
+
+    sessionManagerData.getSessionAsyncMock.mockClear();
+
+    const result = (await handler!({ sessionId: 'session-123', messageIds: [] }, {})) as {
+      preview: { canRewind: boolean; error: string };
+    };
+
+    expect(result.preview.error).toBe('No messages selected');
+    expect(sessionManagerData.getSessionAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it('previews provision dormant workers without replaying pending messages', async () => {
+    const handler = messageHubData.handlers.get('rewind.preview');
+    expect(handler).toBeDefined();
+
+    await handler!({ sessionId: 'session-123', checkpointId: 'checkpoint-1' }, {});
+
+    expect(sessionManagerData.getSessionAsyncMock).toHaveBeenCalledWith('session-123', {
+      replayPendingMessages: false,
+    });
+  });
+
   describe('rewind.execute', () => {
     it('executes rewind with default files mode', async () => {
       const handler = messageHubData.handlers.get('rewind.execute');
@@ -201,6 +245,8 @@ describe('Rewind RPC Handlers', () => {
       const { mocks } = createMockAgentSession();
       sessionManagerData.getSessionAsyncMock.mockResolvedValue({
         ...mocks,
+        getSessionData: () => ({ id: 'session-123', config: {} }),
+        replayPendingMessagesForImmediateMode: async () => {},
       } as unknown as AgentSession);
 
       const result = (await handler!(
@@ -224,6 +270,8 @@ describe('Rewind RPC Handlers', () => {
       });
       sessionManagerData.getSessionAsyncMock.mockResolvedValue({
         ...mocks,
+        getSessionData: () => ({ id: 'session-123', config: {} }),
+        replayPendingMessagesForImmediateMode: async () => {},
       } as unknown as AgentSession);
 
       const result = (await handler!(
@@ -246,6 +294,8 @@ describe('Rewind RPC Handlers', () => {
       });
       sessionManagerData.getSessionAsyncMock.mockResolvedValue({
         ...mocks,
+        getSessionData: () => ({ id: 'session-123', config: {} }),
+        replayPendingMessagesForImmediateMode: async () => {},
       } as unknown as AgentSession);
 
       const result = (await handler!(
@@ -269,6 +319,58 @@ describe('Rewind RPC Handlers', () => {
 
       expect(result.result.success).toBe(false);
       expect(result.result.error).toBe('Session not found');
+    });
+
+    it('skips replay when workflow provisioning was skipped', async () => {
+      const handler = messageHubData.handlers.get('rewind.execute');
+      expect(handler).toBeDefined();
+
+      const { mocks } = createMockAgentSession();
+      mocks.executeRewind.mockResolvedValueOnce({
+        success: false,
+        error: 'no active query',
+        filesReverted: [],
+      });
+      const replay = mock(async () => {});
+      sessionManagerData.getSessionAsyncMock.mockResolvedValue({
+        ...mocks,
+        getSessionData: () => ({ id: 'space:s1:task:t1:exec:e1', config: {} }),
+        replayPendingMessagesForImmediateMode: replay,
+      } as unknown as AgentSession);
+
+      const result = (await handler!(
+        { sessionId: 'space:s1:task:t1:exec:e1', checkpointId: 'checkpoint-1' },
+        {}
+      )) as { result: { success: boolean } };
+
+      expect(result.result.success).toBe(false);
+      expect(replay).not.toHaveBeenCalled();
+    });
+
+    it('reconciles pending messages after a failed rewind', async () => {
+      const handler = messageHubData.handlers.get('rewind.execute');
+      expect(handler).toBeDefined();
+
+      const { mocks } = createMockAgentSession();
+      mocks.executeRewind.mockResolvedValueOnce({
+        success: false,
+        error: 'stale checkpoint',
+        filesReverted: [],
+      });
+      const replay = mock(async () => {});
+      sessionManagerData.getSessionAsyncMock.mockResolvedValue({
+        ...mocks,
+        getSessionData: () => ({ id: 'session-123', config: {} }),
+        replayPendingMessagesForImmediateMode: replay,
+      } as unknown as AgentSession);
+
+      const result = (await handler!(
+        { sessionId: 'session-123', checkpointId: 'checkpoint-1' },
+        {}
+      )) as { result: { success: boolean } };
+
+      expect(result.result.success).toBe(false);
+      expect(replay).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -322,6 +424,8 @@ describe('Rewind RPC Handlers', () => {
       const { mocks } = createMockAgentSession();
       sessionManagerData.getSessionAsyncMock.mockResolvedValue({
         ...mocks,
+        getSessionData: () => ({ id: 'session-123', config: {} }),
+        replayPendingMessagesForImmediateMode: async () => {},
       } as unknown as AgentSession);
 
       const result = (await handler!(
@@ -346,6 +450,8 @@ describe('Rewind RPC Handlers', () => {
       });
       sessionManagerData.getSessionAsyncMock.mockResolvedValue({
         ...mocks,
+        getSessionData: () => ({ id: 'session-123', config: {} }),
+        replayPendingMessagesForImmediateMode: async () => {},
       } as unknown as AgentSession);
 
       const result = (await handler!(

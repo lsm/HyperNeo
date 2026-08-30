@@ -108,6 +108,7 @@ export type AgentProcessingState =
       retryCount: number;
       maxRetries: number;
       retryAt: number;
+      messageId?: string;
     }
   | { status: 'interrupted' };
 

@@ -2,12 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import type { McpServerConfig, SpaceTask, SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
 import {
   assembleNodeAgentSessionInit,
-  buildExecutionBaseSessionId,
   findAvailableSessionId,
   resolveSpawnWorkspace,
   resolveTaskWorkspace,
   resolveWorkflowNodeSlot,
 } from '../../../../src/lib/space/runtime/spawn-slot-resolution';
+import { buildExecutionBaseSessionId } from '../../../../src/lib/session/sub-session-identity';
 import type { AgentSessionInit } from '../../../../src/lib/agent/agent-session';
 
 function makeNode(overrides: Partial<WorkflowNode> = {}): WorkflowNode {

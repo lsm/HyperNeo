@@ -1,13 +1,13 @@
-import { describe, test, expect, afterEach, spyOn } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
-import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import type { McpServerConfig } from '@hyperneo/shared';
 import type { AgentSession as AgentSessionType } from '../../../../src/lib/agent/agent-session.ts';
+import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
-import type { McpServerConfig } from '@hyperneo/shared';
+import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 
 const SPACE_ID = 'space-rehydrate-mcp';
 const RUN_ID = 'run-rehydrate-mcp';
@@ -18,6 +18,7 @@ const SUB_SESSION_ID = `space:${SPACE_ID}:task:${TASK_ID}:exec:${EXEC_ID}`;
 interface FakeSessionState {
   session: {
     id: string;
+    status: 'active' | 'archived';
     workspacePath?: string | null;
     config: { mcpServers?: Record<string, McpServerConfig> };
   };
@@ -32,7 +33,7 @@ function makeFakeAgentSession(
   options: { failStart?: boolean; beforeStart?: () => Promise<void> } = {}
 ) {
   const state: FakeSessionState = {
-    session: { id, config: {} },
+    session: { id, status: 'active', config: {} },
     calls: [],
     metadataUpdates: [],
     startSawCallback: false,
@@ -92,6 +93,7 @@ function makeFakeAgentSession(
       }
     },
     getProcessingState: () => ({ status: 'idle' }),
+    isQueryActiveOrStarting: () => false,
     getSDKMessageCount: () => 0,
     replayPendingMessagesForImmediateMode: async () => {
       state.calls.push('replayPendingMessagesForImmediateMode');
@@ -158,7 +160,7 @@ function makeManager(): {
       getById: () => execution,
       update: () => execution,
     },
-    workflowRunRepo: { getRun: () => null },
+    workflowRunRepo: { getRun: () => ({ id: RUN_ID, status: 'in_progress' }) },
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
   } as unknown as TaskAgentManagerConfig);
   return { tam, registered, unregistered };
@@ -175,6 +177,34 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
 
   afterEach(() => {
     restoreSpy?.mockRestore();
+  });
+
+  test('isSessionAlive treats a cached-but-unindexed worker as alive', async () => {
+    const { tam } = makeManager();
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    (
+      tam.config as unknown as {
+        sessionManager: { getCachedSession: (id: string) => unknown };
+      }
+    ).sessionManager.getCachedSession = (id: string) =>
+      id === SUB_SESSION_ID ? fake.agentSession : null;
+
+    expect(tam.isSessionAlive(SUB_SESSION_ID)).toBe(true);
+    expect(tam.isSessionAlive('space:space-1:task:task-x:exec:exec-x')).toBe(false);
+  });
+
+  test('isSessionAlive rejects an archived cached worker', async () => {
+    const { tam } = makeManager();
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    fake.state.session.status = 'archived';
+    (
+      tam.config as unknown as {
+        sessionManager: { getCachedSession: (id: string) => unknown };
+      }
+    ).sessionManager.getCachedSession = (id: string) =>
+      id === SUB_SESSION_ID ? fake.agentSession : null;
+
+    expect(tam.isSessionAlive(SUB_SESSION_ID)).toBe(false);
   });
 
   test('rehydrated sub-session starts with node-agent merged and the self-heal callback wired', async () => {
@@ -227,6 +257,104 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(fakeWithGate.state.calls.filter((call) => call === 'startStreamingQuery')).toHaveLength(
       1
     );
+  });
+
+  test('provisioning with startQuery:false attaches node-agent without starting the query', async () => {
+    const { tam } = makeManager();
+    (
+      tam as unknown as { config: { workflowRunRepo: { getRun: () => unknown } } }
+    ).config.workflowRunRepo.getRun = () => ({ id: RUN_ID, status: 'in_progress' });
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => makeFakeAgentSession('never').agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    await tam.provisionWorkflowSession(fake.agentSession, { startQuery: false });
+
+    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers']);
+    expect(restoreSpy).toHaveBeenCalledTimes(0);
+  });
+
+  test('skips query startup when the session archives during provisioning', async () => {
+    const { tam } = makeManager();
+    (
+      tam as unknown as { config: { workflowRunRepo: { getRun: () => unknown } } }
+    ).config.workflowRunRepo.getRun = () => ({ id: RUN_ID, status: 'in_progress' });
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    const merge = fake.agentSession.mergeRuntimeMcpServers.bind(fake.agentSession);
+    fake.agentSession.mergeRuntimeMcpServers = (additional: Record<string, McpServerConfig>) => {
+      merge(additional);
+      (fake.state.session as { status?: string }).status = 'archived';
+    };
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => makeFakeAgentSession('never').agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    await tam.provisionWorkflowSession(fake.agentSession, {});
+
+    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(fake.state.calls).not.toContain('startStreamingQuery');
+    expect(fake.state.calls).not.toContain('replayPendingMessagesForImmediateMode');
+  });
+
+  test('a running but unreplayed worker reconciles replay on a later default lookup', async () => {
+    const { tam } = makeManager();
+    (
+      tam as unknown as { config: { workflowRunRepo: { getRun: () => unknown } } }
+    ).config.workflowRunRepo.getRun = () => ({ id: RUN_ID, status: 'in_progress' });
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    (
+      fake.agentSession as unknown as { isQueryActiveOrStarting: () => boolean }
+    ).isQueryActiveOrStarting = () => true;
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => fake.agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    await tam.provisionWorkflowSession(fake.agentSession, { replayPendingMessages: false });
+    expect(fake.state.calls).not.toContain('replayPendingMessagesForImmediateMode');
+    expect(fake.state.calls.filter((call) => call === 'startStreamingQuery')).toHaveLength(1);
+
+    await tam.provisionWorkflowSession(fake.agentSession, {});
+
+    expect(fake.state.calls.filter((call) => call === 'startStreamingQuery')).toHaveLength(1);
+    expect(fake.state.calls).toContain('replayPendingMessagesForImmediateMode');
+  });
+
+  test('starts an indexed idle worker when a later default provisioning requests startup', async () => {
+    const { tam } = makeManager();
+    (
+      tam as unknown as { config: { workflowRunRepo: { getRun: () => unknown } } }
+    ).config.workflowRunRepo.getRun = () => ({ id: RUN_ID, status: 'in_progress' });
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => fake.agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    await tam.provisionWorkflowSession(fake.agentSession, { startQuery: false });
+    expect(fake.state.calls).not.toContain('startStreamingQuery');
+
+    await tam.provisionWorkflowSession(fake.agentSession, {});
+
+    expect(fake.state.calls.filter((call) => call === 'startStreamingQuery')).toHaveLength(1);
+    expect(fake.state.calls).toContain('replayPendingMessagesForImmediateMode');
+  });
+
+  test('provisioning with replayPendingMessages:false starts the query without replaying', async () => {
+    const { tam } = makeManager();
+    (
+      tam as unknown as { config: { workflowRunRepo: { getRun: () => unknown } } }
+    ).config.workflowRunRepo.getRun = () => ({ id: RUN_ID, status: 'in_progress' });
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => makeFakeAgentSession('never').agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    await tam.provisionWorkflowSession(fake.agentSession, { replayPendingMessages: false });
+
+    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers', 'startStreamingQuery']);
+    expect(fake.state.calls).not.toContain('replayPendingMessagesForImmediateMode');
   });
 
   test('rehydrate adopts the SessionManager cached instance instead of restoring a duplicate', async () => {

@@ -32,6 +32,10 @@ import { ErrorCategory, ErrorManager, type StructuredError } from '../error-mana
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import { SettingsManager } from '../settings-manager.ts';
+import {
+  resolveRateLimitEpisodeDeliveryUuid,
+  runRateLimitManualRetry,
+} from './rate-limit-manual-retry.ts';
 
 export const RECENTLY_EXITED_ROOT_PID_RETENTION_MS = 15 * 60 * 1000;
 
@@ -568,6 +572,7 @@ export class AgentSession
       void this.reevaluateContextBudgetAfterModelSwitch();
     }
     this.stateManager.restoreFromDatabase();
+    this.armPersistedRateLimitCooldown();
 
     this.eventSubscriptionSetup.setup();
 
@@ -780,6 +785,11 @@ export class AgentSession
   }
 
   async startStreamingQuery(): Promise<void> {
+    if (this.session.status === 'archived' || this.session.status === 'ended') {
+      throw new Error(
+        `Session ${this.session.id} is ${this.session.status}; refusing to start the query`
+      );
+    }
     const wantsAcp = this.session.config.provider === 'acp';
     const hasAcpRunner = this.queryRunner instanceof AcpQueryRunner;
     if (wantsAcp !== hasAcpRunner) {
@@ -789,6 +799,40 @@ export class AgentSession
       this.queryRunner = wantsAcp ? new AcpQueryRunner(this) : new QueryRunner(this);
     }
     await this.queryRunner.start();
+  }
+
+  private armPersistedRateLimitCooldown(): void {
+    const persistedState = this.db.getSession(this.session.id)?.processingState;
+    if (!persistedState) return;
+    try {
+      const parsed = JSON.parse(persistedState) as {
+        status?: string;
+        retryAt?: unknown;
+        messageId?: unknown;
+        retryCount?: unknown;
+        maxRetries?: unknown;
+      };
+      if (
+        parsed.status === 'rate_limit_cooldown' &&
+        typeof parsed.retryAt === 'number' &&
+        parsed.retryAt > Date.now()
+      ) {
+        const messageId = typeof parsed.messageId === 'string' ? parsed.messageId : undefined;
+        this.rateLimitWatchdog.armPersistedCooldown(parsed.retryAt, messageId, () => {
+          void this.stateManager.setIdle().catch(() => {});
+        });
+        void this.stateManager
+          .setRateLimitCooldown({
+            retryCount: typeof parsed.retryCount === 'number' ? parsed.retryCount : 0,
+            maxRetries: typeof parsed.maxRetries === 'number' ? parsed.maxRetries : 0,
+            retryAt: parsed.retryAt,
+            ...(messageId !== undefined ? { messageId } : {}),
+          })
+          .catch(() => {});
+      }
+    } catch {
+      this.logger.warn('Failed to restore the persisted rate-limit cooldown.');
+    }
   }
 
   private scheduleInitialPendingMessageReplay(): void {
@@ -804,9 +848,9 @@ export class AgentSession
     });
   }
 
-  async replayPendingMessagesForImmediateMode(): Promise<void> {
+  async replayPendingMessagesForImmediateMode(): Promise<boolean> {
     this.reconcilerProvisioned = true;
-    await this.queryModeHandler.replayPendingMessagesForAutomaticTurnEnd();
+    return this.queryModeHandler.replayPendingMessagesForAutomaticTurnEnd();
   }
 
   async replayAllPendingMessages(): Promise<void> {
@@ -1162,20 +1206,77 @@ export class AgentSession
 
   cancelRateLimitRetry(): void {
     const episodeMessage = this.rateLimitWatchdog.getState().lastUserMessage;
+    const persistedArmMessageId = this.rateLimitWatchdog.getPersistedEpisodeMessageUuid?.() ?? null;
     this.rateLimitWatchdog.cancel(false);
-    if (this.stateManager.getState().status === 'rate_limit_cooldown') {
-      void this.stateManager.setIdle();
+    let persistedEpisodeMessageId: string | undefined = persistedArmMessageId ?? undefined;
+    let cooldownClearPending = false;
+    const inMemoryCooldown = this.stateManager.getState().status === 'rate_limit_cooldown';
+    const persistedState = this.db.getSession(this.session.id)?.processingState;
+    try {
+      const parsed = persistedState
+        ? (JSON.parse(persistedState) as { status?: string; messageId?: string })
+        : null;
+      const persistedCooldown = parsed?.status === 'rate_limit_cooldown';
+      if (persistedCooldown && !persistedEpisodeMessageId && parsed?.messageId) {
+        persistedEpisodeMessageId = parsed.messageId;
+      }
+      cooldownClearPending = inMemoryCooldown || persistedCooldown;
+    } catch {
+      cooldownClearPending = inMemoryCooldown;
+      this.logger.warn('Failed to inspect the persisted rate-limit cooldown on cancel.');
     }
-    if (episodeMessage) {
+    const episodeMessageId = episodeMessage?.uuid ?? persistedEpisodeMessageId;
+    const owningTurnMessageId = resolveRateLimitEpisodeDeliveryUuid(
+      this.db,
+      this.session.id,
+      episodeMessageId
+    );
+    if (owningTurnMessageId) {
       try {
-        this.db.getJobQueueRepo()?.cancelDelivery(this.session.id, episodeMessage.uuid);
+        const jobQueue = this.db.getJobQueueRepo();
+        const sdkRepo = this.db.getSDKMessageRepo?.();
+        const batchUuids = jobQueue?.getActiveDeliveryBatchUuids?.(
+          this.session.id,
+          owningTurnMessageId
+        );
+        jobQueue?.cancelDelivery(this.session.id, owningTurnMessageId);
+        const uuidsToSettle =
+          batchUuids && batchUuids.length > 0 ? batchUuids : [owningTurnMessageId];
+        const settledDbIds: string[] = [];
+        for (const uuid of uuidsToSettle) {
+          const settledDbId = sdkRepo?.markDeliveryFailedByUuid?.(this.session.id, uuid);
+          if (settledDbId) settledDbIds.push(settledDbId);
+        }
+        if (settledDbIds.length > 0) {
+          void this.internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId: this.session.id,
+              messageIds: settledDbIds,
+              status: 'failed',
+            })
+            .catch(() => {});
+        }
+        this.db.getJobQueueRepo()?.rescheduleSessionDeliveries?.(this.session.id, Date.now());
       } catch (error) {
         this.logger.warn('Failed to cancel the parked delivery for the retry episode:', error);
       }
     }
+    if (cooldownClearPending) {
+      void this.stateManager.setIdle();
+    }
   }
 
   async retryNowAfterRateLimit(): Promise<boolean> {
+    const persistedEpisodeMessageUuid = this.rateLimitWatchdog.getPersistedEpisodeMessageUuid();
+    if (this.rateLimitWatchdog.isPersistedCooldownArmed()) {
+      this.rateLimitWatchdog.cancel();
+      return await runRateLimitManualRetry({
+        db: this.db,
+        sessionId: this.session.id,
+        episodeMessageUuid: persistedEpisodeMessageUuid ?? undefined,
+        clearCooldown: () => this.stateManager.setIdle(),
+      });
+    }
     const fired = this.rateLimitWatchdog.retryNow();
     if (!fired) {
       this.logger.warn('retryNowAfterRateLimit: no cooldown retry is pending.');

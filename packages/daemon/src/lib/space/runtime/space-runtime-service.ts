@@ -1644,8 +1644,6 @@ export class SpaceRuntimeService {
         ? sessionManager.registerSessionResetSubscriber(async (event) => {
             await this.reprovisionResetSession(event.session, {
               replayPendingMessages: event.restartQuery,
-            }).catch((err) => {
-              log.error(`Failed to re-provision reset session ${event.sessionId}:`, err);
             });
           })
         : () => {};
@@ -1656,6 +1654,18 @@ export class SpaceRuntimeService {
     session: Session,
     options: { replayPendingMessages: boolean }
   ): Promise<void> {
+    const isWorkflowSubSession =
+      session.id.includes(':task:') &&
+      (session.id.includes(':exec:') || session.id.includes(':post-approval:'));
+    const workflowSession = isWorkflowSubSession
+      ? this.config.sessionManager?.getCachedSession(session.id)
+      : null;
+    if (workflowSession && this.taskAgentManager) {
+      await this.taskAgentManager.provisionWorkflowSession(workflowSession, {
+        startQuery: options.replayPendingMessages,
+      });
+      return;
+    }
     if (session.type === 'space_chat') {
       const spaceId = session.context?.spaceId ?? session.id.match(/^space:chat:(.+)$/)?.[1];
       if (!spaceId) return;
@@ -1931,6 +1941,18 @@ export class SpaceRuntimeService {
     await this.taskAgentManager.mcpSelfHeal(session, missing);
   }
 
+  async provisionWorkflowSession(
+    session: AgentSession,
+    options: {
+      startQuery?: boolean;
+      replayPendingMessages?: boolean;
+      onReplaySettled?: (succeeded: boolean) => void;
+    } = {}
+  ): Promise<void> {
+    if (!this.taskAgentManager) return;
+    await this.taskAgentManager.provisionWorkflowSession(session, options);
+  }
+
   async setupSpaceAgentSession(
     space: Space,
     options: { replayPendingMessages?: boolean } = {}
@@ -2195,7 +2217,7 @@ export class SpaceRuntimeService {
   }
 
   private async replayPendingMessagesAfterRuntimeProvisioning(session: {
-    replayPendingMessagesForImmediateMode?: () => Promise<void>;
+    replayPendingMessagesForImmediateMode?: () => Promise<boolean>;
   }): Promise<void> {
     if (typeof session.replayPendingMessagesForImmediateMode === 'function') {
       await session.replayPendingMessagesForImmediateMode();

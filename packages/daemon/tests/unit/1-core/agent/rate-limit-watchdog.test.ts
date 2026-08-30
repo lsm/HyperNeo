@@ -2099,3 +2099,53 @@ describe('RateLimitWatchdog', () => {
     });
   });
 });
+
+describe('RateLimitWatchdog persisted cooldown arming', () => {
+  it('reports a cooling state and retry time for an armed persisted cooldown', () => {
+    const watchdog = new RateLimitWatchdog('s', createMockStateManager(), createMockDeps());
+    watchdog.armPersistedCooldown(Date.now() + 60_000);
+    const state = watchdog.getState();
+
+    expect(state.retryAt).not.toBeNull();
+    expect(state.persistedCooldown).toBe(true);
+    watchdog.cancel();
+  });
+
+  it('clears the persisted arm when the timer fires', async () => {
+    const expiry = mock(() => {});
+    const watchdog = new RateLimitWatchdog('s', createMockStateManager(), createMockDeps());
+    watchdog.armPersistedCooldown(Date.now() + 20, 'msg-x', expiry);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(watchdog.getState().retryAt).toBeNull();
+    expect(watchdog.getState().persistedCooldown).toBe(false);
+    expect(expiry).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows an immediate retry while only the persisted arm is active', () => {
+    const watchdog = new RateLimitWatchdog('s', createMockStateManager(), createMockDeps());
+    watchdog.armPersistedCooldown(Date.now() + 60_000);
+
+    expect(watchdog.retryNow()).toBe(true);
+    expect(watchdog.getState().retryAt).toBeNull();
+    expect(watchdog.getState().persistedCooldown).toBe(false);
+  });
+
+  it('reports an armed persisted cooldown without an episode message', () => {
+    const watchdog = new RateLimitWatchdog('s', createMockStateManager(), createMockDeps());
+    watchdog.armPersistedCooldown(Date.now() + 60_000);
+
+    expect(watchdog.isPersistedCooldownArmed()).toBe(true);
+    expect(watchdog.getPersistedEpisodeMessageUuid()).toBeNull();
+    watchdog.cancel();
+  });
+
+  it('exposes the persisted episode message for a manual retry', () => {
+    const watchdog = new RateLimitWatchdog('s', createMockStateManager(), createMockDeps());
+    watchdog.armPersistedCooldown(Date.now() + 60_000, 'msg-persisted');
+
+    expect(watchdog.getPersistedEpisodeMessageUuid()).toBe('msg-persisted');
+    watchdog.retryNow();
+    expect(watchdog.getPersistedEpisodeMessageUuid()).toBeNull();
+  });
+});

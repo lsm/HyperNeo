@@ -1,46 +1,54 @@
 import type {
-  Session,
   ImageContent,
-  MessageHub,
   MessageDeliveryMode,
-  MessageOrigin,
+  MessageHub,
   MessageImage,
+  MessageOrigin,
+  Session,
 } from '@hyperneo/shared';
 import { generateUUID, matchesDraftOrComposition } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Database } from '../../storage/database.ts';
+import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
+import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import {
   AgentSession,
   type AgentSessionRuntimeOptions,
   RECENTLY_EXITED_ROOT_PID_RETENTION_MS,
 } from '../agent/agent-session.ts';
 import type { AuthManager } from '../auth-manager.ts';
-import type { SettingsManager } from '../settings-manager.ts';
-import { WorktreeManager } from '../worktree-manager.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { handleSessionTitleGeneration } from '../job-handlers/session-title.handler.ts';
+import { SESSION_TITLE_GENERATION } from '../job-queue-constants.ts';
 import { Logger } from '../logger.ts';
 import { listProcesses, type ProcessSnapshot } from '../process-watchdog.ts';
+import type { SettingsManager } from '../settings-manager.ts';
 import type { SkillsManager } from '../skills-manager.ts';
-import type { AppMcpServerRepository } from '../../storage/repositories/app-mcp-server-repository.ts';
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
-import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
-import { SESSION_TITLE_GENERATION } from '../job-queue-constants.ts';
-import { handleSessionTitleGeneration } from '../job-handlers/session-title.handler.ts';
-
-import { SessionCache } from './session-cache.ts';
-import {
-  SessionLifecycle,
-  type SessionLifecycleConfig,
-  type CreateSessionParams,
-  type ArchiveResourcesTrigger,
-  type DeleteResourcesTrigger,
-} from './session-lifecycle.ts';
-import { ToolsConfigManager } from './tools-config.ts';
+import { WorktreeManager } from '../worktree-manager.ts';
 import { MessagePersistence } from './message-persistence.ts';
 import { ReferenceResolver } from './reference-resolver.ts';
+import { SessionCache } from './session-cache.ts';
+import {
+  type ArchiveResourcesTrigger,
+  type CreateSessionParams,
+  type DeleteResourcesTrigger,
+  SessionLifecycle,
+  type SessionLifecycleConfig,
+} from './session-lifecycle.ts';
+import { hasRuntimeNodeAgentServer, isWorkflowSubSessionIdentity } from './sub-session-identity.ts';
+import { ToolsConfigManager } from './tools-config.ts';
 
 export interface SpaceRuntimeMcpProvider {
   reattachMemberSpaceTools(sessionId: string): Promise<void>;
   reattachWorkflowMcpServers?(session: AgentSession, missing: string[]): Promise<void>;
+  provisionWorkflowSession?(
+    session: AgentSession,
+    options?: {
+      startQuery?: boolean;
+      replayPendingMessages?: boolean;
+      onReplaySettled?: (succeeded: boolean) => void;
+    }
+  ): Promise<void>;
 }
 
 export enum CleanupState {
@@ -69,6 +77,13 @@ export class SessionManager {
   private toolsConfigManager: ToolsConfigManager;
   private messagePersistence: MessagePersistence;
   private spaceRuntimeMcpProvider?: SpaceRuntimeMcpProvider;
+  private workflowMcpProvisioning = new Map<
+    string,
+    { session: AgentSession; promise: Promise<void> }
+  >();
+  private workflowMcpProvisioned = new WeakSet<AgentSession>();
+  private workflowQueryStarted = new WeakSet<AgentSession>();
+  private workflowReplayCompleted = new WeakSet<AgentSession>();
 
   constructor(
     private db: Database,
@@ -114,7 +129,8 @@ export class SessionManager {
       db,
       messageHub,
       internalEventBus,
-      referenceResolver
+      referenceResolver,
+      (sessionId) => this.getSessionForMessagePersistence(sessionId)
     );
 
     this.setupEventSubscriptions();
@@ -268,11 +284,16 @@ export class SessionManager {
       });
       this.sessionCache.set(sessionId, freshSession);
 
-      await this.emitSessionReset({
-        sessionId,
-        session: sessionForFreshInstance,
-        restartQuery: options.restartQuery,
-      });
+      let resetError: unknown;
+      try {
+        await this.emitSessionReset({
+          sessionId,
+          session: sessionForFreshInstance,
+          restartQuery: options.restartQuery,
+        });
+      } catch (error) {
+        resetError = error;
+      }
 
       try {
         await agentSession.cleanup();
@@ -282,6 +303,8 @@ export class SessionManager {
           error
         );
       }
+
+      if (resetError) throw resetError;
 
       if (options.restartQuery) {
         await freshSession.replayPendingMessagesForImmediateMode();
@@ -435,6 +458,106 @@ export class SessionManager {
     this.spaceRuntimeMcpProvider = provider;
   }
 
+  private isWorkflowSubSession(session: AgentSession): boolean {
+    return isWorkflowSubSessionIdentity(session.getSessionData().id);
+  }
+
+  private provisioningSatisfies(
+    session: AgentSession,
+    options: { startQuery?: boolean; replayPendingMessages?: boolean }
+  ): boolean {
+    if (options.startQuery !== false && !this.workflowQueryStarted.has(session)) return false;
+    if (
+      options.startQuery !== false &&
+      options.replayPendingMessages !== false &&
+      !this.workflowReplayCompleted.has(session)
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  private async provisionWorkflowMcpServers(
+    session: AgentSession,
+    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
+  ): Promise<void> {
+    if (this.cleanupState !== CleanupState.IDLE) return;
+    if (!this.isWorkflowSubSession(session)) return;
+    if (this.workflowMcpProvisioned.has(session)) {
+      if (this.provisioningSatisfies(session, options)) return;
+    }
+    if (session.getSessionData().status === 'archived') return;
+
+    const provider = this.spaceRuntimeMcpProvider;
+    if (!provider?.provisionWorkflowSession) return;
+
+    const sessionId = session.getSessionData().id;
+    for (;;) {
+      const existing = this.workflowMcpProvisioning.get(sessionId);
+      if (!existing) break;
+      if (existing.session === session) {
+        await existing.promise;
+        if (this.provisioningSatisfies(session, options)) return;
+      } else {
+        await existing.promise.catch(() => {});
+        const cached = this.getCachedSession(sessionId);
+        if (cached !== session) {
+          if (cached) await this.provisionWorkflowMcpServers(cached, options);
+          return;
+        }
+        if (this.provisioningSatisfies(session, options)) return;
+      }
+      if (this.cleanupState !== CleanupState.IDLE) return;
+    }
+
+    if (this.cleanupState !== CleanupState.IDLE) return;
+
+    let replaySucceeded = false;
+    const provisioning = provider
+      .provisionWorkflowSession(session, {
+        ...options,
+        onReplaySettled: (succeeded) => {
+          replaySucceeded = succeeded;
+        },
+      })
+      .finally(() => {
+        if (this.workflowMcpProvisioning.get(sessionId)?.promise === provisioning) {
+          this.workflowMcpProvisioning.delete(sessionId);
+        }
+      });
+    this.workflowMcpProvisioning.set(sessionId, { session, promise: provisioning });
+    await provisioning;
+    if (this.cleanupState !== CleanupState.IDLE) return;
+    if (hasRuntimeNodeAgentServer(session.getSessionData().config)) {
+      this.workflowMcpProvisioned.add(session);
+      if (options.startQuery !== false && session.isQueryActiveOrStarting()) {
+        this.workflowQueryStarted.add(session);
+      }
+      if (
+        options.startQuery !== false &&
+        options.replayPendingMessages !== false &&
+        replaySucceeded
+      ) {
+        this.workflowReplayCompleted.add(session);
+      }
+    }
+  }
+
+  private async getSessionForMessagePersistence(sessionId: string): Promise<AgentSession | null> {
+    const session = await this.getSessionAsync(sessionId, {
+      startQuery: false,
+      replayPendingMessages: false,
+    });
+    if (!session) return null;
+    if (
+      this.isWorkflowSubSession(session) &&
+      !hasRuntimeNodeAgentServer(session.getSessionData().config)
+    ) {
+      return null;
+    }
+    return session;
+  }
+
   getSessionLifecycle(): SessionLifecycle {
     return this.sessionLifecycle;
   }
@@ -443,8 +566,29 @@ export class SessionManager {
     return this.worktreeManager;
   }
 
-  async getSessionAsync(sessionId: string): Promise<AgentSession | null> {
-    return this.sessionCache.getAsync(sessionId);
+  async getSessionAsync(
+    sessionId: string,
+    options: { startQuery?: boolean; replayPendingMessages?: boolean } = {}
+  ): Promise<AgentSession | null> {
+    let session = await this.sessionCache.getAsync(sessionId);
+    while (session) {
+      await this.provisionWorkflowMcpServers(session, options);
+      const current = this.getCachedSession(sessionId);
+      if (current === session) return session;
+      session = current;
+    }
+    return null;
+  }
+
+  async getSessionForControl(sessionId: string): Promise<AgentSession | null> {
+    let session = await this.sessionCache.getAsync(sessionId);
+    while (session) {
+      const inFlight = this.workflowMcpProvisioning.get(sessionId);
+      if (!inFlight) return session;
+      await inFlight.promise.catch(() => {});
+      session = await this.sessionCache.getAsync(sessionId);
+    }
+    return null;
   }
 
   registerSession(agentSession: AgentSession): void {
@@ -535,10 +679,22 @@ export class SessionManager {
     sessionId: string,
     trigger: ArchiveResourcesTrigger
   ): Promise<void> {
+    const inFlight = this.workflowMcpProvisioning.get(sessionId);
+    if (inFlight) {
+      await this.sessionLifecycle.update(sessionId, { status: 'archived' });
+      inFlight.session.getSessionData().status = 'archived';
+      await inFlight.promise.catch(() => {});
+    }
     return this.sessionLifecycle.archiveResources(sessionId, trigger);
   }
 
   async deleteSessionResources(sessionId: string, trigger: DeleteResourcesTrigger): Promise<void> {
+    const inFlight = this.workflowMcpProvisioning.get(sessionId);
+    if (inFlight) {
+      await this.sessionLifecycle.update(sessionId, { status: 'archived' });
+      inFlight.session.getSessionData().status = 'archived';
+      await inFlight.promise.catch(() => {});
+    }
     return this.sessionLifecycle.deleteResources(sessionId, trigger);
   }
 
@@ -631,7 +787,7 @@ export class SessionManager {
   private async preserveRootPids(agentSession: AgentSession): Promise<void> {
     const split = agentSession.getTrackedAgentRootPidsSplit();
 
-    let startTimeByPid = new Map<number, number>();
+    const startTimeByPid = new Map<number, number>();
     let now = Date.now();
     if (split.live.length > 0) {
       try {
@@ -688,7 +844,6 @@ export class SessionManager {
       const currentStartTime = now - snap.elapsedSeconds * 1000;
       if (Math.abs(currentStartTime - meta.startTime) > 1000) {
         this.evictedLiveRootPids.delete(pid);
-        continue;
       }
     }
 
@@ -727,6 +882,13 @@ export class SessionManager {
       }
       this.internalEventBusUnsubscribers = [];
       this.sessionResetSubscribers = [];
+
+      const provisioning = Array.from(this.workflowMcpProvisioning.values(), ({ promise }) =>
+        promise.catch((error) => {
+          this.logger.error('[SessionManager] Error awaiting workflow provisioning:', error);
+        })
+      );
+      await Promise.all(provisioning);
 
       const cleanupPromises: Promise<void>[] = [];
       for (const [sessionId, agentSession] of this.sessionCache.entries()) {

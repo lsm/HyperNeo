@@ -379,7 +379,7 @@ export class StateProjectionService {
   }
 
   private async getSessionState(sessionId: string): Promise<SessionState> {
-    const agentSession = await this.sessionManager.getSessionAsync(sessionId);
+    const agentSession = await this.sessionManager.getSessionForControl(sessionId);
     if (!agentSession) {
       if (sessionId.startsWith('room:') || sessionId.startsWith('conv:')) {
         return {
@@ -418,7 +418,7 @@ export class StateProjectionService {
   }
 
   private async getSDKMessagesState(sessionId: string, since?: number): Promise<SDKMessagesState> {
-    const agentSession = await this.sessionManager.getSessionAsync(sessionId);
+    const agentSession = await this.sessionManager.getSessionForControl(sessionId);
     if (!agentSession) {
       if ((sessionId.startsWith('room:') || sessionId.startsWith('conv:')) && this.db) {
         const sdkMessageRepo = new SDKMessageRepository(this.db.getDatabase());

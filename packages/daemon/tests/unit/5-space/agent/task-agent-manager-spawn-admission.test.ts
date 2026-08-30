@@ -74,8 +74,10 @@ function makeWorkflow(
 }
 
 function fakeSession(id: string, processingStatus = 'idle'): AgentSession {
+  const session = { id, status: 'active' as const };
   return {
-    session: { id },
+    session,
+    getSessionData: () => session,
     getProcessingState: () => ({ status: processingStatus }),
   } as unknown as AgentSession;
 }

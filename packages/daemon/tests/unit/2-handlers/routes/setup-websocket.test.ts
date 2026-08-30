@@ -40,6 +40,7 @@ describe('createWebSocketHandlers', () => {
 
     mockSessionManager = {
       getSessionAsync: mock(async () => ({ id: 'session-1' })),
+      getSessionForControl: mock(async () => ({ id: 'session-1' })),
     };
 
     handlers = createWebSocketHandlers(
@@ -213,6 +214,7 @@ describe('createWebSocketHandlers', () => {
     describe('session validation', () => {
       it('should return error for non-existent session', async () => {
         mockSessionManager.getSessionAsync.mockImplementation(async () => null);
+        mockSessionManager.getSessionForControl.mockImplementation(async () => null);
 
         const ws: MockWebSocket = {
           data: { connectionSessionId: 'global', clientId: 'client-123' },

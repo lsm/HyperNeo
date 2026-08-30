@@ -8,6 +8,10 @@ import {
   abortAgentMemoryEmbeddingModelPrefetch,
 } from './storage/repositories/agent-memory-transformers.ts';
 import { SessionManager } from './lib/session-manager.ts';
+import {
+  hasRuntimeNodeAgentServer,
+  isWorkflowSubSessionIdentity,
+} from './lib/session/sub-session-identity.ts';
 import { AuthManager } from './lib/auth-manager.ts';
 import { SettingsManager } from './lib/settings-manager.ts';
 import { StateProjectionService } from './lib/state-projection-service.ts';
@@ -939,10 +943,23 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       MESSAGE_DELIVERY,
       createMessageDeliveryHandler({
         jobQueue,
-        getSession: (sessionId: string) =>
-          taskAgentManager?.getSubSession(sessionId) ??
-          sessionManager?.getSession(sessionId) ??
-          null,
+        getSession: async (sessionId: string) => {
+          const indexed = taskAgentManager?.getSubSession(sessionId);
+          if (indexed && sessionManager?.getCachedSession(sessionId) === indexed) {
+            return indexed;
+          }
+          const session = (await sessionManager?.getSessionAsync(sessionId)) ?? null;
+          if (
+            session &&
+            isWorkflowSubSessionIdentity(sessionId) &&
+            !hasRuntimeNodeAgentServer(session.getSessionData().config)
+          ) {
+            return null;
+          }
+          return session;
+        },
+        getSessionCooldownRetryAt: (sessionId: string) =>
+          taskAgentManager?.getRestoredRateLimitRetryAt(sessionId) ?? null,
         getMessageContent: (sessionId: string, messageUuid: string) =>
           reactiveDb?.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageUuid) ?? null,
         isSessionArchived: (sessionId: string) =>

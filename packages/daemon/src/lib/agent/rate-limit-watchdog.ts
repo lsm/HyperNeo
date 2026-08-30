@@ -43,6 +43,7 @@ export interface RateLimitWatchdogState {
   fallbackChain: FallbackModelEntry[] | null;
   fallbackPending: boolean;
   limitKind: 'rate_limit' | 'usage_limit' | null;
+  persistedCooldown: boolean;
 }
 
 export interface RateLimitPausePayload {
@@ -103,6 +104,9 @@ export class RateLimitWatchdog {
   private retryCallbackAttemptSeq = 0;
   private cooldownQueryGeneration: number | undefined = undefined;
   private activePauseQueryGeneration: number | undefined = undefined;
+  private persistedCooldownArm = false;
+  private persistedEpisodeMessageUuid: string | null = null;
+  private persistedExpiryCallback: (() => void) | null = null;
 
   constructor(
     sessionId: string,
@@ -136,7 +140,42 @@ export class RateLimitWatchdog {
       fallbackChain: this.chain,
       fallbackPending: this.fallbackPending,
       limitKind: this.limitKind,
+      persistedCooldown: this.persistedCooldownArm,
     };
+  }
+
+  armPersistedCooldown(retryAt: number, messageId?: string, onPersistedExpiry?: () => void): void {
+    if (this.cooldownTimer !== null) return;
+    const remaining = Math.max(0, retryAt - Date.now());
+    this.currentRetryAt = retryAt;
+    this.persistedCooldownArm = true;
+    this.persistedEpisodeMessageUuid = messageId ?? null;
+    this.persistedExpiryCallback = onPersistedExpiry ?? null;
+    this.cooldownTimer = setTimeout(() => {
+      this.cooldownTimer = null;
+      this.currentRetryAt = null;
+      this.persistedCooldownArm = false;
+      this.persistedEpisodeMessageUuid = null;
+      const expiry = this.persistedExpiryCallback;
+      this.persistedExpiryCallback = null;
+      expiry?.();
+      this.notifyResume();
+    }, remaining);
+    if (
+      this.cooldownTimer &&
+      typeof this.cooldownTimer === 'object' &&
+      'unref' in this.cooldownTimer
+    ) {
+      this.cooldownTimer.unref();
+    }
+  }
+
+  getPersistedEpisodeMessageUuid(): string | null {
+    return this.persistedCooldownArm ? this.persistedEpisodeMessageUuid : null;
+  }
+
+  isPersistedCooldownArmed(): boolean {
+    return this.persistedCooldownArm;
   }
 
   private querySuperseded(queryGeneration?: number): boolean {
@@ -381,6 +420,7 @@ export class RateLimitWatchdog {
                   retryCount: this.retryCount,
                   maxRetries: this.config.maxAutoRetries,
                   retryAt: this.currentRetryAt,
+                  messageId: this.lastUserMessage?.uuid,
                 },
                 queryGeneration
               )
@@ -417,6 +457,7 @@ export class RateLimitWatchdog {
         retryCount: displayRetryCount ?? this.retryCount,
         maxRetries: this.config.maxAutoRetries,
         retryAt,
+        messageId: this.lastUserMessage?.uuid,
       },
       queryGeneration
     );
@@ -445,6 +486,9 @@ export class RateLimitWatchdog {
     });
 
     this.cancelCooldownTimer();
+    this.persistedCooldownArm = false;
+    this.persistedEpisodeMessageUuid = null;
+    this.persistedExpiryCallback = null;
     this.cooldownQueryGeneration = queryGeneration;
     this.cooldownTimer = setTimeout(() => {
       this.cooldownTimer = null;
@@ -558,6 +602,7 @@ export class RateLimitWatchdog {
           retryCount: this.retryCount,
           maxRetries: this.config.maxAutoRetries,
           retryAt: Date.now() + STARTUP_RETRY_DELAY_MS,
+          messageId: this.lastUserMessage?.uuid,
         },
         queryGeneration
       );
@@ -670,6 +715,7 @@ export class RateLimitWatchdog {
                 retryCount: this.retryCount,
                 maxRetries: this.config.maxAutoRetries,
                 retryAt: Date.now(),
+                messageId: this.lastUserMessage?.uuid,
               },
               queryGeneration
             );
@@ -744,6 +790,9 @@ export class RateLimitWatchdog {
       clearTimeout(this.cooldownTimer);
       this.cooldownTimer = null;
       this.currentRetryAt = null;
+      this.persistedCooldownArm = false;
+      this.persistedEpisodeMessageUuid = null;
+      this.persistedExpiryCallback = null;
       this.cooldownQueryGeneration = undefined;
       this.logger.info('Cancelled pending rate limit cooldown.');
     }
@@ -759,6 +808,7 @@ export class RateLimitWatchdog {
         retryCount: this.retryCount,
         maxRetries: this.config.maxAutoRetries,
         retryAt: this.currentRetryAt,
+        messageId: this.lastUserMessage?.uuid,
       });
       return;
     }
@@ -767,6 +817,7 @@ export class RateLimitWatchdog {
         retryCount: this.retryCount,
         maxRetries: this.config.maxAutoRetries,
         retryAt: Date.now(),
+        messageId: this.lastUserMessage?.uuid,
       });
     }
   }
@@ -786,6 +837,9 @@ export class RateLimitWatchdog {
       clearTimeout(this.cooldownTimer);
       this.cooldownTimer = null;
       this.currentRetryAt = null;
+      this.persistedCooldownArm = false;
+      this.persistedEpisodeMessageUuid = null;
+      this.persistedExpiryCallback = null;
     }
     if (this.startupExhausted) {
       this.startupExhausted = false;

@@ -32,6 +32,7 @@ describe('StateProjectionService', () => {
       getTotalSessions: mock(() => 5),
       listSessions: mock(() => []),
       getSessionAsync: mock(async () => null),
+      getSessionForControl: mock(async () => null),
     } as unknown as SessionManager;
 
     mockAuthManager = {
@@ -246,7 +247,7 @@ describe('StateProjectionService', () => {
         getSlashCommands: mock(async () => []),
         getContextInfo: mock(() => null),
       };
-      (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+      (mockSessionManager.getSessionForControl as ReturnType<typeof mock>).mockResolvedValue(
         mockAgentSession
       );
 
@@ -279,7 +280,7 @@ describe('StateProjectionService', () => {
         getSlashCommands: mock(async () => []),
         getContextInfo: mock(() => null),
       };
-      (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+      (mockSessionManager.getSessionForControl as ReturnType<typeof mock>).mockResolvedValue(
         ghostAgentSession
       );
 
@@ -308,7 +309,7 @@ describe('StateProjectionService', () => {
     }
 
     it('stamps a strictly increasing revision on consecutive calls', async () => {
-      (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+      (mockSessionManager.getSessionForControl as ReturnType<typeof mock>).mockResolvedValue(
         mockAgent()
       );
 
@@ -322,7 +323,7 @@ describe('StateProjectionService', () => {
     });
 
     it('keeps per-session revision counters independent', async () => {
-      (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+      (mockSessionManager.getSessionForControl as ReturnType<typeof mock>).mockResolvedValue(
         mockAgent()
       );
 
@@ -336,7 +337,7 @@ describe('StateProjectionService', () => {
     });
 
     it('stamps a stable daemon-instance epoch alongside the revision', async () => {
-      (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+      (mockSessionManager.getSessionForControl as ReturnType<typeof mock>).mockResolvedValue(
         mockAgent()
       );
       const a = await service.getSessionState('rev-session');
@@ -351,7 +352,7 @@ describe('StateProjectionService', () => {
     it('stamps revision + daemonEpoch on the fallback state when getSessionState throws', async () => {
       const createdHandler = eventSubscribers.get('session.created')?.[0];
       await createdHandler!({ session: { id: 'fall-session', title: 'Fall' } });
-      (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(null);
+      (mockSessionManager.getSessionForControl as ReturnType<typeof mock>).mockResolvedValue(null);
 
       await service.broadcastSessionStateChange('fall-session');
 
@@ -374,7 +375,7 @@ describe('StateProjectionService', () => {
         getContextInfo: mock(() => null),
         getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
       };
-      (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+      (mockSessionManager.getSessionForControl as ReturnType<typeof mock>).mockResolvedValue(
         mockAgentSession
       );
 
@@ -405,7 +406,7 @@ describe('StateProjectionService', () => {
           getProcessingState: mock(() => ({ status: 'idle' })),
           getSlashCommands: mock(async () => []),
         };
-        (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+        (mockSessionManager.getSessionForControl as ReturnType<typeof mock>).mockResolvedValue(
           mockAgentSession
         );
 
@@ -434,7 +435,7 @@ describe('StateProjectionService', () => {
           getProcessingState: mock(() => ({ status: 'idle' })),
           getSlashCommands: mock(async () => []),
         };
-        (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+        (mockSessionManager.getSessionForControl as ReturnType<typeof mock>).mockResolvedValue(
           mockAgentSession
         );
 
@@ -491,7 +492,7 @@ describe('StateProjectionService', () => {
           getProcessingState: mock(() => ({ status: 'idle' })),
           getSlashCommands: mock(async () => ['old-cmd']),
         };
-        (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+        (mockSessionManager.getSessionForControl as ReturnType<typeof mock>).mockResolvedValue(
           mockAgentSession
         );
 
@@ -514,7 +515,7 @@ describe('StateProjectionService', () => {
           getProcessingState: mock(() => ({ status: 'idle' })),
           getSlashCommands: mock(async () => []),
         };
-        (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+        (mockSessionManager.getSessionForControl as ReturnType<typeof mock>).mockResolvedValue(
           mockAgentSession
         );
 
@@ -540,7 +541,7 @@ describe('StateProjectionService', () => {
           getProcessingState: mock(() => ({ status: 'idle' })),
           getSlashCommands: mock(async () => []),
         };
-        (mockSessionManager.getSessionAsync as ReturnType<typeof mock>).mockResolvedValue(
+        (mockSessionManager.getSessionForControl as ReturnType<typeof mock>).mockResolvedValue(
           mockAgentSession
         );
 

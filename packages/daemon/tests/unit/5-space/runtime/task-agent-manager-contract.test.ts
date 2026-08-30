@@ -171,7 +171,7 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
       await fixture.manager.rehydrate();
 
       expect(fixture.restoreMock).toHaveBeenCalledTimes(1);
-      expect(fixture.restoreMock).toHaveBeenCalledWith(SUB_SESSION_ID);
+      expect(fixture.restoreMock).toHaveBeenCalledWith(SUB_SESSION_ID, undefined, {});
     });
   });
 });

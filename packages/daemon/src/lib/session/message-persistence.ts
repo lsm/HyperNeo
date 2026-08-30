@@ -20,6 +20,7 @@ import {
 import { expandBuiltInCommand } from '../built-in-commands.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
+import type { AgentSession } from '../agent/agent-session.ts';
 import {
   type PreprocessedMessage,
   ReferenceResolver,
@@ -61,7 +62,8 @@ export class MessagePersistence {
     private db: Database,
     private messageHub: MessageHub,
     private internalEventBus: InternalEventBus<DaemonInternalEventMap>,
-    private referenceResolver?: ReferenceResolver
+    private referenceResolver?: ReferenceResolver,
+    private resolveSession?: (sessionId: string) => Promise<AgentSession | null>
   ) {
     this.logger = new Logger('MessagePersistence');
   }
@@ -120,6 +122,9 @@ export class MessagePersistence {
         `[MessagePersistence] Session ${sessionId} is archived; cannot accept new messages.`
       );
     }
+    if (images && images.length > 0) {
+      validateImageSizes(images);
+    }
 
     const preSendDraft = persistedSession?.metadata?.inputDraft ?? '';
     const preSendPending = persistedSession?.metadata?.inputDraftVoicePending ?? '';
@@ -129,7 +134,9 @@ export class MessagePersistence {
     const compositionAtSend =
       preSendComposed !== null && content.trim().includes(preSendComposed.trim());
 
-    const agentSession = await this.sessionCache.getAsync(sessionId);
+    const agentSession = this.resolveSession
+      ? await this.resolveSession(sessionId)
+      : await this.sessionCache.getAsync(sessionId);
     if (!agentSession) {
       const error = `[MessagePersistence] Session ${sessionId} not found for message persistence`;
       this.logger.error(error);
@@ -139,10 +146,6 @@ export class MessagePersistence {
     const session = agentSession.getSessionData();
 
     try {
-      if (images && images.length > 0) {
-        validateImageSizes(images);
-      }
-
       const expandedContent = expandBuiltInCommand(content);
       const finalContent = expandedContent || content;
 

@@ -37,6 +37,7 @@ function createMockMessageHub(): {
 
 function createMockAgentSession(overrides?: Partial<AgentSession>): AgentSession {
   return {
+    getSessionData: () => ({ id: 'session-123', config: {} }),
     handleQuestionResponse: mock(async () => {}),
     updateQuestionDraft: mock(async () => {}),
     handleQuestionCancel: mock(async () => {}),
@@ -47,6 +48,7 @@ function createMockAgentSession(overrides?: Partial<AgentSession>): AgentSession
 function createMockSessionManager(session: AgentSession | null = null): SessionManager {
   return {
     getSessionAsync: mock(async () => session),
+    getSessionForControl: mock(async () => session),
   } as unknown as SessionManager;
 }
 
@@ -136,7 +138,7 @@ describe('question handlers — session routing', () => {
       expect(sessionManager.getSessionAsync).not.toHaveBeenCalled();
     });
 
-    it('falls back to SessionManager when session not in runtime pool', async () => {
+    it('falls back to the control lookup when session not in runtime pool', async () => {
       const sessionManagerSession = createMockAgentSession();
       const sessionManager = createMockSessionManager(sessionManagerSession);
 
@@ -146,7 +148,8 @@ describe('question handlers — session routing', () => {
       const draftResponses = [{ questionId: 'q2', value: 'draft-value' }];
       await handler({ sessionId: 'lobby-session-2', draftResponses });
 
-      expect(sessionManager.getSessionAsync).toHaveBeenCalledWith('lobby-session-2');
+      expect(sessionManager.getSessionForControl).toHaveBeenCalledWith('lobby-session-2');
+      expect(sessionManager.getSessionAsync).not.toHaveBeenCalled();
       expect(sessionManagerSession.updateQuestionDraft).toHaveBeenCalledWith(draftResponses);
     });
   });
@@ -179,5 +182,65 @@ describe('question handlers — session routing', () => {
       expect(sessionManager.getSessionAsync).toHaveBeenCalledWith('lobby-session-3');
       expect(sessionManagerSession.handleQuestionCancel).toHaveBeenCalledWith('tool-cancel-2');
     });
+  });
+});
+
+describe('question handlers — workflow provisioning gate', () => {
+  let mockHub: ReturnType<typeof createMockMessageHub>;
+  let daemonHub: DaemonHub;
+
+  beforeEach(() => {
+    mockHub = createMockMessageHub();
+    daemonHub = createMockDaemonHub();
+  });
+
+  it('rejects question.respond when workflow provisioning was skipped', async () => {
+    const sessionManager = createMockSessionManager({
+      getSessionData: () => ({ id: 'space:s1:task:t1:exec:e1', config: {} }),
+    } as unknown as AgentSession);
+    setupQuestionHandlers(mockHub.hub, sessionManager, daemonHub, () => undefined);
+
+    await expect(
+      mockHub.handlers.get('question.respond')!({
+        sessionId: 'space:s1:task:t1:exec:e1',
+        toolUseId: 'tool-1',
+        responses: [],
+      })
+    ).rejects.toThrow('not resumable');
+  });
+
+  it('rejects question.cancel when workflow provisioning was skipped', async () => {
+    const sessionManager = createMockSessionManager({
+      getSessionData: () => ({ id: 'space:s1:task:t1:exec:e1', config: {} }),
+    } as unknown as AgentSession);
+    setupQuestionHandlers(mockHub.hub, sessionManager, daemonHub, () => undefined);
+
+    await expect(
+      mockHub.handlers.get('question.cancel')!({
+        sessionId: 'space:s1:task:t1:exec:e1',
+        toolUseId: 'tool-1',
+      })
+    ).rejects.toThrow('not resumable');
+  });
+
+  it('allows question.respond for a provisioned workflow session', async () => {
+    const handleQuestionResponse = mock(async () => {});
+    const sessionManager = createMockSessionManager({
+      getSessionData: () => ({
+        id: 'space:s1:task:t1:exec:e1',
+        config: { mcpServers: { 'node-agent': { type: 'sdk' } } },
+      }),
+      handleQuestionResponse,
+    } as unknown as AgentSession);
+    setupQuestionHandlers(mockHub.hub, sessionManager, daemonHub, () => undefined);
+
+    const result = (await mockHub.handlers.get('question.respond')!({
+      sessionId: 'space:s1:task:t1:exec:e1',
+      toolUseId: 'tool-1',
+      responses: [],
+    })) as { success: boolean };
+
+    expect(result).toEqual({ success: true });
+    expect(handleQuestionResponse).toHaveBeenCalledWith('tool-1', []);
   });
 });

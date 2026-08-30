@@ -123,7 +123,7 @@ export function createWebSocketHandlers(
         }
 
         if (data.sessionId !== GLOBAL_SESSION_ID) {
-          const session = await sessionManager.getSessionAsync(data.sessionId);
+          const session = await sessionManager.getSessionForControl(data.sessionId);
           if (!session) {
             const errorMsg = createErrorResponseMessage({
               method: data.method || 'unknown.method',

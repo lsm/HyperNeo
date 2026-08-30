@@ -1,7 +1,19 @@
 import type { MessageHub } from '@hyperneo/shared';
+import { withSessionOperationLock } from '../agent/message-delivery.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import {
+  hasRuntimeNodeAgentServer,
+  isWorkflowSubSessionIdentity,
+} from '../session/sub-session-identity.ts';
 import type { SessionManager } from '../session-manager.ts';
 import type { RewindMode, SelectiveRewindRequest } from '@hyperneo/shared';
+
+function workflowReplayAdmitted(data: {
+  id: string;
+  config: { mcpServers?: Record<string, unknown> };
+}): boolean {
+  return !isWorkflowSubSessionIdentity(data.id) || hasRuntimeNodeAgentServer(data.config);
+}
 
 export function setupRewindHandlers(
   messageHub: MessageHub,
@@ -11,7 +23,7 @@ export function setupRewindHandlers(
   messageHub.onRequest('rewind.checkpoints', async (data) => {
     const { sessionId } = data as { sessionId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(sessionId);
+    const agentSession = await sessionManager.getSessionForControl(sessionId);
     if (!agentSession) {
       return {
         rewindPoints: [],
@@ -26,7 +38,9 @@ export function setupRewindHandlers(
   messageHub.onRequest('rewind.preview', async (data) => {
     const { sessionId, checkpointId } = data as { sessionId: string; checkpointId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(sessionId);
+    const agentSession = await sessionManager.getSessionAsync(sessionId, {
+      replayPendingMessages: false,
+    });
     if (!agentSession) {
       return {
         preview: {
@@ -51,7 +65,9 @@ export function setupRewindHandlers(
       mode?: RewindMode;
     };
 
-    const agentSession = await sessionManager.getSessionAsync(sessionId);
+    const agentSession = await sessionManager.getSessionAsync(sessionId, {
+      replayPendingMessages: false,
+    });
     if (!agentSession) {
       return {
         result: {
@@ -61,30 +77,38 @@ export function setupRewindHandlers(
       };
     }
 
-    const result = await agentSession.executeRewind(checkpointId, mode);
+    const result = await withSessionOperationLock(sessionId, () =>
+      agentSession.executeRewind(checkpointId, mode)
+    );
+    const rewindData = agentSession.getSessionData();
+    if (workflowReplayAdmitted(rewindData) && rewindData.config.queryMode !== 'manual') {
+      await agentSession.replayPendingMessagesForImmediateMode();
+    }
     return { result };
   });
 
   messageHub.onRequest('rewind.previewSelective', async (data) => {
     const { sessionId, messageIds } = data as SelectiveRewindRequest;
 
-    const agentSession = await sessionManager.getSessionAsync(sessionId);
-    if (!agentSession) {
+    if (messageIds.length === 0) {
       return {
         preview: {
           canRewind: false,
-          error: 'Session not found',
+          error: 'No messages selected',
           messagesToDelete: 0,
           filesToRevert: [],
         },
       };
     }
 
-    if (messageIds.length === 0) {
+    const agentSession = await sessionManager.getSessionAsync(sessionId, {
+      replayPendingMessages: false,
+    });
+    if (!agentSession) {
       return {
         preview: {
           canRewind: false,
-          error: 'No messages selected',
+          error: 'Session not found',
           messagesToDelete: 0,
           filesToRevert: [],
         },
@@ -102,18 +126,6 @@ export function setupRewindHandlers(
       mode = 'both',
     } = data as SelectiveRewindRequest & { mode?: RewindMode };
 
-    const agentSession = await sessionManager.getSessionAsync(sessionId);
-    if (!agentSession) {
-      return {
-        result: {
-          success: false,
-          error: 'Session not found',
-          messagesDeleted: 0,
-          filesReverted: [],
-        },
-      };
-    }
-
     if (messageIds.length === 0) {
       return {
         result: {
@@ -125,7 +137,27 @@ export function setupRewindHandlers(
       };
     }
 
-    const result = await agentSession.executeSelectiveRewind(messageIds, mode);
+    const agentSession = await sessionManager.getSessionAsync(sessionId, {
+      replayPendingMessages: false,
+    });
+    if (!agentSession) {
+      return {
+        result: {
+          success: false,
+          error: 'Session not found',
+          messagesDeleted: 0,
+          filesReverted: [],
+        },
+      };
+    }
+
+    const result = await withSessionOperationLock(sessionId, () =>
+      agentSession.executeSelectiveRewind(messageIds, mode)
+    );
+    const rewindData = agentSession.getSessionData();
+    if (workflowReplayAdmitted(rewindData) && rewindData.config.queryMode !== 'manual') {
+      await agentSession.replayPendingMessagesForImmediateMode();
+    }
     return { result };
   });
 }

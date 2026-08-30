@@ -1,8 +1,8 @@
-import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
-import { MessageHub, type Session } from '@hyperneo/shared';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { MessageHub, Session } from '@hyperneo/shared';
+import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { setupConfigHandlers } from '../../../../src/lib/rpc-handlers/config-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -82,6 +82,7 @@ function createMockAgentSession(configOverrides: Partial<Session['config']> = {}
     setPermissionMode: ReturnType<typeof mock>;
     updateConfig: ReturnType<typeof mock>;
     updateUserMcpServers: ReturnType<typeof mock>;
+    isQueryActiveOrStarting: ReturnType<typeof mock>;
     resetQuery: ReturnType<typeof mock>;
     getMcpServerStatus: ReturnType<typeof mock>;
   };
@@ -95,6 +96,7 @@ function createMockAgentSession(configOverrides: Partial<Session['config']> = {}
     setPermissionMode: mock(async () => ({ success: true })),
     updateConfig: mock(async () => {}),
     updateUserMcpServers: mock(async () => {}),
+    isQueryActiveOrStarting: mock(() => true),
     resetQuery: mock(async () => ({ success: true })),
     getMcpServerStatus: mock(async () => ({})),
   };
@@ -116,6 +118,7 @@ function createMockSessionManager(): {
 
   const sessionManager = {
     getSessionAsync: getSessionAsyncMock,
+    getSessionForControl: getSessionAsyncMock,
   } as unknown as SessionManager;
 
   return { sessionManager, getSessionAsyncMock };
@@ -307,6 +310,86 @@ describe('SDK Config RPC Handlers', () => {
       );
 
       expect(result).toEqual({ success: true, applied: true });
+    });
+
+    it('starts a dormant session through the barrier instead of a no-op restart', async () => {
+      const handler = messageHubData.handlers.get('config.systemPrompt.update');
+      expect(handler).toBeDefined();
+
+      const { agentSession, mocks } = createMockAgentSession();
+      mocks.isQueryActiveOrStarting.mockReturnValue(false);
+      sessionManagerData.getSessionAsyncMock.mockResolvedValue(agentSession);
+      sessionManagerData.getSessionAsyncMock.mockClear();
+
+      const result = await handler!(
+        {
+          sessionId: 'session-123',
+          systemPrompt: 'New prompt',
+          restartQuery: true,
+        },
+        {}
+      );
+
+      expect(result).toEqual({ success: true, applied: true });
+      expect(mocks.resetQuery).toHaveBeenCalledWith({ restartQuery: true });
+      expect(sessionManagerData.getSessionAsyncMock).toHaveBeenCalledWith('session-123', {
+        startQuery: false,
+      });
+    });
+
+    it('reports restart failure when workflow provisioning is skipped for a dormant worker', async () => {
+      const handler = messageHubData.handlers.get('config.systemPrompt.update');
+      expect(handler).toBeDefined();
+
+      const { agentSession, mocks } = createMockAgentSession();
+      mocks.isQueryActiveOrStarting.mockReturnValueOnce(false);
+      const workerData = { id: 'space:s1:task:t1:exec:e1', config: {}, status: 'active' };
+      const workerSession = {
+        ...mocks,
+        getSessionData: () => workerData,
+      } as unknown as AgentSession;
+      sessionManagerData.getSessionAsyncMock.mockResolvedValue(workerSession);
+
+      const result = (await handler!(
+        {
+          sessionId: 'space:s1:task:t1:exec:e1',
+          systemPrompt: 'New prompt',
+          restartQuery: true,
+        },
+        {}
+      )) as { success: boolean; applied: boolean; error?: string };
+
+      expect(result.success).toBe(false);
+      expect(result.applied).toBe(false);
+      expect(result.error).toContain('not resumable');
+    });
+
+    it('reapplies the updated config when the cache-current session was replaced', async () => {
+      const handler = messageHubData.handlers.get('config.systemPrompt.update');
+      expect(handler).toBeDefined();
+
+      const { agentSession, mocks } = createMockAgentSession();
+      mocks.isQueryActiveOrStarting.mockReturnValueOnce(false);
+      const reapply = mock(async () => {});
+      const replacement = {
+        ...createMockAgentSession().mocks,
+        isQueryActiveOrStarting: () => true,
+        getSessionData: () => ({ id: 'session-123', config: {} }),
+        updateConfig: reapply,
+      } as unknown as AgentSession;
+      (
+        sessionManagerData.sessionManager as unknown as Record<string, unknown>
+      ).getSessionForControl = mock(async () => agentSession);
+      sessionManagerData.getSessionAsyncMock.mockResolvedValue(replacement);
+      sessionManagerData.getSessionAsyncMock.mockClear();
+
+      await handler!(
+        { sessionId: 'session-123', systemPrompt: 'New prompt', restartQuery: true },
+        {}
+      );
+
+      expect(reapply).toHaveBeenCalledTimes(1);
+      expect(reapply).toHaveBeenCalledWith({ systemPrompt: 'New prompt' });
     });
 
     it('handles restart failure', async () => {

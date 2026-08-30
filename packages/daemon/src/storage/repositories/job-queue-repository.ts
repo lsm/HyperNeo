@@ -393,6 +393,38 @@ export class JobQueueRepository {
     );
   }
 
+  rescheduleSessionDeliveries(sessionId: string, runAt: number): boolean {
+    const result = withBusyRetry(() =>
+      this.db
+        .prepare(
+          `UPDATE job_queue
+              SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL,
+                  payload = json_remove(payload, '$.__claimToken', '$.__parkCount')
+            WHERE queue = 'message_delivery'
+              AND json_extract(payload, '$.sessionId') = ?
+              AND status IN ('pending', 'processing')`
+        )
+        .run(runAt, sessionId)
+    );
+    return result.changes > 0;
+  }
+
+  rescheduleDelivery(sessionId: string, messageUuid: string, runAt: number): boolean {
+    const result = withBusyRetry(() =>
+      this.db
+        .prepare(
+          `UPDATE job_queue
+              SET status = 'pending', run_at = ?, started_at = NULL, heartbeat_at = NULL
+            WHERE queue = 'message_delivery'
+              AND json_extract(payload, '$.sessionId') = ?
+              AND json_extract(payload, '$.messageUuid') = ?
+              AND status IN ('pending', 'processing')`
+        )
+        .run(runAt, sessionId, messageUuid)
+    );
+    return result.changes > 0;
+  }
+
   cancelDelivery(sessionId: string, messageUuid: string): boolean {
     const result = withBusyRetry(() =>
       this.db
@@ -652,6 +684,21 @@ export class JobQueueRepository {
       )
       .get(sessionId) as { 1: number } | undefined | null;
     return row != null;
+  }
+
+  getActiveTurnDeliveryMessageUuid(sessionId: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT json_extract(payload, '$.messageUuid') AS uuid
+           FROM job_queue
+          WHERE queue = 'message_delivery'
+            AND json_extract(payload, '$.sessionId') = ?
+            AND json_extract(payload, '$.role') = 'turn'
+            AND status IN ('pending', 'processing')
+          LIMIT 1`
+      )
+      .get(sessionId) as { uuid: string | null } | undefined | null;
+    return row?.uuid ?? null;
   }
 
   activeDeliveryMessageUuids(sessionId: string): Set<string> {

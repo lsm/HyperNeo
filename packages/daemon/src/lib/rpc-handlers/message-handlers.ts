@@ -1,17 +1,15 @@
-import type { MessageHub, ChatMessage } from '@hyperneo/shared';
+import type { ChatMessage, MessageHub } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
+  type ContentBlock,
   isSDKAssistantMessage,
+  isSDKResultMessage,
   isSDKUserMessage,
   isSDKUserMessageReplay,
-  isSDKResultMessage,
   isTextBlock,
-  isToolUseBlock,
   isThinkingBlock,
-  type ContentBlock,
+  isToolUseBlock,
 } from '@hyperneo/shared/sdk';
-import type { SessionManager } from '../session-manager.ts';
-import { removeToolResultFromSessionFile } from '../sdk-session-file-manager.ts';
 import type { Database } from '../../storage/database.ts';
 import {
   MESSAGE_SEARCH_MIN_TERM_LENGTH,
@@ -19,6 +17,8 @@ import {
 } from '../../storage/message-search.ts';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import { MessageSearchWorkerService } from '../message-search-worker-service.ts';
+import { removeToolResultFromSessionFile } from '../sdk-session-file-manager.ts';
+import type { SessionManager } from '../session-manager.ts';
 
 export function setupMessageHandlers(
   messageHub: MessageHub,
@@ -130,7 +130,7 @@ export function setupMessageHandlers(
       sinceRowid?: number;
     };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
 
     if (!agentSession) {
       if (targetSessionId.startsWith('conv:') && db) {
@@ -169,7 +169,7 @@ export function setupMessageHandlers(
   messageHub.onRequest('message.count', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
 
     if (!agentSession) {
       if (targetSessionId.startsWith('conv:') && db) {
@@ -190,7 +190,7 @@ export function setupMessageHandlers(
       format?: 'markdown' | 'json';
     };
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
 
     if (!agentSession) {
       throw new Error('Session not found');

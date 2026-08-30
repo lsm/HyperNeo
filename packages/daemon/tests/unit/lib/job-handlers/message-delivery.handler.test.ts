@@ -137,6 +137,42 @@ describe('createMessageDeliveryHandler', () => {
       expect(getMessageContent).not.toHaveBeenCalled();
     });
 
+    it('parks the job until a restored cooldown expires instead of driving the turn', async () => {
+      const retryAt = Date.now() + 60_000;
+      const { handler, session, jobQueue, getMessageContent, job } = makeHarness({
+        getSessionCooldownRetryAt: () => retryAt,
+      });
+      const result = await handler(job, {});
+      expect(result).toEqual({ parked: 'rate_limit_cooldown', retryAt });
+      expect(jobQueue.requeueParked).toHaveBeenCalledWith('job-1', retryAt, 'claim-1');
+      expect(session.driveCalls).toBe(0);
+      expect(getMessageContent).not.toHaveBeenCalled();
+    });
+
+    it('returns stale_attempt when the claim expires before parking for a cooldown', async () => {
+      const { handler, jobQueue, job } = makeHarness({
+        getSessionCooldownRetryAt: () => Date.now() + 60_000,
+      });
+      let claimChecks = 0;
+      jobQueue.isClaimCurrent.mockImplementation(() => {
+        claimChecks++;
+        return claimChecks === 1;
+      });
+      const result = await handler(job, {});
+      expect(result).toEqual({ outcome: 'stale_attempt' });
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+    });
+
+    it('proceeds to drive the turn when no restored cooldown is reported', async () => {
+      const { handler, session, jobQueue, job } = makeHarness({
+        getSessionCooldownRetryAt: () => null,
+      });
+      const result = await handler(job, {});
+      expect(result).toEqual({ outcome: 'completed' });
+      expect(jobQueue.requeueParked).not.toHaveBeenCalled();
+      expect(session.driveCalls).toBe(1);
+    });
+
     it('re-checks the claim after content loads before driving a turn', async () => {
       const { handler, session, jobQueue, getMessageContent, job } = makeHarness();
       let claimChecks = 0;
