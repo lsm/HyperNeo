@@ -128,8 +128,6 @@ describe('delivery admission boundary (MDR 3/N)', () => {
         saveUserMessage(repo, sessionId, messageUuid, 'enqueued', content);
         stubLifecycleManager(agentSession, 'started');
         armNeverResolvingQuery(agentSession);
-        agentSession.messageQueue.start();
-        const generator = agentSession.messageQueue.messageGenerator(sessionId);
 
         const turnPromise = agentSession.driveDeliveryTurn(
           messageUuid,
@@ -138,13 +136,9 @@ describe('delivery admission boundary (MDR 3/N)', () => {
           false,
           () => true
         );
-        const yielded = await generator.next();
-        if (!yielded.value) throw new Error('message not yielded');
-
         await expect(turnPromise).rejects.toBeInstanceOf(MessageDeliveryRecoverableTurnError);
         await expect(turnPromise).rejects.toThrow('Delivery not consumed within timeout');
         expect(repo.getDeliveryContent(sessionId, messageUuid)?.sendStatus).toBe('enqueued');
-        await generator.return?.(undefined);
       } finally {
         if (previousTimeout === undefined) {
           delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
@@ -167,7 +161,9 @@ describe('delivery admission boundary (MDR 3/N)', () => {
         stubLifecycleManager(agentSession, 'started');
         armNeverResolvingQuery(agentSession);
         agentSession.messageQueue.start();
-        const generator = agentSession.messageQueue.messageGenerator(sessionId);
+        const generator = agentSession.messageQueue.messageGenerator(sessionId, {
+          suppressPreYieldCallback: true,
+        });
 
         const turnPromise = agentSession.driveDeliveryTurn(
           messageUuid,
