@@ -495,7 +495,9 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
             `SELECT id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp DESC, rowid DESC LIMIT 1`
           )
           .get(sessionId) as { id: string };
-        db.prepare(`UPDATE sdk_messages SET send_status = 'enqueued' WHERE id = ?`).run(row.id);
+        db.prepare(
+          `UPDATE sdk_messages SET send_status = 'consumed', timestamp = ? WHERE id = ?`
+        ).run(new Date(Date.now() - 30 * 60_000).toISOString(), row.id);
         return row.id;
       },
     });
@@ -852,6 +854,86 @@ describe('SpaceRuntime — prompt-too-long recovery', () => {
 
     expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
     expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+  });
+
+  test('keeps waiting when the /compact prompt stays parked instead of timing out', async () => {
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, sdkMessageRepo, db, {
+      inject: async (sessionId, message) => {
+        injections.push({ sessionId, message });
+        sdkMessageRepo.saveSDKMessage(sessionId, {
+          type: 'user',
+          message: { role: 'user', content: message },
+        } as never);
+        const row = db
+          .prepare(
+            `SELECT id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp DESC, rowid DESC LIMIT 1`
+          )
+          .get(sessionId) as { id: string };
+        db.prepare(`UPDATE sdk_messages SET send_status = 'enqueued' WHERE id = ?`).run(row.id);
+        return row.id;
+      },
+    });
+    const rt = new SpaceRuntime(buildConfig(tam));
+    const sessionId = 'session:parked-compact';
+    const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
+
+    await rt.executeTick();
+    expect(injections.map((i) => i.message)).toEqual(['/compact']);
+
+    const states = (
+      rt as unknown as {
+        promptTooLongRecovery: Map<string, { awaitingContinueSince: number | null }>;
+      }
+    ).promptTooLongRecovery;
+    const state = states.get(`${run.id}:${execution.id}`);
+    state!.awaitingContinueSince = Date.now() - (COMPACT_RESULT_TIMEOUT_MS + 1000);
+
+    await rt.executeTick();
+
+    expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('idle');
+    expect(injections.filter((i) => i.message === '/compact')).toHaveLength(1);
+  });
+
+  test('requeues the compact when the /compact prompt dead-letters without being consumed', async () => {
+    const injections: Array<{ sessionId: string; message: string }> = [];
+    const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, sdkMessageRepo, db, {
+      inject: async (sessionId, message) => {
+        injections.push({ sessionId, message });
+        sdkMessageRepo.saveSDKMessage(sessionId, {
+          type: 'user',
+          message: { role: 'user', content: message },
+        } as never);
+        const row = db
+          .prepare(
+            `SELECT id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp DESC, rowid DESC LIMIT 1`
+          )
+          .get(sessionId) as { id: string };
+        db.prepare(
+          `UPDATE sdk_messages SET send_status = 'failed', timestamp = ? WHERE id = ?`
+        ).run(new Date(Date.now() - 30 * 60_000).toISOString(), row.id);
+        return row.id;
+      },
+    });
+    const rt = new SpaceRuntime(buildConfig(tam));
+    const sessionId = 'session:dead-compact';
+    const { run, execution } = await setupIdleOverflowExecution(rt, sessionId, true);
+
+    await rt.executeTick();
+
+    const states = (
+      rt as unknown as {
+        promptTooLongRecovery: Map<string, { awaitingContinueSince: number | null }>;
+      }
+    ).promptTooLongRecovery;
+    const state = states.get(`${run.id}:${execution.id}`);
+    state!.awaitingContinueSince = Date.now() - (COMPACT_RESULT_TIMEOUT_MS + 1000);
+
+    await rt.executeTick();
+    await rt.executeTick();
+
+    expect(injections.filter((i) => i.message === '/compact')).toHaveLength(2);
+    expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('idle');
   });
 
   test('retries then escalates when the resume nag cannot be delivered', async () => {

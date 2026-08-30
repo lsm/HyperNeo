@@ -351,7 +351,9 @@ describe('prompt-too-long replay — recovery escalation: reason & final visible
           `SELECT id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp DESC, rowid DESC LIMIT 1`
         )
         .get(sessionId) as { id: string };
-      db.prepare(`UPDATE sdk_messages SET send_status = 'enqueued' WHERE id = ?`).run(row.id);
+      db.prepare(
+        `UPDATE sdk_messages SET send_status = 'consumed', timestamp = ? WHERE id = ?`
+      ).run(new Date(Date.now() - 30 * 60_000).toISOString(), row.id);
       return row.id;
     };
     return {
@@ -578,7 +580,9 @@ describe('prompt-too-long replay — terminal-error row deferral', () => {
           `SELECT id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp DESC, rowid DESC LIMIT 1`
         )
         .get(sessionId) as { id: string };
-      db.prepare(`UPDATE sdk_messages SET send_status = 'enqueued' WHERE id = ?`).run(row.id);
+      db.prepare(
+        `UPDATE sdk_messages SET send_status = 'consumed', timestamp = ? WHERE id = ?`
+      ).run(new Date(Date.now() - 30 * 60_000).toISOString(), row.id);
       return row.id;
     };
     const tam = {

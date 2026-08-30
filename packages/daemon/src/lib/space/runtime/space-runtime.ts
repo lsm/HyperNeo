@@ -5408,6 +5408,7 @@ export class SpaceRuntime {
       state.awaitingContinue = false;
       state.awaitingContinueAfterDbId = null;
       state.awaitingContinueSince = null;
+      state.awaitingContinueMessageId = null;
       if (lastMessageIsSuccessResult) {
         state.continueNagPending = true;
         state.awaitingResumeAfterDbId = lastMessageDbId;
@@ -5424,6 +5425,7 @@ export class SpaceRuntime {
         state.awaitingResume = false;
         state.awaitingResumeAfterDbId = null;
         state.awaitingResumeSince = null;
+        state.awaitingResumeMessageId = null;
         state.awaitingResumeLastProgressDbId = null;
         if (lastMessageIsSuccessResult) {
           this.promptTooLongRecovery.delete(key);
@@ -5445,6 +5447,22 @@ export class SpaceRuntime {
           state.awaitingResumeSince !== null &&
           now - state.awaitingResumeSince > COMPACT_RESULT_TIMEOUT_MS
         ) {
+          const resumeDelivery = this.classifyRecoveryPromptDelivery(
+            sessionId,
+            state.awaitingResumeMessageId
+          );
+          if (resumeDelivery === 'pending') {
+            return 'handled';
+          }
+          if (resumeDelivery === 'dead') {
+            state.awaitingResume = false;
+            state.awaitingResumeAfterDbId = null;
+            state.awaitingResumeSince = null;
+            state.awaitingResumeMessageId = null;
+            state.awaitingResumeLastProgressDbId = null;
+            state.continueNagPending = true;
+            return 'handled';
+          }
           const reason = `Context-overflow recovery timed out: the resumed turn did not produce a result within ${COMPACT_RESULT_TIMEOUT_MS / 1000}s for agent ${execution.agentName}.`;
           await this.escalatePromptTooLongBlocked(
             runId,
@@ -5466,6 +5484,21 @@ export class SpaceRuntime {
       state.awaitingContinueSince !== null &&
       now - state.awaitingContinueSince > COMPACT_RESULT_TIMEOUT_MS
     ) {
+      const compactDelivery = this.classifyRecoveryPromptDelivery(
+        sessionId,
+        state.awaitingContinueMessageId
+      );
+      if (compactDelivery === 'pending') {
+        return 'handled';
+      }
+      if (compactDelivery === 'dead') {
+        state.awaitingContinue = false;
+        state.awaitingContinueAfterDbId = null;
+        state.awaitingContinueSince = null;
+        state.awaitingContinueMessageId = null;
+        state.compactRetryPending = true;
+        return 'handled';
+      }
       const reason = `Context-overflow recovery timed out: the /compact turn did not produce a result within ${COMPACT_RESULT_TIMEOUT_MS / 1000}s for agent ${execution.agentName}.`;
       await this.escalatePromptTooLongBlocked(
         runId,
@@ -5515,6 +5548,7 @@ export class SpaceRuntime {
         state.awaitingContinue = true;
         state.awaitingContinueAfterDbId = lastMessageDbId;
         state.awaitingContinueSince = now;
+        state.awaitingContinueMessageId = injectedDbId;
         log.warn(
           `SpaceRuntime: injected /compact for overflowed execution ${execution.id} ` +
             `(agent ${execution.agentName}, session ${sessionId}, attempt ${state.compactAttempts}/${MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS})`
@@ -5534,24 +5568,25 @@ export class SpaceRuntime {
     }
 
     if (state.continueNagPending) {
-      let nagDelivered = false;
+      let nagDbId: string | null = null;
       try {
-        nagDelivered =
-          !!(await manager?.injectRuntimeRecoveryMessage(
+        nagDbId =
+          (await manager?.injectRuntimeRecoveryMessage(
             sessionId!,
             buildPromptTooLongContinueNag()
-          )) && !!manager;
+          )) ?? null;
       } catch (err) {
         log.warn(
           `SpaceRuntime: failed to inject continue nag for execution ${execution.id} ` +
             `(session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
         );
       }
-      if (nagDelivered) {
+      if (nagDbId !== null) {
         state.continueNagPending = false;
         state.continueNagAttempts = 0;
         state.awaitingResume = true;
         state.awaitingResumeSince = now;
+        state.awaitingResumeMessageId = nagDbId;
         log.warn(
           `SpaceRuntime: injected continue nag after compaction for execution ${execution.id} (agent ${execution.agentName}, session ${sessionId})`
         );
@@ -6977,6 +7012,22 @@ export class SpaceRuntime {
         continue;
       }
       if (state.nudgeCount > 0) {
+        if (state.lastRuntimeNudgeMessageId !== null) {
+          const nudgeDelivery = this.classifyRecoveryPromptDelivery(
+            sessionId,
+            state.lastRuntimeNudgeMessageId
+          );
+          if (nudgeDelivery === 'dead') {
+            state.failedNudgeCount += 1;
+            state.lastNudgeAt = now;
+            state.lastRuntimeNudgeMessageId = null;
+            log.warn(
+              `Runtime nudge for idle non-terminal node ${execution.workflowNodeId} ` +
+                `dead-lettered without being consumed; will retry after the failed-nudge cooldown: ` +
+                `execution=${execution.id} agent=${execution.agentName} session=${sessionId}`
+            );
+          }
+        }
         if (state.failedNudgeCount > 0 && state.lastNudgeAt !== null) {
           const retryAfter = state.lastNudgeAt + NON_TERMINAL_IDLE_FAILED_NUDGE_RETRY_MS;
           if (now < retryAfter) {
@@ -7271,19 +7322,24 @@ export class SpaceRuntime {
     return 'none';
   }
 
+  private classifyRecoveryPromptDelivery(
+    sessionId: string | null | undefined,
+    messageId: string | null
+  ): 'consumed' | 'pending' | 'dead' {
+    if (messageId === null || !sessionId) return 'consumed';
+    const repo = this.getSdkMessageRepo();
+    if (repo.getMessageByStatusAndDbId(sessionId, 'consumed', messageId)) return 'consumed';
+    if (repo.getMessageByStatusAndDbId(sessionId, 'failed', messageId)) return 'dead';
+    for (const pending of ['enqueued', 'submitted', 'deferred'] as const) {
+      if (repo.getMessageByStatusAndDbId(sessionId, pending, messageId)) return 'pending';
+    }
+    return 'consumed';
+  }
+
   private classifyLastContinuePrompt(
     state: TerminalErrorContinueState
   ): 'consumed' | 'pending' | 'dead' {
-    if (state.lastContinueMessageId === null || state.lastSessionId === null) return 'consumed';
-    const repo = this.getSdkMessageRepo();
-    const sessionId = state.lastSessionId;
-    const dbId = state.lastContinueMessageId;
-    if (repo.getMessageByStatusAndDbId(sessionId, 'consumed', dbId)) return 'consumed';
-    if (repo.getMessageByStatusAndDbId(sessionId, 'failed', dbId)) return 'dead';
-    for (const pending of ['enqueued', 'submitted', 'deferred'] as const) {
-      if (repo.getMessageByStatusAndDbId(sessionId, pending, dbId)) return 'pending';
-    }
-    return 'consumed';
+    return this.classifyRecoveryPromptDelivery(state.lastSessionId, state.lastContinueMessageId);
   }
 
   private detectSilentStallForAttention(
