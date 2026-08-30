@@ -4,8 +4,7 @@ export interface RateLimitManualRetryDb {
   getSession(sessionId: string): { processingState?: string | null } | null | undefined;
   getJobQueueRepo?: () =>
     | {
-        getActiveDeliveryRole?: (sessionId: string, messageUuid: string) => 'turn' | 'steer' | null;
-        getActiveTurnDeliveryMessageUuid?: (sessionId: string) => string | null;
+        getActiveDeliveryMessageUuid?: (sessionId: string) => string | null;
         rescheduleDelivery?: (sessionId: string, messageUuid: string, runAt: number) => boolean;
         rescheduleSessionDeliveries?: (sessionId: string, runAt: number) => boolean;
       }
@@ -47,14 +46,8 @@ export function resolveRateLimitEpisodeDeliveryUuid(
   sessionId: string,
   episodeMessageId: string | undefined
 ): string | undefined {
-  const jobQueue = db.getJobQueueRepo?.();
-  if (episodeMessageId === undefined) {
-    return jobQueue?.getActiveTurnDeliveryMessageUuid?.(sessionId) ?? undefined;
-  }
-  if (jobQueue?.getActiveDeliveryRole?.(sessionId, episodeMessageId) === 'steer') {
-    return jobQueue?.getActiveTurnDeliveryMessageUuid?.(sessionId) ?? episodeMessageId;
-  }
-  return episodeMessageId;
+  if (episodeMessageId !== undefined) return episodeMessageId;
+  return db.getJobQueueRepo?.()?.getActiveDeliveryMessageUuid?.(sessionId) ?? undefined;
 }
 
 async function clearPersistedCooldownStage(

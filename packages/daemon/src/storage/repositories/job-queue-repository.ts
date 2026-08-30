@@ -41,7 +41,6 @@ export interface ReclaimedJobClaim {
   queue: string;
   sessionId: string | null;
   messageUuid: string | null;
-  role: string | null;
 }
 
 export interface PayloadMatch {
@@ -49,27 +48,10 @@ export interface PayloadMatch {
   equals: string;
 }
 
-export interface FencedDeliveryBatchWriteResult {
-  applied: boolean;
-  priorBatchUuids: string[] | null;
-  priorDroppedBatchUuids: string[];
-}
-
 export type DeliveryAdmissionReservation =
   | { status: 'reserved' }
   | { status: 'alreadyReserved'; reservedByClaimToken: string }
   | { status: 'staleClaim' };
-
-function parseUuidArray(value: unknown): string[] | null {
-  if (typeof value !== 'string') return null;
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!Array.isArray(parsed)) return null;
-    return parsed.filter((uuid): uuid is string => typeof uuid === 'string' && uuid.length > 0);
-  } catch {
-    return null;
-  }
-}
 
 const DELIVERY_CLAIM_FENCE_SQL = `queue = 'message_delivery'
   AND json_extract(payload, '$.sessionId') = ?
@@ -327,13 +309,6 @@ export class JobQueueRepository {
     return this.getJob(jobId);
   }
 
-  getParkCount(jobId: string): number {
-    const row = this.db
-      .prepare(`SELECT json_extract(payload, '$.__parkCount') AS c FROM job_queue WHERE id = ?`)
-      .get(jobId) as { c: number | null } | undefined;
-    return Number(row?.c ?? 0) || 0;
-  }
-
   requeueParked(jobId: string, runAt: number, claimToken?: string | null): Job | null {
     const stmt = this.db.prepare(
       `UPDATE job_queue
@@ -344,24 +319,6 @@ export class JobQueueRepository {
          AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
     );
     const res = withBusyRetry(() => stmt.run(runAt, jobId, claimToken ?? null, claimToken ?? null));
-    if (res.changes === 0) return null;
-    return this.getJob(jobId);
-  }
-
-  requeueAs(jobId: string, role: string, runAt: number, claimToken?: string | null): Job | null {
-    const stmt = this.db.prepare(
-      `UPDATE job_queue
-         SET status = 'pending',
-             payload = json_set(payload, '$.role', ?),
-             run_at = ?,
-             started_at = NULL,
-             heartbeat_at = NULL
-       WHERE id = ? AND status = 'processing'
-         AND (? IS NULL OR json_extract(payload, '$.__claimToken') = ?)`
-    );
-    const res = withBusyRetry(() =>
-      stmt.run(role, runAt, jobId, claimToken ?? null, claimToken ?? null)
-    );
     if (res.changes === 0) return null;
     return this.getJob(jobId);
   }
@@ -446,27 +403,6 @@ export class JobQueueRepository {
                   AND status IN ('pending', 'processing')`
           )
           .all(queue, sessionId) as Array<{ message_uuid: string | null }>;
-        const batchRows = this.db
-          .prepare(
-            `SELECT je.value AS message_uuid
-                 FROM job_queue, json_each(
-                      CASE WHEN json_type(payload, '$.batchUuids') = 'array'
-                           THEN json_extract(payload, '$.batchUuids') ELSE '[]' END
-                    ) AS je
-                WHERE queue = ?
-                  AND json_extract(payload, '$.sessionId') = ?
-                  AND status IN ('pending', 'processing')
-                UNION
-                SELECT jd.value AS message_uuid
-                 FROM job_queue, json_each(
-                      CASE WHEN json_type(payload, '$.droppedBatchUuids') = 'array'
-                           THEN json_extract(payload, '$.droppedBatchUuids') ELSE '[]' END
-                    ) AS jd
-                WHERE queue = ?
-                  AND json_extract(payload, '$.sessionId') = ?
-                  AND status IN ('pending', 'processing')`
-          )
-          .all(queue, sessionId, queue, sessionId) as Array<{ message_uuid: string | null }>;
         this.db
           .prepare(
             `DELETE FROM job_queue
@@ -475,7 +411,7 @@ export class JobQueueRepository {
                   AND status IN ('pending', 'processing')`
           )
           .run(queue, sessionId);
-        return [...rows, ...batchRows].flatMap((row) =>
+        return rows.flatMap((row) =>
           typeof row.message_uuid === 'string' ? [row.message_uuid] : []
         );
       }, 'immediate')()
@@ -529,28 +465,19 @@ export class JobQueueRepository {
     return result.changes > 0;
   }
 
-  getActiveDeliveryRole(sessionId: string, messageUuid: string): 'turn' | 'steer' | null {
+  hasActiveDeliveryJob(sessionId: string, messageUuid: string): boolean {
     const row = this.db
       .prepare(
-        `SELECT json_extract(payload, '$.role') AS role
+        `SELECT 1
            FROM job_queue
           WHERE queue = 'message_delivery'
             AND json_extract(payload, '$.sessionId') = ?
+            AND json_extract(payload, '$.messageUuid') = ?
             AND status IN ('pending', 'processing')
-            AND (
-              json_extract(payload, '$.messageUuid') = ?
-              OR EXISTS (
-                SELECT 1 FROM json_each(
-                  CASE WHEN json_type(payload, '$.batchUuids') = 'array'
-                       THEN json_extract(payload, '$.batchUuids') ELSE '[]' END
-                ) AS je WHERE je.value = ?
-              )
-            )
           LIMIT 1`
       )
-      .get(sessionId, messageUuid, messageUuid) as { role: string | null } | undefined;
-    const role = row?.role;
-    return role === 'turn' || role === 'steer' ? role : null;
+      .get(sessionId, messageUuid) as { 1: number } | undefined | null;
+    return row != null;
   }
 
   getActiveDeliveryBatchUuids(sessionId: string, kickoffUuid: string): string[] | null {
@@ -575,85 +502,6 @@ export class JobQueueRepository {
     } catch {
       return null;
     }
-  }
-
-  narrowActiveDeliveryBatchUuids(
-    sessionId: string,
-    kickoffUuid: string,
-    admitted: string[]
-  ): boolean {
-    const current = this.getActiveDeliveryBatchUuids(sessionId, kickoffUuid);
-    if (!current) return false;
-    const admittedSet = new Set(admitted);
-    const dropped = current.filter((uuid) => !admittedSet.has(uuid));
-    const settleableDropped =
-      dropped.length > 0 ? this.settleableBatchMembers(sessionId, dropped) : [];
-    const res = withBusyRetry(() =>
-      this.db
-        .prepare(
-          `UPDATE job_queue
-              SET payload = json_set(
-                    json_set(payload, '$.batchUuids', json(?)),
-                    '$.droppedBatchUuids', json(?)
-                  )
-            WHERE queue = 'message_delivery'
-              AND json_extract(payload, '$.sessionId') = ?
-              AND json_extract(payload, '$.messageUuid') = ?
-              AND status IN ('pending', 'processing')`
-        )
-        .run(JSON.stringify(admitted), JSON.stringify(settleableDropped), sessionId, kickoffUuid)
-    );
-    return res.changes > 0;
-  }
-
-  updateDeliveryBatchUuidsFenced(args: {
-    sessionId: string;
-    kickoffUuid: string;
-    claimToken: string;
-    expectedBatchUuids: string[];
-    batchUuids: string[];
-    droppedBatchUuids?: string[];
-  }): FencedDeliveryBatchWriteResult {
-    const prior = this.db
-      .prepare(
-        `SELECT json_extract(payload, '$.batchUuids') AS batch,
-                json_extract(payload, '$.droppedBatchUuids') AS dropped
-           FROM job_queue
-          WHERE ${DELIVERY_CLAIM_FENCE_SQL}`
-      )
-      .get(args.sessionId, args.kickoffUuid, args.claimToken) as
-      | { batch: string | null; dropped: string | null }
-      | undefined;
-    const priorBatchUuids = prior ? parseUuidArray(prior.batch) : null;
-    const priorDroppedBatchUuids = parseUuidArray(prior?.dropped) ?? [];
-    if (priorBatchUuids === null) {
-      return { applied: false, priorBatchUuids: null, priorDroppedBatchUuids: [] };
-    }
-    const dropped = priorBatchUuids.filter((uuid) => !args.batchUuids.includes(uuid));
-    const droppedBatchUuids =
-      args.droppedBatchUuids ??
-      (dropped.length > 0 ? this.settleableBatchMembers(args.sessionId, dropped) : []);
-    const res = withBusyRetry(() =>
-      this.db
-        .prepare(
-          `UPDATE job_queue
-              SET payload = json_set(
-                    json_set(payload, '$.batchUuids', json(?)),
-                    '$.droppedBatchUuids', json(?)
-                  )
-            WHERE ${DELIVERY_CLAIM_FENCE_SQL}
-              AND json_extract(payload, '$.batchUuids') = json(?)`
-        )
-        .run(
-          JSON.stringify(args.batchUuids),
-          JSON.stringify(droppedBatchUuids),
-          args.sessionId,
-          args.kickoffUuid,
-          args.claimToken,
-          JSON.stringify(args.expectedBatchUuids)
-        )
-    );
-    return { applied: res.changes > 0, priorBatchUuids, priorDroppedBatchUuids };
   }
 
   transitionDeliverySendStatusFenced(args: {
@@ -733,18 +581,6 @@ export class JobQueueRepository {
     return { status: 'alreadyReserved', reservedByClaimToken: row.reservedBy };
   }
 
-  settleableBatchMembers(sessionId: string, uuids: string[]): string[] {
-    const placeholders = uuids.map(() => '?').join(',');
-    const rows = this.db
-      .prepare(
-        `SELECT sdk_uuid AS uuid FROM sdk_messages
-          WHERE session_id = ? AND sdk_uuid IN (${placeholders})
-            AND send_status IN ('enqueued', 'submitted')`
-      )
-      .all(sessionId, ...uuids) as Array<{ uuid: string }>;
-    return rows.map((r) => r.uuid);
-  }
-
   isProcessingDelivery(sessionId: string, messageUuid: string): boolean {
     const row = this.db
       .prepare(
@@ -760,30 +596,15 @@ export class JobQueueRepository {
     return row != null;
   }
 
-  hasActiveTurnDeliveryJob(sessionId: string): boolean {
-    const row = this.db
-      .prepare(
-        `SELECT 1
-           FROM job_queue
-          WHERE queue = 'message_delivery'
-            AND json_extract(payload, '$.sessionId') = ?
-            AND json_extract(payload, '$.role') = 'turn'
-            AND status IN ('pending', 'processing')
-          LIMIT 1`
-      )
-      .get(sessionId) as { 1: number } | undefined | null;
-    return row != null;
-  }
-
-  getActiveTurnDeliveryMessageUuid(sessionId: string): string | null {
+  getActiveDeliveryMessageUuid(sessionId: string): string | null {
     const row = this.db
       .prepare(
         `SELECT json_extract(payload, '$.messageUuid') AS uuid
            FROM job_queue
           WHERE queue = 'message_delivery'
             AND json_extract(payload, '$.sessionId') = ?
-            AND json_extract(payload, '$.role') = 'turn'
             AND status IN ('pending', 'processing')
+          ORDER BY created_at ASC, rowid ASC
           LIMIT 1`
       )
       .get(sessionId) as { uuid: string | null } | undefined | null;
@@ -802,21 +623,6 @@ export class JobQueueRepository {
       .all(sessionId) as Array<{ uuid: string | null }>;
     const out = new Set<string>();
     for (const r of rows) {
-      if (typeof r.uuid === 'string') out.add(r.uuid);
-    }
-    const batchRows = this.db
-      .prepare(
-        `SELECT je.value AS uuid
-           FROM job_queue, json_each(
-                CASE WHEN json_type(payload, '$.batchUuids') = 'array'
-                     THEN json_extract(payload, '$.batchUuids') ELSE '[]' END
-              ) AS je
-          WHERE queue = 'message_delivery'
-            AND json_extract(payload, '$.sessionId') = ?
-            AND status IN ('pending', 'processing')`
-      )
-      .all(sessionId) as Array<{ uuid: string | null }>;
-    for (const r of batchRows) {
       if (typeof r.uuid === 'string') out.add(r.uuid);
     }
     return out;
@@ -1051,8 +857,7 @@ export class JobQueueRepository {
         let candidateSql = `SELECT id, queue,
                       json_extract(payload, '$.__claimToken') AS claim_token,
                       json_extract(payload, '$.sessionId') AS session_id,
-                      json_extract(payload, '$.messageUuid') AS message_uuid,
-                      json_extract(payload, '$.role') AS role
+                      json_extract(payload, '$.messageUuid') AS message_uuid
                  FROM job_queue
                 WHERE status = 'processing' AND COALESCE(heartbeat_at, started_at) < ?`;
         const candidateParams: (string | number | null)[] = [staleBefore];
@@ -1066,7 +871,6 @@ export class JobQueueRepository {
           claim_token: string | null;
           session_id: string | null;
           message_uuid: string | null;
-          role: string | null;
         }>;
         const reclaimed: ReclaimedJobClaim[] = [];
 
@@ -1088,7 +892,6 @@ export class JobQueueRepository {
               queue: candidate.queue,
               sessionId: candidate.session_id,
               messageUuid: candidate.message_uuid,
-              role: candidate.role,
             });
           }
         }

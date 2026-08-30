@@ -176,7 +176,6 @@ export class QueryModeHandler {
       messages: flushMessages,
       activeInJobQueue:
         jobQueue?.activeDeliveryMessageUuids?.(this.ctx.session.id) ?? new Set<string>(),
-      activeTurnInJobQueue: jobQueue?.hasActiveTurnDeliveryJob?.(this.ctx.session.id) ?? false,
       slotResetsContext: this.ctx.slotResetsContext?.() ?? false,
       hasPriorContext: !!(this.ctx.session.sdkSessionId || this.ctx.session.acpSessionId),
       pendingTaskInput: options?.pendingTaskInput === true,
@@ -259,7 +258,6 @@ export class QueryModeHandler {
     });
     if (!this.ctx.stateManager) return;
     for (const entry of activated) {
-      if (entry.role !== 'turn') continue;
       try {
         await this.ctx.stateManager.setQueuedIfIdle(entry.messageUuid);
       } catch {}
@@ -277,7 +275,7 @@ export class QueryModeHandler {
     const plan = this.planFlush(flushMessages, options);
     if (plan.action === 'noop') return { clearedContext: false };
     let clearedContext = false;
-    let deliverables = plan.action === 'batch' ? plan.uuids : plan.deliver;
+    let deliverables = plan.deliver;
     let clearBoundaryOwner: ContextClearBoundaryOwner | null = null;
     try {
       if (plan.contextReset.action === 'clear_then_flush' && !options?.skipContextReset) {
@@ -287,7 +285,7 @@ export class QueryModeHandler {
           if (refreshed.action === 'noop') {
             return { clearedContext: false };
           }
-          deliverables = refreshed.action === 'batch' ? refreshed.uuids : refreshed.deliver;
+          deliverables = refreshed.deliver;
           deliverables = await this.deferTaskDeliverables(flushMessages, deliverables);
           if (deliverables.length === 0) return { clearedContext: false };
         } else {
@@ -301,7 +299,7 @@ export class QueryModeHandler {
             if (refreshed.action === 'noop') {
               return { clearedContext };
             }
-            deliverables = refreshed.action === 'batch' ? refreshed.uuids : refreshed.deliver;
+            deliverables = refreshed.deliver;
             if (
               refreshed.contextReset.action === 'flush_without_clear' &&
               refreshed.contextReset.reason === 'active_delivery_job'

@@ -4,7 +4,6 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { DeadLetterImmediatelyError } from '../../storage/job-queue-processor.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
-import { planDeliveryRoleArbitration } from './delivery-turn-routing.ts';
 
 export async function drainDeliveryWaitersOnTerminalSDKMessage(
   stateManager: { setIdle(): Promise<void> },
@@ -17,8 +16,6 @@ export async function drainDeliveryWaitersOnTerminalSDKMessage(
   }
 }
 
-export type MessageDeliveryRole = 'turn' | 'steer';
-
 export type MessageDeliveryOrigin =
   | 'chat'
   | 'space_inject'
@@ -29,21 +26,15 @@ export type MessageDeliveryOrigin =
 export type MessageDeliveryPayload = {
   sessionId: string;
   messageUuid: string;
-  role: MessageDeliveryRole;
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
-  batchUuids?: string[];
+  released?: boolean;
 };
 
 export const MESSAGE_DELIVERY_MAX_RETRIES = (() => {
   const raw = Number.parseInt(process.env.HYPERNEO_MESSAGE_DELIVERY_MAX_RETRIES ?? '', 10);
   return Number.isFinite(raw) && raw > 0 ? raw : 8;
 })();
-
-export function isUniqueConstraintError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  return /UNIQUE constraint/i.test(err.message);
-}
 
 export class MessageDeliveryRecoverableTurnError extends Error {
   constructor(
@@ -88,7 +79,6 @@ export function isRetryableErrorResultSubtype(subtype: string | null): boolean {
 export interface DeliverMessageOptions {
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
-  role?: MessageDeliveryRole;
 }
 
 export function deliverMessage(
@@ -96,39 +86,17 @@ export function deliverMessage(
   sessionId: string,
   messageUuid: string,
   options: DeliverMessageOptions
-): MessageDeliveryRole {
-  const basePayload: MessageDeliveryPayload = {
-    sessionId,
-    messageUuid,
-    role: 'turn',
-    origin: options.origin,
-    parentToolUseId: options.parentToolUseId ?? null,
-  };
-
-  const arbitration = planDeliveryRoleArbitration({
-    existingActiveRole: jobQueue.getActiveDeliveryRole(sessionId, messageUuid),
-    requestedRole: options.role,
+): void {
+  jobQueue.enqueue({
+    queue: MESSAGE_DELIVERY,
+    payload: {
+      sessionId,
+      messageUuid,
+      origin: options.origin,
+      parentToolUseId: options.parentToolUseId ?? null,
+    },
+    maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
   });
-
-  if (arbitration.action === 'reuse') return arbitration.role;
-
-  try {
-    jobQueue.enqueue({
-      queue: MESSAGE_DELIVERY,
-      payload: { ...basePayload, role: arbitration.role },
-      maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
-    });
-    return arbitration.role;
-  } catch (err) {
-    if (!isUniqueConstraintError(err)) throw err;
-    if (arbitration.uniqueConstraintFallback === null) throw err;
-    jobQueue.enqueue({
-      queue: MESSAGE_DELIVERY,
-      payload: { ...basePayload, role: arbitration.uniqueConstraintFallback },
-      maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
-    });
-    return arbitration.uniqueConstraintFallback;
-  }
 }
 
 export { MESSAGE_DELIVERY };
@@ -141,56 +109,6 @@ export function flattenDeliveryText(content: DeliveryContent): string | null {
     texts.push(block.text);
   }
   return texts.length > 0 ? texts.join('\n') : null;
-}
-
-export function buildBatchedDeliveryContent(texts: string[]): string {
-  const total = texts.length;
-  return texts.map((text, i) => `--- message ${i + 1} of ${total} ---\n${text}`).join('\n\n');
-}
-
-export const BATCH_DELIVERY_MAX_CHARS = 200_000;
-
-export async function deliverBatchAndMarkQueued(args: {
-  jobQueue: JobQueueRepository;
-  stateManager?: {
-    setQueuedIfIdle(messageId: string): Promise<boolean>;
-    getState(): { status: string };
-  };
-  sessionId: string;
-  messageUuids: string[];
-  origin: MessageDeliveryOrigin;
-}): Promise<boolean> {
-  return await withSessionLock(args.sessionId, async () => {
-    const usable = args.messageUuids;
-    if (usable.length < 2) return false;
-    const active = args.jobQueue.activeDeliveryMessageUuids(args.sessionId);
-    if (usable.some((uuid) => active.has(uuid))) return false;
-
-    try {
-      args.jobQueue.enqueue({
-        queue: MESSAGE_DELIVERY,
-        payload: {
-          sessionId: args.sessionId,
-          messageUuid: usable[0],
-          role: 'turn',
-          origin: args.origin,
-          parentToolUseId: null,
-          batchUuids: usable,
-        },
-        maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
-      });
-    } catch (err) {
-      if (!isUniqueConstraintError(err)) throw err;
-      return false;
-    }
-
-    if (args.stateManager) {
-      try {
-        await args.stateManager.setQueuedIfIdle(usable[0]);
-      } catch {}
-    }
-    return true;
-  });
 }
 
 export type ReclaimTerminationDecision = 'terminated' | 'redrive' | 'live';
@@ -211,19 +129,13 @@ export function asMessageDeliveryPayload(
 ): MessageDeliveryPayload | null {
   const sessionId = payload.sessionId;
   const messageUuid = payload.messageUuid;
-  const role = payload.role;
   if (typeof sessionId !== 'string' || typeof messageUuid !== 'string') return null;
-  if (role !== 'turn' && role !== 'steer') return null;
-  const batchUuids = Array.isArray(payload.batchUuids)
-    ? payload.batchUuids.filter((u): u is string => typeof u === 'string' && u.length > 0)
-    : undefined;
   return {
     sessionId,
     messageUuid,
-    role,
     origin: typeof payload.origin === 'string' ? (payload.origin as MessageDeliveryOrigin) : 'chat',
     parentToolUseId: typeof payload.parentToolUseId === 'string' ? payload.parentToolUseId : null,
-    ...(batchUuids && batchUuids.length > 0 ? { batchUuids } : {}),
+    ...(typeof payload.released === 'boolean' ? { released: payload.released } : {}),
   };
 }
 
@@ -235,18 +147,6 @@ export const MESSAGE_DELIVERY_PARK_MS = 5_000;
 
 export const MANUAL_RECOVERY_PARK_MS = 5 * 60_000;
 
-export const MAX_STEER_PARKS = 60;
-
-export const STEER_ACK_TIMEOUT_MS = 30_000;
-
-const MAX_TIMER_MS = 2_147_483_647;
-
-export function steerAckTimeoutMs(): number {
-  const parsed = Number(process.env.HYPERNEO_STEER_ACK_TIMEOUT_MS);
-  if (Number.isFinite(parsed) && parsed > 0 && parsed <= MAX_TIMER_MS) return parsed;
-  return STEER_ACK_TIMEOUT_MS;
-}
-
 export type DeliveryOutcome =
   | { outcome: 'completed' }
   | { outcome: 'aborted' }
@@ -257,7 +157,6 @@ export type DeliveryOutcome =
     };
 
 export type DriveTurnOutcome = DeliveryOutcome;
-export type FeedSteerOutcome = DeliveryOutcome;
 
 export interface MessageDeliveryAttemptObserver {
   reportStage(
@@ -278,21 +177,10 @@ export interface MessageDeliverySession {
     parentToolUseId?: string | null,
     alreadyConsumed?: boolean,
     claimGuard?: () => boolean,
-    batchUuids?: string[],
-    signal?: AbortSignal,
-    observer?: MessageDeliveryAttemptObserver,
-    deliveryClaimToken?: string | null
-  ): Promise<DriveTurnOutcome>;
-  feedDeliverySteer(
-    messageUuid: string,
-    content: DeliveryContent,
-    parentToolUseId?: string | null,
-    claimGuard?: () => boolean,
     signal?: AbortSignal,
     observer?: MessageDeliveryAttemptObserver
-  ): Promise<FeedSteerOutcome>;
+  ): Promise<DriveTurnOutcome>;
   isWaitingForInput?(): boolean;
-  stuckInitializingMs?(now?: number): number | null;
   settleSkippedDelivery?(messageUuid: string): Promise<void>;
 }
 
@@ -338,9 +226,6 @@ export function signalDeliveryConsumed(sessionId: string, messageUuid: string): 
 }
 
 export const ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS = 12 * 60 * 1000;
-
-export const MAX_ACP_STEER_PARKS =
-  Math.ceil(ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS / MESSAGE_DELIVERY_PARK_MS) + MAX_STEER_PARKS;
 
 export function deliveryConsumptionTimeoutMs(provider?: string): number | undefined {
   return provider === 'acp' ? ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS : undefined;
@@ -1018,9 +903,8 @@ export async function deliverAndMarkQueued(args: {
   await withSessionLock(
     args.sessionId,
     async () => {
-      let role: MessageDeliveryRole;
       try {
-        role = deliverMessage(args.jobQueue, args.sessionId, args.messageUuid, {
+        deliverMessage(args.jobQueue, args.sessionId, args.messageUuid, {
           origin: args.origin,
           parentToolUseId: null,
         });
@@ -1028,7 +912,7 @@ export async function deliverAndMarkQueued(args: {
         args.onEnqueueFailure?.();
         throw err;
       }
-      if (role === 'turn' && args.stateManager) {
+      if (args.stateManager) {
         try {
           await args.stateManager.setQueuedIfIdle(args.messageUuid);
         } catch {}

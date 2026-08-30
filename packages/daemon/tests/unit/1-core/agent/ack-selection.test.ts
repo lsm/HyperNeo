@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'bun:test';
 import {
-  composeTurnEndDeliveryUuids,
   isTurnEndAckEligible,
   selectPersistedAckRow,
   selectYieldedAckRow,
@@ -117,28 +116,5 @@ describe('isTurnEndAckEligible', () => {
     ],
   ])('%s', (_label, dims, expected) => {
     expect(isTurnEndAckEligible({ uuid: UUID, ...dims })).toBe(expected);
-  });
-});
-
-describe('composeTurnEndDeliveryUuids', () => {
-  it.each([
-    [
-      'a row that never yielded delivers alone',
-      { yielded: false, batchUuids: [UUID, 'batch-member-uuid'] },
-      [UUID],
-    ],
-    ['a yielded row without a batch delivers alone', { yielded: true, batchUuids: null }, [UUID]],
-    [
-      'a batch that does not contain the row is ignored',
-      { yielded: true, batchUuids: [OTHER_UUID, 'batch-member-uuid'] },
-      [UUID],
-    ],
-    [
-      'a yielded row leads its batch members',
-      { yielded: true, batchUuids: ['batch-member-uuid', UUID, 'later-member-uuid'] },
-      [UUID, 'batch-member-uuid', 'later-member-uuid'],
-    ],
-  ])('%s', (_label, dims, expected) => {
-    expect(composeTurnEndDeliveryUuids({ messageId: UUID, ...dims })).toEqual(expected);
   });
 });

@@ -8,9 +8,7 @@ import {
 export interface RateLimitManualCancelDb extends RateLimitManualRetryDb {
   getJobQueueRepo: () =>
     | {
-        getActiveDeliveryRole?: (sessionId: string, messageUuid: string) => 'turn' | 'steer' | null;
-        getActiveTurnDeliveryMessageUuid?: (sessionId: string) => string | null;
-        getActiveDeliveryBatchUuids?: (sessionId: string, kickoffUuid: string) => string[] | null;
+        getActiveDeliveryMessageUuid?: (sessionId: string) => string | null;
         cancelDelivery: (sessionId: string, messageUuid: string) => boolean;
         rescheduleSessionDeliveries?: (sessionId: string, runAt: number) => boolean;
       }
@@ -59,29 +57,19 @@ export function captureEpisodeStage(ctx: RateLimitManualCancelCtx): RateLimitMan
 }
 
 export function settleOwningDeliveryStage(ctx: RateLimitManualCancelCtx): RateLimitManualCancelCtx {
-  const owningTurnMessageUuid = resolveRateLimitEpisodeDeliveryUuid(
+  const owningMessageUuid = resolveRateLimitEpisodeDeliveryUuid(
     ctx.db,
     ctx.sessionId,
     ctx.episodeMessageUuid
   );
-  if (!owningTurnMessageUuid) return ctx;
+  if (!owningMessageUuid) return ctx;
   try {
     const jobQueue = ctx.db.getJobQueueRepo();
     const sdkRepo = ctx.db.getSDKMessageRepo?.();
-    const batchUuids = jobQueue?.getActiveDeliveryBatchUuids?.(
-      ctx.sessionId,
-      owningTurnMessageUuid
-    );
-    jobQueue?.cancelDelivery(ctx.sessionId, owningTurnMessageUuid);
-    const uuidsToSettle =
-      batchUuids && batchUuids.length > 0 ? batchUuids : [owningTurnMessageUuid];
-    const settledDbIds: string[] = [];
-    for (const uuid of uuidsToSettle) {
-      const settledDbId = sdkRepo?.markDeliveryFailedByUuid?.(ctx.sessionId, uuid);
-      if (settledDbId) settledDbIds.push(settledDbId);
-    }
-    if (settledDbIds.length > 0) {
-      ctx.publishStatusesFailed(settledDbIds);
+    jobQueue?.cancelDelivery(ctx.sessionId, owningMessageUuid);
+    const settledDbId = sdkRepo?.markDeliveryFailedByUuid?.(ctx.sessionId, owningMessageUuid);
+    if (settledDbId) {
+      ctx.publishStatusesFailed([settledDbId]);
     }
     jobQueue?.rescheduleSessionDeliveries?.(ctx.sessionId, Date.now());
   } catch (error) {

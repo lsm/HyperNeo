@@ -1,5 +1,3 @@
-import { BATCH_DELIVERY_MAX_CHARS, type MessageDeliveryRole } from './message-delivery.ts';
-
 export type MessageOwnership = 'job_queue' | 'unowned';
 
 export function resolveMessageOwnership(args: { activeInJobQueue: boolean }): MessageOwnership {
@@ -27,20 +25,15 @@ export interface FlushSkipEntry {
   ownership: FlushSkipOwnership;
 }
 
-const BATCH_EXECUTION_COST_PER_MESSAGE_CHARS = 32;
-
 export type FlushDeliveryPlan =
   | { action: 'noop' }
-  | { action: 'batch'; uuids: string[] }
   | { action: 'each'; deliver: string[]; skip: FlushSkipEntry[] };
 
 export function planFlushDelivery(args: {
   messages: FlushMessage[];
   activeInJobQueue: ReadonlySet<string>;
-  activeTurnInJobQueue: boolean;
 }): FlushDeliveryPlan {
   const deliver: string[] = [];
-  const deliverableTexts: string[] = [];
   const skip: FlushSkipEntry[] = [];
   for (const message of args.messages) {
     const ownership = resolveMessageOwnership({
@@ -55,56 +48,9 @@ export function planFlushDelivery(args: {
       continue;
     }
     deliver.push(message.uuid);
-    if (message.flattenedText !== null) deliverableTexts.push(message.flattenedText);
   }
   if (deliver.length === 0) return { action: 'noop' };
-
-  const allBatchable = args.messages
-    .filter((message) => message.isUserMessage)
-    .every(
-      (message) =>
-        message.flattenedText !== null &&
-        !message.flattenedText.startsWith('/') &&
-        !args.activeInJobQueue.has(message.uuid)
-    );
-  const combinedChars =
-    deliverableTexts.reduce((sum, text) => sum + text.length, 0) +
-    deliverableTexts.length * BATCH_EXECUTION_COST_PER_MESSAGE_CHARS;
-  if (
-    deliver.length >= 2 &&
-    allBatchable &&
-    !args.activeTurnInJobQueue &&
-    combinedChars <= BATCH_DELIVERY_MAX_CHARS
-  ) {
-    return { action: 'batch', uuids: deliver };
-  }
   return { action: 'each', deliver, skip };
-}
-
-export type DeliveryRoleResolution = MessageDeliveryRole | 'explicit_role_rejected';
-
-export function resolveDeliveryRole(args: {
-  existingActiveRole: MessageDeliveryRole | null;
-  requestedRole?: MessageDeliveryRole;
-  uniqueConstraintHit: true;
-}): DeliveryRoleResolution;
-export function resolveDeliveryRole(args: {
-  existingActiveRole: MessageDeliveryRole | null;
-  requestedRole?: MessageDeliveryRole;
-  uniqueConstraintHit: false;
-}): MessageDeliveryRole;
-export function resolveDeliveryRole(args: {
-  existingActiveRole: MessageDeliveryRole | null;
-  requestedRole?: MessageDeliveryRole;
-  uniqueConstraintHit: boolean;
-}): DeliveryRoleResolution {
-  if (args.existingActiveRole) return args.existingActiveRole;
-  if (args.requestedRole === 'turn' && args.uniqueConstraintHit) {
-    return 'explicit_role_rejected';
-  }
-  if (args.requestedRole) return args.requestedRole;
-  if (args.uniqueConstraintHit) return 'steer';
-  return 'turn';
 }
 
 export type DeferAdmissionDecision = { action: 'defer' } | { action: 'deliver' };

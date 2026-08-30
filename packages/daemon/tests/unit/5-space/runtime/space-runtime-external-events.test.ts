@@ -1057,7 +1057,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(jobs).toHaveLength(1);
       expect(JSON.parse(jobs[0]!.payload)).toMatchObject({
         sessionId: 'session-immediate-steer',
-        role: 'steer',
         origin: 'space_inject',
       });
     });
@@ -1113,7 +1112,6 @@ describe('SpaceRuntime external event subscriptions', () => {
           (payload) =>
             payload.sessionId === 'session-immediate-deferred' &&
             payload.messageUuid === digestRows[0]!.sdk_uuid &&
-            payload.role === 'turn' &&
             payload.origin === 'space_inject'
         )
       ).toBe(true);

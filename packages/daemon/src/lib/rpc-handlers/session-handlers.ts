@@ -1223,9 +1223,7 @@ export function setupSessionHandlers(
     if (!activatedEntry) {
       return { promoted: false };
     }
-    if (activatedEntry.role === 'turn') {
-      await agentSession.stateManager.setQueuedIfIdle(messageUuid).catch(() => {});
-    }
+    await agentSession.stateManager.setQueuedIfIdle(messageUuid).catch(() => {});
 
     return {
       promoted: true,
@@ -1280,9 +1278,7 @@ export function setupSessionHandlers(
     if (!retried) {
       return { retried: false };
     }
-    if (retried.role === 'turn') {
-      await agentSession.stateManager.setQueuedIfIdle(messageUuid).catch(() => {});
-    }
+    await agentSession.stateManager.setQueuedIfIdle(messageUuid).catch(() => {});
 
     return {
       retried: true,

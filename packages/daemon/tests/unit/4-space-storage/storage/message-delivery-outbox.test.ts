@@ -72,13 +72,6 @@ function setup() {
       completed_at INTEGER
     );
   `);
-  db.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_message_delivery_active_turn
-      ON job_queue (queue, json_extract(payload, '$.sessionId'))
-      WHERE queue = 'message_delivery'
-        AND json_extract(payload, '$.role') = 'turn'
-        AND status IN ('pending', 'processing');
-  `);
   const sdkRepo = new SDKMessageRepository(db as never);
   const jobQueue = new JobQueueRepository(db as never);
   return { db, sdkRepo, jobQueue };
@@ -107,7 +100,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
 
   it('saves the user message AND enqueues a turn delivery job atomically', () => {
     const uuid = 'msg-1';
-    const { dbMessageId, role } = persistAndEnqueueDelivery({
+    const { dbMessageId } = persistAndEnqueueDelivery({
       db: db as never,
       sdkMessageRepo: sdkRepo,
       jobQueue,
@@ -117,38 +110,41 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       delivery: { origin: 'chat' },
     });
 
-    expect(role).toBe('turn');
     const row = db
       .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
       .get(dbMessageId) as { send_status: string };
     expect(row.send_status).toBe('enqueued');
     const payload = jobPayload(db, SESSION, uuid);
     expect(payload).not.toBeNull();
-    expect(payload?.role).toBe('turn');
     expect(payload?.origin).toBe('chat');
   });
 
-  it('inserts as steer when an active turn already owns the session', () => {
+  it('enqueues a second FIFO sibling when a delivery job already owns the session', () => {
     persistAndEnqueueDelivery({
       db: db as never,
       sdkMessageRepo: sdkRepo,
       jobQueue,
       sessionId: SESSION,
-      message: userMessage('msg-turn'),
+      message: userMessage('msg-first'),
       sendStatus: 'enqueued',
       delivery: { origin: 'chat' },
     });
-    const { role } = persistAndEnqueueDelivery({
+    const { dbMessageId } = persistAndEnqueueDelivery({
       db: db as never,
       sdkMessageRepo: sdkRepo,
       jobQueue,
       sessionId: SESSION,
-      message: userMessage('msg-steer'),
+      message: userMessage('msg-second'),
       sendStatus: 'enqueued',
       delivery: { origin: 'chat' },
     });
-    expect(role).toBe('steer');
-    expect(jobPayload(db, SESSION, 'msg-steer')?.role).toBe('steer');
+    expect(dbMessageId).toBeTruthy();
+    const payload = jobPayload(db, SESSION, 'msg-second');
+    expect(payload?.sessionId).toBe(SESSION);
+    const ordered = jobQueue
+      .dequeueSessionFifo(MESSAGE_DELIVERY, 2)
+      .map((job) => job.payload.messageUuid);
+    expect(ordered).toEqual(['msg-first', 'msg-second']);
   });
 
   it('rolls back BOTH writes when the enqueue fails (no stranded row)', () => {
@@ -202,7 +198,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       delivery: { origin: 'chat' },
     });
 
-    expect(result.role).toBe('turn');
+    expect(result.dbMessageId).toBeTruthy();
     expect(jobPayload(db, SESSION, 'msg-sideeffect')).not.toBeNull();
     const row = db
       .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
@@ -225,8 +221,8 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
     ).toThrow(/no uuid/);
   });
 
-  describe('role-arbitration call-site characterization (A1b)', () => {
-    it('has no same-UUID ownership precheck — a second persist enqueues a duplicate (turn then steer)', () => {
+  describe('call-site characterization (A1b)', () => {
+    it('has no same-UUID ownership precheck — a second persist enqueues a duplicate (FIFO siblings)', () => {
       const first = persistAndEnqueueDelivery({
         db: db as never,
         sdkMessageRepo: sdkRepo,
@@ -236,7 +232,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         sendStatus: 'enqueued',
         delivery: { origin: 'chat' },
       });
-      expect(first.role).toBe('turn');
+      expect(first.dbMessageId).toBeTruthy();
       const second = persistAndEnqueueDelivery({
         db: db as never,
         sdkMessageRepo: sdkRepo,
@@ -246,7 +242,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         sendStatus: 'enqueued',
         delivery: { origin: 'chat' },
       });
-      expect(second.role).toBe('steer');
+      expect(second.dbMessageId).toBeTruthy();
       const jobs = db
         .prepare(`SELECT payload FROM job_queue WHERE queue = ?`)
         .all(MESSAGE_DELIVERY) as Array<{ payload: string }>;
@@ -254,20 +250,18 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         (j) => (JSON.parse(j.payload) as { messageUuid?: string }).messageUuid === 'dup'
       );
       expect(dupJobs).toHaveLength(2);
-      const roles = dupJobs.map((j) => (JSON.parse(j.payload) as { role: string }).role).sort();
-      expect(roles).toEqual(['steer', 'turn']);
       const rows = db
         .prepare(`SELECT COUNT(*) AS c FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?`)
         .get(SESSION, 'dup') as { c: number };
       expect(rows.c).toBe(2);
     });
 
-    it('converts an implicit turn collision to steer inside the transaction — the save COMMITS with the steer (no rollback)', () => {
+    it('commits the save alongside the enqueue with no arbiter collision', () => {
       jobQueue.enqueue({
         queue: MESSAGE_DELIVERY,
-        payload: { sessionId: SESSION, messageUuid: 'anchor', role: 'turn', origin: 'chat' },
+        payload: { sessionId: SESSION, messageUuid: 'anchor', origin: 'chat' },
       });
-      const { role, dbMessageId } = persistAndEnqueueDelivery({
+      const { dbMessageId } = persistAndEnqueueDelivery({
         db: db as never,
         sdkMessageRepo: sdkRepo,
         jobQueue,
@@ -276,52 +270,17 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         sendStatus: 'enqueued',
         delivery: { origin: 'chat' },
       });
-      expect(role).toBe('steer');
       const saved = db
         .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
         .get(dbMessageId) as { send_status: string } | undefined;
       expect(saved).not.toBeUndefined();
       expect(saved?.send_status).toBe('enqueued');
-      expect(jobPayload(db, SESSION, 'collide')?.role).toBe('steer');
+      expect(jobPayload(db, SESSION, 'collide')).not.toBeNull();
     });
   });
 
-  describe('role-arbitration wiring (A3b — Phase 0 transactional ownership)', () => {
-    it('rolls back BOTH writes when the steer fallback enqueue also fails — no ownerless row', () => {
-      let calls = 0;
-      const failingQueue = {
-        enqueue: () => {
-          calls++;
-          throw new Error(
-            calls === 1 ? 'UNIQUE constraint failed: job_queue.queue' : 'fallback enqueue exploded'
-          );
-        },
-      } as unknown as JobQueueRepoType;
-
-      expect(() =>
-        persistAndEnqueueDelivery({
-          db: db as never,
-          sdkMessageRepo: sdkRepo,
-          jobQueue: failingQueue,
-          sessionId: SESSION,
-          message: userMessage('msg-fallback-fail'),
-          sendStatus: 'enqueued',
-          delivery: { origin: 'chat' },
-        })
-      ).toThrow(/fallback enqueue exploded/);
-
-      expect(calls).toBe(2);
-      const sdkCount = db
-        .prepare(`SELECT COUNT(*) AS c FROM sdk_messages WHERE session_id = ?`)
-        .get(SESSION) as { c: number };
-      expect(sdkCount.c).toBe(0);
-      const jobCount = db
-        .prepare(`SELECT COUNT(*) AS c FROM job_queue WHERE queue = ?`)
-        .get(MESSAGE_DELIVERY) as { c: number };
-      expect(jobCount.c).toBe(0);
-    });
-
-    it('attempts exactly one enqueue when the failure is not a UNIQUE constraint', () => {
+  describe('enqueue failure wiring (A3b — Phase 0 transactional ownership)', () => {
+    it('attempts exactly one enqueue when the enqueue fails', () => {
       let calls = 0;
       const failingQueue = {
         enqueue: () => {
@@ -449,13 +408,12 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
     function jobsFor(uuid: string): Array<{
       id: string;
       status: string;
-      role: unknown;
       released: number;
       retryCount: number;
     }> {
       return db
         .prepare(
-          `SELECT id, status, json_extract(payload, '$.role') AS role,
+          `SELECT id, status,
                   COALESCE(json_extract(payload, '$.released'), 1) AS released, retry_count AS retryCount
              FROM job_queue
             WHERE queue = ?
@@ -466,7 +424,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         .all(MESSAGE_DELIVERY, SESSION, uuid) as Array<{
         id: string;
         status: string;
-        role: unknown;
         released: number;
         retryCount: number;
       }>;
@@ -483,7 +440,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       });
 
       expect(result.released).toBe(true);
-      expect(result.role).toBe('turn');
+      expect(result.dbMessageId).toBeTruthy();
       expect(rowStatus('persist-immediate')).toBe('enqueued');
       expect(jobsFor('persist-immediate')).toHaveLength(1);
       expect(jobsFor('persist-immediate')[0].released).toBe(1);
@@ -501,7 +458,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       });
 
       expect(result.released).toBe(false);
-      expect(result.role).toBe('turn');
+      expect(result.dbMessageId).toBeTruthy();
       expect(rowStatus('persist-manual')).toBe('deferred');
       expect(jobsFor('persist-manual')).toHaveLength(1);
       expect(jobsFor('persist-manual')[0].released).toBe(0);
@@ -519,7 +476,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       });
 
       expect(result.dbMessageId).toBeTruthy();
-      expect(result.role).toBe('turn');
       expect(jobsFor('wrapper-parity')[0].released).toBe(1);
     });
 
@@ -547,7 +503,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
 
       expect(replay.created).toBe(false);
       expect(replay.dbMessageId).toBe(first.dbMessageId);
-      expect(replay.role).toBe('turn');
+      expect(replay.activated).toBe(true);
       expect(replay.released).toBe(true);
       const rows = db
         .prepare(`SELECT COUNT(*) AS c FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?`)
@@ -596,13 +552,13 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       });
 
       expect(outcome.created).toBe(true);
-      expect(outcome.role).toBe('turn');
+      expect(outcome.activated).toBe(true);
       expect(outcome.released).toBe(false);
       expect(rowStatus('ensure-fresh')).toBe('deferred');
       expect(jobsFor('ensure-fresh')[0].released).toBe(0);
     });
 
-    it('ensurePrompt leaves a consumed row jobless and reports a null role', () => {
+    it('ensurePrompt leaves a consumed row jobless and reports not activated', () => {
       insertStatusRow('ensure-consumed', 'consumed');
 
       const outcome = ensurePrompt({
@@ -615,7 +571,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       });
 
       expect(outcome.created).toBe(false);
-      expect(outcome.role).toBeNull();
+      expect(outcome.activated).toBe(false);
       expect(outcome.released).toBe(true);
       expect(jobsFor('ensure-consumed')).toHaveLength(0);
     });
@@ -645,8 +601,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       });
 
       expect(activated.map((entry) => entry.messageUuid)).toEqual(['act-1', 'act-2', 'act-3']);
-      expect(activated[0].role).toBe('turn');
-      expect(activated.slice(1).map((entry) => entry.role)).toEqual(['steer', 'steer']);
       for (const uuid of ['act-1', 'act-2', 'act-3']) {
         expect(rowStatus(uuid)).toBe('enqueued');
         expect(jobsFor(uuid)[0].released).toBe(1);
@@ -661,7 +615,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         payload: {
           sessionId: SESSION,
           messageUuid: 'held-1',
-          role: 'turn',
           origin: 'chat',
           parentToolUseId: null,
           released: false,
@@ -679,7 +632,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       });
 
       expect(activated).toHaveLength(1);
-      expect(activated[0].role).toBe('turn');
       expect(rowStatus('held-1')).toBe('enqueued');
       const after = jobsFor('held-1');
       expect(after).toHaveLength(1);
@@ -753,7 +705,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         },
       });
 
-      expect(retried?.role).toBe('turn');
+      expect(retried?.dbId).toBeTruthy();
       expect(rowStatus('retry-fresh')).toBe('enqueued');
       const jobs = jobsFor('retry-fresh');
       expect(jobs).toHaveLength(1);
@@ -769,7 +721,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         payload: {
           sessionId: SESSION,
           messageUuid: 'retry-dead',
-          role: 'turn',
           origin: 'chat',
           parentToolUseId: null,
           released: true,
@@ -788,7 +739,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         origin: 'chat',
       });
 
-      expect(retried?.role).toBe('turn');
+      expect(retried?.dbId).toBeTruthy();
       expect(rowStatus('retry-dead')).toBe('enqueued');
       const jobs = jobsFor('retry-dead');
       expect(jobs).toHaveLength(1);
@@ -805,7 +756,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         payload: {
           sessionId: SESSION,
           messageUuid: 'retry-pending',
-          role: 'turn',
           origin: 'space_inject',
           parentToolUseId: 'toolu_9',
           released: true,
@@ -825,7 +775,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         origin: 'chat',
       });
 
-      expect(retried?.role).toBe('turn');
+      expect(retried?.dbId).toBeTruthy();
       expect(rowStatus('retry-pending')).toBe('enqueued');
       const jobs = jobsFor('retry-pending');
       expect(jobs).toHaveLength(1);
@@ -835,19 +785,17 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       const payload = jobPayload(db, SESSION, 'retry-pending');
       expect(payload?.origin).toBe('chat');
       expect(payload?.parentToolUseId).toBeNull();
-      expect(payload?.batchUuids).toBeUndefined();
       expect(payload?.__parkCount).toBeUndefined();
       expect(payload?.released).toBe(true);
     });
 
-    it('retryPrompt revives as steer when another turn already owns the session', async () => {
+    it('retryPrompt revives the dead job in place even when a sibling job is active', async () => {
       insertStatusRow('retry-steer', 'failed');
       const deadJob = jobQueue.enqueue({
         queue: MESSAGE_DELIVERY,
         payload: {
           sessionId: SESSION,
           messageUuid: 'retry-steer',
-          role: 'turn',
           origin: 'chat',
           parentToolUseId: null,
           released: true,
@@ -859,7 +807,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         payload: {
           sessionId: SESSION,
           messageUuid: 'other-active',
-          role: 'turn',
           origin: 'chat',
           parentToolUseId: null,
           released: true,
@@ -874,11 +821,10 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         origin: 'chat',
       });
 
-      expect(retried?.role).toBe('steer');
+      expect(retried?.dbId).toBe('db-retry-steer');
       const jobs = jobsFor('retry-steer');
       expect(jobs).toHaveLength(1);
       expect(jobs[0].id).toBe(deadJob.id);
-      expect(jobs[0].role).toBe('steer');
       expect(jobs[0].status).toBe('pending');
     });
 
@@ -909,7 +855,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         delivery: { origin: 'chat' },
       });
 
-      expect(result.role).toBe('turn');
+      expect(result.dbMessageId).toBeTruthy();
       expect(rowStatus('wrapper-deferred')).toBe('deferred');
       expect(jobsFor('wrapper-deferred')[0].released).toBe(0);
     });
@@ -974,14 +920,11 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         payload: {
           sessionId: SESSION,
           messageUuid: 'retry-strip',
-          role: 'turn',
           origin: 'space_inject',
           parentToolUseId: 'toolu_1',
           released: true,
           __parkCount: 12,
           __claimToken: 'stale-claim',
-          batchUuids: ['retry-strip', 'retry-other'],
-          droppedBatchUuids: ['retry-dropped'],
         },
         maxRetries: 8,
       });
@@ -1000,10 +943,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       const payload = jobPayload(db, SESSION, 'retry-strip');
       expect(payload?.__parkCount).toBeUndefined();
       expect(payload?.__claimToken).toBeUndefined();
-      expect(payload?.batchUuids).toBeUndefined();
-      expect(payload?.droppedBatchUuids).toBeUndefined();
       expect(payload?.released).toBe(true);
-      expect(payload?.role).toBe('turn');
       expect(payload?.origin).toBe('chat');
       expect(payload?.parentToolUseId).toBeNull();
       const job = jobsFor('retry-strip')[0];
@@ -1042,7 +982,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         payload: {
           sessionId: SESSION,
           messageUuid: 'claim-held',
-          role: 'turn',
           origin: 'chat',
           parentToolUseId: null,
           released: false,
@@ -1061,7 +1000,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       });
 
       expect(activated).toHaveLength(1);
-      expect(activated[0].role).toBe('turn');
       expect(rowStatus('claim-held')).toBe('enqueued');
       const jobs = jobsFor('claim-held');
       expect(jobs).toHaveLength(1);
@@ -1080,7 +1018,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         payload: {
           sessionId: SESSION,
           messageUuid: 'claim-released',
-          role: 'turn',
           origin: 'chat',
           parentToolUseId: null,
           released: true,
@@ -1105,73 +1042,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       expect(jobPayload(db, SESSION, 'claim-released')?.__claimToken).toBe('live-claim');
     });
 
-    it('activatePrompts reuses the active batch job that owns the prompt as a member', async () => {
-      insertStatusRow('batch-member', 'deferred');
-      const batchJob = jobQueue.enqueue({
-        queue: MESSAGE_DELIVERY,
-        payload: {
-          sessionId: SESSION,
-          messageUuid: 'batch-kickoff',
-          role: 'turn',
-          origin: 'recovery',
-          parentToolUseId: null,
-          released: true,
-          batchUuids: ['batch-kickoff', 'batch-member'],
-        },
-      });
-
-      const { activated } = await activatePrompts({
-        db: db as never,
-        jobQueue,
-        sessionId: SESSION,
-        messageUuids: ['batch-member'],
-        origin: 'recovery',
-      });
-
-      expect(activated).toHaveLength(1);
-      expect(activated[0].role).toBe('turn');
-      expect(rowStatus('batch-member')).toBe('enqueued');
-      const allJobs = db
-        .prepare(`SELECT COUNT(*) AS c FROM job_queue WHERE queue = ?`)
-        .get(MESSAGE_DELIVERY) as { c: number };
-      expect(allJobs.c).toBe(1);
-      expect(jobsFor('batch-kickoff')[0].id).toBe(batchJob.id);
-    });
-
-    it('retryPrompt reopens a batch member without disturbing the owning batch job', async () => {
-      insertStatusRow('batch-retry', 'failed');
-      const batchJob = jobQueue.enqueue({
-        queue: MESSAGE_DELIVERY,
-        payload: {
-          sessionId: SESSION,
-          messageUuid: 'batch-retry-kickoff',
-          role: 'turn',
-          origin: 'recovery',
-          parentToolUseId: null,
-          released: true,
-          batchUuids: ['batch-retry-kickoff', 'batch-retry'],
-        },
-      });
-
-      const retried = await retryPrompt({
-        db: db as never,
-        jobQueue,
-        sessionId: SESSION,
-        messageUuid: 'batch-retry',
-        origin: 'chat',
-      });
-
-      expect(retried?.role).toBe('turn');
-      expect(rowStatus('batch-retry')).toBe('enqueued');
-      const allJobs = db
-        .prepare(`SELECT COUNT(*) AS c FROM job_queue WHERE queue = ?`)
-        .get(MESSAGE_DELIVERY) as { c: number };
-      expect(allJobs.c).toBe(1);
-      const payload = jobPayload(db, SESSION, 'batch-retry-kickoff');
-      expect(jobsFor('batch-retry-kickoff')[0].id).toBe(batchJob.id);
-      expect(payload?.batchUuids).toEqual(['batch-retry-kickoff', 'batch-retry']);
-    });
-
     it('retryPrompt revives a released processing claim instead of trusting its skip outcome', async () => {
       insertStatusRow('retry-live', 'failed');
       const liveJob = jobQueue.enqueue({
@@ -1179,7 +1049,6 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         payload: {
           sessionId: SESSION,
           messageUuid: 'retry-live',
-          role: 'turn',
           origin: 'chat',
           parentToolUseId: null,
           released: true,
@@ -1199,7 +1068,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         origin: 'chat',
       });
 
-      expect(retried?.role).toBe('turn');
+      expect(retried?.dbId).toBe('db-retry-live');
       expect(rowStatus('retry-live')).toBe('enqueued');
       const jobs = jobsFor('retry-live');
       expect(jobs).toHaveLength(1);
@@ -1288,7 +1157,7 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       });
 
       expect(replay.created).toBe(false);
-      expect(replay.role).toBe('turn');
+      expect(replay.activated).toBe(true);
     });
 
     it('retryPrompt honors an explicit dbId over oldest-row reselection', async () => {

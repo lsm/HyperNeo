@@ -101,7 +101,6 @@ function makeManager(opts: {
         activeDeliveryMessageUuids: () =>
           new Set<string>(opts.hasActiveDeliveryJob ? ['pending-job'] : []),
         enqueue: jobQueueEnqueue,
-        getActiveDeliveryRole: () => null,
       }),
     },
     internalEventBus: {

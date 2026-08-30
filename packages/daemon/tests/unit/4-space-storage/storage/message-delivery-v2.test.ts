@@ -4,19 +4,13 @@ import {
   ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
   awaitDeliveryConsumption,
   deliveryConsumptionTimeoutOrDefault,
-  buildBatchedDeliveryContent,
   type DriveTurnOutcome,
   deliverAndMarkQueued,
-  deliverBatchAndMarkQueued,
   deliverMessage,
   drainDeliveryWaitersOnTerminalSDKMessage,
-  type FeedSteerOutcome,
   flattenDeliveryText,
   isRetryableErrorResultSubtype,
   isTerminalTurnError,
-  isUniqueConstraintError,
-  MAX_ACP_STEER_PARKS,
-  MAX_STEER_PARKS,
   MESSAGE_DELIVERY_PARK_MS,
   type MessageDeliverySession,
   signalDeliveryConsumed,
@@ -29,6 +23,7 @@ import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { runMigration182 } from '../../../../src/storage/schema/migrations';
+import { runMigration221 } from '../../../../src/storage/schema/m221-drop-message-delivery-active-turn-index';
 import { Database } from '../../../../src/storage/sqlite-compat';
 
 const SESSION = 'sess-conformance';
@@ -55,9 +50,6 @@ function setupRepo(): { db: Database; repo: JobQueueRepository } {
     );
     CREATE INDEX idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC);
     CREATE INDEX idx_job_queue_status ON job_queue(status);
-    -- Minimal delivery-row projection: narrowActiveDeliveryBatchUuids reads
-    -- pending-state membership from sdk_messages (a full schema table in
-    -- production).
     CREATE TABLE sdk_messages (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
@@ -66,6 +58,7 @@ function setupRepo(): { db: Database; repo: JobQueueRepository } {
     );
   `);
   runMigration182(db as unknown as Parameters<typeof runMigration182>[0]);
+  runMigration221(db as unknown as Parameters<typeof runMigration221>[0]);
   return { db, repo: new JobQueueRepository(db as never) };
 }
 
@@ -85,268 +78,59 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
   });
   afterEach(() => db.close());
 
-  describe('deliverMessage — atomic role decision (§7, §13: atomic claim)', () => {
-    it('first message becomes a turn', () => {
+  describe('deliverMessage — plain enqueue (§7: durable insertion)', () => {
+    it('enqueues a role-free FIFO payload', () => {
       deliverMessage(repo, SESSION, 'msg-A', { origin: 'chat' });
       const jobs = jobsFor(repo, SESSION);
       expect(jobs).toHaveLength(1);
-      expect((jobs[0].payload as { role: string }).role).toBe('turn');
+      expect(jobs[0].payload).toEqual({
+        sessionId: SESSION,
+        messageUuid: 'msg-A',
+        origin: 'chat',
+        parentToolUseId: null,
+      });
+      expect(jobs[0].maxRetries).toBeGreaterThan(0);
     });
 
-    it('a second message while a turn is active becomes a steer (UNIQUE arbiter)', () => {
+    it('a second message enqueues alongside the first — FIFO orders them, no arbiter', () => {
       deliverMessage(repo, SESSION, 'msg-A', { origin: 'chat' });
       deliverMessage(repo, SESSION, 'msg-B', { origin: 'chat' });
       const jobs = jobsFor(repo, SESSION);
       expect(jobs).toHaveLength(2);
-      const roles = jobs.map((j) => (j.payload as { role: string }).role).sort();
-      expect(roles).toEqual(['steer', 'turn']);
+      expect(
+        repo.dequeueSessionFifo(MESSAGE_DELIVERY, 2).map((j) => j.payload.messageUuid)
+      ).toEqual(['msg-A', 'msg-B']);
     });
 
-    it('steers coexist with the active turn and with each other (excluded from the index)', () => {
-      deliverMessage(repo, SESSION, 'turn', { origin: 'chat' });
-      deliverMessage(repo, SESSION, 'steer-1', { origin: 'chat' });
-      deliverMessage(repo, SESSION, 'steer-2', { origin: 'chat' });
-      deliverMessage(repo, SESSION, 'steer-3', { origin: 'chat' });
-      const jobs = jobsFor(repo, SESSION);
-      const roles = jobs.map((j) => (j.payload as { role: string }).role);
-      expect(roles.filter((r) => r === 'turn')).toHaveLength(1);
-      expect(roles.filter((r) => r === 'steer')).toHaveLength(3);
-    });
-
-    it('a second turn is rejected by the index — not by a check-then-insert', () => {
-      repo.enqueue({
-        queue: MESSAGE_DELIVERY,
-        payload: { sessionId: SESSION, messageUuid: 'existing', role: 'turn', origin: 'chat' },
-      });
-      expect(() =>
-        deliverMessage(repo, SESSION, 'competing', { origin: 'chat', role: 'turn' })
-      ).toThrow();
-    });
-
-    it('a completed/failed turn frees the slot for a new turn', () => {
-      deliverMessage(repo, SESSION, 'turn-1', { origin: 'chat' });
-      const job = jobsFor(repo, SESSION)[0];
-      repo.dequeue(MESSAGE_DELIVERY, 1)[0];
-      repo.complete(job.id, { ok: true });
-      deliverMessage(repo, SESSION, 'turn-2', { origin: 'chat' });
-      const turns = jobsFor(repo, SESSION).filter(
-        (j) => (j.payload as { role: string }).role === 'turn'
-      );
-      expect(turns).toHaveLength(2);
-    });
-
-    it('is idempotent per UUID — a second deliverMessage for the same UUID is a no-op', () => {
-      const role1 = deliverMessage(repo, SESSION, 'dup', { origin: 'chat' });
-      const role2 = deliverMessage(repo, SESSION, 'dup', { origin: 'chat' });
-      expect(role1).toBe('turn');
-      expect(role2).toBe('turn');
-      const dup = jobsFor(repo, SESSION).filter(
-        (j) => (j.payload as { messageUuid: string }).messageUuid === 'dup'
-      );
-      expect(dup).toHaveLength(1);
-    });
-
-    it('idempotency returns the existing steer role, not a fresh insert', () => {
-      deliverMessage(repo, SESSION, 'turn', { origin: 'chat' });
-      const role1 = deliverMessage(repo, SESSION, 'steer-uuid', { origin: 'chat' });
-      expect(role1).toBe('steer');
-      const role2 = deliverMessage(repo, SESSION, 'steer-uuid', { origin: 'chat' });
-      expect(role2).toBe('steer');
-      const steers = jobsFor(repo, SESSION).filter(
-        (j) => (j.payload as { messageUuid: string }).messageUuid === 'steer-uuid'
-      );
-      expect(steers).toHaveLength(1);
-    });
-
-    it('isUniqueConstraintError detects SQLite UNIQUE failures', () => {
-      expect(isUniqueConstraintError(new Error('UNIQUE constraint failed: job_queue.queue'))).toBe(
-        true
-      );
-      expect(isUniqueConstraintError(new Error('some other error'))).toBe(false);
-      expect(isUniqueConstraintError('not an error')).toBe(false);
-    });
-  });
-
-  describe('deliverMessage — role-arbitration call-site characterization (A1b)', () => {
-    function seedActiveJob(uuid: string, role: 'turn' | 'steer'): void {
-      repo.enqueue({
-        queue: MESSAGE_DELIVERY,
-        payload: { sessionId: SESSION, messageUuid: uuid, role, origin: 'chat' },
-        maxRetries: 8,
-      });
-    }
-
-    function jobsForUuid(uuid: string): Job[] {
-      return jobsFor(repo, SESSION).filter(
-        (j) => (j.payload as { messageUuid?: string }).messageUuid === uuid
-      );
-    }
-
-    const reuseRows: Array<{
-      name: string;
-      existingRole: 'turn' | 'steer';
-      requested?: 'turn' | 'steer';
-    }> = [
-      {
-        name: 'an active same-UUID turn is reused under an implicit request',
-        existingRole: 'turn',
-      },
-      {
-        name: 'an active same-UUID turn wins over a requested turn (no new job, no throw)',
-        existingRole: 'turn',
-        requested: 'turn',
-      },
-      {
-        name: 'an active same-UUID turn wins over a requested steer',
-        existingRole: 'turn',
-        requested: 'steer',
-      },
-      {
-        name: 'an active same-UUID steer is reused under an implicit request',
-        existingRole: 'steer',
-      },
-      {
-        name: 'an active same-UUID steer wins over a requested turn',
-        existingRole: 'steer',
-        requested: 'turn',
-      },
-      {
-        name: 'an active same-UUID steer wins over a requested steer',
-        existingRole: 'steer',
-        requested: 'steer',
-      },
-    ];
-
-    for (const row of reuseRows) {
-      it(row.name, () => {
-        seedActiveJob('uuid', row.existingRole);
-        const role = deliverMessage(repo, SESSION, 'uuid', {
-          origin: 'chat',
-          role: row.requested,
-        });
-        expect(role).toBe(row.existingRole);
-        const jobs = jobsForUuid('uuid');
-        expect(jobs).toHaveLength(1);
-        expect((jobs[0].payload as { role: string }).role).toBe(row.existingRole);
-      });
-    }
-
-    it('a fresh implicit delivery takes the turn role', () => {
-      const role = deliverMessage(repo, SESSION, 'fresh', { origin: 'chat' });
-      expect(role).toBe('turn');
-      const jobs = jobsForUuid('fresh');
-      expect(jobs).toHaveLength(1);
-      expect((jobs[0].payload as { role: string }).role).toBe('turn');
-    });
-
-    it('an implicit turn collision under an active session turn converts to steer', () => {
-      seedActiveJob('blocker', 'turn');
-      const role = deliverMessage(repo, SESSION, 'collide', { origin: 'chat' });
-      expect(role).toBe('steer');
-      const jobs = jobsForUuid('collide');
-      expect(jobs).toHaveLength(1);
-      expect((jobs[0].payload as { role: string }).role).toBe('steer');
-    });
-
-    it('an explicit requested turn succeeds when the session has no active turn', () => {
-      const role = deliverMessage(repo, SESSION, 'explicit', { origin: 'chat', role: 'turn' });
-      expect(role).toBe('turn');
-      const jobs = jobsForUuid('explicit');
-      expect(jobs).toHaveLength(1);
-      expect((jobs[0].payload as { role: string }).role).toBe('turn');
-    });
-
-    it('an explicit requested turn under an active session turn PROPAGATES the UNIQUE failure (no steer fallback)', () => {
-      seedActiveJob('blocker', 'turn');
-      const before = jobsFor(repo, SESSION).length;
-      expect(() =>
-        deliverMessage(repo, SESSION, 'rejected', { origin: 'chat', role: 'turn' })
-      ).toThrow();
-      expect(jobsFor(repo, SESSION)).toHaveLength(before);
-      expect(jobsForUuid('rejected')).toHaveLength(0);
-    });
-
-    it('an explicit requested steer succeeds even under an active session turn (steer is unconstrained)', () => {
-      seedActiveJob('blocker', 'turn');
-      const role = deliverMessage(repo, SESSION, 'steer-explicit', {
-        origin: 'chat',
-        role: 'steer',
-      });
-      expect(role).toBe('steer');
-      const jobs = jobsForUuid('steer-explicit');
-      expect(jobs).toHaveLength(1);
-      expect((jobs[0].payload as { role: string }).role).toBe('steer');
-    });
-
-    it('an active batch membership is reused — a member uuid dedups to the batch turn', () => {
-      repo.enqueue({
-        queue: MESSAGE_DELIVERY,
-        payload: {
-          sessionId: SESSION,
-          messageUuid: 'kickoff',
-          role: 'turn',
-          origin: 'recovery',
-          parentToolUseId: null,
-          batchUuids: ['kickoff', 'member-a'],
-        },
-        maxRetries: 8,
-      });
-      const role = deliverMessage(repo, SESSION, 'member-a', { origin: 'chat' });
-      expect(role).toBe('turn');
-      expect(jobsForUuid('member-a')).toHaveLength(0);
-      expect(jobsFor(repo, SESSION)).toHaveLength(1);
-    });
-  });
-
-  describe('deliverMessage — role-arbitration wiring (A3b)', () => {
-    it('propagates when the steer fallback enqueue fails too — exactly two attempts, no third', () => {
-      let calls = 0;
+    it('propagates enqueue failures to the caller', () => {
       const stub = {
-        getActiveDeliveryRole: () => null,
         enqueue: () => {
-          calls++;
-          throw new Error(
-            calls === 1 ? 'UNIQUE constraint failed: job_queue.queue' : 'steer insert exploded'
-          );
-        },
-      } as unknown as JobQueueRepository;
-      expect(() => deliverMessage(stub, SESSION, 'fallback-fail', { origin: 'chat' })).toThrow(
-        /steer insert exploded/
-      );
-      expect(calls).toBe(2);
-    });
-
-    it('rethrows a non-UNIQUE enqueue failure without attempting the steer fallback', () => {
-      let calls = 0;
-      const stub = {
-        getActiveDeliveryRole: () => null,
-        enqueue: () => {
-          calls++;
           throw new Error('disk I/O error');
         },
       } as unknown as JobQueueRepository;
       expect(() => deliverMessage(stub, SESSION, 'io-fail', { origin: 'chat' })).toThrow(
         /disk I\/O error/
       );
-      expect(calls).toBe(1);
     });
   });
 
-  describe('deliverAndMarkQueued — role arbitration', () => {
-    it('classifies as a turn when no active turn exists (idle session)', async () => {
-      const { repo } = setupRepo();
+  describe('deliverAndMarkQueued — admission completion', () => {
+    it('enqueues the job and marks the session queued when idle', async () => {
+      const { repo: fresh } = setupRepo();
+      const setQueuedIfIdle = mock(async () => false);
       await deliverAndMarkQueued({
-        jobQueue: repo,
+        jobQueue: fresh,
         stateManager: {
           getState: () => ({ status: 'idle' }),
-          setQueuedIfIdle: async () => false,
+          setQueuedIfIdle,
         },
         sessionId: SESSION,
         messageUuid: 'msg-idle',
         origin: 'chat',
       });
-      const jobs = jobsFor(repo, SESSION);
-      expect((jobs[0].payload as { role: string }).role).toBe('turn');
+      const jobs = fresh.listJobs({ queue: MESSAGE_DELIVERY, limit: 10 });
+      expect(jobs).toHaveLength(1);
+      expect(setQueuedIfIdle).toHaveBeenCalledWith('msg-idle');
     });
   });
 
@@ -356,12 +140,12 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       for (const uuid of ['first', 'second', 'third']) {
         repo.enqueue({
           queue: MESSAGE_DELIVERY,
-          payload: { sessionId: SESSION, messageUuid: uuid, role: 'steer', origin: 'chat' },
+          payload: { sessionId: SESSION, messageUuid: uuid, origin: 'chat' },
           runAt: now,
         });
       }
       db.prepare(`UPDATE job_queue SET priority = 0, run_at = ?, created_at = ?`).run(now, now);
-      const claimed = repo.dequeueExempt(MESSAGE_DELIVERY, { path: '$.role', equals: 'steer' }, 3);
+      const claimed = repo.dequeueSessionFifo(MESSAGE_DELIVERY, 3);
       expect(claimed.map((j) => j.payload.messageUuid)).toEqual(['first', 'second', 'third']);
     });
 
@@ -370,7 +154,7 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       for (const uuid of ['first', 'second', 'third']) {
         repo.enqueue({
           queue: MESSAGE_DELIVERY,
-          payload: { sessionId: SESSION, messageUuid: uuid, role: 'steer', origin: 'chat' },
+          payload: { sessionId: SESSION, messageUuid: uuid, origin: 'chat' },
           runAt: now,
         });
       }
@@ -381,9 +165,38 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
         'third',
       ]);
     });
+
+    it('a running-but-unconsumed predecessor blocks the session lane until it settles', () => {
+      deliverMessage(repo, SESSION, 'head', { origin: 'chat' });
+      deliverMessage(repo, SESSION, 'tail', { origin: 'chat' });
+      const [head] = repo.dequeueSessionFifo(MESSAGE_DELIVERY, 1);
+      expect(head?.payload.messageUuid).toBe('head');
+      expect(repo.dequeueSessionFifo(MESSAGE_DELIVERY, 5)).toHaveLength(0);
+      repo.complete(head!.id, { ok: true });
+      const [tail] = repo.dequeueSessionFifo(MESSAGE_DELIVERY, 5);
+      expect(tail?.payload.messageUuid).toBe('tail');
+    });
+
+    it('an unreleased held job blocks the lane and releases unblock it', () => {
+      deliverMessage(repo, SESSION, 'held', { origin: 'chat' });
+      db.prepare(
+        `UPDATE job_queue SET payload = json_set(payload, '$.released', json('false'))`
+      ).run();
+      deliverMessage(repo, SESSION, 'next', { origin: 'chat' });
+      expect(repo.dequeueSessionFifo(MESSAGE_DELIVERY, 5, { releasedPath: '$.released' })).toEqual(
+        []
+      );
+      db.prepare(
+        `UPDATE job_queue SET payload = json_set(payload, '$.released', json('true'))`
+      ).run();
+      const [claimed] = repo.dequeueSessionFifo(MESSAGE_DELIVERY, 5, {
+        releasedPath: '$.released',
+      });
+      expect(claimed?.payload.messageUuid).toBe('held');
+    });
   });
 
-  describe('requeue — park a blocked turn (§8: runAt, no retry bump)', () => {
+  describe('requeue — park a blocked delivery (§8: runAt, no retry bump)', () => {
     it('returns a processing job to pending with runAt without touching retry_count', () => {
       deliverMessage(repo, SESSION, 'parked', { origin: 'chat' });
       const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
@@ -416,6 +229,7 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       );
       const reclaimed = repo.reclaimStale(Date.now() - 5 * 60 * 1000);
       expect(reclaimed).toHaveLength(1);
+      expect(reclaimed[0].messageUuid).toBe('crashed');
       const after = repo.getJob(job.id);
       expect(after?.status).toBe('pending');
       expect(after?.startedAt).toBeNull();
@@ -442,32 +256,6 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       const claimed = repo.dequeue(MESSAGE_DELIVERY, 10);
       expect(claimed).toHaveLength(1);
       expect(claimed[0].status).toBe('processing');
-    });
-  });
-
-  describe('requeueAs — atomic promote (no second job)', () => {
-    it('converts a processing steer to a pending turn in place', () => {
-      deliverMessage(repo, SESSION, 'turn-anchor', { origin: 'chat' });
-      deliverMessage(repo, SESSION, 'the-steer', { origin: 'chat' });
-      const [turn] = repo.dequeue(MESSAGE_DELIVERY, 1);
-      repo.complete(turn.id, { ok: true });
-      const [steer] = repo.dequeue(MESSAGE_DELIVERY, 1);
-      expect((steer.payload as { role: string }).role).toBe('steer');
-      const before = repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 50 }).length;
-      repo.requeueAs(steer.id, 'turn', 123);
-      const after = repo.getJob(steer.id);
-      expect(after?.status).toBe('pending');
-      expect((after?.payload as { role: string }).role).toBe('turn');
-      expect(after?.runAt).toBe(123);
-      expect(after?.retryCount).toBe(0);
-      expect(repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 50 }).length).toBe(before);
-    });
-
-    it('no-ops (returns null) when the job is no longer processing', () => {
-      deliverMessage(repo, SESSION, 'gone-as', { origin: 'chat' });
-      const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
-      repo.complete(job.id, { ok: true });
-      expect(repo.requeueAs(job.id, 'turn', Date.now())).toBeNull();
     });
   });
 
@@ -504,30 +292,13 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       deliverMessage(repo, SESSION, 'msg-a', { origin: 'chat' });
       deliverMessage(repo, SESSION, 'msg-b', { origin: 'chat' });
       expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['msg-a', 'msg-b']));
-      const [turn] = repo.dequeue(MESSAGE_DELIVERY, 1);
-      repo.complete(turn.id, { ok: true });
+      const [first] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      repo.complete(first.id, { ok: true });
       expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['msg-b']));
-    });
-
-    it('includes batchUuids members of an active batched turn (batch-aware)', () => {
-      repo.enqueue({
-        queue: MESSAGE_DELIVERY,
-        payload: {
-          sessionId: SESSION,
-          messageUuid: 'batch-kickoff',
-          role: 'turn',
-          origin: 'recovery',
-          parentToolUseId: null,
-          batchUuids: ['batch-kickoff', 'batch-member-2', 'batch-member-3'],
-        },
-      });
-      expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(
-        new Set(['batch-kickoff', 'batch-member-2', 'batch-member-3'])
-      );
     });
   });
 
-  describe('batched flush content helpers', () => {
+  describe('delivery content helpers', () => {
     it('flattenDeliveryText flattens strings and text-only arrays; rejects non-text', () => {
       expect(flattenDeliveryText('hello')).toBe('hello');
       expect(flattenDeliveryText('')).toBeNull();
@@ -539,100 +310,6 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       ).toBe('a\nb');
       expect(flattenDeliveryText([{ type: 'text', text: 'a' }, { type: 'image' }])).toBeNull();
       expect(flattenDeliveryText([])).toBeNull();
-    });
-
-    it('buildBatchedDeliveryContent numbers and delimits every message', () => {
-      expect(buildBatchedDeliveryContent(['one', 'two'])).toBe(
-        '--- message 1 of 2 ---\none\n\n--- message 2 of 2 ---\ntwo'
-      );
-    });
-  });
-
-  describe('batched flush — ownership + lookup guards', () => {
-    it('getActiveDeliveryBatchUuids resolves the active batch payload (null when none)', () => {
-      expect(repo.getActiveDeliveryBatchUuids(SESSION, 'kickoff')).toBeNull();
-      repo.enqueue({
-        queue: MESSAGE_DELIVERY,
-        payload: {
-          sessionId: SESSION,
-          messageUuid: 'kickoff',
-          role: 'turn',
-          origin: 'recovery',
-          parentToolUseId: null,
-          batchUuids: ['kickoff', 'member-a'],
-        },
-      });
-      expect(repo.getActiveDeliveryBatchUuids(SESSION, 'kickoff')).toEqual(['kickoff', 'member-a']);
-    });
-
-    it('narrowActiveDeliveryBatchUuids shrinks the payload to the admitted set', () => {
-      repo.enqueue({
-        queue: MESSAGE_DELIVERY,
-        payload: {
-          sessionId: SESSION,
-          messageUuid: 'kickoff',
-          role: 'turn',
-          origin: 'recovery',
-          parentToolUseId: null,
-          batchUuids: ['kickoff', 'admitted-a', 'over-budget-tail', 'user-deferred-tail'],
-        },
-      });
-      db.prepare(
-        `INSERT INTO sdk_messages (id, session_id, sdk_uuid, send_status)
-         VALUES ('m1', ?, 'over-budget-tail', 'enqueued'),
-                ('m2', ?, 'user-deferred-tail', 'deferred')`
-      ).run(SESSION, SESSION);
-      expect(
-        repo.narrowActiveDeliveryBatchUuids(SESSION, 'kickoff', ['kickoff', 'admitted-a'])
-      ).toBe(true);
-      expect(repo.getActiveDeliveryBatchUuids(SESSION, 'kickoff')).toEqual([
-        'kickoff',
-        'admitted-a',
-      ]);
-      expect(repo.activeDeliveryMessageUuids(SESSION)).toEqual(new Set(['kickoff', 'admitted-a']));
-      const job = repo.listJobs({ queue: MESSAGE_DELIVERY, limit: 10 })[0];
-      expect((job.payload as { droppedBatchUuids?: string[] }).droppedBatchUuids).toEqual([
-        'over-budget-tail',
-      ]);
-      const cancelled = repo.cancelForSessionWithMessages(SESSION);
-      expect(cancelled).toEqual(
-        expect.arrayContaining(['kickoff', 'admitted-a', 'over-budget-tail'])
-      );
-      expect(cancelled).not.toContain('user-deferred-tail');
-      expect(repo.narrowActiveDeliveryBatchUuids(SESSION, 'kickoff', ['kickoff'])).toBe(false);
-    });
-
-    it('getActiveDeliveryRole recognizes a batch member (promote dedup)', () => {
-      repo.enqueue({
-        queue: MESSAGE_DELIVERY,
-        payload: {
-          sessionId: SESSION,
-          messageUuid: 'kickoff',
-          role: 'turn',
-          origin: 'recovery',
-          parentToolUseId: null,
-          batchUuids: ['kickoff', 'member-a'],
-        },
-      });
-      expect(repo.getActiveDeliveryRole(SESSION, 'kickoff')).toBe('turn');
-      expect(repo.getActiveDeliveryRole(SESSION, 'member-a')).toBe('turn');
-      expect(repo.getActiveDeliveryRole(SESSION, 'not-a-member')).toBeNull();
-    });
-
-    it('deliverBatchAndMarkQueued returns false when ANY member already owns an active job', async () => {
-      deliverMessage(repo, SESSION, 'turn-anchor', { origin: 'chat' });
-      deliverMessage(repo, SESSION, 'uuid-old', { origin: 'chat' });
-      const batched = await deliverBatchAndMarkQueued({
-        jobQueue: repo,
-        sessionId: SESSION,
-        messageUuids: ['uuid-old', 'uuid-mid', 'uuid-new'],
-        origin: 'recovery',
-      });
-      expect(batched).toBe(false);
-      const uuids = repo
-        .listJobs({ queue: MESSAGE_DELIVERY, limit: 50 })
-        .map((j) => (j.payload as { messageUuid: string }).messageUuid);
-      expect(uuids.sort()).toEqual(['turn-anchor', 'uuid-old']);
     });
   });
 
@@ -646,37 +323,38 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(repo.isProcessingDelivery(SESSION, 'absent')).toBe(false);
     });
   });
+
+  describe('hasActiveDeliveryJob — ownership probe for the ack path', () => {
+    it('is true while a pending or processing job carries the message', () => {
+      deliverMessage(repo, SESSION, 'owned', { origin: 'chat' });
+      expect(repo.hasActiveDeliveryJob(SESSION, 'owned')).toBe(true);
+      const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
+      expect(repo.hasActiveDeliveryJob(SESSION, 'owned')).toBe(true);
+      repo.complete(job.id, { ok: true });
+      expect(repo.hasActiveDeliveryJob(SESSION, 'owned')).toBe(false);
+    });
+  });
 });
 
 class MockSession implements MessageDeliverySession {
   driveResult: DriveTurnOutcome = { outcome: 'completed' };
-  feedResult: FeedSteerOutcome = { outcome: 'completed' };
   driveOutcomeByUuid?: Record<string, DriveTurnOutcome>;
   shouldThrow = false;
   driveCalls = 0;
-  feedCalls = 0;
   settleCalls: string[] = [];
   lastUuid?: string;
   lastContent?: unknown;
-  lastParentToolUseId?: string | null;
-  lastAlreadyConsumed = false;
-  lastBatchUuids?: string[];
-  waitingForInput = false;
 
   async driveDeliveryTurn(
     uuid: string,
     content: unknown,
-    parentToolUseId?: string | null,
-    alreadyConsumed = false,
-    _claimGuard?: () => boolean,
-    batchUuids?: string[]
+    _parentToolUseId?: string | null,
+    _alreadyConsumed = false,
+    _claimGuard?: () => boolean
   ): Promise<DriveTurnOutcome> {
     this.driveCalls++;
     this.lastUuid = uuid;
     this.lastContent = content;
-    this.lastParentToolUseId = parentToolUseId;
-    this.lastAlreadyConsumed = alreadyConsumed;
-    this.lastBatchUuids = batchUuids;
     if (this.shouldThrow) throw new Error('turn exploded');
     if (this.driveOutcomeByUuid && uuid in this.driveOutcomeByUuid) {
       return this.driveOutcomeByUuid[uuid];
@@ -684,24 +362,12 @@ class MockSession implements MessageDeliverySession {
     return this.driveResult;
   }
 
-  async feedDeliverySteer(
-    uuid: string,
-    content: unknown,
-    parentToolUseId?: string | null
-  ): Promise<FeedSteerOutcome> {
-    this.feedCalls++;
-    this.lastUuid = uuid;
-    this.lastContent = content;
-    this.lastParentToolUseId = parentToolUseId;
-    return this.feedResult;
-  }
-
   async settleSkippedDelivery(uuid: string): Promise<void> {
     this.settleCalls.push(uuid);
   }
 
   isWaitingForInput(): boolean {
-    return this.waitingForInput;
+    return false;
   }
 }
 
@@ -709,15 +375,6 @@ function turnJob(repo: JobQueueRepository, uuid: string): Job {
   deliverMessage(repo, SESSION, uuid, { origin: 'chat' });
   const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
   return job!;
-}
-
-function steerJob(repo: JobQueueRepository, uuid: string): Job {
-  deliverMessage(repo, SESSION, `${uuid}-turn-anchor`, { origin: 'chat' });
-  deliverMessage(repo, SESSION, uuid, { origin: 'chat' });
-  const [turn] = repo.dequeue(MESSAGE_DELIVERY, 1);
-  repo.complete(turn.id, { ok: true });
-  const [steer] = repo.dequeue(MESSAGE_DELIVERY, 1);
-  return steer!;
 }
 
 describe('message-delivery v2 — handler (conformance)', () => {
@@ -729,7 +386,7 @@ describe('message-delivery v2 — handler (conformance)', () => {
   });
   afterEach(() => db.close());
 
-  it('turn completed → handler returns completed outcome', async () => {
+  it('admission completed → handler returns completed outcome', async () => {
     const session = new MockSession();
     const job = turnJob(repo, 'msg-turn');
     const handler = createMessageDeliveryHandler({
@@ -742,69 +399,29 @@ describe('message-delivery v2 — handler (conformance)', () => {
     expect(session.driveCalls).toBe(1);
   });
 
-  it('batched turn job → combines member contents into one delimited prompt + passes batchUuids', async () => {
+  it('a legacy queued payload carrying role and batchUuids still processes (unknown fields ignored)', async () => {
     const session = new MockSession();
     repo.enqueue({
       queue: MESSAGE_DELIVERY,
       payload: {
         sessionId: SESSION,
-        messageUuid: 'kickoff',
-        role: 'turn',
+        messageUuid: 'legacy',
+        role: 'steer',
         origin: 'recovery',
         parentToolUseId: null,
-        batchUuids: ['kickoff', 'member-2', 'member-3'],
+        batchUuids: ['legacy', 'legacy-member'],
       },
     });
     const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
-    const contents: Record<string, string> = {
-      kickoff: 'first text',
-      'member-2': 'second text',
-      'member-3': 'third text',
-    };
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
-      getMessageContent: (_sid, uuid) => ({
-        content: contents[uuid] ?? '',
-        sendStatus: 'enqueued',
-      }),
+      getMessageContent: () => ({ content: 'legacy content', sendStatus: 'enqueued' }),
     });
     const result = await handler(job);
     expect(result).toEqual({ outcome: 'completed' });
-    expect(session.lastContent).toBe(
-      '--- message 1 of 3 ---\nfirst text\n\n--- message 2 of 3 ---\nsecond text\n\n--- message 3 of 3 ---\nthird text'
-    );
-    expect(session.lastBatchUuids).toEqual(['kickoff', 'member-2', 'member-3']);
-  });
-
-  it('batched turn job → skips members whose row is gone or user-deferred', async () => {
-    const session = new MockSession();
-    repo.enqueue({
-      queue: MESSAGE_DELIVERY,
-      payload: {
-        sessionId: SESSION,
-        messageUuid: 'kickoff',
-        role: 'turn',
-        origin: 'recovery',
-        parentToolUseId: null,
-        batchUuids: ['kickoff', 'deleted-member', 'deferred-member'],
-      },
-    });
-    const [job] = repo.dequeue(MESSAGE_DELIVERY, 1);
-    const handler = createMessageDeliveryHandler({
-      jobQueue: repo,
-      getSession: () => session,
-      getMessageContent: (_sid, uuid) => {
-        if (uuid === 'kickoff') return { content: 'only one left', sendStatus: 'enqueued' };
-        if (uuid === 'deferred-member') {
-          return { content: 'deferred', sendStatus: 'deferred' };
-        }
-        return null;
-      },
-    });
-    await handler(job);
-    expect(session.lastContent).toBe('only one left');
-    expect(session.lastBatchUuids).toEqual(['kickoff', 'deleted-member', 'deferred-member']);
+    expect(session.driveCalls).toBe(1);
+    expect(session.lastContent).toBe('legacy content');
   });
 
   it('blocked startup → parks (requeue) and the job stays pending (§13: blocked→parked, not failed)', async () => {
@@ -833,20 +450,6 @@ describe('message-delivery v2 — handler (conformance)', () => {
     });
     await expect(handler(job)).rejects.toThrow('turn exploded');
     expect(repo.getJob(job.id)?.status).toBe('processing');
-  });
-
-  it('steer admitted → handler returns completed (§9: completion = SDK admission)', async () => {
-    const session = new MockSession();
-    const job = steerJob(repo, 'msg-steer');
-    const handler = createMessageDeliveryHandler({
-      jobQueue: repo,
-      getSession: () => session,
-      getMessageContent: () => ({ content: 'steer-content', sendStatus: 'enqueued' }),
-    });
-    const result = await handler(job);
-    expect(result).toEqual({ outcome: 'completed' });
-    expect(session.feedCalls).toBe(1);
-    expect((job.payload as { role: string }).role).toBe('steer');
   });
 
   it('session gone → handler rejects (so reclaimStale/processor re-drives it)', async () => {
@@ -895,7 +498,7 @@ describe('handler — status-aware delivery (§8)', () => {
     expect(session.driveCalls).toBe(0);
   });
 
-  it('end-to-end: stale reclaimed consumed-turn completes without driving, then the steer feeds', async () => {
+  it('end-to-end: stale reclaimed consumed delivery completes without driving, then the successor drives', async () => {
     const session = new MockSession();
     const statuses: Record<string, string> = { 'zombie-turn': 'consumed' };
     const handler = createMessageDeliveryHandler({
@@ -917,25 +520,21 @@ describe('handler — status-aware delivery (§8)', () => {
     );
 
     deliverMessage(repo, SESSION, 'new-msg', { origin: 'chat' });
-    const steerRow = repo
-      .listJobs({ queue: MESSAGE_DELIVERY, limit: 50 })
-      .find((j) => (j.payload as { messageUuid: string }).messageUuid === 'new-msg');
-    expect((steerRow?.payload as { role: string }).role).toBe('steer');
 
     expect(repo.reclaimStale(Date.now() - 5 * 60 * 1000)).toHaveLength(1);
 
     const [reclaimed] = repo.dequeue(MESSAGE_DELIVERY, 1);
-    expect((reclaimed.payload as { role: string }).role).toBe('turn');
+    expect((reclaimed.payload as { messageUuid: string }).messageUuid).toBe('zombie-turn');
     const zombieResult = await handler(reclaimed);
     expect(zombieResult).toEqual({ outcome: 'completed' });
     expect(session.driveCalls).toBe(0);
     repo.complete(reclaimed.id, { ok: true });
 
-    const [steer] = repo.dequeue(MESSAGE_DELIVERY, 1);
-    expect((steer.payload as { role: string }).role).toBe('steer');
-    const steerResult = await handler(steer);
-    expect(steerResult).toEqual({ outcome: 'completed' });
-    expect(session.feedCalls).toBe(1);
+    const [successor] = repo.dequeue(MESSAGE_DELIVERY, 1);
+    expect((successor.payload as { messageUuid: string }).messageUuid).toBe('new-msg');
+    const successorResult = await handler(successor);
+    expect(successorResult).toEqual({ outcome: 'completed' });
+    expect(session.driveCalls).toBe(1);
     const active = repo.activeDeliveryMessageUuids(SESSION);
     expect(active.has('zombie-turn')).toBe(false);
   });
@@ -969,19 +568,6 @@ describe('handler — status-aware delivery (§8)', () => {
     expect(session.driveCalls).toBe(1);
   });
 
-  it('a submitted ACP STEER is fed toward acceptance', async () => {
-    const session = new MockSession();
-    const job = steerJob(repo, 'msg-submitted-steer');
-    const handler = createMessageDeliveryHandler({
-      jobQueue: repo,
-      getSession: () => session,
-      getMessageContent: () => ({ content: 'steer', sendStatus: 'submitted' }),
-    });
-    const result = await handler(job);
-    expect(result).toEqual({ outcome: 'completed' });
-    expect(session.feedCalls).toBe(1);
-  });
-
   it('deferred message is skipped, not force-fed into the turn (#2597)', async () => {
     const session = new MockSession();
     const job = turnJob(repo, 'msg-deferred');
@@ -1008,19 +594,6 @@ describe('handler — status-aware delivery (§8)', () => {
     expect(session.driveCalls).toBe(0);
   });
 
-  it('a consumed steer is not re-fed', async () => {
-    const session = new MockSession();
-    const job = steerJob(repo, 'msg-steer-consumed');
-    const handler = createMessageDeliveryHandler({
-      jobQueue: repo,
-      getSession: () => session,
-      getMessageContent: () => ({ content: 'steer', sendStatus: 'consumed' }),
-    });
-    const result = await handler(job);
-    expect(result).toEqual({ outcome: 'completed' });
-    expect(session.feedCalls).toBe(0);
-  });
-
   it('archived session is rejected, terminalized, and not driven (#3742616723/#3744225587)', async () => {
     const session = new MockSession();
     const job = turnJob(repo, 'msg-archived');
@@ -1038,19 +611,19 @@ describe('handler — status-aware delivery (§8)', () => {
     expect(session.driveCalls).toBe(0);
   });
 
-  it('a blocked steer is requeued with a delay, not hot-looped (#3683)', async () => {
+  it('a blocked delivery is requeued with a delay, not hot-looped (#3683)', async () => {
     const session = new MockSession();
     const sessionRetryAt = Date.now() + 60_000;
-    session.feedResult = {
+    session.driveResult = {
       outcome: 'blocked',
       retryAt: sessionRetryAt,
       reason: 'sdk_resume_choice',
     };
-    const job = steerJob(repo, 'msg-park');
+    const job = turnJob(repo, 'msg-park');
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
-      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
     });
     const result = await handler(job);
     expect(result).toMatchObject({ parked: 'sdk_resume_choice', retryAt: sessionRetryAt });
@@ -1073,24 +646,9 @@ describe('handler — status-aware delivery (§8)', () => {
     expect(session.driveCalls).toBe(1);
     expect(session.settleCalls).toEqual(['msg-abort-turn']);
   });
-
-  it('steer aborted (archive/removePending at feed time) → completes without feeding (#3742774841/#3696)', async () => {
-    const session = new MockSession();
-    session.feedResult = { outcome: 'aborted' };
-    const job = steerJob(repo, 'msg-abort-steer');
-    const handler = createMessageDeliveryHandler({
-      jobQueue: repo,
-      getSession: () => session,
-      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
-    });
-    const result = await handler(job);
-    expect(result).toEqual({ outcome: 'aborted' });
-    expect(session.feedCalls).toBe(1);
-    expect(session.settleCalls).toEqual(['msg-abort-steer']);
-  });
 });
 
-describe('repo — exempt dequeue + requeueAllProcessing (#2587/#2593)', () => {
+describe('repo — payload-match dequeue + requeueAllProcessing (#2587/#2593)', () => {
   let db: Database;
   let repo: JobQueueRepository;
 
@@ -1099,19 +657,25 @@ describe('repo — exempt dequeue + requeueAllProcessing (#2587/#2593)', () => {
   });
   afterEach(() => db.close());
 
-  it('dequeue(exclude) claims turns but leaves steers; dequeueExempt claims steers', () => {
-    const steerSpec = { path: '$.role', equals: 'steer' };
-    deliverMessage(repo, SESSION, 'turn-1', { origin: 'chat' });
-    deliverMessage(repo, SESSION, 'steer-1', { origin: 'chat' });
-    const capped = repo.dequeue(MESSAGE_DELIVERY, 10, steerSpec);
+  it('dequeue(exclude) skips payloads matching the spec; dequeueExempt claims them', () => {
+    const exemptSpec = { path: '$.lane', equals: 'urgent' };
+    repo.enqueue({
+      queue: MESSAGE_DELIVERY,
+      payload: { sessionId: SESSION, messageUuid: 'plain-1', lane: 'normal', origin: 'chat' },
+    });
+    repo.enqueue({
+      queue: MESSAGE_DELIVERY,
+      payload: { sessionId: SESSION, messageUuid: 'urgent-1', lane: 'urgent', origin: 'chat' },
+    });
+    const capped = repo.dequeue(MESSAGE_DELIVERY, 10, exemptSpec);
     expect(capped).toHaveLength(1);
-    expect((capped[0].payload as { role: string }).role).toBe('turn');
-    const exempt = repo.dequeueExempt(MESSAGE_DELIVERY, steerSpec, 10);
+    expect((capped[0].payload as { messageUuid: string }).messageUuid).toBe('plain-1');
+    const exempt = repo.dequeueExempt(MESSAGE_DELIVERY, exemptSpec, 10);
     expect(exempt).toHaveLength(1);
-    expect((exempt[0].payload as { role: string }).role).toBe('steer');
+    expect((exempt[0].payload as { messageUuid: string }).messageUuid).toBe('urgent-1');
   });
 
-  it('dequeue(exclude) is a no-op filter for lanes without an exempt spec', () => {
+  it('dequeue without an exclude spec is a no-op filter', () => {
     deliverMessage(repo, SESSION, 'a', { origin: 'chat' });
     deliverMessage(repo, SESSION, 'b', { origin: 'chat' });
     const claimed = repo.dequeue(MESSAGE_DELIVERY, 10);
@@ -1154,7 +718,7 @@ describe('repo — exempt dequeue + requeueAllProcessing (#2587/#2593)', () => {
   });
 });
 
-describe('processor — exempt pass + onDead (#2587/#2595)', () => {
+describe('processor — onDead (#2595)', () => {
   let db: Database;
   let repo: JobQueueRepository;
 
@@ -1162,32 +726,6 @@ describe('processor — exempt pass + onDead (#2587/#2595)', () => {
     ({ db, repo } = setupRepo());
   });
   afterEach(() => db.close());
-
-  it('exempt steers run even when the single capped slot is held (maxConcurrent=1)', async () => {
-    const ran: string[] = [];
-    let releaseTurn!: () => void;
-    const turnBlocked = new Promise<void>((r) => {
-      releaseTurn = r;
-    });
-    const processor = new JobQueueProcessor(repo, { maxConcurrent: 1, pollIntervalMs: 999_999 });
-    processor.register(
-      MESSAGE_DELIVERY,
-      async (job) => {
-        const role = (job.payload as { role: string }).role;
-        ran.push(role);
-        if (role === 'turn') await turnBlocked;
-        return { ok: true };
-      },
-      { exemptJobs: { path: '$.role', equals: 'steer' } }
-    );
-
-    deliverMessage(repo, SESSION, 't', { origin: 'chat' });
-    deliverMessage(repo, SESSION, 's', { origin: 'chat' });
-    await processor.tick();
-    expect(ran).toEqual(['turn', 'steer']);
-    releaseTurn();
-    await processor.stop();
-  });
 
   it('onDead fires (with the dead job) when a lane job exhausts retries (#2595)', async () => {
     const dead: Job[] = [];
@@ -1201,7 +739,7 @@ describe('processor — exempt pass + onDead (#2587/#2595)', () => {
     );
     repo.enqueue({
       queue: MESSAGE_DELIVERY,
-      payload: { sessionId: SESSION, messageUuid: 'd', role: 'turn', origin: 'chat' },
+      payload: { sessionId: SESSION, messageUuid: 'd', origin: 'chat' },
       maxRetries: 0,
     });
     await processor.tick();
@@ -1379,7 +917,7 @@ describe('awaitDeliveryConsumption — lost wakeup (persisted sendStatus re-chec
   });
 });
 
-describe('message-delivery v2 — blocked steer requeue bound', () => {
+describe('message-delivery v2 — blocked delivery requeue bound', () => {
   let db: Database;
   let repo: JobQueueRepository;
 
@@ -1388,16 +926,16 @@ describe('message-delivery v2 — blocked steer requeue bound', () => {
   });
   afterEach(() => db.close());
 
-  it('a blocked steer requeues as pending at the session retryAt without burning retries', async () => {
+  it('a blocked delivery requeues as pending at the session retryAt without burning retries', async () => {
     const session = new MockSession();
-    session.feedResult = { outcome: 'blocked', retryAt: 4321, reason: 'sdk_resume_choice' };
+    session.driveResult = { outcome: 'blocked', retryAt: 4321, reason: 'sdk_resume_choice' };
     const handler = createMessageDeliveryHandler({
       jobQueue: repo,
       getSession: () => session,
-      getMessageContent: () => ({ content: 'steer', sendStatus: 'enqueued' }),
+      getMessageContent: () => ({ content: 'hello', sendStatus: 'enqueued' }),
     });
 
-    let current = steerJob(repo, 'msg-blocked-bound');
+    let current = turnJob(repo, 'msg-blocked-bound');
     for (let i = 0; i < 3; i++) {
       const result = await handler(current);
       expect(result).toMatchObject({ parked: 'sdk_resume_choice', retryAt: 4321 });
@@ -1439,6 +977,11 @@ describe('deliveryConsumptionTimeoutOrDefault — timeout validation', () => {
     expect(deliveryConsumptionTimeoutOrDefault()).toBe(30_000);
     expect(deliveryConsumptionTimeoutOrDefault(-1)).toBe(30_000);
     expect(deliveryConsumptionTimeoutOrDefault(Number.NaN)).toBe(30_000);
+  });
+
+  it('exposes the ACP consumption timeout constant for ACP providers', () => {
+    expect(ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS).toBe(12 * 60 * 1000);
+    expect(MESSAGE_DELIVERY_PARK_MS).toBe(5_000);
   });
 });
 

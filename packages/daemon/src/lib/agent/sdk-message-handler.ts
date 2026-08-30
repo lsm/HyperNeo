@@ -40,11 +40,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import { getProviderCatalogEpoch, getSessionModelInfo } from '../model-service.ts';
 import { getProviderContextManager } from '../providers/factory.ts';
-import {
-  composeTurnEndDeliveryUuids,
-  isTurnEndAckEligible,
-  selectPersistedAckRow,
-} from './ack-selection.ts';
+import { isTurnEndAckEligible, selectPersistedAckRow } from './ack-selection.ts';
 import { ApiErrorCircuitBreaker } from './api-error-circuit-breaker.ts';
 import { contextBudgetThreshold } from './context-budget-decision.ts';
 import { enforceContextBudget } from './context-budget-enforcement.ts';
@@ -677,13 +673,9 @@ export class SDKMessageHandler {
       let consumedAt = Date.now();
       if (consumedAt <= lastConsumedAt) consumedAt = lastConsumedAt + 1;
       lastConsumedAt = consumedAt;
-      const batchUuids = yielded
-        ? db.getJobQueueRepo?.()?.getActiveDeliveryBatchUuids?.(session.id, messageId)
-        : null;
-      const deliveryUuids = composeTurnEndDeliveryUuids({ messageId, yielded, batchUuids });
       const consumed = db
         .getSDKMessageRepo()
-        .markDeliveriesConsumedAtTurnEnd(session.id, deliveryUuids, resultUuid);
+        .markDeliveriesConsumedAtTurnEnd(session.id, [messageId], resultUuid);
       const consumedId = consumed.ids[0];
       if (!consumedId) continue;
       if (messageQueue.acknowledgeYielded(messageId, invocationGeneration ?? undefined)) {
@@ -726,28 +718,7 @@ export class SDKMessageHandler {
       );
       if (already) persisted = true;
     }
-    if (persisted) {
-      this.submitBatchMembersWithKickoff(messageId);
-    }
     return persisted;
-  }
-
-  private submitBatchMembersWithKickoff(kickoffUuid: string): void {
-    try {
-      const jobQueue = this.ctx.db.getJobQueueRepo?.();
-      if (!jobQueue?.getActiveDeliveryBatchUuids) return;
-      const members = jobQueue.getActiveDeliveryBatchUuids(this.ctx.session.id, kickoffUuid);
-      if (!members) return;
-      for (const uuid of members) {
-        if (uuid === kickoffUuid) continue;
-        const row = this.ctx.db.getMessageByStatusAndUuid(this.ctx.session.id, 'enqueued', uuid);
-        if (row) {
-          this.transitionPersistedMessage(row.dbId, 'enqueued', 'submitted');
-        }
-      }
-    } catch (err) {
-      this.logger.warn('Failed to submit batch members with the kickoff:', err);
-    }
   }
 
   markMessageAccepted(messageId: string): void {
@@ -760,39 +731,7 @@ export class SDKMessageHandler {
       messageId
     );
     if (consumed) {
-      this.completeDeliveryAcceptance(messageId);
-    }
-  }
-
-  private completeDeliveryAcceptance(messageId: string): void {
-    signalDeliveryConsumed(this.ctx.session.id, messageId);
-    this.consumeBatchMembersAtAcceptance(messageId);
-  }
-
-  private consumeBatchMembersAtAcceptance(kickoffUuid: string): void {
-    try {
-      const jobQueue = this.ctx.db.getJobQueueRepo?.();
-      const repo = this.ctx.db.getSDKMessageRepo();
-      if (!jobQueue || !repo) return;
-      const members = jobQueue.getActiveDeliveryBatchUuids?.(this.ctx.session.id, kickoffUuid);
-      if (!members) return;
-      const uuids = members.filter((uuid) => uuid !== kickoffUuid);
-      if (uuids.length === 0) return;
-      const flippedIds = repo.markDeliveryConsumedByUuids(this.ctx.session.id, uuids);
-      if (flippedIds.length > 0) {
-        void this.ctx.internalEventBus
-          .publish('messages.statusChanged', {
-            sessionId: this.ctx.session.id,
-            messageIds: flippedIds,
-            status: 'consumed',
-          })
-          .catch(() => {});
-      }
-      for (const uuid of uuids) {
-        signalDeliveryConsumed(this.ctx.session.id, uuid);
-      }
-    } catch (err) {
-      this.logger.warn('Failed to consume batch members at ACP acceptance:', err);
+      signalDeliveryConsumed(this.ctx.session.id, messageId);
     }
   }
 
@@ -898,7 +837,7 @@ export class SDKMessageHandler {
     const jobQueue = db.getJobQueueRepo?.();
     if (
       session.config.provider !== 'acp' &&
-      jobQueue?.getActiveDeliveryRole(session.id, messageId)
+      jobQueue?.hasActiveDeliveryJob(session.id, messageId)
     ) {
       return;
     }

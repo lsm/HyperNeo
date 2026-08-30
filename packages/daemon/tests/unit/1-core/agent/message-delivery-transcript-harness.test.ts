@@ -4,7 +4,6 @@ import type { MessageContent, Provider, Session } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import {
-  buildBatchedDeliveryContent,
   MESSAGE_DELIVERY,
   MESSAGE_DELIVERY_MAX_RETRIES,
   MESSAGE_DELIVERY_PARK_MS,
@@ -50,18 +49,7 @@ type DeliveryTranscriptEvent =
   | { op: 'db:clearTurnEnd'; sessionId: string; uuid: string }
   | { op: 'job:requeue'; jobId: string; runAt: number; claimToken: string | null }
   | { op: 'job:requeueParked'; jobId: string; runAt: number; claimToken: string | null }
-  | { op: 'job:requeueAs'; jobId: string; role: string; runAt: number; claimToken: string | null }
   | { op: 'job:isClaimCurrent'; jobId: string; result: boolean; claimToken: string | null }
-  | { op: 'job:getParkCount'; jobId: string; result: number }
-  | {
-      op: 'job:narrowBatch';
-      sessionId: string;
-      kickoffUuid: string;
-      admitted: string[];
-      dropped: string[];
-      settleableDropped: string[];
-      result: boolean;
-    }
   | { op: 'state:clearQueuedIfOwnedBy'; uuid: string }
   | { op: 'state:setQueuedIfIdle'; uuid: string; result: boolean }
   | { op: 'state:setQueued'; uuid: string };
@@ -222,11 +210,7 @@ function instrumentDeliveryTranscript(
   const jobOriginals = {
     requeue: jobRepo.requeue.bind(jobRepo),
     requeueParked: jobRepo.requeueParked.bind(jobRepo),
-    requeueAs: jobRepo.requeueAs.bind(jobRepo),
     isClaimCurrent: jobRepo.isClaimCurrent.bind(jobRepo),
-    getParkCount: jobRepo.getParkCount.bind(jobRepo),
-    getActiveDeliveryBatchUuids: jobRepo.getActiveDeliveryBatchUuids.bind(jobRepo),
-    narrowActiveDeliveryBatchUuids: jobRepo.narrowActiveDeliveryBatchUuids.bind(jobRepo),
   };
 
   jobRepo.requeue = (
@@ -245,51 +229,9 @@ function instrumentDeliveryTranscript(
     transcript.push({ op: 'job:requeueParked', jobId, runAt, claimToken: claimToken ?? null });
     return jobOriginals.requeueParked(jobId, runAt, claimToken);
   };
-  jobRepo.requeueAs = (
-    jobId: string,
-    role: string,
-    runAt: number,
-    claimToken?: string | null
-  ): ReturnType<JobQueueRepository['requeueAs']> => {
-    transcript.push({ op: 'job:requeueAs', jobId, role, runAt, claimToken: claimToken ?? null });
-    return jobOriginals.requeueAs(jobId, role, runAt, claimToken);
-  };
   jobRepo.isClaimCurrent = (jobId: string, claimToken: string | null): boolean => {
     const result = jobOriginals.isClaimCurrent(jobId, claimToken);
     transcript.push({ op: 'job:isClaimCurrent', jobId, result, claimToken: claimToken ?? null });
-    return result;
-  };
-  jobRepo.getParkCount = (jobId: string): number => {
-    const result = jobOriginals.getParkCount(jobId);
-    transcript.push({ op: 'job:getParkCount', jobId, result });
-    return result;
-  };
-  jobRepo.narrowActiveDeliveryBatchUuids = (
-    sessionId: string,
-    kickoffUuid: string,
-    admitted: string[]
-  ): boolean => {
-    const current = jobOriginals.getActiveDeliveryBatchUuids(sessionId, kickoffUuid) ?? [];
-    const admittedSet = new Set(admitted);
-    const dropped = current.filter((uuid) => !admittedSet.has(uuid));
-    const sdkMessageRepo = db.getSDKMessageRepo();
-    const settleableDropped: string[] = [];
-    for (const uuid of dropped) {
-      const loaded = sdkMessageRepo.getDeliveryContent(sessionId, uuid);
-      if (loaded && (loaded.sendStatus === 'enqueued' || loaded.sendStatus === 'submitted')) {
-        settleableDropped.push(uuid);
-      }
-    }
-    const result = jobOriginals.narrowActiveDeliveryBatchUuids(sessionId, kickoffUuid, admitted);
-    transcript.push({
-      op: 'job:narrowBatch',
-      sessionId,
-      kickoffUuid,
-      admitted,
-      dropped,
-      settleableDropped,
-      result,
-    });
     return result;
   };
 
@@ -344,11 +286,7 @@ function instrumentDeliveryTranscript(
       db.updateMessageTimestamp = dbOriginals.updateMessageTimestamp;
       jobRepo.requeue = jobOriginals.requeue;
       jobRepo.requeueParked = jobOriginals.requeueParked;
-      jobRepo.requeueAs = jobOriginals.requeueAs;
       jobRepo.isClaimCurrent = jobOriginals.isClaimCurrent;
-      jobRepo.getParkCount = jobOriginals.getParkCount;
-      jobRepo.getActiveDeliveryBatchUuids = jobOriginals.getActiveDeliveryBatchUuids;
-      jobRepo.narrowActiveDeliveryBatchUuids = jobOriginals.narrowActiveDeliveryBatchUuids;
       stateManager.setQueuedIfIdle = stateOriginals.setQueuedIfIdle;
       stateManager.setQueued = stateOriginals.setQueued;
       stateManager.clearQueuedIfOwnedBy = stateOriginals.clearQueuedIfOwnedBy;
@@ -439,7 +377,7 @@ async function waitForTranscript(
 }
 
 describe('delivery transcript parity harness (A1a)', () => {
-  describe('feedDeliverySteer', () => {
+  describe('driveDeliveryTurn — mid-processing admission (steer-shaped)', () => {
     const steerUuid = 'msg-steer';
     const steerContent = 'steer content';
 
@@ -453,10 +391,11 @@ describe('delivery transcript parity harness (A1a)', () => {
         setNeverResolvingQuery(agentSession);
         harness.reset();
 
-        const steerPromise = agentSession.feedDeliverySteer(
+        const steerPromise = agentSession.driveDeliveryTurn(
           steerUuid,
           steerContent,
           null,
+          false,
           () => true
         );
         for (let i = 0; i < 100; i++) {
@@ -509,10 +448,11 @@ describe('delivery transcript parity harness (A1a)', () => {
           saveUserMessage(db.getSDKMessageRepo(), sessionId, steerUuid, 'enqueued', steerContent);
           await agentSession.stateManager.setProcessing('active-msg');
           setNeverResolvingQuery(agentSession);
-          const steerPromise = agentSession.feedDeliverySteer(
+          const steerPromise = agentSession.driveDeliveryTurn(
             steerUuid,
             steerContent,
             null,
+            false,
             () => true
           );
           await waitForTranscript(
@@ -543,10 +483,11 @@ describe('delivery transcript parity harness (A1a)', () => {
         harness.reset();
 
         const before = Date.now();
-        const outcome = await agentSession.feedDeliverySteer(
+        const outcome = await agentSession.driveDeliveryTurn(
           steerUuid,
           steerContent,
           null,
+          false,
           () => true
         );
         const after = Date.now();
@@ -573,10 +514,11 @@ describe('delivery transcript parity harness (A1a)', () => {
         stubLifecycleManager(agentSession, 'started');
         harness.reset();
 
-        const steerPromise = agentSession.feedDeliverySteer(
+        const steerPromise = agentSession.driveDeliveryTurn(
           steerUuid,
           steerContent,
           null,
+          false,
           () => true
         );
         await waitForTranscript(
@@ -603,10 +545,11 @@ describe('delivery transcript parity harness (A1a)', () => {
         setNeverResolvingQuery(agentSession);
         harness.reset();
 
-        const outcome = await agentSession.feedDeliverySteer(
+        const outcome = await agentSession.driveDeliveryTurn(
           steerUuid,
           steerContent,
           null,
+          false,
           () => false
         );
         expect(outcome).toEqual({ outcome: 'aborted' });
@@ -628,10 +571,11 @@ describe('delivery transcript parity harness (A1a)', () => {
         setNeverResolvingQuery(agentSession);
         stubLifecycleManager(agentSession, 'started');
 
-        const steerPromise = agentSession.feedDeliverySteer(
+        const steerPromise = agentSession.driveDeliveryTurn(
           steerUuid,
           steerContent,
           null,
+          false,
           () => true
         );
         await expect(steerPromise).rejects.toThrow('Delivery not consumed within timeout');
@@ -762,7 +706,6 @@ describe('delivery transcript parity harness (A1a)', () => {
           payload: {
             sessionId,
             messageUuid: turnUuid,
-            role: 'turn',
             origin: 'chat',
             parentToolUseId: null,
           },
@@ -836,29 +779,22 @@ describe('delivery transcript parity harness (A1a)', () => {
       }
     });
 
-    it('narrows a batched turn to settleable members and completes', async () => {
-      const sessionId = 'sess-turn-batch-narrow';
+    it('completes a single-message turn delivery', async () => {
+      const sessionId = 'sess-turn-single';
       const kickoffUuid = 'msg-kickoff';
-      const memberUuid = 'msg-member';
-      const droppedUuid = 'msg-dropped';
       const kickoffContent = 'kickoff content';
-      const memberContent = 'member content';
       const { db, agentSession, harness } = await makeTestSession(sessionId);
       try {
         const repo = db.getSDKMessageRepo();
         const jobRepo = db.getJobQueueRepo();
         saveUserMessage(repo, sessionId, kickoffUuid, 'enqueued', kickoffContent);
-        saveUserMessage(repo, sessionId, memberUuid, 'enqueued', memberContent);
-        saveUserMessage(repo, sessionId, droppedUuid, 'enqueued', []);
         jobRepo.enqueue({
           queue: MESSAGE_DELIVERY,
           payload: {
             sessionId,
             messageUuid: kickoffUuid,
-            role: 'turn',
             origin: 'chat',
             parentToolUseId: null,
-            batchUuids: [kickoffUuid, memberUuid, droppedUuid],
           },
           maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
         });
@@ -879,8 +815,7 @@ describe('delivery transcript parity harness (A1a)', () => {
           kickoffContent,
           null,
           false,
-          () => true,
-          [kickoffUuid, memberUuid, droppedUuid]
+          () => true
         );
         const yielded = await gen.next();
         if (!yielded.value) throw new Error('message not yielded');
@@ -905,18 +840,9 @@ describe('delivery transcript parity harness (A1a)', () => {
         expect(outcome).toEqual({ outcome: 'completed' });
         expect(harness.transcript).toEqual([
           {
-            op: 'job:narrowBatch',
-            sessionId,
-            kickoffUuid,
-            admitted: [kickoffUuid, memberUuid],
-            dropped: [droppedUuid],
-            settleableDropped: [droppedUuid],
-            result: true,
-          },
-          {
             op: 'queue:admit',
             messageId: kickoffUuid,
-            content: buildBatchedDeliveryContent([kickoffContent, memberContent]),
+            content: kickoffContent,
             internal: false,
             durable: true,
           },
@@ -924,20 +850,13 @@ describe('delivery transcript parity harness (A1a)', () => {
           {
             op: 'db:markConsumedBatch',
             sessionId,
-            uuids: [kickoffUuid, memberUuid],
-            dbIds: [expect.any(String), expect.any(String)],
+            uuids: [kickoffUuid],
+            dbIds: [expect.any(String)],
           },
           {
             op: 'db:updateMessageTimestamp',
             sessionId,
             uuid: kickoffUuid,
-            dbId: expect.any(String),
-            at: expect.any(Number),
-          },
-          {
-            op: 'db:updateMessageTimestamp',
-            sessionId,
-            uuid: memberUuid,
             dbId: expect.any(String),
             at: expect.any(Number),
           },
@@ -964,7 +883,6 @@ describe('delivery transcript parity harness (A1a)', () => {
           payload: {
             sessionId,
             messageUuid: handlerUuid,
-            role: 'turn',
             origin: 'chat',
             parentToolUseId: null,
           },
@@ -983,7 +901,6 @@ describe('delivery transcript parity harness (A1a)', () => {
             driveClaimResult = claimGuard();
             return { outcome: 'blocked', retryAt: 12345 };
           }),
-          feedDeliverySteer: mock(async () => ({ outcome: 'consumed' })),
           settleSkippedDelivery: mock(async () => {}),
         };
 
@@ -1027,7 +944,6 @@ describe('delivery transcript parity harness (A1a)', () => {
           payload: {
             sessionId,
             messageUuid: handlerUuid,
-            role: 'turn',
             origin: 'chat',
             parentToolUseId: null,
           },
@@ -1046,7 +962,6 @@ describe('delivery transcript parity harness (A1a)', () => {
             driveClaimResult = claimGuard();
             return { outcome: 'aborted' };
           }),
-          feedDeliverySteer: mock(async () => ({ outcome: 'consumed' })),
           settleSkippedDelivery: mock(agentSession.settleSkippedDelivery.bind(agentSession)),
         };
 
@@ -1077,29 +992,23 @@ describe('delivery transcript parity harness (A1a)', () => {
       }
     });
 
-    it('forwards a batched turn payload and drives the full batch transcript', async () => {
-      const sessionId = 'sess-handler-batch';
+    it('forwards a legacy role-carrying payload and drives the single-message transcript', async () => {
+      const sessionId = 'sess-handler-legacy';
       const kickoffUuid = 'msg-kickoff';
-      const memberUuid = 'msg-member';
-      const droppedUuid = 'msg-dropped';
       const kickoffContent = 'kickoff content';
-      const memberContent = 'member content';
       const { db, agentSession, harness } = await makeTestSession(sessionId);
       try {
         const repo = db.getSDKMessageRepo();
         const jobRepo = db.getJobQueueRepo();
         saveUserMessage(repo, sessionId, kickoffUuid, 'enqueued', kickoffContent);
-        saveUserMessage(repo, sessionId, memberUuid, 'enqueued', memberContent);
-        saveUserMessage(repo, sessionId, droppedUuid, 'enqueued', []);
         jobRepo.enqueue({
           queue: MESSAGE_DELIVERY,
           payload: {
             sessionId,
             messageUuid: kickoffUuid,
-            role: 'turn',
+            role: 'steer',
             origin: 'chat',
             parentToolUseId: null,
-            batchUuids: [kickoffUuid, memberUuid, droppedUuid],
           },
           maxRetries: MESSAGE_DELIVERY_MAX_RETRIES,
         });
@@ -1125,12 +1034,10 @@ describe('delivery transcript parity harness (A1a)', () => {
               args[2] as string | null | undefined,
               args[3] as boolean | undefined,
               () => true,
-              args[5] as string[] | undefined,
-              args[6] as AbortSignal | undefined,
-              args[7] as MessageDeliveryAttemptObserver | undefined
+              args[5] as AbortSignal | undefined,
+              args[6] as MessageDeliveryAttemptObserver | undefined
             );
           }),
-          feedDeliverySteer: mock(async () => ({ outcome: 'consumed' })),
           settleSkippedDelivery: mock(agentSession.settleSkippedDelivery.bind(agentSession)),
         };
 
@@ -1165,23 +1072,14 @@ describe('delivery transcript parity harness (A1a)', () => {
 
         const result = await handlerPromise;
         expect(result).toEqual({ outcome: 'completed' });
-        expect(driveArgs[5]).toEqual([kickoffUuid, memberUuid, droppedUuid]);
+        expect(driveArgs[5]).toBeUndefined();
         expect(harness.transcript).toEqual([
           { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
           { op: 'job:isClaimCurrent', jobId: job.id, result: true, claimToken: job.claimToken },
           {
-            op: 'job:narrowBatch',
-            sessionId,
-            kickoffUuid,
-            admitted: [kickoffUuid, memberUuid],
-            dropped: [droppedUuid],
-            settleableDropped: [droppedUuid],
-            result: true,
-          },
-          {
             op: 'queue:admit',
             messageId: kickoffUuid,
-            content: buildBatchedDeliveryContent([kickoffContent, memberContent]),
+            content: kickoffContent,
             internal: false,
             durable: true,
           },
@@ -1189,20 +1087,13 @@ describe('delivery transcript parity harness (A1a)', () => {
           {
             op: 'db:markConsumedBatch',
             sessionId,
-            uuids: [kickoffUuid, memberUuid],
-            dbIds: [expect.any(String), expect.any(String)],
+            uuids: [kickoffUuid],
+            dbIds: [expect.any(String)],
           },
           {
             op: 'db:updateMessageTimestamp',
             sessionId,
             uuid: kickoffUuid,
-            dbId: expect.any(String),
-            at: expect.any(Number),
-          },
-          {
-            op: 'db:updateMessageTimestamp',
-            sessionId,
-            uuid: memberUuid,
             dbId: expect.any(String),
             at: expect.any(Number),
           },

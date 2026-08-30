@@ -1003,7 +1003,6 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
         getJobQueueRepo: () => ({
           activeDeliveryMessageUuids: () => new Set<string>(),
           enqueue: jobQueueEnqueue,
-          getActiveDeliveryRole: () => null,
         }),
       },
       internalEventBus: { subscribe: mock(() => () => {}), publish: mock(async () => {}) },
@@ -1144,7 +1143,6 @@ describe('pending drain through the v2 injection shell', () => {
         getJobQueueRepo: () => ({
           activeDeliveryMessageUuids: () => new Set<string>(),
           enqueue: jobQueueEnqueue,
-          getActiveDeliveryRole: () => null,
         }),
       },
       internalEventBus: { subscribe: mock(() => () => {}), publish: mock(async () => {}) },

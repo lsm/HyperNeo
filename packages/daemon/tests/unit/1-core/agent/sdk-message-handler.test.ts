@@ -2275,12 +2275,11 @@ describe('SDKMessageHandler', () => {
         return { messages: [], total: 0 };
       });
       const markDeliveriesConsumedAtTurnEndSpy = mock(() => ({
-        ids: ['db-yielded', 'db-batch-member'],
-        uuids: ['yielded-user-uuid', 'batch-member-uuid'],
+        ids: ['db-yielded'],
+        uuids: ['yielded-user-uuid'],
       }));
       mockDb.getJobQueueRepo = mock(() => ({
         activeDeliveryMessageUuids: () => new Set(['yielded-user-uuid']),
-        getActiveDeliveryBatchUuids: () => ['yielded-user-uuid', 'batch-member-uuid'],
       })) as never;
       mockDb.getSDKMessageRepo = mock(() => ({
         markDeliveriesConsumedAtTurnEnd: markDeliveriesConsumedAtTurnEndSpy,
@@ -2312,19 +2311,21 @@ describe('SDKMessageHandler', () => {
       expect(getStateSpy).toHaveBeenCalledTimes(2);
       expect(markDeliveriesConsumedAtTurnEndSpy).toHaveBeenCalledWith(
         'test-session-id',
-        ['yielded-user-uuid', 'batch-member-uuid'],
+        ['yielded-user-uuid'],
         'result-uuid'
       );
       expect(acknowledgeYieldedSpy).toHaveBeenCalledWith('yielded-user-uuid', undefined);
-      expect(
-        await Promise.all([
-          kickoffWaiter.promise.then(() => 'consumed'),
-          memberWaiter.promise.then(() => 'consumed'),
-        ])
-      ).toEqual(['consumed', 'consumed']);
+      expect(await kickoffWaiter.promise.then(() => 'consumed')).toBe('consumed');
+      let memberSettled = false;
+      void memberWaiter.promise.then(() => {
+        memberSettled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(memberSettled).toBe(false);
+      memberWaiter.cancel();
       expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
         sessionId: 'test-session-id',
-        messageIds: ['db-yielded', 'db-batch-member'],
+        messageIds: ['db-yielded'],
         status: 'consumed',
       });
     });
@@ -2349,7 +2350,6 @@ describe('SDKMessageHandler', () => {
       });
       mockDb.getJobQueueRepo = mock(() => ({
         activeDeliveryMessageUuids: () => new Set(['yielded-user-uuid']),
-        getActiveDeliveryBatchUuids: () => ['yielded-user-uuid', 'held-member-uuid'],
       })) as never;
       mockDb.getSDKMessageRepo = mock(() => ({
         markDeliveriesConsumedAtTurnEnd: mock(() => ({
@@ -6202,7 +6202,7 @@ describe('SDKMessageHandler', () => {
         if (status === 'consumed') consumed = true;
       });
       mockDb.getJobQueueRepo = mock(() => ({
-        getActiveDeliveryRole: () => 'turn',
+        hasActiveDeliveryJob: () => true,
       })) as never;
       const waiter = waitForDeliveryConsumption(mockSession.id, 'msg-acp');
       handler.markMessageAccepted('msg-acp');
@@ -6249,10 +6249,6 @@ describe('SDKMessageHandler', () => {
           };
         }
       );
-      mockDb.getJobQueueRepo = mock(() => ({
-        getActiveDeliveryBatchUuids: () => null,
-      })) as never;
-
       expect(handler.markMessageSubmitted('msg-submitted')).toBe(true);
       expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-submitted'], 'submitted');
 
@@ -7033,10 +7029,10 @@ describe('SDKMessageHandler', () => {
         expect(getUserMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'enqueued');
       });
 
-      it('publishes but does not consume a message owned by an active delivery role', async () => {
+      it('publishes but does not consume a message owned by an active delivery job', async () => {
         statusSpy('enqueued');
         mockDb.getJobQueueRepo = mock(() => ({
-          getActiveDeliveryRole: () => 'coordinator',
+          hasActiveDeliveryJob: () => true,
         })) as never;
         mockMessageQueue.onMessageYielded?.(ackUuid, yieldAt);
         expect(updateMessageStatusSpy).not.toHaveBeenCalledWith([ackDbId], 'consumed');
@@ -7098,7 +7094,6 @@ describe('SDKMessageHandler', () => {
         if (options.durable) {
           mockDb.getJobQueueRepo = mock(() => ({
             activeDeliveryMessageUuids: () => new Set([turnUuid]),
-            getActiveDeliveryBatchUuids: () => [turnUuid],
           })) as never;
         } else {
           mockDb.getJobQueueRepo = mock(() => ({

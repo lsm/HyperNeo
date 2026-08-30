@@ -151,16 +151,12 @@ import { InterruptHandler, type InterruptHandlerContext } from './interrupt-hand
 import type { LimitRetryHint } from './limit-error-classifier.ts';
 import { LimitErrorLlmClassifier } from './limit-error-llm-classifier.ts';
 import {
-  BATCH_DELIVERY_MAX_CHARS,
   admitAcrossContextClearBoundary,
-  buildBatchedDeliveryContent,
   type DeliveryOutcome,
   type DriveTurnOutcome,
   deliverMessage,
   deliveryConsumptionTimeoutMs,
   deliveryConsumptionTimeoutOrDefault,
-  type FeedSteerOutcome,
-  flattenDeliveryText,
   MANUAL_RECOVERY_PARK_MS,
   MESSAGE_DELIVERY_PARK_MS,
   type MessageDeliveryAttemptObserver,
@@ -1757,42 +1753,6 @@ export class AgentSession
         const repo = this.db.getSDKMessageRepo();
         const kickoff = repo.getUserMessageContentByUuid(this.session.id, uuid);
         if (kickoff === null || kickoff === undefined) return undefined;
-        try {
-          const batchUuids = this.db
-            .getJobQueueRepo?.()
-            ?.getActiveDeliveryBatchUuids?.(this.session.id, uuid);
-          if (batchUuids && batchUuids.length > 1) {
-            const rebuilt = this.rebuildBatchDeliveryContent(uuid, kickoff, batchUuids);
-            const admitted = rebuilt.admittedUuids ?? [];
-            if (!admitted.includes(uuid)) {
-              if (!this.narrowRecoveredDeliveryBatch(uuid, [uuid])) return undefined;
-              if (repo.getDeliveryContent(this.session.id, uuid)?.sendStatus === 'failed') {
-                const reopenedId = repo.reopenDeliveryByUuid(this.session.id, uuid);
-                if (reopenedId) {
-                  void this.internalEventBus
-                    .publish('messages.statusChanged', {
-                      sessionId: this.session.id,
-                      messageIds: [reopenedId],
-                      status: 'enqueued',
-                    })
-                    .catch(() => {});
-                }
-              }
-              return kickoff;
-            }
-            if (admitted.length < batchUuids.length) {
-              if (!this.narrowRecoveredDeliveryBatch(uuid, admitted)) return undefined;
-            }
-            return rebuilt.content;
-          }
-        } catch (error) {
-          this.logger.warn(
-            `batch content rebuild for evicted survivor ${uuid} in session ${this.session.id} ` +
-              `failed; falling back to the recovered kickoff content:`,
-            error
-          );
-          if (!this.narrowRecoveredDeliveryBatch(uuid, [uuid])) return undefined;
-        }
         return kickoff;
       },
       ownsTurn: () => this.queryObject === queryObject,
@@ -2492,35 +2452,12 @@ export class AgentSession
     _parentToolUseId?: string | null,
     _alreadyConsumed = false,
     claimGuard?: () => boolean,
-    batchUuids?: string[],
     signal?: AbortSignal,
-    observer?: MessageDeliveryAttemptObserver,
-    deliveryClaimToken?: string | null
+    observer?: MessageDeliveryAttemptObserver
   ): Promise<DriveTurnOutcome> {
     return this.admitDelivery({
       messageUuid,
       content,
-      role: 'turn',
-      claimGuard,
-      batchUuids,
-      signal,
-      observer,
-      deliveryClaimToken,
-    });
-  }
-
-  async feedDeliverySteer(
-    messageUuid: string,
-    content: string | MessageContent[],
-    _parentToolUseId?: string | null,
-    claimGuard?: () => boolean,
-    signal?: AbortSignal,
-    observer?: MessageDeliveryAttemptObserver
-  ): Promise<FeedSteerOutcome> {
-    return this.admitDelivery({
-      messageUuid,
-      content,
-      role: 'steer',
       claimGuard,
       signal,
       observer,
@@ -2530,20 +2467,16 @@ export class AgentSession
   private async admitDelivery(args: {
     messageUuid: string;
     content: string | MessageContent[];
-    role: 'turn' | 'steer';
     parentToolUseId?: string | null;
     claimGuard?: () => boolean;
-    batchUuids?: string[];
     signal?: AbortSignal;
     observer?: MessageDeliveryAttemptObserver;
-    deliveryClaimToken?: string | null;
   }): Promise<DeliveryOutcome> {
     type DeliveryAdmissionResult =
       | DeliveryOutcome
       | { outcome: 'driving'; acknowledgment: Promise<void>; consumedUuids: string[] };
 
-    const { messageUuid, content, claimGuard, batchUuids, signal, observer, deliveryClaimToken } =
-      args;
+    const { messageUuid, content, claimGuard, signal, observer } = args;
 
     const boundary = await admitAcrossContextClearBoundary(this.session.id, signal, () =>
       withSessionLock(
@@ -2557,14 +2490,6 @@ export class AgentSession
           if (claimGuard && !claimGuard()) return { outcome: 'aborted' };
 
           if (this.isWaitingForInput()) {
-            return {
-              outcome: 'blocked',
-              retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS,
-              reason: 'sdk_resume_choice',
-            };
-          }
-
-          if (args.role === 'steer' && this.stateManager.getState().status === 'queued') {
             return {
               outcome: 'blocked',
               retryAt: Date.now() + MESSAGE_DELIVERY_PARK_MS,
@@ -2603,77 +2528,30 @@ export class AgentSession
             return { outcome: 'aborted' };
           }
 
-          let feedContent: string | MessageContent[] = content;
-          let consumedUuids: string[] = [messageUuid];
-          if (batchUuids && batchUuids.length > 1) {
-            const rebuilt = this.rebuildBatchDeliveryContent(messageUuid, content, batchUuids);
-            feedContent = rebuilt.content;
-            if (!rebuilt.admittedUuids?.includes(messageUuid)) {
-              return { outcome: 'aborted' };
-            }
-            consumedUuids = rebuilt.admittedUuids ?? [messageUuid];
-          }
-
           const existing = this.messageQueue.waitForPendingOrInFlight(messageUuid);
           if (
             existing &&
             this.messageQueue.hasYielded?.(messageUuid) &&
-            !this.deliveryContentMatches(existing.content, feedContent)
+            !this.deliveryContentMatches(existing.content, content)
           ) {
             return { outcome: 'aborted' };
           }
 
-          if (batchUuids && batchUuids.length > 1) {
-            const jobQueue = this.db.getJobQueueRepo?.();
-            if (jobQueue) {
-              let narrowed: boolean;
-              if (deliveryClaimToken && jobQueue.updateDeliveryBatchUuidsFenced) {
-                narrowed = jobQueue.updateDeliveryBatchUuidsFenced({
-                  sessionId: this.session.id,
-                  kickoffUuid: messageUuid,
-                  claimToken: deliveryClaimToken,
-                  expectedBatchUuids: batchUuids,
-                  batchUuids: consumedUuids,
-                }).applied;
-              } else if (jobQueue.narrowActiveDeliveryBatchUuids) {
-                narrowed = jobQueue.narrowActiveDeliveryBatchUuids(
-                  this.session.id,
-                  messageUuid,
-                  consumedUuids
-                );
-              } else {
-                narrowed = true;
-              }
-              if (!narrowed) {
-                this.logger.warn(
-                  `delivery: could not narrow active batch for ${messageUuid} in session ${this.session.id}`
-                );
-                const stale = this.messageQueue.waitForPendingOrInFlight(messageUuid);
-                if (stale && !this.messageQueue.hasYielded?.(messageUuid)) {
-                  this.messageQueue.remove?.(messageUuid);
-                } else {
-                  stale?.acknowledgment.catch(() => {});
-                }
-                return { outcome: 'aborted' };
-              }
-            }
-          }
-
           let acknowledgment: Promise<void>;
-          if (existing && this.deliveryContentMatches(existing.content, feedContent)) {
+          if (existing && this.deliveryContentMatches(existing.content, content)) {
             acknowledgment = existing.acknowledgment;
           } else {
             if (existing) {
               this.messageQueue.remove(messageUuid);
               this.messageQueue.acknowledgeYielded(messageUuid, this.getQueryGeneration());
             }
-            acknowledgment = this.messageQueue.admitWithId(messageUuid, feedContent, false, {
+            acknowledgment = this.messageQueue.admitWithId(messageUuid, content, false, {
               durable: true,
             });
           }
 
           observer?.reportStage('query_ready', { generation: this.getQueryGeneration() });
-          return { outcome: 'driving', acknowledgment, consumedUuids };
+          return { outcome: 'driving', acknowledgment, consumedUuids: [messageUuid] };
         },
         signal
       )
@@ -2749,7 +2627,7 @@ export class AgentSession
         deliveryMetrics.recordAckWait(Date.now() - ackWaitStartedAt, 'ack_timeout');
         if (this.messageQueue.hasYielded?.(messageUuid)) {
           await withSessionLock(this.session.id, async () => {
-            this.markDeliveryBatchConsumed(admission.consumedUuids);
+            this.markDeliveryConsumed(admission.consumedUuids);
             await this.publishToolResultConsumed(this.session.id, admission.consumedUuids);
             for (const uuid of admission.consumedUuids) {
               signalDeliveryConsumed(this.session.id, uuid);
@@ -2768,7 +2646,7 @@ export class AgentSession
     }
 
     await withSessionLock(this.session.id, async () => {
-      this.markDeliveryBatchConsumed(admission.consumedUuids);
+      this.markDeliveryConsumed(admission.consumedUuids);
       await this.publishToolResultConsumed(this.session.id, admission.consumedUuids);
       for (const uuid of admission.consumedUuids) {
         signalDeliveryConsumed(this.session.id, uuid);
@@ -2822,10 +2700,6 @@ export class AgentSession
     }
   }
 
-  stuckInitializingMs(now: number = Date.now()): number | null {
-    return this.stateManager.stuckInitializingMs(now);
-  }
-
   async deliverChatMessage(messageUuid: string): Promise<void> {
     await withSessionLock(this.session.id, async () => {
       if (this.db.getSession(this.session.id)?.status === 'archived') {
@@ -2843,9 +2717,8 @@ export class AgentSession
         }
         throw new Error(`Session ${this.session.id} is archived`);
       }
-      let role: 'turn' | 'steer';
       try {
-        role = deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
+        deliverMessage(this.db.getJobQueueRepo(), this.session.id, messageUuid, {
           origin: 'chat',
         });
       } catch (err) {
@@ -2863,20 +2736,16 @@ export class AgentSession
         }
         throw err;
       }
-      if (role === 'turn' || this.stateManager.getState().status === 'rate_limit_cooldown') {
-        this.rateLimitWatchdog.cancel();
-      }
-      if (role === 'turn') {
-        try {
-          await this.stateManager.setQueuedIfIdle(messageUuid);
-        } catch (error) {
-          this.logger.warn('Queued-state publication failed after durable insertion:', error);
-        }
+      this.rateLimitWatchdog.cancel();
+      try {
+        await this.stateManager.setQueuedIfIdle(messageUuid);
+      } catch (error) {
+        this.logger.warn('Queued-state publication failed after durable insertion:', error);
       }
     });
   }
 
-  private markDeliveryBatchConsumed(uuids: string[]): void {
+  private markDeliveryConsumed(uuids: string[]): void {
     const flippedIds = this.db
       .getSDKMessageRepo()
       .markDeliveryConsumedByUuids(this.session.id, uuids);
@@ -2902,67 +2771,6 @@ export class AgentSession
     return JSON.stringify(queued) === JSON.stringify(expected);
   }
 
-  private narrowRecoveredDeliveryBatch(uuid: string, admitted: string[]): boolean {
-    try {
-      const narrowed =
-        this.db
-          .getJobQueueRepo?.()
-          ?.narrowActiveDeliveryBatchUuids?.(this.session.id, uuid, admitted) === true;
-      if (!narrowed) {
-        this.logger.warn(
-          `narrowing the delivery batch for evicted survivor ${uuid} in session ` +
-            `${this.session.id} was not applied; declining the recovery`
-        );
-      }
-      return narrowed;
-    } catch (error) {
-      this.logger.warn(
-        `narrowing the delivery batch for evicted survivor ${uuid} in session ` +
-          `${this.session.id} failed:`,
-        error
-      );
-      return false;
-    }
-  }
-
-  private rebuildBatchDeliveryContent(
-    kickoffUuid: string,
-    kickoffContent: string | MessageContent[],
-    batchUuids: string[]
-  ): { content: string | MessageContent[]; admittedUuids?: string[] } {
-    const repo = this.db.getSDKMessageRepo();
-    const texts: string[] = [];
-    const admitted: string[] = [];
-    let kickoffRaw: string | MessageContent[] | null = null;
-    let budget = BATCH_DELIVERY_MAX_CHARS;
-    for (const uuid of batchUuids) {
-      const row = repo.getDeliveryContent(this.session.id, uuid);
-      if (!row) continue;
-      if (
-        row.sendStatus === 'deferred' ||
-        row.sendStatus === 'failed' ||
-        row.sendStatus === 'consumed'
-      ) {
-        continue;
-      }
-      const text = flattenDeliveryText(row.content);
-      if (text === null) continue;
-      const cost = text.length + 32;
-      if (texts.length > 0 && budget < cost) break;
-      budget -= cost;
-      if (uuid === kickoffUuid) kickoffRaw = row.content;
-      texts.push(text);
-      admitted.push(uuid);
-    }
-    if (texts.length === 0) {
-      return { content: kickoffContent };
-    }
-    if (texts.length === 1) {
-      return { content: kickoffRaw ?? kickoffContent, admittedUuids: admitted };
-    }
-    return { content: buildBatchedDeliveryContent(texts), admittedUuids: admitted };
-  }
-
   async reconcileStrandedDeliveries(owner?: IdleOwnerScope): Promise<number> {
     const jobQueue = this.db.getJobQueueRepo?.();
     if (!jobQueue) return 0;
@@ -2980,10 +2788,8 @@ export class AgentSession
         (uuid) => this.messageQueue.hasPendingOrInFlight(uuid)
       );
       for (const uuid of stranded) {
-        const role = deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
-        if (role === 'turn') {
-          void this.stateManager.setQueuedIfIdle(uuid).catch(() => {});
-        }
+        deliverMessage(jobQueue, this.session.id, uuid, { origin: 'recovery' });
+        void this.stateManager.setQueuedIfIdle(uuid).catch(() => {});
       }
       return stranded.length;
     });

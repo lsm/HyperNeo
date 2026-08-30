@@ -37,7 +37,3 @@ export function routeDriveTurnOutcome(result: DeliveryOutcome): HandlerOutcomeRo
   }
   return { mutation: 'none', settleSkipped: false, result: { outcome: 'completed' } };
 }
-
-export function routeFeedSteerOutcome(result: DeliveryOutcome): HandlerOutcomeRoute {
-  return routeDriveTurnOutcome(result);
-}

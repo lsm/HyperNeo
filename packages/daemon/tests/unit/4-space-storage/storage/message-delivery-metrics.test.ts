@@ -186,18 +186,6 @@ describe('DeliveryMetrics (task #861 item 13)', () => {
     });
   });
 
-  describe('stuck-initializing refusals (admission gate signal)', () => {
-    it('counts refusions cumulatively and keeps the latest initializing duration', () => {
-      expect(metrics.snapshot().stuckInitializingRefusals).toBe(0);
-      expect(metrics.snapshot().lastStuckInitializingMs).toBeNull();
-      metrics.recordStuckInitializingRefusal(150_000);
-      metrics.recordStuckInitializingRefusal(210_000);
-      const snap = metrics.snapshot();
-      expect(snap.stuckInitializingRefusals).toBe(2);
-      expect(snap.lastStuckInitializingMs).toBe(210_000);
-    });
-  });
-
   describe('steer acknowledgment waits', () => {
     it('computes P50/P99 over wait samples and counts timeouts separately', () => {
       for (const ms of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) metrics.recordAckWait(ms, 'acknowledged');

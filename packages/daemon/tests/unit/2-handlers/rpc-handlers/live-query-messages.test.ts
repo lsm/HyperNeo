@@ -1195,7 +1195,7 @@ describe('messages.bySession — mapRow', () => {
     });
   });
 
-  test('uses the highest retry count for canonical and batch-owned messages', () => {
+  test('uses each message own delivery job for its retry projection', () => {
     insertSdkMessage(db, {
       id: 'm-batch',
       sessionId: 's1',
@@ -1213,23 +1213,20 @@ describe('messages.bySession — mapRow', () => {
       sendStatus: 'enqueued',
     });
     insertDeliveryJob(db, {
-      id: 'job-batch',
-      sessionId: 's1',
-      messageUuid: 'u-kickoff',
-      batchUuids: ['u-batch', 'u-batch-only'],
-      retryCount: 2,
-      maxRetries: 5,
-      runAt: 1_700_000_000_002,
-      role: 'steer',
-    });
-    insertDeliveryJob(db, {
       id: 'job-direct',
       sessionId: 's1',
       messageUuid: 'u-batch',
       retryCount: 4,
       maxRetries: 9,
       runAt: 1_700_000_000_004,
-      role: 'steer',
+    });
+    insertDeliveryJob(db, {
+      id: 'job-only',
+      sessionId: 's1',
+      messageUuid: 'u-batch-only',
+      retryCount: 2,
+      maxRetries: 5,
+      runAt: 1_700_000_000_002,
     });
 
     const byUuid = new Map(query(db, 's1', 10).map((row) => [row.uuid as string, row]));

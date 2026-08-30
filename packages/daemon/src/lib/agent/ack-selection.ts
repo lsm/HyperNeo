@@ -41,14 +41,3 @@ export function isTurnEndAckEligible(args: {
   const activeYielded = args.uuid === args.activeMessageId && args.yielded;
   return (!args.durableOwned || activeYielded) && !args.pendingOrClaimed;
 }
-
-export function composeTurnEndDeliveryUuids(args: {
-  messageId: string;
-  yielded: boolean;
-  batchUuids: ReadonlyArray<string> | null;
-}): string[] {
-  if (!args.yielded || !args.batchUuids?.includes(args.messageId)) {
-    return [args.messageId];
-  }
-  return [args.messageId, ...args.batchUuids.filter((uuid) => uuid !== args.messageId)];
-}

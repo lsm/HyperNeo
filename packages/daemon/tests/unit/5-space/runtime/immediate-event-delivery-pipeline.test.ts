@@ -131,11 +131,6 @@ function setupDb(): Database {
     );
   `);
   db.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_message_delivery_active_turn
-      ON job_queue (queue, json_extract(payload, '$.sessionId'))
-      WHERE queue = 'message_delivery'
-        AND json_extract(payload, '$.role') = 'turn'
-        AND status IN ('pending', 'processing');
     CREATE INDEX IF NOT EXISTS idx_message_delivery_session_active
       ON job_queue (json_extract(payload, '$.sessionId'))
       WHERE queue = 'message_delivery' AND status IN ('pending', 'processing');
@@ -206,7 +201,6 @@ async function deliver(
 interface DeliveryJobRow {
   sessionId: string;
   messageUuid: string;
-  role: string;
   origin: string;
 }
 
@@ -220,7 +214,6 @@ function deliveryJobs(db: Database): DeliveryJobRow[] {
     return {
       sessionId: payload.sessionId,
       messageUuid: payload.messageUuid,
-      role: payload.role,
       origin: payload.origin,
     };
   });
@@ -242,12 +235,11 @@ describe('deliver-immediate-event pipeline', () => {
     expect(outcome).toEqual({
       action: 'delivered',
       mechanics: 'turn',
-      deliveryRole: 'turn',
       messageUuid: uuid,
     });
     expect(messageRow(db, uuid)).toEqual({ sendStatus: 'enqueued', origin: 'system' });
     expect(deliveryJobs(db)).toEqual([
-      { sessionId: SESSION_ID, messageUuid: uuid, role: 'turn', origin: 'space_inject' },
+      { sessionId: SESSION_ID, messageUuid: uuid, origin: 'space_inject' },
     ]);
     expect(rec.queuedIfIdle).toEqual([uuid]);
     expect(rec.delivered).toEqual([[EVENT_ID, DELIVERY_KEY]]);
@@ -263,7 +255,6 @@ describe('deliver-immediate-event pipeline', () => {
       payload: {
         sessionId: SESSION_ID,
         messageUuid: 'seed-active-turn',
-        role: 'turn',
         origin: 'chat',
         parentToolUseId: null,
       },
@@ -273,15 +264,12 @@ describe('deliver-immediate-event pipeline', () => {
     expect(outcome).toEqual({
       action: 'delivered',
       mechanics: 'steer',
-      deliveryRole: 'steer',
       messageUuid: uuid,
     });
     expect(
       deliveryJobs(harness.db).filter((job) => job.messageUuid !== 'seed-active-turn')
-    ).toEqual([
-      { sessionId: SESSION_ID, messageUuid: uuid, role: 'steer', origin: 'space_inject' },
-    ]);
-    expect(harness.rec.queuedIfIdle).toEqual([]);
+    ).toEqual([{ sessionId: SESSION_ID, messageUuid: uuid, origin: 'space_inject' }]);
+    expect(harness.rec.queuedIfIdle).toEqual([uuid]);
   });
 
   it('keeps the first routing decision when later gate inputs also hold', async () => {
@@ -401,12 +389,11 @@ describe('deliver-immediate-event pipeline', () => {
     expect(outcome).toEqual({
       action: 'delivered',
       mechanics: 'turn',
-      deliveryRole: 'turn',
       messageUuid: uuid,
     });
     expect(messageRow(db, uuid).sendStatus).toBe('enqueued');
     expect(deliveryJobs(db)).toEqual([
-      { sessionId: SESSION_ID, messageUuid: uuid, role: 'turn', origin: 'space_inject' },
+      { sessionId: SESSION_ID, messageUuid: uuid, origin: 'space_inject' },
     ]);
     expect(rec.delivered).toEqual([[EVENT_ID, DELIVERY_KEY]]);
   });
@@ -424,7 +411,6 @@ describe('deliver-immediate-event pipeline', () => {
     expect(outcome).toEqual({
       action: 'delivered',
       mechanics: 'turn',
-      deliveryRole: null,
       messageUuid: uuid,
     });
     expect(messageRow(db, uuid).sendStatus).toBe('consumed');

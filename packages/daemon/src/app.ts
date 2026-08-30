@@ -975,7 +975,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           }),
       }),
       {
-        exemptJobs: { path: '$.role', equals: 'steer' },
+        dequeueMode: { kind: 'session-fifo', releasedPath: '$.released' },
         onDead: (job) => {
           deliveryMetrics.recordDeadLetter();
           const payload = asMessageDeliveryPayload(job.payload);

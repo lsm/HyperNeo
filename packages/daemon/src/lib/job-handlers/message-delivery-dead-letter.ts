@@ -15,16 +15,11 @@ export async function settleMessageDeliveryDeadLetter(
   payload: MessageDeliveryPayload,
   settlement: MessageDeliveryDeadLetterSettlement
 ): Promise<void> {
-  const uuids = [payload.messageUuid, ...(payload.batchUuids ?? [])];
-  const flippedIds: string[] = [];
-  for (const uuid of new Set(uuids)) {
-    const flipped = settlement.markDeliveryFailedByUuid(payload.sessionId, uuid);
-    if (flipped) flippedIds.push(flipped);
+  const flipped = settlement.markDeliveryFailedByUuid(payload.sessionId, payload.messageUuid);
+  if (flipped) {
+    void settlement.publishStatusChanged(payload.sessionId, [flipped]).catch(() => {});
   }
-  if (flippedIds.length > 0) {
-    void settlement.publishStatusChanged(payload.sessionId, flippedIds).catch(() => {});
-  }
-  if (payload.origin === 'space_inject' && payload.role === 'turn') {
+  if (payload.origin === 'space_inject') {
     try {
       await settlement.publishSessionError(payload.sessionId, DEAD_LETTER_SESSION_ERROR);
     } catch {}

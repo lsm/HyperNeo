@@ -351,13 +351,6 @@ export class ProcessingStateManager {
     return this.processingState.status === 'waiting_for_input';
   }
 
-  stuckInitializingMs(now: number = Date.now()): number | null {
-    const state = this.processingState;
-    if (state.status !== 'processing' || state.phase !== 'initializing') return null;
-    if (this.processingStartedAt === null) return null;
-    return Math.max(0, now - this.processingStartedAt);
-  }
-
   private noteInitializationProgress(nextPhase: StreamingPhase): void {
     if (this.streamingPhase !== 'initializing' || nextPhase === 'initializing') return;
     if (this.processingStartedAt === null) return;

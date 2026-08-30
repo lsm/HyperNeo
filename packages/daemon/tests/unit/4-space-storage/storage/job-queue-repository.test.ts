@@ -825,14 +825,17 @@ describe('JobQueueRepository', () => {
     });
   });
 
-  describe('hasActiveTurnDeliveryJob', () => {
-    function enqueueDeliveryJob(args: { sessionId: string; role: string; status?: string }): void {
+  describe('getActiveDeliveryMessageUuid', () => {
+    function enqueueDeliveryJob(args: {
+      sessionId: string;
+      messageUuid: string;
+      status?: string;
+    }): void {
       const job = repository.enqueue({
         queue: 'message_delivery',
         payload: {
           sessionId: args.sessionId,
-          messageUuid: `msg-${args.role}-${args.sessionId}`,
-          role: args.role,
+          messageUuid: args.messageUuid,
           origin: 'chat',
           parentToolUseId: null,
         },
@@ -842,38 +845,55 @@ describe('JobQueueRepository', () => {
       }
     }
 
-    it('returns true when a pending turn-role delivery job exists for the session', () => {
-      enqueueDeliveryJob({ sessionId: 'sess-1', role: 'turn' });
+    it('returns the oldest active delivery message for the session', () => {
+      enqueueDeliveryJob({ sessionId: 'sess-1', messageUuid: 'msg-first' });
+      enqueueDeliveryJob({ sessionId: 'sess-1', messageUuid: 'msg-second' });
 
-      expect(repository.hasActiveTurnDeliveryJob('sess-1')).toBe(true);
+      expect(repository.getActiveDeliveryMessageUuid('sess-1')).toBe('msg-first');
     });
 
-    it('returns true when the turn-role delivery job is processing', () => {
-      enqueueDeliveryJob({ sessionId: 'sess-1', role: 'turn', status: 'processing' });
+    it('returns the message even while its job is processing', () => {
+      enqueueDeliveryJob({ sessionId: 'sess-1', messageUuid: 'msg-live', status: 'processing' });
 
-      expect(repository.hasActiveTurnDeliveryJob('sess-1')).toBe(true);
+      expect(repository.getActiveDeliveryMessageUuid('sess-1')).toBe('msg-live');
     });
 
-    it('returns false when only steer-role delivery jobs are active', () => {
-      enqueueDeliveryJob({ sessionId: 'sess-1', role: 'steer' });
+    it('returns null when every delivery job has completed', () => {
+      enqueueDeliveryJob({ sessionId: 'sess-1', messageUuid: 'msg-done', status: 'completed' });
 
-      expect(repository.hasActiveTurnDeliveryJob('sess-1')).toBe(false);
+      expect(repository.getActiveDeliveryMessageUuid('sess-1')).toBeNull();
     });
 
-    it('returns false when the turn-role delivery job has completed', () => {
-      enqueueDeliveryJob({ sessionId: 'sess-1', role: 'turn', status: 'completed' });
+    it('ignores delivery jobs of other sessions', () => {
+      enqueueDeliveryJob({ sessionId: 'sess-other', messageUuid: 'msg-other' });
 
-      expect(repository.hasActiveTurnDeliveryJob('sess-1')).toBe(false);
+      expect(repository.getActiveDeliveryMessageUuid('sess-1')).toBeNull();
     });
 
-    it('ignores turn-role delivery jobs of other sessions', () => {
-      enqueueDeliveryJob({ sessionId: 'sess-other', role: 'turn' });
+    it('returns null for a session with no delivery jobs', () => {
+      expect(repository.getActiveDeliveryMessageUuid('sess-1')).toBeNull();
+    });
+  });
 
-      expect(repository.hasActiveTurnDeliveryJob('sess-1')).toBe(false);
+  describe('hasActiveDeliveryJob', () => {
+    it('is true while a delivery job is pending or processing for the message', () => {
+      const job = repository.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'sess-1', messageUuid: 'msg-1', origin: 'chat' },
+      });
+      expect(repository.hasActiveDeliveryJob('sess-1', 'msg-1')).toBe(true);
+      db.prepare('UPDATE job_queue SET status = ? WHERE id = ?').run('processing', job.id);
+      expect(repository.hasActiveDeliveryJob('sess-1', 'msg-1')).toBe(true);
     });
 
-    it('returns false for a session with no delivery jobs', () => {
-      expect(repository.hasActiveTurnDeliveryJob('sess-1')).toBe(false);
+    it('is false once the delivery job settles or for another message', () => {
+      const job = repository.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'sess-1', messageUuid: 'msg-1', origin: 'chat' },
+      });
+      db.prepare('UPDATE job_queue SET status = ? WHERE id = ?').run('completed', job.id);
+      expect(repository.hasActiveDeliveryJob('sess-1', 'msg-1')).toBe(false);
+      expect(repository.hasActiveDeliveryJob('sess-1', 'msg-other')).toBe(false);
     });
   });
 });

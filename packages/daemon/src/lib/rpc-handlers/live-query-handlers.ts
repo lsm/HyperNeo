@@ -1791,11 +1791,6 @@ function activeDeliveryJobsCtes(sessionFilterSql: string = ''): string {
     jq.rowid AS job_rowid,
     json_extract(jq.payload, '$.sessionId') AS session_id,
     json_extract(jq.payload, '$.messageUuid') AS message_uuid,
-    CASE
-      WHEN json_type(jq.payload, '$.batchUuids') = 'array'
-      THEN json_extract(jq.payload, '$.batchUuids')
-      ELSE '[]'
-    END AS batch_uuids,
     jq.retry_count,
     jq.run_at,
     jq.max_retries
@@ -1813,16 +1808,6 @@ active_delivery_candidates AS (
     max_retries
   FROM active_delivery_jobs
   WHERE message_uuid IS NOT NULL
-  UNION ALL
-  SELECT
-    je.value AS message_uuid,
-    jobs.session_id,
-    jobs.job_rowid,
-    jobs.retry_count,
-    jobs.run_at,
-    jobs.max_retries
-  FROM active_delivery_jobs jobs, json_each(jobs.batch_uuids) je
-  WHERE je.value IS NOT NULL
 )`;
 }
 

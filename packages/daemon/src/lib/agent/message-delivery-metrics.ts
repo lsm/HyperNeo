@@ -14,8 +14,7 @@ export type MessageDeliveryLifecycleEventName =
   | 'old_handler_aborted'
   | 'settled'
   | 'slot_released'
-  | 'fenced_completion_rejected'
-  | 'stuck_initializing_refusal';
+  | 'fenced_completion_rejected';
 
 export interface MessageDeliveryLifecycleFields {
   jobId?: string;
@@ -24,7 +23,6 @@ export interface MessageDeliveryLifecycleFields {
   slotClass?: 'capped' | 'exempt';
   sessionId?: string;
   messageUuid?: string;
-  role?: string;
   generation?: number;
   stage?: string;
   elapsedMs?: number;
@@ -49,9 +47,7 @@ export function emitMessageDeliveryLifecycleEvent(
     }
     emitStructuredLogEvent({
       level:
-        event === 'fenced_completion_rejected' ||
-        event === 'stale_reclaim_jitter_failed' ||
-        event === 'stuck_initializing_refusal'
+        event === 'fenced_completion_rejected' || event === 'stale_reclaim_jitter_failed'
           ? 'warn'
           : 'info',
       args: ['message_delivery.lifecycle'],
@@ -78,8 +74,6 @@ export interface DeliveryMetricsSnapshot {
   residualWindowSamples: number;
   deadLetters: number;
   zeroProgressWedges: number;
-  stuckInitializingRefusals: number;
-  lastStuckInitializingMs: number | null;
   ackWaitP50: number | null;
   ackWaitP99: number | null;
   ackWaitSamples: number;
@@ -118,8 +112,6 @@ export class DeliveryMetrics {
   private residualWindows: number[] = [];
   private deadLetters = 0;
   private zeroProgressWedges = 0;
-  private stuckInitializingRefusals = 0;
-  private lastStuckInitializingMs: number | null = null;
   private ackWaits: number[] = [];
   private ackWaitTimeouts = 0;
   private initializationDurations: number[] = [];
@@ -166,11 +158,6 @@ export class DeliveryMetrics {
     this.zeroProgressWedges++;
   }
 
-  recordStuckInitializingRefusal(initializingMs: number): void {
-    this.stuckInitializingRefusals++;
-    this.lastStuckInitializingMs = initializingMs;
-  }
-
   recordAckWait(ms: number, outcome: 'acknowledged' | 'ack_timeout'): void {
     if (!Number.isFinite(ms) || ms < 0) return;
     pushBounded(this.ackWaits, ms);
@@ -194,8 +181,6 @@ export class DeliveryMetrics {
       residualWindowSamples: this.residualWindows.length,
       deadLetters: this.deadLetters,
       zeroProgressWedges: this.zeroProgressWedges,
-      stuckInitializingRefusals: this.stuckInitializingRefusals,
-      lastStuckInitializingMs: this.lastStuckInitializingMs,
       ackWaitP50: percentile(this.ackWaits, 0.5),
       ackWaitP99: percentile(this.ackWaits, 0.99),
       ackWaitSamples: this.ackWaits.length,
