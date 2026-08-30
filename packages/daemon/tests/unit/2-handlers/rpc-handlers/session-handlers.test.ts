@@ -1,20 +1,24 @@
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
-import { MessageHub } from '@hyperneo/shared';
-import type { ModelInfo } from '@hyperneo/shared';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { MessageHub, ModelInfo } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
-import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import {
+  sessionResetCoordinationLocks,
+  withSessionLock,
+  withSessionResetCoordination,
+} from '../../../../src/lib/agent/message-delivery';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
-import { setModelsCache } from '../../../../src/lib/model-service.js';
-import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
-import { resetProviderFactory } from '../../../../src/lib/providers/factory';
-import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
+import { setModelsCache } from '../../../../src/lib/model-service.js';
+import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
+import type { SessionManager } from '../../../../src/lib/session-manager';
+import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 function createMockInternalEventBus(): InternalEventBus<DaemonInternalEventMap> {
   return {
@@ -869,6 +873,31 @@ describe('Session RPC Handlers — models.list', () => {
         )
         .get(MESSAGE_DELIVERY, 'promote-me') as { role: string };
       expect(job.role).toBe('turn');
+    });
+
+    it('promote does not pin the coordination slot while a live turn holds the session lock', async () => {
+      const previous = process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+      process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = '50';
+      let releaseTurn!: () => void;
+      const turnGate = new Promise<void>((resolve) => {
+        releaseTurn = resolve;
+      });
+      try {
+        void withSessionLock('sess-1', () => turnGate);
+        const handler = messageHubData.handlers.get('session.messages.promotePending')!;
+        void handler({ sessionId: 'sess-1', messageDbId: 'db-1' }, {}).catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 5));
+
+        await expect(withSessionResetCoordination('sess-1', async () => 'sent')).resolves.toBe(
+          'sent'
+        );
+      } finally {
+        releaseTurn();
+        if (previous === undefined)
+          delete process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS;
+        else process.env.HYPERNEO_DELIVERY_COORDINATION_ACQUIRE_TIMEOUT_MS = previous;
+        sessionResetCoordinationLocks.clear();
+      }
     });
   });
 

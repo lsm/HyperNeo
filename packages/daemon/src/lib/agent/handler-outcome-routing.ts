@@ -15,6 +15,7 @@ export type HandlerJobResult =
   | {
       parked:
         | 'sdk_resume_choice'
+        | 'context_clear_boundary'
         | 'limit_recovery'
         | 'turn_blocked'
         | 'turn_blocked_gate_open'
@@ -41,7 +42,13 @@ export function routeDriveTurnOutcome(result: DriveTurnOutcome): HandlerOutcomeR
       mutation: 'requeue',
       retryAt: result.retryAt,
       settleSkipped: false,
-      result: { parked: 'sdk_resume_choice', retryAt: result.retryAt },
+      result: {
+        parked:
+          result.reason === 'context_clear_boundary'
+            ? 'context_clear_boundary'
+            : 'sdk_resume_choice',
+        retryAt: result.retryAt,
+      },
     };
   }
   if (result.outcome === 'recovery_pending') {

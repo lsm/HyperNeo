@@ -10,11 +10,14 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { Logger } from '../logger.ts';
 import { ClearConversationCancelledError } from './agent-session.ts';
 import {
+  acquireContextClearBoundary,
+  type ContextClearBoundaryOwner,
   deliverAndMarkQueued,
   deliverBatchAndMarkQueued,
   flattenDeliveryText,
   isMessageDeliveryV2Enabled,
   type MessageDeliveryOrigin,
+  SessionCoordinationStallError,
   withSessionResetCoordination,
 } from './message-delivery.ts';
 import { decideTurnEndFlush, type TurnEndFlushPlan } from './message-delivery-pipeline.ts';
@@ -32,7 +35,7 @@ export interface QueryModeHandlerContext {
     getState(): { status: string };
   };
   slotResetsContext?(): boolean;
-  clearConversationContext?(): Promise<void>;
+  clearConversationContext?(boundaryOwner?: ContextClearBoundaryOwner): Promise<void>;
   renderPendingDigest?(
     sessionId: string,
     taskId?: string
@@ -292,7 +295,8 @@ export class QueryModeHandler {
 
   private async clearContextAheadOfFlush(
     flushMessages: FlushMessage[],
-    options?: { skipContextReset?: boolean; pendingTaskInput?: boolean }
+    options?: { skipContextReset?: boolean; pendingTaskInput?: boolean },
+    boundaryOwner?: ContextClearBoundaryOwner
   ): Promise<boolean> {
     if (options?.skipContextReset) return false;
     if (!this.ctx.clearConversationContext) return false;
@@ -300,7 +304,7 @@ export class QueryModeHandler {
     if (plan.action === 'noop') return false;
     if (plan.contextReset.action !== 'clear_then_flush') return false;
     try {
-      await this.ctx.clearConversationContext();
+      await this.ctx.clearConversationContext(boundaryOwner);
     } catch (error) {
       if (error instanceof ClearConversationCancelledError) throw error;
       this.ctx.logger.warn(
@@ -343,38 +347,103 @@ export class QueryModeHandler {
     if (plan.action === 'noop') return { clearedContext: false, reDeferredDbIds: [] };
     let clearedContext = false;
     let reDeferredDbIds: string[] = [];
+    let planAction = plan.action;
     let deliverables = plan.action === 'batch' ? plan.uuids : plan.deliver;
-    if (plan.contextReset.action === 'clear_then_flush') {
-      clearedContext = await this.clearContextAheadOfFlush(flushMessages, options);
-    } else if (plan.contextReset.reason === 'active_delivery_job') {
-      const deliverableSet = new Set(deliverables);
-      reDeferredDbIds = await this.deferTaskDeliverables(flushMessages, deliverableSet);
-      deliverables = deliverables.filter((uuid) => {
-        const message = flushMessages.find((entry) => entry.uuid === uuid);
-        return message !== undefined && !message.isTaskInput;
-      });
-      if (deliverables.length === 0) return { clearedContext, reDeferredDbIds };
+    let clearBoundaryOwner: ContextClearBoundaryOwner | null = null;
+    try {
+      if (plan.contextReset.action === 'clear_then_flush' && !options?.skipContextReset) {
+        clearBoundaryOwner = await this.acquireClearBoundaryAheadOfFlush();
+        if (clearBoundaryOwner === null) {
+          const refreshed = this.planFlush(flushMessages, options);
+          if (refreshed.action === 'noop') {
+            return { clearedContext: false, reDeferredDbIds };
+          }
+          planAction = refreshed.action;
+          deliverables = refreshed.action === 'batch' ? refreshed.uuids : refreshed.deliver;
+          const deliverableSet = new Set(deliverables);
+          reDeferredDbIds = await this.deferTaskDeliverables(flushMessages, deliverableSet);
+          deliverables = deliverables.filter((uuid) => {
+            const message = flushMessages.find((entry) => entry.uuid === uuid);
+            return message !== undefined && !message.isTaskInput;
+          });
+          if (deliverables.length === 0) return { clearedContext: false, reDeferredDbIds };
+        } else {
+          clearedContext = await this.clearContextAheadOfFlush(
+            flushMessages,
+            options,
+            clearBoundaryOwner
+          );
+          if (!clearedContext) {
+            const refreshed = this.planFlush(flushMessages, options);
+            if (refreshed.action === 'noop') {
+              return { clearedContext, reDeferredDbIds };
+            }
+            planAction = refreshed.action;
+            deliverables = refreshed.action === 'batch' ? refreshed.uuids : refreshed.deliver;
+            if (
+              refreshed.contextReset.action === 'flush_without_clear' &&
+              refreshed.contextReset.reason === 'active_delivery_job'
+            ) {
+              const deliverableSet = new Set(deliverables);
+              reDeferredDbIds = await this.deferTaskDeliverables(flushMessages, deliverableSet);
+              deliverables = deliverables.filter((uuid) => {
+                const message = flushMessages.find((entry) => entry.uuid === uuid);
+                return message !== undefined && !message.isTaskInput;
+              });
+              if (deliverables.length === 0) return { clearedContext, reDeferredDbIds };
+            }
+          }
+        }
+      } else if (
+        plan.contextReset.action === 'flush_without_clear' &&
+        plan.contextReset.reason === 'active_delivery_job'
+      ) {
+        const deliverableSet = new Set(deliverables);
+        reDeferredDbIds = await this.deferTaskDeliverables(flushMessages, deliverableSet);
+        deliverables = deliverables.filter((uuid) => {
+          const message = flushMessages.find((entry) => entry.uuid === uuid);
+          return message !== undefined && !message.isTaskInput;
+        });
+        if (deliverables.length === 0) return { clearedContext, reDeferredDbIds };
+      }
+      if (planAction === 'batch' && !options?.deliverIndividually) {
+        const batched = await deliverBatchAndMarkQueued({
+          jobQueue,
+          stateManager: this.ctx.stateManager,
+          sessionId: this.ctx.session.id,
+          messageUuids: deliverables,
+          origin,
+        });
+        if (batched) return { clearedContext, reDeferredDbIds };
+      }
+      for (const uuid of deliverables) {
+        await deliverAndMarkQueued({
+          jobQueue,
+          stateManager: this.ctx.stateManager,
+          sessionId: this.ctx.session.id,
+          messageUuid: uuid,
+          origin,
+        });
+      }
+      return { clearedContext, reDeferredDbIds };
+    } finally {
+      clearBoundaryOwner?.release();
     }
-    if (plan.action === 'batch' && !options?.deliverIndividually) {
-      const batched = await deliverBatchAndMarkQueued({
-        jobQueue,
-        stateManager: this.ctx.stateManager,
-        sessionId: this.ctx.session.id,
-        messageUuids: deliverables,
-        origin,
-      });
-      if (batched) return { clearedContext, reDeferredDbIds };
+  }
+
+  private async acquireClearBoundaryAheadOfFlush(): Promise<ContextClearBoundaryOwner | null> {
+    try {
+      return await acquireContextClearBoundary(this.ctx.session.id);
+    } catch (error) {
+      if (error instanceof SessionCoordinationStallError) {
+        this.ctx.logger.warn(
+          `turn-end flush context-clear boundary busy for session ${this.ctx.session.id}: ` +
+            `${error.message} — deferring the flush instead of clearing unprotected`
+        );
+        return null;
+      }
+      throw error;
     }
-    for (const uuid of deliverables) {
-      await deliverAndMarkQueued({
-        jobQueue,
-        stateManager: this.ctx.stateManager,
-        sessionId: this.ctx.session.id,
-        messageUuid: uuid,
-        origin,
-      });
-    }
-    return { clearedContext, reDeferredDbIds };
   }
 
   async sendEnqueuedMessagesOnTurnEnd(options?: {

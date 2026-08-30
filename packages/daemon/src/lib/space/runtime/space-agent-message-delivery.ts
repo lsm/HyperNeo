@@ -1,16 +1,15 @@
-import superpipe, { type PipelineAPI } from 'superpipe';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import { Logger } from '../../logger.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   awaitDeliveryConsumptionTolerant,
   deliverAndMarkQueued,
   deliveryConsumptionTimeoutMs,
   MESSAGE_DELIVERY_PARK_MS,
+  type MessageDeliveryOrigin,
   signalDeliveryConsumed,
   waitForDeliveryConsumption,
-  withSessionResetCoordination,
-  type MessageDeliveryOrigin,
 } from '../../agent/message-delivery.ts';
+import { Logger } from '../../logger.ts';
 
 const log = new Logger('space-agent-delivery');
 
@@ -137,6 +136,7 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
     this.waiters.clear();
   }
 }
+
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 
 export type SpaceAgentInjectionOutcome =
@@ -229,28 +229,20 @@ async function deliverAndAwaitConsumption(
         ? () => ctx.deps.sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus
         : undefined,
     deliver: () =>
-      withSessionResetCoordination(
+      deliverAndMarkQueued({
+        jobQueue: ctx.deps.jobQueue,
+        stateManager: ctx.deps.stateManager,
         sessionId,
-        async () =>
-          deliverAndMarkQueued({
-            jobQueue: ctx.deps.jobQueue,
-            stateManager: ctx.deps.stateManager,
-            sessionId,
-            messageUuid: messageId,
-            origin: ctx.origin ?? 'space_agent',
-            signal: ctx.deps.disposeSignal,
-            onEnqueueFailure: () => {
-              const failedDbId = ctx.deps.sdkMessageRepo.markDeliveryFailedByUuid(
-                sessionId,
-                messageId
-              );
-              if (failedDbId) {
-                void ctx.deps.publishStatusChanged(sessionId, failedDbId, 'failed').catch(() => {});
-              }
-            },
-          }),
-        ctx.deps.disposeSignal
-      ),
+        messageUuid: messageId,
+        origin: ctx.origin ?? 'space_agent',
+        signal: ctx.deps.disposeSignal,
+        onEnqueueFailure: () => {
+          const failedDbId = ctx.deps.sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
+          if (failedDbId) {
+            void ctx.deps.publishStatusChanged(sessionId, failedDbId, 'failed').catch(() => {});
+          }
+        },
+      }),
   });
   return { ...ctx, consumed: outcome.consumed };
 }

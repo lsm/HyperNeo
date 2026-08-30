@@ -34,6 +34,16 @@ describe('routeDriveTurnOutcome', () => {
       },
     },
     {
+      label: 'blocked behind a context-clear boundary',
+      drive: { outcome: 'blocked', retryAt: 5000, reason: 'context_clear_boundary' },
+      expected: {
+        mutation: 'requeue',
+        retryAt: 5000,
+        settleSkipped: false,
+        result: { parked: 'context_clear_boundary', retryAt: 5000 },
+      },
+    },
+    {
       label: 'recovery_pending',
       drive: { outcome: 'recovery_pending', retryAt: 9000 },
       expected: {
