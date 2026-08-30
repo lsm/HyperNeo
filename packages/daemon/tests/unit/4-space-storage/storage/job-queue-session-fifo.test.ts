@@ -218,6 +218,24 @@ describe('JobQueueRepository — dequeueSessionFifo (dark launch)', () => {
     expect(claimed.map((job) => job.id)).toEqual([c1First.id, c2.id]);
     expect(repo.getJob(c1Second.id)?.status).toBe('pending');
   });
+
+  it('never merges a sessionless job with a real session or another sessionless job', () => {
+    const sessionless1 = repo.enqueue({ queue: 'message_delivery', payload: {} });
+    const sessionless2 = repo.enqueue({ queue: 'message_delivery', payload: {} });
+    const realFirst = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'rowid:1' },
+    });
+    const realSecond = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'rowid:1' },
+    });
+
+    const claimed = repo.dequeueSessionFifo('message_delivery', 5);
+
+    expect(claimed.map((job) => job.id)).toEqual([sessionless1.id, sessionless2.id, realFirst.id]);
+    expect(repo.getJob(realSecond.id)?.status).toBe('pending');
+  });
 });
 
 describe('JobQueueProcessor — session-fifo dequeue mode (dark launch)', () => {

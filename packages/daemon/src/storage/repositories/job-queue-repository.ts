@@ -149,7 +149,7 @@ export function buildJobQueueSessionFifoSelection(
       SELECT rid FROM (
         SELECT rowid AS rid,
                ROW_NUMBER() OVER (
-                 PARTITION BY COALESCE(${sessionKeySql}, 'rowid:' || rowid)
+                 PARTITION BY ${sessionKeySql}, COALESCE(${sessionKeySql}, rowid)
                  ORDER BY created_at ASC, rowid ASC
                ) AS rn
           FROM job_queue
@@ -160,7 +160,7 @@ export function buildJobQueueSessionFifoSelection(
       JOIN session_heads ON session_heads.rid = candidate.rowid
      WHERE candidate.queue = ? AND candidate.status = 'pending' AND candidate.run_at <= ?`;
   const params: Array<string | number> = [];
-  if (!defaultSessionPath) params.push(sessionIdPath);
+  if (!defaultSessionPath) params.push(sessionIdPath, sessionIdPath);
   params.push(input.queue, input.queue, input.now);
   if (input.releasedPath) {
     sql += ` AND COALESCE(json_extract(candidate.payload, ?), 1) = 1`;
