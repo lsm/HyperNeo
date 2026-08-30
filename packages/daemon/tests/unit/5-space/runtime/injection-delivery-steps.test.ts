@@ -299,6 +299,87 @@ describe('deliverInjectedMessage', () => {
     }
   });
 
+  it('retries a row that became failed before the ensure path ran', async () => {
+    const db = await makeDb();
+    try {
+      const { deps, publishStatusChanged } = makeBranchDeps(db);
+      const target = makeTargetSession();
+      db.saveUserMessage(SESSION_ID, makeSdkUserMessage(), 'enqueued');
+      db.getSDKMessageRepo().markDeliveryFailedByUuid(SESSION_ID, MESSAGE_ID);
+      publishStatusChanged.mockClear();
+
+      const dbId = await deliverInjectedMessage(deps, {
+        session: target.session,
+        sessionId: SESSION_ID,
+        messageId: MESSAGE_ID,
+        sdkUserMessage: makeSdkUserMessage(),
+        existing: null,
+      });
+
+      expect(dbId).toBeTypeOf('string');
+      expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, MESSAGE_ID)?.sendStatus).toBe(
+        'enqueued'
+      );
+      expect(publishStatusChanged).toHaveBeenCalled();
+    } finally {
+      db.close();
+    }
+  });
+
+  it('activates a row that became deferred before the ensure path ran', async () => {
+    const db = await makeDb();
+    try {
+      const { deps, publishStatusChanged } = makeBranchDeps(db);
+      const target = makeTargetSession();
+      db.saveUserMessage(SESSION_ID, makeSdkUserMessage(), 'enqueued');
+      db.getSDKMessageRepo().markDeliveryDeferredByUuid(SESSION_ID, MESSAGE_ID);
+      publishStatusChanged.mockClear();
+
+      const dbId = await deliverInjectedMessage(deps, {
+        session: target.session,
+        sessionId: SESSION_ID,
+        messageId: MESSAGE_ID,
+        sdkUserMessage: makeSdkUserMessage(),
+        existing: null,
+      });
+
+      expect(dbId).toBeTypeOf('string');
+      expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, MESSAGE_ID)?.sendStatus).toBe(
+        'enqueued'
+      );
+      expect(publishStatusChanged).toHaveBeenCalled();
+    } finally {
+      db.close();
+    }
+  });
+
+  it('accepts a consumed row idempotently when the ensure path sees it late', async () => {
+    const db = await makeDb();
+    try {
+      const { deps, publishStatusChanged } = makeBranchDeps(db);
+      const target = makeTargetSession();
+      db.saveUserMessage(SESSION_ID, makeSdkUserMessage(), 'enqueued');
+      db.getSDKMessageRepo().markDeliveryConsumedByUuid(SESSION_ID, MESSAGE_ID);
+      publishStatusChanged.mockClear();
+
+      const dbId = await deliverInjectedMessage(deps, {
+        session: target.session,
+        sessionId: SESSION_ID,
+        messageId: MESSAGE_ID,
+        sdkUserMessage: makeSdkUserMessage(),
+        existing: null,
+      });
+
+      expect(dbId).toBeTypeOf('string');
+      expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, MESSAGE_ID)?.sendStatus).toBe(
+        'consumed'
+      );
+      expect(publishStatusChanged).not.toHaveBeenCalled();
+    } finally {
+      db.close();
+    }
+  });
+
   it('reuses an existing enqueued row without re-publishing enqueued', async () => {
     const db = await makeDb();
     try {

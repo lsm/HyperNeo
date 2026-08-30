@@ -126,15 +126,10 @@ function deliverableHandoff(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
   return { ...ctx, handoff: { dbId: dbIds[0] ?? ctx.messageId, role: null, changed: false } };
 }
 
-async function advanceStaleHandoff(
-  ctx: MailboxHandoffCtx,
-  sourceStatus: string
-): Promise<MailboxHandoffCtx> {
+async function advanceCurrentHandoff(ctx: MailboxHandoffCtx): Promise<MailboxHandoffCtx> {
   const current = ctx.sdkMessageRepo.getDeliveryContent(ctx.sessionId, ctx.messageId);
-  if (current === null || current === undefined || current.sendStatus === sourceStatus) {
-    throw new Error(
-      `prompt handoff: no ${sourceStatus} row to advance for ${ctx.sessionId}/${ctx.messageId}`
-    );
+  if (current === null || current === undefined) {
+    throw new Error(`prompt handoff: row disappeared for ${ctx.sessionId}/${ctx.messageId}`);
   }
   if (DELIVERABLE_STATUSES.has(current.sendStatus)) {
     return deliverableHandoff(ctx);
@@ -173,6 +168,19 @@ async function advanceStaleHandoff(
   );
 }
 
+async function advanceStaleHandoff(
+  ctx: MailboxHandoffCtx,
+  sourceStatus: string
+): Promise<MailboxHandoffCtx> {
+  const current = ctx.sdkMessageRepo.getDeliveryContent(ctx.sessionId, ctx.messageId);
+  if (current === null || current === undefined || current.sendStatus === sourceStatus) {
+    throw new Error(
+      `prompt handoff: no ${sourceStatus} row to advance for ${ctx.sessionId}/${ctx.messageId}`
+    );
+  }
+  return advanceCurrentHandoff(ctx);
+}
+
 async function applyRetryHandoff(ctx: MailboxHandoffCtx): Promise<MailboxHandoffCtx> {
   if (ctx.mechanism !== 'retry') return ctx;
   const retried = await retryPrompt({
@@ -205,7 +213,7 @@ async function applyActivateHandoff(ctx: MailboxHandoffCtx): Promise<MailboxHand
   return { ...ctx, handoff: { dbId: entry.dbId, role: entry.role, changed: true } };
 }
 
-function applyEnsureHandoff(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
+async function applyEnsureHandoff(ctx: MailboxHandoffCtx): Promise<MailboxHandoffCtx> {
   if (ctx.mechanism !== 'ensure') return ctx;
   const ensured = ensurePrompt({
     db: ctx.db,
@@ -216,10 +224,13 @@ function applyEnsureHandoff(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
     origin: ctx.messageOrigin,
     delivery: { origin: ctx.origin },
   });
-  return {
-    ...ctx,
-    handoff: { dbId: ensured.dbMessageId, role: ensured.role, changed: ensured.created },
-  };
+  if (ensured.created || (ensured.role !== null && ensured.released)) {
+    return {
+      ...ctx,
+      handoff: { dbId: ensured.dbMessageId, role: ensured.role, changed: ensured.created },
+    };
+  }
+  return advanceCurrentHandoff(ctx);
 }
 
 async function markQueuedIfTurn(ctx: MailboxHandoffCtx): Promise<MailboxHandoffCtx> {
