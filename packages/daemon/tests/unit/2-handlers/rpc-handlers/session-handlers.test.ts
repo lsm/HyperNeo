@@ -2401,3 +2401,47 @@ describe('Session RPC Handlers — session.resetQuery', () => {
     expect(getSessionAsync).not.toHaveBeenCalled();
   });
 });
+
+describe('Session RPC Handlers — client.interrupt', () => {
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+  let getCachedSession: ReturnType<typeof mock>;
+  let getSessionForControl: ReturnType<typeof mock>;
+
+  beforeEach(async () => {
+    messageHubData = createMockMessageHub();
+    getCachedSession = mock(() => ({ getSessionData: () => ({ id: 'session-1' }) }));
+    getSessionForControl = mock(async () => null);
+    const sessionManager = {
+      getCachedSession,
+      getSessionForControl,
+    } as unknown as SessionManager;
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(
+      messageHubData.hub,
+      sessionManager,
+      createMockInternalEventBus(),
+      {} as SpaceManager
+    );
+  });
+
+  it('publishes the interrupt through the cached lookup without waiting on provisioning', async () => {
+    const handler = messageHubData.handlers.get('client.interrupt');
+    expect(handler).toBeDefined();
+
+    const result = (await handler!({ sessionId: 'session-1' }, {})) as { accepted: boolean };
+
+    expect(result).toEqual({ accepted: true });
+    expect(getCachedSession).toHaveBeenCalledWith('session-1');
+    expect(getSessionForControl).not.toHaveBeenCalled();
+  });
+
+  it('throws when the session is not cached', async () => {
+    const handler = messageHubData.handlers.get('client.interrupt');
+    expect(handler).toBeDefined();
+    getCachedSession.mockReturnValue(null);
+
+    await expect(handler!({ sessionId: 'session-1' }, {})).rejects.toThrow('Session not found');
+  });
+});

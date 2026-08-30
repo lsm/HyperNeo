@@ -2181,9 +2181,29 @@ export class TaskAgentManager {
     return state !== undefined && state !== CleanupState.IDLE;
   }
 
-  private restoredWorkerDeliveryAdmitted(session: AgentSession): boolean {
-    if (session.getSessionData().config?.queryMode === 'manual') return false;
-    return !this.sessionManagerCleaningUp();
+  private async restoredWorkerStartAdmitted(
+    session: AgentSession,
+    taskId: string,
+    options: { settleReplayProvisioning?: boolean } = {}
+  ): Promise<boolean> {
+    if (
+      !options.settleReplayProvisioning &&
+      session.getSessionData().config?.queryMode === 'manual'
+    ) {
+      return false;
+    }
+    if (this.sessionManagerCleaningUp()) return false;
+    const task = this.config.taskRepo.getTask(taskId);
+    if (!task?.workflowRunId) return false;
+    if (task.status === 'cancelled' || task.status === 'archived') return false;
+    const workflowRun = this.config.workflowRunRepo.getRun(task.workflowRunId);
+    if (workflowRun?.status === 'cancelled') return false;
+    const space = await this.config.spaceManager.getSpace(task.spaceId);
+    if (!space || space.stopped || space.paused || space.status === 'archived') return false;
+    if (session.getSessionData().id.includes(':post-approval:') && task.status !== 'approved') {
+      return false;
+    }
+    return true;
   }
 
   getRestoredRateLimitRetryAt(sessionId: string): number | null {
@@ -2216,14 +2236,16 @@ export class TaskAgentManager {
         if (
           options.startQuery !== false &&
           !indexed.isQueryActiveOrStarting() &&
-          this.restoredWorkerDeliveryAdmitted(indexed)
+          (await this.restoredWorkerStartAdmitted(indexed, taskId))
         ) {
           await indexed.startStreamingQuery();
         }
         if (
           options.startQuery !== false &&
           options.replayPendingMessages !== false &&
-          !this.sessionManagerCleaningUp()
+          (await this.restoredWorkerStartAdmitted(indexed, taskId, {
+            settleReplayProvisioning: true,
+          }))
         ) {
           const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
           options.onReplaySettled?.(replayed);
@@ -2392,13 +2414,18 @@ export class TaskAgentManager {
         );
         return sessionId;
       }
-      if (options.startQuery !== false && this.restoredWorkerDeliveryAdmitted(agentSession)) {
+      if (
+        options.startQuery !== false &&
+        (await this.restoredWorkerStartAdmitted(agentSession, taskId))
+      ) {
         await agentSession.startStreamingQuery();
       }
       if (
         options.startQuery !== false &&
         options.replayPendingMessages !== false &&
-        !this.sessionManagerCleaningUp()
+        (await this.restoredWorkerStartAdmitted(agentSession, taskId, {
+          settleReplayProvisioning: true,
+        }))
       ) {
         const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
         options.onReplaySettled?.(replayed);
@@ -2414,7 +2441,7 @@ export class TaskAgentManager {
     if (
       options.startQuery !== false &&
       options.replayPendingMessages !== false &&
-      this.restoredWorkerDeliveryAdmitted(agentSession)
+      (await this.restoredWorkerStartAdmitted(agentSession, taskId))
     ) {
       void this.flushPendingMessagesForTarget(task.workflowRunId, agentName, sessionId).catch(
         (err) => {
@@ -3918,13 +3945,18 @@ export class TaskAgentManager {
     }
 
     try {
-      if (options.startQuery !== false && this.restoredWorkerDeliveryAdmitted(agentSession)) {
+      if (
+        options.startQuery !== false &&
+        (await this.restoredWorkerStartAdmitted(agentSession, taskId))
+      ) {
         await agentSession.startStreamingQuery();
       }
       if (
         options.startQuery !== false &&
         options.replayPendingMessages !== false &&
-        !this.sessionManagerCleaningUp()
+        (await this.restoredWorkerStartAdmitted(agentSession, taskId, {
+          settleReplayProvisioning: true,
+        }))
       ) {
         const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
         options.onReplaySettled?.(replayed);
@@ -3944,7 +3976,7 @@ export class TaskAgentManager {
     if (
       options.startQuery !== false &&
       options.replayPendingMessages !== false &&
-      this.restoredWorkerDeliveryAdmitted(agentSession)
+      (await this.restoredWorkerStartAdmitted(agentSession, taskId))
     ) {
       void this.flushPendingMessagesForTarget(
         workflowRunId,

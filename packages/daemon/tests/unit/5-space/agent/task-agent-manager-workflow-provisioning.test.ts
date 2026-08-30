@@ -163,7 +163,12 @@ describe('TaskAgentManager workflow session provisioning', () => {
   });
 });
 
-function makeRestoreManager(input: { queryMode?: string; cleanupState?: string }) {
+function makeRestoreManager(input: {
+  queryMode?: string;
+  cleanupState?: string;
+  taskStatus?: string;
+  spacePaused?: boolean;
+}) {
   const startStreamingQuery = mock(async () => {});
   const replay = mock(async () => true);
   const session = {
@@ -175,6 +180,25 @@ function makeRestoreManager(input: { queryMode?: string; cleanupState?: string }
   const manager = Object.create(TaskAgentManager.prototype) as TaskAgentManager;
   Object.defineProperty(manager, 'config', {
     value: {
+      taskRepo: {
+        getTask: () => ({
+          id: TASK_ID,
+          spaceId: 'space-1',
+          workflowRunId: 'run-1',
+          status: input.taskStatus ?? 'approved',
+        }),
+      },
+      workflowRunRepo: {
+        getRun: () => ({ id: 'run-1', status: 'in_progress' }),
+      },
+      spaceManager: {
+        getSpace: async () => ({
+          id: 'space-1',
+          stopped: false,
+          paused: input.spacePaused ?? false,
+          status: 'active',
+        }),
+      },
       sessionManager: {
         cleanupState: input.cleanupState,
         getCachedSession: () => session,
@@ -220,6 +244,28 @@ describe('TaskAgentManager restored worker query admission', () => {
   it('skips query startup and replay while the session manager is cleaning up', async () => {
     const { manager, startStreamingQuery, replay } = makeRestoreManager({
       cleanupState: 'cleaning',
+    });
+
+    await manager.restorePostApprovalWorkerSession(TASK_ID, SESSION_ID);
+
+    expect(startStreamingQuery).not.toHaveBeenCalled();
+    expect(replay).not.toHaveBeenCalled();
+  });
+
+  it('skips query startup when the space pauses during restoration', async () => {
+    const { manager, startStreamingQuery, replay } = makeRestoreManager({
+      spacePaused: true,
+    });
+
+    await manager.restorePostApprovalWorkerSession(TASK_ID, SESSION_ID);
+
+    expect(startStreamingQuery).not.toHaveBeenCalled();
+    expect(replay).not.toHaveBeenCalled();
+  });
+
+  it('skips query startup when the task leaves approved during restoration', async () => {
+    const { manager, startStreamingQuery, replay } = makeRestoreManager({
+      taskStatus: 'cancelled',
     });
 
     await manager.restorePostApprovalWorkerSession(TASK_ID, SESSION_ID);
