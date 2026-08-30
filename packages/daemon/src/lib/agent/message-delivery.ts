@@ -29,6 +29,7 @@ export type MessageDeliveryPayload = {
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
   released?: boolean;
+  injectedMidTurn?: boolean;
 };
 
 export const MESSAGE_DELIVERY_MAX_RETRIES = (() => {
@@ -136,6 +137,9 @@ export function asMessageDeliveryPayload(
     origin: typeof payload.origin === 'string' ? (payload.origin as MessageDeliveryOrigin) : 'chat',
     parentToolUseId: typeof payload.parentToolUseId === 'string' ? payload.parentToolUseId : null,
     ...(typeof payload.released === 'boolean' ? { released: payload.released } : {}),
+    ...(payload.injectedMidTurn === true || payload.role === 'steer'
+      ? { injectedMidTurn: true }
+      : {}),
   };
 }
 

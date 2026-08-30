@@ -2741,7 +2741,7 @@ export class AgentSession
         this.rateLimitWatchdog.cancel();
       } else {
         const activeDeliveries =
-          this.db.getJobQueueRepo?.().activeDeliveryMessageUuids(this.session.id) ??
+          this.db.getJobQueueRepo?.().activeDeliveryMessageUuids?.(this.session.id) ??
           new Set<string>();
         activeDeliveries.delete(messageUuid);
         const midTurn = this.messageQueue.isRunning() && status === 'processing';

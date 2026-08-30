@@ -530,7 +530,7 @@ describe('QueryModeHandler', () => {
       const result = await handler.handleQueryTrigger();
 
       expect(result).toEqual({ success: true, messageCount: 3 });
-      expect(deliveryUuids().map((job) => job.uuid)).toEqual(['uuid-1', 'uuid-2']);
+      expect(deliveryUuids().map((job) => job.uuid)).toEqual(['uuid-1', 'uuid-2', 'uuid-3']);
       expect(sendStatusByUuid('uuid-3')).toBe('enqueued');
       expect(statusEvents).toEqual([{ messageIds: [expect.any(String)], status: 'enqueued' }]);
     });

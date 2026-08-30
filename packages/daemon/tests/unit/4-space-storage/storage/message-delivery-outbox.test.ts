@@ -406,6 +406,21 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       return row?.send_status;
     }
 
+    function repoHeldCount(uuid: string): number {
+      return (
+        db
+          .prepare(
+            `SELECT COUNT(*) AS c FROM job_queue
+              WHERE queue = ?
+                AND json_extract(payload, '$.sessionId') = ?
+                AND json_extract(payload, '$.messageUuid') = ?
+                AND COALESCE(json_extract(payload, '$.released'), 1) = 0
+                AND status IN ('pending', 'processing')`
+          )
+          .get(MESSAGE_DELIVERY, SESSION, uuid) as { c: number }
+      ).c;
+    }
+
     function jobsFor(uuid: string): Array<{
       id: string;
       status: string;
@@ -640,6 +655,53 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       expect(after[0].released).toBe(1);
     });
 
+    it('activatePrompts releases every duplicate held job so the FIFO lane keeps draining', async () => {
+      insertStatusRow('dup-held', 'deferred');
+      insertStatusRow('later-msg', 'deferred');
+      const firstHeld = jobQueue.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'dup-held',
+          origin: 'chat',
+          parentToolUseId: null,
+          released: false,
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      jobQueue.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'dup-held',
+          origin: 'chat',
+          parentToolUseId: null,
+          released: false,
+        },
+      });
+      await activatePrompts({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuids: ['dup-held', 'later-msg'],
+        origin: 'recovery',
+      });
+
+      expect(repoHeldCount('dup-held')).toBe(0);
+      expect(repoHeldCount('later-msg')).toBe(0);
+      const claimed: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        const [head] = jobQueue.dequeueSessionFifo(MESSAGE_DELIVERY, 1, {
+          releasedPath: '$.released',
+        });
+        if (!head) break;
+        claimed.push(head.payload.messageUuid as string);
+        jobQueue.complete(head.id, { ok: true });
+      }
+      expect(claimed).toEqual(['dup-held', 'dup-held', 'later-msg']);
+      expect(firstHeld.id).toBeDefined();
+    });
+
     it('activatePrompts leaves rows outside the deferred/enqueued lane untouched', async () => {
       insertStatusRow('skip-consumed', 'consumed');
       insertStatusRow('skip-failed', 'failed');
@@ -827,6 +889,60 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       expect(jobs).toHaveLength(1);
       expect(jobs[0].id).toBe(deadJob.id);
       expect(jobs[0].status).toBe('pending');
+    });
+
+    it('retryPrompt clears a stale mid-turn classification when reviving as a kickoff', async () => {
+      insertStatusRow('retry-flip-off', 'failed');
+      const deadJob = jobQueue.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'retry-flip-off',
+          origin: 'space_inject',
+          parentToolUseId: null,
+          released: true,
+          injectedMidTurn: true,
+        },
+        maxRetries: 8,
+      });
+      db.prepare(`UPDATE job_queue SET status = 'dead' WHERE id = ?`).run(deadJob.id);
+
+      await retryPrompt({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuid: 'retry-flip-off',
+        origin: 'space_inject',
+      });
+
+      expect(jobPayload(db, SESSION, 'retry-flip-off')?.injectedMidTurn).not.toBe(true);
+    });
+
+    it('retryPrompt stamps the mid-turn classification when reviving a kickoff as an injection', async () => {
+      insertStatusRow('retry-flip-on', 'failed');
+      const deadJob = jobQueue.enqueue({
+        queue: MESSAGE_DELIVERY,
+        payload: {
+          sessionId: SESSION,
+          messageUuid: 'retry-flip-on',
+          origin: 'space_inject',
+          parentToolUseId: null,
+          released: true,
+        },
+        maxRetries: 8,
+      });
+      db.prepare(`UPDATE job_queue SET status = 'dead' WHERE id = ?`).run(deadJob.id);
+
+      await retryPrompt({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuid: 'retry-flip-on',
+        origin: 'space_inject',
+        injectedMidTurn: true,
+      });
+
+      expect(jobPayload(db, SESSION, 'retry-flip-on')?.injectedMidTurn).toBe(true);
     });
 
     it('retryPrompt returns null for a row that is not failed', async () => {

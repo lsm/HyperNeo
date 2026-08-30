@@ -192,6 +192,7 @@ export async function persistAndEnqueue(
       origin: 'system',
       delivery: {
         origin: 'space_inject',
+        ...(ctx.mechanics === 'steer' ? { injectedMidTurn: true } : {}),
       },
     });
     let activated = ensured.activated;
@@ -203,6 +204,7 @@ export async function persistAndEnqueue(
         sessionId: ctx.sessionId!,
         messageUuid: ctx.messageUuid!,
         origin: 'space_inject',
+        ...(ctx.mechanics === 'steer' ? { injectedMidTurn: true } : {}),
       });
       activated = retried !== null;
     }

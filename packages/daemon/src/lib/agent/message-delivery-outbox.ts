@@ -36,6 +36,7 @@ interface PromptInput {
   delivery: {
     origin: MessageDeliveryOrigin;
     parentToolUseId?: string | null;
+    injectedMidTurn?: boolean;
   };
 }
 
@@ -104,6 +105,7 @@ export interface RetryPromptArgs {
   dbId?: string;
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
+  injectedMidTurn?: boolean;
   publishStatusChanged?: OutboxStatusPublisher;
 }
 
@@ -189,15 +191,14 @@ type RetryPromptCtx = RetryPromptArgs & {
 
 const DELIVERY_MAX_RETRIES = MESSAGE_DELIVERY_MAX_RETRIES;
 
-const ACTIVE_DELIVERY_JOB_SQL = `SELECT id AS job_id, status AS job_status,
+const ACTIVE_DELIVERY_JOBS_SQL = `SELECT id AS job_id, status AS job_status,
     COALESCE(json_extract(payload, '$.released'), 1) AS released
   FROM job_queue
   WHERE queue = 'message_delivery'
     AND json_extract(payload, '$.sessionId') = ?
     AND json_extract(payload, '$.messageUuid') = ?
     AND status IN ('pending', 'processing')
-  ORDER BY created_at DESC, rowid DESC
-  LIMIT 1`;
+  ORDER BY created_at ASC, rowid ASC`;
 
 const LATEST_DELIVERY_JOB_SQL = `SELECT id AS job_id
   FROM job_queue
@@ -222,10 +223,14 @@ const REVIVE_DELIVERY_JOB_SQL = `UPDATE job_queue
       payload = json_remove(
         json_set(
           json_set(
-            json_set(payload, '$.released', json('true')),
-            '$.origin', ?
+            json_set(
+              json_set(payload, '$.released', json('true')),
+              '$.origin', ?
+            ),
+            '$.parentToolUseId', ?
           ),
-          '$.parentToolUseId', ?
+          '$.injectedMidTurn',
+          CASE WHEN ? THEN json('true') ELSE json('null') END
         ),
         '$.__claimToken', '$.__parkCount'
       )
@@ -290,28 +295,35 @@ const PROMPT_ROW_BY_UUID_SQL = `SELECT id AS "dbId", sdk_message AS "sdkMessage"
 
 const ENSURABLE_PROMPT_STATUSES: readonly SendStatus[] = ['deferred', 'enqueued', 'submitted'];
 
+interface ActiveDeliveryJob {
+  jobId: string;
+  released: boolean;
+  processing: boolean;
+}
+
+function listActiveDeliveryJobs(
+  db: BunDatabase,
+  sessionId: string,
+  messageUuid: string
+): ActiveDeliveryJob[] {
+  const rows = db.prepare(ACTIVE_DELIVERY_JOBS_SQL).all(sessionId, messageUuid) as Array<{
+    job_id: string;
+    job_status: string;
+    released: number;
+  }>;
+  return rows.map((row) => ({
+    jobId: row.job_id,
+    released: row.released === 1,
+    processing: row.job_status === 'processing',
+  }));
+}
+
 function findActiveDeliveryJob(
   db: BunDatabase,
   sessionId: string,
   messageUuid: string
-): {
-  jobId: string;
-  released: boolean;
-  processing: boolean;
-} | null {
-  const row = db.prepare(ACTIVE_DELIVERY_JOB_SQL).get(sessionId, messageUuid) as
-    | {
-        job_id: string;
-        job_status: string;
-        released: number;
-      }
-    | undefined;
-  if (!row) return null;
-  return {
-    jobId: row.job_id,
-    released: row.released === 1,
-    processing: row.job_status === 'processing',
-  };
+): ActiveDeliveryJob | null {
+  return listActiveDeliveryJobs(db, sessionId, messageUuid)[0] ?? null;
 }
 
 function setDeliveryJobReleased(db: BunDatabase, jobId: string, released: boolean): void {
@@ -342,6 +354,7 @@ function reviveDeliveryJob(
       DELIVERY_MAX_RETRIES,
       basePayload.origin,
       basePayload.parentToolUseId ?? null,
+      basePayload.injectedMidTurn === true ? 1 : 0,
       jobId
     );
   if (res.changes > 0) return true;
@@ -376,14 +389,24 @@ function releaseActiveDeliveryJob(
     setDeliveryJobReleased(db, active.jobId, desiredReleased);
 }
 
+function releaseActiveDeliveryJobs(
+  db: BunDatabase,
+  jobQueue: JobQueueRepository,
+  basePayload: ReleasedDeliveryPayload,
+  desiredReleased: boolean
+): void {
+  for (const job of listActiveDeliveryJobs(db, basePayload.sessionId, basePayload.messageUuid)) {
+    releaseActiveDeliveryJob(db, jobQueue, basePayload, job, desiredReleased);
+  }
+}
+
 function ensureReleasedDeliveryJob(
   db: BunDatabase,
   jobQueue: JobQueueRepository,
   basePayload: ReleasedDeliveryPayload
 ): void {
-  const active = findActiveDeliveryJob(db, basePayload.sessionId, basePayload.messageUuid);
-  if (active) {
-    releaseActiveDeliveryJob(db, jobQueue, basePayload, active, true);
+  if (findActiveDeliveryJob(db, basePayload.sessionId, basePayload.messageUuid) !== null) {
+    releaseActiveDeliveryJobs(db, jobQueue, basePayload, true);
     return;
   }
   enqueueDeliveryJob(jobQueue, basePayload);
@@ -412,6 +435,7 @@ function buildReleasedPayload(args: {
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
   released: boolean;
+  injectedMidTurn?: boolean;
 }): ReleasedDeliveryPayload {
   return {
     sessionId: args.sessionId,
@@ -419,6 +443,7 @@ function buildReleasedPayload(args: {
     origin: args.origin,
     parentToolUseId: args.parentToolUseId ?? null,
     released: args.released,
+    ...(args.injectedMidTurn === true ? { injectedMidTurn: true } : {}),
   };
 }
 
@@ -580,6 +605,7 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
             origin: ctx.delivery.origin,
             parentToolUseId: ctx.delivery.parentToolUseId,
             released,
+            injectedMidTurn: ctx.delivery.injectedMidTurn,
           })
         );
         return { dbId: ctx.existing.dbId, activated: true, released, countsTowardsBadge: false };
@@ -592,7 +618,19 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
           countsTowardsBadge: false,
         };
       }
-      if (active.released !== released) setDeliveryJobReleased(ctx.db, active.jobId, released);
+      releaseActiveDeliveryJobs(
+        ctx.db,
+        ctx.jobQueue,
+        buildReleasedPayload({
+          sessionId: ctx.sessionId,
+          messageUuid: ctx.messageUuid,
+          origin: ctx.delivery.origin,
+          parentToolUseId: ctx.delivery.parentToolUseId,
+          released,
+          injectedMidTurn: ctx.delivery.injectedMidTurn,
+        }),
+        released
+      );
       return { dbId: ctx.existing.dbId, activated: true, released, countsTowardsBadge: false };
     }
     const admission = decideMessageAdmission(normalizeMessageAdmissionInput(ctx.message), {
@@ -616,6 +654,7 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
         origin: ctx.delivery.origin,
         parentToolUseId: ctx.delivery.parentToolUseId,
         released: ctx.ensureStatus !== 'deferred',
+        injectedMidTurn: ctx.delivery.injectedMidTurn,
       })
     );
     return {
@@ -768,6 +807,7 @@ function commitRetryPrompt(ctx: RetryPromptCtx): RetryPromptCtx {
           origin: ctx.origin,
           parentToolUseId: ctx.parentToolUseId,
           released: true,
+          injectedMidTurn: ctx.injectedMidTurn,
         })
       );
       ctx.sdkMessageRepo?.updateMessageStatus([row.db_id], 'enqueued');

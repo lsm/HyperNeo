@@ -202,6 +202,7 @@ interface DeliveryJobRow {
   sessionId: string;
   messageUuid: string;
   origin: string;
+  injectedMidTurn?: boolean;
 }
 
 function deliveryJobs(db: Database): DeliveryJobRow[] {
@@ -215,6 +216,7 @@ function deliveryJobs(db: Database): DeliveryJobRow[] {
       sessionId: payload.sessionId,
       messageUuid: payload.messageUuid,
       origin: payload.origin,
+      ...(payload.injectedMidTurn === true ? { injectedMidTurn: true } : {}),
     };
   });
 }
@@ -268,7 +270,9 @@ describe('deliver-immediate-event pipeline', () => {
     });
     expect(
       deliveryJobs(harness.db).filter((job) => job.messageUuid !== 'seed-active-turn')
-    ).toEqual([{ sessionId: SESSION_ID, messageUuid: uuid, origin: 'space_inject' }]);
+    ).toEqual([
+      { sessionId: SESSION_ID, messageUuid: uuid, origin: 'space_inject', injectedMidTurn: true },
+    ]);
     expect(harness.rec.queuedIfIdle).toEqual([uuid]);
   });
 
