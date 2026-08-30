@@ -177,6 +177,20 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     restoreSpy?.mockRestore();
   });
 
+  test('isSessionAlive treats a cached-but-unindexed worker as alive', async () => {
+    const { tam } = makeManager();
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    (
+      tam.config as unknown as {
+        sessionManager: { getCachedSession: (id: string) => unknown };
+      }
+    ).sessionManager.getCachedSession = (id: string) =>
+      id === SUB_SESSION_ID ? fake.agentSession : null;
+
+    expect(tam.isSessionAlive(SUB_SESSION_ID)).toBe(true);
+    expect(tam.isSessionAlive('space:space-1:task:task-x:exec:exec-x')).toBe(false);
+  });
+
   test('rehydrated sub-session starts with node-agent merged and the self-heal callback wired', async () => {
     const { tam, registered } = makeManager();
     const fake = makeFakeAgentSession(SUB_SESSION_ID);

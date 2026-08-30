@@ -2587,7 +2587,9 @@ export class TaskAgentManager {
 
   isSessionAlive(sessionId: string): boolean {
     const indexed = this.agentSessionIndex.get(sessionId);
-    return indexed ? this.isAgentSessionAlive(indexed) : false;
+    if (indexed) return this.isAgentSessionAlive(indexed);
+    const cached = this.config.sessionManager.getCachedSession?.(sessionId);
+    return cached ? this.isAgentSessionAlive(cached) : false;
   }
 
   isSessionInMemory(sessionId: string): boolean {
@@ -3492,7 +3494,9 @@ export class TaskAgentManager {
               !workflowRun ||
               workflowRun.status === 'cancelled' ||
               !space ||
-              space.stopped
+              space.stopped ||
+              space.paused ||
+              space.status === 'archived'
             ) {
               return { decision: 'ineligible', skip: true };
             }

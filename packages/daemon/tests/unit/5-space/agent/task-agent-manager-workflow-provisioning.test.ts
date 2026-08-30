@@ -9,6 +9,8 @@ function makeManager(input: {
   taskStatus?: string;
   runStatus?: string;
   spaceStopped?: boolean;
+  spacePaused?: boolean;
+  spaceArchived?: boolean;
   cooldown?: boolean;
   spaceError?: Error;
 }) {
@@ -30,7 +32,12 @@ function makeManager(input: {
       spaceManager: {
         getSpace: async () => {
           if (input.spaceError) throw input.spaceError;
-          return { id: 'space-1', stopped: input.spaceStopped ?? false };
+          return {
+            id: 'space-1',
+            stopped: input.spaceStopped ?? false,
+            paused: input.spacePaused ?? false,
+            status: input.spaceArchived ? 'archived' : 'active',
+          };
         },
       },
     },
@@ -97,6 +104,22 @@ describe('TaskAgentManager workflow session provisioning', () => {
       expect.anything(),
       { startQuery: false }
     );
+  });
+
+  it('does not revive a post-approval worker for a paused space', async () => {
+    const { manager, restorePostApprovalWorkerSession } = makeManager({ spacePaused: true });
+
+    await manager.provisionWorkflowSession(workflowSession());
+
+    expect(restorePostApprovalWorkerSession).not.toHaveBeenCalled();
+  });
+
+  it('does not revive a post-approval worker for an archived space', async () => {
+    const { manager, restorePostApprovalWorkerSession } = makeManager({ spaceArchived: true });
+
+    await manager.provisionWorkflowSession(workflowSession());
+
+    expect(restorePostApprovalWorkerSession).not.toHaveBeenCalled();
   });
 
   it('leaves a cooling-down post-approval worker available to control paths', async () => {
