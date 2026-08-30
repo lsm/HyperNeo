@@ -97,6 +97,7 @@ export interface MailboxHandoffArgs {
   messageId: string;
   message: SDKUserMessage;
   origin: MessageDeliveryOrigin;
+  messageOrigin?: MessageOrigin;
   existing?: { sendStatus: string } | null;
   publishEnqueued(sessionId: string, dbId: string): Promise<void>;
   setQueuedIfIdle?(messageId: string): Promise<boolean>;
@@ -143,6 +144,7 @@ export async function handoffPromptToMailbox(args: MailboxHandoffArgs): Promise<
       jobQueue,
       sessionId,
       message,
+      origin: args.messageOrigin,
       delivery: { origin },
     });
     dbId = ensured.dbMessageId;
@@ -182,6 +184,7 @@ export async function deliverInjectedMessage(
       messageId: args.messageId,
       message: args.sdkUserMessage,
       origin: 'space_inject',
+      messageOrigin: args.origin,
       existing:
         args.existing ?? deps.sdkMessageRepo.getDeliveryContent(args.sessionId, args.messageId),
       publishEnqueued: (sessionId, dbId) => deps.publishStatusChanged(sessionId, dbId, 'enqueued'),

@@ -190,6 +190,30 @@ describe('deliverInjectedMessage', () => {
     }
   });
 
+  it('persists the SDK message origin on the fresh row', async () => {
+    const db = await makeDb();
+    try {
+      const { deps } = makeBranchDeps(db);
+      const target = makeTargetSession();
+
+      await deliverInjectedMessage(deps, {
+        session: target.session,
+        sessionId: SESSION_ID,
+        messageId: MESSAGE_ID,
+        sdkUserMessage: makeSdkUserMessage(),
+        origin: 'system',
+      });
+
+      const row = db
+        .getDatabase()
+        .prepare(`SELECT origin FROM sdk_messages WHERE sdk_uuid = ?`)
+        .get(MESSAGE_ID) as { origin: string | null };
+      expect(row.origin).toBe('system');
+    } finally {
+      db.close();
+    }
+  });
+
   it('reuses an existing enqueued row without re-publishing enqueued', async () => {
     const db = await makeDb();
     try {
