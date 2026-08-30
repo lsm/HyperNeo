@@ -176,12 +176,16 @@ describe('settleDeliveryRowStatus', () => {
 });
 
 describe('deliverInjectedMessage', () => {
-  function makeJobQueue(throwOnEnqueue = false, signalOnEnqueue = true) {
+  function makeJobQueue(
+    opts: { throwOnEnqueue?: boolean; skipSignal?: boolean } | boolean = false
+  ) {
+    const { throwOnEnqueue = false, skipSignal = false } =
+      typeof opts === 'boolean' ? { throwOnEnqueue: opts } : opts;
     const jobQueueEnqueue = mock(
       (args: { payload?: { sessionId?: string; messageUuid?: string; origin?: string } }) => {
         if (throwOnEnqueue) throw new Error('job queue unavailable');
         const uuid = args?.payload?.messageUuid;
-        if (uuid && signalOnEnqueue) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
+        if (uuid && !skipSignal) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
         return { id: 'job-1' };
       }
     );
@@ -283,7 +287,7 @@ describe('deliverInjectedMessage', () => {
 
   it('fresh row timeout marks the row failed and publishes failed', async () => {
     const rows = makeRowDeps({ savedDbId: 'saved-db', failedDbId: 'failed-db' });
-    const { jobQueue, jobQueueEnqueue } = makeJobQueue();
+    const { jobQueue, jobQueueEnqueue } = makeJobQueue({ skipSignal: true });
     const target = makeTargetSession();
 
     const previousTimeout = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
@@ -336,7 +340,7 @@ describe('deliverInjectedMessage', () => {
     it('default hold path resolves from persisted status instead of timing out', async () => {
       const rows = makeRowDeps({ savedDbId: 'saved-db' });
       armGapConsumption(rows);
-      const { jobQueue, jobQueueEnqueue } = makeJobQueue(false, false);
+      const { jobQueue, jobQueueEnqueue } = makeJobQueue({ skipSignal: true });
       const target = makeTargetSession();
 
       const dbId = await withDeadline(
@@ -361,7 +365,7 @@ describe('deliverInjectedMessage', () => {
     it('acp hold path resolves from persisted status instead of holding for 12 minutes', async () => {
       const rows = makeRowDeps();
       armGapConsumption(rows);
-      const { jobQueue, jobQueueEnqueue } = makeJobQueue(false, false);
+      const { jobQueue, jobQueueEnqueue } = makeJobQueue({ skipSignal: true });
       const target = makeTargetSession('acp');
 
       const dbId = await withDeadline(

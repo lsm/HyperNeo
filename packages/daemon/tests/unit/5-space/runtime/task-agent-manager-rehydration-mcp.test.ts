@@ -359,7 +359,11 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       activeDeliveryMessageUuids: () => new Set<string>(),
       hasActiveTurnDeliveryJob: () => false,
       getActiveDeliveryRole: () => null,
-      enqueue: () => ({ id: 'job-1' }),
+      enqueue: (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
+        const uuid = args?.payload?.messageUuid;
+        if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
+        return { id: 'job-1' };
+      },
     });
     config.db.saveUserMessage = () => 'db-id';
     config.db.getUserMessageIdsByStatus = () => [];
@@ -370,21 +374,26 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       .agentSessionIndex;
     index.set(SUB_SESSION_ID, fake.agentSession);
 
-    let advance!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      advance = resolve;
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
     });
     session.handleQueryTrigger = async () => {
-      await gate;
+      await firstGate;
       return { success: true, messageCount: 0 };
     };
 
-    const injectPromise = tam.injectSubSessionMessage(SUB_SESSION_ID, 'handoff', true);
+    const firstInject = tam.injectSubSessionMessage(SUB_SESSION_ID, 'first', true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const secondInject = tam.injectSubSessionMessage(SUB_SESSION_ID, 'second', true);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     index.delete(SUB_SESSION_ID);
-    advance();
-    await expect(injectPromise).rejects.toThrow(`Sub-session not found: ${SUB_SESSION_ID}`);
+    releaseFirst();
+
+    await expect(secondInject).rejects.toThrow(`Sub-session not found: ${SUB_SESSION_ID}`);
+    await firstInject;
   });
 
   test('injecting into an uncached sub-session never deadlocks while replaying pending messages', async () => {
