@@ -219,6 +219,20 @@ describe('JobQueueRepository — dequeueSessionFifo (dark launch)', () => {
     expect(repo.getJob(c1Second.id)?.status).toBe('pending');
   });
 
+  it('orders eligible session heads by priority before FIFO when slots are scarce', () => {
+    const older = enqueueDelivery(repo, 'sess-a');
+    const newer = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-b' },
+      priority: 10,
+    });
+
+    const claimed = repo.dequeueSessionFifo('message_delivery', 1);
+
+    expect(claimed.map((job) => job.id)).toEqual([newer.id]);
+    expect(repo.getJob(older.id)?.status).toBe('pending');
+  });
+
   it('never merges a sessionless job with a real session or another sessionless job', () => {
     const sessionless1 = repo.enqueue({ queue: 'message_delivery', payload: {} });
     const sessionless2 = repo.enqueue({ queue: 'message_delivery', payload: {} });

@@ -175,7 +175,7 @@ export function buildJobQueueSessionFifoSelection(
     sql += ` AND candidate.id NOT IN (${excludeIds.map(() => '?').join(',')})`;
     params.push(...excludeIds);
   }
-  sql += ` ORDER BY candidate.created_at ASC, candidate.rowid ASC LIMIT ?`;
+  sql += ` ORDER BY candidate.priority DESC, candidate.run_at ASC, candidate.created_at ASC, candidate.rowid ASC LIMIT ?`;
   params.push(input.limit);
   return { sql, params };
 }
