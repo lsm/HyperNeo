@@ -361,6 +361,34 @@ describe('SDK Config RPC Handlers', () => {
       expect(result.error).toContain('not resumable');
     });
 
+    it('reapplies the updated config when the cache-current session was replaced', async () => {
+      const handler = messageHubData.handlers.get('config.systemPrompt.update');
+      expect(handler).toBeDefined();
+
+      const { agentSession, mocks } = createMockAgentSession();
+      mocks.isQueryActiveOrStarting.mockReturnValueOnce(false);
+      const reapply = mock(async () => {});
+      const replacement = {
+        ...createMockAgentSession().mocks,
+        isQueryActiveOrStarting: () => true,
+        getSessionData: () => ({ id: 'session-123', config: {} }),
+        updateConfig: reapply,
+      } as unknown as AgentSession;
+      (
+        sessionManagerData.sessionManager as unknown as Record<string, unknown>
+      ).getSessionForControl = mock(async () => agentSession);
+      sessionManagerData.getSessionAsyncMock.mockResolvedValue(replacement);
+      sessionManagerData.getSessionAsyncMock.mockClear();
+
+      await handler!(
+        { sessionId: 'session-123', systemPrompt: 'New prompt', restartQuery: true },
+        {}
+      );
+
+      expect(reapply).toHaveBeenCalledTimes(1);
+      expect(reapply).toHaveBeenCalledWith(agentSession.getSessionData().config);
+    });
+
     it('handles restart failure', async () => {
       const handler = messageHubData.handlers.get('config.systemPrompt.update');
       expect(handler).toBeDefined();

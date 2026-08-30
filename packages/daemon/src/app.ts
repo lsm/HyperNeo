@@ -8,6 +8,7 @@ import {
   abortAgentMemoryEmbeddingModelPrefetch,
 } from './storage/repositories/agent-memory-transformers.ts';
 import { SessionManager } from './lib/session-manager.ts';
+import { isWorkflowSubSessionIdentity } from './lib/session/sub-session-identity.ts';
 import { AuthManager } from './lib/auth-manager.ts';
 import { SettingsManager } from './lib/settings-manager.ts';
 import { StateProjectionService } from './lib/state-projection-service.ts';
@@ -944,7 +945,15 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           if (indexed && sessionManager?.getCachedSession(sessionId) === indexed) {
             return indexed;
           }
-          return (await sessionManager?.getSessionAsync(sessionId)) ?? null;
+          const session = (await sessionManager?.getSessionAsync(sessionId)) ?? null;
+          if (
+            session &&
+            isWorkflowSubSessionIdentity(sessionId) &&
+            !session.getSessionData().config.mcpServers?.['node-agent']
+          ) {
+            return null;
+          }
+          return session;
         },
         getMessageContent: (sessionId: string, messageUuid: string) =>
           reactiveDb?.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageUuid) ?? null,

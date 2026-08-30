@@ -53,6 +53,9 @@ async function restartQueryForConfig(
     return agentSession.resetQuery({ restartQuery: true });
   }
   const current = await sessionManager.getSessionAsync(sessionId);
+  if (current && current !== agentSession) {
+    await current.updateConfig(agentSession.getSessionData().config);
+  }
   const currentData = current?.getSessionData();
   if (
     !currentData ||
