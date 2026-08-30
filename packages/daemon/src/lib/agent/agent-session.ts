@@ -1237,6 +1237,21 @@ export class AgentSession
     const persistedEpisodeMessageUuid = this.rateLimitWatchdog.getPersistedEpisodeMessageUuid();
     if (persistedEpisodeMessageUuid !== null) {
       this.rateLimitWatchdog.cancel();
+      if (this.stateManager.getState().status === 'rate_limit_cooldown') {
+        await this.stateManager.setIdle();
+      } else {
+        const persistedState = this.db.getSession(this.session.id)?.processingState;
+        try {
+          const parsed = persistedState
+            ? (JSON.parse(persistedState) as { status?: string })
+            : null;
+          if (parsed?.status === 'rate_limit_cooldown') {
+            await this.stateManager.setIdle();
+          }
+        } catch {
+          this.logger.warn('Failed to clear the persisted rate-limit cooldown on retry-now.');
+        }
+      }
       const owningTurnMessageId = this.resolveRateLimitEpisodeDeliveryUuid(
         persistedEpisodeMessageUuid
       );
