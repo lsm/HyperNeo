@@ -11119,6 +11119,46 @@ describe('GitHub self-echo gate wiring (GE-W1)', () => {
     await extension.stop();
   });
 
+  test('a stale validation completing after credential rotation returns the rotation error', async () => {
+    const db = setupDb();
+    let userCalls = 0;
+    let releaseStale!: (response: Response) => void;
+    const extension = new GitHubEventExtension(db, 'token', {
+      fetchImpl: (async (url: string | URL | Request) => {
+        if (String(url).endsWith('/user')) {
+          userCalls += 1;
+          if (userCalls === 1) {
+            return new Promise<Response>((resolve) => {
+              releaseStale = resolve;
+            });
+          }
+          return new Response(JSON.stringify({ login: 'new-user' }), { status: 200 });
+        }
+        return new Response('[]', { status: 200 });
+      }) as typeof fetch,
+    });
+    const aware = extension as unknown as {
+      resolveTokenStatus(lightweight: boolean): Promise<{ login?: string; error?: string }>;
+      resetRateLimitObservation(): void;
+    };
+    const { published, ext, context } = publishCapture(extension);
+
+    const stale = aware.resolveTokenStatus(false);
+    aware.resetRateLimitObservation();
+    const fresh = await aware.resolveTokenStatus(false);
+    expect(fresh.login).toBe('new-user');
+
+    releaseStale(new Response(JSON.stringify({ login: 'old-user' }), { status: 200 }));
+    const staleResult = await stale;
+    expect(staleResult.login).toBeUndefined();
+    expect(staleResult.error).toBe('credential changed during validation');
+
+    expect((await aware.resolveTokenStatus(true)).login).toBe('new-user');
+    await ext.publishEvent('space-1', selfCommentEvent('new-user'), context);
+    expect(published).toHaveLength(0);
+    await extension.stop();
+  });
+
   test('publishEvent suppresses the identity refresh while rate-limited', async () => {
     const db = setupDb();
     let userCalls = 0;

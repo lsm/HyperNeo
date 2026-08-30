@@ -1400,9 +1400,8 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const generationBefore = this.credentialGeneration;
     const sequenceBefore = ++this.tokenValidationSequence;
     const token = await this.getTokenStatus();
-    if (this.tokenValidationSequence !== sequenceBefore) return token;
     if (this.credentialGeneration !== generationBefore) {
-      this.lastTokenStatus = null;
+      if (this.lastTokenStatusGeneration === generationBefore) this.lastTokenStatus = null;
       return {
         configured: true,
         source: token.source,
@@ -1410,6 +1409,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
         autoRegisteredHookCount: this.repo.countAllAutoRegisteredHookRefs(),
       };
     }
+    if (this.tokenValidationSequence !== sequenceBefore) return token;
     const isPermissionError = token.error === 'HTTP 403';
     if (!token.error || token.authRejected || isPermissionError) {
       this.lastTokenStatus = token;
