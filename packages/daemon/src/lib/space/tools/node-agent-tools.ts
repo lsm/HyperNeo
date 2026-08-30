@@ -11,7 +11,6 @@ import type {
   MarkCompleteInput,
 } from './task-agent-tool-schemas.ts';
 import { Logger } from '../../logger.ts';
-import { emitActionTypedEvent } from '../actions/dispatch-telemetry.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import { ChannelResolver } from '../runtime/channel-resolver.ts';
 import type { AgentMessageRouter } from '../runtime/agent-message-router.ts';
@@ -26,6 +25,7 @@ import {
 } from '@hyperneo/shared';
 import { jsonResult } from './tool-result.ts';
 import type { ToolResult } from './tool-result.ts';
+import { instrumentTypedTelemetryAtMcpBoundary } from './mcp-typed-telemetry-boundary.ts';
 import {
   ListPeersSchema,
   SendMessageSchema,
@@ -1020,53 +1020,18 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
 }
 
 function wrapToolHandlersWithTypedTelemetry(
-  config: NodeAgentToolsConfig,
+  _config: NodeAgentToolsConfig,
   handlers: Record<string, (...args: unknown[]) => Promise<ToolResult>>
 ): Record<string, (...args: unknown[]) => Promise<ToolResult>> {
-  const wrapped: Record<string, (...args: unknown[]) => Promise<ToolResult>> = {};
-  for (const [name, handler] of Object.entries(handlers)) {
-    if (typeof handler !== 'function') {
-      wrapped[name] = handler as (...args: unknown[]) => Promise<ToolResult>;
-      continue;
-    }
-    const bound = handler.bind(handlers);
-    wrapped[name] = async (...args: unknown[]) => {
-      try {
-        emitActionTypedEvent({
-          actionName: name,
-          spaceId: config.spaceId,
-          agentName: config.myAgentName,
-          sessionId: config.mySessionId,
-          taskId: config.taskId,
-          workflowRunId: config.workflowRunId,
-          timestamp: Date.now(),
-        });
-      } catch {}
-      return bound(...args);
-    };
-  }
-  return wrapped;
+  return handlers;
 }
 
 function withTypedTelemetry<TArgs extends unknown[]>(
-  config: NodeAgentToolsConfig,
-  name: string,
+  _config: NodeAgentToolsConfig,
+  _name: string,
   handler: (...args: TArgs) => Promise<ToolResult>
 ): (...args: TArgs) => Promise<ToolResult> {
-  return async (...args: TArgs) => {
-    try {
-      emitActionTypedEvent({
-        actionName: name,
-        spaceId: config.spaceId,
-        agentName: config.myAgentName,
-        sessionId: config.mySessionId,
-        taskId: config.taskId,
-        workflowRunId: config.workflowRunId,
-        timestamp: Date.now(),
-      });
-    } catch {}
-    return handler(...args);
-  };
+  return (...args: TArgs) => handler(...args);
 }
 
 export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
@@ -1346,6 +1311,7 @@ export function createNodeAgentMcpServer(config: NodeAgentToolsConfig) {
   ];
 
   const server = createSdkMcpServer({ name: 'node-agent', tools });
+  instrumentTypedTelemetryAtMcpBoundary(server, config);
   return { ...server, tools };
 }
 

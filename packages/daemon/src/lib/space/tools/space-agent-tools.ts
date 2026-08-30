@@ -44,7 +44,6 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { AgentSession } from '../../agent/agent-session.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
-import { emitActionTypedEvent } from '../actions/dispatch-telemetry.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers.ts';
 import { requireAgentFamily } from '../agents/agent-family-resolver.ts';
@@ -73,6 +72,7 @@ import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts
 import { decideGoalOwnershipMutationAdmission } from '../goals/goal-ownership-gates.ts';
 import type { ToolResult } from './tool-result.ts';
 import { jsonResult } from './tool-result.ts';
+import { instrumentTypedTelemetryAtMcpBoundary } from './mcp-typed-telemetry-boundary.ts';
 import { decideUpdateTask } from './space-tool-pipeline.ts';
 import {
   routeApproveTask,
@@ -4176,49 +4176,18 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 }
 
 function wrapToolHandlersWithTypedTelemetry(
-  config: SpaceAgentToolsConfig,
+  _config: SpaceAgentToolsConfig,
   handlers: Record<string, (...args: unknown[]) => Promise<ToolResult>>
 ): Record<string, (...args: unknown[]) => Promise<ToolResult>> {
-  const wrapped: Record<string, (...args: unknown[]) => Promise<ToolResult>> = {};
-  for (const [name, handler] of Object.entries(handlers)) {
-    if (typeof handler !== 'function') {
-      wrapped[name] = handler as (...args: unknown[]) => Promise<ToolResult>;
-      continue;
-    }
-    const bound = handler.bind(handlers);
-    wrapped[name] = async (...args: unknown[]) => {
-      try {
-        emitActionTypedEvent({
-          actionName: name,
-          spaceId: config.spaceId,
-          agentName: config.myAgentName,
-          sessionId: config.mySessionId,
-          timestamp: Date.now(),
-        });
-      } catch {}
-      return bound(...args);
-    };
-  }
-  return wrapped;
+  return handlers;
 }
 
 function withTypedTelemetry<TArgs extends unknown[]>(
-  config: SpaceAgentToolsConfig,
-  name: string,
+  _config: SpaceAgentToolsConfig,
+  _name: string,
   handler: (...args: TArgs) => Promise<ToolResult>
 ): (...args: TArgs) => Promise<ToolResult> {
-  return async (...args: TArgs) => {
-    try {
-      emitActionTypedEvent({
-        actionName: name,
-        spaceId: config.spaceId,
-        agentName: config.myAgentName,
-        sessionId: config.mySessionId,
-        timestamp: Date.now(),
-      });
-    } catch {}
-    return handler(...args);
-  };
+  return (...args: TArgs) => handler(...args);
 }
 
 export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
@@ -4928,6 +4897,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
   }
 
   const server = createSdkMcpServer({ name: 'space-agent', tools });
+  instrumentTypedTelemetryAtMcpBoundary(server, config);
   return { ...server, tools };
 }
 
