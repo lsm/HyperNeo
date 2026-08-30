@@ -41,11 +41,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { AgentSession } from '../../agent/agent-session.ts';
-import {
-  awaitDeliveryConsumption,
-  deliverAndMarkQueued,
-  deliveryConsumptionTimeoutMs,
-} from '../../agent/message-delivery.ts';
+import { handoffPromptToMailbox } from './injection-delivery-steps.ts';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
 import type { ExternalEventService } from '../../external-events/external-event-service.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
@@ -411,16 +407,14 @@ export class SpaceRuntimeService {
     }
     const sessionId = session.getSessionData().id;
     try {
-      await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey, {
-        terminalizeOnTimeout: false,
-      });
+      await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey);
       const row = this.config.reactiveDb?.db
         .getSDKMessageRepo()
         .getDeliveryContent(sessionId, args.idempotencyKey);
       if (row !== null && row !== undefined && row.sendStatus === 'failed') {
         return 'terminal_failure_after_consumption';
       }
-      return 'consumed';
+      return 'accepted';
     } catch {
       const row = this.config.reactiveDb?.db
         .getSDKMessageRepo()
@@ -668,8 +662,7 @@ export class SpaceRuntimeService {
       };
     },
     message: string,
-    messageId?: string,
-    options: { terminalizeOnTimeout?: boolean } = {}
+    messageId?: string
   ): Promise<string> {
     const id = messageId ?? generateRuntimeMessageId();
     const sessionId = session.getSessionData().id;
@@ -692,46 +685,18 @@ export class SpaceRuntimeService {
     }
     const sdkMessageRepo = reactiveDb.getSDKMessageRepo();
     const existing = sdkMessageRepo.getDeliveryContent(sessionId, id);
-    const fresh = !existing;
-    if (!existing) {
-      const dbId = reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-      await this.publishMessageStatusChanged(sessionId, dbId, 'enqueued');
-    } else if (existing.sendStatus === 'consumed') {
-      return id;
-    } else if (existing.sendStatus === 'failed') {
-      const reopenedDbId = sdkMessageRepo.reopenDeliveryByUuid(sessionId, id);
-      if (reopenedDbId) {
-        await this.publishMessageStatusChanged(sessionId, reopenedDbId, 'enqueued');
-      }
-    }
-    await awaitDeliveryConsumption({
+    if (existing?.sendStatus === 'consumed') return id;
+    await handoffPromptToMailbox({
+      db: reactiveDb.getDatabase(),
+      sdkMessageRepo,
+      jobQueue: reactiveDb.getJobQueueRepo(),
       sessionId,
-      messageUuid: id,
-      timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
-      deliver: () =>
-        deliverAndMarkQueued({
-          jobQueue: reactiveDb.getJobQueueRepo(),
-          stateManager: session.stateManager,
-          sessionId,
-          messageUuid: id,
-          origin: 'long_term_agent',
-          onEnqueueFailure: () => {
-            const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
-            if (failedDbId) {
-              void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
-            }
-          },
-        }),
-      ...(fresh && options.terminalizeOnTimeout !== false
-        ? {
-            terminalizeOnTimeout: () => {
-              const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
-              if (failedDbId) {
-                void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
-              }
-            },
-          }
-        : {}),
+      messageId: id,
+      message: sdkUserMessage,
+      origin: 'long_term_agent',
+      existing: existing ?? null,
+      publishEnqueued: (sid, dbId) => this.publishMessageStatusChanged(sid, dbId, 'enqueued'),
+      setQueuedIfIdle: session.stateManager?.setQueuedIfIdle.bind(session.stateManager),
     });
     return id;
   }

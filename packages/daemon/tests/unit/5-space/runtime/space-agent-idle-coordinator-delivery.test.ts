@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -91,7 +91,7 @@ const { getProviderRegistry, resetProviderRegistry } = await import(
 const { resetProviderFactory } = await import('../../../../src/lib/providers/factory.js');
 const { AnthropicProvider } = await import('../../../../src/lib/providers/anthropic-provider.js');
 const { resetProviderServiceInstance } = await import('../../../../src/lib/provider-service');
-const { deliverSpaceAgentMessage, SpaceAgentLateSettlements } = await import(
+const { deliverSpaceAgentMessage } = await import(
   '../../../../src/lib/space/runtime/space-agent-message-delivery'
 );
 const { AgentMessageRouter } = await import(
@@ -167,12 +167,7 @@ interface IdleCoordinatorHarness {
   db: Database;
   agentSession: AgentSessionType;
   processor: InstanceType<typeof JobQueueProcessor>;
-  lateSettlements: InstanceType<typeof SpaceAgentLateSettlements>;
-  escalate: (
-    messageId: string,
-    text: string,
-    depsOverride?: { onConsumed?: (settledSessionId: string) => void }
-  ) => Promise<SpaceAgentInjectionOutcome>;
+  escalate: (messageId: string, text: string) => Promise<SpaceAgentInjectionOutcome>;
 }
 
 async function makeIdleCoordinatorHarness(): Promise<IdleCoordinatorHarness> {
@@ -217,21 +212,14 @@ async function makeIdleCoordinatorHarness(): Promise<IdleCoordinatorHarness> {
   );
   processor.start();
 
-  const lateSettlements = new SpaceAgentLateSettlements();
-  const escalate = (
-    messageId: string,
-    text: string,
-    depsOverride?: { onConsumed?: (settledSessionId: string) => void }
-  ) =>
+  const escalate = (messageId: string, text: string): Promise<SpaceAgentInjectionOutcome> =>
     deliverSpaceAgentMessage(
       {
+        db: db.getDatabase(),
         sdkMessageRepo: db.getSDKMessageRepo(),
-        saveUserMessage: (sid, msg, status) => db.saveUserMessage(sid, msg, status),
         publishStatusChanged: async () => {},
         jobQueue,
         stateManager: agentSession.stateManager,
-        onConsumed: depsOverride?.onConsumed,
-        lateSettlement: lateSettlements,
       },
       {
         sessionId: SESSION_ID,
@@ -250,7 +238,6 @@ async function makeIdleCoordinatorHarness(): Promise<IdleCoordinatorHarness> {
     db,
     agentSession,
     processor,
-    lateSettlements,
     escalate,
   };
 }
@@ -294,9 +281,6 @@ describe('idle coordinator message consumption (issue #2963)', () => {
         harness.db.close();
       } catch {}
     }
-    for (const harness of harnesses) {
-      harness.lateSettlements.dispose();
-    }
     for (const workspace of workspaces) {
       rmSync(workspace, { recursive: true, force: true });
     }
@@ -311,199 +295,105 @@ describe('idle coordinator message consumption (issue #2963)', () => {
     return harness;
   }
 
-  it('wakes an idle coordinator session: escalation drives a turn and is consumed', async () => {
+  it('wakes an idle coordinator session: escalation is accepted durably and then consumed', async () => {
     const harness = await makeIdleCoordinatorHarness();
     track(harness, harness.agentSession.getSessionData().workspacePath);
     const { db, agentSession } = harness;
     expect(agentSession.getProcessingState().status).toBe('idle');
 
-    const delivered = harness.escalate('msg-wake-1', 'Blocked on base-OID rule; need judgment');
+    const outcome = await harness.escalate('msg-wake-1', 'Blocked on base-OID rule; need judgment');
+    expect(outcome).toEqual({ state: 'accepted', messageId: 'msg-wake-1', sessionId: SESSION_ID });
+    expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-wake-1')?.sendStatus).toBe(
+      'enqueued'
+    );
+
     await waitFor(() => spawnedQueries.length > 0);
     expect(agentSession.getProcessingState().status).not.toBe('idle');
 
     await admitPromptMessage(spawnedQueries[0], 'msg-wake-1');
-    const outcome = await delivered;
-    expect(outcome).toEqual({ state: 'delivered', messageId: 'msg-wake-1', sessionId: SESSION_ID });
-    expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-wake-1')?.sendStatus).toBe(
-      'consumed'
+    await waitFor(
+      () =>
+        db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-wake-1')?.sendStatus ===
+        'consumed'
     );
-
     await completeTurn(db, agentSession, 'msg-wake-1');
   });
 
-  describe('when the idle coordinator does not consume within the window', () => {
-    let savedTimeout: string | undefined;
+  it('retries a dead-lettered delivery row on a subsequent escalation', async () => {
+    const harness = await makeIdleCoordinatorHarness();
+    track(harness, harness.agentSession.getSessionData().workspacePath);
+    const { db, agentSession } = harness;
+    db.saveUserMessage(
+      SESSION_ID,
+      {
+        type: 'user',
+        uuid: 'msg-fail-1',
+        session_id: SESSION_ID,
+        parent_tool_use_id: null,
+        message: { role: 'user', content: [{ type: 'text', text: 'dead-lettered escalation' }] },
+      } as unknown as SDKUserMessage,
+      'enqueued'
+    );
+    db.getSDKMessageRepo().markDeliveryFailedByUuid(SESSION_ID, 'msg-fail-1');
 
-    beforeAll(() => {
-      savedTimeout = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
-      process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '300';
+    const outcome = await harness.escalate('msg-fail-1', 'retry a dead-lettered escalation');
+    expect(outcome).toEqual({ state: 'accepted', messageId: 'msg-fail-1', sessionId: SESSION_ID });
+    expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-fail-1')?.sendStatus).toBe(
+      'enqueued'
+    );
+
+    await waitFor(() => spawnedQueries.length > 0);
+    await admitPromptMessage(spawnedQueries[0], 'msg-fail-1');
+    await waitFor(
+      () =>
+        db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-fail-1')?.sendStatus ===
+        'consumed'
+    );
+    await completeTurn(db, agentSession, 'msg-fail-1');
+  });
+
+  it('routes an accepted escalation into the delivered list via send_message', async () => {
+    const harness = await makeIdleCoordinatorHarness();
+    track(harness, harness.agentSession.getSessionData().workspacePath);
+    const { db, agentSession } = harness;
+    let injectedMessageId: string | undefined;
+
+    const router = new AgentMessageRouter({
+      nodeExecutionRepo: {
+        listByWorkflowRun: () => [],
+      } as unknown as NodeExecutionRepository,
+      workflowRunId: 'run-idle-coordinator',
+      workflowChannels: [],
+      messageInjector: async () => {},
+      spaceId: SPACE_ID,
+      spaceAgentInjector: async (_spaceId, message, _replyTo, explicitMessageId) => {
+        const messageId = explicitMessageId ?? `msg-router-${Date.now()}`;
+        injectedMessageId = messageId;
+        return harness.escalate(messageId, message);
+      },
     });
 
-    afterAll(() => {
-      if (savedTimeout === undefined) {
-        delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
-      } else {
-        process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = savedTimeout;
-      }
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: 'sess-coder',
+      target: 'space-agent',
+      message: 'Blocked-task escalation: strict base-OID rule withheld mark_complete',
     });
 
-    it('acks queued instead of timing out, keeps the row pending, and consumes it on activation', async () => {
-      const harness = await makeIdleCoordinatorHarness();
-      track(harness, harness.agentSession.getSessionData().workspacePath);
-      const { db, agentSession } = harness;
+    expect(result.success).toBe(true);
+    expect(result.failed).toEqual([]);
+    expect(result.delivered).toEqual([
+      { agentName: 'space-agent', sessionId: `space:chat:${SPACE_ID}` },
+    ]);
+    expect(injectedMessageId).toBeTypeOf('string');
 
-      const outcome = await harness.escalate('msg-queued-1', 'escalation while coordinator idle');
-      expect(outcome).toEqual({
-        state: 'queued',
-        messageId: 'msg-queued-1',
-        sessionId: SESSION_ID,
-      });
-      expect(
-        db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-queued-1')?.sendStatus
-      ).toBe('enqueued');
-
-      await waitFor(() => spawnedQueries.length > 0);
-      await admitPromptMessage(spawnedQueries[0], 'msg-queued-1');
-      await waitFor(
-        () =>
-          db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-queued-1')?.sendStatus ===
-          'consumed'
-      );
-      await completeTurn(db, agentSession, 'msg-queued-1');
-    });
-
-    it('reports a truthful queued ack to the escalating worker via send_message routing', async () => {
-      const harness = await makeIdleCoordinatorHarness();
-      track(harness, harness.agentSession.getSessionData().workspacePath);
-      const { db, agentSession, escalate } = harness;
-
-      const router = new AgentMessageRouter({
-        nodeExecutionRepo: {
-          listByWorkflowRun: () => [],
-        } as unknown as NodeExecutionRepository,
-        workflowRunId: 'run-idle-coordinator',
-        workflowChannels: [],
-        messageInjector: async () => {},
-        spaceId: SPACE_ID,
-        spaceAgentInjector: async (_spaceId, message, _replyTo, explicitMessageId) =>
-          escalate(explicitMessageId ?? `msg-router-${Date.now()}`, message),
-      });
-
-      const result = await router.deliverMessage({
-        fromAgentName: 'coder',
-        fromSessionId: 'sess-coder',
-        target: 'space-agent',
-        message: 'Blocked-task escalation: strict base-OID rule withheld mark_complete',
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.delivered).toEqual([]);
-      expect(result.failed).toEqual([]);
-      expect(result.queued).toHaveLength(1);
-      expect(result.queued?.[0].agentName).toBe('space-agent');
-      const queuedMessageId = result.queued?.[0].messageId as string;
-      expect(typeof queuedMessageId).toBe('string');
-      expect(
-        db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, queuedMessageId)?.sendStatus
-      ).toBe('enqueued');
-
-      await waitFor(() => spawnedQueries.length > 0);
-      await admitPromptMessage(spawnedQueries[0], queuedMessageId);
-      await waitFor(
-        () =>
-          db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, queuedMessageId)?.sendStatus ===
-          'consumed'
-      );
-      await completeTurn(db, agentSession, queuedMessageId);
-    });
-
-    it('propagates failure when the delivery job dead-letters during the window', async () => {
-      const harness = await makeIdleCoordinatorHarness();
-      track(harness, harness.agentSession.getSessionData().workspacePath);
-      const { db } = harness;
-
-      const pending = harness.escalate('msg-dead-1', 'escalation that dead-letters');
-      await waitFor(
-        () => db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-dead-1') !== null
-      );
-      db.getSDKMessageRepo().markDeliveryFailedByUuid(SESSION_ID, 'msg-dead-1');
-
-      const outcome = await pending;
-      expect(outcome.state).toBe('failed');
-      if (outcome.state === 'failed') {
-        expect(outcome.error).toContain('dead-lettered');
-      }
-      expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-dead-1')?.sendStatus).toBe(
-        'failed'
-      );
-    });
-
-    it('reports delivered when consumption lands between the timeout and classification', async () => {
-      const harness = await makeIdleCoordinatorHarness();
-      track(harness, harness.agentSession.getSessionData().workspacePath);
-      const { db } = harness;
-      const realRepo = db.getSDKMessageRepo();
-      let reads = 0;
-      const lateConsumingRepo = new Proxy(realRepo, {
-        get(target, prop, receiver) {
-          if (prop !== 'getDeliveryContent') {
-            return Reflect.get(target, prop, receiver);
-          }
-          return (sessionId: string, uuid: string) => {
-            reads += 1;
-            if (reads >= 2 && uuid === 'msg-boundary-1') {
-              realRepo.markDeliveryConsumedByUuid(sessionId, uuid);
-            }
-            return Reflect.get(target, prop, receiver).call(target, sessionId, uuid);
-          };
-        },
-      });
-
-      const escalated = deliverSpaceAgentMessage(
-        {
-          sdkMessageRepo: lateConsumingRepo,
-          saveUserMessage: (sid, msg, status) => db.saveUserMessage(sid, msg, status),
-          publishStatusChanged: async () => {},
-          jobQueue: db.getJobQueueRepo(),
-        },
-        {
-          sessionId: SESSION_ID,
-          messageId: 'msg-boundary-1',
-          sdkUserMessage: {
-            type: 'user',
-            uuid: 'msg-boundary-1',
-            session_id: SESSION_ID,
-            parent_tool_use_id: null,
-            message: { role: 'user', content: [{ type: 'text', text: 'boundary race' }] },
-          } as unknown as SDKUserMessage,
-        }
-      );
-      const outcome = await escalated;
-      expect(outcome).toEqual({
-        state: 'delivered',
-        messageId: 'msg-boundary-1',
-        sessionId: SESSION_ID,
-      });
-    });
-
-    it('settles a queued escalation through the delayed-consumption hook', async () => {
-      const harness = await makeIdleCoordinatorHarness();
-      track(harness, harness.agentSession.getSessionData().workspacePath);
-      const { db, agentSession } = harness;
-      let settled = false;
-
-      const outcome = await harness.escalate('msg-late-1', 'escalation consumed after ack', {
-        onConsumed: () => {
-          settled = true;
-        },
-      });
-      expect(outcome).toEqual({ state: 'queued', messageId: 'msg-late-1', sessionId: SESSION_ID });
-      expect(settled).toBe(false);
-
-      await waitFor(() => spawnedQueries.length > 0);
-      await admitPromptMessage(spawnedQueries[0], 'msg-late-1');
-      await waitFor(() => settled);
-      await completeTurn(db, agentSession, 'msg-late-1');
-    });
+    await waitFor(() => spawnedQueries.length > 0);
+    await admitPromptMessage(spawnedQueries[0], injectedMessageId!);
+    await waitFor(
+      () =>
+        db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, injectedMessageId!)?.sendStatus ===
+        'consumed'
+    );
+    await completeTurn(db, agentSession, injectedMessageId!);
   });
 });

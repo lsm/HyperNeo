@@ -115,7 +115,7 @@ import { ChannelResolver } from './channel-resolver.ts';
 import { ChannelRouter } from './channel-router.ts';
 import { createGithubConnector } from './connectors/github-connector.ts';
 import { HookExecutor } from './hook-executor.ts';
-import type { InjectionDeliveryRowDeps } from './injection-delivery-steps.ts';
+import type { InjectDeliveryBranchDeps } from './injection-delivery-steps.ts';
 import {
   deliverInjectedMessage,
   flipDeliveryRowToDeferred,
@@ -251,13 +251,7 @@ export interface TaskAgentManagerConfig {
     spaceId: string,
     message: string,
     replyToSessionId?: string | null,
-    explicitMessageId?: string,
-    options?: {
-      onConsumed?: (settledSessionId: string) => void;
-      lateSettlement?: import('./space-agent-message-delivery.ts').SpaceAgentLateSettlementOwner;
-      onLateFailure?: () => void;
-      disposeSignal?: AbortSignal;
-    }
+    explicitMessageId?: string
   ) => Promise<import('./space-agent-message-delivery.ts').SpaceAgentInjectionOutcome>;
   scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
   replyRoutingRegistry?: ReplyRoutingRegistry;
@@ -1664,13 +1658,8 @@ export class TaskAgentManager {
     repo.recordDeliveryAttempt(row.id, null);
     repo.deferExpiration([row.id]);
     try {
-      const outcome = await inject(spaceId, message, replyTo, row.id, {
-        onConsumed: settleDelivered,
-        onLateFailure: scheduleReconciliation,
-        lateSettlement: this.lateSettlements,
-        disposeSignal: this.lateSettlements.disposeSignal(),
-      });
-      if (outcome.state === 'delivered') {
+      const outcome = await inject(spaceId, message, replyTo, row.id);
+      if (outcome.state === 'accepted') {
         settleDelivered(outcome.sessionId);
         return;
       }
@@ -1678,18 +1667,11 @@ export class TaskAgentManager {
       if (outcome.state === 'failed' && (repo.getById(row.id)?.attempts ?? 0) >= row.maxAttempts) {
         repo.markFailed(row.id, `space-agent delivery attempts exhausted (${row.maxAttempts})`);
       }
-      if (outcome.state === 'failed') {
-        scheduleReconciliation();
-        log.warn(
-          `TaskAgentManager: Space Agent delivery for ${row.id} failed: ${outcome.error}; ` +
-            `scheduled reconciliation to charge and retry the attempt`
-        );
-      } else {
-        log.info(
-          `TaskAgentManager: Space Agent delivery for ${row.id} queued pending consumption ` +
-            `by ${spaceChatSessionId}; the pending row settles when consumption completes`
-        );
-      }
+      scheduleReconciliation();
+      log.warn(
+        `TaskAgentManager: Space Agent delivery for ${row.id} failed: ${outcome.error}; ` +
+          `scheduled reconciliation to charge and retry the attempt`
+      );
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       repo.recordDeliveryError(row.id, errMsg);
@@ -4336,10 +4318,6 @@ export class TaskAgentManager {
       }
     }
 
-    if (outcome.reopenFailedDelivery) {
-      await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
-    }
-
     try {
       if (!isBusy) {
         const clearSuppressedByPendingWork =
@@ -4400,37 +4378,33 @@ export class TaskAgentManager {
         }
       }
 
-      return deliverInjectedMessage(
-        { ...deliveryRows, jobQueue: this.config.db.getJobQueueRepo() },
-        {
-          session,
-          sessionId,
-          messageId,
-          sdkUserMessage,
-          rowExists: !!existing,
-          origin,
-          boundaryOwner: boundaryOwner ?? undefined,
-        }
-      );
+      return deliverInjectedMessage(deliveryRows, {
+        session,
+        sessionId,
+        messageId,
+        sdkUserMessage,
+        existing,
+        origin,
+        boundaryOwner: boundaryOwner ?? undefined,
+      });
     } finally {
       boundaryOwner?.release();
     }
   }
 
-  private injectDeliveryRowDeps(): InjectionDeliveryRowDeps {
+  private injectDeliveryRowDeps(): InjectDeliveryBranchDeps {
     return {
+      db: this.config.db.getDatabase(),
+      sdkMessageRepo: this.config.db.getSDKMessageRepo(),
+      jobQueue: this.config.db.getJobQueueRepo(),
       publishStatusChanged: (sessionId, dbId, status) =>
         this.publishMessageStatusChanged(sessionId, dbId, status),
       saveUserMessage: (sessionId, message, sendStatus, origin) =>
         this.config.db.saveUserMessage(sessionId, message, sendStatus, origin),
-      getDeliverySendStatus: (sessionId, uuid) =>
-        this.config.db.getSDKMessageRepo().getDeliveryContent(sessionId, uuid)?.sendStatus,
       reopenDeliveryByUuid: (sessionId, uuid) =>
         this.config.db.getSDKMessageRepo().reopenDeliveryByUuid(sessionId, uuid),
       markDeliveryDeferredByUuid: (sessionId, uuid) =>
         this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, uuid),
-      markDeliveryFailedByUuid: (sessionId, uuid) =>
-        this.config.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, uuid),
     };
   }
 

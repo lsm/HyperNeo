@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
-import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
@@ -11,6 +11,7 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { createTestDb, createTestSession } from '../../../helpers/database';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 const NODE_ID = 'node-build';
@@ -610,7 +611,7 @@ function makeSpaceAgentHarness(
       message: string,
       replyTo: string | null,
       rowId: string
-    ) => Promise<{ state: 'delivered' | 'queued' | 'failed'; messageId: string; error?: string }>;
+    ) => Promise<{ state: 'accepted' | 'failed'; messageId: string; error?: string }>;
     registry?: { get: (taskId: string) => string | null };
   } = {}
 ): SpaceAgentHarness {
@@ -640,7 +641,7 @@ function makeSpaceAgentHarness(
   const injector = mock(
     options.injectorImpl ??
       (async (_spaceId: string, _message: string, _replyTo: string | null, rowId: string) => ({
-        state: 'delivered',
+        state: 'accepted',
         messageId: rowId,
       }))
   );
@@ -697,7 +698,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
   it('defers pending-row expiry while an SDK delivery is still active', async () => {
     const h = makeSpaceAgentHarness({
       injectorImpl: async (_spaceId, _message, _replyTo, rowId) => ({
-        state: 'queued',
+        state: 'accepted',
         messageId: rowId,
         sessionId: `space:chat:stub`,
       }),
@@ -782,24 +783,18 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     expect(expiredAt).toBeGreaterThan(deliveredAt);
   });
 
-  it('keeps a queued space-agent row pending and settles it from delayed consumption', async () => {
-    let settleQueuedRow: (() => void) | null = null;
+  it('settles a space-agent row as soon as the injector accepts it', async () => {
     const h = makeSpaceAgentHarness({
-      injectorImpl: async (_spaceId, _message, _replyTo, rowId, options) => {
-        settleQueuedRow = options?.onConsumed ?? null;
-        return { state: 'queued', messageId: rowId };
-      },
+      injectorImpl: async (spaceId, _message, _replyTo, rowId) => ({
+        state: 'accepted',
+        messageId: rowId,
+        sessionId: `space:chat:${spaceId}`,
+      }),
     });
     dbByTest.push(h.db);
-    const row = h.enqueue({ message: 'queued while coordinator idle' });
+    const row = h.enqueue({ message: 'accepted while coordinator idle' });
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
-
-    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
-    expect(h.spyRepo.calls).not.toContain(`delivered:${row.id}`);
-    expect(settleQueuedRow).not.toBeNull();
-
-    settleQueuedRow?.();
 
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(row.id)?.deliveredSessionId).toBe(`space:chat:${h.spaceId}`);
@@ -919,7 +914,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     const h = makeSpaceAgentHarness({
       injectorImpl: async (_spaceId, message, _replyTo, rowId) => {
         if (message.includes('fails first')) throw new Error('injector down');
-        return { state: 'delivered', messageId: rowId };
+        return { state: 'accepted', messageId: rowId };
       },
     });
     dbByTest.push(h.db);
@@ -953,14 +948,12 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
   const GUARD_SESSION_ID = 'sub-session-guard';
   const GUARD_RUN_ID = 'run-guard';
 
-  function makeGuardManager(
+  async function makeGuardManager(
     taskStatus: string | null,
     runStatus: string
-  ): {
-    manager: TaskAgentManager;
-    saveUserMessage: ReturnType<typeof mock>;
-    jobQueueEnqueue: ReturnType<typeof mock>;
-  } {
+  ): Promise<{ manager: TaskAgentManager; db: Database }> {
+    const db = await createTestDb();
+    db.createSession(createTestSession(GUARD_SESSION_ID));
     const execution = {
       id: 'exec-guard',
       workflowRunId: GUARD_RUN_ID,
@@ -971,14 +964,6 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
       createdAt: 1,
       updatedAt: 1,
     };
-    const saveUserMessage = mock(() => 'db-id');
-    const jobQueueEnqueue = mock(
-      (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
-        const uuid = args?.payload?.messageUuid;
-        if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
-        return { id: 'job-1' };
-      }
-    );
     const replayMock = mock(async () => ({ success: true, messageCount: 0 }));
     const workflow = { nodes: [{ id: NODE_ID, name: NODE_NAME, agents: [] }] };
     const session = {
@@ -990,22 +975,7 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
     } as unknown as AgentSession;
 
     const manager = new TaskAgentManager({
-      db: {
-        getDatabase: () => ({}),
-        saveUserMessage,
-        getUserMessageIdsByStatus: mock(() => []),
-        getSDKMessageRepo: () => ({
-          getDeliveryContent: () => null,
-          reopenDeliveryByUuid: mock(() => null),
-          markDeliveryDeferredByUuid: mock(() => null),
-          markDeliveryFailedByUuid: mock(() => null),
-        }),
-        getJobQueueRepo: () => ({
-          activeDeliveryMessageUuids: () => new Set<string>(),
-          enqueue: jobQueueEnqueue,
-          getActiveDeliveryRole: () => null,
-        }),
-      },
+      db,
       internalEventBus: { subscribe: mock(() => () => {}), publish: mock(async () => {}) },
       nodeExecutionRepo: {
         getByAgentSessionId: mock(() => execution),
@@ -1026,47 +996,64 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
       GUARD_SESSION_ID,
       session
     );
-    return { manager, saveUserMessage, jobQueueEnqueue };
+    return { manager, db };
   }
 
   it('rejects when the canonical task is cancelled', async () => {
-    const { manager } = makeGuardManager('cancelled', 'in_progress');
+    const { manager, db } = await makeGuardManager('cancelled', 'in_progress');
     await expect(manager.injectSubSessionMessage(GUARD_SESSION_ID, 'note', true)).rejects.toThrow(
       'task/run is terminal (cancelled)'
     );
+    db.close();
   });
 
   it('rejects when the canonical task is archived', async () => {
-    const { manager } = makeGuardManager('archived', 'in_progress');
+    const { manager, db } = await makeGuardManager('archived', 'in_progress');
     await expect(manager.injectSubSessionMessage(GUARD_SESSION_ID, 'note', true)).rejects.toThrow(
       'task/run is terminal (archived)'
     );
+    db.close();
   });
 
   it('rejects when the workflow run is cancelled', async () => {
-    const { manager } = makeGuardManager(null, 'cancelled');
+    const { manager, db } = await makeGuardManager(null, 'cancelled');
     await expect(manager.injectSubSessionMessage(GUARD_SESSION_ID, 'note', true)).rejects.toThrow(
       'task/run is terminal (cancelled)'
     );
+    db.close();
   });
 
   it('lets done task and run states through to the durable injection shell', async () => {
-    const { manager, saveUserMessage, jobQueueEnqueue } = makeGuardManager('done', 'done');
+    const { manager, db } = await makeGuardManager('done', 'done');
 
     const dbId = await manager.injectSubSessionMessage(GUARD_SESSION_ID, 'note', true);
 
-    expect(dbId).toBe('db-id');
-    expect(saveUserMessage).toHaveBeenCalledTimes(1);
-    expect(saveUserMessage.mock.calls[0][2]).toBe('enqueued');
-    expect(jobQueueEnqueue).toHaveBeenCalledTimes(1);
+    expect(dbId).toBeTypeOf('string');
+    const row = db
+      .getDatabase()
+      .prepare(
+        `SELECT send_status AS sendStatus, sdk_uuid AS sdkUuid FROM sdk_messages WHERE id = ?`
+      )
+      .get(dbId) as { sendStatus: string; sdkUuid: string };
+    expect(row.sendStatus).toBe('enqueued');
+    const job = db
+      .getDatabase()
+      .prepare(
+        `SELECT id FROM job_queue WHERE queue = 'message_delivery'
+           AND json_extract(payload, '$.messageUuid') = ?`
+      )
+      .get(row.sdkUuid);
+    expect(job).toBeDefined();
+    db.close();
   });
 
   it('rejects runtime-origin injections when the canonical task is done (#3109)', async () => {
-    const { manager } = makeGuardManager('done', 'in_progress');
+    const { manager, db } = await makeGuardManager('done', 'in_progress');
 
     await expect(
       manager.injectRuntimeRecoveryMessage(GUARD_SESSION_ID, 'recovery nag')
     ).rejects.toThrow('task/run is terminal (done)');
+    db.close();
   });
 });
 
@@ -1075,25 +1062,28 @@ describe('pending drain through the v2 injection shell', () => {
   const V2_RUN_ID = 'run-v2';
   const V2_NODE_ID = 'node-coder';
 
-  function makeV2Harness(deliveryContent: { sendStatus: string }): {
+  async function makeV2Harness(deliveryContent: { sendStatus: string }): Promise<{
     manager: TaskAgentManager;
-    saveUserMessage: ReturnType<typeof mock>;
-    jobQueueEnqueue: ReturnType<typeof mock>;
-    reopenDeliveryByUuid: ReturnType<typeof mock>;
-    markDeliveryDeferredByUuid: ReturnType<typeof mock>;
+    db: Database;
     markDelivered: ReturnType<typeof mock>;
     replayMock: ReturnType<typeof mock>;
-  } {
-    const saveUserMessage = mock(() => 'db-id');
-    const jobQueueEnqueue = mock(
-      (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
-        const uuid = args?.payload?.messageUuid;
-        if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
-        return { id: 'job-1' };
-      }
-    );
-    const reopenDeliveryByUuid = mock(() => 'db-reopened');
-    const markDeliveryDeferredByUuid = mock(() => null);
+  }> {
+    const db = await createTestDb();
+    db.createSession(createTestSession(V2_SESSION_ID));
+    const sdkUserMessage: SDKUserMessage = {
+      type: 'user',
+      uuid: 'row-v2',
+      session_id: V2_SESSION_ID,
+      parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'text', text: 'queued v2 note' }] },
+    };
+    db.saveUserMessage(V2_SESSION_ID, sdkUserMessage, 'enqueued');
+    if (deliveryContent.sendStatus === 'failed') {
+      db.getSDKMessageRepo().markDeliveryFailedByUuid(V2_SESSION_ID, 'row-v2');
+    }
+    if (deliveryContent.sendStatus === 'consumed') {
+      db.getSDKMessageRepo().markDeliveryConsumedByUuid(V2_SESSION_ID, 'row-v2');
+    }
     const replayMock = mock(async () => ({ success: true, messageCount: 0 }));
     const execution = {
       id: 'exec-v2',
@@ -1131,22 +1121,7 @@ describe('pending drain through the v2 injection shell', () => {
     } as unknown as AgentSession;
 
     const manager = new TaskAgentManager({
-      db: {
-        getDatabase: () => ({}),
-        saveUserMessage,
-        getUserMessageIdsByStatus: mock(() => []),
-        getSDKMessageRepo: () => ({
-          getDeliveryContent: () => deliveryContent,
-          reopenDeliveryByUuid,
-          markDeliveryDeferredByUuid,
-          markDeliveryFailedByUuid: mock(() => null),
-        }),
-        getJobQueueRepo: () => ({
-          activeDeliveryMessageUuids: () => new Set<string>(),
-          enqueue: jobQueueEnqueue,
-          getActiveDeliveryRole: () => null,
-        }),
-      },
+      db,
       internalEventBus: { subscribe: mock(() => () => {}), publish: mock(async () => {}) },
       nodeExecutionRepo: {
         getByAgentSessionId: mock(() => execution),
@@ -1168,38 +1143,50 @@ describe('pending drain through the v2 injection shell', () => {
     );
     return {
       manager,
-      saveUserMessage,
-      jobQueueEnqueue,
-      reopenDeliveryByUuid,
-      markDeliveryDeferredByUuid,
+      db,
       markDelivered: pendingRepo.markDelivered,
       replayMock,
     };
   }
 
   it('a drain retry over a failed delivery row reopens it and re-enqueues without a duplicate row', async () => {
-    const h = makeV2Harness({ sendStatus: 'failed' });
+    const h = await makeV2Harness({ sendStatus: 'failed' });
 
     await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
 
-    expect(h.reopenDeliveryByUuid).toHaveBeenCalledWith(V2_SESSION_ID, 'row-v2');
-    expect(h.saveUserMessage).not.toHaveBeenCalled();
-    expect(h.jobQueueEnqueue).toHaveBeenCalledTimes(1);
-    expect(
-      (h.jobQueueEnqueue.mock.calls[0][0] as { payload?: { messageUuid?: string } }).payload
-        ?.messageUuid
-    ).toBe('row-v2');
+    expect(h.db.getSDKMessageRepo().getDeliveryContent(V2_SESSION_ID, 'row-v2')?.sendStatus).toBe(
+      'enqueued'
+    );
+    const job = h.db
+      .getDatabase()
+      .prepare(
+        `SELECT id FROM job_queue WHERE queue = 'message_delivery'
+           AND json_extract(payload, '$.messageUuid') = 'row-v2'`
+      )
+      .get();
+    expect(job).toBeDefined();
     expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
+    h.db.close();
   });
 
   it('a drain retry over a consumed delivery row is a noop yet still marks the pending row delivered', async () => {
-    const h = makeV2Harness({ sendStatus: 'consumed' });
+    const h = await makeV2Harness({ sendStatus: 'consumed' });
 
     await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
 
-    expect(h.saveUserMessage).not.toHaveBeenCalled();
-    expect(h.jobQueueEnqueue).not.toHaveBeenCalled();
+    expect(h.db.getSDKMessageRepo().getDeliveryContent(V2_SESSION_ID, 'row-v2')?.sendStatus).toBe(
+      'consumed'
+    );
+    const job = h.db
+      .getDatabase()
+      .prepare(
+        `SELECT id FROM job_queue WHERE queue = 'message_delivery'
+           AND json_extract(payload, '$.messageUuid') = 'row-v2'`
+      )
+      .get();
+    expect(job).toBeNull();
     expect(h.replayMock).not.toHaveBeenCalled();
     expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
+    h.db.close();
   });
 });

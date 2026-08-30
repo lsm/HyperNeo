@@ -37,12 +37,7 @@ export interface AgentMessageRouterConfig {
     spaceId: string,
     message: string,
     replyToSessionId?: string | null,
-    explicitMessageId?: string,
-    options?: {
-      onConsumed?: (settledSessionId: string) => void;
-      onLateFailure?: () => void;
-      disposeSignal?: AbortSignal;
-    }
+    explicitMessageId?: string
   ) => Promise<SpaceAgentInjectionOutcome>;
   taskNumber?: number | null;
   pendingMessageRepo?: PendingAgentMessageRepository;
@@ -328,10 +323,8 @@ export class AgentMessageRouter {
         const envelopedMessage = buildEnvelope('space-agent');
         try {
           const outcome = await spaceAgentInjector!(spaceId!, envelopedMessage, null);
-          if (outcome.state === 'delivered') {
+          if (outcome.state === 'accepted') {
             delivered.push({ agentName: 'space-agent', sessionId: outcome.sessionId });
-          } else if (outcome.state === 'queued') {
-            queued.push({ agentName: 'space-agent', messageId: outcome.messageId });
           } else {
             failed.push({
               agentName: 'space-agent',
@@ -352,10 +345,8 @@ export class AgentMessageRouter {
         const envelopedMessage = buildEnvelope('space-agent');
         try {
           const outcome = await spaceAgentInjector!(spaceId!, envelopedMessage, decision.sessionId);
-          if (outcome.state === 'delivered') {
+          if (outcome.state === 'accepted') {
             delivered.push({ agentName: 'space-agent', sessionId: outcome.sessionId });
-          } else if (outcome.state === 'queued') {
-            queued.push({ agentName: 'space-agent', messageId: outcome.messageId });
           } else {
             failed.push({
               agentName: 'space-agent',
@@ -717,10 +708,8 @@ export class AgentMessageRouter {
         const envelopedMessage = buildEnvelope('space-agent');
         try {
           const outcome = await spaceAgentInjector(spaceId, envelopedMessage, replyTo);
-          if (outcome.state === 'delivered') {
+          if (outcome.state === 'accepted') {
             delivered.push({ agentName, sessionId: outcome.sessionId || sessionId });
-          } else if (outcome.state === 'queued') {
-            queued.push({ agentName, messageId: outcome.messageId });
           } else {
             failed.push({
               agentName,

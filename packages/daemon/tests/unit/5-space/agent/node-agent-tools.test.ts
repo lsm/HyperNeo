@@ -464,7 +464,7 @@ describe('node-agent-tools: send_message', () => {
       spaceAgentInjector: async (spaceId, message) => {
         spaceMessages.push({ spaceId, message });
         return {
-          state: 'delivered',
+          state: 'accepted',
           messageId: `msg-${spaceMessages.length}`,
           sessionId: `space:chat:${spaceId}`,
         };

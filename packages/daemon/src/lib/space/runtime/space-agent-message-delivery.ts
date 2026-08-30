@@ -2,14 +2,15 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { Logger } from '../../logger.ts';
 import {
-  awaitDeliveryConsumptionTolerant,
-  deliverAndMarkQueued,
-  deliveryConsumptionTimeoutMs,
   MESSAGE_DELIVERY_PARK_MS,
   signalDeliveryConsumed,
   waitForDeliveryConsumption,
   type MessageDeliveryOrigin,
 } from '../../agent/message-delivery.ts';
+import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
+import type { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import { handoffPromptToMailbox } from './injection-delivery-steps.ts';
 
 const log = new Logger('space-agent-delivery');
 
@@ -37,13 +38,7 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
     string,
     { handle: SpaceAgentLateSettlementHandle; release: () => void }
   >();
-  private readonly disposeController = new AbortController();
   private disposed = false;
-
-  disposeSignal(): AbortSignal {
-    if (this.disposed) this.disposeController.abort();
-    return this.disposeController.signal;
-  }
 
   arm({
     sessionId,
@@ -127,7 +122,6 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
   }
   dispose(): void {
     this.disposed = true;
-    this.disposeController.abort();
     for (const timer of this.timers) clearTimeout(timer);
     this.timers.clear();
     for (const [, watcher] of this.waiters) {
@@ -136,23 +130,14 @@ export class SpaceAgentLateSettlements implements SpaceAgentLateSettlementOwner 
     this.waiters.clear();
   }
 }
-import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 
 export type SpaceAgentInjectionOutcome =
-  | { state: 'delivered'; messageId: string; sessionId: string }
-  | { state: 'queued'; messageId: string; sessionId: string }
+  | { state: 'accepted'; messageId: string; sessionId: string }
   | { state: 'failed'; messageId: string; sessionId: string; error: string };
 
 export interface SpaceAgentDeliveryDeps {
-  sdkMessageRepo: {
-    getDeliveryContent(
-      sessionId: string,
-      uuid: string
-    ): { content: string | Array<{ type: string }>; sendStatus: string } | null;
-    reopenDeliveryByUuid(sessionId: string, uuid: string): string | null;
-    markDeliveryFailedByUuid(sessionId: string, uuid: string): string | null;
-  };
-  saveUserMessage(sessionId: string, message: SDKUserMessage, status: 'enqueued'): string;
+  db: BunDatabase;
+  sdkMessageRepo: SDKMessageRepository;
   publishStatusChanged(
     sessionId: string,
     dbId: string,
@@ -163,24 +148,18 @@ export interface SpaceAgentDeliveryDeps {
     setQueuedIfIdle(messageId: string): Promise<boolean>;
     getState(): { status: string };
   };
-  onConsumed?: (settledSessionId: string) => void;
-  onLateFailure?: () => void;
-  lateSettlement?: SpaceAgentLateSettlementOwner;
-  disposeSignal?: AbortSignal;
 }
 
 export interface SpaceAgentDeliveryInput {
   sessionId: string;
   messageId: string;
   sdkUserMessage: SDKUserMessage;
-  provider?: string;
   origin?: MessageDeliveryOrigin;
 }
 
 interface SpaceAgentDeliveryCtx extends SpaceAgentDeliveryInput {
   deps: SpaceAgentDeliveryDeps;
   existing?: { sendStatus: string } | null;
-  consumed?: boolean;
   outcome?: SpaceAgentInjectionOutcome;
 }
 
@@ -195,110 +174,32 @@ function shortCircuitConsumed(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx
   if (ctx.existing?.sendStatus !== 'consumed') return ctx;
   return {
     ...ctx,
-    outcome: { state: 'delivered', messageId: ctx.messageId, sessionId: ctx.sessionId },
+    outcome: { state: 'accepted', messageId: ctx.messageId, sessionId: ctx.sessionId },
   };
 }
 
-async function persistOrReopenRow(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeliveryCtx> {
-  if (!ctx.existing) {
-    const dbId = ctx.deps.saveUserMessage(ctx.sessionId, ctx.sdkUserMessage, 'enqueued');
-    await ctx.deps.publishStatusChanged(ctx.sessionId, dbId, 'enqueued');
-    return ctx;
-  }
-  if (ctx.existing.sendStatus === 'failed') {
-    const reopenedDbId = ctx.deps.sdkMessageRepo.reopenDeliveryByUuid(ctx.sessionId, ctx.messageId);
-    if (reopenedDbId) {
-      await ctx.deps.publishStatusChanged(ctx.sessionId, reopenedDbId, 'enqueued');
-    }
-  }
+async function enqueuePrompt(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeliveryCtx> {
+  await handoffPromptToMailbox({
+    db: ctx.deps.db,
+    sdkMessageRepo: ctx.deps.sdkMessageRepo,
+    jobQueue: ctx.deps.jobQueue,
+    sessionId: ctx.sessionId,
+    messageId: ctx.messageId,
+    message: ctx.sdkUserMessage,
+    origin: ctx.origin ?? 'space_agent',
+    existing: ctx.existing ?? null,
+    publishEnqueued: (sessionId, dbId) =>
+      ctx.deps.publishStatusChanged(sessionId, dbId, 'enqueued'),
+    setQueuedIfIdle: ctx.deps.stateManager?.setQueuedIfIdle.bind(ctx.deps.stateManager),
+  });
   return ctx;
 }
 
-async function deliverAndAwaitConsumption(
-  ctx: SpaceAgentDeliveryCtx
-): Promise<SpaceAgentDeliveryCtx> {
-  const { sessionId, messageId } = ctx;
-  const outcome = await awaitDeliveryConsumptionTolerant({
-    sessionId,
-    messageUuid: messageId,
-    timeoutMs: deliveryConsumptionTimeoutMs(ctx.provider),
-    signal: ctx.deps.disposeSignal,
-    getSendStatus:
-      ctx.provider === 'acp'
-        ? () => ctx.deps.sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus
-        : undefined,
-    deliver: () =>
-      deliverAndMarkQueued({
-        jobQueue: ctx.deps.jobQueue,
-        stateManager: ctx.deps.stateManager,
-        sessionId,
-        messageUuid: messageId,
-        origin: ctx.origin ?? 'space_agent',
-        signal: ctx.deps.disposeSignal,
-        onEnqueueFailure: () => {
-          const failedDbId = ctx.deps.sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageId);
-          if (failedDbId) {
-            void ctx.deps.publishStatusChanged(sessionId, failedDbId, 'failed').catch(() => {});
-          }
-        },
-      }),
-  });
-  return { ...ctx, consumed: outcome.consumed };
-}
-
-async function classifyOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeliveryCtx> {
-  const { sessionId, messageId } = ctx;
-  if (ctx.consumed) {
-    return { ...ctx, outcome: { state: 'delivered', messageId, sessionId } };
-  }
-  if (ctx.deps.onConsumed && ctx.deps.lateSettlement) {
-    const lateArm = ctx.deps.lateSettlement.arm({
-      sessionId,
-      messageId,
-      onConsumed: ctx.deps.onConsumed,
-      onFailed: ctx.deps.onLateFailure,
-      getSendStatus: () =>
-        ctx.deps.sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus,
-    });
-    const armed = readSettledStatus(ctx);
-    if (armed === 'consumed') {
-      lateArm.cancel();
-      return { ...ctx, outcome: { state: 'delivered', messageId, sessionId } };
-    }
-    if (armed === 'failed') {
-      lateArm.cancel();
-      return {
-        ...ctx,
-        outcome: {
-          state: 'failed',
-          messageId,
-          sessionId,
-          error: 'delivery dead-lettered while awaiting consumption',
-        },
-      };
-    }
-    return { ...ctx, outcome: { state: 'queued', messageId, sessionId } };
-  }
-  const settled = readSettledStatus(ctx);
-  if (settled === 'consumed') {
-    return { ...ctx, outcome: { state: 'delivered', messageId, sessionId } };
-  }
-  if (settled === 'failed') {
-    return {
-      ...ctx,
-      outcome: {
-        state: 'failed',
-        messageId,
-        sessionId,
-        error: 'delivery dead-lettered while awaiting consumption',
-      },
-    };
-  }
-  return { ...ctx, outcome: { state: 'queued', messageId, sessionId } };
-}
-
-function readSettledStatus(ctx: SpaceAgentDeliveryCtx): string | undefined {
-  return ctx.deps.sdkMessageRepo.getDeliveryContent(ctx.sessionId, ctx.messageId)?.sendStatus;
+function acceptOutcome(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx {
+  return {
+    ...ctx,
+    outcome: { state: 'accepted', messageId: ctx.messageId, sessionId: ctx.sessionId },
+  };
 }
 
 async function failDelivery(ctx: SpaceAgentDeliveryCtx): Promise<void> {
@@ -321,9 +222,8 @@ const run = (
   .pipe(loadExistingRow, 'ctx', 'ctx')
   .pipe(shortCircuitConsumed, 'ctx', 'ctx')
   .pipe('!hasOutcome', 'ctx')
-  .pipe(persistOrReopenRow, 'ctx', 'ctx')
-  .pipe(deliverAndAwaitConsumption, 'ctx', 'ctx')
-  .pipe(classifyOutcome, 'ctx', 'ctx')
+  .pipe(enqueuePrompt, 'ctx', 'ctx')
+  .pipe(acceptOutcome, 'ctx', 'ctx')
   .error(failDelivery, ['ctx'])
   .endAsync('ctx') as (input: SpaceAgentDeliveryCtx) => Promise<SpaceAgentDeliveryCtx>;
 
