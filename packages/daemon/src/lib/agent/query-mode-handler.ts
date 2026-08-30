@@ -353,6 +353,12 @@ export class QueryModeHandler {
       if (plan.contextReset.action === 'clear_then_flush') {
         clearBoundaryRelease = await this.acquireClearBoundaryAheadOfFlush();
         if (clearBoundaryRelease === null) {
+          const refreshed = this.planFlush(flushMessages, options);
+          if (refreshed.action === 'noop') {
+            return { clearedContext: false, reDeferredDbIds };
+          }
+          planAction = refreshed.action;
+          deliverables = refreshed.action === 'batch' ? refreshed.uuids : refreshed.deliver;
           const deliverableSet = new Set(deliverables);
           reDeferredDbIds = await this.deferTaskDeliverables(flushMessages, deliverableSet);
           deliverables = deliverables.filter((uuid) => {
