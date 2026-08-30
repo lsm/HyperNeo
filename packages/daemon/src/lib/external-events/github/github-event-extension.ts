@@ -692,7 +692,7 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
     const signature = req.headers.get('X-Hub-Signature-256');
     const eventType = req.headers.get('X-GitHub-Event');
     const deliveryId = req.headers.get('X-GitHub-Delivery');
-    const tokenLoginSnapshot = this.cachedTokenStatus()?.login ?? '';
+    let tokenLoginSnapshot: string | undefined;
     let dropped = 0;
 
     const deps: WebhookAdmissionDeps = {
@@ -704,6 +704,9 @@ export class GitHubEventExtension implements HttpExternalEventExtension, RpcExte
           getSpaceConfig: (spaceId: string) =>
             context.config.getSpaceConfig(spaceId, this.sourceId),
           publishEvent: async (spaceId: string, event) => {
+            if (tokenLoginSnapshot === undefined) {
+              tokenLoginSnapshot = this.cachedTokenStatus()?.login ?? '';
+            }
             const ok = await this.publishEvent(spaceId, event, context, tokenLoginSnapshot);
             if (!ok) dropped++;
           },
