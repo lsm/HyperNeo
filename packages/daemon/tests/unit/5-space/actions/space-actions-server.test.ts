@@ -11,9 +11,17 @@ import {
   type SpaceActionsMcpServer,
   type SpaceActionsServerConfig,
 } from '../../../../src/lib/space/actions/space-actions-server.ts';
+import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
+import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import type { NodeAgentToolsConfig } from '../../../../src/lib/space/tools/node-agent-tools.ts';
 import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import type { CreateMcpAuditLogParams } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
+import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import type { Database as BunDatabase } from '../../../../src/storage/sqlite-compat.ts';
 
 const SPACE_ID = 'space-actions-server-test';
 const stubSpaceConfig = {
@@ -1208,5 +1216,53 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
       agentName: 'coder-1',
       sessionId: 'session-1',
     });
+  });
+});
+
+function buildRuntimeService(): SpaceRuntimeService {
+  const spaceManager = {
+    getSpace: () => Promise.resolve(null),
+    listSpaces: () => Promise.resolve([]),
+  } as unknown as SpaceManager;
+  return new SpaceRuntimeService({
+    db: {} as BunDatabase,
+    spaceManager,
+    spaceAgentManager: {} as SpaceAgentManager,
+    spaceWorkflowManager: {} as SpaceWorkflowManager,
+    workflowRunRepo: {} as SpaceWorkflowRunRepository,
+    taskRepo: {} as SpaceTaskRepository,
+    nodeExecutionRepo: {
+      getByAgentSessionId: () => null,
+      getById: () => null,
+    } as unknown as NodeExecutionRepository,
+    tickIntervalMs: 60_000,
+  });
+}
+
+describe('SpaceRuntimeService.buildUniversalReadDispatcherServer', () => {
+  test('returns a valid server exposing only the read meta actions', () => {
+    const svc = buildRuntimeService();
+    const server = svc.buildUniversalReadDispatcherServer();
+    expect(server.tools.map((entry) => entry.name)).toEqual(['call_action']);
+    const names = server.registry.entries.map((entry) => entry.name).sort();
+    expect(names).toEqual(['describe_action', 'list_actions']);
+    for (const entry of server.registry.entries) {
+      expect(entry.family).toBe('space');
+      expect(entry.safetyClass).toBe('read');
+    }
+  });
+
+  test('serves the list_actions catalog through call_action', async () => {
+    const svc = buildRuntimeService();
+    const server = svc.buildUniversalReadDispatcherServer();
+    const catalog = (await dispatch(server, { name: 'list_actions' })) as Array<
+      Record<string, unknown>
+    >;
+    const names = catalog.map((entry) => entry.name).sort();
+    expect(names).toEqual(['describe_action', 'list_actions']);
+    for (const entry of catalog) {
+      expect(entry.family).toBe('space');
+      expect(entry.safetyClass).toBe('read');
+    }
   });
 });

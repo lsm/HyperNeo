@@ -58,6 +58,7 @@ import type { SessionManager } from '../../session-manager.ts';
 import { isSpaceActionsDispatcherEnabled } from '../actions/dispatcher-flag.ts';
 import {
   createSpaceActionsMcpServer,
+  type SpaceActionsMcpServer,
   type SpaceActionsServerConfig,
 } from '../actions/space-actions-server.ts';
 import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry.ts';
@@ -1201,6 +1202,19 @@ export class SpaceRuntimeService {
     mcpServers['space-actions'] = createSpaceActionsMcpServer(
       buildConfig()
     ) as unknown as McpServerConfig;
+  }
+
+  buildUniversalReadDispatcherServer(): SpaceActionsMcpServer {
+    if (!isSpaceActionsDispatcherEnabled()) {
+      throw new Error(
+        'buildUniversalReadDispatcherServer requires the space-actions dispatcher to be enabled ' +
+          '(set HYPERNEO_SPACE_ACTIONS_DISPATCHER=1)'
+      );
+    }
+    return createSpaceActionsMcpServer({
+      role: 'coordinator',
+      spaceId: '',
+    });
   }
 
   private missingLongTermAgentMcpServers(session: { getSessionData(): Session }): boolean {
