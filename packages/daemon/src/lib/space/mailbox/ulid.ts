@@ -1,7 +1,8 @@
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const MASK_80 = (1n << 80n) - 1n;
+const MAX_TIMESTAMP = 1n << 48n;
 
-let lastTime = 0n;
+let lastTime = -1n;
 let lastRandom = 0n;
 
 function encodeBits(value: bigint, length: number): string {
@@ -25,10 +26,13 @@ function random80(): bigint {
 
 export function createUlid(nowMs?: number): string {
   const time = nowMs === undefined ? BigInt(Date.now()) : BigInt(nowMs);
+  if (time >= MAX_TIMESTAMP) throw new RangeError(`createUlid timestamp out of range: ${nowMs}`);
   let random: bigint;
   if (time > lastTime) {
     lastTime = time;
-    random = random80();
+    const sampled = random80();
+    lastRandom = sampled;
+    random = sampled;
   } else {
     lastRandom = (lastRandom + 1n) & MASK_80;
     random = lastRandom;

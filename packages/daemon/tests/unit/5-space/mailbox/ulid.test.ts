@@ -140,6 +140,24 @@ describe('isUlid', () => {
   });
 });
 
+describe('epoch and timestamp range', () => {
+  test('the Unix epoch is a fresh timestamp that samples randomness', () => {
+    expect(isUlid(createUlid(0))).toBe(true);
+  });
+
+  test('two epoch calls never collide', () => {
+    expect(createUlid(0)).not.toBe(createUlid(0));
+  });
+
+  test('a timestamp at the 48-bit ceiling is accepted', () => {
+    expect(isUlid(createUlid(2 ** 48 - 1))).toBe(true);
+  });
+
+  test('a timestamp at or above the 48-bit ceiling throws', () => {
+    expect(() => createUlid(2 ** 48)).toThrow(RangeError);
+  });
+});
+
 describe('determinism under an injected clock', () => {
   test('the same nowMs always yields the same timestamp prefix', () => {
     expect(createUlid(1_700_000_000_123).slice(0, 10)).toBe(
