@@ -92,7 +92,7 @@ export function isValidAddress(addr: MailboxAddress): boolean {
   const record = addr as Record<string, unknown>;
   const keys = Object.keys(record);
   if (addr.kind === 'session') {
-    if (keys.length !== 2 || !keys.includes('sessionId')) return false;
+    if (keys.length !== 2 || !keys.includes('kind') || !keys.includes('sessionId')) return false;
     return isNonEmptyString(record.sessionId);
   }
   if (addr.kind === 'agent') {

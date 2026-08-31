@@ -350,4 +350,11 @@ describe('isValidAddress', () => {
       isValidAddress(asAddress({ kind: 'agent', spaceId: 'sp-1', handle: 'coder', node: '\uDFFF' }))
     ).toBe(false);
   });
+
+  test('rejects a session whose kind is inherited rather than an own key', () => {
+    const inherited: Record<string, unknown> = Object.create({ kind: 'session' });
+    inherited.sessionId = 'sess-1';
+    inherited.queue = 'high';
+    expect(isValidAddress(asAddress(inherited))).toBe(false);
+  });
 });
