@@ -64,6 +64,7 @@
 5	packages/daemon/tests/unit/5-space/goals/goal-ownership-gates.test.ts
 6	packages/daemon/tests/unit/5-space/goals/reportable-terminal-gates.test.ts
 205	packages/daemon/tests/unit/5-space/messaging-adapter.test.ts
+21	packages/daemon/tests/unit/5-space/mailbox/address.test.ts
 680	packages/daemon/tests/unit/5-space/other/agent-capability-contract.test.ts
 245	packages/daemon/tests/unit/5-space/other/agent-family-resolver.test.ts
 54	packages/daemon/tests/unit/5-space/other/artifact-git-ops.test.ts
