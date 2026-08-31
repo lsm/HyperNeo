@@ -79,12 +79,25 @@ function validateTextBlock(block: unknown): string | null {
   return null;
 }
 
+function isPlainArray(value: unknown): value is unknown[] {
+  if (!Array.isArray(value)) return false;
+  if (Object.getPrototypeOf(value) !== Array.prototype) return false;
+  if (Object.getOwnPropertySymbols(value).length > 0) return false;
+  for (const name of Object.getOwnPropertyNames(value)) {
+    if (name === 'length') continue;
+    if (!/^\d+$/.test(name)) return false;
+    const desc = Object.getOwnPropertyDescriptor(value, name);
+    if (desc === undefined || desc.get !== undefined || desc.set !== undefined) return false;
+  }
+  return true;
+}
+
 function validateContent(content: unknown): string | null {
   if (typeof content === 'string') {
     return content.length > 0 ? null : 'content must be a non-empty string';
   }
-  if (!Array.isArray(content)) {
-    return 'content must be a non-empty string or an array of text blocks';
+  if (!isPlainArray(content)) {
+    return 'content must be a non-empty string or a plain array of text blocks';
   }
   if (content.length === 0) return 'content array must not be empty';
   for (const block of content) {

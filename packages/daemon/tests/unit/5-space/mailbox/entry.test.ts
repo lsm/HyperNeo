@@ -110,6 +110,24 @@ describe('validateMailboxMessage', () => {
     expect(validateMailboxMessage(buildMessage({ type: 1 }))).toContain('type');
   });
 
+  test('rejects content arrays with hidden properties, hooks, or exotic prototypes', () => {
+    const hooked: unknown[] = [{ type: 'text', text: 'a' }];
+    Object.defineProperty(hooked, 'toJSON', { value: () => 'x', enumerable: false });
+    expect(validateMailboxMessage(messageWith(hooked))).toContain('plain array');
+    const symbolled: unknown[] = [{ type: 'text', text: 'a' }];
+    Object.defineProperty(symbolled, Symbol('tag'), { value: 1, enumerable: true });
+    expect(validateMailboxMessage(messageWith(symbolled))).toContain('plain array');
+    const accessor: unknown[] = [{ type: 'text', text: 'a' }];
+    Object.defineProperty(accessor, 0, {
+      get: () => ({ type: 'text', text: 'a' }),
+      enumerable: true,
+    });
+    expect(validateMailboxMessage(messageWith(accessor))).toContain('plain array');
+    const fakeSubclass = [{ type: 'text', text: 'a' }];
+    Object.setPrototypeOf(fakeSubclass, Object.create(Array.prototype));
+    expect(validateMailboxMessage(messageWith(fakeSubclass))).toContain('plain array');
+  });
+
   test('rejects a body that is not an object carrying only content', () => {
     expect(validateMailboxMessage(buildMessage({ message: undefined }))).toContain('message');
     expect(validateMailboxMessage(buildMessage({ message: [] }))).toContain('message');
@@ -332,6 +350,19 @@ describe('isValidMailboxEntry', () => {
     const hook = buildEntry();
     Object.defineProperty(hook, 'toJSON', { value: () => 'x', enumerable: false });
     expect(isValidMailboxEntry(hook)).toBe(false);
+    const hookedContent: unknown[] = [{ type: 'text', text: 'a' }];
+    Object.defineProperty(hookedContent, 'toJSON', { value: () => 'x', enumerable: false });
+    expect(
+      isValidMailboxEntry(
+        tamper(entry, {
+          message: {
+            type: 'user',
+            message: { content: hookedContent },
+            parent_tool_use_id: null,
+          },
+        })
+      )
+    ).toBe(false);
     expect(
       isValidMailboxEntry(
         tamper(entry, {
