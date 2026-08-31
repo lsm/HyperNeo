@@ -1523,6 +1523,7 @@ export class SpaceRuntimeService {
   async stop(): Promise<void> {
     if (!this.started) return;
     this.started = false;
+    const inboxLateSettlements = this.inboxLateSettlements;
     if (this.provisioningPromise) {
       await this.provisioningPromise;
       this.provisioningPromise = null;
@@ -1532,7 +1533,7 @@ export class SpaceRuntimeService {
       unsub();
     }
     this.unsubscribers.length = 0;
-    this.inboxLateSettlements.dispose();
+    inboxLateSettlements.dispose();
 
     for (const [spaceId, server] of this.spaceDbQueryServers) {
       try {
