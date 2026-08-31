@@ -1849,7 +1849,32 @@ export class TaskAgentManager {
     return [
       ...this.activeSpaceDeliveryIdsForRun(workflowRunId),
       ...this.watchedNodeAgentPendingRowIds(workflowRunId),
+      ...this.durableNodeDeliveryIdsForRun(workflowRunId),
     ];
+  }
+
+  private durableNodeDeliveryIdsForRun(workflowRunId: string): string[] {
+    const repo = this.config.pendingMessageRepo;
+    const rows = repo?.listByRunAndStatus?.(workflowRunId, 'pending') ?? [];
+    const nodeRows = rows.filter((row) => row.targetKind === 'node_agent');
+    if (nodeRows.length === 0) return [];
+    const sessionsByAgent = new Map<string, string[]>();
+    for (const execution of this.config.nodeExecutionRepo.listByWorkflowRun?.(workflowRunId) ??
+      []) {
+      if (!execution.agentSessionId) continue;
+      const sessions = sessionsByAgent.get(execution.agentName) ?? [];
+      sessions.push(execution.agentSessionId);
+      sessionsByAgent.set(execution.agentName, sessions);
+    }
+    const ids: string[] = [];
+    for (const row of nodeRows) {
+      const live = (sessionsByAgent.get(row.targetAgentName) ?? []).some((sessionId) => {
+        const status = this.probeSettledDeliveryStatus(sessionId, row.id);
+        return status === 'enqueued' || status === 'submitted' || status === 'deferred';
+      });
+      if (live) ids.push(row.id);
+    }
+    return ids;
   }
 
   private activeSpaceDeliveryIdsForRun(workflowRunId: string): string[] {

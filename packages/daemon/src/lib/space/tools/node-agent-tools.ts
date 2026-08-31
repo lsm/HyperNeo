@@ -444,7 +444,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
       }
       if (result.queued && result.queued.length > 0) {
         summaryParts.push(
-          `queued for ${result.queued.length} peer(s) pending activation: ` +
+          `queued for delivery to ${result.queued.length} peer(s): ` +
             result.queued.map((t) => t.agentName).join(', ')
         );
       }
