@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -225,8 +225,8 @@ async function makeIdleCoordinatorHarness(): Promise<IdleCoordinatorHarness> {
   ) =>
     deliverSpaceAgentMessage(
       {
+        db: db.getDatabase(),
         sdkMessageRepo: db.getSDKMessageRepo(),
-        saveUserMessage: (sid, msg, status) => db.saveUserMessage(sid, msg, status),
         publishStatusChanged: async () => {},
         jobQueue,
         stateManager: agentSession.stateManager,
@@ -318,43 +318,30 @@ describe('idle coordinator message consumption (issue #2963)', () => {
     expect(agentSession.getProcessingState().status).toBe('idle');
 
     const delivered = harness.escalate('msg-wake-1', 'Blocked on base-OID rule; need judgment');
+    const outcome = await delivered;
+    expect(outcome).toEqual({ state: 'accepted', messageId: 'msg-wake-1', sessionId: SESSION_ID });
+
     await waitFor(() => spawnedQueries.length > 0);
     expect(agentSession.getProcessingState().status).not.toBe('idle');
-
     await admitPromptMessage(spawnedQueries[0], 'msg-wake-1');
-    const outcome = await delivered;
-    expect(outcome).toEqual({ state: 'delivered', messageId: 'msg-wake-1', sessionId: SESSION_ID });
-    expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-wake-1')?.sendStatus).toBe(
-      'consumed'
+    await waitFor(
+      () =>
+        db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-wake-1')?.sendStatus ===
+        'consumed'
     );
 
     await completeTurn(db, agentSession, 'msg-wake-1');
   });
 
-  describe('when the idle coordinator does not consume within the window', () => {
-    let savedTimeout: string | undefined;
-
-    beforeAll(() => {
-      savedTimeout = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
-      process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '300';
-    });
-
-    afterAll(() => {
-      if (savedTimeout === undefined) {
-        delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
-      } else {
-        process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = savedTimeout;
-      }
-    });
-
-    it('acks queued instead of timing out, keeps the row pending, and consumes it on activation', async () => {
+  describe('when the idle coordinator does not consume before the handoff returns', () => {
+    it('acks accepted without waiting for consumption, keeps the row enqueued, and consumes it on activation', async () => {
       const harness = await makeIdleCoordinatorHarness();
       track(harness, harness.agentSession.getSessionData().workspacePath);
       const { db, agentSession } = harness;
 
       const outcome = await harness.escalate('msg-queued-1', 'escalation while coordinator idle');
       expect(outcome).toEqual({
-        state: 'queued',
+        state: 'accepted',
         messageId: 'msg-queued-1',
         sessionId: SESSION_ID,
       });
@@ -417,76 +404,7 @@ describe('idle coordinator message consumption (issue #2963)', () => {
       await completeTurn(db, agentSession, queuedMessageId);
     });
 
-    it('propagates failure when the delivery job dead-letters during the window', async () => {
-      const harness = await makeIdleCoordinatorHarness();
-      track(harness, harness.agentSession.getSessionData().workspacePath);
-      const { db } = harness;
-
-      const pending = harness.escalate('msg-dead-1', 'escalation that dead-letters');
-      await waitFor(
-        () => db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-dead-1') !== null
-      );
-      db.getSDKMessageRepo().markDeliveryFailedByUuid(SESSION_ID, 'msg-dead-1');
-
-      const outcome = await pending;
-      expect(outcome.state).toBe('failed');
-      if (outcome.state === 'failed') {
-        expect(outcome.error).toContain('dead-lettered');
-      }
-      expect(db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-dead-1')?.sendStatus).toBe(
-        'failed'
-      );
-    });
-
-    it('reports delivered when consumption lands between the timeout and classification', async () => {
-      const harness = await makeIdleCoordinatorHarness();
-      track(harness, harness.agentSession.getSessionData().workspacePath);
-      const { db } = harness;
-      const realRepo = db.getSDKMessageRepo();
-      let reads = 0;
-      const lateConsumingRepo = new Proxy(realRepo, {
-        get(target, prop, receiver) {
-          if (prop !== 'getDeliveryContent') {
-            return Reflect.get(target, prop, receiver);
-          }
-          return (sessionId: string, uuid: string) => {
-            reads += 1;
-            if (reads >= 2 && uuid === 'msg-boundary-1') {
-              realRepo.markDeliveryConsumedByUuid(sessionId, uuid);
-            }
-            return Reflect.get(target, prop, receiver).call(target, sessionId, uuid);
-          };
-        },
-      });
-
-      const escalated = deliverSpaceAgentMessage(
-        {
-          sdkMessageRepo: lateConsumingRepo,
-          saveUserMessage: (sid, msg, status) => db.saveUserMessage(sid, msg, status),
-          publishStatusChanged: async () => {},
-          jobQueue: db.getJobQueueRepo(),
-        },
-        {
-          sessionId: SESSION_ID,
-          messageId: 'msg-boundary-1',
-          sdkUserMessage: {
-            type: 'user',
-            uuid: 'msg-boundary-1',
-            session_id: SESSION_ID,
-            parent_tool_use_id: null,
-            message: { role: 'user', content: [{ type: 'text', text: 'boundary race' }] },
-          } as unknown as SDKUserMessage,
-        }
-      );
-      const outcome = await escalated;
-      expect(outcome).toEqual({
-        state: 'delivered',
-        messageId: 'msg-boundary-1',
-        sessionId: SESSION_ID,
-      });
-    });
-
-    it('settles a queued escalation through the delayed-consumption hook', async () => {
+    it('settles an accepted escalation through the delayed-consumption hook', async () => {
       const harness = await makeIdleCoordinatorHarness();
       track(harness, harness.agentSession.getSessionData().workspacePath);
       const { db, agentSession } = harness;
@@ -497,7 +415,11 @@ describe('idle coordinator message consumption (issue #2963)', () => {
           settled = true;
         },
       });
-      expect(outcome).toEqual({ state: 'queued', messageId: 'msg-late-1', sessionId: SESSION_ID });
+      expect(outcome).toEqual({
+        state: 'accepted',
+        messageId: 'msg-late-1',
+        sessionId: SESSION_ID,
+      });
       expect(settled).toBe(false);
 
       await waitFor(() => spawnedQueries.length > 0);

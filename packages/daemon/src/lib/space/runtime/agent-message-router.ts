@@ -41,7 +41,6 @@ export interface AgentMessageRouterConfig {
     options?: {
       onConsumed?: (settledSessionId: string) => void;
       onLateFailure?: () => void;
-      disposeSignal?: AbortSignal;
     }
   ) => Promise<SpaceAgentInjectionOutcome>;
   taskNumber?: number | null;
@@ -328,9 +327,7 @@ export class AgentMessageRouter {
         const envelopedMessage = buildEnvelope('space-agent');
         try {
           const outcome = await spaceAgentInjector!(spaceId!, envelopedMessage, null);
-          if (outcome.state === 'delivered') {
-            delivered.push({ agentName: 'space-agent', sessionId: outcome.sessionId });
-          } else if (outcome.state === 'queued') {
+          if (outcome.state === 'accepted') {
             queued.push({ agentName: 'space-agent', messageId: outcome.messageId });
           } else {
             failed.push({
@@ -352,9 +349,7 @@ export class AgentMessageRouter {
         const envelopedMessage = buildEnvelope('space-agent');
         try {
           const outcome = await spaceAgentInjector!(spaceId!, envelopedMessage, decision.sessionId);
-          if (outcome.state === 'delivered') {
-            delivered.push({ agentName: 'space-agent', sessionId: outcome.sessionId });
-          } else if (outcome.state === 'queued') {
+          if (outcome.state === 'accepted') {
             queued.push({ agentName: 'space-agent', messageId: outcome.messageId });
           } else {
             failed.push({
@@ -717,9 +712,7 @@ export class AgentMessageRouter {
         const envelopedMessage = buildEnvelope('space-agent');
         try {
           const outcome = await spaceAgentInjector(spaceId, envelopedMessage, replyTo);
-          if (outcome.state === 'delivered') {
-            delivered.push({ agentName, sessionId: outcome.sessionId || sessionId });
-          } else if (outcome.state === 'queued') {
+          if (outcome.state === 'accepted') {
             queued.push({ agentName, messageId: outcome.messageId });
           } else {
             failed.push({

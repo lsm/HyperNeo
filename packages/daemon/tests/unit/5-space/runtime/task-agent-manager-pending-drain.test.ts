@@ -609,8 +609,17 @@ function makeSpaceAgentHarness(
       spaceId: string,
       message: string,
       replyTo: string | null,
-      rowId: string
-    ) => Promise<{ state: 'delivered' | 'queued' | 'failed'; messageId: string; error?: string }>;
+      rowId: string,
+      options?: {
+        onConsumed?: (settledSessionId: string) => void;
+        onLateFailure?: () => void;
+      }
+    ) => Promise<{
+      state: 'accepted' | 'failed';
+      messageId: string;
+      sessionId?: string;
+      error?: string;
+    }>;
     registry?: { get: (taskId: string) => string | null };
   } = {}
 ): SpaceAgentHarness {
@@ -639,10 +648,19 @@ function makeSpaceAgentHarness(
   const publish = mock(async (_event: string, _payload: unknown) => {});
   const injector = mock(
     options.injectorImpl ??
-      (async (_spaceId: string, _message: string, _replyTo: string | null, rowId: string) => ({
-        state: 'delivered',
-        messageId: rowId,
-      }))
+      (async (
+        _spaceId: string,
+        _message: string,
+        replyTo: string | null,
+        rowId: string,
+        injectorOptions?: {
+          onConsumed?: (settledSessionId: string) => void;
+          onLateFailure?: () => void;
+        }
+      ) => {
+        injectorOptions?.onConsumed?.(replyTo ?? `space:chat:${_spaceId}`);
+        return { state: 'accepted' as const, messageId: rowId };
+      })
   );
 
   const config: Record<string, unknown> = {
@@ -697,7 +715,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
   it('defers pending-row expiry while an SDK delivery is still active', async () => {
     const h = makeSpaceAgentHarness({
       injectorImpl: async (_spaceId, _message, _replyTo, rowId) => ({
-        state: 'queued',
+        state: 'accepted',
         messageId: rowId,
         sessionId: `space:chat:stub`,
       }),
@@ -782,12 +800,13 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     expect(expiredAt).toBeGreaterThan(deliveredAt);
   });
 
-  it('keeps a queued space-agent row pending and settles it from delayed consumption', async () => {
+  it('keeps an accepted space-agent row pending and settles it from delayed consumption', async () => {
     let settleQueuedRow: (() => void) | null = null;
     const h = makeSpaceAgentHarness({
       injectorImpl: async (_spaceId, _message, _replyTo, rowId, options) => {
-        settleQueuedRow = options?.onConsumed ?? null;
-        return { state: 'queued', messageId: rowId };
+        const onConsumed = options?.onConsumed;
+        settleQueuedRow = onConsumed ? () => onConsumed(`space:chat:${_spaceId}`) : null;
+        return { state: 'accepted', messageId: rowId };
       },
     });
     dbByTest.push(h.db);
@@ -917,9 +936,10 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
   it('marks the attempt failed and continues when the injector rejects', async () => {
     const h = makeSpaceAgentHarness({
-      injectorImpl: async (_spaceId, message, _replyTo, rowId) => {
+      injectorImpl: async (_spaceId, message, _replyTo, rowId, options) => {
         if (message.includes('fails first')) throw new Error('injector down');
-        return { state: 'delivered', messageId: rowId };
+        options?.onConsumed?.(_replyTo ?? `space:chat:${_spaceId}`);
+        return { state: 'accepted', messageId: rowId };
       },
     });
     dbByTest.push(h.db);

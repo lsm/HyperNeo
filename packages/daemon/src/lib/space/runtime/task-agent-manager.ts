@@ -256,7 +256,6 @@ export interface TaskAgentManagerConfig {
       onConsumed?: (settledSessionId: string) => void;
       lateSettlement?: import('./space-agent-message-delivery.ts').SpaceAgentLateSettlementOwner;
       onLateFailure?: () => void;
-      disposeSignal?: AbortSignal;
     }
   ) => Promise<import('./space-agent-message-delivery.ts').SpaceAgentInjectionOutcome>;
   scheduleService?: import('../schedule/schedule-service.ts').ScheduleService;
@@ -1668,17 +1667,12 @@ export class TaskAgentManager {
         onConsumed: settleDelivered,
         onLateFailure: scheduleReconciliation,
         lateSettlement: this.lateSettlements,
-        disposeSignal: this.lateSettlements.disposeSignal(),
       });
-      if (outcome.state === 'delivered') {
-        settleDelivered(outcome.sessionId);
-        return;
-      }
       repo.deferExpiration([row.id]);
-      if (outcome.state === 'failed' && (repo.getById(row.id)?.attempts ?? 0) >= row.maxAttempts) {
-        repo.markFailed(row.id, `space-agent delivery attempts exhausted (${row.maxAttempts})`);
-      }
       if (outcome.state === 'failed') {
+        if ((repo.getById(row.id)?.attempts ?? 0) >= row.maxAttempts) {
+          repo.markFailed(row.id, `space-agent delivery attempts exhausted (${row.maxAttempts})`);
+        }
         scheduleReconciliation();
         log.warn(
           `TaskAgentManager: Space Agent delivery for ${row.id} failed: ${outcome.error}; ` +
@@ -1686,8 +1680,9 @@ export class TaskAgentManager {
         );
       } else {
         log.info(
-          `TaskAgentManager: Space Agent delivery for ${row.id} queued pending consumption ` +
-            `by ${spaceChatSessionId}; the pending row settles when consumption completes`
+          `TaskAgentManager: Space Agent delivery for ${row.id} accepted into the mailbox ` +
+            `pending consumption by ${spaceChatSessionId}; ` +
+            `the pending row settles when consumption completes`
         );
       }
     } catch (err) {
@@ -4401,13 +4396,17 @@ export class TaskAgentManager {
       }
 
       return deliverInjectedMessage(
-        { ...deliveryRows, jobQueue: this.config.db.getJobQueueRepo() },
+        {
+          ...deliveryRows,
+          db: this.config.db.getDatabase(),
+          sdkMessageRepo: this.config.db.getSDKMessageRepo(),
+          jobQueue: this.config.db.getJobQueueRepo(),
+        },
         {
           session,
           sessionId,
           messageId,
           sdkUserMessage,
-          rowExists: !!existing,
           origin,
           boundaryOwner: boundaryOwner ?? undefined,
         }
@@ -4423,14 +4422,10 @@ export class TaskAgentManager {
         this.publishMessageStatusChanged(sessionId, dbId, status),
       saveUserMessage: (sessionId, message, sendStatus, origin) =>
         this.config.db.saveUserMessage(sessionId, message, sendStatus, origin),
-      getDeliverySendStatus: (sessionId, uuid) =>
-        this.config.db.getSDKMessageRepo().getDeliveryContent(sessionId, uuid)?.sendStatus,
       reopenDeliveryByUuid: (sessionId, uuid) =>
         this.config.db.getSDKMessageRepo().reopenDeliveryByUuid(sessionId, uuid),
       markDeliveryDeferredByUuid: (sessionId, uuid) =>
         this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, uuid),
-      markDeliveryFailedByUuid: (sessionId, uuid) =>
-        this.config.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, uuid),
     };
   }
 
