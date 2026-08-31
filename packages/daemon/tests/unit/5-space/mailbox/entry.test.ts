@@ -347,6 +347,29 @@ describe('createMailboxEntry', () => {
     expect(isValidMailboxEntry(entry)).toBe(true);
   });
 
+  test('snapshots message data read through a lying proxy', () => {
+    let reads = 0;
+    const inner = new Proxy(
+      { content: 'hi' },
+      {
+        get(target, prop, receiver) {
+          if (prop === 'content') {
+            reads += 1;
+            return reads === 1 ? 'hi' : undefined;
+          }
+          return Reflect.get(target, prop, receiver);
+        },
+      }
+    );
+    const entry = createMailboxEntry({
+      to: TO,
+      message: { type: 'user', message: inner, parent_tool_use_id: null },
+      origin: 'web',
+    });
+    expect(isValidMailboxEntry(entry)).toBe(true);
+    expect(entry.message.message.content).toBe('hi');
+  });
+
   test('throws TypeError naming the message violation', () => {
     const invalid = { type: 'user', message: { content: 'hi' }, parent_tool_use_id: 'toolu_1' };
     expect(() =>

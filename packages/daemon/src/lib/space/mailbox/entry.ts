@@ -184,13 +184,23 @@ function validateEntryPolicy(policy: unknown): string | null {
   return null;
 }
 
+function snapshotJson(value: unknown): unknown {
+  const serialized = JSON.stringify(value);
+  if (typeof serialized !== 'string') {
+    throw new TypeError('mailbox entry payload is not JSON-serializable');
+  }
+  return JSON.parse(serialized);
+}
+
 export function createMailboxEntry(args: {
   to: MailboxAddress;
   message: MailboxMessage;
   origin: string;
   policy?: Partial<MailboxEntryPolicy>;
 }): MailboxEntry {
-  const { to, message, origin, policy } = args;
+  const { origin, policy } = args;
+  const message = snapshotJson(args.message) as MailboxMessage;
+  const to = snapshotJson(args.to) as MailboxAddress;
   const messageViolation = validateMailboxMessage(message);
   if (messageViolation !== null) {
     throw new TypeError(`invalid mailbox message: ${messageViolation}`);
