@@ -270,7 +270,7 @@ const RETRY_PROMPT_ROW_BY_ID_SQL = `UPDATE sdk_messages
   WHERE id = (
     SELECT id FROM sdk_messages
     WHERE id = ? AND session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-      AND send_status = 'failed'
+      AND send_status = 'failed' AND consumed_seq IS NULL
   )
   AND send_status = 'failed'
   RETURNING id AS db_id`;
@@ -280,7 +280,7 @@ const RETRY_PROMPT_ROW_BY_UUID_SQL = `UPDATE sdk_messages
   WHERE id = (
     SELECT id FROM sdk_messages
     WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-      AND send_status = 'failed'
+      AND send_status = 'failed' AND consumed_seq IS NULL
     ORDER BY timestamp ASC, rowid ASC LIMIT 1
   )
   AND send_status = 'failed'

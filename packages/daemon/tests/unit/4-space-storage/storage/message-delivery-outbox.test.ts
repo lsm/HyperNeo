@@ -43,7 +43,8 @@ function setup() {
       parent_tool_use_id TEXT,
       task_id TEXT,
       sdk_uuid TEXT,
-      replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
+      replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0,
+      consumed_seq INTEGER
     );
     CREATE TABLE sdk_message_replacements (
       source_message_id TEXT NOT NULL,
@@ -1427,5 +1428,74 @@ describe('prompt content verification (verifyPromptContent)', () => {
         delivery: { origin: 'space_inject' },
       })
     ).toThrow(PromptContentConflictError);
+  });
+});
+
+describe('retryPrompt consumption-evidence guard', () => {
+  let db: Database;
+  let sdkRepo: SDKMessageRepository;
+  let jobQueue: JobQueueRepository;
+
+  beforeEach(() => {
+    ({ db, sdkRepo, jobQueue } = setup());
+  });
+  afterEach(() => db.close());
+
+  function failedRowWithEvidence(uuid: string): string {
+    const { dbMessageId } = persistPrompt({
+      db: db as never,
+      sdkMessageRepo: sdkRepo,
+      jobQueue,
+      sessionId: SESSION,
+      message: userMessage(uuid),
+      delivery: { origin: 'space_inject' },
+    });
+    sdkRepo.updateMessageStatus([dbMessageId], 'failed' as never);
+    db.prepare(
+      `UPDATE sdk_messages SET consumed_seq = 1 WHERE session_id = ? AND sdk_uuid = ?`
+    ).run(SESSION, uuid);
+    db.prepare(`UPDATE job_queue SET status = 'completed'`).run();
+    return dbMessageId;
+  }
+
+  it('refuses to re-enqueue a failed row that carries consumption evidence', async () => {
+    failedRowWithEvidence('retry-evidence-1');
+    const retried = await retryPrompt({
+      db: db as never,
+      jobQueue,
+      sdkMessageRepo: sdkRepo,
+      sessionId: SESSION,
+      messageUuid: 'retry-evidence-1',
+      origin: 'space_inject',
+    });
+    expect(retried).toBeNull();
+    const status = db
+      .prepare(`SELECT send_status FROM sdk_messages WHERE sdk_uuid = ?`)
+      .get('retry-evidence-1') as { send_status: string };
+    expect(status.send_status).toBe('failed');
+    const jobs = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM job_queue
+          WHERE status IN ('pending', 'processing')
+            AND json_extract(payload, '$.messageUuid') = ?`
+      )
+      .get('retry-evidence-1') as { n: number };
+    expect(jobs.n).toBe(0);
+  });
+
+  it('still retries a failed row whose consumed_seq is NULL', async () => {
+    const dbId = failedRowWithEvidence('retry-null-1');
+    db.prepare(`UPDATE sdk_messages SET consumed_seq = NULL WHERE sdk_uuid = ?`).run(
+      'retry-null-1'
+    );
+    const retried = await retryPrompt({
+      db: db as never,
+      jobQueue,
+      sdkMessageRepo: sdkRepo,
+      sessionId: SESSION,
+      messageUuid: 'retry-null-1',
+      origin: 'space_inject',
+    });
+    expect(retried).toEqual({ dbId, messageUuid: 'retry-null-1' });
   });
 });

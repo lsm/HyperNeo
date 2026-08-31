@@ -156,6 +156,32 @@ function setConsumedSeq(h: Harness, uuid: string): void {
     .run(SESSION, uuid);
 }
 
+function insertDuplicateRow(
+  h: Harness,
+  uuid: string,
+  dbId: string,
+  sendStatus: string,
+  consumedSeq: number | null = null
+): string {
+  h.db
+    .prepare(
+      `INSERT INTO sdk_messages
+        (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+         replacement_metadata_normalized, consumed_seq)
+       VALUES (?, ?, 'user', ?, ?, ?, ?, 1, ?)`
+    )
+    .run(
+      dbId,
+      SESSION,
+      JSON.stringify(userMessage(uuid)),
+      new Date().toISOString(),
+      sendStatus,
+      uuid,
+      consumedSeq
+    );
+  return dbId;
+}
+
 describe('planHandoffMechanism', () => {
   it('maps the existing row status onto the handoff mechanism', () => {
     expect(planHandoffMechanism({ sendStatus: 'failed' })).toBe('retry');
@@ -226,6 +252,36 @@ describe('resolveDeliverableHandoff', () => {
       changed: false,
     });
   });
+
+  it('resolves the evidenced sibling when duplicates share a uuid, consumed row inserted first', () => {
+    const h = makeHarness();
+    insertDuplicateRow(h, 'msg-dup-1', 'db-dup-consumed', 'failed', 7);
+    insertDuplicateRow(h, 'msg-dup-1', 'db-dup-failed', 'failed', null);
+    expect(resolveDeliverableHandoff(h.deps, targetFor(userMessage('msg-dup-1')))).toEqual({
+      dbId: 'db-dup-consumed',
+      changed: false,
+    });
+  });
+
+  it('resolves the evidenced sibling when duplicates share a uuid, consumed row inserted last', () => {
+    const h = makeHarness();
+    insertDuplicateRow(h, 'msg-dup-2', 'db-dup-failed', 'failed', null);
+    insertDuplicateRow(h, 'msg-dup-2', 'db-dup-consumed', 'failed', 9);
+    expect(resolveDeliverableHandoff(h.deps, targetFor(userMessage('msg-dup-2')))).toEqual({
+      dbId: 'db-dup-consumed',
+      changed: false,
+    });
+  });
+
+  it('resolves the consumed-status sibling when no row carries evidence', () => {
+    const h = makeHarness();
+    insertDuplicateRow(h, 'msg-dup-3', 'db-dup-enqueued', 'enqueued', null);
+    insertDuplicateRow(h, 'msg-dup-3', 'db-dup-consumed-status', 'consumed', null);
+    expect(resolveDeliverableHandoff(h.deps, targetFor(userMessage('msg-dup-3')))).toEqual({
+      dbId: 'db-dup-consumed-status',
+      changed: false,
+    });
+  });
 });
 
 describe('retryFailedPromptIntoMailbox', () => {
@@ -247,6 +303,9 @@ describe('retryFailedPromptIntoMailbox', () => {
     const dbId = seedEnqueuedRow(h, 'msg-retry-2');
     markRowStatus(h, dbId, 'failed');
     setConsumedSeq(h, 'msg-retry-2');
+    h.db
+      .prepare("UPDATE job_queue SET status = ? WHERE json_extract(payload, '$.messageUuid') = ?")
+      .run('completed', 'msg-retry-2');
     const outcome = await retryFailedPromptIntoMailbox(
       h.deps,
       targetFor(userMessage('msg-retry-2'))
@@ -264,6 +323,18 @@ describe('retryFailedPromptIntoMailbox', () => {
       targetFor(userMessage('msg-retry-3'))
     );
     expect(outcome).toBeNull();
+  });
+
+  it('settles on the evidenced sibling when duplicates share a uuid', async () => {
+    const h = makeHarness();
+    insertDuplicateRow(h, 'msg-retry-4', 'db-retry-plain', 'failed', null);
+    insertDuplicateRow(h, 'msg-retry-4', 'db-retry-evidenced', 'failed', 5);
+    const outcome = await retryFailedPromptIntoMailbox(
+      h.deps,
+      targetFor(userMessage('msg-retry-4'))
+    );
+    expect(outcome).toEqual({ dbId: 'db-retry-evidenced', changed: false });
+    expect(deliveryJobCount(h, 'msg-retry-4')).toBe(0);
   });
 });
 

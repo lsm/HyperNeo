@@ -47,6 +47,13 @@ export function resolveDeliverableHandoff(
   deps: PromptHandoffDeps,
   target: PromptHandoffTarget
 ): PromptHandoffStageOutcome {
+  const settledDbId = deps.sdkMessageRepo.getSettledDeliveryMessageId(
+    target.sessionId,
+    target.messageId
+  );
+  if (settledDbId !== null) {
+    return { dbId: settledDbId, changed: false };
+  }
   const dbIds = deps.sdkMessageRepo.getDeliveryMessageIdsByUuids(target.sessionId, [
     target.messageId,
   ]);
@@ -77,7 +84,12 @@ export async function retryFailedPromptIntoMailbox(
     messageUuid: target.messageId,
     origin: target.origin,
   });
-  if (retried === null) return null;
+  if (retried === null) {
+    if (hasSettledHandoffRow(deps, target)) {
+      return resolveDeliverableHandoff(deps, target);
+    }
+    return null;
+  }
   return { dbId: retried.dbId, changed: true };
 }
 
