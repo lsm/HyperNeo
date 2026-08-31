@@ -7,11 +7,11 @@ export interface MailboxEntryPolicy {
   priority: number;
 }
 
-export const DEFAULT_MAILBOX_ENTRY_POLICY: MailboxEntryPolicy = {
+export const DEFAULT_MAILBOX_ENTRY_POLICY: MailboxEntryPolicy = Object.freeze({
   ttlMs: 24 * 60 * 60 * 1000,
   maxAttempts: 5,
   priority: 0,
-};
+});
 
 export type MailboxMessage = {
   type: 'user';
@@ -37,7 +37,9 @@ const ENTRY_KEYS = new Set(['id', 'to', 'origin', 'message', 'status', 'policy']
 const POLICY_KEYS = new Set(['ttlMs', 'maxAttempts', 'priority']);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === null || proto === Object.prototype;
 }
 
 function hasExactKeys(record: Record<string, unknown>, keys: Set<string>): boolean {
@@ -85,8 +87,12 @@ function validateContent(content: unknown): string | null {
 export function validateMailboxMessage(message: unknown): string | null {
   if (!isPlainObject(message)) return 'message must be a plain object';
   const record = message;
-  for (const key of Object.keys(record)) {
+  const keys = Object.keys(record);
+  for (const key of keys) {
     if (!MESSAGE_KEYS.has(key)) return `unexpected message key: ${key}`;
+  }
+  if (!keys.includes('type') || !keys.includes('message') || !keys.includes('parent_tool_use_id')) {
+    return 'type, message, and parent_tool_use_id are required';
   }
   if (record.type !== 'user') return 'type must be exactly "user"';
   if (!isPlainObject(record.message)) return 'message must be an object with a content field';
@@ -96,13 +102,16 @@ export function validateMailboxMessage(message: unknown): string | null {
   const contentViolation = validateContent(record.message.content);
   if (contentViolation !== null) return `message.content: ${contentViolation}`;
   if (record.parent_tool_use_id !== null) return 'parent_tool_use_id must be null';
-  if (record.priority !== undefined && !PRIORITIES.has(record.priority as string)) {
+  if (keys.includes('priority') && !PRIORITIES.has(record.priority as string)) {
     return 'priority must be one of "now", "next", "later"';
   }
   return null;
 }
 
 function resolvePolicy(overrides?: Partial<MailboxEntryPolicy>): MailboxEntryPolicy {
+  if (overrides !== undefined && !isPlainObject(overrides)) {
+    throw new TypeError('invalid mailbox policy: policy override must be a plain object');
+  }
   const merged = { ...DEFAULT_MAILBOX_ENTRY_POLICY, ...overrides };
   if (!hasExactKeys(merged, POLICY_KEYS)) {
     const unknownKey = Object.keys(merged).find((key) => !POLICY_KEYS.has(key));

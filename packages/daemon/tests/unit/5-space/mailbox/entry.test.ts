@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { type MailboxAddress } from '../../../../src/lib/space/mailbox/address';
+import type { MailboxAddress } from '../../../../src/lib/space/mailbox/address';
 import {
   createMailboxEntry,
   DEFAULT_MAILBOX_ENTRY_POLICY,
@@ -66,6 +66,10 @@ describe('DEFAULT_MAILBOX_ENTRY_POLICY', () => {
       maxAttempts: 5,
       priority: 0,
     });
+  });
+
+  test('is frozen against mutation', () => {
+    expect(Object.isFrozen(DEFAULT_MAILBOX_ENTRY_POLICY)).toBe(true);
   });
 });
 
@@ -157,6 +161,25 @@ describe('validateMailboxMessage', () => {
     expect(validateMailboxMessage(buildMessage({ priority: 'urgent' }))).toContain('priority');
     expect(validateMailboxMessage(buildMessage({ priority: 1 }))).toContain('priority');
     expect(validateMailboxMessage(buildMessage({ priority: null }))).toContain('priority');
+    expect(validateMailboxMessage(buildMessage({ priority: undefined }))).toContain('priority');
+  });
+
+  test('rejects payloads with non-plain prototypes', () => {
+    const decorated = Object.assign(new Date('2026-01-01T00:00:00Z'), buildMessage());
+    expect(validateMailboxMessage(decorated)).toContain('plain object');
+    class Box {}
+    expect(validateMailboxMessage(Object.assign(new Box(), buildMessage()))).toContain(
+      'plain object'
+    );
+  });
+
+  test('rejects required fields hidden as non-enumerable own properties', () => {
+    const source = buildMessage();
+    const hidden: Record<string, unknown> = {};
+    for (const key of Object.keys(source)) {
+      Object.defineProperty(hidden, key, { value: source[key], enumerable: false });
+    }
+    expect(validateMailboxMessage(hidden)).toContain('required');
   });
 
   test('rejects every named SDK excess key', () => {
@@ -217,6 +240,14 @@ describe('createMailboxEntry', () => {
   test('rejects unknown policy keys with a TypeError', () => {
     const args = tamper(entryArgs(), { policy: { ttlMs: 1, bogus: 2 } }) as CreateArgs;
     expect(() => createMailboxEntry(args)).toThrow(TypeError);
+  });
+
+  test('rejects non-object policy overrides with a TypeError', () => {
+    for (const policy of [null, false, 0, 'fast', [], [1], new Date('2026-01-01T00:00:00Z')]) {
+      expect(() => createMailboxEntry(tamper(entryArgs(), { policy }) as CreateArgs)).toThrow(
+        TypeError
+      );
+    }
   });
 
   test('rejects missing required fields with a TypeError', () => {
@@ -292,6 +323,21 @@ describe('isValidMailboxEntry', () => {
         })
       )
     ).toBe(false);
+    expect(
+      isValidMailboxEntry(
+        tamper(entry, { to: Object.assign(new Date('2026-01-01T00:00:00Z'), TO) })
+      )
+    ).toBe(false);
+    expect(
+      isValidMailboxEntry(
+        tamper(entry, { message: Object.assign(new Date('2026-01-01T00:00:00Z'), VALID_MESSAGE) })
+      )
+    ).toBe(false);
+    expect(
+      isValidMailboxEntry(
+        tamper(entry, { policy: Object.assign(new Date('2026-01-01T00:00:00Z'), entry.policy) })
+      )
+    ).toBe(false);
   });
 });
 
@@ -300,6 +346,15 @@ describe('mailbox entry JSON round-trip law', () => {
     const cases: CreateArgs[] = [
       entryArgs(),
       { ...entryArgs(), to: SESSION_TO, policy: { ttlMs: 1000, priority: 2 } },
+      {
+        to: { kind: 'agent', spaceId: 'sp-1', handle: 'coder', taskId: '42', node: 'Coding' },
+        origin: ORIGIN,
+        message: {
+          type: 'user',
+          message: { content: 'plain' },
+          parent_tool_use_id: null,
+        },
+      },
       {
         to: TO,
         origin: ORIGIN,

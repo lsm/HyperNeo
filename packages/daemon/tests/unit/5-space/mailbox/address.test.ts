@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import {
   isValidAddress,
+  type MailboxAddress,
   parseAddress,
   renderAddress,
-  type MailboxAddress,
 } from '../../../../src/lib/space/mailbox/address';
 
 const VALID_SAMPLES: MailboxAddress[] = [
@@ -301,17 +301,17 @@ describe('isValidAddress', () => {
     expect(isValidAddress(asAddress([1, 2]))).toBe(false);
   });
 
-  test('treats explicitly undefined optional fields as absent', () => {
+  test('rejects explicitly undefined optional fields', () => {
     expect(
       isValidAddress(
         asAddress({ kind: 'agent', spaceId: 'sp-1', handle: 'coder', taskId: undefined })
       )
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isValidAddress(
         asAddress({ kind: 'agent', spaceId: 'sp-1', handle: 'coder', node: undefined })
       )
-    ).toBe(true);
+    ).toBe(false);
   });
 
   test('rejects undefined-valued unknown or cross-variant fields', () => {
