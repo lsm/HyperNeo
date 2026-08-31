@@ -121,10 +121,12 @@ function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCt
 
 function deferActiveDeliveries(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
   const protectedDeliveryIds = [
-    ...(ctx.activeDeliveryIds ?? []),
-    ...(ctx.excludedDeliveryIds ?? []),
-    ...(ctx.pendingRetryIds ?? []),
-    ...(ctx.retentionExcludeIds ?? []),
+    ...new Set([
+      ...(ctx.activeDeliveryIds ?? []),
+      ...(ctx.excludedDeliveryIds ?? []),
+      ...(ctx.pendingRetryIds ?? []),
+      ...(ctx.retentionExcludeIds ?? []),
+    ]),
   ];
   if (protectedDeliveryIds.length > 0) {
     ctx.deps.repo.deferExpiration(protectedDeliveryIds);
@@ -134,10 +136,12 @@ function deferActiveDeliveries(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendin
 
 function runRetention(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
   const excludeIds = [
-    ...(ctx.activeDeliveryIds ?? []),
-    ...(ctx.excludedDeliveryIds ?? []),
-    ...(ctx.pendingRetryIds ?? []),
-    ...(ctx.retentionExcludeIds ?? []),
+    ...new Set([
+      ...(ctx.activeDeliveryIds ?? []),
+      ...(ctx.excludedDeliveryIds ?? []),
+      ...(ctx.pendingRetryIds ?? []),
+      ...(ctx.retentionExcludeIds ?? []),
+    ]),
   ];
   ctx.deps.repo.enforceRetention({ runId: ctx.workflowRunId, excludeIds });
   ctx.deps.repo.expireStale(ctx.workflowRunId, excludeIds);
