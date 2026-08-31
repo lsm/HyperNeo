@@ -2,6 +2,8 @@ const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
 const TIMESTAMP_MASK = 0xffffffffffffn;
 
+const MAX_RANDOM = (1n << 80n) - 1n;
+
 let lastNowMs: number | undefined;
 let lastRandomness = 0n;
 
@@ -26,10 +28,14 @@ function random80(): bigint {
 }
 
 export function createUlid(nowMs?: number): string {
-  const ms = nowMs ?? Date.now();
+  let ms = nowMs ?? Date.now();
   let randomness: bigint;
   if (ms === lastNowMs) {
     randomness = lastRandomness + 1n;
+    if (randomness > MAX_RANDOM) {
+      ms += 1;
+      randomness = 0n;
+    }
   } else {
     randomness = random80();
   }
@@ -41,7 +47,12 @@ export function createUlid(nowMs?: number): string {
 export function isUlid(value: string): boolean {
   if (typeof value !== 'string' || value.length !== 26) return false;
   for (let i = 0; i < value.length; i++) {
-    if (CROCKFORD.indexOf(value[i]) === -1) return false;
+    if (CROCKFORD.indexOf(value[i]) === -1 || (i === 0 && value[i] > '7')) return false;
   }
   return true;
+}
+
+export function _resetForTesting(nowMs?: number, randomness?: bigint): void {
+  lastNowMs = nowMs;
+  lastRandomness = randomness ?? 0n;
 }

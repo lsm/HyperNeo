@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test';
-import { createUlid, isUlid } from '../../../../src/lib/space/mailbox/ulid';
+import { beforeEach, describe, expect, test } from 'bun:test';
+import { _resetForTesting, createUlid, isUlid } from '../../../../src/lib/space/mailbox/ulid';
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
@@ -10,6 +10,10 @@ function decodeBase32(value: string): bigint {
   }
   return decoded;
 }
+
+beforeEach(() => {
+  _resetForTesting();
+});
 
 describe('createUlid', () => {
   test('emits 26 chars from the Crockford alphabet', () => {
@@ -66,6 +70,22 @@ describe('createUlid', () => {
     expect(seen.size).toBe(101);
   });
 
+  test('advances the timestamp and resets randomness when the 80-bit field overflows', () => {
+    _resetForTesting(1_700_000_000_000, (1n << 80n) - 1n);
+    const overflowed = createUlid(1_700_000_000_000);
+    expect(Number(decodeBase32(overflowed.slice(0, 10)))).toBe(1_700_000_000_001);
+    expect(overflowed.slice(10)).toBe('0000000000000000');
+    expect(isUlid(overflowed)).toBe(true);
+    expect(createUlid(1_700_000_000_001).slice(10)).toBe('0000000000000001');
+  });
+
+  test('keeps monotonic ordering across the overflow boundary', () => {
+    _resetForTesting(1_700_000_000_000, (1n << 80n) - 2n);
+    const nearMax = createUlid(1_700_000_000_000);
+    const overflowed = createUlid(1_700_000_000_000);
+    expect(overflowed > nearMax).toBe(true);
+  });
+
   test('uses the current time when nowMs is omitted', () => {
     const before = Date.now();
     const ulid = createUlid();
@@ -105,6 +125,15 @@ describe('isUlid', () => {
       const mutated = forbidden + ulid.slice(1);
       expect(isUlid(mutated)).toBe(false);
     }
+  });
+
+  test('rejects out-of-range timestamp prefixes', () => {
+    const ulid = createUlid();
+    for (const high of ['8', '9', 'A', 'Z']) {
+      expect(isUlid(high + ulid.slice(1))).toBe(false);
+    }
+    expect(isUlid(`0${ulid.slice(1)}`)).toBe(true);
+    expect(isUlid(`7${ulid.slice(1)}`)).toBe(true);
   });
 
   test('rejects I/L/O/U at any position', () => {
