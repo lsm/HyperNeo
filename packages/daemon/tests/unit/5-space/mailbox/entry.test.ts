@@ -315,6 +315,46 @@ describe('createMailboxEntry', () => {
       })
     ).toThrow(TypeError);
   });
+
+  test('rejects an address with inherited routing fields', () => {
+    const withTask = Object.create({ taskId: '1725' });
+    withTask.kind = 'agent';
+    withTask.spaceId = 'sp-1';
+    withTask.handle = 'coder';
+    expect(() =>
+      createMailboxEntry({
+        to: withTask as unknown as MailboxAddress,
+        message: MESSAGE_STRING,
+        origin: 'api',
+      })
+    ).toThrow(TypeError);
+
+    const withNode = Object.create({ node: 'Coding' });
+    withNode.kind = 'agent';
+    withNode.spaceId = 'sp-1';
+    withNode.handle = 'coder';
+    expect(() =>
+      createMailboxEntry({
+        to: withNode as unknown as MailboxAddress,
+        message: MESSAGE_STRING,
+        origin: 'api',
+      })
+    ).toThrow(TypeError);
+  });
+
+  test('default policy is immutable', () => {
+    expect(Object.isFrozen(DEFAULT_MAILBOX_ENTRY_POLICY)).toBe(true);
+    const entry = createMailboxEntry({
+      to: SESSION_ADDRESS,
+      message: MESSAGE_STRING,
+      origin: 'api',
+    });
+    expect(entry.policy).toEqual({
+      ttlMs: 24 * 60 * 60 * 1000,
+      maxAttempts: 5,
+      priority: 0,
+    });
+  });
 });
 
 describe('isValidMailboxEntry', () => {
@@ -341,6 +381,17 @@ describe('isValidMailboxEntry', () => {
   test('rejects an invalid to', () => {
     const entry = makeEntry();
     expect(isValidMailboxEntry({ ...entry, to: { kind: 'session' } })).toBe(false);
+  });
+
+  test('rejects an address with inherited routing fields', () => {
+    const entry = makeEntry();
+    const withTask = Object.create({ taskId: '1725' });
+    withTask.kind = 'agent';
+    withTask.spaceId = 'sp-1';
+    withTask.handle = 'coder';
+    expect(isValidMailboxEntry({ ...entry, to: withTask as unknown as MailboxAddress })).toBe(
+      false
+    );
   });
 
   test('rejects a bad message', () => {

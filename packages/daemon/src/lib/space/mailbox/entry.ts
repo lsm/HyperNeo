@@ -7,11 +7,11 @@ export interface MailboxEntryPolicy {
   priority: number;
 }
 
-export const DEFAULT_MAILBOX_ENTRY_POLICY: MailboxEntryPolicy = {
+export const DEFAULT_MAILBOX_ENTRY_POLICY: Readonly<MailboxEntryPolicy> = Object.freeze({
   ttlMs: 24 * 60 * 60 * 1000,
   maxAttempts: 5,
   priority: 0,
-};
+});
 
 export type MailboxMessage = {
   type: 'user';

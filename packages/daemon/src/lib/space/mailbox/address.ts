@@ -28,6 +28,12 @@ function isNonEmptyString(value: unknown): value is string {
   }
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === null || proto === Object.prototype;
+}
+
 function parseAgentQuery(query: string): { taskId?: string; node?: string } | null {
   const parsed: { taskId?: string; node?: string } = {};
   for (const pair of query.split('&')) {
@@ -88,7 +94,7 @@ export function renderAddress(addr: MailboxAddress): string {
 }
 
 export function isValidAddress(addr: MailboxAddress): boolean {
-  if (typeof addr !== 'object' || addr === null) return false;
+  if (!isPlainObject(addr)) return false;
   const record = addr as Record<string, unknown>;
   const keys = Object.keys(record);
   if (addr.kind === 'session') {
