@@ -103,7 +103,7 @@ export function validateMailboxMessage(message: unknown): string | null {
     }
   }
   for (const key of ['type', 'message', 'parent_tool_use_id']) {
-    if (!(key in message)) return `message is missing required key "${key}"`;
+    if (!Object.hasOwn(message, key)) return `message is missing required key "${key}"`;
   }
   if (message.type !== 'user') return 'message type must be exactly "user"';
   const inner = message.message;
@@ -146,8 +146,20 @@ export function createMailboxEntry(args: {
         throw new TypeError(`policy may not carry "${key}"`);
       }
     }
+    for (const key of POLICY_KEYS) {
+      if (
+        !(key in args.policy) ||
+        Object.getOwnPropertyDescriptor(args.policy, key)?.enumerable !== true
+      ) {
+        throw new TypeError(`policy is missing required key "${key}"`);
+      }
+    }
   }
-  const policy: MailboxEntryPolicy = { ...DEFAULT_MAILBOX_ENTRY_POLICY, ...args.policy };
+  const policy: MailboxEntryPolicy = {
+    ...DEFAULT_MAILBOX_ENTRY_POLICY,
+    ...(args.policy &&
+      Object.fromEntries(Object.entries(args.policy).filter(([, v]) => v !== undefined))),
+  };
   checkPolicyValue('ttlMs', policy.ttlMs, false);
   checkPolicyValue('maxAttempts', policy.maxAttempts, false);
   checkPolicyValue('priority', policy.priority, true);
