@@ -19,6 +19,16 @@ function safeDecode(input: string): string | null {
   }
 }
 
+function hasUnmatchedSurrogate(str: string): boolean {
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function parseAddress(raw: string): MailboxAddress | null {
   if (raw.startsWith(SESSION_PREFIX)) {
     const sessionId = raw.slice(SESSION_PREFIX.length);
@@ -112,6 +122,7 @@ export function isValidAddress(addr: MailboxAddress): boolean {
   if (kind === 'session') {
     const sessionId = 'sessionId' in addr ? (addr.sessionId as string) : undefined;
     if (typeof sessionId !== 'string' || sessionId.length === 0) return false;
+    if (hasUnmatchedSurrogate(sessionId)) return false;
     if ('spaceId' in addr) return false;
     if ('handle' in addr) return false;
     if ('taskId' in addr) return false;
@@ -125,17 +136,27 @@ export function isValidAddress(addr: MailboxAddress): boolean {
   const handle = 'handle' in addr ? (addr.handle as string) : undefined;
 
   if (typeof spaceId !== 'string' || spaceId.length === 0) return false;
+  if (hasUnmatchedSurrogate(spaceId)) return false;
   if (typeof handle !== 'string' || handle.length === 0) return false;
   if (handle.includes('/')) return false;
+  if (hasUnmatchedSurrogate(handle)) return false;
 
   if ('taskId' in addr && addr.taskId !== undefined) {
     const taskId = addr.taskId as string;
     if (typeof taskId !== 'string' || taskId.length === 0) return false;
+    if (hasUnmatchedSurrogate(taskId)) return false;
   }
 
-  if ('node' in addr && typeof addr.node === 'string') {
+  if ('node' in addr && addr.node !== undefined) {
     const node = addr.node;
-    if (node.length === 0) return false;
+    if (typeof node !== 'string' || node.length === 0) return false;
+    if (hasUnmatchedSurrogate(node)) return false;
+  }
+
+  if ('sessionId' in addr) {
+    const sessionId = addr.sessionId as string;
+    if (typeof sessionId !== 'string' || sessionId.length === 0) return false;
+    if (hasUnmatchedSurrogate(sessionId)) return false;
   }
 
   return true;

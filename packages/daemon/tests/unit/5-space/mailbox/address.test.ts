@@ -132,6 +132,10 @@ describe('parseAddress', () => {
     test('returns null for multiple slashes in path', () => {
       expect(parseAddress('agent:a/b/c')).toBeNull();
     });
+
+    test('rejects decoded slash handle via percent-encoded slash', () => {
+      expect(parseAddress('agent:sp/h%2Fa')).toBeNull();
+    });
   });
 
   describe('percent-encoding', () => {
@@ -330,6 +334,28 @@ describe('isValidAddress', () => {
       expect(isValidAddress({ kind: 'agent', spaceId: 'sp', handle: 'h', node: '' })).toBe(false);
     });
 
+    test('rejects agent with non-string node (number)', () => {
+      expect(
+        isValidAddress({
+          kind: 'agent',
+          spaceId: 'sp',
+          handle: 'h',
+          node: 123 as unknown as string,
+        } as MailboxAddress)
+      ).toBe(false);
+    });
+
+    test('rejects agent with non-string node (null)', () => {
+      expect(
+        isValidAddress({
+          kind: 'agent',
+          spaceId: 'sp',
+          handle: 'h',
+          node: null as unknown as string,
+        } as MailboxAddress)
+      ).toBe(false);
+    });
+
     test('accepts agent with taskId set to undefined (treated as absent)', () => {
       expect(
         isValidAddress({
@@ -383,6 +409,32 @@ describe('isValidAddress', () => {
       expect(
         isValidAddress({ kind: 'invalid', sessionId: 's1' } as unknown as MailboxAddress)
       ).toBe(false);
+    });
+
+    test('rejects session with lone surrogate in sessionId', () => {
+      expect(isValidAddress({ kind: 'session', sessionId: 's\uD800' } as MailboxAddress)).toBe(
+        false
+      );
+    });
+
+    test('rejects agent with lone surrogate in spaceId', () => {
+      expect(isValidAddress({ kind: 'agent', spaceId: 's\uD800', handle: 'h' })).toBe(false);
+    });
+
+    test('rejects agent with lone surrogate in handle', () => {
+      expect(isValidAddress({ kind: 'agent', spaceId: 'sp', handle: 'h\uD800' })).toBe(false);
+    });
+
+    test('rejects agent with lone surrogate in taskId', () => {
+      expect(isValidAddress({ kind: 'agent', spaceId: 'sp', handle: 'h', taskId: 't\uD800' })).toBe(
+        false
+      );
+    });
+
+    test('rejects agent with lone surrogate in node', () => {
+      expect(isValidAddress({ kind: 'agent', spaceId: 'sp', handle: 'h', node: 'n\uD800' })).toBe(
+        false
+      );
     });
   });
 });
