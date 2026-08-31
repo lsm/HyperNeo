@@ -75,9 +75,28 @@ function isPolicyKey(value: string): value is PolicyKey {
   return POLICY_KEYS.has(value);
 }
 
+function deepClonePlain<T>(value: unknown): T {
+  if (value === null || typeof value !== 'object') return value as T;
+  if (Array.isArray(value)) {
+    const clone: unknown[] = [];
+    for (let index = 0; index < value.length; index += 1) {
+      clone[index] = deepClonePlain(value[index]);
+    }
+    Object.setPrototypeOf(clone, null);
+    return clone as T;
+  }
+  if (!isPlainObject(value)) throw new TypeError('value is not a plain object');
+  const record = value as Record<string, unknown>;
+  const clone = Object.create(null) as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    clone[key] = deepClonePlain(record[key]);
+  }
+  return clone as T;
+}
+
 function snapshotValue<T>(value: unknown, errorMessage: string): T {
   try {
-    return JSON.parse(JSON.stringify(value)) as T;
+    return deepClonePlain<T>(value);
   } catch {
     throw new TypeError(errorMessage);
   }
@@ -122,9 +141,6 @@ export function validateMailboxMessage(message: unknown): string | null {
       if (content.length === 0) return 'message.content must not be empty';
       if (Object.keys(content).length !== content.length) {
         return 'message.content must be a plain array';
-      }
-      if (typeof (content as unknown as Record<string, unknown>).toJSON === 'function') {
-        return 'message.content must not define toJSON';
       }
       for (let index = 0; index < content.length; index += 1) {
         const block = content[index];

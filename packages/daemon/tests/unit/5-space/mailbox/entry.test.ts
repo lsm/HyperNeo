@@ -501,6 +501,93 @@ describe('createMailboxEntry', () => {
       })
     ).toThrow(TypeError);
   });
+
+  test('ignores a non-enumerable toJSON on an address', () => {
+    const to = { kind: 'session', sessionId: 'sess-1' } as unknown as MailboxAddress;
+    Object.defineProperty(to, 'toJSON', {
+      value: () => ({ kind: 'session', sessionId: 'evil' }),
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+    const entry = createMailboxEntry({ to, message: MESSAGE_STRING, origin: 'api' });
+    expect(entry.to).toEqual({ kind: 'session', sessionId: 'sess-1' });
+    expect(isValidMailboxEntry(entry)).toBe(true);
+  });
+
+  test('ignores a non-enumerable toJSON on a message', () => {
+    const message = { ...MESSAGE_STRING } as unknown as MailboxMessage;
+    Object.defineProperty(message, 'toJSON', {
+      value: () => ({ type: 'agent', message: { content: 'hacked' }, parent_tool_use_id: null }),
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+    const entry = createMailboxEntry({ to: SESSION_ADDRESS, message, origin: 'api' });
+    expect(entry.message).toEqual(MESSAGE_STRING);
+    expect(isValidMailboxEntry(entry)).toBe(true);
+  });
+
+  test('ignores a non-enumerable toJSON on a content array', () => {
+    const content = [{ type: 'text', text: 'hi' }] as unknown as { type: 'text'; text: string }[];
+    Object.defineProperty(content, 'toJSON', {
+      value: () => [],
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+    const message = {
+      ...MESSAGE_ONE_BLOCK,
+      message: { content },
+    } as unknown as MailboxMessage;
+    const entry = createMailboxEntry({ to: SESSION_ADDRESS, message, origin: 'api' });
+    expect(entry.message).toEqual(MESSAGE_ONE_BLOCK);
+    expect(isValidMailboxEntry(entry)).toBe(true);
+  });
+
+  test('ignores a non-enumerable toJSON on a content container', () => {
+    const container: Record<string, unknown> = { content: 'hello' };
+    Object.defineProperty(container, 'toJSON', {
+      value: () => ({ content: 'hacked' }),
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+    const message = {
+      type: 'user',
+      message: container,
+      parent_tool_use_id: null,
+    } as unknown as MailboxMessage;
+    const entry = createMailboxEntry({ to: SESSION_ADDRESS, message, origin: 'api' });
+    expect(entry.message).toEqual({
+      type: 'user',
+      message: { content: 'hello' },
+      parent_tool_use_id: null,
+    });
+    expect(isValidMailboxEntry(entry)).toBe(true);
+  });
+
+  test('ignores a non-enumerable toJSON on a text block', () => {
+    const block: Record<string, unknown> = { type: 'text', text: 'hi' };
+    Object.defineProperty(block, 'toJSON', {
+      value: () => ({ type: 'text', text: 'hacked' }),
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+    const message = {
+      type: 'user',
+      message: { content: [block] },
+      parent_tool_use_id: null,
+    } as unknown as MailboxMessage;
+    const entry = createMailboxEntry({ to: SESSION_ADDRESS, message, origin: 'api' });
+    expect(entry.message).toEqual({
+      type: 'user',
+      message: { content: [{ type: 'text', text: 'hi' }] },
+      parent_tool_use_id: null,
+    });
+    expect(isValidMailboxEntry(entry)).toBe(true);
+  });
 });
 
 describe('isValidMailboxEntry', () => {
