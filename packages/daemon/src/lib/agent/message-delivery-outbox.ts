@@ -574,13 +574,39 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+export class PromptContentConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PromptContentConflictError';
+  }
+}
+
+export function verifyPromptContent(args: {
+  db: BunDatabase;
+  sessionId: string;
+  messageUuid: string;
+  message: SDKMessage;
+}): void {
+  const row = args.db.prepare(PROMPT_ROW_BY_UUID_SQL).get(args.sessionId, args.messageUuid) as
+    | EnsurePromptRow
+    | undefined;
+  if (!row) return;
+  const stored = JSON.parse(row.sdkMessage) as SDKMessage;
+  if (canonicalJson(stored) !== canonicalJson(args.message)) {
+    throw new PromptContentConflictError(
+      `prompt handoff: message ${args.messageUuid} in session ${args.sessionId} ` +
+        'already exists with different content'
+    );
+  }
+}
+
 function checkPromptContent(ctx: EnsurePromptCtx): EnsurePromptSettledCtx {
   if (ctx.existing === null) {
     return { ...ctx, created: true, ensureStatus: ctx.hold === 'manual' ? 'deferred' : 'enqueued' };
   }
   const stored = JSON.parse(ctx.existing.sdkMessage) as SDKMessage;
   if (canonicalJson(stored) !== canonicalJson(ctx.message)) {
-    throw new Error(
+    throw new PromptContentConflictError(
       `ensurePrompt: message ${ctx.messageUuid} in session ${ctx.sessionId} ` +
         'already exists with different content'
     );

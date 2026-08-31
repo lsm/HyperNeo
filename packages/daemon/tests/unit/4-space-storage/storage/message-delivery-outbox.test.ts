@@ -8,7 +8,9 @@ import {
   ensurePrompt,
   persistAndEnqueueDelivery,
   persistPrompt,
+  PromptContentConflictError,
   retryPrompt,
+  verifyPromptContent,
 } from '../../../../src/lib/agent/message-delivery-outbox';
 import type { JobQueueRepository as JobQueueRepoType } from '../../../../src/storage/repositories/job-queue-repository';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -1354,5 +1356,76 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         { id: 'db-act-other', send_status: 'deferred' },
       ]);
     });
+  });
+});
+
+describe('prompt content verification (verifyPromptContent)', () => {
+  let db: Database;
+  let sdkRepo: SDKMessageRepository;
+  let jobQueue: JobQueueRepository;
+
+  beforeEach(() => {
+    ({ db, sdkRepo, jobQueue } = setup());
+  });
+  afterEach(() => db.close());
+
+  function seedRow(uuid: string, text: string): void {
+    persistPrompt({
+      db: db as never,
+      sdkMessageRepo: sdkRepo,
+      jobQueue,
+      sessionId: SESSION,
+      message: userMessage(uuid, text),
+      delivery: { origin: 'space_inject' },
+    });
+  }
+
+  it('returns silently when no row exists for the uuid', () => {
+    expect(() =>
+      verifyPromptContent({
+        db: db as never,
+        sessionId: SESSION,
+        messageUuid: 'verify-absent',
+        message: userMessage('verify-absent'),
+      })
+    ).not.toThrow();
+  });
+
+  it('accepts content that matches the stored row', () => {
+    seedRow('verify-same', 'original');
+    expect(() =>
+      verifyPromptContent({
+        db: db as never,
+        sessionId: SESSION,
+        messageUuid: 'verify-same',
+        message: userMessage('verify-same', 'original'),
+      })
+    ).not.toThrow();
+  });
+
+  it('throws PromptContentConflictError when content differs', () => {
+    seedRow('verify-diff', 'original');
+    expect(() =>
+      verifyPromptContent({
+        db: db as never,
+        sessionId: SESSION,
+        messageUuid: 'verify-diff',
+        message: userMessage('verify-diff', 'conflicting'),
+      })
+    ).toThrow(PromptContentConflictError);
+  });
+
+  it('types the conflict ensurePrompt raises so producers can classify it', () => {
+    seedRow('verify-ensure', 'original');
+    expect(() =>
+      ensurePrompt({
+        db: db as never,
+        sdkMessageRepo: sdkRepo,
+        jobQueue,
+        sessionId: SESSION,
+        message: userMessage('verify-ensure', 'conflicting'),
+        delivery: { origin: 'space_inject' },
+      })
+    ).toThrow(PromptContentConflictError);
   });
 });
