@@ -284,17 +284,18 @@ describe('resolveSpaceMcpSessionPolicy', () => {
     expect(policy.requiredServers).toEqual([]);
   });
 
-  test('leaves non-Space sessions unowned', () => {
+  test('resolves non-Space sessions to universal_read requiring the dispatcher server', () => {
     const policy = resolveSpaceMcpSessionPolicy(makeSession({ context: undefined }));
 
     expect(policy).toMatchObject({
-      role: 'outside_space',
+      role: 'universal_read',
       owner: 'none',
       attachGenericSpaceTools: false,
       attachCoordinatorTools: false,
       isWorkflowWorker: false,
     });
-    expect(policy.requiredServers).toEqual([]);
+    expect(policy.spaceId).toBeUndefined();
+    expect(policy.requiredServers).toEqual(['space-actions']);
   });
 });
 

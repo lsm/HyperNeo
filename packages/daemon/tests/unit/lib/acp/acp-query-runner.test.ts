@@ -640,6 +640,16 @@ describe('AcpQueryRunner', () => {
     ]);
   });
 
+  test('starts a non-Space session missing the space-actions dispatcher without refusing', async () => {
+    const { runner, ctx, mockClient } = createRunnerFixture();
+
+    await runner.start();
+    await ctx.queryPromise;
+
+    expect(mockClient.createSession).toHaveBeenCalled();
+    expect(ctx.logger.info).toHaveBeenCalledWith(expect.stringContaining('space-actions'));
+  });
+
   test('runs ACP lifecycle and forwards translated SDK messages', async () => {
     const {
       runner,

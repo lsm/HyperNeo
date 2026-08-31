@@ -1860,7 +1860,7 @@ export class QueryRunner {
       nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
       taskRepo: this.ctx.db.getSpaceTaskRepo(),
     });
-    if (policy.role !== 'outside_space') return queryOptions;
+    if (policy.role !== 'universal_read') return queryOptions;
 
     const serverNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
     if (isSpaceActionsDispatcherEnabled() && !serverNames.includes('space-actions')) {
