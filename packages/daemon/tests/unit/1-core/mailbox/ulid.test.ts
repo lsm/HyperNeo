@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createUlid, isUlid } from '../../../../src/lib/space/mailbox/ulid';
+import { createUlid, isUlid } from '../../../../src/lib/mailbox/ulid';
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const MAX_48_BIT = 281474976710655;

@@ -92,13 +92,13 @@ export function toMailboxPolicy(
   const priority =
     source.priority === undefined ? DEFAULT_MAILBOX_ENTRY_POLICY.priority : source.priority;
 
-  if (!Number.isInteger(ttlMs) || ttlMs < 1) {
+  if (!Number.isSafeInteger(ttlMs) || ttlMs < 1) {
     return { reason: 'policy.ttlMs must be a positive integer' };
   }
-  if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
     return { reason: 'policy.maxAttempts must be a positive integer' };
   }
-  if (!Number.isInteger(priority) || priority < 0) {
+  if (!Number.isSafeInteger(priority) || priority < 0) {
     return { reason: 'policy.priority must be a non-negative integer' };
   }
 

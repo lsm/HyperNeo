@@ -8,7 +8,7 @@ import {
   parseMailboxEntry,
   toMailboxMessage,
   toMailboxPolicy,
-} from '../../../../src/lib/space/mailbox/entry';
+} from '../../../../src/lib/mailbox/entry';
 
 describe('DEFAULT_MAILBOX_ENTRY_POLICY', () => {
   test('equals the literal policy', () => {
@@ -272,6 +272,7 @@ describe('toMailboxPolicy', () => {
   test.each([
     ['non-integer ttlMs', { ttlMs: 1.5 }],
     ['non-finite ttlMs', { ttlMs: Infinity }],
+    ['unsafe integer ttlMs', { ttlMs: Number.MAX_SAFE_INTEGER + 1 }],
     ['ttlMs below one', { ttlMs: 0 }],
     ['negative ttlMs', { ttlMs: -1 }],
     ['non-integer maxAttempts', { maxAttempts: 2.5 }],

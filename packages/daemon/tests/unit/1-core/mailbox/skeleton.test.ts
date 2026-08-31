@@ -3,34 +3,34 @@ import {
   MAILBOX_LANE,
   enqueueMailboxEntry,
   type MailboxEnqueueOutcome,
-} from '../../../../src/lib/space/mailbox/enqueue';
+} from '../../../../src/lib/mailbox/enqueue';
 import {
   handoffPromptToMailbox,
   type MailboxHandoffOutcome,
-} from '../../../../src/lib/space/mailbox/handoff';
+} from '../../../../src/lib/mailbox/handoff';
 import {
   resolveMailboxAddress,
   type MailboxAddressResolution,
-} from '../../../../src/lib/space/mailbox/resolution';
+} from '../../../../src/lib/mailbox/resolution';
 import {
   findOrSpawnSessionForAddress,
   type MailboxSessionRef,
-} from '../../../../src/lib/space/mailbox/spawn';
+} from '../../../../src/lib/mailbox/spawn';
 import {
   deliverMailboxEntry,
   type MailboxDeliveryOutcome,
-} from '../../../../src/lib/space/mailbox/delivery';
+} from '../../../../src/lib/mailbox/delivery';
 import {
   expireMailboxEntries,
   settleMailboxEntry,
   type MailboxSettleOutcome,
-} from '../../../../src/lib/space/mailbox/settlement';
-import { mapPendingAgentRowToMailboxEntry } from '../../../../src/lib/space/mailbox/bridge';
+} from '../../../../src/lib/mailbox/settlement';
+import { mapPendingAgentRowToMailboxEntry } from '../../../../src/lib/mailbox/bridge';
 import {
   DEFAULT_MAILBOX_ENTRY_POLICY,
   type MailboxEntry,
   type MailboxMessage,
-} from '../../../../src/lib/space/mailbox/entry';
+} from '../../../../src/lib/mailbox/entry';
 import type { PendingAgentMessageRecord } from '../../../../src/storage/repositories/pending-agent-message-repository';
 
 const message: MailboxMessage = {

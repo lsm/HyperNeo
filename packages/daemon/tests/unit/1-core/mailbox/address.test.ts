@@ -4,7 +4,7 @@ import {
   parseAddress,
   renderAddress,
   type MailboxAddress,
-} from '../../../../src/lib/space/mailbox/address';
+} from '../../../../src/lib/mailbox/address';
 
 const VALID_SAMPLES: MailboxAddress[] = [
   { kind: 'session', sessionId: 'sess-1' },
