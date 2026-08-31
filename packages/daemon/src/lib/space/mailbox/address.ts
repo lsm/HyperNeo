@@ -29,13 +29,20 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 function hasOwnKey(record: Record<string, unknown>, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(record, key);
+  return (
+    Object.prototype.hasOwnProperty.call(record, key) &&
+    Object.prototype.propertyIsEnumerable.call(record, key)
+  );
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const proto = Object.getPrototypeOf(value);
-  return proto === null || proto === Object.prototype;
+  try {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+    const proto = Object.getPrototypeOf(value);
+    return proto === null || proto === Object.prototype;
+  } catch {
+    return false;
+  }
 }
 
 function parseAgentQuery(query: string): { taskId?: string; node?: string } | null {
@@ -98,33 +105,37 @@ export function renderAddress(addr: MailboxAddress): string {
 }
 
 export function isValidAddress(addr: MailboxAddress): boolean {
-  if (!isPlainObject(addr)) return false;
-  const record = addr as Record<string, unknown>;
-  const keys = Object.keys(record);
-  if (addr.kind === 'session') {
-    if (keys.length !== 2 || !keys.includes('kind') || !keys.includes('sessionId')) return false;
-    return isNonEmptyString(record.sessionId);
+  try {
+    if (!isPlainObject(addr)) return false;
+    const record = addr as Record<string, unknown>;
+    const keys = Object.keys(record);
+    if (addr.kind === 'session') {
+      if (keys.length !== 2 || !keys.includes('kind') || !keys.includes('sessionId')) return false;
+      return isNonEmptyString(record.sessionId);
+    }
+    if (addr.kind === 'agent') {
+      for (const key of keys) {
+        if (!AGENT_FIELD_KEYS.has(key)) return false;
+      }
+      if (!keys.includes('kind') || !keys.includes('spaceId') || !keys.includes('handle')) {
+        return false;
+      }
+      if (!isNonEmptyString(record.spaceId)) return false;
+      if (!isNonEmptyString(record.handle) || record.handle.includes('/')) return false;
+      if (hasOwnKey(record, 'taskId')) {
+        if (record.taskId !== undefined && !isNonEmptyString(record.taskId)) return false;
+      } else if (record.taskId !== undefined) {
+        return false;
+      }
+      if (hasOwnKey(record, 'node')) {
+        if (record.node !== undefined && !isNonEmptyString(record.node)) return false;
+      } else if (record.node !== undefined) {
+        return false;
+      }
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
   }
-  if (addr.kind === 'agent') {
-    for (const key of keys) {
-      if (!AGENT_FIELD_KEYS.has(key)) return false;
-    }
-    if (!keys.includes('kind') || !keys.includes('spaceId') || !keys.includes('handle')) {
-      return false;
-    }
-    if (!isNonEmptyString(record.spaceId)) return false;
-    if (!isNonEmptyString(record.handle) || record.handle.includes('/')) return false;
-    if (hasOwnKey(record, 'taskId')) {
-      if (record.taskId !== undefined && !isNonEmptyString(record.taskId)) return false;
-    } else if (record.taskId !== undefined) {
-      return false;
-    }
-    if (hasOwnKey(record, 'node')) {
-      if (record.node !== undefined && !isNonEmptyString(record.node)) return false;
-    } else if (record.node !== undefined) {
-      return false;
-    }
-    return true;
-  }
-  return false;
 }

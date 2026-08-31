@@ -210,6 +210,72 @@ describe('validateMailboxMessage', () => {
     expect(validateMailboxMessage({ ...MESSAGE_STRING, priority: 'urgent' })).not.toBeNull();
     expect(validateMailboxMessage({ ...MESSAGE_STRING, priority: 1 })).not.toBeNull();
   });
+
+  test('rejects an inherited priority from Object.prototype', () => {
+    Object.defineProperty(Object.prototype, 'priority', {
+      value: 'now',
+      configurable: true,
+      writable: true,
+    });
+    try {
+      const withoutOwn = { type: 'user', message: { content: 'hello' }, parent_tool_use_id: null };
+      expect(validateMailboxMessage(withoutOwn as unknown as MailboxMessage)).not.toBeNull();
+    } finally {
+      Reflect.deleteProperty(Object.prototype, 'priority');
+    }
+  });
+
+  test('rejects a content array with extra own properties', () => {
+    const content = [{ type: 'text', text: 'hi' }] as unknown as { type: 'text'; text: string }[];
+    (content as unknown as Record<string, unknown>).extra = 'x';
+    expect(
+      validateMailboxMessage({
+        ...MESSAGE_STRING,
+        message: { content },
+      } as unknown as MailboxMessage)
+    ).not.toBeNull();
+  });
+
+  test('rejects a content array with a toJSON method', () => {
+    const content = [{ type: 'text', text: 'hi' }] as unknown as { type: 'text'; text: string }[];
+    (content as unknown as Record<string, unknown>).toJSON = () => [];
+    expect(
+      validateMailboxMessage({
+        ...MESSAGE_STRING,
+        message: { content },
+      } as unknown as MailboxMessage)
+    ).not.toBeNull();
+  });
+
+  test('rejects a message with non-enumerable content', () => {
+    const container: Record<string, unknown> = {};
+    Object.defineProperty(container, 'content', {
+      value: 'hello',
+      enumerable: false,
+      configurable: true,
+    });
+    expect(
+      validateMailboxMessage({
+        type: 'user',
+        message: container,
+        parent_tool_use_id: null,
+      } as unknown as MailboxMessage)
+    ).not.toBeNull();
+  });
+
+  test('rejects a hostile message object', () => {
+    const proxy = new Proxy(
+      { type: 'user', message: { content: 'hello' }, parent_tool_use_id: null },
+      {
+        get(target, prop) {
+          if (prop === 'message') throw new Error('revoked');
+          return (target as Record<string, unknown>)[prop as string];
+        },
+      }
+    );
+    expect(validateMailboxMessage(proxy as unknown as MailboxMessage)).not.toBeNull();
+    expect(isValidMailboxEntry(proxy)).toBe(false);
+  });
 });
 
 describe('createMailboxEntry', () => {
@@ -411,6 +477,29 @@ describe('createMailboxEntry', () => {
       maxAttempts: 5,
       priority: 0,
     });
+  });
+
+  test('snapshots message and address inputs before returning', () => {
+    let read = 0;
+    const message = {
+      get type() {
+        return 'user';
+      },
+      get message() {
+        read += 1;
+        return { content: read === 1 ? 'hello' : '' };
+      },
+      get parent_tool_use_id() {
+        return null;
+      },
+    } as unknown as MailboxMessage;
+    expect(() =>
+      createMailboxEntry({
+        to: SESSION_ADDRESS,
+        message,
+        origin: 'api',
+      })
+    ).toThrow(TypeError);
   });
 });
 
