@@ -613,7 +613,13 @@ export function uuidSiblingsShareCanonicalContent(args: {
     )
     .all(args.sessionId, args.messageUuid) as Array<{ sdkMessage: string }>;
   if (rows.length === 0) return true;
-  const canonical = rows.map((row) => canonicalJson(JSON.parse(row.sdkMessage)));
+  const canonical = rows.map((row) => {
+    try {
+      return `json:${canonicalJson(JSON.parse(row.sdkMessage))}`;
+    } catch {
+      return `raw:${row.sdkMessage}`;
+    }
+  });
   return canonical.every((entry) => entry === canonical[0]);
 }
 
