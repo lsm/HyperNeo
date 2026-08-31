@@ -161,7 +161,7 @@ describe('buildExternalEventDigestMessage', () => {
     const digest = buildExternalEventDigestMessage(essences);
     const lines = digest.split('\n');
 
-    expect(lines).toHaveLength(12);
+    expect(lines).toHaveLength(19);
     expect(lines[0]).toBe('External events while you were working (30 events, PR #2828):');
     expect(lines[1]).toBe(
       '- CI check "Build Binary (linux-x64)": 11 runs (canceled ×6, failure ×5), ' +
@@ -170,28 +170,31 @@ describe('buildExternalEventDigestMessage', () => {
     );
     expect(lines[2]).toBe(
       '- Review comments on packages/daemon/src/lib/agent/query-mode-handler.ts:L88: ×3, ' +
-        `latest by codex[bot] at 16:20 UTC — "latest review body" — ` +
+        `latest by codex[bot] at 16:20 UTC — ` +
         `${PR_URL}#rc-3 (latest eventId: rc-3)`
     );
-    expect(lines[3]).toBe(
+    expect(lines[3]).toBe('  latest review body');
+    expect(lines[4]).toBe(
       `- Review comment on packages/web/src/app.tsx:L12: ×1, ` +
-        `latest by codex[bot] at 16:25 UTC — "standalone review" — ` +
+        `latest by codex[bot] at 16:25 UTC — ` +
         `${PR_URL}#rc-4 (latest eventId: rc-4)`
     );
+    expect(lines[5]).toBe('  standalone review');
     for (let i = 0; i < 5; i++) {
       const body = i === 4 ? 'latest pr comment' : `pr comment ${i + 1}`;
-      expect(lines[4 + i]).toBe(
-        `- PR comment: ×1, latest by marcliu at 15:${30 + i} UTC — "${body}" — ` +
+      expect(lines[6 + i * 2]).toBe(
+        `- PR comment: ×1, latest by marcliu at 15:${30 + i} UTC — ` +
           `${PR_URL}#pc-${i + 1} (latest eventId: pc-${i + 1})`
       );
+      expect(lines[7 + i * 2]).toBe(`  ${body}`);
     }
-    expect(lines[9]).toBe(
+    expect(lines[16]).toBe(
       `- PR #2828 state: open (latest poll 16:35 UTC, ×8 polls folded) — ` + `${PR_URL}#st-8`
     );
-    expect(lines[10]).toBe(
+    expect(lines[17]).toBe(
       `- Reactions on PR #2828: ×1, latest 👍 by marcliu at 15:05 UTC — ` + `${PR_URL}#re-1`
     );
-    expect(lines[11]).toBe(
+    expect(lines[18]).toBe(
       `- Reactions on PR #2828: ×1, latest 🚀 by marcliu at 15:10 UTC — ` + `${PR_URL}#re-2`
     );
   });
@@ -227,6 +230,52 @@ describe('buildExternalEventDigestMessage', () => {
     expect(lines[2]).toBe(
       '- github/o/r/pull_request/7.thread_reopened: ×1 (latest 16:00 UTC) — reopened by marcliu'
     );
+  });
+
+  it('renders review-thread bodies on indented lines below the topic line', () => {
+    const digest = buildExternalEventDigestMessage([
+      {
+        eventId: 'th-3',
+        topic: 'github/o/r/pull_request/7.thread_resolved',
+        eventType: 'pull_request_review_thread',
+        action: 'resolved',
+        actor: 'marcliu',
+        prNumber: 7,
+        threadId: 'tt_3',
+        body: 'addressed in 4f2c1<br>thanks!',
+        occurredAt: at(16),
+      },
+    ]);
+    const lines = digest.split('\n');
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toBe(
+      '- github/o/r/pull_request/7.thread_resolved: ×1 (latest 16:00 UTC) — resolved by marcliu'
+    );
+    expect(lines[2]).toBe('  addressed in 4f2c1<br>thanks!');
+  });
+
+  it('renders multi-line essence-backed comment bodies verbatim', () => {
+    const digest = buildExternalEventDigestMessage([
+      essence({
+        eventId: 'ml-1',
+        topic: 'github/lsm/hyperneo/pull_request/2828.comment_polled',
+        eventType: 'issue_comment',
+        occurredAt: at(16),
+        actor: 'coderabbitai[bot]',
+        body: '<sub>![P2 Badge](https://img.shields.io/badge/P2-x)</sub> nits<br>one\r\n\r\ntwo',
+        extra: { commentId: 'ml-1' },
+      }),
+    ]);
+    const lines = digest.split('\n');
+    expect(lines[1]).toBe(
+      `- PR comment: ×1, latest by coderabbitai[bot] at 16:00 UTC — ` +
+        `${PR_URL}#ml-1 (latest eventId: ml-1)`
+    );
+    expect(lines[2]).toBe(
+      '  <sub>![P2 Badge](https://img.shields.io/badge/P2-x)</sub> nits<br>one'
+    );
+    expect(lines[3]).toBe('');
+    expect(lines[4]).toBe('  two');
   });
 
   it('collapses same-value reaction duplicates but keeps actors distinct', () => {

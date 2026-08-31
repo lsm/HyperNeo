@@ -58,8 +58,9 @@ describe('renderEventBlock', () => {
   it('folds review threads by default and lists each body when renderAllReviewBodies is set', () => {
     expect(renderEventBlock(REVIEWS[2]!, { count: REVIEWS.length, events: REVIEWS })).toBe(
       '- Review comments on packages/daemon/src/lib/agent/query-mode-handler.ts:L88: ×3, ' +
-        `latest by codex[bot] at 16:00 UTC — "latest review body" — ${PR_URL}` +
-        ' (latest eventId: rt-3)'
+        `latest by codex[bot] at 16:00 UTC — ${PR_URL}` +
+        ' (latest eventId: rt-3)\n' +
+        '  latest review body'
     );
     expect(
       renderEventBlock(REVIEWS[2]!, {
@@ -70,17 +71,20 @@ describe('renderEventBlock', () => {
     ).toBe(
       '- Review comment by codex[bot] at 15:50 UTC ' +
         'on packages/daemon/src/lib/agent/query-mode-handler.ts:L88 ' +
-        `— "review body 1" — ${PR_URL} (latest eventId: rt-1)\n` +
+        `— ${PR_URL} (latest eventId: rt-1)\n` +
+        '  review body 1\n' +
         '- Review comment by codex[bot] at 15:55 UTC ' +
         'on packages/daemon/src/lib/agent/query-mode-handler.ts:L88 ' +
-        `— "review body 2" — ${PR_URL} (latest eventId: rt-2)\n` +
+        `— ${PR_URL} (latest eventId: rt-2)\n` +
+        '  review body 2\n' +
         '- Review comment by codex[bot] at 16:00 UTC ' +
         'on packages/daemon/src/lib/agent/query-mode-handler.ts:L88 ' +
-        `— "latest review body" — ${PR_URL} (latest eventId: rt-3)`
+        `— ${PR_URL} (latest eventId: rt-3)\n` +
+        '  latest review body'
     );
   });
 
-  it('renders a PR comment with actor and snippet', () => {
+  it('renders a PR comment with its body below the metadata line', () => {
     expect(
       renderEventBlock({
         eventId: 'pc-1',
@@ -93,9 +97,109 @@ describe('renderEventBlock', () => {
         prUrl: PR_URL,
       })
     ).toBe(
-      `- PR comment: ×1, latest by marcliu at 15:30 UTC — "pr comment 1" — ${PR_URL}` +
-        ' (latest eventId: pc-1)'
+      `- PR comment: ×1, latest by marcliu at 15:30 UTC — ${PR_URL}` +
+        ' (latest eventId: pc-1)\n' +
+        '  pr comment 1'
     );
+  });
+
+  it('renders multi-line bodies verbatim with markdown and HTML intact', () => {
+    expect(
+      renderEventBlock({
+        eventId: 'ml-1',
+        topic: 'github/o/r/pull_request/7.comment_polled',
+        eventType: 'issue_comment',
+        actor: 'coderabbitai[bot]',
+        body:
+          '<sub>![P2 Badge](https://img.shields.io/badge/P2-5e2c2c) <b>Nit</b></sub> in `foo.ts`\r\n\r\n' +
+          'second paragraph\n\n\nthird',
+        commentId: 'ml-1',
+        occurredAt: at(16),
+        prUrl: PR_URL,
+      })
+    ).toBe(
+      `- PR comment: ×1, latest by coderabbitai[bot] at 16:00 UTC — ${PR_URL}` +
+        ' (latest eventId: ml-1)\n' +
+        '  <sub>![P2 Badge](https://img.shields.io/badge/P2-5e2c2c) <b>Nit</b></sub> in `foo.ts`\n' +
+        '\n' +
+        '  second paragraph\n' +
+        '\n' +
+        '\n' +
+        '  third'
+    );
+  });
+
+  it('renders a review-thread body below the topic line', () => {
+    expect(
+      renderEventBlock({
+        eventId: 'th-1',
+        topic: 'github/o/r/pull_request/7.thread_resolved',
+        eventType: 'pull_request_review_thread',
+        action: 'resolved',
+        actor: 'marcliu',
+        body: 'thread resolved\n\nthanks',
+        threadId: 'tt_1',
+        occurredAt: at(15),
+        prUrl: PR_URL,
+      })
+    ).toBe(
+      `- github/o/r/pull_request/7.thread_resolved: ×1 (latest 15:00 UTC) — ` +
+        `resolved by marcliu — ${PR_URL}\n` +
+        '  thread resolved\n' +
+        '\n' +
+        '  thanks'
+    );
+  });
+
+  it('preserves leading indentation in comment bodies', () => {
+    expect(
+      renderEventBlock({
+        eventId: 'ws-1',
+        topic: 'github/o/r/pull_request/7.comment_polled',
+        eventType: 'issue_comment',
+        actor: 'marcliu',
+        body: '    const x = 1\n    const y = 2',
+        commentId: 'ws-1',
+        occurredAt: at(16),
+        prUrl: PR_URL,
+      })
+    ).toBe(
+      `- PR comment: ×1, latest by marcliu at 16:00 UTC — ${PR_URL}` +
+        ' (latest eventId: ws-1)\n' +
+        '      const x = 1\n' +
+        '      const y = 2'
+    );
+    expect(
+      renderEventBlock({
+        eventId: 'ws-2',
+        topic: 'github/o/r/pull_request/7.comment_polled',
+        eventType: 'issue_comment',
+        actor: 'marcliu',
+        body: '  \n\n  ',
+        commentId: 'ws-2',
+        occurredAt: at(16),
+        prUrl: PR_URL,
+      })
+    ).toBe(
+      `- PR comment: ×1, latest by marcliu at 16:00 UTC — ${PR_URL}` + ' (latest eventId: ws-2)'
+    );
+  });
+
+  it('caps comment bodies at 200000 characters with a truncation marker', () => {
+    const block = renderEventBlock({
+      eventId: 'cap-1',
+      topic: 'github/o/r/pull_request/7.comment_polled',
+      eventType: 'issue_comment',
+      actor: 'marcliu',
+      body: 'a'.repeat(200050),
+      commentId: 'cap-1',
+      occurredAt: at(16),
+      prUrl: PR_URL,
+    });
+    const lines = block.split('\n');
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toBe(`  ${'a'.repeat(200000)}`);
+    expect(lines[2]).toBe('  [comment body truncated at 200000 characters]');
   });
 
   it('renders state markers and poll folds', () => {
@@ -166,7 +270,7 @@ describe('renderEventBlock', () => {
       prUrl: PR_URL,
     };
     const singleDigest = buildExternalEventDigestMessage([single]);
-    expect(renderEventBlock(single)).toBe(singleDigest.split('\n')[1]);
+    expect(renderEventBlock(single)).toBe(singleDigest.split('\n').slice(1).join('\n'));
     const foldedDigest = buildExternalEventDigestMessage(CHECKS);
     expect(renderEventBlock(CHECKS[2]!, FOLDED_CHECKS)).toBe(foldedDigest.split('\n')[1]);
   });
