@@ -242,6 +242,31 @@ describe('hasSettledHandoffRow', () => {
       true
     );
   });
+
+  it('settles a legacy row whose send_status is NULL', () => {
+    const h = makeHarness();
+    h.db
+      .prepare(
+        `INSERT INTO sdk_messages
+          (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+           replacement_metadata_normalized, consumed_seq)
+         VALUES (?, ?, 'user', ?, ?, NULL, ?, 1, NULL)`
+      )
+      .run(
+        'db-legacy-null',
+        SESSION,
+        JSON.stringify(userMessage('msg-legacy-null')),
+        new Date().toISOString(),
+        'msg-legacy-null'
+      );
+    expect(hasSettledHandoffRow(h.deps, { sessionId: SESSION, messageId: 'msg-legacy-null' })).toBe(
+      true
+    );
+    expect(resolveDeliverableHandoff(h.deps, targetFor(userMessage('msg-legacy-null')))).toEqual({
+      dbId: 'db-legacy-null',
+      changed: false,
+    });
+  });
 });
 
 describe('resolveDeliverableHandoff', () => {

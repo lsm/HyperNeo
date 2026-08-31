@@ -1498,4 +1498,42 @@ describe('retryPrompt consumption-evidence guard', () => {
     });
     expect(retried).toEqual({ dbId, messageUuid: 'retry-null-1' });
   });
+
+  it('refuses to retry when a duplicate sibling carries consumption evidence', async () => {
+    const insert = db.prepare(
+      `INSERT INTO sdk_messages
+        (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+         replacement_metadata_normalized, consumed_seq)
+       VALUES (?, ?, 'user', ?, ?, 'failed', ?, 1, ?)`
+    );
+    insert.run(
+      'db-sibling-clean',
+      SESSION,
+      JSON.stringify(userMessage('retry-sibling-1')),
+      new Date().toISOString(),
+      'retry-sibling-1',
+      null
+    );
+    insert.run(
+      'db-sibling-evidenced',
+      SESSION,
+      JSON.stringify(userMessage('retry-sibling-1')),
+      new Date().toISOString(),
+      'retry-sibling-1',
+      3
+    );
+    const retried = await retryPrompt({
+      db: db as never,
+      jobQueue,
+      sdkMessageRepo: sdkRepo,
+      sessionId: SESSION,
+      messageUuid: 'retry-sibling-1',
+      origin: 'space_inject',
+    });
+    expect(retried).toBeNull();
+    const statuses = db
+      .prepare(`SELECT send_status FROM sdk_messages WHERE sdk_uuid = ? ORDER BY id`)
+      .all('retry-sibling-1') as Array<{ send_status: string }>;
+    expect(statuses).toEqual([{ send_status: 'failed' }, { send_status: 'failed' }]);
+  });
 });

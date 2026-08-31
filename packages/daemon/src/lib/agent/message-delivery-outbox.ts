@@ -270,7 +270,12 @@ const RETRY_PROMPT_ROW_BY_ID_SQL = `UPDATE sdk_messages
   WHERE id = (
     SELECT id FROM sdk_messages
     WHERE id = ? AND session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-      AND send_status = 'failed' AND consumed_seq IS NULL
+      AND send_status = 'failed'
+      AND NOT EXISTS (
+        SELECT 1 FROM sdk_messages sibling
+        WHERE sibling.session_id = ? AND sibling.message_type = 'user'
+          AND sibling.sdk_uuid = ? AND sibling.consumed_seq IS NOT NULL
+      )
   )
   AND send_status = 'failed'
   RETURNING id AS db_id`;
@@ -280,7 +285,12 @@ const RETRY_PROMPT_ROW_BY_UUID_SQL = `UPDATE sdk_messages
   WHERE id = (
     SELECT id FROM sdk_messages
     WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-      AND send_status = 'failed' AND consumed_seq IS NULL
+      AND send_status = 'failed'
+      AND NOT EXISTS (
+        SELECT 1 FROM sdk_messages sibling
+        WHERE sibling.session_id = ? AND sibling.message_type = 'user'
+          AND sibling.sdk_uuid = ? AND sibling.consumed_seq IS NOT NULL
+      )
     ORDER BY timestamp ASC, rowid ASC LIMIT 1
   )
   AND send_status = 'failed'
@@ -817,8 +827,12 @@ function commitRetryPrompt(ctx: RetryPromptCtx): RetryPromptCtx {
     ctx.db.transaction(() => {
       const rows = (
         ctx.dbId !== undefined
-          ? ctx.db.prepare(RETRY_PROMPT_ROW_BY_ID_SQL).all(ctx.dbId, ctx.sessionId, ctx.messageUuid)
-          : ctx.db.prepare(RETRY_PROMPT_ROW_BY_UUID_SQL).all(ctx.sessionId, ctx.messageUuid)
+          ? ctx.db
+              .prepare(RETRY_PROMPT_ROW_BY_ID_SQL)
+              .all(ctx.dbId, ctx.sessionId, ctx.messageUuid, ctx.sessionId, ctx.messageUuid)
+          : ctx.db
+              .prepare(RETRY_PROMPT_ROW_BY_UUID_SQL)
+              .all(ctx.sessionId, ctx.messageUuid, ctx.sessionId, ctx.messageUuid)
       ) as Array<{
         db_id: string;
       }>;

@@ -1999,7 +1999,7 @@ export class SDKMessageRepository {
       .prepare(
         `SELECT id FROM sdk_messages
           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-            AND (consumed_seq IS NOT NULL OR send_status = 'consumed')
+            AND (consumed_seq IS NOT NULL OR COALESCE(send_status, 'consumed') = 'consumed')
           ORDER BY consumed_seq IS NULL, consumed_seq DESC, timestamp ASC, rowid ASC
           LIMIT 1`
       )
