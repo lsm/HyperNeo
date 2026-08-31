@@ -570,14 +570,24 @@ describe('Object.prototype pollution resistance', () => {
     }
   });
 
-  test('fails closed while Array.prototype.toJSON is polluted', () => {
+  test('narrows Array.prototype.toJSON rejection to array content', () => {
     const proto = Array.prototype as Record<string, unknown>;
     proto.toJSON = () => [];
     try {
-      const reason = validateMailboxMessage(blockMessage());
-      expect(reason).toContain('must be an object');
+      expect(validateMailboxMessage(blockMessage())).toContain('plain array of text blocks');
+      expect(validateMailboxMessage(stringMessage())).toBe(null);
     } finally {
       delete proto.toJSON;
+    }
+  });
+
+  test('ignores primitive toJSON hooks that cannot alter serialization', () => {
+    const strProto = String.prototype as Record<string, unknown>;
+    strProto.toJSON = () => 'Z';
+    try {
+      expect(validateMailboxMessage(stringMessage())).toBe(null);
+    } finally {
+      delete strProto.toJSON;
     }
   });
 });
