@@ -4,7 +4,8 @@ const TIMESTAMP_MASK = 0xffffffffffffn;
 
 const MAX_RANDOM = (1n << 80n) - 1n;
 
-let lastNowMs: number | undefined;
+let lastObservedMs: number | undefined;
+let lastTimeMs: number | undefined;
 let lastRandomness = 0n;
 
 function encodeBase32(value: bigint, length: number): string {
@@ -28,18 +29,22 @@ function random80(): bigint {
 }
 
 export function createUlid(nowMs?: number): string {
-  let ms = nowMs ?? Date.now();
+  const observedMs = nowMs ?? Date.now();
+  let ms: number;
   let randomness: bigint;
-  if (ms === lastNowMs) {
+  if (observedMs === lastObservedMs) {
+    ms = lastTimeMs ?? observedMs;
     randomness = lastRandomness + 1n;
     if (randomness > MAX_RANDOM) {
       ms += 1;
       randomness = 0n;
     }
   } else {
+    ms = observedMs;
     randomness = random80();
   }
-  lastNowMs = ms;
+  lastObservedMs = observedMs;
+  lastTimeMs = ms;
   lastRandomness = randomness;
   return encodeBase32(BigInt(ms) & TIMESTAMP_MASK, 10) + encodeBase32(randomness, 16);
 }
@@ -53,6 +58,7 @@ export function isUlid(value: string): boolean {
 }
 
 export function _resetForTesting(nowMs?: number, randomness?: bigint): void {
-  lastNowMs = nowMs;
+  lastObservedMs = nowMs;
+  lastTimeMs = nowMs;
   lastRandomness = randomness ?? 0n;
 }

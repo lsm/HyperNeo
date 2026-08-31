@@ -76,7 +76,15 @@ describe('createUlid', () => {
     expect(Number(decodeBase32(overflowed.slice(0, 10)))).toBe(1_700_000_000_001);
     expect(overflowed.slice(10)).toBe('0000000000000000');
     expect(isUlid(overflowed)).toBe(true);
-    expect(createUlid(1_700_000_000_001).slice(10)).toBe('0000000000000001');
+  });
+
+  test('keeps later calls on the advanced timestamp when the overflowing millisecond recurs', () => {
+    _resetForTesting(1_700_000_000_000, (1n << 80n) - 1n);
+    const overflowed = createUlid(1_700_000_000_000);
+    const next = createUlid(1_700_000_000_000);
+    expect(Number(decodeBase32(next.slice(0, 10)))).toBe(1_700_000_000_001);
+    expect(next.slice(10)).toBe('0000000000000001');
+    expect(next > overflowed).toBe(true);
   });
 
   test('keeps monotonic ordering across the overflow boundary', () => {
