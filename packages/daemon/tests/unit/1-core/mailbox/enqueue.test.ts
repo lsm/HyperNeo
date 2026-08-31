@@ -169,6 +169,36 @@ describe('enqueueMailboxEntry', () => {
       expect(mailbox.rowCount()).toBe(0);
     });
 
+    test('an entry whose toJSON returns undefined rejects with zero rows written', () => {
+      const entry = {
+        ...makeEntry(),
+        toJSON: () => undefined,
+      } as unknown as MailboxEntry;
+
+      const outcome = enqueueMailboxEntry(mailbox.jobQueue, entry);
+
+      expect(outcome.kind).toBe('rejected');
+      if (outcome.kind === 'rejected') {
+        expect(outcome.reason).toContain('entry failed serialization:');
+      }
+      expect(mailbox.rowCount()).toBe(0);
+    });
+
+    test('an entry whose toJSON returns null rejects with zero rows written', () => {
+      const entry = {
+        ...makeEntry(),
+        toJSON: () => null,
+      } as unknown as MailboxEntry;
+
+      const outcome = enqueueMailboxEntry(mailbox.jobQueue, entry);
+
+      expect(outcome).toEqual({
+        kind: 'rejected',
+        reason: 'entry failed serialization: serialized entry is not a JSON object',
+      });
+      expect(mailbox.rowCount()).toBe(0);
+    });
+
     test('a rejected serialization leaves the queue untouched for later valid entries', () => {
       const bad = {
         ...makeEntry(),

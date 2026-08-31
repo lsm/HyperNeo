@@ -11,16 +11,23 @@ export function enqueueMailboxEntry(
   jobQueue: JobQueueRepository,
   entry: MailboxEntry
 ): MailboxEnqueueOutcome {
-  let serialized: string;
+  let payload: Record<string, unknown>;
   try {
-    serialized = JSON.stringify(entry);
+    const parsed: unknown = JSON.parse(JSON.stringify(entry));
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {
+        kind: 'rejected',
+        reason: 'entry failed serialization: serialized entry is not a JSON object',
+      };
+    }
+    payload = parsed as Record<string, unknown>;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { kind: 'rejected', reason: `entry failed serialization: ${message}` };
   }
   jobQueue.enqueueUniquePending({
     queue: MAILBOX_LANE,
-    payload: JSON.parse(serialized) as Record<string, unknown>,
+    payload,
     priority: entry.policy.priority,
     matchPayload: { id: entry.id },
     activeStatuses: ['pending', 'processing'],
