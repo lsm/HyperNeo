@@ -119,12 +119,22 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
+function isAddressField(value: unknown): value is string {
+  if (!isNonEmptyString(value)) return false;
+  try {
+    encodeURIComponent(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function projectStoredAddress(value: unknown): MailboxAddress | null {
   if (typeof value !== 'object' || value === null) return null;
   const record = value as Record<string, unknown>;
   if (record.kind === 'session') {
     const sessionId = record.sessionId;
-    if (!isNonEmptyString(sessionId)) return null;
+    if (!isAddressField(sessionId)) return null;
     return { kind: 'session', sessionId };
   }
   if (record.kind === 'agent') {
@@ -132,10 +142,10 @@ function projectStoredAddress(value: unknown): MailboxAddress | null {
     const handle = record.handle;
     const taskId = record.taskId;
     const node = record.node;
-    if (!isNonEmptyString(spaceId)) return null;
-    if (!isNonEmptyString(handle) || handle.includes('/')) return null;
-    if (taskId !== undefined && !isNonEmptyString(taskId)) return null;
-    if (node !== undefined && !isNonEmptyString(node)) return null;
+    if (!isAddressField(spaceId)) return null;
+    if (!isAddressField(handle) || handle.includes('/')) return null;
+    if (taskId !== undefined && !isAddressField(taskId)) return null;
+    if (node !== undefined && !isAddressField(node)) return null;
     return {
       kind: 'agent',
       spaceId,
@@ -164,7 +174,15 @@ export function parseMailboxEntry(
   if (typeof policySource !== 'object' || policySource === null || Array.isArray(policySource)) {
     return null;
   }
-  const policy = toMailboxPolicy(policySource as Partial<MailboxEntryPolicy>);
+  const policyRecord = policySource as Record<string, unknown>;
+  if (
+    policyRecord.ttlMs === undefined ||
+    policyRecord.maxAttempts === undefined ||
+    policyRecord.priority === undefined
+  ) {
+    return null;
+  }
+  const policy = toMailboxPolicy(policyRecord as Partial<MailboxEntryPolicy>);
   if ('reason' in policy) return null;
   return { id, to, origin, message: message.message, status: 'enqueued', policy: policy.value };
 }

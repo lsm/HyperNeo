@@ -460,6 +460,26 @@ describe('parseMailboxEntry', () => {
         'a non-string agent node',
         { ...sessionPayload, to: { kind: 'agent', spaceId: 'sp', handle: 'c', node: 3 } },
       ],
+      [
+        'an unpaired surrogate in session sessionId',
+        { ...sessionPayload, to: { kind: 'session', sessionId: '\uD800' } },
+      ],
+      [
+        'an unpaired surrogate in agent spaceId',
+        { ...sessionPayload, to: { kind: 'agent', spaceId: '\uD800', handle: 'c' } },
+      ],
+      [
+        'an unpaired surrogate in agent handle',
+        { ...sessionPayload, to: { kind: 'agent', spaceId: 'sp', handle: '\uD800' } },
+      ],
+      [
+        'an unpaired surrogate in agent taskId',
+        { ...sessionPayload, to: { kind: 'agent', spaceId: 'sp', handle: 'c', taskId: '\uD800' } },
+      ],
+      [
+        'an unpaired surrogate in agent node',
+        { ...sessionPayload, to: { kind: 'agent', spaceId: 'sp', handle: 'c', node: '\uD800' } },
+      ],
       ['an empty origin', { ...sessionPayload, origin: '' }],
       ['a non-string origin', { ...sessionPayload, origin: 42 }],
       [
@@ -482,6 +502,16 @@ describe('parseMailboxEntry', () => {
         'an out-of-range policy field',
         { ...sessionPayload, policy: { ttlMs: 0, maxAttempts: 5, priority: 0 } },
       ],
+      ['a policy missing ttlMs', { ...sessionPayload, policy: { maxAttempts: 5, priority: 0 } }],
+      [
+        'a policy missing maxAttempts',
+        { ...sessionPayload, policy: { ttlMs: 60_000, priority: 0 } },
+      ],
+      [
+        'a policy missing priority',
+        { ...sessionPayload, policy: { ttlMs: 60_000, maxAttempts: 5 } },
+      ],
+      ['a policy with only priority', { ...sessionPayload, policy: { priority: 3 } }],
       ['a string policy', { ...sessionPayload, policy: 'standard' }],
       ['an array policy', { ...sessionPayload, policy: [] }],
       ['a null policy', { ...sessionPayload, policy: null }],
