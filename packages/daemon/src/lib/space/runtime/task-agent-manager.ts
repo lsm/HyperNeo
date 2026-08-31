@@ -1568,7 +1568,7 @@ export class TaskAgentManager {
         return;
       }
       repo.markAttemptFailed(row.id, 'delivery dead-lettered before consumption');
-      this.retireNodeAgentWatchers(row.id);
+      this.watchedNodeAgentPendingRows.delete(`${sessionId}::${row.id}`);
       this.scheduleNodeAgentDeliveryReconciliation(row, sessionId);
     };
     if (probeDeliveryStatus() === 'consumed') {
@@ -1751,7 +1751,7 @@ export class TaskAgentManager {
     const drainOutcome = await runSpaceAgentPendingDrain(drainDeps, {
       workflowRunId,
       spaceChatSessionId,
-      activeDeliveryIds: this.watchedNodeAgentPendingRowIds(workflowRunId),
+      activeDeliveryIds: this.activeDeliveryIdsForRun(workflowRunId),
     });
     if (drainOutcome.action === 'skip') return;
 
@@ -1868,7 +1868,8 @@ export class TaskAgentManager {
           status === 'enqueued' ||
           status === 'submitted' ||
           status === 'deferred' ||
-          status === 'consumed'
+          status === 'consumed' ||
+          status === 'failed'
         );
       });
       if (live) ids.push(row.id);
@@ -4546,6 +4547,9 @@ export class TaskAgentManager {
           (backlogReplayFailed || !replay.success || this.clearStillBlocked(session))
         ) {
           if (existing) {
+            if (existing.sendStatus === 'failed') {
+              await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
+            }
             const flippedDbId = await flipDeliveryRowToDeferred(deliveryRows, sessionId, messageId);
             return flippedDbId ?? messageId;
           }
