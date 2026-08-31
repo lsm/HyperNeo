@@ -179,6 +179,7 @@ describe('createMailboxEntry', () => {
     ['zero maxAttempts', { maxAttempts: 0 }],
     ['fractional maxAttempts', { maxAttempts: 2.5 }],
     ['negative priority', { priority: -1 }],
+    ['negative zero priority', { priority: -0 }],
     ['fractional priority', { priority: 1.5 }],
     ['non-numeric priority', { priority: 'high' }],
     ['unknown policy key', { backoffMs: 100 } as Record<string, unknown>],
@@ -222,6 +223,23 @@ describe('createMailboxEntry', () => {
       TypeError
     );
   });
+
+  test('throws TypeError on undefined optional address fields', () => {
+    expect(() =>
+      createMailboxEntry({
+        to: { kind: 'agent', spaceId: 'sp-1', handle: 'coder', taskId: undefined },
+        message: stringMessage(),
+        origin: 'web',
+      })
+    ).toThrow(TypeError);
+    expect(() =>
+      createMailboxEntry({
+        to: { kind: 'agent', spaceId: 'sp-1', handle: 'coder', node: undefined },
+        message: stringMessage(),
+        origin: 'web',
+      })
+    ).toThrow('must not carry undefined fields');
+  });
 });
 
 describe('isValidMailboxEntry', () => {
@@ -256,6 +274,13 @@ describe('isValidMailboxEntry', () => {
       }),
     ],
     ['wrong status', (entry: Record<string, unknown>) => ({ ...entry, status: 'delivered' })],
+    [
+      'address with undefined optional field',
+      (entry: Record<string, unknown>) => ({
+        ...entry,
+        to: { kind: 'agent', spaceId: 'sp-1', handle: 'coder', taskId: undefined },
+      }),
+    ],
     [
       'missing status',
       (entry: Record<string, unknown>) => {
@@ -307,6 +332,17 @@ describe('mailbox entry JSON law', () => {
     ['priority present', { ...stringMessage(), priority: 'next' }],
   ])('round-trips a constructed entry with %s', (_label, message) => {
     const entry = createMailboxEntry({ to: TO, message, origin: 'web:room-9' });
+    const roundTripped = JSON.parse(JSON.stringify(entry));
+    expect(roundTripped).toEqual(entry);
+    expect(isValidMailboxEntry(roundTripped)).toBe(true);
+  });
+
+  test('round-trips a fully populated agent address', () => {
+    const entry = createMailboxEntry({
+      to: { kind: 'agent', spaceId: 'sp-1', handle: 'coder', taskId: '1725', node: 'Coding' },
+      message: stringMessage(),
+      origin: 'web',
+    });
     const roundTripped = JSON.parse(JSON.stringify(entry));
     expect(roundTripped).toEqual(entry);
     expect(isValidMailboxEntry(roundTripped)).toBe(true);

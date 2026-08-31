@@ -52,6 +52,13 @@ function firstUnexpectedKey(record: Record<string, unknown>, allowed: string[]):
   return null;
 }
 
+function hasUndefinedOwnValue(record: Record<string, unknown>): boolean {
+  for (const key of Object.keys(record)) {
+    if (record[key] === undefined) return true;
+  }
+  return false;
+}
+
 function validateTextBlock(block: unknown): string | null {
   if (!isPlainObject(block)) return 'content block must be an object';
   const blockKey = firstUnexpectedKey(block, BLOCK_KEYS);
@@ -103,6 +110,9 @@ function validateEntryPolicy(policy: unknown): string | null {
       return `mailbox entry policy ${key} must be a finite integer`;
     }
     if (key === 'priority') {
+      if (Object.is(value, -0)) {
+        return 'mailbox entry policy priority must not be negative zero';
+      }
       if (value < 0) return 'mailbox entry policy priority must be non-negative';
     } else if (value < 1) {
       return `mailbox entry policy ${key} must be positive`;
@@ -123,6 +133,9 @@ export function createMailboxEntry(args: {
   }
   if (!isValidAddress(args.to)) {
     throw new TypeError('invalid mailbox entry address');
+  }
+  if (hasUndefinedOwnValue(args.to as unknown as Record<string, unknown>)) {
+    throw new TypeError('mailbox entry address must not carry undefined fields');
   }
   if (typeof args.origin !== 'string' || args.origin.length === 0) {
     throw new TypeError('mailbox entry origin must be a non-empty string');
@@ -151,6 +164,7 @@ export function isValidMailboxEntry(entry: unknown): boolean {
   if (firstUnexpectedKey(entry, ENTRY_KEYS) !== null) return false;
   if (typeof entry.id !== 'string' || !isUlid(entry.id)) return false;
   if (!isValidAddress(entry.to as MailboxAddress)) return false;
+  if (hasUndefinedOwnValue(entry.to as unknown as Record<string, unknown>)) return false;
   if (typeof entry.origin !== 'string' || entry.origin.length === 0) return false;
   if (validateMailboxMessage(entry.message) !== null) return false;
   if (entry.status !== 'enqueued') return false;
