@@ -158,23 +158,27 @@ export function createMailboxEntry(args: {
   origin: string;
   policy?: Partial<MailboxEntryPolicy>;
 }): MailboxEntry {
-  const messageViolation = validateMailboxMessage(args.message);
+  const to = args.to;
+  const message = args.message;
+  const origin = args.origin;
+  const overrides = args.policy;
+  const messageViolation = validateMailboxMessage(message);
   if (messageViolation !== null) {
     throw new TypeError(`invalid mailbox message: ${messageViolation}`);
   }
-  if (!isValidAddress(args.to)) {
+  if (!isValidAddress(to)) {
     throw new TypeError('invalid mailbox entry: "to" is not a valid mailbox address');
   }
-  if (!isNonEmptyString(args.origin)) {
+  if (!isNonEmptyString(origin)) {
     throw new TypeError('invalid mailbox entry: origin must be a non-empty string');
   }
   return {
     id: createUlid(),
-    to: args.to,
-    origin: args.origin,
-    message: args.message,
+    to,
+    origin,
+    message,
     status: 'enqueued',
-    policy: resolvePolicy(args.policy),
+    policy: resolvePolicy(overrides),
   };
 }
 

@@ -292,6 +292,27 @@ describe('createMailboxEntry', () => {
     const badTo = tamper(entryArgs(), { to: { kind: 'bogus' } }) as CreateArgs;
     expect(() => createMailboxEntry(badTo)).toThrow(TypeError);
   });
+
+  test('snapshots inputs once, so accessor args cannot vary between validation and construction', () => {
+    const validMessage: MailboxMessage = {
+      type: 'user',
+      message: { content: 'hello' },
+      parent_tool_use_id: null,
+    };
+    let reads = 0;
+    const args = {
+      to: TO,
+      origin: ORIGIN,
+      get message(): MailboxMessage {
+        reads += 1;
+        return reads === 1 ? validMessage : ('corrupted' as unknown as MailboxMessage);
+      },
+    } as unknown as CreateArgs;
+    const entry = createMailboxEntry(args);
+    expect(entry.message).toEqual(validMessage);
+    expect(isValidMailboxEntry(entry)).toBe(true);
+    expect(reads).toBe(1);
+  });
 });
 
 describe('isValidMailboxEntry', () => {
