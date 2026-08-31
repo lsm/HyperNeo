@@ -4,11 +4,16 @@ import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { ClearConversationCancelledError } from '../../../../src/lib/agent/agent-session.ts';
 import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 import {
+  persistPrompt,
+  PromptContentConflictError,
+} from '../../../../src/lib/agent/message-delivery-outbox';
+import {
   QueryModeHandler,
   type QueryModeHandlerContext,
 } from '../../../../src/lib/agent/query-mode-handler.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { createOutboxTestDb, type OutboxTestDb } from '../../../helpers/outbox-test-db';
 
 const SESSION_ID = 'reviewer-session-1';
 const RUN_ID = 'run-1';
@@ -32,6 +37,7 @@ function makeManager(opts: {
   failedDbId?: string;
   enqueueThrows?: boolean;
   unconsumedCounts?: Record<string, number>;
+  outbox?: OutboxTestDb;
 }): {
   manager: TaskAgentManager;
   session: Record<string, ReturnType<typeof mock>>;
@@ -88,20 +94,28 @@ function makeManager(opts: {
 
   const config = {
     db: {
-      getDatabase: () => ({}),
+      getDatabase: () => (opts.outbox ? opts.outbox.db : {}),
       saveUserMessage,
       getUserMessageIdsByStatus,
-      getSDKMessageRepo: () => ({
-        getDeliveryContent: () => opts.deliveryContent ?? null,
-        reopenDeliveryByUuid,
-        markDeliveryFailedByUuid,
-        markDeliveryDeferredByUuid,
-      }),
-      getJobQueueRepo: () => ({
-        activeDeliveryMessageUuids: () =>
-          new Set<string>(opts.hasActiveDeliveryJob ? ['pending-job'] : []),
-        enqueue: jobQueueEnqueue,
-      }),
+      getSDKMessageRepo: () =>
+        opts.outbox
+          ? opts.outbox.sdkRepo
+          : {
+              getDeliveryContent: () => opts.deliveryContent ?? null,
+              reopenDeliveryByUuid,
+              markDeliveryFailedByUuid,
+              markDeliveryDeferredByUuid,
+            },
+      getJobQueueRepo: () =>
+        opts.outbox
+          ? opts.enqueueThrows
+            ? opts.outbox.breakingEnqueue()
+            : opts.outbox.jobQueue
+          : {
+              activeDeliveryMessageUuids: () =>
+                new Set<string>(opts.hasActiveDeliveryJob ? ['pending-job'] : []),
+              enqueue: jobQueueEnqueue,
+            },
     },
     internalEventBus: {
       subscribe: mock(() => () => {}),
@@ -184,14 +198,44 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     } as unknown as AgentSession;
   }
 
+  function seededUserMessage(uuid: string, text: string): SDKMessage {
+    return {
+      type: 'user',
+      uuid,
+      session_id: SESSION_ID,
+      parent_tool_use_id: null,
+      isSynthetic: true,
+      inputKind: 'task',
+      message: { role: 'user', content: [{ type: 'text', text }] },
+    } as SDKMessage;
+  }
+
+  function seedDeliveryRow(outbox: OutboxTestDb, uuid: string, text: string): string {
+    const { dbMessageId } = persistPrompt({
+      db: outbox.db,
+      sdkMessageRepo: outbox.sdkRepo,
+      jobQueue: outbox.jobQueue,
+      sessionId: SESSION_ID,
+      message: seededUserMessage(uuid, text),
+      delivery: { origin: 'space_inject' },
+    });
+    return dbMessageId;
+  }
+
   it('first inject persists the row and enqueues a durable job', async () => {
-    const { manager, session } = makeManager({});
+    const outbox = createOutboxTestDb();
+    const { manager, session } = makeManager({ outbox });
     indexSession(manager, liveSession(session));
 
-    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+    const dbId = await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true
+    );
 
-    expect(session.saveUserMessage).toHaveBeenCalledTimes(1);
-    expect(session.jobQueueEnqueue).toHaveBeenCalled();
+    expect(typeof dbId).toBe('string');
+    expect(outbox.userRowCount(SESSION_ID)).toBe(1);
+    expect(outbox.pendingDeliveryJobCount(SESSION_ID)).toBe(1);
   });
 
   it('a retry finding an existing CONSUMED row does not re-persist or re-enqueue (no re-drive)', async () => {
@@ -204,15 +248,53 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     expect(session.jobQueueEnqueue).not.toHaveBeenCalled();
   });
 
-  it('a retry finding an existing FAILED row reopens it and re-enqueues without a duplicate row', async () => {
-    const { manager, session } = makeManager({ deliveryContent: { sendStatus: 'failed' } });
+  it('a retry finding an existing FAILED row retries it through the mailbox without a duplicate row', async () => {
+    const outbox = createOutboxTestDb();
+    const dbId = seedDeliveryRow(outbox, 'msg-failed-retry', '─── Message from coder ───');
+    outbox.completeDeliveryJobs(SESSION_ID, 'msg-failed-retry');
+    outbox.sdkRepo.updateMessageStatus([dbId], 'failed');
+    const { manager, session } = makeManager({ outbox });
     indexSession(manager, liveSession(session));
 
-    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+    const returned = await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true,
+      undefined,
+      'immediate',
+      undefined,
+      'msg-failed-retry'
+    );
 
-    expect(session.reopenDeliveryByUuid).toHaveBeenCalledTimes(1);
-    expect(session.saveUserMessage).not.toHaveBeenCalled();
-    expect(session.jobQueueEnqueue).toHaveBeenCalled();
+    expect(returned).toBe(dbId);
+    expect(outbox.sendStatus(SESSION_ID, 'msg-failed-retry')).toBe('enqueued');
+    expect(outbox.userRowCount(SESSION_ID)).toBe(1);
+    expect(outbox.pendingDeliveryJobCount(SESSION_ID, 'msg-failed-retry')).toBe(1);
+  });
+
+  it('a failed-row retry with conflicting content rejects and leaves the row failed with no delivery job', async () => {
+    const outbox = createOutboxTestDb();
+    const dbId = seedDeliveryRow(outbox, 'msg-conflict-retry', 'original body');
+    outbox.completeDeliveryJobs(SESSION_ID, 'msg-conflict-retry');
+    outbox.sdkRepo.updateMessageStatus([dbId], 'failed');
+    const { manager, session } = makeManager({ outbox });
+    indexSession(manager, liveSession(session));
+
+    await expect(
+      manager.injectSubSessionMessage(
+        SESSION_ID,
+        'conflicting body',
+        true,
+        undefined,
+        'immediate',
+        undefined,
+        'msg-conflict-retry'
+      )
+    ).rejects.toBeInstanceOf(PromptContentConflictError);
+
+    expect(outbox.sendStatus(SESSION_ID, 'msg-conflict-retry')).toBe('failed');
+    expect(outbox.userRowCount(SESSION_ID)).toBe(1);
+    expect(outbox.pendingDeliveryJobCount(SESSION_ID, 'msg-conflict-retry')).toBe(0);
   });
 
   it('a cancelled clear during a FAILED-row retry aborts before reopening the row', async () => {
@@ -346,14 +428,19 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
   });
 
   it('a fresh enqueued injection publishes messages.statusChanged', async () => {
-    const { manager, session } = makeManager({});
+    const outbox = createOutboxTestDb();
+    const { manager, session } = makeManager({ outbox });
     indexSession(manager, liveSession(session));
 
-    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+    const dbId = await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true
+    );
 
     expect(session.publishStatusChanged).toHaveBeenCalledWith('messages.statusChanged', {
       sessionId: SESSION_ID,
-      messageIds: ['db-id'],
+      messageIds: [dbId],
       status: 'enqueued',
     });
   });
@@ -381,20 +468,22 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     expect(statuses).toContain('deferred');
   });
 
-  it('publishes a failed status when the delivery job cannot be enqueued', async () => {
-    const { manager, session } = makeManager({ enqueueThrows: true, failedDbId: 'db-id' });
+  it('a delivery enqueue failure persists nothing and publishes no failed status', async () => {
+    const outbox = createOutboxTestDb();
+    const { manager, session } = makeManager({ outbox, enqueueThrows: true });
     indexSession(manager, liveSession(session));
 
-    await manager
-      .injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
-      .catch(() => {});
+    await expect(
+      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+    ).rejects.toThrow('job queue unavailable');
 
-    expect(session.markDeliveryFailedByUuid).toHaveBeenCalled();
-    expect(session.publishStatusChanged).toHaveBeenCalledWith('messages.statusChanged', {
-      sessionId: SESSION_ID,
-      messageIds: ['db-id'],
-      status: 'failed',
-    });
+    expect(outbox.userRowCount(SESSION_ID)).toBe(0);
+    expect(outbox.pendingDeliveryJobCount(SESSION_ID)).toBe(0);
+    const failedPublishes = session.publishStatusChanged.mock.calls.filter(
+      (call: unknown[]) =>
+        call[0] === 'messages.statusChanged' && (call[1] as { status?: string }).status === 'failed'
+    );
+    expect(failedPublishes).toHaveLength(0);
   });
 
   it('a defer branch over an existing deferred row re-marks nothing and reuses the existing message id', async () => {

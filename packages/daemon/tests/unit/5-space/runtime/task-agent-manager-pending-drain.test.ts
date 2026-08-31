@@ -12,6 +12,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
+import { createOutboxTestDb, type OutboxTestDb } from '../../../helpers/outbox-test-db';
 
 const NODE_ID = 'node-build';
 const NODE_NAME = 'Build';
@@ -975,7 +976,8 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
 
   function makeGuardManager(
     taskStatus: string | null,
-    runStatus: string
+    runStatus: string,
+    outbox?: OutboxTestDb
   ): {
     manager: TaskAgentManager;
     saveUserMessage: ReturnType<typeof mock>;
@@ -1011,19 +1013,25 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
 
     const manager = new TaskAgentManager({
       db: {
-        getDatabase: () => ({}),
+        getDatabase: () => (outbox ? outbox.db : {}),
         saveUserMessage,
         getUserMessageIdsByStatus: mock(() => []),
-        getSDKMessageRepo: () => ({
-          getDeliveryContent: () => null,
-          reopenDeliveryByUuid: mock(() => null),
-          markDeliveryDeferredByUuid: mock(() => null),
-          markDeliveryFailedByUuid: mock(() => null),
-        }),
-        getJobQueueRepo: () => ({
-          activeDeliveryMessageUuids: () => new Set<string>(),
-          enqueue: jobQueueEnqueue,
-        }),
+        getSDKMessageRepo: () =>
+          outbox
+            ? outbox.sdkRepo
+            : {
+                getDeliveryContent: () => null,
+                reopenDeliveryByUuid: mock(() => null),
+                markDeliveryDeferredByUuid: mock(() => null),
+                markDeliveryFailedByUuid: mock(() => null),
+              },
+        getJobQueueRepo: () =>
+          outbox
+            ? outbox.jobQueue
+            : {
+                activeDeliveryMessageUuids: () => new Set<string>(),
+                enqueue: jobQueueEnqueue,
+              },
       },
       internalEventBus: { subscribe: mock(() => () => {}), publish: mock(async () => {}) },
       nodeExecutionRepo: {
@@ -1070,14 +1078,14 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
   });
 
   it('lets done task and run states through to the durable injection shell', async () => {
-    const { manager, saveUserMessage, jobQueueEnqueue } = makeGuardManager('done', 'done');
+    const outbox = createOutboxTestDb();
+    const { manager } = makeGuardManager('done', 'done', outbox);
 
     const dbId = await manager.injectSubSessionMessage(GUARD_SESSION_ID, 'note', true);
 
-    expect(dbId).toBe('db-id');
-    expect(saveUserMessage).toHaveBeenCalledTimes(1);
-    expect(saveUserMessage.mock.calls[0][2]).toBe('enqueued');
-    expect(jobQueueEnqueue).toHaveBeenCalledTimes(1);
+    expect(typeof dbId).toBe('string');
+    expect(outbox.userRowCount(GUARD_SESSION_ID)).toBe(1);
+    expect(outbox.pendingDeliveryJobCount(GUARD_SESSION_ID)).toBe(1);
   });
 
   it('rejects runtime-origin injections when the canonical task is done (#3109)', async () => {
@@ -1094,7 +1102,10 @@ describe('pending drain through the v2 injection shell', () => {
   const V2_RUN_ID = 'run-v2';
   const V2_NODE_ID = 'node-coder';
 
-  function makeV2Harness(deliveryContent: { sendStatus: string }): {
+  function makeV2Harness(
+    deliveryContent: { sendStatus: string } | null,
+    outbox?: OutboxTestDb
+  ): {
     manager: TaskAgentManager;
     saveUserMessage: ReturnType<typeof mock>;
     jobQueueEnqueue: ReturnType<typeof mock>;
@@ -1151,19 +1162,25 @@ describe('pending drain through the v2 injection shell', () => {
 
     const manager = new TaskAgentManager({
       db: {
-        getDatabase: () => ({}),
+        getDatabase: () => (outbox ? outbox.db : {}),
         saveUserMessage,
         getUserMessageIdsByStatus: mock(() => []),
-        getSDKMessageRepo: () => ({
-          getDeliveryContent: () => deliveryContent,
-          reopenDeliveryByUuid,
-          markDeliveryDeferredByUuid,
-          markDeliveryFailedByUuid: mock(() => null),
-        }),
-        getJobQueueRepo: () => ({
-          activeDeliveryMessageUuids: () => new Set<string>(),
-          enqueue: jobQueueEnqueue,
-        }),
+        getSDKMessageRepo: () =>
+          outbox
+            ? outbox.sdkRepo
+            : {
+                getDeliveryContent: () => deliveryContent,
+                reopenDeliveryByUuid,
+                markDeliveryDeferredByUuid,
+                markDeliveryFailedByUuid: mock(() => null),
+              },
+        getJobQueueRepo: () =>
+          outbox
+            ? outbox.jobQueue
+            : {
+                activeDeliveryMessageUuids: () => new Set<string>(),
+                enqueue: jobQueueEnqueue,
+              },
       },
       internalEventBus: { subscribe: mock(() => () => {}), publish: mock(async () => {}) },
       nodeExecutionRepo: {
@@ -1195,18 +1212,21 @@ describe('pending drain through the v2 injection shell', () => {
     };
   }
 
-  it('a drain retry over a failed delivery row reopens it and re-enqueues without a duplicate row', async () => {
-    const h = makeV2Harness({ sendStatus: 'failed' });
+  it('a drain retry over a failed delivery row retries through the mailbox without a duplicate row', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    const dbId = outbox.userRowIdByUuid(V2_SESSION_ID, 'row-v2');
+    expect(dbId).not.toBeNull();
+    outbox.completeDeliveryJobs(V2_SESSION_ID, 'row-v2');
+    outbox.sdkRepo.updateMessageStatus([dbId as string], 'failed');
 
     await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
 
-    expect(h.reopenDeliveryByUuid).toHaveBeenCalledWith(V2_SESSION_ID, 'row-v2');
-    expect(h.saveUserMessage).not.toHaveBeenCalled();
-    expect(h.jobQueueEnqueue).toHaveBeenCalledTimes(1);
-    expect(
-      (h.jobQueueEnqueue.mock.calls[0][0] as { payload?: { messageUuid?: string } }).payload
-        ?.messageUuid
-    ).toBe('row-v2');
+    expect(outbox.sendStatus(V2_SESSION_ID, 'row-v2')).toBe('enqueued');
+    expect(outbox.userRowCount(V2_SESSION_ID)).toBe(1);
+    expect(outbox.pendingDeliveryJobCount(V2_SESSION_ID, 'row-v2')).toBe(1);
     expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
   });
 
