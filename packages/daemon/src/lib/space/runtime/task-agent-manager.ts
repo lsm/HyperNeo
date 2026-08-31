@@ -335,7 +335,7 @@ export class TaskAgentManager {
   private readonly nodeAgentRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly watchedNodeAgentPendingRows = new Map<
     string,
-    { handle: SpaceAgentLateSettlementHandle; workflowRunId: string }
+    { handle: SpaceAgentLateSettlementHandle; workflowRunId: string; rowId: string }
   >();
   private readonly spaceAgentDrainsInFlight = new Set<string>();
   private readonly spaceAgentDrainRerunQueued = new Set<string>();
@@ -1448,10 +1448,7 @@ export class TaskAgentManager {
     const repo = this.config.pendingMessageRepo;
     if (!repo) return;
 
-    const activeDeliveryIds = [
-      ...this.activeSpaceDeliveryIdsForRun(workflowRunId),
-      ...this.watchedNodeAgentPendingRowIds(workflowRunId),
-    ];
+    const activeDeliveryIds = this.activeDeliveryIdsForRun(workflowRunId);
     repo.enforceRetention({ runId: workflowRunId, excludeIds: activeDeliveryIds });
     repo.expireStale(workflowRunId, activeDeliveryIds);
 
@@ -1504,31 +1501,34 @@ export class TaskAgentManager {
     }
   }
 
+  private probeSettledDeliveryStatus(sessionId: string, messageId: string): string | undefined {
+    const sdkRepo = this.config.db.getSDKMessageRepo?.();
+    if (!sdkRepo) return undefined;
+    if (
+      sdkRepo.hasConsumptionEvidence?.(sessionId, messageId) ||
+      (sdkRepo.getSettledDeliveryMessageId?.(sessionId, messageId) ?? null) !== null
+    ) {
+      return 'consumed';
+    }
+    return sdkRepo.getDeliveryContent(sessionId, messageId)?.sendStatus ?? undefined;
+  }
+
   private settleNodeAgentPendingRow(
     repo: NonNullable<TaskAgentManagerConfig['pendingMessageRepo']>,
     row: PendingAgentMessageRecord,
     sessionId: string
   ): void {
-    const probeDeliveryStatus = () => {
-      const sdkRepo = this.config.db.getSDKMessageRepo?.();
-      if (!sdkRepo) return undefined;
-      if (
-        sdkRepo.hasConsumptionEvidence?.(sessionId, row.id) ||
-        (sdkRepo.getSettledDeliveryMessageId?.(sessionId, row.id) ?? null) !== null
-      ) {
-        return 'consumed';
-      }
-      return sdkRepo.getDeliveryContent(sessionId, row.id)?.sendStatus;
-    };
+    const probeDeliveryStatus = () => this.probeSettledDeliveryStatus(sessionId, row.id);
+    const watchKey = `${sessionId}::${row.id}`;
     const settleDelivered = (): void => {
       if (repo.getById(row.id)?.status !== 'pending') return;
       repo.markDelivered(row.id, sessionId);
       this.emitPendingDelivered(row.id, sessionId, row);
-      this.watchedNodeAgentPendingRows.delete(row.id);
+      this.watchedNodeAgentPendingRows.delete(watchKey);
     };
     const watchDelivery = (): void => {
       repo.deferExpiration?.([row.id], LATE_SETTLE_HORIZON_MS + 60_000);
-      this.watchedNodeAgentPendingRows.delete(row.id);
+      this.watchedNodeAgentPendingRows.delete(watchKey);
       const handle = this.lateSettlements.arm({
         sessionId,
         messageId: row.id,
@@ -1536,7 +1536,11 @@ export class TaskAgentManager {
         onFailed: () => settleFailed(),
         getSendStatus: probeDeliveryStatus,
       });
-      this.watchedNodeAgentPendingRows.set(row.id, { handle, workflowRunId: row.workflowRunId });
+      this.watchedNodeAgentPendingRows.set(watchKey, {
+        handle,
+        workflowRunId: row.workflowRunId,
+        rowId: row.id,
+      });
     };
     const settleFailed = (): void => {
       if (repo.getById(row.id)?.status !== 'pending') return;
@@ -1550,7 +1554,7 @@ export class TaskAgentManager {
         return;
       }
       repo.markAttemptFailed(row.id, 'delivery dead-lettered before consumption');
-      this.watchedNodeAgentPendingRows.delete(row.id);
+      this.watchedNodeAgentPendingRows.delete(watchKey);
       this.scheduleNodeAgentDeliveryReconciliation(row, sessionId);
     };
     if (probeDeliveryStatus() === 'consumed') {
@@ -1561,11 +1565,11 @@ export class TaskAgentManager {
   }
 
   private watchedNodeAgentPendingRowIds(workflowRunId: string): string[] {
-    const ids: string[] = [];
-    for (const [rowId, entry] of this.watchedNodeAgentPendingRows) {
-      if (entry.workflowRunId === workflowRunId) ids.push(rowId);
+    const ids = new Set<string>();
+    for (const entry of this.watchedNodeAgentPendingRows.values()) {
+      if (entry.workflowRunId === workflowRunId) ids.add(entry.rowId);
     }
-    return ids;
+    return [...ids];
   }
 
   private scheduleNodeAgentDeliveryReconciliation(
@@ -1652,7 +1656,7 @@ export class TaskAgentManager {
       repo,
       resolveReplySession,
       probeDeliveryStatus: (sessionId, messageId) =>
-        this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, messageId)?.sendStatus,
+        this.probeSettledDeliveryStatus(sessionId, messageId),
       onSettled: (row, deliveredSessionId) =>
         this.emitPendingDelivered(row.id, deliveredSessionId, row),
       onFailed: () => this.scheduleSpaceAgentReconciliation(spaceId, workflowRunId),
@@ -1662,8 +1666,7 @@ export class TaskAgentManager {
           replyToSession && replyToSession !== spaceChatSessionId
             ? [replyToSession, spaceChatSessionId]
             : [spaceChatSessionId];
-        const probe = (sessionId: string) =>
-          this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, row.id)?.sendStatus;
+        const probe = (sessionId: string) => this.probeSettledDeliveryStatus(sessionId, row.id);
         const handles: import('./space-agent-message-delivery.ts').SpaceAgentLateSettlementHandle[] =
           [];
         let done = false;
@@ -1725,6 +1728,7 @@ export class TaskAgentManager {
     const drainOutcome = await runSpaceAgentPendingDrain(drainDeps, {
       workflowRunId,
       spaceChatSessionId,
+      activeDeliveryIds: this.watchedNodeAgentPendingRowIds(workflowRunId),
     });
     if (drainOutcome.action === 'skip') return;
 
@@ -1812,7 +1816,14 @@ export class TaskAgentManager {
     this.spaceAgentRetryTimers.set(key, timer);
   }
 
-  activeSpaceDeliveryIdsForRun(workflowRunId: string): string[] {
+  activeDeliveryIdsForRun(workflowRunId: string): string[] {
+    return [
+      ...this.activeSpaceDeliveryIdsForRun(workflowRunId),
+      ...this.watchedNodeAgentPendingRowIds(workflowRunId),
+    ];
+  }
+
+  private activeSpaceDeliveryIdsForRun(workflowRunId: string): string[] {
     const repo = this.config.pendingMessageRepo;
     if (!repo) return [];
     return collectActiveSpaceDeliveryIds({
@@ -1821,7 +1832,7 @@ export class TaskAgentManager {
       spaceChatSessionId: `space:chat:${this.config.workflowRunRepo?.getRun?.(workflowRunId)?.spaceId ?? ''}`,
       resolveReplySession: (row) => this.resolveSpaceAgentReplySession(row),
       probeDeliveryStatus: (sessionId, messageId) =>
-        this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, messageId)?.sendStatus,
+        this.probeSettledDeliveryStatus(sessionId, messageId),
     });
   }
 

@@ -1408,6 +1408,11 @@ describe('pending drain through the v2 injection shell', () => {
 
     await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
     expect(armed).toHaveLength(1);
+    const storedMessage = (
+      outbox.db
+        .prepare(`SELECT sdk_message AS m FROM sdk_messages WHERE sdk_uuid = ? LIMIT 1`)
+        .get('row-v2') as { m: string }
+    ).m;
     outbox.db
       .prepare(
         `INSERT INTO sdk_messages
@@ -1415,16 +1420,20 @@ describe('pending drain through the v2 injection shell', () => {
            replacement_metadata_normalized, consumed_seq)
          VALUES ('db-sibling-evidence', ?, 'user', ?, ?, 'failed', ?, 1, 7)`
       )
-      .run(
-        V2_SESSION_ID,
-        JSON.stringify({ message: { content: [] } }),
-        new Date().toISOString(),
-        'row-v2'
-      );
+      .run(V2_SESSION_ID, storedMessage, new Date().toISOString(), 'row-v2');
 
     await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
 
     expect(armed).toHaveLength(1);
     expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
+  });
+
+  it('exposes watched node rows in the unified active delivery id set', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+
+    expect(h.manager.activeDeliveryIdsForRun(V2_RUN_ID)).toContain('row-v2');
   });
 });

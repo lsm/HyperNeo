@@ -33,6 +33,7 @@ export interface SpaceAgentPendingDrainDeps {
 export interface SpaceAgentPendingDrainInput {
   workflowRunId: string;
   spaceChatSessionId: string;
+  activeDeliveryIds?: string[];
 }
 
 interface SpaceAgentPendingDrainCtx extends SpaceAgentPendingDrainInput {
@@ -53,7 +54,7 @@ function listRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
 
 function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
   const settledIds = new Set<string>();
-  const activeDeliveryIds: string[] = [];
+  const activeDeliveryIds: string[] = [...(ctx.activeDeliveryIds ?? [])];
   const excludedDeliveryIds: string[] = [];
   const pendingRetryIds: string[] = [];
   for (const row of ctx.listedRows ?? []) {

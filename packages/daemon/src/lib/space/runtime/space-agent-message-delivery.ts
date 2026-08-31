@@ -221,6 +221,20 @@ async function enqueuePrompt(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeli
   return { ...ctx, handoff };
 }
 
+function probeSettledSendStatus(
+  sdkRepo: SpaceAgentDeliveryDeps['sdkMessageRepo'],
+  sessionId: string,
+  messageId: string
+): string | null | undefined {
+  if (
+    sdkRepo.hasConsumptionEvidence?.(sessionId, messageId) ||
+    (sdkRepo.getSettledDeliveryMessageId?.(sessionId, messageId) ?? null) !== null
+  ) {
+    return 'consumed';
+  }
+  return sdkRepo.getDeliveryContent(sessionId, messageId)?.sendStatus;
+}
+
 function acceptOutcome(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx {
   const { sessionId, messageId } = ctx;
   const handoff = ctx.handoff ?? null;
@@ -243,8 +257,7 @@ function acceptOutcome(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx {
       messageId,
       onConsumed: ctx.deps.onConsumed,
       onFailed: ctx.deps.onLateFailure,
-      getSendStatus: () =>
-        ctx.deps.sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus,
+      getSendStatus: () => probeSettledSendStatus(ctx.deps.sdkMessageRepo, sessionId, messageId),
     });
   }
   return { ...ctx, outcome: { state: 'accepted', messageId, sessionId } };
