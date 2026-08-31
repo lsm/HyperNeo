@@ -11,6 +11,33 @@ import { isUlid } from '../../../../src/lib/space/mailbox/ulid';
 
 const TO: MailboxAddress = { kind: 'session', sessionId: 'sess-1' };
 
+class FakeAddress {
+  kind = 'session';
+  sessionId = 'sess-1';
+}
+
+function withHiddenField(payload: Record<string, unknown>, key: string): Record<string, unknown> {
+  const copy = { ...payload };
+  Object.defineProperty(copy, key, { value: copy[key], enumerable: false });
+  return copy;
+}
+
+function withHiddenInnerContent(): Record<string, unknown> {
+  const inner = { content: 'hi' };
+  Object.defineProperty(inner, 'content', { value: 'hi', enumerable: false });
+  return { type: 'user', message: inner, parent_tool_use_id: null };
+}
+
+function withHiddenBlockText(): Record<string, unknown> {
+  const block = { type: 'text', text: 'hi' };
+  Object.defineProperty(block, 'text', { value: 'hi', enumerable: false });
+  return { type: 'user', message: { content: [block] }, parent_tool_use_id: null };
+}
+
+function withSymbolKey(payload: Record<string, unknown>): Record<string, unknown> {
+  return { ...payload, [Symbol('extra')]: 'value' };
+}
+
 function messageWith(content: unknown): MailboxMessage {
   return {
     type: 'user',
@@ -51,6 +78,23 @@ describe('validateMailboxMessage rejection', () => {
     ['array payload', [base], 'must be an object'],
     ['null payload', null, 'must be an object'],
     ['prototype-inherited fields', Object.create(base), 'must be an object'],
+    ['symbol excess key', withSymbolKey(base), 'must be an object'],
+    ['non-enumerable type', withHiddenField(base, 'type'), 'must be an enumerable own field'],
+    [
+      'non-enumerable parent_tool_use_id',
+      withHiddenField(base, 'parent_tool_use_id'),
+      'must be an enumerable own field',
+    ],
+    [
+      'non-enumerable inner content',
+      withHiddenInnerContent(),
+      'must carry content as an enumerable own field',
+    ],
+    [
+      'non-enumerable block text',
+      withHiddenBlockText(),
+      'must carry type and text as enumerable own fields',
+    ],
     ['wrong type', { ...base, type: 'assistant' }, 'type must be "user"'],
     ['missing type', { message: base.message, parent_tool_use_id: null }, 'type must be "user"'],
     ['empty string content', { ...base, message: { content: '' } }, 'must not be empty'],
@@ -183,10 +227,23 @@ describe('createMailboxEntry', () => {
     ['fractional priority', { priority: 1.5 }],
     ['non-numeric priority', { priority: 'high' }],
     ['unknown policy key', { backoffMs: 100 } as Record<string, unknown>],
+    ['null policy override', null],
+    ['numeric policy override', 42],
+    ['array policy override', [1, 2]],
   ])('throws TypeError on %s override', (_label, policy) => {
     expect(() =>
       createMailboxEntry({ to: TO, message: stringMessage(), origin: 'web', policy })
     ).toThrow(TypeError);
+  });
+
+  test('throws TypeError on a non-plain address object', () => {
+    expect(() =>
+      createMailboxEntry({
+        to: new FakeAddress() as unknown as MailboxAddress,
+        message: stringMessage(),
+        origin: 'web',
+      })
+    ).toThrow('plain object');
   });
 
   test('throws TypeError naming the message violation', () => {
@@ -282,6 +339,18 @@ describe('isValidMailboxEntry', () => {
       }),
     ],
     [
+      'non-plain address object',
+      (entry: Record<string, unknown>) => ({ ...entry, to: new FakeAddress() }),
+    ],
+    [
+      'policy with non-enumerable field',
+      (entry: Record<string, unknown>) => {
+        const policy = { ...copyPolicy(entry) };
+        Object.defineProperty(policy, 'ttlMs', { value: policy.ttlMs, enumerable: false });
+        return { ...entry, policy };
+      },
+    ],
+    [
       'missing status',
       (entry: Record<string, unknown>) => {
         const copy = { ...entry };
@@ -306,6 +375,7 @@ describe('isValidMailboxEntry', () => {
       }),
     ],
     ['excess entry key', (entry: Record<string, unknown>) => ({ ...entry, createdAt: 'today' })],
+    ['symbol entry key', (entry: Record<string, unknown>) => withSymbolKey(entry)],
     ['prototype-inherited entry fields', (entry: Record<string, unknown>) => Object.create(entry)],
     [
       'missing message key',

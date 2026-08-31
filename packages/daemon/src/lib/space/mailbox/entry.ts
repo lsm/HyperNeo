@@ -42,7 +42,8 @@ function isPriorityLevel(value: unknown): boolean {
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const proto = Object.getPrototypeOf(value);
-  return proto === null || proto === Object.prototype;
+  if (proto !== null && proto !== Object.prototype) return false;
+  return Object.getOwnPropertySymbols(value).length === 0;
 }
 
 function firstUnexpectedKey(record: Record<string, unknown>, allowed: string[]): string | null {
@@ -63,6 +64,9 @@ function validateTextBlock(block: unknown): string | null {
   if (!isPlainObject(block)) return 'content block must be an object';
   const blockKey = firstUnexpectedKey(block, BLOCK_KEYS);
   if (blockKey !== null) return `content block must not carry key "${blockKey}"`;
+  if (Object.keys(block).length !== BLOCK_KEYS.length) {
+    return 'content block must carry type and text as enumerable own fields';
+  }
   if (block.type !== 'text') return 'content block type must be "text"';
   if (typeof block.text !== 'string' || block.text.length === 0) {
     return 'content block text must be a non-empty string';
@@ -72,12 +76,16 @@ function validateTextBlock(block: unknown): string | null {
 
 export function validateMailboxMessage(message: unknown): string | null {
   if (!isPlainObject(message)) return 'mailbox message must be an object';
+  const keys = Object.keys(message);
   const messageKey = firstUnexpectedKey(message, MESSAGE_KEYS);
   if (messageKey !== null) return `mailbox message must not carry key "${messageKey}"`;
   if (message.type !== 'user') return 'mailbox message type must be "user"';
   if (!isPlainObject(message.message)) return 'mailbox message.message must be an object';
   const contentKey = firstUnexpectedKey(message.message, ['content']);
   if (contentKey !== null) return `mailbox message.message must not carry key "${contentKey}"`;
+  if (Object.keys(message.message).length !== 1) {
+    return 'mailbox message.message must carry content as an enumerable own field';
+  }
   const content = message.message.content;
   if (typeof content === 'string') {
     if (content.length === 0) return 'mailbox message content must not be empty';
@@ -93,8 +101,13 @@ export function validateMailboxMessage(message: unknown): string | null {
   if (message.parent_tool_use_id !== null) {
     return 'mailbox message parent_tool_use_id must be null';
   }
-  if (Object.hasOwn(message, 'priority') && !isPriorityLevel(message.priority)) {
+  if (keys.includes('priority') && !isPriorityLevel(message.priority)) {
     return 'mailbox message priority must be one of "now", "next", "later"';
+  }
+  for (const required of ['type', 'message', 'parent_tool_use_id']) {
+    if (!keys.includes(required)) {
+      return `mailbox message ${required} must be an enumerable own field`;
+    }
   }
   return null;
 }
@@ -103,9 +116,12 @@ function validateEntryPolicy(policy: unknown): string | null {
   if (!isPlainObject(policy)) return 'mailbox entry policy must be an object';
   const policyKey = firstUnexpectedKey(policy, POLICY_KEYS);
   if (policyKey !== null) return `mailbox entry policy must not carry key "${policyKey}"`;
+  const policyFieldKeys = Object.keys(policy);
   for (const key of POLICY_KEYS) {
     const value = policy[key];
-    if (value === undefined) return `mailbox entry policy ${key} is required`;
+    if (!policyFieldKeys.includes(key) || value === undefined) {
+      return `mailbox entry policy ${key} is required`;
+    }
     if (typeof value !== 'number' || !Number.isInteger(value)) {
       return `mailbox entry policy ${key} must be a finite integer`;
     }
@@ -134,11 +150,17 @@ export function createMailboxEntry(args: {
   if (!isValidAddress(args.to)) {
     throw new TypeError('invalid mailbox entry address');
   }
-  if (hasUndefinedOwnValue(args.to as unknown as Record<string, unknown>)) {
+  if (!isPlainObject(args.to)) {
+    throw new TypeError('mailbox entry address must be a plain object');
+  }
+  if (hasUndefinedOwnValue(args.to)) {
     throw new TypeError('mailbox entry address must not carry undefined fields');
   }
   if (typeof args.origin !== 'string' || args.origin.length === 0) {
     throw new TypeError('mailbox entry origin must be a non-empty string');
+  }
+  if (args.policy !== undefined && !isPlainObject(args.policy)) {
+    throw new TypeError('mailbox entry policy override must be an object');
   }
   const policy: MailboxEntryPolicy = {
     ...DEFAULT_MAILBOX_ENTRY_POLICY,
@@ -163,8 +185,8 @@ export function isValidMailboxEntry(entry: unknown): boolean {
   if (Object.keys(entry).length !== ENTRY_KEYS.length) return false;
   if (firstUnexpectedKey(entry, ENTRY_KEYS) !== null) return false;
   if (typeof entry.id !== 'string' || !isUlid(entry.id)) return false;
-  if (!isValidAddress(entry.to as MailboxAddress)) return false;
-  if (hasUndefinedOwnValue(entry.to as unknown as Record<string, unknown>)) return false;
+  if (!isPlainObject(entry.to) || !isValidAddress(entry.to as MailboxAddress)) return false;
+  if (hasUndefinedOwnValue(entry.to)) return false;
   if (typeof entry.origin !== 'string' || entry.origin.length === 0) return false;
   if (validateMailboxMessage(entry.message) !== null) return false;
   if (entry.status !== 'enqueued') return false;
