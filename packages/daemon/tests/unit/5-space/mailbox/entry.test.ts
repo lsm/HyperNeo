@@ -588,6 +588,32 @@ describe('createMailboxEntry', () => {
     });
     expect(isValidMailboxEntry(entry)).toBe(true);
   });
+
+  test('produces an array content value with Array.prototype methods', () => {
+    const entry = createMailboxEntry({
+      to: SESSION_ADDRESS,
+      message: MESSAGE_ONE_BLOCK,
+      origin: 'api',
+    });
+    const content = entry.message.message.content as { type: 'text'; text: string }[];
+    expect(content.map((block) => block.text)).toEqual(['hi']);
+    expect(content.length).toBe(1);
+    expect(isValidMailboxEntry(entry)).toBe(true);
+  });
+
+  test('drops optional undefined fields so round trips stay equal', () => {
+    const message = { ...MESSAGE_STRING, priority: undefined } as unknown as MailboxMessage;
+    const to = {
+      kind: 'agent',
+      spaceId: 'sp-1',
+      handle: 'coder',
+      taskId: undefined,
+    } as unknown as MailboxAddress;
+    const entry = createMailboxEntry({ to, message, origin: 'api' });
+    const round = JSON.parse(JSON.stringify(entry));
+    expect(round).toEqual(entry);
+    expect(isValidMailboxEntry(round)).toBe(true);
+  });
 });
 
 describe('isValidMailboxEntry', () => {

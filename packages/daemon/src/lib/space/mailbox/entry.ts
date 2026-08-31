@@ -82,14 +82,16 @@ function deepClonePlain<T>(value: unknown): T {
     for (let index = 0; index < value.length; index += 1) {
       clone[index] = deepClonePlain(value[index]);
     }
-    Object.setPrototypeOf(clone, null);
     return clone as T;
   }
   if (!isPlainObject(value)) throw new TypeError('value is not a plain object');
   const record = value as Record<string, unknown>;
   const clone = Object.create(null) as Record<string, unknown>;
   for (const key of Object.keys(record)) {
-    clone[key] = deepClonePlain(record[key]);
+    const cloned = deepClonePlain(record[key]);
+    if (cloned !== undefined) {
+      clone[key] = cloned;
+    }
   }
   return clone as T;
 }
