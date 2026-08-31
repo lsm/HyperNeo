@@ -374,11 +374,11 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
   });
 
   it('runs retention and expiry against the run before listing', async () => {
-    h.enqueue({ message: 'note' });
+    const row = h.enqueue({ message: 'note' });
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
-    expect(h.spyRepo.retentionArgs).toEqual([[{ runId: h.runId, excludeIds: [] }]]);
+    expect(h.spyRepo.retentionArgs).toEqual([[{ runId: h.runId, excludeIds: [row.id] }]]);
     expect(h.spyRepo.expireArgs).toEqual([[h.runId]]);
     expect(h.spyRepo.calls.slice(0, 2)).toEqual(['enforceRetention', 'expireStale']);
     expect(h.spyRepo.calls[2]).toMatch(/^list:/);
