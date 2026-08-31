@@ -44,6 +44,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === null || proto === Object.prototype;
 }
 
+function hasOwnKey(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
@@ -81,14 +85,18 @@ export function validateMailboxMessage(message: unknown): string | null {
 
   const record = message as Record<string, unknown>;
   if (!hasOnlyKeys(record, MAILBOX_MESSAGE_KEYS)) return 'message contains an unexpected key';
-  if (record.type !== 'user') return 'message.type must be "user"';
+  if (!hasOwnKey(record, 'type') || record.type !== 'user') return 'message.type must be "user"';
 
+  if (!hasOwnKey(record, 'message')) return 'message.message is not an object';
   const contentContainer = record.message;
   if (!isPlainObject(contentContainer)) return 'message.message is not an object';
 
   const contentRecord = contentContainer as Record<string, unknown>;
   if (!hasOnlyKeys(contentRecord, MAILBOX_CONTENT_KEYS)) {
     return 'message.message contains an unexpected key';
+  }
+  if (!hasOwnKey(contentRecord, 'content')) {
+    return 'message.content must be a non-empty string or an array of text blocks';
   }
 
   const content = contentRecord.content;
@@ -103,8 +111,10 @@ export function validateMailboxMessage(message: unknown): string | null {
       if (!hasOnlyKeys(blockRecord, MAILBOX_TEXT_BLOCK_KEYS)) {
         return 'message.content block contains an unexpected key';
       }
-      if (blockRecord.type !== 'text') return 'message.content block type must be "text"';
-      if (!isNonEmptyString(blockRecord.text)) {
+      if (!hasOwnKey(blockRecord, 'type') || blockRecord.type !== 'text') {
+        return 'message.content block type must be "text"';
+      }
+      if (!hasOwnKey(blockRecord, 'text') || !isNonEmptyString(blockRecord.text)) {
         return 'message.content block text must be a non-empty string';
       }
     }
@@ -112,9 +122,15 @@ export function validateMailboxMessage(message: unknown): string | null {
     return 'message.content must be a non-empty string or an array of text blocks';
   }
 
-  if (record.parent_tool_use_id !== null) return 'message.parent_tool_use_id must be null';
+  if (!hasOwnKey(record, 'parent_tool_use_id') || record.parent_tool_use_id !== null) {
+    return 'message.parent_tool_use_id must be null';
+  }
 
-  if (record.priority !== undefined && !PRIORITIES.has(record.priority as string)) {
+  if (
+    hasOwnKey(record, 'priority') &&
+    record.priority !== undefined &&
+    !PRIORITIES.has(record.priority as string)
+  ) {
     return 'message.priority must be "now", "next", or "later"';
   }
 
@@ -125,8 +141,9 @@ function isValidPolicy(policy: unknown): boolean {
   if (!isPlainObject(policy)) return false;
   const record = policy as Record<string, unknown>;
   if (!hasOnlyKeys(record, POLICY_KEYS)) return false;
-  for (const key of POLICY_KEYS) {
-    if (!isPolicyKey(key) || !isValidPolicyValue(key, record[key])) return false;
+  for (const raw of POLICY_KEYS) {
+    const key = raw as PolicyKey;
+    if (!hasOwnKey(record, key) || !isValidPolicyValue(key, record[key])) return false;
   }
   return true;
 }
@@ -151,10 +168,11 @@ export function createMailboxEntry(args: {
   if (!isValidAddress(args.to)) throw new TypeError('to is not a valid mailbox address');
   if (!isNonEmptyString(args.origin)) throw new TypeError('origin must be a non-empty string');
 
-  if (args.policy !== undefined && !isPlainObject(args.policy)) {
-    throw new TypeError('policy must be an object');
+  let override: Partial<MailboxEntryPolicy> = {};
+  if (args.policy !== undefined) {
+    if (!isPlainObject(args.policy)) throw new TypeError('policy must be an object');
+    override = { ...args.policy };
   }
-  const override = args.policy ?? {};
   validatePolicyOverride(override);
   const mergedPolicy: MailboxEntryPolicy = { ...DEFAULT_MAILBOX_ENTRY_POLICY, ...override };
 
@@ -172,11 +190,12 @@ export function isValidMailboxEntry(entry: unknown): boolean {
   if (!isPlainObject(entry)) return false;
   const record = entry as Record<string, unknown>;
   if (!hasOnlyKeys(record, MAILBOX_ENTRY_KEYS)) return false;
-  if (!isUlid(record.id as string)) return false;
-  if (!isValidAddress(record.to as MailboxAddress)) return false;
-  if (!isNonEmptyString(record.origin)) return false;
-  if (validateMailboxMessage(record.message) !== null) return false;
-  if (record.status !== 'enqueued') return false;
-  if (!isValidPolicy(record.policy)) return false;
+  if (!hasOwnKey(record, 'id') || !isUlid(record.id as string)) return false;
+  if (!hasOwnKey(record, 'to') || !isValidAddress(record.to as MailboxAddress)) return false;
+  if (!hasOwnKey(record, 'origin') || !isNonEmptyString(record.origin)) return false;
+  if (!hasOwnKey(record, 'message') || validateMailboxMessage(record.message) !== null)
+    return false;
+  if (!hasOwnKey(record, 'status') || record.status !== 'enqueued') return false;
+  if (!hasOwnKey(record, 'policy') || !isValidPolicy(record.policy)) return false;
   return true;
 }

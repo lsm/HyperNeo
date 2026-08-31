@@ -28,6 +28,10 @@ function isNonEmptyString(value: unknown): value is string {
   }
 }
 
+function hasOwnKey(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const proto = Object.getPrototypeOf(value);
@@ -110,8 +114,16 @@ export function isValidAddress(addr: MailboxAddress): boolean {
     }
     if (!isNonEmptyString(record.spaceId)) return false;
     if (!isNonEmptyString(record.handle) || record.handle.includes('/')) return false;
-    if (record.taskId !== undefined && !isNonEmptyString(record.taskId)) return false;
-    if (record.node !== undefined && !isNonEmptyString(record.node)) return false;
+    if (hasOwnKey(record, 'taskId')) {
+      if (record.taskId !== undefined && !isNonEmptyString(record.taskId)) return false;
+    } else if (record.taskId !== undefined) {
+      return false;
+    }
+    if (hasOwnKey(record, 'node')) {
+      if (record.node !== undefined && !isNonEmptyString(record.node)) return false;
+    } else if (record.node !== undefined) {
+      return false;
+    }
     return true;
   }
   return false;

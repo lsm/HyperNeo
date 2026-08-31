@@ -122,6 +122,25 @@ describe('validateMailboxMessage', () => {
     expect(validateMailboxMessage(inherited)).not.toBeNull();
   });
 
+  test('rejects Object.prototype.content pollution', () => {
+    Object.defineProperty(Object.prototype, 'content', {
+      value: 'hello',
+      configurable: true,
+      writable: true,
+    });
+    try {
+      expect(
+        validateMailboxMessage({
+          type: 'user',
+          message: {},
+          parent_tool_use_id: null,
+        } as unknown as MailboxMessage)
+      ).not.toBeNull();
+    } finally {
+      Reflect.deleteProperty(Object.prototype, 'content');
+    }
+  });
+
   test('rejects a block array with a non-object block', () => {
     expect(
       validateMailboxMessage({ ...MESSAGE_STRING, message: { content: ['not a block'] } })
@@ -340,6 +359,44 @@ describe('createMailboxEntry', () => {
         origin: 'api',
       })
     ).toThrow(TypeError);
+  });
+
+  test('rejects an address with Object.prototype taskId pollution', () => {
+    Object.defineProperty(Object.prototype, 'taskId', {
+      value: '1725',
+      configurable: true,
+      writable: true,
+    });
+    try {
+      const withProto = { kind: 'agent', spaceId: 'sp-1', handle: 'coder' };
+      expect(() =>
+        createMailboxEntry({
+          to: withProto as unknown as MailboxAddress,
+          message: MESSAGE_STRING,
+          origin: 'api',
+        })
+      ).toThrow(TypeError);
+    } finally {
+      Reflect.deleteProperty(Object.prototype, 'taskId');
+    }
+  });
+
+  test('snapshots a policy override before validating and merging', () => {
+    let call = 0;
+    const policy = {
+      get ttlMs() {
+        call += 1;
+        return call === 1 ? 123456 : 0;
+      },
+    } as unknown as Partial<MailboxEntryPolicy>;
+    const entry = createMailboxEntry({
+      to: SESSION_ADDRESS,
+      message: MESSAGE_STRING,
+      origin: 'api',
+      policy,
+    });
+    expect(entry.policy.ttlMs).toBe(123456);
+    expect(isValidMailboxEntry(entry)).toBe(true);
   });
 
   test('default policy is immutable', () => {
