@@ -31,12 +31,30 @@ const AGENT_TASK_NODE_ADDR: MailboxAddress = {
 describe('renderAddress', () => {
   test('renders each grammar form', () => {
     expect(renderAddress(SESSION_ADDR)).toBe('session:sess-123');
-    expect(renderAddress(AGENT_ADDR)).toBe('agent:space-1/%40coder');
-    expect(renderAddress(AGENT_TASK_ADDR)).toBe('agent:space-1/%40coder?task=task-9');
-    expect(renderAddress(AGENT_NODE_ADDR)).toBe('agent:space-1/%40coder?node=Coding');
+    expect(renderAddress(AGENT_ADDR)).toBe('agent:space-1/@coder');
+    expect(renderAddress(AGENT_TASK_ADDR)).toBe('agent:space-1/@coder?task=task-9');
+    expect(renderAddress(AGENT_NODE_ADDR)).toBe('agent:space-1/@coder?node=Coding');
     expect(renderAddress(AGENT_TASK_NODE_ADDR)).toBe(
-      'agent:space-1/%40coder?task=task-9&node=Coding'
+      'agent:space-1/@coder?task=task-9&node=Coding'
     );
+  });
+
+  test('preserves the literal @ sigil while still encoding grammar-reserved characters', () => {
+    expect(renderAddress({ kind: 'agent', spaceId: 's', handle: '@coder' })).toBe('agent:s/@coder');
+    expect(renderAddress({ kind: 'session', sessionId: 'a@b' })).toBe('session:a@b');
+    expect(renderAddress({ kind: 'agent', spaceId: 's', handle: 'h', taskId: 't@1' })).toBe(
+      'agent:s/h?task=t@1'
+    );
+    expect(renderAddress({ kind: 'agent', spaceId: 'a/b', handle: '@h?x' })).toBe(
+      'agent:a%2Fb/@h%3Fx'
+    );
+  });
+
+  test('canonicalizes an encoded %40 handle to the literal sigil form', () => {
+    const fromEncoded = parseAddress('agent:s/%40coder');
+    const fromLiteral = parseAddress('agent:s/@coder');
+    expect(fromEncoded).toEqual(fromLiteral);
+    expect(renderAddress(fromEncoded as MailboxAddress)).toBe('agent:s/@coder');
   });
 
   test('omits undefined optional fields instead of rendering empty values', () => {

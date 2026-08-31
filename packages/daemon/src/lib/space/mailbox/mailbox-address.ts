@@ -49,6 +49,10 @@ function decodeValue(value: string): string | null {
   }
 }
 
+function encodeValue(value: string): string {
+  return encodeURIComponent(value).replace(/%40/g, '@');
+}
+
 function parseSessionAddress(rest: string): MailboxAddress | null {
   if (!rest || rest.includes('/') || rest.includes('?')) return null;
   const sessionId = decodeValue(rest);
@@ -115,12 +119,12 @@ export function parseAddress(raw: string): MailboxAddress | null {
 
 export function renderAddress(addr: MailboxAddress): string {
   if (addr.kind === 'session') {
-    return `session:${encodeURIComponent(addr.sessionId)}`;
+    return `session:${encodeValue(addr.sessionId)}`;
   }
-  let rendered = `agent:${encodeURIComponent(addr.spaceId)}/${encodeURIComponent(addr.handle)}`;
+  let rendered = `agent:${encodeValue(addr.spaceId)}/${encodeValue(addr.handle)}`;
   const pairs: string[] = [];
-  if (addr.taskId !== undefined) pairs.push(`task=${encodeURIComponent(addr.taskId)}`);
-  if (addr.node !== undefined) pairs.push(`node=${encodeURIComponent(addr.node)}`);
+  if (addr.taskId !== undefined) pairs.push(`task=${encodeValue(addr.taskId)}`);
+  if (addr.node !== undefined) pairs.push(`node=${encodeValue(addr.node)}`);
   if (pairs.length > 0) rendered += `?${pairs.join('&')}`;
   return rendered;
 }
