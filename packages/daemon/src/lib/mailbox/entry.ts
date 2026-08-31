@@ -106,23 +106,43 @@ export function toMailboxPolicy(
   return { value: { ttlMs, maxAttempts, priority } };
 }
 
+function isEncodable(value: string): boolean {
+  try {
+    encodeURIComponent(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function toMailboxAddress(to: MailboxAddress): MailboxProjection<MailboxAddress> {
   if (to?.kind === 'session') {
-    return typeof to.sessionId === 'string' && to.sessionId.length > 0
+    return typeof to.sessionId === 'string' && to.sessionId.length > 0 && isEncodable(to.sessionId)
       ? { value: { kind: 'session', sessionId: to.sessionId } }
       : { reason: 'to.sessionId must be a non-empty string' };
   }
   if (to?.kind === 'agent') {
-    if (typeof to.spaceId !== 'string' || to.spaceId.length === 0) {
+    if (typeof to.spaceId !== 'string' || to.spaceId.length === 0 || !isEncodable(to.spaceId)) {
       return { reason: 'to.spaceId must be a non-empty string' };
     }
-    if (typeof to.handle !== 'string' || to.handle.length === 0 || to.handle.includes('/')) {
+    if (
+      typeof to.handle !== 'string' ||
+      to.handle.length === 0 ||
+      !isEncodable(to.handle) ||
+      to.handle.includes('/')
+    ) {
       return { reason: 'to.handle must be a non-empty string without "/"' };
     }
-    if (to.taskId !== undefined && (typeof to.taskId !== 'string' || to.taskId.length === 0)) {
+    if (
+      to.taskId !== undefined &&
+      (typeof to.taskId !== 'string' || to.taskId.length === 0 || !isEncodable(to.taskId))
+    ) {
       return { reason: 'to.taskId must be a non-empty string' };
     }
-    if (to.node !== undefined && (typeof to.node !== 'string' || to.node.length === 0)) {
+    if (
+      to.node !== undefined &&
+      (typeof to.node !== 'string' || to.node.length === 0 || !isEncodable(to.node))
+    ) {
       return { reason: 'to.node must be a non-empty string' };
     }
     return {

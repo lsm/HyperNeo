@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { MailboxAddress } from '../../../../src/lib/mailbox/address';
+import { renderAddress, type MailboxAddress } from '../../../../src/lib/mailbox/address';
 import {
   createMailboxEntry,
   DEFAULT_MAILBOX_ENTRY_POLICY,
@@ -331,6 +331,7 @@ describe('createMailboxEntry', () => {
     expect(entry.origin).toBe('space-task-agent');
     expect(entry.message).toEqual(validMessage);
     expect(entry.policy).toEqual(DEFAULT_MAILBOX_ENTRY_POLICY);
+    expect(() => renderAddress(entry.to)).not.toThrow();
   });
 
   test.each<[string, MailboxAddress]>([
@@ -352,6 +353,7 @@ describe('createMailboxEntry', () => {
     expect(entry.to).toEqual(to);
     expect(isUlid(entry.id)).toBe(true);
     expect(entry.status).toBe('enqueued');
+    expect(() => renderAddress(entry.to)).not.toThrow();
   });
 
   test('defaults the policy when the partial is empty', () => {
@@ -455,6 +457,38 @@ describe('createMailboxEntry', () => {
       'to.node must be a non-empty string',
     ],
   ])('throws TypeError with the verbatim to reason for %s', (_label, to, reason) => {
+    const args = { to, message: validMessage, origin: 'test' };
+    expect(() => createMailboxEntry(args)).toThrow(TypeError);
+    expect(() => createMailboxEntry(args)).toThrow(new TypeError(reason));
+  });
+
+  test.each<[string, MailboxAddress, string]>([
+    [
+      'an unpaired surrogate sessionId',
+      { kind: 'session', sessionId: '\uD800' },
+      'to.sessionId must be a non-empty string',
+    ],
+    [
+      'an unpaired surrogate spaceId',
+      { kind: 'agent', spaceId: '\uD800', handle: 'coder' },
+      'to.spaceId must be a non-empty string',
+    ],
+    [
+      'an unpaired surrogate handle',
+      { kind: 'agent', spaceId: 'sp-1', handle: '\uD800' },
+      'to.handle must be a non-empty string without "/"',
+    ],
+    [
+      'an unpaired surrogate taskId',
+      { kind: 'agent', spaceId: 'sp-1', handle: 'coder', taskId: '\uD800' },
+      'to.taskId must be a non-empty string',
+    ],
+    [
+      'an unpaired surrogate node',
+      { kind: 'agent', spaceId: 'sp-1', handle: 'coder', node: '\uD800' },
+      'to.node must be a non-empty string',
+    ],
+  ])('throws TypeError for %s', (_label, to, reason) => {
     const args = { to, message: validMessage, origin: 'test' };
     expect(() => createMailboxEntry(args)).toThrow(TypeError);
     expect(() => createMailboxEntry(args)).toThrow(new TypeError(reason));
