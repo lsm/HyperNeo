@@ -84,7 +84,7 @@ export function validateMailboxMessage(message: unknown): string | null {
   if (message.parent_tool_use_id !== null) {
     return 'mailbox message parent_tool_use_id must be null';
   }
-  if (message.priority !== undefined && !isPriorityLevel(message.priority)) {
+  if (Object.hasOwn(message, 'priority') && !isPriorityLevel(message.priority)) {
     return 'mailbox message priority must be one of "now", "next", "later"';
   }
   return null;

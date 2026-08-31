@@ -100,6 +100,7 @@ describe('validateMailboxMessage rejection', () => {
     ],
     ['invalid priority', { ...base, priority: 'asap' }, 'priority must be one of'],
     ['numeric priority', { ...base, priority: 1 }, 'priority must be one of'],
+    ['explicit undefined priority', { ...base, priority: undefined }, 'priority must be one of'],
     ['uuid excess key', { ...base, uuid: 'abc' }, 'must not carry key "uuid"'],
     ['session_id excess key', { ...base, session_id: 'sess-1' }, 'must not carry key "session_id"'],
     [
@@ -190,6 +191,18 @@ describe('createMailboxEntry', () => {
     expect(() =>
       createMailboxEntry({ to: TO, message: invalid as unknown as MailboxMessage, origin: 'web' })
     ).toThrow('parent_tool_use_id must be null');
+  });
+
+  test('throws TypeError on explicit undefined priority', () => {
+    const invalid = {
+      type: 'user',
+      message: { content: 'hi' },
+      parent_tool_use_id: null,
+      priority: undefined,
+    };
+    expect(() =>
+      createMailboxEntry({ to: TO, message: invalid as unknown as MailboxMessage, origin: 'web' })
+    ).toThrow('priority must be one of');
   });
 
   test('throws TypeError on invalid address', () => {
