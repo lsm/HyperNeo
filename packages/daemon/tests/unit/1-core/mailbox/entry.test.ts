@@ -317,7 +317,204 @@ describe('createMailboxEntry', () => {
 });
 
 describe('parseMailboxEntry', () => {
-  test('throws the not implemented message', () => {
-    expect(() => parseMailboxEntry({})).toThrow('mailbox: parseMailboxEntry not implemented');
+  const sessionPayload: Record<string, unknown> = {
+    id: '00000000000000000000000000',
+    to: { kind: 'session', sessionId: 'sess-1' },
+    origin: 'space-task-agent',
+    message: { type: 'user', message: { content: 'hello' }, parent_tool_use_id: null },
+    status: 'enqueued',
+    policy: { ttlMs: 24 * 60 * 60 * 1000, maxAttempts: 5, priority: 0 },
+  };
+
+  const agentPayload: Record<string, unknown> = {
+    id: '00000000000000000000000001',
+    to: { kind: 'agent', spaceId: 'sp-1', handle: 'coder', taskId: '1735', node: 'Coding' },
+    origin: 'session-agent',
+    message: {
+      type: 'user',
+      message: { content: [{ type: 'text', text: 'review when ready' }] },
+      parent_tool_use_id: null,
+      priority: 'next',
+    },
+    status: 'enqueued',
+    policy: { ttlMs: 60_000, maxAttempts: 1, priority: 3 },
+  };
+
+  describe('projection', () => {
+    test('parses a stored session entry with default-valued policy to the expected entry', () => {
+      expect(parseMailboxEntry(sessionPayload)).toEqual({
+        id: '00000000000000000000000000',
+        to: { kind: 'session', sessionId: 'sess-1' },
+        origin: 'space-task-agent',
+        message: { type: 'user', message: { content: 'hello' }, parent_tool_use_id: null },
+        status: 'enqueued',
+        policy: DEFAULT_MAILBOX_ENTRY_POLICY,
+      });
+    });
+
+    test('parses a stored agent entry with taskId, node, blocks, priority, custom policy', () => {
+      expect(parseMailboxEntry(agentPayload)).toEqual({
+        id: '00000000000000000000000001',
+        to: { kind: 'agent', spaceId: 'sp-1', handle: 'coder', taskId: '1735', node: 'Coding' },
+        origin: 'session-agent',
+        message: {
+          type: 'user',
+          message: { content: [{ type: 'text', text: 'review when ready' }] },
+          parent_tool_use_id: null,
+          priority: 'next',
+        },
+        status: 'enqueued',
+        policy: { ttlMs: 60_000, maxAttempts: 1, priority: 3 },
+      });
+    });
+
+    test('parses an agent address without optional taskId and node', () => {
+      const payload = {
+        ...agentPayload,
+        to: { kind: 'agent', spaceId: 'sp-1', handle: 'reviewer' },
+      };
+      const parsed = parseMailboxEntry(payload);
+      expect(parsed?.to).toEqual({ kind: 'agent', spaceId: 'sp-1', handle: 'reviewer' });
+      expect(Object.keys(parsed?.to ?? {}).sort()).toEqual(['handle', 'kind', 'spaceId']);
+    });
+  });
+
+  describe('fresh entry literal, unknown keys dropped', () => {
+    test('never returns the raw object or its nested objects', () => {
+      const storedMessage = agentPayload.message as MailboxMessage;
+      const parsed = parseMailboxEntry(agentPayload);
+      expect(parsed).not.toBe(agentPayload);
+      expect(parsed?.to).not.toBe(agentPayload.to);
+      expect(parsed?.message).not.toBe(storedMessage);
+      expect(parsed?.message.message).not.toBe(storedMessage.message);
+      expect(parsed?.policy).not.toBe(agentPayload.policy);
+    });
+
+    test('output keys are exactly the six typed fields', () => {
+      const payload = { ...agentPayload, attempts: 2, enqueueAt: 1_735_000_000_000, lane: 'x' };
+      const parsed = parseMailboxEntry(payload);
+      expect(Object.keys(parsed ?? {}).sort()).toEqual([
+        'id',
+        'message',
+        'origin',
+        'policy',
+        'status',
+        'to',
+      ]);
+    });
+
+    test('drops unknown keys inside an agent address', () => {
+      const payload = {
+        ...agentPayload,
+        to: { kind: 'agent', spaceId: 'sp-1', handle: 'coder', routing: 'direct' },
+      };
+      expect(parseMailboxEntry(payload)?.to).toEqual({
+        kind: 'agent',
+        spaceId: 'sp-1',
+        handle: 'coder',
+      });
+    });
+
+    test('drops agent-only keys on a session address', () => {
+      const payload = {
+        ...sessionPayload,
+        to: { kind: 'session', sessionId: 'sess-1', spaceId: 'sp-1' },
+      };
+      expect(parseMailboxEntry(payload)?.to).toEqual({ kind: 'session', sessionId: 'sess-1' });
+    });
+  });
+
+  describe('value failures return null', () => {
+    test.each<[string, Record<string, unknown>]>([
+      ['a non-ULID id', { ...sessionPayload, id: 'not-a-ulid' }],
+      ['a wrong-length id', { ...sessionPayload, id: '01ARZ3NDEKTSV4RRFFQ69G5FAV1' }],
+      ['a non-string id', { ...sessionPayload, id: 42 }],
+      [
+        'an address string instead of the stored object',
+        { ...sessionPayload, to: 'session:sess-1' },
+      ],
+      ['a null to', { ...sessionPayload, to: null }],
+      ['an unknown address kind', { ...sessionPayload, to: { kind: 'workflow', sessionId: 's' } }],
+      ['an empty session sessionId', { ...sessionPayload, to: { kind: 'session', sessionId: '' } }],
+      [
+        'a non-string session sessionId',
+        { ...sessionPayload, to: { kind: 'session', sessionId: 7 } },
+      ],
+      [
+        'an empty agent spaceId',
+        { ...sessionPayload, to: { kind: 'agent', spaceId: '', handle: 'c' } },
+      ],
+      [
+        'an empty agent handle',
+        { ...sessionPayload, to: { kind: 'agent', spaceId: 'sp', handle: '' } },
+      ],
+      [
+        'a slashed agent handle',
+        { ...sessionPayload, to: { kind: 'agent', spaceId: 'sp', handle: 'a/b' } },
+      ],
+      [
+        'an empty agent taskId',
+        { ...sessionPayload, to: { kind: 'agent', spaceId: 'sp', handle: 'c', taskId: '' } },
+      ],
+      [
+        'a non-string agent node',
+        { ...sessionPayload, to: { kind: 'agent', spaceId: 'sp', handle: 'c', node: 3 } },
+      ],
+      ['an empty origin', { ...sessionPayload, origin: '' }],
+      ['a non-string origin', { ...sessionPayload, origin: 42 }],
+      [
+        'a wrong message type',
+        {
+          ...sessionPayload,
+          message: { type: 'assistant', message: { content: 'x' }, parent_tool_use_id: null },
+        },
+      ],
+      [
+        'an empty message content',
+        {
+          ...sessionPayload,
+          message: { type: 'user', message: { content: '' }, parent_tool_use_id: null },
+        },
+      ],
+      ['a wrong status', { ...sessionPayload, status: 'delivered' }],
+      ['an undefined status', { ...sessionPayload, status: undefined }],
+      [
+        'an out-of-range policy field',
+        { ...sessionPayload, policy: { ttlMs: 0, maxAttempts: 5, priority: 0 } },
+      ],
+      ['a string policy', { ...sessionPayload, policy: 'standard' }],
+      ['an array policy', { ...sessionPayload, policy: [] }],
+      ['a null policy', { ...sessionPayload, policy: null }],
+    ])('returns null for %s', (_label, payload) => {
+      expect(parseMailboxEntry(payload)).toBeNull();
+    });
+
+    test.each([
+      'id',
+      'to',
+      'origin',
+      'message',
+      'status',
+      'policy',
+    ])('returns null when %s is missing', (key) => {
+      const payload = { ...sessionPayload };
+      delete payload[key];
+      expect(parseMailboxEntry(payload)).toBeNull();
+    });
+  });
+
+  describe('never-throw law', () => {
+    test.each([
+      null,
+      undefined,
+      [],
+      42,
+      'entry',
+      true,
+    ])('returns null for %p instead of throwing', (garbage) => {
+      const raw = garbage as unknown as Record<string, unknown> | null | undefined;
+      expect(() => parseMailboxEntry(raw)).not.toThrow();
+      expect(parseMailboxEntry(raw)).toBeNull();
+    });
   });
 });
