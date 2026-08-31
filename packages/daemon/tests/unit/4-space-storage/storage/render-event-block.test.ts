@@ -151,6 +151,40 @@ describe('renderEventBlock', () => {
     );
   });
 
+  it('preserves leading indentation in comment bodies', () => {
+    expect(
+      renderEventBlock({
+        eventId: 'ws-1',
+        topic: 'github/o/r/pull_request/7.comment_polled',
+        eventType: 'issue_comment',
+        actor: 'marcliu',
+        body: '    const x = 1\n    const y = 2',
+        commentId: 'ws-1',
+        occurredAt: at(16),
+        prUrl: PR_URL,
+      })
+    ).toBe(
+      `- PR comment: ×1, latest by marcliu at 16:00 UTC — ${PR_URL}` +
+        ' (latest eventId: ws-1)\n' +
+        '      const x = 1\n' +
+        '      const y = 2'
+    );
+    expect(
+      renderEventBlock({
+        eventId: 'ws-2',
+        topic: 'github/o/r/pull_request/7.comment_polled',
+        eventType: 'issue_comment',
+        actor: 'marcliu',
+        body: '  \n\n  ',
+        commentId: 'ws-2',
+        occurredAt: at(16),
+        prUrl: PR_URL,
+      })
+    ).toBe(
+      `- PR comment: ×1, latest by marcliu at 16:00 UTC — ${PR_URL}` + ' (latest eventId: ws-2)'
+    );
+  });
+
   it('caps comment bodies at 200000 characters with a truncation marker', () => {
     const block = renderEventBlock({
       eventId: 'cap-1',

@@ -92,8 +92,8 @@ const COMMENT_BODY_CHAR_CAP = 200000;
 
 function commentBodyBlock(body: string | undefined): string | null {
   if (!body) return null;
-  const text = body.replace(/\r\n?/g, '\n').trim();
-  if (text.length === 0) return null;
+  const text = body.replace(/\r\n?/g, '\n').replace(/^\n+|\n+$/g, '');
+  if (text.trim().length === 0) return null;
   const capped =
     text.length > COMMENT_BODY_CHAR_CAP
       ? `${text.slice(0, COMMENT_BODY_CHAR_CAP)}\n[comment body truncated at ${COMMENT_BODY_CHAR_CAP} characters]`
