@@ -1940,7 +1940,7 @@ export class TaskAgentManager {
   }
 
   private nodeTargetExecutionSessions(
-    row: Pick<PendingAgentMessageRecord, 'workflowRunId' | 'targetAgentName'>
+    row: Pick<PendingAgentMessageRecord, 'workflowRunId' | 'targetAgentName' | 'workflowNodeId'>
   ): Array<{ sessionId: string; nodeName: string | null }> {
     const scopedSeparator = row.targetAgentName.lastIndexOf('/');
     const scopedNodeName =
@@ -1952,9 +1952,13 @@ export class TaskAgentManager {
       []) {
       if (!execution.agentSessionId) continue;
       if (execution.agentName !== plainAgentName) continue;
-      const nodeName = this.workflowNodeNameForRun(row.workflowRunId, execution.workflowNodeId);
-      if (scopedNodeName !== null && nodeName !== scopedNodeName) continue;
-      resolved.push({ sessionId: execution.agentSessionId, nodeName });
+      if (scopedNodeName !== null) {
+        const nodeName = this.workflowNodeNameForRun(row.workflowRunId, execution.workflowNodeId);
+        if (nodeName !== scopedNodeName) continue;
+      } else if (row.workflowNodeId != null && execution.workflowNodeId !== row.workflowNodeId) {
+        continue;
+      }
+      resolved.push({ sessionId: execution.agentSessionId, nodeName: null });
     }
     return resolved;
   }

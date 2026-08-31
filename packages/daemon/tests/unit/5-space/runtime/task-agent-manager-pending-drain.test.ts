@@ -1677,6 +1677,31 @@ describe('pending drain through the v2 injection shell', () => {
     expect(h.manager.activeDeliveryIdsForRun(V2_RUN_ID)).not.toContain('row-v2');
   });
 
+  it("a plain-named row scoped to a node resolves only that node's sessions", async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const manager = h.manager as unknown as {
+      nodeTargetExecutionSessions: (row: {
+        workflowRunId: string;
+        targetAgentName: string;
+        workflowNodeId: string | null;
+      }) => Array<{ sessionId: string }>;
+    };
+
+    const sessionsFor = (workflowNodeId: string | null) =>
+      manager
+        .nodeTargetExecutionSessions({
+          workflowRunId: V2_RUN_ID,
+          targetAgentName: AGENT_NAME,
+          workflowNodeId,
+        })
+        .map((entry) => entry.sessionId);
+
+    expect(sessionsFor(V2_NODE_ID)).toEqual([V2_SESSION_ID, 'sub-session-v2-alt']);
+    expect(sessionsFor('node-other')).toEqual([]);
+    expect(sessionsFor(null)).toEqual([V2_SESSION_ID, 'sub-session-v2-alt']);
+  });
+
   it('settling one session retires the row watchers of every other session', async () => {
     const outbox = createOutboxTestDb();
     const h = makeV2Harness(null, outbox);
