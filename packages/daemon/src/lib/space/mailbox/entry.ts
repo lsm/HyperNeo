@@ -83,9 +83,14 @@ function isPlainArray(value: unknown): value is unknown[] {
   if (!Array.isArray(value)) return false;
   if (Object.getPrototypeOf(value) !== Array.prototype) return false;
   if (Object.getOwnPropertySymbols(value).length > 0) return false;
-  for (const name of Object.getOwnPropertyNames(value)) {
+  const names = Object.getOwnPropertyNames(value);
+  if (names.length !== value.length + 1) return false;
+  for (const name of names) {
     if (name === 'length') continue;
-    if (!/^\d+$/.test(name)) return false;
+    const index = Number(name);
+    if (String(index) !== name || !Number.isInteger(index) || index < 0 || index >= value.length) {
+      return false;
+    }
     const desc = Object.getOwnPropertyDescriptor(value, name);
     if (desc === undefined || desc.get !== undefined || desc.set !== undefined) return false;
   }

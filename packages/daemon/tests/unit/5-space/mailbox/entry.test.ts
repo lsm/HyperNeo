@@ -128,6 +128,24 @@ describe('validateMailboxMessage', () => {
     expect(validateMailboxMessage(messageWith(fakeSubclass))).toContain('plain array');
   });
 
+  test('rejects content arrays carrying non-canonical index properties or holes', () => {
+    const nonCanonical: unknown[] = [{ type: 'text', text: 'a' }];
+    (nonCanonical as unknown as Record<string, unknown>)['01'] = 'metadata';
+    expect(validateMailboxMessage(messageWith(nonCanonical))).toContain('plain array');
+    const outOfRange: unknown[] = [
+      { type: 'text', text: 'a' },
+      { type: 'text', text: 'b' },
+    ];
+    (outOfRange as unknown as Record<string, unknown>)['5'] = 'x';
+    expect(validateMailboxMessage(messageWith(outOfRange))).toContain('plain array');
+    const holey: unknown[] = [
+      { type: 'text', text: 'a' },
+      { type: 'text', text: 'b' },
+    ];
+    delete holey[0];
+    expect(validateMailboxMessage(messageWith(holey))).toContain('plain array');
+  });
+
   test('rejects a body that is not an object carrying only content', () => {
     expect(validateMailboxMessage(buildMessage({ message: undefined }))).toContain('message');
     expect(validateMailboxMessage(buildMessage({ message: [] }))).toContain('message');
