@@ -1751,7 +1751,7 @@ export class TaskAgentManager {
     const drainOutcome = await runSpaceAgentPendingDrain(drainDeps, {
       workflowRunId,
       spaceChatSessionId,
-      activeDeliveryIds: this.activeDeliveryIdsForRun(workflowRunId),
+      retentionExcludeIds: this.activeDeliveryIdsForRun(workflowRunId),
     });
     if (drainOutcome.action === 'skip') return;
 

@@ -34,9 +34,11 @@ export interface SpaceAgentPendingDrainInput {
   workflowRunId: string;
   spaceChatSessionId: string;
   activeDeliveryIds?: string[];
+  retentionExcludeIds?: string[];
 }
 
 interface SpaceAgentPendingDrainCtx extends SpaceAgentPendingDrainInput {
+  retentionExcludeIds?: string[];
   deps: SpaceAgentPendingDrainDeps;
   listedRows?: PendingAgentMessageRecord[];
   activeDeliveryIds?: string[];
@@ -122,6 +124,7 @@ function deferActiveDeliveries(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendin
     ...(ctx.activeDeliveryIds ?? []),
     ...(ctx.excludedDeliveryIds ?? []),
     ...(ctx.pendingRetryIds ?? []),
+    ...(ctx.retentionExcludeIds ?? []),
   ];
   if (protectedDeliveryIds.length > 0) {
     ctx.deps.repo.deferExpiration(protectedDeliveryIds);
@@ -134,6 +137,7 @@ function runRetention(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx
     ...(ctx.activeDeliveryIds ?? []),
     ...(ctx.excludedDeliveryIds ?? []),
     ...(ctx.pendingRetryIds ?? []),
+    ...(ctx.retentionExcludeIds ?? []),
   ];
   ctx.deps.repo.enforceRetention({ runId: ctx.workflowRunId, excludeIds });
   ctx.deps.repo.expireStale(ctx.workflowRunId, excludeIds);

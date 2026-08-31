@@ -874,6 +874,29 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     expect(h.spyRepo.repo.getById(nodeScoped.id)?.status).toBe('delivered');
   });
 
+  it('keeps a failed space delivery admissible for retry while retention protects it', async () => {
+    const h = makeSpaceAgentHarness({
+      injectorImpl: async (_spaceId, _message, _replyTo, rowId) => ({
+        state: 'accepted',
+        messageId: rowId,
+      }),
+    });
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'dead letter retry' });
+    h.spyRepo.repo.markAttemptFailed(row.id, 'space-agent delivery dead-lettered');
+    (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, uuid: string) =>
+          uuid === row.id ? { content: 'x', sendStatus: 'failed' } : null,
+      }),
+      getDatabase: () => ({}),
+    };
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.injector).toHaveBeenCalledTimes(1);
+  });
+
   it('marks rows delivered to the space-chat session id and emits the delivery event', async () => {
     const h = makeSpaceAgentHarness();
     dbByTest.push(h.db);
