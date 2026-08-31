@@ -82,6 +82,12 @@ function deepClonePlain<T>(value: unknown): T {
     for (let index = 0; index < value.length; index += 1) {
       clone[index] = deepClonePlain(value[index]);
     }
+    Object.defineProperty(clone, 'toJSON', {
+      value: undefined,
+      writable: true,
+      configurable: true,
+      enumerable: false,
+    });
     return clone as T;
   }
   if (!isPlainObject(value)) throw new TypeError('value is not a plain object');
@@ -224,9 +230,10 @@ export function createMailboxEntry(args: {
   if (!isNonEmptyString(origin)) throw new TypeError('origin must be a non-empty string');
 
   let override: Partial<MailboxEntryPolicy> = {};
-  if (args.policy !== undefined) {
-    if (!isPlainObject(args.policy)) throw new TypeError('policy must be an object');
-    override = { ...args.policy };
+  const rawPolicy = args.policy;
+  if (rawPolicy !== undefined) {
+    if (!isPlainObject(rawPolicy)) throw new TypeError('policy must be an object');
+    override = { ...rawPolicy };
   }
   validatePolicyOverride(override);
   const mergedPolicy: MailboxEntryPolicy = { ...DEFAULT_MAILBOX_ENTRY_POLICY, ...override };

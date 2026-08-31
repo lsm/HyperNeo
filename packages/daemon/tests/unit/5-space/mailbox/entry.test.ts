@@ -614,6 +614,50 @@ describe('createMailboxEntry', () => {
     expect(round).toEqual(entry);
     expect(isValidMailboxEntry(round)).toBe(true);
   });
+
+  test('ignores an inherited Array.prototype.toJSON on content arrays', () => {
+    Object.defineProperty(Array.prototype, 'toJSON', {
+      value: () => [{ type: 'text', text: 'hijacked' }],
+      configurable: true,
+      writable: true,
+      enumerable: false,
+    });
+    try {
+      const entry = createMailboxEntry({
+        to: SESSION_ADDRESS,
+        message: MESSAGE_ONE_BLOCK,
+        origin: 'api',
+      });
+      const round = JSON.parse(JSON.stringify(entry));
+      expect(round).toEqual(entry);
+      expect(round.message.message.content).toEqual([{ type: 'text', text: 'hi' }]);
+      expect(isValidMailboxEntry(round)).toBe(true);
+    } finally {
+      delete (Array.prototype as unknown as Record<string, unknown>).toJSON;
+    }
+  });
+
+  test('reads the policy override property only once', () => {
+    let calls = 0;
+    const base = {
+      to: SESSION_ADDRESS,
+      message: MESSAGE_STRING,
+      origin: 'api',
+    };
+    Object.defineProperty(base, 'policy', {
+      get(): Partial<MailboxEntryPolicy> | null {
+        calls += 1;
+        if (calls <= 2) return { priority: 7 };
+        return null;
+      },
+      enumerable: true,
+      configurable: true,
+    });
+    const entry = createMailboxEntry(base as unknown as Parameters<typeof createMailboxEntry>[0]);
+    expect(entry.policy.priority).toBe(7);
+    expect(calls).toBe(1);
+    expect(isValidMailboxEntry(entry)).toBe(true);
+  });
 });
 
 describe('isValidMailboxEntry', () => {
