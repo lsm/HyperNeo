@@ -187,7 +187,7 @@ export class SpaceRuntimeService {
   private readonly longTermAgentDbQueryServers = new Map<string, DbQueryMcpServer>();
   private readonly spaceAgentNotificationUnsubs = new Map<string, () => void>();
   private readonly longTermAgentFlushes = new Map<string, Promise<void>>();
-  private readonly inboxLateSettlements = new SpaceAgentLateSettlements();
+  private inboxLateSettlements = new SpaceAgentLateSettlements();
   private resumeStalledRecoveryPromise: Promise<void> = Promise.resolve();
   private provisioningPromise: Promise<void> | null = null;
 
@@ -1392,6 +1392,7 @@ export class SpaceRuntimeService {
   start(): void {
     if (this.started) return;
     this.started = true;
+    this.inboxLateSettlements = new SpaceAgentLateSettlements();
     this.runtime.start();
     this.subscribeToSpaceEvents();
     this.provisioningPromise = (async () => {

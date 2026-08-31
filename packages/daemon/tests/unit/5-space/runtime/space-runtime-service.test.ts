@@ -2494,6 +2494,24 @@ describe('SpaceRuntimeService', () => {
       expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
     });
 
+    test('a restart recreates the late-settlement owner', async () => {
+      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
+      const row = makeInboxRow();
+      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
+
+      svc.start();
+      await svc.stop();
+      svc.start();
+      await flushInbox(svc);
+
+      signalDeliveryConsumed(inboxSessionId, row.idempotencyKey!);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(inboxRepo.markDelivered).toHaveBeenCalledWith(row.id, inboxSessionId);
+      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
+      await svc.stop();
+    });
+
     test('a stale goal-outcome wake row is dismissed without injecting', async () => {
       const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
       const row = makeInboxRow({ idempotencyKey: 'goal-outcome:notif-stale' });
