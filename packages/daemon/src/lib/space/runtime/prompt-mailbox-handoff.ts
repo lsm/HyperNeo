@@ -197,8 +197,11 @@ async function dispatchHandoffMechanism(
 }
 
 export async function applyHandoffMechanism(ctx: MailboxHandoffCtx): Promise<MailboxHandoffCtx> {
-  const planned = await dispatchHandoffMechanism(ctx, ctx.mechanism ?? 'ensure');
-  if (planned !== null) return { ...ctx, applied: planned };
+  const mechanism = ctx.mechanism ?? 'ensure';
+  const planned = await dispatchHandoffMechanism(ctx, mechanism);
+  if (planned !== null && (mechanism !== 'ensure' || planned.advanced)) {
+    return { ...ctx, applied: planned };
+  }
   const fresh = ctx.deps.sdkMessageRepo.getDeliveryContent(
     ctx.target.sessionId,
     ctx.target.messageId
@@ -210,7 +213,8 @@ export function settleHandoffOutcome(ctx: MailboxHandoffCtx): MailboxHandoffCtx 
   const applied = ctx.applied ?? null;
   if (applied === null) return { ...ctx, outcome: { state: 'stale' } };
   if (hasSettledHandoffRow(ctx.deps, ctx.target)) {
-    return { ...ctx, outcome: { state: 'settled', dbId: applied.dbId } };
+    const deliverable = resolveDeliverableHandoff(ctx.deps, ctx.target);
+    return { ...ctx, outcome: { state: 'settled', dbId: deliverable.dbId } };
   }
   return {
     ...ctx,

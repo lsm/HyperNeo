@@ -600,6 +600,20 @@ describe('applyHandoffMechanism', () => {
     expect(sendStatus(h, 'msg-apply-3')).toBe('enqueued');
     expect(deliveryJobCount(h, 'msg-apply-3')).toBe(1);
   });
+
+  it('reconciles an ensure plan when the row raced to failed', async () => {
+    const h = makeHarness();
+    const dbId = seedEnqueuedRow(h, 'msg-apply-4');
+    markRowStatus(h, dbId, 'failed');
+    const ctx = await applyHandoffMechanism(
+      ctxFor(h, userMessage('msg-apply-4'), {
+        mechanism: 'ensure',
+      })
+    );
+    expect(ctx.applied).toEqual({ dbId, changed: true, advanced: true });
+    expect(sendStatus(h, 'msg-apply-4')).toBe('enqueued');
+    expect(deliveryJobCount(h, 'msg-apply-4')).toBe(1);
+  });
 });
 
 describe('settleHandoffOutcome', () => {
@@ -618,6 +632,18 @@ describe('settleHandoffOutcome', () => {
       ctxFor(h, userMessage('msg-settle-2'), { applied: { dbId, changed: true, advanced: true } })
     );
     expect(ctx.outcome).toEqual({ state: 'settled', dbId });
+  });
+
+  it('identifies the evidenced sibling in the settled outcome', () => {
+    const h = makeHarness();
+    insertDuplicateRow(h, 'msg-settle-5', 'db-settle-plain', 'enqueued', null);
+    insertDuplicateRow(h, 'msg-settle-5', 'db-settle-evidenced', 'failed', 8);
+    const ctx = settleHandoffOutcome(
+      ctxFor(h, userMessage('msg-settle-5'), {
+        applied: { dbId: 'db-settle-plain', changed: false, advanced: false },
+      })
+    );
+    expect(ctx.outcome).toEqual({ state: 'settled', dbId: 'db-settle-evidenced' });
   });
 
   it('maps an applied handoff onto the enqueued outcome', () => {
