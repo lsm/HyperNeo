@@ -32,7 +32,7 @@ export function createUlid(nowMs?: number): string {
   const observedMs = nowMs ?? Date.now();
   let ms: number;
   let randomness: bigint;
-  if (observedMs === lastObservedMs) {
+  if (observedMs === lastObservedMs || observedMs === lastTimeMs) {
     ms = lastTimeMs ?? observedMs;
     randomness = lastRandomness + 1n;
     if (randomness > MAX_RANDOM) {

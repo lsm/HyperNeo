@@ -94,6 +94,16 @@ describe('createUlid', () => {
     expect(overflowed > nearMax).toBe(true);
   });
 
+  test('continues monotonicity when the clock catches up to the overflow-advanced timestamp', () => {
+    _resetForTesting(1_700_000_000_000, (1n << 80n) - 1n);
+    const overflowed = createUlid(1_700_000_000_000);
+    const recurring = createUlid(1_700_000_000_000);
+    const caughtUp = createUlid(1_700_000_000_001);
+    expect(caughtUp.slice(10)).toBe('0000000000000002');
+    expect(caughtUp > recurring).toBe(true);
+    expect(caughtUp > overflowed).toBe(true);
+  });
+
   test('uses the current time when nowMs is omitted', () => {
     const before = Date.now();
     const ulid = createUlid();
