@@ -141,7 +141,12 @@ function makeRealDbHarness(): RealDbHarness {
   const workflow = { nodes: [{ id: NODE_ID, name: NODE_NAME }] };
 
   const manager = new TaskAgentManager({
-    db: { getDatabase: () => db },
+    db: {
+      getDatabase: () => db,
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: () => ({ content: 'x', sendStatus: 'consumed' }),
+      }),
+    },
     taskRepo,
     workflowRunRepo: runRepo,
     nodeExecutionRepo,
@@ -1284,7 +1289,7 @@ describe('pending drain through the v2 injection shell', () => {
     expect(outbox.sendStatus(V2_SESSION_ID, 'row-v2')).toBe('enqueued');
     expect(h.markDelivered).not.toHaveBeenCalled();
     expect(armed).toHaveLength(1);
-    expect(h.deferExpiration).toHaveBeenCalledWith(['row-v2']);
+    expect(h.deferExpiration).toHaveBeenCalledWith(['row-v2'], LATE_SETTLE_HORIZON_MS + 60_000);
 
     armed[0].onConsumed(V2_SESSION_ID);
 
@@ -1334,7 +1339,7 @@ describe('pending drain through the v2 injection shell', () => {
 
     expect(h.markAttemptFailed).not.toHaveBeenCalled();
     expect(armed).toHaveLength(2);
-    expect(h.deferExpiration).toHaveBeenCalledWith(['row-v2']);
+    expect(h.deferExpiration).toHaveBeenCalledWith(['row-v2'], LATE_SETTLE_HORIZON_MS + 60_000);
 
     armed[1].onConsumed(V2_SESSION_ID);
 
@@ -1354,6 +1359,6 @@ describe('pending drain through the v2 injection shell', () => {
 
     expect(h.markAttemptFailed).not.toHaveBeenCalled();
     expect(armed).toHaveLength(2);
-    expect(h.deferExpiration).toHaveBeenCalledWith(['row-v2']);
+    expect(h.deferExpiration).toHaveBeenCalledWith(['row-v2'], LATE_SETTLE_HORIZON_MS + 60_000);
   });
 });

@@ -200,7 +200,10 @@ describe('AgentMessageRouter: agent name (role) target → DM', () => {
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
     const injected: Array<{ sessionId: string; message: string }> = [];
     const router = makeRouter(ctx, workflowRunId, injected, runChannels, {
-      messageInjector: async () => 'msg-mailbox-1',
+      messageInjector: async (sessionId, message) => {
+        injected.push({ sessionId, message });
+        return 'msg-mailbox-1';
+      },
     });
 
     const result = await router.deliverMessage({
