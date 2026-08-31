@@ -1,13 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import type { NodeExecution, Session, SpaceTask } from '@hyperneo/shared';
+import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
 import {
   missingMcpServers,
   resolveSpaceMcpSessionPolicy,
   SPACE_AD_HOC_MEMBER_REQUIRED_MCP_SERVERS,
   SPACE_COORDINATOR_REQUIRED_MCP_SERVERS,
   SPACE_WORKFLOW_WORKER_REQUIRED_MCP_SERVERS,
+  type SpaceMcpSessionRole,
 } from '../../../../src/lib/space/runtime/space-mcp-session-policy.ts';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
 
 const now = Date.now();
 
@@ -294,6 +295,13 @@ describe('resolveSpaceMcpSessionPolicy', () => {
       isWorkflowWorker: false,
     });
     expect(policy.requiredServers).toEqual([]);
+  });
+});
+
+describe('SpaceMcpSessionRole', () => {
+  test('accepts universal_read as a union member with no dispatchable actions', () => {
+    const role: SpaceMcpSessionRole = 'universal_read';
+    expect(role).toBe('universal_read');
   });
 });
 

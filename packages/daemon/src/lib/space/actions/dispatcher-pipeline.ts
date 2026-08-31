@@ -95,6 +95,7 @@ const ROLE_ACTION_FAMILY_ALLOWLIST: Record<SpaceMcpSessionRole, readonly string[
   ad_hoc_member: SPACE_ADMISSION_FAMILIES,
   workflow_worker: ['node', 'space'],
   long_term_agent: SPACE_ADMISSION_FAMILIES,
+  universal_read: [],
   legacy_task_agent: [],
   outside_space: [],
 };

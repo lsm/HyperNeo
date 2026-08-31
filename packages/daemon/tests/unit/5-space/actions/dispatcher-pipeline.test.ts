@@ -589,6 +589,45 @@ describe('applyRoleAdmission', () => {
     assertDenied(next.outcome!);
     expect(next.outcome.reason).toBe('role_denied');
   });
+
+  test('denies universal_read every action family', () => {
+    const families = [
+      'space',
+      'node',
+      'agents',
+      'sessions',
+      'workflows',
+      'tasks',
+      'forge',
+      'scheduled',
+      'external_events',
+      'inactivity',
+    ] as const;
+    const registry = createActionRegistry(
+      families.map((family) =>
+        defineAction({
+          name: `probe_${family}`,
+          family,
+          safetyClass: 'read',
+          description: 'Registry family probe',
+          paramsDoc: '{}',
+          paramsSchema: z.object({}),
+          handler: async () => ({}),
+        })
+      )
+    );
+    for (const family of families) {
+      const ctx = applyRoleAdmission(
+        applySafetyClass(
+          resolveAction(
+            buildCtx({ actionName: `probe_${family}`, role: 'universal_read' }, { registry })
+          )
+        )
+      );
+      assertDenied(ctx.outcome!);
+      expect(ctx.outcome.reason).toBe('role_denied');
+    }
+  });
 });
 
 describe('applyAutonomyGate', () => {

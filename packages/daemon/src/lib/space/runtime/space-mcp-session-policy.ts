@@ -8,6 +8,7 @@ export type SpaceMcpSessionRole =
   | 'ad_hoc_member'
   | 'workflow_worker'
   | 'long_term_agent'
+  | 'universal_read'
   | 'legacy_task_agent'
   | 'outside_space';
 
