@@ -12,9 +12,11 @@ export const DEFAULT_MAILBOX_ENTRY_POLICY: MailboxEntryPolicy = {
   priority: 0,
 };
 
+export type MailboxMessageContent = string | { type: 'text'; text: string }[];
+
 export type MailboxMessage = {
   type: 'user';
-  message: { content: string | { type: 'text'; text: string }[] };
+  message: { content: MailboxMessageContent };
   parent_tool_use_id: null;
   priority?: 'now' | 'next' | 'later';
 };
@@ -35,7 +37,7 @@ function isNonEmptyTextBlock(block: { type: 'text'; text: string }): boolean {
   return block.type === 'text' && typeof block.text === 'string' && block.text.length > 0;
 }
 
-function hasDeliverableContent(container: string | { type: 'text'; text: string }[]): boolean {
+function hasDeliverableContent(container: MailboxMessageContent): boolean {
   if (typeof container === 'string') return container.length > 0;
   if (!Array.isArray(container)) return false;
   for (let index = 0; index < container.length; index += 1) {
@@ -48,8 +50,7 @@ function hasDeliverableContent(container: string | { type: 'text'; text: string 
 export function validateMailboxMessage(message: MailboxMessage): string | null {
   if (typeof message !== 'object' || message === null) return 'message must be an object';
   if (message.type !== 'user') return 'message.type must be "user"';
-  const content: string | { type: 'text'; text: string }[] | null | undefined =
-    message.message?.content;
+  const content: MailboxMessageContent | null | undefined = message.message?.content;
   if (content === null || content === undefined || !hasDeliverableContent(content)) {
     return 'message.content must be a non-empty string or a non-empty array of text blocks';
   }
