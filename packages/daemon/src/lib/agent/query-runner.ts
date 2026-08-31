@@ -859,6 +859,7 @@ export class QueryRunner {
       }
 
       queryOptions = await this.ensureMemberSpaceMcpInvariant(queryOptions, attemptHook);
+      queryOptions = await this.ensureUniversalReadMcpInvariant(queryOptions);
 
       const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
       const refreshAutoCompactWindow = true;
@@ -1851,6 +1852,26 @@ export class QueryRunner {
       `[MCP invariant] Space member session ${session.id} missing required MCP servers: ` +
         `[${missingServers.join(', ')}]. Refusing to start a degraded Space member turn.`
     );
+  }
+
+  private async ensureUniversalReadMcpInvariant(queryOptions: Options): Promise<Options> {
+    const { session, logger } = this.ctx;
+    const policy = resolveSpaceMcpSessionPolicy(session, {
+      nodeExecutionRepo: this.ctx.db.getNodeExecutionRepo(),
+      taskRepo: this.ctx.db.getSpaceTaskRepo(),
+    });
+    if (policy.role !== 'outside_space') return queryOptions;
+
+    const serverNames = Object.keys(queryOptions.mcpServers ?? {}).sort();
+    if (isSpaceActionsDispatcherEnabled() && !serverNames.includes('space-actions')) {
+      logger.info(
+        `[MCP invariant, soft] Non-space session ${session.id} is missing the space-actions ` +
+          `dispatcher server while HYPERNEO_SPACE_ACTIONS_DISPATCHER is enabled; ` +
+          `the server will be injected in a follow-up slice. Proceeding log-only. ` +
+          `Present: [${serverNames.join(', ')}].`
+      );
+    }
+    return queryOptions;
   }
 
   private async runRetryTeardown(

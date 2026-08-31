@@ -905,6 +905,36 @@ describe('QueryRunner', () => {
       });
     });
 
+    it('logs info when a non-space session is missing the space-actions dispatcher', async () => {
+      await withAnthropicApiKey(async () => {
+        const previous = process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
+        process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = '1';
+        try {
+          mockSession.id = 'plain-worker-1';
+          mockSession.workspacePath = tmpdir();
+          mockSession.type = 'worker';
+          mockSession.context = {};
+          mockSession.config.mcpServers = {};
+          buildSpy.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} });
+
+          const ctx = createContext();
+          runner = new QueryRunner(ctx);
+          runner.start();
+          await ctx.queryPromise?.catch(() => {});
+
+          expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('space-actions'));
+          expect(buildSpy).toHaveBeenCalledTimes(1);
+          expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(1);
+        } finally {
+          if (previous === undefined) {
+            delete process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
+          } else {
+            process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = previous;
+          }
+        }
+      });
+    });
+
     it('self-heals missing MCP servers for long-term Space agent sessions', async () => {
       await withAnthropicApiKey(async () => {
         mockSession.id = longTermAgentSessionId('s1', 'agent-1');
