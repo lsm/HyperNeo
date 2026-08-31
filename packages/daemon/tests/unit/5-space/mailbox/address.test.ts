@@ -307,6 +307,30 @@ describe('isValidAddress', () => {
         asAddress({ kind: 'agent', spaceId: 'sp-1', handle: 'coder', taskId: undefined })
       )
     ).toBe(true);
+    expect(
+      isValidAddress(
+        asAddress({ kind: 'agent', spaceId: 'sp-1', handle: 'coder', node: undefined })
+      )
+    ).toBe(true);
+  });
+
+  test('rejects undefined-valued unknown or cross-variant fields', () => {
+    expect(
+      isValidAddress(asAddress({ kind: 'session', sessionId: 'sess-1', taskId: undefined }))
+    ).toBe(false);
+    expect(
+      isValidAddress(asAddress({ kind: 'session', sessionId: 'sess-1', node: undefined }))
+    ).toBe(false);
+    expect(
+      isValidAddress(
+        asAddress({ kind: 'agent', spaceId: 'sp-1', handle: 'coder', sessionId: undefined })
+      )
+    ).toBe(false);
+    expect(
+      isValidAddress(
+        asAddress({ kind: 'agent', spaceId: 'sp-1', handle: 'coder', queue: undefined })
+      )
+    ).toBe(false);
   });
 
   test('rejects fields containing unpaired surrogates', () => {

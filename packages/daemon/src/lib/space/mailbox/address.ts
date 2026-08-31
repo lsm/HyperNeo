@@ -28,11 +28,6 @@ function isNonEmptyString(value: unknown): value is string {
   }
 }
 
-function definedKeys(value: object): Set<string> {
-  const record = value as Record<string, unknown>;
-  return new Set(Object.keys(record).filter((key) => record[key] !== undefined));
-}
-
 function parseAgentQuery(query: string): { taskId?: string; node?: string } | null {
   const parsed: { taskId?: string; node?: string } = {};
   for (const pair of query.split('&')) {
@@ -94,20 +89,23 @@ export function renderAddress(addr: MailboxAddress): string {
 
 export function isValidAddress(addr: MailboxAddress): boolean {
   if (typeof addr !== 'object' || addr === null) return false;
-  const keys = definedKeys(addr);
+  const record = addr as Record<string, unknown>;
+  const keys = Object.keys(record);
   if (addr.kind === 'session') {
-    if (keys.size !== 2 || !keys.has('sessionId')) return false;
-    return isNonEmptyString(addr.sessionId);
+    if (keys.length !== 2 || !keys.includes('sessionId')) return false;
+    return isNonEmptyString(record.sessionId);
   }
   if (addr.kind === 'agent') {
-    if (!keys.has('kind') || !keys.has('spaceId') || !keys.has('handle')) return false;
     for (const key of keys) {
       if (!AGENT_FIELD_KEYS.has(key)) return false;
     }
-    if (!isNonEmptyString(addr.spaceId)) return false;
-    if (!isNonEmptyString(addr.handle) || addr.handle.includes('/')) return false;
-    if (keys.has('taskId') && !isNonEmptyString(addr.taskId)) return false;
-    if (keys.has('node') && !isNonEmptyString(addr.node)) return false;
+    if (!keys.includes('kind') || !keys.includes('spaceId') || !keys.includes('handle')) {
+      return false;
+    }
+    if (!isNonEmptyString(record.spaceId)) return false;
+    if (!isNonEmptyString(record.handle) || record.handle.includes('/')) return false;
+    if (record.taskId !== undefined && !isNonEmptyString(record.taskId)) return false;
+    if (record.node !== undefined && !isNonEmptyString(record.node)) return false;
     return true;
   }
   return false;
