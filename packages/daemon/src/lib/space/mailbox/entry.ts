@@ -36,6 +36,17 @@ const POLICY_KEYS = ['ttlMs', 'maxAttempts', 'priority'];
 const ENTRY_KEYS = ['id', 'to', 'origin', 'message', 'status', 'policy'];
 const ADDRESS_FIELD_KEYS = ['kind', 'sessionId', 'spaceId', 'handle', 'taskId', 'node'];
 const PRIORITY_LEVELS = new Set<string>(['now', 'next', 'later']);
+const JSON_HOOK_PROTOTYPES = [
+  Object.prototype,
+  Array.prototype,
+  String.prototype,
+  Number.prototype,
+  Boolean.prototype,
+];
+
+function jsonHookPolluted(): boolean {
+  return JSON_HOOK_PROTOTYPES.some((proto) => Object.hasOwn(proto, 'toJSON'));
+}
 
 function isPriorityLevel(value: unknown): boolean {
   return typeof value === 'string' && PRIORITY_LEVELS.has(value);
@@ -63,7 +74,7 @@ function hasInheritedAddressField(record: Record<string, unknown>): boolean {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  if (Object.hasOwn(Object.prototype, 'toJSON')) return false;
+  if (jsonHookPolluted()) return false;
   const proto = Object.getPrototypeOf(value);
   if (proto !== null && proto !== Object.prototype) return false;
   if (Object.getOwnPropertySymbols(value).length !== 0) return false;
@@ -120,6 +131,7 @@ export function validateMailboxMessage(message: unknown): string | null {
     if (
       Object.getPrototypeOf(content) !== Array.prototype ||
       contentKeys.length !== content.length ||
+      !contentKeys.every((key, index) => key === String(index)) ||
       Object.getOwnPropertyNames(content).length !== contentKeys.length + 1 ||
       Object.getOwnPropertySymbols(content).length !== 0 ||
       hasAccessorProperty(content)

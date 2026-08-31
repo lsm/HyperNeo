@@ -98,6 +98,16 @@ function withAccessorContentIndex(): Record<string, unknown> {
   return { type: 'user', message: { content: blocks }, parent_tool_use_id: null };
 }
 
+function withDisguisedSparseArray(): Record<string, unknown> {
+  const blocks: unknown[] = [
+    { type: 'text', text: 'hi' },
+    { type: 'text', text: 'there' },
+  ];
+  delete blocks[1];
+  Object.defineProperty(blocks, 'audit', { value: 'x', enumerable: true });
+  return { type: 'user', message: { content: blocks }, parent_tool_use_id: null };
+}
+
 function messageWith(content: unknown): MailboxMessage {
   return {
     type: 'user',
@@ -171,6 +181,7 @@ describe('validateMailboxMessage rejection', () => {
     ['accessor type field', withGetterType(), 'mailbox message must be an object'],
     ['accessor inner content', withGetterContent(), 'message.message must be an object'],
     ['accessor content array index', withAccessorContentIndex(), 'plain array of text blocks'],
+    ['non-index content array key', withDisguisedSparseArray(), 'plain array of text blocks'],
     ['wrong type', { ...base, type: 'assistant' }, 'type must be "user"'],
     ['missing type', { message: base.message, parent_tool_use_id: null }, 'type must be "user"'],
     ['empty string content', { ...base, message: { content: '' } }, 'must not be empty'],
@@ -554,6 +565,17 @@ describe('Object.prototype pollution resistance', () => {
     try {
       expect(validateMailboxMessage(stringMessage())).toContain('must be an object');
       expect(isValidMailboxEntry(entry)).toBe(false);
+    } finally {
+      delete proto.toJSON;
+    }
+  });
+
+  test('fails closed while Array.prototype.toJSON is polluted', () => {
+    const proto = Array.prototype as Record<string, unknown>;
+    proto.toJSON = () => [];
+    try {
+      const reason = validateMailboxMessage(blockMessage());
+      expect(reason).toContain('must be an object');
     } finally {
       delete proto.toJSON;
     }
