@@ -57,7 +57,7 @@ export function parseAddress(raw: string): MailboxAddress | null {
         const key = safeDecode(pair.slice(0, eq));
         if (!key) return null;
         const value = safeDecode(pair.slice(eq + 1));
-        if (value === null) return null;
+        if (value === null || value.length === 0) return null;
 
         switch (key) {
           case 'task':
