@@ -1864,7 +1864,12 @@ export class TaskAgentManager {
     for (const row of nodeRows) {
       const live = (sessionsByAgent.get(row.targetAgentName) ?? []).some((sessionId) => {
         const status = this.probeSettledDeliveryStatus(sessionId, row.id);
-        return status === 'enqueued' || status === 'submitted' || status === 'deferred';
+        return (
+          status === 'enqueued' ||
+          status === 'submitted' ||
+          status === 'deferred' ||
+          status === 'consumed'
+        );
       });
       if (live) ids.push(row.id);
     }
