@@ -1479,9 +1479,10 @@ export class TaskAgentManager {
     for (const row of drain.rows) {
       const isSyntheticMessage = !isHumanPendingSource(row.sourceAgentName);
       const message = formatPendingRowForNodeAgent(row, targetAgentName);
+      let deadLetterCharged = row.lastError === 'delivery dead-lettered before consumption';
       if (
+        !deadLetterCharged &&
         this.probeSettledDeliveryStatus(sessionId, row.id) === 'failed' &&
-        row.lastError !== 'delivery dead-lettered before consumption' &&
         !this.nodeRowHasLiveSiblingDelivery(row, sessionId)
       ) {
         const charged = repo.markAttemptFailed(row.id, 'delivery dead-lettered before consumption');
@@ -1491,6 +1492,7 @@ export class TaskAgentManager {
           );
           continue;
         }
+        deadLetterCharged = true;
       }
       try {
         await this.injectSubSessionMessage(
@@ -1502,7 +1504,7 @@ export class TaskAgentManager {
           undefined,
           row.id
         );
-        if (row.lastError === 'delivery dead-lettered before consumption') {
+        if (deadLetterCharged) {
           repo.recordDeliveryAttempt(row.id, null);
         }
         this.recordActivityForSession(sessionId);
@@ -1560,13 +1562,24 @@ export class TaskAgentManager {
     const watchDelivery = (): void => {
       repo.deferExpiration?.([row.id], LATE_SETTLE_HORIZON_MS + 60_000);
       this.watchedNodeAgentPendingRows.delete(`${sessionId}::${row.id}`);
+      let settledDuringArm = false;
       const handle = this.lateSettlements.arm({
         sessionId,
         messageId: row.id,
-        onConsumed: () => settleDelivered(),
-        onFailed: () => settleFailed(),
+        onConsumed: () => {
+          settledDuringArm = true;
+          settleDelivered();
+        },
+        onFailed: () => {
+          settledDuringArm = true;
+          settleFailed();
+        },
         getSendStatus: probeDeliveryStatus,
       });
+      if (settledDuringArm) {
+        this.watchedNodeAgentPendingRows.delete(`${sessionId}::${row.id}`);
+        return;
+      }
       this.watchedNodeAgentPendingRows.set(`${sessionId}::${row.id}`, {
         handle,
         workflowRunId: row.workflowRunId,
@@ -1574,25 +1587,31 @@ export class TaskAgentManager {
       });
     };
     const settleFailed = (): void => {
-      const pendingStatus = repo.getById(row.id)?.status;
-      if (pendingStatus !== undefined && pendingStatus !== 'pending') {
-        this.retireNodeAgentWatchers(row.id);
+      try {
+        const pendingStatus = repo.getById(row.id)?.status;
+        if (pendingStatus !== undefined && pendingStatus !== 'pending') {
+          this.retireNodeAgentWatchers(row.id);
+          return;
+        }
+        const status = probeDeliveryStatus();
+        if (status === 'consumed') {
+          settleDelivered();
+          return;
+        }
+        if (status === 'enqueued' || status === 'submitted' || status === 'deferred') {
+          watchDelivery();
+          return;
+        }
+        this.watchedNodeAgentPendingRows.delete(`${sessionId}::${row.id}`);
+        if (this.watchedNodeAgentPendingRowIds(row.workflowRunId).includes(row.id)) {
+          return;
+        }
+        repo.markAttemptFailed(row.id, 'delivery dead-lettered before consumption');
+      } catch {
+        this.watchedNodeAgentPendingRows.delete(`${sessionId}::${row.id}`);
+        this.scheduleNodeAgentDeliveryReconciliation(row, sessionId);
         return;
       }
-      const status = probeDeliveryStatus();
-      if (status === 'consumed') {
-        settleDelivered();
-        return;
-      }
-      if (status === 'enqueued' || status === 'submitted' || status === 'deferred') {
-        watchDelivery();
-        return;
-      }
-      this.watchedNodeAgentPendingRows.delete(`${sessionId}::${row.id}`);
-      if (this.watchedNodeAgentPendingRowIds(row.workflowRunId).includes(row.id)) {
-        return;
-      }
-      repo.markAttemptFailed(row.id, 'delivery dead-lettered before consumption');
       this.scheduleNodeAgentDeliveryReconciliation(row, sessionId);
     };
     if (probeDeliveryStatus() === 'consumed') {
@@ -1623,11 +1642,9 @@ export class TaskAgentManager {
         }
       }
     }
-    const executions = this.config.nodeExecutionRepo?.listByWorkflowRun?.(row.workflowRunId) ?? [];
-    for (const execution of executions) {
-      if (!execution.agentSessionId || execution.agentSessionId === exceptSessionId) continue;
-      if (execution.agentName !== row.targetAgentName) continue;
-      const status = this.probeSettledDeliveryStatus(execution.agentSessionId, row.id);
+    for (const { sessionId } of this.nodeTargetExecutionSessions(row)) {
+      if (sessionId === exceptSessionId) continue;
+      const status = this.probeSettledDeliveryStatus(sessionId, row.id);
       if (status === 'enqueued' || status === 'submitted' || status === 'deferred') {
         return true;
       }
@@ -1650,9 +1667,15 @@ export class TaskAgentManager {
     if (this.disposed) return;
     const repo = this.config.pendingMessageRepo;
     if (repo) {
-      const current = repo.getById(row.id);
-      if (!current || current.status !== 'pending') return;
-      if ((current.attempts ?? 0) >= (current.maxAttempts ?? Infinity)) return;
+      try {
+        const current = repo.getById(row.id);
+        if (!current || current.status !== 'pending') return;
+        if ((current.attempts ?? 0) >= (current.maxAttempts ?? Infinity)) return;
+      } catch {
+        log.warn(
+          `TaskAgentManager: pending message ${row.id} status unreadable; scheduling reconciliation anyway`
+        );
+      }
     }
     const key = `${row.workflowRunId} ${row.targetAgentName} ${sessionId}`;
     if (this.nodeAgentRetryTimers.has(key)) return;
@@ -1895,22 +1918,34 @@ export class TaskAgentManager {
     ];
   }
 
+  private nodeTargetExecutionSessions(
+    row: Pick<PendingAgentMessageRecord, 'workflowRunId' | 'targetAgentName'>
+  ): Array<{ sessionId: string; nodeName: string | null }> {
+    const scopedSeparator = row.targetAgentName.lastIndexOf('/');
+    const scopedNodeName =
+      scopedSeparator === -1 ? null : row.targetAgentName.slice(0, scopedSeparator);
+    const plainAgentName =
+      scopedSeparator === -1 ? row.targetAgentName : row.targetAgentName.slice(scopedSeparator + 1);
+    const resolved: Array<{ sessionId: string; nodeName: string | null }> = [];
+    for (const execution of this.config.nodeExecutionRepo?.listByWorkflowRun?.(row.workflowRunId) ??
+      []) {
+      if (!execution.agentSessionId) continue;
+      if (execution.agentName !== plainAgentName) continue;
+      const nodeName = this.workflowNodeNameForRun(row.workflowRunId, execution.workflowNodeId);
+      if (scopedNodeName !== null && nodeName !== scopedNodeName) continue;
+      resolved.push({ sessionId: execution.agentSessionId, nodeName });
+    }
+    return resolved;
+  }
+
   private durableNodeDeliveryIdsForRun(workflowRunId: string): string[] {
     const repo = this.config.pendingMessageRepo;
     const rows = repo?.listByRunAndStatus?.(workflowRunId, 'pending') ?? [];
     const nodeRows = rows.filter((row) => row.targetKind === 'node_agent');
     if (nodeRows.length === 0) return [];
-    const sessionsByAgent = new Map<string, string[]>();
-    for (const execution of this.config.nodeExecutionRepo?.listByWorkflowRun?.(workflowRunId) ??
-      []) {
-      if (!execution.agentSessionId) continue;
-      const sessions = sessionsByAgent.get(execution.agentName) ?? [];
-      sessions.push(execution.agentSessionId);
-      sessionsByAgent.set(execution.agentName, sessions);
-    }
     const ids: string[] = [];
     for (const row of nodeRows) {
-      const live = (sessionsByAgent.get(row.targetAgentName) ?? []).some((sessionId) => {
+      const live = this.nodeTargetExecutionSessions(row).some(({ sessionId }) => {
         const status = this.probeSettledDeliveryStatus(sessionId, row.id);
         return (
           status === 'enqueued' ||

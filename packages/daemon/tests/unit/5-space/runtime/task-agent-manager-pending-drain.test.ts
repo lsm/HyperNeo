@@ -1088,6 +1088,14 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
       nodeExecutionRepo: {
         getByAgentSessionId: mock(() => execution),
         listByAgentSessionId: mock(() => [execution]),
+        listByWorkflowRun: mock(() => [
+          execution,
+          {
+            ...execution,
+            id: 'exec-v2-alt',
+            agentSessionId: 'sub-session-v2-alt',
+          },
+        ]),
         getById: mock(() => null),
         touchLastActivity: mock(() => {}),
       },
@@ -1167,6 +1175,7 @@ describe('pending drain through the v2 injection shell', () => {
     deferExpiration: ReturnType<typeof mock>;
     enforceRetention: ReturnType<typeof mock>;
     expireStale: ReturnType<typeof mock>;
+    getById: ReturnType<typeof mock>;
     replayMock: ReturnType<typeof mock>;
     session: AgentSession;
   } {
@@ -1244,6 +1253,14 @@ describe('pending drain through the v2 injection shell', () => {
       nodeExecutionRepo: {
         getByAgentSessionId: mock(() => execution),
         listByAgentSessionId: mock(() => [execution]),
+        listByWorkflowRun: mock(() => [
+          execution,
+          {
+            ...execution,
+            id: 'exec-v2-alt',
+            agentSessionId: 'sub-session-v2-alt',
+          },
+        ]),
         getById: mock(() => null),
         touchLastActivity: mock(() => {}),
       },
@@ -1270,6 +1287,7 @@ describe('pending drain through the v2 injection shell', () => {
       deferExpiration: pendingRepo.deferExpiration,
       enforceRetention: pendingRepo.enforceRetention,
       expireStale: pendingRepo.expireStale,
+      getById: pendingRepo.getById,
       replayMock,
       session,
     };
@@ -1583,6 +1601,63 @@ describe('pending drain through the v2 injection shell', () => {
       'delivery dead-lettered before consumption'
     );
     expect(outbox.sendStatus(V2_SESSION_ID, 'row-v2')).toBe('enqueued');
+  });
+
+  it('a scoped row with a live sibling delivery defers the recovery charge', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const altSessionId = 'sub-session-v2-alt';
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    const storedMessage = (
+      outbox.db
+        .prepare(`SELECT sdk_message AS m FROM sdk_messages WHERE sdk_uuid = ? LIMIT 1`)
+        .get('row-v2') as { m: string }
+    ).m;
+    outbox.db
+      .prepare(
+        `INSERT INTO sdk_messages
+          (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+           replacement_metadata_normalized, consumed_seq)
+         VALUES ('db-sibling-alt', ?, 'user', ?, ?, 'enqueued', ?, 1, NULL)`
+      )
+      .run(altSessionId, storedMessage, new Date().toISOString(), 'row-v2');
+    const primaryDbId = outbox.userRowIdByUuid(V2_SESSION_ID, 'row-v2') as string;
+    outbox.completeDeliveryJobs(V2_SESSION_ID, 'row-v2');
+    outbox.sdkRepo.updateMessageStatus([primaryDbId], 'failed');
+
+    const scopedRow = {
+      ...makeRecord({ id: 'row-v2', workflowRunId: V2_RUN_ID }),
+      targetAgentName: `${NODE_NAME}/${AGENT_NAME}`,
+    };
+    const manager = h.manager as unknown as {
+      nodeRowHasLiveSiblingDelivery: (row: PendingAgentMessageRecord, except: string) => boolean;
+    };
+
+    expect(manager.nodeRowHasLiveSiblingDelivery(scopedRow, V2_SESSION_ID)).toBe(true);
+    expect(manager.nodeRowHasLiveSiblingDelivery(scopedRow, altSessionId)).toBe(false);
+  });
+
+  it('keeps reconciliation armed when the settlement status read throws', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    const reconciliations: string[] = [];
+    (
+      h.manager as unknown as {
+        scheduleNodeAgentDeliveryReconciliation: (row: PendingAgentMessageRecord) => void;
+      }
+    ).scheduleNodeAgentDeliveryReconciliation = (row) => {
+      reconciliations.push(row.id);
+    };
+    h.getById.mockImplementation(() => {
+      throw new Error('db unavailable');
+    });
+
+    expect(() => armed[0].onConsumed(V2_SESSION_ID)).not.toThrow();
+    expect(h.manager.activeDeliveryIdsForRun(V2_RUN_ID)).not.toContain('row-v2');
   });
 
   it('settling one session retires the row watchers of every other session', async () => {
