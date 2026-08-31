@@ -1112,6 +1112,8 @@ describe('pending drain through the v2 injection shell', () => {
     reopenDeliveryByUuid: ReturnType<typeof mock>;
     markDeliveryDeferredByUuid: ReturnType<typeof mock>;
     markDelivered: ReturnType<typeof mock>;
+    markAttemptFailed: ReturnType<typeof mock>;
+    deferExpiration: ReturnType<typeof mock>;
     replayMock: ReturnType<typeof mock>;
   } {
     const saveUserMessage = mock(() => 'db-id');
