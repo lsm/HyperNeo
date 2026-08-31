@@ -1548,6 +1548,25 @@ describe('pending drain through the v2 injection shell', () => {
     expect(h.markDelivered).toHaveBeenCalledWith('row-v2', altSessionId);
   });
 
+  it('stops redelivery when the recovered dead-letter charge exhausts the row', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    h.markAttemptFailed.mockImplementation(() => ({ status: 'failed' }) as never);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    const dbId = outbox.userRowIdByUuid(V2_SESSION_ID, 'row-v2') as string;
+    outbox.completeDeliveryJobs(V2_SESSION_ID, 'row-v2');
+    outbox.sdkRepo.updateMessageStatus([dbId], 'failed');
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+
+    expect(h.markAttemptFailed).toHaveBeenCalledWith(
+      'row-v2',
+      'delivery dead-lettered before consumption'
+    );
+    expect(outbox.sendStatus(V2_SESSION_ID, 'row-v2')).toBe('failed');
+  });
+
   it('charges a recovered dead letter once before the handoff reopens it', async () => {
     const outbox = createOutboxTestDb();
     const h = makeV2Harness(null, outbox);

@@ -1483,7 +1483,13 @@ export class TaskAgentManager {
         this.probeSettledDeliveryStatus(sessionId, row.id) === 'failed' &&
         row.lastError !== 'delivery dead-lettered before consumption'
       ) {
-        repo.markAttemptFailed(row.id, 'delivery dead-lettered before consumption');
+        const charged = repo.markAttemptFailed(row.id, 'delivery dead-lettered before consumption');
+        if (charged && charged.status !== 'pending') {
+          log.warn(
+            `TaskAgentManager: pending message ${row.id} exhausted its attempts before redelivery; skipping`
+          );
+          continue;
+        }
       }
       try {
         await this.injectSubSessionMessage(
