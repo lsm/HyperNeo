@@ -16,6 +16,7 @@ const VALID_SAMPLES: MailboxAddress[] = [
   { kind: 'agent', spaceId: 'sp/1', handle: 'co der' },
   { kind: 'agent', spaceId: 'sp-1', handle: 'coder', taskId: 'a&b=c?d#e%f' },
   { kind: 'agent', spaceId: 'sp-1', handle: 'review:er?', node: 'Nø de' },
+  { kind: 'agent', spaceId: 'sp-1', handle: '😀', taskId: '🚀', node: 'Coding' },
 ];
 
 function asAddress(value: unknown): MailboxAddress {
@@ -89,6 +90,13 @@ describe('parseAddress', () => {
 
   test('rejects a handle that decodes to contain a slash', () => {
     expect(parseAddress('agent:sp-1/co%2Fder')).toBeNull();
+  });
+
+  test('rejects fields containing unpaired surrogates', () => {
+    expect(parseAddress('session:\uD800')).toBeNull();
+    expect(parseAddress('agent:sp-1/co\uDC00der')).toBeNull();
+    expect(parseAddress('agent:sp-1/coder?task=\uD800')).toBeNull();
+    expect(parseAddress('agent:sp-1/coder?node=\uDBFF')).toBeNull();
   });
 
   test('returns null for unknown prefixes', () => {
@@ -299,5 +307,23 @@ describe('isValidAddress', () => {
         asAddress({ kind: 'agent', spaceId: 'sp-1', handle: 'coder', taskId: undefined })
       )
     ).toBe(true);
+  });
+
+  test('rejects fields containing unpaired surrogates', () => {
+    expect(isValidAddress(asAddress({ kind: 'session', sessionId: '\uD800' }))).toBe(false);
+    expect(isValidAddress(asAddress({ kind: 'agent', spaceId: '\uDC00', handle: 'coder' }))).toBe(
+      false
+    );
+    expect(
+      isValidAddress(asAddress({ kind: 'agent', spaceId: 'sp-1', handle: 'co\uD800der' }))
+    ).toBe(false);
+    expect(
+      isValidAddress(
+        asAddress({ kind: 'agent', spaceId: 'sp-1', handle: 'coder', taskId: '\uDBFF' })
+      )
+    ).toBe(false);
+    expect(
+      isValidAddress(asAddress({ kind: 'agent', spaceId: 'sp-1', handle: 'coder', node: '\uDFFF' }))
+    ).toBe(false);
   });
 });

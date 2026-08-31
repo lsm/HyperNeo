@@ -19,7 +19,13 @@ function decodeSegment(raw: string): string | null {
 }
 
 function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
+  if (typeof value !== 'string' || value.length === 0) return false;
+  try {
+    encodeURIComponent(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function definedKeys(value: object): Set<string> {
@@ -57,7 +63,8 @@ export function parseAddress(raw: string): MailboxAddress | null {
     if (query !== null || rest.length === 0 || rest.includes('/')) return null;
     const sessionId = decodeSegment(rest);
     if (sessionId === null || sessionId.length === 0) return null;
-    return { kind: 'session', sessionId };
+    const address: MailboxAddress = { kind: 'session', sessionId };
+    return isValidAddress(address) ? address : null;
   }
   if (scheme === 'agent') {
     const handleSeparator = rest.indexOf('/');
@@ -68,7 +75,8 @@ export function parseAddress(raw: string): MailboxAddress | null {
     if (handle === null || handle.length === 0 || handle.includes('/')) return null;
     const extras = query === null ? {} : parseAgentQuery(query);
     if (extras === null) return null;
-    return { kind: 'agent', spaceId, handle, ...extras };
+    const address: MailboxAddress = { kind: 'agent', spaceId, handle, ...extras };
+    return isValidAddress(address) ? address : null;
   }
   return null;
 }
