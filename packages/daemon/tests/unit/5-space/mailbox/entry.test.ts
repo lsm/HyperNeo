@@ -184,7 +184,7 @@ describe('validateMailboxMessage', () => {
     Object.defineProperty(hook, 'toJSON', { value: () => 'x', enumerable: false });
     expect(validateMailboxMessage(hook)).toContain('plain object');
     const symbolled = buildMessage();
-    Object.defineProperty(symbled, Symbol('tag'), { value: 1, enumerable: true });
+    Object.defineProperty(symbolled, Symbol('tag'), { value: 1, enumerable: true });
     expect(validateMailboxMessage(symbolled)).toContain('plain object');
     const accessor = buildMessage();
     Object.defineProperty(accessor, 'priority', { get: () => 'now', enumerable: true });
