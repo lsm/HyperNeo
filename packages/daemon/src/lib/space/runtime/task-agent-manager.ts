@@ -133,7 +133,10 @@ import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import { decideRestoredWorkerAdmission } from './restored-worker-admission-decision-pipeline.ts';
 import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
-import { SpaceAgentLateSettlements } from './space-agent-message-delivery.ts';
+import {
+  LATE_SETTLE_HORIZON_MS,
+  SpaceAgentLateSettlements,
+} from './space-agent-message-delivery.ts';
 import {
   collectActiveSpaceDeliveryIds,
   runSpaceAgentPendingDrain,
@@ -1505,7 +1508,7 @@ export class TaskAgentManager {
       this.emitPendingDelivered(row.id, sessionId, row);
     };
     const watchDelivery = (): void => {
-      repo.deferExpiration?.([row.id]);
+      repo.deferExpiration?.([row.id], LATE_SETTLE_HORIZON_MS + 60_000);
       this.lateSettlements.arm({
         sessionId,
         messageId: row.id,
@@ -4899,8 +4902,13 @@ export class TaskAgentManager {
       workflowRunId,
       workflowChannels: channels,
       messageInjector: async (targetSessionId, message) => {
-        await this.injectSubSessionMessage(targetSessionId, message, true);
+        const injectedMessageId = await this.injectSubSessionMessage(
+          targetSessionId,
+          message,
+          true
+        );
         this.recordActivityForSession(targetSessionId);
+        return injectedMessageId;
       },
       activateTargetSession: (targetAgentName) =>
         this.activateTargetSessionsForMessage(taskId, workflowRunId, targetAgentName, {

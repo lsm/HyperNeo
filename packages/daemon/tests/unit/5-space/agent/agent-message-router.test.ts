@@ -189,6 +189,32 @@ describe('AgentMessageRouter: agent name (role) target → DM', () => {
         '\nTo reply, use: send_message with target "coder"'
     );
   });
+
+  test('reports a live node handoff as queued when the injector returns a mailbox message id', async () => {
+    const { runId: workflowRunId, channels: runChannels } = seedWorkflowRunWithChannels(
+      ctx.db,
+      ctx.spaceId,
+      [makeResolvedChannel('coder', 'reviewer')]
+    );
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
+    const injected: Array<{ sessionId: string; message: string }> = [];
+    const router = makeRouter(ctx, workflowRunId, injected, runChannels, {
+      messageInjector: async () => 'msg-mailbox-1',
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: 'reviewer',
+      message: 'LGTM!',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.delivered).toEqual([]);
+    expect(result.queued).toEqual([{ agentName: 'reviewer', messageId: 'msg-mailbox-1' }]);
+    expect(injected).toHaveLength(1);
+  });
 });
 
 describe('AgentMessageRouter: single agent per role (task-centric model)', () => {

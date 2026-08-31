@@ -13,6 +13,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { createOutboxTestDb, type OutboxTestDb } from '../../../helpers/outbox-test-db';
+import { LATE_SETTLE_HORIZON_MS } from '../../../../src/lib/space/runtime/space-agent-message-delivery';
 
 const NODE_ID = 'node-build';
 const NODE_NAME = 'Build';
