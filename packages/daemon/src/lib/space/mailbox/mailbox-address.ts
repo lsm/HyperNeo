@@ -30,6 +30,7 @@ function isWellFormed(value: string): boolean {
     if (code >= 0xd800 && code <= 0xdbff) {
       const next = i + 1 < value.length ? value.charCodeAt(i + 1) : 0;
       if (next < 0xdc00 || next > 0xdfff) return false;
+      i += 1;
     }
   }
   return true;
