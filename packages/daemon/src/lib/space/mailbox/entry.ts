@@ -145,12 +145,7 @@ export function createMailboxEntry(args: {
       if (!POLICY_KEYS.includes(key)) {
         throw new TypeError(`policy may not carry "${key}"`);
       }
-    }
-    for (const key of POLICY_KEYS) {
-      if (
-        !(key in args.policy) ||
-        Object.getOwnPropertyDescriptor(args.policy, key)?.enumerable !== true
-      ) {
+      if (Object.getOwnPropertyDescriptor(args.policy, key)?.enumerable !== true) {
         throw new TypeError(`policy is missing required key "${key}"`);
       }
     }
