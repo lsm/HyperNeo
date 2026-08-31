@@ -601,6 +601,22 @@ export class PromptContentConflictError extends Error {
   }
 }
 
+export function uuidSiblingsShareCanonicalContent(args: {
+  db: BunDatabase;
+  sessionId: string;
+  messageUuid: string;
+}): boolean {
+  const rows = args.db
+    .prepare(
+      `SELECT sdk_message AS "sdkMessage" FROM sdk_messages
+        WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?`
+    )
+    .all(args.sessionId, args.messageUuid) as Array<{ sdkMessage: string }>;
+  if (rows.length === 0) return true;
+  const canonical = rows.map((row) => canonicalJson(JSON.parse(row.sdkMessage)));
+  return canonical.every((entry) => entry === canonical[0]);
+}
+
 export function verifyPromptContent(args: {
   db: BunDatabase;
   sessionId: string;

@@ -9,6 +9,7 @@ import {
 } from '../../agent/message-delivery.ts';
 import {
   PromptContentConflictError,
+  uuidSiblingsShareCanonicalContent,
   verifyPromptContent,
 } from '../../agent/message-delivery-outbox.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
@@ -231,14 +232,9 @@ function probeSettledSendStatus(
     sdkRepo.hasConsumptionEvidence?.(sessionId, messageId) ||
     (sdkRepo.getSettledDeliveryMessageId?.(sessionId, messageId) ?? null) !== null
   ) {
-    const rows = ctx.deps.db
-      .prepare(
-        `SELECT sdk_message AS m FROM sdk_messages
-          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?`
-      )
-      .all(sessionId, messageId) as Array<{ m: string }>;
-    const siblingsShareContent = rows.length === 0 || rows.every((row) => row.m === rows[0].m);
-    if (siblingsShareContent) return 'consumed';
+    if (uuidSiblingsShareCanonicalContent({ db: ctx.deps.db, sessionId, messageUuid: messageId })) {
+      return 'consumed';
+    }
   }
   return sdkRepo.getDeliveryContent(sessionId, messageId)?.sendStatus;
 }

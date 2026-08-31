@@ -1430,6 +1430,36 @@ describe('pending drain through the v2 injection shell', () => {
     expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
   });
 
+  it('a settled sibling with reordered but equivalent content still settles the pending row', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    const stored = JSON.parse(
+      (
+        outbox.db
+          .prepare(`SELECT sdk_message AS m FROM sdk_messages WHERE sdk_uuid = ? LIMIT 1`)
+          .get('row-v2') as { m: string }
+      ).m
+    ) as Record<string, unknown>;
+    const reordered: Record<string, unknown> = {};
+    for (const key of Object.keys(stored).reverse()) reordered[key] = stored[key];
+    outbox.db
+      .prepare(
+        `INSERT INTO sdk_messages
+          (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+           replacement_metadata_normalized, consumed_seq)
+         VALUES ('db-sibling-reordered', ?, 'user', ?, ?, 'failed', ?, 1, 5)`
+      )
+      .run(V2_SESSION_ID, JSON.stringify(reordered), new Date().toISOString(), 'row-v2');
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+
+    expect(armed).toHaveLength(1);
+    expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
+  });
+
   it('exposes watched node rows in the unified active delivery id set', async () => {
     const outbox = createOutboxTestDb();
     const h = makeV2Harness(null, outbox);

@@ -21,6 +21,7 @@ import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
 import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session.ts';
+import { uuidSiblingsShareCanonicalContent } from '../../../lib/agent/message-delivery-outbox.ts';
 import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
 import {
   acquireContextClearBoundary,
@@ -1518,14 +1519,7 @@ export class TaskAgentManager {
   private uuidSiblingsShareContent(sessionId: string, messageId: string): boolean {
     const db = this.config.db.getDatabase?.();
     if (!db) return true;
-    const rows = db
-      .prepare(
-        `SELECT sdk_message AS m FROM sdk_messages
-          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?`
-      )
-      .all(sessionId, messageId) as Array<{ m: string }>;
-    if (rows.length === 0) return true;
-    return rows.every((row) => row.m === rows[0].m);
+    return uuidSiblingsShareCanonicalContent({ db, sessionId, messageUuid: messageId });
   }
 
   private settleNodeAgentPendingRow(
