@@ -67,6 +67,37 @@ function withSubclassedContentArray(): Record<string, unknown> {
   return { type: 'user', message: { content: blocks }, parent_tool_use_id: null };
 }
 
+function withGetterType(): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    message: { content: 'hi' },
+    parent_tool_use_id: null,
+  };
+  Object.defineProperty(payload, 'type', { get: () => 'user', enumerable: true });
+  return payload;
+}
+
+function withGetterContent(): Record<string, unknown> {
+  let reads = 0;
+  const inner: Record<string, unknown> = {};
+  Object.defineProperty(inner, 'content', {
+    get: () => {
+      reads += 1;
+      return reads === 1 ? 'hi' : undefined;
+    },
+    enumerable: true,
+  });
+  return { type: 'user', message: inner, parent_tool_use_id: null };
+}
+
+function withAccessorContentIndex(): Record<string, unknown> {
+  const blocks: unknown[] = [{ type: 'text', text: 'hi' }];
+  Object.defineProperty(blocks, '0', {
+    get: () => ({ type: 'text', text: 'hi' }),
+    enumerable: true,
+  });
+  return { type: 'user', message: { content: blocks }, parent_tool_use_id: null };
+}
+
 function messageWith(content: unknown): MailboxMessage {
   return {
     type: 'user',
@@ -137,6 +168,9 @@ describe('validateMailboxMessage rejection', () => {
       withSubclassedContentArray(),
       'plain array of text blocks',
     ],
+    ['accessor type field', withGetterType(), 'mailbox message must be an object'],
+    ['accessor inner content', withGetterContent(), 'message.message must be an object'],
+    ['accessor content array index', withAccessorContentIndex(), 'plain array of text blocks'],
     ['wrong type', { ...base, type: 'assistant' }, 'type must be "user"'],
     ['missing type', { message: base.message, parent_tool_use_id: null }, 'type must be "user"'],
     ['empty string content', { ...base, message: { content: '' } }, 'must not be empty'],
@@ -443,6 +477,51 @@ describe('isValidMailboxEntry', () => {
 function copyPolicy(entry: Record<string, unknown>): Record<string, unknown> {
   return { ...(entry.policy as Record<string, unknown>) };
 }
+
+describe('Object.prototype pollution resistance', () => {
+  test('rejects messages whose required fields are only inherited', () => {
+    const proto = Object.prototype as Record<string, unknown>;
+    proto.type = 'user';
+    try {
+      const reason = validateMailboxMessage({
+        message: { content: 'hi' },
+        parent_tool_use_id: null,
+      });
+      expect(reason).toContain('must be an enumerable own field');
+    } finally {
+      delete proto.type;
+    }
+  });
+
+  test('rejects entries whose policy fields are only inherited', () => {
+    const proto = Object.prototype as Record<string, unknown>;
+    proto.ttlMs = 60_000;
+    try {
+      const entry = createMailboxEntry({ to: TO, message: stringMessage(), origin: 'web' });
+      const policy = { ...entry.policy } as Record<string, unknown>;
+      delete policy.ttlMs;
+      expect(isValidMailboxEntry({ ...entry, policy })).toBe(false);
+    } finally {
+      delete proto.ttlMs;
+    }
+  });
+
+  test('rejects addresses with inherited selectors', () => {
+    const proto = Object.prototype as Record<string, unknown>;
+    proto.taskId = 'task-secret';
+    try {
+      expect(() =>
+        createMailboxEntry({
+          to: { kind: 'agent', spaceId: 'sp-1', handle: 'coder' },
+          message: stringMessage(),
+          origin: 'web',
+        })
+      ).toThrow('must not carry inherited fields');
+    } finally {
+      delete proto.taskId;
+    }
+  });
+});
 
 describe('mailbox entry JSON law', () => {
   test.each([

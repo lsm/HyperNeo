@@ -30,13 +30,35 @@ export type MailboxEntry = {
 };
 
 const MESSAGE_KEYS = ['type', 'message', 'parent_tool_use_id', 'priority'];
+const MESSAGE_REQUIRED_KEYS = ['type', 'message', 'parent_tool_use_id'];
 const BLOCK_KEYS = ['type', 'text'];
 const POLICY_KEYS = ['ttlMs', 'maxAttempts', 'priority'];
 const ENTRY_KEYS = ['id', 'to', 'origin', 'message', 'status', 'policy'];
+const ADDRESS_FIELD_KEYS = ['kind', 'sessionId', 'spaceId', 'handle', 'taskId', 'node'];
 const PRIORITY_LEVELS = new Set<string>(['now', 'next', 'later']);
 
 function isPriorityLevel(value: unknown): boolean {
   return typeof value === 'string' && PRIORITY_LEVELS.has(value);
+}
+
+function hasAccessorProperty(record: object): boolean {
+  for (const name of Object.getOwnPropertyNames(record)) {
+    const descriptor = Object.getOwnPropertyDescriptor(record, name);
+    if (
+      descriptor !== undefined &&
+      (descriptor.get !== undefined || descriptor.set !== undefined)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasInheritedAddressField(record: Record<string, unknown>): boolean {
+  for (const key of ADDRESS_FIELD_KEYS) {
+    if (!Object.hasOwn(record, key) && record[key] !== undefined) return true;
+  }
+  return false;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -44,6 +66,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   const proto = Object.getPrototypeOf(value);
   if (proto !== null && proto !== Object.prototype) return false;
   if (Object.getOwnPropertySymbols(value).length !== 0) return false;
+  if (hasAccessorProperty(value)) return false;
   return Object.getOwnPropertyNames(value).length === Object.keys(value).length;
 }
 
@@ -97,7 +120,8 @@ export function validateMailboxMessage(message: unknown): string | null {
       Object.getPrototypeOf(content) !== Array.prototype ||
       contentKeys.length !== content.length ||
       Object.getOwnPropertyNames(content).length !== contentKeys.length + 1 ||
-      Object.getOwnPropertySymbols(content).length !== 0
+      Object.getOwnPropertySymbols(content).length !== 0 ||
+      hasAccessorProperty(content)
     ) {
       return 'mailbox message content must be a plain array of text blocks';
     }
@@ -114,6 +138,11 @@ export function validateMailboxMessage(message: unknown): string | null {
   if (keys.includes('priority') && !isPriorityLevel(message.priority)) {
     return 'mailbox message priority must be one of "now", "next", "later"';
   }
+  for (const required of MESSAGE_REQUIRED_KEYS) {
+    if (!keys.includes(required)) {
+      return `mailbox message ${required} must be an enumerable own field`;
+    }
+  }
   return null;
 }
 
@@ -121,7 +150,9 @@ function validateEntryPolicy(policy: unknown): string | null {
   if (!isPlainObject(policy)) return 'mailbox entry policy must be an object';
   const policyKey = firstUnexpectedKey(policy, POLICY_KEYS);
   if (policyKey !== null) return `mailbox entry policy must not carry key "${policyKey}"`;
+  const policyFieldKeys = Object.keys(policy);
   for (const key of POLICY_KEYS) {
+    if (!policyFieldKeys.includes(key)) return `mailbox entry policy ${key} is required`;
     const value = policy[key];
     if (value === undefined) return `mailbox entry policy ${key} is required`;
     if (typeof value !== 'number' || !Number.isInteger(value)) {
@@ -158,6 +189,9 @@ export function createMailboxEntry(args: {
   if (hasUndefinedOwnValue(args.to)) {
     throw new TypeError('mailbox entry address must not carry undefined fields');
   }
+  if (hasInheritedAddressField(args.to)) {
+    throw new TypeError('mailbox entry address must not carry inherited fields');
+  }
   if (typeof args.origin !== 'string' || args.origin.length === 0) {
     throw new TypeError('mailbox entry origin must be a non-empty string');
   }
@@ -189,6 +223,7 @@ export function isValidMailboxEntry(entry: unknown): boolean {
   if (typeof entry.id !== 'string' || !isUlid(entry.id)) return false;
   if (!isPlainObject(entry.to) || !isValidAddress(entry.to as MailboxAddress)) return false;
   if (hasUndefinedOwnValue(entry.to)) return false;
+  if (hasInheritedAddressField(entry.to)) return false;
   if (typeof entry.origin !== 'string' || entry.origin.length === 0) return false;
   if (validateMailboxMessage(entry.message) !== null) return false;
   if (entry.status !== 'enqueued') return false;
