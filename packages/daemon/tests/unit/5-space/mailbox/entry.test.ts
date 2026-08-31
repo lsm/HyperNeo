@@ -3,6 +3,7 @@ import {
   DEFAULT_MAILBOX_ENTRY_POLICY,
   type MailboxEntry,
   type MailboxMessage,
+  validateMailboxMessage,
 } from '../../../../src/lib/space/mailbox/entry';
 
 describe('DEFAULT_MAILBOX_ENTRY_POLICY', () => {
@@ -90,5 +91,111 @@ describe('MailboxEntry', () => {
     for (const entry of [toSession, toAgent]) {
       expect(JSON.parse(JSON.stringify(entry))).toEqual(entry);
     }
+  });
+});
+
+describe('validateMailboxMessage', () => {
+  const validMessage = {
+    type: 'user',
+    message: { content: 'hello' },
+    parent_tool_use_id: null,
+  };
+
+  describe('acceptance', () => {
+    test.each([
+      ['non-empty string content without priority', validMessage],
+      [
+        'a single text block',
+        {
+          type: 'user',
+          message: { content: [{ type: 'text', text: 'first' }] },
+          parent_tool_use_id: null,
+        },
+      ],
+      [
+        'multiple text blocks',
+        {
+          type: 'user',
+          message: {
+            content: [
+              { type: 'text', text: 'first' },
+              { type: 'text', text: 'second' },
+            ],
+          },
+          parent_tool_use_id: null,
+        },
+      ],
+      ['priority now', { ...validMessage, priority: 'now' }],
+      ['priority next', { ...validMessage, priority: 'next' }],
+      ['priority later', { ...validMessage, priority: 'later' }],
+    ])('accepts %s', (_label, message) => {
+      expect(validateMailboxMessage(message)).toBeNull();
+    });
+  });
+
+  describe('rejection', () => {
+    test.each([
+      ['an array instead of a plain object', ['user']],
+      ['a wrong type', { ...validMessage, type: 'assistant' }],
+      [
+        'empty string content',
+        { type: 'user', message: { content: '' }, parent_tool_use_id: null },
+      ],
+      [
+        'an empty block array',
+        { type: 'user', message: { content: [] }, parent_tool_use_id: null },
+      ],
+      [
+        'a non-text block',
+        {
+          type: 'user',
+          message: { content: [{ type: 'image', text: 'x' }] },
+          parent_tool_use_id: null,
+        },
+      ],
+      [
+        'an empty block text',
+        {
+          type: 'user',
+          message: { content: [{ type: 'text', text: '' }] },
+          parent_tool_use_id: null,
+        },
+      ],
+      ['a non-null parent_tool_use_id', { ...validMessage, parent_tool_use_id: 'tool-1' }],
+      ['an invalid priority', { ...validMessage, priority: 'soon' }],
+      ['an unknown key', { ...validMessage, kind: 'enqueued' }],
+    ])('rejects %s', (_label, message) => {
+      const reason = validateMailboxMessage(message);
+      expect(reason).toEqual(expect.any(String));
+    });
+
+    test.each([
+      'uuid',
+      'session_id',
+      'subagent_type',
+      'task_description',
+      'isSynthetic',
+      'tool_use_result',
+      'shouldQuery',
+      'timestamp',
+    ])('rejects the named excess key %s', (key) => {
+      const reason = validateMailboxMessage({ ...validMessage, [key]: 'x' });
+      expect(reason).toContain('unexpected key');
+    });
+  });
+
+  describe('never-throw law', () => {
+    test.each([
+      42,
+      ['user'],
+      null,
+      undefined,
+      'user',
+    ])('returns a one-line reason for %p instead of throwing', (garbage) => {
+      expect(() => validateMailboxMessage(garbage)).not.toThrow();
+      const reason = validateMailboxMessage(garbage);
+      expect(reason).toEqual(expect.any(String));
+      expect(reason?.includes('\n')).toBe(false);
+    });
   });
 });
