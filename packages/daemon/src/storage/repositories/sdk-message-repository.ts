@@ -1980,6 +1980,33 @@ export class SDKMessageRepository {
     return rows.map((row) => row.id);
   }
 
+  hasConsumptionEvidence(sessionId: string, messageId: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM sdk_messages
+         WHERE session_id = ?
+           AND message_type = 'user'
+           AND (sdk_uuid = ? OR id = ?)
+           AND consumed_seq IS NOT NULL
+         LIMIT 1`
+      )
+      .get(sessionId, messageId, messageId);
+    return row !== null && row !== undefined;
+  }
+
+  getSettledDeliveryMessageId(sessionId: string, uuid: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT id FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+            AND (consumed_seq IS NOT NULL OR COALESCE(send_status, 'consumed') = 'consumed')
+          ORDER BY consumed_seq IS NULL, consumed_seq DESC, timestamp ASC, rowid ASC
+          LIMIT 1`
+      )
+      .get(sessionId, uuid) as { id: string } | undefined;
+    return row?.id ?? null;
+  }
+
   reopenDeliveryByUuid(sessionId: string, uuid: string): string | null {
     return this.markDeliveryTransitionByUuid(sessionId, uuid, 'reopen');
   }

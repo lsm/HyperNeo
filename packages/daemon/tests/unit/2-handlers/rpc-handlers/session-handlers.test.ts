@@ -800,7 +800,8 @@ describe('Session RPC Handlers — models.list', () => {
           sdk_message TEXT, timestamp TEXT, send_status TEXT, origin TEXT,
           is_renderable INTEGER DEFAULT 1, is_terminal INTEGER DEFAULT 0,
           conversation_turn_index INTEGER, parent_tool_use_id TEXT, task_id TEXT,
-          sdk_uuid TEXT, replacement_metadata_normalized INTEGER DEFAULT 0
+          sdk_uuid TEXT, replacement_metadata_normalized INTEGER DEFAULT 0,
+          consumed_seq INTEGER
         );
         CREATE TABLE job_queue (
           id TEXT PRIMARY KEY, queue TEXT NOT NULL,
@@ -933,7 +934,8 @@ describe('Session RPC Handlers — models.list', () => {
           sdk_message TEXT, timestamp TEXT, send_status TEXT, origin TEXT,
           is_renderable INTEGER DEFAULT 1, is_terminal INTEGER DEFAULT 0,
           conversation_turn_index INTEGER, parent_tool_use_id TEXT, task_id TEXT,
-          sdk_uuid TEXT, replacement_metadata_normalized INTEGER DEFAULT 0
+          sdk_uuid TEXT, replacement_metadata_normalized INTEGER DEFAULT 0,
+          consumed_seq INTEGER
         );
         CREATE TABLE job_queue (
           id TEXT PRIMARY KEY, queue TEXT NOT NULL,

@@ -8,7 +8,9 @@ import {
   ensurePrompt,
   persistAndEnqueueDelivery,
   persistPrompt,
+  PromptContentConflictError,
   retryPrompt,
+  verifyPromptContent,
 } from '../../../../src/lib/agent/message-delivery-outbox';
 import type { JobQueueRepository as JobQueueRepoType } from '../../../../src/storage/repositories/job-queue-repository';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
@@ -41,7 +43,8 @@ function setup() {
       parent_tool_use_id TEXT,
       task_id TEXT,
       sdk_uuid TEXT,
-      replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0
+      replacement_metadata_normalized INTEGER NOT NULL DEFAULT 0,
+      consumed_seq INTEGER
     );
     CREATE TABLE sdk_message_replacements (
       source_message_id TEXT NOT NULL,
@@ -1354,5 +1357,250 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
         { id: 'db-act-other', send_status: 'deferred' },
       ]);
     });
+  });
+});
+
+describe('prompt content verification (verifyPromptContent)', () => {
+  let db: Database;
+  let sdkRepo: SDKMessageRepository;
+  let jobQueue: JobQueueRepository;
+
+  beforeEach(() => {
+    ({ db, sdkRepo, jobQueue } = setup());
+  });
+  afterEach(() => db.close());
+
+  function seedRow(uuid: string, text: string): void {
+    persistPrompt({
+      db: db as never,
+      sdkMessageRepo: sdkRepo,
+      jobQueue,
+      sessionId: SESSION,
+      message: userMessage(uuid, text),
+      delivery: { origin: 'space_inject' },
+    });
+  }
+
+  it('returns silently when no row exists for the uuid', () => {
+    expect(() =>
+      verifyPromptContent({
+        db: db as never,
+        sessionId: SESSION,
+        messageUuid: 'verify-absent',
+        message: userMessage('verify-absent'),
+      })
+    ).not.toThrow();
+  });
+
+  it('accepts content that matches the stored row', () => {
+    seedRow('verify-same', 'original');
+    expect(() =>
+      verifyPromptContent({
+        db: db as never,
+        sessionId: SESSION,
+        messageUuid: 'verify-same',
+        message: userMessage('verify-same', 'original'),
+      })
+    ).not.toThrow();
+  });
+
+  it('throws PromptContentConflictError when content differs', () => {
+    seedRow('verify-diff', 'original');
+    expect(() =>
+      verifyPromptContent({
+        db: db as never,
+        sessionId: SESSION,
+        messageUuid: 'verify-diff',
+        message: userMessage('verify-diff', 'conflicting'),
+      })
+    ).toThrow(PromptContentConflictError);
+  });
+
+  it('types the conflict ensurePrompt raises so producers can classify it', () => {
+    seedRow('verify-ensure', 'original');
+    expect(() =>
+      ensurePrompt({
+        db: db as never,
+        sdkMessageRepo: sdkRepo,
+        jobQueue,
+        sessionId: SESSION,
+        message: userMessage('verify-ensure', 'conflicting'),
+        delivery: { origin: 'space_inject' },
+      })
+    ).toThrow(PromptContentConflictError);
+  });
+
+  it('rejects conflicting content on ANY sibling when duplicates share a uuid', () => {
+    const insert = db.prepare(
+      `INSERT INTO sdk_messages
+        (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+         replacement_metadata_normalized, consumed_seq)
+       VALUES (?, ?, 'user', ?, ?, ?, ?, 1, ?)`
+    );
+    insert.run(
+      'db-verify-earliest',
+      SESSION,
+      JSON.stringify(userMessage('verify-siblings', 'requested')),
+      new Date().toISOString(),
+      'enqueued',
+      'verify-siblings',
+      null
+    );
+    insert.run(
+      'db-verify-evidenced',
+      SESSION,
+      JSON.stringify(userMessage('verify-siblings', 'different')),
+      new Date().toISOString(),
+      'failed',
+      'verify-siblings',
+      2
+    );
+    expect(() =>
+      verifyPromptContent({
+        db: db as never,
+        sessionId: SESSION,
+        messageUuid: 'verify-siblings',
+        message: userMessage('verify-siblings', 'requested'),
+      })
+    ).toThrow(PromptContentConflictError);
+  });
+});
+
+describe('retryPrompt consumption-evidence guard', () => {
+  let db: Database;
+  let sdkRepo: SDKMessageRepository;
+  let jobQueue: JobQueueRepository;
+
+  beforeEach(() => {
+    ({ db, sdkRepo, jobQueue } = setup());
+  });
+  afterEach(() => db.close());
+
+  function failedRowWithEvidence(uuid: string): string {
+    const { dbMessageId } = persistPrompt({
+      db: db as never,
+      sdkMessageRepo: sdkRepo,
+      jobQueue,
+      sessionId: SESSION,
+      message: userMessage(uuid),
+      delivery: { origin: 'space_inject' },
+    });
+    sdkRepo.updateMessageStatus([dbMessageId], 'failed' as never);
+    db.prepare(
+      `UPDATE sdk_messages SET consumed_seq = 1 WHERE session_id = ? AND sdk_uuid = ?`
+    ).run(SESSION, uuid);
+    db.prepare(`UPDATE job_queue SET status = 'completed'`).run();
+    return dbMessageId;
+  }
+
+  it('refuses to re-enqueue a failed row that carries consumption evidence', async () => {
+    failedRowWithEvidence('retry-evidence-1');
+    const retried = await retryPrompt({
+      db: db as never,
+      jobQueue,
+      sdkMessageRepo: sdkRepo,
+      sessionId: SESSION,
+      messageUuid: 'retry-evidence-1',
+      origin: 'space_inject',
+    });
+    expect(retried).toBeNull();
+    const status = db
+      .prepare(`SELECT send_status FROM sdk_messages WHERE sdk_uuid = ?`)
+      .get('retry-evidence-1') as { send_status: string };
+    expect(status.send_status).toBe('failed');
+    const jobs = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM job_queue
+          WHERE status IN ('pending', 'processing')
+            AND json_extract(payload, '$.messageUuid') = ?`
+      )
+      .get('retry-evidence-1') as { n: number };
+    expect(jobs.n).toBe(0);
+  });
+
+  it('still retries a failed row whose consumed_seq is NULL', async () => {
+    const dbId = failedRowWithEvidence('retry-null-1');
+    db.prepare(`UPDATE sdk_messages SET consumed_seq = NULL WHERE sdk_uuid = ?`).run(
+      'retry-null-1'
+    );
+    const retried = await retryPrompt({
+      db: db as never,
+      jobQueue,
+      sdkMessageRepo: sdkRepo,
+      sessionId: SESSION,
+      messageUuid: 'retry-null-1',
+      origin: 'space_inject',
+    });
+    expect(retried).toEqual({ dbId, messageUuid: 'retry-null-1' });
+  });
+
+  it('refuses to retry when a duplicate sibling carries consumption evidence', async () => {
+    const insert = db.prepare(
+      `INSERT INTO sdk_messages
+        (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+         replacement_metadata_normalized, consumed_seq)
+       VALUES (?, ?, 'user', ?, ?, 'failed', ?, 1, ?)`
+    );
+    insert.run(
+      'db-sibling-clean',
+      SESSION,
+      JSON.stringify(userMessage('retry-sibling-1')),
+      new Date().toISOString(),
+      'retry-sibling-1',
+      null
+    );
+    insert.run(
+      'db-sibling-evidenced',
+      SESSION,
+      JSON.stringify(userMessage('retry-sibling-1')),
+      new Date().toISOString(),
+      'retry-sibling-1',
+      3
+    );
+    const retried = await retryPrompt({
+      db: db as never,
+      jobQueue,
+      sdkMessageRepo: sdkRepo,
+      sessionId: SESSION,
+      messageUuid: 'retry-sibling-1',
+      origin: 'space_inject',
+    });
+    expect(retried).toBeNull();
+    const statuses = db
+      .prepare(`SELECT send_status FROM sdk_messages WHERE sdk_uuid = ? ORDER BY id`)
+      .all('retry-sibling-1') as Array<{ send_status: string }>;
+    expect(statuses).toEqual([{ send_status: 'failed' }, { send_status: 'failed' }]);
+  });
+
+  it('refuses to retry when a sibling is legacy-consumed without evidence', async () => {
+    const insert = db.prepare(
+      `INSERT INTO sdk_messages
+        (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+         replacement_metadata_normalized, consumed_seq)
+       VALUES (?, ?, 'user', ?, ?, ?, ?, 1, NULL)`
+    );
+    insert.run(
+      'db-legacy-clean',
+      SESSION,
+      JSON.stringify(userMessage('retry-legacy-1')),
+      new Date().toISOString(),
+      'failed'
+    );
+    insert.run(
+      'db-legacy-consumed',
+      SESSION,
+      JSON.stringify(userMessage('retry-legacy-1')),
+      new Date().toISOString(),
+      'consumed'
+    );
+    const retried = await retryPrompt({
+      db: db as never,
+      jobQueue,
+      sdkMessageRepo: sdkRepo,
+      sessionId: SESSION,
+      messageUuid: 'retry-legacy-1',
+      origin: 'space_inject',
+    });
+    expect(retried).toBeNull();
   });
 });

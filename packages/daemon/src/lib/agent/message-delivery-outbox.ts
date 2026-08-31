@@ -250,6 +250,11 @@ const ACTIVATE_PROMPT_ROW_BY_ID_SQL = `UPDATE sdk_messages
     SELECT id FROM sdk_messages
     WHERE id = ? AND session_id = ? AND message_type = 'user' AND sdk_uuid = ?
       AND send_status IN ('deferred', 'enqueued')
+      AND NOT EXISTS (
+        SELECT 1 FROM sdk_messages sibling
+        WHERE sibling.session_id = ? AND sibling.message_type = 'user'
+          AND sibling.sdk_uuid = ? AND (sibling.consumed_seq IS NOT NULL OR COALESCE(sibling.send_status, 'consumed') = 'consumed')
+      )
   )
   AND send_status IN ('deferred', 'enqueued')
   RETURNING id AS db_id`;
@@ -260,6 +265,11 @@ const ACTIVATE_PROMPT_ROW_BY_UUID_SQL = `UPDATE sdk_messages
     SELECT id FROM sdk_messages
     WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
       AND send_status IN ('deferred', 'enqueued')
+      AND NOT EXISTS (
+        SELECT 1 FROM sdk_messages sibling
+        WHERE sibling.session_id = ? AND sibling.message_type = 'user'
+          AND sibling.sdk_uuid = ? AND (sibling.consumed_seq IS NOT NULL OR COALESCE(sibling.send_status, 'consumed') = 'consumed')
+      )
     ORDER BY timestamp ASC, rowid ASC LIMIT 1
   )
   AND send_status IN ('deferred', 'enqueued')
@@ -271,6 +281,11 @@ const RETRY_PROMPT_ROW_BY_ID_SQL = `UPDATE sdk_messages
     SELECT id FROM sdk_messages
     WHERE id = ? AND session_id = ? AND message_type = 'user' AND sdk_uuid = ?
       AND send_status = 'failed'
+      AND NOT EXISTS (
+        SELECT 1 FROM sdk_messages sibling
+        WHERE sibling.session_id = ? AND sibling.message_type = 'user'
+          AND sibling.sdk_uuid = ? AND (sibling.consumed_seq IS NOT NULL OR COALESCE(sibling.send_status, 'consumed') = 'consumed')
+      )
   )
   AND send_status = 'failed'
   RETURNING id AS db_id`;
@@ -281,6 +296,11 @@ const RETRY_PROMPT_ROW_BY_UUID_SQL = `UPDATE sdk_messages
     SELECT id FROM sdk_messages
     WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
       AND send_status = 'failed'
+      AND NOT EXISTS (
+        SELECT 1 FROM sdk_messages sibling
+        WHERE sibling.session_id = ? AND sibling.message_type = 'user'
+          AND sibling.sdk_uuid = ? AND (sibling.consumed_seq IS NOT NULL OR COALESCE(sibling.send_status, 'consumed') = 'consumed')
+      )
     ORDER BY timestamp ASC, rowid ASC LIMIT 1
   )
   AND send_status = 'failed'
@@ -574,13 +594,43 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+export class PromptContentConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PromptContentConflictError';
+  }
+}
+
+export function verifyPromptContent(args: {
+  db: BunDatabase;
+  sessionId: string;
+  messageUuid: string;
+  message: SDKMessage;
+}): void {
+  const rows = args.db
+    .prepare(
+      `SELECT sdk_message AS "sdkMessage" FROM sdk_messages
+        WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?`
+    )
+    .all(args.sessionId, args.messageUuid) as Array<{ sdkMessage: string }>;
+  for (const row of rows) {
+    const stored = JSON.parse(row.sdkMessage) as SDKMessage;
+    if (canonicalJson(stored) !== canonicalJson(args.message)) {
+      throw new PromptContentConflictError(
+        `prompt handoff: message ${args.messageUuid} in session ${args.sessionId} ` +
+          'already exists with different content'
+      );
+    }
+  }
+}
+
 function checkPromptContent(ctx: EnsurePromptCtx): EnsurePromptSettledCtx {
   if (ctx.existing === null) {
     return { ...ctx, created: true, ensureStatus: ctx.hold === 'manual' ? 'deferred' : 'enqueued' };
   }
   const stored = JSON.parse(ctx.existing.sdkMessage) as SDKMessage;
   if (canonicalJson(stored) !== canonicalJson(ctx.message)) {
-    throw new Error(
+    throw new PromptContentConflictError(
       `ensurePrompt: message ${ctx.messageUuid} in session ${ctx.sessionId} ` +
         'already exists with different content'
     );
@@ -588,12 +638,39 @@ function checkPromptContent(ctx: EnsurePromptCtx): EnsurePromptSettledCtx {
   return { ...ctx, created: false, ensureStatus: ctx.existing.sendStatus };
 }
 
+function hasSettledUuidSibling(db: BunDatabase, sessionId: string, messageUuid: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM sdk_messages sibling
+        WHERE sibling.session_id = ? AND sibling.message_type = 'user'
+          AND sibling.sdk_uuid = ? AND (sibling.consumed_seq IS NOT NULL OR COALESCE(sibling.send_status, 'consumed') = 'consumed')
+        LIMIT 1`
+    )
+    .get(sessionId, messageUuid);
+  return row !== null && row !== undefined;
+}
+
 function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx {
   const outcome = ctx.db.transaction(() => {
     if (ctx.existing !== null) {
-      const released = ctx.ensureStatus !== 'deferred';
-      if (!ENSURABLE_PROMPT_STATUSES.includes(ctx.ensureStatus)) {
-        return { dbId: ctx.existing.dbId, activated: false, released, countsTowardsBadge: false };
+      const fresh = ctx.db.prepare(PROMPT_ROW_BY_UUID_SQL).get(ctx.sessionId, ctx.messageUuid) as
+        | EnsurePromptRow
+        | undefined;
+      if (fresh === null || fresh === undefined) {
+        return {
+          dbId: ctx.existing.dbId,
+          activated: false,
+          released: false,
+          countsTowardsBadge: false,
+        };
+      }
+      const ensureStatus = fresh.sendStatus;
+      const released = ensureStatus !== 'deferred';
+      if (
+        !ENSURABLE_PROMPT_STATUSES.includes(ensureStatus) ||
+        hasSettledUuidSibling(ctx.db, ctx.sessionId, ctx.messageUuid)
+      ) {
+        return { dbId: fresh.dbId, activated: false, released, countsTowardsBadge: false };
       }
       const active = findActiveDeliveryJob(ctx.db, ctx.sessionId, ctx.messageUuid);
       if (active === null) {
@@ -608,11 +685,11 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
             injectedMidTurn: ctx.delivery.injectedMidTurn,
           })
         );
-        return { dbId: ctx.existing.dbId, activated: true, released, countsTowardsBadge: false };
+        return { dbId: fresh.dbId, activated: true, released, countsTowardsBadge: false };
       }
       if (active.processing) {
         return {
-          dbId: ctx.existing.dbId,
+          dbId: fresh.dbId,
           activated: true,
           released: active.released,
           countsTowardsBadge: false,
@@ -631,7 +708,7 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
         }),
         released
       );
-      return { dbId: ctx.existing.dbId, activated: true, released, countsTowardsBadge: false };
+      return { dbId: fresh.dbId, activated: true, released, countsTowardsBadge: false };
     }
     const admission = decideMessageAdmission(normalizeMessageAdmissionInput(ctx.message), {
       variant: 'user',
@@ -731,8 +808,8 @@ function commitActivatePrompts(ctx: ActivatePromptsCtx): ActivatePromptsCommitte
       const rowId = ctx.rowIds[index];
       const rows = (
         rowId !== undefined
-          ? rowByIdStmt.all(rowId, ctx.sessionId, messageUuid)
-          : rowByUuidStmt.all(ctx.sessionId, messageUuid)
+          ? rowByIdStmt.all(rowId, ctx.sessionId, messageUuid, ctx.sessionId, messageUuid)
+          : rowByUuidStmt.all(ctx.sessionId, messageUuid, ctx.sessionId, messageUuid)
       ) as Array<{ db_id: string }>;
       const row = rows[0];
       if (!row) return;
@@ -791,8 +868,12 @@ function commitRetryPrompt(ctx: RetryPromptCtx): RetryPromptCtx {
     ctx.db.transaction(() => {
       const rows = (
         ctx.dbId !== undefined
-          ? ctx.db.prepare(RETRY_PROMPT_ROW_BY_ID_SQL).all(ctx.dbId, ctx.sessionId, ctx.messageUuid)
-          : ctx.db.prepare(RETRY_PROMPT_ROW_BY_UUID_SQL).all(ctx.sessionId, ctx.messageUuid)
+          ? ctx.db
+              .prepare(RETRY_PROMPT_ROW_BY_ID_SQL)
+              .all(ctx.dbId, ctx.sessionId, ctx.messageUuid, ctx.sessionId, ctx.messageUuid)
+          : ctx.db
+              .prepare(RETRY_PROMPT_ROW_BY_UUID_SQL)
+              .all(ctx.sessionId, ctx.messageUuid, ctx.sessionId, ctx.messageUuid)
       ) as Array<{
         db_id: string;
       }>;
