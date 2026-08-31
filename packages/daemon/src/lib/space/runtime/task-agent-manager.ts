@@ -1481,7 +1481,8 @@ export class TaskAgentManager {
       const message = formatPendingRowForNodeAgent(row, targetAgentName);
       if (
         this.probeSettledDeliveryStatus(sessionId, row.id) === 'failed' &&
-        row.lastError !== 'delivery dead-lettered before consumption'
+        row.lastError !== 'delivery dead-lettered before consumption' &&
+        !this.nodeRowHasLiveSiblingDelivery(row, sessionId)
       ) {
         const charged = repo.markAttemptFailed(row.id, 'delivery dead-lettered before consumption');
         if (charged && charged.status !== 'pending') {
@@ -1501,6 +1502,9 @@ export class TaskAgentManager {
           undefined,
           row.id
         );
+        if (row.lastError === 'delivery dead-lettered before consumption') {
+          repo.recordDeliveryAttempt(row.id, null);
+        }
         this.recordActivityForSession(sessionId);
         this.settleNodeAgentPendingRow(repo, row, sessionId);
       } catch (err) {
@@ -1541,12 +1545,17 @@ export class TaskAgentManager {
   ): void {
     const probeDeliveryStatus = () => this.probeSettledDeliveryStatus(sessionId, row.id);
     const settleDelivered = (): void => {
-      const status = repo.getById(row.id)?.status;
-      if (status === undefined || status === 'pending') {
-        repo.markDelivered(row.id, sessionId);
-        this.emitPendingDelivered(row.id, sessionId, row);
+      try {
+        const status = repo.getById(row.id)?.status;
+        if (status === undefined || status === 'pending') {
+          repo.markDelivered(row.id, sessionId);
+          this.emitPendingDelivered(row.id, sessionId, row);
+        }
+      } catch {
+        this.scheduleNodeAgentDeliveryReconciliation(row, sessionId);
+      } finally {
+        this.retireNodeAgentWatchers(row.id);
       }
-      this.retireNodeAgentWatchers(row.id);
     };
     const watchDelivery = (): void => {
       repo.deferExpiration?.([row.id], LATE_SETTLE_HORIZON_MS + 60_000);
@@ -1600,6 +1609,30 @@ export class TaskAgentManager {
         this.watchedNodeAgentPendingRows.delete(key);
       }
     }
+  }
+
+  private nodeRowHasLiveSiblingDelivery(
+    row: PendingAgentMessageRecord,
+    exceptSessionId: string
+  ): boolean {
+    for (const [key, entry] of this.watchedNodeAgentPendingRows) {
+      if (entry.rowId === row.id && key !== `${exceptSessionId}::${row.id}`) {
+        const status = this.probeSettledDeliveryStatus(key.split('::')[0], row.id);
+        if (status === 'enqueued' || status === 'submitted' || status === 'deferred') {
+          return true;
+        }
+      }
+    }
+    const executions = this.config.nodeExecutionRepo?.listByWorkflowRun?.(row.workflowRunId) ?? [];
+    for (const execution of executions) {
+      if (!execution.agentSessionId || execution.agentSessionId === exceptSessionId) continue;
+      if (execution.agentName !== row.targetAgentName) continue;
+      const status = this.probeSettledDeliveryStatus(execution.agentSessionId, row.id);
+      if (status === 'enqueued' || status === 'submitted' || status === 'deferred') {
+        return true;
+      }
+    }
+    return false;
   }
 
   private watchedNodeAgentPendingRowIds(workflowRunId: string): string[] {
