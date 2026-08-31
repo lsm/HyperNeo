@@ -11,6 +11,14 @@ export type MailboxAddress =
 const SESSION_PREFIX = 'session:';
 const AGENT_PREFIX = 'agent:';
 
+function safeDecode(input: string): string | null {
+  try {
+    return decodeURIComponent(input);
+  } catch {
+    return null;
+  }
+}
+
 export function parseAddress(raw: string): MailboxAddress | null {
   if (raw.startsWith(SESSION_PREFIX)) {
     const sessionId = raw.slice(SESSION_PREFIX.length);
@@ -33,10 +41,10 @@ export function parseAddress(raw: string): MailboxAddress | null {
 
     if (rawHandle.includes('/')) return null;
 
-    const spaceId = decodeURIComponent(pathPart.slice(0, slash));
-    const handle = decodeURIComponent(rawHandle);
-
-    if (!spaceId || !handle) return null;
+    const spaceId = safeDecode(pathPart.slice(0, slash));
+    if (!spaceId) return null;
+    const handle = safeDecode(rawHandle);
+    if (!handle) return null;
 
     let taskId: string | undefined;
     let node: string | undefined;
@@ -46,8 +54,10 @@ export function parseAddress(raw: string): MailboxAddress | null {
       for (const pair of pairs) {
         const eq = pair.indexOf('=');
         if (eq < 0) return null;
-        const key = decodeURIComponent(pair.slice(0, eq));
-        const value = decodeURIComponent(pair.slice(eq + 1));
+        const key = safeDecode(pair.slice(0, eq));
+        if (!key) return null;
+        const value = safeDecode(pair.slice(eq + 1));
+        if (value === null) return null;
 
         switch (key) {
           case 'task':

@@ -143,6 +143,36 @@ describe('parseAddress', () => {
       expect(parsed).toEqual({ kind: 'agent', spaceId: 's p', handle: 'handle' });
     });
   });
+
+  describe('malformed percent-escapes return null (never throw)', () => {
+    test('returns null for incomplete escape in space id', () => {
+      expect(parseAddress('agent:s%2/handle')).toBeNull();
+    });
+
+    test('returns null for incomplete escape in handle', () => {
+      expect(parseAddress('agent:sp/h%2')).toBeNull();
+    });
+
+    test('returns null for incomplete escape in query key', () => {
+      expect(parseAddress('agent:sp/h?ta%2sk=val')).toBeNull();
+    });
+
+    test('returns null for incomplete escape in query value', () => {
+      expect(parseAddress('agent:sp/h?key=va%2l')).toBeNull();
+    });
+
+    test('returns null for double-percent escape that decodes to invalid escape', () => {
+      expect(parseAddress('agent:s%%20p/handle')).toBeNull();
+    });
+
+    test('returns null for incomplete escape in task value', () => {
+      expect(parseAddress('agent:sp/h?task=t%2')).toBeNull();
+    });
+
+    test('returns null for incomplete escape in node value', () => {
+      expect(parseAddress('agent:sp/h?node=n%2')).toBeNull();
+    });
+  });
 });
 
 describe('renderAddress', () => {
