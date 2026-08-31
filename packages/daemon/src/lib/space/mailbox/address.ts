@@ -44,7 +44,7 @@ export function parseAddress(raw: string): MailboxAddress | null {
     const spaceId = safeDecode(pathPart.slice(0, slash));
     if (!spaceId) return null;
     const handle = safeDecode(rawHandle);
-    if (!handle) return null;
+    if (!handle || handle.includes('/')) return null;
 
     let taskId: string | undefined;
     let node: string | undefined;

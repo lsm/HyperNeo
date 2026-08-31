@@ -203,7 +203,7 @@ describe('renderAddress', () => {
   });
 
   test('percent-encodes handle', () => {
-    expect(renderAddress({ kind: 'agent', spaceId: 'sp', handle: 'h/a' })).toBe('agent:sp/h%2Fa');
+    expect(renderAddress({ kind: 'agent', spaceId: 'sp', handle: 'h?a' })).toBe('agent:sp/h%3Fa');
   });
 
   test('percent-encodes space id', () => {
