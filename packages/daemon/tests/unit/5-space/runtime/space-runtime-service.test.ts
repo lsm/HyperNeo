@@ -2426,6 +2426,74 @@ describe('SpaceRuntimeService', () => {
       ).inboxLateSettlements.dispose();
     });
 
+    test('an armed settlement fails the attempt on a confirmed dead-letter', async () => {
+      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
+      const row = makeInboxRow();
+      const dbId = seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
+      mailbox.sdkRepo.updateMessageStatus([dbId], 'failed');
+      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
+
+      (
+        svc as unknown as {
+          armLongTermAgentInboxSettlement(
+            row: SpaceAgentInboxMessageRecord,
+            sessionId: string,
+            messageId: string
+          ): void;
+        }
+      ).armLongTermAgentInboxSettlement(row, inboxSessionId, row.idempotencyKey!);
+
+      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
+      expect(inboxRepo.markAttemptFailed).toHaveBeenCalledWith(
+        row.id,
+        'delivery dead-lettered without consumption evidence'
+      );
+    });
+
+    test('a settlement horizon expiry on a still-active row leaves the attempt untouched', async () => {
+      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
+      const row = makeInboxRow();
+      seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
+      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
+
+      (
+        svc as unknown as {
+          settleLongTermAgentInboxRowFailure(
+            row: SpaceAgentInboxMessageRecord,
+            sessionId: string,
+            messageId: string
+          ): void;
+        }
+      ).settleLongTermAgentInboxRowFailure(row, inboxSessionId, row.idempotencyKey!);
+
+      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
+      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
+    });
+
+    test('late consumption evidence outranks the armed failure signal', async () => {
+      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
+      const row = makeInboxRow();
+      const dbId = seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
+      mailbox.db
+        .prepare('UPDATE sdk_messages SET consumed_seq = 1 WHERE session_id = ? AND sdk_uuid = ?')
+        .run(inboxSessionId, row.idempotencyKey);
+      mailbox.sdkRepo.updateMessageStatus([dbId], 'failed');
+      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
+
+      (
+        svc as unknown as {
+          settleLongTermAgentInboxRowFailure(
+            row: SpaceAgentInboxMessageRecord,
+            sessionId: string,
+            messageId: string
+          ): void;
+        }
+      ).settleLongTermAgentInboxRowFailure(row, inboxSessionId, row.idempotencyKey!);
+
+      expect(inboxRepo.markDelivered).toHaveBeenCalledWith(row.id, inboxSessionId);
+      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
+    });
+
     test('a stale goal-outcome wake row is dismissed without injecting', async () => {
       const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
       const row = makeInboxRow({ idempotencyKey: 'goal-outcome:notif-stale' });

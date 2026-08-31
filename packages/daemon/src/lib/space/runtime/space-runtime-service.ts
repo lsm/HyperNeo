@@ -676,14 +676,26 @@ export class SpaceRuntimeService {
         inboxRepo.markDelivered(row.id, sessionId);
       },
       onFailed: () => {
-        if (this.hasLongTermAgentConsumptionEvidence(sessionId, messageId)) {
-          inboxRepo.markDelivered(row.id, sessionId);
-          return;
-        }
-        inboxRepo.markAttemptFailed(row.id, 'delivery dead-lettered without consumption evidence');
+        this.settleLongTermAgentInboxRowFailure(row, sessionId, messageId);
       },
       getSendStatus: () => this.readLongTermAgentSendStatus(sessionId, messageId) ?? undefined,
     });
+  }
+
+  private settleLongTermAgentInboxRowFailure(
+    row: SpaceAgentInboxMessageRecord,
+    sessionId: string,
+    messageId: string
+  ): void {
+    const inboxRepo = this.config.spaceAgentInboxRepo;
+    if (!inboxRepo) return;
+    if (this.hasLongTermAgentConsumptionEvidence(sessionId, messageId)) {
+      inboxRepo.markDelivered(row.id, sessionId);
+      return;
+    }
+    if (this.readLongTermAgentSendStatus(sessionId, messageId) === 'failed') {
+      inboxRepo.markAttemptFailed(row.id, 'delivery dead-lettered without consumption evidence');
+    }
   }
 
   private hasLongTermAgentConsumptionEvidence(sessionId: string, messageId: string): boolean {
