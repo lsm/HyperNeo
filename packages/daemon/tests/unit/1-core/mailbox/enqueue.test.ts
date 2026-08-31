@@ -208,7 +208,7 @@ describe('enqueueMailboxEntry', () => {
       const baseMs = Date.now();
       const earlier = makeEntry({ id: createUlid(baseMs) });
       const later = makeEntry({ id: createUlid(baseMs + 5) });
-      expect(later > earlier).toBe(true);
+      expect(later.id > earlier.id).toBe(true);
 
       enqueueMailboxEntry(mailbox.jobQueue, earlier);
       enqueueMailboxEntry(mailbox.jobQueue, later);
