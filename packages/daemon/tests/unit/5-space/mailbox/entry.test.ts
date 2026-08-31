@@ -38,6 +38,7 @@ describe('validateMailboxMessage acceptance', () => {
     ['priority now', { ...stringMessage(), priority: 'now' }],
     ['priority next', { ...stringMessage(), priority: 'next' }],
     ['priority later', { ...stringMessage(), priority: 'later' }],
+    ['null-prototype record', Object.assign(Object.create(null), stringMessage())],
   ])('accepts %s', (_label, message) => {
     expect(validateMailboxMessage(message)).toBe(null);
   });
@@ -49,6 +50,7 @@ describe('validateMailboxMessage rejection', () => {
     ['non-object payload', 'user', 'must be an object'],
     ['array payload', [base], 'must be an object'],
     ['null payload', null, 'must be an object'],
+    ['prototype-inherited fields', Object.create(base), 'must be an object'],
     ['wrong type', { ...base, type: 'assistant' }, 'type must be "user"'],
     ['missing type', { message: base.message, parent_tool_use_id: null }, 'type must be "user"'],
     ['empty string content', { ...base, message: { content: '' } }, 'must not be empty'],
@@ -279,6 +281,7 @@ describe('isValidMailboxEntry', () => {
       }),
     ],
     ['excess entry key', (entry: Record<string, unknown>) => ({ ...entry, createdAt: 'today' })],
+    ['prototype-inherited entry fields', (entry: Record<string, unknown>) => Object.create(entry)],
     [
       'missing message key',
       (entry: Record<string, unknown>) => {

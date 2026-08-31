@@ -1,5 +1,5 @@
-import { isValidAddress, type MailboxAddress } from './address';
-import { createUlid, isUlid } from './ulid';
+import { isValidAddress, type MailboxAddress } from './address.ts';
+import { createUlid, isUlid } from './ulid.ts';
 
 export interface MailboxEntryPolicy {
   ttlMs: number;
@@ -40,7 +40,9 @@ function isPriorityLevel(value: unknown): boolean {
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === null || proto === Object.prototype;
 }
 
 function firstUnexpectedKey(record: Record<string, unknown>, allowed: string[]): string | null {
