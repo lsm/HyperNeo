@@ -161,9 +161,9 @@ jobs:
   # from migrations, and graceful SIGTERM teardown. This is the guardrail
   # that keeps later Bun/Deno dual-runtime PRs safe to land incrementally;
   # it runs on every trigger regardless of the daemon/web path filters.
-  # NON-BLOCKING for now (continue-on-error): once it has been green for a
-  # few days, flip it to required — remove continue-on-error, add the job to
-  # all-tests-pass.needs, and add its check name to the repo ruleset.
+  # REQUIRED since 2026-08-29 (green continuously since it landed 2026-08-24):
+  # failures gate all-tests-pass, which is the one check the dev ruleset
+  # requires — no ruleset change was needed for the flip.
   # Run on: PR to dev, push to dev, workflow_dispatch
   # ============================================
 
@@ -171,7 +171,6 @@ jobs:
     name: Deno Boot Smoke
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: true
     if: github.event.inputs.run_e2e_only != 'true'
 
     steps:
@@ -808,6 +807,7 @@ jobs:
       - build
       - discover
       - e2e-no-llm
+      - deno-boot-smoke
 
     steps:
       - name: Check all jobs passed
@@ -863,6 +863,12 @@ jobs:
             FAILED=1
           fi
 
+          # deno-boot-smoke: PR to dev, push to dev, workflow_dispatch
+          if [[ "${{ needs.deno-boot-smoke.result }}" == "failure" ]]; then
+            echo "❌ deno-boot-smoke failed"
+            FAILED=1
+          fi
+
           if [ $FAILED -eq 1 ]; then
             echo ""
             echo "One or more required jobs failed:"
@@ -874,6 +880,7 @@ jobs:
             echo "  build: ${{ needs.build.result }}"
             echo "  discover: ${{ needs.discover.result }}"
             echo "  e2e-no-llm: ${{ needs.e2e-no-llm.result }}"
+            echo "  deno-boot-smoke: ${{ needs.deno-boot-smoke.result }}"
             exit 1
           fi
           echo "All tests passed!"
