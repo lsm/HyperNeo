@@ -88,6 +88,22 @@ function digestSnippet(body: string | undefined): string | null {
   return flattened;
 }
 
+const COMMENT_BODY_CHAR_CAP = 200000;
+
+function commentBodyBlock(body: string | undefined): string | null {
+  if (!body) return null;
+  const text = body.replace(/\r\n?/g, '\n').replace(/^\n+|\n+$/g, '');
+  if (text.trim().length === 0) return null;
+  const capped =
+    text.length > COMMENT_BODY_CHAR_CAP
+      ? `${text.slice(0, COMMENT_BODY_CHAR_CAP)}\n[comment body truncated at ${COMMENT_BODY_CHAR_CAP} characters]`
+      : text;
+  return capped
+    .split('\n')
+    .map((line) => (line.length === 0 ? line : `  ${line}`))
+    .join('\n');
+}
+
 function digestLinkSuffix(entry: ExternalEventEssenceEntry): string {
   const url = entry.externalUrl ?? entry.prUrl;
   return url ? ` — ${url}` : '';
@@ -223,10 +239,11 @@ export function renderEventBlock(
             const location = event.path
               ? ` on ${event.path}${typeof event.line === 'number' ? `:L${event.line}` : ''}`
               : '';
-            const snippet = digestSnippet(event.body);
+            const bodyBlock = commentBodyBlock(event.body);
             return (
               `- Review comment by ${event.actor ?? 'unknown'} at ${digestTimestamp(event, includeDate)}${location}` +
-              `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(event)}${digestEventIdSuffix(event)}`
+              `${digestLinkSuffix(event)}${digestEventIdSuffix(event)}` +
+              `${bodyBlock ? `\n${bodyBlock}` : ''}`
             );
           })
           .join('\n');
@@ -234,19 +251,21 @@ export function renderEventBlock(
       const location = latest.path
         ? ` on ${latest.path}${typeof latest.line === 'number' ? `:L${latest.line}` : ''}`
         : '';
-      const snippet = digestSnippet(latest.body);
+      const bodyBlock = commentBodyBlock(latest.body);
       return (
         `- Review comment${count > 1 ? 's' : ''}${digestActionLabel(latest)}${location}: ×${count}, ` +
         `latest by ${latest.actor ?? 'unknown'} at ${digestTimestamp(latest, includeDate)}` +
-        `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(latest)}${digestEventIdSuffix(latest)}`
+        `${digestLinkSuffix(latest)}${digestEventIdSuffix(latest)}` +
+        `${bodyBlock ? `\n${bodyBlock}` : ''}`
       );
     }
     case 'pr_comment': {
-      const snippet = digestSnippet(latest.body);
+      const bodyBlock = commentBodyBlock(latest.body);
       return (
         `- PR comment${count > 1 ? 's' : ''}${digestActionLabel(latest)}: ×${count}, ` +
         `latest by ${latest.actor ?? 'unknown'} at ${digestTimestamp(latest, includeDate)}` +
-        `${snippet ? ` — "${snippet}"` : ''}${digestLinkSuffix(latest)}${digestEventIdSuffix(latest)}`
+        `${digestLinkSuffix(latest)}${digestEventIdSuffix(latest)}` +
+        `${bodyBlock ? `\n${bodyBlock}` : ''}`
       );
     }
     case 'state': {
@@ -274,7 +293,8 @@ export function renderEventBlock(
         parts.push(`state: ${latest.state}${markers ? ` (${markers})` : ''}`);
       }
       if (latest.environment) parts.push(`environment: ${latest.environment}`);
-      const snippet = digestSnippet(latest.description ?? latest.body);
+      const renderThreadBody = latest.eventType === 'pull_request_review_thread';
+      const snippet = renderThreadBody ? null : digestSnippet(latest.description ?? latest.body);
       if (snippet) parts.push(`"${snippet}"`);
       const structured = [latest.changedFields, latest.requiredStatusChecks]
         .filter((field): field is object => !!field)
@@ -292,7 +312,10 @@ export function renderEventBlock(
       }
       const url = latest.externalUrl ?? latest.prUrl;
       if (url) parts.push(url);
-      return `- ${parts.join(' — ')}`;
+      const line = `- ${parts.join(' — ')}`;
+      if (!renderThreadBody) return line;
+      const bodyBlock = commentBodyBlock(latest.body);
+      return bodyBlock ? `${line}\n${bodyBlock}` : line;
     }
   }
 }
