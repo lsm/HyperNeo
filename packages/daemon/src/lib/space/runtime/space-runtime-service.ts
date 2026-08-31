@@ -695,7 +695,11 @@ export class SpaceRuntimeService {
     }
     if (this.readLongTermAgentSendStatus(sessionId, messageId) === 'failed') {
       inboxRepo.markAttemptFailed(row.id, 'delivery dead-lettered without consumption evidence');
+      return;
     }
+    const inboxRow = inboxRepo.getById?.(row.id);
+    if (inboxRow && inboxRow.status !== 'pending') return;
+    this.armLongTermAgentInboxSettlement(row, sessionId, messageId);
   }
 
   private hasLongTermAgentConsumptionEvidence(sessionId: string, messageId: string): boolean {

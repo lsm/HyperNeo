@@ -2539,6 +2539,30 @@ describe('SpaceRuntimeService', () => {
       await svc.stop();
     });
 
+    test('a settlement horizon expiry on an active row re-arms the watcher', async () => {
+      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
+      const row = makeInboxRow();
+      seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
+      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
+
+      (
+        svc as unknown as {
+          settleLongTermAgentInboxRowFailure(
+            row: SpaceAgentInboxMessageRecord,
+            sessionId: string,
+            messageId: string
+          ): void;
+        }
+      ).settleLongTermAgentInboxRowFailure(row, inboxSessionId, row.idempotencyKey!);
+      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
+      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
+
+      signalDeliveryConsumed(inboxSessionId, row.idempotencyKey!);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(inboxRepo.markDelivered).toHaveBeenCalledWith(row.id, inboxSessionId);
+    });
+
     test('a stale goal-outcome wake row is dismissed without injecting', async () => {
       const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
       const row = makeInboxRow({ idempotencyKey: 'goal-outcome:notif-stale' });
