@@ -51,11 +51,14 @@ export function parseAddress(raw: string): MailboxAddress | null {
 
     if (queryPart.length > 0) {
       const pairs = queryPart.split('&');
+      const seenKeys = new Set<string>();
       for (const pair of pairs) {
         const eq = pair.indexOf('=');
         if (eq < 0) return null;
         const key = safeDecode(pair.slice(0, eq));
         if (!key) return null;
+        if (seenKeys.has(key)) return null;
+        seenKeys.add(key);
         const value = safeDecode(pair.slice(eq + 1));
         if (value === null || value.length === 0) return null;
 
@@ -125,14 +128,14 @@ export function isValidAddress(addr: MailboxAddress): boolean {
   if (typeof handle !== 'string' || handle.length === 0) return false;
   if (handle.includes('/')) return false;
 
-  if ('taskId' in addr) {
-    const taskId = addr.taskId as string | undefined;
+  if ('taskId' in addr && addr.taskId !== undefined) {
+    const taskId = addr.taskId as string;
     if (typeof taskId !== 'string' || taskId.length === 0) return false;
   }
 
-  if ('node' in addr) {
-    const node = addr.node as string | undefined;
-    if (typeof node !== 'string' || node.length === 0) return false;
+  if ('node' in addr && typeof addr.node === 'string') {
+    const node = addr.node;
+    if (node.length === 0) return false;
   }
 
   return true;

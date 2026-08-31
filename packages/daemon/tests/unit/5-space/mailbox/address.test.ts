@@ -105,6 +105,18 @@ describe('parseAddress', () => {
       expect(parseAddress('agent:sp/h?node=')).toBeNull();
     });
 
+    test('returns null for duplicate task query param', () => {
+      expect(parseAddress('agent:sp/h?task=t1&task=t2')).toBeNull();
+    });
+
+    test('returns null for duplicate node query param', () => {
+      expect(parseAddress('agent:sp/h?node=n1&node=n2')).toBeNull();
+    });
+
+    test('returns null for mixed duplicate params', () => {
+      expect(parseAddress('agent:sp/h?task=t1&node=n1&task=t2')).toBeNull();
+    });
+
     test('returns null for unknown prefix', () => {
       expect(parseAddress('unknown:sp/h')).toBeNull();
     });
@@ -316,6 +328,28 @@ describe('isValidAddress', () => {
 
     test('rejects agent with empty node', () => {
       expect(isValidAddress({ kind: 'agent', spaceId: 'sp', handle: 'h', node: '' })).toBe(false);
+    });
+
+    test('accepts agent with taskId set to undefined (treated as absent)', () => {
+      expect(
+        isValidAddress({
+          kind: 'agent',
+          spaceId: 'sp',
+          handle: 'h',
+          taskId: undefined,
+        } as MailboxAddress)
+      ).toBe(true);
+    });
+
+    test('accepts agent with node set to undefined (treated as absent)', () => {
+      expect(
+        isValidAddress({
+          kind: 'agent',
+          spaceId: 'sp',
+          handle: 'h',
+          node: undefined,
+        } as MailboxAddress)
+      ).toBe(true);
     });
 
     test('rejects excess properties on session', () => {
