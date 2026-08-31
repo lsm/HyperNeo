@@ -423,6 +423,18 @@ describe('activateDeferredPromptIntoMailbox', () => {
     );
     expect(outcome).toBeNull();
   });
+
+  it('refuses activation when a sibling is legacy-consumed without evidence', async () => {
+    const h = makeHarness();
+    insertDuplicateRow(h, 'msg-activate-5', 'db-activate-deferred', 'deferred', null);
+    insertDuplicateRow(h, 'msg-activate-5', 'db-activate-legacy', 'consumed', null);
+    const outcome = await activateDeferredPromptIntoMailbox(
+      h.deps,
+      targetFor(userMessage('msg-activate-5'))
+    );
+    expect(outcome).toEqual({ dbId: 'db-activate-legacy', changed: false });
+    expect(deliveryJobCount(h, 'msg-activate-5')).toBe(0);
+  });
 });
 
 describe('ensurePromptIntoMailbox', () => {
@@ -476,5 +488,17 @@ describe('ensurePromptIntoMailbox', () => {
     );
     expect(outcome).toEqual({ dbId: 'db-ensure-enqueued', changed: false, advanced: false });
     expect(deliveryJobCount(h, 'msg-ensure-5')).toBe(0);
+  });
+
+  it('does not re-arm an enqueued row when a sibling is legacy-consumed', () => {
+    const h = makeHarness();
+    insertDuplicateRow(h, 'msg-ensure-6', 'db-ensure-enqueued', 'enqueued', null);
+    insertDuplicateRow(h, 'msg-ensure-6', 'db-ensure-legacy', 'consumed', null);
+    const outcome = ensurePromptIntoMailbox(
+      h.deps,
+      targetFor(userMessage('msg-ensure-6', 'hello'))
+    );
+    expect(outcome).toEqual({ dbId: 'db-ensure-enqueued', changed: false, advanced: false });
+    expect(deliveryJobCount(h, 'msg-ensure-6')).toBe(0);
   });
 });

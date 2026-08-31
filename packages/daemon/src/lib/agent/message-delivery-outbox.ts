@@ -253,7 +253,7 @@ const ACTIVATE_PROMPT_ROW_BY_ID_SQL = `UPDATE sdk_messages
       AND NOT EXISTS (
         SELECT 1 FROM sdk_messages sibling
         WHERE sibling.session_id = ? AND sibling.message_type = 'user'
-          AND sibling.sdk_uuid = ? AND sibling.consumed_seq IS NOT NULL
+          AND sibling.sdk_uuid = ? AND (sibling.consumed_seq IS NOT NULL OR COALESCE(sibling.send_status, 'consumed') = 'consumed')
       )
   )
   AND send_status IN ('deferred', 'enqueued')
@@ -268,7 +268,7 @@ const ACTIVATE_PROMPT_ROW_BY_UUID_SQL = `UPDATE sdk_messages
       AND NOT EXISTS (
         SELECT 1 FROM sdk_messages sibling
         WHERE sibling.session_id = ? AND sibling.message_type = 'user'
-          AND sibling.sdk_uuid = ? AND sibling.consumed_seq IS NOT NULL
+          AND sibling.sdk_uuid = ? AND (sibling.consumed_seq IS NOT NULL OR COALESCE(sibling.send_status, 'consumed') = 'consumed')
       )
     ORDER BY timestamp ASC, rowid ASC LIMIT 1
   )
@@ -284,7 +284,7 @@ const RETRY_PROMPT_ROW_BY_ID_SQL = `UPDATE sdk_messages
       AND NOT EXISTS (
         SELECT 1 FROM sdk_messages sibling
         WHERE sibling.session_id = ? AND sibling.message_type = 'user'
-          AND sibling.sdk_uuid = ? AND sibling.consumed_seq IS NOT NULL
+          AND sibling.sdk_uuid = ? AND (sibling.consumed_seq IS NOT NULL OR COALESCE(sibling.send_status, 'consumed') = 'consumed')
       )
   )
   AND send_status = 'failed'
@@ -299,7 +299,7 @@ const RETRY_PROMPT_ROW_BY_UUID_SQL = `UPDATE sdk_messages
       AND NOT EXISTS (
         SELECT 1 FROM sdk_messages sibling
         WHERE sibling.session_id = ? AND sibling.message_type = 'user'
-          AND sibling.sdk_uuid = ? AND sibling.consumed_seq IS NOT NULL
+          AND sibling.sdk_uuid = ? AND (sibling.consumed_seq IS NOT NULL OR COALESCE(sibling.send_status, 'consumed') = 'consumed')
       )
     ORDER BY timestamp ASC, rowid ASC LIMIT 1
   )
@@ -638,16 +638,12 @@ function checkPromptContent(ctx: EnsurePromptCtx): EnsurePromptSettledCtx {
   return { ...ctx, created: false, ensureStatus: ctx.existing.sendStatus };
 }
 
-function hasUuidConsumptionEvidence(
-  db: BunDatabase,
-  sessionId: string,
-  messageUuid: string
-): boolean {
+function hasSettledUuidSibling(db: BunDatabase, sessionId: string, messageUuid: string): boolean {
   const row = db
     .prepare(
       `SELECT 1 FROM sdk_messages sibling
         WHERE sibling.session_id = ? AND sibling.message_type = 'user'
-          AND sibling.sdk_uuid = ? AND sibling.consumed_seq IS NOT NULL
+          AND sibling.sdk_uuid = ? AND (sibling.consumed_seq IS NOT NULL OR COALESCE(sibling.send_status, 'consumed') = 'consumed')
         LIMIT 1`
     )
     .get(sessionId, messageUuid);
@@ -672,7 +668,7 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
       const released = ensureStatus !== 'deferred';
       if (
         !ENSURABLE_PROMPT_STATUSES.includes(ensureStatus) ||
-        hasUuidConsumptionEvidence(ctx.db, ctx.sessionId, ctx.messageUuid)
+        hasSettledUuidSibling(ctx.db, ctx.sessionId, ctx.messageUuid)
       ) {
         return { dbId: fresh.dbId, activated: false, released, countsTowardsBadge: false };
       }

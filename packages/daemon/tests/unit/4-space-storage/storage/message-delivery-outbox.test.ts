@@ -1571,4 +1571,36 @@ describe('retryPrompt consumption-evidence guard', () => {
       .all('retry-sibling-1') as Array<{ send_status: string }>;
     expect(statuses).toEqual([{ send_status: 'failed' }, { send_status: 'failed' }]);
   });
+
+  it('refuses to retry when a sibling is legacy-consumed without evidence', async () => {
+    const insert = db.prepare(
+      `INSERT INTO sdk_messages
+        (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+         replacement_metadata_normalized, consumed_seq)
+       VALUES (?, ?, 'user', ?, ?, ?, ?, 1, NULL)`
+    );
+    insert.run(
+      'db-legacy-clean',
+      SESSION,
+      JSON.stringify(userMessage('retry-legacy-1')),
+      new Date().toISOString(),
+      'failed'
+    );
+    insert.run(
+      'db-legacy-consumed',
+      SESSION,
+      JSON.stringify(userMessage('retry-legacy-1')),
+      new Date().toISOString(),
+      'consumed'
+    );
+    const retried = await retryPrompt({
+      db: db as never,
+      jobQueue,
+      sdkMessageRepo: sdkRepo,
+      sessionId: SESSION,
+      messageUuid: 'retry-legacy-1',
+      origin: 'space_inject',
+    });
+    expect(retried).toBeNull();
+  });
 });
