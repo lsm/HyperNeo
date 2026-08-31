@@ -95,14 +95,17 @@ describe('MailboxEntry', () => {
 });
 
 describe('validateMailboxMessage', () => {
-  const validMessage = {
+  const validMessage: MailboxMessage = {
     type: 'user',
     message: { content: 'hello' },
     parent_tool_use_id: null,
   };
 
+  const sparseContent: { type: 'text'; text: string }[] = [{ type: 'text', text: 'x' }];
+  delete sparseContent[0];
+
   describe('acceptance', () => {
-    test.each([
+    test.each<[string, MailboxMessage]>([
       ['non-empty string content without priority', validMessage],
       [
         'a single text block',
@@ -134,8 +137,8 @@ describe('validateMailboxMessage', () => {
   });
 
   describe('rejection', () => {
-    test.each([
-      ['an array instead of a plain object', ['user']],
+    test.each<[string, unknown]>([
+      ['an array instead of an object', ['user']],
       ['a wrong type', { ...validMessage, type: 'assistant' }],
       [
         'empty string content',
@@ -161,11 +164,15 @@ describe('validateMailboxMessage', () => {
           parent_tool_use_id: null,
         },
       ],
+      [
+        'a sparse block array with a hole',
+        { type: 'user', message: { content: sparseContent }, parent_tool_use_id: null },
+      ],
       ['a non-null parent_tool_use_id', { ...validMessage, parent_tool_use_id: 'tool-1' }],
       ['an invalid priority', { ...validMessage, priority: 'soon' }],
       ['an unknown key', { ...validMessage, kind: 'enqueued' }],
     ])('rejects %s', (_label, message) => {
-      const reason = validateMailboxMessage(message);
+      const reason = validateMailboxMessage(message as unknown as MailboxMessage);
       expect(reason).toEqual(expect.any(String));
     });
 
@@ -179,7 +186,7 @@ describe('validateMailboxMessage', () => {
       'shouldQuery',
       'timestamp',
     ])('rejects the named excess key %s', (key) => {
-      const reason = validateMailboxMessage({ ...validMessage, [key]: 'x' });
+      const reason = validateMailboxMessage({ ...validMessage, [key]: 'x' } as MailboxMessage);
       expect(reason).toContain('unexpected key');
     });
   });
@@ -192,8 +199,9 @@ describe('validateMailboxMessage', () => {
       undefined,
       'user',
     ])('returns a one-line reason for %p instead of throwing', (garbage) => {
-      expect(() => validateMailboxMessage(garbage)).not.toThrow();
-      const reason = validateMailboxMessage(garbage);
+      const message = garbage as unknown as MailboxMessage;
+      expect(() => validateMailboxMessage(message)).not.toThrow();
+      const reason = validateMailboxMessage(message);
       expect(reason).toEqual(expect.any(String));
       expect(reason?.includes('\n')).toBe(false);
     });
