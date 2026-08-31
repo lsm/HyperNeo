@@ -15,7 +15,7 @@ function encodeBits(value: bigint, length: number): string {
 
 function random80(): bigint {
   const bytes = new Uint8Array(10);
-  crypto.getRandomValues(bytes);
+  globalThis.crypto.getRandomValues(bytes);
   let value = 0n;
   for (const byte of bytes) {
     value = (value << 8n) | BigInt(byte);

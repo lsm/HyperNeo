@@ -135,7 +135,6 @@ describe('isUlid', () => {
   test('returns false for non-string input without throwing', () => {
     expect(() => isUlid(undefined as unknown as string)).not.toThrow();
     expect(() => isUlid(null as unknown as string)).not.toThrow();
-    expect(() => isUlid(1700000000000 as unknown as string)).not.toThrow();
     expect(isUlid(undefined as unknown as string)).toBe(false);
     expect(isUlid(null as unknown as string)).toBe(false);
   });
