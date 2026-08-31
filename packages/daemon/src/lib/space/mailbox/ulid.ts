@@ -1,5 +1,5 @@
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-const ULID_PATTERN = /^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$/;
+const ULID_PATTERN = /^[0-7][0-9ABCDEFGHJKMNPQRSTVWXYZ]{25}$/;
 const MAX_TIME_MS = 2 ** 48;
 const RANDOM_BYTES = 10;
 
@@ -52,8 +52,12 @@ export function createUlid(nowMs?: number): string {
   if (timeMs !== lastTimeMs) {
     lastRandom = crypto.getRandomValues(new Uint8Array(RANDOM_BYTES));
     lastTimeMs = timeMs;
-  } else if (!incrementRandom(lastRandom)) {
-    throw new Error('ulid randomness exhausted within millisecond');
+  } else {
+    const nextRandom = lastRandom.slice();
+    if (!incrementRandom(nextRandom)) {
+      throw new Error('ulid randomness exhausted within millisecond');
+    }
+    lastRandom = nextRandom;
   }
   return encodeTimestamp(timeMs) + encodeRandom(lastRandom);
 }

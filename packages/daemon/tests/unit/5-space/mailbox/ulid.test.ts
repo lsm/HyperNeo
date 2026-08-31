@@ -8,7 +8,7 @@ const TIMESTAMP_VECTORS: Array<[number, string]> = [
   [0, '0000000000'],
   [1, '0000000001'],
   [1000, '00000000Z8'],
-  [1729000000000, '01JA86WGJG0'],
+  [1729000000000, '01JA86WJG0'],
   [MAX_48_BIT, '7ZZZZZZZZZ'],
 ];
 
@@ -88,6 +88,21 @@ describe('createUlid', () => {
     expect(second.slice(0, 10)).toBe(first.slice(0, 10));
     expect(second).not.toBe(first);
   });
+
+  test('keeps failing after same-millisecond randomness exhaustion', () => {
+    const maxed = new Uint8Array(10).fill(255);
+    Object.defineProperty(crypto, 'getRandomValues', {
+      value: () => maxed,
+      configurable: true,
+    });
+    try {
+      expect(isUlid(createUlid(60_000))).toBe(true);
+      expect(() => createUlid(60_000)).toThrow();
+      expect(() => createUlid(60_000)).toThrow();
+    } finally {
+      delete (crypto as { getRandomValues?: unknown }).getRandomValues;
+    }
+  });
 });
 
 describe('isUlid', () => {
@@ -118,5 +133,17 @@ describe('isUlid', () => {
     for (const char of ['I', 'L', 'O', 'U', ' ', '-', '#', '!', 'é']) {
       expect(isUlid(replaceAt(base, 20, char))).toBe(false);
     }
+  });
+
+  test('rejects timestamps beyond the 48-bit range', () => {
+    const base = createUlid(0);
+    for (const char of ['8', '9', 'A', 'Z']) {
+      expect(isUlid(replaceAt(base, 0, char))).toBe(false);
+    }
+  });
+
+  test('accepts the maximum representable ulid', () => {
+    expect(isUlid(`7${'Z'.repeat(25)}`)).toBe(true);
+    expect(isUlid(`8${'Z'.repeat(25)}`)).toBe(false);
   });
 });
