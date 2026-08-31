@@ -1148,6 +1148,7 @@ describe('pending drain through the v2 injection shell', () => {
       enforceRetention: mock(() => 0),
       expireStale: mock(() => 0),
       listPendingForTarget: mock(() => [row]),
+      getById: mock(() => ({ status: 'pending' })),
       markDelivered: mock(() => {}),
       markAttemptFailed: mock(() => null),
     };
@@ -1208,6 +1209,7 @@ describe('pending drain through the v2 injection shell', () => {
       reopenDeliveryByUuid,
       markDeliveryDeferredByUuid,
       markDelivered: pendingRepo.markDelivered,
+      markAttemptFailed: pendingRepo.markAttemptFailed,
       replayMock,
     };
   }
@@ -1227,6 +1229,8 @@ describe('pending drain through the v2 injection shell', () => {
     expect(outbox.sendStatus(V2_SESSION_ID, 'row-v2')).toBe('enqueued');
     expect(outbox.userRowCount(V2_SESSION_ID)).toBe(1);
     expect(outbox.pendingDeliveryJobCount(V2_SESSION_ID, 'row-v2')).toBe(1);
+    signalDeliveryConsumed(V2_SESSION_ID, 'row-v2');
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
   });
 
@@ -1239,5 +1243,61 @@ describe('pending drain through the v2 injection shell', () => {
     expect(h.jobQueueEnqueue).not.toHaveBeenCalled();
     expect(h.replayMock).not.toHaveBeenCalled();
     expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
+  });
+
+  function captureLateSettlementArms(manager: TaskAgentManager): Array<{
+    onConsumed: (settledSessionId: string) => void;
+    onFailed?: () => void;
+  }> {
+    const armed: Array<{ onConsumed: (settledSessionId: string) => void; onFailed?: () => void }> =
+      [];
+    (
+      manager as unknown as {
+        lateSettlements: {
+          arm: (request: {
+            onConsumed: (settledSessionId: string) => void;
+            onFailed?: () => void;
+          }) => { cancel(): void };
+        };
+      }
+    ).lateSettlements = {
+      arm: (request) => {
+        armed.push(request);
+        return { cancel: () => {} };
+      },
+    };
+    return armed;
+  }
+
+  it('a drain keeps the pending row open until consumption settles it', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+
+    expect(outbox.sendStatus(V2_SESSION_ID, 'row-v2')).toBe('enqueued');
+    expect(h.markDelivered).not.toHaveBeenCalled();
+    expect(armed).toHaveLength(1);
+
+    armed[0].onConsumed(V2_SESSION_ID);
+
+    expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
+  });
+
+  it('a drain charges the pending row when the delivery dead-letters before consumption', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+
+    armed[0].onFailed?.();
+
+    expect(h.markAttemptFailed).toHaveBeenCalledWith(
+      'row-v2',
+      expect.stringContaining('dead-letter')
+    );
+    expect(h.markDelivered).not.toHaveBeenCalled();
   });
 });

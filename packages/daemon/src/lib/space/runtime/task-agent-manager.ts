@@ -1478,8 +1478,7 @@ export class TaskAgentManager {
           row.id
         );
         this.recordActivityForSession(sessionId);
-        repo.markDelivered(row.id, sessionId);
-        this.emitPendingDelivered(row.id, sessionId, row);
+        this.settleNodeAgentPendingRow(repo, row, sessionId);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         log.warn(
@@ -1488,6 +1487,35 @@ export class TaskAgentManager {
         repo.markAttemptFailed(row.id, errMsg);
       }
     }
+  }
+
+  private settleNodeAgentPendingRow(
+    repo: NonNullable<TaskAgentManagerConfig['pendingMessageRepo']>,
+    row: PendingAgentMessageRecord,
+    sessionId: string
+  ): void {
+    const probeDeliveryStatus = () =>
+      this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, row.id)?.sendStatus;
+    const settleDelivered = (): void => {
+      if (repo.getById(row.id)?.status !== 'pending') return;
+      repo.markDelivered(row.id, sessionId);
+      this.emitPendingDelivered(row.id, sessionId, row);
+    };
+    const settleFailed = (): void => {
+      if (repo.getById(row.id)?.status !== 'pending') return;
+      repo.markAttemptFailed(row.id, 'delivery dead-lettered before consumption');
+    };
+    if (probeDeliveryStatus() === 'consumed') {
+      settleDelivered();
+      return;
+    }
+    this.lateSettlements.arm({
+      sessionId,
+      messageId: row.id,
+      onConsumed: () => settleDelivered(),
+      onFailed: () => settleFailed(),
+      getSendStatus: probeDeliveryStatus,
+    });
   }
 
   async tryResumeNodeAgentSession(
