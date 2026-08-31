@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import type { MailboxAddress } from '../../../../src/lib/space/mailbox/address';
 import {
   createMailboxEntry,
   DEFAULT_MAILBOX_ENTRY_POLICY,
@@ -8,7 +9,6 @@ import {
   validateMailboxMessage,
 } from '../../../../src/lib/space/mailbox/entry';
 import { isUlid } from '../../../../src/lib/space/mailbox/ulid';
-import type { MailboxAddress } from '../../../../src/lib/space/mailbox/address';
 
 const TO: MailboxAddress = { kind: 'session', sessionId: 'sess-1' };
 const AGENT_TO: MailboxAddress = {
@@ -187,6 +187,34 @@ describe('createMailboxEntry', () => {
       { priority: Number.NaN },
     ];
     for (const policy of overrides) {
+      expect(
+        () => createMailboxEntry({ to: TO, message: messageWith('hi'), origin: 'o', policy }),
+        JSON.stringify(policy)
+      ).toThrow(TypeError);
+    }
+  });
+
+  test('rejects excess keys in policy override', () => {
+    const excessPolicies = [
+      { ttlMs: 1000, foo: 'bar' },
+      { maxAttempts: 3, extra: true },
+      { priority: 1, junk: null },
+    ];
+    for (const policy of excessPolicies) {
+      expect(
+        () => createMailboxEntry({ to: TO, message: messageWith('hi'), origin: 'o', policy }),
+        JSON.stringify(policy)
+      ).toThrow(TypeError);
+    }
+  });
+
+  test('rejects excess keys in policy override', () => {
+    const excessPolicies = [
+      { ttlMs: 1000, foo: 'bar' },
+      { maxAttempts: 3, extra: true },
+      { priority: 1, junk: null },
+    ];
+    for (const policy of excessPolicies) {
       expect(
         () => createMailboxEntry({ to: TO, message: messageWith('hi'), origin: 'o', policy }),
         JSON.stringify(policy)

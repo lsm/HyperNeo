@@ -73,8 +73,8 @@ function validateContent(content: unknown): string | null {
     return 'message.content must be a non-empty string or array of text blocks';
   }
   for (const block of content) {
-    if (typeof block !== 'object' || block === null) {
-      return 'every message.content block must be an object';
+    if (!isPlainObject(block)) {
+      return 'every message.content block must be a plain object';
     }
     const record = block as Record<string, unknown>;
     const keys = Object.keys(record);
@@ -107,8 +107,8 @@ export function validateMailboxMessage(message: unknown): string | null {
   }
   if (message.type !== 'user') return 'message type must be exactly "user"';
   const inner = message.message;
-  if (typeof inner !== 'object' || inner === null) {
-    return 'message.message must be an object';
+  if (!isPlainObject(inner)) {
+    return 'message.message must be a plain object';
   }
   const innerRecord = inner as Record<string, unknown>;
   const innerKeys = Object.keys(innerRecord);
@@ -139,6 +139,13 @@ export function createMailboxEntry(args: {
   if (!isValidAddress(args.to)) throw new TypeError('to must be a valid mailbox address');
   if (typeof args.origin !== 'string' || args.origin.length === 0) {
     throw new TypeError('origin must be a non-empty string');
+  }
+  if (args.policy !== undefined) {
+    for (const key of Object.keys(args.policy)) {
+      if (!POLICY_KEYS.includes(key)) {
+        throw new TypeError(`policy may not carry "${key}"`);
+      }
+    }
   }
   const policy: MailboxEntryPolicy = { ...DEFAULT_MAILBOX_ENTRY_POLICY, ...args.policy };
   checkPolicyValue('ttlMs', policy.ttlMs, false);
