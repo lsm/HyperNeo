@@ -9,11 +9,18 @@ import {
 } from '../../../../src/lib/agent/message-delivery-outbox';
 import {
   activateDeferredPromptIntoMailbox,
+  applyHandoffMechanism,
   ensurePromptIntoMailbox,
   hasSettledHandoffRow,
+  handoffPromptToMailbox,
+  markQueuedIfIdle,
   planHandoffMechanism,
+  publishEnqueuedIfChanged,
   resolveDeliverableHandoff,
   retryFailedPromptIntoMailbox,
+  settleHandoffOutcome,
+  verifyHandoffContent,
+  type MailboxHandoffArgs,
   type PromptHandoffDeps,
   type PromptHandoffTarget,
 } from '../../../../src/lib/space/runtime/prompt-mailbox-handoff';
@@ -500,5 +507,341 @@ describe('ensurePromptIntoMailbox', () => {
     );
     expect(outcome).toEqual({ dbId: 'db-ensure-enqueued', changed: false, advanced: false });
     expect(deliveryJobCount(h, 'msg-ensure-6')).toBe(0);
+  });
+});
+
+type HandoffCtx = Parameters<typeof applyHandoffMechanism>[0];
+
+function ctxFor(h: Harness, message: SDKMessage, extra: Partial<HandoffCtx> = {}): HandoffCtx {
+  return { deps: h.deps, target: targetFor(message), ...extra };
+}
+
+function portSpy() {
+  const queued: string[] = [];
+  const published: Array<{ sessionId: string; dbId: string; status: string }> = [];
+  return {
+    queued,
+    published,
+    stateManager: {
+      setQueuedIfIdle: async (messageId: string) => {
+        queued.push(messageId);
+        return true;
+      },
+    },
+    publishStatusChanged: async (sessionId: string, dbId: string, status: 'enqueued') => {
+      published.push({ sessionId, dbId, status });
+    },
+  };
+}
+
+function argsFor(h: Harness, message: SDKMessage): MailboxHandoffArgs {
+  return { deps: h.deps, target: targetFor(message) };
+}
+
+describe('verifyHandoffContent', () => {
+  it('propagates a content conflict for the ensure mechanism too', () => {
+    const h = makeHarness();
+    seedEnqueuedRow(h, 'msg-verify-1', 'original');
+    expect(() =>
+      verifyHandoffContent(
+        ctxFor(h, userMessage('msg-verify-1', 'conflicting'), { mechanism: 'ensure' })
+      )
+    ).toThrow(PromptContentConflictError);
+  });
+
+  it('propagates a content conflict for the retry mechanism', () => {
+    const h = makeHarness();
+    seedEnqueuedRow(h, 'msg-verify-2', 'original');
+    expect(() =>
+      verifyHandoffContent(
+        ctxFor(h, userMessage('msg-verify-2', 'conflicting'), {
+          mechanism: 'retry',
+        })
+      )
+    ).toThrow(PromptContentConflictError);
+  });
+});
+
+describe('applyHandoffMechanism', () => {
+  it('applies the planned mechanism and normalizes the stage outcome', async () => {
+    const h = makeHarness();
+    const dbId = seedEnqueuedRow(h, 'msg-apply-1');
+    markRowStatus(h, dbId, 'failed');
+    const ctx = await applyHandoffMechanism(
+      ctxFor(h, userMessage('msg-apply-1'), {
+        mechanism: 'retry',
+      })
+    );
+    expect(ctx.applied).toEqual({ dbId, changed: true, advanced: true });
+    expect(sendStatus(h, 'msg-apply-1')).toBe('enqueued');
+    expect(deliveryJobCount(h, 'msg-apply-1')).toBe(1);
+  });
+
+  it('reconciles a stale plan by re-reading the row and re-dispatching', async () => {
+    const h = makeHarness();
+    const dbId = seedEnqueuedRow(h, 'msg-apply-2');
+    const ctx = await applyHandoffMechanism(
+      ctxFor(h, userMessage('msg-apply-2'), {
+        mechanism: 'retry',
+      })
+    );
+    expect(ctx.applied).toEqual({ dbId, changed: false, advanced: true });
+  });
+
+  it('reconciles onto activation when the row is deferred under a stale plan', async () => {
+    const h = makeHarness();
+    const dbId = seedDeferredRow(h, 'msg-apply-3');
+    const ctx = await applyHandoffMechanism(
+      ctxFor(h, userMessage('msg-apply-3'), {
+        mechanism: 'retry',
+      })
+    );
+    expect(ctx.applied).toEqual({ dbId, changed: true, advanced: true });
+    expect(sendStatus(h, 'msg-apply-3')).toBe('enqueued');
+    expect(deliveryJobCount(h, 'msg-apply-3')).toBe(1);
+  });
+
+  it('reconciles an ensure plan when the row raced to failed', async () => {
+    const h = makeHarness();
+    const dbId = seedEnqueuedRow(h, 'msg-apply-4');
+    markRowStatus(h, dbId, 'failed');
+    const ctx = await applyHandoffMechanism(
+      ctxFor(h, userMessage('msg-apply-4'), {
+        mechanism: 'ensure',
+      })
+    );
+    expect(ctx.applied).toEqual({ dbId, changed: true, advanced: true });
+    expect(sendStatus(h, 'msg-apply-4')).toBe('enqueued');
+    expect(deliveryJobCount(h, 'msg-apply-4')).toBe(1);
+  });
+
+  it('reconciles an ensure plan when the row raced to deferred', async () => {
+    const h = makeHarness();
+    const dbId = seedDeferredRow(h, 'msg-apply-5');
+    const ctx = await applyHandoffMechanism(
+      ctxFor(h, userMessage('msg-apply-5'), {
+        mechanism: 'ensure',
+      })
+    );
+    expect(ctx.applied).toEqual({ dbId, changed: true, advanced: true });
+    expect(sendStatus(h, 'msg-apply-5')).toBe('enqueued');
+    expect(deliveryJobCount(h, 'msg-apply-5')).toBe(1);
+  });
+});
+
+describe('settleHandoffOutcome', () => {
+  it('reports stale when no mechanism applied', () => {
+    const h = makeHarness();
+    const ctx = settleHandoffOutcome(ctxFor(h, userMessage('msg-settle-1'), { applied: null }));
+    expect(ctx.outcome).toEqual({ state: 'stale' });
+  });
+
+  it('settles on consumption evidence even when no mechanism applied', () => {
+    const h = makeHarness();
+    const dbId = seedEnqueuedRow(h, 'msg-settle-6');
+    markRowStatus(h, dbId, 'failed');
+    setConsumedSeq(h, 'msg-settle-6');
+    const ctx = settleHandoffOutcome(ctxFor(h, userMessage('msg-settle-6'), { applied: null }));
+    expect(ctx.outcome).toEqual({ state: 'settled', dbId });
+  });
+
+  it('settles on consumption evidence even after an advanced apply', () => {
+    const h = makeHarness();
+    const dbId = seedEnqueuedRow(h, 'msg-settle-2');
+    markRowStatus(h, dbId, 'failed');
+    setConsumedSeq(h, 'msg-settle-2');
+    const ctx = settleHandoffOutcome(
+      ctxFor(h, userMessage('msg-settle-2'), { applied: { dbId, changed: true, advanced: true } })
+    );
+    expect(ctx.outcome).toEqual({ state: 'settled', dbId });
+  });
+
+  it('identifies the evidenced sibling in the settled outcome', () => {
+    const h = makeHarness();
+    insertDuplicateRow(h, 'msg-settle-5', 'db-settle-plain', 'enqueued', null);
+    insertDuplicateRow(h, 'msg-settle-5', 'db-settle-evidenced', 'failed', 8);
+    const ctx = settleHandoffOutcome(
+      ctxFor(h, userMessage('msg-settle-5'), {
+        applied: { dbId: 'db-settle-plain', changed: false, advanced: false },
+      })
+    );
+    expect(ctx.outcome).toEqual({ state: 'settled', dbId: 'db-settle-evidenced' });
+  });
+
+  it('maps an applied handoff onto the enqueued outcome', () => {
+    const h = makeHarness();
+    const ctx = settleHandoffOutcome(
+      ctxFor(h, userMessage('msg-settle-3'), {
+        applied: { dbId: 'db-settle-3', changed: true, advanced: true },
+      })
+    );
+    expect(ctx.outcome).toEqual({
+      state: 'enqueued',
+      dbId: 'db-settle-3',
+      changed: true,
+      advanced: true,
+    });
+  });
+
+  it('leaves an unadvanced row without evidence enqueued', () => {
+    const h = makeHarness();
+    const ctx = settleHandoffOutcome(
+      ctxFor(h, userMessage('msg-settle-4'), {
+        applied: { dbId: 'db-settle-4', changed: false, advanced: false },
+      })
+    );
+    expect(ctx.outcome).toEqual({
+      state: 'enqueued',
+      dbId: 'db-settle-4',
+      changed: false,
+      advanced: false,
+    });
+  });
+});
+
+describe('markQueuedIfIdle', () => {
+  it('marks the session queued when the outcome advanced into the mailbox', async () => {
+    const h = makeHarness();
+    const spy = portSpy();
+    await markQueuedIfIdle(
+      ctxFor(h, userMessage('msg-queued-1'), {
+        stateManager: spy.stateManager,
+        outcome: { state: 'enqueued', dbId: 'db-queued-1', changed: true, advanced: true },
+      })
+    );
+    expect(spy.queued).toEqual(['msg-queued-1']);
+  });
+
+  it('skips settled outcomes and unadvanced handoffs', async () => {
+    const h = makeHarness();
+    const spy = portSpy();
+    await markQueuedIfIdle(
+      ctxFor(h, userMessage('msg-queued-2'), {
+        stateManager: spy.stateManager,
+        outcome: { state: 'settled', dbId: 'db-queued-2' },
+      })
+    );
+    await markQueuedIfIdle(
+      ctxFor(h, userMessage('msg-queued-3'), {
+        stateManager: spy.stateManager,
+        outcome: { state: 'enqueued', dbId: 'db-queued-3', changed: false, advanced: false },
+      })
+    );
+    expect(spy.queued).toEqual([]);
+  });
+});
+
+describe('publishEnqueuedIfChanged', () => {
+  it('publishes the enqueued status only when the row changed', async () => {
+    const h = makeHarness();
+    const spy = portSpy();
+    await publishEnqueuedIfChanged(
+      ctxFor(h, userMessage('msg-pub-1'), {
+        publishStatusChanged: spy.publishStatusChanged,
+        outcome: { state: 'enqueued', dbId: 'db-pub-1', changed: true, advanced: true },
+      })
+    );
+    await publishEnqueuedIfChanged(
+      ctxFor(h, userMessage('msg-pub-2'), {
+        publishStatusChanged: spy.publishStatusChanged,
+        outcome: { state: 'enqueued', dbId: 'db-pub-2', changed: false, advanced: true },
+      })
+    );
+    expect(spy.published).toEqual([{ sessionId: SESSION, dbId: 'db-pub-1', status: 'enqueued' }]);
+  });
+
+  it('swallows publisher failures', async () => {
+    const h = makeHarness();
+    await publishEnqueuedIfChanged(
+      ctxFor(h, userMessage('msg-pub-3'), {
+        publishStatusChanged: async () => {
+          throw new Error('hub gone');
+        },
+        outcome: { state: 'enqueued', dbId: 'db-pub-3', changed: true, advanced: true },
+      })
+    );
+  });
+});
+
+describe('handoffPromptToMailbox', () => {
+  it('retries a failed row into the mailbox and publishes the transition', async () => {
+    const h = makeHarness();
+    const spy = portSpy();
+    const dbId = seedEnqueuedRow(h, 'msg-e2e-1');
+    markRowStatus(h, dbId, 'failed');
+    const outcome = await handoffPromptToMailbox({
+      ...argsFor(h, userMessage('msg-e2e-1')),
+      ...spy,
+    });
+    expect(outcome).toEqual({ state: 'enqueued', dbId, changed: true, advanced: true });
+    expect(sendStatus(h, 'msg-e2e-1')).toBe('enqueued');
+    expect(deliveryJobCount(h, 'msg-e2e-1')).toBe(1);
+    expect(spy.queued).toEqual(['msg-e2e-1']);
+    expect(spy.published).toEqual([{ sessionId: SESSION, dbId, status: 'enqueued' }]);
+  });
+
+  it('activates a deferred row into the mailbox', async () => {
+    const h = makeHarness();
+    const dbId = seedDeferredRow(h, 'msg-e2e-2');
+    const outcome = await handoffPromptToMailbox(argsFor(h, userMessage('msg-e2e-2')));
+    expect(outcome).toEqual({ state: 'enqueued', dbId, changed: true, advanced: true });
+    expect(sendStatus(h, 'msg-e2e-2')).toBe('enqueued');
+    expect(deliveryJobCount(h, 'msg-e2e-2')).toBe(1);
+  });
+
+  it('ensures a missing row into the mailbox', async () => {
+    const h = makeHarness();
+    const outcome = await handoffPromptToMailbox(argsFor(h, userMessage('msg-e2e-3', 'fresh')));
+    expect(outcome).toMatchObject({ state: 'enqueued', changed: true, advanced: true });
+    expect(sendStatus(h, 'msg-e2e-3')).toBe('enqueued');
+    expect(deliveryJobCount(h, 'msg-e2e-3')).toBe(1);
+  });
+
+  it('lets consumption evidence win over a failed snapshot', async () => {
+    const h = makeHarness();
+    const spy = portSpy();
+    const dbId = seedEnqueuedRow(h, 'msg-e2e-4');
+    markRowStatus(h, dbId, 'failed');
+    setConsumedSeq(h, 'msg-e2e-4');
+    h.db
+      .prepare("UPDATE job_queue SET status = ? WHERE json_extract(payload, '$.messageUuid') = ?")
+      .run('completed', 'msg-e2e-4');
+    const outcome = await handoffPromptToMailbox({
+      ...argsFor(h, userMessage('msg-e2e-4')),
+      ...spy,
+    });
+    expect(outcome).toEqual({ state: 'settled', dbId });
+    expect(sendStatus(h, 'msg-e2e-4')).toBe('failed');
+    expect(deliveryJobCount(h, 'msg-e2e-4')).toBe(0);
+    expect(spy.queued).toEqual([]);
+    expect(spy.published).toEqual([]);
+  });
+
+  it('settles a consumed row without republishing', async () => {
+    const h = makeHarness();
+    const spy = portSpy();
+    const dbId = seedEnqueuedRow(h, 'msg-e2e-5');
+    markRowStatus(h, dbId, 'consumed');
+    const outcome = await handoffPromptToMailbox({
+      ...argsFor(h, userMessage('msg-e2e-5')),
+      ...spy,
+    });
+    expect(outcome).toEqual({ state: 'settled', dbId });
+    expect(spy.queued).toEqual([]);
+    expect(spy.published).toEqual([]);
+  });
+
+  it('propagates a content conflict without touching the row', async () => {
+    const h = makeHarness();
+    const dbId = seedEnqueuedRow(h, 'msg-e2e-6', 'original');
+    markRowStatus(h, dbId, 'failed');
+    h.db
+      .prepare("UPDATE job_queue SET status = ? WHERE json_extract(payload, '$.messageUuid') = ?")
+      .run('completed', 'msg-e2e-6');
+    await expect(
+      handoffPromptToMailbox(argsFor(h, userMessage('msg-e2e-6', 'conflicting')))
+    ).rejects.toBeInstanceOf(PromptContentConflictError);
+    expect(sendStatus(h, 'msg-e2e-6')).toBe('failed');
+    expect(deliveryJobCount(h, 'msg-e2e-6')).toBe(0);
   });
 });
