@@ -1,9 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  MAILBOX_LANE,
-  enqueueMailboxEntry,
-  type MailboxEnqueueOutcome,
-} from '../../../../src/lib/mailbox/enqueue';
+import { MAILBOX_LANE, type MailboxEnqueueOutcome } from '../../../../src/lib/mailbox/enqueue';
 import {
   handoffPromptToMailbox,
   type MailboxHandoffOutcome,
@@ -53,12 +49,6 @@ const pendingRow = {} as PendingAgentMessageRecord;
 describe('mailbox skeleton stubs', () => {
   test('MAILBOX_LANE equals "mailbox"', () => {
     expect(MAILBOX_LANE).toBe('mailbox');
-  });
-
-  test('enqueueMailboxEntry throws its not implemented message', () => {
-    expect(() => enqueueMailboxEntry(entry)).toThrow(
-      'mailbox: enqueueMailboxEntry not implemented'
-    );
   });
 
   test('handoffPromptToMailbox throws its not implemented message', () => {
