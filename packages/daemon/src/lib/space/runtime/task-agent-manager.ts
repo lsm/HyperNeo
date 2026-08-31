@@ -1479,6 +1479,18 @@ export class TaskAgentManager {
     for (const row of drain.rows) {
       const isSyntheticMessage = !isHumanPendingSource(row.sourceAgentName);
       const message = formatPendingRowForNodeAgent(row, targetAgentName);
+      const consumedSessionId = this.nodeTargetExecutionSessions(row).find(
+        ({ sessionId: candidate }) =>
+          candidate !== sessionId &&
+          this.probeSettledDeliveryStatus(candidate, row.id) === 'consumed'
+      )?.sessionId;
+      if (consumedSessionId) {
+        if (repo.getById(row.id)?.status === 'pending') {
+          repo.markDelivered(row.id, consumedSessionId);
+          this.emitPendingDelivered(row.id, consumedSessionId, row);
+        }
+        continue;
+      }
       let deadLetterCharged = row.lastError === 'delivery dead-lettered before consumption';
       if (
         !deadLetterCharged &&
@@ -1505,7 +1517,7 @@ export class TaskAgentManager {
           row.id
         );
         if (deadLetterCharged) {
-          repo.recordDeliveryAttempt(row.id, null);
+          repo.recordDeliveryError(row.id, null);
         }
         this.recordActivityForSession(sessionId);
         this.settleNodeAgentPendingRow(repo, row, sessionId);
@@ -1681,10 +1693,11 @@ export class TaskAgentManager {
     if (this.nodeAgentRetryTimers.has(key)) return;
     const timer = setTimeout(() => {
       this.nodeAgentRetryTimers.delete(key);
+      const currentSessionId = this.nodeTargetExecutionSessions(row).at(-1)?.sessionId ?? sessionId;
       void this.flushPendingMessagesForTarget(
         row.workflowRunId,
         row.targetAgentName,
-        sessionId
+        currentSessionId
       ).catch(() => {});
     }, NODE_AGENT_RETRY_DELAY_MS);
     this.nodeAgentRetryTimers.set(key, timer);
@@ -1772,9 +1785,13 @@ export class TaskAgentManager {
           if (done) return;
           done = true;
           stopWatchers();
-          if (repo.getById(row.id)?.status !== 'pending') return;
-          repo.markDelivered(row.id, settledSessionId);
-          this.emitPendingDelivered(row.id, settledSessionId, row);
+          try {
+            if (repo.getById(row.id)?.status !== 'pending') return;
+            repo.markDelivered(row.id, settledSessionId);
+            this.emitPendingDelivered(row.id, settledSessionId, row);
+          } catch {
+            this.scheduleSpaceAgentReconciliation(spaceId, workflowRunId);
+          }
         };
         const scheduleReconciliation = () => {
           this.scheduleSpaceAgentReconciliation(spaceId, workflowRunId);
@@ -1852,10 +1869,14 @@ export class TaskAgentManager {
     const replyTo = resolveReplySession(row);
     const deliveredSessionId = replyTo || spaceChatSessionId;
     const settleDelivered = (settledSessionId?: string): void => {
-      const targetSessionId = settledSessionId ?? deliveredSessionId;
-      if (repo.getById(row.id)?.status !== 'pending') return;
-      repo.markDelivered(row.id, targetSessionId);
-      this.emitPendingDelivered(row.id, targetSessionId, row);
+      try {
+        const targetSessionId = settledSessionId ?? deliveredSessionId;
+        if (repo.getById(row.id)?.status !== 'pending') return;
+        repo.markDelivered(row.id, targetSessionId);
+        this.emitPendingDelivered(row.id, targetSessionId, row);
+      } catch {
+        this.scheduleSpaceAgentReconciliation(spaceId, workflowRunId);
+      }
     };
     const scheduleReconciliation = () => {
       this.scheduleSpaceAgentReconciliation(spaceId, workflowRunId);

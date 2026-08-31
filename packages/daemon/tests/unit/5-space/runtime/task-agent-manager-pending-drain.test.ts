@@ -98,6 +98,7 @@ interface RealDbHarness {
   spaceId: string;
   executionId: string;
   enqueue: (overrides?: EnqueueOverrides) => PendingAgentMessageRecord;
+  markInjected: (id: string) => void;
 }
 
 function makeRealDbHarness(): RealDbHarness {
@@ -137,14 +138,20 @@ function makeRealDbHarness(): RealDbHarness {
     )
   );
   const publish = mock(async (_event: string, _payload: unknown) => {});
-  const injectMock = mock(async (...args: unknown[]) => (args[6] as string) ?? 'injected');
+  const injectedIds = new Set<string>();
+  const injectMock = mock(async (...args: unknown[]) => {
+    const id = (args[6] as string) ?? 'injected';
+    injectedIds.add(id);
+    return id;
+  });
   const workflow = { nodes: [{ id: NODE_ID, name: NODE_NAME }] };
 
   const manager = new TaskAgentManager({
     db: {
       getDatabase: () => db,
       getSDKMessageRepo: () => ({
-        getDeliveryContent: () => ({ content: 'x', sendStatus: 'consumed' }),
+        getDeliveryContent: (_sessionId: string, uuid: string) =>
+          injectedIds.has(uuid) ? { content: 'x', sendStatus: 'consumed' } : null,
       }),
     },
     taskRepo,
@@ -172,6 +179,7 @@ function makeRealDbHarness(): RealDbHarness {
     runId: run.id,
     spaceId: space.id,
     executionId: exec.id,
+    markInjected: (id: string) => injectedIds.add(id),
     enqueue: (overrides = {}) =>
       spyRepo.repo.enqueue({
         workflowRunId: run.id,
@@ -378,7 +386,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
-    expect(h.spyRepo.retentionArgs).toEqual([[{ runId: h.runId, excludeIds: [row.id] }]]);
+    expect(h.spyRepo.retentionArgs).toEqual([[{ runId: h.runId, excludeIds: [] }]]);
     expect(h.spyRepo.expireArgs).toEqual([[h.runId]]);
     expect(h.spyRepo.calls.slice(0, 2)).toEqual(['enforceRetention', 'expireStale']);
     expect(h.spyRepo.calls[2]).toMatch(/^list:/);
@@ -601,6 +609,7 @@ describe('flushPendingMessagesForTarget — per-row outcomes', () => {
       }
     ).injectSubSessionMessage = mock(async (...args: unknown[]) => {
       if (args[6] === failingRow.id) throw new Error('inject exploded');
+      h.markInjected(args[6] as string);
       return 'ok';
     });
 
@@ -1088,14 +1097,18 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
       nodeExecutionRepo: {
         getByAgentSessionId: mock(() => execution),
         listByAgentSessionId: mock(() => [execution]),
-        listByWorkflowRun: mock(() => [
-          execution,
-          {
-            ...execution,
-            id: 'exec-v2-alt',
-            agentSessionId: 'sub-session-v2-alt',
-          },
-        ]),
+        ...(outbox
+          ? {
+              listByWorkflowRun: mock(() => [
+                execution,
+                {
+                  ...execution,
+                  id: 'exec-v2-alt',
+                  agentSessionId: 'sub-session-v2-alt',
+                },
+              ]),
+            }
+          : {}),
         getById: mock(() => null),
         touchLastActivity: mock(() => {}),
       },
@@ -1253,14 +1266,18 @@ describe('pending drain through the v2 injection shell', () => {
       nodeExecutionRepo: {
         getByAgentSessionId: mock(() => execution),
         listByAgentSessionId: mock(() => [execution]),
-        listByWorkflowRun: mock(() => [
-          execution,
-          {
-            ...execution,
-            id: 'exec-v2-alt',
-            agentSessionId: 'sub-session-v2-alt',
-          },
-        ]),
+        ...(outbox
+          ? {
+              listByWorkflowRun: mock(() => [
+                execution,
+                {
+                  ...execution,
+                  id: 'exec-v2-alt',
+                  agentSessionId: 'sub-session-v2-alt',
+                },
+              ]),
+            }
+          : {}),
         getById: mock(() => null),
         touchLastActivity: mock(() => {}),
       },
