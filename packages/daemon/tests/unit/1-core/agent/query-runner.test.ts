@@ -848,6 +848,38 @@ describe('QueryRunner', () => {
       });
     });
 
+    it('logs info without throwing when a non-space session lacks the space-actions dispatcher', async () => {
+      await withAnthropicApiKey(async () => {
+        const previous = process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
+        process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = '1';
+        try {
+          mockSession.id = 'plain-session-1';
+          mockSession.workspacePath = tmpdir();
+          mockSession.type = 'worker';
+          mockSession.context = {};
+          mockSession.config.mcpServers = {};
+          buildSpy.mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} });
+
+          const onMissingMemberSpaceMcpServers = mock(async () => {});
+          const ctx = createContext({ onMissingMemberSpaceMcpServers });
+          runner = new QueryRunner(ctx);
+          runner.start();
+          await ctx.queryPromise?.catch(() => {});
+
+          expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('space-actions'));
+          expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('plain-session-1'));
+          expect(onMissingMemberSpaceMcpServers).not.toHaveBeenCalled();
+          const invariantErrors = handleErrorSpy.mock.calls
+            .map((call) => call[1])
+            .filter((err) => err instanceof Error && err.message.includes('MCP invariant'));
+          expect(invariantErrors).toEqual([]);
+        } finally {
+          if (previous === undefined) delete process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER;
+          else process.env.HYPERNEO_SPACE_ACTIONS_DISPATCHER = previous;
+        }
+      });
+    });
+
     it('throws when member Space MCP still missing after self-heal callback', async () => {
       await withAnthropicApiKey(async () => {
         mockSession.id = 'worker-session-1';
