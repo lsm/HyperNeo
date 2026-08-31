@@ -31,34 +31,49 @@ export type MailboxEntry = {
 };
 
 const MAILBOX_MESSAGE_PRIORITIES: readonly MailboxMessage['priority'][] = ['now', 'next', 'later'];
-const MAILBOX_MESSAGE_KEYS = new Set(['type', 'message', 'parent_tool_use_id', 'priority']);
+const MAILBOX_CONTENT_REASON =
+  'message.content must be a non-empty string or a non-empty array of text blocks';
 
-function isNonEmptyTextBlock(block: { type: 'text'; text: string }): boolean {
-  return block.type === 'text' && typeof block.text === 'string' && block.text.length > 0;
+function projectTextBlock(
+  block: { type: 'text'; text: string } | null | undefined
+): { type: 'text'; text: string } | null {
+  if (block === null || block === undefined) return null;
+  if (block.type !== 'text' || typeof block.text !== 'string' || block.text.length === 0) {
+    return null;
+  }
+  return { type: 'text', text: block.text };
 }
 
-function hasDeliverableContent(container: MailboxMessageContent): boolean {
-  if (typeof container === 'string') return container.length > 0;
-  if (!Array.isArray(container)) return false;
-  for (let index = 0; index < container.length; index += 1) {
-    const block: { type: 'text'; text: string } | null | undefined = container[index];
-    if (block === null || block === undefined || !isNonEmptyTextBlock(block)) return false;
-  }
-  return container.length > 0;
-}
+export type MailboxMessageProjection = { message: MailboxMessage } | { reason: string };
 
-export function validateMailboxMessage(message: MailboxMessage): string | null {
-  if (typeof message !== 'object' || message === null) return 'message must be an object';
-  if (message.type !== 'user') return 'message.type must be "user"';
-  const content: MailboxMessageContent | null | undefined = message.message?.content;
-  if (content === null || content === undefined || !hasDeliverableContent(content)) {
-    return 'message.content must be a non-empty string or a non-empty array of text blocks';
+export function toMailboxMessage(message: MailboxMessage): MailboxMessageProjection {
+  if (message?.type !== 'user') return { reason: 'message.type must be "user"' };
+  if (message.parent_tool_use_id !== null) {
+    return { reason: 'message.parent_tool_use_id must be null' };
   }
-  if (message.parent_tool_use_id !== null) return 'message.parent_tool_use_id must be null';
   if (message.priority !== undefined && !MAILBOX_MESSAGE_PRIORITIES.includes(message.priority)) {
-    return 'message.priority must be one of "now", "next", "later"';
+    return { reason: 'message.priority must be one of "now", "next", "later"' };
   }
-  const excess = Object.keys(message).find((key) => !MAILBOX_MESSAGE_KEYS.has(key));
-  if (excess !== undefined) return `message has unexpected key "${excess}"`;
-  return null;
+  const content = message.message?.content;
+  let projected: { content: MailboxMessageContent } | null = null;
+  if (typeof content === 'string') {
+    projected = content.length > 0 ? { content } : null;
+  } else if (Array.isArray(content)) {
+    const blocks: { type: 'text'; text: string }[] = [];
+    for (let index = 0; index < content.length; index += 1) {
+      const block = projectTextBlock(content[index]);
+      if (block === null) return { reason: MAILBOX_CONTENT_REASON };
+      blocks.push(block);
+    }
+    projected = blocks.length > 0 ? { content: blocks } : null;
+  }
+  if (projected === null) return { reason: MAILBOX_CONTENT_REASON };
+  return {
+    message: {
+      type: 'user',
+      message: projected,
+      parent_tool_use_id: null,
+      ...(message.priority !== undefined ? { priority: message.priority } : {}),
+    },
+  };
 }

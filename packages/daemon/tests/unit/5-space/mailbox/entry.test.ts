@@ -3,7 +3,7 @@ import {
   DEFAULT_MAILBOX_ENTRY_POLICY,
   type MailboxEntry,
   type MailboxMessage,
-  validateMailboxMessage,
+  toMailboxMessage,
 } from '../../../../src/lib/space/mailbox/entry';
 
 describe('DEFAULT_MAILBOX_ENTRY_POLICY', () => {
@@ -94,7 +94,7 @@ describe('MailboxEntry', () => {
   });
 });
 
-describe('validateMailboxMessage', () => {
+describe('toMailboxMessage', () => {
   const validMessage: MailboxMessage = {
     type: 'user',
     message: { content: 'hello' },
@@ -104,41 +104,84 @@ describe('validateMailboxMessage', () => {
   const sparseContent: { type: 'text'; text: string }[] = [{ type: 'text', text: 'x' }];
   delete sparseContent[0];
 
-  describe('acceptance', () => {
+  describe('projection', () => {
     test.each<[string, MailboxMessage]>([
       ['non-empty string content without priority', validMessage],
       [
         'a single text block',
-        {
-          type: 'user',
-          message: { content: [{ type: 'text', text: 'first' }] },
-          parent_tool_use_id: null,
-        },
+        { ...validMessage, message: { content: [{ type: 'text', text: 'first' }] } },
       ],
       [
         'multiple text blocks',
         {
-          type: 'user',
+          ...validMessage,
           message: {
             content: [
               { type: 'text', text: 'first' },
               { type: 'text', text: 'second' },
             ],
           },
-          parent_tool_use_id: null,
         },
       ],
       ['priority now', { ...validMessage, priority: 'now' }],
       ['priority next', { ...validMessage, priority: 'next' }],
       ['priority later', { ...validMessage, priority: 'later' }],
-    ])('accepts %s', (_label, message) => {
-      expect(validateMailboxMessage(message)).toBeNull();
+    ])('projects %s to a fresh deep-equal message', (_label, input) => {
+      expect(toMailboxMessage(input)).toEqual({ message: input });
+    });
+
+    test('output keys are exactly the typed fields', () => {
+      const withoutPriority = toMailboxMessage(validMessage) as { message: MailboxMessage };
+      expect(Object.keys(withoutPriority.message).sort()).toEqual([
+        'message',
+        'parent_tool_use_id',
+        'type',
+      ]);
+      const withPriority = toMailboxMessage({ ...validMessage, priority: 'next' }) as {
+        message: MailboxMessage;
+      };
+      expect(Object.keys(withPriority.message).sort()).toEqual([
+        'message',
+        'parent_tool_use_id',
+        'priority',
+        'type',
+      ]);
+    });
+
+    test('returns a fresh object graph, never the input reference', () => {
+      const input: MailboxMessage = {
+        ...validMessage,
+        message: { content: [{ type: 'text', text: 'first' }] },
+      };
+      const result = toMailboxMessage(input) as { message: MailboxMessage };
+      expect(result.message).not.toBe(input);
+      expect(result.message.message).not.toBe(input.message);
+      const projectedBlocks = result.message.message.content as { type: 'text'; text: string }[];
+      const inputBlocks = input.message.content as { type: 'text'; text: string }[];
+      expect(projectedBlocks[0]).not.toBe(inputBlocks[0]);
     });
   });
 
-  describe('rejection', () => {
+  describe('unknown input keys are dropped', () => {
+    test.each([
+      'uuid',
+      'session_id',
+      'subagent_type',
+      'task_description',
+      'isSynthetic',
+      'tool_use_result',
+      'shouldQuery',
+      'timestamp',
+      'kind',
+    ])('drops %s by construction', (key) => {
+      expect(toMailboxMessage({ ...validMessage, [key]: 'x' } as MailboxMessage)).toEqual({
+        message: validMessage,
+      });
+    });
+  });
+
+  describe('value failures', () => {
     test.each<[string, unknown]>([
-      ['an array instead of an object', ['user']],
       ['a wrong type', { ...validMessage, type: 'assistant' }],
       [
         'empty string content',
@@ -170,24 +213,10 @@ describe('validateMailboxMessage', () => {
       ],
       ['a non-null parent_tool_use_id', { ...validMessage, parent_tool_use_id: 'tool-1' }],
       ['an invalid priority', { ...validMessage, priority: 'soon' }],
-      ['an unknown key', { ...validMessage, kind: 'enqueued' }],
-    ])('rejects %s', (_label, message) => {
-      const reason = validateMailboxMessage(message as unknown as MailboxMessage);
-      expect(reason).toEqual(expect.any(String));
-    });
-
-    test.each([
-      'uuid',
-      'session_id',
-      'subagent_type',
-      'task_description',
-      'isSynthetic',
-      'tool_use_result',
-      'shouldQuery',
-      'timestamp',
-    ])('rejects the named excess key %s', (key) => {
-      const reason = validateMailboxMessage({ ...validMessage, [key]: 'x' } as MailboxMessage);
-      expect(reason).toContain('unexpected key');
+    ])('returns a reason for %s', (_label, message) => {
+      expect(toMailboxMessage(message as unknown as MailboxMessage)).toEqual({
+        reason: expect.any(String),
+      });
     });
   });
 
@@ -200,10 +229,10 @@ describe('validateMailboxMessage', () => {
       'user',
     ])('returns a one-line reason for %p instead of throwing', (garbage) => {
       const message = garbage as unknown as MailboxMessage;
-      expect(() => validateMailboxMessage(message)).not.toThrow();
-      const reason = validateMailboxMessage(message);
-      expect(reason).toEqual(expect.any(String));
-      expect(reason?.includes('\n')).toBe(false);
+      expect(() => toMailboxMessage(message)).not.toThrow();
+      const result = toMailboxMessage(message);
+      expect(result).toEqual({ reason: expect.any(String) });
+      if ('reason' in result) expect(result.reason.includes('\n')).toBe(false);
     });
   });
 });
