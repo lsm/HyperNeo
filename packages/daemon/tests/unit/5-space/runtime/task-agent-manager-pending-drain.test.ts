@@ -1141,6 +1141,7 @@ describe('pending drain through the v2 injection shell', () => {
     enforceRetention: ReturnType<typeof mock>;
     expireStale: ReturnType<typeof mock>;
     replayMock: ReturnType<typeof mock>;
+    session: AgentSession;
   } {
     const saveUserMessage = mock(() => 'db-id');
     const jobQueueEnqueue = mock(
@@ -1243,6 +1244,7 @@ describe('pending drain through the v2 injection shell', () => {
       enforceRetention: pendingRepo.enforceRetention,
       expireStale: pendingRepo.expireStale,
       replayMock,
+      session,
     };
   }
 
@@ -1435,5 +1437,54 @@ describe('pending drain through the v2 injection shell', () => {
     await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
 
     expect(h.manager.activeDeliveryIdsForRun(V2_RUN_ID)).toContain('row-v2');
+  });
+
+  it('a settled sibling with conflicting content surfaces the conflict instead of settling', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    outbox.db
+      .prepare(
+        `INSERT INTO sdk_messages
+          (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+           replacement_metadata_normalized, consumed_seq)
+         VALUES ('db-sibling-conflict', ?, 'user', ?, ?, 'failed', ?, 1, 9)`
+      )
+      .run(
+        V2_SESSION_ID,
+        JSON.stringify({ message: { content: [{ type: 'text', text: 'different body' }] } }),
+        new Date().toISOString(),
+        'row-v2'
+      );
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+
+    expect(h.markDelivered).not.toHaveBeenCalled();
+    expect(h.markAttemptFailed).toHaveBeenCalledWith(
+      'row-v2',
+      expect.stringContaining('different content')
+    );
+  });
+
+  it('settling one session retires the row watchers of every other session', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+    const altSessionId = 'sub-session-v2-alt';
+    (
+      h.manager as unknown as { agentSessionIndex: Map<string, AgentSession> }
+    ).agentSessionIndex.set(altSessionId, h.session);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, altSessionId);
+
+    expect(armed).toHaveLength(2);
+    expect(h.manager.activeDeliveryIdsForRun(V2_RUN_ID)).toContain('row-v2');
+
+    armed[0].onConsumed(V2_SESSION_ID);
+
+    expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
+    expect(h.manager.activeDeliveryIdsForRun(V2_RUN_ID)).not.toContain('row-v2');
   });
 });

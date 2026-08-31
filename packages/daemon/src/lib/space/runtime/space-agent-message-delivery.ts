@@ -222,15 +222,23 @@ async function enqueuePrompt(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeli
 }
 
 function probeSettledSendStatus(
-  sdkRepo: SpaceAgentDeliveryDeps['sdkMessageRepo'],
+  ctx: SpaceAgentDeliveryCtx,
   sessionId: string,
   messageId: string
 ): string | null | undefined {
+  const sdkRepo = ctx.deps.sdkMessageRepo;
   if (
     sdkRepo.hasConsumptionEvidence?.(sessionId, messageId) ||
     (sdkRepo.getSettledDeliveryMessageId?.(sessionId, messageId) ?? null) !== null
   ) {
-    return 'consumed';
+    const rows = ctx.deps.db
+      .prepare(
+        `SELECT sdk_message AS m FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?`
+      )
+      .all(sessionId, messageId) as Array<{ m: string }>;
+    const siblingsShareContent = rows.length === 0 || rows.every((row) => row.m === rows[0].m);
+    if (siblingsShareContent) return 'consumed';
   }
   return sdkRepo.getDeliveryContent(sessionId, messageId)?.sendStatus;
 }
@@ -257,7 +265,7 @@ function acceptOutcome(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx {
       messageId,
       onConsumed: ctx.deps.onConsumed,
       onFailed: ctx.deps.onLateFailure,
-      getSendStatus: () => probeSettledSendStatus(ctx.deps.sdkMessageRepo, sessionId, messageId),
+      getSendStatus: () => probeSettledSendStatus(ctx, sessionId, messageId),
     });
   }
   return { ...ctx, outcome: { state: 'accepted', messageId, sessionId } };
