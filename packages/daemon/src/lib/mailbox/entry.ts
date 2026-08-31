@@ -1,4 +1,5 @@
 import type { MailboxAddress } from './address.ts';
+import { createUlid } from './ulid.ts';
 
 export interface MailboxEntryPolicy {
   ttlMs: number;
@@ -105,13 +106,61 @@ export function toMailboxPolicy(
   return { value: { ttlMs, maxAttempts, priority } };
 }
 
-export function createMailboxEntry(_args: {
+function toMailboxAddress(to: MailboxAddress): MailboxProjection<MailboxAddress> {
+  if (to?.kind === 'session') {
+    return typeof to.sessionId === 'string' && to.sessionId.length > 0
+      ? { value: { kind: 'session', sessionId: to.sessionId } }
+      : { reason: 'to.sessionId must be a non-empty string' };
+  }
+  if (to?.kind === 'agent') {
+    if (typeof to.spaceId !== 'string' || to.spaceId.length === 0) {
+      return { reason: 'to.spaceId must be a non-empty string' };
+    }
+    if (typeof to.handle !== 'string' || to.handle.length === 0 || to.handle.includes('/')) {
+      return { reason: 'to.handle must be a non-empty string without "/"' };
+    }
+    if (to.taskId !== undefined && (typeof to.taskId !== 'string' || to.taskId.length === 0)) {
+      return { reason: 'to.taskId must be a non-empty string' };
+    }
+    if (to.node !== undefined && (typeof to.node !== 'string' || to.node.length === 0)) {
+      return { reason: 'to.node must be a non-empty string' };
+    }
+    return {
+      value: {
+        kind: 'agent',
+        spaceId: to.spaceId,
+        handle: to.handle,
+        ...(to.taskId !== undefined ? { taskId: to.taskId } : {}),
+        ...(to.node !== undefined ? { node: to.node } : {}),
+      },
+    };
+  }
+  return { reason: 'to.kind must be "session" or "agent"' };
+}
+
+export function createMailboxEntry(args: {
   to: MailboxAddress;
   message: MailboxMessage;
   origin: string;
   policy?: Partial<MailboxEntryPolicy>;
 }): MailboxEntry {
-  throw new Error('mailbox: createMailboxEntry not implemented');
+  const projectedTo = toMailboxAddress(args.to);
+  if ('reason' in projectedTo) throw new TypeError(projectedTo.reason);
+  const projectedMessage = toMailboxMessage(args.message);
+  if ('reason' in projectedMessage) throw new TypeError(projectedMessage.reason);
+  if (typeof args.origin !== 'string' || args.origin.length === 0) {
+    throw new TypeError('origin must be a non-empty string');
+  }
+  const projectedPolicy = toMailboxPolicy(args.policy);
+  if ('reason' in projectedPolicy) throw new TypeError(projectedPolicy.reason);
+  return {
+    id: createUlid(),
+    to: projectedTo.value,
+    origin: args.origin,
+    message: projectedMessage.message,
+    status: 'enqueued',
+    policy: projectedPolicy.value,
+  };
 }
 
 export function parseMailboxEntry(
