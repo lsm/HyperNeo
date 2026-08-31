@@ -147,6 +147,7 @@ export function createMailboxEntry(args: {
   const messageError = validateMailboxMessage(args.message);
   if (messageError !== null) throw new TypeError(messageError);
   if (!isValidAddress(args.to)) throw new TypeError('to is not a valid mailbox address');
+  if (!isNonEmptyString(args.origin)) throw new TypeError('origin must be a non-empty string');
 
   const override = args.policy ?? {};
   validatePolicyOverride(override);

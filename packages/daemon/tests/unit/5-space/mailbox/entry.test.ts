@@ -237,6 +237,16 @@ describe('createMailboxEntry', () => {
     ).toThrow(TypeError);
   });
 
+  test('rejects an empty origin', () => {
+    expect(() =>
+      createMailboxEntry({
+        to: SESSION_ADDRESS,
+        message: MESSAGE_STRING,
+        origin: '',
+      })
+    ).toThrow(TypeError);
+  });
+
   test('rejects invalid policy override values', () => {
     expect(() =>
       createMailboxEntry({
