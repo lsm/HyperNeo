@@ -141,12 +141,13 @@ export function createMailboxEntry(args: {
     throw new TypeError('origin must be a non-empty string');
   }
   if (args.policy !== undefined) {
-    for (const key of Object.keys(args.policy)) {
-      if (!POLICY_KEYS.includes(key)) {
-        throw new TypeError(`policy may not carry "${key}"`);
+    for (const name of Object.getOwnPropertyNames(args.policy)) {
+      const desc = Object.getOwnPropertyDescriptor(args.policy, name)!;
+      if (!POLICY_KEYS.includes(name)) {
+        throw new TypeError(`policy may not carry "${name}"`);
       }
-      if (Object.getOwnPropertyDescriptor(args.policy, key)?.enumerable !== true) {
-        throw new TypeError(`policy is missing required key "${key}"`);
+      if (desc.enumerable !== true) {
+        throw new TypeError('policy fields must be enumerable');
       }
     }
   }

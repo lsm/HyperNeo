@@ -194,18 +194,12 @@ describe('createMailboxEntry', () => {
     }
   });
 
-  test('rejects excess keys in policy override', () => {
-    const excessPolicies = [
-      { ttlMs: 1000, foo: 'bar' },
-      { maxAttempts: 3, extra: true },
-      { priority: 1, junk: null },
-    ];
-    for (const policy of excessPolicies) {
-      expect(
-        () => createMailboxEntry({ to: TO, message: messageWith('hi'), origin: 'o', policy }),
-        JSON.stringify(policy)
-      ).toThrow(TypeError);
-    }
+  test('rejects non-enumerable policy fields', () => {
+    const hidden = {} as Partial<MailboxEntryPolicy>;
+    Object.defineProperty(hidden, 'ttlMs', { value: 1000, enumerable: false });
+    expect(() =>
+      createMailboxEntry({ to: TO, message: messageWith('hi'), origin: 'o', policy: hidden })
+    ).toThrow(TypeError);
   });
 
   test('rejects excess keys in policy override', () => {
