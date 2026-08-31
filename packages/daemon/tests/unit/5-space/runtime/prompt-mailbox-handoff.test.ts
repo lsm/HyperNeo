@@ -233,6 +233,15 @@ describe('hasSettledHandoffRow', () => {
       false
     );
   });
+
+  it('settles when a duplicate sibling carries consumed status without evidence', () => {
+    const h = makeHarness();
+    insertDuplicateRow(h, 'msg-dup-settled', 'db-dup-oldest', 'failed', null);
+    insertDuplicateRow(h, 'msg-dup-settled', 'db-dup-consumed-status', 'consumed', null);
+    expect(hasSettledHandoffRow(h.deps, { sessionId: SESSION, messageId: 'msg-dup-settled' })).toBe(
+      true
+    );
+  });
 });
 
 describe('resolveDeliverableHandoff', () => {

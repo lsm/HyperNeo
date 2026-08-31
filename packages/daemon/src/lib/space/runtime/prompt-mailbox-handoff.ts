@@ -65,8 +65,9 @@ export function hasSettledHandoffRow(
   target: Pick<PromptHandoffTarget, 'sessionId' | 'messageId'>
 ): boolean {
   if (deps.sdkMessageRepo.hasConsumptionEvidence(target.sessionId, target.messageId)) return true;
-  const current = deps.sdkMessageRepo.getDeliveryContent(target.sessionId, target.messageId);
-  return current?.sendStatus === 'consumed';
+  return (
+    deps.sdkMessageRepo.getSettledDeliveryMessageId(target.sessionId, target.messageId) !== null
+  );
 }
 
 export async function retryFailedPromptIntoMailbox(
