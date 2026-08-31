@@ -80,6 +80,7 @@
     "packages/daemon/src/lib/model-settlement-routing.ts": ["exports"],
     "packages/daemon/src/lib/space/artifact-git-ops.ts": ["exports"],
     "packages/daemon/src/lib/space/managers/node-execution-manager.ts": ["exports"],
+    "packages/daemon/src/lib/space/mailbox/mailbox-address.ts": ["exports", "files"],
     "packages/daemon/src/lib/space/messaging-adapter.ts": ["exports"],
     "packages/daemon/src/lib/space/runtime/gate-evaluator.ts": ["exports"],
     "packages/daemon/src/lib/space/runtime/render-pending-digest-pipeline.ts": ["exports"],
