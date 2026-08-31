@@ -103,6 +103,13 @@ describe('createSpaceActionsMcpServer — tool and registry composition', () => 
     expect(server.registry.get('list_actions')).toBeDefined();
   });
 
+  test('restricts the universal_read registry to read-class actions', () => {
+    const server = makeServer({ role: 'universal_read' });
+    expect(server.registry.get('list_sessions')?.safetyClass).toBe('read');
+    expect(server.registry.get('update_task')).toBeUndefined();
+    expect(server.registry.get('list_actions')).toBeDefined();
+  });
+
   test('describes the node role hot list in the call_action description', () => {
     const server = makeServer({ nodeRole: 'coder' });
     expect(server.description.startsWith('## Coder actions')).toBe(true);
@@ -253,6 +260,10 @@ describe('createSpaceActionsMcpServer — call_action dispatch', () => {
       'does not support role "legacy_task_agent"'
     );
     expect(() => makeServer({ role: 'outside_space' })).toThrow('does not support role');
+  });
+
+  test('accepts construction for the universal_read dispatcher role', () => {
+    expect(() => makeServer({ role: 'universal_read' })).not.toThrow();
   });
 
   test('rejects tool configs bound to a different space', () => {
