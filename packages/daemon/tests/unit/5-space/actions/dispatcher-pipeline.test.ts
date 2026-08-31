@@ -2010,6 +2010,42 @@ describe('runDispatchAction', () => {
     expect(outcome.reason).toBe('rate_limited');
   });
 
+  test('denies universal_read every non-space-family action', async () => {
+    const families = [
+      'node',
+      'agents',
+      'sessions',
+      'workflows',
+      'tasks',
+      'forge',
+      'scheduled',
+      'external_events',
+      'inactivity',
+    ] as const;
+    const registry = createActionRegistry(
+      families.map((family) =>
+        defineAction({
+          name: `probe_${family}`,
+          family,
+          safetyClass: 'read',
+          description: 'Registry family probe',
+          paramsDoc: '{}',
+          paramsSchema: z.object({}),
+          handler: async () => ({}),
+        })
+      )
+    );
+    const deps = baseDeps({ registry });
+    for (const family of families) {
+      const outcome = await runDispatchAction(
+        deps,
+        baseInput({ actionName: `probe_${family}`, role: 'universal_read' })
+      );
+      assertDenied(outcome);
+      expect(outcome.reason).toBe('role_denied');
+    }
+  });
+
   test('returns failed outcome for unexpected errors', async () => {
     const telemetry: DispatchTelemetryEvent[] = [];
     const deps = baseDeps({

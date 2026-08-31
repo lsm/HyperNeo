@@ -50,6 +50,7 @@ const DISPATCHABLE_ROLES: ReadonlySet<SpaceMcpSessionRole> = new Set([
   'ad_hoc_member',
   'workflow_worker',
   'long_term_agent',
+  'universal_read',
 ]);
 
 function displayLabel(value: string): string {
@@ -190,12 +191,15 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
   const isRoleAdmittedEntry = (entry: ActionDefinition) =>
     config.role === 'coordinator' || !COORDINATOR_ONLY_ACTIONS.has(entry.name);
   const isNotDeniedEntry = (entry: ActionDefinition) => !config.deniedActionNames?.has(entry.name);
+  const isUniversalReadFiltered = (entry: ActionDefinition) =>
+    config.role !== 'universal_read' || entry.safetyClass === 'read';
   let registry: ActionRegistry;
   const metaEntries = createRegistryMetaEntries(() => registry);
   registry = createActionRegistry([
     ...composeRoleActionEntries(config.role, spaceEntries, nodeEntries)
       .filter(isRoleAdmittedEntry)
-      .filter(isNotDeniedEntry),
+      .filter(isNotDeniedEntry)
+      .filter(isUniversalReadFiltered),
     ...metaEntries,
   ]);
 
