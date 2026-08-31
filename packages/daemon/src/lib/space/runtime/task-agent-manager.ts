@@ -1521,7 +1521,7 @@ export class TaskAgentManager {
         settleDelivered();
         return;
       }
-      if (status === 'enqueued' || status === 'submitted') {
+      if (status === 'enqueued' || status === 'submitted' || status === 'deferred') {
         watchDelivery();
         return;
       }

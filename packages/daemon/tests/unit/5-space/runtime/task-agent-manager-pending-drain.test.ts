@@ -1339,4 +1339,20 @@ describe('pending drain through the v2 injection shell', () => {
 
     expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
   });
+
+  it('a horizon lapse over a deferred delivery re-arms instead of charging an attempt', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    const dbId = outbox.userRowIdByUuid(V2_SESSION_ID, 'row-v2') as string;
+    outbox.sdkRepo.updateMessageStatus([dbId], 'deferred');
+
+    armed[0].onFailed?.();
+
+    expect(h.markAttemptFailed).not.toHaveBeenCalled();
+    expect(armed).toHaveLength(2);
+    expect(h.deferExpiration).toHaveBeenCalledWith(['row-v2']);
+  });
 });
