@@ -156,6 +156,10 @@ describe('epoch and timestamp range', () => {
   test('a timestamp at or above the 48-bit ceiling throws', () => {
     expect(() => createUlid(2 ** 48)).toThrow(RangeError);
   });
+
+  test('a negative timestamp throws', () => {
+    expect(() => createUlid(-1)).toThrow(RangeError);
+  });
 });
 
 describe('determinism under an injected clock', () => {

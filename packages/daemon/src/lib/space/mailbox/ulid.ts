@@ -26,7 +26,9 @@ function random80(): bigint {
 
 export function createUlid(nowMs?: number): string {
   const time = nowMs === undefined ? BigInt(Date.now()) : BigInt(nowMs);
-  if (time >= MAX_TIMESTAMP) throw new RangeError(`createUlid timestamp out of range: ${nowMs}`);
+  if (time < 0n || time >= MAX_TIMESTAMP) {
+    throw new RangeError(`createUlid timestamp out of range: ${nowMs}`);
+  }
   let random: bigint;
   if (time > lastTime) {
     lastTime = time;
