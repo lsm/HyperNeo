@@ -1,10 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  createMailboxEntry,
   DEFAULT_MAILBOX_ENTRY_POLICY,
   type MailboxEntry,
+  type MailboxEntryPolicy,
   type MailboxMessage,
+  parseMailboxEntry,
   toMailboxMessage,
-} from '../../../../src/lib/space/mailbox/entry';
+  toMailboxPolicy,
+} from '../../../../src/lib/mailbox/entry';
 
 describe('DEFAULT_MAILBOX_ENTRY_POLICY', () => {
   test('equals the literal policy', () => {
@@ -234,5 +238,86 @@ describe('toMailboxMessage', () => {
       expect(result).toEqual({ reason: expect.any(String) });
       if ('reason' in result) expect(result.reason.includes('\n')).toBe(false);
     });
+  });
+});
+
+describe('toMailboxPolicy', () => {
+  test('defaults to DEFAULT_MAILBOX_ENTRY_POLICY when partial is undefined', () => {
+    const result = toMailboxPolicy(undefined);
+    expect(result).toEqual({ value: DEFAULT_MAILBOX_ENTRY_POLICY });
+  });
+
+  test('defaults to DEFAULT_MAILBOX_ENTRY_POLICY when partial is empty', () => {
+    const result = toMailboxPolicy({});
+    expect(result).toEqual({ value: DEFAULT_MAILBOX_ENTRY_POLICY });
+  });
+
+  test.each([
+    ['ttlMs only', { ttlMs: 60_000 }, { ttlMs: 60_000, maxAttempts: 5, priority: 0 }],
+    [
+      'maxAttempts only',
+      { maxAttempts: 1 },
+      { ttlMs: 24 * 60 * 60 * 1000, maxAttempts: 1, priority: 0 },
+    ],
+    ['priority only', { priority: 3 }, { ttlMs: 24 * 60 * 60 * 1000, maxAttempts: 5, priority: 3 }],
+    [
+      'all fields',
+      { ttlMs: 60_000, maxAttempts: 1, priority: 3 },
+      { ttlMs: 60_000, maxAttempts: 1, priority: 3 },
+    ],
+  ])('merges valid overrides for %s', (_label, partial, expected) => {
+    expect(toMailboxPolicy(partial)).toEqual({ value: expected });
+  });
+
+  test.each([
+    ['non-integer ttlMs', { ttlMs: 1.5 }],
+    ['non-finite ttlMs', { ttlMs: Infinity }],
+    ['unsafe integer ttlMs', { ttlMs: Number.MAX_SAFE_INTEGER + 1 }],
+    ['ttlMs below one', { ttlMs: 0 }],
+    ['negative ttlMs', { ttlMs: -1 }],
+    ['non-integer maxAttempts', { maxAttempts: 2.5 }],
+    ['maxAttempts below one', { maxAttempts: 0 }],
+    ['negative maxAttempts', { maxAttempts: -1 }],
+    ['non-integer priority', { priority: 1.5 }],
+    ['negative priority', { priority: -1 }],
+    ['non-finite priority', { priority: NaN }],
+  ])('returns a reason when %s', (_label, partial) => {
+    expect(toMailboxPolicy(partial)).toEqual({ reason: expect.any(String) });
+  });
+
+  test('drops unknown keys by construction', () => {
+    const result = toMailboxPolicy({ ttlMs: 60_000, unknown: 'x' } as Partial<MailboxEntryPolicy>);
+    expect(result).toEqual({
+      value: { ...DEFAULT_MAILBOX_ENTRY_POLICY, ttlMs: 60_000 },
+    });
+  });
+
+  test('returns a fresh policy object, never the input or default reference', () => {
+    const partial = { ttlMs: 60_000 };
+    const result = toMailboxPolicy(partial) as { value: MailboxEntryPolicy };
+    expect(result.value).not.toBe(partial);
+    expect(result.value).not.toBe(DEFAULT_MAILBOX_ENTRY_POLICY);
+  });
+});
+
+describe('createMailboxEntry', () => {
+  test('throws the not implemented message', () => {
+    expect(() =>
+      createMailboxEntry({
+        to: { kind: 'session', sessionId: 'sess-1' },
+        message: {
+          type: 'user',
+          message: { content: 'hello' },
+          parent_tool_use_id: null,
+        },
+        origin: 'test',
+      })
+    ).toThrow('mailbox: createMailboxEntry not implemented');
+  });
+});
+
+describe('parseMailboxEntry', () => {
+  test('throws the not implemented message', () => {
+    expect(() => parseMailboxEntry({})).toThrow('mailbox: parseMailboxEntry not implemented');
   });
 });
