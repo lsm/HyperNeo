@@ -323,9 +323,12 @@ export function resolvePostApprovalRouteNodeId(
 
 const SPACE_AGENT_RETRY_DELAY_MS = 30_000;
 
+const NODE_AGENT_RETRY_DELAY_MS = 30_000;
+
 export class TaskAgentManager {
   private readonly lateSettlements = new SpaceAgentLateSettlements();
   private readonly spaceAgentRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly nodeAgentRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly spaceAgentDrainsInFlight = new Set<string>();
   private readonly spaceAgentDrainRerunQueued = new Set<string>();
   private disposed = false;
@@ -1501,21 +1504,59 @@ export class TaskAgentManager {
       repo.markDelivered(row.id, sessionId);
       this.emitPendingDelivered(row.id, sessionId, row);
     };
+    const watchDelivery = (): void => {
+      repo.deferExpiration?.([row.id]);
+      this.lateSettlements.arm({
+        sessionId,
+        messageId: row.id,
+        onConsumed: () => settleDelivered(),
+        onFailed: () => settleFailed(),
+        getSendStatus: probeDeliveryStatus,
+      });
+    };
     const settleFailed = (): void => {
       if (repo.getById(row.id)?.status !== 'pending') return;
+      const status = probeDeliveryStatus();
+      if (status === 'consumed') {
+        settleDelivered();
+        return;
+      }
+      if (status === 'enqueued' || status === 'submitted') {
+        watchDelivery();
+        return;
+      }
       repo.markAttemptFailed(row.id, 'delivery dead-lettered before consumption');
+      this.scheduleNodeAgentDeliveryReconciliation(row, sessionId);
     };
     if (probeDeliveryStatus() === 'consumed') {
       settleDelivered();
       return;
     }
-    this.lateSettlements.arm({
-      sessionId,
-      messageId: row.id,
-      onConsumed: () => settleDelivered(),
-      onFailed: () => settleFailed(),
-      getSendStatus: probeDeliveryStatus,
-    });
+    watchDelivery();
+  }
+
+  private scheduleNodeAgentDeliveryReconciliation(
+    row: PendingAgentMessageRecord,
+    sessionId: string
+  ): void {
+    if (this.disposed) return;
+    const repo = this.config.pendingMessageRepo;
+    if (repo) {
+      const current = repo.getById(row.id);
+      if (!current || current.status !== 'pending') return;
+      if ((current.attempts ?? 0) >= (current.maxAttempts ?? Infinity)) return;
+    }
+    const key = `${row.workflowRunId} ${row.targetAgentName} ${sessionId}`;
+    if (this.nodeAgentRetryTimers.has(key)) return;
+    const timer = setTimeout(() => {
+      this.nodeAgentRetryTimers.delete(key);
+      void this.flushPendingMessagesForTarget(
+        row.workflowRunId,
+        row.targetAgentName,
+        sessionId
+      ).catch(() => {});
+    }, NODE_AGENT_RETRY_DELAY_MS);
+    this.nodeAgentRetryTimers.set(key, timer);
   }
 
   async tryResumeNodeAgentSession(
@@ -3186,6 +3227,8 @@ export class TaskAgentManager {
     this.lateSettlements.dispose();
     for (const [, timer] of this.spaceAgentRetryTimers) clearTimeout(timer);
     this.spaceAgentRetryTimers.clear();
+    for (const [, timer] of this.nodeAgentRetryTimers) clearTimeout(timer);
+    this.nodeAgentRetryTimers.clear();
     clearAllRetryableHookActionTimers();
     for (const executionId of this.concurrentSpawnWaiters.keys()) {
       this.settleConcurrentSpawnWaiters(executionId, { status: 'failed' });

@@ -2794,7 +2794,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             }),
             true
           );
-          audit('delivered', {
+          audit('queued', {
             target: 'node',
             node_id: resolved.id,
             agent_name: resolved.agentName,
@@ -2862,7 +2862,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             }),
             true
           );
-          audit('delivered', {
+          audit('queued', {
             target: 'node',
             node_id: resolved.id,
             agent_name: resolved.agentName,

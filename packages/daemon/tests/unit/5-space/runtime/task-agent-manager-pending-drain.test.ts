@@ -1151,6 +1151,7 @@ describe('pending drain through the v2 injection shell', () => {
       getById: mock(() => ({ status: 'pending' })),
       markDelivered: mock(() => {}),
       markAttemptFailed: mock(() => null),
+      deferExpiration: mock(() => {}),
     };
     const session = {
       session: { id: V2_SESSION_ID, sdkSessionId: 'prior-sdk' },
@@ -1210,6 +1211,7 @@ describe('pending drain through the v2 injection shell', () => {
       markDeliveryDeferredByUuid,
       markDelivered: pendingRepo.markDelivered,
       markAttemptFailed: pendingRepo.markAttemptFailed,
+      deferExpiration: pendingRepo.deferExpiration,
       replayMock,
     };
   }
@@ -1279,6 +1281,7 @@ describe('pending drain through the v2 injection shell', () => {
     expect(outbox.sendStatus(V2_SESSION_ID, 'row-v2')).toBe('enqueued');
     expect(h.markDelivered).not.toHaveBeenCalled();
     expect(armed).toHaveLength(1);
+    expect(h.deferExpiration).toHaveBeenCalledWith(['row-v2']);
 
     armed[0].onConsumed(V2_SESSION_ID);
 
@@ -1289,8 +1292,22 @@ describe('pending drain through the v2 injection shell', () => {
     const outbox = createOutboxTestDb();
     const h = makeV2Harness(null, outbox);
     const armed = captureLateSettlementArms(h.manager);
+    const reconciliations: Array<{ rowId: string; sessionId: string }> = [];
+    (
+      h.manager as unknown as {
+        scheduleNodeAgentDeliveryReconciliation: (
+          row: PendingAgentMessageRecord,
+          sessionId: string
+        ) => void;
+      }
+    ).scheduleNodeAgentDeliveryReconciliation = (row, sessionId) => {
+      reconciliations.push({ rowId: row.id, sessionId });
+    };
 
     await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    const dbId = outbox.userRowIdByUuid(V2_SESSION_ID, 'row-v2') as string;
+    outbox.completeDeliveryJobs(V2_SESSION_ID, 'row-v2');
+    outbox.sdkRepo.updateMessageStatus([dbId], 'failed');
 
     armed[0].onFailed?.();
 
@@ -1298,6 +1315,26 @@ describe('pending drain through the v2 injection shell', () => {
       'row-v2',
       expect.stringContaining('dead-letter')
     );
+    expect(reconciliations).toEqual([{ rowId: 'row-v2', sessionId: V2_SESSION_ID }]);
     expect(h.markDelivered).not.toHaveBeenCalled();
+  });
+
+  it('a horizon lapse over a still-enqueued delivery re-arms instead of charging an attempt', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    expect(armed).toHaveLength(1);
+
+    armed[0].onFailed?.();
+
+    expect(h.markAttemptFailed).not.toHaveBeenCalled();
+    expect(armed).toHaveLength(2);
+    expect(h.deferExpiration).toHaveBeenCalledWith(['row-v2']);
+
+    armed[1].onConsumed(V2_SESSION_ID);
+
+    expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
   });
 });
