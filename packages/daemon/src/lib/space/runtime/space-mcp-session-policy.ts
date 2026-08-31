@@ -83,9 +83,10 @@ export function resolveSpaceMcpSessionPolicy(
 
   if (!spaceId) {
     return {
-      role: 'outside_space',
+      role: 'universal_read',
+      spaceId: undefined,
       owner: 'none',
-      requiredServers: [],
+      requiredServers: ['space-actions'],
       attachGenericSpaceTools: false,
       attachCoordinatorTools: false,
       attachLongTermAgentTools: false,
