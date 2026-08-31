@@ -44,7 +44,7 @@ export function parseAddress(raw: string): MailboxAddress | null {
     const spaceId = safeDecode(pathPart.slice(0, slash));
     if (!spaceId) return null;
     const handle = safeDecode(rawHandle);
-    if (!handle) return null;
+    if (!handle || handle.includes('/')) return null;
 
     let taskId: string | undefined;
     let node: string | undefined;
@@ -115,6 +115,8 @@ export function isValidAddress(addr: MailboxAddress): boolean {
     if ('node' in addr) return false;
     return true;
   }
+
+  if ('sessionId' in addr) return false;
 
   const spaceId = 'spaceId' in addr ? (addr.spaceId as string) : undefined;
   const handle = 'handle' in addr ? (addr.handle as string) : undefined;

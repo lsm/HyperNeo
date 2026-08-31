@@ -97,8 +97,12 @@ describe('parseAddress', () => {
       expect(parseAddress('agent:sp/h?=val')).toBeNull();
     });
 
-    test('returns null for empty query value', () => {
-      expect(parseAddress('agent:sp/h?key=')).toBeNull();
+    test('returns null for empty task query value', () => {
+      expect(parseAddress('agent:sp/h?task=')).toBeNull();
+    });
+
+    test('returns null for empty node query value', () => {
+      expect(parseAddress('agent:sp/h?node=')).toBeNull();
     });
 
     test('returns null for unknown prefix', () => {
@@ -119,20 +123,14 @@ describe('parseAddress', () => {
   });
 
   describe('percent-encoding', () => {
-    test('round-trips percent-encoded handle', () => {
-      const encoded = 'agent:sp/h%2Fa';
-      const parsed = parseAddress(encoded);
-      expect(parsed).toEqual({ kind: 'agent', spaceId: 'sp', handle: 'h/a' });
-    });
-
     test('round-trips percent-encoded query values', () => {
-      const encoded = 'agent:sp/h?task=t%20ask&node=n%26me';
+      const encoded = 'agent:sp/h?task=t%3Fask&node=n%26me';
       const parsed = parseAddress(encoded);
       expect(parsed).toEqual({
         kind: 'agent',
         spaceId: 'sp',
         handle: 'h',
-        taskId: 't ask',
+        taskId: 't?ask',
         node: 'n&me',
       });
     });
@@ -247,7 +245,7 @@ describe('round-trip identity', () => {
   });
 
   test('round-trips percent-encoded values', () => {
-    const raw = 'agent:s%20p/h%2Fa?task=t%20ask&node=n%26me';
+    const raw = 'agent:s%20p/h?task=t%26ask&node=n%3Fme';
     const parsed = parseAddress(raw);
     expect(parsed).not.toBeNull();
     expect(renderAddress(parsed!)).toBe(raw);
