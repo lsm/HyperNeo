@@ -1524,6 +1524,48 @@ describe('pending drain through the v2 injection shell', () => {
     );
   });
 
+  it('a dead letter in one session does not charge the row while a sibling delivery stays live', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+    const altSessionId = 'sub-session-v2-alt';
+    (
+      h.manager as unknown as { agentSessionIndex: Map<string, AgentSession> }
+    ).agentSessionIndex.set(altSessionId, h.session);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, altSessionId);
+    const dbId = outbox.userRowIdByUuid(V2_SESSION_ID, 'row-v2') as string;
+    outbox.completeDeliveryJobs(V2_SESSION_ID, 'row-v2');
+    outbox.sdkRepo.updateMessageStatus([dbId], 'failed');
+
+    armed[0].onFailed?.();
+
+    expect(h.markAttemptFailed).not.toHaveBeenCalled();
+
+    armed[1].onConsumed(altSessionId);
+
+    expect(h.markDelivered).toHaveBeenCalledWith('row-v2', altSessionId);
+  });
+
+  it('charges a recovered dead letter once before the handoff reopens it', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    const dbId = outbox.userRowIdByUuid(V2_SESSION_ID, 'row-v2') as string;
+    outbox.completeDeliveryJobs(V2_SESSION_ID, 'row-v2');
+    outbox.sdkRepo.updateMessageStatus([dbId], 'failed');
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+
+    expect(h.markAttemptFailed).toHaveBeenCalledWith(
+      'row-v2',
+      'delivery dead-lettered before consumption'
+    );
+    expect(outbox.sendStatus(V2_SESSION_ID, 'row-v2')).toBe('enqueued');
+  });
+
   it('settling one session retires the row watchers of every other session', async () => {
     const outbox = createOutboxTestDb();
     const h = makeV2Harness(null, outbox);

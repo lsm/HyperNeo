@@ -1479,6 +1479,12 @@ export class TaskAgentManager {
     for (const row of drain.rows) {
       const isSyntheticMessage = !isHumanPendingSource(row.sourceAgentName);
       const message = formatPendingRowForNodeAgent(row, targetAgentName);
+      if (
+        this.probeSettledDeliveryStatus(sessionId, row.id) === 'failed' &&
+        row.lastError !== 'delivery dead-lettered before consumption'
+      ) {
+        repo.markAttemptFailed(row.id, 'delivery dead-lettered before consumption');
+      }
       try {
         await this.injectSubSessionMessage(
           sessionId,
@@ -1567,8 +1573,11 @@ export class TaskAgentManager {
         watchDelivery();
         return;
       }
-      repo.markAttemptFailed(row.id, 'delivery dead-lettered before consumption');
       this.watchedNodeAgentPendingRows.delete(`${sessionId}::${row.id}`);
+      if (this.watchedNodeAgentPendingRowIds(row.workflowRunId).includes(row.id)) {
+        return;
+      }
+      repo.markAttemptFailed(row.id, 'delivery dead-lettered before consumption');
       this.scheduleNodeAgentDeliveryReconciliation(row, sessionId);
     };
     if (probeDeliveryStatus() === 'consumed') {
