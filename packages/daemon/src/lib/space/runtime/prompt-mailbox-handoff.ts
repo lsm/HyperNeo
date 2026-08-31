@@ -172,7 +172,6 @@ function planHandoffStage(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
 }
 
 export function verifyHandoffContent(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
-  if (ctx.mechanism === 'ensure') return ctx;
   verifyPromptContent({
     db: ctx.deps.db,
     sessionId: ctx.target.sessionId,
@@ -210,7 +209,7 @@ export async function applyHandoffMechanism(ctx: MailboxHandoffCtx): Promise<Mai
 export function settleHandoffOutcome(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
   const applied = ctx.applied ?? null;
   if (applied === null) return { ...ctx, outcome: { state: 'stale' } };
-  if (!applied.advanced && hasSettledHandoffRow(ctx.deps, ctx.target)) {
+  if (hasSettledHandoffRow(ctx.deps, ctx.target)) {
     return { ...ctx, outcome: { state: 'settled', dbId: applied.dbId } };
   }
   return {

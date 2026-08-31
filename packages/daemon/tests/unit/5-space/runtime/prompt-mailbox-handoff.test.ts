@@ -539,13 +539,14 @@ function argsFor(h: Harness, message: SDKMessage): MailboxHandoffArgs {
 }
 
 describe('verifyHandoffContent', () => {
-  it('skips verification for the ensure mechanism', () => {
+  it('propagates a content conflict for the ensure mechanism too', () => {
     const h = makeHarness();
     seedEnqueuedRow(h, 'msg-verify-1', 'original');
-    const ctx = verifyHandoffContent(
-      ctxFor(h, userMessage('msg-verify-1', 'conflicting'), { mechanism: 'ensure' })
-    );
-    expect(ctx.mechanism).toBe('ensure');
+    expect(() =>
+      verifyHandoffContent(
+        ctxFor(h, userMessage('msg-verify-1', 'conflicting'), { mechanism: 'ensure' })
+      )
+    ).toThrow(PromptContentConflictError);
   });
 
   it('propagates a content conflict for the retry mechanism', () => {
@@ -608,13 +609,13 @@ describe('settleHandoffOutcome', () => {
     expect(ctx.outcome).toEqual({ state: 'stale' });
   });
 
-  it('settles on consumption evidence when nothing advanced', () => {
+  it('settles on consumption evidence even after an advanced apply', () => {
     const h = makeHarness();
     const dbId = seedEnqueuedRow(h, 'msg-settle-2');
     markRowStatus(h, dbId, 'failed');
     setConsumedSeq(h, 'msg-settle-2');
     const ctx = settleHandoffOutcome(
-      ctxFor(h, userMessage('msg-settle-2'), { applied: { dbId, changed: false, advanced: false } })
+      ctxFor(h, userMessage('msg-settle-2'), { applied: { dbId, changed: true, advanced: true } })
     );
     expect(ctx.outcome).toEqual({ state: 'settled', dbId });
   });
