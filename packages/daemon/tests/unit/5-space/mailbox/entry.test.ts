@@ -38,6 +38,24 @@ function withSymbolKey(payload: Record<string, unknown>): Record<string, unknown
   return { ...payload, [Symbol('extra')]: 'value' };
 }
 
+function withExtraContentArrayProp(): Record<string, unknown> {
+  const blocks: unknown[] = [{ type: 'text', text: 'hi' }];
+  Object.assign(blocks, { audit: 'required' });
+  return { type: 'user', message: { content: blocks }, parent_tool_use_id: null };
+}
+
+function withHiddenContentArrayToJson(): Record<string, unknown> {
+  const blocks: unknown[] = [{ type: 'text', text: 'hi' }];
+  Object.defineProperty(blocks, 'toJSON', { value: () => [], enumerable: false });
+  return { type: 'user', message: { content: blocks }, parent_tool_use_id: null };
+}
+
+function withSparseContentArray(): Record<string, unknown> {
+  const blocks: unknown[] = [{ type: 'text', text: 'hi' }];
+  blocks[2] = { type: 'text', text: 'there' };
+  return { type: 'user', message: { content: blocks }, parent_tool_use_id: null };
+}
+
 function messageWith(content: unknown): MailboxMessage {
   return {
     type: 'user',
@@ -92,6 +110,17 @@ describe('validateMailboxMessage rejection', () => {
     ],
     ['non-enumerable inner content', withHiddenInnerContent(), 'message.message must be an object'],
     ['non-enumerable block text', withHiddenBlockText(), 'content block must be an object'],
+    [
+      'content array with extra property',
+      withExtraContentArrayProp(),
+      'plain array of text blocks',
+    ],
+    [
+      'content array with hidden toJSON',
+      withHiddenContentArrayToJson(),
+      'plain array of text blocks',
+    ],
+    ['sparse content array', withSparseContentArray(), 'plain array of text blocks'],
     ['wrong type', { ...base, type: 'assistant' }, 'type must be "user"'],
     ['missing type', { message: base.message, parent_tool_use_id: null }, 'type must be "user"'],
     ['empty string content', { ...base, message: { content: '' } }, 'must not be empty'],

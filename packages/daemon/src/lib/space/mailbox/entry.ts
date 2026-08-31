@@ -92,6 +92,14 @@ export function validateMailboxMessage(message: unknown): string | null {
     if (content.length === 0) return 'mailbox message content must not be empty';
   } else if (Array.isArray(content)) {
     if (content.length === 0) return 'mailbox message content must not be empty';
+    const contentKeys = Object.keys(content);
+    if (
+      contentKeys.length !== content.length ||
+      Object.getOwnPropertyNames(content).length !== contentKeys.length + 1 ||
+      Object.getOwnPropertySymbols(content).length !== 0
+    ) {
+      return 'mailbox message content must be a plain array of text blocks';
+    }
     for (const block of content) {
       const blockViolation = validateTextBlock(block);
       if (blockViolation !== null) return blockViolation;
