@@ -1482,7 +1482,8 @@ export class TaskAgentManager {
       const consumedSessionId = this.nodeTargetExecutionSessions(row).find(
         ({ sessionId: candidate }) =>
           candidate !== sessionId &&
-          this.probeSettledDeliveryStatus(candidate, row.id) === 'consumed'
+          this.probeSettledDeliveryStatus(candidate, row.id) === 'consumed' &&
+          this.historicalDeliveryMatchesMessage(candidate, row.id, message)
       )?.sessionId;
       if (consumedSessionId) {
         if (repo.getById(row.id)?.status === 'pending') {
@@ -1492,9 +1493,13 @@ export class TaskAgentManager {
         continue;
       }
       let deadLetterCharged = row.lastError === 'delivery dead-lettered before consumption';
+      const historicalFailure = this.nodeTargetExecutionSessions(row).some(
+        ({ sessionId: candidate }) =>
+          candidate !== sessionId && this.probeSettledDeliveryStatus(candidate, row.id) === 'failed'
+      );
       if (
         !deadLetterCharged &&
-        this.probeSettledDeliveryStatus(sessionId, row.id) === 'failed' &&
+        (this.probeSettledDeliveryStatus(sessionId, row.id) === 'failed' || historicalFailure) &&
         !this.nodeRowHasLiveSiblingDelivery(row, sessionId)
       ) {
         const charged = repo.markAttemptFailed(row.id, 'delivery dead-lettered before consumption');
@@ -1937,6 +1942,37 @@ export class TaskAgentManager {
       ...this.watchedNodeAgentPendingRowIds(workflowRunId),
       ...this.durableNodeDeliveryIdsForRun(workflowRunId),
     ];
+  }
+
+  private historicalDeliveryMatchesMessage(
+    sessionId: string,
+    messageId: string,
+    message: string
+  ): boolean {
+    const db = this.config.db.getDatabase?.();
+    if (!db) return true;
+    const rows = db
+      .prepare(
+        `SELECT sdk_message AS m FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?`
+      )
+      .all(sessionId, messageId) as Array<{ m: string }>;
+    return rows.some((row) => {
+      try {
+        const stored = JSON.parse(row.m) as { message?: { content?: unknown } };
+        const content = stored.message?.content;
+        if (!Array.isArray(content)) return false;
+        return content.some(
+          (block) =>
+            typeof block === 'object' &&
+            block !== null &&
+            (block as { type?: string }).type === 'text' &&
+            (block as { text?: string }).text === message
+        );
+      } catch {
+        return false;
+      }
+    });
   }
 
   private nodeTargetExecutionSessions(
