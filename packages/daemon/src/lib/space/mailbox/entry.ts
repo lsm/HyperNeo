@@ -176,7 +176,9 @@ function isValidEntryPolicy(value: unknown): boolean {
 
 export function isValidMailboxEntry(entry: unknown): boolean {
   if (!isPlainObject(entry)) return false;
-  for (const key of Object.keys(entry)) {
+  const keys = Object.keys(entry);
+  if (keys.length !== ENTRY_KEYS.length) return false;
+  for (const key of keys) {
     if (!ENTRY_KEYS.includes(key)) return false;
   }
   if (typeof entry.id !== 'string' || !isUlid(entry.id)) return false;

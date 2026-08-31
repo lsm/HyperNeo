@@ -345,6 +345,19 @@ describe('isValidMailboxEntry', () => {
     const entry = Object.create(build());
     expect(isValidMailboxEntry(entry)).toBe(false);
   });
+
+  test('rejects entries with non-enumerable required fields', () => {
+    const entry = build();
+    for (const key of ['id', 'to', 'origin', 'message', 'status', 'policy']) {
+      const def = Object.entries(entry).filter(([k]) => k !== key);
+      const fake = Object.fromEntries(def);
+      Object.defineProperty(fake, key, {
+        value: (entry as Record<string, unknown>)[key],
+        enumerable: false,
+      });
+      expect(isValidMailboxEntry(fake)).toBe(false);
+    }
+  });
 });
 
 describe('JSON round-trip law', () => {
