@@ -614,6 +614,19 @@ describe('applyHandoffMechanism', () => {
     expect(sendStatus(h, 'msg-apply-4')).toBe('enqueued');
     expect(deliveryJobCount(h, 'msg-apply-4')).toBe(1);
   });
+
+  it('reconciles an ensure plan when the row raced to deferred', async () => {
+    const h = makeHarness();
+    const dbId = seedDeferredRow(h, 'msg-apply-5');
+    const ctx = await applyHandoffMechanism(
+      ctxFor(h, userMessage('msg-apply-5'), {
+        mechanism: 'ensure',
+      })
+    );
+    expect(ctx.applied).toEqual({ dbId, changed: true, advanced: true });
+    expect(sendStatus(h, 'msg-apply-5')).toBe('enqueued');
+    expect(deliveryJobCount(h, 'msg-apply-5')).toBe(1);
+  });
 });
 
 describe('settleHandoffOutcome', () => {
@@ -621,6 +634,15 @@ describe('settleHandoffOutcome', () => {
     const h = makeHarness();
     const ctx = settleHandoffOutcome(ctxFor(h, userMessage('msg-settle-1'), { applied: null }));
     expect(ctx.outcome).toEqual({ state: 'stale' });
+  });
+
+  it('settles on consumption evidence even when no mechanism applied', () => {
+    const h = makeHarness();
+    const dbId = seedEnqueuedRow(h, 'msg-settle-6');
+    markRowStatus(h, dbId, 'failed');
+    setConsumedSeq(h, 'msg-settle-6');
+    const ctx = settleHandoffOutcome(ctxFor(h, userMessage('msg-settle-6'), { applied: null }));
+    expect(ctx.outcome).toEqual({ state: 'settled', dbId });
   });
 
   it('settles on consumption evidence even after an advanced apply', () => {

@@ -137,7 +137,7 @@ export function ensurePromptIntoMailbox(
   return {
     dbId: ensured.dbMessageId,
     changed: ensured.created,
-    advanced: ensured.created || ensured.activated,
+    advanced: ensured.created || (ensured.activated && ensured.released),
   };
 }
 
@@ -210,12 +210,12 @@ export async function applyHandoffMechanism(ctx: MailboxHandoffCtx): Promise<Mai
 }
 
 export function settleHandoffOutcome(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
-  const applied = ctx.applied ?? null;
-  if (applied === null) return { ...ctx, outcome: { state: 'stale' } };
   if (hasSettledHandoffRow(ctx.deps, ctx.target)) {
     const deliverable = resolveDeliverableHandoff(ctx.deps, ctx.target);
     return { ...ctx, outcome: { state: 'settled', dbId: deliverable.dbId } };
   }
+  const applied = ctx.applied ?? null;
+  if (applied === null) return { ...ctx, outcome: { state: 'stale' } };
   return {
     ...ctx,
     outcome: {
