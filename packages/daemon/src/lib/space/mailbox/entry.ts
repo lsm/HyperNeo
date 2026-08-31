@@ -39,7 +39,15 @@ const POLICY_KEYS = new Set(['ttlMs', 'maxAttempts', 'priority']);
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const proto = Object.getPrototypeOf(value);
-  return proto === null || proto === Object.prototype;
+  if (proto !== null && proto !== Object.prototype) return false;
+  const names = Object.getOwnPropertyNames(value);
+  if (names.length !== Object.keys(value).length) return false;
+  if (Object.getOwnPropertySymbols(value).length > 0) return false;
+  for (const key of names) {
+    const desc = Object.getOwnPropertyDescriptor(value, key);
+    if (desc === undefined || desc.get !== undefined || desc.set !== undefined) return false;
+  }
+  return true;
 }
 
 function hasExactKeys(record: Record<string, unknown>, keys: Set<string>): boolean {
@@ -56,7 +64,9 @@ function isPositiveInteger(value: unknown): value is number {
 }
 
 function isPriorityValue(value: unknown): boolean {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+  return (
+    typeof value === 'number' && Number.isInteger(value) && value >= 0 && !Object.is(value, -0)
+  );
 }
 
 function validateTextBlock(block: unknown): string | null {

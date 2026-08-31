@@ -173,13 +173,22 @@ describe('validateMailboxMessage', () => {
     );
   });
 
-  test('rejects required fields hidden as non-enumerable own properties', () => {
+  test('rejects hidden own properties and serialization hooks', () => {
     const source = buildMessage();
     const hidden: Record<string, unknown> = {};
     for (const key of Object.keys(source)) {
       Object.defineProperty(hidden, key, { value: source[key], enumerable: false });
     }
-    expect(validateMailboxMessage(hidden)).toContain('required');
+    expect(validateMailboxMessage(hidden)).toContain('plain object');
+    const hook = buildMessage();
+    Object.defineProperty(hook, 'toJSON', { value: () => 'x', enumerable: false });
+    expect(validateMailboxMessage(hook)).toContain('plain object');
+    const symbolled = buildMessage();
+    Object.defineProperty(symbled, Symbol('tag'), { value: 1, enumerable: true });
+    expect(validateMailboxMessage(symbolled)).toContain('plain object');
+    const accessor = buildMessage();
+    Object.defineProperty(accessor, 'priority', { get: () => 'now', enumerable: true });
+    expect(validateMailboxMessage(accessor)).toContain('plain object');
   });
 
   test('rejects every named SDK excess key', () => {
@@ -230,6 +239,7 @@ describe('createMailboxEntry', () => {
       { maxAttempts: 0 },
       { maxAttempts: 2.5 },
       { priority: -1 },
+      { priority: -0 },
       { priority: 0.5 },
     ];
     for (const policy of overrides) {
@@ -316,6 +326,12 @@ describe('isValidMailboxEntry', () => {
     expect(
       isValidMailboxEntry(tamper(entry, { policy: tamper(entry.policy, { priority: -1 }) }))
     ).toBe(false);
+    expect(
+      isValidMailboxEntry(tamper(entry, { policy: tamper(entry.policy, { priority: -0 }) }))
+    ).toBe(false);
+    const hook = buildEntry();
+    Object.defineProperty(hook, 'toJSON', { value: () => 'x', enumerable: false });
+    expect(isValidMailboxEntry(hook)).toBe(false);
     expect(
       isValidMailboxEntry(
         tamper(entry, {
