@@ -110,6 +110,18 @@ describe('validateMailboxMessage', () => {
     ).not.toBeNull();
   });
 
+  test('rejects a message with an inherited message container', () => {
+    const inherited = Object.create({ content: 'hello' });
+    expect(
+      validateMailboxMessage({ ...MESSAGE_STRING, message: inherited } as unknown as MailboxMessage)
+    ).not.toBeNull();
+  });
+
+  test('rejects an entry-level object with a custom prototype', () => {
+    const inherited = Object.create({ type: 'user', message: { content: 'hello' } });
+    expect(validateMailboxMessage(inherited)).not.toBeNull();
+  });
+
   test('rejects a block array with a non-object block', () => {
     expect(
       validateMailboxMessage({ ...MESSAGE_STRING, message: { content: ['not a block'] } })
@@ -281,6 +293,25 @@ describe('createMailboxEntry', () => {
         message: MESSAGE_STRING,
         origin: 'api',
         policy: { timeout: 1000 } as unknown as Partial<MailboxEntryPolicy>,
+      })
+    ).toThrow(TypeError);
+  });
+
+  test('rejects a non-object policy override', () => {
+    expect(() =>
+      createMailboxEntry({
+        to: SESSION_ADDRESS,
+        message: MESSAGE_STRING,
+        origin: 'api',
+        policy: null as unknown as Partial<MailboxEntryPolicy>,
+      })
+    ).toThrow(TypeError);
+    expect(() =>
+      createMailboxEntry({
+        to: SESSION_ADDRESS,
+        message: MESSAGE_STRING,
+        origin: 'api',
+        policy: 0 as unknown as Partial<MailboxEntryPolicy>,
       })
     ).toThrow(TypeError);
   });

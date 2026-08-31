@@ -1,5 +1,5 @@
-import { isValidAddress, type MailboxAddress } from './address';
-import { createUlid, isUlid } from './ulid';
+import { isValidAddress, type MailboxAddress } from './address.ts';
+import { createUlid, isUlid } from './ulid.ts';
 
 export interface MailboxEntryPolicy {
   ttlMs: number;
@@ -39,7 +39,9 @@ const PRIORITIES = new Set(['now', 'next', 'later']);
 type PolicyKey = 'ttlMs' | 'maxAttempts' | 'priority';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === null || proto === Object.prototype;
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -149,6 +151,9 @@ export function createMailboxEntry(args: {
   if (!isValidAddress(args.to)) throw new TypeError('to is not a valid mailbox address');
   if (!isNonEmptyString(args.origin)) throw new TypeError('origin must be a non-empty string');
 
+  if (args.policy !== undefined && !isPlainObject(args.policy)) {
+    throw new TypeError('policy must be an object');
+  }
   const override = args.policy ?? {};
   validatePolicyOverride(override);
   const mergedPolicy: MailboxEntryPolicy = { ...DEFAULT_MAILBOX_ENTRY_POLICY, ...override };
