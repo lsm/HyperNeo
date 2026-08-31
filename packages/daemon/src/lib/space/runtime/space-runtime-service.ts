@@ -41,11 +41,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { AgentSession } from '../../agent/agent-session.ts';
-import {
-  awaitDeliveryConsumption,
-  deliverAndMarkQueued,
-  deliveryConsumptionTimeoutMs,
-} from '../../agent/message-delivery.ts';
+import { PromptContentConflictError } from '../../agent/message-delivery-outbox.ts';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
 import type { ExternalEventService } from '../../external-events/external-event-service.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
@@ -88,8 +84,10 @@ import type { WorkflowArtifactProfile } from './artifact-profile.ts';
 import { ChannelRouter } from './channel-router.ts';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
 import { selectWorkflowWithLlmDefault } from './llm-workflow-selector.ts';
+import { handoffPromptToMailbox, type MailboxHandoffOutcome } from './prompt-mailbox-handoff.ts';
 import type { RenderPendingDigestOutcome } from './render-pending-digest-pipeline.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
+import { SpaceAgentLateSettlements } from './space-agent-message-delivery.ts';
 import {
   SpaceAgentNotificationService,
   type SpaceAgentNotificationServiceConfig,
@@ -189,6 +187,7 @@ export class SpaceRuntimeService {
   private readonly longTermAgentDbQueryServers = new Map<string, DbQueryMcpServer>();
   private readonly spaceAgentNotificationUnsubs = new Map<string, () => void>();
   private readonly longTermAgentFlushes = new Map<string, Promise<void>>();
+  private readonly inboxLateSettlements = new SpaceAgentLateSettlements();
   private resumeStalledRecoveryPromise: Promise<void> = Promise.resolve();
   private provisioningPromise: Promise<void> | null = null;
 
@@ -411,22 +410,21 @@ export class SpaceRuntimeService {
     }
     const sessionId = session.getSessionData().id;
     try {
-      await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey, {
-        terminalizeOnTimeout: false,
-      });
-      const row = this.config.reactiveDb?.db
-        .getSDKMessageRepo()
-        .getDeliveryContent(sessionId, args.idempotencyKey);
-      if (row !== null && row !== undefined && row.sendStatus === 'failed') {
-        return 'terminal_failure_after_consumption';
+      const outcome = await this.injectLongTermAgentMessage(
+        session,
+        args.message,
+        args.idempotencyKey
+      );
+      if (outcome.state === 'settled') {
+        return this.readLongTermAgentSendStatus(sessionId, args.idempotencyKey) === 'failed'
+          ? 'terminal_failure_after_consumption'
+          : 'consumed';
       }
-      return 'consumed';
-    } catch {
-      const row = this.config.reactiveDb?.db
-        .getSDKMessageRepo()
-        .getDeliveryContent(sessionId, args.idempotencyKey);
-      return row !== null && row !== undefined && row.sendStatus !== 'failed'
-        ? 'accepted'
+      return 'accepted';
+    } catch (err) {
+      if (err instanceof PromptContentConflictError) return 'pre_admission_failure';
+      return this.hasLongTermAgentConsumptionEvidence(sessionId, args.idempotencyKey)
+        ? 'terminal_failure_after_consumption'
         : 'terminal_failure';
     }
   }
@@ -625,17 +623,80 @@ export class SpaceRuntimeService {
         ]
       : pending;
     for (const row of ordered) {
-      try {
-        if (this.isGoalOutcomeWakeStale(row)) {
-          inboxRepo.markDelivered(row.id, session.getSessionData().id);
-          continue;
-        }
-        await this.injectLongTermAgentMessage(session, row.message, row.idempotencyKey ?? row.id);
+      if (this.isGoalOutcomeWakeStale(row)) {
         inboxRepo.markDelivered(row.id, session.getSessionData().id);
+        continue;
+      }
+      try {
+        const outcome = await this.injectLongTermAgentMessage(
+          session,
+          row.message,
+          row.idempotencyKey ?? row.id
+        );
+        this.settleLongTermAgentInboxRow(row, session.getSessionData().id, outcome);
       } catch (err) {
         inboxRepo.markAttemptFailed(row.id, err instanceof Error ? err.message : String(err));
       }
     }
+  }
+
+  private settleLongTermAgentInboxRow(
+    row: SpaceAgentInboxMessageRecord,
+    sessionId: string,
+    outcome: MailboxHandoffOutcome
+  ): void {
+    const inboxRepo = this.config.spaceAgentInboxRepo;
+    if (!inboxRepo) return;
+    const messageId = row.idempotencyKey ?? row.id;
+    if (
+      outcome.state === 'settled' ||
+      this.hasLongTermAgentConsumptionEvidence(sessionId, messageId)
+    ) {
+      inboxRepo.markDelivered(row.id, sessionId);
+      return;
+    }
+    if (this.readLongTermAgentSendStatus(sessionId, messageId) === 'failed') {
+      inboxRepo.markAttemptFailed(row.id, 'delivery dead-lettered without consumption evidence');
+      return;
+    }
+    this.armLongTermAgentInboxSettlement(row, sessionId, messageId);
+  }
+
+  private armLongTermAgentInboxSettlement(
+    row: SpaceAgentInboxMessageRecord,
+    sessionId: string,
+    messageId: string
+  ): void {
+    const inboxRepo = this.config.spaceAgentInboxRepo;
+    if (!inboxRepo) return;
+    this.inboxLateSettlements.arm({
+      sessionId,
+      messageId,
+      onConsumed: () => {
+        inboxRepo.markDelivered(row.id, sessionId);
+      },
+      onFailed: () => {
+        if (this.hasLongTermAgentConsumptionEvidence(sessionId, messageId)) {
+          inboxRepo.markDelivered(row.id, sessionId);
+          return;
+        }
+        inboxRepo.markAttemptFailed(row.id, 'delivery dead-lettered without consumption evidence');
+      },
+      getSendStatus: () => this.readLongTermAgentSendStatus(sessionId, messageId) ?? undefined,
+    });
+  }
+
+  private hasLongTermAgentConsumptionEvidence(sessionId: string, messageId: string): boolean {
+    const repo = this.config.reactiveDb?.db.getSDKMessageRepo();
+    return repo?.hasConsumptionEvidence(sessionId, messageId) ?? false;
+  }
+
+  private readLongTermAgentSendStatus(
+    sessionId: string,
+    messageId: string
+  ): string | null | undefined {
+    return this.config.reactiveDb?.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)
+      ?.sendStatus;
   }
 
   private isGoalOutcomeWakeStale(row: SpaceAgentInboxMessageRecord): boolean {
@@ -668,9 +729,8 @@ export class SpaceRuntimeService {
       };
     },
     message: string,
-    messageId?: string,
-    options: { terminalizeOnTimeout?: boolean } = {}
-  ): Promise<string> {
+    messageId?: string
+  ): Promise<MailboxHandoffOutcome> {
     const id = messageId ?? generateRuntimeMessageId();
     const sessionId = session.getSessionData().id;
     const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
@@ -690,50 +750,22 @@ export class SpaceRuntimeService {
         `injectLongTermAgentMessage: reactiveDb unavailable; cannot deliver to ${sessionId}`
       );
     }
-    const sdkMessageRepo = reactiveDb.getSDKMessageRepo();
-    const existing = sdkMessageRepo.getDeliveryContent(sessionId, id);
-    const fresh = !existing;
-    if (!existing) {
-      const dbId = reactiveDb.saveUserMessage(sessionId, sdkUserMessage, 'enqueued');
-      await this.publishMessageStatusChanged(sessionId, dbId, 'enqueued');
-    } else if (existing.sendStatus === 'consumed') {
-      return id;
-    } else if (existing.sendStatus === 'failed') {
-      const reopenedDbId = sdkMessageRepo.reopenDeliveryByUuid(sessionId, id);
-      if (reopenedDbId) {
-        await this.publishMessageStatusChanged(sessionId, reopenedDbId, 'enqueued');
-      }
-    }
-    await awaitDeliveryConsumption({
-      sessionId,
-      messageUuid: id,
-      timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
-      deliver: () =>
-        deliverAndMarkQueued({
-          jobQueue: reactiveDb.getJobQueueRepo(),
-          stateManager: session.stateManager,
-          sessionId,
-          messageUuid: id,
-          origin: 'long_term_agent',
-          onEnqueueFailure: () => {
-            const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
-            if (failedDbId) {
-              void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
-            }
-          },
-        }),
-      ...(fresh && options.terminalizeOnTimeout !== false
-        ? {
-            terminalizeOnTimeout: () => {
-              const failedDbId = sdkMessageRepo.markDeliveryFailedByUuid(sessionId, id);
-              if (failedDbId) {
-                void this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
-              }
-            },
-          }
-        : {}),
+    return handoffPromptToMailbox({
+      deps: {
+        db: this.config.db,
+        sdkMessageRepo: reactiveDb.getSDKMessageRepo(),
+        jobQueue: reactiveDb.getJobQueueRepo(),
+      },
+      target: {
+        sessionId,
+        messageId: id,
+        message: sdkUserMessage,
+        origin: 'long_term_agent',
+      },
+      stateManager: session.stateManager,
+      publishStatusChanged: (settledSessionId, dbId, status) =>
+        this.publishMessageStatusChanged(settledSessionId, dbId, status),
     });
-    return id;
   }
 
   private async publishMessageStatusChanged(
@@ -1487,6 +1519,7 @@ export class SpaceRuntimeService {
       unsub();
     }
     this.unsubscribers.length = 0;
+    this.inboxLateSettlements.dispose();
 
     for (const [spaceId, server] of this.spaceDbQueryServers) {
       try {
