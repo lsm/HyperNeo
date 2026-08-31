@@ -198,24 +198,31 @@ export function createMailboxEntry(args: {
   origin: string;
   policy?: Partial<MailboxEntryPolicy>;
 }): MailboxEntry {
-  const { origin, policy } = args;
-  const message = snapshotJson(args.message) as MailboxMessage;
-  const to = snapshotJson(args.to) as MailboxAddress;
+  const { to: rawTo, message: rawMessage, origin, policy } = args;
+  const rawMessageViolation = validateMailboxMessage(rawMessage);
+  if (rawMessageViolation !== null) {
+    throw new TypeError(`invalid mailbox message: ${rawMessageViolation}`);
+  }
+  if (!isValidAddress(rawTo)) {
+    throw new TypeError('invalid mailbox entry address');
+  }
+  if (!isPlainObject(rawTo)) {
+    throw new TypeError('mailbox entry address must be a plain object');
+  }
+  if (hasUndefinedOwnValue(rawTo)) {
+    throw new TypeError('mailbox entry address must not carry undefined fields');
+  }
+  if (hasInheritedAddressField(rawTo)) {
+    throw new TypeError('mailbox entry address must not carry inherited fields');
+  }
+  const message = snapshotJson(rawMessage) as MailboxMessage;
+  const to = snapshotJson(rawTo) as MailboxAddress;
   const messageViolation = validateMailboxMessage(message);
   if (messageViolation !== null) {
     throw new TypeError(`invalid mailbox message: ${messageViolation}`);
   }
-  if (!isValidAddress(to)) {
+  if (!isPlainObject(to) || !isValidAddress(to)) {
     throw new TypeError('invalid mailbox entry address');
-  }
-  if (!isPlainObject(to)) {
-    throw new TypeError('mailbox entry address must be a plain object');
-  }
-  if (hasUndefinedOwnValue(to)) {
-    throw new TypeError('mailbox entry address must not carry undefined fields');
-  }
-  if (hasInheritedAddressField(to)) {
-    throw new TypeError('mailbox entry address must not carry inherited fields');
   }
   if (typeof origin !== 'string' || origin.length === 0) {
     throw new TypeError('mailbox entry origin must be a non-empty string');

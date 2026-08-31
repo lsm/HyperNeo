@@ -347,7 +347,7 @@ describe('createMailboxEntry', () => {
     expect(isValidMailboxEntry(entry)).toBe(true);
   });
 
-  test('snapshots message data read through a lying proxy', () => {
+  test('rejects a proxy serving different data to validation and serialization', () => {
     let reads = 0;
     const inner = new Proxy(
       { content: 'hi' },
@@ -361,6 +361,17 @@ describe('createMailboxEntry', () => {
         },
       }
     );
+    expect(() =>
+      createMailboxEntry({
+        to: TO,
+        message: { type: 'user', message: inner, parent_tool_use_id: null },
+        origin: 'web',
+      })
+    ).toThrow(TypeError);
+  });
+
+  test('retains a stable proxy-backed message as detached plain data', () => {
+    const inner = new Proxy({ content: 'hi' }, {});
     const entry = createMailboxEntry({
       to: TO,
       message: { type: 'user', message: inner, parent_tool_use_id: null },
@@ -368,6 +379,36 @@ describe('createMailboxEntry', () => {
     });
     expect(isValidMailboxEntry(entry)).toBe(true);
     expect(entry.message.message.content).toBe('hi');
+    expect(entry.message.message).not.toBe(inner);
+  });
+
+  test('rejects malformed payloads instead of letting serialization sanitize them', () => {
+    expect(() =>
+      createMailboxEntry({
+        to: TO,
+        message: {
+          type: 'user',
+          message: { content: 'hi' },
+          parent_tool_use_id: null,
+          priority: undefined,
+        } as unknown as MailboxMessage,
+        origin: 'web',
+      })
+    ).toThrow(TypeError);
+    expect(() =>
+      createMailboxEntry({
+        to: { kind: 'agent', spaceId: 'sp-1', handle: 'coder', taskId: undefined },
+        message: stringMessage(),
+        origin: 'web',
+      })
+    ).toThrow(TypeError);
+    expect(() =>
+      createMailboxEntry({
+        to: TO,
+        message: withSymbolKey(stringMessage() as unknown as Record<string, unknown>),
+        origin: 'web',
+      } as unknown as Parameters<typeof createMailboxEntry>[0])
+    ).toThrow(TypeError);
   });
 
   test('throws TypeError naming the message violation', () => {
