@@ -79,22 +79,19 @@ describe('validateMailboxMessage rejection', () => {
     ['null payload', null, 'must be an object'],
     ['prototype-inherited fields', Object.create(base), 'must be an object'],
     ['symbol excess key', withSymbolKey(base), 'must be an object'],
-    ['non-enumerable type', withHiddenField(base, 'type'), 'must be an enumerable own field'],
+    ['non-enumerable type', withHiddenField(base, 'type'), 'must be an object'],
     [
       'non-enumerable parent_tool_use_id',
       withHiddenField(base, 'parent_tool_use_id'),
-      'must be an enumerable own field',
+      'must be an object',
     ],
     [
-      'non-enumerable inner content',
-      withHiddenInnerContent(),
-      'must carry content as an enumerable own field',
+      'non-enumerable priority',
+      withHiddenField({ ...base, priority: 'asap' }, 'priority'),
+      'must be an object',
     ],
-    [
-      'non-enumerable block text',
-      withHiddenBlockText(),
-      'must carry type and text as enumerable own fields',
-    ],
+    ['non-enumerable inner content', withHiddenInnerContent(), 'message.message must be an object'],
+    ['non-enumerable block text', withHiddenBlockText(), 'content block must be an object'],
     ['wrong type', { ...base, type: 'assistant' }, 'type must be "user"'],
     ['missing type', { message: base.message, parent_tool_use_id: null }, 'type must be "user"'],
     ['empty string content', { ...base, message: { content: '' } }, 'must not be empty'],
@@ -341,6 +338,13 @@ describe('isValidMailboxEntry', () => {
     [
       'non-plain address object',
       (entry: Record<string, unknown>) => ({ ...entry, to: new FakeAddress() }),
+    ],
+    [
+      'address with non-enumerable field',
+      (entry: Record<string, unknown>) => ({
+        ...entry,
+        to: withHiddenField({ kind: 'agent', spaceId: 'sp-1', handle: 'coder' }, 'taskId'),
+      }),
     ],
     [
       'policy with non-enumerable field',

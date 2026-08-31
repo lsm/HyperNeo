@@ -43,7 +43,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const proto = Object.getPrototypeOf(value);
   if (proto !== null && proto !== Object.prototype) return false;
-  return Object.getOwnPropertySymbols(value).length === 0;
+  if (Object.getOwnPropertySymbols(value).length !== 0) return false;
+  return Object.getOwnPropertyNames(value).length === Object.keys(value).length;
 }
 
 function firstUnexpectedKey(record: Record<string, unknown>, allowed: string[]): string | null {
@@ -104,11 +105,6 @@ export function validateMailboxMessage(message: unknown): string | null {
   if (keys.includes('priority') && !isPriorityLevel(message.priority)) {
     return 'mailbox message priority must be one of "now", "next", "later"';
   }
-  for (const required of ['type', 'message', 'parent_tool_use_id']) {
-    if (!keys.includes(required)) {
-      return `mailbox message ${required} must be an enumerable own field`;
-    }
-  }
   return null;
 }
 
@@ -116,12 +112,9 @@ function validateEntryPolicy(policy: unknown): string | null {
   if (!isPlainObject(policy)) return 'mailbox entry policy must be an object';
   const policyKey = firstUnexpectedKey(policy, POLICY_KEYS);
   if (policyKey !== null) return `mailbox entry policy must not carry key "${policyKey}"`;
-  const policyFieldKeys = Object.keys(policy);
   for (const key of POLICY_KEYS) {
     const value = policy[key];
-    if (!policyFieldKeys.includes(key) || value === undefined) {
-      return `mailbox entry policy ${key} is required`;
-    }
+    if (value === undefined) return `mailbox entry policy ${key} is required`;
     if (typeof value !== 'number' || !Number.isInteger(value)) {
       return `mailbox entry policy ${key} must be a finite integer`;
     }
