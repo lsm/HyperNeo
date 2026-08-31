@@ -63,6 +63,7 @@ function hasInheritedAddressField(record: Record<string, unknown>): boolean {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  if (Object.hasOwn(Object.prototype, 'toJSON')) return false;
   const proto = Object.getPrototypeOf(value);
   if (proto !== null && proto !== Object.prototype) return false;
   if (Object.getOwnPropertySymbols(value).length !== 0) return false;
@@ -135,6 +136,9 @@ export function validateMailboxMessage(message: unknown): string | null {
   if (message.parent_tool_use_id !== null) {
     return 'mailbox message parent_tool_use_id must be null';
   }
+  if (!Object.hasOwn(message, 'priority') && message.priority !== undefined) {
+    return 'mailbox message priority must be an enumerable own field';
+  }
   if (keys.includes('priority') && !isPriorityLevel(message.priority)) {
     return 'mailbox message priority must be one of "now", "next", "later"';
   }
@@ -176,43 +180,44 @@ export function createMailboxEntry(args: {
   origin: string;
   policy?: Partial<MailboxEntryPolicy>;
 }): MailboxEntry {
-  const messageViolation = validateMailboxMessage(args.message);
+  const { to, message, origin, policy } = args;
+  const messageViolation = validateMailboxMessage(message);
   if (messageViolation !== null) {
     throw new TypeError(`invalid mailbox message: ${messageViolation}`);
   }
-  if (!isValidAddress(args.to)) {
+  if (!isValidAddress(to)) {
     throw new TypeError('invalid mailbox entry address');
   }
-  if (!isPlainObject(args.to)) {
+  if (!isPlainObject(to)) {
     throw new TypeError('mailbox entry address must be a plain object');
   }
-  if (hasUndefinedOwnValue(args.to)) {
+  if (hasUndefinedOwnValue(to)) {
     throw new TypeError('mailbox entry address must not carry undefined fields');
   }
-  if (hasInheritedAddressField(args.to)) {
+  if (hasInheritedAddressField(to)) {
     throw new TypeError('mailbox entry address must not carry inherited fields');
   }
-  if (typeof args.origin !== 'string' || args.origin.length === 0) {
+  if (typeof origin !== 'string' || origin.length === 0) {
     throw new TypeError('mailbox entry origin must be a non-empty string');
   }
-  if (args.policy !== undefined && !isPlainObject(args.policy)) {
+  if (policy !== undefined && !isPlainObject(policy)) {
     throw new TypeError('mailbox entry policy override must be an object');
   }
-  const policy: MailboxEntryPolicy = {
+  const mergedPolicy: MailboxEntryPolicy = {
     ...DEFAULT_MAILBOX_ENTRY_POLICY,
-    ...args.policy,
+    ...policy,
   };
-  const policyViolation = validateEntryPolicy(policy);
+  const policyViolation = validateEntryPolicy(mergedPolicy);
   if (policyViolation !== null) {
     throw new TypeError(`invalid mailbox entry policy: ${policyViolation}`);
   }
   return {
     id: createUlid(),
-    to: args.to,
-    origin: args.origin,
-    message: args.message,
+    to,
+    origin,
+    message,
     status: 'enqueued',
-    policy,
+    policy: mergedPolicy,
   };
 }
 

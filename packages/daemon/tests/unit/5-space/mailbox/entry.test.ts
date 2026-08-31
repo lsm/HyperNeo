@@ -322,6 +322,20 @@ describe('createMailboxEntry', () => {
     ).toThrow('plain object');
   });
 
+  test('reads factory arguments exactly once', () => {
+    let reads = 0;
+    const args: Record<string, unknown> = { to: TO, origin: 'web' };
+    Object.defineProperty(args, 'message', {
+      get: () => {
+        reads += 1;
+        return reads === 1 ? stringMessage() : undefined;
+      },
+      enumerable: true,
+    });
+    const entry = createMailboxEntry(args as unknown as Parameters<typeof createMailboxEntry>[0]);
+    expect(isValidMailboxEntry(entry)).toBe(true);
+  });
+
   test('throws TypeError naming the message violation', () => {
     const invalid = { type: 'user', message: { content: 'hi' }, parent_tool_use_id: 'toolu_1' };
     expect(() =>
@@ -519,6 +533,29 @@ describe('Object.prototype pollution resistance', () => {
       ).toThrow('must not carry inherited fields');
     } finally {
       delete proto.taskId;
+    }
+  });
+
+  test('rejects messages with only an inherited priority', () => {
+    const proto = Object.prototype as Record<string, unknown>;
+    proto.priority = 'now';
+    try {
+      const reason = validateMailboxMessage(stringMessage());
+      expect(reason).toContain('priority must be an enumerable own field');
+    } finally {
+      delete proto.priority;
+    }
+  });
+
+  test('fails closed while Object.prototype.toJSON is polluted', () => {
+    const entry = createMailboxEntry({ to: TO, message: stringMessage(), origin: 'web' });
+    const proto = Object.prototype as Record<string, unknown>;
+    proto.toJSON = () => ({});
+    try {
+      expect(validateMailboxMessage(stringMessage())).toContain('must be an object');
+      expect(isValidMailboxEntry(entry)).toBe(false);
+    } finally {
+      delete proto.toJSON;
     }
   });
 });
