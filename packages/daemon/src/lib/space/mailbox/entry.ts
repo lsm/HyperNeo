@@ -77,3 +77,45 @@ export function toMailboxMessage(message: MailboxMessage): MailboxMessageProject
     },
   };
 }
+
+export type MailboxProjection<T> = { value: T } | { reason: string };
+
+export function toMailboxPolicy(
+  partial: Partial<MailboxEntryPolicy> | undefined
+): MailboxProjection<MailboxEntryPolicy> {
+  const source = partial ?? {};
+  const ttlMs = source.ttlMs === undefined ? DEFAULT_MAILBOX_ENTRY_POLICY.ttlMs : source.ttlMs;
+  const maxAttempts =
+    source.maxAttempts === undefined
+      ? DEFAULT_MAILBOX_ENTRY_POLICY.maxAttempts
+      : source.maxAttempts;
+  const priority =
+    source.priority === undefined ? DEFAULT_MAILBOX_ENTRY_POLICY.priority : source.priority;
+
+  if (!Number.isInteger(ttlMs) || ttlMs < 1) {
+    return { reason: 'policy.ttlMs must be a positive integer' };
+  }
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+    return { reason: 'policy.maxAttempts must be a positive integer' };
+  }
+  if (!Number.isInteger(priority) || priority < 0) {
+    return { reason: 'policy.priority must be a non-negative integer' };
+  }
+
+  return { value: { ttlMs, maxAttempts, priority } };
+}
+
+export function createMailboxEntry(_args: {
+  to: MailboxAddress;
+  message: MailboxMessage;
+  origin: string;
+  policy?: Partial<MailboxEntryPolicy>;
+}): MailboxEntry {
+  throw new Error('mailbox: createMailboxEntry not implemented');
+}
+
+export function parseMailboxEntry(
+  _raw: Record<string, unknown> | null | undefined
+): MailboxEntry | null {
+  throw new Error('mailbox: parseMailboxEntry not implemented');
+}
