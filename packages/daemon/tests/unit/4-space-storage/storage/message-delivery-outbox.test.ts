@@ -1429,6 +1429,41 @@ describe('prompt content verification (verifyPromptContent)', () => {
       })
     ).toThrow(PromptContentConflictError);
   });
+
+  it('rejects conflicting content on ANY sibling when duplicates share a uuid', () => {
+    const insert = db.prepare(
+      `INSERT INTO sdk_messages
+        (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+         replacement_metadata_normalized, consumed_seq)
+       VALUES (?, ?, 'user', ?, ?, ?, ?, 1, ?)`
+    );
+    insert.run(
+      'db-verify-earliest',
+      SESSION,
+      JSON.stringify(userMessage('verify-siblings', 'requested')),
+      new Date().toISOString(),
+      'enqueued',
+      'verify-siblings',
+      null
+    );
+    insert.run(
+      'db-verify-evidenced',
+      SESSION,
+      JSON.stringify(userMessage('verify-siblings', 'different')),
+      new Date().toISOString(),
+      'failed',
+      'verify-siblings',
+      2
+    );
+    expect(() =>
+      verifyPromptContent({
+        db: db as never,
+        sessionId: SESSION,
+        messageUuid: 'verify-siblings',
+        message: userMessage('verify-siblings', 'requested'),
+      })
+    ).toThrow(PromptContentConflictError);
+  });
 });
 
 describe('retryPrompt consumption-evidence guard', () => {

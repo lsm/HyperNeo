@@ -385,13 +385,41 @@ describe('activateDeferredPromptIntoMailbox', () => {
     expect(deliveryJobCount(h, 'msg-activate-1')).toBe(1);
   });
 
-  it('reports a stale snapshot as null when the row is no longer activatable', async () => {
+  it('settles as deliverable when the row was consumed after the plan', async () => {
     const h = makeHarness();
     const dbId = seedDeferredRow(h, 'msg-activate-2');
     markRowStatus(h, dbId, 'consumed');
     const outcome = await activateDeferredPromptIntoMailbox(
       h.deps,
       targetFor(userMessage('msg-activate-2'))
+    );
+    expect(outcome).toEqual({ dbId, changed: false });
+  });
+
+  it('refuses activation when a duplicate sibling carries consumption evidence', async () => {
+    const h = makeHarness();
+    insertDuplicateRow(h, 'msg-activate-3', 'db-activate-deferred', 'deferred', null);
+    insertDuplicateRow(h, 'msg-activate-3', 'db-activate-evidenced', 'failed', 4);
+    const outcome = await activateDeferredPromptIntoMailbox(
+      h.deps,
+      targetFor(userMessage('msg-activate-3'))
+    );
+    expect(outcome).toEqual({ dbId: 'db-activate-evidenced', changed: false });
+    expect(
+      h.db
+        .prepare(`SELECT send_status FROM sdk_messages WHERE id = ?`)
+        .get('db-activate-deferred') as { send_status: string }
+    ).toEqual({ send_status: 'deferred' });
+    expect(deliveryJobCount(h, 'msg-activate-3')).toBe(0);
+  });
+
+  it('reports a stale snapshot as null when the row is neither activatable nor settled', async () => {
+    const h = makeHarness();
+    const dbId = seedDeferredRow(h, 'msg-activate-4');
+    markRowStatus(h, dbId, 'submitted');
+    const outcome = await activateDeferredPromptIntoMailbox(
+      h.deps,
+      targetFor(userMessage('msg-activate-4'))
     );
     expect(outcome).toBeNull();
   });
@@ -436,5 +464,17 @@ describe('ensurePromptIntoMailbox', () => {
     expect(() =>
       ensurePromptIntoMailbox(h.deps, targetFor(userMessage('msg-ensure-4', 'conflicting')))
     ).toThrow(PromptContentConflictError);
+  });
+
+  it('does not re-arm an enqueued row when a sibling carries consumption evidence', () => {
+    const h = makeHarness();
+    insertDuplicateRow(h, 'msg-ensure-5', 'db-ensure-enqueued', 'enqueued', null);
+    insertDuplicateRow(h, 'msg-ensure-5', 'db-ensure-evidenced', 'failed', 6);
+    const outcome = ensurePromptIntoMailbox(
+      h.deps,
+      targetFor(userMessage('msg-ensure-5', 'hello'))
+    );
+    expect(outcome).toEqual({ dbId: 'db-ensure-enqueued', changed: false, advanced: false });
+    expect(deliveryJobCount(h, 'msg-ensure-5')).toBe(0);
   });
 });

@@ -106,7 +106,12 @@ export async function activateDeferredPromptIntoMailbox(
     origin: target.origin,
   });
   const entry = activated[0];
-  if (!entry) return null;
+  if (!entry) {
+    if (hasSettledHandoffRow(deps, target)) {
+      return resolveDeliverableHandoff(deps, target);
+    }
+    return null;
+  }
   return { dbId: entry.dbId, changed: true };
 }
 
