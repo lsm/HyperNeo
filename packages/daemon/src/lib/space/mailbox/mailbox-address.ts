@@ -23,13 +23,26 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isWellFormed(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xdc00 && code <= 0xdfff) return false;
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = i + 1 < value.length ? value.charCodeAt(i + 1) : 0;
+      if (next < 0xdc00 || next > 0xdfff) return false;
+    }
+  }
+  return true;
+}
+
 function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
+  return typeof value === 'string' && value.length > 0 && isWellFormed(value);
 }
 
 function decodeValue(value: string): string | null {
   try {
-    return decodeURIComponent(value);
+    const decoded = decodeURIComponent(value);
+    return isWellFormed(decoded) ? decoded : null;
   } catch {
     return null;
   }
@@ -76,6 +89,7 @@ function parseAgentAddress(rest: string): MailboxAddress | null {
   const spaceId = decodeValue(rawSpaceId);
   const handle = decodeValue(rawHandle);
   if (spaceId === null || handle === null) return null;
+  if (handle.includes('/')) return null;
   let taskId: string | undefined;
   let node: string | undefined;
   if (query !== null) {

@@ -4,7 +4,7 @@ import {
   type MailboxAddress,
   parseAddress,
   renderAddress,
-} from '../../../src/lib/space/mailbox/mailbox-address';
+} from '../../../../src/lib/space/mailbox/mailbox-address';
 
 const SESSION_ADDR: MailboxAddress = { kind: 'session', sessionId: 'sess-123' };
 const AGENT_ADDR: MailboxAddress = { kind: 'agent', spaceId: 'space-1', handle: '@coder' };
@@ -103,11 +103,6 @@ describe('parseAddress', () => {
       spaceId: 'a/b',
       handle: 'h?x',
     });
-    expect(parseAddress('agent:s/h%2Fsub')).toEqual({
-      kind: 'agent',
-      spaceId: 's',
-      handle: 'h/sub',
-    });
     expect(parseAddress('agent:s/h?task=t%261&node=n%3D1')).toEqual({
       kind: 'agent',
       spaceId: 's',
@@ -115,6 +110,28 @@ describe('parseAddress', () => {
       taskId: 't&1',
       node: 'n=1',
     });
+    expect(parseAddress('agent:s/h?task=a%2Fb')).toEqual({
+      kind: 'agent',
+      spaceId: 's',
+      handle: 'h',
+      taskId: 'a/b',
+    });
+  });
+
+  test('validates every address it returns (parse and isValid agree)', () => {
+    const parseable = [
+      'session:sess-123',
+      'session:a%2Fb',
+      'agent:space-1/@coder',
+      'agent:a%2Fb/h%3Fx',
+      'agent:s/h?task=t&node=n',
+      'agent:s/h?task=a%2Fb',
+    ];
+    for (const raw of parseable) {
+      const addr = parseAddress(raw);
+      expect(addr).not.toBeNull();
+      expect(isValidAddress(addr as MailboxAddress)).toBe(true);
+    }
   });
 
   test('round-trips every grammar form (parse ∘ render is identity)', () => {
@@ -132,7 +149,7 @@ describe('parseAddress', () => {
   test('round-trips addresses with percent-encoded reserved characters', () => {
     const encoded: MailboxAddress[] = [
       { kind: 'session', sessionId: 'a/b?c&d=e%f' },
-      { kind: 'agent', spaceId: 'sp/ace', handle: '@co/der?1' },
+      { kind: 'agent', spaceId: 'sp/ace', handle: '@co-der?1' },
       { kind: 'agent', spaceId: 's', handle: 'h', taskId: 't/&=?', node: 'n/&=?' },
     ];
     for (const addr of encoded) {
@@ -169,6 +186,20 @@ describe('parseAddress', () => {
     expect(parseAddress('agent:s/h/')).toBeNull();
     expect(parseAddress('session:a/b')).toBeNull();
     expect(parseAddress('session:a/b?x')).toBeNull();
+  });
+
+  test('rejects an encoded slash inside a handle (handle never contains a slash)', () => {
+    expect(parseAddress('agent:s/a%2Fb')).toBeNull();
+    expect(parseAddress('agent:s/h%2Fx%2Fy')).toBeNull();
+  });
+
+  test('rejects ill-formed Unicode (unpaired surrogates) in any field', () => {
+    expect(parseAddress('session:\uD800')).toBeNull();
+    expect(parseAddress('session:%ED%A0%80')).toBeNull();
+    expect(parseAddress('agent:s\uD800/h')).toBeNull();
+    expect(parseAddress('agent:s/\uDC00')).toBeNull();
+    expect(parseAddress('agent:s/h?task=%ED%A0%80')).toBeNull();
+    expect(parseAddress('agent:s/h?node=%ED%A0%80')).toBeNull();
   });
 
   test('returns null for invalid query syntax', () => {
@@ -214,6 +245,32 @@ describe('isValidAddress', () => {
   test('accepts values with reserved characters that are legal within a field', () => {
     expect(isValidAddress({ kind: 'session', sessionId: 'a?b&c=d' })).toBe(true);
     expect(isValidAddress({ kind: 'agent', spaceId: 'a/b', handle: 'h?x' })).toBe(true);
+  });
+
+  test('accepts well-formed multi-byte characters in any field', () => {
+    expect(isValidAddress({ kind: 'session', sessionId: '🎉sess' })).toBe(true);
+    expect(
+      isValidAddress({
+        kind: 'agent',
+        spaceId: 'späché',
+        handle: '@héllo',
+        taskId: 't🎉',
+        node: 'Coding ✓',
+      })
+    ).toBe(true);
+  });
+
+  test('rejects ill-formed strings (unpaired surrogates) in any field', () => {
+    expect(isValidAddress({ kind: 'session', sessionId: '\uD800' })).toBe(false);
+    expect(isValidAddress({ kind: 'agent', spaceId: 's\uD800', handle: 'h' })).toBe(false);
+    expect(isValidAddress({ kind: 'agent', spaceId: 's', handle: '\uDC00' })).toBe(false);
+    expect(isValidAddress({ kind: 'agent', spaceId: 's', handle: 'h', taskId: '\uD800' })).toBe(
+      false
+    );
+    expect(isValidAddress({ kind: 'agent', spaceId: 's', handle: 'h', node: '\uDC00' })).toBe(
+      false
+    );
+    expect(isValidAddress({ kind: 'session', sessionId: 'ok\uD800ok' })).toBe(false);
   });
 
   test('rejects empty sessionId', () => {
