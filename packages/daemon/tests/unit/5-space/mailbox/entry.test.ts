@@ -56,6 +56,17 @@ function withSparseContentArray(): Record<string, unknown> {
   return { type: 'user', message: { content: blocks }, parent_tool_use_id: null };
 }
 
+function withSubclassedContentArray(): Record<string, unknown> {
+  class SneakyArray extends Array {
+    toJSON(): unknown[] {
+      return [];
+    }
+  }
+  const blocks = new SneakyArray();
+  blocks.push({ type: 'text', text: 'hi' });
+  return { type: 'user', message: { content: blocks }, parent_tool_use_id: null };
+}
+
 function messageWith(content: unknown): MailboxMessage {
   return {
     type: 'user',
@@ -121,6 +132,11 @@ describe('validateMailboxMessage rejection', () => {
       'plain array of text blocks',
     ],
     ['sparse content array', withSparseContentArray(), 'plain array of text blocks'],
+    [
+      'subclass content array with inherited toJSON',
+      withSubclassedContentArray(),
+      'plain array of text blocks',
+    ],
     ['wrong type', { ...base, type: 'assistant' }, 'type must be "user"'],
     ['missing type', { message: base.message, parent_tool_use_id: null }, 'type must be "user"'],
     ['empty string content', { ...base, message: { content: '' } }, 'must not be empty'],

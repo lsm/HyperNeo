@@ -94,6 +94,7 @@ export function validateMailboxMessage(message: unknown): string | null {
     if (content.length === 0) return 'mailbox message content must not be empty';
     const contentKeys = Object.keys(content);
     if (
+      Object.getPrototypeOf(content) !== Array.prototype ||
       contentKeys.length !== content.length ||
       Object.getOwnPropertyNames(content).length !== contentKeys.length + 1 ||
       Object.getOwnPropertySymbols(content).length !== 0
