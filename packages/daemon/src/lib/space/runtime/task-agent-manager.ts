@@ -1853,7 +1853,7 @@ export class TaskAgentManager {
     const nodeRows = rows.filter((row) => row.targetKind === 'node_agent');
     if (nodeRows.length === 0) return [];
     const sessionsByAgent = new Map<string, string[]>();
-    for (const execution of this.config.nodeExecutionRepo.listByWorkflowRun?.(workflowRunId) ??
+    for (const execution of this.config.nodeExecutionRepo?.listByWorkflowRun?.(workflowRunId) ??
       []) {
       if (!execution.agentSessionId) continue;
       const sessions = sessionsByAgent.get(execution.agentName) ?? [];

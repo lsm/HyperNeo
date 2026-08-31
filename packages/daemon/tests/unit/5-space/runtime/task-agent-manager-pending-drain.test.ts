@@ -950,7 +950,11 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
       'registry-session',
       null,
     ]);
-    expect(registry.get.mock.calls.map((call: unknown[]) => call[0])).toEqual(['task-9', 'task-9']);
+    expect(registry.get.mock.calls.map((call: unknown[]) => call[0])).toEqual([
+      'task-9',
+      'task-9',
+      'task-9',
+    ]);
   });
 
   it('formats plain rows for the space-agent level and passes enveloped rows through', async () => {
