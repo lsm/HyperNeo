@@ -123,6 +123,7 @@ export function isValidAddress(addr: MailboxAddress): boolean {
 
   if (typeof spaceId !== 'string' || spaceId.length === 0) return false;
   if (typeof handle !== 'string' || handle.length === 0) return false;
+  if (handle.includes('/')) return false;
 
   if ('taskId' in addr) {
     const taskId = addr.taskId as string | undefined;

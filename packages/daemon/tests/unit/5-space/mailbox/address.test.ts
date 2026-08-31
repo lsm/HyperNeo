@@ -251,6 +251,13 @@ describe('round-trip identity', () => {
     expect(renderAddress(parsed!)).toBe(raw);
   });
 
+  test('round-trips percent-encoded handle', () => {
+    const raw = 'agent:sp/h%3F?task=t1';
+    const parsed = parseAddress(raw);
+    expect(parsed).not.toBeNull();
+    expect(renderAddress(parsed!)).toBe(raw);
+  });
+
   test('round-trips session with slash in id', () => {
     const raw = 'session:a/b/c';
     const parsed = parseAddress(raw);
@@ -320,6 +327,17 @@ describe('isValidAddress', () => {
     test('rejects agent fields on session', () => {
       expect(
         isValidAddress({ kind: 'session', sessionId: 's1', handle: 'h' } as MailboxAddress)
+      ).toBe(false);
+    });
+
+    test('rejects session field on agent', () => {
+      expect(
+        isValidAddress({
+          kind: 'agent',
+          spaceId: 'sp',
+          handle: 'h',
+          sessionId: 's1',
+        } as MailboxAddress)
       ).toBe(false);
     });
 
