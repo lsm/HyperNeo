@@ -29,6 +29,7 @@ export function enqueueMailboxEntry(
     queue: MAILBOX_LANE,
     payload,
     priority: entry.policy.priority,
+    maxRetries: Math.max(0, entry.policy.maxAttempts - 1),
     matchPayload: { id: entry.id },
     activeStatuses: ['pending', 'processing'],
   });

@@ -98,6 +98,8 @@ import {
   TASK_SCHEDULE_FIRE,
 } from './lib/job-queue-constants.ts';
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler.ts';
+import { createMailboxDeliveryHandler } from './lib/mailbox/delivery.ts';
+import { MAILBOX_LANE } from './lib/mailbox/enqueue.ts';
 import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter.ts';
 import { asMessageDeliveryPayload } from './lib/agent/message-delivery.ts';
 import { deliveryMetrics } from './lib/agent/message-delivery-metrics.ts';
@@ -937,6 +939,48 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     jobProcessor.register(
       MEMORY_CONSOLIDATION,
       createMemoryConsolidationHandler(db.agentMemory, jobQueue)
+    );
+    jobProcessor.register(
+      MAILBOX_LANE,
+      createMailboxDeliveryHandler({
+        jobQueue,
+        db: db.getDatabase(),
+        sdkMessageRepo: db.getSDKMessageRepo(),
+        getSession: async (sessionId: string) => {
+          const indexed = taskAgentManager?.getSubSession(sessionId);
+          if (indexed && sessionManager?.getCachedSession(sessionId) === indexed) {
+            const data = indexed.getSessionData();
+            if (data.status === 'ended') return null;
+            if (
+              isWorkflowSubSessionIdentity(sessionId) &&
+              !hasRuntimeNodeAgentServer(data.config)
+            ) {
+              return null;
+            }
+            return indexed;
+          }
+          const session = (await sessionManager?.getSessionAsync(sessionId)) ?? null;
+          if (session && session.getSessionData().status === 'ended') {
+            return null;
+          }
+          if (
+            session &&
+            isWorkflowSubSessionIdentity(sessionId) &&
+            !hasRuntimeNodeAgentServer(session.getSessionData().config)
+          ) {
+            return null;
+          }
+          return session;
+        },
+        isSessionArchived: (sessionId: string) =>
+          reactiveDb?.db.getSession(sessionId)?.status === 'archived',
+      }),
+      {
+        onDead: (job) => {
+          const entryId = typeof job.payload.id === 'string' ? job.payload.id : 'unknown';
+          logError(`mailbox: entry ${entryId} dead-lettered: ${job.error ?? 'unknown error'}`);
+        },
+      }
     );
 
     messageDeliveryProcessor.register(
