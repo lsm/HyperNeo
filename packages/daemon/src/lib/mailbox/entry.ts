@@ -228,7 +228,7 @@ function projectStoredAddress(value: unknown): MailboxAddress | null {
 export function parseMailboxEntry(
   raw: Record<string, unknown> | null | undefined
 ): MailboxEntry | null {
-  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
   const id = raw.id;
   if (typeof id !== 'string' || !isUlid(id)) return null;
   const to = projectStoredAddress(raw.to);

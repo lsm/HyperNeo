@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { renderAddress, type MailboxAddress } from '../../../../src/lib/mailbox/address';
+import { type MailboxAddress, renderAddress } from '../../../../src/lib/mailbox/address';
 import {
   createMailboxEntry,
   DEFAULT_MAILBOX_ENTRY_POLICY,
@@ -795,6 +795,11 @@ describe('parseMailboxEntry', () => {
     ])('returns null for %s instead of throwing', (_label, garbage) => {
       const raw = garbage as unknown as Record<string, unknown> | null | undefined;
       expect(() => parseMailboxEntry(raw)).not.toThrow();
+      expect(parseMailboxEntry(raw)).toBeNull();
+    });
+
+    test('returns null for a populated array carrying the entry fields as named properties', () => {
+      const raw = Object.assign(['stray'], sessionPayload) as unknown as Record<string, unknown>;
       expect(parseMailboxEntry(raw)).toBeNull();
     });
   });
