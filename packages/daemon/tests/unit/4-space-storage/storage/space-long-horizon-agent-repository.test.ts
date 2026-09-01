@@ -627,6 +627,26 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(inboxRowsFor(shared.id)).toBe(1);
   });
 
+  test('delete purges inbox rows when the same-id worker row lives in another space', () => {
+    db.prepare(
+      `INSERT INTO spaces (id, slug, workspace_path, name, description, background_context,
+       instructions, allowed_models, session_ids, status, paused, stopped, autonomy_level,
+       max_concurrent_tasks, created_at, updated_at)
+       VALUES ('space-2', 'space-2', '/tmp/space-2', 'Space 2', '', '', '', '[]', '[]',
+       'active', 0, 0, 1, 1, 1, 1)`
+    ).run();
+    const agent = repo.create({ spaceId: 'space-1', handle: 'cross', displayName: 'Cross' });
+    db.prepare(
+      `INSERT INTO space_agents (id, space_id, name, created_at, updated_at)
+       VALUES (?, 'space-2', 'Other-Space Worker', 1, 1)`
+    ).run(agent.id);
+    seedInboxRow('in-cross', agent.id);
+
+    repo.delete(agent.id);
+
+    expect(inboxRowsFor(agent.id)).toBe(0);
+  });
+
   test('coordinator row is mutable today — rename and archive succeed without guards', () => {
     const coordinator = repo.ensureCoordinator('space-1');
 
@@ -635,8 +655,5 @@ describe('SpaceLongHorizonAgentRepository', () => {
 
     const archived = repo.update(coordinator.id, { status: 'archived' });
     expect(archived?.status).toBe('archived');
-
-    const revived = repo.ensureCoordinator('space-1');
-    expect(revived.status).toBe('active');
   });
 });

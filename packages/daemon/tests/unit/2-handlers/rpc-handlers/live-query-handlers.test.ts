@@ -3045,6 +3045,15 @@ describe('NAMED_QUERY_REGISTRY', () => {
           nowIso,
           taskId
         );
+        db.prepare(
+          `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, task_id)
+           VALUES ('sdk-label-retry', ?, 'system', 'api_retry', ?, ?, 'consumed', NULL, ?)`
+        ).run(
+          agentSessionId,
+          JSON.stringify({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 3 }),
+          nowIso,
+          taskId
+        );
 
         const activityRow = queryAndMap(taskId).find((r) => r.sessionId === agentSessionId);
         expect(activityRow?.label).toBe('Fresh Label');
@@ -3079,8 +3088,13 @@ describe('NAMED_QUERY_REGISTRY', () => {
         );
         expect((byRunRow?.target as Record<string, unknown>)?.label).toBe('Fresh Label');
 
-        const milestoneRow = queryMilestones(taskId).find((r) => r.sourceId === agentSessionId);
-        expect(milestoneRow?.sourceLabel).toBe('Fresh Label');
+        const milestoneRows = queryMilestones(taskId).filter((r) => r.sourceId === agentSessionId);
+        expect(
+          milestoneRows.some((r) => r.sourceLabel === 'Fresh Label' && r.category === 'answer')
+        ).toBe(true);
+        expect(
+          milestoneRows.some((r) => r.sourceLabel === 'Fresh Label' && r.category === 'retry')
+        ).toBe(true);
       });
     });
 

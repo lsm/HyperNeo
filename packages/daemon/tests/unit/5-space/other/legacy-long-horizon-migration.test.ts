@@ -235,6 +235,27 @@ describe('legacy long-horizon migration — same-id overlay mapping', () => {
         updated_at INTEGER NOT NULL
       )
     `);
+    db.exec(`
+      CREATE TABLE space_goals (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    db.exec(`
+      CREATE TABLE evolution_scopes (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        objective TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
     return db;
   }
 
@@ -300,6 +321,7 @@ describe('legacy long-horizon migration — same-id overlay mapping', () => {
     });
     seedOverlayWorker(db, 'w-plain', 'space-a', {
       name: 'Planner',
+      handle: 'planner',
       systemPrompt: 'Sys prompt',
     });
     seedOverlayWorker(db, 'w-cross', 'space-a', { name: 'Scribe', handle: 'scribe' });
@@ -326,7 +348,7 @@ describe('legacy long-horizon migration — same-id overlay mapping', () => {
     );
     expect(repo.getById('w-plain')).toEqual(
       expect.objectContaining({
-        handle: 'Planner',
+        handle: 'planner',
         status: 'active',
         instructions: 'Sys prompt',
         toolPermissions: {},

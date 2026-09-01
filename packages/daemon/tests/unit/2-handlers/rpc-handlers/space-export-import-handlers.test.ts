@@ -2261,6 +2261,7 @@ describe('full export→import round-trip', () => {
       customPrompt: 'You write careful code.',
       tools: ['bash', 'read_file'],
       settingSources: ['project'],
+      modelPool: [{ model: 'kimi-for-coding', maxConcurrent: 2, weight: 1 }],
       createdAt: 1000,
       updatedAt: 2000,
     };
@@ -2293,6 +2294,7 @@ describe('full export→import round-trip', () => {
       thinkingLevel: 'think16k',
       systemPrompt: 'You write careful code.',
       tools: ['bash', 'read_file'],
+      modelPool: [{ model: 'kimi-for-coding', maxConcurrent: 2, weight: 1 }],
     });
     const validation = validateExportBundle(bundle);
     expect(validation.ok).toBe(true);
@@ -2313,6 +2315,7 @@ describe('full export→import round-trip', () => {
       customPrompt: 'You write careful code.',
       tools: ['bash', 'read_file'],
       settingSources: ['project'],
+      modelPool: [{ model: 'kimi-for-coding', maxConcurrent: 2, weight: 1 }],
     });
     const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
     expect(importedWf.nodes[0].agents![0].agentId).toBe(imported.id);
