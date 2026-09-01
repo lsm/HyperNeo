@@ -187,9 +187,19 @@ describe('resolveDaemonConfig', () => {
     expect(resolved.deliveryTiming?.operationLockAcquireTimeoutMs).toBe(7);
   });
 
-  it('clamps stored values to bounds and keeps valid zeros', () => {
+  it('falls back to defaults for non-positive values on positive-only keys', () => {
     const resolved = resolveDaemonConfig({
       deliveryPolicy: { messageDeliveryMaxRetries: 0 },
+      sdkAcp: { sdkStartInactivityTimeoutMs: -500 },
+      deliveryTiming: { interruptControlTimeoutMs: 0.9 },
+    });
+    expect(resolved.deliveryPolicy?.messageDeliveryMaxRetries).toBe(8);
+    expect(resolved.sdkAcp?.sdkStartInactivityTimeoutMs).toBe(600000);
+    expect(resolved.deliveryTiming?.interruptControlTimeoutMs).toBe(2000);
+  });
+
+  it('clamps stored values to bounds and keeps valid zeros', () => {
+    const resolved = resolveDaemonConfig({
       providersMisc: {
         providerMaxRetries: -3,
         spaceActionsRateLimitPerMinute: 0,
@@ -197,7 +207,6 @@ describe('resolveDaemonConfig', () => {
       },
       startup: { logRetainedFiles: 5000 },
     });
-    expect(resolved.deliveryPolicy?.messageDeliveryMaxRetries).toBe(1);
     expect(resolved.providersMisc?.providerMaxRetries).toBe(0);
     expect(resolved.providersMisc?.spaceActionsRateLimitPerMinute).toBe(0);
     expect(resolved.providersMisc?.providerRetryBaseDelayMs).toBe(0);
@@ -228,5 +237,11 @@ describe('resolveDaemonConfig', () => {
       flags: { workflowConnectors: 'nope' as unknown as boolean },
     });
     expect(invalid.flags?.workflowConnectors).toBe(true);
+    const legacyAliases = resolveDaemonConfig({
+      flags: { taskAgentPostApprovalRouting: 'off' as unknown as boolean },
+      startup: { sqlQueryObservability: 'no' as unknown as boolean },
+    });
+    expect(legacyAliases.flags?.taskAgentPostApprovalRouting).toBe(false);
+    expect(legacyAliases.startup?.sqlQueryObservability).toBe(false);
   });
 });

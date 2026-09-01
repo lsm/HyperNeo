@@ -181,6 +181,7 @@ function resolveIntValue(raw: unknown, entry: DaemonConfigKeyEntry): number {
   else return entry.default as number;
   if (!Number.isFinite(parsed)) return entry.default as number;
   let value = Math.trunc(parsed);
+  if (value <= 0 && (entry.min ?? 0) > 0) return entry.default as number;
   if (entry.min !== undefined && value < entry.min) value = entry.min;
   if (entry.max !== undefined && value > entry.max) value = entry.max;
   return value;
@@ -193,7 +194,7 @@ function resolveBooleanValue(raw: unknown, entry: DaemonConfigKeyEntry): boolean
   if (typeof raw === 'string') {
     const normalized = raw.trim().toLowerCase();
     if (normalized === '1' || normalized === 'true') return true;
-    if (normalized === '0' || normalized === 'false') return false;
+    if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
   }
   return entry.default as boolean;
 }
