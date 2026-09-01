@@ -5,6 +5,7 @@ import type {
 } from '../../../../src/lib/session-resolution/deps';
 import {
   activateStage,
+  awaitRoutingStage,
   awaitSessionStage,
   crashHandler,
   ensureWorkerSession,
@@ -124,6 +125,17 @@ describe('phaseStage', () => {
     expect(result.postApprovalArm).toBe(postApprovalStage);
     expect(result.activateArm).toBeUndefined();
     expect(calls).toEqual([`phase:${TASK_ID}`]);
+  });
+
+  test('a routing task arms only awaitRoutingStage and leaves spawning disarmed', () => {
+    const deps = buildDeps({ readWorkerTaskPhase: () => 'routing' });
+    const result = phaseStage(workerTarget(), deps);
+    expect(result.phase).toBe('routing');
+    expect(result.outcome).toBeUndefined();
+    expect(result.findArm).toBeUndefined();
+    expect(result.postApprovalArm).toBeUndefined();
+    expect(result.routingArm).toBe(awaitRoutingStage);
+    expect(result.activateArm).toBeUndefined();
   });
 
   test('a terminal task disarms every arm and writes the task_terminal outcome', () => {
@@ -331,6 +343,97 @@ describe('postApprovalStage', () => {
     const deps = buildDeps({ spawnPostApprovalWorker: async () => null });
     const outcome = await postApprovalStage(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'unresolved', reason: 'spawn_failed' });
+  });
+});
+
+describe('awaitRoutingStage', () => {
+  test('resolves the routed worker without waiting when the identity is already live', async () => {
+    const calls: string[] = [];
+    const deps = buildDeps({
+      getPostApprovalWorkerSession: () => {
+        calls.push('worker');
+        return { sessionId: 'pa-routed', agentName: AGENT_NAME };
+      },
+      rehydrateSubSession: async (sessionId) => {
+        calls.push(`rehydrate:${sessionId}`);
+        return { id: sessionId };
+      },
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return 'spawned';
+      },
+    });
+    const outcome = await awaitRoutingStage(workerTarget(), deps);
+    expect(outcome).toEqual({ kind: 'resolved', sessionId: 'pa-routed', created: false });
+    expect(calls).toEqual(['worker', 'rehydrate:pa-routed']);
+  });
+
+  test('waits for the router to record the identity and never spawns', async () => {
+    let polls = 0;
+    const calls: string[] = [];
+    const deps = buildDeps({
+      getPostApprovalWorkerSession: () => {
+        polls += 1;
+        return polls >= 3 ? { sessionId: 'pa-late', agentName: AGENT_NAME } : null;
+      },
+      rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return 'spawned';
+      },
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(awaitRoutingStage(workerTarget(), deps), 20);
+      expect(settled).toEqual({ kind: 'resolved', sessionId: 'pa-late', created: false });
+      expect(polls).toBe(3);
+      expect(calls).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('an identity for another agent stops the wait as a target mismatch', async () => {
+    const deps = buildDeps({
+      getPostApprovalWorkerSession: () => ({ sessionId: 'pa-other', agentName: 'reviewer' }),
+      spawnPostApprovalWorker: async () => 'spawned',
+    });
+    const outcome = await awaitRoutingStage(workerTarget(), deps);
+    expect(outcome).toEqual({ kind: 'unresolved', reason: 'post_approval_target_mismatch' });
+  });
+
+  test('an identity that never appears ends in post_approval_pending without spawning', async () => {
+    const calls: string[] = [];
+    const deps = buildDeps({
+      getPostApprovalWorkerSession: () => null,
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return 'spawned';
+      },
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(awaitRoutingStage(workerTarget(), deps), 40);
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'post_approval_pending' });
+      expect(calls).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a recorded identity whose session stays dead ends in post_approval_pending', async () => {
+    const deps = buildDeps({
+      getPostApprovalWorkerSession: () => ({ sessionId: 'pa-dead', agentName: AGENT_NAME }),
+      rehydrateSubSession: async () => null,
+      spawnPostApprovalWorker: async () => 'spawned',
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(awaitRoutingStage(workerTarget(), deps), 40);
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'post_approval_pending' });
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 
@@ -685,6 +788,38 @@ describe('ensureWorkerSession', () => {
     const outcome = await ensureWorkerSession(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: 'pa-routed', created: false });
     expect(calls).toEqual(['worker']);
+  });
+
+  test('resolution during the approval dispatch window waits for the routed worker instead of spawning', async () => {
+    let polls = 0;
+    const calls: string[] = [];
+    const deps = buildDeps({
+      readWorkerTaskPhase: () => {
+        calls.push('phase');
+        return 'routing';
+      },
+      getPostApprovalWorkerSession: () => {
+        polls += 1;
+        return polls >= 2 ? { sessionId: 'pa-recorded', agentName: AGENT_NAME } : null;
+      },
+      rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return 'spawned';
+      },
+      activateTaskAgent: async () => {
+        calls.push('activate');
+        return true;
+      },
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(ensureWorkerSession(workerTarget(), deps), 20);
+      expect(settled).toEqual({ kind: 'resolved', sessionId: 'pa-recorded', created: false });
+      expect(calls).toEqual(['phase']);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test('a retried post-approval run resolves the latest routed session and never probes a deterministic id', async () => {

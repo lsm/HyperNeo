@@ -34,6 +34,7 @@ export function phaseStage(
   outcome: EnsureSessionOutcome | undefined;
   findArm: typeof findStage | undefined;
   postApprovalArm: typeof postApprovalStage | undefined;
+  routingArm: typeof awaitRoutingStage | undefined;
   activateArm: typeof activateStage | undefined;
 } {
   const phase = deps.readWorkerTaskPhase(target.taskId);
@@ -43,6 +44,17 @@ export function phaseStage(
       outcome: { kind: 'unresolved', reason: 'task_terminal' },
       findArm: undefined,
       postApprovalArm: undefined,
+      routingArm: undefined,
+      activateArm: undefined,
+    };
+  }
+  if (phase === 'routing') {
+    return {
+      phase,
+      outcome: undefined,
+      findArm: undefined,
+      postApprovalArm: undefined,
+      routingArm: awaitRoutingStage,
       activateArm: undefined,
     };
   }
@@ -52,6 +64,7 @@ export function phaseStage(
       outcome: undefined,
       findArm: undefined,
       postApprovalArm: postApprovalStage,
+      routingArm: undefined,
       activateArm: undefined,
     };
   }
@@ -60,6 +73,7 @@ export function phaseStage(
     outcome: undefined,
     findArm: findStage,
     postApprovalArm: undefined,
+    routingArm: undefined,
     activateArm: activateStage,
   };
 }
@@ -87,6 +101,39 @@ export async function postApprovalStage(
     return { kind: 'unresolved', reason: 'spawn_failed' };
   }
   return { kind: 'resolved', sessionId: spawnedSessionId, created: true };
+}
+
+export async function awaitRoutingStage(
+  target: SessionTargetWorker,
+  deps: SessionResolutionDeps
+): Promise<EnsureSessionOutcome> {
+  const cap = delay(WORKER_SESSION_WAIT_CAP_MS);
+  try {
+    for (;;) {
+      if (cap.fired) {
+        return { kind: 'unresolved', reason: 'post_approval_pending' };
+      }
+      const worker = deps.getPostApprovalWorkerSession(target.taskId);
+      if (worker !== null) {
+        const nodeOk = !target.workflowNodeId || worker.nodeId === target.workflowNodeId;
+        if (!nodeOk || worker.agentName !== target.agentName) {
+          return { kind: 'unresolved', reason: 'post_approval_target_mismatch' };
+        }
+        const live = await Promise.race([deps.rehydrateSubSession(worker.sessionId), cap.promise]);
+        if (cap.fired) {
+          return { kind: 'unresolved', reason: 'post_approval_pending' };
+        }
+        if (live !== null) {
+          return { kind: 'resolved', sessionId: worker.sessionId, created: false };
+        }
+      }
+      const tick = delay(WORKER_SESSION_POLL_INTERVAL_MS);
+      await Promise.race([tick.promise, cap.promise]);
+      tick.cancel();
+    }
+  } finally {
+    cap.cancel();
+  }
 }
 
 export async function activateStage(
@@ -165,12 +212,14 @@ const runEnsureWorkerSession = (
   .pipe(
     phaseStage,
     ['target', 'deps'],
-    ['phase', 'outcome', 'findArm', 'postApprovalArm', 'activateArm']
+    ['phase', 'outcome', 'findArm', 'postApprovalArm', 'routingArm', 'activateArm']
   )
   .pipe('!settled', 'outcome')
   .pipe('?findArm', ['target', 'deps'], ['foundSessionId', 'outcome'])
   .pipe('!settled', 'outcome')
   .pipe('?postApprovalArm', ['target', 'deps'], 'outcome')
+  .pipe('!settled', 'outcome')
+  .pipe('?routingArm', ['target', 'deps'], 'outcome')
   .pipe('!settled', 'outcome')
   .pipe('?activateArm', ['target', 'deps'], ['activated', 'outcome'])
   .pipe('!settled', 'outcome')

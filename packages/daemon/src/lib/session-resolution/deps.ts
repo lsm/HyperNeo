@@ -5,7 +5,7 @@ export interface WorkerExecutionSession {
   status: string;
 }
 
-export type WorkerTaskPhase = 'run_active' | 'post_approval' | 'terminal';
+export type WorkerTaskPhase = 'run_active' | 'routing' | 'post_approval' | 'terminal';
 
 export interface SessionResolutionDeps {
   getSession(sessionId: string): Promise<unknown | null>;
