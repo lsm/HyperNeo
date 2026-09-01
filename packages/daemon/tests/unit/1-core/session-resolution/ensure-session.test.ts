@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type {
   SessionResolutionDeps,
   WorkerExecutionSession,
+  WorkerTaskPhase,
 } from '../../../../src/lib/session-resolution/deps';
 import {
   crashHandler,
@@ -36,6 +37,7 @@ function makeDeps(
     getCoordinator?: () => { id: string } | null;
     ensureLongTermAgent?: (spaceId: string, agentId: string) => unknown;
     listWorkerExecutions?: () => WorkerExecutionSession[];
+    readWorkerTaskPhase?: () => WorkerTaskPhase;
     getTaskSpaceId?: () => string | null;
     activateTaskAgent?: () => boolean;
     spawnPostApprovalWorker?: (
@@ -43,6 +45,11 @@ function makeDeps(
       agentName: string,
       workflowNodeId?: string
     ) => string | null;
+    getPostApprovalWorkerSession?: () => {
+      sessionId: string;
+      agentName: string;
+      nodeId?: string | null;
+    } | null;
   } = {}
 ): { deps: SessionResolutionDeps; log: DepsLog } {
   const log: DepsLog = {
@@ -76,6 +83,8 @@ function makeDeps(
       log.listWorkerExecutions += 1;
       return handlers.listWorkerExecutions ? handlers.listWorkerExecutions() : [];
     },
+    readWorkerTaskPhase: () =>
+      handlers.readWorkerTaskPhase ? handlers.readWorkerTaskPhase() : 'run_active',
     getTaskSpaceId: async () => {
       log.getTaskSpaceId += 1;
       return handlers.getTaskSpaceId ? handlers.getTaskSpaceId() : null;
@@ -90,6 +99,8 @@ function makeDeps(
         ? handlers.spawnPostApprovalWorker(taskId, agentName, workflowNodeId)
         : null;
     },
+    getPostApprovalWorkerSession: () =>
+      handlers.getPostApprovalWorkerSession ? handlers.getPostApprovalWorkerSession() : null,
   };
   return { deps, log };
 }
@@ -247,10 +258,10 @@ describe('ensureStage', () => {
     expect(log.spawnPostApprovalWorker).toEqual([]);
   });
 
-  test('worker kind delegates to the post-approval arm on the done phase', async () => {
+  test('worker kind delegates to the post-approval arm on the post-approval phase', async () => {
     const { deps, log } = makeDeps({
-      listWorkerExecutions: () => [row(null, 'cancelled')],
-      getTaskSpaceId: () => SPACE_ID,
+      readWorkerTaskPhase: () => 'post_approval',
+      getPostApprovalWorkerSession: () => null,
       spawnPostApprovalWorker: () => 'spawned-1',
     });
     expect(await ensureStage(workerTarget(), deps)).toEqual({
@@ -258,8 +269,8 @@ describe('ensureStage', () => {
       sessionId: 'spawned-1',
       created: true,
     });
-    expect(log.listWorkerExecutions).toBe(2);
-    expect(log.getTaskSpaceId).toBe(1);
+    expect(log.listWorkerExecutions).toBe(0);
+    expect(log.getTaskSpaceId).toBe(0);
     expect(log.spawnPostApprovalWorker).toEqual([[TASK_ID, AGENT_NAME, undefined]]);
   });
 });

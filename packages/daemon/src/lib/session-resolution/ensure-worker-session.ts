@@ -1,12 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import {
-  buildPostApprovalSessionId,
-  sanitizeAgentNameForId,
-} from '../session/sub-session-identity.ts';
-import type { SessionResolutionDeps, WorkerExecutionSession } from './deps.ts';
+import type { SessionResolutionDeps, WorkerExecutionSession, WorkerTaskPhase } from './deps.ts';
 import type { EnsureSessionOutcome, SessionTargetWorker } from './target.ts';
-
-export type WorkerSessionPhase = 'run_active' | 'done';
 
 export const WORKER_SESSION_POLL_INTERVAL_MS = 1_000;
 export const WORKER_SESSION_WAIT_CAP_MS = 30_000;
@@ -16,10 +10,6 @@ export function newestWorkerSessionId(rows: WorkerExecutionSession[]): string | 
     (row) => row.sessionId !== null && row.status !== 'cancelled' && row.status !== 'pending'
   );
   return live.at(-1)?.sessionId ?? null;
-}
-
-export function workerSessionPhase(rows: WorkerExecutionSession[]): WorkerSessionPhase {
-  return rows.some((row) => row.status !== 'cancelled') ? 'run_active' : 'done';
 }
 
 export async function findStage(
@@ -33,56 +23,247 @@ export async function findStage(
   if ((await deps.rehydrateSubSession(sessionId)) === null) {
     return { foundSessionId: undefined, outcome: undefined };
   }
+  const phase = deps.readWorkerTaskPhase(target.taskId);
+  if (phase !== 'run_active' && phase !== 'done') {
+    return { foundSessionId: undefined, outcome: undefined };
+  }
   return { foundSessionId: sessionId, outcome: { kind: 'resolved', sessionId, created: false } };
+}
+
+export async function findTerminalStage(
+  target: SessionTargetWorker,
+  deps: SessionResolutionDeps
+): Promise<{ foundSessionId: string | undefined; outcome: EnsureSessionOutcome | undefined }> {
+  const found = await findStage(target, deps);
+  if (found.outcome !== undefined) {
+    return found;
+  }
+  if (deps.readWorkerTaskPhase(target.taskId) !== 'done') {
+    return { foundSessionId: undefined, outcome: await ensureWorkerSession(target, deps) };
+  }
+  return {
+    foundSessionId: undefined,
+    outcome: { kind: 'unresolved', reason: 'task_terminal' },
+  };
 }
 
 export function phaseStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): {
-  phase: WorkerSessionPhase;
+  phase: WorkerTaskPhase;
+  outcome: EnsureSessionOutcome | undefined;
+  findArm: typeof findStage | undefined;
   postApprovalArm: typeof postApprovalStage | undefined;
+  postApprovalDoneArm: typeof postApprovalDoneStage | undefined;
+  routingArm: typeof awaitRoutingStage | undefined;
   activateArm: typeof activateStage | undefined;
 } {
-  if (workerSessionPhase(deps.listWorkerExecutions(target)) === 'done') {
-    return { phase: 'done', postApprovalArm: postApprovalStage, activateArm: undefined };
+  const phase = deps.readWorkerTaskPhase(target.taskId);
+  if (phase === 'terminal') {
+    return {
+      phase,
+      outcome: { kind: 'unresolved', reason: 'task_terminal' },
+      findArm: undefined,
+      postApprovalArm: undefined,
+      postApprovalDoneArm: undefined,
+      routingArm: undefined,
+      activateArm: undefined,
+    };
   }
-  return { phase: 'run_active', postApprovalArm: undefined, activateArm: activateStage };
+  if (phase === 'routing') {
+    return {
+      phase,
+      outcome: undefined,
+      findArm: undefined,
+      postApprovalArm: undefined,
+      postApprovalDoneArm: undefined,
+      routingArm: awaitRoutingStage,
+      activateArm: undefined,
+    };
+  }
+  if (phase === 'post_approval') {
+    return {
+      phase,
+      outcome: undefined,
+      findArm: undefined,
+      postApprovalArm: postApprovalStage,
+      postApprovalDoneArm: undefined,
+      routingArm: undefined,
+      activateArm: undefined,
+    };
+  }
+  if (phase === 'post_approval_done') {
+    return {
+      phase,
+      outcome: undefined,
+      findArm: undefined,
+      postApprovalArm: undefined,
+      postApprovalDoneArm: postApprovalDoneStage,
+      routingArm: undefined,
+      activateArm: undefined,
+    };
+  }
+  if (phase === 'done') {
+    return {
+      phase,
+      outcome: undefined,
+      findArm: findTerminalStage,
+      postApprovalArm: undefined,
+      postApprovalDoneArm: undefined,
+      routingArm: undefined,
+      activateArm: undefined,
+    };
+  }
+  return {
+    phase,
+    outcome: undefined,
+    findArm: findStage,
+    postApprovalArm: undefined,
+    postApprovalDoneArm: undefined,
+    routingArm: undefined,
+    activateArm: activateStage,
+  };
 }
 
 export async function postApprovalStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
-  const spaceId = await deps.getTaskSpaceId(target.taskId);
-  if (spaceId === null) {
-    return { kind: 'unresolved', reason: 'task_not_found' };
+  const cap = delay(WORKER_SESSION_WAIT_CAP_MS);
+  try {
+    const worker = deps.getPostApprovalWorkerSession(target.taskId);
+    if (worker !== null) {
+      const nodeOk = !target.workflowNodeId || worker.nodeId === target.workflowNodeId;
+      if (!nodeOk || worker.agentName !== target.agentName) {
+        return { kind: 'unresolved', reason: 'post_approval_target_mismatch' };
+      }
+      const live = await Promise.race([deps.rehydrateSubSession(worker.sessionId), cap.promise]);
+      if (cap.fired) {
+        return deps.readWorkerTaskPhase(target.taskId) === 'post_approval'
+          ? { kind: 'unresolved', reason: 'restore_timeout' }
+          : ensureWorkerSession(target, deps);
+      }
+      if (live !== null && deps.readWorkerTaskPhase(target.taskId) === 'post_approval') {
+        const stillRouted = deps.getPostApprovalWorkerSession(target.taskId);
+        if (stillRouted === null || stillRouted.sessionId !== worker.sessionId) {
+          return ensureWorkerSession(target, deps);
+        }
+        return { kind: 'resolved', sessionId: worker.sessionId, created: false };
+      }
+      const afterRestore = deps.getPostApprovalWorkerSession(target.taskId);
+      if (afterRestore === null || afterRestore.sessionId !== worker.sessionId) {
+        return ensureWorkerSession(target, deps);
+      }
+    }
+    if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval') {
+      return ensureWorkerSession(target, deps);
+    }
+    const spawnedSessionId = await deps.spawnPostApprovalWorker(
+      target.taskId,
+      target.agentName,
+      target.workflowNodeId ?? worker?.nodeId ?? undefined
+    );
+    if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval') {
+      return ensureWorkerSession(target, deps);
+    }
+    if (spawnedSessionId === null) {
+      return { kind: 'unresolved', reason: 'spawn_failed' };
+    }
+    const baselineId = worker?.sessionId ?? null;
+    const recorded = deps.getPostApprovalWorkerSession(target.taskId);
+    if (
+      recorded !== null &&
+      recorded.sessionId !== baselineId &&
+      recorded.sessionId !== spawnedSessionId
+    ) {
+      return ensureWorkerSession(target, deps);
+    }
+    return { kind: 'resolved', sessionId: spawnedSessionId, created: true };
+  } finally {
+    cap.cancel();
   }
-  const postApprovalSessionId = buildPostApprovalSessionId(
-    spaceId,
-    target.taskId,
-    sanitizeAgentNameForId(target.agentName)
-  );
-  const existing = await deps.getSession(postApprovalSessionId);
-  if (existing !== null) {
-    return { kind: 'resolved', sessionId: postApprovalSessionId, created: false };
+}
+
+export async function postApprovalDoneStage(
+  target: SessionTargetWorker,
+  deps: SessionResolutionDeps
+): Promise<EnsureSessionOutcome> {
+  const cap = delay(WORKER_SESSION_WAIT_CAP_MS);
+  try {
+    const worker = deps.getPostApprovalWorkerSession(target.taskId);
+    if (worker !== null) {
+      const nodeOk = !target.workflowNodeId || worker.nodeId === target.workflowNodeId;
+      if (!nodeOk || worker.agentName !== target.agentName) {
+        return { kind: 'unresolved', reason: 'post_approval_target_mismatch' };
+      }
+      const live = await Promise.race([deps.rehydrateSubSession(worker.sessionId), cap.promise]);
+      if (cap.fired) {
+        return deps.readWorkerTaskPhase(target.taskId) === 'post_approval_done'
+          ? { kind: 'unresolved', reason: 'restore_timeout' }
+          : ensureWorkerSession(target, deps);
+      }
+      if (live !== null && deps.readWorkerTaskPhase(target.taskId) === 'post_approval_done') {
+        const stillRouted = deps.getPostApprovalWorkerSession(target.taskId);
+        if (stillRouted === null || stillRouted.sessionId !== worker.sessionId) {
+          return ensureWorkerSession(target, deps);
+        }
+        return { kind: 'resolved', sessionId: worker.sessionId, created: false };
+      }
+    }
+    if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval_done') {
+      return ensureWorkerSession(target, deps);
+    }
+    return { kind: 'unresolved', reason: 'task_terminal' };
+  } finally {
+    cap.cancel();
   }
-  const spawnedSessionId = await deps.spawnPostApprovalWorker(
-    target.taskId,
-    target.agentName,
-    target.workflowNodeId
-  );
-  if (spawnedSessionId === null) {
-    return { kind: 'unresolved', reason: 'spawn_failed' };
+}
+
+export async function awaitRoutingStage(
+  target: SessionTargetWorker,
+  deps: SessionResolutionDeps
+): Promise<EnsureSessionOutcome> {
+  const cap = delay(WORKER_SESSION_WAIT_CAP_MS);
+  try {
+    for (;;) {
+      if (deps.readWorkerTaskPhase(target.taskId) !== 'routing') {
+        return ensureWorkerSession(target, deps);
+      }
+      if (cap.fired) {
+        return { kind: 'unresolved', reason: 'post_approval_pending' };
+      }
+      const worker = deps.getPostApprovalWorkerSession(target.taskId);
+      if (worker !== null) {
+        const nodeOk = !target.workflowNodeId || worker.nodeId === target.workflowNodeId;
+        if (!nodeOk || worker.agentName !== target.agentName) {
+          return { kind: 'unresolved', reason: 'post_approval_target_mismatch' };
+        }
+        const live = await Promise.race([deps.rehydrateSubSession(worker.sessionId), cap.promise]);
+        if (!cap.fired && live !== null && deps.readWorkerTaskPhase(target.taskId) === 'routing') {
+          return { kind: 'resolved', sessionId: worker.sessionId, created: false };
+        }
+      }
+      const tick = delay(WORKER_SESSION_POLL_INTERVAL_MS);
+      await Promise.race([tick.promise, cap.promise]);
+      tick.cancel();
+    }
+  } finally {
+    cap.cancel();
   }
-  return { kind: 'resolved', sessionId: spawnedSessionId, created: true };
 }
 
 export async function activateStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): Promise<{ activated: boolean; outcome: EnsureSessionOutcome | undefined }> {
+  if (deps.readWorkerTaskPhase(target.taskId) !== 'run_active') {
+    return { activated: false, outcome: await ensureWorkerSession(target, deps) };
+  }
   const activated = await deps.activateTaskAgent(target);
+  if (deps.readWorkerTaskPhase(target.taskId) !== 'run_active') {
+    return { activated, outcome: await ensureWorkerSession(target, deps) };
+  }
   if (!activated) {
     return { activated: false, outcome: { kind: 'unresolved', reason: 'activate_failed' } };
   }
@@ -114,16 +295,19 @@ export async function awaitSessionStage(
   const cap = delay(WORKER_SESSION_WAIT_CAP_MS);
   try {
     for (;;) {
+      if (deps.readWorkerTaskPhase(target.taskId) !== 'run_active') {
+        return ensureWorkerSession(target, deps);
+      }
       if (cap.fired) {
         return { kind: 'unresolved', reason: 'activation_timeout' };
       }
       const sessionId = newestWorkerSessionId(deps.listWorkerExecutions(target));
       if (sessionId !== null) {
         const live = await Promise.race([deps.rehydrateSubSession(sessionId), cap.promise]);
-        if (cap.fired) {
-          return { kind: 'unresolved', reason: 'activation_timeout' };
-        }
-        if (live !== null) {
+        if (!cap.fired && live !== null) {
+          if (deps.readWorkerTaskPhase(target.taskId) !== 'run_active') {
+            return ensureWorkerSession(target, deps);
+          }
           return { kind: 'resolved', sessionId, created: true };
         }
       }
@@ -151,10 +335,27 @@ const runEnsureWorkerSession = (
   })('ensure-worker-session') as PipelineAPI
 )
   .input(['target', 'deps'])
-  .pipe(findStage, ['target', 'deps'], ['foundSessionId', 'outcome'])
+  .pipe(
+    phaseStage,
+    ['target', 'deps'],
+    [
+      'phase',
+      'outcome',
+      'findArm',
+      'postApprovalArm',
+      'postApprovalDoneArm',
+      'routingArm',
+      'activateArm',
+    ]
+  )
   .pipe('!settled', 'outcome')
-  .pipe(phaseStage, ['target', 'deps'], ['phase', 'postApprovalArm', 'activateArm'])
+  .pipe('?findArm', ['target', 'deps'], ['foundSessionId', 'outcome'])
+  .pipe('!settled', 'outcome')
   .pipe('?postApprovalArm', ['target', 'deps'], 'outcome')
+  .pipe('!settled', 'outcome')
+  .pipe('?postApprovalDoneArm', ['target', 'deps'], 'outcome')
+  .pipe('!settled', 'outcome')
+  .pipe('?routingArm', ['target', 'deps'], 'outcome')
   .pipe('!settled', 'outcome')
   .pipe('?activateArm', ['target', 'deps'], ['activated', 'outcome'])
   .pipe('!settled', 'outcome')
