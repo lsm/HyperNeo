@@ -5,13 +5,15 @@ export interface WorkerExecutionSession {
   status: string;
 }
 
+export type WorkerTaskPhase = 'run_active' | 'post_approval' | 'terminal';
+
 export interface SessionResolutionDeps {
   getSession(sessionId: string): Promise<unknown | null>;
   rehydrateSubSession(sessionId: string): Promise<unknown | null>;
   getCoordinator(spaceId: string): Promise<{ id: string } | null>;
   ensureLongTermAgent(spaceId: string, agentId: string): Promise<unknown | null>;
   listWorkerExecutions(target: SessionTargetWorker): WorkerExecutionSession[];
-  isTaskDoneOrApproved(taskId: string): boolean;
+  readWorkerTaskPhase(taskId: string): WorkerTaskPhase;
   getTaskSpaceId(taskId: string): Promise<string | null>;
   activateTaskAgent(target: SessionTargetWorker): Promise<boolean>;
   spawnPostApprovalWorker(

@@ -1,12 +1,6 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
-import {
-  buildPostApprovalSessionId,
-  sanitizeAgentNameForId,
-} from '../session/sub-session-identity.ts';
-import type { SessionResolutionDeps, WorkerExecutionSession } from './deps.ts';
+import type { SessionResolutionDeps, WorkerExecutionSession, WorkerTaskPhase } from './deps.ts';
 import type { EnsureSessionOutcome, SessionTargetWorker } from './target.ts';
-
-export type WorkerSessionPhase = 'run_active' | 'done';
 
 export const WORKER_SESSION_POLL_INTERVAL_MS = 1_000;
 export const WORKER_SESSION_WAIT_CAP_MS = 30_000;
@@ -16,10 +10,6 @@ export function newestWorkerSessionId(rows: WorkerExecutionSession[]): string | 
     (row) => row.sessionId !== null && row.status !== 'cancelled' && row.status !== 'pending'
   );
   return live.at(-1)?.sessionId ?? null;
-}
-
-export function workerSessionPhase(taskDone: boolean): WorkerSessionPhase {
-  return taskDone ? 'done' : 'run_active';
 }
 
 export async function findStage(
@@ -40,21 +30,34 @@ export function phaseStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): {
-  phase: WorkerSessionPhase;
+  phase: WorkerTaskPhase;
+  outcome: EnsureSessionOutcome | undefined;
   findArm: typeof findStage | undefined;
   postApprovalArm: typeof postApprovalStage | undefined;
   activateArm: typeof activateStage | undefined;
 } {
-  if (workerSessionPhase(deps.isTaskDoneOrApproved(target.taskId)) === 'done') {
+  const phase = deps.readWorkerTaskPhase(target.taskId);
+  if (phase === 'terminal') {
     return {
-      phase: 'done',
+      phase,
+      outcome: { kind: 'unresolved', reason: 'task_terminal' },
+      findArm: undefined,
+      postApprovalArm: undefined,
+      activateArm: undefined,
+    };
+  }
+  if (phase === 'post_approval') {
+    return {
+      phase,
+      outcome: undefined,
       findArm: undefined,
       postApprovalArm: postApprovalStage,
       activateArm: undefined,
     };
   }
   return {
-    phase: 'run_active',
+    phase,
+    outcome: undefined,
     findArm: findStage,
     postApprovalArm: undefined,
     activateArm: activateStage,
@@ -66,23 +69,13 @@ export async function postApprovalStage(
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
   const worker = deps.getPostApprovalWorkerSession(target.taskId);
-  const nodeOk = !target.workflowNodeId || worker?.nodeId === target.workflowNodeId;
-  if (worker && nodeOk && worker.agentName === target.agentName) {
-    return { kind: 'resolved', sessionId: worker.sessionId, created: false };
-  }
-  const spaceId = await deps.getTaskSpaceId(target.taskId);
-  if (spaceId === null) {
-    return { kind: 'unresolved', reason: 'task_not_found' };
-  }
-  if (target.workflowNodeId === undefined) {
-    const postApprovalSessionId = buildPostApprovalSessionId(
-      spaceId,
-      target.taskId,
-      sanitizeAgentNameForId(target.agentName)
-    );
-    const existing = await deps.getSession(postApprovalSessionId);
-    if (existing !== null) {
-      return { kind: 'resolved', sessionId: postApprovalSessionId, created: false };
+  if (worker !== null) {
+    const nodeOk = !target.workflowNodeId || worker.nodeId === target.workflowNodeId;
+    if (!nodeOk || worker.agentName !== target.agentName) {
+      return { kind: 'unresolved', reason: 'post_approval_target_mismatch' };
+    }
+    if ((await deps.rehydrateSubSession(worker.sessionId)) !== null) {
+      return { kind: 'resolved', sessionId: worker.sessionId, created: false };
     }
   }
   const spawnedSessionId = await deps.spawnPostApprovalWorker(
@@ -169,7 +162,12 @@ const runEnsureWorkerSession = (
   })('ensure-worker-session') as PipelineAPI
 )
   .input(['target', 'deps'])
-  .pipe(phaseStage, ['target', 'deps'], ['phase', 'findArm', 'postApprovalArm', 'activateArm'])
+  .pipe(
+    phaseStage,
+    ['target', 'deps'],
+    ['phase', 'outcome', 'findArm', 'postApprovalArm', 'activateArm']
+  )
+  .pipe('!settled', 'outcome')
   .pipe('?findArm', ['target', 'deps'], ['foundSessionId', 'outcome'])
   .pipe('!settled', 'outcome')
   .pipe('?postApprovalArm', ['target', 'deps'], 'outcome')

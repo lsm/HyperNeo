@@ -42,7 +42,7 @@ function makeDeps(
       return null;
     },
     listWorkerExecutions: () => [],
-    isTaskDoneOrApproved: () => false,
+    readWorkerTaskPhase: () => 'run_active',
     getTaskSpaceId: async () => null,
     activateTaskAgent: async () => {
       log.activateTaskAgent += 1;
