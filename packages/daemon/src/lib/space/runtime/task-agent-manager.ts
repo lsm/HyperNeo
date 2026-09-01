@@ -21,14 +21,12 @@ import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
 import { AgentSession, ClearConversationCancelledError } from '../../../lib/agent/agent-session.ts';
-import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
 import {
   acquireContextClearBoundary,
   type ContextClearBoundaryOwner,
   withSessionOperationLock,
 } from '../../../lib/agent/message-delivery.ts';
-
-import { validateImageSizes } from '../../session/message-persistence.ts';
+import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
 import type { Database } from '../../../storage/database.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
@@ -43,6 +41,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
+import { validateImageSizes } from '../../session/message-persistence.ts';
 import { CleanupState, type SessionManager } from '../../session-manager.ts';
 import type { SkillsManager } from '../../skills-manager.ts';
 import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
@@ -82,8 +81,15 @@ import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-m
 import {
   buildExecutionBaseSessionId,
   buildPostApprovalSessionId,
+  sanitizeAgentNameForId,
   taskIdFromSubSessionIdentity,
 } from '../../session/sub-session-identity.ts';
+import { isSpaceActionsDispatcherEnabled } from '../actions/dispatcher-flag.ts';
+import {
+  buildWorkerDispatcherContractTools,
+  createSpaceActionsMcpServer,
+  type SpaceActionsMcpServer,
+} from '../actions/space-actions-server.ts';
 import { extractReplyToSessionId } from '../agent-message-envelope.ts';
 import {
   buildCustomAgentTaskMessage,
@@ -99,12 +105,6 @@ import {
   createPrMergedGate,
 } from '../tools/end-node-handlers.ts';
 import { createNodeAgentMcpServer, type NodeAgentToolsConfig } from '../tools/node-agent-tools.ts';
-import { isSpaceActionsDispatcherEnabled } from '../actions/dispatcher-flag.ts';
-import {
-  buildWorkerDispatcherContractTools,
-  createSpaceActionsMcpServer,
-  type SpaceActionsMcpServer,
-} from '../actions/space-actions-server.ts';
 import { jsonResult } from '../tools/tool-result.ts';
 import { builtInWorkflowRequiresPrMerge } from '../workflows/built-in-workflows.ts';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
@@ -1119,16 +1119,6 @@ export class TaskAgentManager {
         activateModelPoolReservation(this.modelPoolAssignments, { id: executionId }, sessionId);
       },
     };
-  }
-
-  private sanitizeAgentNameForId(name: string): string {
-    return (
-      name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 40) || 'agent'
-    );
   }
 
   async createSubSession(
@@ -5395,7 +5385,7 @@ export class TaskAgentManager {
       const baseSessionId = buildPostApprovalSessionId(
         spaceId,
         taskId,
-        this.sanitizeAgentNameForId(slot.name)
+        sanitizeAgentNameForId(slot.name)
       );
       const sessionId = this.resolveSessionId(baseSessionId);
 
