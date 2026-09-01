@@ -1,21 +1,26 @@
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
-import { MessageHub } from '@hyperneo/shared';
-import type { ModelInfo } from '@hyperneo/shared';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { McpServerConfig, MessageHub, ModelInfo } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
-import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
-import { setModelsCache } from '../../../../src/lib/model-service.js';
-import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
-import { resetProviderFactory } from '../../../../src/lib/providers/factory';
-import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
+import { setModelsCache } from '../../../../src/lib/model-service.js';
+import { resetProviderFactory } from '../../../../src/lib/providers/factory';
+import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
+import type { SessionManager } from '../../../../src/lib/session-manager';
+import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
+import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
+import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
+import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 function createMockInternalEventBus(): InternalEventBus<DaemonInternalEventMap> {
   return {
@@ -2380,5 +2385,156 @@ describe('Session RPC Handlers — session.query.trigger', () => {
 
     expect(result).toEqual({ success: true });
     expect(replayAllPendingMessages).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Session RPC Handlers — session.create universal-read dispatcher injection', () => {
+  const FLAG = 'HYPERNEO_SPACE_ACTIONS_DISPATCHER';
+  const previousFlag = process.env[FLAG];
+  let messageHubData: ReturnType<typeof createMockMessageHub>;
+
+  beforeEach(() => {
+    process.env[FLAG] = '1';
+  });
+
+  afterEach(() => {
+    if (previousFlag === undefined) delete process.env[FLAG];
+    else process.env[FLAG] = previousFlag;
+  });
+
+  function makeSessionFixture(sessionData: Record<string, unknown>) {
+    const session = {
+      id: 'sess-create-1',
+      ...sessionData,
+      config: { mcpServers: {} as Record<string, McpServerConfig> },
+    };
+    const mergeRuntimeMcpServers = mock((additional: Record<string, McpServerConfig>) => {
+      const config = session.config as { mcpServers?: Record<string, McpServerConfig> };
+      session.config = {
+        ...config,
+        mcpServers: { ...(config.mcpServers ?? {}), ...additional },
+      };
+    });
+    const agentSession = {
+      getSessionData: () => session,
+      mergeRuntimeMcpServers,
+    };
+    const sessionManager = {
+      createSession: mock(async () => session.id),
+      getSession: mock(() => agentSession),
+    } as unknown as SessionManager;
+    return { sessionManager, session, mergeRuntimeMcpServers };
+  }
+
+  async function setupWith(
+    sessionManager: SessionManager,
+    spaceRuntimeService: unknown
+  ): Promise<void> {
+    messageHubData = createMockMessageHub();
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(
+      messageHubData.hub,
+      sessionManager,
+      createMockInternalEventBus(),
+      {} as SpaceManager,
+      spaceRuntimeService as SpaceRuntimeService
+    );
+  }
+
+  function buildRuntimeService(): SpaceRuntimeService {
+    return new SpaceRuntimeService({
+      db: {} as Database,
+      spaceManager: {
+        getSpace: () => Promise.resolve(null),
+        listSpaces: () => Promise.resolve([]),
+      } as unknown as SpaceManager,
+      spaceAgentManager: {} as SpaceAgentManager,
+      spaceWorkflowManager: {} as SpaceWorkflowManager,
+      workflowRunRepo: {} as SpaceWorkflowRunRepository,
+      taskRepo: {} as SpaceTaskRepository,
+      nodeExecutionRepo: {
+        getByAgentSessionId: () => null,
+        getById: () => null,
+      } as unknown as NodeExecutionRepository,
+      tickIntervalMs: 60_000,
+    });
+  }
+
+  async function dispatchCallAction(server: unknown, actionName: string): Promise<unknown> {
+    const tools = (
+      server as {
+        tools: Array<{
+          name: string;
+          handler: (args: unknown, extra: unknown) => Promise<{ content: Array<{ text: string }> }>;
+        }>;
+      }
+    ).tools;
+    const callAction = tools.find((entry) => entry.name === 'call_action');
+    if (!callAction) throw new Error('call_action tool missing');
+    const result = await callAction.handler({ name: actionName, params: {} }, {});
+    return JSON.parse(result.content[0].text);
+  }
+
+  it('attaches the read-only space-actions dispatcher to a non-space session and serves list_actions', async () => {
+    const fixture = makeSessionFixture({});
+    await setupWith(fixture.sessionManager, buildRuntimeService());
+
+    const handler = messageHubData.handlers.get('session.create');
+    expect(handler).toBeDefined();
+    await handler!({ workspacePath: '/tmp/hyperneo-ws' }, {});
+
+    const attached = ((fixture.session.config as { mcpServers?: Record<string, unknown> })
+      .mcpServers ?? {})['space-actions'] as
+      | { tools: Array<{ name: string }>; registry: { entries: Array<{ name: string }> } }
+      | undefined;
+    expect(attached).toBeDefined();
+    expect(attached?.tools.map((entry) => entry.name)).toEqual(['call_action']);
+    expect(attached?.registry.entries.map((entry) => entry.name).sort()).toEqual([
+      'describe_action',
+      'list_actions',
+    ]);
+
+    const catalog = (await dispatchCallAction(attached, 'list_actions')) as Array<{
+      name: string;
+    }>;
+    expect(catalog.map((entry) => entry.name).sort()).toEqual(['describe_action', 'list_actions']);
+  });
+
+  it('does not inject the dispatcher when the space-actions dispatcher flag is off', async () => {
+    process.env[FLAG] = '0';
+    const fixture = makeSessionFixture({});
+    const buildUniversalReadDispatcherServer = mock(() => {
+      throw new Error('buildUniversalReadDispatcherServer must not be called');
+    });
+    await setupWith(fixture.sessionManager, { buildUniversalReadDispatcherServer });
+
+    const handler = messageHubData.handlers.get('session.create');
+    expect(handler).toBeDefined();
+    await handler!({ workspacePath: '/tmp/hyperneo-ws' }, {});
+
+    expect(buildUniversalReadDispatcherServer).not.toHaveBeenCalled();
+    expect(fixture.mergeRuntimeMcpServers).not.toHaveBeenCalled();
+  });
+
+  it('routes space sessions through attachSpaceToolsToMemberSession instead of the universal dispatcher', async () => {
+    const fixture = makeSessionFixture({ context: { spaceId: 'space-1' } });
+    const attachSpaceToolsToMemberSession = mock(async () => {});
+    const buildUniversalReadDispatcherServer = mock(() => {
+      throw new Error('buildUniversalReadDispatcherServer must not be called');
+    });
+    await setupWith(fixture.sessionManager, {
+      attachSpaceToolsToMemberSession,
+      buildUniversalReadDispatcherServer,
+    });
+
+    const handler = messageHubData.handlers.get('session.create');
+    expect(handler).toBeDefined();
+    await handler!({ workspacePath: '/tmp/hyperneo-ws' }, {});
+
+    expect(attachSpaceToolsToMemberSession).toHaveBeenCalledTimes(1);
+    expect(buildUniversalReadDispatcherServer).not.toHaveBeenCalled();
+    expect(fixture.mergeRuntimeMcpServers).not.toHaveBeenCalled();
   });
 });

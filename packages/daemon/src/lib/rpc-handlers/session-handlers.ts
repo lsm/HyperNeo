@@ -4,6 +4,7 @@ import type {
   ImageContent,
   ListRuntimeMcpServersRequest,
   ListRuntimeMcpServersResponse,
+  McpServerConfig,
   MessageDeliveryMode,
   MessageHub,
   MessageImage,
@@ -42,6 +43,7 @@ import {
   isWorkflowSubSessionIdentity,
 } from '../session/sub-session-identity.ts';
 import type { SessionManager } from '../session-manager.ts';
+import { isSpaceActionsDispatcherEnabled } from '../space/actions/dispatcher-flag.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 
@@ -168,6 +170,26 @@ export function setupSessionHandlers(
       } catch (err) {
         log.warn(
           `Failed to attach space tools to session ${sessionId} (space ${session.context.spaceId}):`,
+          err
+        );
+      }
+    }
+
+    if (
+      session &&
+      !session.context?.spaceId &&
+      spaceRuntimeService &&
+      agentSession &&
+      isSpaceActionsDispatcherEnabled()
+    ) {
+      try {
+        agentSession.mergeRuntimeMcpServers({
+          'space-actions':
+            spaceRuntimeService.buildUniversalReadDispatcherServer() as unknown as McpServerConfig,
+        });
+      } catch (err) {
+        log.warn(
+          `Failed to attach space-actions dispatcher to non-space session ${sessionId}:`,
           err
         );
       }
