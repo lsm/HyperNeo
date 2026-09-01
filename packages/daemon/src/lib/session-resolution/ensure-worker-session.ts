@@ -130,57 +130,77 @@ export async function postApprovalStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
-  const worker = deps.getPostApprovalWorkerSession(target.taskId);
-  if (worker !== null) {
-    const nodeOk = !target.workflowNodeId || worker.nodeId === target.workflowNodeId;
-    if (!nodeOk || worker.agentName !== target.agentName) {
-      return { kind: 'unresolved', reason: 'post_approval_target_mismatch' };
+  const cap = delay(WORKER_SESSION_WAIT_CAP_MS);
+  try {
+    const worker = deps.getPostApprovalWorkerSession(target.taskId);
+    if (worker !== null) {
+      const nodeOk = !target.workflowNodeId || worker.nodeId === target.workflowNodeId;
+      if (!nodeOk || worker.agentName !== target.agentName) {
+        return { kind: 'unresolved', reason: 'post_approval_target_mismatch' };
+      }
+      const live = await Promise.race([deps.rehydrateSubSession(worker.sessionId), cap.promise]);
+      if (cap.fired) {
+        return { kind: 'unresolved', reason: 'restore_timeout' };
+      }
+      if (live !== null && deps.readWorkerTaskPhase(target.taskId) === 'post_approval') {
+        const stillRouted = deps.getPostApprovalWorkerSession(target.taskId);
+        if (stillRouted === null || stillRouted.sessionId !== worker.sessionId) {
+          return ensureWorkerSession(target, deps);
+        }
+        return { kind: 'resolved', sessionId: worker.sessionId, created: false };
+      }
     }
-    if (
-      (await deps.rehydrateSubSession(worker.sessionId)) !== null &&
-      deps.readWorkerTaskPhase(target.taskId) === 'post_approval'
-    ) {
-      return { kind: 'resolved', sessionId: worker.sessionId, created: false };
+    if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval') {
+      return ensureWorkerSession(target, deps);
     }
+    const spawnedSessionId = await deps.spawnPostApprovalWorker(
+      target.taskId,
+      target.agentName,
+      target.workflowNodeId ?? worker?.nodeId ?? undefined
+    );
+    if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval') {
+      return ensureWorkerSession(target, deps);
+    }
+    if (spawnedSessionId === null) {
+      return { kind: 'unresolved', reason: 'spawn_failed' };
+    }
+    return { kind: 'resolved', sessionId: spawnedSessionId, created: true };
+  } finally {
+    cap.cancel();
   }
-  if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval') {
-    return ensureWorkerSession(target, deps);
-  }
-  const spawnedSessionId = await deps.spawnPostApprovalWorker(
-    target.taskId,
-    target.agentName,
-    target.workflowNodeId ?? worker?.nodeId ?? undefined
-  );
-  if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval') {
-    return ensureWorkerSession(target, deps);
-  }
-  if (spawnedSessionId === null) {
-    return { kind: 'unresolved', reason: 'spawn_failed' };
-  }
-  return { kind: 'resolved', sessionId: spawnedSessionId, created: true };
 }
 
 export async function postApprovalDoneStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
-  const worker = deps.getPostApprovalWorkerSession(target.taskId);
-  if (worker !== null) {
-    const nodeOk = !target.workflowNodeId || worker.nodeId === target.workflowNodeId;
-    if (!nodeOk || worker.agentName !== target.agentName) {
-      return { kind: 'unresolved', reason: 'post_approval_target_mismatch' };
+  const cap = delay(WORKER_SESSION_WAIT_CAP_MS);
+  try {
+    const worker = deps.getPostApprovalWorkerSession(target.taskId);
+    if (worker !== null) {
+      const nodeOk = !target.workflowNodeId || worker.nodeId === target.workflowNodeId;
+      if (!nodeOk || worker.agentName !== target.agentName) {
+        return { kind: 'unresolved', reason: 'post_approval_target_mismatch' };
+      }
+      const live = await Promise.race([deps.rehydrateSubSession(worker.sessionId), cap.promise]);
+      if (cap.fired) {
+        return { kind: 'unresolved', reason: 'restore_timeout' };
+      }
+      if (live !== null && deps.readWorkerTaskPhase(target.taskId) === 'post_approval_done') {
+        const stillRouted = deps.getPostApprovalWorkerSession(target.taskId);
+        if (stillRouted === null || stillRouted.sessionId !== worker.sessionId) {
+          return ensureWorkerSession(target, deps);
+        }
+        return { kind: 'resolved', sessionId: worker.sessionId, created: false };
+      }
     }
-    if (
-      (await deps.rehydrateSubSession(worker.sessionId)) !== null &&
-      deps.readWorkerTaskPhase(target.taskId) === 'post_approval_done'
-    ) {
-      return { kind: 'resolved', sessionId: worker.sessionId, created: false };
+    if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval_done') {
+      return ensureWorkerSession(target, deps);
     }
+    return { kind: 'unresolved', reason: 'task_terminal' };
+  } finally {
+    cap.cancel();
   }
-  if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval_done') {
-    return ensureWorkerSession(target, deps);
-  }
-  return { kind: 'unresolved', reason: 'task_terminal' };
 }
 
 export async function awaitRoutingStage(
@@ -192,6 +212,9 @@ export async function awaitRoutingStage(
     for (;;) {
       if (cap.fired) {
         return { kind: 'unresolved', reason: 'post_approval_pending' };
+      }
+      if (deps.readWorkerTaskPhase(target.taskId) !== 'routing') {
+        return ensureWorkerSession(target, deps);
       }
       const worker = deps.getPostApprovalWorkerSession(target.taskId);
       if (worker !== null) {
@@ -206,9 +229,6 @@ export async function awaitRoutingStage(
         if (live !== null && deps.readWorkerTaskPhase(target.taskId) === 'routing') {
           return { kind: 'resolved', sessionId: worker.sessionId, created: false };
         }
-      }
-      if (deps.readWorkerTaskPhase(target.taskId) !== 'routing') {
-        return ensureWorkerSession(target, deps);
       }
       const tick = delay(WORKER_SESSION_POLL_INTERVAL_MS);
       await Promise.race([tick.promise, cap.promise]);

@@ -334,7 +334,44 @@ describe('postApprovalStage', () => {
     });
     const outcome = await postApprovalStage(workerTarget({ workflowNodeId: 'node-1' }), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: 'pa-retried-2', created: false });
-    expect(calls).toEqual(['worker', 'rehydrate:pa-retried-2']);
+    expect(calls).toEqual(['worker', 'rehydrate:pa-retried-2', 'worker']);
+  });
+
+  test('a routed identity replaced during the restore re-dispatches to the new worker', async () => {
+    let workerReads = 0;
+    const calls: string[] = [];
+    const deps = buildDeps({
+      readWorkerTaskPhase: () => 'post_approval',
+      getPostApprovalWorkerSession: () => {
+        workerReads += 1;
+        return workerReads <= 1
+          ? { sessionId: 'pa-old', agentName: AGENT_NAME }
+          : { sessionId: 'pa-new', agentName: AGENT_NAME };
+      },
+      rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return 'spawned';
+      },
+    });
+    const outcome = await postApprovalStage(workerTarget(), deps);
+    expect(outcome).toEqual({ kind: 'resolved', sessionId: 'pa-new', created: false });
+    expect(calls).toEqual([]);
+  });
+
+  test('a stalled post-approval restore ends in restore_timeout', async () => {
+    const deps = buildDeps({
+      readWorkerTaskPhase: () => 'post_approval',
+      getPostApprovalWorkerSession: () => ({ sessionId: 'pa-stuck', agentName: AGENT_NAME }),
+      rehydrateSubSession: () => new Promise<unknown>(() => {}),
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(postApprovalStage(workerTarget(), deps), 40);
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'restore_timeout' });
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test('a routed identity whose session cannot be rehydrated spawns a fresh worker on the routed node', async () => {
@@ -596,6 +633,21 @@ describe('postApprovalDoneStage', () => {
     const outcome = await postApprovalDoneStage(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'unresolved', reason: 'post_approval_target_mismatch' });
   });
+
+  test('a stalled completed-worker restore ends in restore_timeout', async () => {
+    const deps = buildDeps({
+      readWorkerTaskPhase: () => 'post_approval_done',
+      getPostApprovalWorkerSession: () => ({ sessionId: 'pa-stuck', agentName: AGENT_NAME }),
+      rehydrateSubSession: () => new Promise<unknown>(() => {}),
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(postApprovalDoneStage(workerTarget(), deps), 40);
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'restore_timeout' });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
 
 describe('awaitRoutingStage', () => {
@@ -687,6 +739,7 @@ describe('awaitRoutingStage', () => {
 
   test('an identity for another agent stops the wait as a target mismatch', async () => {
     const deps = buildDeps({
+      readWorkerTaskPhase: () => 'routing',
       getPostApprovalWorkerSession: () => ({ sessionId: 'pa-other', agentName: 'reviewer' }),
       spawnPostApprovalWorker: async () => 'spawned',
     });
@@ -1237,7 +1290,7 @@ describe('ensureWorkerSession', () => {
     try {
       const settled = await drainByPolling(ensureWorkerSession(workerTarget(), deps), 20);
       expect(settled).toEqual({ kind: 'resolved', sessionId: 'pa-recorded', created: false });
-      expect(calls).toEqual(['phase', 'phase', 'phase']);
+      expect(calls).toEqual(['phase', 'phase', 'phase', 'phase']);
     } finally {
       jest.useRealTimers();
     }
