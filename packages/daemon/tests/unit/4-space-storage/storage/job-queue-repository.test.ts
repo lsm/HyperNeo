@@ -514,9 +514,10 @@ describe('JobQueueRepository', () => {
       expect(jobs[2].payload.order).toBe(3);
     });
 
-    it('paginates oldest-first with an after cursor', () => {
+    it('paginates oldest-first with an after cursor', async () => {
       for (let i = 0; i < 5; i += 1) {
         repository.enqueue({ queue: 'test', payload: { i } });
+        await new Promise((r) => setTimeout(r, 5));
       }
 
       const pages: number[][] = [];
