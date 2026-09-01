@@ -294,7 +294,7 @@ export async function awaitSessionStage(
 ): Promise<EnsureSessionOutcome> {
   const requestedWaitCapMs = target.waitCapMs;
   const waitCapMs =
-    requestedWaitCapMs === undefined || !Number.isFinite(requestedWaitCapMs)
+    requestedWaitCapMs === undefined || Number.isNaN(requestedWaitCapMs)
       ? WORKER_SESSION_WAIT_CAP_MS
       : Math.max(0, Math.min(requestedWaitCapMs, WORKER_SESSION_WAIT_CAP_MS));
   const cap = delay(waitCapMs);
@@ -308,8 +308,11 @@ export async function awaitSessionStage(
       }
       const sessionId = newestWorkerSessionId(deps.listWorkerExecutions(target));
       if (sessionId !== null) {
-        const live = await Promise.race([deps.rehydrateSubSession(sessionId), cap.promise]);
-        if (!cap.fired && live !== null) {
+        const live =
+          waitCapMs === 0
+            ? await deps.rehydrateSubSession(sessionId)
+            : await Promise.race([deps.rehydrateSubSession(sessionId), cap.promise]);
+        if (live !== null && (waitCapMs === 0 || !cap.fired)) {
           if (deps.readWorkerTaskPhase(target.taskId) !== 'run_active') {
             return ensureWorkerSession(target, deps);
           }

@@ -1179,6 +1179,52 @@ describe('awaitSessionStage', () => {
     }
   });
 
+  test('waitCapMs 0 still resolves when the liveness probe completes after the zero deadline', async () => {
+    let probes = 0;
+    const deps = buildDeps({
+      listWorkerExecutions: () => [row('sess-slow', 'running')],
+      rehydrateSubSession: (sessionId) =>
+        new Promise<unknown>((resolve) => {
+          probes += 1;
+          setTimeout(() => resolve({ id: sessionId }), 200);
+        }),
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(
+        awaitSessionStage(workerTarget({ waitCapMs: 0 }), deps),
+        5
+      );
+      expect(settled).toEqual({ kind: 'resolved', sessionId: 'sess-slow', created: true });
+      expect(probes).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('waitCapMs 0 times out after a single un-raced probe when the candidate is dead', async () => {
+    let probes = 0;
+    const deps = buildDeps({
+      listWorkerExecutions: () => [row('sess-dead', 'running')],
+      rehydrateSubSession: () =>
+        new Promise<unknown>((resolve) => {
+          probes += 1;
+          setTimeout(() => resolve(null), 200);
+        }),
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(
+        awaitSessionStage(workerTarget({ waitCapMs: 0 }), deps),
+        5
+      );
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
+      expect(probes).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test('a shorter waitCapMs shortens the poll window', async () => {
     let listCalls = 0;
     const deps = buildDeps({
@@ -1267,7 +1313,7 @@ describe('awaitSessionStage', () => {
     }
   });
 
-  test('a non-finite waitCapMs falls back to the global cap instead of an immediate timer', async () => {
+  test('a NaN or positive-infinity waitCapMs falls back to the global cap instead of an immediate timer', async () => {
     for (const waitCapMs of [Number.NaN, Number.POSITIVE_INFINITY]) {
       let listCalls = 0;
       const deps = buildDeps({
@@ -1290,24 +1336,26 @@ describe('awaitSessionStage', () => {
     }
   });
 
-  test('a negative waitCapMs is clamped to a single check', async () => {
-    let listCalls = 0;
-    const deps = buildDeps({
-      listWorkerExecutions: () => {
-        listCalls += 1;
-        return [];
-      },
-    });
-    jest.useFakeTimers();
-    try {
-      const settled = await drainByPolling(
-        awaitSessionStage(workerTarget({ waitCapMs: -1_000 }), deps),
-        5
-      );
-      expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
-      expect(listCalls).toBe(1);
-    } finally {
-      jest.useRealTimers();
+  test('a negative or negative-infinity waitCapMs is clamped to a single check', async () => {
+    for (const waitCapMs of [-1_000, Number.NEGATIVE_INFINITY]) {
+      let listCalls = 0;
+      const deps = buildDeps({
+        listWorkerExecutions: () => {
+          listCalls += 1;
+          return [];
+        },
+      });
+      jest.useFakeTimers();
+      try {
+        const settled = await drainByPolling(
+          awaitSessionStage(workerTarget({ waitCapMs }), deps),
+          5
+        );
+        expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
+        expect(listCalls).toBe(1);
+      } finally {
+        jest.useRealTimers();
+      }
     }
   });
 });
