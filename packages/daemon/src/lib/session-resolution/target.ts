@@ -30,8 +30,16 @@ export type EnsureSessionOutcome =
   | { kind: 'resolved'; sessionId: string; created: boolean }
   | { kind: 'unresolved'; reason: string };
 
-export function agentSessionIdOf(spaceId: string, agentId: string): string {
-  if (agentId === 'coordinator' || agentId === coordinatorLongHorizonAgentId(spaceId)) {
+export function agentSessionIdOf(
+  spaceId: string,
+  agentId: string,
+  coordinatorAgentId?: string
+): string {
+  if (
+    agentId === 'coordinator' ||
+    (coordinatorAgentId !== undefined && agentId === coordinatorAgentId) ||
+    agentId === coordinatorLongHorizonAgentId(spaceId)
+  ) {
     return coordinatorSessionId(spaceId);
   }
   return longTermAgentSessionId(spaceId, agentId);

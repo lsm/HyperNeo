@@ -78,4 +78,10 @@ describe('agentSessionIdOf', () => {
     const agentId = 'agent-1';
     expect(agentSessionIdOf(spaceId, agentId)).toBe(longTermAgentSessionId(spaceId, agentId));
   });
+
+  test('noncanonical coordinator agentId reuses coordinatorSessionId', () => {
+    const spaceId = 'space-1';
+    const agentId = 'coordinator-alt';
+    expect(agentSessionIdOf(spaceId, agentId, agentId)).toBe(coordinatorSessionId(spaceId));
+  });
 });
