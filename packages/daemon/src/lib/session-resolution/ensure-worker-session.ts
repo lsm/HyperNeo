@@ -118,8 +118,14 @@ export async function awaitSessionStage(
         return { kind: 'unresolved', reason: 'activation_timeout' };
       }
       const sessionId = newestWorkerSessionId(deps.listWorkerExecutions(target));
-      if (sessionId !== null && (await deps.rehydrateSubSession(sessionId)) !== null) {
-        return { kind: 'resolved', sessionId, created: true };
+      if (sessionId !== null) {
+        const live = await Promise.race([deps.rehydrateSubSession(sessionId), cap.promise]);
+        if (cap.fired) {
+          return { kind: 'unresolved', reason: 'activation_timeout' };
+        }
+        if (live !== null) {
+          return { kind: 'resolved', sessionId, created: true };
+        }
       }
       const tick = delay(WORKER_SESSION_POLL_INTERVAL_MS);
       await Promise.race([tick.promise, cap.promise]);

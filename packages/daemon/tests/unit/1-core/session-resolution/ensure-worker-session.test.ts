@@ -333,6 +333,20 @@ describe('awaitSessionStage', () => {
     }
   });
 
+  test('a stalled liveness check cannot extend the wait past the cap', async () => {
+    const deps = buildDeps({
+      listWorkerExecutions: () => [row('sess-slow', 'running')],
+      rehydrateSubSession: () => new Promise<unknown>(() => {}),
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(awaitSessionStage(workerTarget(), deps), 40);
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test('unresolved activation_timeout at the cap with no list read past the deadline', async () => {
     let listCalls = 0;
     const deps = buildDeps({
