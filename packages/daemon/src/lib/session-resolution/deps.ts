@@ -8,6 +8,7 @@ export interface WorkerExecutionSession {
 export interface SessionResolutionDeps {
   getSession(sessionId: string): Promise<unknown | null>;
   rehydrateSubSession(sessionId: string): Promise<unknown | null>;
+  getCoordinator(spaceId: string): Promise<{ id: string } | null>;
   ensureLongTermAgent(spaceId: string, agentId: string): Promise<unknown | null>;
   listWorkerExecutions(target: SessionTargetWorker): WorkerExecutionSession[];
   activateTaskAgent(target: SessionTargetWorker): Promise<boolean>;
