@@ -20,6 +20,7 @@ export interface SessionTargetWorker {
   taskId: string;
   agentName: string;
   workflowNodeId?: string;
+  waitCapMs?: number;
 }
 
 export type SessionTarget = SessionTargetSession | SessionTargetAgent | SessionTargetWorker;
