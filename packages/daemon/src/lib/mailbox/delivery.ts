@@ -1,7 +1,7 @@
 import type { MessageOrigin } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { createHash } from 'node:crypto';
-import { ensurePrompt } from '../agent/message-delivery-outbox.ts';
+import { ensurePrompt, type PromptHold } from '../agent/message-delivery-outbox.ts';
 import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
 import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
@@ -79,6 +79,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       sessionId: target,
       message,
       ...(synthetic ? { origin: 'system' as MessageOrigin } : {}),
+      ...(entry.deliveryMode === 'defer' ? { hold: 'manual' as PromptHold } : {}),
       delivery: { origin: mapOrigin(entry.origin), parentToolUseId: null },
       db: deps.db,
       sdkMessageRepo: deps.sdkMessageRepo,

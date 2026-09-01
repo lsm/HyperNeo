@@ -3,6 +3,7 @@ import { type MailboxAddress, renderAddress } from '../../../../src/lib/mailbox/
 import {
   createMailboxEntry,
   DEFAULT_MAILBOX_ENTRY_POLICY,
+  type MailboxDeliveryMode,
   type MailboxEntry,
   type MailboxEntryPolicy,
   type MailboxMessage,
@@ -77,6 +78,7 @@ describe('MailboxEntry', () => {
     },
     status: 'enqueued',
     policy: { ...DEFAULT_MAILBOX_ENTRY_POLICY },
+    deliveryMode: 'immediate',
   };
 
   const toAgent: MailboxEntry = {
@@ -91,6 +93,7 @@ describe('MailboxEntry', () => {
     },
     status: 'enqueued',
     policy: { ttlMs: 60_000, maxAttempts: 1, priority: 3 },
+    deliveryMode: 'defer',
   };
 
   test('entries for both address kinds round-trip through JSON', () => {
@@ -331,7 +334,20 @@ describe('createMailboxEntry', () => {
     expect(entry.origin).toBe('space-task-agent');
     expect(entry.message).toEqual(validMessage);
     expect(entry.policy).toEqual(DEFAULT_MAILBOX_ENTRY_POLICY);
+    expect(entry.deliveryMode).toBe('immediate');
     expect(() => renderAddress(entry.to)).not.toThrow();
+  });
+
+  test('stamps an explicit deliveryMode verbatim for both values', () => {
+    for (const deliveryMode of ['immediate', 'defer'] as MailboxDeliveryMode[]) {
+      const entry = createMailboxEntry({
+        to: sessionTo,
+        message: validMessage,
+        origin: 'test',
+        deliveryMode,
+      });
+      expect(entry.deliveryMode).toBe(deliveryMode);
+    }
   });
 
   test.each<[string, MailboxAddress]>([
@@ -527,6 +543,23 @@ describe('createMailboxEntry', () => {
     );
   });
 
+  test.each([
+    ['an unknown string', 'when_ready'],
+    ['a non-string', 42],
+    ['an empty string', ''],
+  ])('throws TypeError with the verbatim deliveryMode reason for %s', (_label, deliveryMode) => {
+    const args = {
+      to: sessionTo,
+      message: validMessage,
+      origin: 'test',
+      deliveryMode: deliveryMode as MailboxDeliveryMode,
+    };
+    expect(() => createMailboxEntry(args)).toThrow(TypeError);
+    expect(() => createMailboxEntry(args)).toThrow(
+      new TypeError('deliveryMode must be "immediate" or "defer"')
+    );
+  });
+
   describe('first violation wins', () => {
     const invalidTo = { kind: 'session', sessionId: '' } as MailboxAddress;
     const invalidMessage = { ...validMessage, type: 'assistant' } as MailboxMessage;
@@ -564,6 +597,18 @@ describe('createMailboxEntry', () => {
         })
       ).toThrow(new TypeError('origin must be a non-empty string'));
     });
+
+    test('the deliveryMode reason wins over policy', () => {
+      expect(() =>
+        createMailboxEntry({
+          to: sessionTo,
+          message: validMessage,
+          origin: 'test',
+          deliveryMode: 'when_ready' as MailboxDeliveryMode,
+          policy: invalidPolicy,
+        })
+      ).toThrow(new TypeError('deliveryMode must be "immediate" or "defer"'));
+    });
   });
 });
 
@@ -600,6 +645,7 @@ describe('parseMailboxEntry', () => {
         message: { type: 'user', message: { content: 'hello' }, parent_tool_use_id: null },
         status: 'enqueued',
         policy: DEFAULT_MAILBOX_ENTRY_POLICY,
+        deliveryMode: 'immediate',
       });
     });
 
@@ -616,6 +662,7 @@ describe('parseMailboxEntry', () => {
         },
         status: 'enqueued',
         policy: { ttlMs: 60_000, maxAttempts: 1, priority: 3 },
+        deliveryMode: 'immediate',
       });
     });
 
@@ -630,6 +677,32 @@ describe('parseMailboxEntry', () => {
     });
   });
 
+  describe('deliveryMode', () => {
+    test('reads a stored defer entry back as defer', () => {
+      expect(parseMailboxEntry({ ...sessionPayload, deliveryMode: 'defer' })?.deliveryMode).toBe(
+        'defer'
+      );
+    });
+
+    test.each([
+      ['an unknown string', 'when_ready'],
+      ['a non-string', 42],
+      ['an empty string', ''],
+      ['null', null],
+      ['true', true],
+    ])('returns null for %s', (_label, deliveryMode) => {
+      expect(parseMailboxEntry({ ...sessionPayload, deliveryMode })).toBeNull();
+    });
+  });
+
+  describe('legacy payload back-compat', () => {
+    test('a payload created before deliveryMode existed parses with immediate', () => {
+      expect(Object.hasOwn(sessionPayload, 'deliveryMode')).toBe(false);
+      expect(parseMailboxEntry(sessionPayload)?.deliveryMode).toBe('immediate');
+      expect(parseMailboxEntry(agentPayload)?.deliveryMode).toBe('immediate');
+    });
+  });
+
   describe('fresh entry literal, unknown keys dropped', () => {
     test('never returns the raw object or its nested objects', () => {
       const storedMessage = agentPayload.message as MailboxMessage;
@@ -641,10 +714,11 @@ describe('parseMailboxEntry', () => {
       expect(parsed?.policy).not.toBe(agentPayload.policy);
     });
 
-    test('output keys are exactly the six typed fields', () => {
+    test('output keys are exactly the seven typed fields', () => {
       const payload = { ...agentPayload, attempts: 2, enqueueAt: 1_735_000_000_000, lane: 'x' };
       const parsed = parseMailboxEntry(payload);
       expect(Object.keys(parsed ?? {}).sort()).toEqual([
+        'deliveryMode',
         'id',
         'message',
         'origin',
@@ -809,5 +883,29 @@ describe('parseMailboxEntry', () => {
       const raw = Object.assign(['stray'], sessionPayload) as unknown as Record<string, unknown>;
       expect(parseMailboxEntry(raw)).toBeNull();
     });
+  });
+});
+
+describe('mailbox entry deliveryMode round-trip law', () => {
+  const to: MailboxAddress = { kind: 'session', sessionId: 'sess-1' };
+  const message: MailboxMessage = {
+    type: 'user',
+    message: { content: 'hello' },
+    parent_tool_use_id: null,
+  };
+
+  test.each<[string, MailboxDeliveryMode | undefined]>([
+    ['immediate', 'immediate'],
+    ['defer', 'defer'],
+    ['defaulted', undefined],
+  ])('a %s entry survives JSON serialization into parseMailboxEntry unchanged', (_label, mode) => {
+    const entry = createMailboxEntry({
+      to,
+      message,
+      origin: 'test',
+      ...(mode !== undefined ? { deliveryMode: mode } : {}),
+    });
+    expect(entry.deliveryMode).toBe(mode ?? 'immediate');
+    expect(parseMailboxEntry(JSON.parse(JSON.stringify(entry)))).toEqual(entry);
   });
 });
