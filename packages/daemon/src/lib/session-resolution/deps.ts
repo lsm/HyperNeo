@@ -1,3 +1,4 @@
+import type { SpaceTaskStatus } from '@hyperneo/shared';
 import type { SessionTargetWorker } from './target.ts';
 
 export interface WorkerExecutionSession {
@@ -12,6 +13,22 @@ export type WorkerTaskPhase =
   | 'post_approval'
   | 'post_approval_done'
   | 'terminal';
+
+export function workerTaskPhaseOf(
+  status: SpaceTaskStatus,
+  postApprovalSessionId: string | null
+): WorkerTaskPhase {
+  if (status === 'cancelled' || status === 'archived' || status === 'stopped') {
+    return 'terminal';
+  }
+  if (status === 'approved') {
+    return postApprovalSessionId ? 'post_approval' : 'routing';
+  }
+  if (status === 'done') {
+    return postApprovalSessionId ? 'post_approval_done' : 'done';
+  }
+  return 'run_active';
+}
 
 export interface SessionResolutionDeps {
   getSession(sessionId: string): Promise<unknown | null>;

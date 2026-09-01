@@ -140,7 +140,9 @@ export async function postApprovalStage(
       }
       const live = await Promise.race([deps.rehydrateSubSession(worker.sessionId), cap.promise]);
       if (cap.fired) {
-        return { kind: 'unresolved', reason: 'restore_timeout' };
+        return deps.readWorkerTaskPhase(target.taskId) === 'post_approval'
+          ? { kind: 'unresolved', reason: 'restore_timeout' }
+          : ensureWorkerSession(target, deps);
       }
       if (live !== null && deps.readWorkerTaskPhase(target.taskId) === 'post_approval') {
         const stillRouted = deps.getPostApprovalWorkerSession(target.taskId);
@@ -184,7 +186,9 @@ export async function postApprovalDoneStage(
       }
       const live = await Promise.race([deps.rehydrateSubSession(worker.sessionId), cap.promise]);
       if (cap.fired) {
-        return { kind: 'unresolved', reason: 'restore_timeout' };
+        return deps.readWorkerTaskPhase(target.taskId) === 'post_approval_done'
+          ? { kind: 'unresolved', reason: 'restore_timeout' }
+          : ensureWorkerSession(target, deps);
       }
       if (live !== null && deps.readWorkerTaskPhase(target.taskId) === 'post_approval_done') {
         const stillRouted = deps.getPostApprovalWorkerSession(target.taskId);
@@ -210,11 +214,11 @@ export async function awaitRoutingStage(
   const cap = delay(WORKER_SESSION_WAIT_CAP_MS);
   try {
     for (;;) {
-      if (cap.fired) {
-        return { kind: 'unresolved', reason: 'post_approval_pending' };
-      }
       if (deps.readWorkerTaskPhase(target.taskId) !== 'routing') {
         return ensureWorkerSession(target, deps);
+      }
+      if (cap.fired) {
+        return { kind: 'unresolved', reason: 'post_approval_pending' };
       }
       const worker = deps.getPostApprovalWorkerSession(target.taskId);
       if (worker !== null) {
@@ -223,10 +227,7 @@ export async function awaitRoutingStage(
           return { kind: 'unresolved', reason: 'post_approval_target_mismatch' };
         }
         const live = await Promise.race([deps.rehydrateSubSession(worker.sessionId), cap.promise]);
-        if (cap.fired) {
-          return { kind: 'unresolved', reason: 'post_approval_pending' };
-        }
-        if (live !== null && deps.readWorkerTaskPhase(target.taskId) === 'routing') {
+        if (!cap.fired && live !== null && deps.readWorkerTaskPhase(target.taskId) === 'routing') {
           return { kind: 'resolved', sessionId: worker.sessionId, created: false };
         }
       }
@@ -281,19 +282,16 @@ export async function awaitSessionStage(
   const cap = delay(WORKER_SESSION_WAIT_CAP_MS);
   try {
     for (;;) {
-      if (cap.fired) {
-        return { kind: 'unresolved', reason: 'activation_timeout' };
-      }
       if (deps.readWorkerTaskPhase(target.taskId) !== 'run_active') {
         return ensureWorkerSession(target, deps);
+      }
+      if (cap.fired) {
+        return { kind: 'unresolved', reason: 'activation_timeout' };
       }
       const sessionId = newestWorkerSessionId(deps.listWorkerExecutions(target));
       if (sessionId !== null) {
         const live = await Promise.race([deps.rehydrateSubSession(sessionId), cap.promise]);
-        if (cap.fired) {
-          return { kind: 'unresolved', reason: 'activation_timeout' };
-        }
-        if (live !== null) {
+        if (!cap.fired && live !== null) {
           if (deps.readWorkerTaskPhase(target.taskId) !== 'run_active') {
             return ensureWorkerSession(target, deps);
           }

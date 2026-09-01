@@ -1,7 +1,8 @@
 import { describe, expect, jest, test } from 'bun:test';
-import type {
-  SessionResolutionDeps,
-  WorkerExecutionSession,
+import {
+  workerTaskPhaseOf,
+  type SessionResolutionDeps,
+  type WorkerExecutionSession,
 } from '../../../../src/lib/session-resolution/deps';
 import {
   activateStage,
@@ -104,6 +105,41 @@ describe('newestWorkerSessionId', () => {
     expect(newestWorkerSessionId([])).toBeNull();
     expect(newestWorkerSessionId([row(null, 'pending')])).toBeNull();
     expect(newestWorkerSessionId([row('s-1', 'cancelled')])).toBeNull();
+  });
+});
+
+describe('workerTaskPhaseOf', () => {
+  test('cancelled, archived, and stopped tasks are terminal', () => {
+    expect(workerTaskPhaseOf('cancelled', null)).toBe('terminal');
+    expect(workerTaskPhaseOf('cancelled', 'pa-1')).toBe('terminal');
+    expect(workerTaskPhaseOf('archived', null)).toBe('terminal');
+    expect(workerTaskPhaseOf('stopped', null)).toBe('terminal');
+    expect(workerTaskPhaseOf('stopped', 'pa-1')).toBe('terminal');
+  });
+
+  test('approved tasks route or hold by their recorded worker', () => {
+    expect(workerTaskPhaseOf('approved', null)).toBe('routing');
+    expect(workerTaskPhaseOf('approved', 'pa-1')).toBe('post_approval');
+  });
+
+  test('done tasks split by post-approval history', () => {
+    expect(workerTaskPhaseOf('done', 'pa-1')).toBe('post_approval_done');
+    expect(workerTaskPhaseOf('done', null)).toBe('done');
+  });
+
+  test('run-phase statuses stay run_active regardless of pointer state', () => {
+    for (const status of [
+      'draft',
+      'open',
+      'in_progress',
+      'review',
+      'blocked',
+      'rate_limited',
+      'usage_limited',
+    ] as const) {
+      expect(workerTaskPhaseOf(status, null)).toBe('run_active');
+      expect(workerTaskPhaseOf(status, 'pa-1')).toBe('run_active');
+    }
   });
 });
 
@@ -369,6 +405,21 @@ describe('postApprovalStage', () => {
     try {
       const settled = await drainByPolling(postApprovalStage(workerTarget(), deps), 40);
       expect(settled).toEqual({ kind: 'unresolved', reason: 'restore_timeout' });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a task cancelled during a stalled restore re-enters instead of returning restore_timeout', async () => {
+    const deps = buildDeps({
+      readWorkerTaskPhase: () => 'terminal',
+      getPostApprovalWorkerSession: () => ({ sessionId: 'pa-stuck', agentName: AGENT_NAME }),
+      rehydrateSubSession: () => new Promise<unknown>(() => {}),
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(postApprovalStage(workerTarget(), deps), 40);
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'task_terminal' });
     } finally {
       jest.useRealTimers();
     }
