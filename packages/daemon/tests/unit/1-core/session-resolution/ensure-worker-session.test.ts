@@ -344,6 +344,40 @@ describe('postApprovalStage', () => {
     const outcome = await postApprovalStage(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'unresolved', reason: 'spawn_failed' });
   });
+
+  test('a task cancelled while the identity liveness check runs resolves task_terminal before spawning', async () => {
+    const calls: string[] = [];
+    const deps = buildDeps({
+      getPostApprovalWorkerSession: () => ({ sessionId: 'pa-dying', agentName: AGENT_NAME }),
+      rehydrateSubSession: async () => null,
+      readWorkerTaskPhase: () => {
+        calls.push('phase');
+        return 'terminal';
+      },
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return 'spawned';
+      },
+    });
+    const outcome = await postApprovalStage(workerTarget(), deps);
+    expect(outcome).toEqual({ kind: 'unresolved', reason: 'task_terminal' });
+    expect(calls).toEqual(['phase']);
+  });
+
+  test('a task cancelled before an absent identity would spawn resolves task_terminal', async () => {
+    const calls: string[] = [];
+    const deps = buildDeps({
+      getPostApprovalWorkerSession: () => null,
+      readWorkerTaskPhase: () => 'terminal',
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return 'spawned';
+      },
+    });
+    const outcome = await postApprovalStage(workerTarget(), deps);
+    expect(outcome).toEqual({ kind: 'unresolved', reason: 'task_terminal' });
+    expect(calls).toEqual([]);
+  });
 });
 
 describe('awaitRoutingStage', () => {

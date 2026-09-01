@@ -92,6 +92,9 @@ export async function postApprovalStage(
       return { kind: 'resolved', sessionId: worker.sessionId, created: false };
     }
   }
+  if (deps.readWorkerTaskPhase(target.taskId) === 'terminal') {
+    return { kind: 'unresolved', reason: 'task_terminal' };
+  }
   const spawnedSessionId = await deps.spawnPostApprovalWorker(
     target.taskId,
     target.agentName,
