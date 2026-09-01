@@ -661,7 +661,7 @@ describe('awaitRoutingStage', () => {
     try {
       const settled = await drainByPolling(awaitRoutingStage(workerTarget(), deps), 20);
       expect(settled).toEqual({ kind: 'resolved', sessionId: 's-exec', created: false });
-      expect(calls).toEqual(['phase', 'phase', 'phase', 'list', 'rehydrate:s-exec']);
+      expect(calls).toEqual(['phase', 'phase', 'phase', 'list', 'rehydrate:s-exec', 'phase']);
     } finally {
       jest.useRealTimers();
     }
@@ -714,7 +714,7 @@ describe('awaitRoutingStage', () => {
     try {
       const settled = await drainByPolling(awaitRoutingStage(workerTarget(), deps), 20);
       expect(settled).toEqual({ kind: 'resolved', sessionId: 'spawned-fresh', created: true });
-      expect(calls).toEqual(['phase', 'phase', 'phase', 'phase', 'spawn']);
+      expect(calls).toEqual(['phase', 'phase', 'phase', 'phase', 'spawn', 'phase']);
     } finally {
       jest.useRealTimers();
     }
@@ -796,7 +796,7 @@ describe('activateStage', () => {
       activated: true,
       outcome: { kind: 'resolved', sessionId: 'pa-routed', created: false },
     });
-    expect(calls).toEqual(['phase', 'activate', 'phase', 'phase']);
+    expect(calls).toEqual(['phase', 'activate', 'phase', 'phase', 'phase']);
   });
 });
 
@@ -1219,7 +1219,7 @@ describe('ensureWorkerSession', () => {
     try {
       const settled = await drainByPolling(ensureWorkerSession(workerTarget(), deps), 20);
       expect(settled).toEqual({ kind: 'resolved', sessionId: 'pa-recorded', created: false });
-      expect(calls).toEqual(['phase', 'phase']);
+      expect(calls).toEqual(['phase', 'phase', 'phase']);
     } finally {
       jest.useRealTimers();
     }
@@ -1348,7 +1348,7 @@ describe('ensureWorkerSession', () => {
     });
     const outcome = await ensureWorkerSession(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'unresolved', reason: 'task_terminal' });
-    expect(calls).toEqual(['phase', 'list']);
+    expect(calls).toEqual(['phase', 'list', 'phase']);
   });
 
   test('a completed post-approval worker is never respawned', async () => {
