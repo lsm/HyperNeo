@@ -28,6 +28,7 @@ function makeEntry(overrides?: {
     message: overrides?.message ?? message,
     status: 'enqueued',
     policy: { ...DEFAULT_MAILBOX_ENTRY_POLICY, ...overrides?.policy },
+    deliveryMode: 'immediate',
   };
 }
 

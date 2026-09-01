@@ -4,6 +4,7 @@ import { MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
 import {
   createMailboxEntry,
   DEFAULT_MAILBOX_ENTRY_POLICY,
+  type MailboxDeliveryMode,
   type MailboxEntry,
   type MailboxEntryPolicy,
   type MailboxMessage,
@@ -45,7 +46,10 @@ const agentAddress: MailboxAddress = {
   node: 'Coding',
 };
 
-function makeEntry(overrides?: { policy?: Partial<MailboxEntryPolicy> }): MailboxEntry {
+function makeEntry(overrides?: {
+  policy?: Partial<MailboxEntryPolicy>;
+  deliveryMode?: MailboxDeliveryMode;
+}): MailboxEntry {
   return {
     id: createUlid(),
     to: sessionAddress,
@@ -53,6 +57,7 @@ function makeEntry(overrides?: { policy?: Partial<MailboxEntryPolicy> }): Mailbo
     message: textMessage,
     status: 'enqueued',
     policy: { ...DEFAULT_MAILBOX_ENTRY_POLICY, ...overrides?.policy },
+    deliveryMode: overrides?.deliveryMode ?? 'immediate',
   };
 }
 
@@ -193,7 +198,13 @@ describe('projectMessageStage', () => {
 
 describe('createEntryStage', () => {
   test('a valid handoff builds an entry with default policy and an unset outcome', () => {
-    const result = createEntryStage(sessionAddress, textMessage, 'test-origin', undefined);
+    const result = createEntryStage(
+      sessionAddress,
+      textMessage,
+      'test-origin',
+      undefined,
+      undefined
+    );
 
     expect(result.outcome).toBeUndefined();
     expect(Object.keys(result).sort()).toEqual(['entry', 'outcome']);
@@ -205,11 +216,18 @@ describe('createEntryStage', () => {
       message: textMessage,
       status: 'enqueued',
       policy: { ...DEFAULT_MAILBOX_ENTRY_POLICY },
+      deliveryMode: 'immediate',
     });
   });
 
   test('a partial policy merges over the defaults', () => {
-    const result = createEntryStage(sessionAddress, textMessage, 'test-origin', { priority: 5 });
+    const result = createEntryStage(
+      sessionAddress,
+      textMessage,
+      'test-origin',
+      { priority: 5 },
+      undefined
+    );
 
     expect(result.entry?.policy).toEqual({
       ttlMs: DEFAULT_MAILBOX_ENTRY_POLICY.ttlMs,
@@ -219,14 +237,56 @@ describe('createEntryStage', () => {
   });
 
   test('an agent address keeps its task and node fields on the entry', () => {
-    const result = createEntryStage(agentAddress, blocksMessage, 'test-origin', undefined);
+    const result = createEntryStage(
+      agentAddress,
+      blocksMessage,
+      'test-origin',
+      undefined,
+      undefined
+    );
 
     expect(result.entry?.to).toEqual(agentAddress);
     expect(result.entry?.message).toEqual(blocksMessage);
   });
 
+  test('a defer deliveryMode threads onto the entry', () => {
+    const result = createEntryStage(sessionAddress, textMessage, 'test-origin', undefined, 'defer');
+
+    expect(result.outcome).toBeUndefined();
+    expect(result.entry?.deliveryMode).toBe('defer');
+  });
+
+  test('an immediate deliveryMode threads onto the entry', () => {
+    const result = createEntryStage(
+      sessionAddress,
+      textMessage,
+      'test-origin',
+      undefined,
+      'immediate'
+    );
+
+    expect(result.outcome).toBeUndefined();
+    expect(result.entry?.deliveryMode).toBe('immediate');
+  });
+
+  test('an unknown deliveryMode rejects with the factory reason verbatim', () => {
+    const result = createEntryStage(
+      sessionAddress,
+      textMessage,
+      'test-origin',
+      undefined,
+      'when_ready' as MailboxDeliveryMode
+    );
+
+    expect(result.entry).toBeUndefined();
+    expect(result.outcome).toEqual({
+      kind: 'rejected',
+      reason: 'deliveryMode must be "immediate" or "defer"',
+    });
+  });
+
   test('an empty origin rejects with the factory reason verbatim', () => {
-    const result = createEntryStage(sessionAddress, textMessage, '', undefined);
+    const result = createEntryStage(sessionAddress, textMessage, '', undefined, undefined);
 
     expect(result.entry).toBeUndefined();
     expect(result.outcome).toEqual({
@@ -236,7 +296,13 @@ describe('createEntryStage', () => {
   });
 
   test('a zero ttlMs rejects with the factory reason verbatim', () => {
-    const result = createEntryStage(sessionAddress, textMessage, 'test-origin', { ttlMs: 0 });
+    const result = createEntryStage(
+      sessionAddress,
+      textMessage,
+      'test-origin',
+      { ttlMs: 0 },
+      undefined
+    );
 
     expect(result.outcome).toEqual({
       kind: 'rejected',
@@ -245,9 +311,15 @@ describe('createEntryStage', () => {
   });
 
   test('a zero maxAttempts rejects with the factory reason verbatim', () => {
-    const result = createEntryStage(sessionAddress, textMessage, 'test-origin', {
-      maxAttempts: 0,
-    });
+    const result = createEntryStage(
+      sessionAddress,
+      textMessage,
+      'test-origin',
+      {
+        maxAttempts: 0,
+      },
+      undefined
+    );
 
     expect(result.outcome).toEqual({
       kind: 'rejected',
@@ -256,7 +328,13 @@ describe('createEntryStage', () => {
   });
 
   test('a negative priority rejects with the factory reason verbatim', () => {
-    const result = createEntryStage(sessionAddress, textMessage, 'test-origin', { priority: -1 });
+    const result = createEntryStage(
+      sessionAddress,
+      textMessage,
+      'test-origin',
+      { priority: -1 },
+      undefined
+    );
 
     expect(result.outcome).toEqual({
       kind: 'rejected',
@@ -269,6 +347,7 @@ describe('createEntryStage', () => {
       sessionAddress,
       { type: 'user', message: { content: '' }, parent_tool_use_id: null },
       'test-origin',
+      undefined,
       undefined
     );
 
@@ -283,6 +362,7 @@ describe('createEntryStage', () => {
       { kind: 'session', sessionId: '' },
       textMessage,
       'test-origin',
+      undefined,
       undefined
     );
 
@@ -395,6 +475,7 @@ describe('handoffPromptToMailbox', () => {
         message: textMessage,
         status: 'enqueued',
         policy: { ...DEFAULT_MAILBOX_ENTRY_POLICY },
+        deliveryMode: 'immediate',
       });
     });
 
@@ -417,6 +498,7 @@ describe('handoffPromptToMailbox', () => {
         message: blocksMessage,
         status: 'enqueued',
         policy: { ...DEFAULT_MAILBOX_ENTRY_POLICY },
+        deliveryMode: 'immediate',
       });
     });
 
@@ -436,6 +518,34 @@ describe('handoffPromptToMailbox', () => {
         ...DEFAULT_MAILBOX_ENTRY_POLICY,
         priority: 9,
       });
+    });
+
+    test('a defer deliveryMode threads onto the enqueued entry payload', async () => {
+      const outcome = await handoffPromptToMailbox({
+        to: 'session:sess-1',
+        message: textMessage,
+        origin: 'test',
+        deliveryMode: 'defer',
+        jobQueue: mailbox.jobQueue,
+      });
+
+      expect(outcome.kind).toBe('enqueued');
+      expect(mailbox.rowCount()).toBe(1);
+      const row = mailbox.rows()[0];
+      expect(JSON.parse(row.payload).deliveryMode).toBe('defer');
+    });
+
+    test('an explicit immediate deliveryMode threads onto the enqueued entry payload', async () => {
+      const outcome = await handoffPromptToMailbox({
+        to: 'session:sess-1',
+        message: textMessage,
+        origin: 'test',
+        deliveryMode: 'immediate',
+        jobQueue: mailbox.jobQueue,
+      });
+
+      expect(outcome.kind).toBe('enqueued');
+      expect(JSON.parse(mailbox.rows()[0].payload).deliveryMode).toBe('immediate');
     });
   });
 
@@ -531,6 +641,22 @@ describe('handoffPromptToMailbox', () => {
       });
       expect(mailbox.rowCount()).toBe(0);
     });
+
+    test('an invalid deliveryMode rejects with the factory reason verbatim and writes nothing', async () => {
+      const outcome = await handoffPromptToMailbox({
+        to: 'session:sess-1',
+        message: textMessage,
+        origin: 'test',
+        deliveryMode: 'when_ready' as MailboxDeliveryMode,
+        jobQueue: mailbox.jobQueue,
+      });
+
+      expect(outcome).toEqual({
+        kind: 'rejected',
+        reason: 'deliveryMode must be "immediate" or "defer"',
+      });
+      expect(mailbox.rowCount()).toBe(0);
+    });
   });
 
   describe('crash path', () => {
@@ -576,6 +702,18 @@ describe('mailbox entry round-trip law', () => {
       policy: { priority: 3 },
     });
 
+    expect(parseMailboxEntry(JSON.parse(JSON.stringify(entry)))).toEqual(entry);
+  });
+
+  test('a defer entry survives JSON serialization into parseMailboxEntry unchanged', () => {
+    const entry = createMailboxEntry({
+      to: sessionAddress,
+      message: textMessage,
+      origin: 'test',
+      deliveryMode: 'defer',
+    });
+
+    expect(entry.deliveryMode).toBe('defer');
     expect(parseMailboxEntry(JSON.parse(JSON.stringify(entry)))).toEqual(entry);
   });
 });

@@ -22,6 +22,7 @@ function makeEntry(overrides?: { id?: string; to?: MailboxEntry['to'] }): Mailbo
     message,
     status: 'enqueued',
     policy: { ...DEFAULT_MAILBOX_ENTRY_POLICY },
+    deliveryMode: 'immediate',
   };
 }
 

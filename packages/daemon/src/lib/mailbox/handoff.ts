@@ -4,6 +4,7 @@ import { type MailboxAddress, parseAddress } from './address.ts';
 import { enqueueMailboxEntry } from './enqueue.ts';
 import {
   createMailboxEntry,
+  type MailboxDeliveryMode,
   type MailboxEntry,
   type MailboxEntryPolicy,
   type MailboxMessage,
@@ -45,11 +46,18 @@ export function createEntryStage(
   address: MailboxAddress,
   projectedMessage: MailboxMessage,
   origin: string,
-  policy: Partial<MailboxEntryPolicy> | undefined
+  policy: Partial<MailboxEntryPolicy> | undefined,
+  deliveryMode: MailboxDeliveryMode | undefined
 ): { entry: MailboxEntry | undefined; outcome: MailboxHandoffOutcome | undefined } {
   try {
     return {
-      entry: createMailboxEntry({ to: address, message: projectedMessage, origin, policy }),
+      entry: createMailboxEntry({
+        to: address,
+        message: projectedMessage,
+        origin,
+        policy,
+        deliveryMode,
+      }),
       outcome: undefined,
     };
   } catch (error) {
@@ -77,12 +85,16 @@ const runMailboxHandoff = (
     rejected,
   })('mailbox-handoff') as PipelineAPI
 )
-  .input(['to', 'message', 'origin', 'policy', 'jobQueue'])
+  .input(['to', 'message', 'origin', 'policy', 'deliveryMode', 'jobQueue'])
   .pipe(parseAddressStage, 'to', ['address', 'outcome'])
   .pipe('!rejected', 'outcome')
   .pipe(projectMessageStage, 'message', ['projectedMessage', 'outcome'])
   .pipe('!rejected', 'outcome')
-  .pipe(createEntryStage, ['address', 'projectedMessage', 'origin', 'policy'], ['entry', 'outcome'])
+  .pipe(
+    createEntryStage,
+    ['address', 'projectedMessage', 'origin', 'policy', 'deliveryMode'],
+    ['entry', 'outcome']
+  )
   .pipe('!rejected', 'outcome')
   .pipe(enqueueStage, ['jobQueue', 'entry'], 'outcome')
   .error(crashHandler, ['error'])
@@ -93,9 +105,15 @@ export function handoffPromptToMailbox(args: {
   message: MailboxMessage;
   origin: string;
   policy?: Partial<MailboxEntryPolicy>;
+  deliveryMode?: MailboxDeliveryMode;
   jobQueue: JobQueueRepository;
 }): Promise<MailboxHandoffOutcome> {
-  return runMailboxHandoff(args.to, args.message, args.origin, args.policy, args.jobQueue).catch(
-    crashHandler
-  );
+  return runMailboxHandoff(
+    args.to,
+    args.message,
+    args.origin,
+    args.policy,
+    args.deliveryMode,
+    args.jobQueue
+  ).catch(crashHandler);
 }
