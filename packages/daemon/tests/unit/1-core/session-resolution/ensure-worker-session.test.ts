@@ -269,9 +269,10 @@ describe('activateStage', () => {
 });
 
 describe('awaitSessionStage', () => {
-  test('resolves created:true without waiting when the session already appeared', async () => {
+  test('resolves created:true without waiting when a live session already appeared', async () => {
     const deps = buildDeps({
       listWorkerExecutions: () => [row('sess-live', 'running')],
+      rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
     });
     const outcome = await awaitSessionStage(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: 'sess-live', created: true });
@@ -284,12 +285,49 @@ describe('awaitSessionStage', () => {
         listCalls += 1;
         return listCalls >= 3 ? [row('sess-late', 'running')] : [row('stale-id', 'pending')];
       },
+      rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
     });
     jest.useFakeTimers();
     try {
       const settled = await drainByPolling(awaitSessionStage(workerTarget(), deps), 20);
       expect(settled).toEqual({ kind: 'resolved', sessionId: 'sess-late', created: true });
       expect(listCalls).toBe(3);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('keeps polling while the polled candidate fails the liveness check', async () => {
+    let listCalls = 0;
+    const deps = buildDeps({
+      listWorkerExecutions: () => {
+        listCalls += 1;
+        return listCalls >= 4
+          ? [row('sess-dead', 'running'), row('sess-live', 'running')]
+          : [row('sess-dead', 'running')];
+      },
+      rehydrateSubSession: async (sessionId) =>
+        sessionId === 'sess-dead' ? null : { id: sessionId },
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(awaitSessionStage(workerTarget(), deps), 20);
+      expect(settled).toEqual({ kind: 'resolved', sessionId: 'sess-live', created: true });
+      expect(listCalls).toBe(4);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a stale binding that never goes live ends in activation_timeout', async () => {
+    const deps = buildDeps({
+      listWorkerExecutions: () => [row('sess-dead', 'running')],
+      rehydrateSubSession: async () => null,
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(awaitSessionStage(workerTarget(), deps), 40);
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
     } finally {
       jest.useRealTimers();
     }
@@ -438,6 +476,7 @@ describe('ensureWorkerSession', () => {
           ? [row(null, 'running'), row('sess-late', 'running')]
           : [row(null, 'running')];
       },
+      rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
       activateTaskAgent: async () => true,
     });
     jest.useFakeTimers();

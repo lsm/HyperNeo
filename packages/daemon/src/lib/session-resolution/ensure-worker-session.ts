@@ -118,7 +118,7 @@ export async function awaitSessionStage(
         return { kind: 'unresolved', reason: 'activation_timeout' };
       }
       const sessionId = newestWorkerSessionId(deps.listWorkerExecutions(target));
-      if (sessionId !== null) {
+      if (sessionId !== null && (await deps.rehydrateSubSession(sessionId)) !== null) {
         return { kind: 'resolved', sessionId, created: true };
       }
       const tick = delay(WORKER_SESSION_POLL_INTERVAL_MS);
