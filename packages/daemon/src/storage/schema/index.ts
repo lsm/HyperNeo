@@ -303,6 +303,14 @@ export function createTables(db: BunDatabase): void {
     `);
 
   db.exec(`
+      CREATE TABLE IF NOT EXISTS daemon_config (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        config_json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+
+  db.exec(`
       CREATE TABLE IF NOT EXISTS providers (
         id TEXT PRIMARY KEY,
         provider_id TEXT UNIQUE NOT NULL,

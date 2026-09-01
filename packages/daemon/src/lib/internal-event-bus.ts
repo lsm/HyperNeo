@@ -220,6 +220,16 @@ export interface SettingsEvents {
   'settings.updated': SettingsUpdatedEvent;
 }
 
+export interface DaemonConfigUpdatedEvent {
+  sessionId?: string;
+  namespaceId?: string;
+  changedKeys: string[];
+}
+
+export interface DaemonConfigEvents {
+  'daemonConfig.updated': DaemonConfigUpdatedEvent;
+}
+
 export interface ExternalEventEvents {
   'externalEvent.published': ExternalEventPublishedPayload;
 }
@@ -541,6 +551,7 @@ export type DaemonInternalEventMap = Record<string, InternalEventBusPayload> &
   AgentControlEvents &
   ClientForwardingEvents &
   SettingsEvents &
+  DaemonConfigEvents &
   ExternalEventEvents &
   SessionEvents &
   ApiConnectionEvents &
