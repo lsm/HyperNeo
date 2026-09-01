@@ -1266,6 +1266,50 @@ describe('awaitSessionStage', () => {
       jest.useRealTimers();
     }
   });
+
+  test('a non-finite waitCapMs falls back to the global cap instead of an immediate timer', async () => {
+    for (const waitCapMs of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      let listCalls = 0;
+      const deps = buildDeps({
+        listWorkerExecutions: () => {
+          listCalls += 1;
+          return [];
+        },
+      });
+      jest.useFakeTimers();
+      try {
+        const settled = await drainByPolling(
+          awaitSessionStage(workerTarget({ waitCapMs }), deps),
+          40
+        );
+        expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
+        expect(listCalls).toBe(WORKER_SESSION_WAIT_CAP_MS / WORKER_SESSION_POLL_INTERVAL_MS);
+      } finally {
+        jest.useRealTimers();
+      }
+    }
+  });
+
+  test('a negative waitCapMs is clamped to a single check', async () => {
+    let listCalls = 0;
+    const deps = buildDeps({
+      listWorkerExecutions: () => {
+        listCalls += 1;
+        return [];
+      },
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(
+        awaitSessionStage(workerTarget({ waitCapMs: -1_000 }), deps),
+        5
+      );
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
+      expect(listCalls).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
 
 describe('crashHandler', () => {
