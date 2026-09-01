@@ -17,6 +17,7 @@ function makeDeps(
   handlers: {
     getSession?: (sessionId: string) => unknown;
     rehydrateSubSession?: (sessionId: string) => unknown;
+    getCoordinator?: () => { id: string } | null;
   } = {}
 ): { deps: SessionResolutionDeps; log: DepsLog } {
   const log: DepsLog = {
@@ -35,7 +36,7 @@ function makeDeps(
       log.rehydrateSubSession.push(sessionId);
       return handlers.rehydrateSubSession ? handlers.rehydrateSubSession(sessionId) : null;
     },
-    getCoordinator: async () => null,
+    getCoordinator: async () => (handlers.getCoordinator ? handlers.getCoordinator() : null),
     ensureLongTermAgent: async (spaceId, agentId) => {
       log.ensureLongTermAgent.push([spaceId, agentId]);
       return null;
@@ -112,6 +113,39 @@ describe('findSessionForTarget', () => {
       const agentId = 'agent-7';
       const sessionId = longTermAgentSessionId(spaceId, agentId);
       const { deps, log } = makeDeps({
+        getSession: (queried) => (queried === sessionId ? { id: sessionId } : null),
+      });
+      const target: FindTarget = { kind: 'agent', spaceId, agentId };
+      expect(await findSessionForTarget(target, deps)).toEqual({
+        kind: 'resolved',
+        sessionId,
+        created: false,
+      });
+      expect(log.getSession).toEqual([sessionId]);
+    });
+
+    test('repository-derived coordinator agentId resolves the space:chat: session id', async () => {
+      const spaceId = 'space-1';
+      const chatId = coordinatorSessionId(spaceId);
+      const { deps, log } = makeDeps({
+        getCoordinator: () => ({ id: 'coordinator-row-9' }),
+        getSession: (queried) => (queried === chatId ? { id: chatId } : null),
+      });
+      const target: FindTarget = { kind: 'agent', spaceId, agentId: 'coordinator-row-9' };
+      expect(await findSessionForTarget(target, deps)).toEqual({
+        kind: 'resolved',
+        sessionId: chatId,
+        created: false,
+      });
+      expect(log.getSession).toEqual([chatId]);
+    });
+
+    test('non-coordinator agentId with a coordinator row present resolves the space:agent: id', async () => {
+      const spaceId = 'space-1';
+      const agentId = 'agent-7';
+      const sessionId = longTermAgentSessionId(spaceId, agentId);
+      const { deps, log } = makeDeps({
+        getCoordinator: () => ({ id: 'coordinator-row-9' }),
         getSession: (queried) => (queried === sessionId ? { id: sessionId } : null),
       });
       const target: FindTarget = { kind: 'agent', spaceId, agentId };
