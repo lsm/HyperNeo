@@ -126,6 +126,8 @@ export async function awaitRoutingStage(
         if (live !== null) {
           return { kind: 'resolved', sessionId: worker.sessionId, created: false };
         }
+      } else if (deps.readWorkerTaskPhase(target.taskId) !== 'routing') {
+        return ensureWorkerSession(target, deps);
       }
       const tick = delay(WORKER_SESSION_POLL_INTERVAL_MS);
       await Promise.race([tick.promise, cap.promise]);
