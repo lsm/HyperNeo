@@ -419,6 +419,29 @@ describe('postApprovalStage', () => {
     expect(calls).toEqual([]);
   });
 
+  test('a router replacement recorded during the spawn re-dispatches to it', async () => {
+    let workerReads = 0;
+    const calls: string[] = [];
+    const deps = buildDeps({
+      readWorkerTaskPhase: () => 'post_approval',
+      getPostApprovalWorkerSession: () => {
+        workerReads += 1;
+        return workerReads <= 2
+          ? { sessionId: 'pa-dead', agentName: AGENT_NAME }
+          : { sessionId: 'pa-router', agentName: AGENT_NAME };
+      },
+      rehydrateSubSession: async (sessionId) =>
+        sessionId === 'pa-dead' ? null : { id: sessionId },
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return 'spawned-duplicate';
+      },
+    });
+    const outcome = await postApprovalStage(workerTarget(), deps);
+    expect(outcome).toEqual({ kind: 'resolved', sessionId: 'pa-router', created: false });
+    expect(calls).toEqual(['spawn']);
+  });
+
   test('a stalled post-approval restore ends in restore_timeout', async () => {
     const deps = buildDeps({
       readWorkerTaskPhase: () => 'post_approval',
@@ -470,7 +493,7 @@ describe('postApprovalStage', () => {
     });
     const outcome = await postApprovalStage(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: 'spawned-fresh', created: true });
-    expect(calls).toEqual(['worker', 'rehydrate:pa-dead', 'worker', 'spawn']);
+    expect(calls).toEqual(['worker', 'rehydrate:pa-dead', 'worker', 'spawn', 'worker']);
     expect(spawned).toEqual([[TASK_ID, AGENT_NAME, 'node-7']]);
   });
 

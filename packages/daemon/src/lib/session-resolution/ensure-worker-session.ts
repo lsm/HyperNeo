@@ -170,6 +170,15 @@ export async function postApprovalStage(
     if (spawnedSessionId === null) {
       return { kind: 'unresolved', reason: 'spawn_failed' };
     }
+    const baselineId = worker?.sessionId ?? null;
+    const recorded = deps.getPostApprovalWorkerSession(target.taskId);
+    if (
+      recorded !== null &&
+      recorded.sessionId !== baselineId &&
+      recorded.sessionId !== spawnedSessionId
+    ) {
+      return ensureWorkerSession(target, deps);
+    }
     return { kind: 'resolved', sessionId: spawnedSessionId, created: true };
   } finally {
     cap.cancel();
