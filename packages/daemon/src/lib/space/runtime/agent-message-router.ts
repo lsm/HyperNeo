@@ -30,7 +30,7 @@ export interface AgentMessageRouterConfig {
   nodeExecutionRepo: NodeExecutionRepository;
   workflowRunId: string;
   workflowChannels: WorkflowChannel[];
-  messageInjector: (sessionId: string, message: string) => Promise<void>;
+  messageInjector: (sessionId: string, message: string) => Promise<string | void>;
   channelRouter?: ChannelRouter;
   nodeGroups?: Record<string, string[]>;
   spaceAgentInjector?: (
@@ -41,7 +41,6 @@ export interface AgentMessageRouterConfig {
     options?: {
       onConsumed?: (settledSessionId: string) => void;
       onLateFailure?: () => void;
-      disposeSignal?: AbortSignal;
     }
   ) => Promise<SpaceAgentInjectionOutcome>;
   taskNumber?: number | null;
@@ -328,9 +327,7 @@ export class AgentMessageRouter {
         const envelopedMessage = buildEnvelope('space-agent');
         try {
           const outcome = await spaceAgentInjector!(spaceId!, envelopedMessage, null);
-          if (outcome.state === 'delivered') {
-            delivered.push({ agentName: 'space-agent', sessionId: outcome.sessionId });
-          } else if (outcome.state === 'queued') {
+          if (outcome.state === 'accepted') {
             queued.push({ agentName: 'space-agent', messageId: outcome.messageId });
           } else {
             failed.push({
@@ -352,9 +349,7 @@ export class AgentMessageRouter {
         const envelopedMessage = buildEnvelope('space-agent');
         try {
           const outcome = await spaceAgentInjector!(spaceId!, envelopedMessage, decision.sessionId);
-          if (outcome.state === 'delivered') {
-            delivered.push({ agentName: 'space-agent', sessionId: outcome.sessionId });
-          } else if (outcome.state === 'queued') {
+          if (outcome.state === 'accepted') {
             queued.push({ agentName: 'space-agent', messageId: outcome.messageId });
           } else {
             failed.push({
@@ -519,8 +514,12 @@ export class AgentMessageRouter {
         for (const session of sessions) {
           const envelopedMessage = buildEnvelope('node-agent');
           try {
-            await messageInjector(session.sessionId, envelopedMessage);
-            delivered.push(session);
+            const injectedMessageId = await messageInjector(session.sessionId, envelopedMessage);
+            if (typeof injectedMessageId === 'string') {
+              queued.push({ agentName: session.agentName, messageId: injectedMessageId });
+            } else {
+              delivered.push(session);
+            }
           } catch (err) {
             failed.push({ ...session, error: err instanceof Error ? err.message : String(err) });
           }
@@ -717,9 +716,7 @@ export class AgentMessageRouter {
         const envelopedMessage = buildEnvelope('space-agent');
         try {
           const outcome = await spaceAgentInjector(spaceId, envelopedMessage, replyTo);
-          if (outcome.state === 'delivered') {
-            delivered.push({ agentName, sessionId: outcome.sessionId || sessionId });
-          } else if (outcome.state === 'queued') {
+          if (outcome.state === 'accepted') {
             queued.push({ agentName, messageId: outcome.messageId });
           } else {
             failed.push({
@@ -743,8 +740,12 @@ export class AgentMessageRouter {
         for (const member of agentSessions) {
           const envelopedMessage = buildEnvelope('node-agent');
           try {
-            await messageInjector(member.sessionId, envelopedMessage);
-            delivered.push({ agentName, sessionId: member.sessionId });
+            const injectedMessageId = await messageInjector(member.sessionId, envelopedMessage);
+            if (typeof injectedMessageId === 'string') {
+              queued.push({ agentName, messageId: injectedMessageId });
+            } else {
+              delivered.push({ agentName, sessionId: member.sessionId });
+            }
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
             failed.push({ agentName, sessionId: member.sessionId, error: errMsg });

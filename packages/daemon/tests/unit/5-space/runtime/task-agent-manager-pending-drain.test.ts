@@ -12,6 +12,8 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
+import { createOutboxTestDb, type OutboxTestDb } from '../../../helpers/outbox-test-db';
+import { LATE_SETTLE_HORIZON_MS } from '../../../../src/lib/space/runtime/space-agent-message-delivery';
 
 const NODE_ID = 'node-build';
 const NODE_NAME = 'Build';
@@ -96,6 +98,7 @@ interface RealDbHarness {
   spaceId: string;
   executionId: string;
   enqueue: (overrides?: EnqueueOverrides) => PendingAgentMessageRecord;
+  markInjected: (id: string) => void;
 }
 
 function makeRealDbHarness(): RealDbHarness {
@@ -135,11 +138,22 @@ function makeRealDbHarness(): RealDbHarness {
     )
   );
   const publish = mock(async (_event: string, _payload: unknown) => {});
-  const injectMock = mock(async (...args: unknown[]) => (args[6] as string) ?? 'injected');
+  const injectedIds = new Set<string>();
+  const injectMock = mock(async (...args: unknown[]) => {
+    const id = (args[6] as string) ?? 'injected';
+    injectedIds.add(id);
+    return id;
+  });
   const workflow = { nodes: [{ id: NODE_ID, name: NODE_NAME }] };
 
   const manager = new TaskAgentManager({
-    db: { getDatabase: () => db },
+    db: {
+      getDatabase: () => db,
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, uuid: string) =>
+          injectedIds.has(uuid) ? { content: 'x', sendStatus: 'consumed' } : null,
+      }),
+    },
     taskRepo,
     workflowRunRepo: runRepo,
     nodeExecutionRepo,
@@ -165,6 +179,7 @@ function makeRealDbHarness(): RealDbHarness {
     runId: run.id,
     spaceId: space.id,
     executionId: exec.id,
+    markInjected: (id: string) => injectedIds.add(id),
     enqueue: (overrides = {}) =>
       spyRepo.repo.enqueue({
         workflowRunId: run.id,
@@ -212,6 +227,10 @@ function makeMockRepoManager(repo: {
   markAttemptFailed: ReturnType<typeof mock>;
 }): { manager: TaskAgentManager; injectMock: ReturnType<typeof mock> } {
   const injectMock = mock(async (...args: unknown[]) => (args[6] as string) ?? 'injected');
+  const repoWithGuards = {
+    getById: mock(() => ({ status: 'pending' })),
+    ...repo,
+  };
   const execution = {
     id: 'exec-mock',
     workflowRunId: 'run-mock',
@@ -224,7 +243,12 @@ function makeMockRepoManager(repo: {
   };
   const workflow = { nodes: [{ id: NODE_ID, name: NODE_NAME }] };
   const manager = new TaskAgentManager({
-    db: { getDatabase: () => ({}) },
+    db: {
+      getDatabase: () => ({}),
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: () => ({ content: 'x', sendStatus: 'consumed' }),
+      }),
+    },
     nodeExecutionRepo: {
       getByAgentSessionId: mock(() => execution),
       listByAgentSessionId: mock(() => [execution]),
@@ -233,7 +257,7 @@ function makeMockRepoManager(repo: {
     },
     workflowRunRepo: { getRun: mock(() => ({ workflowId: WORKFLOW_ID })) },
     spaceWorkflowManager: { getWorkflow: () => workflow, getWorkflowForRun: () => workflow },
-    pendingMessageRepo: repo,
+    pendingMessageRepo: repoWithGuards,
     internalEventBus: { subscribe: mock(() => () => {}), publish: mock(async () => {}) },
   } as unknown as TaskAgentManagerConfig);
   (
@@ -358,7 +382,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
   });
 
   it('runs retention and expiry against the run before listing', async () => {
-    h.enqueue({ message: 'note' });
+    const row = h.enqueue({ message: 'note' });
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
@@ -568,15 +592,24 @@ describe('flushPendingMessagesForTarget — per-row outcomes', () => {
     ]);
   });
 
-  it('marks the attempt failed and continues draining the remaining rows', async () => {
+  it('marks the attempt failed, schedules reconciliation, and continues draining the remaining rows', async () => {
     const failingRow = h.enqueue({ message: 'fails first' });
     const laterRow = h.enqueue({ message: 'still drains' });
+    const reconciliations: string[] = [];
+    (
+      h.manager as unknown as {
+        scheduleNodeAgentDeliveryReconciliation: (row: PendingAgentMessageRecord) => void;
+      }
+    ).scheduleNodeAgentDeliveryReconciliation = (row) => {
+      reconciliations.push(row.id);
+    };
     (
       h.manager as unknown as {
         injectSubSessionMessage: (...args: unknown[]) => Promise<string>;
       }
     ).injectSubSessionMessage = mock(async (...args: unknown[]) => {
       if (args[6] === failingRow.id) throw new Error('inject exploded');
+      h.markInjected(args[6] as string);
       return 'ok';
     });
 
@@ -587,6 +620,7 @@ describe('flushPendingMessagesForTarget — per-row outcomes', () => {
     expect(failed?.attempts).toBe(1);
     expect(failed?.lastError).toBe('inject exploded');
     expect(h.spyRepo.calls).toContain(`attemptFailed:${failingRow.id}`);
+    expect(reconciliations).toEqual([failingRow.id]);
     expect(h.spyRepo.repo.getById(laterRow.id)?.status).toBe('delivered');
   });
 });
@@ -609,8 +643,17 @@ function makeSpaceAgentHarness(
       spaceId: string,
       message: string,
       replyTo: string | null,
-      rowId: string
-    ) => Promise<{ state: 'delivered' | 'queued' | 'failed'; messageId: string; error?: string }>;
+      rowId: string,
+      options?: {
+        onConsumed?: (settledSessionId: string) => void;
+        onLateFailure?: () => void;
+      }
+    ) => Promise<{
+      state: 'accepted' | 'failed';
+      messageId: string;
+      sessionId?: string;
+      error?: string;
+    }>;
     registry?: { get: (taskId: string) => string | null };
   } = {}
 ): SpaceAgentHarness {
@@ -639,10 +682,19 @@ function makeSpaceAgentHarness(
   const publish = mock(async (_event: string, _payload: unknown) => {});
   const injector = mock(
     options.injectorImpl ??
-      (async (_spaceId: string, _message: string, _replyTo: string | null, rowId: string) => ({
-        state: 'delivered',
-        messageId: rowId,
-      }))
+      (async (
+        _spaceId: string,
+        _message: string,
+        replyTo: string | null,
+        rowId: string,
+        injectorOptions?: {
+          onConsumed?: (settledSessionId: string) => void;
+          onLateFailure?: () => void;
+        }
+      ) => {
+        injectorOptions?.onConsumed?.(replyTo ?? `space:chat:${_spaceId}`);
+        return { state: 'accepted' as const, messageId: rowId };
+      })
   );
 
   const config: Record<string, unknown> = {
@@ -697,7 +749,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
   it('defers pending-row expiry while an SDK delivery is still active', async () => {
     const h = makeSpaceAgentHarness({
       injectorImpl: async (_spaceId, _message, _replyTo, rowId) => ({
-        state: 'queued',
+        state: 'accepted',
         messageId: rowId,
         sessionId: `space:chat:stub`,
       }),
@@ -782,12 +834,13 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     expect(expiredAt).toBeGreaterThan(deliveredAt);
   });
 
-  it('keeps a queued space-agent row pending and settles it from delayed consumption', async () => {
+  it('keeps an accepted space-agent row pending and settles it from delayed consumption', async () => {
     let settleQueuedRow: (() => void) | null = null;
     const h = makeSpaceAgentHarness({
       injectorImpl: async (_spaceId, _message, _replyTo, rowId, options) => {
-        settleQueuedRow = options?.onConsumed ?? null;
-        return { state: 'queued', messageId: rowId };
+        const onConsumed = options?.onConsumed;
+        settleQueuedRow = onConsumed ? () => onConsumed(`space:chat:${_spaceId}`) : null;
+        return { state: 'accepted', messageId: rowId };
       },
     });
     dbByTest.push(h.db);
@@ -828,6 +881,29 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     expect(h.injector).toHaveBeenCalledTimes(1);
     expect(h.spyRepo.repo.getById(nodeScoped.id)?.status).toBe('delivered');
+  });
+
+  it('keeps a failed space delivery admissible for retry while retention protects it', async () => {
+    const h = makeSpaceAgentHarness({
+      injectorImpl: async (_spaceId, _message, _replyTo, rowId) => ({
+        state: 'accepted',
+        messageId: rowId,
+      }),
+    });
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'dead letter retry' });
+    h.spyRepo.repo.markAttemptFailed(row.id, 'space-agent delivery dead-lettered');
+    (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, uuid: string) =>
+          uuid === row.id ? { content: 'x', sendStatus: 'failed' } : null,
+      }),
+      getDatabase: () => ({}),
+    };
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.injector).toHaveBeenCalledTimes(1);
   });
 
   it('marks rows delivered to the space-chat session id and emits the delivery event', async () => {
@@ -883,7 +959,11 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
       'registry-session',
       null,
     ]);
-    expect(registry.get.mock.calls.map((call: unknown[]) => call[0])).toEqual(['task-9', 'task-9']);
+    expect(registry.get.mock.calls.map((call: unknown[]) => call[0])).toEqual([
+      'task-9',
+      'task-9',
+      'task-9',
+    ]);
   });
 
   it('formats plain rows for the space-agent level and passes enveloped rows through', async () => {
@@ -917,9 +997,10 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
   it('marks the attempt failed and continues when the injector rejects', async () => {
     const h = makeSpaceAgentHarness({
-      injectorImpl: async (_spaceId, message, _replyTo, rowId) => {
+      injectorImpl: async (_spaceId, message, _replyTo, rowId, options) => {
         if (message.includes('fails first')) throw new Error('injector down');
-        return { state: 'delivered', messageId: rowId };
+        options?.onConsumed?.(_replyTo ?? `space:chat:${_spaceId}`);
+        return { state: 'accepted', messageId: rowId };
       },
     });
     dbByTest.push(h.db);
@@ -955,7 +1036,8 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
 
   function makeGuardManager(
     taskStatus: string | null,
-    runStatus: string
+    runStatus: string,
+    outbox?: OutboxTestDb
   ): {
     manager: TaskAgentManager;
     saveUserMessage: ReturnType<typeof mock>;
@@ -991,24 +1073,42 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
 
     const manager = new TaskAgentManager({
       db: {
-        getDatabase: () => ({}),
+        getDatabase: () => (outbox ? outbox.db : {}),
         saveUserMessage,
         getUserMessageIdsByStatus: mock(() => []),
-        getSDKMessageRepo: () => ({
-          getDeliveryContent: () => null,
-          reopenDeliveryByUuid: mock(() => null),
-          markDeliveryDeferredByUuid: mock(() => null),
-          markDeliveryFailedByUuid: mock(() => null),
-        }),
-        getJobQueueRepo: () => ({
-          activeDeliveryMessageUuids: () => new Set<string>(),
-          enqueue: jobQueueEnqueue,
-        }),
+        getSDKMessageRepo: () =>
+          outbox
+            ? outbox.sdkRepo
+            : {
+                getDeliveryContent: () => null,
+                reopenDeliveryByUuid: mock(() => null),
+                markDeliveryDeferredByUuid: mock(() => null),
+                markDeliveryFailedByUuid: mock(() => null),
+              },
+        getJobQueueRepo: () =>
+          outbox
+            ? outbox.jobQueue
+            : {
+                activeDeliveryMessageUuids: () => new Set<string>(),
+                enqueue: jobQueueEnqueue,
+              },
       },
       internalEventBus: { subscribe: mock(() => () => {}), publish: mock(async () => {}) },
       nodeExecutionRepo: {
         getByAgentSessionId: mock(() => execution),
         listByAgentSessionId: mock(() => [execution]),
+        ...(outbox
+          ? {
+              listByWorkflowRun: mock(() => [
+                execution,
+                {
+                  ...execution,
+                  id: 'exec-v2-alt',
+                  agentSessionId: 'sub-session-v2-alt',
+                },
+              ]),
+            }
+          : {}),
         getById: mock(() => null),
         touchLastActivity: mock(() => {}),
       },
@@ -1050,14 +1150,14 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
   });
 
   it('lets done task and run states through to the durable injection shell', async () => {
-    const { manager, saveUserMessage, jobQueueEnqueue } = makeGuardManager('done', 'done');
+    const outbox = createOutboxTestDb();
+    const { manager } = makeGuardManager('done', 'done', outbox);
 
     const dbId = await manager.injectSubSessionMessage(GUARD_SESSION_ID, 'note', true);
 
-    expect(dbId).toBe('db-id');
-    expect(saveUserMessage).toHaveBeenCalledTimes(1);
-    expect(saveUserMessage.mock.calls[0][2]).toBe('enqueued');
-    expect(jobQueueEnqueue).toHaveBeenCalledTimes(1);
+    expect(typeof dbId).toBe('string');
+    expect(outbox.userRowCount(GUARD_SESSION_ID)).toBe(1);
+    expect(outbox.pendingDeliveryJobCount(GUARD_SESSION_ID)).toBe(1);
   });
 
   it('rejects runtime-origin injections when the canonical task is done (#3109)', async () => {
@@ -1074,14 +1174,23 @@ describe('pending drain through the v2 injection shell', () => {
   const V2_RUN_ID = 'run-v2';
   const V2_NODE_ID = 'node-coder';
 
-  function makeV2Harness(deliveryContent: { sendStatus: string }): {
+  function makeV2Harness(
+    deliveryContent: { sendStatus: string } | null,
+    outbox?: OutboxTestDb
+  ): {
     manager: TaskAgentManager;
     saveUserMessage: ReturnType<typeof mock>;
     jobQueueEnqueue: ReturnType<typeof mock>;
     reopenDeliveryByUuid: ReturnType<typeof mock>;
     markDeliveryDeferredByUuid: ReturnType<typeof mock>;
     markDelivered: ReturnType<typeof mock>;
+    markAttemptFailed: ReturnType<typeof mock>;
+    deferExpiration: ReturnType<typeof mock>;
+    enforceRetention: ReturnType<typeof mock>;
+    expireStale: ReturnType<typeof mock>;
+    getById: ReturnType<typeof mock>;
     replayMock: ReturnType<typeof mock>;
+    session: AgentSession;
   } {
     const saveUserMessage = mock(() => 'db-id');
     const jobQueueEnqueue = mock(
@@ -1117,8 +1226,10 @@ describe('pending drain through the v2 injection shell', () => {
       enforceRetention: mock(() => 0),
       expireStale: mock(() => 0),
       listPendingForTarget: mock(() => [row]),
+      getById: mock(() => ({ status: 'pending' })),
       markDelivered: mock(() => {}),
       markAttemptFailed: mock(() => null),
+      deferExpiration: mock(() => {}),
     };
     const session = {
       session: { id: V2_SESSION_ID, sdkSessionId: 'prior-sdk' },
@@ -1131,24 +1242,42 @@ describe('pending drain through the v2 injection shell', () => {
 
     const manager = new TaskAgentManager({
       db: {
-        getDatabase: () => ({}),
+        getDatabase: () => (outbox ? outbox.db : {}),
         saveUserMessage,
         getUserMessageIdsByStatus: mock(() => []),
-        getSDKMessageRepo: () => ({
-          getDeliveryContent: () => deliveryContent,
-          reopenDeliveryByUuid,
-          markDeliveryDeferredByUuid,
-          markDeliveryFailedByUuid: mock(() => null),
-        }),
-        getJobQueueRepo: () => ({
-          activeDeliveryMessageUuids: () => new Set<string>(),
-          enqueue: jobQueueEnqueue,
-        }),
+        getSDKMessageRepo: () =>
+          outbox
+            ? outbox.sdkRepo
+            : {
+                getDeliveryContent: () => deliveryContent,
+                reopenDeliveryByUuid,
+                markDeliveryDeferredByUuid,
+                markDeliveryFailedByUuid: mock(() => null),
+              },
+        getJobQueueRepo: () =>
+          outbox
+            ? outbox.jobQueue
+            : {
+                activeDeliveryMessageUuids: () => new Set<string>(),
+                enqueue: jobQueueEnqueue,
+              },
       },
       internalEventBus: { subscribe: mock(() => () => {}), publish: mock(async () => {}) },
       nodeExecutionRepo: {
         getByAgentSessionId: mock(() => execution),
         listByAgentSessionId: mock(() => [execution]),
+        ...(outbox
+          ? {
+              listByWorkflowRun: mock(() => [
+                execution,
+                {
+                  ...execution,
+                  id: 'exec-v2-alt',
+                  agentSessionId: 'sub-session-v2-alt',
+                },
+              ]),
+            }
+          : {}),
         getById: mock(() => null),
         touchLastActivity: mock(() => {}),
       },
@@ -1171,22 +1300,33 @@ describe('pending drain through the v2 injection shell', () => {
       reopenDeliveryByUuid,
       markDeliveryDeferredByUuid,
       markDelivered: pendingRepo.markDelivered,
+      markAttemptFailed: pendingRepo.markAttemptFailed,
+      deferExpiration: pendingRepo.deferExpiration,
+      enforceRetention: pendingRepo.enforceRetention,
+      expireStale: pendingRepo.expireStale,
+      getById: pendingRepo.getById,
       replayMock,
+      session,
     };
   }
 
-  it('a drain retry over a failed delivery row reopens it and re-enqueues without a duplicate row', async () => {
-    const h = makeV2Harness({ sendStatus: 'failed' });
+  it('a drain retry over a failed delivery row retries through the mailbox without a duplicate row', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    const dbId = outbox.userRowIdByUuid(V2_SESSION_ID, 'row-v2');
+    expect(dbId).not.toBeNull();
+    outbox.completeDeliveryJobs(V2_SESSION_ID, 'row-v2');
+    outbox.sdkRepo.updateMessageStatus([dbId as string], 'failed');
 
     await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
 
-    expect(h.reopenDeliveryByUuid).toHaveBeenCalledWith(V2_SESSION_ID, 'row-v2');
-    expect(h.saveUserMessage).not.toHaveBeenCalled();
-    expect(h.jobQueueEnqueue).toHaveBeenCalledTimes(1);
-    expect(
-      (h.jobQueueEnqueue.mock.calls[0][0] as { payload?: { messageUuid?: string } }).payload
-        ?.messageUuid
-    ).toBe('row-v2');
+    expect(outbox.sendStatus(V2_SESSION_ID, 'row-v2')).toBe('enqueued');
+    expect(outbox.userRowCount(V2_SESSION_ID)).toBe(1);
+    expect(outbox.pendingDeliveryJobCount(V2_SESSION_ID, 'row-v2')).toBe(1);
+    signalDeliveryConsumed(V2_SESSION_ID, 'row-v2');
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
   });
 
@@ -1199,5 +1339,387 @@ describe('pending drain through the v2 injection shell', () => {
     expect(h.jobQueueEnqueue).not.toHaveBeenCalled();
     expect(h.replayMock).not.toHaveBeenCalled();
     expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
+  });
+
+  function captureLateSettlementArms(manager: TaskAgentManager): Array<{
+    onConsumed: (settledSessionId: string) => void;
+    onFailed?: () => void;
+  }> {
+    const armed: Array<{ onConsumed: (settledSessionId: string) => void; onFailed?: () => void }> =
+      [];
+    (
+      manager as unknown as {
+        lateSettlements: {
+          arm: (request: {
+            onConsumed: (settledSessionId: string) => void;
+            onFailed?: () => void;
+          }) => { cancel(): void };
+        };
+      }
+    ).lateSettlements = {
+      arm: (request) => {
+        armed.push(request);
+        return { cancel: () => {} };
+      },
+    };
+    return armed;
+  }
+
+  it('a drain keeps the pending row open until consumption settles it', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+
+    expect(outbox.sendStatus(V2_SESSION_ID, 'row-v2')).toBe('enqueued');
+    expect(h.markDelivered).not.toHaveBeenCalled();
+    expect(armed).toHaveLength(1);
+    expect(h.deferExpiration).toHaveBeenCalledWith(['row-v2'], LATE_SETTLE_HORIZON_MS + 60_000);
+
+    armed[0].onConsumed(V2_SESSION_ID);
+
+    expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
+  });
+
+  it('a drain charges the pending row when the delivery dead-letters before consumption', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+    const reconciliations: Array<{ rowId: string; sessionId: string }> = [];
+    (
+      h.manager as unknown as {
+        scheduleNodeAgentDeliveryReconciliation: (
+          row: PendingAgentMessageRecord,
+          sessionId: string
+        ) => void;
+      }
+    ).scheduleNodeAgentDeliveryReconciliation = (row, sessionId) => {
+      reconciliations.push({ rowId: row.id, sessionId });
+    };
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    const dbId = outbox.userRowIdByUuid(V2_SESSION_ID, 'row-v2') as string;
+    outbox.completeDeliveryJobs(V2_SESSION_ID, 'row-v2');
+    outbox.sdkRepo.updateMessageStatus([dbId], 'failed');
+
+    armed[0].onFailed?.();
+
+    expect(h.markAttemptFailed).toHaveBeenCalledWith(
+      'row-v2',
+      expect.stringContaining('dead-letter')
+    );
+    expect(reconciliations).toEqual([{ rowId: 'row-v2', sessionId: V2_SESSION_ID }]);
+    expect(h.markDelivered).not.toHaveBeenCalled();
+  });
+
+  it('a horizon lapse over a still-enqueued delivery re-arms instead of charging an attempt', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    expect(armed).toHaveLength(1);
+
+    armed[0].onFailed?.();
+
+    expect(h.markAttemptFailed).not.toHaveBeenCalled();
+    expect(armed).toHaveLength(2);
+    expect(h.deferExpiration).toHaveBeenCalledWith(['row-v2'], LATE_SETTLE_HORIZON_MS + 60_000);
+
+    armed[1].onConsumed(V2_SESSION_ID);
+
+    expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
+  });
+
+  it('a horizon lapse over a deferred delivery re-arms instead of charging an attempt', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    const dbId = outbox.userRowIdByUuid(V2_SESSION_ID, 'row-v2') as string;
+    outbox.sdkRepo.updateMessageStatus([dbId], 'deferred');
+
+    armed[0].onFailed?.();
+
+    expect(h.markAttemptFailed).not.toHaveBeenCalled();
+    expect(armed).toHaveLength(2);
+    expect(h.deferExpiration).toHaveBeenCalledWith(['row-v2'], LATE_SETTLE_HORIZON_MS + 60_000);
+  });
+
+  it('a drain excludes watched rows from retention caps and stale expiry', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    expect(outbox.sendStatus(V2_SESSION_ID, 'row-v2')).toBe('enqueued');
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+
+    const retentionCalls = h.enforceRetention.mock.calls as unknown as Array<
+      [{ runId?: string; excludeIds?: string[] }]
+    >;
+    expect(retentionCalls.at(-1)?.[0].excludeIds).toContain('row-v2');
+    const expireCalls = h.expireStale.mock.calls as unknown as Array<[string, string[]]>;
+    expect(expireCalls.at(-1)?.[1]).toContain('row-v2');
+  });
+
+  it('a settled sibling row with the same uuid settles the pending row without arming another watcher', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    expect(armed).toHaveLength(1);
+    const storedMessage = (
+      outbox.db
+        .prepare(`SELECT sdk_message AS m FROM sdk_messages WHERE sdk_uuid = ? LIMIT 1`)
+        .get('row-v2') as { m: string }
+    ).m;
+    outbox.db
+      .prepare(
+        `INSERT INTO sdk_messages
+          (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+           replacement_metadata_normalized, consumed_seq)
+         VALUES ('db-sibling-evidence', ?, 'user', ?, ?, 'failed', ?, 1, 7)`
+      )
+      .run(V2_SESSION_ID, storedMessage, new Date().toISOString(), 'row-v2');
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+
+    expect(armed).toHaveLength(1);
+    expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
+  });
+
+  it('a settled sibling with reordered but equivalent content still settles the pending row', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    const stored = JSON.parse(
+      (
+        outbox.db
+          .prepare(`SELECT sdk_message AS m FROM sdk_messages WHERE sdk_uuid = ? LIMIT 1`)
+          .get('row-v2') as { m: string }
+      ).m
+    ) as Record<string, unknown>;
+    const reordered: Record<string, unknown> = {};
+    for (const key of Object.keys(stored).reverse()) reordered[key] = stored[key];
+    outbox.db
+      .prepare(
+        `INSERT INTO sdk_messages
+          (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+           replacement_metadata_normalized, consumed_seq)
+         VALUES ('db-sibling-reordered', ?, 'user', ?, ?, 'failed', ?, 1, 5)`
+      )
+      .run(V2_SESSION_ID, JSON.stringify(reordered), new Date().toISOString(), 'row-v2');
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+
+    expect(armed).toHaveLength(1);
+    expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
+  });
+
+  it('exposes watched node rows in the unified active delivery id set', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+
+    expect(h.manager.activeDeliveryIdsForRun(V2_RUN_ID)).toContain('row-v2');
+  });
+
+  it('a settled sibling with conflicting content surfaces the conflict instead of settling', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    outbox.db
+      .prepare(
+        `INSERT INTO sdk_messages
+          (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+           replacement_metadata_normalized, consumed_seq)
+         VALUES ('db-sibling-conflict', ?, 'user', ?, ?, 'failed', ?, 1, 9)`
+      )
+      .run(
+        V2_SESSION_ID,
+        JSON.stringify({ message: { content: [{ type: 'text', text: 'different body' }] } }),
+        new Date().toISOString(),
+        'row-v2'
+      );
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+
+    expect(h.markDelivered).not.toHaveBeenCalled();
+    expect(h.markAttemptFailed).toHaveBeenCalledWith(
+      'row-v2',
+      expect.stringContaining('different content')
+    );
+  });
+
+  it('a dead letter in one session does not charge the row while a sibling delivery stays live', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+    const altSessionId = 'sub-session-v2-alt';
+    (
+      h.manager as unknown as { agentSessionIndex: Map<string, AgentSession> }
+    ).agentSessionIndex.set(altSessionId, h.session);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, altSessionId);
+    const dbId = outbox.userRowIdByUuid(V2_SESSION_ID, 'row-v2') as string;
+    outbox.completeDeliveryJobs(V2_SESSION_ID, 'row-v2');
+    outbox.sdkRepo.updateMessageStatus([dbId], 'failed');
+
+    armed[0].onFailed?.();
+
+    expect(h.markAttemptFailed).not.toHaveBeenCalled();
+
+    armed[1].onConsumed(altSessionId);
+
+    expect(h.markDelivered).toHaveBeenCalledWith('row-v2', altSessionId);
+  });
+
+  it('stops redelivery when the recovered dead-letter charge exhausts the row', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    h.markAttemptFailed.mockImplementation(() => ({ status: 'failed' }) as never);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    const dbId = outbox.userRowIdByUuid(V2_SESSION_ID, 'row-v2') as string;
+    outbox.completeDeliveryJobs(V2_SESSION_ID, 'row-v2');
+    outbox.sdkRepo.updateMessageStatus([dbId], 'failed');
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+
+    expect(h.markAttemptFailed).toHaveBeenCalledWith(
+      'row-v2',
+      'delivery dead-lettered before consumption'
+    );
+    expect(outbox.sendStatus(V2_SESSION_ID, 'row-v2')).toBe('failed');
+  });
+
+  it('charges a recovered dead letter once before the handoff reopens it', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    const dbId = outbox.userRowIdByUuid(V2_SESSION_ID, 'row-v2') as string;
+    outbox.completeDeliveryJobs(V2_SESSION_ID, 'row-v2');
+    outbox.sdkRepo.updateMessageStatus([dbId], 'failed');
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+
+    expect(h.markAttemptFailed).toHaveBeenCalledWith(
+      'row-v2',
+      'delivery dead-lettered before consumption'
+    );
+    expect(outbox.sendStatus(V2_SESSION_ID, 'row-v2')).toBe('enqueued');
+  });
+
+  it('a scoped row with a live sibling delivery defers the recovery charge', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const altSessionId = 'sub-session-v2-alt';
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    const storedMessage = (
+      outbox.db
+        .prepare(`SELECT sdk_message AS m FROM sdk_messages WHERE sdk_uuid = ? LIMIT 1`)
+        .get('row-v2') as { m: string }
+    ).m;
+    outbox.db
+      .prepare(
+        `INSERT INTO sdk_messages
+          (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+           replacement_metadata_normalized, consumed_seq)
+         VALUES ('db-sibling-alt', ?, 'user', ?, ?, 'enqueued', ?, 1, NULL)`
+      )
+      .run(altSessionId, storedMessage, new Date().toISOString(), 'row-v2');
+    const primaryDbId = outbox.userRowIdByUuid(V2_SESSION_ID, 'row-v2') as string;
+    outbox.completeDeliveryJobs(V2_SESSION_ID, 'row-v2');
+    outbox.sdkRepo.updateMessageStatus([primaryDbId], 'failed');
+
+    const scopedRow = {
+      ...makeRecord({ id: 'row-v2', workflowRunId: V2_RUN_ID }),
+      targetAgentName: `${NODE_NAME}/${AGENT_NAME}`,
+    };
+    const manager = h.manager as unknown as {
+      nodeRowHasLiveSiblingDelivery: (row: PendingAgentMessageRecord, except: string) => boolean;
+    };
+
+    expect(manager.nodeRowHasLiveSiblingDelivery(scopedRow, V2_SESSION_ID)).toBe(true);
+    expect(manager.nodeRowHasLiveSiblingDelivery(scopedRow, altSessionId)).toBe(false);
+  });
+
+  it('keeps reconciliation armed when the settlement status read throws', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    const reconciliations: string[] = [];
+    (
+      h.manager as unknown as {
+        scheduleNodeAgentDeliveryReconciliation: (row: PendingAgentMessageRecord) => void;
+      }
+    ).scheduleNodeAgentDeliveryReconciliation = (row) => {
+      reconciliations.push(row.id);
+    };
+    h.getById.mockImplementation(() => {
+      throw new Error('db unavailable');
+    });
+
+    expect(() => armed[0].onConsumed(V2_SESSION_ID)).not.toThrow();
+    expect(h.manager.activeDeliveryIdsForRun(V2_RUN_ID)).not.toContain('row-v2');
+  });
+
+  it("a plain-named row scoped to a node resolves only that node's sessions", async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const manager = h.manager as unknown as {
+      nodeTargetExecutionSessions: (row: {
+        workflowRunId: string;
+        targetAgentName: string;
+        workflowNodeId: string | null;
+      }) => Array<{ sessionId: string }>;
+    };
+
+    const sessionsFor = (workflowNodeId: string | null) =>
+      manager
+        .nodeTargetExecutionSessions({
+          workflowRunId: V2_RUN_ID,
+          targetAgentName: AGENT_NAME,
+          workflowNodeId,
+        })
+        .map((entry) => entry.sessionId);
+
+    expect(sessionsFor(V2_NODE_ID)).toEqual([V2_SESSION_ID, 'sub-session-v2-alt']);
+    expect(sessionsFor('node-other')).toEqual([]);
+    expect(sessionsFor(null)).toEqual([V2_SESSION_ID, 'sub-session-v2-alt']);
+  });
+
+  it('settling one session retires the row watchers of every other session', async () => {
+    const outbox = createOutboxTestDb();
+    const h = makeV2Harness(null, outbox);
+    const armed = captureLateSettlementArms(h.manager);
+    const altSessionId = 'sub-session-v2-alt';
+    (
+      h.manager as unknown as { agentSessionIndex: Map<string, AgentSession> }
+    ).agentSessionIndex.set(altSessionId, h.session);
+
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
+    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, altSessionId);
+
+    expect(armed).toHaveLength(2);
+    expect(h.manager.activeDeliveryIdsForRun(V2_RUN_ID)).toContain('row-v2');
+
+    armed[0].onConsumed(V2_SESSION_ID);
+
+    expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
+    expect(h.manager.activeDeliveryIdsForRun(V2_RUN_ID)).not.toContain('row-v2');
   });
 });

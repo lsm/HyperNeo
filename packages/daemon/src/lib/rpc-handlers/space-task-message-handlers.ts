@@ -628,8 +628,8 @@ export function setupSpaceTaskMessageHandlers(
       const prefixed = `[Message from human]: ${params.message}`;
       await taskAgentManager.injectSubSessionMessage(liveSession.session.id, prefixed, false);
       log.info(
-        `space.task.activateNodeAgent: delivered message to live session ${liveSession.session.id} ` +
-          `(agent=${params.agentName}, task=${params.taskId})`
+        `space.task.activateNodeAgent: handed message to live session ${liveSession.session.id} ` +
+          `for delivery (agent=${params.agentName}, task=${params.taskId})`
       );
       await resetChannelCyclesOnHumanTouch(workflowRunId, params.taskId);
       return {

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import type { McpServerConfig } from '@hyperneo/shared';
 import type { AgentSession as AgentSessionType } from '../../../../src/lib/agent/agent-session.ts';
 import { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
-import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
+import { createOutboxTestDb } from '../../../helpers/outbox-test-db';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
@@ -477,20 +477,10 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       }
     ).config;
     config.nodeExecutionRepo.getByAgentSessionId = () => makeExecution();
-    config.db.getSDKMessageRepo = () => ({
-      getDeliveryContent: () => null,
-      reopenDeliveryByUuid: () => null,
-      markDeliveryFailedByUuid: () => null,
-      markDeliveryDeferredByUuid: () => null,
-    });
-    config.db.getJobQueueRepo = () => ({
-      activeDeliveryMessageUuids: () => new Set<string>(),
-      enqueue: (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
-        const uuid = args?.payload?.messageUuid;
-        if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
-        return { id: 'job-1' };
-      },
-    });
+    const outbox = createOutboxTestDb();
+    config.db.getDatabase = () => outbox.db;
+    config.db.getSDKMessageRepo = () => outbox.sdkRepo;
+    config.db.getJobQueueRepo = () => outbox.jobQueue;
     config.db.saveUserMessage = () => 'db-id';
     config.db.getUserMessageIdsByStatus = () => [];
     const session = fake.agentSession as unknown as Record<string, unknown>;
@@ -534,20 +524,10 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       }
     ).config;
     config.nodeExecutionRepo.getByAgentSessionId = () => makeExecution();
-    config.db.getSDKMessageRepo = () => ({
-      getDeliveryContent: () => null,
-      reopenDeliveryByUuid: () => null,
-      markDeliveryFailedByUuid: () => null,
-      markDeliveryDeferredByUuid: () => null,
-    });
-    config.db.getJobQueueRepo = () => ({
-      activeDeliveryMessageUuids: () => new Set<string>(),
-      enqueue: (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
-        const uuid = args?.payload?.messageUuid;
-        if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
-        return { id: 'job-1' };
-      },
-    });
+    const outbox = createOutboxTestDb();
+    config.db.getDatabase = () => outbox.db;
+    config.db.getSDKMessageRepo = () => outbox.sdkRepo;
+    config.db.getJobQueueRepo = () => outbox.jobQueue;
     config.db.saveUserMessage = () => 'db-id';
     config.db.getUserMessageIdsByStatus = () => [];
     const session = fake.agentSession as unknown as Record<string, unknown>;
@@ -564,7 +544,9 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       true
     );
 
-    expect(dbId).toBe('db-id');
+    expect(typeof dbId).toBe('string');
+    expect(outbox.userRowCount(SUB_SESSION_ID)).toBe(1);
+    expect(outbox.pendingDeliveryJobCount(SUB_SESSION_ID)).toBe(1);
   });
 
   test('task.workspacePath outranks the stale session workspace and syncs the restored session (WS10)', async () => {

@@ -33,9 +33,12 @@ export interface SpaceAgentPendingDrainDeps {
 export interface SpaceAgentPendingDrainInput {
   workflowRunId: string;
   spaceChatSessionId: string;
+  activeDeliveryIds?: string[];
+  retentionExcludeIds?: string[];
 }
 
 interface SpaceAgentPendingDrainCtx extends SpaceAgentPendingDrainInput {
+  retentionExcludeIds?: string[];
   deps: SpaceAgentPendingDrainDeps;
   listedRows?: PendingAgentMessageRecord[];
   activeDeliveryIds?: string[];
@@ -53,7 +56,7 @@ function listRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
 
 function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
   const settledIds = new Set<string>();
-  const activeDeliveryIds: string[] = [];
+  const activeDeliveryIds: string[] = [...(ctx.activeDeliveryIds ?? [])];
   const excludedDeliveryIds: string[] = [];
   const pendingRetryIds: string[] = [];
   for (const row of ctx.listedRows ?? []) {
@@ -118,9 +121,12 @@ function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCt
 
 function deferActiveDeliveries(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
   const protectedDeliveryIds = [
-    ...(ctx.activeDeliveryIds ?? []),
-    ...(ctx.excludedDeliveryIds ?? []),
-    ...(ctx.pendingRetryIds ?? []),
+    ...new Set([
+      ...(ctx.activeDeliveryIds ?? []),
+      ...(ctx.excludedDeliveryIds ?? []),
+      ...(ctx.pendingRetryIds ?? []),
+      ...(ctx.retentionExcludeIds ?? []),
+    ]),
   ];
   if (protectedDeliveryIds.length > 0) {
     ctx.deps.repo.deferExpiration(protectedDeliveryIds);
@@ -130,9 +136,12 @@ function deferActiveDeliveries(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendin
 
 function runRetention(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
   const excludeIds = [
-    ...(ctx.activeDeliveryIds ?? []),
-    ...(ctx.excludedDeliveryIds ?? []),
-    ...(ctx.pendingRetryIds ?? []),
+    ...new Set([
+      ...(ctx.activeDeliveryIds ?? []),
+      ...(ctx.excludedDeliveryIds ?? []),
+      ...(ctx.pendingRetryIds ?? []),
+      ...(ctx.retentionExcludeIds ?? []),
+    ]),
   ];
   ctx.deps.repo.enforceRetention({ runId: ctx.workflowRunId, excludeIds });
   ctx.deps.repo.expireStale(ctx.workflowRunId, excludeIds);

@@ -7020,7 +7020,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     expect(auditSummaries).toHaveLength(1);
     expect(auditSummaries[0]).toMatchObject({
       task_id: task.id,
-      outcome: 'delivered',
+      outcome: 'queued',
       target: 'node',
       node_id: exec.id,
       agent_name: 'coder',
@@ -8681,7 +8681,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(parsed.delivered_session_id).toBe('coder-live-trace');
       expect(parsed.sdk_message_id).toBe('sdk-message-0');
       expect(audit).toHaveLength(1);
-      expect(audit[0]).toMatchObject({ outcome: 'delivered', target: 'node' });
+      expect(audit[0]).toMatchObject({ outcome: 'queued', target: 'node' });
       expect(audit[0].delivered_session_id).toBe(parsed.delivered_session_id);
       expect(audit[0].sdk_message_id).toBe(parsed.sdk_message_id);
     });
@@ -8719,7 +8719,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(parsed.delivered_session_id).toBe('reviewer-restored-trace');
       expect(parsed.sdk_message_id).toBe('sdk-message-0');
       expect(audit).toHaveLength(1);
-      expect(audit[0]).toMatchObject({ outcome: 'delivered' });
+      expect(audit[0]).toMatchObject({ outcome: 'queued' });
       expect(audit[0].delivered_session_id).toBe(parsed.delivered_session_id);
       expect(audit[0].sdk_message_id).toBe(parsed.sdk_message_id);
     });
@@ -8800,7 +8800,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(parsed.delivered_session_id).toBe('coder-handle-trace');
       expect(parsed.sdk_message_id).toBe('sdk-message-0');
       expect(audit).toHaveLength(1);
-      expect(audit[0]).toMatchObject({ outcome: 'delivered' });
+      expect(audit[0]).toMatchObject({ outcome: 'queued' });
       expect(audit[0].delivered_session_id).toBe(parsed.delivered_session_id);
       expect(audit[0].sdk_message_id).toBe(parsed.sdk_message_id);
     });

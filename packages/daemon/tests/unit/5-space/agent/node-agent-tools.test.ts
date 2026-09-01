@@ -464,7 +464,7 @@ describe('node-agent-tools: send_message', () => {
       spaceAgentInjector: async (spaceId, message) => {
         spaceMessages.push({ spaceId, message });
         return {
-          state: 'delivered',
+          state: 'accepted',
           messageId: `msg-${spaceMessages.length}`,
           sessionId: `space:chat:${spaceId}`,
         };
@@ -480,9 +480,7 @@ describe('node-agent-tools: send_message', () => {
     const data = JSON.parse(result.content[0].text);
 
     expect(data.success).toBe(true);
-    expect(data.delivered).toEqual([
-      { agentName: 'space-agent', sessionId: `space:chat:${ctx.spaceId}` },
-    ]);
+    expect(data.queued).toEqual([{ agentName: 'space-agent', messageId: 'msg-1' }]);
     expect(spaceMessages).toEqual([
       {
         spaceId: ctx.spaceId,
