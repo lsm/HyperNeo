@@ -1,6 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
-import { ensureSession } from '../../../../src/lib/session-resolution/ensure-session';
 import {
   agentSessionIdOf,
   type FindTarget,
@@ -11,17 +9,6 @@ import {
   coordinatorLongHorizonAgentId,
   coordinatorSessionId,
 } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
-
-const deps = {} as SessionResolutionDeps;
-
-describe('session-resolution skeleton stubs', () => {
-  test('ensureSession throws its exact message', () => {
-    const target: SessionTarget = { kind: 'session', sessionId: 'sess-1' };
-    expect(() => ensureSession(target, deps)).toThrow(
-      'session-resolution: ensureSession not implemented'
-    );
-  });
-});
 
 describe('session-resolution type assignment tests', () => {
   test('new types accept their literal shapes', () => {
