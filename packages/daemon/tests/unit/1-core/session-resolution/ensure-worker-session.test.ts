@@ -120,25 +120,42 @@ describe('workerSessionPhase', () => {
 });
 
 describe('findStage', () => {
-  test('resolves with the newest sessionId and created:false, passing the target to deps', () => {
+  test('resolves with the newest live sessionId and created:false, passing the target to deps', async () => {
     const seen: SessionTargetWorker[] = [];
     const deps = buildDeps({
       listWorkerExecutions: (target) => {
         seen.push(target);
         return [row('s-1', 'done'), row('s-2', 'running')];
       },
+      rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
     });
     const target = workerTarget();
-    expect(findStage(target, deps)).toEqual({
+    expect(await findStage(target, deps)).toEqual({
       foundSessionId: 's-2',
       outcome: { kind: 'resolved', sessionId: 's-2', created: false },
     });
     expect(seen).toEqual([target]);
   });
 
-  test('writes no outcome when no live session exists', () => {
+  test('verifies the binding through rehydrateSubSession before resolving', async () => {
+    const rehydrated: string[] = [];
+    const deps = buildDeps({
+      listWorkerExecutions: () => [row('s-stale', 'in_progress')],
+      rehydrateSubSession: async (sessionId) => {
+        rehydrated.push(sessionId);
+        return null;
+      },
+    });
+    expect(await findStage(workerTarget(), deps)).toEqual({
+      foundSessionId: undefined,
+      outcome: undefined,
+    });
+    expect(rehydrated).toEqual(['s-stale']);
+  });
+
+  test('writes no outcome when no live session exists', async () => {
     const deps = buildDeps({ listWorkerExecutions: () => [row(null, 'pending')] });
-    expect(findStage(workerTarget(), deps)).toEqual({
+    expect(await findStage(workerTarget(), deps)).toEqual({
       foundSessionId: undefined,
       outcome: undefined,
     });
@@ -338,6 +355,10 @@ describe('ensureWorkerSession', () => {
         calls.push('list');
         return [row('s-live', 'running')];
       },
+      rehydrateSubSession: async (sessionId) => {
+        calls.push(`rehydrate:${sessionId}`);
+        return { id: sessionId };
+      },
       getTaskSpaceId: async () => {
         calls.push('space');
         return SPACE_ID;
@@ -353,7 +374,42 @@ describe('ensureWorkerSession', () => {
     });
     const outcome = await ensureWorkerSession(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: 's-live', created: false });
-    expect(calls).toEqual(['list']);
+    expect(calls).toEqual(['list', 'rehydrate:s-live']);
+  });
+
+  test('a dead binding on a running row falls through to activation', async () => {
+    let listCalls = 0;
+    const calls: string[] = [];
+    const deps = buildDeps({
+      listWorkerExecutions: () => {
+        listCalls += 1;
+        calls.push('list');
+        return listCalls >= 3 ? [row('sess-fresh', 'running')] : [row('sess-dead', 'in_progress')];
+      },
+      rehydrateSubSession: async (sessionId) =>
+        sessionId === 'sess-dead' ? null : { id: sessionId },
+      activateTaskAgent: async () => {
+        calls.push('activate');
+        return true;
+      },
+      getTaskSpaceId: async () => {
+        calls.push('space');
+        return SPACE_ID;
+      },
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return 'spawned';
+      },
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(ensureWorkerSession(workerTarget(), deps), 20);
+      expect(settled).toEqual({ kind: 'resolved', sessionId: 'sess-fresh', created: true });
+      expect(calls).not.toContain('space');
+      expect(calls).not.toContain('spawn');
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test('run_active with a failed activation resolves activate_failed and never awaits', async () => {

@@ -22,12 +22,15 @@ export function workerSessionPhase(rows: WorkerExecutionSession[]): WorkerSessio
   return rows.some((row) => row.status !== 'cancelled') ? 'run_active' : 'done';
 }
 
-export function findStage(
+export async function findStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
-): { foundSessionId: string | undefined; outcome: EnsureSessionOutcome | undefined } {
+): Promise<{ foundSessionId: string | undefined; outcome: EnsureSessionOutcome | undefined }> {
   const sessionId = newestWorkerSessionId(deps.listWorkerExecutions(target));
   if (sessionId === null) {
+    return { foundSessionId: undefined, outcome: undefined };
+  }
+  if ((await deps.rehydrateSubSession(sessionId)) === null) {
     return { foundSessionId: undefined, outcome: undefined };
   }
   return { foundSessionId: sessionId, outcome: { kind: 'resolved', sessionId, created: false } };
