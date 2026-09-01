@@ -26,6 +26,17 @@ export async function findStage(
   return { foundSessionId: sessionId, outcome: { kind: 'resolved', sessionId, created: false } };
 }
 
+export async function findTerminalStage(
+  target: SessionTargetWorker,
+  deps: SessionResolutionDeps
+): Promise<{ foundSessionId: string | undefined; outcome: EnsureSessionOutcome | undefined }> {
+  const found = await findStage(target, deps);
+  return {
+    foundSessionId: found.foundSessionId,
+    outcome: found.outcome ?? { kind: 'unresolved', reason: 'task_terminal' },
+  };
+}
+
 export function phaseStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
@@ -34,6 +45,7 @@ export function phaseStage(
   outcome: EnsureSessionOutcome | undefined;
   findArm: typeof findStage | undefined;
   postApprovalArm: typeof postApprovalStage | undefined;
+  postApprovalDoneArm: typeof postApprovalDoneStage | undefined;
   routingArm: typeof awaitRoutingStage | undefined;
   activateArm: typeof activateStage | undefined;
 } {
@@ -44,6 +56,7 @@ export function phaseStage(
       outcome: { kind: 'unresolved', reason: 'task_terminal' },
       findArm: undefined,
       postApprovalArm: undefined,
+      postApprovalDoneArm: undefined,
       routingArm: undefined,
       activateArm: undefined,
     };
@@ -54,6 +67,7 @@ export function phaseStage(
       outcome: undefined,
       findArm: undefined,
       postApprovalArm: undefined,
+      postApprovalDoneArm: undefined,
       routingArm: awaitRoutingStage,
       activateArm: undefined,
     };
@@ -64,6 +78,29 @@ export function phaseStage(
       outcome: undefined,
       findArm: undefined,
       postApprovalArm: postApprovalStage,
+      postApprovalDoneArm: undefined,
+      routingArm: undefined,
+      activateArm: undefined,
+    };
+  }
+  if (phase === 'post_approval_done') {
+    return {
+      phase,
+      outcome: undefined,
+      findArm: undefined,
+      postApprovalArm: undefined,
+      postApprovalDoneArm: postApprovalDoneStage,
+      routingArm: undefined,
+      activateArm: undefined,
+    };
+  }
+  if (phase === 'done') {
+    return {
+      phase,
+      outcome: undefined,
+      findArm: findTerminalStage,
+      postApprovalArm: undefined,
+      postApprovalDoneArm: undefined,
       routingArm: undefined,
       activateArm: undefined,
     };
@@ -73,6 +110,7 @@ export function phaseStage(
     outcome: undefined,
     findArm: findStage,
     postApprovalArm: undefined,
+    postApprovalDoneArm: undefined,
     routingArm: undefined,
     activateArm: activateStage,
   };
@@ -88,22 +126,48 @@ export async function postApprovalStage(
     if (!nodeOk || worker.agentName !== target.agentName) {
       return { kind: 'unresolved', reason: 'post_approval_target_mismatch' };
     }
-    if ((await deps.rehydrateSubSession(worker.sessionId)) !== null) {
+    if (
+      (await deps.rehydrateSubSession(worker.sessionId)) !== null &&
+      deps.readWorkerTaskPhase(target.taskId) === 'post_approval'
+    ) {
       return { kind: 'resolved', sessionId: worker.sessionId, created: false };
     }
   }
-  if (deps.readWorkerTaskPhase(target.taskId) === 'terminal') {
-    return { kind: 'unresolved', reason: 'task_terminal' };
+  if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval') {
+    return ensureWorkerSession(target, deps);
   }
   const spawnedSessionId = await deps.spawnPostApprovalWorker(
     target.taskId,
     target.agentName,
-    target.workflowNodeId
+    target.workflowNodeId ?? worker?.nodeId ?? undefined
   );
   if (spawnedSessionId === null) {
     return { kind: 'unresolved', reason: 'spawn_failed' };
   }
   return { kind: 'resolved', sessionId: spawnedSessionId, created: true };
+}
+
+export async function postApprovalDoneStage(
+  target: SessionTargetWorker,
+  deps: SessionResolutionDeps
+): Promise<EnsureSessionOutcome> {
+  const worker = deps.getPostApprovalWorkerSession(target.taskId);
+  if (worker !== null) {
+    const nodeOk = !target.workflowNodeId || worker.nodeId === target.workflowNodeId;
+    if (!nodeOk || worker.agentName !== target.agentName) {
+      return { kind: 'unresolved', reason: 'post_approval_target_mismatch' };
+    }
+    if (
+      (await deps.rehydrateSubSession(worker.sessionId)) !== null &&
+      deps.readWorkerTaskPhase(target.taskId) === 'post_approval_done'
+    ) {
+      return { kind: 'resolved', sessionId: worker.sessionId, created: false };
+    }
+  }
+  if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval_done') {
+    return ensureWorkerSession(target, deps);
+  }
+  return { kind: 'unresolved', reason: 'task_terminal' };
 }
 
 export async function awaitRoutingStage(
@@ -146,6 +210,9 @@ export async function activateStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): Promise<{ activated: boolean; outcome: EnsureSessionOutcome | undefined }> {
+  if (deps.readWorkerTaskPhase(target.taskId) !== 'run_active') {
+    return { activated: false, outcome: await ensureWorkerSession(target, deps) };
+  }
   const activated = await deps.activateTaskAgent(target);
   if (!activated) {
     return { activated: false, outcome: { kind: 'unresolved', reason: 'activate_failed' } };
@@ -218,12 +285,22 @@ const runEnsureWorkerSession = (
   .pipe(
     phaseStage,
     ['target', 'deps'],
-    ['phase', 'outcome', 'findArm', 'postApprovalArm', 'routingArm', 'activateArm']
+    [
+      'phase',
+      'outcome',
+      'findArm',
+      'postApprovalArm',
+      'postApprovalDoneArm',
+      'routingArm',
+      'activateArm',
+    ]
   )
   .pipe('!settled', 'outcome')
   .pipe('?findArm', ['target', 'deps'], ['foundSessionId', 'outcome'])
   .pipe('!settled', 'outcome')
   .pipe('?postApprovalArm', ['target', 'deps'], 'outcome')
+  .pipe('!settled', 'outcome')
+  .pipe('?postApprovalDoneArm', ['target', 'deps'], 'outcome')
   .pipe('!settled', 'outcome')
   .pipe('?routingArm', ['target', 'deps'], 'outcome')
   .pipe('!settled', 'outcome')
