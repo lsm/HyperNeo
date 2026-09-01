@@ -247,19 +247,6 @@ describe('postApprovalStage', () => {
     expect(outcome).toEqual({ kind: 'resolved', sessionId: postApprovalId, created: false });
   });
 
-  test('an identity bound to another workflow node falls through to the deterministic probe', async () => {
-    const deps = buildDeps({
-      getPostApprovalWorkerSession: () => ({
-        sessionId: 'pa-other-node',
-        agentName: AGENT_NAME,
-        nodeId: 'node-9',
-      }),
-      getSession: async (sessionId) => (sessionId === postApprovalId ? { id: sessionId } : null),
-    });
-    const outcome = await postApprovalStage(workerTarget({ workflowNodeId: 'node-1' }), deps);
-    expect(outcome).toEqual({ kind: 'resolved', sessionId: postApprovalId, created: false });
-  });
-
   test('resolves created:false with the deterministic post-approval id when found', async () => {
     const getSession = async (sessionId: string) =>
       sessionId === postApprovalId ? { id: sessionId } : null;
@@ -281,10 +268,33 @@ describe('postApprovalStage', () => {
         return 'spawned-1';
       },
     });
-    const target = workerTarget({ workflowNodeId: 'node-1' });
-    const outcome = await postApprovalStage(target, deps);
+    const outcome = await postApprovalStage(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: 'spawned-1', created: true });
     expect(probed).toEqual([postApprovalId]);
+    expect(spawned).toEqual([[TASK_ID, AGENT_NAME, undefined]]);
+  });
+
+  test('a node-scoped target skips the node-agnostic probe and spawns with its node', async () => {
+    const probed: string[] = [];
+    const spawned: Array<[string, string, string | undefined]> = [];
+    const deps = buildDeps({
+      getPostApprovalWorkerSession: () => ({
+        sessionId: 'pa-node-9',
+        agentName: AGENT_NAME,
+        nodeId: 'node-9',
+      }),
+      getSession: async (sessionId) => {
+        probed.push(sessionId);
+        return { id: sessionId };
+      },
+      spawnPostApprovalWorker: async (taskId, agentName, workflowNodeId) => {
+        spawned.push([taskId, agentName, workflowNodeId]);
+        return 'spawned-node-1';
+      },
+    });
+    const outcome = await postApprovalStage(workerTarget({ workflowNodeId: 'node-1' }), deps);
+    expect(outcome).toEqual({ kind: 'resolved', sessionId: 'spawned-node-1', created: true });
+    expect(probed).toEqual([]);
     expect(spawned).toEqual([[TASK_ID, AGENT_NAME, 'node-1']]);
   });
 

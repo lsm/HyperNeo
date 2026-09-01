@@ -74,14 +74,16 @@ export async function postApprovalStage(
   if (spaceId === null) {
     return { kind: 'unresolved', reason: 'task_not_found' };
   }
-  const postApprovalSessionId = buildPostApprovalSessionId(
-    spaceId,
-    target.taskId,
-    sanitizeAgentNameForId(target.agentName)
-  );
-  const existing = await deps.getSession(postApprovalSessionId);
-  if (existing !== null) {
-    return { kind: 'resolved', sessionId: postApprovalSessionId, created: false };
+  if (target.workflowNodeId === undefined) {
+    const postApprovalSessionId = buildPostApprovalSessionId(
+      spaceId,
+      target.taskId,
+      sanitizeAgentNameForId(target.agentName)
+    );
+    const existing = await deps.getSession(postApprovalSessionId);
+    if (existing !== null) {
+      return { kind: 'resolved', sessionId: postApprovalSessionId, created: false };
+    }
   }
   const spawnedSessionId = await deps.spawnPostApprovalWorker(
     target.taskId,
