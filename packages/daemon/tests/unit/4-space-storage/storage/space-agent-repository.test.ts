@@ -246,6 +246,81 @@ describe('SpaceAgentRepository', () => {
     it('is idempotent for unknown ids', () => {
       expect(() => repo.delete('nonexistent')).not.toThrow();
     });
+
+    function createInboxTable(): void {
+      db.exec(`
+        CREATE TABLE space_agent_inbox_messages (
+          id TEXT PRIMARY KEY,
+          space_id TEXT NOT NULL,
+          target_agent_id TEXT NOT NULL,
+          source_actor_id TEXT NOT NULL,
+          message TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          created_at INTEGER NOT NULL
+        )
+      `);
+    }
+
+    function seedInboxRow(id: string, spaceId: string, targetAgentId: string): void {
+      db.prepare(
+        `INSERT INTO space_agent_inbox_messages
+         (id, space_id, target_agent_id, source_actor_id, message, expires_at, created_at)
+         VALUES (?, ?, ?, 'src', 'hello', 9999, 1)`
+      ).run(id, spaceId, targetAgentId);
+    }
+
+    function inboxRowsFor(agentId: string): number {
+      return (
+        db
+          .prepare(`SELECT COUNT(*) AS n FROM space_agent_inbox_messages WHERE target_agent_id = ?`)
+          .get(agentId) as { n: number }
+      ).n;
+    }
+
+    it('purges sibling inbox rows when no long-horizon row shares the id', () => {
+      createInboxTable();
+      const a = repo.create({ spaceId: 'space-1', name: 'A' });
+      const b = repo.create({ spaceId: 'space-1', name: 'B' });
+      seedInboxRow('in-a', 'space-1', a.id);
+      seedInboxRow('in-b', 'space-1', b.id);
+
+      repo.delete(a.id);
+
+      expect(inboxRowsFor(a.id)).toBe(0);
+      expect(inboxRowsFor(b.id)).toBe(1);
+    });
+
+    it('keeps inbox rows when a long-horizon row shares the id in the same space', () => {
+      createInboxTable();
+      const worker = repo.create({ spaceId: 'space-1', name: 'Shared' });
+      db.prepare(
+        `INSERT INTO space_long_horizon_agents
+         (id, space_id, handle, display_name, created_at, updated_at)
+         VALUES (?, 'space-1', 'shared', 'Shared', 1, 1)`
+      ).run(worker.id);
+      seedInboxRow('in-shared', 'space-1', worker.id);
+
+      repo.delete(worker.id);
+
+      expect(repo.getById(worker.id)).toBeNull();
+      expect(inboxRowsFor(worker.id)).toBe(1);
+    });
+
+    it('purges inbox rows when the same-id long-horizon row lives in another space', () => {
+      createInboxTable();
+      insertSpace(db, 'space-2');
+      const worker = repo.create({ spaceId: 'space-1', name: 'Shared' });
+      db.prepare(
+        `INSERT INTO space_long_horizon_agents
+         (id, space_id, handle, display_name, created_at, updated_at)
+         VALUES (?, 'space-2', 'shared', 'Shared', 1, 1)`
+      ).run(worker.id);
+      seedInboxRow('in-shared', 'space-1', worker.id);
+
+      repo.delete(worker.id);
+
+      expect(inboxRowsFor(worker.id)).toBe(0);
+    });
   });
 
   describe('isAgentReferenced', () => {

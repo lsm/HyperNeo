@@ -521,6 +521,41 @@ describe('SpaceActorRegistryAdapter', () => {
     expect(actor?.status).toBe('archived');
   });
 
+  it('lists both families side by side and scopes the shared-id overlay to one space', () => {
+    const space = spaceRepo.createSpace({
+      workspacePath: '/workspace/project',
+      slug: 'project',
+      name: 'Project',
+    });
+    const other = spaceRepo.createSpace({ workspacePath: '/w2', slug: 'p2', name: 'P2' });
+    const workerOnly = spaceAgentRepo.create({ spaceId: space.id, name: 'Worker Only' });
+    const longHorizonOnly = longHorizonAgentRepo.create({
+      spaceId: space.id,
+      handle: 'lh-only',
+      displayName: 'LH Only',
+    });
+    const bridged = spaceAgentRepo.create({ spaceId: space.id, name: 'Bridged' });
+    longHorizonAgentRepo.create({
+      id: bridged.id,
+      spaceId: other.id,
+      handle: 'bridged-elsewhere',
+      displayName: 'Bridged Elsewhere',
+    });
+
+    const actors = registry.listActors(space.id);
+
+    const workerActor = actors.find((a) => a.actorId === `agent:${workerOnly.id}`);
+    expect(workerActor?.handle).toBe('@worker-only');
+    const longHorizonActor = actors.find((a) => a.actorId === `agent:${longHorizonOnly.id}`);
+    expect(longHorizonActor?.handle).toBe('@lh-only');
+    const bridgedActor = actors.find((a) => a.actorId === `agent:${bridged.id}`);
+    expect(bridgedActor?.handle).toBe('@bridged');
+    expect(bridgedActor?.status).toBe('inactive');
+    expect(
+      actors.filter((a) => a.actorId === `agent:${bridged.id}` || a.handle === '@bridged')
+    ).toHaveLength(1);
+  });
+
   it('does not expose long-horizon coordinator row as separate actor', () => {
     const space = spaceRepo.createSpace({
       workspacePath: '/workspace/project',

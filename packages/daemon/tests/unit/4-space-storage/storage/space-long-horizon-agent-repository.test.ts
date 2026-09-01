@@ -593,4 +593,50 @@ describe('SpaceLongHorizonAgentRepository', () => {
     ).toBe(false);
     expect(repo.getReminder(fired.id)!.lastFiredAt).toBeNull();
   });
+
+  function seedInboxRow(id: string, targetAgentId: string): void {
+    db.prepare(
+      `INSERT INTO space_agent_inbox_messages
+       (id, space_id, target_agent_id, source_actor_id, message, expires_at, created_at)
+       VALUES (?, 'space-1', ?, 'src', 'hello', 9999, 1)`
+    ).run(id, targetAgentId);
+  }
+
+  function inboxRowsFor(agentId: string): number {
+    return (
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM space_agent_inbox_messages WHERE target_agent_id = ?`)
+        .get(agentId) as { n: number }
+    ).n;
+  }
+
+  test('delete purges sibling inbox rows only when no worker row shares the id', () => {
+    const solo = repo.create({ spaceId: 'space-1', handle: 'solo', displayName: 'Solo' });
+    const shared = repo.create({ spaceId: 'space-1', handle: 'shared', displayName: 'Shared' });
+    db.prepare(
+      `INSERT INTO space_agents (id, space_id, name, created_at, updated_at)
+       VALUES (?, 'space-1', 'Shared Worker', 1, 1)`
+    ).run(shared.id);
+    seedInboxRow('in-solo', solo.id);
+    seedInboxRow('in-shared', shared.id);
+
+    repo.delete(solo.id);
+    expect(inboxRowsFor(solo.id)).toBe(0);
+
+    repo.delete(shared.id);
+    expect(inboxRowsFor(shared.id)).toBe(1);
+  });
+
+  test('coordinator row is mutable today — rename and archive succeed without guards', () => {
+    const coordinator = repo.ensureCoordinator('space-1');
+
+    const renamed = repo.update(coordinator.id, { displayName: 'Renamed Coordinator' });
+    expect(renamed?.displayName).toBe('Renamed Coordinator');
+
+    const archived = repo.update(coordinator.id, { status: 'archived' });
+    expect(archived?.status).toBe('archived');
+
+    const revived = repo.ensureCoordinator('space-1');
+    expect(revived.status).toBe('active');
+  });
 });
