@@ -685,6 +685,13 @@ describe('parseMailboxEntry', () => {
         { ...sessionPayload, to: 'session:sess-1' },
       ],
       ['a null to', { ...sessionPayload, to: null }],
+      [
+        'a propertied array as the stored address',
+        {
+          ...sessionPayload,
+          to: Object.assign([], { kind: 'session', sessionId: 'sess-1' }),
+        },
+      ],
       ['an unknown address kind', { ...sessionPayload, to: { kind: 'workflow', sessionId: 's' } }],
       ['an empty session sessionId', { ...sessionPayload, to: { kind: 'session', sessionId: '' } }],
       [

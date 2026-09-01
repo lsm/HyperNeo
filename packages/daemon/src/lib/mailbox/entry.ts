@@ -198,7 +198,7 @@ function isAddressField(value: unknown): value is string {
 }
 
 function projectStoredAddress(value: unknown): MailboxAddress | null {
-  if (typeof value !== 'object' || value === null) return null;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (record.kind === 'session') {
     const sessionId = record.sessionId;
