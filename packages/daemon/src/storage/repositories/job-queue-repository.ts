@@ -719,6 +719,24 @@ export class JobQueueRepository {
     return result.changes > 0 ? this.getJob(jobId) : null;
   }
 
+  markDeadIfActive(
+    jobId: string,
+    error: string,
+    activeStatuses: JobStatus[] = ['pending', 'processing']
+  ): Job | null {
+    if (activeStatuses.length === 0) return null;
+    const placeholders = activeStatuses.map(() => '?').join(',');
+    const result = withBusyRetry(() =>
+      this.db
+        .prepare(
+          `UPDATE job_queue SET status = 'dead', error = ?, completed_at = ?, heartbeat_at = NULL
+            WHERE id = ? AND status IN (${placeholders})`
+        )
+        .run(error, Date.now(), jobId, ...activeStatuses)
+    );
+    return result.changes > 0 ? this.getJob(jobId) : null;
+  }
+
   getJob(jobId: string): Job | null {
     const stmt = this.db.prepare(`SELECT * FROM job_queue WHERE id = ?`);
     const row = stmt.get(jobId) as Record<string, unknown> | undefined;
@@ -727,7 +745,13 @@ export class JobQueueRepository {
     return this.rowToJob(row);
   }
 
-  listJobs(filter: { queue?: string; status?: JobStatus | JobStatus[]; limit?: number }): Job[] {
+  listJobs(filter: {
+    queue?: string;
+    status?: JobStatus | JobStatus[];
+    limit?: number;
+    oldestFirst?: boolean;
+    excludeIds?: string[];
+  }): Job[] {
     if (Array.isArray(filter.status) && filter.status.length === 0) {
       return [];
     }
@@ -749,8 +773,15 @@ export class JobQueueRepository {
         params.push(filter.status);
       }
     }
+    const excludeIds = filter.excludeIds ?? [];
+    if (excludeIds.length > 0) {
+      query += ` AND id NOT IN (${excludeIds.map(() => '?').join(',')})`;
+      params.push(...excludeIds);
+    }
 
-    query += ` ORDER BY created_at DESC LIMIT ?`;
+    query += filter.oldestFirst
+      ? ` ORDER BY created_at ASC, rowid ASC LIMIT ?`
+      : ` ORDER BY created_at DESC LIMIT ?`;
     params.push(filter.limit ?? 100);
 
     const stmt = this.db.prepare(query);

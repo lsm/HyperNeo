@@ -499,6 +499,112 @@ describe('JobQueueRepository', () => {
       expect(jobs[1].payload.order).toBe(2);
       expect(jobs[2].payload.order).toBe(1);
     });
+
+    it('orders by created_at ASC when oldestFirst is set', async () => {
+      repository.enqueue({ queue: 'test', payload: { order: 1 } });
+      await new Promise((r) => setTimeout(r, 5));
+      repository.enqueue({ queue: 'test', payload: { order: 2 } });
+      await new Promise((r) => setTimeout(r, 5));
+      repository.enqueue({ queue: 'test', payload: { order: 3 } });
+
+      const jobs = repository.listJobs({ oldestFirst: true });
+
+      expect(jobs[0].payload.order).toBe(1);
+      expect(jobs[1].payload.order).toBe(2);
+      expect(jobs[2].payload.order).toBe(3);
+    });
+
+    it('excludes the given ids', () => {
+      const first = repository.enqueue({ queue: 'test', payload: { n: 1 } });
+      const second = repository.enqueue({ queue: 'test', payload: { n: 2 } });
+      repository.enqueue({ queue: 'test', payload: { n: 3 } });
+
+      const jobs = repository.listJobs({ excludeIds: [first.id, second.id] });
+
+      expect(jobs.length).toBe(1);
+      expect(jobs[0].payload.n).toBe(3);
+    });
+
+    it('paginates oldest-first with a growing exclusion list', () => {
+      for (let i = 0; i < 5; i += 1) {
+        repository.enqueue({ queue: 'test', payload: { i } });
+      }
+
+      const seen: string[] = [];
+      const pages: number[][] = [];
+      for (;;) {
+        const page = repository.listJobs({ limit: 2, oldestFirst: true, excludeIds: seen });
+        if (page.length === 0) break;
+        for (const job of page) seen.push(job.id);
+        pages.push(page.map((job) => job.payload.i as number));
+        if (page.length < 2) break;
+      }
+
+      expect(pages).toEqual([[0, 1], [2, 3], [4]]);
+      expect(seen.length).toBe(5);
+    });
+  });
+
+  describe('markDeadIfActive', () => {
+    it('dead-letters a pending job', () => {
+      const job = repository.enqueue({ queue: 'test', payload: {} });
+
+      const dead = repository.markDeadIfActive(job.id, 'boom');
+
+      expect(dead?.status).toBe('dead');
+      expect(dead?.error).toBe('boom');
+      expect(dead?.completedAt).not.toBeNull();
+      expect(repository.getJob(job.id)?.status).toBe('dead');
+    });
+
+    it('dead-letters a processing job regardless of claim', () => {
+      repository.enqueue({ queue: 'test', payload: {} });
+      const [claimed] = repository.dequeue('test', 1);
+      expect(claimed.status).toBe('processing');
+
+      const dead = repository.markDeadIfActive(claimed.id, 'boom');
+
+      expect(dead?.status).toBe('dead');
+      expect(dead?.error).toBe('boom');
+    });
+
+    it('does not touch a completed job', () => {
+      repository.enqueue({ queue: 'test', payload: {} });
+      const [claimed] = repository.dequeue('test', 1);
+      repository.complete(claimed.id);
+
+      const dead = repository.markDeadIfActive(claimed.id, 'boom');
+
+      expect(dead).toBeNull();
+      const job = repository.getJob(claimed.id);
+      expect(job?.status).toBe('completed');
+      expect(job?.error).toBeNull();
+    });
+
+    it('does not touch an already dead job or overwrite its error', () => {
+      const job = repository.enqueue({ queue: 'test', payload: {} });
+      repository.markDeadIfActive(job.id, 'first');
+
+      const again = repository.markDeadIfActive(job.id, 'second');
+
+      expect(again).toBeNull();
+      const row = repository.getJob(job.id);
+      expect(row?.status).toBe('dead');
+      expect(row?.error).toBe('first');
+    });
+
+    it('returns null for an unknown job id', () => {
+      expect(repository.markDeadIfActive('missing', 'boom')).toBeNull();
+    });
+
+    it('honors an explicit active-status set', () => {
+      const job = repository.enqueue({ queue: 'test', payload: {} });
+
+      const dead = repository.markDeadIfActive(job.id, 'boom', ['processing']);
+
+      expect(dead).toBeNull();
+      expect(repository.getJob(job.id)?.status).toBe('pending');
+    });
   });
 
   describe('countByStatus', () => {

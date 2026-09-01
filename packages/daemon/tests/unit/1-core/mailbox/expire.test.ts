@@ -5,7 +5,7 @@ import type {
   MailboxEntryPolicy,
   MailboxMessage,
 } from '../../../../src/lib/mailbox/entry';
-import { expireMailboxEntries } from '../../../../src/lib/mailbox/expire';
+import { expireMailboxEntries, MAILBOX_SCAN_PAGE_SIZE } from '../../../../src/lib/mailbox/expire';
 import { createUlid } from '../../../../src/lib/mailbox/ulid';
 import {
   createMailboxTestDb,
@@ -200,6 +200,34 @@ describe('expireMailboxEntries', () => {
     expect(rowFor(mailbox, oldest.id).status).toBe('dead');
     expect(rowFor(mailbox, barely.id).status).toBe('dead');
     expect(corruptRow(mailbox).status).toBe('pending');
+  });
+
+  test('a sweep reaches an expired entry that a fixed newest-first window would starve', async () => {
+    const expired = makeEntry({ id: createUlid(NOW - 10 * TTL_MS) });
+    mailbox.jobQueue.enqueue({ queue: MAILBOX_LANE, payload: { ...expired } });
+    for (let index = 0; index < MAILBOX_SCAN_PAGE_SIZE; index += 1) {
+      mailbox.jobQueue.enqueue({ queue: MAILBOX_LANE, payload: { ...makeEntry() } });
+    }
+    expect(mailbox.rowCount()).toBe(MAILBOX_SCAN_PAGE_SIZE + 1);
+
+    const count = await expireMailboxEntries({ jobQueue: mailbox.jobQueue, now: NOW });
+
+    expect(count).toBe(1);
+    expect(rowFor(mailbox, expired.id).status).toBe('dead');
+  });
+
+  test('a sweep pages through the whole active set beyond one page', async () => {
+    for (let index = 0; index < MAILBOX_SCAN_PAGE_SIZE; index += 1) {
+      mailbox.jobQueue.enqueue({ queue: MAILBOX_LANE, payload: { ...makeEntry() } });
+    }
+    const newest = makeEntry({ id: createUlid(NOW - TTL_MS - 1) });
+    mailbox.jobQueue.enqueue({ queue: MAILBOX_LANE, payload: { ...newest } });
+    expect(mailbox.rowCount()).toBe(MAILBOX_SCAN_PAGE_SIZE + 1);
+
+    const count = await expireMailboxEntries({ jobQueue: mailbox.jobQueue, now: NOW });
+
+    expect(count).toBe(1);
+    expect(rowFor(mailbox, newest.id).status).toBe('dead');
   });
 
   test('now defaults to the wall clock', async () => {
