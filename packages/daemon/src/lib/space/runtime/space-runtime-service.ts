@@ -1212,7 +1212,7 @@ export class SpaceRuntimeService {
       );
     }
     return createSpaceActionsMcpServer({
-      role: 'coordinator',
+      role: 'universal_read',
       spaceId: '',
     });
   }

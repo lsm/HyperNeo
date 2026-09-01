@@ -590,9 +590,8 @@ describe('applyRoleAdmission', () => {
     expect(next.outcome.reason).toBe('role_denied');
   });
 
-  test('denies universal_read every action family', () => {
+  test('denies universal_read every non-space action family', () => {
     const families = [
-      'space',
       'node',
       'agents',
       'sessions',

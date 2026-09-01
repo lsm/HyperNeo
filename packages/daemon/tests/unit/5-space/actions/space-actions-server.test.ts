@@ -1244,6 +1244,7 @@ describe('SpaceRuntimeService.buildUniversalReadDispatcherServer', () => {
     const svc = buildRuntimeService();
     const server = svc.buildUniversalReadDispatcherServer();
     expect(server.tools.map((entry) => entry.name)).toEqual(['call_action']);
+    expect(server.description.startsWith('## Universal Read actions')).toBe(true);
     const names = server.registry.entries.map((entry) => entry.name).sort();
     expect(names).toEqual(['describe_action', 'list_actions']);
     for (const entry of server.registry.entries) {
