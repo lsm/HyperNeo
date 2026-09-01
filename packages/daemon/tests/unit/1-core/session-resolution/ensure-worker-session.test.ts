@@ -125,6 +125,7 @@ describe('workerTaskPhaseOf', () => {
   test('done tasks split by post-approval history', () => {
     expect(workerTaskPhaseOf('done', 'pa-1')).toBe('post_approval_done');
     expect(workerTaskPhaseOf('done', null)).toBe('done');
+    expect(workerTaskPhaseOf('done', null, true)).toBe('post_approval_done');
   });
 
   test('run-phase statuses stay run_active regardless of pointer state', () => {
@@ -392,6 +393,29 @@ describe('postApprovalStage', () => {
     });
     const outcome = await postApprovalStage(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: 'pa-new', created: false });
+    expect(calls).toEqual([]);
+  });
+
+  test('a dead routed identity replaced during the restore re-dispatches instead of spawning', async () => {
+    let workerReads = 0;
+    const calls: string[] = [];
+    const deps = buildDeps({
+      readWorkerTaskPhase: () => 'post_approval',
+      getPostApprovalWorkerSession: () => {
+        workerReads += 1;
+        return workerReads <= 1
+          ? { sessionId: 'pa-dead', agentName: AGENT_NAME }
+          : { sessionId: 'pa-replacement', agentName: AGENT_NAME };
+      },
+      rehydrateSubSession: async (sessionId) =>
+        sessionId === 'pa-dead' ? null : { id: sessionId },
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return 'spawned';
+      },
+    });
+    const outcome = await postApprovalStage(workerTarget(), deps);
+    expect(outcome).toEqual({ kind: 'resolved', sessionId: 'pa-replacement', created: false });
     expect(calls).toEqual([]);
   });
 

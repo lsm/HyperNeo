@@ -16,7 +16,8 @@ export type WorkerTaskPhase =
 
 export function workerTaskPhaseOf(
   status: SpaceTaskStatus,
-  postApprovalSessionId: string | null
+  postApprovalSessionId: string | null,
+  hasDurablePostApprovalWorker = false
 ): WorkerTaskPhase {
   if (status === 'cancelled' || status === 'archived' || status === 'stopped') {
     return 'terminal';
@@ -25,7 +26,7 @@ export function workerTaskPhaseOf(
     return postApprovalSessionId ? 'post_approval' : 'routing';
   }
   if (status === 'done') {
-    return postApprovalSessionId ? 'post_approval_done' : 'done';
+    return postApprovalSessionId || hasDurablePostApprovalWorker ? 'post_approval_done' : 'done';
   }
   return 'run_active';
 }

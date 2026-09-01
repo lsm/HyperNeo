@@ -151,6 +151,10 @@ export async function postApprovalStage(
         }
         return { kind: 'resolved', sessionId: worker.sessionId, created: false };
       }
+      const afterRestore = deps.getPostApprovalWorkerSession(target.taskId);
+      if (afterRestore === null || afterRestore.sessionId !== worker.sessionId) {
+        return ensureWorkerSession(target, deps);
+      }
     }
     if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval') {
       return ensureWorkerSession(target, deps);
