@@ -46,6 +46,7 @@ export type {
   ToolsSettings,
   ValidationResult,
 } from './types/sdk-config.ts';
+export * from './types/daemon-config.ts';
 
 export type SessionType = 'worker' | 'lobby' | 'space_task_agent' | 'space_chat';
 
