@@ -1148,6 +1148,238 @@ describe('awaitSessionStage', () => {
       jest.useRealTimers();
     }
   });
+
+  test('waitCapMs 0 still resolves an already-live session without waiting', async () => {
+    const deps = buildDeps({
+      listWorkerExecutions: () => [row('sess-live', 'running')],
+      rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
+    });
+    const outcome = await awaitSessionStage(workerTarget({ waitCapMs: 0 }), deps);
+    expect(outcome).toEqual({ kind: 'resolved', sessionId: 'sess-live', created: true });
+  });
+
+  test('waitCapMs 0 stops after a single check when nothing is live', async () => {
+    let listCalls = 0;
+    const deps = buildDeps({
+      listWorkerExecutions: () => {
+        listCalls += 1;
+        return [];
+      },
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(
+        awaitSessionStage(workerTarget({ waitCapMs: 0 }), deps),
+        5
+      );
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
+      expect(listCalls).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a never-settling probe under waitCapMs 0 ends in activation_timeout after one probe', async () => {
+    let probes = 0;
+    const deps = buildDeps({
+      listWorkerExecutions: () => [row('sess-stuck', 'running')],
+      rehydrateSubSession: () => {
+        probes += 1;
+        return new Promise<unknown>(() => {});
+      },
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(
+        awaitSessionStage(workerTarget({ waitCapMs: 0 }), deps),
+        5
+      );
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
+      expect(probes).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a probe settling only after the zero deadline does not rescue the waitCapMs 0 check', async () => {
+    let probes = 0;
+    const deps = buildDeps({
+      listWorkerExecutions: () => [row('sess-slow', 'running')],
+      rehydrateSubSession: (sessionId) => {
+        probes += 1;
+        return new Promise<unknown>((resolve) => {
+          setTimeout(() => resolve({ id: sessionId }), 200);
+        });
+      },
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(
+        awaitSessionStage(workerTarget({ waitCapMs: 0 }), deps),
+        5
+      );
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
+      expect(probes).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('waitCapMs 0 times out after a single probe when the candidate is dead', async () => {
+    let probes = 0;
+    const deps = buildDeps({
+      listWorkerExecutions: () => [row('sess-dead', 'running')],
+      rehydrateSubSession: async () => {
+        probes += 1;
+        return null;
+      },
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(
+        awaitSessionStage(workerTarget({ waitCapMs: 0 }), deps),
+        5
+      );
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
+      expect(probes).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a shorter waitCapMs shortens the poll window', async () => {
+    let listCalls = 0;
+    const deps = buildDeps({
+      listWorkerExecutions: () => {
+        listCalls += 1;
+        return [];
+      },
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(
+        awaitSessionStage(workerTarget({ waitCapMs: 5_000 }), deps),
+        40
+      );
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
+      expect(listCalls).toBe(5_000 / WORKER_SESSION_POLL_INTERVAL_MS);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a waitCapMs above the global cap is clamped to the global cap', async () => {
+    let listCalls = 0;
+    const deps = buildDeps({
+      listWorkerExecutions: () => {
+        listCalls += 1;
+        return [];
+      },
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(
+        awaitSessionStage(workerTarget({ waitCapMs: 120_000 }), deps),
+        40
+      );
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
+      expect(listCalls).toBe(WORKER_SESSION_WAIT_CAP_MS / WORKER_SESSION_POLL_INTERVAL_MS);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a session appearing within a shorter waitCapMs still resolves', async () => {
+    let listCalls = 0;
+    const deps = buildDeps({
+      listWorkerExecutions: () => {
+        listCalls += 1;
+        return listCalls >= 2 ? [row('sess-late', 'running')] : [];
+      },
+      rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(
+        awaitSessionStage(workerTarget({ waitCapMs: 5_000 }), deps),
+        20
+      );
+      expect(settled).toEqual({ kind: 'resolved', sessionId: 'sess-late', created: true });
+      expect(listCalls).toBe(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a session appearing only after a shorter waitCapMs still resolves activation_timeout', async () => {
+    let listCalls = 0;
+    const deps = buildDeps({
+      listWorkerExecutions: () => {
+        listCalls += 1;
+        return listCalls > 2_000 / WORKER_SESSION_POLL_INTERVAL_MS
+          ? [row('sess-too-late', 'running')]
+          : [];
+      },
+      rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(
+        awaitSessionStage(workerTarget({ waitCapMs: 2_000 }), deps),
+        20
+      );
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
+      expect(listCalls).toBe(2_000 / WORKER_SESSION_POLL_INTERVAL_MS);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a NaN or positive-infinity waitCapMs falls back to the global cap instead of an immediate timer', async () => {
+    for (const waitCapMs of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      let listCalls = 0;
+      const deps = buildDeps({
+        listWorkerExecutions: () => {
+          listCalls += 1;
+          return [];
+        },
+      });
+      jest.useFakeTimers();
+      try {
+        const settled = await drainByPolling(
+          awaitSessionStage(workerTarget({ waitCapMs }), deps),
+          40
+        );
+        expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
+        expect(listCalls).toBe(WORKER_SESSION_WAIT_CAP_MS / WORKER_SESSION_POLL_INTERVAL_MS);
+      } finally {
+        jest.useRealTimers();
+      }
+    }
+  });
+
+  test('a negative or negative-infinity waitCapMs is clamped to a single check', async () => {
+    for (const waitCapMs of [-1_000, Number.NEGATIVE_INFINITY]) {
+      let listCalls = 0;
+      const deps = buildDeps({
+        listWorkerExecutions: () => {
+          listCalls += 1;
+          return [];
+        },
+      });
+      jest.useFakeTimers();
+      try {
+        const settled = await drainByPolling(
+          awaitSessionStage(workerTarget({ waitCapMs }), deps),
+          5
+        );
+        expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
+        expect(listCalls).toBe(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    }
+  });
 });
 
 describe('crashHandler', () => {

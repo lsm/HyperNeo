@@ -292,7 +292,12 @@ export async function awaitSessionStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
-  const cap = delay(WORKER_SESSION_WAIT_CAP_MS);
+  const requestedWaitCapMs = target.waitCapMs;
+  const waitCapMs =
+    requestedWaitCapMs === undefined || Number.isNaN(requestedWaitCapMs)
+      ? WORKER_SESSION_WAIT_CAP_MS
+      : Math.max(0, Math.min(requestedWaitCapMs, WORKER_SESSION_WAIT_CAP_MS));
+  const cap = delay(waitCapMs);
   try {
     for (;;) {
       if (deps.readWorkerTaskPhase(target.taskId) !== 'run_active') {
