@@ -106,7 +106,7 @@ export class DaemonConfigService {
     if (this.cachedConfig === undefined) {
       this.cachedConfig = resolveDaemonConfig(this.readStoredConfig());
     }
-    return this.cachedConfig;
+    return structuredClone(this.cachedConfig);
   }
 
   updateConfig(patch: Partial<DaemonBehaviorConfig>): DaemonConfigUpdateResult {
@@ -117,10 +117,10 @@ export class DaemonConfigService {
     const changedKeys = changedCatalogKeys(before, after);
     if (changedKeys.length > 0) {
       this.writeStoredConfig(merged);
-      this.cachedConfig = after;
       this.internalEventBus?.publishAsync(DAEMON_CONFIG_UPDATED, { changedKeys });
     }
-    return { config: after, changedKeys };
+    this.cachedConfig = after;
+    return { config: structuredClone(after), changedKeys };
   }
 
   seedFromLegacyEnv(env: Record<string, string | undefined> = process.env): boolean {

@@ -176,6 +176,38 @@ describe('DaemonConfigService', () => {
     db.close();
   });
 
+  test('a no-op updateConfig still refreshes the cache from the stored row', () => {
+    const db = createDb();
+    writeConfigRow(db, { deliveryPolicy: { messageDeliveryMaxRetries: 3 } });
+    const service = new DaemonConfigService(db);
+    expect(service.getConfig().deliveryPolicy?.messageDeliveryMaxRetries).toBe(3);
+    writeConfigRow(db, { deliveryPolicy: { messageDeliveryMaxRetries: 6 } });
+    const result = service.updateConfig({
+      deliveryPolicy: { messageDeliveryMaxRetries: 6 },
+    });
+    expect(result.changedKeys).toEqual([]);
+    expect(service.getConfig().deliveryPolicy?.messageDeliveryMaxRetries).toBe(6);
+    db.close();
+  });
+
+  test('mutating a getConfig result cannot corrupt the cache', () => {
+    const db = createDb();
+    const service = new DaemonConfigService(db);
+    const mutated = service.getConfig();
+    (mutated.deliveryPolicy ??= {}).messageDeliveryMaxRetries = 99;
+    expect(service.getConfig().deliveryPolicy?.messageDeliveryMaxRetries).toBe(8);
+    db.close();
+  });
+
+  test('mutating an updateConfig result cannot corrupt the cache', () => {
+    const db = createDb();
+    const service = new DaemonConfigService(db);
+    const result = service.updateConfig({ deliveryPolicy: { messageDeliveryMaxRetries: 4 } });
+    (result.config.deliveryPolicy ??= {}).messageDeliveryMaxRetries = 99;
+    expect(service.getConfig().deliveryPolicy?.messageDeliveryMaxRetries).toBe(4);
+    db.close();
+  });
+
   test('updateConfig rejects unknown families and keys without writing', () => {
     const db = createDb();
     const service = new DaemonConfigService(db);
