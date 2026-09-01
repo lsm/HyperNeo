@@ -291,6 +291,28 @@ describe('legacy long-horizon migration — same-id overlay mapping', () => {
     ).run(`rem-${agentId}`, spaceId, agentId, `Check ${agentId}`, 300, 250, 250);
   }
 
+  function seedLegacyGoal(db: BunDatabase, agentId: string, spaceId: string): void {
+    db.prepare(
+      `INSERT INTO space_goals (id, space_id, title, description, created_at, updated_at)
+       VALUES (?, ?, ?, '', 1, 1)`
+    ).run(`goal-${agentId}`, spaceId, `Goal ${agentId}`);
+    db.prepare(
+      `INSERT INTO space_agent_goal_assignments (space_id, agent_id, goal_id, created_at)
+       VALUES (?, ?, ?, 1)`
+    ).run(spaceId, agentId, `goal-${agentId}`);
+  }
+
+  function seedLegacyScope(db: BunDatabase, agentId: string, spaceId: string): void {
+    db.prepare(
+      `INSERT INTO evolution_scopes (id, space_id, kind, name, objective, created_at, updated_at)
+       VALUES (?, ?, 'custom', ?, 'Track scope', 1, 1)`
+    ).run(`scope-${agentId}`, spaceId, `Scope ${agentId}`);
+    db.prepare(
+      `INSERT INTO space_agent_forge_scope_assignments (space_id, agent_id, scope_id, created_at)
+       VALUES (?, ?, ?, 1)`
+    ).run(spaceId, agentId, `scope-${agentId}`);
+  }
+
   test('maps worker rows to same-id LHA rows with collision-suffixed handles', () => {
     const db = makeOverlayDb();
     insertSpace(db, 'space-a');
@@ -326,14 +348,16 @@ describe('legacy long-horizon migration — same-id overlay mapping', () => {
     });
     seedOverlayWorker(db, 'w-cross', 'space-a', { name: 'Scribe', handle: 'scribe' });
     seedOverlayWorker(db, 'w-skip', 'space-a', { name: 'NoLegacy' });
-    for (const id of ['w-collide', 'w-plain', 'w-cross']) {
-      seedLegacyReminder(db, id, 'space-a');
-    }
+    seedLegacyReminder(db, 'w-collide', 'space-a');
+    seedLegacyGoal(db, 'w-plain', 'space-a');
+    seedLegacyScope(db, 'w-cross', 'space-a');
 
     const report = migrateLegacyLongHorizonAgentData(db);
 
     expect(report.backfilledAgents).toBe(3);
-    expect(report.copiedReminders).toBe(3);
+    expect(report.copiedGoals).toBe(1);
+    expect(report.copiedForgeScopes).toBe(1);
+    expect(report.copiedReminders).toBe(1);
     expect(repo.getById('w-collide')).toEqual(
       expect.objectContaining({
         id: 'w-collide',

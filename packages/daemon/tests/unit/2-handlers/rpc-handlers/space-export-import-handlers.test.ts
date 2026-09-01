@@ -2253,7 +2253,7 @@ describe('full export→import round-trip', () => {
       id: 'src-agent-v4',
       spaceId: 'other-space',
       name: 'V4 Worker',
-      handle: 'v4-worker',
+      handle: 'legacy-handle',
       description: 'Described worker',
       model: 'kimi-for-coding',
       provider: 'openrouter',
@@ -2289,6 +2289,7 @@ describe('full export→import round-trip', () => {
       version: 4,
       type: 'agent',
       name: 'V4 Worker',
+      handle: 'legacy-handle',
       model: 'kimi-for-coding',
       provider: 'openrouter',
       thinkingLevel: 'think16k',
@@ -2308,6 +2309,7 @@ describe('full export→import round-trip', () => {
     const imported = agentRepo.getById(result.agents[0].id)!;
     expect(imported).toMatchObject({
       name: 'V4 Worker',
+      handle: 'legacy-handle',
       description: 'Described worker',
       model: 'kimi-for-coding',
       provider: 'openrouter',

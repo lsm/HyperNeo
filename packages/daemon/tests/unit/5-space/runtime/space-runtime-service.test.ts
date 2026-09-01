@@ -4350,20 +4350,35 @@ describe('ensureLongTermAgentSession — id→session routing table (dual-family
   }
 
   test('coordinator alias resolves the space:chat session instead of an agent session', async () => {
-    const coordinator = buildLongHorizonAgent({
+    const canonical = buildLongHorizonAgent({
       id: 'space-lh-agent:coordinator:space-1',
       handle: 'coordinator',
     });
-    const { svc, createCalls, lookupIds } = buildRoutingService({
-      longHorizonAgents: [coordinator],
-      coordinatorId: coordinator.id,
+    const canonicalRun = buildRoutingService({
+      longHorizonAgents: [canonical],
+      coordinatorId: canonical.id,
     });
 
-    const session = await route(svc, coordinator.id);
+    const canonicalSession = await route(canonicalRun.svc, canonical.id);
 
-    expect(session).toBeDefined();
-    expect(lookupIds).toEqual(['space:chat:space-1']);
-    expect(createCalls).toHaveLength(0);
+    expect(canonicalSession).toBeDefined();
+    expect(canonicalRun.lookupIds).toEqual(['space:chat:space-1']);
+    expect(canonicalRun.createCalls).toHaveLength(0);
+
+    const discovered = buildLongHorizonAgent({
+      id: 'legacy-coordinator-row',
+      handle: 'coordinator',
+    });
+    const discoveredRun = buildRoutingService({
+      longHorizonAgents: [discovered],
+      coordinatorId: discovered.id,
+    });
+
+    const discoveredSession = await route(discoveredRun.svc, discovered.id);
+
+    expect(discoveredSession).toBeDefined();
+    expect(discoveredRun.lookupIds).toEqual(['space:chat:space-1']);
+    expect(discoveredRun.createCalls).toHaveLength(0);
   });
 
   test('non-coordinator long-horizon agent resolves space:agent:<space>:<id>', async () => {
