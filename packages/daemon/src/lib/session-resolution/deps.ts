@@ -17,13 +17,16 @@ export type WorkerTaskPhase =
 export function workerTaskPhaseOf(
   status: SpaceTaskStatus,
   postApprovalSessionId: string | null,
-  hasDurablePostApprovalWorker = false
+  hasDurablePostApprovalWorker = false,
+  postApprovalBlockedReason: string | null = null
 ): WorkerTaskPhase {
   if (status === 'cancelled' || status === 'archived' || status === 'stopped') {
     return 'terminal';
   }
   if (status === 'approved') {
-    return postApprovalSessionId ? 'post_approval' : 'routing';
+    return postApprovalSessionId || postApprovalBlockedReason !== null
+      ? 'post_approval'
+      : 'routing';
   }
   if (status === 'done') {
     return postApprovalSessionId || hasDurablePostApprovalWorker ? 'post_approval_done' : 'done';

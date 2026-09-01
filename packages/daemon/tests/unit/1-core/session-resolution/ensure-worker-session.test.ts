@@ -122,6 +122,11 @@ describe('workerTaskPhaseOf', () => {
     expect(workerTaskPhaseOf('approved', 'pa-1')).toBe('post_approval');
   });
 
+  test('an approved task with a recorded blocked reason is a failed dispatch, not routing', () => {
+    expect(workerTaskPhaseOf('approved', null, false, 'spawn failed')).toBe('post_approval');
+    expect(workerTaskPhaseOf('approved', null, false, null)).toBe('routing');
+  });
+
   test('done tasks split by post-approval history', () => {
     expect(workerTaskPhaseOf('done', 'pa-1')).toBe('post_approval_done');
     expect(workerTaskPhaseOf('done', null)).toBe('done');
@@ -560,7 +565,7 @@ describe('postApprovalStage', () => {
     });
     const outcome = await postApprovalStage(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: 'spawned-1', created: true });
-    expect(calls).toEqual(['worker', 'spawn']);
+    expect(calls).toEqual(['worker', 'spawn', 'worker']);
     expect(spawned).toEqual([[TASK_ID, AGENT_NAME, undefined]]);
   });
 
@@ -1462,7 +1467,7 @@ describe('ensureWorkerSession', () => {
     });
     const outcome = await ensureWorkerSession(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: 'spawned-1', created: true });
-    expect(calls).toEqual(['worker', 'spawn']);
+    expect(calls).toEqual(['worker', 'spawn', 'worker']);
     expect(spawned).toEqual([[TASK_ID, AGENT_NAME, undefined]]);
   });
 
