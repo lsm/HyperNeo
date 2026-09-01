@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
 import { ensureSession } from '../../../../src/lib/session-resolution/ensure-session';
 import { ensureWorkerSession } from '../../../../src/lib/session-resolution/ensure-worker-session';
-import { findSessionForTarget } from '../../../../src/lib/session-resolution/find-session-for-target';
 import {
   agentSessionIdOf,
   type FindTarget,
@@ -18,13 +17,6 @@ import {
 const deps = {} as SessionResolutionDeps;
 
 describe('session-resolution skeleton stubs', () => {
-  test('findSessionForTarget throws its exact message', () => {
-    const target: FindTarget = { kind: 'session', sessionId: 'sess-1' };
-    expect(() => findSessionForTarget(target, deps)).toThrow(
-      'session-resolution: findSessionForTarget not implemented'
-    );
-  });
-
   test('ensureWorkerSession throws its exact message', () => {
     const target: SessionTargetWorker = { kind: 'worker', taskId: 'task-1', agentName: 'devin' };
     expect(() => ensureWorkerSession(target, deps)).toThrow(
