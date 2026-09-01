@@ -225,10 +225,10 @@ describe('resolveDaemonConfig', () => {
   it('coerces booleans including 1/0 and string forms', () => {
     const on = resolveDaemonConfig({
       startup: { disableWorktrees: 1 as unknown as boolean },
-      flags: { workflowConnectors: 'false' as unknown as boolean },
+      flags: { taskAgentPostApprovalRouting: 'false' as unknown as boolean },
     });
     expect(on.startup?.disableWorktrees).toBe(true);
-    expect(on.flags?.workflowConnectors).toBe(false);
+    expect(on.flags?.taskAgentPostApprovalRouting).toBe(false);
     const off = resolveDaemonConfig({
       startup: { disableWorktrees: 0 as unknown as boolean },
     });
@@ -237,11 +237,30 @@ describe('resolveDaemonConfig', () => {
       flags: { workflowConnectors: 'nope' as unknown as boolean },
     });
     expect(invalid.flags?.workflowConnectors).toBe(true);
-    const legacyAliases = resolveDaemonConfig({
-      flags: { taskAgentPostApprovalRouting: 'off' as unknown as boolean },
-      startup: { sqlQueryObservability: 'no' as unknown as boolean },
+  });
+
+  it('applies each boolean key legacy string semantics', () => {
+    const perKey = resolveDaemonConfig({
+      flags: {
+        taskAgentPostApprovalRouting: 'off' as unknown as boolean,
+        workflowConnectors: 'off' as unknown as boolean,
+        spaceActionsDispatcher: 'yes' as unknown as boolean,
+      },
+      startup: {
+        sqlQueryObservability: 'no' as unknown as boolean,
+        disableWorktrees: 'true' as unknown as boolean,
+      },
     });
-    expect(legacyAliases.flags?.taskAgentPostApprovalRouting).toBe(false);
-    expect(legacyAliases.startup?.sqlQueryObservability).toBe(false);
+    expect(perKey.flags?.taskAgentPostApprovalRouting).toBe(false);
+    expect(perKey.flags?.workflowConnectors).toBe(true);
+    expect(perKey.flags?.spaceActionsDispatcher).toBe(false);
+    expect(perKey.startup?.sqlQueryObservability).toBe(true);
+    expect(perKey.startup?.disableWorktrees).toBe(false);
+    const recognizedFalse = resolveDaemonConfig({
+      flags: { workflowConnectors: '0' as unknown as boolean },
+      startup: { sqlQueryObservability: 'off' as unknown as boolean },
+    });
+    expect(recognizedFalse.flags?.workflowConnectors).toBe(false);
+    expect(recognizedFalse.startup?.sqlQueryObservability).toBe(false);
   });
 });

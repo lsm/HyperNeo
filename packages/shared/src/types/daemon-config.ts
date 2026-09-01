@@ -145,6 +145,15 @@ const RANGE_OVERRIDES: Record<string, { min?: number; max?: number }> = {
   logRetainedFiles: { max: 1000 },
 };
 
+const BOOLEAN_LEGACY_STRINGS: Record<string, readonly [readonly string[], boolean]> = {
+  sqlQueryObservability: [['0', 'false', 'off'], false],
+  workflowConnectors: [['0'], false],
+  spaceActionsDispatcher: [['1', 'true'], true],
+  disableWorktrees: [['1'], true],
+  disableGoalProcessing: [['1'], true],
+  taskAgentPostApprovalRouting: [['0', 'false', 'no', 'off'], false],
+};
+
 function legacyEnvNameFor(key: string): string {
   return `HYPERNEO_${key.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase()}`;
 }
@@ -191,10 +200,12 @@ function resolveBooleanValue(raw: unknown, entry: DaemonConfigKeyEntry): boolean
   if (typeof raw === 'boolean') return raw;
   if (raw === 1) return true;
   if (raw === 0) return false;
-  if (typeof raw === 'string') {
+  if (typeof raw === 'string' && raw.trim() !== '') {
     const normalized = raw.trim().toLowerCase();
+    const legacy = BOOLEAN_LEGACY_STRINGS[entry.key];
+    if (legacy) return legacy[0].includes(normalized) ? legacy[1] : !legacy[1];
     if (normalized === '1' || normalized === 'true') return true;
-    if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+    if (normalized === '0' || normalized === 'false') return false;
   }
   return entry.default as boolean;
 }
