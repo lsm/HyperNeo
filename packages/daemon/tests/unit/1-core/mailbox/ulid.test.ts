@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createUlid, isUlid } from '../../../../src/lib/mailbox/ulid';
+import { createUlid, decodeUlidTimestamp, isUlid } from '../../../../src/lib/mailbox/ulid';
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const MAX_48_BIT = 281474976710655;
@@ -102,6 +102,29 @@ describe('createUlid', () => {
     } finally {
       delete (crypto as { getRandomValues?: unknown }).getRandomValues;
     }
+  });
+});
+
+describe('decodeUlidTimestamp', () => {
+  test('round-trips the injected clock through createUlid', () => {
+    for (const [timeMs] of TIMESTAMP_VECTORS) {
+      expect(decodeUlidTimestamp(createUlid(timeMs))).toBe(timeMs);
+    }
+  });
+
+  test('reads only the first ten chars — the suffix does not perturb the timestamp', () => {
+    for (const [timeMs, prefix] of TIMESTAMP_VECTORS) {
+      expect(decodeUlidTimestamp(`${prefix}${'0'.repeat(16)}`)).toBe(timeMs);
+      expect(decodeUlidTimestamp(`${prefix}${'Z'.repeat(16)}`)).toBe(timeMs);
+    }
+  });
+
+  test('decodes a wall-clock ulid within one tick of Date.now()', () => {
+    const before = Date.now();
+    const ulid = createUlid();
+    const after = Date.now();
+    expect(decodeUlidTimestamp(ulid)).toBeGreaterThanOrEqual(before);
+    expect(decodeUlidTimestamp(ulid)).toBeLessThanOrEqual(after);
   });
 });
 
