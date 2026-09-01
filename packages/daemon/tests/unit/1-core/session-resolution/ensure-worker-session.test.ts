@@ -470,7 +470,7 @@ describe('postApprovalStage', () => {
     });
     const outcome = await postApprovalStage(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: 'spawned-fresh', created: true });
-    expect(calls).toEqual(['worker', 'rehydrate:pa-dead', 'spawn']);
+    expect(calls).toEqual(['worker', 'rehydrate:pa-dead', 'worker', 'spawn']);
     expect(spawned).toEqual([[TASK_ID, AGENT_NAME, 'node-7']]);
   });
 
