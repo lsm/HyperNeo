@@ -62,6 +62,14 @@ export function createUlid(nowMs?: number): string {
   return encodeTimestamp(timeMs) + encodeRandom(lastRandom);
 }
 
+export function decodeUlidTimestamp(ulid: string): number {
+  let time = 0;
+  for (let index = 0; index < 10; index += 1) {
+    time = time * 32 + ALPHABET.indexOf(ulid[index]);
+  }
+  return time;
+}
+
 export function isUlid(value: string): boolean {
   return typeof value === 'string' && ULID_PATTERN.test(value);
 }
