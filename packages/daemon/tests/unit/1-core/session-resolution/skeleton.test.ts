@@ -1,11 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  coordinatorLongHorizonAgentId,
-  coordinatorSessionId,
-} from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
-import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
-import { ensureAgentSession } from '../../../../src/lib/session-resolution/ensure-agent-session';
 import { ensureSession } from '../../../../src/lib/session-resolution/ensure-session';
 import { ensureWorkerSession } from '../../../../src/lib/session-resolution/ensure-worker-session';
 import { findSessionForTarget } from '../../../../src/lib/session-resolution/find-session-for-target';
@@ -13,9 +7,13 @@ import {
   agentSessionIdOf,
   type FindTarget,
   type SessionTarget,
-  type SessionTargetAgent,
   type SessionTargetWorker,
 } from '../../../../src/lib/session-resolution/target';
+import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
+import {
+  coordinatorLongHorizonAgentId,
+  coordinatorSessionId,
+} from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 
 const deps = {} as SessionResolutionDeps;
 
@@ -24,13 +22,6 @@ describe('session-resolution skeleton stubs', () => {
     const target: FindTarget = { kind: 'session', sessionId: 'sess-1' };
     expect(() => findSessionForTarget(target, deps)).toThrow(
       'session-resolution: findSessionForTarget not implemented'
-    );
-  });
-
-  test('ensureAgentSession throws its exact message', () => {
-    const target: SessionTargetAgent = { kind: 'agent', spaceId: 'sp-1', agentId: 'ag-1' };
-    expect(() => ensureAgentSession(target, deps)).toThrow(
-      'session-resolution: ensureAgentSession not implemented'
     );
   });
 
