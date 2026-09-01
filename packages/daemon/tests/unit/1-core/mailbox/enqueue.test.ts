@@ -60,6 +60,30 @@ describe('enqueueMailboxEntry', () => {
       expect(row.id).not.toBe(entry.id);
     });
 
+    test('converts policy maxAttempts (total executions) into the row retry budget', () => {
+      const entry = makeEntry({ policy: { maxAttempts: 9 } });
+
+      enqueueMailboxEntry(mailbox.jobQueue, entry);
+
+      expect(mailbox.rows()[0].max_retries).toBe(8);
+    });
+
+    test('the default policy of five attempts lands a retry budget of four', () => {
+      const entry = makeEntry();
+
+      enqueueMailboxEntry(mailbox.jobQueue, entry);
+
+      expect(mailbox.rows()[0].max_retries).toBe(DEFAULT_MAILBOX_ENTRY_POLICY.maxAttempts - 1);
+    });
+
+    test('a single-attempt policy lands a zero retry budget', () => {
+      const entry = makeEntry({ policy: { maxAttempts: 1 } });
+
+      enqueueMailboxEntry(mailbox.jobQueue, entry);
+
+      expect(mailbox.rows()[0].max_retries).toBe(0);
+    });
+
     test('round-trips an agent address and message priority through the payload', () => {
       const nowMessage: MailboxMessage = {
         type: 'user',
