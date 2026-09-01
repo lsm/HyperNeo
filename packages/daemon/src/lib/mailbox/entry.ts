@@ -22,6 +22,8 @@ export type MailboxMessage = {
   priority?: 'now' | 'next' | 'later';
 };
 
+export type MailboxDeliveryMode = 'immediate' | 'defer';
+
 export type MailboxEntry = {
   id: string;
   to: MailboxAddress;
@@ -29,11 +31,16 @@ export type MailboxEntry = {
   message: MailboxMessage;
   status: 'enqueued';
   policy: MailboxEntryPolicy;
+  deliveryMode: MailboxDeliveryMode;
 };
 
 const MAILBOX_MESSAGE_PRIORITIES: readonly MailboxMessage['priority'][] = ['now', 'next', 'later'];
 const MAILBOX_CONTENT_REASON =
   'message.content must be a non-empty string or a non-empty array of text blocks';
+
+function isMailboxDeliveryMode(value: unknown): value is MailboxDeliveryMode {
+  return value === 'immediate' || value === 'defer';
+}
 
 function projectTextBlock(
   block: { type: 'text'; text: string } | null | undefined
@@ -163,6 +170,7 @@ export function createMailboxEntry(args: {
   message: MailboxMessage;
   origin: string;
   policy?: Partial<MailboxEntryPolicy>;
+  deliveryMode?: MailboxDeliveryMode;
 }): MailboxEntry {
   const projectedTo = toMailboxAddress(args.to);
   if ('reason' in projectedTo) throw new TypeError(projectedTo.reason);
@@ -170,6 +178,9 @@ export function createMailboxEntry(args: {
   if ('reason' in projectedMessage) throw new TypeError(projectedMessage.reason);
   if (typeof args.origin !== 'string' || args.origin.length === 0) {
     throw new TypeError('origin must be a non-empty string');
+  }
+  if (args.deliveryMode !== undefined && !isMailboxDeliveryMode(args.deliveryMode)) {
+    throw new TypeError('deliveryMode must be "immediate" or "defer"');
   }
   const projectedPolicy = toMailboxPolicy(args.policy);
   if ('reason' in projectedPolicy) throw new TypeError(projectedPolicy.reason);
@@ -180,6 +191,7 @@ export function createMailboxEntry(args: {
     message: projectedMessage.message,
     status: 'enqueued',
     policy: projectedPolicy.value,
+    deliveryMode: args.deliveryMode ?? 'immediate',
   };
 }
 
@@ -252,5 +264,17 @@ export function parseMailboxEntry(
   }
   const policy = toMailboxPolicy(policyRecord as Partial<MailboxEntryPolicy>);
   if ('reason' in policy) return null;
-  return { id, to, origin, message: message.message, status: 'enqueued', policy: policy.value };
+  const deliveryMode = raw.deliveryMode;
+  if (deliveryMode !== undefined && !isMailboxDeliveryMode(deliveryMode)) {
+    return null;
+  }
+  return {
+    id,
+    to,
+    origin,
+    message: message.message,
+    status: 'enqueued',
+    policy: policy.value,
+    deliveryMode: deliveryMode ?? 'immediate',
+  };
 }

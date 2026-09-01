@@ -1,10 +1,11 @@
-import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery';
 import { enqueueMailboxEntry, MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
 import {
   DEFAULT_MAILBOX_ENTRY_POLICY,
+  type MailboxDeliveryMode,
   type MailboxEntry,
   type MailboxEntryPolicy,
   type MailboxMessage,
@@ -31,6 +32,7 @@ function makeEntry(overrides?: {
   origin?: string;
   policy?: Partial<MailboxEntryPolicy>;
   message?: MailboxMessage;
+  deliveryMode?: MailboxDeliveryMode;
 }): MailboxEntry {
   return {
     id: overrides?.id ?? createUlid(),
@@ -39,6 +41,7 @@ function makeEntry(overrides?: {
     message: overrides?.message ?? message,
     status: 'enqueued',
     policy: { ...DEFAULT_MAILBOX_ENTRY_POLICY, ...overrides?.policy },
+    deliveryMode: overrides?.deliveryMode ?? 'immediate',
   };
 }
 
@@ -369,6 +372,114 @@ describe('createMailboxDeliveryHandler', () => {
         const messageUuid = expectedMessageUuid(entry.id);
         expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)[0].origin).toBe(origin);
       }
+    });
+  });
+
+  describe('deliveryMode mapping', () => {
+    test('defer writes the content row held with no delivery release and completes the mailbox job', async () => {
+      const { handler } = makeHandler();
+      const entry = makeEntry({ origin: 'space_agent', deliveryMode: 'defer' });
+      const job = claimMailboxJob(mailbox, entry);
+
+      const result = await handler(job);
+
+      expect(result).toEqual({ kind: 'delivered', sessionId: SESSION_ID });
+
+      const rows = mailbox.sdkRows();
+      expect(rows).toHaveLength(1);
+      const messageUuid = expectedMessageUuid(entry.id);
+      expect(rows[0].sdk_uuid).toBe(messageUuid);
+      expect(rows[0].send_status).toBe('deferred');
+
+      const pointers = deliveryPayloads(mailbox, SESSION_ID, messageUuid);
+      expect(pointers).toHaveLength(1);
+      expect(pointers[0].released).toBe(false);
+
+      const completed = mailbox.jobQueue.complete(
+        job.id,
+        result as Record<string, unknown>,
+        job.claimToken
+      );
+      expect(completed?.status).toBe('completed');
+    });
+
+    test('defer preserves the provenance law — system origin and synthetic stamp', async () => {
+      const { handler } = makeHandler();
+      const entry = makeEntry({ origin: 'space_agent', deliveryMode: 'defer' });
+      const job = claimMailboxJob(mailbox, entry);
+
+      await handler(job);
+
+      const rows = mailbox.sdkRows();
+      expect(rows[0].origin).toBe('system');
+      const messageUuid = expectedMessageUuid(entry.id);
+      expect(JSON.parse(rows[0].sdk_message)).toEqual({
+        ...message,
+        uuid: messageUuid,
+        session_id: SESSION_ID,
+        isSynthetic: true,
+      });
+      expect(humanPredicate(mailbox, SESSION_ID, messageUuid)).toBe(false);
+    });
+
+    test('immediate keeps the content row enqueued with a released delivery pointer', async () => {
+      const { handler } = makeHandler();
+      const entry = makeEntry({ origin: 'chat', deliveryMode: 'immediate' });
+      const job = claimMailboxJob(mailbox, entry);
+
+      const result = await handler(job);
+
+      expect(result).toEqual({ kind: 'delivered', sessionId: SESSION_ID });
+      const rows = mailbox.sdkRows();
+      expect(rows).toHaveLength(1);
+      const messageUuid = expectedMessageUuid(entry.id);
+      expect(rows[0].send_status).toBe('enqueued');
+      expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)[0].released).toBe(true);
+    });
+
+    test('a legacy payload without deliveryMode delivers immediately', async () => {
+      const { handler } = makeHandler();
+      const entry = makeEntry({ origin: 'chat' });
+      const job = claimMailboxJob(mailbox, entry);
+      delete (job.payload as Record<string, unknown>).deliveryMode;
+
+      const result = await handler(job);
+
+      expect(result).toEqual({ kind: 'delivered', sessionId: SESSION_ID });
+      expect(mailbox.sdkRows()[0].send_status).toBe('enqueued');
+    });
+
+    describe('retry-convergence law under hold', () => {
+      test('a reclaim re-run converges on the single held row without minting or releasing', async () => {
+        const { handler } = makeHandler();
+        const entry = makeEntry({ origin: 'recovery', deliveryMode: 'defer' });
+        const firstJob = claimMailboxJob(mailbox, entry);
+
+        await handler(firstJob);
+
+        expect(mailbox.sdkRows()).toHaveLength(1);
+        expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(1);
+        expect(mailbox.sdkRows()[0].send_status).toBe('deferred');
+
+        mailbox.jobQueue.reclaimStale(Date.now() + 60_000, [MAILBOX_LANE]);
+        expect(mailbox.rows()[0].status).toBe('pending');
+
+        const reclaims = mailbox.jobQueue.dequeue(MAILBOX_LANE, 1);
+        expect(reclaims).toHaveLength(1);
+        const secondJob = reclaims[0];
+
+        const secondResult = await handler(secondJob);
+
+        expect(secondResult).toEqual({ kind: 'delivered', sessionId: SESSION_ID });
+        const rows = mailbox.sdkRows();
+        expect(rows).toHaveLength(1);
+        expect(rows[0].sdk_uuid).toBe(expectedMessageUuid(entry.id));
+        expect(rows[0].send_status).toBe('deferred');
+        expect(rows[0].origin).toBe('system');
+        const pointers = deliveryPayloads(mailbox, SESSION_ID, expectedMessageUuid(entry.id));
+        expect(pointers).toHaveLength(1);
+        expect(pointers[0].released).toBe(false);
+      });
     });
   });
 
