@@ -18,7 +18,6 @@ import {
 import {
   expireMailboxEntries,
   type MailboxSettleOutcome,
-  settleMailboxEntry,
 } from '../../../../src/lib/mailbox/settlement';
 import {
   findOrSpawnSessionForAddress,
@@ -63,12 +62,6 @@ describe('mailbox skeleton stubs', () => {
   test('deliverMailboxEntry throws its not implemented message', () => {
     expect(() => deliverMailboxEntry(entry)).toThrow(
       'mailbox: deliverMailboxEntry not implemented'
-    );
-  });
-
-  test('settleMailboxEntry throws its not implemented message', () => {
-    expect(() => settleMailboxEntry(entry, { kind: 'delivered', sessionId: 'sess-1' })).toThrow(
-      'mailbox: settleMailboxEntry not implemented'
     );
   });
 
