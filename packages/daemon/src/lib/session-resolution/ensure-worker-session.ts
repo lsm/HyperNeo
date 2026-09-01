@@ -308,11 +308,8 @@ export async function awaitSessionStage(
       }
       const sessionId = newestWorkerSessionId(deps.listWorkerExecutions(target));
       if (sessionId !== null) {
-        const live =
-          waitCapMs === 0
-            ? await deps.rehydrateSubSession(sessionId)
-            : await Promise.race([deps.rehydrateSubSession(sessionId), cap.promise]);
-        if (live !== null && (waitCapMs === 0 || !cap.fired)) {
+        const live = await Promise.race([deps.rehydrateSubSession(sessionId), cap.promise]);
+        if (!cap.fired && live !== null) {
           if (deps.readWorkerTaskPhase(target.taskId) !== 'run_active') {
             return ensureWorkerSession(target, deps);
           }

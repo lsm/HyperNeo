@@ -1179,15 +1179,14 @@ describe('awaitSessionStage', () => {
     }
   });
 
-  test('waitCapMs 0 still resolves when the liveness probe completes after the zero deadline', async () => {
+  test('a never-settling probe under waitCapMs 0 ends in activation_timeout after one probe', async () => {
     let probes = 0;
     const deps = buildDeps({
-      listWorkerExecutions: () => [row('sess-slow', 'running')],
-      rehydrateSubSession: (sessionId) =>
-        new Promise<unknown>((resolve) => {
-          probes += 1;
-          setTimeout(() => resolve({ id: sessionId }), 200);
-        }),
+      listWorkerExecutions: () => [row('sess-stuck', 'running')],
+      rehydrateSubSession: () => {
+        probes += 1;
+        return new Promise<unknown>(() => {});
+      },
     });
     jest.useFakeTimers();
     try {
@@ -1195,22 +1194,45 @@ describe('awaitSessionStage', () => {
         awaitSessionStage(workerTarget({ waitCapMs: 0 }), deps),
         5
       );
-      expect(settled).toEqual({ kind: 'resolved', sessionId: 'sess-slow', created: true });
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
       expect(probes).toBe(1);
     } finally {
       jest.useRealTimers();
     }
   });
 
-  test('waitCapMs 0 times out after a single un-raced probe when the candidate is dead', async () => {
+  test('a probe settling only after the zero deadline does not rescue the waitCapMs 0 check', async () => {
+    let probes = 0;
+    const deps = buildDeps({
+      listWorkerExecutions: () => [row('sess-slow', 'running')],
+      rehydrateSubSession: (sessionId) => {
+        probes += 1;
+        return new Promise<unknown>((resolve) => {
+          setTimeout(() => resolve({ id: sessionId }), 200);
+        });
+      },
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(
+        awaitSessionStage(workerTarget({ waitCapMs: 0 }), deps),
+        5
+      );
+      expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
+      expect(probes).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('waitCapMs 0 times out after a single probe when the candidate is dead', async () => {
     let probes = 0;
     const deps = buildDeps({
       listWorkerExecutions: () => [row('sess-dead', 'running')],
-      rehydrateSubSession: () =>
-        new Promise<unknown>((resolve) => {
-          probes += 1;
-          setTimeout(() => resolve(null), 200);
-        }),
+      rehydrateSubSession: async () => {
+        probes += 1;
+        return null;
+      },
     });
     jest.useFakeTimers();
     try {
