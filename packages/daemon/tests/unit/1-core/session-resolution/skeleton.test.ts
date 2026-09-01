@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { coordinatorSessionId } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import {
+  coordinatorLongHorizonAgentId,
+  coordinatorSessionId,
+} from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
 import { ensureAgentSession } from '../../../../src/lib/session-resolution/ensure-agent-session';
@@ -61,6 +64,13 @@ describe('agentSessionIdOf', () => {
   test('coordinator agentId reuses coordinatorSessionId', () => {
     const spaceId = 'space-1';
     expect(agentSessionIdOf(spaceId, 'coordinator')).toBe(coordinatorSessionId(spaceId));
+  });
+
+  test('coordinator long-horizon agentId reuses coordinatorSessionId', () => {
+    const spaceId = 'space-1';
+    expect(agentSessionIdOf(spaceId, coordinatorLongHorizonAgentId(spaceId))).toBe(
+      coordinatorSessionId(spaceId)
+    );
   });
 
   test('non-coordinator agentId reuses longTermAgentSessionId', () => {
