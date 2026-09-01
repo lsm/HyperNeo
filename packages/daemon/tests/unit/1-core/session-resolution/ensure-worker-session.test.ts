@@ -450,17 +450,25 @@ describe('awaitRoutingStage', () => {
     }
   });
 
-  test('a recorded identity whose session stays dead ends in post_approval_pending', async () => {
+  test('a recorded identity whose session is dead restarts resolution once routing completes', async () => {
+    const calls: string[] = [];
     const deps = buildDeps({
-      readWorkerTaskPhase: () => 'routing',
+      readWorkerTaskPhase: () => {
+        calls.push('phase');
+        return calls.length <= 1 ? 'routing' : 'post_approval';
+      },
       getPostApprovalWorkerSession: () => ({ sessionId: 'pa-dead', agentName: AGENT_NAME }),
       rehydrateSubSession: async () => null,
-      spawnPostApprovalWorker: async () => 'spawned',
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return 'spawned-fresh';
+      },
     });
     jest.useFakeTimers();
     try {
-      const settled = await drainByPolling(awaitRoutingStage(workerTarget(), deps), 40);
-      expect(settled).toEqual({ kind: 'unresolved', reason: 'post_approval_pending' });
+      const settled = await drainByPolling(awaitRoutingStage(workerTarget(), deps), 20);
+      expect(settled).toEqual({ kind: 'resolved', sessionId: 'spawned-fresh', created: true });
+      expect(calls).toEqual(['phase', 'phase', 'phase', 'spawn']);
     } finally {
       jest.useRealTimers();
     }
