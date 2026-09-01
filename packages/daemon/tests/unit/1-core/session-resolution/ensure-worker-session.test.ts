@@ -378,7 +378,9 @@ describe('ensureWorkerSession', () => {
     const deps = buildDeps({
       listWorkerExecutions: () => {
         listCalls += 1;
-        return listCalls >= 3 ? [row('sess-late', 'running')] : [];
+        return listCalls >= 3
+          ? [row(null, 'running'), row('sess-late', 'running')]
+          : [row(null, 'running')];
       },
       activateTaskAgent: async () => true,
     });
@@ -386,20 +388,26 @@ describe('ensureWorkerSession', () => {
     try {
       const settled = await drainByPolling(ensureWorkerSession(workerTarget(), deps), 20);
       expect(settled).toEqual({ kind: 'resolved', sessionId: 'sess-late', created: true });
+      expect(listCalls).toBe(3);
     } finally {
       jest.useRealTimers();
     }
   });
 
   test('run_active activation that never yields a session resolves activation_timeout', async () => {
+    let listCalls = 0;
     const deps = buildDeps({
-      listWorkerExecutions: () => [],
+      listWorkerExecutions: () => {
+        listCalls += 1;
+        return [row(null, 'running')];
+      },
       activateTaskAgent: async () => true,
     });
     jest.useFakeTimers();
     try {
       const settled = await drainByPolling(ensureWorkerSession(workerTarget(), deps), 40);
       expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
+      expect(listCalls).toBe(2 + WORKER_SESSION_WAIT_CAP_MS / WORKER_SESSION_POLL_INTERVAL_MS);
     } finally {
       jest.useRealTimers();
     }
@@ -484,7 +492,10 @@ describe('ensureWorkerSession', () => {
         doneCalls.push('list');
         return [row(null, 'cancelled')];
       },
-      getTaskSpaceId: async () => SPACE_ID,
+      getTaskSpaceId: async () => {
+        doneCalls.push('space');
+        return SPACE_ID;
+      },
       activateTaskAgent: async () => {
         doneCalls.push('activate');
         return true;
