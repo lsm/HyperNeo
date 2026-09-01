@@ -1,12 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
 import { ensureSession } from '../../../../src/lib/session-resolution/ensure-session';
-import { ensureWorkerSession } from '../../../../src/lib/session-resolution/ensure-worker-session';
 import {
   agentSessionIdOf,
   type FindTarget,
   type SessionTarget,
-  type SessionTargetWorker,
 } from '../../../../src/lib/session-resolution/target';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import {
@@ -17,13 +15,6 @@ import {
 const deps = {} as SessionResolutionDeps;
 
 describe('session-resolution skeleton stubs', () => {
-  test('ensureWorkerSession throws its exact message', () => {
-    const target: SessionTargetWorker = { kind: 'worker', taskId: 'task-1', agentName: 'devin' };
-    expect(() => ensureWorkerSession(target, deps)).toThrow(
-      'session-resolution: ensureWorkerSession not implemented'
-    );
-  });
-
   test('ensureSession throws its exact message', () => {
     const target: SessionTarget = { kind: 'session', sessionId: 'sess-1' };
     expect(() => ensureSession(target, deps)).toThrow(

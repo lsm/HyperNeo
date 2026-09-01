@@ -24,6 +24,16 @@ export function buildExecutionBaseSessionId(
   return `space:${spaceId}:task:${taskId}:exec:${executionId}`;
 }
 
+export function sanitizeAgentNameForId(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) || 'agent'
+  );
+}
+
 export function buildPostApprovalSessionId(
   spaceId: string,
   taskId: string,
