@@ -10,19 +10,20 @@ export async function expireMailboxEntries(deps: {
   now?: number;
 }): Promise<number> {
   const now = deps.now ?? Date.now();
-  const seen: string[] = [];
   let expired = 0;
+  let cursor: { createdAt: number; id: string } | undefined;
   for (;;) {
     const page = deps.jobQueue.listJobs({
       queue: MAILBOX_LANE,
       status: ['pending', 'processing'],
       limit: MAILBOX_SCAN_PAGE_SIZE,
       oldestFirst: true,
-      excludeIds: seen,
+      after: cursor,
     });
     if (page.length === 0) return expired;
+    const last = page[page.length - 1];
+    cursor = { createdAt: last.createdAt, id: last.id };
     for (const job of page) {
-      seen.push(job.id);
       const entry = parseMailboxEntry(job.payload);
       if (entry === null) continue;
       if (now - decodeUlidTimestamp(entry.id) > entry.policy.ttlMs) {

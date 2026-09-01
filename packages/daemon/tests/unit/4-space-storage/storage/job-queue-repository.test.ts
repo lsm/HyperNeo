@@ -514,34 +514,51 @@ describe('JobQueueRepository', () => {
       expect(jobs[2].payload.order).toBe(3);
     });
 
-    it('excludes the given ids', () => {
-      const first = repository.enqueue({ queue: 'test', payload: { n: 1 } });
-      const second = repository.enqueue({ queue: 'test', payload: { n: 2 } });
-      repository.enqueue({ queue: 'test', payload: { n: 3 } });
-
-      const jobs = repository.listJobs({ excludeIds: [first.id, second.id] });
-
-      expect(jobs.length).toBe(1);
-      expect(jobs[0].payload.n).toBe(3);
-    });
-
-    it('paginates oldest-first with a growing exclusion list', () => {
+    it('paginates oldest-first with an after cursor', () => {
       for (let i = 0; i < 5; i += 1) {
         repository.enqueue({ queue: 'test', payload: { i } });
       }
 
-      const seen: string[] = [];
       const pages: number[][] = [];
+      let after: { createdAt: number; id: string } | undefined;
+      let total = 0;
       for (;;) {
-        const page = repository.listJobs({ limit: 2, oldestFirst: true, excludeIds: seen });
+        const page = repository.listJobs({ limit: 2, oldestFirst: true, after });
         if (page.length === 0) break;
-        for (const job of page) seen.push(job.id);
         pages.push(page.map((job) => job.payload.i as number));
+        total += page.length;
+        const last = page[page.length - 1];
+        after = { createdAt: last.createdAt, id: last.id };
         if (page.length < 2) break;
       }
 
       expect(pages).toEqual([[0, 1], [2, 3], [4]]);
+      expect(total).toBe(5);
+    });
+
+    it('paginates past created_at ties using the id tiebreak', () => {
+      const ids: string[] = [];
+      for (let i = 0; i < 5; i += 1) {
+        const job = repository.enqueue({ queue: 'test', payload: { i } });
+        ids.push(job.id);
+      }
+      db.prepare(`UPDATE job_queue SET created_at = 12345`).run();
+
+      const seen: number[] = [];
+      let after: { createdAt: number; id: string } | undefined;
+      for (;;) {
+        const page = repository.listJobs({ limit: 2, oldestFirst: true, after });
+        if (page.length === 0) break;
+        for (const job of page) seen.push(job.payload.i as number);
+        const last = page[page.length - 1];
+        after = { createdAt: last.createdAt, id: last.id };
+        if (page.length < 2) break;
+      }
+
       expect(seen.length).toBe(5);
+      const indexById = new Map(ids.map((id, index) => [id, index]));
+      const expected = [...ids].sort().map((id) => indexById.get(id) as number);
+      expect(seen).toEqual(expected);
     });
   });
 

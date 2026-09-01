@@ -750,7 +750,7 @@ export class JobQueueRepository {
     status?: JobStatus | JobStatus[];
     limit?: number;
     oldestFirst?: boolean;
-    excludeIds?: string[];
+    after?: { createdAt: number; id: string };
   }): Job[] {
     if (Array.isArray(filter.status) && filter.status.length === 0) {
       return [];
@@ -773,15 +773,15 @@ export class JobQueueRepository {
         params.push(filter.status);
       }
     }
-    const excludeIds = filter.excludeIds ?? [];
-    if (excludeIds.length > 0) {
-      query += ` AND id NOT IN (${excludeIds.map(() => '?').join(',')})`;
-      params.push(...excludeIds);
+    if (filter.after !== undefined) {
+      query += ` AND (created_at > ? OR (created_at = ? AND id > ?))`;
+      params.push(filter.after.createdAt, filter.after.createdAt, filter.after.id);
     }
 
-    query += filter.oldestFirst
-      ? ` ORDER BY created_at ASC, rowid ASC LIMIT ?`
-      : ` ORDER BY created_at DESC LIMIT ?`;
+    query +=
+      filter.oldestFirst || filter.after !== undefined
+        ? ` ORDER BY created_at ASC, id ASC LIMIT ?`
+        : ` ORDER BY created_at DESC LIMIT ?`;
     params.push(filter.limit ?? 100);
 
     const stmt = this.db.prepare(query);
