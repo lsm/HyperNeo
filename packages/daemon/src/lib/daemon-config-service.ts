@@ -4,6 +4,7 @@ import {
   type DaemonBehaviorConfig,
   type DaemonConfigKeyEntry,
 } from '@hyperneo/shared';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database as BunDatabase } from '../storage/sqlite-compat.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from './internal-event-bus.ts';
 
@@ -94,6 +95,35 @@ function changedCatalogKeys(before: DaemonBehaviorConfig, after: DaemonBehaviorC
   ).map((entry) => entry.key);
 }
 
+function unchanged(changedKeys: string[] | undefined): boolean {
+  return (changedKeys?.length ?? 0) === 0;
+}
+
+function completeDaemonConfigUpdate(
+  config: DaemonBehaviorConfig,
+  changedKeys: string[]
+): DaemonConfigUpdateResult {
+  return { config, changedKeys: changedKeys ?? [] };
+}
+
+const runUpdateDaemonConfig = (superpipe({ unchanged })('update-daemon-config') as PipelineAPI)
+  .input(['patch', 'readStoredConfig', 'writeStoredConfig', 'publishConfigUpdated'])
+  .pipe('readStoredConfig', [], 'stored')
+  .pipe(resolveDaemonConfig, 'stored', 'before')
+  .pipe(applyValidatedPatch, ['stored', 'patch'], 'merged')
+  .pipe(resolveDaemonConfig, 'merged', 'after')
+  .pipe(changedCatalogKeys, ['before', 'after'], 'changedKeys')
+  .pipe(completeDaemonConfigUpdate, ['after', 'changedKeys'], 'result')
+  .pipe('!unchanged', 'changedKeys')
+  .pipe('writeStoredConfig', 'merged')
+  .pipe('publishConfigUpdated', 'changedKeys')
+  .end('result') as (
+  patch: Partial<DaemonBehaviorConfig>,
+  readStoredConfig: () => Partial<DaemonBehaviorConfig>,
+  writeStoredConfig: (config: Partial<DaemonBehaviorConfig>) => void,
+  publishConfigUpdated: (changedKeys: string[]) => void
+) => DaemonConfigUpdateResult;
+
 export class DaemonConfigService {
   private cachedConfig: DaemonBehaviorConfig | undefined;
 
@@ -110,17 +140,16 @@ export class DaemonConfigService {
   }
 
   updateConfig(patch: Partial<DaemonBehaviorConfig>): DaemonConfigUpdateResult {
-    const stored = this.readStoredConfig();
-    const before = resolveDaemonConfig(stored);
-    const merged = applyValidatedPatch(stored, patch);
-    const after = resolveDaemonConfig(merged);
-    const changedKeys = changedCatalogKeys(before, after);
-    if (changedKeys.length > 0) {
-      this.writeStoredConfig(merged);
-      this.internalEventBus?.publishAsync(DAEMON_CONFIG_UPDATED, { changedKeys });
-    }
-    this.cachedConfig = after;
-    return { config: structuredClone(after), changedKeys };
+    const outcome = runUpdateDaemonConfig(
+      patch,
+      () => this.readStoredConfig(),
+      (config) => this.writeStoredConfig(config),
+      (changedKeys) => {
+        this.internalEventBus?.publishAsync(DAEMON_CONFIG_UPDATED, { changedKeys });
+      }
+    );
+    this.cachedConfig = outcome.config;
+    return { config: structuredClone(outcome.config), changedKeys: outcome.changedKeys };
   }
 
   seedFromLegacyEnv(env: Record<string, string | undefined> = process.env): boolean {
