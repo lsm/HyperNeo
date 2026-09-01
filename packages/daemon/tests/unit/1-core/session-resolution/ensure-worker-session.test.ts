@@ -237,11 +237,36 @@ describe('findStage', () => {
       outcome: undefined,
     });
   });
+
+  test('a task cancelled during rehydration does not resolve the session', async () => {
+    const deps = buildDeps({
+      listWorkerExecutions: () => [row('s-live', 'running')],
+      rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
+      readWorkerTaskPhase: () => 'terminal',
+    });
+    expect(await findStage(workerTarget(), deps)).toEqual({
+      foundSessionId: undefined,
+      outcome: undefined,
+    });
+  });
+
+  test('a task approved during rehydration does not resolve the pre-approval session', async () => {
+    const deps = buildDeps({
+      listWorkerExecutions: () => [row('s-live', 'running')],
+      rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
+      readWorkerTaskPhase: () => 'post_approval',
+    });
+    expect(await findStage(workerTarget(), deps)).toEqual({
+      foundSessionId: undefined,
+      outcome: undefined,
+    });
+  });
 });
 
 describe('findTerminalStage', () => {
   test('resolves a live execution session through the ordinary find path', async () => {
     const deps = buildDeps({
+      readWorkerTaskPhase: () => 'done',
       listWorkerExecutions: () => [row('s-exec', 'idle')],
       rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
     });
@@ -252,18 +277,35 @@ describe('findTerminalStage', () => {
   });
 
   test('a missing or dead execution session resolves task_terminal', async () => {
-    const missing = buildDeps({ listWorkerExecutions: () => [] });
+    const missing = buildDeps({
+      readWorkerTaskPhase: () => 'done',
+      listWorkerExecutions: () => [],
+    });
     expect(await findTerminalStage(workerTarget(), missing)).toEqual({
       foundSessionId: undefined,
       outcome: { kind: 'unresolved', reason: 'task_terminal' },
     });
     const dead = buildDeps({
+      readWorkerTaskPhase: () => 'done',
       listWorkerExecutions: () => [row('s-dead', 'idle')],
       rehydrateSubSession: async () => null,
     });
     expect(await findTerminalStage(workerTarget(), dead)).toEqual({
       foundSessionId: undefined,
       outcome: { kind: 'unresolved', reason: 'task_terminal' },
+    });
+  });
+
+  test('a task leaving the done phase mid-find re-enters phase selection', async () => {
+    const deps = buildDeps({
+      readWorkerTaskPhase: () => 'post_approval',
+      getPostApprovalWorkerSession: () => ({ sessionId: 'pa-routed', agentName: AGENT_NAME }),
+      rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
+      listWorkerExecutions: () => [],
+    });
+    expect(await findTerminalStage(workerTarget(), deps)).toEqual({
+      foundSessionId: undefined,
+      outcome: { kind: 'resolved', sessionId: 'pa-routed', created: false },
     });
   });
 });
@@ -444,6 +486,24 @@ describe('postApprovalStage', () => {
     expect(calls).toEqual([]);
   });
 
+  test('a cancellation landing during the spawn never resolves the spawned worker', async () => {
+    const calls: string[] = [];
+    const deps = buildDeps({
+      readWorkerTaskPhase: () => {
+        calls.push('phase');
+        return calls.length <= 1 ? 'post_approval' : 'terminal';
+      },
+      getPostApprovalWorkerSession: () => null,
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return 'spawned-orphan';
+      },
+    });
+    const outcome = await postApprovalStage(workerTarget(), deps);
+    expect(outcome).toEqual({ kind: 'unresolved', reason: 'task_terminal' });
+    expect(calls).toEqual(['phase', 'spawn', 'phase']);
+  });
+
   test('a retried approval moving the task back to routing re-enters the routing arm instead of spawning', async () => {
     let workerReads = 0;
     const calls: string[] = [];
@@ -524,6 +584,7 @@ describe('awaitRoutingStage', () => {
   test('resolves the routed worker without waiting when the identity is already live', async () => {
     const calls: string[] = [];
     const deps = buildDeps({
+      readWorkerTaskPhase: () => 'routing',
       getPostApprovalWorkerSession: () => {
         calls.push('worker');
         return { sessionId: 'pa-routed', agentName: AGENT_NAME };
@@ -540,6 +601,17 @@ describe('awaitRoutingStage', () => {
     const outcome = await awaitRoutingStage(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: 'pa-routed', created: false });
     expect(calls).toEqual(['worker', 'rehydrate:pa-routed']);
+  });
+
+  test('a task cancelled while the routed worker rehydrates resolves task_terminal', async () => {
+    const deps = buildDeps({
+      readWorkerTaskPhase: () => 'terminal',
+      getPostApprovalWorkerSession: () => ({ sessionId: 'pa-live', agentName: AGENT_NAME }),
+      rehydrateSubSession: async () => ({ id: 'pa-live' }),
+      spawnPostApprovalWorker: async () => 'spawned',
+    });
+    const outcome = await awaitRoutingStage(workerTarget(), deps);
+    expect(outcome).toEqual({ kind: 'unresolved', reason: 'task_terminal' });
   });
 
   test('waits for the router to record the identity and never spawns', async () => {
@@ -684,6 +756,28 @@ describe('activateStage', () => {
     });
     expect(calls).toEqual(['phase', 'phase']);
   });
+
+  test('a task that leaves run_active during activation re-enters phase selection', async () => {
+    const calls: string[] = [];
+    const deps = buildDeps({
+      readWorkerTaskPhase: () => {
+        calls.push('phase');
+        return calls.length <= 1 ? 'run_active' : 'post_approval';
+      },
+      activateTaskAgent: async () => {
+        calls.push('activate');
+        return true;
+      },
+      getPostApprovalWorkerSession: () => ({ sessionId: 'pa-routed', agentName: AGENT_NAME }),
+      rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
+    });
+    const result = await activateStage(workerTarget(), deps);
+    expect(result).toEqual({
+      activated: true,
+      outcome: { kind: 'resolved', sessionId: 'pa-routed', created: false },
+    });
+    expect(calls).toEqual(['phase', 'activate', 'phase', 'phase']);
+  });
 });
 
 describe('awaitSessionStage', () => {
@@ -694,6 +788,16 @@ describe('awaitSessionStage', () => {
     });
     const outcome = await awaitSessionStage(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: 'sess-live', created: true });
+  });
+
+  test('a task cancelled while the activated session appears resolves task_terminal', async () => {
+    const deps = buildDeps({
+      listWorkerExecutions: () => [row('sess-live', 'running')],
+      rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
+      readWorkerTaskPhase: () => 'terminal',
+    });
+    const outcome = await awaitSessionStage(workerTarget(), deps);
+    expect(outcome).toEqual({ kind: 'unresolved', reason: 'task_terminal' });
   });
 
   test('resolves created:true once the session appears within the cap', async () => {

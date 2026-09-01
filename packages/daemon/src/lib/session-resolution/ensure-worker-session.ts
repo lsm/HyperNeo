@@ -23,6 +23,10 @@ export async function findStage(
   if ((await deps.rehydrateSubSession(sessionId)) === null) {
     return { foundSessionId: undefined, outcome: undefined };
   }
+  const phase = deps.readWorkerTaskPhase(target.taskId);
+  if (phase !== 'run_active' && phase !== 'done') {
+    return { foundSessionId: undefined, outcome: undefined };
+  }
   return { foundSessionId: sessionId, outcome: { kind: 'resolved', sessionId, created: false } };
 }
 
@@ -31,9 +35,15 @@ export async function findTerminalStage(
   deps: SessionResolutionDeps
 ): Promise<{ foundSessionId: string | undefined; outcome: EnsureSessionOutcome | undefined }> {
   const found = await findStage(target, deps);
+  if (found.outcome !== undefined) {
+    return found;
+  }
+  if (deps.readWorkerTaskPhase(target.taskId) !== 'done') {
+    return { foundSessionId: undefined, outcome: await ensureWorkerSession(target, deps) };
+  }
   return {
-    foundSessionId: found.foundSessionId,
-    outcome: found.outcome ?? { kind: 'unresolved', reason: 'task_terminal' },
+    foundSessionId: undefined,
+    outcome: { kind: 'unresolved', reason: 'task_terminal' },
   };
 }
 
@@ -144,6 +154,9 @@ export async function postApprovalStage(
   if (spawnedSessionId === null) {
     return { kind: 'unresolved', reason: 'spawn_failed' };
   }
+  if (deps.readWorkerTaskPhase(target.taskId) === 'terminal') {
+    return { kind: 'unresolved', reason: 'task_terminal' };
+  }
   return { kind: 'resolved', sessionId: spawnedSessionId, created: true };
 }
 
@@ -190,7 +203,7 @@ export async function awaitRoutingStage(
         if (cap.fired) {
           return { kind: 'unresolved', reason: 'post_approval_pending' };
         }
-        if (live !== null) {
+        if (live !== null && deps.readWorkerTaskPhase(target.taskId) === 'routing') {
           return { kind: 'resolved', sessionId: worker.sessionId, created: false };
         }
       }
@@ -216,6 +229,9 @@ export async function activateStage(
   const activated = await deps.activateTaskAgent(target);
   if (!activated) {
     return { activated: false, outcome: { kind: 'unresolved', reason: 'activate_failed' } };
+  }
+  if (deps.readWorkerTaskPhase(target.taskId) !== 'run_active') {
+    return { activated: true, outcome: await ensureWorkerSession(target, deps) };
   }
   return { activated: true, outcome: undefined };
 }
@@ -255,6 +271,9 @@ export async function awaitSessionStage(
           return { kind: 'unresolved', reason: 'activation_timeout' };
         }
         if (live !== null) {
+          if (deps.readWorkerTaskPhase(target.taskId) === 'terminal') {
+            return { kind: 'unresolved', reason: 'task_terminal' };
+          }
           return { kind: 'resolved', sessionId, created: true };
         }
       }
