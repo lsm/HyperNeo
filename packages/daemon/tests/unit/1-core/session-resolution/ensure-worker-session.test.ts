@@ -41,10 +41,11 @@ const buildDeps = (overrides: Partial<SessionResolutionDeps> = {}): SessionResol
   getCoordinator: async () => null,
   ensureLongTermAgent: async () => null,
   listWorkerExecutions: () => [],
-  isTaskDone: () => false,
+  isTaskDoneOrApproved: () => false,
   getTaskSpaceId: async () => SPACE_ID,
   activateTaskAgent: async () => false,
   spawnPostApprovalWorker: async () => null,
+  getPostApprovalWorkerSession: () => null,
   ...overrides,
 });
 
@@ -161,10 +162,10 @@ describe('findStage', () => {
 });
 
 describe('phaseStage', () => {
-  test('a done task arms only postApprovalStage, reading task state and never the row census', () => {
+  test('a done-or-approved task arms only postApprovalStage, reading task state and never the row census', () => {
     const calls: string[] = [];
     const deps = buildDeps({
-      isTaskDone: (taskId) => {
+      isTaskDoneOrApproved: (taskId) => {
         calls.push(`done:${taskId}`);
         return true;
       },
@@ -181,10 +182,19 @@ describe('phaseStage', () => {
     expect(calls).toEqual([`done:${TASK_ID}`]);
   });
 
+  test('an approved task with no execution rows phases to done, not run_active', () => {
+    const deps = buildDeps({ isTaskDoneOrApproved: () => true, listWorkerExecutions: () => [] });
+    const result = phaseStage(workerTarget(), deps);
+    expect(result.phase).toBe('done');
+    expect(result.findArm).toBeUndefined();
+    expect(result.activateArm).toBeUndefined();
+    expect(result.postApprovalArm).toBe(postApprovalStage);
+  });
+
   test('an active task arms findStage and activateStage and leaves postApprovalStage disarmed', () => {
     const calls: string[] = [];
     const deps = buildDeps({
-      isTaskDone: () => {
+      isTaskDoneOrApproved: () => {
         calls.push('done');
         return false;
       },
@@ -203,6 +213,53 @@ describe('phaseStage', () => {
 });
 
 describe('postApprovalStage', () => {
+  test('resolves the actual routed worker identity without probing or spawning', async () => {
+    const calls: string[] = [];
+    const deps = buildDeps({
+      getPostApprovalWorkerSession: () => {
+        calls.push('worker');
+        return { sessionId: 'pa-retried-2', agentName: AGENT_NAME, nodeId: 'node-1' };
+      },
+      getTaskSpaceId: async () => {
+        calls.push('space');
+        return SPACE_ID;
+      },
+      getSession: async () => {
+        calls.push('probe');
+        return null;
+      },
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return 'spawned';
+      },
+    });
+    const outcome = await postApprovalStage(workerTarget({ workflowNodeId: 'node-1' }), deps);
+    expect(outcome).toEqual({ kind: 'resolved', sessionId: 'pa-retried-2', created: false });
+    expect(calls).toEqual(['worker']);
+  });
+
+  test('an identity for another agent name falls through to the deterministic probe', async () => {
+    const deps = buildDeps({
+      getPostApprovalWorkerSession: () => ({ sessionId: 'pa-other', agentName: 'reviewer' }),
+      getSession: async (sessionId) => (sessionId === postApprovalId ? { id: sessionId } : null),
+    });
+    const outcome = await postApprovalStage(workerTarget(), deps);
+    expect(outcome).toEqual({ kind: 'resolved', sessionId: postApprovalId, created: false });
+  });
+
+  test('an identity bound to another workflow node falls through to the deterministic probe', async () => {
+    const deps = buildDeps({
+      getPostApprovalWorkerSession: () => ({
+        sessionId: 'pa-other-node',
+        agentName: AGENT_NAME,
+        nodeId: 'node-9',
+      }),
+      getSession: async (sessionId) => (sessionId === postApprovalId ? { id: sessionId } : null),
+    });
+    const outcome = await postApprovalStage(workerTarget({ workflowNodeId: 'node-1' }), deps);
+    expect(outcome).toEqual({ kind: 'resolved', sessionId: postApprovalId, created: false });
+  });
+
   test('resolves created:false with the deterministic post-approval id when found', async () => {
     const getSession = async (sessionId: string) =>
       sessionId === postApprovalId ? { id: sessionId } : null;
@@ -572,7 +629,7 @@ describe('ensureWorkerSession', () => {
   test('done task with idle rows resolves the live post-approval session, never the exec session', async () => {
     const calls: string[] = [];
     const deps = buildDeps({
-      isTaskDone: () => true,
+      isTaskDoneOrApproved: () => true,
       listWorkerExecutions: () => {
         calls.push('list');
         return [row('s-exec', 'idle')];
@@ -603,11 +660,72 @@ describe('ensureWorkerSession', () => {
     expect(calls).toEqual(['space', `probe:${postApprovalId}`]);
   });
 
+  test('an approved task with zero rows routes through the post-approval arm, never activation', async () => {
+    const calls: string[] = [];
+    const deps = buildDeps({
+      isTaskDoneOrApproved: () => true,
+      listWorkerExecutions: () => {
+        calls.push('list');
+        return [];
+      },
+      getPostApprovalWorkerSession: () => {
+        calls.push('worker');
+        return { sessionId: 'pa-routed', agentName: AGENT_NAME };
+      },
+      getTaskSpaceId: async () => {
+        calls.push('space');
+        return SPACE_ID;
+      },
+      getSession: async () => {
+        calls.push('probe');
+        return null;
+      },
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return 'spawned';
+      },
+      activateTaskAgent: async () => {
+        calls.push('activate');
+        return true;
+      },
+    });
+    const outcome = await ensureWorkerSession(workerTarget(), deps);
+    expect(outcome).toEqual({ kind: 'resolved', sessionId: 'pa-routed', created: false });
+    expect(calls).toEqual(['worker']);
+  });
+
+  test('a retried post-approval run resolves the latest routed session, not the obsolete base id', async () => {
+    const calls: string[] = [];
+    const deps = buildDeps({
+      isTaskDoneOrApproved: () => true,
+      listWorkerExecutions: () => [row('s-exec', 'idle')],
+      getPostApprovalWorkerSession: () => {
+        calls.push('worker');
+        return { sessionId: 'pa-retried-2', agentName: AGENT_NAME };
+      },
+      getTaskSpaceId: async () => {
+        calls.push('space');
+        return SPACE_ID;
+      },
+      getSession: async (sessionId) => {
+        calls.push(`probe:${sessionId}`);
+        return sessionId === postApprovalId ? { id: sessionId } : null;
+      },
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return 'spawned';
+      },
+    });
+    const outcome = await ensureWorkerSession(workerTarget(), deps);
+    expect(outcome).toEqual({ kind: 'resolved', sessionId: 'pa-retried-2', created: false });
+    expect(calls).toEqual(['worker']);
+  });
+
   test('done phase probes the sanitized post-approval id for a non-canonical agent name', async () => {
     const sanitizedId = buildPostApprovalSessionId(SPACE_ID, TASK_ID, 'devin');
     const calls: string[] = [];
     const deps = buildDeps({
-      isTaskDone: () => true,
+      isTaskDoneOrApproved: () => true,
       listWorkerExecutions: () => [row(null, 'cancelled')],
       getTaskSpaceId: async () => SPACE_ID,
       getSession: async (sessionId) => {
@@ -627,7 +745,7 @@ describe('ensureWorkerSession', () => {
   test('done task with idle rows and no post-approval worker spawns one and resolves created:true', async () => {
     const spawned: Array<[string, string, string | undefined]> = [];
     const deps = buildDeps({
-      isTaskDone: () => true,
+      isTaskDoneOrApproved: () => true,
       listWorkerExecutions: () => [row('s-exec', 'idle')],
       spawnPostApprovalWorker: async (taskId, agentName, workflowNodeId) => {
         spawned.push([taskId, agentName, workflowNodeId]);
@@ -641,7 +759,7 @@ describe('ensureWorkerSession', () => {
 
   test('done phase with a null spawn resolves spawn_failed', async () => {
     const deps = buildDeps({
-      isTaskDone: () => true,
+      isTaskDoneOrApproved: () => true,
       listWorkerExecutions: () => [],
       spawnPostApprovalWorker: async () => null,
     });
@@ -652,7 +770,7 @@ describe('ensureWorkerSession', () => {
   test('the non-taken phase never runs its stages', async () => {
     const doneCalls: string[] = [];
     const doneDeps = buildDeps({
-      isTaskDone: () => true,
+      isTaskDoneOrApproved: () => true,
       listWorkerExecutions: () => {
         doneCalls.push('list');
         return [row(null, 'cancelled')];

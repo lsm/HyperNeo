@@ -42,7 +42,7 @@ function makeDeps(
       return null;
     },
     listWorkerExecutions: () => [],
-    isTaskDone: () => false,
+    isTaskDoneOrApproved: () => false,
     getTaskSpaceId: async () => null,
     activateTaskAgent: async () => {
       log.activateTaskAgent += 1;
@@ -52,6 +52,7 @@ function makeDeps(
       log.spawnPostApprovalWorker += 1;
       return null;
     },
+    getPostApprovalWorkerSession: () => null,
   };
   return { deps, log };
 }

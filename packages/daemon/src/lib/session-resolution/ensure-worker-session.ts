@@ -45,7 +45,7 @@ export function phaseStage(
   postApprovalArm: typeof postApprovalStage | undefined;
   activateArm: typeof activateStage | undefined;
 } {
-  if (workerSessionPhase(deps.isTaskDone(target.taskId)) === 'done') {
+  if (workerSessionPhase(deps.isTaskDoneOrApproved(target.taskId)) === 'done') {
     return {
       phase: 'done',
       findArm: undefined,
@@ -65,6 +65,11 @@ export async function postApprovalStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
+  const worker = deps.getPostApprovalWorkerSession(target.taskId);
+  const nodeOk = !target.workflowNodeId || worker?.nodeId === target.workflowNodeId;
+  if (worker && nodeOk && worker.agentName === target.agentName) {
+    return { kind: 'resolved', sessionId: worker.sessionId, created: false };
+  }
   const spaceId = await deps.getTaskSpaceId(target.taskId);
   if (spaceId === null) {
     return { kind: 'unresolved', reason: 'task_not_found' };
