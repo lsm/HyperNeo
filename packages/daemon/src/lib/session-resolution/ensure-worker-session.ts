@@ -154,8 +154,8 @@ export async function postApprovalStage(
   if (spawnedSessionId === null) {
     return { kind: 'unresolved', reason: 'spawn_failed' };
   }
-  if (deps.readWorkerTaskPhase(target.taskId) === 'terminal') {
-    return { kind: 'unresolved', reason: 'task_terminal' };
+  if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval') {
+    return ensureWorkerSession(target, deps);
   }
   return { kind: 'resolved', sessionId: spawnedSessionId, created: true };
 }

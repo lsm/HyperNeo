@@ -501,7 +501,7 @@ describe('postApprovalStage', () => {
     });
     const outcome = await postApprovalStage(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'unresolved', reason: 'task_terminal' });
-    expect(calls).toEqual(['phase', 'spawn', 'phase']);
+    expect(calls).toEqual(['phase', 'spawn', 'phase', 'phase']);
   });
 
   test('a retried approval moving the task back to routing re-enters the routing arm instead of spawning', async () => {
