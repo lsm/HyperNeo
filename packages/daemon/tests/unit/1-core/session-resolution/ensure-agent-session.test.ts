@@ -8,7 +8,11 @@ import {
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import { coordinatorSessionId } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 
-function makeDeps(config?: { existingSessionIds?: string[]; ensureOutcome?: 'create' | 'fail' }): {
+function makeDeps(config?: {
+  existingSessionIds?: string[];
+  ensureOutcome?: 'create' | 'fail';
+  coordinatorId?: string;
+}): {
   deps: SessionResolutionDeps;
   ensureCalls: Array<[string, string]>;
 } {
@@ -19,12 +23,13 @@ function makeDeps(config?: { existingSessionIds?: string[]; ensureOutcome?: 'cre
     ensureLongTermAgent: async (spaceId, agentId) => {
       ensureCalls.push([spaceId, agentId]);
       if (config?.ensureOutcome === 'fail') return null;
-      const sessionId = agentSessionIdOf(spaceId, agentId);
+      const sessionId = agentSessionIdOf(spaceId, agentId, config?.coordinatorId);
       sessions.add(sessionId);
       return { id: sessionId };
     },
     rehydrateSubSession: async () => null,
-    getCoordinator: async () => null,
+    getCoordinator: async () =>
+      config?.coordinatorId === undefined ? null : { id: config.coordinatorId },
     listWorkerExecutions: () => [],
     activateTaskAgent: async () => false,
     spawnPostApprovalWorker: async () => null,
@@ -75,6 +80,56 @@ describe('ensureAgentSession', () => {
       created: true,
     });
     expect(ensureCalls).toEqual([[spaceId, 'coordinator']]);
+  });
+
+  test('existing session for a noncanonical coordinator id resolves the coordinator session id as not created', async () => {
+    const spaceId = 'space-1';
+    const agentId = 'coordinator-alt';
+    const { deps, ensureCalls } = makeDeps({
+      coordinatorId: agentId,
+      existingSessionIds: [coordinatorSessionId(spaceId)],
+    });
+    const target: SessionTargetAgent = { kind: 'agent', spaceId, agentId };
+
+    const outcome = await ensureAgentSession(target, deps);
+
+    expect(outcome).toEqual({
+      kind: 'resolved',
+      sessionId: coordinatorSessionId(spaceId),
+      created: false,
+    });
+    expect(ensureCalls).toHaveLength(0);
+  });
+
+  test('missing session for a noncanonical coordinator id delegates to ensure and resolves the coordinator session id as created', async () => {
+    const spaceId = 'space-1';
+    const agentId = 'coordinator-alt';
+    const { deps, ensureCalls } = makeDeps({ coordinatorId: agentId });
+    const target: SessionTargetAgent = { kind: 'agent', spaceId, agentId };
+
+    const outcome = await ensureAgentSession(target, deps);
+
+    expect(outcome).toEqual({
+      kind: 'resolved',
+      sessionId: coordinatorSessionId(spaceId),
+      created: true,
+    });
+    expect(ensureCalls).toEqual([[spaceId, agentId]]);
+  });
+
+  test('noncanonical coordinator id does not capture regular agent ids', async () => {
+    const spaceId = 'space-1';
+    const agentId = 'agent-1';
+    const { deps } = makeDeps({ coordinatorId: 'coordinator-alt' });
+    const target: SessionTargetAgent = { kind: 'agent', spaceId, agentId };
+
+    const outcome = await ensureAgentSession(target, deps);
+
+    expect(outcome).toEqual({
+      kind: 'resolved',
+      sessionId: longTermAgentSessionId(spaceId, agentId),
+      created: true,
+    });
   });
 
   test('null from ensureLongTermAgent reports unresolved ensure_failed', async () => {
