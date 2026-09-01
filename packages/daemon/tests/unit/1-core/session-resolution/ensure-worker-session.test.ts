@@ -452,6 +452,24 @@ describe('postApprovalStage', () => {
     expect(outcome).toEqual({ kind: 'unresolved', reason: 'spawn_failed' });
   });
 
+  test('a task changing phase during a failed spawn re-enters phase selection', async () => {
+    const calls: string[] = [];
+    const deps = buildDeps({
+      readWorkerTaskPhase: () => {
+        calls.push('phase');
+        return calls.length <= 1 ? 'post_approval' : 'terminal';
+      },
+      getPostApprovalWorkerSession: () => null,
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return null;
+      },
+    });
+    const outcome = await postApprovalStage(workerTarget(), deps);
+    expect(outcome).toEqual({ kind: 'unresolved', reason: 'task_terminal' });
+    expect(calls).toEqual(['phase', 'spawn', 'phase', 'phase']);
+  });
+
   test('a task cancelled while the identity liveness check runs resolves task_terminal before spawning', async () => {
     const calls: string[] = [];
     const deps = buildDeps({

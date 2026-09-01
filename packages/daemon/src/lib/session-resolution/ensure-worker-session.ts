@@ -151,11 +151,11 @@ export async function postApprovalStage(
     target.agentName,
     target.workflowNodeId ?? worker?.nodeId ?? undefined
   );
-  if (spawnedSessionId === null) {
-    return { kind: 'unresolved', reason: 'spawn_failed' };
-  }
   if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval') {
     return ensureWorkerSession(target, deps);
+  }
+  if (spawnedSessionId === null) {
+    return { kind: 'unresolved', reason: 'spawn_failed' };
   }
   return { kind: 'resolved', sessionId: spawnedSessionId, created: true };
 }
