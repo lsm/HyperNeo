@@ -1,5 +1,5 @@
 import type { MailboxAddress } from './address.ts';
-import { createUlid } from './ulid.ts';
+import { createUlid, isUlid } from './ulid.ts';
 
 export interface MailboxEntryPolicy {
   ttlMs: number;
@@ -183,8 +183,74 @@ export function createMailboxEntry(args: {
   };
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function isAddressField(value: unknown): value is string {
+  if (!isNonEmptyString(value)) return false;
+  try {
+    encodeURIComponent(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function projectStoredAddress(value: unknown): MailboxAddress | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (record.kind === 'session') {
+    const sessionId = record.sessionId;
+    if (!isAddressField(sessionId)) return null;
+    return { kind: 'session', sessionId };
+  }
+  if (record.kind === 'agent') {
+    const spaceId = record.spaceId;
+    const handle = record.handle;
+    const taskId = record.taskId;
+    const node = record.node;
+    if (!isAddressField(spaceId)) return null;
+    if (!isAddressField(handle) || handle.includes('/')) return null;
+    if (taskId !== undefined && !isAddressField(taskId)) return null;
+    if (node !== undefined && !isAddressField(node)) return null;
+    return {
+      kind: 'agent',
+      spaceId,
+      handle,
+      ...(taskId !== undefined ? { taskId } : {}),
+      ...(node !== undefined ? { node } : {}),
+    };
+  }
+  return null;
+}
+
 export function parseMailboxEntry(
-  _raw: Record<string, unknown> | null | undefined
+  raw: Record<string, unknown> | null | undefined
 ): MailboxEntry | null {
-  throw new Error('mailbox: parseMailboxEntry not implemented');
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const id = raw.id;
+  if (typeof id !== 'string' || !isUlid(id)) return null;
+  const to = projectStoredAddress(raw.to);
+  if (to === null) return null;
+  const origin = raw.origin;
+  if (!isNonEmptyString(origin)) return null;
+  const message = toMailboxMessage(raw.message as MailboxMessage);
+  if ('reason' in message) return null;
+  if (raw.status !== 'enqueued') return null;
+  const policySource = raw.policy;
+  if (typeof policySource !== 'object' || policySource === null || Array.isArray(policySource)) {
+    return null;
+  }
+  const policyRecord = policySource as Record<string, unknown>;
+  if (
+    policyRecord.ttlMs === undefined ||
+    policyRecord.maxAttempts === undefined ||
+    policyRecord.priority === undefined
+  ) {
+    return null;
+  }
+  const policy = toMailboxPolicy(policyRecord as Partial<MailboxEntryPolicy>);
+  if ('reason' in policy) return null;
+  return { id, to, origin, message: message.message, status: 'enqueued', policy: policy.value };
 }
