@@ -737,6 +737,26 @@ describe('activateStage', () => {
     });
   });
 
+  test('a failed activation after a phase change re-enters phase selection', async () => {
+    const calls: string[] = [];
+    const deps = buildDeps({
+      readWorkerTaskPhase: () => {
+        calls.push('phase');
+        return calls.length <= 1 ? 'run_active' : 'terminal';
+      },
+      activateTaskAgent: async () => {
+        calls.push('activate');
+        return false;
+      },
+    });
+    const result = await activateStage(workerTarget(), deps);
+    expect(result).toEqual({
+      activated: false,
+      outcome: { kind: 'unresolved', reason: 'task_terminal' },
+    });
+    expect(calls).toEqual(['phase', 'activate', 'phase', 'phase']);
+  });
+
   test('a task that leaves run_active before activation re-enters phase selection', async () => {
     const calls: string[] = [];
     const deps = buildDeps({
@@ -795,6 +815,53 @@ describe('awaitSessionStage', () => {
       listWorkerExecutions: () => [row('sess-live', 'running')],
       rehydrateSubSession: async (sessionId) => ({ id: sessionId }),
       readWorkerTaskPhase: () => 'terminal',
+    });
+    const outcome = await awaitSessionStage(workerTarget(), deps);
+    expect(outcome).toEqual({ kind: 'unresolved', reason: 'task_terminal' });
+  });
+
+  test('a task approved while awaiting the activated session re-enters phase selection', async () => {
+    const calls: string[] = [];
+    const deps = buildDeps({
+      readWorkerTaskPhase: () => {
+        calls.push('phase');
+        return calls.length <= 1 ? 'run_active' : 'post_approval';
+      },
+      listWorkerExecutions: () => {
+        calls.push('list');
+        return [];
+      },
+      getPostApprovalWorkerSession: () => {
+        calls.push('worker');
+        return { sessionId: 'pa-routed', agentName: AGENT_NAME };
+      },
+      rehydrateSubSession: async (sessionId) => {
+        calls.push(`rehydrate:${sessionId}`);
+        return { id: sessionId };
+      },
+    });
+    jest.useFakeTimers();
+    try {
+      const settled = await drainByPolling(awaitSessionStage(workerTarget(), deps), 20);
+      expect(settled).toEqual({ kind: 'resolved', sessionId: 'pa-routed', created: false });
+      expect(calls).toEqual([
+        'phase',
+        'list',
+        'phase',
+        'phase',
+        'worker',
+        'rehydrate:pa-routed',
+        'phase',
+      ]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a cancelled task with no appearing session resolves task_terminal without burning the cap', async () => {
+    const deps = buildDeps({
+      readWorkerTaskPhase: () => 'terminal',
+      listWorkerExecutions: () => [],
     });
     const outcome = await awaitSessionStage(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'unresolved', reason: 'task_terminal' });
