@@ -651,7 +651,7 @@ describe('postApprovalDoneStage', () => {
     });
     const outcome = await postApprovalDoneStage(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: 'pa-done', created: false });
-    expect(calls).toEqual(['worker', 'rehydrate:pa-done']);
+    expect(calls).toEqual(['worker', 'rehydrate:pa-done', 'worker']);
   });
 
   test('a completed routed worker whose session is gone never respawns', async () => {
@@ -974,6 +974,7 @@ describe('awaitSessionStage', () => {
         'worker',
         'rehydrate:pa-routed',
         'phase',
+        'worker',
       ]);
     } finally {
       jest.useRealTimers();
@@ -1285,7 +1286,7 @@ describe('ensureWorkerSession', () => {
     });
     const outcome = await ensureWorkerSession(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: 'pa-live', created: false });
-    expect(calls).toEqual(['worker', 'rehydrate:pa-live']);
+    expect(calls).toEqual(['worker', 'rehydrate:pa-live', 'worker']);
   });
 
   test('an approved task with zero rows routes through the post-approval arm, never activation', async () => {
@@ -1312,7 +1313,7 @@ describe('ensureWorkerSession', () => {
     });
     const outcome = await ensureWorkerSession(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: 'pa-routed', created: false });
-    expect(calls).toEqual(['worker']);
+    expect(calls).toEqual(['worker', 'worker']);
   });
 
   test('resolution during the approval dispatch window waits for the routed worker instead of spawning', async () => {
@@ -1371,7 +1372,7 @@ describe('ensureWorkerSession', () => {
     });
     const outcome = await ensureWorkerSession(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: 'pa-retried-2', created: false });
-    expect(calls).toEqual(['worker', 'rehydrate:pa-retried-2']);
+    expect(calls).toEqual(['worker', 'rehydrate:pa-retried-2', 'worker']);
   });
 
   test('a routed worker for another agent resolves as a target mismatch without spawning', async () => {
