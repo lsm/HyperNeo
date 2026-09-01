@@ -1,32 +1,29 @@
 import { describe, expect, test } from 'bun:test';
-import { MAILBOX_LANE, type MailboxEnqueueOutcome } from '../../../../src/lib/mailbox/enqueue';
-import {
-  handoffPromptToMailbox,
-  type MailboxHandoffOutcome,
-} from '../../../../src/lib/mailbox/handoff';
-import {
-  resolveMailboxAddress,
-  type MailboxAddressResolution,
-} from '../../../../src/lib/mailbox/resolution';
-import {
-  findOrSpawnSessionForAddress,
-  type MailboxSessionRef,
-} from '../../../../src/lib/mailbox/spawn';
+import { mapPendingAgentRowToMailboxEntry } from '../../../../src/lib/mailbox/bridge';
 import {
   deliverMailboxEntry,
   type MailboxDeliveryOutcome,
 } from '../../../../src/lib/mailbox/delivery';
-import {
-  expireMailboxEntries,
-  settleMailboxEntry,
-  type MailboxSettleOutcome,
-} from '../../../../src/lib/mailbox/settlement';
-import { mapPendingAgentRowToMailboxEntry } from '../../../../src/lib/mailbox/bridge';
+import { MAILBOX_LANE, type MailboxEnqueueOutcome } from '../../../../src/lib/mailbox/enqueue';
 import {
   DEFAULT_MAILBOX_ENTRY_POLICY,
   type MailboxEntry,
   type MailboxMessage,
 } from '../../../../src/lib/mailbox/entry';
+import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff';
+import {
+  type MailboxAddressResolution,
+  resolveMailboxAddress,
+} from '../../../../src/lib/mailbox/resolution';
+import {
+  expireMailboxEntries,
+  type MailboxSettleOutcome,
+  settleMailboxEntry,
+} from '../../../../src/lib/mailbox/settlement';
+import {
+  findOrSpawnSessionForAddress,
+  type MailboxSessionRef,
+} from '../../../../src/lib/mailbox/spawn';
 import type { PendingAgentMessageRecord } from '../../../../src/storage/repositories/pending-agent-message-repository';
 
 const message: MailboxMessage = {
@@ -49,12 +46,6 @@ const pendingRow = {} as PendingAgentMessageRecord;
 describe('mailbox skeleton stubs', () => {
   test('MAILBOX_LANE equals "mailbox"', () => {
     expect(MAILBOX_LANE).toBe('mailbox');
-  });
-
-  test('handoffPromptToMailbox throws its not implemented message', () => {
-    expect(() => handoffPromptToMailbox({ to: 'session:sess-1', message, origin: 'test' })).toThrow(
-      'mailbox: handoffPromptToMailbox not implemented'
-    );
   });
 
   test('resolveMailboxAddress throws its not implemented message', () => {
