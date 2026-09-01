@@ -145,13 +145,13 @@ const RANGE_OVERRIDES: Record<string, { min?: number; max?: number }> = {
   logRetainedFiles: { max: 1000 },
 };
 
-const BOOLEAN_LEGACY_STRINGS: Record<string, readonly [readonly string[], boolean]> = {
-  sqlQueryObservability: [['0', 'false', 'off'], false],
+const BOOLEAN_LEGACY_STRINGS: Record<string, readonly [readonly string[], boolean, boolean?]> = {
+  sqlQueryObservability: [['0', 'false', 'off'], false, true],
   workflowConnectors: [['0'], false],
   spaceActionsDispatcher: [['1', 'true'], true],
   disableWorktrees: [['1'], true],
   disableGoalProcessing: [['1'], true],
-  taskAgentPostApprovalRouting: [['0', 'false', 'no', 'off'], false],
+  taskAgentPostApprovalRouting: [['0', 'false', 'no', 'off'], false, true],
 };
 
 function legacyEnvNameFor(key: string): string {
@@ -188,8 +188,8 @@ function resolveIntValue(raw: unknown, entry: DaemonConfigKeyEntry): number {
   if (typeof raw === 'number') parsed = raw;
   else if (typeof raw === 'string' && /^[0-9]+$/.test(raw.trim())) parsed = Number(raw.trim());
   else return entry.default as number;
-  if (!Number.isFinite(parsed)) return entry.default as number;
   let value = Math.trunc(parsed);
+  if (!Number.isSafeInteger(value)) return entry.default as number;
   if (value < (entry.min ?? 0)) return entry.default as number;
   if (entry.max !== undefined && value > entry.max) value = entry.max;
   return value;
@@ -199,10 +199,13 @@ function resolveBooleanValue(raw: unknown, entry: DaemonConfigKeyEntry): boolean
   if (typeof raw === 'boolean') return raw;
   if (raw === 1) return true;
   if (raw === 0) return false;
-  if (typeof raw === 'string' && raw.trim() !== '') {
-    const normalized = raw.trim().toLowerCase();
+  if (typeof raw === 'string') {
     const legacy = BOOLEAN_LEGACY_STRINGS[entry.key];
-    if (legacy) return legacy[0].includes(normalized) ? legacy[1] : !legacy[1];
+    if (legacy) {
+      const value = legacy[2] ? raw.trim().toLowerCase() : raw;
+      return legacy[0].includes(value) ? legacy[1] : !legacy[1];
+    }
+    const normalized = raw.trim().toLowerCase();
     if (normalized === '1' || normalized === 'true') return true;
     if (normalized === '0' || normalized === 'false') return false;
   }

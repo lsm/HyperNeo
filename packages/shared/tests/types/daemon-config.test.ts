@@ -217,6 +217,17 @@ describe('resolveDaemonConfig', () => {
     expect(resolved.startup?.logRetainedFiles).toBe(1000);
   });
 
+  it('rejects unsafe integer values', () => {
+    const resolved = resolveDaemonConfig({
+      startup: {
+        sqlQuerySummaryIntervalMs: '9007199254740993' as unknown as number,
+        maxSubscriptionsPerClient: Number.MAX_VALUE,
+      },
+    });
+    expect(resolved.startup?.sqlQuerySummaryIntervalMs).toBe(300000);
+    expect(resolved.startup?.maxSubscriptionsPerClient).toBe(128);
+  });
+
   it('falls back to defaults on invalid stored values', () => {
     const resolved = resolveDaemonConfig({
       deliveryTiming: { interruptControlTimeoutMs: 'abc' as unknown as number },
@@ -266,5 +277,17 @@ describe('resolveDaemonConfig', () => {
     });
     expect(recognizedFalse.flags?.workflowConnectors).toBe(false);
     expect(recognizedFalse.startup?.sqlQueryObservability).toBe(false);
+    const exactMatch = resolveDaemonConfig({
+      flags: {
+        spaceActionsDispatcher: 'TRUE' as unknown as boolean,
+        workflowConnectors: ' 0 ' as unknown as boolean,
+        taskAgentPostApprovalRouting: ' NO ' as unknown as boolean,
+      },
+      startup: { sqlQueryObservability: ' OFF ' as unknown as boolean },
+    });
+    expect(exactMatch.flags?.spaceActionsDispatcher).toBe(false);
+    expect(exactMatch.flags?.workflowConnectors).toBe(true);
+    expect(exactMatch.flags?.taskAgentPostApprovalRouting).toBe(false);
+    expect(exactMatch.startup?.sqlQueryObservability).toBe(false);
   });
 });
