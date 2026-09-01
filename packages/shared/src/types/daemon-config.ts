@@ -186,12 +186,11 @@ export const DAEMON_CONFIG_KEY_CATALOG: readonly DaemonConfigKeyEntry[] = Object
 function resolveIntValue(raw: unknown, entry: DaemonConfigKeyEntry): number {
   let parsed: number;
   if (typeof raw === 'number') parsed = raw;
-  else if (typeof raw === 'string' && raw.trim() !== '') parsed = Number(raw);
+  else if (typeof raw === 'string' && /^[0-9]+$/.test(raw.trim())) parsed = Number(raw.trim());
   else return entry.default as number;
   if (!Number.isFinite(parsed)) return entry.default as number;
   let value = Math.trunc(parsed);
-  if (value <= 0 && (entry.min ?? 0) > 0) return entry.default as number;
-  if (entry.min !== undefined && value < entry.min) value = entry.min;
+  if (value < (entry.min ?? 0)) return entry.default as number;
   if (entry.max !== undefined && value > entry.max) value = entry.max;
   return value;
 }

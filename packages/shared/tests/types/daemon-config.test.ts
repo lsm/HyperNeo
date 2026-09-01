@@ -176,15 +176,19 @@ describe('resolveDaemonConfig', () => {
     expect(resolved.deliveryTiming?.interruptControlTimeoutMs).toBe(2000);
   });
 
-  it('coerces numeric strings and truncates fractions', () => {
+  it('coerces digit-only strings, rejects exotic string forms, and truncates fractions', () => {
     const resolved = resolveDaemonConfig({
       deliveryTiming: {
         interruptControlTimeoutMs: '2500' as unknown as number,
         operationLockAcquireTimeoutMs: 7.9,
+        deliveryConsumptionTimeoutMs: '1e3' as unknown as number,
+        operationLockLeakCeilingMs: '-5' as unknown as number,
       },
     });
     expect(resolved.deliveryTiming?.interruptControlTimeoutMs).toBe(2500);
     expect(resolved.deliveryTiming?.operationLockAcquireTimeoutMs).toBe(7);
+    expect(resolved.deliveryTiming?.deliveryConsumptionTimeoutMs).toBe(30000);
+    expect(resolved.deliveryTiming?.operationLockLeakCeilingMs).toBe(900000);
   });
 
   it('falls back to defaults for non-positive values on positive-only keys', () => {
@@ -198,7 +202,7 @@ describe('resolveDaemonConfig', () => {
     expect(resolved.deliveryTiming?.interruptControlTimeoutMs).toBe(2000);
   });
 
-  it('clamps stored values to bounds and keeps valid zeros', () => {
+  it('falls back to defaults below min, caps at max, and keeps valid zeros', () => {
     const resolved = resolveDaemonConfig({
       providersMisc: {
         providerMaxRetries: -3,
@@ -207,7 +211,7 @@ describe('resolveDaemonConfig', () => {
       },
       startup: { logRetainedFiles: 5000 },
     });
-    expect(resolved.providersMisc?.providerMaxRetries).toBe(0);
+    expect(resolved.providersMisc?.providerMaxRetries).toBe(3);
     expect(resolved.providersMisc?.spaceActionsRateLimitPerMinute).toBe(0);
     expect(resolved.providersMisc?.providerRetryBaseDelayMs).toBe(0);
     expect(resolved.startup?.logRetainedFiles).toBe(1000);
