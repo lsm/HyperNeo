@@ -31,6 +31,7 @@ function makeDeps(config?: {
     getCoordinator: async () =>
       config?.coordinatorId === undefined ? null : { id: config.coordinatorId },
     listWorkerExecutions: () => [],
+    isTaskDone: () => false,
     getTaskSpaceId: async () => null,
     activateTaskAgent: async () => false,
     spawnPostApprovalWorker: async () => null,

@@ -18,8 +18,8 @@ export function newestWorkerSessionId(rows: WorkerExecutionSession[]): string | 
   return live.at(-1)?.sessionId ?? null;
 }
 
-export function workerSessionPhase(rows: WorkerExecutionSession[]): WorkerSessionPhase {
-  return rows.some((row) => row.status !== 'cancelled') ? 'run_active' : 'done';
+export function workerSessionPhase(taskDone: boolean): WorkerSessionPhase {
+  return taskDone ? 'done' : 'run_active';
 }
 
 export async function findStage(
@@ -41,13 +41,24 @@ export function phaseStage(
   deps: SessionResolutionDeps
 ): {
   phase: WorkerSessionPhase;
+  findArm: typeof findStage | undefined;
   postApprovalArm: typeof postApprovalStage | undefined;
   activateArm: typeof activateStage | undefined;
 } {
-  if (workerSessionPhase(deps.listWorkerExecutions(target)) === 'done') {
-    return { phase: 'done', postApprovalArm: postApprovalStage, activateArm: undefined };
+  if (workerSessionPhase(deps.isTaskDone(target.taskId)) === 'done') {
+    return {
+      phase: 'done',
+      findArm: undefined,
+      postApprovalArm: postApprovalStage,
+      activateArm: undefined,
+    };
   }
-  return { phase: 'run_active', postApprovalArm: undefined, activateArm: activateStage };
+  return {
+    phase: 'run_active',
+    findArm: findStage,
+    postApprovalArm: undefined,
+    activateArm: activateStage,
+  };
 }
 
 export async function postApprovalStage(
@@ -151,9 +162,9 @@ const runEnsureWorkerSession = (
   })('ensure-worker-session') as PipelineAPI
 )
   .input(['target', 'deps'])
-  .pipe(findStage, ['target', 'deps'], ['foundSessionId', 'outcome'])
+  .pipe(phaseStage, ['target', 'deps'], ['phase', 'findArm', 'postApprovalArm', 'activateArm'])
+  .pipe('?findArm', ['target', 'deps'], ['foundSessionId', 'outcome'])
   .pipe('!settled', 'outcome')
-  .pipe(phaseStage, ['target', 'deps'], ['phase', 'postApprovalArm', 'activateArm'])
   .pipe('?postApprovalArm', ['target', 'deps'], 'outcome')
   .pipe('!settled', 'outcome')
   .pipe('?activateArm', ['target', 'deps'], ['activated', 'outcome'])

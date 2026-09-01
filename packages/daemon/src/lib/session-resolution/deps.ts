@@ -11,6 +11,7 @@ export interface SessionResolutionDeps {
   getCoordinator(spaceId: string): Promise<{ id: string } | null>;
   ensureLongTermAgent(spaceId: string, agentId: string): Promise<unknown | null>;
   listWorkerExecutions(target: SessionTargetWorker): WorkerExecutionSession[];
+  isTaskDone(taskId: string): boolean;
   getTaskSpaceId(taskId: string): Promise<string | null>;
   activateTaskAgent(target: SessionTargetWorker): Promise<boolean>;
   spawnPostApprovalWorker(

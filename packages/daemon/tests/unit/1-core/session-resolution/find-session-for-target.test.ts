@@ -42,6 +42,8 @@ function makeDeps(
       return null;
     },
     listWorkerExecutions: () => [],
+    isTaskDone: () => false,
+    getTaskSpaceId: async () => null,
     activateTaskAgent: async () => {
       log.activateTaskAgent += 1;
       return false;

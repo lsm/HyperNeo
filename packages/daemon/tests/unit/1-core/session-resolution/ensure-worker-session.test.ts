@@ -41,6 +41,7 @@ const buildDeps = (overrides: Partial<SessionResolutionDeps> = {}): SessionResol
   getCoordinator: async () => null,
   ensureLongTermAgent: async () => null,
   listWorkerExecutions: () => [],
+  isTaskDone: () => false,
   getTaskSpaceId: async () => SPACE_ID,
   activateTaskAgent: async () => false,
   spawnPostApprovalWorker: async () => null,
@@ -107,15 +108,12 @@ describe('newestWorkerSessionId', () => {
 });
 
 describe('workerSessionPhase', () => {
-  test('run_active when any non-cancelled row exists, sessionless and pending included', () => {
-    expect(workerSessionPhase([row('s-1', 'done')])).toBe('run_active');
-    expect(workerSessionPhase([row(null, 'pending')])).toBe('run_active');
-    expect(workerSessionPhase([row('s-1', 'cancelled'), row(null, 'running')])).toBe('run_active');
+  test('done when the task itself is done', () => {
+    expect(workerSessionPhase(true)).toBe('done');
   });
 
-  test('done when rows are empty or all cancelled', () => {
-    expect(workerSessionPhase([])).toBe('done');
-    expect(workerSessionPhase([row('s-1', 'cancelled'), row(null, 'cancelled')])).toBe('done');
+  test('run_active when the task is not done', () => {
+    expect(workerSessionPhase(false)).toBe('run_active');
   });
 });
 
@@ -163,20 +161,44 @@ describe('findStage', () => {
 });
 
 describe('phaseStage', () => {
-  test('arms postApprovalStage on the done phase and leaves activateStage disarmed', () => {
-    const deps = buildDeps({ listWorkerExecutions: () => [row('s-1', 'cancelled')] });
+  test('a done task arms only postApprovalStage, reading task state and never the row census', () => {
+    const calls: string[] = [];
+    const deps = buildDeps({
+      isTaskDone: (taskId) => {
+        calls.push(`done:${taskId}`);
+        return true;
+      },
+      listWorkerExecutions: () => {
+        calls.push('list');
+        return [row('s-idle', 'idle')];
+      },
+    });
     const result = phaseStage(workerTarget(), deps);
     expect(result.phase).toBe('done');
+    expect(result.findArm).toBeUndefined();
     expect(result.postApprovalArm).toBe(postApprovalStage);
     expect(result.activateArm).toBeUndefined();
+    expect(calls).toEqual([`done:${TASK_ID}`]);
   });
 
-  test('arms activateStage on the run_active phase and leaves postApprovalStage disarmed', () => {
-    const deps = buildDeps({ listWorkerExecutions: () => [row(null, 'pending')] });
+  test('an active task arms findStage and activateStage and leaves postApprovalStage disarmed', () => {
+    const calls: string[] = [];
+    const deps = buildDeps({
+      isTaskDone: () => {
+        calls.push('done');
+        return false;
+      },
+      listWorkerExecutions: () => {
+        calls.push('list');
+        return [row('s-idle', 'idle')];
+      },
+    });
     const result = phaseStage(workerTarget(), deps);
     expect(result.phase).toBe('run_active');
+    expect(result.findArm).toBe(findStage);
     expect(result.postApprovalArm).toBeUndefined();
     expect(result.activateArm).toBe(activateStage);
+    expect(calls).toEqual(['done']);
   });
 });
 
@@ -478,7 +500,32 @@ describe('ensureWorkerSession', () => {
     });
     const outcome = await ensureWorkerSession(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'unresolved', reason: 'activate_failed' });
-    expect(calls).toEqual(['list', 'list', 'activate']);
+    expect(calls).toEqual(['list', 'activate']);
+  });
+
+  test('an active task with zero rows activates and never spawns a post-approval worker', async () => {
+    const calls: string[] = [];
+    const deps = buildDeps({
+      listWorkerExecutions: () => {
+        calls.push('list');
+        return [];
+      },
+      getTaskSpaceId: async () => {
+        calls.push('space');
+        return SPACE_ID;
+      },
+      spawnPostApprovalWorker: async () => {
+        calls.push('spawn');
+        return 'spawned';
+      },
+      activateTaskAgent: async () => {
+        calls.push('activate');
+        return false;
+      },
+    });
+    const outcome = await ensureWorkerSession(workerTarget(), deps);
+    expect(outcome).toEqual({ kind: 'unresolved', reason: 'activate_failed' });
+    expect(calls).toEqual(['list', 'activate']);
   });
 
   test('run_active with activation succeeds once the session appears within the cap', async () => {
@@ -516,18 +563,23 @@ describe('ensureWorkerSession', () => {
     try {
       const settled = await drainByPolling(ensureWorkerSession(workerTarget(), deps), 40);
       expect(settled).toEqual({ kind: 'unresolved', reason: 'activation_timeout' });
-      expect(listCalls).toBe(2 + WORKER_SESSION_WAIT_CAP_MS / WORKER_SESSION_POLL_INTERVAL_MS);
+      expect(listCalls).toBe(1 + WORKER_SESSION_WAIT_CAP_MS / WORKER_SESSION_POLL_INTERVAL_MS);
     } finally {
       jest.useRealTimers();
     }
   });
 
-  test('done phase with a live post-approval session resolves created:false and never spawns', async () => {
+  test('done task with idle rows resolves the live post-approval session, never the exec session', async () => {
     const calls: string[] = [];
     const deps = buildDeps({
+      isTaskDone: () => true,
       listWorkerExecutions: () => {
         calls.push('list');
-        return [row('s-old', 'cancelled')];
+        return [row('s-exec', 'idle')];
+      },
+      rehydrateSubSession: async (sessionId) => {
+        calls.push(`rehydrate:${sessionId}`);
+        return { id: sessionId };
       },
       getTaskSpaceId: async () => {
         calls.push('space');
@@ -535,7 +587,7 @@ describe('ensureWorkerSession', () => {
       },
       getSession: async (sessionId) => {
         calls.push(`probe:${sessionId}`);
-        return { id: sessionId };
+        return sessionId === postApprovalId ? { id: sessionId } : null;
       },
       spawnPostApprovalWorker: async () => {
         calls.push('spawn');
@@ -548,13 +600,14 @@ describe('ensureWorkerSession', () => {
     });
     const outcome = await ensureWorkerSession(workerTarget(), deps);
     expect(outcome).toEqual({ kind: 'resolved', sessionId: postApprovalId, created: false });
-    expect(calls).toEqual(['list', 'list', 'space', `probe:${postApprovalId}`]);
+    expect(calls).toEqual(['space', `probe:${postApprovalId}`]);
   });
 
   test('done phase probes the sanitized post-approval id for a non-canonical agent name', async () => {
     const sanitizedId = buildPostApprovalSessionId(SPACE_ID, TASK_ID, 'devin');
     const calls: string[] = [];
     const deps = buildDeps({
+      isTaskDone: () => true,
       listWorkerExecutions: () => [row(null, 'cancelled')],
       getTaskSpaceId: async () => SPACE_ID,
       getSession: async (sessionId) => {
@@ -571,10 +624,11 @@ describe('ensureWorkerSession', () => {
     expect(calls).toEqual([`probe:${sanitizedId}`]);
   });
 
-  test('done phase with no post-approval session spawns and resolves created:true', async () => {
+  test('done task with idle rows and no post-approval worker spawns one and resolves created:true', async () => {
     const spawned: Array<[string, string, string | undefined]> = [];
     const deps = buildDeps({
-      listWorkerExecutions: () => [],
+      isTaskDone: () => true,
+      listWorkerExecutions: () => [row('s-exec', 'idle')],
       spawnPostApprovalWorker: async (taskId, agentName, workflowNodeId) => {
         spawned.push([taskId, agentName, workflowNodeId]);
         return 'spawned-1';
@@ -587,6 +641,7 @@ describe('ensureWorkerSession', () => {
 
   test('done phase with a null spawn resolves spawn_failed', async () => {
     const deps = buildDeps({
+      isTaskDone: () => true,
       listWorkerExecutions: () => [],
       spawnPostApprovalWorker: async () => null,
     });
@@ -597,6 +652,7 @@ describe('ensureWorkerSession', () => {
   test('the non-taken phase never runs its stages', async () => {
     const doneCalls: string[] = [];
     const doneDeps = buildDeps({
+      isTaskDone: () => true,
       listWorkerExecutions: () => {
         doneCalls.push('list');
         return [row(null, 'cancelled')];
@@ -616,7 +672,7 @@ describe('ensureWorkerSession', () => {
     });
     const doneOutcome = await ensureWorkerSession(workerTarget(), doneDeps);
     expect(doneOutcome).toEqual({ kind: 'resolved', sessionId: 'spawned-done', created: true });
-    expect(doneCalls).toEqual(['list', 'list', 'space', 'spawn']);
+    expect(doneCalls).toEqual(['space', 'spawn']);
     expect(doneCalls).not.toContain('activate');
 
     const activeCalls: string[] = [];
@@ -640,7 +696,7 @@ describe('ensureWorkerSession', () => {
     });
     const activeOutcome = await ensureWorkerSession(workerTarget(), activeDeps);
     expect(activeOutcome).toEqual({ kind: 'unresolved', reason: 'activate_failed' });
-    expect(activeCalls).toEqual(['list', 'list', 'activate']);
+    expect(activeCalls).toEqual(['list', 'activate']);
     expect(activeCalls).not.toContain('space');
     expect(activeCalls).not.toContain('spawn');
   });
