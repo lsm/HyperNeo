@@ -15,7 +15,7 @@ import {
   type ImportPreviewResult,
   type ImportExecuteResult,
 } from '../../../../src/lib/rpc-handlers/space-export-import-handlers';
-import { exportBundle } from '../../../../src/lib/space/export-format';
+import { exportBundle, validateExportBundle } from '../../../../src/lib/space/export-format';
 
 function createSchema(db: Database): void {
   db.exec('PRAGMA foreign_keys = ON');
@@ -2246,6 +2246,81 @@ describe('full export→import round-trip', () => {
     expect(wfCreatedEvents).toHaveLength(1);
     expect((agentCreatedEvents[0].data as any).agent.name).toBe('My Coder');
     expect((wfCreatedEvents[0].data as any).workflow.name).toBe('Code Pipeline');
+  });
+
+  it('v4 bundle round-trips worker agent config fields through import', async () => {
+    const workerAgent: SpaceWorkerAgent = {
+      id: 'src-agent-v4',
+      spaceId: 'other-space',
+      name: 'V4 Worker',
+      handle: 'legacy-handle',
+      description: 'Described worker',
+      model: 'kimi-for-coding',
+      provider: 'openrouter',
+      thinkingLevel: 'think16k',
+      customPrompt: 'You write careful code.',
+      tools: ['bash', 'read_file'],
+      settingSources: ['project'],
+      modelPool: [{ model: 'kimi-for-coding', maxConcurrent: 2, weight: 1 }],
+      createdAt: 1000,
+      updatedAt: 2000,
+    };
+    const workflow: SpaceWorkflow = {
+      id: 'src-wf-v4',
+      spaceId: 'other-space',
+      name: 'V4 Pipeline',
+      nodes: [
+        {
+          id: 'src-v4-step',
+          name: 'Build',
+          agents: [{ agentId: 'src-agent-v4', name: 'builder' }],
+        },
+      ],
+      startNodeId: 'src-v4-step',
+      tags: [],
+      completionAutonomyLevel: 3,
+      createdAt: 1000,
+      updatedAt: 2000,
+    };
+
+    const bundle = exportBundle([workerAgent], [workflow], 'V4 Export');
+    expect(bundle.version).toBe(4);
+    expect(bundle.agents[0]).toMatchObject({
+      version: 4,
+      type: 'agent',
+      name: 'V4 Worker',
+      handle: 'legacy-handle',
+      model: 'kimi-for-coding',
+      provider: 'openrouter',
+      thinkingLevel: 'think16k',
+      systemPrompt: 'You write careful code.',
+      tools: ['bash', 'read_file'],
+      modelPool: [{ model: 'kimi-for-coding', maxConcurrent: 2, weight: 1 }],
+    });
+    const validation = validateExportBundle(bundle);
+    expect(validation.ok).toBe(true);
+
+    const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+      spaceId: SPACE_ID,
+      bundle,
+    });
+
+    expect(result.agents[0].action).toBe('created');
+    const imported = agentRepo.getById(result.agents[0].id)!;
+    expect(imported).toMatchObject({
+      name: 'V4 Worker',
+      handle: 'legacy-handle',
+      description: 'Described worker',
+      model: 'kimi-for-coding',
+      provider: 'openrouter',
+      thinkingLevel: 'think16k',
+      customPrompt: 'You write careful code.',
+      tools: ['bash', 'read_file'],
+      settingSources: ['project'],
+      modelPool: [{ model: 'kimi-for-coding', maxConcurrent: 2, weight: 1 }],
+    });
+    const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
+    expect(importedWf.nodes[0].agents![0].agentId).toBe(imported.id);
   });
 
   it('multi-agent step round-trip: export → import preserves agents array, channels, and hooks', async () => {

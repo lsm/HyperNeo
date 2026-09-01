@@ -4,6 +4,8 @@ import { migrateLegacyLongHorizonAgentData } from '../../../../src/lib/space/age
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { runMigration155 } from '../../../../src/storage/schema/migrations.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { createLongHorizonAgentTables } from '../../../../src/storage/schema/long-horizon-agents.ts';
+import { createSpaceAgentSchema, insertSpace } from '../../helpers/space-agent-schema.ts';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -194,6 +196,192 @@ describe('legacy long-horizon migration', () => {
     runMigration155(db);
 
     expect(repo.listGoals('worker-only')).toEqual([]);
+    db.close();
+  });
+});
+
+describe('legacy long-horizon migration — same-id overlay mapping', () => {
+  function makeOverlayDb(): BunDatabase {
+    const db = new BunDatabase(':memory:');
+    createSpaceAgentSchema(db);
+    createLongHorizonAgentTables(db);
+    db.exec(`
+      CREATE TABLE space_agent_goal_assignments (
+        space_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        goal_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (agent_id, goal_id)
+      )
+    `);
+    db.exec(`
+      CREATE TABLE space_agent_forge_scope_assignments (
+        space_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        scope_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (agent_id, scope_id)
+      )
+    `);
+    db.exec(`
+      CREATE TABLE space_agent_reminders (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        message TEXT NOT NULL,
+        remind_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    db.exec(`
+      CREATE TABLE space_goals (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    db.exec(`
+      CREATE TABLE evolution_scopes (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        objective TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    return db;
+  }
+
+  function seedOverlayWorker(
+    db: BunDatabase,
+    id: string,
+    spaceId: string,
+    overrides: Record<string, unknown> = {}
+  ): void {
+    db.prepare(
+      `INSERT INTO space_agents (id, space_id, name, handle, status, tools, custom_prompt,
+       system_prompt, model, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      id,
+      spaceId,
+      overrides.name ?? id,
+      overrides.handle ?? null,
+      overrides.status ?? 'active',
+      overrides.tools ?? '[]',
+      overrides.customPrompt ?? null,
+      overrides.systemPrompt ?? '',
+      overrides.model ?? null,
+      100,
+      100
+    );
+  }
+
+  function seedLegacyReminder(db: BunDatabase, agentId: string, spaceId: string): void {
+    db.prepare(
+      `INSERT INTO space_agent_reminders (id, space_id, agent_id, message, remind_at, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`
+    ).run(`rem-${agentId}`, spaceId, agentId, `Check ${agentId}`, 300, 250, 250);
+  }
+
+  function seedLegacyGoal(db: BunDatabase, agentId: string, spaceId: string): void {
+    db.prepare(
+      `INSERT INTO space_goals (id, space_id, title, description, created_at, updated_at)
+       VALUES (?, ?, ?, '', 1, 1)`
+    ).run(`goal-${agentId}`, spaceId, `Goal ${agentId}`);
+    db.prepare(
+      `INSERT INTO space_agent_goal_assignments (space_id, agent_id, goal_id, created_at)
+       VALUES (?, ?, ?, 1)`
+    ).run(spaceId, agentId, `goal-${agentId}`);
+  }
+
+  function seedLegacyScope(db: BunDatabase, agentId: string, spaceId: string): void {
+    db.prepare(
+      `INSERT INTO evolution_scopes (id, space_id, kind, name, objective, created_at, updated_at)
+       VALUES (?, ?, 'custom', ?, 'Track scope', 1, 1)`
+    ).run(`scope-${agentId}`, spaceId, `Scope ${agentId}`);
+    db.prepare(
+      `INSERT INTO space_agent_forge_scope_assignments (space_id, agent_id, scope_id, created_at)
+       VALUES (?, ?, ?, 1)`
+    ).run(spaceId, agentId, `scope-${agentId}`);
+  }
+
+  test('maps worker rows to same-id LHA rows with collision-suffixed handles', () => {
+    const db = makeOverlayDb();
+    insertSpace(db, 'space-a');
+    insertSpace(db, 'space-b');
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    repo.create({
+      id: 'lh-holder',
+      spaceId: 'space-a',
+      handle: 'researcher',
+      displayName: 'Holder',
+    });
+    repo.create({
+      id: 'lh-arch',
+      spaceId: 'space-a',
+      handle: 'planner',
+      displayName: 'Archived Holder',
+      status: 'archived',
+    });
+    repo.create({ id: 'lh-other', spaceId: 'space-b', handle: 'scribe', displayName: 'Other' });
+
+    seedOverlayWorker(db, 'w-collide', 'space-a', {
+      name: 'Researcher',
+      handle: 'researcher',
+      status: 'paused',
+      customPrompt: 'Custom prompt',
+      tools: '["bash","read"]',
+      model: 'm1',
+    });
+    seedOverlayWorker(db, 'w-plain', 'space-a', {
+      name: 'Planner',
+      handle: 'planner',
+      systemPrompt: 'Sys prompt',
+    });
+    seedOverlayWorker(db, 'w-cross', 'space-a', { name: 'Scribe', handle: 'scribe' });
+    seedOverlayWorker(db, 'w-skip', 'space-a', { name: 'NoLegacy' });
+    seedLegacyReminder(db, 'w-collide', 'space-a');
+    seedLegacyGoal(db, 'w-plain', 'space-a');
+    seedLegacyScope(db, 'w-cross', 'space-a');
+
+    const report = migrateLegacyLongHorizonAgentData(db);
+
+    expect(report.backfilledAgents).toBe(3);
+    expect(report.copiedGoals).toBe(1);
+    expect(report.copiedForgeScopes).toBe(1);
+    expect(report.copiedReminders).toBe(1);
+    expect(repo.getById('w-collide')).toEqual(
+      expect.objectContaining({
+        id: 'w-collide',
+        handle: 'researcher-w-collide',
+        displayName: 'Researcher',
+        status: 'paused',
+        instructions: 'Custom prompt',
+        model: 'm1',
+        templateKey: 'migration.legacy_space_agent',
+        toolPermissions: { tools: ['bash', 'read'] },
+      })
+    );
+    expect(repo.getById('w-plain')).toEqual(
+      expect.objectContaining({
+        handle: 'planner',
+        status: 'active',
+        instructions: 'Sys prompt',
+        toolPermissions: {},
+      })
+    );
+    expect(repo.getById('w-cross')).toEqual(
+      expect.objectContaining({ handle: 'scribe', displayName: 'Scribe' })
+    );
+    expect(repo.getById('w-skip')).toBeNull();
     db.close();
   });
 });

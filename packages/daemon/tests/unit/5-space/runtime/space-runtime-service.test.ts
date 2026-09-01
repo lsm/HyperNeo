@@ -4286,6 +4286,185 @@ describe('ensureLongTermAgentSession — regular worker agent provider inference
   });
 });
 
+describe('ensureLongTermAgentSession — id→session routing table (dual-family pin)', () => {
+  function buildRoutingService(options: {
+    longHorizonAgents: SpaceLongHorizonAgent[];
+    coordinatorId?: string;
+    worker?: SpaceWorkerAgent;
+  }): {
+    svc: SpaceRuntimeService;
+    createCalls: Array<{ sessionId?: string; title?: string }>;
+    lookupIds: string[];
+  } {
+    const sessionMock = {
+      getSessionData: () => ({ id: 'sess-existing', metadata: {} }),
+      mergeRuntimeMcpServers: () => {},
+    };
+    const createCalls: Array<{ sessionId?: string; title?: string }> = [];
+    const lookupIds: string[] = [];
+    const lookupCounts = new Map<string, number>();
+    const sessionManager = {
+      getSessionAsync: mock(async (sessionId: string) => {
+        lookupIds.push(sessionId);
+        const count = (lookupCounts.get(sessionId) ?? 0) + 1;
+        lookupCounts.set(sessionId, count);
+        if (sessionId.startsWith('space:agent:') && count === 1) return null;
+        return sessionMock;
+      }),
+      createSession: mock(async (opts: { sessionId?: string; title?: string }) => {
+        createCalls.push(opts);
+      }),
+    } as unknown as SessionManager;
+    const spaceAgentManager = {
+      getById: mock(() => options.worker ?? null),
+    } as unknown as SpaceAgentManager;
+    const longHorizonAgentRepo = {
+      getById: mock((id: string) => options.longHorizonAgents.find((a) => a.id === id) ?? null),
+      getCoordinator: mock(
+        () => options.longHorizonAgents.find((a) => a.id === options.coordinatorId) ?? null
+      ),
+      update: mock(() => ({})),
+    } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+    const svc = new SpaceRuntimeService({
+      ...buildConfig(createMockSpaceManager(mockSpace)),
+      sessionManager,
+      spaceAgentManager,
+      longHorizonAgentRepo,
+    });
+    (
+      svc as unknown as { attachLongTermAgentMcpServers: () => void }
+    ).attachLongTermAgentMcpServers = () => {};
+    (
+      svc as unknown as { missingLongTermAgentMcpServers: () => boolean }
+    ).missingLongTermAgentMcpServers = () => false;
+    return { svc, createCalls, lookupIds };
+  }
+
+  async function route(svc: SpaceRuntimeService, agentId: string): Promise<unknown> {
+    return (
+      svc as unknown as { ensureLongTermAgentSession: (a: ActorRef) => Promise<unknown> }
+    ).ensureLongTermAgentSession({
+      actorId: `agent:${agentId}`,
+      spaceId: 'space-1',
+    } as ActorRef);
+  }
+
+  test('coordinator alias resolves the space:chat session instead of an agent session', async () => {
+    const canonical = buildLongHorizonAgent({
+      id: 'space-lh-agent:coordinator:space-1',
+      handle: 'coordinator',
+    });
+    const canonicalRun = buildRoutingService({
+      longHorizonAgents: [canonical],
+      coordinatorId: canonical.id,
+    });
+
+    const canonicalSession = await route(canonicalRun.svc, canonical.id);
+
+    expect(canonicalSession).toBeDefined();
+    expect(canonicalRun.lookupIds).toEqual(['space:chat:space-1']);
+    expect(canonicalRun.createCalls).toHaveLength(0);
+
+    const discovered = buildLongHorizonAgent({
+      id: 'legacy-coordinator-row',
+      handle: 'coordinator',
+    });
+    const discoveredRun = buildRoutingService({
+      longHorizonAgents: [discovered],
+      coordinatorId: discovered.id,
+    });
+
+    const discoveredSession = await route(discoveredRun.svc, discovered.id);
+
+    expect(discoveredSession).toBeDefined();
+    expect(discoveredRun.lookupIds).toEqual(['space:chat:space-1']);
+    expect(discoveredRun.createCalls).toHaveLength(0);
+  });
+
+  test('non-coordinator long-horizon agent resolves space:agent:<space>:<id>', async () => {
+    const agent = buildLongHorizonAgent({ id: 'lh-1', handle: 'researcher' });
+    const { svc, createCalls, lookupIds } = buildRoutingService({
+      longHorizonAgents: [agent],
+    });
+
+    await route(svc, 'lh-1');
+
+    expect(lookupIds[0]).toBe('space:agent:space-1:lh-1');
+    expect(createCalls).toHaveLength(1);
+    expect(createCalls[0]).toEqual(
+      expect.objectContaining({
+        sessionId: 'space:agent:space-1:lh-1',
+        title: 'Researcher',
+        worktreeMode: 'direct',
+      })
+    );
+  });
+
+  test('worker-only id resolves space:agent:<space>:<id> titled with the worker name', async () => {
+    const { svc, createCalls } = buildRoutingService({
+      longHorizonAgents: [],
+      worker: {
+        id: 'worker-1',
+        spaceId: 'space-1',
+        name: 'Worker Name',
+        model: null,
+        provider: null,
+        thinkingLevel: null,
+        customPrompt: '',
+        tools: [],
+        settingSources: null,
+      } as unknown as SpaceWorkerAgent,
+    });
+
+    await route(svc, 'worker-1');
+
+    expect(createCalls).toHaveLength(1);
+    expect(createCalls[0]).toEqual(
+      expect.objectContaining({
+        sessionId: 'space:agent:space-1:worker-1',
+        title: 'Worker Name',
+      })
+    );
+  });
+
+  test('long-horizon row wins over a same-id worker row, and cross-space rows do not', async () => {
+    const overlay = buildLongHorizonAgent({
+      id: 'shared-1',
+      handle: 'overlay',
+      displayName: 'Overlay LHA',
+    });
+    const worker = {
+      id: 'shared-1',
+      spaceId: 'space-1',
+      name: 'Worker Name',
+      model: null,
+      provider: null,
+      thinkingLevel: null,
+      customPrompt: '',
+      tools: [],
+      settingSources: null,
+    } as unknown as SpaceWorkerAgent;
+
+    const overlayRun = buildRoutingService({ longHorizonAgents: [overlay], worker });
+    await route(overlayRun.svc, 'shared-1');
+    expect(overlayRun.createCalls[0]).toEqual(expect.objectContaining({ title: 'Overlay LHA' }));
+
+    const crossSpace = buildLongHorizonAgent({
+      id: 'shared-2',
+      spaceId: 'space-2',
+      handle: 'elsewhere',
+    });
+    const crossRun = buildRoutingService({
+      longHorizonAgents: [crossSpace],
+      worker: { ...worker, id: 'shared-2' },
+    });
+    await route(crossRun.svc, 'shared-2');
+    expect(crossRun.createCalls[0]).toEqual(
+      expect.objectContaining({ sessionId: 'space:agent:space-1:shared-2', title: 'Worker Name' })
+    );
+  });
+});
+
 describe('clearLongTermAgentSessionProvider — provider-override clear (P2)', () => {
   function buildService(session: unknown): SpaceRuntimeService {
     const sessionManager = {

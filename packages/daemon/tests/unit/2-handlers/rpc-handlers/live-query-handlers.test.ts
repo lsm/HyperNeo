@@ -2990,6 +2990,112 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(categories).toContain('artifact');
         expect(rows.length).toBeGreaterThanOrEqual(4);
       });
+
+      test('resolves display labels from space_agents.name across every feed label join', () => {
+        const workflowRunId = 'wr-label-join';
+        const orchSessionId = 'orch-label-join';
+        const agentSessionId = 'space:task:label-agent';
+        const taskId = insertSpaceTask({
+          id: 'label-join-task',
+          workflowRunId,
+          status: 'in_progress',
+          taskAgentSessionId: orchSessionId,
+        });
+        insertWorkflowRun(workflowRunId);
+        insertSession(orchSessionId, 'space_task_agent', '{"status":"idle"}');
+        db.prepare(
+          `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, processing_state, type, session_context)
+           VALUES (?, 'Label Agent', '/tmp', ?, ?, 'active', '{}', ?, 0, '{}', 'worker', ?)`
+        ).run(
+          agentSessionId,
+          nowIso,
+          nowIso,
+          JSON.stringify({
+            promptProvenance: {
+              source: 'space_agent_custom_prompt',
+              hash: 'h',
+              agentId: 'agent-label',
+              agentName: 'Stale Provenance Name',
+            },
+          }),
+          JSON.stringify({ spaceId, taskId })
+        );
+        db.prepare(
+          `INSERT INTO space_agents (id, space_id, name) VALUES ('agent-label', ?, 'Fresh Label')`
+        ).run(spaceId);
+        insertNodeExecution({
+          id: 'ne-label',
+          workflowRunId,
+          workflowNodeId: 'node-label',
+          agentName: 'stale-exec-name',
+          agentId: 'agent-label',
+          agentSessionId,
+          status: 'in_progress',
+        });
+        sessionTaskIds.set(agentSessionId, taskId);
+        db.prepare(
+          `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, task_id)
+           VALUES ('sdk-label', ?, 'assistant', NULL, ?, ?, 'consumed', NULL, ?)`
+        ).run(
+          agentSessionId,
+          JSON.stringify({
+            type: 'assistant',
+            message: { role: 'assistant', content: [{ type: 'text', text: 'labeled work' }] },
+          }),
+          nowIso,
+          taskId
+        );
+        db.prepare(
+          `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, task_id)
+           VALUES ('sdk-label-retry', ?, 'system', 'api_retry', ?, ?, 'consumed', NULL, ?)`
+        ).run(
+          agentSessionId,
+          JSON.stringify({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 3 }),
+          nowIso,
+          taskId
+        );
+
+        const activityRow = queryAndMap(taskId).find((r) => r.sessionId === agentSessionId);
+        expect(activityRow?.label).toBe('Fresh Label');
+
+        const messageRow = queryMessages(taskId).find((r) => r.sessionId === agentSessionId);
+        expect(messageRow?.label).toBe('Fresh Label');
+
+        backfillConversationTurns();
+        const compactEntry = NAMED_QUERY_REGISTRY.get('spaceTaskMessages.byTask.compact')!;
+        const compactRows = db.prepare(compactEntry.sql).all(taskId, 1000) as Record<
+          string,
+          unknown
+        >[];
+        const compactRow = (
+          compactEntry.mapRow ? compactRows.map(compactEntry.mapRow) : compactRows
+        ).find((r) => r.sessionId === agentSessionId);
+        expect(compactRow?.label).toBe('Fresh Label');
+
+        const byTaskEntry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+        const byTaskRows = db.prepare(byTaskEntry.sql).all(taskId) as Record<string, unknown>[];
+        const byTaskRow = (
+          byTaskEntry.mapRow ? byTaskRows.map(byTaskEntry.mapRow) : byTaskRows
+        ).find((r) => (r.from as Record<string, unknown> | null)?.sessionId === agentSessionId);
+        expect((byTaskRow?.from as Record<string, unknown>)?.label).toBe('Fresh Label');
+
+        const byRunEntry = NAMED_QUERY_REGISTRY.get('actorMessages.byWorkflowRun')!;
+        const byRunRows = db
+          .prepare(byRunEntry.sql)
+          .all(workflowRunId, workflowRunId, workflowRunId) as Record<string, unknown>[];
+        const byRunRow = (byRunEntry.mapRow ? byRunRows.map(byRunEntry.mapRow) : byRunRows).find(
+          (r) => r.id === 'node:ne-label:in_progress'
+        );
+        expect((byRunRow?.target as Record<string, unknown>)?.label).toBe('Fresh Label');
+
+        const milestoneRows = queryMilestones(taskId).filter((r) => r.sourceId === agentSessionId);
+        expect(
+          milestoneRows.some((r) => r.sourceLabel === 'Fresh Label' && r.category === 'answer')
+        ).toBe(true);
+        expect(
+          milestoneRows.some((r) => r.sourceLabel === 'Fresh Label' && r.category === 'retry')
+        ).toBe(true);
+      });
     });
 
     test('classifies by session type, not current task_agent_session_id pointer', () => {
