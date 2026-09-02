@@ -452,6 +452,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'auth_config',
   'global_tools_config',
   'global_settings',
+  'daemon_config',
   'session_counters',
   'providers',
   'provider_credentials',
