@@ -915,6 +915,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.spaceAgentManager,
     deps.spaceManager,
     deps.db,
+    { getById: (id) => longHorizonAgentRepo.getById(id) },
     spaceRuntimeService
   );
 

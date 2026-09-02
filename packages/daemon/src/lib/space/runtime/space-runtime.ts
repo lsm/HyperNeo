@@ -853,16 +853,24 @@ export class SpaceRuntime {
     return this.config.nodeExecutionRepo.createOrIgnore(params);
   }
 
-  private agentRecordExists(agentId: string): boolean {
+  private agentRecordExists(agentId: string, expectedSpaceId?: string): boolean {
     const unified = this.config.longHorizonAgentRepo?.getById(agentId);
-    if (unified) return isRunnableUnifiedAgent(unified);
+    if (unified) {
+      if (expectedSpaceId && unified.spaceId !== expectedSpaceId) return false;
+      return isRunnableUnifiedAgent(unified);
+    }
+    if (expectedSpaceId) {
+      const worker = this.config.spaceAgentManager.getById(agentId);
+      return worker != null && worker.spaceId === expectedSpaceId;
+    }
     return this.config.spaceAgentManager.getById(agentId) !== null;
   }
 
   private assertAgentReferenceExists(params: CreateNodeExecutionParams): void {
     const agentId = params.agentId;
     if (!agentId) return;
-    if (this.agentRecordExists(agentId)) return;
+    const run = this.config.workflowRunRepo.getRun(params.workflowRunId);
+    if (this.agentRecordExists(agentId, run?.spaceId)) return;
     throw new MissingWorkflowAgentError(
       formatMissingAgentReference({
         runId: params.workflowRunId,
@@ -5030,7 +5038,7 @@ export class SpaceRuntime {
         if (!targetNode || targetNode.id === sourceNode.id) continue;
 
         const missing = findMissingNodeAgentReferences(targetNode, (id) =>
-          this.agentRecordExists(id)
+          this.agentRecordExists(id, run.spaceId)
         );
         if (missing.length > 0) {
           const first = missing[0];

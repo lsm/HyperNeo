@@ -2,6 +2,7 @@ import type {
   MessageHub,
   Session,
   SettingSource,
+  SpaceLongHorizonAgent,
   SpaceWorkerAgent,
   SpaceWorkerAgentPromotionDraft,
   ThinkingLevel,
@@ -9,11 +10,11 @@ import type {
 import { isKnownToolEntry, isScopedBashToolEntry } from '@hyperneo/shared';
 import type { Database } from '../../storage/index.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
+import { computeAgentTemplateHash } from '../space/agents/agent-template-hash.ts';
+import { getPresetAgentTemplates } from '../space/agents/seed-agents.ts';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
-import { getPresetAgentTemplates } from '../space/agents/seed-agents.ts';
-import { computeAgentTemplateHash } from '../space/agents/agent-template-hash.ts';
-import { Logger } from '../logger.ts';
 
 const log = new Logger('space-agent-handlers');
 
@@ -156,6 +157,7 @@ export function setupSpaceAgentHandlers(
   spaceAgentManager: SpaceAgentManager,
   spaceManager: SpaceManager,
   db: Database,
+  longHorizonAgentRepo: { getById(id: string): SpaceLongHorizonAgent | null },
   runtimeService?: {
     removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void;
     clearLongTermAgentSessionProvider(spaceId: string, agentId: string): Promise<void>;
@@ -433,12 +435,16 @@ export function setupSpaceAgentHandlers(
     const existing = spaceAgentManager.getById(params.id);
     if (!existing) throw new Error(`Agent not found: ${params.id}`);
 
+    const mirrorBefore = longHorizonAgentRepo.getById(existing.id);
     const result = spaceAgentManager.delete(params.id);
     if (!result.ok) {
       const detailsMsg = result.details?.length ? `\n${result.details.join('\n')}` : '';
       throw new Error(`${result.error}${detailsMsg}`);
     }
-    runtimeService?.removeLongHorizonAgentSubscriptions(existing.spaceId, existing.id);
+    const mirrorStillExists = longHorizonAgentRepo.getById(existing.id) != null;
+    if (mirrorBefore && !mirrorStillExists) {
+      runtimeService?.removeLongHorizonAgentSubscriptions(existing.spaceId, existing.id);
+    }
 
     await internalEventBus
       .publish('spaceAgent.deleted', {

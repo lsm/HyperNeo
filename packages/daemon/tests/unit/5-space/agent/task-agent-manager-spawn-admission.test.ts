@@ -85,6 +85,7 @@ function fakeSession(id: string, processingStatus = 'idle'): AgentSession {
 function fakeCustomAgent() {
   return {
     id: AGENT_ID,
+    spaceId: SPACE_ID,
     name: AGENT_NAME,
     customPrompt: 'do the pinned work',
     model: 'm',

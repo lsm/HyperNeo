@@ -173,7 +173,8 @@ describe('Space Agent RPC Handlers', () => {
       daemonData.internalEventBus,
       manager,
       spaceManagerData.spaceManager,
-      createTestDatabaseFacade(db)
+      createTestDatabaseFacade(db),
+      new SpaceLongHorizonAgentRepository(db as any)
     );
   });
 
@@ -716,6 +717,7 @@ describe('Space Agent RPC Handlers', () => {
         manager,
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
+        new SpaceLongHorizonAgentRepository(db as any),
         runtimeService
       );
 
@@ -742,6 +744,7 @@ describe('Space Agent RPC Handlers', () => {
         manager,
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
+        new SpaceLongHorizonAgentRepository(db as any),
         runtimeService
       );
 
@@ -932,13 +935,15 @@ describe('Space Agent RPC Handlers', () => {
     });
 
     it('does not archive matching long-horizon agent rows before deleting workers', async () => {
+      const removeLongHorizonAgentSubscriptions = mock(() => {});
       setupSpaceAgentHandlers(
         hubData.hub,
         daemonData.internalEventBus,
         manager,
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
-        { removeLongHorizonAgentSubscriptions: mock(() => {}) }
+        new SpaceLongHorizonAgentRepository(db as any),
+        { removeLongHorizonAgentSubscriptions }
       );
       const visibleAgent = manager.getById(agentId);
       expect(visibleAgent).not.toBeNull();
@@ -954,6 +959,7 @@ describe('Space Agent RPC Handlers', () => {
       await call(hubData.handlers, 'spaceAgent.delete', { id: agentId });
 
       expect(longHorizonRepo.getById(longHorizonAgent.id)?.status).toBe('active');
+      expect(removeLongHorizonAgentSubscriptions).not.toHaveBeenCalled();
     });
 
     it('does not archive standalone long-horizon rows matched only by handle', async () => {
@@ -963,6 +969,7 @@ describe('Space Agent RPC Handlers', () => {
         manager,
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
+        new SpaceLongHorizonAgentRepository(db as any),
         { removeLongHorizonAgentSubscriptions: mock(() => {}) }
       );
       const visibleAgent = manager.getById(agentId);
@@ -989,6 +996,7 @@ describe('Space Agent RPC Handlers', () => {
         manager,
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
+        new SpaceLongHorizonAgentRepository(db as any),
         { removeLongHorizonAgentSubscriptions }
       );
       const created = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
@@ -1009,7 +1017,8 @@ describe('Space Agent RPC Handlers', () => {
 
       expect(longHorizonRepo.getById(coordinator.id)?.status).toBe('active');
       expect(longHorizonRepo.getSubscription(subscription.id)?.status).toBe('active');
-      expect(removeLongHorizonAgentSubscriptions).not.toHaveBeenCalled();
+      expect(removeLongHorizonAgentSubscriptions).toHaveBeenCalledTimes(1);
+      expect(removeLongHorizonAgentSubscriptions).toHaveBeenCalledWith('space-1', created.agent.id);
     });
 
     it('emits spaceAgent.deleted event', async () => {

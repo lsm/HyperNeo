@@ -402,7 +402,7 @@ describe('workerAgentToLongHorizonParams — typed extensions beyond m155', () =
       { occupiedHandles: new Set<string>(['researcher', 'researcher-w-1']), now: NOW }
     );
 
-    expect(params.handle).toBe('researcher-w-1-w-1');
+    expect(params.handle).toBe('researcher-w-1-2');
   });
 
   test('batch callers reserve each chosen handle so converted rows cannot collide', () => {

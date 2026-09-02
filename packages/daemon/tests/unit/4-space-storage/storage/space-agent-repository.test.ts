@@ -444,9 +444,12 @@ describe('SpaceAgentRepository', () => {
 
       repo.update(agent.id, { handle: 'renamed' });
 
-      const aligned = `renamed-${agent.id}`;
-      expect(repo.getById(agent.id)?.handle).toBe(aligned);
-      expect(unifiedRow(agent.id)?.handle).toBe(aligned);
+      const expected =
+        `renamed-${agent.id}`.length <= 60
+          ? `renamed-${agent.id}`
+          : `renamed-${agent.id}`.slice(0, 60);
+      expect(repo.getById(agent.id)?.handle).toBe(expected);
+      expect(unifiedRow(agent.id)?.handle).toBe(expected);
     });
 
     it('worker edits leave a genuine same-id overlay untouched', () => {
@@ -497,9 +500,11 @@ describe('SpaceAgentRepository', () => {
 
       const agent = repo.create({ spaceId: 'space-1', name: 'Coder', handle: 'coder' });
 
-      expect(agent.handle).toBe(`coder-${agent.id}`);
-      expect(repo.getById(agent.id)?.handle).toBe(`coder-${agent.id}`);
-      expect(unifiedRow(agent.id)?.handle).toBe(`coder-${agent.id}`);
+      const expectedHandle =
+        `coder-${agent.id}`.length <= 60 ? `coder-${agent.id}` : `coder-${agent.id}`.slice(0, 60);
+      expect(agent.handle).toBe(expectedHandle);
+      expect(repo.getById(agent.id)?.handle).toBe(expectedHandle);
+      expect(unifiedRow(agent.id)?.handle).toBe(expectedHandle);
     });
 
     it('generated handles avoid unified-table handles alongside worker handles', () => {
