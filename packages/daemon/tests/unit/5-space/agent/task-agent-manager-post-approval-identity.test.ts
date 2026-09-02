@@ -30,6 +30,7 @@ function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   createTables(db);
   db.exec(`
+    ALTER TABLE space_tasks ADD COLUMN approved_at INTEGER;
     CREATE TABLE IF NOT EXISTS space_tasks (
       id TEXT PRIMARY KEY,
       space_id TEXT NOT NULL,
@@ -115,6 +116,7 @@ function insertTaskInput(
     taskId?: string;
     status?: 'deferred' | 'enqueued' | 'submitted' | 'consumed' | 'failed';
     consumedSeq?: number | null;
+    timestamp?: number;
   } = {}
 ): void {
   const status = options.status ?? 'consumed';
@@ -122,7 +124,7 @@ function insertTaskInput(
   db.prepare(
     `INSERT INTO sdk_messages (
        id, session_id, message_type, sdk_message, timestamp, send_status, task_id, consumed_seq
-     ) VALUES (?, ?, 'user', ?, '2026-09-02T00:00:00.000Z', ?, ?, ?)`
+     ) VALUES (?, ?, 'user', ?, ?, ?, ?, ?)`
   ).run(
     id,
     sessionId,
@@ -133,6 +135,7 @@ function insertTaskInput(
       inputKind: 'task',
       message: { role: 'user', content: [{ type: 'text', text: id }] },
     }),
+    new Date(options.timestamp ?? 1).toISOString(),
     status,
     options.taskId ?? TASK_ID,
     options.consumedSeq === undefined ? (status === 'consumed' ? 1 : null) : options.consumedSeq
@@ -293,7 +296,7 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     const staleSessionId = postApprovalSessionId('stale');
     insertTask(db, { status: 'approved', postApprovalSessionId: null, approvedAt: 10 });
     insertWorkerSession(db, { sessionId: staleSessionId, createdAt: 5, lastActiveAt: 9 });
-    insertTaskInput(db, staleSessionId);
+    insertTaskInput(db, staleSessionId, { timestamp: 9 });
     expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
   });
 
@@ -301,7 +304,15 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     const sessionId = postApprovalSessionId('current');
     insertTask(db, { status: 'approved', postApprovalSessionId: null, approvedAt: 10 });
     insertWorkerSession(db, { sessionId, createdAt: 10, lastActiveAt: 10 });
-    insertTaskInput(db, sessionId);
+    insertTaskInput(db, sessionId, { timestamp: 10 });
+    expect(tam.getPostApprovalWorkerSession(TASK_ID)?.sessionId).toBe(sessionId);
+  });
+
+  it('recovers a current-cycle kickoff consumed by a reused execution session', () => {
+    const sessionId = 'space:space-id:task:task-1:exec:reused';
+    insertTask(db, { status: 'approved', postApprovalSessionId: null, approvedAt: 10 });
+    insertWorkerSession(db, { sessionId, createdAt: 1, lastActiveAt: 10, withExecution: true });
+    insertTaskInput(db, sessionId, { timestamp: 10 });
     expect(tam.getPostApprovalWorkerSession(TASK_ID)?.sessionId).toBe(sessionId);
   });
 

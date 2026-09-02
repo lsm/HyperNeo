@@ -2174,20 +2174,51 @@ export class TaskAgentManager {
       const sdkMessageRepo = new SDKMessageRepository(db);
       const rows = db
         .prepare(
-          `SELECT s.id AS id
+          `SELECT s.id AS id,
+                  EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id) AS hasExecution
              FROM sessions s
             WHERE s.type = 'worker'
               AND s.task_id = ?
-              AND instr(s.id, ':post-approval:') > 0
-              AND (? IS NULL OR s.created_at >= ?)
-              AND NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)
             ORDER BY s.last_active_at DESC`
         )
-        .all(taskId, approvedAt ?? null, approvedAt ?? null) as Array<{ id: string }>;
-      return rows.find((row) => sdkMessageRepo.hasConsumedTaskInputForSession(row.id, taskId))?.id;
+        .all(taskId) as Array<{ id: string; hasExecution: number }>;
+      return rows.find((row) => {
+        if (!sdkMessageRepo.hasConsumedTaskInputForSession(row.id, taskId)) return false;
+        if (approvedAt === null || approvedAt === undefined) {
+          return row.hasExecution === 0 && row.id.includes(':post-approval:');
+        }
+        if (row.hasExecution === 0 && !row.id.includes(':post-approval:')) return false;
+        return this.hasConsumedTaskInputSince(row.id, taskId, approvedAt);
+      })?.id;
     } catch {
       return undefined;
     }
+  }
+
+  private hasConsumedTaskInputSince(
+    sessionId: string,
+    taskId: string,
+    approvedAt: number
+  ): boolean {
+    const row = this.config.db
+      .getDatabase()
+      .prepare(
+        `SELECT 1 FROM sdk_messages
+          WHERE session_id = ? AND task_id = ? AND message_type = 'user'
+            AND consumed_seq IS NOT NULL AND timestamp >= ?
+            AND json_valid(sdk_message)
+            AND json_extract(sdk_message, '$.type') = 'user'
+            AND (
+              json_extract(sdk_message, '$.inputKind') = 'task'
+              OR (
+                json_type(sdk_message, '$.inputKind') IS NULL
+                AND COALESCE(CAST(json_extract(sdk_message, '$.isSynthetic') AS INTEGER), 0) = 1
+              )
+            )
+          LIMIT 1`
+      )
+      .get(sessionId, taskId, new Date(approvedAt).toISOString());
+    return row !== null && row !== undefined;
   }
 
   private readPersistedRateLimitCooldown(sessionId: string): { retryAt: number } | null {
