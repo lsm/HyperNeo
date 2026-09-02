@@ -18,16 +18,13 @@ export interface EnsureAgentSessionDeps {
   ensureWorkerAgentSession(spaceId: string, agent: WorkerAgent): Promise<EnsuredSession | null>;
 }
 
-const ensureHalted = (halt?: string): boolean => halt !== undefined;
-
 export async function admitSpaceStage(
   deps: EnsureAgentSessionDeps,
   spaceId: string
 ): Promise<string | undefined> {
   const space = await deps.getSpace(spaceId).catch(() => null);
-  if (space === null || space.paused || space.stopped || space.status === 'archived') {
+  if (!space || space.paused || space.stopped || space.status === 'archived')
     return 'space_inactive';
-  }
 }
 
 export function classifyAgentStage(
@@ -66,8 +63,7 @@ export async function gateEnsuredSessionStage(
   agentId: string,
   deps: EnsureAgentSessionDeps
 ): Promise<{ ensuredSession: EnsuredSession | null }> {
-  const status = ensured?.getSessionData().status;
-  if (status === undefined || status === 'ended' || status === 'archived')
+  if (['ended', 'archived'].includes(ensured?.getSessionData().status ?? ''))
     return { ensuredSession: null };
   if ((await admitSpaceStage(deps, spaceId)) !== undefined) return { ensuredSession: null };
   if (classifyAgentStage(spaceId, agentId, deps).resolution === null) {
@@ -77,7 +73,9 @@ export async function gateEnsuredSessionStage(
 }
 
 const runEnsureAgentSessionPipeline = (
-  superpipe({ ensureHalted })('ensure-agent-session') as PipelineAPI
+  superpipe({ ensureHalted: (halt?: string) => halt !== undefined })(
+    'ensure-agent-session'
+  ) as PipelineAPI
 )
   .input(['spaceId', 'agentId', 'deps'])
   .pipe(admitSpaceStage, ['deps', 'spaceId'], 'spaceHalt')
@@ -102,8 +100,8 @@ export async function isAgentTargetLifecycleEligible(
   agentId: string,
   deps: EnsureAgentSessionDeps
 ): Promise<boolean> {
+  if ((await admitSpaceStage(deps, spaceId)) !== undefined) return false;
   try {
-    if ((await admitSpaceStage(deps, spaceId)) !== undefined) return false;
     return classifyAgentStage(spaceId, agentId, deps).resolution !== null;
   } catch {
     return false;

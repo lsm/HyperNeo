@@ -902,6 +902,7 @@ export class SpaceRuntimeService {
       }
       session = session ?? (await sessionManager.getSessionAsync(sessionId));
       if (!session) return null;
+      if (['ended', 'archived'].includes(session.getSessionData().status)) return null;
     } else {
       await this.refreshLongHorizonAgentSessionConfig(session, config);
     }
@@ -1014,6 +1015,7 @@ export class SpaceRuntimeService {
       }
       session = session ?? (await sessionManager.getSessionAsync(sessionId));
       if (!session) return null;
+      if (['ended', 'archived'].includes(session.getSessionData().status)) return null;
       const currentMetadata = session.getSessionData().metadata;
       this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
         metadata: {
