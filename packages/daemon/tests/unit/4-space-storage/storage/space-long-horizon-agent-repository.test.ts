@@ -647,6 +647,20 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(inboxRowsFor(agent.id)).toBe(0);
   });
 
+  test('update rejects migrated worker mirrors so the worker row stays authoritative', () => {
+    const mirror = repo.create({
+      spaceId: 'space-1',
+      handle: 'mirror-edit',
+      displayName: 'Migrated Worker',
+      templateKey: 'migration.legacy_space_agent',
+    });
+
+    expect(() => repo.update(mirror.id, { displayName: 'Edited' })).toThrow(
+      /migrated worker mirror/
+    );
+    expect(repo.getById(mirror.id)?.displayName).toBe('Migrated Worker');
+  });
+
   test('delete rejects migrated worker mirrors so execution identity survives', () => {
     const mirror = repo.create({
       spaceId: 'space-1',

@@ -4071,16 +4071,9 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
     ]);
     setModelsCache(cache);
     try {
-      const built = await (
-        service as unknown as {
-          buildLongHorizonAgentSessionConfig: (
-            s: Space,
-            a: SpaceLongHorizonAgent
-          ) => Promise<Partial<Session['config']>>;
-        }
-      ).buildLongHorizonAgentSessionConfig(
-        mockSpace,
-        buildLongHorizonAgent({ model: 'gemini-3.1-pro-preview' })
+      const built = await buildAgentSessionConfig(
+        { kind: 'long_horizon', agent: buildLongHorizonAgent({ model: 'gemini-3.1-pro-preview' }) },
+        mockSpace
       );
       expect(built.provider).toBe('anthropic-copilot');
 

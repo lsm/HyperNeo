@@ -118,7 +118,7 @@ export class SpaceAgentRepository {
   }
 
   update(id: string, params: UpdateSpaceWorkerAgentParams): SpaceWorkerAgent | null {
-    if (params.handle !== undefined && params.handle !== null) {
+    if (params.handle !== undefined && params.handle !== null && this.hasUnifiedMirror(id)) {
       const worker = this.getById(id);
       if (worker) {
         params = {
@@ -254,6 +254,15 @@ export class SpaceAgentRepository {
       ...this.getUnifiedHandlesForSpace(spaceId),
       ...RESERVED_SPACE_AGENT_HANDLES,
     ]);
+  }
+
+  private hasUnifiedMirror(id: string): boolean {
+    if (!this.unifiedTableExists()) return false;
+    return !!this.db
+      .prepare(
+        `SELECT 1 FROM space_long_horizon_agents WHERE id = ? AND template_key = '${MIGRATED_WORKER_TEMPLATE_KEY}'`
+      )
+      .get(id);
   }
 
   private alignHandleWithUnified(

@@ -125,6 +125,13 @@ export class SpaceLongHorizonAgentRepository {
   }
 
   update(id: string, params: UpdateSpaceLongHorizonAgentParams): SpaceLongHorizonAgent | null {
+    const existing = this.getById(id);
+    if (existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
+      throw new Error(
+        `Agent ${id} is a migrated worker mirror — edit the worker agent instead; ` +
+          `worker edits propagate to the mirror.`
+      );
+    }
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
 

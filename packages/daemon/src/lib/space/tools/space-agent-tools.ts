@@ -47,6 +47,7 @@ import { Logger } from '../../logger.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers.ts';
 import { requireAgentFamily } from '../agents/agent-family-resolver.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import { formatAgentMessage } from '../agent-message-envelope.ts';
 import { getLongHorizonAgentTemplates } from '../agents/long-horizon-agent-templates.ts';
 import { getPresetAgentTemplates } from '../agents/seed-agents.ts';
@@ -473,7 +474,9 @@ async function resolveHandleForTaskRouting(
     if (actor.actorId === `agent:coordinator:${spaceId}`) return taskWorker !== null;
     if (!longHorizonAgentRepo) return true;
     const agentId = decodeURIComponent(actor.actorId.slice('agent:'.length));
-    return longHorizonAgentRepo.getById(agentId)?.spaceId === spaceId;
+    const unifiedAgent = longHorizonAgentRepo.getById(agentId);
+    if (unifiedAgent?.spaceId !== spaceId) return false;
+    return unifiedAgent.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY;
   });
 
   if (taskWorker && longHorizonActors.length === 0)
