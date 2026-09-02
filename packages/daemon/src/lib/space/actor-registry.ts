@@ -15,6 +15,7 @@ import {
   coordinatorLongHorizonAgentId,
   type SpaceLongHorizonAgentRepository,
 } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from './agents/worker-long-horizon-mapper.ts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
@@ -112,7 +113,11 @@ export class SpaceActorRegistryAdapter {
       .map((agent) => agentActor(agent, this.findLongTermAgentSession(spaceId, agent.id)));
     const longHorizonActorById = new Map(
       (this.repos.longHorizonAgentRepo?.listBySpaceId(spaceId) ?? [])
-        .filter((agent) => !isCoordinatorLongHorizonAgent(spaceId, agent))
+        .filter(
+          (agent) =>
+            !isCoordinatorLongHorizonAgent(spaceId, agent) &&
+            agent.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY
+        )
         .map((agent) => [agent.id, longHorizonAgentActor(agent)])
     );
     const workerActorRefs = workerActors.filter((actor) => {

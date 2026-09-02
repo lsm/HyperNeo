@@ -523,6 +523,24 @@ describe('SpaceActorRegistryAdapter', () => {
     expect(actor?.status).toBe('archived');
   });
 
+  it('keeps a paused migrated worker routable through its worker actor', () => {
+    const space = spaceRepo.createSpace({
+      workspacePath: '/workspace/project',
+      slug: 'project',
+      name: 'Project',
+    });
+    const worker = spaceAgentRepo.create({ spaceId: space.id, name: 'Legacy Worker' });
+    spaceAgentRepo.update(worker.id, { status: 'paused' });
+    sessionRepo.createSession(
+      makeSession(longTermAgentSessionId(space.id, worker.id), { context: { spaceId: space.id } })
+    );
+
+    const actor = registry.getActor(space.id, `agent:${worker.id}`);
+
+    expect(actor?.handle).toBe('@legacy-worker');
+    expect(actor?.status).not.toBe('archived');
+  });
+
   it('lists both families side by side and scopes the shared-id overlay to one space', () => {
     const space = spaceRepo.createSpace({
       workspacePath: '/workspace/project',

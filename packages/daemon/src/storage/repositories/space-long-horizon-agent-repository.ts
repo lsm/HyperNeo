@@ -29,6 +29,11 @@ export class SpaceLongHorizonAgentRepository {
   constructor(private db: BunDatabase) {}
 
   create(params: CreateSpaceLongHorizonAgentParams): SpaceLongHorizonAgent {
+    if (params.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
+      throw new Error(
+        `Template key ${MIGRATED_WORKER_TEMPLATE_KEY} is reserved for migrated worker mirrors`
+      );
+    }
     const id = params.id ?? generateUUID();
     const now = Date.now();
     const displayName = params.displayName ?? params.handle;

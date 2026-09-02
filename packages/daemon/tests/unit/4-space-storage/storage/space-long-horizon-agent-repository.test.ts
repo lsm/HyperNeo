@@ -661,13 +661,25 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(inboxRowsFor(agent.id)).toBe(0);
   });
 
+  test('create rejects the reserved migration template key', () => {
+    expect(() =>
+      repo.create({
+        spaceId: 'space-1',
+        handle: 'fake-mirror',
+        displayName: 'Fake Mirror',
+        templateKey: 'migration.legacy_space_agent',
+      })
+    ).toThrow(/reserved for migrated worker mirrors/);
+  });
+
   test('update rejects migrated worker mirrors so the worker row stays authoritative', () => {
-    const mirror = repo.create({
-      spaceId: 'space-1',
-      handle: 'mirror-edit',
-      displayName: 'Migrated Worker',
-      templateKey: 'migration.legacy_space_agent',
-    });
+    db.prepare(
+      `INSERT INTO space_long_horizon_agents
+         (id, space_id, handle, display_name, template_key, status, instructions,
+          tool_permissions_json, created_at, updated_at)
+       VALUES (?, 'space-1', 'mirror-edit', 'Migrated Worker', 'migration.legacy_space_agent', 'active', '', '{}', 1, 1)`
+    ).run('mirror-edit-id');
+    const mirror = repo.getById('mirror-edit-id')!;
 
     expect(() => repo.update(mirror.id, { displayName: 'Edited' })).toThrow(
       /migrated worker mirror/
@@ -727,33 +739,33 @@ describe('SpaceLongHorizonAgentRepository', () => {
   });
 
   test('update permits the runtime session binding on migrated worker mirrors', () => {
-    const mirror = repo.create({
-      spaceId: 'space-1',
-      handle: 'mirror-bind',
-      displayName: 'Migrated Worker',
-      templateKey: 'migration.legacy_space_agent',
-    });
+    db.prepare(
+      `INSERT INTO space_long_horizon_agents
+         (id, space_id, handle, display_name, template_key, status, instructions,
+          tool_permissions_json, created_at, updated_at)
+       VALUES (?, 'space-1', 'mirror-bind', 'Migrated Worker', 'migration.legacy_space_agent', 'active', '', '{}', 1, 1)`
+    ).run('mirror-bind-id');
 
-    const bound = repo.update(mirror.id, { sessionId: 'space:agent:space-1:sess' });
+    const bound = repo.update('mirror-bind-id', { sessionId: 'space:agent:space-1:sess' });
 
     expect(bound?.sessionId).toBe('space:agent:space-1:sess');
-    expect(repo.update(mirror.id, { sessionId: null })?.sessionId).toBeNull();
+    expect(repo.update('mirror-bind-id', { sessionId: null })?.sessionId).toBeNull();
   });
 
   test('delete rejects migrated worker mirrors so execution identity survives', () => {
-    const mirror = repo.create({
-      spaceId: 'space-1',
-      handle: 'mirror',
-      displayName: 'Migrated Worker',
-      templateKey: 'migration.legacy_space_agent',
-    });
+    db.prepare(
+      `INSERT INTO space_long_horizon_agents
+         (id, space_id, handle, display_name, template_key, status, instructions,
+          tool_permissions_json, created_at, updated_at)
+       VALUES (?, 'space-1', 'mirror', 'Migrated Worker', 'migration.legacy_space_agent', 'active', '', '{}', 1, 1)`
+    ).run('mirror-del-id');
     db.prepare(
       `INSERT INTO space_agents (id, space_id, name, created_at, updated_at)
        VALUES (?, 'space-1', 'Migrated Worker', 1, 1)`
-    ).run(mirror.id);
+    ).run('mirror-del-id');
 
-    expect(() => repo.delete(mirror.id)).toThrow(/migrated worker mirror/);
-    expect(repo.getById(mirror.id)).not.toBeNull();
+    expect(() => repo.delete('mirror-del-id')).toThrow(/migrated worker mirror/);
+    expect(repo.getById('mirror-del-id')).not.toBeNull();
   });
 
   test('coordinator row is mutable today — rename and archive succeed without guards', () => {
