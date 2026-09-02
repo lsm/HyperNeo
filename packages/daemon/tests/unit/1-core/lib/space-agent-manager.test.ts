@@ -298,6 +298,7 @@ describe('SpaceAgentManager', () => {
     it('allows shared-ID agents to keep their own long-horizon handle on update', async () => {
       const created = await manager.create({ spaceId: 'space-1', name: 'Worker' });
       if (!created.ok) throw new Error('create failed');
+      db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(created.value.id);
       longHorizonRepo.create({
         id: created.value.id,
         spaceId: 'space-1',

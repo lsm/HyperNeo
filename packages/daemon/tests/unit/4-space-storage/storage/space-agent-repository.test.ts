@@ -294,9 +294,7 @@ describe('SpaceAgentRepository', () => {
       createInboxTable();
       const worker = repo.create({ spaceId: 'space-1', name: 'Shared' });
       db.prepare(
-        `INSERT INTO space_long_horizon_agents
-         (id, space_id, handle, display_name, created_at, updated_at)
-         VALUES (?, 'space-1', 'shared', 'Shared', 1, 1)`
+        `UPDATE space_long_horizon_agents SET template_key = 'coordinator.default' WHERE id = ?`
       ).run(worker.id);
       seedInboxRow('in-shared', 'space-1', worker.id);
 
@@ -310,10 +308,11 @@ describe('SpaceAgentRepository', () => {
       createInboxTable();
       insertSpace(db, 'space-2');
       const worker = repo.create({ spaceId: 'space-1', name: 'Shared' });
+      db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(worker.id);
       db.prepare(
         `INSERT INTO space_long_horizon_agents
-         (id, space_id, handle, display_name, created_at, updated_at)
-         VALUES (?, 'space-2', 'shared', 'Shared', 1, 1)`
+       (id, space_id, handle, display_name, created_at, updated_at)
+       VALUES (?, 'space-2', 'shared', 'Shared', 1, 1)`
       ).run(worker.id);
       seedInboxRow('in-shared', 'space-1', worker.id);
 
@@ -439,14 +438,68 @@ describe('SpaceAgentRepository', () => {
       expect(unifiedRow(agent.id)?.handle).toBe('renamed');
     });
 
-    it('create suffixes the mirror handle when a genuine long-horizon agent holds it', () => {
+    it('update aligns a colliding rename onto the same suffixed handle in both rows', () => {
+      insertLongHorizonAgent('lh-1', 'renamed', 'coordinator.default');
+      const agent = repo.create({ spaceId: 'space-1', name: 'Coder' });
+
+      repo.update(agent.id, { handle: 'renamed' });
+
+      const aligned = `renamed-${agent.id}`;
+      expect(repo.getById(agent.id)?.handle).toBe(aligned);
+      expect(unifiedRow(agent.id)?.handle).toBe(aligned);
+    });
+
+    it('worker edits leave a genuine same-id overlay untouched', () => {
+      const agent = repo.create({
+        spaceId: 'space-1',
+        name: 'Original',
+        handle: 'original',
+        customPrompt: 'Old prompt',
+        tools: ['Bash'],
+        model: 'm1',
+        provider: 'p1',
+        modelPool: [{ model: 'm1', maxConcurrent: 1, weight: 1 }],
+      });
+      db.prepare(
+        `UPDATE space_long_horizon_agents SET template_key = 'coordinator.default' WHERE id = ?`
+      ).run(agent.id);
+      const overlayBefore = { ...unifiedRow(agent.id) };
+
+      repo.update(agent.id, {
+        name: 'Renamed',
+        handle: 'renamed',
+        status: 'paused',
+        description: 'New description',
+        model: 'm2',
+        provider: 'p2',
+        customPrompt: 'New prompt',
+        tools: ['Read'],
+        settingSources: ['project'],
+        modelPool: [{ model: 'm2', maxConcurrent: 2, weight: 1 }],
+      });
+
+      expect(repo.getById(agent.id)).toEqual(
+        expect.objectContaining({
+          name: 'Renamed',
+          handle: 'renamed',
+          status: 'paused',
+          description: 'New description',
+          model: 'm2',
+          provider: 'p2',
+          customPrompt: 'New prompt',
+        })
+      );
+      expect(unifiedRow(agent.id)).toEqual(overlayBefore);
+    });
+
+    it('create aligns the worker handle with the mirror when a genuine agent holds it', () => {
       insertLongHorizonAgent('lh-1', 'coder', 'coordinator.default');
 
       const agent = repo.create({ spaceId: 'space-1', name: 'Coder', handle: 'coder' });
 
-      expect(agent.handle).toBe('coder');
-      const row = unifiedRow(agent.id);
-      expect(row?.handle).toBe(`coder-${agent.id}`);
+      expect(agent.handle).toBe(`coder-${agent.id}`);
+      expect(repo.getById(agent.id)?.handle).toBe(`coder-${agent.id}`);
+      expect(unifiedRow(agent.id)?.handle).toBe(`coder-${agent.id}`);
     });
 
     it('generated handles avoid unified-table handles alongside worker handles', () => {
@@ -480,7 +533,7 @@ describe('SpaceAgentRepository', () => {
       repo.delete(agent.id);
 
       expect(repo.getById(agent.id)).toBeNull();
-      expect(unifiedRow(agent.id)).toBeUndefined();
+      expect(unifiedRow(agent.id)).toBeNull();
       const inbox = db
         .prepare(`SELECT COUNT(*) AS n FROM space_agent_inbox_messages WHERE target_agent_id = ?`)
         .get(agent.id) as { n: number };

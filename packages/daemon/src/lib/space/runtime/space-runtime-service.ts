@@ -67,6 +67,11 @@ import { SpaceActorRegistryAdapter } from '../actor-registry.ts';
 import { resolveCustomAgentPrompt } from '../agents/custom-agent.ts';
 import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../agents/long-horizon-agent-tools.ts';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent.ts';
+import {
+  isRunnableUnifiedAgent,
+  longHorizonAgentToWorkerView,
+  MIGRATED_WORKER_TEMPLATE_KEY,
+} from '../agents/worker-long-horizon-mapper.ts';
 import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session.ts';
 import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
@@ -926,12 +931,23 @@ export class SpaceRuntimeService {
     if (resolution.kind === 'missing') return null;
     if (resolution.kind === 'coordinator') return this.resolveCoordinatorSession(actor.spaceId);
     if (resolution.kind === 'long_horizon') {
-      return this.ensureLongHorizonAgentSession(actor.spaceId, agentId);
+      if (resolution.agent.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY) {
+        return this.ensureLongHorizonAgentSession(actor.spaceId, agentId);
+      }
+      return this.ensureWorkerAgentSession(
+        actor.spaceId,
+        longHorizonAgentToWorkerView(resolution.agent)
+      );
     }
-    const agent = resolution.agent;
-    const space = await this.config.spaceManager.getSpace(actor.spaceId);
+    return this.ensureWorkerAgentSession(actor.spaceId, resolution.agent);
+  }
+
+  private async ensureWorkerAgentSession(spaceId: string, agent: SpaceWorkerAgent) {
+    const sessionManager = this.config.sessionManager;
+    if (!sessionManager) return null;
+    const space = await this.config.spaceManager.getSpace(spaceId);
     if (!space) return null;
-    const sessionId = longTermAgentSessionId(actor.spaceId, agentId);
+    const sessionId = longTermAgentSessionId(spaceId, agent.id);
     let session = await sessionManager.getSessionAsync(sessionId);
     const created = !session;
     const resolvedPrompt = resolveCustomAgentPrompt(agent, {
@@ -976,7 +992,7 @@ export class SpaceRuntimeService {
       await session.resetQuery({ restartQuery: true });
     }
     if (created || this.missingLongTermAgentMcpServers(session)) {
-      this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId, agent, agentId);
+      this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId, agent, agent.id);
     }
     return session;
   }
@@ -995,10 +1011,9 @@ export class SpaceRuntimeService {
   }
 
   private agentRecordExists(agentId: string): boolean {
-    return (
-      (this.config.longHorizonAgentRepo?.getById(agentId) ?? null) !== null ||
-      this.config.spaceAgentManager.getById(agentId) !== null
-    );
+    const unified = this.config.longHorizonAgentRepo?.getById(agentId);
+    if (unified) return isRunnableUnifiedAgent(unified);
+    return this.config.spaceAgentManager.getById(agentId) !== null;
   }
 
   private listPromptRestampAgents(

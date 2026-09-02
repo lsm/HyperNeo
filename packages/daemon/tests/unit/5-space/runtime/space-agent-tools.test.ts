@@ -1918,7 +1918,9 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
         .content[0].text
     );
     expect(listedWorkerOnly).toEqual({ success: true, subscriptions: [] });
-    expect(ctx.longHorizonAgentRepo.getById(workerOnlyAgent.value.id)).toBeNull();
+    expect(ctx.longHorizonAgentRepo.getById(workerOnlyAgent.value.id)?.templateKey).toBe(
+      'migration.legacy_space_agent'
+    );
     const unsubscribedWorkerOnly = JSON.parse(
       (
         await handlers.unsubscribe_agent_event({
@@ -2094,6 +2096,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(workerOnly.ok).toBe(true);
     if (!workerOnly.ok) throw new Error(workerOnly.error);
     const workerId = workerOnly.value.id;
+    ctx.db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(workerId);
 
     const goal = ctx.goalService.createGoal({
       spaceId: ctx.spaceId,
@@ -8193,6 +8196,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
   });
 
   test('task worker handle ignores matching worker profile actor', async () => {
+    ctx.db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(ctx.agentId);
     const wf = buildSingleStepWorkflow(
       ctx.spaceId,
       ctx.workflowManager,

@@ -20,6 +20,7 @@ import type {
   UpdateSpaceLongHorizonAgentParams,
 } from '@hyperneo/shared';
 import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
 import type { SQLiteValue } from '../types.ts';
 
 const DEFAULT_TOOL_PERMISSIONS: Record<string, never> = {};
@@ -201,8 +202,14 @@ export class SpaceLongHorizonAgentRepository {
   delete(id: string): void {
     this.db.transaction(() => {
       const row = this.db
-        .prepare(`SELECT space_id FROM space_long_horizon_agents WHERE id = ?`)
-        .get(id) as { space_id: string } | null;
+        .prepare(`SELECT space_id, template_key FROM space_long_horizon_agents WHERE id = ?`)
+        .get(id) as { space_id: string; template_key: string | null } | null;
+      if (row?.template_key === MIGRATED_WORKER_TEMPLATE_KEY) {
+        throw new Error(
+          `Agent ${id} is a migrated worker mirror — delete the worker agent instead; ` +
+            `deleting only the mirror would strip its execution history.`
+        );
+      }
       const hasInbox = !!this.db
         .prepare(
           `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_inbox_messages'`

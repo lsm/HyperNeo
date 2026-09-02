@@ -7,9 +7,10 @@ import type {
   UpdateSpaceWorkerAgentParams,
 } from '@hyperneo/shared';
 import type { SQLiteValue } from '../types.ts';
-import { workerAgentToLongHorizonParams } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
-
-const MIRROR_TEMPLATE_KEY = 'migration.legacy_space_agent';
+import {
+  MIGRATED_WORKER_TEMPLATE_KEY,
+  workerAgentToLongHorizonParams,
+} from '../../lib/space/agents/worker-long-horizon-mapper.ts';
 
 export class SpaceAgentRepository {
   constructor(private db: BunDatabase) {}
@@ -17,40 +18,44 @@ export class SpaceAgentRepository {
   create(params: CreateSpaceWorkerAgentParams): SpaceWorkerAgent {
     const id = generateUUID();
     const now = Date.now();
-    const handle = params.handle ?? this.generateUniqueHandle(params.spaceId, params.name);
+    const requestedHandle = params.handle ?? this.generateUniqueHandle(params.spaceId, params.name);
+    const handle = this.alignHandleWithUnified(params.spaceId, id, requestedHandle, params.name);
 
-    this.db
-      .prepare(
-        `INSERT INTO space_agents
-					(id, space_id, name, handle, status, description, model, thinking_level, provider, tools, custom_prompt,
-					 setting_sources, template_name, template_hash, model_pool, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        id,
-        params.spaceId,
-        params.name,
-        handle,
-        params.status ?? 'active',
-        params.description ?? '',
-        params.model ?? null,
-        params.thinkingLevel ?? null,
-        params.provider ?? null,
-        params.tools != null ? JSON.stringify(params.tools) : '[]',
-        params.customPrompt ?? null,
-        params.settingSources != null ? JSON.stringify(params.settingSources) : null,
-        params.templateName ?? null,
-        params.templateHash ?? null,
-        params.modelPool != null && params.modelPool.length > 0
-          ? JSON.stringify(params.modelPool)
-          : null,
-        now,
-        now
-      );
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO space_agents
+						(id, space_id, name, handle, status, description, model, thinking_level, provider, tools, custom_prompt,
+						 setting_sources, template_name, template_hash, model_pool, created_at, updated_at)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          id,
+          params.spaceId,
+          params.name,
+          handle,
+          params.status ?? 'active',
+          params.description ?? '',
+          params.model ?? null,
+          params.thinkingLevel ?? null,
+          params.provider ?? null,
+          params.tools != null ? JSON.stringify(params.tools) : '[]',
+          params.customPrompt ?? null,
+          params.settingSources != null ? JSON.stringify(params.settingSources) : null,
+          params.templateName ?? null,
+          params.templateHash ?? null,
+          params.modelPool != null && params.modelPool.length > 0
+            ? JSON.stringify(params.modelPool)
+            : null,
+          now,
+          now
+        );
 
-    const agent = this.getById(id)!;
-    this.mirrorCreate(agent);
-    return agent;
+      const agent = this.getById(id)!;
+      this.mirrorCreate(agent);
+    })();
+
+    return this.getById(id)!;
   }
 
   getById(id: string): SpaceWorkerAgent | null {
@@ -113,6 +118,15 @@ export class SpaceAgentRepository {
   }
 
   update(id: string, params: UpdateSpaceWorkerAgentParams): SpaceWorkerAgent | null {
+    if (params.handle !== undefined && params.handle !== null) {
+      const worker = this.getById(id);
+      if (worker) {
+        params = {
+          ...params,
+          handle: this.alignHandleWithUnified(worker.spaceId, id, params.handle, worker.name),
+        };
+      }
+    }
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
 
@@ -179,8 +193,10 @@ export class SpaceAgentRepository {
     values.push(Date.now());
     values.push(id);
 
-    this.db.prepare(`UPDATE space_agents SET ${fields.join(', ')} WHERE id = ?`).run(...values);
-    this.mirrorUpdate(id, params);
+    this.db.transaction(() => {
+      this.db.prepare(`UPDATE space_agents SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+      this.mirrorUpdate(id, params);
+    })();
 
     return this.getById(id);
   }
@@ -238,6 +254,19 @@ export class SpaceAgentRepository {
       ...this.getUnifiedHandlesForSpace(spaceId),
       ...RESERVED_SPACE_AGENT_HANDLES,
     ]);
+  }
+
+  private alignHandleWithUnified(
+    spaceId: string,
+    id: string,
+    handle: string,
+    name: string
+  ): string {
+    if (!this.unifiedTableExists()) return handle;
+    return workerAgentToLongHorizonParams(
+      { id, spaceId, name, handle },
+      { occupiedHandles: this.getUnifiedHandlesExcluding(spaceId, id), now: Date.now() }
+    ).handle;
   }
 
   private mirrorCreate(agent: SpaceWorkerAgent): void {
@@ -352,9 +381,12 @@ export class SpaceAgentRepository {
     if (fields.length === 0) return;
 
     fields.push('updated_at = ?');
-    values.push(Date.now(), id);
+    values.push(Date.now(), id, MIGRATED_WORKER_TEMPLATE_KEY);
     this.db
-      .prepare(`UPDATE space_long_horizon_agents SET ${fields.join(', ')} WHERE id = ?`)
+      .prepare(
+        `UPDATE space_long_horizon_agents SET ${fields.join(', ')}
+			 WHERE id = ? AND template_key = ?`
+      )
       .run(...values);
   }
 
@@ -363,9 +395,9 @@ export class SpaceAgentRepository {
     this.db
       .prepare(
         `DELETE FROM space_long_horizon_agents
-			 WHERE id = ? AND space_id = ? AND template_key = '${MIRROR_TEMPLATE_KEY}'`
+			 WHERE id = ? AND space_id = ? AND template_key = ?`
       )
-      .run(id, spaceId);
+      .run(id, spaceId, MIGRATED_WORKER_TEMPLATE_KEY);
   }
 
   private unifiedTableExists(): boolean {

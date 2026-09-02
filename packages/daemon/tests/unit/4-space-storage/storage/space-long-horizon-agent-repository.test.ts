@@ -647,6 +647,22 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(inboxRowsFor(agent.id)).toBe(0);
   });
 
+  test('delete rejects migrated worker mirrors so execution identity survives', () => {
+    const mirror = repo.create({
+      spaceId: 'space-1',
+      handle: 'mirror',
+      displayName: 'Migrated Worker',
+      templateKey: 'migration.legacy_space_agent',
+    });
+    db.prepare(
+      `INSERT INTO space_agents (id, space_id, name, created_at, updated_at)
+       VALUES (?, 'space-1', 'Migrated Worker', 1, 1)`
+    ).run(mirror.id);
+
+    expect(() => repo.delete(mirror.id)).toThrow(/migrated worker mirror/);
+    expect(repo.getById(mirror.id)).not.toBeNull();
+  });
+
   test('coordinator row is mutable today — rename and archive succeed without guards', () => {
     const coordinator = repo.ensureCoordinator('space-1');
 

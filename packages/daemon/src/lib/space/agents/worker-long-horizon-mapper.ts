@@ -53,6 +53,8 @@ export interface WorkerAgentToLongHorizonOptions {
   now: number;
 }
 
+export const MIGRATED_WORKER_TEMPLATE_KEY = 'migration.legacy_space_agent';
+
 export function workerAgentToLongHorizonParams(
   worker: WorkerAgentRowSource,
   options: WorkerAgentToLongHorizonOptions
@@ -68,7 +70,7 @@ export function workerAgentToLongHorizonParams(
     spaceId: worker.spaceId,
     handle,
     displayName: worker.name ?? worker.handle ?? worker.id,
-    templateKey: 'migration.legacy_space_agent',
+    templateKey: MIGRATED_WORKER_TEMPLATE_KEY,
     status: mapWorkerStatus(worker.status),
     sessionId: null,
     instructions: worker.customPrompt ?? worker.instructions ?? worker.systemPrompt ?? '',
@@ -120,4 +122,9 @@ function mapLongHorizonStatus(status: SpaceLongHorizonAgentStatus): SpaceWorkerA
   if (status === 'paused' || status === 'disabled') return 'paused';
   if (status === 'archived') return 'archived';
   return 'active';
+}
+
+export function isRunnableUnifiedAgent(agent: SpaceLongHorizonAgent): boolean {
+  if (agent.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) return true;
+  return agent.status === 'active';
 }

@@ -755,6 +755,7 @@ describe('Space Agent RPC Handlers', () => {
       const visibleAgent = manager.getById(agentId);
       expect(visibleAgent).not.toBeNull();
       const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      (db as any).prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(agentId);
       const longHorizonAgent = longHorizonRepo.create({
         id: agentId,
         spaceId: 'space-1',
@@ -786,6 +787,7 @@ describe('Space Agent RPC Handlers', () => {
       const visibleAgent = manager.getById(agentId);
       expect(visibleAgent).not.toBeNull();
       const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      (db as any).prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(agentId);
       longHorizonRepo.create({
         id: agentId,
         spaceId: 'space-1',
@@ -814,6 +816,7 @@ describe('Space Agent RPC Handlers', () => {
       const visibleAgent = manager.getById(agentId);
       expect(visibleAgent).not.toBeNull();
       const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      (db as any).prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(agentId);
       const standaloneAgent = longHorizonRepo.create({
         id: 'standalone-lh-agent',
         spaceId: 'space-1',
@@ -940,6 +943,7 @@ describe('Space Agent RPC Handlers', () => {
       const visibleAgent = manager.getById(agentId);
       expect(visibleAgent).not.toBeNull();
       const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      (db as any).prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(agentId);
       const longHorizonAgent = longHorizonRepo.create({
         id: agentId,
         spaceId: 'space-1',
@@ -964,6 +968,7 @@ describe('Space Agent RPC Handlers', () => {
       const visibleAgent = manager.getById(agentId);
       expect(visibleAgent).not.toBeNull();
       const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      (db as any).prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(agentId);
       const standaloneAgent = longHorizonRepo.create({
         id: 'standalone-lh-agent-delete',
         spaceId: 'space-1',
@@ -1191,6 +1196,9 @@ describe('Space Agent RPC Handlers', () => {
       });
       if (!created.ok) throw new Error('create failed');
       const longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+      (db as any)
+        .prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`)
+        .run(created.value.id);
       const longHorizonAgent = longHorizonRepo.create({
         id: created.value.id,
         spaceId: 'space-1',

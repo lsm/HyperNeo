@@ -3,7 +3,6 @@ import { NodeExecutionRepository } from '../../../../src/storage/repositories/no
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('NodeExecutionRepository', () => {
@@ -644,11 +643,11 @@ describe('NodeExecutionRepository', () => {
       expect(repo.listByWorkflowRun(workflowRunId)).toHaveLength(0);
     });
 
-    it('sets agentId to null when agent is deleted (FK SET NULL)', () => {
+    it('sets agentId to null when the unified agent row is deleted (FK SET NULL)', () => {
       const exec = createExecution({ agentId });
       expect(exec.agentId).toBe(agentId);
 
-      (db as any).prepare(`DELETE FROM space_agents WHERE id = ?`).run(agentId);
+      (db as any).prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(agentId);
 
       const updated = repo.getById(exec.id)!;
       expect(updated.agentId).toBeNull();

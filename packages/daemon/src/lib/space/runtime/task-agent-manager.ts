@@ -46,7 +46,10 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-ev
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import { CleanupState, type SessionManager } from '../../session-manager.ts';
 import type { SkillsManager } from '../../skills-manager.ts';
-import { longHorizonAgentToWorkerView } from '../agents/worker-long-horizon-mapper.ts';
+import {
+  isRunnableUnifiedAgent,
+  longHorizonAgentToWorkerView,
+} from '../agents/worker-long-horizon-mapper.ts';
 import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
@@ -3507,7 +3510,10 @@ export class TaskAgentManager {
 
   private resolveUnifiedSlotAgent(agentId: string): SpaceWorkerAgent | null {
     const unified = this.config.longHorizonAgentRepo?.getById(agentId);
-    if (unified) return longHorizonAgentToWorkerView(unified);
+    if (unified) {
+      if (!isRunnableUnifiedAgent(unified)) return null;
+      return longHorizonAgentToWorkerView(unified);
+    }
     return this.config.spaceAgentManager.getById(agentId);
   }
 

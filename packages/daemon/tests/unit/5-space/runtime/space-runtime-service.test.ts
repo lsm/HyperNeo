@@ -45,6 +45,7 @@ import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/space/m
 import type { MailboxHandoffOutcome } from '../../../../src/lib/space/runtime/prompt-mailbox-handoff.ts';
 import type { SpaceRuntimeServiceConfig } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
+import { buildAgentSessionConfig } from '../../../../src/lib/session-resolution/agent-session-config.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
@@ -3773,8 +3774,6 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
 });
 
 describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)', () => {
-  const service = new SpaceRuntimeService(buildConfig(createMockSpaceManager(mockSpace)));
-
   beforeEach(() => clearModelsCache());
   afterEach(() => clearModelsCache());
 
@@ -3803,16 +3802,10 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
     currentProvider?: string,
     currentModel?: string
   ): Promise<Partial<Session['config']>> {
-    return (
-      service as unknown as {
-        buildLongHorizonAgentSessionConfig: (
-          space: Space,
-          a: SpaceLongHorizonAgent,
-          currentProvider?: string,
-          currentModel?: string
-        ) => Promise<Partial<Session['config']>>;
-      }
-    ).buildLongHorizonAgentSessionConfig(mockSpace, agent, currentProvider, currentModel);
+    return buildAgentSessionConfig({ kind: 'long_horizon', agent }, mockSpace, {
+      provider: currentProvider,
+      model: currentModel,
+    });
   }
 
   test('infers kimi provider when model is kimi and provider is unset', async () => {
@@ -3946,17 +3939,8 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
 });
 
 describe('buildLongHorizonAgentSessionConfig — owner-review contract injection (MC5-B1)', () => {
-  const service = new SpaceRuntimeService(buildConfig(createMockSpaceManager(mockSpace)));
-
   async function callBuilder(agent: SpaceLongHorizonAgent): Promise<Partial<Session['config']>> {
-    return (
-      service as unknown as {
-        buildLongHorizonAgentSessionConfig: (
-          space: Space,
-          a: SpaceLongHorizonAgent
-        ) => Promise<Partial<Session['config']>>;
-      }
-    ).buildLongHorizonAgentSessionConfig(mockSpace, agent);
+    return buildAgentSessionConfig({ kind: 'long_horizon', agent }, mockSpace);
   }
 
   function systemPromptAppend(config: Partial<Session['config']>): string {
@@ -4013,16 +3997,9 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
       restart,
     } as unknown as AgentSession;
 
-    const built = await (
-      service as unknown as {
-        buildLongHorizonAgentSessionConfig: (
-          s: Space,
-          a: SpaceLongHorizonAgent
-        ) => Promise<Partial<Session['config']>>;
-      }
-    ).buildLongHorizonAgentSessionConfig(
-      mockSpace,
-      buildLongHorizonAgent({ model: 'kimi-for-coding' })
+    const built = await buildAgentSessionConfig(
+      { kind: 'long_horizon', agent: buildLongHorizonAgent({ model: 'kimi-for-coding' }) },
+      mockSpace
     );
 
     await refresh().refreshLongHorizonAgentSessionConfig(stranded, built);
@@ -4464,6 +4441,61 @@ describe('ensureLongTermAgentSession — id→session routing table (dual-family
     expect(crossRun.createCalls[0]).toEqual(
       expect.objectContaining({ sessionId: 'space:agent:space-1:shared-2', title: 'Worker Name' })
     );
+  });
+
+  test('a migrated worker mirror keeps worker session semantics, not long-horizon ones', async () => {
+    const mirror = buildLongHorizonAgent({
+      id: 'worker-migrated',
+      handle: 'migrated-worker',
+      displayName: 'Migrated Worker',
+      templateKey: 'migration.legacy_space_agent',
+      instructions: 'Worker prompt',
+      toolPermissions: { tools: ['Read'] },
+    });
+    const createdConfigs: Array<{ sessionId?: string; title?: string; config?: unknown }> = [];
+    const sessionManager = {
+      getSessionAsync: mock(async (sessionId: string) =>
+        sessionId.startsWith('space:agent:') ? null : { getSessionData: () => ({ metadata: {} }) }
+      ),
+      createSession: mock(
+        async (opts: { sessionId?: string; title?: string; config?: unknown }) => {
+          createdConfigs.push(opts);
+        }
+      ),
+    } as unknown as SessionManager;
+    const svc = new SpaceRuntimeService({
+      ...buildConfig(createMockSpaceManager(mockSpace)),
+      sessionManager,
+      spaceAgentManager: { getById: mock(() => null) } as unknown as SpaceAgentManager,
+      longHorizonAgentRepo: {
+        getById: mock((id: string) => (id === mirror.id ? mirror : null)),
+        getCoordinator: mock(() => null),
+        update: mock(() => ({})),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'],
+    });
+    (
+      svc as unknown as { attachLongTermAgentMcpServers: () => void }
+    ).attachLongTermAgentMcpServers = () => {};
+    (
+      svc as unknown as { missingLongTermAgentMcpServers: () => boolean }
+    ).missingLongTermAgentMcpServers = () => false;
+
+    await route(svc, 'worker-migrated');
+
+    expect(createdConfigs).toHaveLength(1);
+    expect(createdConfigs[0]).toEqual(
+      expect.objectContaining({
+        sessionId: 'space:agent:space-1:worker-migrated',
+        title: 'Migrated Worker',
+      })
+    );
+    const config = createdConfigs[0].config as Record<string, unknown>;
+    expect(config.systemPrompt).toMatchObject({
+      type: 'preset',
+      preset: 'claude_code',
+      append: 'Worker prompt',
+    });
+    expect(config.sdkToolsPreset).toBeUndefined();
   });
 });
 

@@ -122,65 +122,7 @@ function emptySessionManager(): SessionManager {
   } as unknown as SessionManager;
 }
 
-describe('buildAgentSessionConfig — long-horizon arm equivalence', () => {
-  interface OldBuilder {
-    buildLongHorizonAgentSessionConfig: (
-      space: Space,
-      agent: SpaceLongHorizonAgent,
-      currentProvider?: string,
-      currentModel?: string
-    ) => Promise<Partial<Session['config']>>;
-  }
-
-  function oldBuilder(): OldBuilder['buildLongHorizonAgentSessionConfig'] {
-    const svc = buildService({ sessionManager: emptySessionManager() });
-    return (svc as unknown as OldBuilder).buildLongHorizonAgentSessionConfig;
-  }
-
-  test('reproduces the old builder field-for-field across fixture variants', async () => {
-    const old = oldBuilder();
-    const cases: Array<{
-      agent: SpaceLongHorizonAgent;
-      space: Space;
-      current?: { provider?: string; model?: string };
-    }> = [
-      { agent: makeAgent('lh-min'), space: mockSpace },
-      {
-        agent: makeAgent('lh-set', {
-          model: 'model-x',
-          provider: 'provider-x',
-          thinkingLevel: 'think8k',
-          settingSources: ['project'],
-          instructions: '  Own the goal.  ',
-        }),
-        space: richSpace,
-      },
-      {
-        agent: makeAgent('lh-tools', {
-          model: 'model-x',
-          toolPermissions: { tools: ['Bash(npm run:*)', 'Read', 7] },
-        }),
-        space: mockSpace,
-      },
-      {
-        agent: makeAgent('lh-current', { model: 'model-keep' }),
-        space: mockSpace,
-        current: { provider: 'provider-keep', model: 'model-keep' },
-      },
-      { agent: makeAgent('lh-spacefallback', { settingSources: null }), space: richSpace },
-    ];
-
-    for (const { agent, space, current } of cases) {
-      const oldConfig = await old(space, agent, current?.provider, current?.model);
-      const newConfig = await buildAgentSessionConfig(
-        { kind: 'long_horizon', agent },
-        space,
-        current
-      );
-      expect(newConfig).toEqual(oldConfig);
-    }
-  });
-
+describe('buildAgentSessionConfig — long-horizon arm', () => {
   test('deterministic fixture produces the expected literal config', async () => {
     const agent = makeAgent('lh-set', {
       model: 'model-x',

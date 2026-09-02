@@ -445,6 +445,7 @@ describe('SpaceActorRegistryAdapter', () => {
       name: 'Project',
     });
     const worker = spaceAgentRepo.create({ spaceId: space.id, name: 'Legacy Worker' });
+    db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(worker.id);
     longHorizonAgentRepo.create({
       id: worker.id,
       spaceId: space.id,
@@ -504,6 +505,7 @@ describe('SpaceActorRegistryAdapter', () => {
       name: 'Project',
     });
     const worker = spaceAgentRepo.create({ spaceId: space.id, name: 'Legacy Worker' });
+    db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(worker.id);
     longHorizonAgentRepo.create({
       id: worker.id,
       spaceId: space.id,
@@ -535,6 +537,7 @@ describe('SpaceActorRegistryAdapter', () => {
       displayName: 'LH Only',
     });
     const bridged = spaceAgentRepo.create({ spaceId: space.id, name: 'Bridged' });
+    db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(bridged.id);
     longHorizonAgentRepo.create({
       id: bridged.id,
       spaceId: other.id,

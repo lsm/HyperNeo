@@ -19,6 +19,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 function makeDb(): BunDatabase {
@@ -41,6 +42,7 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string): void {
     `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
      VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
   ).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
+  seedUnifiedAgentMirror(db, { id: agentId, spaceId, name: `Agent ${agentId}` });
 }
 
 class RecordingCollector {

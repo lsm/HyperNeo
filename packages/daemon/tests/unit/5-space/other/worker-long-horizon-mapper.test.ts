@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { SettingSource, SpaceLongHorizonAgent, ThinkingLevel } from '@hyperneo/shared';
 import { migrateLegacyLongHorizonAgentData } from '../../../../src/lib/space/agents/legacy-long-horizon-migration.ts';
 import {
+  isRunnableUnifiedAgent,
   longHorizonAgentToWorkerView,
   type WorkerAgentRowSource,
   workerAgentToLongHorizonParams,
@@ -435,31 +436,31 @@ describe('workerAgentToLongHorizonParams — typed extensions beyond m155', () =
   });
 });
 
-describe('longHorizonAgentToWorkerView — unified row to worker view (U3a)', () => {
-  function longHorizonAgent(overrides: Partial<SpaceLongHorizonAgent> = {}): SpaceLongHorizonAgent {
-    return {
-      id: 'lh-1',
-      spaceId: 'space-a',
-      handle: 'researcher',
-      displayName: 'Researcher',
-      templateKey: 'migration.legacy_space_agent',
-      status: 'active',
-      sessionId: null,
-      instructions: 'Investigate thoroughly',
-      autonomyLevel: null,
-      model: 'kimi-for-coding',
-      thinkingLevel: null,
-      provider: 'kimi',
-      settingSources: null,
-      toolPermissions: { tools: ['Bash', 'Read'] },
-      description: 'Does research',
-      modelPool: [{ model: 'kimi-for-coding', maxConcurrent: 2, weight: 1 }],
-      createdAt: 10,
-      updatedAt: 20,
-      ...overrides,
-    };
-  }
+function longHorizonAgent(overrides: Partial<SpaceLongHorizonAgent> = {}): SpaceLongHorizonAgent {
+  return {
+    id: 'lh-1',
+    spaceId: 'space-a',
+    handle: 'researcher',
+    displayName: 'Researcher',
+    templateKey: 'migration.legacy_space_agent',
+    status: 'active',
+    sessionId: null,
+    instructions: 'Investigate thoroughly',
+    autonomyLevel: null,
+    model: 'kimi-for-coding',
+    thinkingLevel: null,
+    provider: 'kimi',
+    settingSources: null,
+    toolPermissions: { tools: ['Bash', 'Read'] },
+    description: 'Does research',
+    modelPool: [{ model: 'kimi-for-coding', maxConcurrent: 2, weight: 1 }],
+    createdAt: 10,
+    updatedAt: 20,
+    ...overrides,
+  };
+}
 
+describe('longHorizonAgentToWorkerView — unified row to worker view (U3a)', () => {
   test('maps unified fields onto the SpaceWorkerAgent shape', () => {
     const view = longHorizonAgentToWorkerView(longHorizonAgent());
 
@@ -502,5 +503,33 @@ describe('longHorizonAgentToWorkerView — unified row to worker view (U3a)', ()
     expect(longHorizonAgentToWorkerView(longHorizonAgent({ status: 'archived' })).status).toBe(
       'archived'
     );
+  });
+});
+
+describe('isRunnableUnifiedAgent — activity contract (U3a)', () => {
+  test('migrated worker mirrors stay runnable in every status', () => {
+    for (const status of ['active', 'paused', 'disabled', 'archived'] as const) {
+      expect(
+        isRunnableUnifiedAgent(
+          longHorizonAgent({ templateKey: 'migration.legacy_space_agent', status })
+        )
+      ).toBe(true);
+    }
+  });
+
+  test('genuine long-horizon rows are runnable only while active', () => {
+    expect(isRunnableUnifiedAgent(longHorizonAgent({ templateKey: null }))).toBe(true);
+    expect(isRunnableUnifiedAgent(longHorizonAgent({ templateKey: 'coordinator.default' }))).toBe(
+      true
+    );
+    expect(isRunnableUnifiedAgent(longHorizonAgent({ templateKey: null, status: 'paused' }))).toBe(
+      false
+    );
+    expect(
+      isRunnableUnifiedAgent(longHorizonAgent({ templateKey: null, status: 'disabled' }))
+    ).toBe(false);
+    expect(
+      isRunnableUnifiedAgent(longHorizonAgent({ templateKey: null, status: 'archived' }))
+    ).toBe(false);
   });
 });
