@@ -3750,6 +3750,10 @@ export class TaskAgentManager {
     }
   }
 
+  async rehydrateSubSessionById(sessionId: string): Promise<AgentSession | null> {
+    return this.rehydrateSubSession(sessionId);
+  }
+
   private async rehydrateSubSession(
     subSessionId: string,
     suppliedSession?: AgentSession,
@@ -5240,8 +5244,9 @@ export class TaskAgentManager {
     workflow: SpaceWorkflow;
     targetAgent: string;
     kickoffMessage: string;
+    nodeId?: string;
   }): Promise<{ sessionId: string }> {
-    const { task, workflow, targetAgent, kickoffMessage } = args;
+    const { task, workflow, targetAgent, kickoffMessage, nodeId } = args;
     const taskId = task.id;
     const spaceId = task.spaceId;
 
@@ -5253,6 +5258,7 @@ export class TaskAgentManager {
     let matchedSlot: ReturnType<typeof resolveNodeAgents>[number] | null = null;
     let matchedNodeId: string | null = null;
     for (const node of workflow.nodes) {
+      if (nodeId !== undefined && node.id !== nodeId) continue;
       for (const slot of resolveNodeAgents(node)) {
         if (slot.name === targetAgent || slot.agentId === targetAgent) {
           matchedSlot = slot;

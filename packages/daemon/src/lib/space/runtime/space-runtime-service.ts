@@ -55,6 +55,7 @@ import { Logger } from '../../logger.ts';
 import { findInModels, getAvailableModels } from '../../model-service.ts';
 import { inferPersistableProviderForModel } from '../../providers/registry.ts';
 import type { SessionManager } from '../../session-manager.ts';
+import { agentSessionIdOf } from '../../session-resolution/target.ts';
 import { isSpaceActionsDispatcherEnabled } from '../actions/dispatcher-flag.ts';
 import {
   createSpaceActionsMcpServer,
@@ -986,6 +987,23 @@ export class SpaceRuntimeService {
       [`@${agent.handle}`]
     );
     return session;
+  }
+
+  async ensureAgentSession(spaceId: string, agentId: string): Promise<AgentSession | null> {
+    const repo = this.config.longHorizonAgentRepo;
+    const coordinator = repo?.getCoordinator(spaceId) ?? null;
+    if (agentSessionIdOf(spaceId, agentId, coordinator?.id) === coordinatorSessionId(spaceId)) {
+      return this.ensureCoordinatorSession(spaceId);
+    }
+    if (repo?.getById(agentId)?.spaceId === spaceId) {
+      return this.ensureLongHorizonAgentSession(spaceId, agentId);
+    }
+    return this.ensureLongTermAgentSession({
+      actorId: `agent:${encodeActorIdComponent(agentId)}`,
+      kind: 'agent',
+      spaceId,
+      status: 'inactive',
+    });
   }
 
   private async ensureLongTermAgentSession(actor: ActorRef) {
