@@ -1,6 +1,8 @@
 import type {
   AuthStatus,
+  DaemonBehaviorConfig,
   DaemonConfig,
+  DaemonConfigKeyEntry,
   FileInfo,
   FileTree,
   HealthStatus,
@@ -1108,4 +1110,21 @@ export interface SkillSetEnabledRequest {
 
 export interface SkillSetEnabledResponse {
   skill: AppSkill;
+}
+
+export interface DaemonConfigGetRequest {}
+
+export interface DaemonConfigGetResponse {
+  config: DaemonBehaviorConfig;
+  catalog: readonly DaemonConfigKeyEntry[];
+}
+
+export interface DaemonConfigUpdateRequest {
+  patch: Partial<DaemonBehaviorConfig>;
+}
+
+export interface DaemonConfigUpdateResponse {
+  status: 'applied' | 'superseded';
+  config: DaemonBehaviorConfig;
+  changedKeys: string[];
 }
