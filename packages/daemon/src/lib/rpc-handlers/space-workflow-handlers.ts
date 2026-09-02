@@ -53,6 +53,17 @@ const PRESET_AGENT_NAMES_LOWER = new Set(
   getPresetAgentTemplates().map((p) => p.name.toLowerCase())
 );
 
+function isOrphanedMigrationMirror(
+  workerSource: { listBySpaceId(spaceId: string): SpaceWorkerAgentLike[] } | undefined,
+  spaceId: string,
+  id: string,
+  templateKey: string | null | undefined
+): boolean {
+  if (templateKey !== 'migration.legacy_space_agent') return false;
+  if (!workerSource) return false;
+  return !workerSource.listBySpaceId(spaceId).some((w) => w.id === id);
+}
+
 function workerOnlyRoleCandidates(
   workerSource: { listBySpaceId(spaceId: string): SpaceWorkerAgentLike[] } | undefined,
   spaceId: string,
@@ -109,6 +120,7 @@ function buildTemplateUpdateParams(
       .filter((a) => a.id !== coordinatorLongHorizonAgentId(spaceId))
       .filter((a) => !coordinatorByHandle || a.id !== coordinatorByHandle.id)
       .filter((a) => a.status !== 'archived')
+      .filter((a) => !isOrphanedMigrationMirror(workerAgentSource, spaceId, a.id, a.templateKey))
       .map((a) => ({ id: a.id, displayName: a.displayName ?? a.handle })),
     ...workerOnlyRoleCandidates(workerAgentSource, spaceId, unifiedIds),
   ];
@@ -356,6 +368,9 @@ export async function restampBuiltInWorkflowsOnStartup(
             .filter((a) => a.id !== coordinatorLongHorizonAgentId(space.id))
             .filter((a) => !restampCoordinatorByHandle || a.id !== restampCoordinatorByHandle.id)
             .filter((a) => a.status !== 'archived')
+            .filter(
+              (a) => !isOrphanedMigrationMirror(spaceAgentManager, space.id, a.id, a.templateKey)
+            )
             .map((a) => ({ id: a.id, displayName: a.displayName ?? a.handle })),
           ...workerOnlyRoleCandidates(spaceAgentManager, space.id, restampUnifiedIds),
         ];

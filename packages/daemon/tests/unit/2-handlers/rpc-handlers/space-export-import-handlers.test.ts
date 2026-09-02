@@ -1987,6 +1987,21 @@ describe('Space Export/Import RPC Handlers', () => {
       expect((agentCreated[0].data as { agent: { name: string } }).agent.name).toBe('NewAgent');
     });
 
+    it('emits unified mirror events for worker-backed import creates', async () => {
+      const bundle = makeBundle([{ name: 'NewAgent', role: 'coder' }], []);
+
+      await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+
+      await Promise.resolve();
+      const unifiedCreated = emittedEvents.filter(
+        (e) => e.name === 'spaceLongHorizonAgent.created'
+      );
+      expect(unifiedCreated).toHaveLength(1);
+    });
+
     it('emits spaceAgent.updated for replaced agent', async () => {
       seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
       const bundle = makeBundle([{ name: 'Coder', role: 'coder', model: 'claude-haiku-4-5' }], []);

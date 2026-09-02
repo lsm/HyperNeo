@@ -1078,6 +1078,23 @@ export function setupSpaceExportImportHandlers(
         .catch((err) => {
           log.warn(`Failed to emit ${eventName} for imported agent "${item.name}":`, err);
         });
+      const mirror = longHorizonAgentRepo.getById(item.id);
+      if (mirror) {
+        internalEventBus
+          .publish(
+            item.action === 'replaced'
+              ? 'spaceLongHorizonAgent.updated'
+              : 'spaceLongHorizonAgent.created',
+            {
+              sessionId: `space:${spaceId}`,
+              spaceId,
+              agent: mirror,
+            }
+          )
+          .catch((err) => {
+            log.warn(`Failed to emit unified ${eventName} for imported agent "${item.name}":`, err);
+          });
+      }
     }
 
     for (const item of importResult.workflows) {

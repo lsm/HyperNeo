@@ -1960,6 +1960,28 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
     env.db.close();
   });
 
+  it('does not resolve orphaned migration mirrors as role targets', async () => {
+    const env = makeRealEnv();
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    const coder = env.spaceAgentRepo.getBySpaceId('space-retire').find((w) => w.name === 'Coder')!;
+    env.db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(coder.id);
+
+    await restampBuiltInWorkflowsOnStartup(
+      env.workflowManager,
+      env.spaceManager,
+      env.spaceAgentManager,
+      env.longHorizonAgentRepo,
+      () => false
+    );
+
+    const boundAgentIds = env.workflowRepo
+      .listWorkflows('space-retire')
+      .flatMap((w) => w.nodes.flatMap((n) => n.agents ?? []))
+      .map((a) => a.agentId);
+    expect(boundAgentIds).not.toContain(coder.id);
+    env.db.close();
+  });
+
   it('resolves worker-only preset rows during built-in sync', async () => {
     const env = makeRealEnv();
     await seedPresetAgents('space-retire', env.spaceAgentManager);
