@@ -22,6 +22,7 @@ import {
   publishUnifiedAgentDeleted,
   publishUnifiedAgentUpdated,
 } from '../space/agents/unified-agent-events.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../space/agents/worker-long-horizon-mapper.ts';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager.ts';
 import {
   validateAgentModel,
@@ -464,7 +465,7 @@ function buildUnifiedAgentCreate(
       const modelError = await validateAgentModel(params.model, params.provider ?? undefined);
       if (modelError) throw new Error(modelError);
     }
-    if (params.modelPool) {
+    if (params.modelPool && params.modelPool.length > 0) {
       const poolError = await validateAgentModelPool(params.modelPool);
       if (poolError) throw new Error(poolError);
     }
@@ -501,6 +502,9 @@ async function updateUnifiedAgentTwin(
   if (displayName !== undefined) {
     ensureWorkerDisplayNameAvailable(deps, spaceId, displayName, agentId);
   }
+  if (params.autonomyLevel !== undefined) {
+    throw new Error('autonomyLevel cannot be set on a migrated worker agent');
+  }
   const customPrompt =
     params.customPrompt !== undefined
       ? params.customPrompt
@@ -517,7 +521,11 @@ async function updateUnifiedAgentTwin(
     provider: params.provider,
     customPrompt,
     tools:
-      params.tools !== undefined ? params.tools : toolPermissionsToolsList(params.toolPermissions),
+      params.tools !== undefined
+        ? params.tools
+        : params.toolPermissions !== undefined
+          ? (toolPermissionsToolsList(params.toolPermissions) ?? [])
+          : undefined,
     settingSources: params.settingSources,
     templateName: resolveUnifiedTemplateKey(params) as UpdateSpaceWorkerAgentParams['templateName'],
     modelPool: params.modelPool,
@@ -567,7 +575,8 @@ export function registerUnifiedSpaceAgentMethods(
     const spaceId = existing?.spaceId ?? workerTwin!.spaceId;
     if (params.spaceId && spaceId !== params.spaceId)
       throw new Error(`Agent ${agentId} does not belong to space ${params.spaceId}`);
-    if (workerTwin && workerTwin.spaceId === spaceId) {
+    const isMigratedMirror = existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY;
+    if (workerTwin && workerTwin.spaceId === spaceId && (!existing || isMigratedMirror)) {
       const updated = await updateUnifiedAgentTwin(deps, agentId, spaceId, params);
       if (params.provider === null) {
         await deps.runtimeService?.clearLongTermAgentSessionProvider(spaceId, agentId);
@@ -610,7 +619,7 @@ export function registerUnifiedSpaceAgentMethods(
       const modelError = await validateAgentModel(params.model, provider);
       if (modelError) throw new Error(modelError);
     }
-    if (params.modelPool) {
+    if (params.modelPool && params.modelPool.length > 0) {
       const poolError = await validateAgentModelPool(params.modelPool);
       if (poolError) throw new Error(poolError);
     }
@@ -658,12 +667,14 @@ export function registerUnifiedSpaceAgentMethods(
     }
     const referenceCheck = deps.spaceAgentManager?.isAgentReferenced(agentId);
     if (referenceCheck?.referenced) {
+      const displayName = existing?.displayName ?? workerTwin?.name ?? agentId;
       throw new Error(
-        `Cannot delete agent "${existing?.displayName ?? workerTwin!.name}" - it is referenced by workflow nodes` +
+        `Cannot delete agent "${displayName}" - it is referenced by workflow nodes` +
           referenceCheck.workflowNames.map((n) => ` (Workflow: ${n})`).join('')
       );
     }
-    if (workerTwin) {
+    const isMigratedMirror = existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY;
+    if (workerTwin && workerTwin.spaceId === spaceId && (!existing || isMigratedMirror)) {
       const mirrorBefore = existing != null;
       const result = deps.spaceAgentManager!.delete(agentId);
       if (!result.ok) {

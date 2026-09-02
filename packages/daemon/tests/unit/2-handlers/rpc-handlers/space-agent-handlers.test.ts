@@ -623,7 +623,7 @@ describe('Space Agent RPC Handlers', () => {
           name: 'BadTools',
           tools: ['Read', 'NotARealTool'],
         })
-      ).rejects.toThrow('Unknown tool "NotARealTool"');
+      ).rejects.toThrow('Unknown tool: "NotARealTool"');
     });
 
     it('rejects unknown tools passed via toolPermissions', async () => {
@@ -634,7 +634,7 @@ describe('Space Agent RPC Handlers', () => {
           displayName: 'BadTools LH',
           toolPermissions: { tools: ['NotARealTool'] },
         })
-      ).rejects.toThrow('Unknown tool "NotARealTool"');
+      ).rejects.toThrow('Unknown tool: "NotARealTool"');
     });
 
     it('rejects unrecognized models when the model cache is populated', async () => {
@@ -943,7 +943,7 @@ describe('Space Agent RPC Handlers', () => {
           id: agentId,
           tools: ['NotARealTool'],
         })
-      ).rejects.toThrow('Unknown tool "NotARealTool"');
+      ).rejects.toThrow('Unknown tool: "NotARealTool"');
     });
 
     it('routes worker-twin updates through the worker path and propagates the mirror', async () => {
@@ -994,6 +994,84 @@ describe('Space Agent RPC Handlers', () => {
           instructions: 'Standalone prompt',
         })
       );
+    });
+
+    it('routes native-overlay updates to the unified table, not the worker twin', async () => {
+      const workerId = await createWorkerAgent(manager, {
+        spaceId: 'space-1',
+        name: 'Overlay Sibling',
+        customPrompt: 'Worker prompt',
+      });
+      db.prepare(
+        `UPDATE space_long_horizon_agents SET template_key = 'custom.overlay' WHERE id = ?`
+      ).run(workerId);
+
+      const result = await call<{ agent: { displayName: string; instructions: string } }>(
+        hubData.handlers,
+        'spaceAgent.update',
+        { id: workerId, displayName: 'Overlay Renamed', instructions: 'Overlay prompt' }
+      );
+
+      expect(result.agent.displayName).toBe('Overlay Renamed');
+      expect(longHorizonRepo.getById(workerId)?.instructions).toBe('Overlay prompt');
+      expect(manager.getById(workerId)?.name).toBe('Overlay Sibling');
+      expect(manager.getById(workerId)?.customPrompt).toBe('Worker prompt');
+    });
+
+    it('does not delete the worker sibling of a native overlay', async () => {
+      const workerId = await createWorkerAgent(manager, {
+        spaceId: 'space-1',
+        name: 'Overlay Delete Sibling',
+      });
+      db.prepare(
+        `UPDATE space_long_horizon_agents SET template_key = 'custom.overlay' WHERE id = ?`
+      ).run(workerId);
+
+      await expect(call(hubData.handlers, 'spaceAgent.delete', { id: workerId })).rejects.toThrow(
+        'same-id worker overlay'
+      );
+      expect(manager.getById(workerId)).not.toBeNull();
+      expect(longHorizonRepo.getById(workerId)).not.toBeNull();
+    });
+
+    it('clears twin tools when long-horizon vocabulary sends empty toolPermissions', async () => {
+      const workerId = await createWorkerAgent(manager, {
+        spaceId: 'space-1',
+        name: 'Twin Tool Clear',
+        tools: ['Read'],
+      });
+      expect(manager.getById(workerId)?.tools ?? []).toHaveLength(1);
+
+      await call(hubData.handlers, 'spaceAgent.update', {
+        id: workerId,
+        toolPermissions: null,
+      });
+
+      expect(manager.getById(workerId)?.tools ?? []).toEqual([]);
+      expect(longHorizonRepo.getById(workerId)?.toolPermissions).toEqual({});
+    });
+
+    it('rejects autonomy changes on migrated worker twins', async () => {
+      const workerId = await createWorkerAgent(manager, {
+        spaceId: 'space-1',
+        name: 'Twin Autonomy',
+      });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', {
+          id: workerId,
+          autonomyLevel: 3,
+        })
+      ).rejects.toThrow('autonomyLevel cannot be set on a migrated worker agent');
+    });
+
+    it('treats an empty model pool as a clear on unified updates', async () => {
+      const result = await call<{ agent: { modelPool: Array<{ model: string }> | null } }>(
+        hubData.handlers,
+        'spaceAgent.update',
+        { id: agentId, modelPool: [] }
+      );
+      expect(result.agent.modelPool ?? null).toBeNull();
     });
 
     it('emits unified updated events under both namespaces', async () => {
