@@ -2130,7 +2130,7 @@ export class TaskAgentManager {
     let provenance = sessionId ? this.readProvenanceFromSessionRow(sessionId) : null;
     if (!provenance && !sessionId && (task?.status === 'done' || task?.status === 'approved')) {
       const durableId = this.findDurableWorkerSessionId(taskId);
-      if (durableId) {
+      if (durableId && this.durableWorkerSessionReceivedKickoff(durableId)) {
         sessionId = durableId;
         provenance = this.readProvenanceFromSessionRow(durableId);
       }
@@ -2162,6 +2162,22 @@ export class TaskAgentManager {
       return provenance ?? null;
     } catch {
       return null;
+    }
+  }
+
+  private durableWorkerSessionReceivedKickoff(sessionId: string): boolean {
+    try {
+      const row = this.config.db
+        .getDatabase()
+        .prepare(
+          `SELECT created_at AS createdAt, last_active_at AS lastActiveAt
+             FROM sessions WHERE id = ?`
+        )
+        .get(sessionId) as { createdAt: number; lastActiveAt: number } | undefined;
+      if (row === undefined) return false;
+      return row.lastActiveAt > row.createdAt;
+    } catch {
+      return false;
     }
   }
 
