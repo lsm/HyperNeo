@@ -539,6 +539,34 @@ describe('Space Export/Import RPC Handlers', () => {
       );
     });
 
+    it('reserves shadowed worker handles for new imports and the coordinator name', async () => {
+      const worker = seedAgent({ spaceId: SPACE_ID, name: 'Alpha', handle: 'alpha' });
+      db.prepare(
+        `UPDATE space_long_horizon_agents SET template_key = 'custom.overlay', handle = 'overlay-handle' WHERE id = ?`
+      ).run(worker.id);
+
+      const reservedHandleBundle = makeBundle([{ name: 'New Agent', handle: 'alpha' }], []);
+      const coordinator = longHorizonAgentRepo.ensureCoordinator(SPACE_ID);
+      const coordinatorName = longHorizonAgentRepo.getById(coordinator.id)!.displayName;
+      const coordinatorBundle = makeBundle([{ name: coordinatorName }], []);
+
+      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle: coordinatorBundle,
+      });
+      expect(
+        preview.validationErrors.some((e) => e.includes('reserved by the space coordinator'))
+      ).toBe(true);
+
+      const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+        spaceId: SPACE_ID,
+        bundle: reservedHandleBundle,
+      });
+      expect(result.agents[0].action).toBe('created');
+      const created = agentRepo.getById(result.agents[0].id)!;
+      expect(created.handle).not.toBe('alpha');
+    });
+
     it('flags skipped non-runnable conflicts as unresolved references', async () => {
       longHorizonAgentRepo.create({
         spaceId: SPACE_ID,

@@ -145,6 +145,22 @@ function nonRunnableUnifiedIds(
   );
 }
 
+function reservedCoordinatorNames(
+  longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
+  spaceId: string
+): Set<string> {
+  const rows = longHorizonAgentRepo.listBySpaceId(spaceId);
+  const canonical = rows.find((a) => a.id === coordinatorLongHorizonAgentId(spaceId));
+  const byHandle = longHorizonAgentRepo.getCoordinator(spaceId);
+  const names = new Set<string>();
+  for (const row of [canonical, byHandle]) {
+    if (row && (row.displayName ?? '').trim() !== '') {
+      names.add(nameKey(row.displayName));
+    }
+  }
+  return names;
+}
+
 function findDuplicateBundleAgentNames(agents: Array<{ name: string }>): string[] {
   const seen = new Map<string, string>();
   const duplicates = new Set<string>();
@@ -720,7 +736,17 @@ export function setupSpaceExportImportHandlers(
       }
     }
 
+    const coordinatorNameCollisions = bundle.agents
+      .filter((a) =>
+        reservedCoordinatorNames(longHorizonAgentRepo, params.spaceId).has(nameKey(a.name))
+      )
+      .map(
+        (a) =>
+          `Cannot import: agent name "${a.name}" is reserved by the space coordinator. ` +
+          `Rename the agent in the bundle and retry.`
+      );
     validationErrors.push(...agentNameAmbiguities);
+    validationErrors.push(...coordinatorNameCollisions);
     validationErrors.push(...findDuplicateBundleAgentNames(bundle.agents));
     const result: ImportPreviewResult = {
       agents: agentPreviews,
@@ -786,6 +812,14 @@ export function setupSpaceExportImportHandlers(
         assertUnambiguousAgentNames(existingAgents);
         const duplicateBundleNames = findDuplicateBundleAgentNames(bundle.agents);
         if (duplicateBundleNames.length > 0) throw new Error(duplicateBundleNames[0]);
+        const coordinatorCollision = bundle.agents.find((a) =>
+          reservedCoordinatorNames(longHorizonAgentRepo, spaceId).has(nameKey(a.name))
+        );
+        if (coordinatorCollision) {
+          throw new Error(
+            `Cannot import: agent name "${coordinatorCollision.name}" is reserved by the space coordinator.`
+          );
+        }
         const existingAgentByName = new Map(existingAgents.map((a) => [nameKey(a.name), a]));
         const existingWorkflowByName = new Map(existingWorkflows.map((w) => [w.name, w]));
         const nonRunnableIds = nonRunnableUnifiedIds(longHorizonAgentRepo, spaceId);
@@ -798,6 +832,7 @@ export function setupSpaceExportImportHandlers(
         const usedAgentNames = new Set(existingAgents.map((a) => nameKey(a.name)));
         const usedAgentHandles = new Set<string>([
           ...existingAgents.map((a) => a.handle).filter(Boolean),
+          ...workerAgents.map((w) => w.handle).filter(Boolean),
           ...longHorizonAgentRepo.listBySpaceId(spaceId).map((a) => a.handle),
         ]);
         const usedWorkflowNames = new Set(existingWorkflows.map((w) => w.name));
@@ -816,7 +851,10 @@ export function setupSpaceExportImportHandlers(
           if (strategy !== 'replace') continue;
           replacedAgentByName.set(exportedAgent.name, existing);
           usedAgentHandles.delete(existing.handle);
+          const shadowedWorker = workerAgents.find((w) => w.id === existing.id);
+          if (shadowedWorker) usedAgentHandles.delete(shadowedWorker.handle);
           fallbackBaseHandles.add(existing.handle);
+          if (shadowedWorker) fallbackBaseHandles.add(shadowedWorker.handle);
         }
         if (replacedAgentByName.size > 0) {
           const now = Date.now();
