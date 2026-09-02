@@ -122,13 +122,14 @@ function assertExportableAgentNames(agents: Array<{ id: string; name: string }>)
   }
 }
 
-function findAmbiguousAgentNames(agents: Array<{ name: string }>): string[] {
-  const idsByName = new Map<string, number>();
+function findAmbiguousAgentNames(agents: Array<{ name: string; id: string }>): string[] {
+  const idsByName = new Map<string, Set<string>>();
   for (const agent of agents) {
-    idsByName.set(nameKey(agent.name), (idsByName.get(nameKey(agent.name)) ?? 0) + 1);
+    const key = nameKey(agent.name);
+    idsByName.set(key, (idsByName.get(key) ?? new Set()).add(agent.id));
   }
   return [...idsByName.entries()]
-    .filter(([, count]) => count > 1)
+    .filter(([, ids]) => ids.size > 1)
     .map(
       ([name]) =>
         `Cannot import: agent name "${name.trim()}" is ambiguous in this space ` +
@@ -136,7 +137,7 @@ function findAmbiguousAgentNames(agents: Array<{ name: string }>): string[] {
     );
 }
 
-function assertUnambiguousAgentNames(agents: Array<{ name: string }>): void {
+function assertUnambiguousAgentNames(agents: Array<{ name: string; id: string }>): void {
   const ambiguities = findAmbiguousAgentNames(agents);
   if (ambiguities.length > 0) throw new Error(ambiguities[0]);
 }
@@ -601,7 +602,10 @@ export function setupSpaceExportImportHandlers(
           a.id !== coordinatorLongHorizonAgentId(params.spaceId) &&
           (!coordinatorByHandle || a.id !== coordinatorByHandle.id)
       )
-      .filter((a) => !workerAgents.some((w) => w.id === a.id))
+      .filter(
+        (a) =>
+          !workerAgents.some((w) => w.id === a.id) || a.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY
+      )
       .map(longHorizonAgentToWorkerView);
     const existingAgents = [...workerAgents, ...unifiedOnlyAgents];
     const existingWorkflows = workflowRepo.listWorkflows(params.spaceId);
@@ -683,7 +687,11 @@ export function setupSpaceExportImportHandlers(
               a.id !== coordinatorLongHorizonAgentId(spaceId) &&
               (!coordinatorByHandle || a.id !== coordinatorByHandle.id)
           )
-          .filter((a) => !workerAgents.some((w) => w.id === a.id))
+          .filter(
+            (a) =>
+              !workerAgents.some((w) => w.id === a.id) ||
+              a.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY
+          )
           .map(longHorizonAgentToWorkerView);
         const existingAgents = [...workerAgents, ...unifiedOnlyAgents];
         const existingWorkflows = workflowRepo.listWorkflows(spaceId);
@@ -817,29 +825,28 @@ export function setupSpaceExportImportHandlers(
               allWarnings,
               preservedHandle
             );
-            const unifiedOnly = !workerAgents.some((w) => w.id === existing.id);
             let updated = agentRepo.update(existing.id, updateParams);
-            if (!updated && unifiedOnly) {
-              const unified = longHorizonAgentRepo.getById(existing.id);
-              if (unified) {
-                longHorizonAgentRepo.update(existing.id, {
-                  displayName: exportedAgent.name,
-                  description: exportedAgent.description ?? null,
-                  model: exportedAgent.model ?? null,
-                  thinkingLevel: (exportedAgent.thinkingLevel ??
-                    null) as SpaceLongHorizonAgent['thinkingLevel'],
-                  provider: exportedAgent.provider ?? null,
-                  instructions: replaceParts.length > 0 ? replaceParts.join('\n\n') : '',
-                  settingSources: exportedAgent.settingSources ?? null,
-                  modelPool: exportedAgent.modelPool ?? null,
-                  handle: updateParams.handle,
-                  toolPermissions:
-                    exportedAgent.tools && exportedAgent.tools.length > 0
-                      ? { tools: [...exportedAgent.tools] }
-                      : {},
-                });
-                deferredUnifiedUpdates.push({ spaceId: existing.spaceId, agentId: existing.id });
-              }
+            const twinRow = longHorizonAgentRepo.getById(existing.id);
+            const authoritativeOverlay =
+              !!twinRow && twinRow.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY;
+            if (authoritativeOverlay) {
+              longHorizonAgentRepo.update(existing.id, {
+                displayName: exportedAgent.name,
+                description: exportedAgent.description ?? null,
+                model: exportedAgent.model ?? null,
+                thinkingLevel: (exportedAgent.thinkingLevel ??
+                  null) as SpaceLongHorizonAgent['thinkingLevel'],
+                provider: exportedAgent.provider ?? null,
+                instructions: replaceParts.length > 0 ? replaceParts.join('\n\n') : '',
+                settingSources: exportedAgent.settingSources ?? null,
+                modelPool: exportedAgent.modelPool ?? null,
+                handle: updateParams.handle,
+                toolPermissions:
+                  exportedAgent.tools && exportedAgent.tools.length > 0
+                    ? { tools: [...exportedAgent.tools] }
+                    : {},
+              });
+              deferredUnifiedUpdates.push({ spaceId: existing.spaceId, agentId: existing.id });
             }
             const id = updated?.id ?? existing.id;
             if (updateParams.provider === null) providerClearedAgentIds.push(id);

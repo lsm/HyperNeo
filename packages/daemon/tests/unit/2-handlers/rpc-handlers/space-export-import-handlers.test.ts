@@ -1330,6 +1330,57 @@ describe('Space Export/Import RPC Handlers', () => {
         expect((unifiedEvent!.data as { agent: { id: string } }).agent.id).toBe(unifiedId);
       });
 
+      it('resolves native overlays by their display name in imports', async () => {
+        const worker = seedAgent({ spaceId: SPACE_ID, name: 'Alpha', handle: 'alpha' });
+        db.prepare(
+          `UPDATE space_long_horizon_agents SET template_key = 'custom.overlay', display_name = 'Overlay Name' WHERE id = ?`
+        ).run(worker.id);
+
+        const agentBundle = makeBundle([{ name: 'Overlay Name' }], []);
+        const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+          spaceId: SPACE_ID,
+          bundle: agentBundle,
+        });
+        expect(preview.agents[0]).toEqual({
+          name: 'Overlay Name',
+          action: 'conflict',
+          existingId: worker.id,
+        });
+
+        const wfBundle = makeBundle(
+          [],
+          [{ name: 'Pipe', nodes: [{ agentRef: 'Overlay Name', name: 'S' }] }]
+        );
+        const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle: wfBundle,
+        });
+        expect(result.workflows[0].action).toBe('created');
+        expect(workflowRepo.getWorkflow(result.workflows[0].id)!.nodes[0].agents![0].agentId).toBe(
+          worker.id
+        );
+      });
+
+      it('replaces the authoritative native overlay alongside its worker sibling', async () => {
+        const worker = seedAgent({ spaceId: SPACE_ID, name: 'Alpha', handle: 'alpha' });
+        db.prepare(
+          `UPDATE space_long_horizon_agents SET template_key = 'custom.overlay', display_name = 'Alpha', instructions = 'old overlay prompt' WHERE id = ?`
+        ).run(worker.id);
+
+        const bundle = makeBundle([{ name: 'Alpha', customPrompt: 'New overlay prompt.' }], []);
+
+        const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle,
+          conflictResolution: { agents: { Alpha: 'replace' } },
+        });
+
+        expect(result.agents[0].action).toBe('replaced');
+        const overlay = longHorizonAgentRepo.getById(worker.id)!;
+        expect(overlay.templateKey).toBe('custom.overlay');
+        expect(overlay.instructions).toBe('New overlay prompt.');
+      });
+
       it('preserves genuine native overlay handles during replacement', async () => {
         const worker = seedAgent({ spaceId: SPACE_ID, name: 'Alpha', handle: 'alpha' });
         db.prepare(

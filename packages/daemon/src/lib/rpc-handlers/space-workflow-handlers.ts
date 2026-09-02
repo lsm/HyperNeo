@@ -89,7 +89,7 @@ function buildTemplateUpdateParams(
     .filter((a) => a.status !== 'archived');
   function resolveAgentId(roleName: string): string | undefined {
     const role = roleName.toLowerCase();
-    const matches = spaceAgents.filter((a) => a.displayName.toLowerCase() === role);
+    const matches = spaceAgents.filter((a) => (a.displayName ?? '').trim().toLowerCase() === role);
     if (matches.length > 1) {
       throw new Error(
         `Cannot ${errorVerb}: agent name "${roleName}" is ambiguous in space "${spaceId}" ` +
@@ -332,7 +332,9 @@ export async function restampBuiltInWorkflowsOnStartup(
           workflowManager,
           (name) => {
             const role = name.toLowerCase();
-            const matches = agents.filter((a) => a.displayName.toLowerCase() === role);
+            const matches = agents.filter(
+              (a) => (a.displayName ?? '').trim().toLowerCase() === role
+            );
             return matches.length === 1 ? matches[0].id : undefined;
           },
           hasActiveRuns

@@ -1960,6 +1960,32 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
     env.db.close();
   });
 
+  it('resolves whitespace-padded preset display names during restamp', async () => {
+    const env = makeRealEnv();
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    const coderTwin = env.longHorizonAgentRepo
+      .listBySpaceId('space-retire')
+      .find((a) => (a.displayName ?? '').trim() === 'Coder')!;
+    env.db
+      .prepare(`UPDATE space_long_horizon_agents SET display_name = ' Coder ' WHERE id = ?`)
+      .run(coderTwin.id);
+
+    await restampBuiltInWorkflowsOnStartup(
+      env.workflowManager,
+      env.spaceManager,
+      env.spaceAgentManager,
+      env.longHorizonAgentRepo,
+      () => false
+    );
+
+    const boundAgentIds = env.workflowRepo
+      .listWorkflows('space-retire')
+      .flatMap((w) => w.nodes.flatMap((n) => n.agents ?? []))
+      .map((a) => a.agentId);
+    expect(boundAgentIds).toContain(coderTwin.id);
+    env.db.close();
+  });
+
   it('does not resolve archived preset twins as built-in role targets', async () => {
     const env = makeRealEnv();
     await seedPresetAgents('space-retire', env.spaceAgentManager);
