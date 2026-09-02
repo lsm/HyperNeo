@@ -55,7 +55,7 @@ interface HarnessConfig {
     nodeId?: string | null;
   } | null;
   activationResult?: boolean;
-  spawnResult?: { sessionId: string } | Error;
+  spawnResult?: { sessionId: string } | Error | Promise<{ sessionId: string }>;
   run?: { id: string; workflowId: string; spaceId: string } | null;
   workflow?: Partial<SpaceWorkflow> | null;
   prUrl?: string | null;
@@ -166,6 +166,12 @@ function makeHarness(config: HarnessConfig = {}): Harness {
     },
     updateTask: (taskId: string, params: Record<string, unknown>) => {
       harness.updateTaskCalls.push([taskId, params]);
+      if (typeof params.postApprovalSessionId === 'string') {
+        config.postApprovalWorkerSession = {
+          sessionId: params.postApprovalSessionId,
+          agentName: 'publisher',
+        };
+      }
       return task;
     },
   } as unknown as SpaceTaskRepository;
@@ -222,7 +228,10 @@ function makeHarness(config: HarnessConfig = {}): Harness {
           internalEventBus: {
             publish: (topic: string, payload: { taskId: string; spaceId: string }) => {
               expect(topic).toBe('space.task.updated');
-              harness.publishedTaskUpdates.push(payload);
+              harness.publishedTaskUpdates.push({
+                taskId: payload.taskId,
+                spaceId: payload.spaceId,
+              });
               return Promise.resolve({ delivered: 0, failures: [] });
             },
           } as unknown as InternalEventBus<DaemonInternalEventMap>,
@@ -596,7 +605,7 @@ describe('spawnPostApprovalWorker', () => {
     const { deps, spawnCalls, updateTaskCalls, getTaskCalls, getRunCalls } = spawnHarness();
 
     await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBe('spawned-9');
-    expect(getTaskCalls).toEqual(['t-1']);
+    expect(getTaskCalls).toEqual(['t-1', 't-1', 't-1']);
     expect(getRunCalls).toEqual(['run-1']);
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0]?.targetAgent).toBe('publisher');
@@ -631,6 +640,46 @@ describe('spawnPostApprovalWorker', () => {
     await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBe('spawned-9');
     expect(updateTaskCalls).toHaveLength(1);
     expect(publishedTaskUpdates).toEqual([{ taskId: 't-1', spaceId: 'space-1' }]);
+  });
+
+  test('a live recorded routing matching the target resolves without spawning', async () => {
+    const { deps, spawnCalls, updateTaskCalls } = spawnHarness({
+      postApprovalWorkerSession: { sessionId: 'pa-live-1', agentName: 'publisher' },
+      asyncSession: fakeSession('pa-live-1', 'active'),
+    });
+
+    await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBe('pa-live-1');
+    expect(spawnCalls).toHaveLength(0);
+    expect(updateTaskCalls).toHaveLength(0);
+  });
+
+  test('a dead recorded routing matching the target still spawns a replacement', async () => {
+    const { deps, spawnCalls } = spawnHarness({
+      postApprovalWorkerSession: { sessionId: 'pa-dead-1', agentName: 'publisher' },
+    });
+
+    await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBe('spawned-9');
+    expect(spawnCalls).toHaveLength(1);
+  });
+
+  test('concurrent recoveries for one task serialize behind a single spawn', async () => {
+    let releaseSpawn: (value: { sessionId: string }) => void = () => {};
+    const gatedSpawn = new Promise<{ sessionId: string }>((resolve) => {
+      releaseSpawn = resolve;
+    });
+    const { deps, spawnCalls, updateTaskCalls } = spawnHarness({
+      spawnResult: gatedSpawn,
+      asyncSession: fakeSession('spawned-9', 'active'),
+    });
+
+    const first = deps.spawnPostApprovalWorker('t-1', 'publisher');
+    const second = deps.spawnPostApprovalWorker('t-1', 'publisher');
+    releaseSpawn({ sessionId: 'spawned-9' });
+
+    await expect(first).resolves.toBe('spawned-9');
+    await expect(second).resolves.toBe('spawned-9');
+    expect(spawnCalls).toHaveLength(1);
+    expect(updateTaskCalls).toHaveLength(1);
   });
 
   test('node id constrains the spawn slot while the canonical first route provides the kickoff', async () => {

@@ -3754,7 +3754,21 @@ export class TaskAgentManager {
     if (sessionId.includes(':post-approval:')) {
       const taskId = taskIdFromSubSessionIdentity(sessionId);
       if (taskId !== null) {
-        const restoredId = await this.restorePostApprovalWorkerSession(taskId, sessionId);
+        const task = this.config.taskRepo.getTask(taskId);
+        if (task === null) return null;
+        const space = await this.config.spaceManager.getSpace(task.spaceId);
+        if (space === null || space.paused || space.stopped || space.status === 'archived') {
+          return null;
+        }
+        const restoreOptions = this.readPersistedRateLimitCooldown(sessionId)
+          ? { startQuery: false }
+          : {};
+        const restoredId = await this.restorePostApprovalWorkerSession(
+          taskId,
+          sessionId,
+          undefined,
+          restoreOptions
+        );
         return restoredId === null ? null : (this.getSubSession(restoredId) ?? null);
       }
     }
@@ -5450,6 +5464,7 @@ export class TaskAgentManager {
         agentId: matchedSlot.agentId,
         agentName: matchedSlot.name,
         nodeId: matchedNodeId,
+        freshSessionOnly: true,
       });
 
       const spawned = this.getSubSession(actualSessionId);

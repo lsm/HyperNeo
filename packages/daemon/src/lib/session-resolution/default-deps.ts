@@ -57,6 +57,32 @@ export function createDefaultSessionResolutionDeps(services: {
     internalEventBus,
   } = services;
 
+  const spawnInFlight = new Map<string, Promise<string | null>>();
+
+  const resolveLiveSession = async (
+    sessionId: string
+  ): Promise<ReturnType<SessionManager['getCachedSession']>> => {
+    const indexed = taskAgentManager.getSubSession(sessionId);
+    if (indexed !== undefined && sessionManager.getCachedSession(sessionId) === indexed) {
+      const data = indexed.getSessionData();
+      if (sessionUnavailable(data.status)) return null;
+      if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeNodeAgentServer(data.config)) {
+        return null;
+      }
+      return indexed;
+    }
+    const session = await sessionManager.getSessionAsync(sessionId);
+    if (session === null) return null;
+    if (sessionUnavailable(session.getSessionData().status)) return null;
+    if (
+      isWorkflowSubSessionIdentity(sessionId) &&
+      !hasRuntimeNodeAgentServer(session.getSessionData().config)
+    ) {
+      return null;
+    }
+    return session;
+  };
+
   const runSpawnPostApprovalWorker = (
     superpipe({
       spawnHalted,
@@ -109,27 +135,7 @@ export function createDefaultSessionResolutionDeps(services: {
   ) => Promise<string | undefined>;
 
   return {
-    async getSession(sessionId) {
-      const indexed = taskAgentManager.getSubSession(sessionId);
-      if (indexed !== undefined && sessionManager.getCachedSession(sessionId) === indexed) {
-        const data = indexed.getSessionData();
-        if (sessionUnavailable(data.status)) return null;
-        if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeNodeAgentServer(data.config)) {
-          return null;
-        }
-        return indexed;
-      }
-      const session = await sessionManager.getSessionAsync(sessionId);
-      if (session === null) return null;
-      if (sessionUnavailable(session.getSessionData().status)) return null;
-      if (
-        isWorkflowSubSessionIdentity(sessionId) &&
-        !hasRuntimeNodeAgentServer(session.getSessionData().config)
-      ) {
-        return null;
-      }
-      return session;
-    },
+    getSession: (sessionId) => resolveLiveSession(sessionId),
 
     async rehydrateSubSession(sessionId) {
       const restored = await taskAgentManager.rehydrateSubSessionById(sessionId);
@@ -193,11 +199,29 @@ export function createDefaultSessionResolutionDeps(services: {
     },
 
     async spawnPostApprovalWorker(taskId, agentName, workflowNodeId) {
-      return (
-        (await runSpawnPostApprovalWorker(taskId, agentName, workflowNodeId).catch(
-          () => undefined
-        )) ?? null
-      );
+      const runSerialized = async (): Promise<string | null> => {
+        const routed = taskAgentManager.getPostApprovalWorkerSession(taskId);
+        if (
+          routed !== null &&
+          routed.agentName === agentName &&
+          (workflowNodeId === undefined || routed.nodeId === workflowNodeId)
+        ) {
+          if ((await resolveLiveSession(routed.sessionId)) !== null) return routed.sessionId;
+        }
+        return (
+          (await runSpawnPostApprovalWorker(taskId, agentName, workflowNodeId).catch(
+            () => undefined
+          )) ?? null
+        );
+      };
+      const previous = spawnInFlight.get(taskId) ?? Promise.resolve(null);
+      const chained = previous.then(runSerialized, runSerialized);
+      spawnInFlight.set(taskId, chained);
+      try {
+        return await chained;
+      } finally {
+        if (spawnInFlight.get(taskId) === chained) spawnInFlight.delete(taskId);
+      }
     },
 
     getPostApprovalWorkerSession(taskId) {
