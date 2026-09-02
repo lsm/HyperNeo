@@ -3115,7 +3115,7 @@ describe('seedBuiltInWorkflows()', () => {
     const brokenResolver = (_role: string): string | undefined => undefined;
 
     expect(() => seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver)).toThrow(
-      'no SpaceWorkerAgent found with name'
+      'no SpaceLongHorizonAgent found with name'
     );
   });
 

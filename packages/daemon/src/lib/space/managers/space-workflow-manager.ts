@@ -21,6 +21,8 @@ import {
 import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url.ts';
 import '../runtime/connectors/production.ts';
 import { slugify, validateSlug } from '../slug.ts';
+import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
@@ -35,6 +37,27 @@ export function isReservedWorkflowAgentName(name: string): boolean {
 
 export interface SpaceAgentLookup {
   getAgentById(spaceId: string, id: string): { id: string; name: string } | null;
+}
+
+export function createSpaceAgentLookup(
+  spaceAgentRepo: Pick<SpaceAgentRepository, 'getById'>,
+  longHorizonAgentRepo: Pick<SpaceLongHorizonAgentRepository, 'getById'>
+): SpaceAgentLookup {
+  return {
+    getAgentById(spaceId: string, id: string) {
+      const unified = longHorizonAgentRepo.getById(id);
+      if (unified && unified.spaceId === spaceId) {
+        if (unified.templateKey === 'migration.legacy_space_agent') {
+          const legacyTwin = spaceAgentRepo.getById(id);
+          if (!legacyTwin || legacyTwin.spaceId !== spaceId) return null;
+        }
+        return { id: unified.id, name: unified.displayName };
+      }
+      const worker = spaceAgentRepo.getById(id);
+      if (!worker || worker.spaceId !== spaceId) return null;
+      return { id: worker.id, name: worker.name };
+    },
+  };
 }
 
 export class WorkflowValidationError extends Error {
@@ -569,7 +592,7 @@ export class SpaceWorkflowManager {
       const loc = `node[${index}].agents[${j}]`;
       if (!entry.agentId || !entry.agentId.trim()) {
         throw new WorkflowValidationError(
-          `${loc}: agentId must be a non-empty SpaceWorkerAgent UUID`
+          `${loc}: agentId must be a non-empty SpaceLongHorizonAgent UUID`
         );
       }
       if (!entry.name || !entry.name.trim()) {
@@ -608,7 +631,7 @@ export class SpaceWorkflowManager {
         const agent = this.agentLookup.getAgentById(spaceId, entry.agentId);
         if (!agent) {
           throw new WorkflowValidationError(
-            `node[${index}].agents[${j}]: agentId "${entry.agentId}" does not match any SpaceWorkerAgent in this space`
+            `node[${index}].agents[${j}]: agentId "${entry.agentId}" does not match any SpaceLongHorizonAgent in this space`
           );
         }
       }

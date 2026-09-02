@@ -157,12 +157,36 @@ export function setupSpaceAgentHandlers(
   spaceAgentManager: SpaceAgentManager,
   spaceManager: SpaceManager,
   db: Database,
-  longHorizonAgentRepo: { getById(id: string): SpaceLongHorizonAgent | null },
+  longHorizonAgentRepo: {
+    getById(id: string): SpaceLongHorizonAgent | null;
+    listBySpaceId(spaceId: string): SpaceLongHorizonAgent[];
+  },
   runtimeService?: {
     removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void;
     clearLongTermAgentSessionProvider(spaceId: string, agentId: string): Promise<void>;
   }
 ): void {
+  async function ensureDisplayNameAvailable(
+    spaceId: string,
+    name: string,
+    excludeId?: string
+  ): Promise<void> {
+    const target = name.trim().toLowerCase();
+    if (!target) return;
+    const conflict = longHorizonAgentRepo
+      .listBySpaceId(spaceId)
+      .find(
+        (a) =>
+          a.status !== 'archived' &&
+          a.id !== excludeId &&
+          (a.displayName ?? '').trim().toLowerCase() === target &&
+          !spaceAgentManager.getById(a.id)
+      );
+    if (conflict) {
+      throw new Error(`Agent name "${name}" is already used by a unified agent in this space`);
+    }
+  }
+
   messageHub.onRequest('spaceAgent.listBuiltInTemplates', async (data) => {
     const params = data as { spaceId: string };
     if (!params.spaceId) throw new Error('spaceId is required');
@@ -197,6 +221,7 @@ export function setupSpaceAgentHandlers(
 
     if (!params.spaceId) throw new Error('spaceId is required');
     if (!params.name) throw new Error('name is required');
+    await ensureDisplayNameAvailable(params.spaceId, params.name);
 
     const result = await spaceAgentManager.create({
       spaceId: params.spaceId,
@@ -261,6 +286,7 @@ export function setupSpaceAgentHandlers(
     if (!params.spaceId) throw new Error('spaceId is required');
     if (!params.sessionId) throw new Error('sessionId is required');
     if (!params.name) throw new Error('name is required');
+    await ensureDisplayNameAvailable(params.spaceId, params.name);
 
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
@@ -333,6 +359,10 @@ export function setupSpaceAgentHandlers(
     if (!params.id) throw new Error('id is required');
 
     const { id, ...updateFields } = params;
+    if (updateFields.name !== undefined) {
+      const existing = spaceAgentManager.getById(id);
+      if (existing) await ensureDisplayNameAvailable(existing.spaceId, updateFields.name, id);
+    }
     const result = await spaceAgentManager.update(id, {
       name: updateFields.name,
       handle: updateFields.handle,

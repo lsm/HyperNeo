@@ -13,8 +13,10 @@ import {
   WorkspaceRemovalBlockedError,
 } from '../../../../src/lib/space/managers/space-workspace-manager';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
-import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { createSpaceTables } from '../../helpers/space-test-db';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import type {
@@ -178,34 +180,22 @@ function createMockRunRepo(runs: SpaceWorkflowRun[] = [mockRun]): SpaceWorkflowR
   } as unknown as SpaceWorkflowRunRepository;
 }
 
-const mockAgents = [
-  { id: 'agent-coder', name: 'Coder', spaceId: 'space-1' },
-  { id: 'agent-general', name: 'General', spaceId: 'space-1' },
-  { id: 'agent-planner', name: 'Planner', spaceId: 'space-1' },
-  { id: 'agent-research', name: 'Research', spaceId: 'space-1' },
-  { id: 'agent-reviewer', name: 'Reviewer', spaceId: 'space-1' },
-  { id: 'agent-qa', name: 'QA', spaceId: 'space-1' },
-];
+function createAgentDb(): Database {
+  const db = new Database(':memory:');
+  createSpaceTables(db);
+  db.exec(
+    `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+     VALUES ('space-1', 'space-1', '/tmp', 'Space 1', 1, 1)`
+  );
+  return db;
+}
 
-function createMockSpaceAgentManager(opts?: {
-  createFail?: (name: string) => boolean;
-}): SpaceAgentManager {
-  let callCount = 0;
-  return {
-    create: mock(async (params: { name?: string }) => {
-      const idx = callCount++;
-      if (opts?.createFail?.(params.name ?? '')) {
-        return { ok: false, error: `Agent ${params.name} already exists` };
-      }
-      const agent = mockAgents[idx] ?? {
-        id: `agent-${idx}`,
-        name: params.name,
-        spaceId: 'space-1',
-      };
-      return { ok: true, value: agent };
-    }),
-    listBySpaceId: mock(() => mockAgents),
-  } as unknown as SpaceAgentManager;
+function createAgentRepo(occupiedHandles: string[] = []): SpaceLongHorizonAgentRepository {
+  const repo = new SpaceLongHorizonAgentRepository(createAgentDb());
+  for (const handle of occupiedHandles) {
+    repo.create({ spaceId: 'space-1', handle, displayName: `Occupied ${handle}` });
+  }
+  return repo;
 }
 
 function createMockSpaceWorkflowManager(): SpaceWorkflowManager {
@@ -237,11 +227,18 @@ describe('space-handlers', () => {
   let taskRepo: SpaceTaskRepository;
   let runRepo: SpaceWorkflowRunRepository;
 
+  let agentRepoDb: Database | null = null;
+
+  function defaultAgentRepo(): SpaceLongHorizonAgentRepository {
+    agentRepoDb = createAgentDb();
+    return new SpaceLongHorizonAgentRepository(agentRepoDb);
+  }
+
   function setup(
     space: Space | null = mockSpace,
     sessionManager?: SessionManager,
     spaceRuntimeService?: SpaceRuntimeService,
-    agentManager?: SpaceAgentManager,
+    longHorizonAgentRepo?: SpaceLongHorizonAgentRepository,
     workflowManager?: SpaceWorkflowManager
   ) {
     const mh = createMockMessageHub();
@@ -251,16 +248,20 @@ describe('space-handlers', () => {
     spaceManager = createMockSpaceManager(space);
     taskRepo = createMockTaskRepo();
     runRepo = createMockRunRepo();
+    agentRepoDb?.close();
+    agentRepoDb = null;
     setupSpaceHandlers(
       hub,
       spaceManager,
       taskRepo,
       runRepo,
       internalEventBus,
-      agentManager ?? createMockSpaceAgentManager(),
       workflowManager ?? createMockSpaceWorkflowManager(),
       sessionManager,
-      spaceRuntimeService
+      spaceRuntimeService,
+      {
+        longHorizonAgentRepo: longHorizonAgentRepo ?? defaultAgentRepo(),
+      }
     );
   }
 
@@ -467,10 +468,7 @@ describe('space-handlers', () => {
     });
 
     it('returns seedWarnings when some agents fail to seed', async () => {
-      const agentMgr = createMockSpaceAgentManager({
-        createFail: (name) => name === 'Coder' || name === 'QA',
-      });
-      setup(mockSpace, undefined, undefined, agentMgr);
+      setup(mockSpace, undefined, undefined, createAgentRepo(['coder', 'qa']));
 
       const result = (await call('space.create', {
         workspacePath: '/tmp/x',
@@ -495,12 +493,13 @@ describe('space-handlers', () => {
       expect((result as Record<string, unknown>).seedWarnings).toBeUndefined();
     });
 
-    it('returns seedWarnings when seedPresetAgents throws unexpectedly', async () => {
-      const agentMgr = createMockSpaceAgentManager();
-      (agentMgr.create as ReturnType<typeof mock>).mockImplementation(async () => {
-        throw new Error('Database locked');
-      });
-      setup(mockSpace, undefined, undefined, agentMgr);
+    it('returns seedWarnings when preset agent rows cannot be created', async () => {
+      setup(
+        mockSpace,
+        undefined,
+        undefined,
+        createAgentRepo(['coder', 'general', 'planner', 'research', 'reviewer', 'qa'])
+      );
 
       const result = (await call('space.create', {
         workspacePath: '/tmp/x',
@@ -509,13 +508,18 @@ describe('space-handlers', () => {
 
       expect(result.id).toBe(mockSpace.id);
       expect(result.seedWarnings).toBeDefined();
-      expect(result.seedWarnings!.some((w) => w.includes('preset agents'))).toBe(true);
+      expect(result.seedWarnings!.some((w) => w.includes('Failed to seed agents'))).toBe(true);
     });
 
     it('returns seedWarnings when workflow seeding fails', async () => {
-      const agentMgr = createMockSpaceAgentManager();
-      (agentMgr.listBySpaceId as ReturnType<typeof mock>).mockReturnValue([]);
-      setup(mockSpace, undefined, undefined, agentMgr);
+      const emptyRepo = {
+        ensureCoordinator: mock(() => null),
+        create: mock(() => {
+          throw new Error('insert failed');
+        }),
+        listBySpaceId: mock(() => []),
+      } as unknown as SpaceLongHorizonAgentRepository;
+      setup(mockSpace, undefined, undefined, emptyRepo);
 
       const result = (await call('space.create', {
         workspacePath: '/tmp/x',
@@ -528,11 +532,14 @@ describe('space-handlers', () => {
     });
 
     it('space creation succeeds even when both agents and workflows fail', async () => {
-      const agentMgr = createMockSpaceAgentManager({
-        createFail: () => true,
-      });
-      (agentMgr.listBySpaceId as ReturnType<typeof mock>).mockReturnValue([]);
-      setup(mockSpace, undefined, undefined, agentMgr);
+      const emptyRepo = {
+        ensureCoordinator: mock(() => null),
+        create: mock(() => {
+          throw new Error('insert failed');
+        }),
+        listBySpaceId: mock(() => []),
+      } as unknown as SpaceLongHorizonAgentRepository;
+      setup(mockSpace, undefined, undefined, emptyRepo);
 
       const result = (await call('space.create', {
         workspacePath: '/tmp/x',

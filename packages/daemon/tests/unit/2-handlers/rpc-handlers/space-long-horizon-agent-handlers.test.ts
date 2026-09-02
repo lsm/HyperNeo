@@ -48,7 +48,12 @@ describe('Space long-horizon agent handlers', () => {
     removeLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
     clearLongTermAgentSessionProvider: ReturnType<typeof mock>;
   };
-  let spaceAgentManager: { listBySpaceId: ReturnType<typeof mock> };
+  let spaceAgentManager: {
+    listBySpaceId: ReturnType<typeof mock>;
+    isAgentReferenced: ReturnType<typeof mock>;
+    getById: ReturnType<typeof mock>;
+    delete: ReturnType<typeof mock>;
+  };
   let internalEventBus: { publish: ReturnType<typeof mock> };
 
   beforeEach(() => {
@@ -105,7 +110,12 @@ describe('Space long-horizon agent handlers', () => {
       removeLongHorizonAgentSubscriptions: mock(() => {}),
       clearLongTermAgentSessionProvider: mock(async () => {}),
     };
-    spaceAgentManager = { listBySpaceId: mock(() => []) };
+    spaceAgentManager = {
+      listBySpaceId: mock(() => []),
+      isAgentReferenced: mock(() => ({ referenced: false, workflowNames: [] as string[] })),
+      getById: mock(() => null),
+      delete: mock(() => ({ ok: true })),
+    };
     internalEventBus = { publish: mock(async () => {}) };
     setupSpaceLongHorizonAgentHandlers(
       hubData.hub,
@@ -118,6 +128,40 @@ describe('Space long-horizon agent handlers', () => {
   });
 
   describe('spaceLongHorizonAgent.create', () => {
+    it('rejects a display name already used by another unified agent (case-insensitive)', async () => {
+      repo.listBySpaceId = mock(() => [
+        {
+          id: 'other-agent',
+          spaceId: 'space-1',
+          handle: 'other',
+          displayName: 'Existing Agent',
+          status: 'active',
+        },
+      ]) as SpaceLongHorizonAgentRepository['listBySpaceId'];
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.create', {
+          spaceId: 'space-1',
+          handle: 'fresh',
+          displayName: 'existing agent',
+        })
+      ).rejects.toThrow('already used by another unified agent');
+    });
+
+    it('rejects a display name already used by a worker agent', async () => {
+      spaceAgentManager.listBySpaceId = mock(() => [
+        { id: 'worker-1', spaceId: 'space-1', name: 'Worker Name' },
+      ]);
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.create', {
+          spaceId: 'space-1',
+          handle: 'fresh',
+          displayName: 'Worker Name',
+        })
+      ).rejects.toThrow('already used by a worker agent');
+    });
+
     it('uses a non-conflicting mirror handle when requested handle belongs to another row', async () => {
       repo.getByHandle = mock(() => ({
         id: 'standalone-agent',
@@ -231,6 +275,48 @@ describe('Space long-horizon agent handlers', () => {
       ).rejects.toThrow('An agent with handle "coder" already exists in this Space');
 
       expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects display-name updates that collide with another unified agent', async () => {
+      repo.listBySpaceId = mock(() => [
+        {
+          id: 'other-agent',
+          spaceId: 'space-1',
+          handle: 'other',
+          displayName: 'Taken Name',
+          status: 'active',
+        },
+      ]) as SpaceLongHorizonAgentRepository['listBySpaceId'];
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+          agentId: 'agent-1',
+          spaceId: 'space-1',
+          displayName: 'taken name',
+        })
+      ).rejects.toThrow('already used by another unified agent');
+
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('allows keeping your own display name on update', async () => {
+      repo.listBySpaceId = mock(() => [
+        {
+          id: 'agent-1',
+          spaceId: 'space-1',
+          handle: 'mine',
+          displayName: 'Same Name',
+          status: 'active',
+        },
+      ]) as SpaceLongHorizonAgentRepository['listBySpaceId'];
+
+      await call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+        agentId: 'agent-1',
+        spaceId: 'space-1',
+        displayName: 'Same Name',
+      });
+
+      expect(repo.update).toHaveBeenCalled();
     });
 
     it('allows shared-ID long-horizon agents to keep their worker handle', async () => {

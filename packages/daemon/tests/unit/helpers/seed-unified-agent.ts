@@ -6,7 +6,7 @@ export function seedUnifiedAgentMirror(
 ): void {
   const now = Date.now();
   db.prepare(
-    `INSERT INTO space_long_horizon_agents (
+    `INSERT OR REPLACE INTO space_long_horizon_agents (
        id, space_id, handle, display_name, template_key, status, instructions,
        tool_permissions_json, created_at, updated_at
      ) VALUES (?, ?, ?, ?, 'migration.legacy_space_agent', 'active', '', '{}', ?, ?)`

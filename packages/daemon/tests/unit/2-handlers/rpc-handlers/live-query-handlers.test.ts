@@ -645,7 +645,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
         JSON.stringify({ spaceId, taskId })
       );
       db.prepare(
-        `INSERT INTO space_agents (id, space_id, name) VALUES ('agent-reviewer', ?, 'Reviewer')`
+        `INSERT INTO space_long_horizon_agents (id, space_id, handle, display_name, status, instructions, tool_permissions_json, created_at, updated_at)
+         VALUES ('agent-reviewer', ?, 'reviewer', 'Reviewer', 'active', '', '{}', 1, 1)`
       ).run(spaceId);
       seedUnifiedAgentMirror(db, { id: 'agent-reviewer', spaceId, name: 'Reviewer' });
       db.prepare(
@@ -2788,7 +2789,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
           })
         );
         db.prepare(
-          `INSERT INTO space_agents (id, space_id, name) VALUES ('agent-merger', ?, 'PR Merger')`
+          `INSERT INTO space_long_horizon_agents (id, space_id, handle, display_name, status, instructions, tool_permissions_json, created_at, updated_at)
+         VALUES ('agent-merger', ?, 'merger', 'PR Merger', 'active', '', '{}', 1, 1)`
         ).run(spaceId);
         seedUnifiedAgentMirror(db, { id: 'agent-merger', spaceId, name: 'PR Merger' });
         sessionTaskIds.set(mergerSessionId, taskId);
@@ -3024,7 +3026,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
           JSON.stringify({ spaceId, taskId })
         );
         db.prepare(
-          `INSERT INTO space_agents (id, space_id, name) VALUES ('agent-label', ?, 'Fresh Label')`
+          `INSERT INTO space_long_horizon_agents (id, space_id, handle, display_name, status, instructions, tool_permissions_json, created_at, updated_at)
+           VALUES ('agent-label', ?, 'agent-label', 'Fresh Label', 'active', '', '{}', 1, 1)`
         ).run(spaceId);
         seedUnifiedAgentMirror(db, { id: 'agent-label', spaceId, name: 'Fresh Label' });
         insertNodeExecution({

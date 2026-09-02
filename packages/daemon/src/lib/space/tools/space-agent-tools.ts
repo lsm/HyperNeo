@@ -556,6 +556,48 @@ export interface SpaceAgentToolsConfig {
 }
 
 export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
+  const uniqueAgentDisplayName = (base: string): string => {
+    let candidate = base;
+    let counter = 1;
+    while (
+      requireLongHorizonAgentRepo()
+        .listBySpaceId(spaceId)
+        .some(
+          (existing) =>
+            existing.status !== 'archived' &&
+            (existing.displayName ?? '').trim().toLowerCase() === candidate.trim().toLowerCase()
+        )
+    ) {
+      counter += 1;
+      candidate = `${base} (${counter})`;
+    }
+    return candidate;
+  };
+
+  const ensureUniqueAgentDisplayName = (name: string, excludeId?: string): void => {
+    const target = name.trim().toLowerCase();
+    if (!target) return;
+    const unifiedConflict = requireLongHorizonAgentRepo()
+      .listBySpaceId(spaceId)
+      .find(
+        (candidate) =>
+          candidate.status !== 'archived' &&
+          candidate.id !== excludeId &&
+          (candidate.displayName ?? '').trim().toLowerCase() === target
+      );
+    if (unifiedConflict) {
+      throw new Error(`Agent name "${name}" is already used by another agent in this space`);
+    }
+    const workerConflict = config.spaceAgentManager
+      ?.listBySpaceId(spaceId)
+      .find(
+        (candidate) => candidate.id !== excludeId && candidate.name.trim().toLowerCase() === target
+      );
+    if (workerConflict) {
+      throw new Error(`Agent name "${name}" is already used by a worker agent in this space`);
+    }
+  };
+
   const {
     spaceId,
     runtime,
@@ -1400,11 +1442,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           const modelError = await validateLongHorizonModel(args.model, args.provider);
           if (modelError) return jsonResult({ success: false, error: modelError });
         }
+        ensureUniqueAgentDisplayName(args.name);
         const agent = requireLongHorizonAgentRepo().create({
           spaceId,
           handle: uniqueLongHorizonAgentHandle(args.name),
           displayName: args.name,
-          instructions: args.custom_prompt ?? args.description ?? '',
+          instructions: args.custom_prompt ?? '',
+          description: args.description,
           autonomyLevel: getCallingAgentAutonomyLevel(),
           model: args.model ?? null,
           thinkingLevel: args.thinking_level ?? null,
@@ -1462,10 +1506,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             callerCeiling == null || lhTemplate.suggestedAutonomyLevel <= callerCeiling
               ? lhTemplate.suggestedAutonomyLevel
               : callerCeiling;
+          const templateDisplayName = nameOverride
+            ? (ensureUniqueAgentDisplayName(nameOverride), nameOverride)
+            : uniqueAgentDisplayName(lhTemplate.displayName);
           const agent = repo.create({
             spaceId,
-            handle: uniqueLongHorizonAgentHandle(nameOverride ?? lhTemplate.handle),
-            displayName: nameOverride ?? lhTemplate.displayName,
+            handle: uniqueLongHorizonAgentHandle(templateDisplayName),
+            displayName: templateDisplayName,
             templateKey: lhTemplate.key,
             instructions: lhTemplate.instructions,
             autonomyLevel,
@@ -1517,10 +1564,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           const modelError = await validateLongHorizonModel(args.model, args.provider);
           if (modelError) return jsonResult({ success: false, error: modelError });
         }
+        const finalName = args.name
+          ? (ensureUniqueAgentDisplayName(name), name)
+          : uniqueAgentDisplayName(name);
         const agent = requireLongHorizonAgentRepo().create({
           spaceId,
-          handle: uniqueLongHorizonAgentHandle(name),
-          displayName: name,
+          handle: uniqueLongHorizonAgentHandle(finalName),
+          displayName: finalName,
           templateKey: template.name,
           instructions: template.customPrompt ?? template.description,
           autonomyLevel: getCallingAgentAutonomyLevel(),
@@ -1578,8 +1628,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           const modelError = await validateLongHorizonModel(effectiveModel, effectiveProvider);
           if (modelError) return jsonResult({ success: false, error: modelError });
         }
+        if (args.name !== undefined) ensureUniqueAgentDisplayName(args.name, args.agent_id);
         const agent = requireLongHorizonAgentRepo().update(args.agent_id, {
-          description: undefined,
+          description: args.description,
           modelPool: undefined,
           displayName: args.name,
           status:
@@ -1589,12 +1640,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             args.status === 'archived'
               ? args.status
               : undefined,
-          instructions:
-            args.custom_prompt !== undefined
-              ? (args.custom_prompt ?? '')
-              : args.description !== undefined
-                ? (args.description ?? '')
-                : undefined,
+          instructions: args.custom_prompt !== undefined ? (args.custom_prompt ?? '') : undefined,
           model: args.model,
           thinkingLevel: args.thinking_level,
           provider: args.provider,

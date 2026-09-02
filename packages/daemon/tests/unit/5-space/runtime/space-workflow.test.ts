@@ -7,7 +7,12 @@ import {
   WorkflowValidationError,
   WorkflowDeletionBlockedError,
 } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import type { SpaceAgentLookup } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import {
+  createSpaceAgentLookup,
+  type SpaceAgentLookup,
+} from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import type { WorkflowNodeInput } from '@hyperneo/shared';
 
 function makeDb(): BunDatabase {
@@ -1285,5 +1290,62 @@ describe('SpaceWorkflowManager', () => {
     expect(node.agents).toHaveLength(2);
     expect(node.agents![0].name).toBe('agent-old-1');
     expect(node.agents![1].name).toBe('agent-old-2');
+  });
+});
+
+describe('createSpaceAgentLookup — runtime-shaped resolution', () => {
+  test('resolves unified-native rows alone, migrated mirrors with twins, and worker-only rows', () => {
+    const db = makeDb();
+    seedSpace(db, 'space-1');
+    seedSpace(db, 'space-2');
+    const spaceAgentRepo = new SpaceAgentRepository(db);
+    const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
+
+    const dualId = 'agent-dual';
+    seedAgent(db, dualId, 'space-1', 'Dual');
+    longHorizonAgentRepo.create({
+      id: dualId,
+      spaceId: 'space-1',
+      handle: 'dual',
+      displayName: 'Dual',
+    });
+    const unifiedOnlyId = 'agent-unified-only';
+    longHorizonAgentRepo.create({
+      id: unifiedOnlyId,
+      spaceId: 'space-1',
+      handle: 'unified-only',
+      displayName: 'Unified Only',
+    });
+    const workerOnlyId = 'agent-worker-only';
+    seedAgent(db, workerOnlyId, 'space-1', 'Worker Only');
+    const crossSpaceId = 'agent-cross';
+    longHorizonAgentRepo.create({
+      id: crossSpaceId,
+      spaceId: 'space-2',
+      handle: 'cross',
+      displayName: 'Cross',
+    });
+    const orphanedMirrorId = 'agent-orphaned-mirror';
+    db.prepare(
+      `INSERT INTO space_long_horizon_agents
+         (id, space_id, handle, display_name, template_key, status, instructions, tool_permissions_json, created_at, updated_at)
+       VALUES (?, 'space-1', 'orphaned-mirror', 'Orphaned Mirror', 'migration.legacy_space_agent', 'active', '', '{}', 1, 1)`
+    ).run(orphanedMirrorId);
+
+    const lookup = createSpaceAgentLookup(spaceAgentRepo, longHorizonAgentRepo);
+
+    expect(lookup.getAgentById('space-1', dualId)).toEqual({ id: dualId, name: 'Dual' });
+    expect(lookup.getAgentById('space-1', unifiedOnlyId)).toEqual({
+      id: unifiedOnlyId,
+      name: 'Unified Only',
+    });
+    expect(lookup.getAgentById('space-1', workerOnlyId)).toEqual({
+      id: workerOnlyId,
+      name: 'Worker Only',
+    });
+    expect(lookup.getAgentById('space-1', crossSpaceId)).toBeNull();
+    expect(lookup.getAgentById('space-1', orphanedMirrorId)).toBeNull();
+    expect(lookup.getAgentById('space-1', 'agent-missing')).toBeNull();
+    db.close();
   });
 });

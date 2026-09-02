@@ -6,6 +6,7 @@ import type {
   McpServerConfig,
   EvolutionLesson,
   Space,
+  SpaceLongHorizonAgent,
   SpaceWorkerAgent,
   SpaceGoal,
   SpaceTask,
@@ -78,6 +79,24 @@ export interface SlotOverrides {
   resolutionContext?: SlotResolutionContext;
 }
 
+export type UnifiedSpaceAgent = SpaceWorkerAgent | SpaceLongHorizonAgent;
+
+function unifiedAgentDisplayName(agent: UnifiedSpaceAgent): string {
+  return 'displayName' in agent ? agent.displayName : agent.name;
+}
+
+function unifiedAgentInstructions(agent: UnifiedSpaceAgent): string {
+  return 'customPrompt' in agent ? (agent.customPrompt ?? '') : agent.instructions;
+}
+
+function unifiedAgentTools(agent: UnifiedSpaceAgent): string[] {
+  if (!('toolPermissions' in agent)) return agent.tools ?? [];
+  const tools = agent.toolPermissions.tools;
+  return Array.isArray(tools)
+    ? tools.filter((tool): tool is string => typeof tool === 'string')
+    : [];
+}
+
 export function expandPrompt(
   base: string | null | undefined,
   expansion: string | null | undefined
@@ -90,7 +109,7 @@ export function expandPrompt(
 }
 
 export interface CustomAgentConfig {
-  customAgent: SpaceWorkerAgent;
+  customAgent: UnifiedSpaceAgent;
   task: SpaceTask;
   workflowRun: SpaceWorkflowRun | null;
   workflow?: SpaceWorkflow | null;
@@ -108,17 +127,17 @@ export interface CustomAgentConfig {
 }
 
 export function buildCustomAgentSystemPrompt(
-  customAgent: SpaceWorkerAgent,
+  customAgent: UnifiedSpaceAgent,
   slotOverrides?: SlotOverrides
 ): string {
   return resolveCustomAgentPrompt(customAgent, slotOverrides).value;
 }
 
 export function resolveCustomAgentPrompt(
-  customAgent: SpaceWorkerAgent,
+  customAgent: UnifiedSpaceAgent,
   slotOverrides?: SlotOverrides
 ): ResolvedAgentPrompt {
-  const basePrompt = customAgent.customPrompt?.trim() ?? '';
+  const basePrompt = unifiedAgentInstructions(customAgent).trim();
   const slotPrompt = slotOverrides?.customPrompt?.trim() ?? '';
   const replace = slotOverrides?.replaceAgentPrompt === true;
   let value: string;
@@ -139,7 +158,7 @@ export function resolveCustomAgentPrompt(
 
 function buildPromptProvenance(
   resolved: ResolvedAgentPrompt,
-  customAgent: SpaceWorkerAgent,
+  customAgent: UnifiedSpaceAgent,
   slotOverrides?: SlotOverrides
 ): PromptProvenanceInit {
   const ctx = slotOverrides?.resolutionContext;
@@ -147,7 +166,7 @@ function buildPromptProvenance(
     source: resolved.source,
     hash: resolved.hash,
     agentId: ctx?.agentId ?? customAgent.id,
-    agentName: ctx?.agentName ?? customAgent.name,
+    agentName: ctx?.agentName ?? unifiedAgentDisplayName(customAgent),
     workflowRunId: ctx?.workflowRunId,
     workflowId: ctx?.workflowId,
     nodeId: ctx?.nodeId,
@@ -431,7 +450,7 @@ function describeChannelTarget(channel: WorkflowChannel, target: string): string
 export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionInit {
   const { customAgent, task, space, sessionId, workspacePath, slotOverrides } = config;
 
-  const customTools = customAgent.tools;
+  const customTools = unifiedAgentTools(customAgent);
   const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
   const customAgentInvocationTools = customTools?.filter((tool) =>
     ['Task', 'TaskOutput', 'TaskStop'].includes(tool)
@@ -447,7 +466,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
   };
   const model =
     slotOverrides?.model ?? customAgent.model ?? space.defaultModel ?? DEFAULT_CUSTOM_AGENT_MODEL;
-  const thinkingLevel = slotOverrides?.thinkingLevel ?? customAgent.thinkingLevel;
+  const thinkingLevel = slotOverrides?.thinkingLevel ?? customAgent.thinkingLevel ?? undefined;
   const provider = slotOverrides?.model
     ? (slotOverrides?.provider ?? inferProviderForModel(model))
     : (customAgent.provider ?? inferProviderForModel(model));

@@ -17,6 +17,11 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
+import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
+import {
+  coordinatorLongHorizonAgentId,
+  type SpaceLongHorizonAgentRepository,
+} from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import { exportBundle, validateExportBundle, normalizeOverride } from '../space/export-format.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug.ts';
@@ -64,10 +69,65 @@ async function requireSpace(spaceManager: SpaceManager, spaceId: string): Promis
   return space;
 }
 
+export function longHorizonAgentToWorkerView(agent: SpaceLongHorizonAgent): SpaceWorkerAgent {
+  const toolEntries = agent.toolPermissions.tools;
+  return {
+    id: agent.id,
+    spaceId: agent.spaceId,
+    name: agent.displayName,
+    handle: agent.handle,
+    description: agent.description,
+    model: agent.model ?? undefined,
+    thinkingLevel: agent.thinkingLevel ?? undefined,
+    provider: agent.provider ?? undefined,
+    customPrompt: agent.instructions,
+    tools: Array.isArray(toolEntries)
+      ? toolEntries.filter((tool): tool is string => typeof tool === 'string')
+      : undefined,
+    settingSources: agent.settingSources ?? undefined,
+    modelPool: agent.modelPool,
+    createdAt: agent.createdAt,
+    updatedAt: agent.updatedAt,
+  };
+}
+
+function unifiedExportAgents(
+  longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
+  spaceId: string
+): SpaceWorkerAgent[] {
+  const coordinatorByHandle = longHorizonAgentRepo.getCoordinator(spaceId);
+  return longHorizonAgentRepo
+    .listBySpaceId(spaceId)
+    .filter((a) => a.id !== coordinatorLongHorizonAgentId(spaceId))
+    .filter((a) => !coordinatorByHandle || a.id !== coordinatorByHandle.id)
+    .filter((a) => a.status !== 'archived')
+    .map(longHorizonAgentToWorkerView);
+}
+
+function assertExportableAgentNames(agents: Array<{ id: string; name: string }>): void {
+  const idByName = new Map<string, string>();
+  for (const agent of agents) {
+    const key = agent.name.toLowerCase();
+    const existingId = idByName.get(key);
+    if (existingId && existingId !== agent.id) {
+      throw new Error(
+        `Cannot export: duplicate agent name "${agent.name}" in this space. ` +
+          `Rename one of the agents and retry.`
+      );
+    }
+    idByName.set(key, agent.id);
+  }
+}
+
+function nameKey(name: string): string {
+  return name.trim().toLowerCase();
+}
+
 function generateUniqueName(baseName: string, existingNames: Set<string>): string {
-  if (!existingNames.has(baseName)) return baseName;
+  const normalized = new Set([...existingNames].map((n) => nameKey(n)));
+  if (!normalized.has(nameKey(baseName))) return baseName;
   let counter = 1;
-  while (counter < 10_000 && existingNames.has(`${baseName} (${counter})`)) counter++;
+  while (counter < 10_000 && normalized.has(nameKey(`${baseName} (${counter})`))) counter++;
   if (counter >= 10_000) {
     throw new Error(`Cannot generate a unique name for "${baseName}": too many existing variants`);
   }
@@ -165,6 +225,13 @@ export function buildWorkflowCreateParams(
 ): { params: CreateSpaceWorkflowParams; nodeNameToId: Map<string, string>; warnings: string[] } {
   const warnings: string[] = [];
 
+  const normalizedImportedAgentNameToId = new Map(
+    [...importedAgentNameToId].map(([n, id]) => [nameKey(n), id])
+  );
+  const normalizedExistingAgentNameToId = new Map(
+    [...existingAgentNameToId].map(([n, id]) => [nameKey(n), id])
+  );
+
   const nodeNameToId = new Map<string, string>();
   for (const node of exported.nodes) {
     nodeNameToId.set(node.name, generateUUID());
@@ -173,7 +240,9 @@ export function buildWorkflowCreateParams(
   const nodes: WorkflowNodeInput[] = exported.nodes.map((exportedNode) => {
     const agents = exportedNode.agents.map((a) => {
       const agentId =
-        importedAgentNameToId.get(a.agentRef) ?? existingAgentNameToId.get(a.agentRef) ?? null;
+        normalizedImportedAgentNameToId.get(nameKey(a.agentRef)) ??
+        normalizedExistingAgentNameToId.get(nameKey(a.agentRef)) ??
+        null;
       if (!agentId) {
         warnings.push(`node "${exportedNode.name}" references unknown agent "${a.agentRef}"`);
       }
@@ -270,7 +339,10 @@ function validateWorkflowForPreview(
 
   for (const node of exported.nodes) {
     for (const a of node.agents) {
-      if (!importedAgentNames.has(a.agentRef) && !existingAgentNameToId.has(a.agentRef)) {
+      if (
+        !importedAgentNames.has(nameKey(a.agentRef)) &&
+        !existingAgentNameToId.has(nameKey(a.agentRef))
+      ) {
         errors.push(
           `node "${node.name}" references unknown agent "${a.agentRef}" — not found in bundle or target space`
         );
@@ -340,6 +412,7 @@ export function setupSpaceExportImportHandlers(
   messageHub: MessageHub,
   spaceManager: SpaceManager,
   agentRepo: SpaceAgentRepository,
+  longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
   workflowRepo: SpaceWorkflowRepository,
   workflowManager: SpaceWorkflowManager,
   db: BunDatabase,
@@ -352,11 +425,12 @@ export function setupSpaceExportImportHandlers(
     const params = data as { spaceId: string; agentIds?: string[] };
     const space = await requireSpace(spaceManager, params.spaceId);
 
-    let agents: SpaceWorkerAgent[] = agentRepo.getBySpaceId(params.spaceId);
+    let agents: SpaceWorkerAgent[] = unifiedExportAgents(longHorizonAgentRepo, params.spaceId);
     if (params.agentIds?.length) {
       const idSet = new Set(params.agentIds);
       agents = agents.filter((a) => idSet.has(a.id));
     }
+    assertExportableAgentNames(agents);
 
     const bundle = exportBundle(agents, [], `${space.name} agents`, {
       exportedFrom: params.spaceId,
@@ -374,7 +448,49 @@ export function setupSpaceExportImportHandlers(
       workflows = workflows.filter((w) => idSet.has(w.id));
     }
 
-    const allAgents = agentRepo.getBySpaceId(params.spaceId);
+    const allAgents = unifiedExportAgents(longHorizonAgentRepo, params.spaceId);
+
+    const referencedAgentIds = new Set<string>();
+    for (const wf of workflows) {
+      for (const node of wf.nodes ?? []) {
+        for (const a of node.agents ?? []) referencedAgentIds.add(a.agentId);
+      }
+    }
+    const liveById = new Map(allAgents.map((a) => [a.id, a]));
+    const allSpaceAgents = longHorizonAgentRepo.listBySpaceId(params.spaceId);
+    const archivedReferenced = [...referencedAgentIds].filter((id) =>
+      allSpaceAgents.some((a) => a.id === id && a.status === 'archived')
+    );
+    if (archivedReferenced.length > 0) {
+      throw new Error(
+        `Cannot export workflows: referenced agent(s) are archived in this space: ` +
+          archivedReferenced.join(', ') +
+          `. Archive or unarchive the workflow(s) referencing them first.`
+      );
+    }
+    const unresolved = [...referencedAgentIds].filter(
+      (id) => !liveById.has(id) && !allSpaceAgents.some((a) => a.id === id)
+    );
+    if (unresolved.length > 0) {
+      throw new Error(
+        `Cannot export workflows: referenced agent(s) missing in this space: ` +
+          unresolved.join(', ')
+      );
+    }
+    for (const agentId of referencedAgentIds) {
+      const liveMatch = liveById.get(agentId);
+      const lhaMatch = allSpaceAgents.find((a) => a.id === agentId);
+      if (!liveMatch && !lhaMatch) continue;
+      const referencedName = (liveMatch?.name ?? lhaMatch?.displayName ?? '').toLowerCase();
+      if (!referencedName) continue;
+      const clashes = allAgents.filter((a) => a.name.toLowerCase() === referencedName);
+      if (clashes.length > 1) {
+        throw new Error(
+          `Cannot export: agent name "${liveMatch?.name ?? lhaMatch?.displayName}" is ambiguous in this space ` +
+            `(matched ${clashes.length} agents). Rename one of them and retry.`
+        );
+      }
+    }
 
     const full = exportBundle(allAgents, workflows, `${space.name} workflows`, {
       exportedFrom: params.spaceId,
@@ -399,16 +515,33 @@ export function setupSpaceExportImportHandlers(
     const params = data as { spaceId: string; agentIds?: string[]; workflowIds?: string[] };
     const space = await requireSpace(spaceManager, params.spaceId);
 
-    let agents = agentRepo.getBySpaceId(params.spaceId);
+    let agents = unifiedExportAgents(longHorizonAgentRepo, params.spaceId);
     if (params.agentIds?.length) {
       const idSet = new Set(params.agentIds);
       agents = agents.filter((a) => idSet.has(a.id));
     }
+    assertExportableAgentNames(agents);
 
     let workflows = workflowRepo.listWorkflows(params.spaceId);
     if (params.workflowIds?.length) {
       const idSet = new Set(params.workflowIds);
       workflows = workflows.filter((w) => idSet.has(w.id));
+    }
+
+    const referencedAgentIds = new Set<string>();
+    for (const wf of workflows) {
+      for (const node of wf.nodes ?? []) {
+        for (const a of node.agents ?? []) referencedAgentIds.add(a.agentId);
+      }
+    }
+    const exportedIdSet = new Set(agents.map((a) => a.id));
+    const missingRefs = [...referencedAgentIds].filter((id) => !exportedIdSet.has(id));
+    if (missingRefs.length > 0) {
+      throw new Error(
+        `Cannot export bundle: workflow(s) reference agent(s) not included in this export: ` +
+          missingRefs.join(', ') +
+          `. Include those agents or exclude the workflows referencing them.`
+      );
     }
 
     const bundle = exportBundle(agents, workflows, `${space.name} bundle`, {
@@ -432,17 +565,31 @@ export function setupSpaceExportImportHandlers(
     }
     const bundle = validation.value;
 
-    const existingAgents = agentRepo.getBySpaceId(params.spaceId);
+    const workerAgents = agentRepo.getBySpaceId(params.spaceId);
+    const coordinatorByHandle = longHorizonAgentRepo.getCoordinator(params.spaceId);
+    const unifiedOnlyAgents = longHorizonAgentRepo
+      .listBySpaceId(params.spaceId)
+      .filter(
+        (a) =>
+          a.status !== 'archived' &&
+          a.id !== coordinatorLongHorizonAgentId(params.spaceId) &&
+          (!coordinatorByHandle || a.id !== coordinatorByHandle.id)
+      )
+      .filter((a) => !workerAgents.some((w) => w.id === a.id))
+      .map(longHorizonAgentToWorkerView);
+    const existingAgents = [...workerAgents, ...unifiedOnlyAgents];
     const existingWorkflows = workflowRepo.listWorkflows(params.spaceId);
 
-    const existingAgentByName = new Map(existingAgents.map((a) => [a.name, a]));
+    const existingAgentByName = new Map(existingAgents.map((a) => [nameKey(a.name), a]));
     const existingWorkflowByName = new Map(existingWorkflows.map((w) => [w.name, w]));
-    const existingAgentNameToId = new Map(existingAgents.map((a) => [a.name, a.id]));
+    const existingAgentNameToId = new Map(existingAgents.map((a) => [nameKey(a.name), a.id]));
 
-    const agentNameToRole = new Map<string, string>(existingAgents.map((a) => [a.name, a.name]));
+    const agentNameToRole = new Map<string, string>(
+      existingAgents.map((a) => [nameKey(a.name), a.name])
+    );
 
     const agentPreviews: ImportPreview[] = bundle.agents.map((a) => {
-      const existing = existingAgentByName.get(a.name);
+      const existing = existingAgentByName.get(nameKey(a.name));
       if (existing) return { name: a.name, action: 'conflict', existingId: existing.id };
       return { name: a.name, action: 'create' };
     });
@@ -450,7 +597,7 @@ export function setupSpaceExportImportHandlers(
     const workflowPreviews: ImportPreview[] = [];
     const validationErrors: string[] = [];
 
-    const importedAgentNames = new Set(bundle.agents.map((a) => a.name));
+    const importedAgentNames = new Set(bundle.agents.map((a) => nameKey(a.name)));
 
     for (const wf of bundle.workflows) {
       const existing = existingWorkflowByName.get(wf.name);
@@ -497,15 +644,30 @@ export function setupSpaceExportImportHandlers(
     const providerClearedAgentIds: string[] = [];
     const executeImport = db.transaction(
       (spaceId: string, res: ImportConflictResolution): ImportExecuteResult => {
-        const existingAgents = agentRepo.getBySpaceId(spaceId);
+        const workerAgents = agentRepo.getBySpaceId(spaceId);
+        const coordinatorByHandle = longHorizonAgentRepo.getCoordinator(spaceId);
+        const unifiedOnlyAgents = longHorizonAgentRepo
+          .listBySpaceId(spaceId)
+          .filter(
+            (a) =>
+              a.status !== 'archived' &&
+              a.id !== coordinatorLongHorizonAgentId(spaceId) &&
+              (!coordinatorByHandle || a.id !== coordinatorByHandle.id)
+          )
+          .filter((a) => !workerAgents.some((w) => w.id === a.id))
+          .map(longHorizonAgentToWorkerView);
+        const existingAgents = [...workerAgents, ...unifiedOnlyAgents];
         const existingWorkflows = workflowRepo.listWorkflows(spaceId);
 
-        const existingAgentByName = new Map(existingAgents.map((a) => [a.name, a]));
+        const existingAgentByName = new Map(existingAgents.map((a) => [nameKey(a.name), a]));
         const existingWorkflowByName = new Map(existingWorkflows.map((w) => [w.name, w]));
-        const existingAgentNameToId = new Map(existingAgents.map((a) => [a.name, a.id]));
+        const existingAgentNameToId = new Map(existingAgents.map((a) => [nameKey(a.name), a.id]));
 
-        const usedAgentNames = new Set(existingAgents.map((a) => a.name));
-        const usedAgentHandles = new Set(existingAgents.map((a) => a.handle).filter(Boolean));
+        const usedAgentNames = new Set(existingAgents.map((a) => nameKey(a.name)));
+        const usedAgentHandles = new Set<string>([
+          ...existingAgents.map((a) => a.handle).filter(Boolean),
+          ...longHorizonAgentRepo.listBySpaceId(spaceId).map((a) => a.handle),
+        ]);
         const usedWorkflowNames = new Set(existingWorkflows.map((w) => w.name));
         const usedWorkflowHandles = new Set(
           existingWorkflows.map((w) => w.handle).filter((h): h is string => !!h)
@@ -516,13 +678,35 @@ export function setupSpaceExportImportHandlers(
         const fallbackReplaceHandleByName = new Map<string, string>();
         const fallbackBaseHandles = new Set<string>();
         for (const exportedAgent of bundle.agents) {
-          const existing = existingAgentByName.get(exportedAgent.name);
+          const existing = existingAgentByName.get(nameKey(exportedAgent.name));
           if (!existing) continue;
           const strategy: ConflictResolutionStrategy = res.agents?.[exportedAgent.name] ?? 'skip';
           if (strategy !== 'replace') continue;
           replacedAgentByName.set(exportedAgent.name, existing);
           usedAgentHandles.delete(existing.handle);
           fallbackBaseHandles.add(existing.handle);
+        }
+        if (replacedAgentByName.size > 0) {
+          const now = Date.now();
+          const clearAgentHandle = db.prepare(
+            `UPDATE space_agents SET handle = NULL, updated_at = ? WHERE id = ?`
+          );
+          const parkAgentHandle = db.prepare(
+            `UPDATE space_long_horizon_agents SET handle = ?, updated_at = ? WHERE id = ?`
+          );
+          for (const agent of replacedAgentByName.values()) {
+            clearAgentHandle.run(now, agent.id);
+            const twin = longHorizonAgentRepo.getById(agent.id);
+            if (!twin) continue;
+            let parked = `${twin.handle}-${agent.id}`;
+            let holder = longHorizonAgentRepo.getByHandle(spaceId, parked);
+            while (holder && holder.id !== agent.id) {
+              parked = `${parked}-2`;
+              holder = longHorizonAgentRepo.getByHandle(spaceId, parked);
+            }
+            parkAgentHandle.run(parked, now, agent.id);
+            usedAgentHandles.add(parked);
+          }
         }
         for (const exportedAgent of bundle.agents) {
           const existing = replacedAgentByName.get(exportedAgent.name);
@@ -541,35 +725,13 @@ export function setupSpaceExportImportHandlers(
           fallbackReplaceHandleByName.set(exportedAgent.name, fallbackHandle);
           usedAgentHandles.add(fallbackHandle);
         }
-        if (replacedAgentByName.size > 0) {
-          const now = Date.now();
-          const clearAgentHandle = db.prepare(
-            `UPDATE space_agents SET handle = NULL, updated_at = ? WHERE id = ?`
-          );
-          const hasUnifiedTable = !!db
-            .prepare(
-              `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_long_horizon_agents'`
-            )
-            .get();
-          const reserveMirrorHandle = hasUnifiedTable
-            ? db.prepare(
-                `UPDATE space_long_horizon_agents
-                 SET handle = 'import-swap:' || id, updated_at = ?
-                 WHERE id = ? AND template_key = 'migration.legacy_space_agent'`
-              )
-            : null;
-          for (const agent of replacedAgentByName.values()) {
-            clearAgentHandle.run(now, agent.id);
-            reserveMirrorHandle?.run(now, agent.id);
-          }
-        }
 
         const importedAgentNameToId = new Map<string, string>();
         const agentResults: ImportedItem[] = [];
         const allWarnings: string[] = [];
 
         for (const exportedAgent of bundle.agents) {
-          const existing = existingAgentByName.get(exportedAgent.name);
+          const existing = existingAgentByName.get(nameKey(exportedAgent.name));
 
           if (!existing) {
             const createParams = buildAgentCreateParams(
@@ -585,9 +747,9 @@ export function setupSpaceExportImportHandlers(
               allWarnings
             );
             const created = agentRepo.create(createParams);
-            usedAgentNames.add(exportedAgent.name);
+            usedAgentNames.add(nameKey(exportedAgent.name));
             usedAgentHandles.add(created.handle);
-            importedAgentNameToId.set(exportedAgent.name, created.id);
+            importedAgentNameToId.set(nameKey(exportedAgent.name), created.id);
             agentResults.push({ name: exportedAgent.name, id: created.id, action: 'created' });
             continue;
           }
@@ -595,7 +757,8 @@ export function setupSpaceExportImportHandlers(
           const strategy: ConflictResolutionStrategy = res.agents?.[exportedAgent.name] ?? 'skip';
 
           if (strategy === 'skip') {
-            importedAgentNameToId.set(exportedAgent.name, existing.id);
+            importedAgentNameToId.set(nameKey(exportedAgent.name), existing.id);
+
             agentResults.push({ name: exportedAgent.name, id: existing.id, action: 'skipped' });
           } else if (strategy === 'replace') {
             const replaceParts = [exportedAgent.systemPrompt, exportedAgent.instructions].filter(
@@ -624,10 +787,27 @@ export function setupSpaceExportImportHandlers(
               allWarnings,
               preservedHandle
             );
-            const updated = agentRepo.update(existing.id, updateParams);
+            const unifiedOnly = !workerAgents.some((w) => w.id === existing.id);
+            let updated = agentRepo.update(existing.id, updateParams);
+            if (!updated && unifiedOnly) {
+              const unified = longHorizonAgentRepo.getById(existing.id);
+              if (unified) {
+                longHorizonAgentRepo.update(existing.id, {
+                  displayName: exportedAgent.name,
+                  description: exportedAgent.description ?? null,
+                  model: exportedAgent.model ?? null,
+                  thinkingLevel: (exportedAgent.thinkingLevel ??
+                    null) as SpaceLongHorizonAgent['thinkingLevel'],
+                  provider: exportedAgent.provider ?? null,
+                  instructions: replaceParts.length > 0 ? replaceParts.join('\n\n') : '',
+                  settingSources: exportedAgent.settingSources ?? null,
+                  modelPool: exportedAgent.modelPool ?? null,
+                });
+              }
+            }
             const id = updated?.id ?? existing.id;
             if (updateParams.provider === null) providerClearedAgentIds.push(id);
-            importedAgentNameToId.set(exportedAgent.name, id);
+            importedAgentNameToId.set(nameKey(exportedAgent.name), id);
             agentResults.push({ name: exportedAgent.name, id, action: 'replaced' });
           } else {
             const finalName = generateUniqueName(exportedAgent.name, usedAgentNames);
@@ -639,9 +819,9 @@ export function setupSpaceExportImportHandlers(
             );
             warnOnAgentHandleRewrite(exportedAgent, finalName, usedAgentHandles, allWarnings);
             const created = agentRepo.create(createParams);
-            usedAgentNames.add(finalName);
+            usedAgentNames.add(nameKey(finalName));
             usedAgentHandles.add(created.handle);
-            importedAgentNameToId.set(exportedAgent.name, created.id);
+            importedAgentNameToId.set(nameKey(exportedAgent.name), created.id);
             agentResults.push({ name: finalName, id: created.id, action: 'renamed' });
           }
         }

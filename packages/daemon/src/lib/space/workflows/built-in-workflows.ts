@@ -2625,7 +2625,7 @@ export function seedBuiltInWorkflows(
     const agentId = resolveAgentId(agentName);
     if (!agentId) {
       throw new Error(
-        `seedBuiltInWorkflows: no SpaceWorkerAgent found with name '${agentName}' in space '${spaceId}'. ` +
+        `seedBuiltInWorkflows: no SpaceLongHorizonAgent found with name '${agentName}' in space '${spaceId}'. ` +
           `Preset agents must be seeded before calling seedBuiltInWorkflows.`
       );
     }

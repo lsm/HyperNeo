@@ -18,13 +18,12 @@ import type {
 } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
-import type { SpaceAgentManager } from '../space/managers/space-agent-manager.ts';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import type { SessionManager } from '../session-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
-import { seedPresetAgents } from '../space/agents/seed-agents.ts';
+import { seedUnifiedSpaceAgents } from '../space/agents/seed-agents.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows.ts';
 import { Logger } from '../logger.ts';
@@ -145,7 +144,7 @@ function toSummaryTask(task: SpaceTask): SummarySpaceTask {
 }
 
 type SetupSpaceHandlersOptions = {
-  longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
+  longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
 };
 
 export function setupSpaceHandlers(
@@ -154,12 +153,12 @@ export function setupSpaceHandlers(
   taskRepo: SpaceTaskRepository,
   workflowRunRepo: SpaceWorkflowRunRepository,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
-  spaceAgentManager: SpaceAgentManager,
   spaceWorkflowManager: SpaceWorkflowManager,
   sessionManager?: SessionManager,
   spaceRuntimeService?: SpaceRuntimeService,
-  options: SetupSpaceHandlersOptions = {}
+  options?: SetupSpaceHandlersOptions
 ): void {
+  const longHorizonAgentRepo = options?.longHorizonAgentRepo;
   messageHub.onRequest('space.create', async (data) => {
     const params = data as CreateSpaceParams;
 
@@ -191,12 +190,16 @@ export function setupSpaceHandlers(
       }
     }
 
+    if (!longHorizonAgentRepo) {
+      throw new Error('longHorizonAgentRepo is required to create a space');
+    }
+
     const space = await spaceManager.createSpace(params);
     const seedWarnings: string[] = [];
-    options.longHorizonAgentRepo?.ensureCoordinator(space.id);
+    longHorizonAgentRepo.ensureCoordinator(space.id);
 
     try {
-      const agentSeedResult = await seedPresetAgents(space.id, spaceAgentManager);
+      const agentSeedResult = seedUnifiedSpaceAgents(space.id, longHorizonAgentRepo);
       if (agentSeedResult.errors.length > 0) {
         const failedNames = agentSeedResult.errors.map((e) => e.name).join(', ');
         log.warn(
@@ -211,11 +214,11 @@ export function setupSpaceHandlers(
     }
 
     try {
-      const agents = spaceAgentManager.listBySpaceId(space.id);
+      const agents = longHorizonAgentRepo.listBySpaceId(space.id);
       const workflowSeedResult = seedBuiltInWorkflows(
         space.id,
         spaceWorkflowManager,
-        (name) => agents.find((a) => a.name.toLowerCase() === name.toLowerCase())?.id
+        (name) => agents.find((a) => a.displayName.toLowerCase() === name.toLowerCase())?.id
       );
       if (workflowSeedResult.errors.length > 0) {
         const failedNames = workflowSeedResult.errors.map((e) => e.name).join(', ');

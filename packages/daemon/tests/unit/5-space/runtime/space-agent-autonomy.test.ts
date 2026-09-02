@@ -110,7 +110,6 @@ function makeHandlers(ctx: TestCtx) {
     nodeExecutionRepo: ctx.nodeExecutionRepo,
     workflowRunRepo: ctx.workflowRunRepo,
     taskManager: ctx.taskManager,
-    spaceAgentManager: ctx.agentManager,
   });
 }
 

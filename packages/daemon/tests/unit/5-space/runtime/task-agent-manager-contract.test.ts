@@ -74,6 +74,53 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
     );
   });
 
+  describe('non-active agent spawn gates', () => {
+    function makeManagerWithAgent(agent: { id: string; name: string; status: string } | null) {
+      const db = new BunDatabase(':memory:');
+      return new TaskAgentManager({
+        db: { getDatabase: () => db },
+        internalEventBus: { subscribe: () => () => {} },
+        spaceAgentManager: { getById: mock(() => agent) },
+      } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
+    }
+
+    function spawnDeps(manager: TaskAgentManager) {
+      return (
+        manager as unknown as Record<
+          string,
+          (state: unknown) => Record<string, (request: unknown) => Promise<unknown>>
+        >
+      ).buildSpawnExecutionFlowDeps({ reservationHeld: false, reservedExecution: false });
+    }
+
+    test('createSpawnedSession refuses to spawn for a paused agent', async () => {
+      const manager = makeManagerWithAgent({
+        id: 'agent-paused',
+        name: 'Paused Agent',
+        status: 'paused',
+      });
+
+      await expect(
+        spawnDeps(manager).createSpawnedSession({ slot: { agentId: 'agent-paused' } })
+      ).rejects.toThrow('"Paused Agent" is paused; refusing to spawn its workflow sessions');
+    });
+
+    test('buildKickoffMessage refuses to run for a disabled agent', async () => {
+      const manager = makeManagerWithAgent({
+        id: 'agent-disabled',
+        name: 'Disabled Agent',
+        status: 'disabled',
+      });
+
+      await expect(
+        spawnDeps(manager).buildKickoffMessage({
+          slot: { agentId: 'agent-disabled' },
+          task: { goalId: null },
+        })
+      ).rejects.toThrow('"Disabled Agent" is disabled; refusing to run its workflow sessions');
+    });
+  });
+
   describe('listLiveSessionTaskIdsForSpace', () => {
     test('enumerates live sub-session task ids by space-embedded session id prefix', () => {
       const manager = makeManager();

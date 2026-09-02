@@ -1,6 +1,7 @@
 import type { SpaceAgentManager, SpaceAgentResult } from '../managers/space-agent-manager.ts';
 import { computeAgentTemplateHash } from './agent-template-hash.ts';
-import type { SpaceWorkerAgent } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent, SpaceWorkerAgent } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import {
   QA_SYSTEM_CONTRACT,
   REVIEWER_SYSTEM_CONTRACT,
@@ -189,6 +190,7 @@ export function isPristineRetiredPrMergerRow(agent: SpaceWorkerAgent): boolean {
 export interface RetireRemovedPresetAgentsDeps {
   agentManager: Pick<SpaceAgentManager, 'listBySpaceId' | 'delete'>;
   referencedAgentIds: ReadonlySet<string>;
+  shouldRetireUnifiedTwin?: (agentId: string) => boolean;
 }
 
 export function retireRemovedPresetAgents(
@@ -199,6 +201,7 @@ export function retireRemovedPresetAgents(
   for (const agent of deps.agentManager.listBySpaceId(spaceId)) {
     if (!isPristineRetiredPrMergerRow(agent)) continue;
     if (deps.referencedAgentIds.has(agent.id)) continue;
+    if (deps.shouldRetireUnifiedTwin && !deps.shouldRetireUnifiedTwin(agent.id)) continue;
     try {
       deps.agentManager.delete(agent.id);
       retired.push(agent.name);
@@ -237,6 +240,39 @@ export async function seedPresetAgents(
       seeded.push(result.value);
     } else {
       errors.push({ name: preset.name, error: result.error });
+    }
+  }
+
+  return { seeded, errors };
+}
+
+export interface SeedUnifiedSpaceAgentsResult {
+  seeded: SpaceLongHorizonAgent[];
+  errors: Array<{ name: string; error: string }>;
+}
+
+export function seedUnifiedSpaceAgents(
+  spaceId: string,
+  longHorizonAgentRepo: SpaceLongHorizonAgentRepository
+): SeedUnifiedSpaceAgentsResult {
+  const seeded: SpaceLongHorizonAgent[] = [];
+  const errors: Array<{ name: string; error: string }> = [];
+
+  for (const preset of PRESET_AGENTS) {
+    try {
+      const agent = longHorizonAgentRepo.create({
+        spaceId,
+        handle: preset.handle,
+        displayName: preset.name,
+        description: preset.description,
+        instructions: preset.customPrompt,
+        toolPermissions: preset.tools.length > 0 ? { tools: [...preset.tools] } : {},
+        thinkingLevel: preset.thinkingLevel ?? null,
+      });
+
+      seeded.push(agent);
+    } catch (err) {
+      errors.push({ name: preset.name, error: err instanceof Error ? err.message : String(err) });
     }
   }
 

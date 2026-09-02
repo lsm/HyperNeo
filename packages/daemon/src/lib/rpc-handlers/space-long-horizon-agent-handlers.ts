@@ -29,6 +29,36 @@ function validateLongHorizonSubscriptionPattern(
   return pattern;
 }
 
+function ensureUnifiedDisplayNameAvailable(
+  repo: SpaceLongHorizonAgentRepository,
+  spaceAgentManager: SpaceAgentManager | undefined,
+  spaceId: string,
+  displayName: string,
+  excludeId?: string
+): void {
+  const target = displayName.trim().toLowerCase();
+  if (!target) return;
+  const unifiedConflict = repo
+    .listBySpaceId(spaceId)
+    .find(
+      (a) =>
+        a.status !== 'archived' &&
+        a.id !== excludeId &&
+        (a.displayName ?? '').trim().toLowerCase() === target
+    );
+  if (unifiedConflict) {
+    throw new Error(
+      `Agent name "${displayName}" is already used by another unified agent in this space`
+    );
+  }
+  const workerConflict = spaceAgentManager
+    ?.listBySpaceId(spaceId)
+    .find((a) => a.id !== excludeId && (a.name ?? '').trim().toLowerCase() === target);
+  if (workerConflict) {
+    throw new Error(`Agent name "${displayName}" is already used by a worker agent in this space`);
+  }
+}
+
 function resolveLongHorizonAgentCreateHandle(
   repo: SpaceLongHorizonAgentRepository,
   spaceAgentManager: SpaceAgentManager | undefined,
@@ -238,6 +268,13 @@ export function setupSpaceLongHorizonAgentHandlers(
       params.id ?? '',
       params.handle
     );
+    ensureUnifiedDisplayNameAvailable(
+      repo,
+      spaceAgentManager,
+      params.spaceId,
+      params.displayName ?? handle,
+      params.id
+    );
     const agent = repo.create({
       id: params.id,
       spaceId: params.spaceId,
@@ -291,6 +328,15 @@ export function setupSpaceLongHorizonAgentHandlers(
             params.agentId,
             params.handle
           );
+    if (params.displayName !== undefined) {
+      ensureUnifiedDisplayNameAvailable(
+        repo,
+        spaceAgentManager,
+        existing.spaceId,
+        params.displayName,
+        params.agentId
+      );
+    }
     const agent = repo.update(params.agentId, {
       handle,
       displayName: params.displayName,

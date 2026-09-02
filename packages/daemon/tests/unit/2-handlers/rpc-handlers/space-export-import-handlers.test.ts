@@ -2,7 +2,10 @@ import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { MessageHub, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { createLongHorizonAgentTables } from '../../../../src/storage/schema/long-horizon-agents';
+import { workerAgentToLongHorizonParams } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceAgentLookup } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
@@ -17,8 +20,16 @@ import {
 } from '../../../../src/lib/rpc-handlers/space-export-import-handlers';
 import { exportBundle, validateExportBundle } from '../../../../src/lib/space/export-format';
 
+function makeSeedAgent(
+  agentRepo: SpaceAgentRepository,
+  _longHorizonAgentRepo: SpaceLongHorizonAgentRepository
+): (params: Parameters<SpaceAgentRepository['create']>[0]) => SpaceWorkerAgent {
+  return (params) => agentRepo.create(params);
+}
+
 function createSchema(db: Database): void {
   db.exec('PRAGMA foreign_keys = ON');
+  createLongHorizonAgentTables(db);
 
   db.exec(`
 		CREATE TABLE spaces (
@@ -224,6 +235,8 @@ const OTHER_SPACE_ID = 'space-2';
 describe('Space Export/Import RPC Handlers', () => {
   let db: Database;
   let agentRepo: SpaceAgentRepository;
+  let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
+  let seedAgent: (params: Parameters<SpaceAgentRepository['create']>[0]) => SpaceWorkerAgent;
   let workflowRepo: SpaceWorkflowRepository;
   let workflowManager: SpaceWorkflowManager;
   let spaceManager: SpaceManager;
@@ -239,6 +252,8 @@ describe('Space Export/Import RPC Handlers', () => {
 
     agentRepo = new SpaceAgentRepository(db as any);
     workflowRepo = new SpaceWorkflowRepository(db as any);
+    longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db as any);
+    seedAgent = makeSeedAgent(agentRepo, longHorizonAgentRepo);
 
     const agentLookup: SpaceAgentLookup = {
       getAgentById(spaceId: string, id: string) {
@@ -261,6 +276,7 @@ describe('Space Export/Import RPC Handlers', () => {
       mockHub.hub,
       spaceManager,
       agentRepo,
+      longHorizonAgentRepo,
       workflowRepo,
       workflowManager,
       db as any,
@@ -315,9 +331,22 @@ describe('Space Export/Import RPC Handlers', () => {
   });
 
   describe('spaceExport.agents', () => {
+    it('rejects the export when two agents share a display name', async () => {
+      seedAgent({ spaceId: SPACE_ID, name: 'Dup', handle: 'dup-1' });
+      longHorizonAgentRepo.create({
+        spaceId: SPACE_ID,
+        handle: 'dup-2',
+        displayName: 'Dup',
+      });
+
+      await expect(
+        call<{ bundle: unknown }>(handlers, 'spaceExport.agents', { spaceId: SPACE_ID })
+      ).rejects.toThrow('duplicate agent name "Dup"');
+    });
+
     it('exports all agents when no filter provided', async () => {
-      agentRepo.create({ spaceId: SPACE_ID, name: 'Alpha' });
-      agentRepo.create({ spaceId: SPACE_ID, name: 'Beta' });
+      seedAgent({ spaceId: SPACE_ID, name: 'Alpha' });
+      seedAgent({ spaceId: SPACE_ID, name: 'Beta' });
 
       const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
         spaceId: SPACE_ID,
@@ -332,8 +361,8 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('filters agents by agentIds', async () => {
-      const a1 = agentRepo.create({ spaceId: SPACE_ID, name: 'Alpha' });
-      agentRepo.create({ spaceId: SPACE_ID, name: 'Beta' });
+      const a1 = seedAgent({ spaceId: SPACE_ID, name: 'Alpha' });
+      seedAgent({ spaceId: SPACE_ID, name: 'Beta' });
 
       const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
         spaceId: SPACE_ID,
@@ -345,7 +374,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('exported agent preserves fields and strips id/spaceId', async () => {
-      agentRepo.create({
+      seedAgent({
         spaceId: SPACE_ID,
         name: 'Coder',
         handle: 'feature-coder',
@@ -371,11 +400,27 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('sets exportedFrom to spaceId', async () => {
-      agentRepo.create({ spaceId: SPACE_ID, name: 'A' });
+      seedAgent({ spaceId: SPACE_ID, name: 'A' });
       const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
         spaceId: SPACE_ID,
       });
       expect(bundle.exportedFrom).toBe(SPACE_ID);
+    });
+
+    it('excludes a coordinator recognized by handle even with a non-canonical id', async () => {
+      seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
+      longHorizonAgentRepo.create({
+        spaceId: SPACE_ID,
+        handle: 'coordinator',
+        displayName: 'Legacy Space Coordinator',
+      });
+
+      const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
+        spaceId: SPACE_ID,
+      });
+
+      expect(bundle.agents).toHaveLength(1);
+      expect(bundle.agents[0].name).toBe('Coder');
     });
 
     it('returns empty agents array when no agents exist', async () => {
@@ -388,7 +433,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
   describe('spaceExport.workflows', () => {
     it('exports workflow with agentRef resolved to agent name', async () => {
-      const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder' });
+      const agent = seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
       workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: 'Pipeline',
@@ -409,7 +454,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('exports static external event interests for agent slots', async () => {
-      const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder' });
+      const agent = seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
       workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: 'Pipeline',
@@ -447,8 +492,8 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('includes only referenced agents in the bundle', async () => {
-      const coder = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder' });
-      agentRepo.create({ spaceId: SPACE_ID, name: 'Reviewer' });
+      const coder = seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
+      seedAgent({ spaceId: SPACE_ID, name: 'Reviewer' });
       workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: 'Pipeline',
@@ -466,7 +511,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('filters workflows by workflowIds', async () => {
-      const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A' });
+      const agent = seedAgent({ spaceId: SPACE_ID, name: 'A' });
       const wf1 = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: 'WF1',
@@ -494,7 +539,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
   describe('spaceExport.bundle', () => {
     it('exports all agents and workflows', async () => {
-      const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A' });
+      const agent = seedAgent({ spaceId: SPACE_ID, name: 'A' });
       workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: 'W',
@@ -513,8 +558,8 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('filters by agentIds and workflowIds', async () => {
-      const a1 = agentRepo.create({ spaceId: SPACE_ID, name: 'A1' });
-      agentRepo.create({ spaceId: SPACE_ID, name: 'A2' });
+      const a1 = seedAgent({ spaceId: SPACE_ID, name: 'A1' });
+      seedAgent({ spaceId: SPACE_ID, name: 'A2' });
       const wf1 = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: 'W1',
@@ -540,6 +585,38 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(bundle.agents[0].name).toBe('A1');
       expect(bundle.workflows).toHaveLength(1);
       expect(bundle.workflows[0].name).toBe('W1');
+    });
+
+    it('rejects when an included workflow references an archived agent', async () => {
+      const agent = seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
+      workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Pipe',
+        nodes: [{ name: 'S', agentId: agent.id }],
+        transitions: [],
+        completionAutonomyLevel: 3,
+      });
+      agentRepo.update(agent.id, { status: 'archived' });
+
+      await expect(call(handlers, 'spaceExport.bundle', { spaceId: SPACE_ID })).rejects.toThrow(
+        'not included in this export'
+      );
+    });
+
+    it('rejects when the agentIds filter drops an agent required by an included workflow', async () => {
+      const referenced = seedAgent({ spaceId: SPACE_ID, name: 'Needed' });
+      const other = seedAgent({ spaceId: SPACE_ID, name: 'Other' });
+      workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Pipe',
+        nodes: [{ name: 'S', agentId: referenced.id }],
+        transitions: [],
+        completionAutonomyLevel: 3,
+      });
+
+      await expect(
+        call(handlers, 'spaceExport.bundle', { spaceId: SPACE_ID, agentIds: [other.id] })
+      ).rejects.toThrow('not included in this export');
     });
   });
 
@@ -569,7 +646,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('detects agent name conflict', async () => {
-      const existing = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder' });
+      const existing = seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
       const bundle = makeBundle([{ name: 'Coder', role: 'coder' }], []);
 
       const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
@@ -584,8 +661,24 @@ describe('Space Export/Import RPC Handlers', () => {
       });
     });
 
+    it('detects agent name conflict case-insensitively', async () => {
+      const existing = seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
+      const bundle = makeBundle([{ name: 'coder', role: 'coder' }], []);
+
+      const result = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+
+      expect(result.agents[0]).toEqual({
+        name: 'coder',
+        action: 'conflict',
+        existingId: existing.id,
+      });
+    });
+
     it('detects workflow name conflict', async () => {
-      const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A' });
+      const agent = seedAgent({ spaceId: SPACE_ID, name: 'A' });
       const existing = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
         name: 'Pipeline',
@@ -628,7 +721,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('resolves agent ref from existing space agents', async () => {
-      agentRepo.create({ spaceId: SPACE_ID, name: 'ExistingAgent' });
+      seedAgent({ spaceId: SPACE_ID, name: 'ExistingAgent' });
       const bundle = makeBundle(
         [],
         [{ name: 'Pipeline', nodes: [{ agentRef: 'ExistingAgent', name: 'S' }] }]
@@ -798,7 +891,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
     describe('conflict resolution: skip', () => {
       it('skips conflicting agent and uses existing UUID for workflow cross-refs', async () => {
-        const existing = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder' });
+        const existing = seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
 
         const bundle = makeBundle(
           [{ name: 'Coder', role: 'reviewer' }],
@@ -825,7 +918,7 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       it('skips conflicting workflow', async () => {
-        const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A' });
+        const agent = seedAgent({ spaceId: SPACE_ID, name: 'A' });
         const existingWf = workflowManager.createWorkflow({
           spaceId: SPACE_ID,
           name: 'Pipeline',
@@ -854,12 +947,61 @@ describe('Space Export/Import RPC Handlers', () => {
         const all = workflowRepo.listWorkflows(SPACE_ID);
         expect(all).toHaveLength(1);
       });
+
+      it('leaves a worker-backed conflict and its unified mirror untouched on skip', async () => {
+        const existing = seedAgent({
+          spaceId: SPACE_ID,
+          name: 'Coder',
+          handle: 'coder',
+          model: 'glm-4.7',
+        });
+
+        const bundle = makeBundle(
+          [{ name: 'Coder', model: 'claude-opus-5', customPrompt: 'bundle instructions' }],
+          []
+        );
+
+        const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle,
+          conflictResolution: { agents: { Coder: 'skip' } },
+        });
+
+        expect(result.agents[0]).toMatchObject({ name: 'Coder', action: 'skipped' });
+
+        const worker = agentRepo.getById(existing.id)!;
+        expect(worker.model).toBe('glm-4.7');
+        expect(worker.customPrompt).toBeNull();
+
+        const twin = longHorizonAgentRepo.getById(existing.id)!;
+        expect(twin.model).toBe('glm-4.7');
+        expect(twin.instructions).toBe('');
+      });
+
+      it('matches conflicts case-insensitively instead of creating a case-variant duplicate', async () => {
+        const existing = seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
+
+        const bundle = makeBundle([{ name: 'coder', model: 'claude-opus-5' }], []);
+
+        const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle,
+          conflictResolution: { agents: { coder: 'skip' } },
+        });
+
+        expect(result.agents[0]).toMatchObject({
+          name: 'coder',
+          action: 'skipped',
+          id: existing.id,
+        });
+        expect(agentRepo.getBySpaceId(SPACE_ID)).toHaveLength(1);
+      });
     });
 
     describe('conflict resolution: rename', () => {
       it('renames conflicting agent with unique name', async () => {
-        agentRepo.create({ spaceId: SPACE_ID, name: 'Coder' });
-        agentRepo.create({ spaceId: SPACE_ID, name: 'Coder (1)' });
+        seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
+        seedAgent({ spaceId: SPACE_ID, name: 'Coder (1)' });
 
         const bundle = makeBundle([{ name: 'Coder', handle: 'reviewer', role: 'reviewer' }], []);
 
@@ -878,7 +1020,7 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       it('auto-generates an imported agent handle and warns when exported handle conflicts', async () => {
-        agentRepo.create({ spaceId: SPACE_ID, name: 'Local Reviewer', handle: 'reviewer' });
+        seedAgent({ spaceId: SPACE_ID, name: 'Local Reviewer', handle: 'reviewer' });
 
         const bundle = makeBundle([{ name: 'Reviewer', handle: 'reviewer', role: 'reviewer' }], []);
 
@@ -917,7 +1059,7 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       it('renames conflicting workflow', async () => {
-        const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A' });
+        const agent = seedAgent({ spaceId: SPACE_ID, name: 'A' });
         workflowManager.createWorkflow({
           spaceId: SPACE_ID,
           name: 'Pipeline',
@@ -947,7 +1089,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
     describe('conflict resolution: replace', () => {
       it('replaces conflicting agent in place (preserves UUID)', async () => {
-        const existing = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder' });
+        const existing = seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
 
         const bundle = makeBundle(
           [{ name: 'Coder', handle: 'reviewer', role: 'reviewer', model: 'claude-new' }],
@@ -980,6 +1122,7 @@ describe('Space Export/Import RPC Handlers', () => {
           freshHub.hub,
           spaceManager,
           agentRepo,
+          longHorizonAgentRepo,
           workflowRepo,
           workflowManager,
           db as any,
@@ -987,7 +1130,7 @@ describe('Space Export/Import RPC Handlers', () => {
           runtimeService
         );
 
-        const existing = agentRepo.create({
+        const existing = seedAgent({
           spaceId: SPACE_ID,
           name: 'Coder',
           provider: 'openrouter',
@@ -1008,8 +1151,8 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       it('preserves swapped handles when replacing multiple agents', async () => {
-        const existingA = agentRepo.create({ spaceId: SPACE_ID, name: 'A', handle: 'a' });
-        const existingB = agentRepo.create({ spaceId: SPACE_ID, name: 'B', handle: 'b' });
+        const existingA = seedAgent({ spaceId: SPACE_ID, name: 'A', handle: 'a' });
+        const existingB = seedAgent({ spaceId: SPACE_ID, name: 'B', handle: 'b' });
 
         const bundle = makeBundle(
           [
@@ -1035,8 +1178,33 @@ describe('Space Export/Import RPC Handlers', () => {
         expect(agentRepo.getById(existingB.id)?.handle).toBe('a');
       });
 
+      it('parks replacement handles without colliding with an existing suffixed handle', async () => {
+        const alpha = seedAgent({ spaceId: SPACE_ID, name: 'Alpha', handle: 'alpha' });
+        seedAgent({ spaceId: SPACE_ID, name: 'Beta', handle: `alpha-${alpha.id}` });
+
+        const bundle = makeBundle(
+          [
+            { name: 'Alpha', handle: 'alpha', customPrompt: 'Alpha prompt.' },
+            { name: 'Beta', handle: 'beta', customPrompt: 'Beta prompt.' },
+          ],
+          []
+        );
+
+        const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle,
+          conflictResolution: { agents: { Alpha: 'replace', Beta: 'replace' } },
+        });
+
+        expect(result.agents.map((a) => a.action)).toEqual(['replaced', 'replaced']);
+
+        const twinAlpha = longHorizonAgentRepo.getById(alpha.id)!;
+        expect(twinAlpha.handle).not.toBe(`alpha-${alpha.id}`);
+        expect(longHorizonAgentRepo.listBySpaceId(SPACE_ID)).toHaveLength(2);
+      });
+
       it('reserves fallback handles when replace cannot preserve exported handle', async () => {
-        const existingA = agentRepo.create({ spaceId: SPACE_ID, name: 'A', handle: 'a' });
+        const existingA = seedAgent({ spaceId: SPACE_ID, name: 'A', handle: 'a' });
 
         const bundle = makeBundle(
           [
@@ -1065,8 +1233,8 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       it('generates a new fallback handle when another replacement claims the old one', async () => {
-        const existingA = agentRepo.create({ spaceId: SPACE_ID, name: 'A', handle: 'a' });
-        const existingB = agentRepo.create({ spaceId: SPACE_ID, name: 'B', handle: 'b' });
+        const existingA = seedAgent({ spaceId: SPACE_ID, name: 'A', handle: 'a' });
+        const existingB = seedAgent({ spaceId: SPACE_ID, name: 'B', handle: 'b' });
 
         const bundle = makeBundle(
           [
@@ -1094,7 +1262,7 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       it('generates legacy create handles from batch reservations', async () => {
-        const existingA = agentRepo.create({ spaceId: SPACE_ID, name: 'A', handle: 'a' });
+        const existingA = seedAgent({ spaceId: SPACE_ID, name: 'A', handle: 'a' });
 
         const bundle = makeBundle(
           [
@@ -1116,7 +1284,7 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       it('replaces conflicting workflow (delete + create)', async () => {
-        const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A' });
+        const agent = seedAgent({ spaceId: SPACE_ID, name: 'A' });
         workflowManager.createWorkflow({
           spaceId: SPACE_ID,
           name: 'Pipeline',
@@ -1144,7 +1312,7 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       it('SKIPS replace when the existing workflow has a non-archived run (RFC §4 #3)', async () => {
-        const agent = agentRepo.create({ spaceId: SPACE_ID, name: 'A' });
+        const agent = seedAgent({ spaceId: SPACE_ID, name: 'A' });
         const existing = workflowManager.createWorkflow({
           spaceId: SPACE_ID,
           name: 'Pipeline',
@@ -1201,7 +1369,7 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       it('resolves agent name→UUID from existing space agents (not in bundle)', async () => {
-        const existing = agentRepo.create({ spaceId: SPACE_ID, name: 'LocalAgent' });
+        const existing = seedAgent({ spaceId: SPACE_ID, name: 'LocalAgent' });
 
         const bundle = makeBundle(
           [],
@@ -1218,7 +1386,7 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       it('prefers bundle agent over existing space agent of same name', async () => {
-        const existingAgent = agentRepo.create({ spaceId: SPACE_ID, name: 'Agent' });
+        const existingAgent = seedAgent({ spaceId: SPACE_ID, name: 'Agent' });
 
         const bundle = makeBundle(
           [{ name: 'Agent', role: 'reviewer' }],
@@ -1337,7 +1505,7 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       it('rolls back workflow deletion when replacement creation fails', async () => {
-        const existingAgent = agentRepo.create({ spaceId: SPACE_ID, name: 'A' });
+        const existingAgent = seedAgent({ spaceId: SPACE_ID, name: 'A' });
         const existingWf = workflowManager.createWorkflow({
           spaceId: SPACE_ID,
           name: 'ToReplace',
@@ -1380,7 +1548,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
     describe('replace agent: unset fields are cleared', () => {
       it('clears model when not present in exported agent', async () => {
-        const existing = agentRepo.create({
+        const existing = seedAgent({
           spaceId: SPACE_ID,
           name: 'Coder',
           role: 'coder',
@@ -1400,7 +1568,7 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       it('clears customPrompt when not present in exported agent', async () => {
-        const existing = agentRepo.create({
+        const existing = seedAgent({
           spaceId: SPACE_ID,
           name: 'Coder',
           customPrompt: 'Old prompt.',
@@ -1419,7 +1587,7 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       it('replaces thinkingLevel when present in exported agent', async () => {
-        const existing = agentRepo.create({
+        const existing = seedAgent({
           spaceId: SPACE_ID,
           name: 'Coder',
           thinkingLevel: 'think8k',
@@ -1438,7 +1606,7 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       it('clears thinkingLevel when not present in exported agent', async () => {
-        const existing = agentRepo.create({
+        const existing = seedAgent({
           spaceId: SPACE_ID,
           name: 'Coder',
           thinkingLevel: 'think16k',
@@ -1488,7 +1656,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('emits spaceAgent.updated for replaced agent', async () => {
-      agentRepo.create({ spaceId: SPACE_ID, name: 'Coder' });
+      seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
       const bundle = makeBundle([{ name: 'Coder', role: 'coder', model: 'claude-haiku-4-5' }], []);
 
       await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -1505,7 +1673,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('does not emit event for skipped agent', async () => {
-      agentRepo.create({ spaceId: SPACE_ID, name: 'Coder' });
+      seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
       const bundle = makeBundle([{ name: 'Coder', role: 'coder' }], []);
 
       await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
@@ -1539,7 +1707,7 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('emits spaceWorkflow.deleted (old id) + spaceWorkflow.created (new id) for replaced workflow', async () => {
-      const existingAgent = agentRepo.create({ spaceId: SPACE_ID, name: 'Coder' });
+      const existingAgent = seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
       const existingAgentId = existingAgent.id;
       const existingWf = workflowManager.createWorkflow({
         spaceId: SPACE_ID,
@@ -1595,6 +1763,8 @@ describe('Space Export/Import RPC Handlers', () => {
 describe('multi-agent step import', () => {
   let db: Database;
   let agentRepo: SpaceAgentRepository;
+  let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
+  let seedAgent: (params: Parameters<SpaceAgentRepository['create']>[0]) => SpaceWorkerAgent;
   let workflowRepo: SpaceWorkflowRepository;
   let workflowManager: SpaceWorkflowManager;
   let spaceManager: SpaceManager;
@@ -1608,6 +1778,8 @@ describe('multi-agent step import', () => {
 
     agentRepo = new SpaceAgentRepository(db as any);
     workflowRepo = new SpaceWorkflowRepository(db as any);
+    longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db as any);
+    seedAgent = makeSeedAgent(agentRepo, longHorizonAgentRepo);
 
     const agentLookup: SpaceAgentLookup = {
       getAgentById(spaceId: string, id: string) {
@@ -1627,6 +1799,7 @@ describe('multi-agent step import', () => {
       mockHub.hub,
       spaceManager,
       agentRepo,
+      longHorizonAgentRepo,
       workflowRepo,
       workflowManager,
       db as any,
@@ -1858,8 +2031,8 @@ describe('multi-agent step import', () => {
   });
 
   it('resolves multi-agent step refs from existing space agents', async () => {
-    const existing1 = agentRepo.create({ spaceId: SPACE_ID, name: 'LocalCoder' });
-    const existing2 = agentRepo.create({
+    const existing1 = seedAgent({ spaceId: SPACE_ID, name: 'LocalCoder' });
+    const existing2 = seedAgent({
       spaceId: SPACE_ID,
       name: 'LocalReviewer',
       role: 'reviewer',
@@ -2140,6 +2313,8 @@ function makeSingleAgentBundle(agentName: string, _agentRole: string, stepName: 
 describe('full export→import round-trip', () => {
   let db: Database;
   let agentRepo: SpaceAgentRepository;
+  let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
+  let seedAgent: (params: Parameters<SpaceAgentRepository['create']>[0]) => SpaceWorkerAgent;
   let workflowRepo: SpaceWorkflowRepository;
   let workflowManager: SpaceWorkflowManager;
   let spaceManager: SpaceManager;
@@ -2154,6 +2329,8 @@ describe('full export→import round-trip', () => {
 
     agentRepo = new SpaceAgentRepository(db as any);
     workflowRepo = new SpaceWorkflowRepository(db as any);
+    longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db as any);
+    seedAgent = makeSeedAgent(agentRepo, longHorizonAgentRepo);
 
     const agentLookup: SpaceAgentLookup = {
       getAgentById(spaceId: string, id: string) {
@@ -2175,11 +2352,41 @@ describe('full export→import round-trip', () => {
       mockHub.hub,
       spaceManager,
       agentRepo,
+      longHorizonAgentRepo,
       workflowRepo,
       workflowManager,
       db as any,
       internalEventBus
     );
+  });
+
+  it('rejects the workflows export when a referenced agent name is ambiguous', async () => {
+    const coderWorker = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+    longHorizonAgentRepo.create({
+      spaceId: SPACE_ID,
+      handle: 'coder-lh',
+      displayName: 'Coder',
+    });
+    workflowRepo.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'Ambiguous Pipeline',
+      nodes: [
+        {
+          id: 'amb-node',
+          name: 'Build',
+          agents: [{ agentId: coderWorker.id, name: 'builder' }],
+        },
+      ],
+      startNodeId: 'amb-node',
+      tags: [],
+      completionAutonomyLevel: 3,
+      createdAt: 1000,
+      updatedAt: 2000,
+    } as never);
+
+    await expect(
+      call<{ bundle: unknown }>(handlers, 'spaceExport.workflows', { spaceId: SPACE_ID })
+    ).rejects.toThrow('ambiguous');
   });
 
   it('single-agent workflow round-trip: export → import produces equivalent workflow', async () => {
@@ -2321,6 +2528,65 @@ describe('full export→import round-trip', () => {
     });
     const importedWf = workflowRepo.getWorkflow(result.workflows[0].id)!;
     expect(importedWf.nodes[0].agents![0].agentId).toBe(imported.id);
+  });
+
+  it('import mirrors created and replaced agents into the unified table (production path)', async () => {
+    const existing = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+    const bundle = makeBundle(
+      [{ name: 'Fresh Agent', handle: 'fresh', customPrompt: 'Be fresh.' }],
+      []
+    );
+    bundle.agents[0].description = 'Fresh description';
+
+    const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+      spaceId: SPACE_ID,
+      bundle,
+    });
+    expect(result.agents[0].action).toBe('created');
+
+    const mirrored = longHorizonAgentRepo.getById(result.agents[0].id)!;
+    expect(mirrored).toBeTruthy();
+    expect(mirrored.displayName).toBe('Fresh Agent');
+    expect(mirrored.handle).toBe('fresh');
+    expect(mirrored.instructions).toBe('Be fresh.');
+    expect(mirrored.description).toBe('Fresh description');
+
+    const replaceBundle = makeBundle(
+      [{ name: 'Coder', handle: 'coder', customPrompt: 'Replaced prompt.' }],
+      []
+    );
+    const replaceResult = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+      spaceId: SPACE_ID,
+      bundle: replaceBundle,
+      conflictResolution: { agents: { Coder: 'replace' } },
+    });
+    expect(replaceResult.agents[0].action).toBe('replaced');
+
+    const replacedTwin = longHorizonAgentRepo.getById(existing.id)!;
+    expect(replacedTwin).toBeTruthy();
+    expect(replacedTwin.instructions).toBe('Replaced prompt.');
+  });
+
+  it('import replace with a unified-only handle collision keeps both tables consistent', async () => {
+    seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+    longHorizonAgentRepo.create({
+      spaceId: SPACE_ID,
+      handle: 'foo',
+      displayName: 'Unified Only',
+    });
+
+    const bundle = makeBundle([{ name: 'Coder', handle: 'foo', model: 'claude-new' }], []);
+    const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+      spaceId: SPACE_ID,
+      bundle,
+      conflictResolution: { agents: { Coder: 'replace' } },
+    });
+
+    expect(result.agents[0].action).toBe('replaced');
+    const replacedWorker = agentRepo.getById(result.agents[0].id)!;
+    const replacedTwin = longHorizonAgentRepo.getById(result.agents[0].id)!;
+    expect(replacedWorker.handle).not.toBe('foo');
+    expect(replacedTwin.handle).toBe(replacedWorker.handle);
   });
 
   it('multi-agent step round-trip: export → import preserves agents array, channels, and hooks', async () => {
@@ -2831,7 +3097,7 @@ describe('full export→import round-trip', () => {
   });
 
   it('surfaces a warning when imported workflow handle conflicts with an existing space handle', async () => {
-    const existingAgent = agentRepo.create({
+    const existingAgent = seedAgent({
       spaceId: SPACE_ID,
       name: 'Existing Coder',
       customPrompt: null,

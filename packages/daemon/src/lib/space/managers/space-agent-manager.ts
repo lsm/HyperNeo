@@ -134,6 +134,10 @@ export class SpaceAgentManager {
     return this.repo.getById(id);
   }
 
+  isAgentReferenced(id: string): { referenced: boolean; workflowNames: string[] } {
+    return this.repo.isAgentReferenced(id);
+  }
+
   listBySpaceId(spaceId: string): SpaceWorkerAgent[] {
     return this.repo.getBySpaceId(spaceId);
   }
