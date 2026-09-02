@@ -85,6 +85,12 @@ import {
 } from '../tools/space-agent-tools.ts';
 import type { WorkflowArtifactProfile } from './artifact-profile.ts';
 import { ChannelRouter } from './channel-router.ts';
+import {
+  type EnsureAgentSessionDeps,
+  type EnsuredSession,
+  isAgentTargetLifecycleEligible,
+  runEnsureAgentSession,
+} from './ensure-agent-session.ts';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
 import { selectWorkflowWithLlmDefault } from './llm-workflow-selector.ts';
 import { handoffPromptToMailbox, type MailboxHandoffOutcome } from './prompt-mailbox-handoff.ts';
@@ -858,6 +864,7 @@ export class SpaceRuntimeService {
       session = session ?? (await sessionManager.getSessionAsync(sessionId));
       if (!session) return null;
     }
+    if (['ended', 'archived'].includes(session.getSessionData().status)) return null;
     await this.setupSpaceAgentSession(space);
     return session;
   }
@@ -872,6 +879,7 @@ export class SpaceRuntimeService {
     if (!space) return null;
     const sessionId = longTermAgentSessionId(spaceId, agentId);
     let session = await sessionManager.getSessionAsync(sessionId);
+    if (['ended', 'archived'].includes(session?.getSessionData().status ?? '')) return null;
     const currentConfig = session?.getSessionData().config;
     const config = await buildAgentSessionConfig(
       { kind: 'long_horizon', agent },
@@ -894,6 +902,7 @@ export class SpaceRuntimeService {
       }
       session = session ?? (await sessionManager.getSessionAsync(sessionId));
       if (!session) return null;
+      if (['ended', 'archived'].includes(session.getSessionData().status)) return null;
     } else {
       await this.refreshLongHorizonAgentSessionConfig(session, config);
     }
@@ -942,6 +951,24 @@ export class SpaceRuntimeService {
     return this.ensureWorkerAgentSession(actor.spaceId, resolution.agent);
   }
 
+  async ensureAgentSession(spaceId: string, agentId: string): Promise<EnsuredSession | null> {
+    return runEnsureAgentSession(spaceId, agentId, this.ensureAgentSessionDeps());
+  }
+
+  async isAgentTargetLifecycleEligible(spaceId: string, agentId: string): Promise<boolean> {
+    return isAgentTargetLifecycleEligible(spaceId, agentId, this.ensureAgentSessionDeps());
+  }
+
+  private ensureAgentSessionDeps(): EnsureAgentSessionDeps {
+    return {
+      getSpace: (spaceId) => this.config.spaceManager.getSpace(spaceId),
+      recordDeps: this.agentRecordDeps(),
+      ensureCoordinatorSession: (spaceId) => this.ensureCoordinatorSession(spaceId),
+      ensureLongHorizon: this.ensureLongHorizonAgentSession.bind(this),
+      ensureWorkerAgentSession: (spaceId, agent) => this.ensureWorkerAgentSession(spaceId, agent),
+    };
+  }
+
   private findMigratedWorkerMirror(spaceId: string, agentId: string): SpaceLongHorizonAgent | null {
     const unified = this.config.longHorizonAgentRepo?.getById(agentId) ?? null;
     if (
@@ -962,6 +989,7 @@ export class SpaceRuntimeService {
     const sessionId = longTermAgentSessionId(spaceId, agent.id);
     let session = await sessionManager.getSessionAsync(sessionId);
     const created = !session;
+    if (['ended', 'archived'].includes(session?.getSessionData().status ?? '')) return null;
     const resolvedPrompt = resolveCustomAgentPrompt(agent, {
       resolutionContext: { agentId: agent.id, agentName: agent.name },
     });
@@ -987,6 +1015,7 @@ export class SpaceRuntimeService {
       }
       session = session ?? (await sessionManager.getSessionAsync(sessionId));
       if (!session) return null;
+      if (['ended', 'archived'].includes(session.getSessionData().status)) return null;
       const currentMetadata = session.getSessionData().metadata;
       this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
         metadata: {
@@ -1015,8 +1044,9 @@ export class SpaceRuntimeService {
       getLongHorizonAgent: (agentId) => repo?.getById(agentId) ?? null,
       getCoordinator: (spaceId) => repo?.getCoordinator(spaceId) ?? null,
       getCoordinatorRecord: (spaceId) =>
-        repo?.getById(coordinatorLongHorizonAgentId(spaceId)) ??
         repo?.getCoordinator(spaceId) ??
+        repo?.getById(coordinatorLongHorizonAgentId(spaceId)) ??
+        repo?.getCoordinatorRecord(spaceId) ??
         null,
       getWorkerAgent: (agentId) => this.config.spaceAgentManager.getById(agentId),
     };
