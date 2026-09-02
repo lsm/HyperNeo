@@ -408,6 +408,44 @@ describe('Space long-horizon agent handlers', () => {
   });
 
   describe('spaceLongHorizonAgent.delete', () => {
+    it('rejects deleting an agent referenced by workflow nodes', async () => {
+      spaceAgentManager.isAgentReferenced = mock(() => ({
+        referenced: true,
+        workflowNames: ['Pipe'],
+      }));
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.delete', {
+          agentId: 'agent-1',
+          spaceId: 'space-1',
+        })
+      ).rejects.toThrow('referenced by workflow nodes');
+
+      expect(repo.delete).not.toHaveBeenCalled();
+    });
+
+    it('rejects blank display names on create', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.create', {
+          spaceId: 'space-1',
+          handle: 'fresh',
+          displayName: '   ',
+        })
+      ).rejects.toThrow('displayName cannot be blank');
+    });
+
+    it('rejects blank display names on update', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+          agentId: 'agent-1',
+          spaceId: 'space-1',
+          displayName: '  ',
+        })
+      ).rejects.toThrow('displayName cannot be blank');
+
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
     it('removes runtime subscriptions before deleting the agent row', async () => {
       const result = await call<{ success: boolean }>(
         hubData.handlers,

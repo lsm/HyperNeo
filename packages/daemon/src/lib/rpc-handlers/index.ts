@@ -962,6 +962,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceTaskRepo,
     spaceWorkflowRunRepo,
     deps.internalEventBus,
+    deps.spaceAgentManager,
     spaceWorkflowManager,
     deps.sessionManager,
     spaceRuntimeService,

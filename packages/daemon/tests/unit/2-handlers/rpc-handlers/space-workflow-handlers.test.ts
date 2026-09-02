@@ -20,7 +20,7 @@ import type { SpaceManager } from '../../../../src/lib/space/managers/space-mana
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import {
-  seedUnifiedSpaceAgents,
+  seedPresetAgents,
   RETIRED_PR_MERGER_DESCRIPTION,
   RETIRED_PR_MERGER_PROMPT,
   RETIRED_PR_MERGER_TOOLS,
@@ -1861,7 +1861,7 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
 
   it('retires the unified twin of a pristine removed preset', async () => {
     const env = makeRealEnv();
-    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo, env.spaceAgentRepo);
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
     const id = seedRetiree(env);
     await restampBuiltInWorkflowsOnStartup(
       env.workflowManager,
@@ -1877,7 +1877,7 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
 
   it('keeps a diverged unified twin and its worker row on retirement', async () => {
     const env = makeRealEnv();
-    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo, env.spaceAgentRepo);
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
     const id = seedRetiree(env, { instructions: 'Customized by the owner.' });
     await restampBuiltInWorkflowsOnStartup(
       env.workflowManager,
@@ -1893,7 +1893,7 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
 
   it('keeps a goal-owning unified twin and its worker row on retirement', async () => {
     const env = makeRealEnv();
-    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo, env.spaceAgentRepo);
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
     const id = seedRetiree(env);
     env.db
       .prepare(
@@ -1916,7 +1916,7 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
 
   it('keeps a reminder-owning unified twin and its worker row on retirement', async () => {
     const env = makeRealEnv();
-    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo, env.spaceAgentRepo);
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
     const id = seedRetiree(env);
     env.longHorizonAgentRepo.createReminder({
       spaceId: 'space-retire',
@@ -1939,7 +1939,7 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
 
   it('keeps a subscription-owning unified twin and its worker row on retirement', async () => {
     const env = makeRealEnv();
-    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo, env.spaceAgentRepo);
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
     const id = seedRetiree(env);
     env.longHorizonAgentRepo.createSubscription({
       spaceId: 'space-retire',
@@ -1962,11 +1962,11 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
 
   it('does not resolve archived preset twins as built-in role targets', async () => {
     const env = makeRealEnv();
-    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo, env.spaceAgentRepo);
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
     const coderTwin = env.longHorizonAgentRepo
       .listBySpaceId('space-retire')
       .find((a) => a.displayName === 'Coder')!;
-    env.longHorizonAgentRepo.update(coderTwin.id, { status: 'archived' });
+    env.spaceAgentRepo.update(coderTwin.id, { status: 'archived' });
 
     await restampBuiltInWorkflowsOnStartup(
       env.workflowManager,

@@ -1178,6 +1178,36 @@ describe('Space Export/Import RPC Handlers', () => {
         expect(agentRepo.getById(existingB.id)?.handle).toBe('a');
       });
 
+      it('replaces unified-only conflicts with the imported handle and tools', async () => {
+        longHorizonAgentRepo.create({
+          spaceId: SPACE_ID,
+          handle: 'coder',
+          displayName: 'Coder',
+          instructions: 'old prompt',
+        });
+        const unifiedId = longHorizonAgentRepo.listBySpaceId(SPACE_ID)[0].id;
+
+        const bundle = makeBundle(
+          [{ name: 'Coder', handle: 'coder', customPrompt: 'New prompt.', model: 'claude-new' }],
+          []
+        );
+        bundle.agents[0].tools = ['Read', 'Grep'];
+
+        const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle,
+          conflictResolution: { agents: { Coder: 'replace' } },
+        });
+
+        expect(result.agents[0]).toMatchObject({ name: 'Coder', action: 'replaced' });
+
+        const twin = longHorizonAgentRepo.getById(unifiedId)!;
+        expect(twin.instructions).toBe('New prompt.');
+        expect(twin.model).toBe('claude-new');
+        expect(twin.handle).toBe('coder');
+        expect(twin.toolPermissions).toEqual({ tools: ['Read', 'Grep'] });
+      });
+
       it('parks replacement handles without colliding with an existing suffixed handle', async () => {
         const alpha = seedAgent({ spaceId: SPACE_ID, name: 'Alpha', handle: 'alpha' });
         seedAgent({ spaceId: SPACE_ID, name: 'Beta', handle: `alpha-${alpha.id}` });

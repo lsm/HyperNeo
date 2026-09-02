@@ -802,6 +802,11 @@ export function setupSpaceExportImportHandlers(
                   instructions: replaceParts.length > 0 ? replaceParts.join('\n\n') : '',
                   settingSources: exportedAgent.settingSources ?? null,
                   modelPool: exportedAgent.modelPool ?? null,
+                  handle: updateParams.handle,
+                  toolPermissions:
+                    exportedAgent.tools && exportedAgent.tools.length > 0
+                      ? { tools: [...exportedAgent.tools] }
+                      : {},
                 });
               }
             }
