@@ -945,11 +945,15 @@ export class TaskAgentManager {
             ...(poolProvider ? { provider: poolProvider } : {}),
           };
 
+          if (!customAgent) {
+            throw new PermanentSpawnError(`Agent not found: ${slot.agentId}`);
+          }
+
           let init = resolveAgentInit({
             task: request.task,
             space: request.space,
             agentManager: this.config.spaceAgentManager,
-            agent: customAgent ?? undefined,
+            agent: customAgent,
             sessionId: request.sessionId,
             workspacePath: request.workspacePath,
             workflowRun: request.workflowRun,
@@ -957,10 +961,6 @@ export class TaskAgentManager {
             slotOverrides,
             agentId: slot.agentId,
           });
-
-          if (request.kickoff && !customAgent) {
-            throw new PermanentSpawnError(`Agent not found: ${slot.agentId}`);
-          }
 
           const nodeAgentMcpServers = this.buildNodeAgentMcpServersForSession(
             request.task.id,
@@ -2397,7 +2397,7 @@ export class TaskAgentManager {
         task,
         space,
         agentManager: this.config.spaceAgentManager,
-        agent: this.resolveUnifiedSlotAgent(matchedSlot.agentId) ?? undefined,
+        agent: this.resolveUnifiedSlotAgent(matchedSlot.agentId),
         sessionId,
         workspacePath,
         workflowRun: workflowRun ?? undefined,
@@ -4124,7 +4124,7 @@ export class TaskAgentManager {
       task,
       space,
       agentManager: this.config.spaceAgentManager,
-      agent: this.resolveUnifiedSlotAgent(slot.agentId) ?? undefined,
+      agent: this.resolveUnifiedSlotAgent(slot.agentId),
       sessionId,
       workspacePath,
       workflowRun,
@@ -5416,7 +5416,7 @@ export class TaskAgentManager {
         task,
         space,
         agentManager: this.config.spaceAgentManager,
-        agent: poolAgent ?? undefined,
+        agent: poolAgent,
         sessionId,
         workspacePath,
         workflowRun: workflowRun ?? undefined,
