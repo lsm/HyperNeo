@@ -60,6 +60,7 @@ export interface ImportExecuteResult {
   agents: ImportedItem[];
   workflows: ImportedItem[];
   warnings: string[];
+  deferredUnifiedUpdates?: Array<{ spaceId: string; agentId: string }>;
 }
 
 async function requireSpace(spaceManager: SpaceManager, spaceId: string): Promise<Space> {
@@ -100,14 +101,14 @@ function unifiedExportAgents(
     .listBySpaceId(spaceId)
     .filter((a) => a.id !== coordinatorLongHorizonAgentId(spaceId))
     .filter((a) => !coordinatorByHandle || a.id !== coordinatorByHandle.id)
-    .filter((a) => a.status !== 'archived')
+    .filter((a) => a.status === 'active')
     .map(longHorizonAgentToWorkerView);
 }
 
 function assertExportableAgentNames(agents: Array<{ id: string; name: string }>): void {
   const idByName = new Map<string, string>();
   for (const agent of agents) {
-    const key = agent.name.toLowerCase();
+    const key = nameKey(agent.name);
     const existingId = idByName.get(key);
     if (existingId && existingId !== agent.id) {
       throw new Error(
@@ -458,32 +459,33 @@ export function setupSpaceExportImportHandlers(
     }
     const liveById = new Map(allAgents.map((a) => [a.id, a]));
     const allSpaceAgents = longHorizonAgentRepo.listBySpaceId(params.spaceId);
-    const archivedReferenced = [...referencedAgentIds].filter((id) =>
-      allSpaceAgents.some((a) => a.id === id && a.status === 'archived')
-    );
-    if (archivedReferenced.length > 0) {
+    const coordinatorByHandle = longHorizonAgentRepo.getCoordinator(params.spaceId);
+    const unexportable = [...referencedAgentIds].filter((id) => !liveById.has(id));
+    if (unexportable.length > 0) {
+      const details = unexportable.map((id) => {
+        if (
+          id === coordinatorLongHorizonAgentId(params.spaceId) ||
+          coordinatorByHandle?.id === id
+        ) {
+          return `${id} (the space coordinator is not exportable)`;
+        }
+        const lha = allSpaceAgents.find((a) => a.id === id);
+        if (!lha) return `${id} (missing in this space)`;
+        return `${id} (agent is ${lha.status}; only active agents are exportable)`;
+      });
       throw new Error(
-        `Cannot export workflows: referenced agent(s) are archived in this space: ` +
-          archivedReferenced.join(', ') +
-          `. Archive or unarchive the workflow(s) referencing them first.`
-      );
-    }
-    const unresolved = [...referencedAgentIds].filter(
-      (id) => !liveById.has(id) && !allSpaceAgents.some((a) => a.id === id)
-    );
-    if (unresolved.length > 0) {
-      throw new Error(
-        `Cannot export workflows: referenced agent(s) missing in this space: ` +
-          unresolved.join(', ')
+        `Cannot export workflows: referenced agent(s) cannot be exported: ` +
+          details.join(', ') +
+          `. Activate them, or remove the workflow reference(s) first.`
       );
     }
     for (const agentId of referencedAgentIds) {
       const liveMatch = liveById.get(agentId);
       const lhaMatch = allSpaceAgents.find((a) => a.id === agentId);
       if (!liveMatch && !lhaMatch) continue;
-      const referencedName = (liveMatch?.name ?? lhaMatch?.displayName ?? '').toLowerCase();
+      const referencedName = nameKey(liveMatch?.name ?? lhaMatch?.displayName ?? '');
       if (!referencedName) continue;
-      const clashes = allAgents.filter((a) => a.name.toLowerCase() === referencedName);
+      const clashes = allAgents.filter((a) => nameKey(a.name) === referencedName);
       if (clashes.length > 1) {
         throw new Error(
           `Cannot export: agent name "${liveMatch?.name ?? lhaMatch?.displayName}" is ambiguous in this space ` +
@@ -642,6 +644,7 @@ export function setupSpaceExportImportHandlers(
     const resolution = params.conflictResolution ?? {};
 
     const providerClearedAgentIds: string[] = [];
+    const deferredUnifiedUpdates: Array<{ spaceId: string; agentId: string }> = [];
     const executeImport = db.transaction(
       (spaceId: string, res: ImportConflictResolution): ImportExecuteResult => {
         const workerAgents = agentRepo.getBySpaceId(spaceId);
@@ -808,6 +811,7 @@ export function setupSpaceExportImportHandlers(
                       ? { tools: [...exportedAgent.tools] }
                       : {},
                 });
+                deferredUnifiedUpdates.push({ spaceId: existing.spaceId, agentId: existing.id });
               }
             }
             const id = updated?.id ?? existing.id;
@@ -934,11 +938,27 @@ export function setupSpaceExportImportHandlers(
           agents: agentResults,
           workflows: workflowResults,
           warnings: allWarnings,
+          deferredUnifiedUpdates,
         };
       }
     );
 
     const importResult = executeImport(params.spaceId, resolution);
+
+    for (const ref of importResult.deferredUnifiedUpdates ?? []) {
+      const unified = longHorizonAgentRepo.getById(ref.agentId);
+      if (unified) {
+        internalEventBus
+          .publish('spaceLongHorizonAgent.updated', {
+            sessionId: `space:${ref.spaceId}`,
+            spaceId: ref.spaceId,
+            agent: unified,
+          })
+          .catch((err) => {
+            log.warn('Failed to emit spaceLongHorizonAgent.updated for imported agent:', err);
+          });
+      }
+    }
 
     for (const agentId of providerClearedAgentIds) {
       await runtimeService?.clearLongTermAgentSessionProvider(params.spaceId, agentId);

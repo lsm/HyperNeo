@@ -6,8 +6,11 @@ import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/reposit
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { createLongHorizonAgentTables } from '../../../../src/storage/schema/long-horizon-agents';
 import { workerAgentToLongHorizonParams } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
-import type { SpaceAgentLookup } from '../../../../src/lib/space/managers/space-workflow-manager';
+import {
+  SpaceWorkflowManager,
+  createSpaceAgentLookup,
+  type SpaceAgentLookup,
+} from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type {
   DaemonInternalEventMap,
@@ -255,13 +258,7 @@ describe('Space Export/Import RPC Handlers', () => {
     longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db as any);
     seedAgent = makeSeedAgent(agentRepo, longHorizonAgentRepo);
 
-    const agentLookup: SpaceAgentLookup = {
-      getAgentById(spaceId: string, id: string) {
-        const agent = agentRepo.getById(id);
-        if (!agent || agent.spaceId !== spaceId) return null;
-        return { id: agent.id, name: agent.name };
-      },
-    };
+    const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(agentRepo, longHorizonAgentRepo);
     workflowManager = new SpaceWorkflowManager(workflowRepo, agentLookup);
     spaceManager = createMockSpaceManager(SPACE_ID);
 
@@ -432,6 +429,71 @@ describe('Space Export/Import RPC Handlers', () => {
   });
 
   describe('spaceExport.workflows', () => {
+    it('rejects when a referenced native agent is paused or disabled', async () => {
+      longHorizonAgentRepo.create({
+        spaceId: SPACE_ID,
+        handle: 'sleeper',
+        displayName: 'Sleeper',
+        status: 'paused',
+      });
+      const sleeperId = longHorizonAgentRepo.listBySpaceId(SPACE_ID)[0].id;
+      workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Pipe',
+        nodes: [{ name: 'S', agentId: sleeperId }],
+        transitions: [],
+        completionAutonomyLevel: 3,
+      });
+
+      await expect(call(handlers, 'spaceExport.workflows', { spaceId: SPACE_ID })).rejects.toThrow(
+        'only active agents are exportable'
+      );
+    });
+
+    it('rejects when a workflow references the space coordinator', async () => {
+      const coordinator = longHorizonAgentRepo.ensureCoordinator(SPACE_ID);
+      workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Pipe',
+        nodes: [{ name: 'S', agentId: coordinator.id }],
+        transitions: [],
+        completionAutonomyLevel: 3,
+      });
+
+      await expect(call(handlers, 'spaceExport.workflows', { spaceId: SPACE_ID })).rejects.toThrow(
+        'coordinator is not exportable'
+      );
+    });
+
+    it('treats whitespace-variant duplicate names as ambiguous', async () => {
+      seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
+      longHorizonAgentRepo.create({
+        spaceId: SPACE_ID,
+        handle: 'coder-padded',
+        displayName: ' Coder ',
+      });
+
+      await expect(call(handlers, 'spaceExport.agents', { spaceId: SPACE_ID })).rejects.toThrow(
+        'duplicate agent name'
+      );
+    });
+
+    it('excludes paused native agents from agents exports', async () => {
+      seedAgent({ spaceId: SPACE_ID, name: 'Active One' });
+      longHorizonAgentRepo.create({
+        spaceId: SPACE_ID,
+        handle: 'paused-one',
+        displayName: 'Paused One',
+        status: 'paused',
+      });
+
+      const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
+        spaceId: SPACE_ID,
+      });
+
+      expect(bundle.agents.map((a: any) => a.name)).toEqual(['Active One']);
+    });
+
     it('exports workflow with agentRef resolved to agent name', async () => {
       const agent = seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
       workflowManager.createWorkflow({
@@ -1206,6 +1268,11 @@ describe('Space Export/Import RPC Handlers', () => {
         expect(twin.model).toBe('claude-new');
         expect(twin.handle).toBe('coder');
         expect(twin.toolPermissions).toEqual({ tools: ['Read', 'Grep'] });
+
+        await Promise.resolve();
+        const unifiedEvent = emittedEvents.find((e) => e.name === 'spaceLongHorizonAgent.updated');
+        expect(unifiedEvent).toBeTruthy();
+        expect((unifiedEvent!.data as { agent: { id: string } }).agent.id).toBe(unifiedId);
       });
 
       it('parks replacement handles without colliding with an existing suffixed handle', async () => {
@@ -1811,13 +1878,7 @@ describe('multi-agent step import', () => {
     longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db as any);
     seedAgent = makeSeedAgent(agentRepo, longHorizonAgentRepo);
 
-    const agentLookup: SpaceAgentLookup = {
-      getAgentById(spaceId: string, id: string) {
-        const agent = agentRepo.getById(id);
-        if (!agent || agent.spaceId !== spaceId) return null;
-        return { id: agent.id, name: agent.name };
-      },
-    };
+    const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(agentRepo, longHorizonAgentRepo);
     workflowManager = new SpaceWorkflowManager(workflowRepo, agentLookup);
     spaceManager = createMockSpaceManager(SPACE_ID);
     const mockHub = createMockHub();
@@ -2362,13 +2423,7 @@ describe('full export→import round-trip', () => {
     longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db as any);
     seedAgent = makeSeedAgent(agentRepo, longHorizonAgentRepo);
 
-    const agentLookup: SpaceAgentLookup = {
-      getAgentById(spaceId: string, id: string) {
-        const agent = agentRepo.getById(id);
-        if (!agent || agent.spaceId !== spaceId) return null;
-        return { id: agent.id, name: agent.name };
-      },
-    };
+    const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(agentRepo, longHorizonAgentRepo);
     workflowManager = new SpaceWorkflowManager(workflowRepo, agentLookup);
     spaceManager = createMockSpaceManager(SPACE_ID);
 
