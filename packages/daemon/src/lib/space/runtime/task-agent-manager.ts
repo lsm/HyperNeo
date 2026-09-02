@@ -2063,7 +2063,11 @@ export class TaskAgentManager {
     return resolvePostApprovalRouteNodeId(workflow);
   }
 
-  private sessionIsWorkerForTask(sessionId: string, taskId: string): boolean {
+  private sessionIsWorkerForTask(
+    sessionId: string,
+    taskId: string,
+    allowExecutionBound = false
+  ): boolean {
     try {
       const row = this.config.db
         .getDatabase()
@@ -2073,9 +2077,9 @@ export class TaskAgentManager {
             WHERE s.id = ?
               AND s.type = 'worker'
               AND s.task_id = ?
-              AND NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)`
+              AND (? OR NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id))`
         )
-        .get(sessionId, taskId) as { ok?: number } | undefined;
+        .get(sessionId, taskId, allowExecutionBound ? 1 : 0) as { ok?: number } | undefined;
       return Boolean(row);
     } catch {
       return false;
@@ -2095,12 +2099,12 @@ export class TaskAgentManager {
     if (task?.status === 'cancelled' || task?.status === 'archived') return null;
     if (hintSessionId) {
       if (!task?.workflowRunId) return null;
+      const recordedPointer = task.postApprovalSessionId === hintSessionId;
       if (
         (!task.postApprovalSessionId &&
           (task.status === 'approved' || task.status === 'done') &&
           this.findDurableWorkerSessionId(task) !== hintSessionId) ||
-        (task.postApprovalSessionId !== hintSessionId &&
-          !this.sessionIsWorkerForTask(hintSessionId, taskId))
+        !this.sessionIsWorkerForTask(hintSessionId, taskId, recordedPointer)
       )
         return null;
       const provenance = this.readProvenanceFromSessionRow(hintSessionId);
@@ -5390,6 +5394,17 @@ export class TaskAgentManager {
       matchedSlot.name,
       matchedNodeId
     );
+    const preEffectSpace = await this.config.spaceManager.getSpace(spaceId);
+    if (
+      !preEffectSpace ||
+      preEffectSpace.paused ||
+      preEffectSpace.stopped ||
+      preEffectSpace.status === 'archived'
+    ) {
+      throw new Error(
+        `spawnPostApprovalSubSession: space ${spaceId} became inactive before worker effects; refusing to spawn`
+      );
+    }
     if (existingSessionId) {
       const existing = this.getSubSession(existingSessionId);
       if (!existing) {
@@ -5613,7 +5628,8 @@ export class TaskAgentManager {
     const candidateId = prevExec?.agentSessionId ?? null;
     if (!candidateId) return null;
     const candidate =
-      this.getSubSession(candidateId) ?? (await this.rehydrateSubSession(candidateId));
+      this.getSubSession(candidateId) ??
+      (await this.rehydrateSubSession(candidateId, undefined, { startQuery: false }));
     if (!candidate) return null;
     const data = candidate.getSessionData();
     if (data.status === 'ended' || data.status === 'archived') return null;

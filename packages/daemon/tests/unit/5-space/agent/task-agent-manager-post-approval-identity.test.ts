@@ -250,6 +250,12 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     });
   });
 
+  it('rejects a recorded pointer naming a session owned by another task', () => {
+    insertTask(db, { status: 'approved', postApprovalSessionId: 'sibling-worker' });
+    insertWorkerSession(db, { sessionId: 'sibling-worker', taskId: 'sibling-task' });
+    expect(tam.getPostApprovalWorkerSession(TASK_ID, 'sibling-worker')).toBeNull();
+  });
+
   it('rejects a hint for a worker owned by a different task (task-scoped lookup)', () => {
     insertTask(db, { postApprovalSessionId: 'worker-1' });
     insertWorkerSession(db, { sessionId: 'worker-1' });

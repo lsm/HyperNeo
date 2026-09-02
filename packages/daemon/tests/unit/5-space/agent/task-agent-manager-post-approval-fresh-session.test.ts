@@ -915,6 +915,19 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(result.sessionId).toBe(FRESH_PA_SESSION_ID);
     expect(fromInitSpy).toHaveBeenCalledTimes(1);
   });
+
+  test('rejects the spawn when the space pauses during the reuse probe', async () => {
+    const opts = { spacePaused: false };
+    const tam = makeManager([], opts);
+    const stub = tam as unknown as { findLiveSubSessionForAgent: () => Promise<string | null> };
+    stub.findLiveSubSessionForAgent = async () => {
+      opts.spacePaused = true;
+    };
+
+    await expect(
+      tam.spawnPostApprovalSubSession(postApprovalSpawn(minimalWorkflow()))
+    ).rejects.toThrow('became inactive');
+  });
 });
 
 function makeExecutionRow(

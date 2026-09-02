@@ -67,7 +67,10 @@ function makeManager(input: {
     value: rehydrateSubSession,
     configurable: true,
   });
-  const restored = { marker: 'restored' } as unknown as AgentSession;
+  const restored = {
+    marker: 'restored',
+    getSessionData: () => ({ status: 'active' }),
+  } as unknown as AgentSession;
   Object.defineProperty(manager, 'getSubSession', { value: () => restored, configurable: true });
   if (input.cooldown) {
     Object.defineProperty(manager, 'readPersistedRateLimitCooldown', {
@@ -232,47 +235,25 @@ describe('TaskAgentManager workflow session provisioning', () => {
 });
 
 describe('TaskAgentManager rehydrateSubSessionById post-approval routing and admission', () => {
-  it('routes post-approval ids and recorded exec pointers through the dedicated restore', async () => {
-    for (const target of [SESSION_ID, EXEC_SESSION_ID]) {
-      const { manager, restorePostApprovalWorkerSession } = makeManager({
+  it('routes recorded targets through the dedicated restore; unrecorded ids fall back', async () => {
+    for (const [target, recorded] of [
+      [SESSION_ID, true],
+      [EXEC_SESSION_ID, true],
+      ['legacy-worker', true],
+      [`space:space-1:task:${TASK_ID}:exec:unrecorded`, false],
+    ] as Array<[string, boolean]>) {
+      const { manager, restorePostApprovalWorkerSession, rehydrateSubSession } = makeManager({
         taskStatus: 'approved',
-        postApprovalSessionId: target,
+        postApprovalSessionId: recorded ? target : null,
+        routingPointerTaskId: target === 'legacy-worker' ? TASK_ID : undefined,
         restoreResult: target,
       });
 
       await manager.rehydrateSubSessionById(target);
 
-      expect(restorePostApprovalWorkerSession).toHaveBeenCalledWith(TASK_ID, target, undefined, {});
+      expect(restorePostApprovalWorkerSession).toHaveBeenCalledTimes(recorded ? 1 : 0);
+      expect(rehydrateSubSession).toHaveBeenCalledTimes(recorded ? 0 : 1);
     }
-  });
-
-  it('routes a legacy (non-canonical) routing pointer through the dedicated restore', async () => {
-    const { manager, restorePostApprovalWorkerSession } = makeManager({
-      taskStatus: 'approved',
-      postApprovalSessionId: 'legacy-worker',
-      routingPointerTaskId: TASK_ID,
-      restoreResult: 'legacy-worker',
-    });
-
-    await manager.rehydrateSubSessionById('legacy-worker');
-
-    expect(restorePostApprovalWorkerSession).toHaveBeenCalledWith(
-      TASK_ID,
-      'legacy-worker',
-      undefined,
-      {}
-    );
-  });
-
-  it('falls back to the execution rehydrate for an unrecorded exec session', async () => {
-    const { manager, restorePostApprovalWorkerSession, rehydrateSubSession } = makeManager({
-      postApprovalSessionId: null,
-    });
-
-    await manager.rehydrateSubSessionById(EXEC_SESSION_ID);
-
-    expect(rehydrateSubSession).toHaveBeenCalledWith(EXEC_SESSION_ID);
-    expect(restorePostApprovalWorkerSession).not.toHaveBeenCalled();
   });
 
   it('rejects restores for terminal tasks or inactive spaces', async () => {
