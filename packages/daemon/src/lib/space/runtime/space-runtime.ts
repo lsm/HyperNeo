@@ -69,7 +69,7 @@ import type {
 import { Logger } from '../../logger.ts';
 import type { SpaceActorRegistryAdapter } from '../actor-registry.ts';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
-import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
+import { unifiedAgentRecordExists } from '../agents/worker-long-horizon-mapper.ts';
 import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import {
@@ -856,8 +856,9 @@ export class SpaceRuntime {
   private agentRecordExists(agentId: string, expectedSpaceId?: string): boolean {
     const unified = this.config.longHorizonAgentRepo?.getById(agentId);
     if (unified) {
-      if (expectedSpaceId && unified.spaceId !== expectedSpaceId) return false;
-      return isRunnableUnifiedAgent(unified);
+      return unifiedAgentRecordExists(unified, expectedSpaceId, (id) =>
+        this.config.spaceAgentManager.getById(id)
+      );
     }
     if (expectedSpaceId) {
       const worker = this.config.spaceAgentManager.getById(agentId);

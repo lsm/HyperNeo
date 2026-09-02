@@ -450,6 +450,19 @@ describe('SpaceAgentRepository', () => {
       expect(unifiedRow(agent.id)?.session_id).toBe('bound-session-1');
     });
 
+    it('reactivating an archived worker whose handle was claimed aligns both rows', () => {
+      const agent = repo.create({ spaceId: 'space-1', name: 'Coder', handle: 'coder' });
+      repo.update(agent.id, { status: 'archived' });
+      insertLongHorizonAgent('lh-claimed', 'coder', 'coordinator.default');
+
+      repo.update(agent.id, { status: 'active' });
+
+      const expected = `coder-${agent.id}`;
+      expect(repo.getById(agent.id)?.handle).toBe(expected);
+      expect(unifiedRow(agent.id)?.handle).toBe(expected);
+      expect(unifiedRow(agent.id)?.status).toBe('active');
+    });
+
     it('update aligns a colliding rename onto the same suffixed handle in both rows', () => {
       insertLongHorizonAgent('lh-1', 'renamed', 'coordinator.default');
       const agent = repo.create({ spaceId: 'space-1', name: 'Coder' });

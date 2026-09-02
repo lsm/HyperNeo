@@ -4194,6 +4194,29 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(eventStore.listDeliveries(otherEvent.id)[0]!.state).toBe('pending');
     });
 
+    test('a workflow referencing an orphan migration mirror reports the agent as missing', async () => {
+      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(AGENT_ID);
+      runtime = new SpaceRuntime({
+        db,
+        spaceManager: new SpaceManager(db),
+        spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+        longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
+        spaceWorkflowManager: workflowManager,
+        workflowRunRepo,
+        taskRepo,
+        nodeExecutionRepo,
+        internalEventBus: bus,
+        externalEventStore: eventStore,
+        taskAgentManager: tam as never,
+        deliverLongHorizonExternalEvent: async () => ({ delivered: true }),
+      });
+      const workflow = createWorkflow('code-orphan');
+
+      await expect(runtime.startWorkflowRun(SPACE_ID, workflow.id, 'Orphan Run')).rejects.toThrow(
+        /no longer exists in this Space/
+      );
+    });
+
     test('an interrupted target session defers to a probe that delivers once the interrupt clears', async () => {
       const { event, executionId } = await runWithPendingDelivery();
       bindLiveSession(executionId, 'session-interrupt-recovery');

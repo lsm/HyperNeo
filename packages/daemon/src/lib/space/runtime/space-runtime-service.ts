@@ -68,9 +68,9 @@ import { resolveCustomAgentPrompt } from '../agents/custom-agent.ts';
 import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../agents/long-horizon-agent-tools.ts';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent.ts';
 import {
-  isRunnableUnifiedAgent,
   longHorizonAgentToWorkerView,
   MIGRATED_WORKER_TEMPLATE_KEY,
+  unifiedAgentRecordExists,
 } from '../agents/worker-long-horizon-mapper.ts';
 import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session.ts';
 import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
@@ -1025,8 +1025,9 @@ export class SpaceRuntimeService {
   private agentRecordExists(agentId: string, expectedSpaceId?: string): boolean {
     const unified = this.config.longHorizonAgentRepo?.getById(agentId);
     if (unified) {
-      if (expectedSpaceId && unified.spaceId !== expectedSpaceId) return false;
-      return isRunnableUnifiedAgent(unified);
+      return unifiedAgentRecordExists(unified, expectedSpaceId, (id) =>
+        this.config.spaceAgentManager.getById(id)
+      );
     }
     if (expectedSpaceId) {
       const worker = this.config.spaceAgentManager.getById(agentId);

@@ -118,12 +118,14 @@ export class SpaceAgentRepository {
   }
 
   update(id: string, params: UpdateSpaceWorkerAgentParams): SpaceWorkerAgent | null {
-    if (params.handle !== undefined && params.handle !== null && this.hasUnifiedMirror(id)) {
+    if (this.hasUnifiedMirror(id)) {
       const worker = this.getById(id);
-      if (worker) {
+      if (worker && (params.handle != null || params.status === 'active')) {
+        const effectiveHandle = params.handle ?? worker.handle;
+        const effectiveName = params.name ?? worker.name;
         params = {
           ...params,
-          handle: this.alignHandleWithUnified(worker.spaceId, id, params.handle, worker.name),
+          handle: this.alignHandleWithUnified(worker.spaceId, id, effectiveHandle, effectiveName),
         };
       }
     }
