@@ -120,6 +120,10 @@ function buildTemplateUpdateParams(
       .filter((a) => a.id !== coordinatorLongHorizonAgentId(spaceId))
       .filter((a) => !coordinatorByHandle || a.id !== coordinatorByHandle.id)
       .filter((a) => a.status !== 'archived')
+      .filter(
+        (a) =>
+          a.templateKey === 'migration.legacy_space_agent' || (a.status ?? 'active') === 'active'
+      )
       .filter((a) => !isOrphanedMigrationMirror(workerAgentSource, spaceId, a.id, a.templateKey))
       .map((a) => ({ id: a.id, displayName: a.displayName ?? a.handle })),
     ...workerOnlyRoleCandidates(workerAgentSource, spaceId, unifiedIds),
@@ -368,6 +372,11 @@ export async function restampBuiltInWorkflowsOnStartup(
             .filter((a) => a.id !== coordinatorLongHorizonAgentId(space.id))
             .filter((a) => !restampCoordinatorByHandle || a.id !== restampCoordinatorByHandle.id)
             .filter((a) => a.status !== 'archived')
+            .filter(
+              (a) =>
+                a.templateKey === 'migration.legacy_space_agent' ||
+                (a.status ?? 'active') === 'active'
+            )
             .filter(
               (a) => !isOrphanedMigrationMirror(spaceAgentManager, space.id, a.id, a.templateKey)
             )

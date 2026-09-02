@@ -187,6 +187,12 @@ export function setupSpaceAgentHandlers(
     if (conflict) {
       throw new Error(`Agent name "${name}" is already used by a unified agent in this space`);
     }
+    const workerConflict = spaceAgentManager
+      .listBySpaceId(spaceId)
+      .find((a) => a.id !== excludeId && a.name.trim().toLowerCase() === target);
+    if (workerConflict) {
+      throw new Error(`Agent name "${name}" is already used by a worker agent in this space`);
+    }
   }
 
   messageHub.onRequest('spaceAgent.listBuiltInTemplates', async (data) => {

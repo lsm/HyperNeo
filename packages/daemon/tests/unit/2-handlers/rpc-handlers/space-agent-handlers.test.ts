@@ -573,7 +573,7 @@ describe('Space Agent RPC Handlers', () => {
           spaceId: 'space-1',
           name: 'Duplicate',
         })
-      ).rejects.toThrow('"Duplicate" already exists');
+      ).rejects.toThrow(/already (exists|used by a worker agent)/);
     });
   });
 
@@ -913,7 +913,7 @@ describe('Space Agent RPC Handlers', () => {
 
       await expect(
         call(hubData.handlers, 'spaceAgent.update', { id: agentId, name: 'OtherAgent' })
-      ).rejects.toThrow('already exists');
+      ).rejects.toThrow(/already (exists|used by a worker agent)/);
     });
 
     it('updates agent name successfully', async () => {

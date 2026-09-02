@@ -984,7 +984,9 @@ export function setupSpaceExportImportHandlers(
             }
             const id = updated?.id ?? existing.id;
             if (updateParams.provider === null) providerClearedAgentIds.push(id);
-            importedAgentNameToId.set(nameKey(exportedAgent.name), id);
+            if (!nonRunnableIds.has(existing.id)) {
+              importedAgentNameToId.set(nameKey(exportedAgent.name), id);
+            }
             agentResults.push({ name: exportedAgent.name, id, action: 'replaced' });
           } else {
             const finalName = generateUniqueName(exportedAgent.name, usedAgentNames);
