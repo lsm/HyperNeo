@@ -24,6 +24,7 @@ import {
 } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import { exportBundle, validateExportBundle, normalizeOverride } from '../space/export-format.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../space/agents/worker-long-horizon-mapper.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug.ts';
 import { Logger } from '../logger.ts';
 
@@ -102,6 +103,7 @@ function unifiedExportAgents(
     .filter((a) => a.id !== coordinatorLongHorizonAgentId(spaceId))
     .filter((a) => !coordinatorByHandle || a.id !== coordinatorByHandle.id)
     .filter((a) => a.status === 'active')
+    .filter((a) => a.autonomyLevel == null)
     .map(longHorizonAgentToWorkerView);
 }
 
@@ -118,6 +120,25 @@ function assertExportableAgentNames(agents: Array<{ id: string; name: string }>)
     }
     idByName.set(key, agent.id);
   }
+}
+
+function findAmbiguousAgentNames(agents: Array<{ name: string }>): string[] {
+  const idsByName = new Map<string, number>();
+  for (const agent of agents) {
+    idsByName.set(nameKey(agent.name), (idsByName.get(nameKey(agent.name)) ?? 0) + 1);
+  }
+  return [...idsByName.entries()]
+    .filter(([, count]) => count > 1)
+    .map(
+      ([name]) =>
+        `Cannot import: agent name "${name.trim()}" is ambiguous in this space ` +
+        `(multiple agents normalize to it). Rename one of them and retry.`
+    );
+}
+
+function assertUnambiguousAgentNames(agents: Array<{ name: string }>): void {
+  const ambiguities = findAmbiguousAgentNames(agents);
+  if (ambiguities.length > 0) throw new Error(ambiguities[0]);
 }
 
 function nameKey(name: string): string {
@@ -471,6 +492,9 @@ export function setupSpaceExportImportHandlers(
         }
         const lha = allSpaceAgents.find((a) => a.id === id);
         if (!lha) return `${id} (missing in this space)`;
+        if (lha.status === 'active' && lha.autonomyLevel != null) {
+          return `${id} (agent has an autonomy ceiling the export format cannot carry)`;
+        }
         return `${id} (agent is ${lha.status}; only active agents are exportable)`;
       });
       throw new Error(
@@ -582,6 +606,7 @@ export function setupSpaceExportImportHandlers(
     const existingAgents = [...workerAgents, ...unifiedOnlyAgents];
     const existingWorkflows = workflowRepo.listWorkflows(params.spaceId);
 
+    const agentNameAmbiguities = findAmbiguousAgentNames(existingAgents);
     const existingAgentByName = new Map(existingAgents.map((a) => [nameKey(a.name), a]));
     const existingWorkflowByName = new Map(existingWorkflows.map((w) => [w.name, w]));
     const existingAgentNameToId = new Map(existingAgents.map((a) => [nameKey(a.name), a.id]));
@@ -620,6 +645,7 @@ export function setupSpaceExportImportHandlers(
       }
     }
 
+    validationErrors.push(...agentNameAmbiguities);
     const result: ImportPreviewResult = {
       agents: agentPreviews,
       workflows: workflowPreviews,
@@ -662,6 +688,7 @@ export function setupSpaceExportImportHandlers(
         const existingAgents = [...workerAgents, ...unifiedOnlyAgents];
         const existingWorkflows = workflowRepo.listWorkflows(spaceId);
 
+        assertUnambiguousAgentNames(existingAgents);
         const existingAgentByName = new Map(existingAgents.map((a) => [nameKey(a.name), a]));
         const existingWorkflowByName = new Map(existingWorkflows.map((w) => [w.name, w]));
         const existingAgentNameToId = new Map(existingAgents.map((a) => [nameKey(a.name), a.id]));
@@ -700,7 +727,7 @@ export function setupSpaceExportImportHandlers(
           for (const agent of replacedAgentByName.values()) {
             clearAgentHandle.run(now, agent.id);
             const twin = longHorizonAgentRepo.getById(agent.id);
-            if (!twin) continue;
+            if (!twin || twin.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY) continue;
             let parked = `${twin.handle}-${agent.id}`;
             let holder = longHorizonAgentRepo.getByHandle(spaceId, parked);
             while (holder && holder.id !== agent.id) {

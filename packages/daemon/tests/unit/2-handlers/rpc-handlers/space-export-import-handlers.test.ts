@@ -465,6 +465,61 @@ describe('Space Export/Import RPC Handlers', () => {
       );
     });
 
+    it('rejects imports into a target with ambiguous normalized names', async () => {
+      seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
+      longHorizonAgentRepo.create({
+        spaceId: SPACE_ID,
+        handle: 'coder-padded',
+        displayName: ' Coder ',
+      });
+      longHorizonAgentRepo.create({
+        spaceId: SPACE_ID,
+        handle: 'fresh-native',
+        displayName: 'Fresh Native',
+        autonomyLevel: 2,
+      });
+      workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Pipe',
+        nodes: [
+          {
+            name: 'S',
+            agentId: longHorizonAgentRepo
+              .listBySpaceId(SPACE_ID)
+              .find((a) => a.displayName === 'Fresh Native')!.id,
+          },
+        ],
+        transitions: [],
+        completionAutonomyLevel: 3,
+      });
+
+      await expect(call(handlers, 'spaceExport.workflows', { spaceId: SPACE_ID })).rejects.toThrow(
+        'autonomy ceiling the export format cannot carry'
+      );
+      await expect(call(handlers, 'spaceExport.agents', { spaceId: SPACE_ID })).rejects.toThrow(
+        'duplicate agent name'
+      );
+    });
+
+    it('rejects execute when the import target has ambiguous normalized names', async () => {
+      seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
+      longHorizonAgentRepo.create({
+        spaceId: SPACE_ID,
+        handle: 'coder-padded',
+        displayName: ' Coder ',
+      });
+
+      const bundle = makeBundle([{ name: 'Coder' }], []);
+
+      await expect(
+        call(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle,
+          conflictResolution: { agents: { Coder: 'replace' } },
+        })
+      ).rejects.toThrow('is ambiguous in this space');
+    });
+
     it('treats whitespace-variant duplicate names as ambiguous', async () => {
       seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
       longHorizonAgentRepo.create({
@@ -1273,6 +1328,26 @@ describe('Space Export/Import RPC Handlers', () => {
         const unifiedEvent = emittedEvents.find((e) => e.name === 'spaceLongHorizonAgent.updated');
         expect(unifiedEvent).toBeTruthy();
         expect((unifiedEvent!.data as { agent: { id: string } }).agent.id).toBe(unifiedId);
+      });
+
+      it('preserves genuine native overlay handles during replacement', async () => {
+        const worker = seedAgent({ spaceId: SPACE_ID, name: 'Alpha', handle: 'alpha' });
+        db.prepare(
+          `UPDATE space_long_horizon_agents SET template_key = 'custom.overlay', handle = 'overlay-handle' WHERE id = ?`
+        ).run(worker.id);
+
+        const bundle = makeBundle([{ name: 'Alpha', handle: 'alpha', customPrompt: 'New.' }], []);
+
+        const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle,
+          conflictResolution: { agents: { Alpha: 'replace' } },
+        });
+
+        expect(result.agents[0].action).toBe('replaced');
+        const overlay = longHorizonAgentRepo.getById(worker.id)!;
+        expect(overlay.handle).toBe('overlay-handle');
+        expect(overlay.templateKey).toBe('custom.overlay');
       });
 
       it('parks replacement handles without colliding with an existing suffixed handle', async () => {

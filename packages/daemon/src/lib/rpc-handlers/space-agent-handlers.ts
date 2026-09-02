@@ -173,15 +173,17 @@ export function setupSpaceAgentHandlers(
   ): Promise<void> {
     const target = name.trim().toLowerCase();
     if (!target) return;
-    const conflict = longHorizonAgentRepo
-      .listBySpaceId(spaceId)
-      .find(
-        (a) =>
-          a.status !== 'archived' &&
-          a.id !== excludeId &&
-          (a.displayName ?? '').trim().toLowerCase() === target &&
-          !spaceAgentManager.getById(a.id)
-      );
+    const conflict = longHorizonAgentRepo.listBySpaceId(spaceId).find((a) => {
+      if (
+        a.status === 'archived' ||
+        a.id === excludeId ||
+        (a.displayName ?? '').trim().toLowerCase() !== target
+      ) {
+        return false;
+      }
+      const worker = spaceAgentManager.getById(a.id);
+      return !worker || a.templateKey !== 'migration.legacy_space_agent';
+    });
     if (conflict) {
       throw new Error(`Agent name "${name}" is already used by a unified agent in this space`);
     }
