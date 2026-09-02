@@ -946,7 +946,9 @@ export class TaskAgentManager {
           };
 
           if (!customAgent) {
-            throw new PermanentSpawnError(`Agent not found: ${slot.agentId}`);
+            throw new PermanentSpawnError(
+              `Agent not found: ${slot.agentId} (task: ${request.task.id})`
+            );
           }
 
           let init = resolveAgentInit({

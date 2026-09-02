@@ -1,15 +1,7 @@
-import type { Database as BunDatabase } from '../sqlite-compat.ts';
-import { generateUUID } from '@hyperneo/shared';
-import {
-  decideGoalOwnerResolution,
-  type GoalOwnerAgentState,
-  type GoalOwnerResolutionDecision,
-} from '../../lib/space/goals/goal-owner-resolution.ts';
 import type {
   CreateSpaceLongHorizonAgentParams,
   CreateSpaceLongHorizonAgentReminderParams,
   CreateSpaceLongHorizonAgentSubscriptionParams,
-  UpdateSpaceLongHorizonAgentSubscriptionParams,
   SpaceAgentAutonomyLevel,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentEventSubscription,
@@ -18,9 +10,17 @@ import type {
   SpaceLongHorizonAgentReminder,
   SpaceLongHorizonAgentStatus,
   UpdateSpaceLongHorizonAgentParams,
+  UpdateSpaceLongHorizonAgentSubscriptionParams,
 } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
+import {
+  decideGoalOwnerResolution,
+  type GoalOwnerAgentState,
+  type GoalOwnerResolutionDecision,
+} from '../../lib/space/goals/goal-owner-resolution.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
 
 const DEFAULT_TOOL_PERMISSIONS: Record<string, never> = {};
@@ -126,7 +126,9 @@ export class SpaceLongHorizonAgentRepository {
 
   update(id: string, params: UpdateSpaceLongHorizonAgentParams): SpaceLongHorizonAgent | null {
     const existing = this.getById(id);
-    if (existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
+    const sessionBindingOnly =
+      Object.keys(params).length > 0 && Object.keys(params).every((key) => key === 'sessionId');
+    if (existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY && !sessionBindingOnly) {
       throw new Error(
         `Agent ${id} is a migrated worker mirror — edit the worker agent instead; ` +
           `worker edits propagate to the mirror.`
@@ -224,7 +226,7 @@ export class SpaceLongHorizonAgentRepository {
         .get();
       const hasSiblingWorker =
         row != null &&
-        !!this.db
+        this.db
           .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agents'`)
           .get()
           ? !!this.db

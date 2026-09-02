@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import {
   coordinatorLongHorizonAgentId,
   coordinatorSessionId,
   SpaceLongHorizonAgentRepository,
 } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('SpaceLongHorizonAgentRepository', () => {
@@ -659,6 +659,20 @@ describe('SpaceLongHorizonAgentRepository', () => {
       /migrated worker mirror/
     );
     expect(repo.getById(mirror.id)?.displayName).toBe('Migrated Worker');
+  });
+
+  test('update permits the runtime session binding on migrated worker mirrors', () => {
+    const mirror = repo.create({
+      spaceId: 'space-1',
+      handle: 'mirror-bind',
+      displayName: 'Migrated Worker',
+      templateKey: 'migration.legacy_space_agent',
+    });
+
+    const bound = repo.update(mirror.id, { sessionId: 'space:agent:space-1:sess' });
+
+    expect(bound?.sessionId).toBe('space:agent:space-1:sess');
+    expect(repo.update(mirror.id, { sessionId: null })?.sessionId).toBeNull();
   });
 
   test('delete rejects migrated worker mirrors so execution identity survives', () => {
