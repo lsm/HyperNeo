@@ -68,9 +68,9 @@ export function applySessionStatusGate(
 
 export function applyPostApprovalGate(ctx: RestoredWorkerAdmissionCtx): RestoredWorkerAdmissionCtx {
   const task = readLazyInput(ctx.task);
-  return ctx.sessionId.includes(':post-approval:')
-    ? decided(ctx, task?.status === 'approved')
-    : ctx;
+  const isPostApprovalTarget =
+    ctx.sessionId.includes(':post-approval:') || task?.postApprovalSessionId === ctx.sessionId;
+  return isPostApprovalTarget ? decided(ctx, task?.status === 'approved') : ctx;
 }
 
 export function applyTerminalForSpawnGate(

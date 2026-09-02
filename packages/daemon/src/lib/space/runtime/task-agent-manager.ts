@@ -89,6 +89,8 @@ import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-m
 import {
   buildExecutionBaseSessionId,
   buildPostApprovalSessionId,
+  hasRuntimeNodeAgentServer,
+  isWorkflowSubSessionIdentity,
   sanitizeAgentNameForId,
   taskIdFromSubSessionIdentity,
 } from '../../session/sub-session-identity.ts';
@@ -2097,7 +2099,8 @@ export class TaskAgentManager {
         (!task.postApprovalSessionId &&
           (task.status === 'approved' || task.status === 'done') &&
           this.findDurableWorkerSessionId(task) !== hintSessionId) ||
-        !this.sessionIsWorkerForTask(hintSessionId, taskId)
+        (task.postApprovalSessionId !== hintSessionId &&
+          !this.sessionIsWorkerForTask(hintSessionId, taskId))
       )
         return null;
       const provenance = this.readProvenanceFromSessionRow(hintSessionId);
@@ -3801,6 +3804,39 @@ export class TaskAgentManager {
     }
   }
 
+  async rehydrateSubSessionById(sessionId: string): Promise<AgentSession | null> {
+    const taskId = taskIdFromSubSessionIdentity(sessionId);
+    if (taskId !== null) {
+      const task = this.config.taskRepo.getTask(taskId);
+      const recordedRouting = task?.postApprovalSessionId ?? null;
+      if (sessionId.includes(':post-approval:') || recordedRouting === sessionId) {
+        if (
+          task === null ||
+          task.status === 'cancelled' ||
+          task.status === 'archived' ||
+          task.status === 'stopped'
+        ) {
+          return null;
+        }
+        const space = await this.config.spaceManager.getSpace(task.spaceId);
+        if (space === null || space.paused || space.stopped || space.status === 'archived') {
+          return null;
+        }
+        const restoreOptions = this.readPersistedRateLimitCooldown(sessionId)
+          ? { startQuery: false }
+          : {};
+        const restoredId = await this.restorePostApprovalWorkerSession(
+          taskId,
+          sessionId,
+          undefined,
+          restoreOptions
+        );
+        return restoredId === null ? null : (this.getSubSession(restoredId) ?? null);
+      }
+    }
+    return this.rehydrateSubSession(sessionId);
+  }
+
   private async rehydrateSubSession(
     subSessionId: string,
     suppliedSession?: AgentSession,
@@ -5301,6 +5337,12 @@ export class TaskAgentManager {
     if (!space) {
       throw new Error(`spawnPostApprovalSubSession: space ${spaceId} not found for task ${taskId}`);
     }
+    if (space.paused || space.stopped || space.status === 'archived') {
+      throw new Error(
+        `spawnPostApprovalSubSession: space ${spaceId} is ${space.status}` +
+          `${space.paused ? ' (paused)' : ''}${space.stopped ? ' (stopped)' : ''}; refusing to spawn`
+      );
+    }
 
     let matchedSlot: ReturnType<typeof resolveNodeAgents>[number] | null = null;
     let matchedNodeId: string | null = null;
@@ -5320,7 +5362,11 @@ export class TaskAgentManager {
       );
     }
 
-    const existingSessionId = this.findLiveSubSessionForAgent(task, matchedSlot.name);
+    const existingSessionId = this.findLiveSubSessionForAgent(
+      task,
+      matchedSlot.name,
+      matchedNodeId
+    );
     if (existingSessionId) {
       const existing = this.getSubSession(existingSessionId);
       if (!existing) {
@@ -5387,6 +5433,15 @@ export class TaskAgentManager {
     if (freshTask.workflowRunId !== task.workflowRunId) {
       throw new Error(
         `spawnPostApprovalSubSession: task ${taskId} moved to workflow run ${freshTask.workflowRunId ?? 'detached'} before creating a fresh session`
+      );
+    }
+    if (
+      freshTask.status === 'cancelled' ||
+      freshTask.status === 'archived' ||
+      freshTask.status === 'stopped'
+    ) {
+      throw new Error(
+        `spawnPostApprovalSubSession: task ${taskId} is ${freshTask.status}; refusing to spawn a post-approval session`
       );
     }
     const workspacePath = resolveSpawnWorkspace({
@@ -5481,6 +5536,7 @@ export class TaskAgentManager {
         agentId: matchedSlot.agentId,
         agentName: matchedSlot.name,
         nodeId: matchedNodeId,
+        freshSessionOnly: true,
       });
 
       const spawned = this.getSubSession(actualSessionId);
@@ -5520,14 +5576,26 @@ export class TaskAgentManager {
     }
   }
 
-  private findLiveSubSessionForAgent(task: SpaceTask, agentName: string): string | null {
+  private findLiveSubSessionForAgent(
+    task: SpaceTask,
+    agentName: string,
+    nodeId?: string
+  ): string | null {
     if (!task.workflowRunId) return null;
     const prevExec = this.config.nodeExecutionRepo
       .listByWorkflowRun(task.workflowRunId)
       .filter((e) => e.agentName === agentName && e.agentSessionId)
+      .filter((e) => nodeId === undefined || e.workflowNodeId === nodeId)
       .at(-1);
     const candidateId = prevExec?.agentSessionId ?? null;
     if (!candidateId) return null;
-    return this.getSubSession(candidateId) ? candidateId : null;
+    const candidate = this.getSubSession(candidateId);
+    if (!candidate) return null;
+    const data = candidate.getSessionData();
+    if (data.status === 'ended' || data.status === 'archived') return null;
+    if (isWorkflowSubSessionIdentity(candidateId) && !hasRuntimeNodeAgentServer(data.config)) {
+      return null;
+    }
+    return candidateId;
   }
 }

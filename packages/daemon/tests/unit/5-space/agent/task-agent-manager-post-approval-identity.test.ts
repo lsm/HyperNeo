@@ -239,6 +239,17 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     expect(tam.getPostApprovalWorkerSession(TASK_ID, 'coder-1')).toBeNull();
   });
 
+  it('authorizes an execution-backed hint recorded as the routing pointer', () => {
+    const reusedExecId = 'space:space-id:task:task-1:exec:reused';
+    insertTask(db, { status: 'approved', postApprovalSessionId: reusedExecId });
+    insertWorkerSession(db, { sessionId: reusedExecId, withExecution: true });
+    expect(tam.getPostApprovalWorkerSession(TASK_ID, reusedExecId)).toEqual({
+      sessionId: reusedExecId,
+      agentName: 'merger',
+      nodeId: POST_APPROVAL_NODE,
+    });
+  });
+
   it('rejects a hint for a worker owned by a different task (task-scoped lookup)', () => {
     insertTask(db, { postApprovalSessionId: 'worker-1' });
     insertWorkerSession(db, { sessionId: 'worker-1' });
