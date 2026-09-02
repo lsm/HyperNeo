@@ -4,6 +4,7 @@ import type { NodeExecutionRepository } from '../../storage/repositories/node-ex
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import {
   hasRuntimeNodeAgentServer,
   isWorkflowSubSessionIdentity,
@@ -17,12 +18,17 @@ import {
   collectDispatchablePostApprovalRoutes,
 } from '../space/runtime/post-approval-router.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import { resolveTaskWorkspace } from '../space/runtime/spawn-slot-resolution.ts';
 import type { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
 import {
   interpolatePostApprovalTemplate,
   type PostApprovalTemplateContext,
 } from '../space/workflows/post-approval-template.ts';
 import { type SessionResolutionDeps, workerTaskPhaseOf } from './deps.ts';
+
+const spawnHalted = (halt?: string): boolean => halt !== undefined;
+
+const sessionUnavailable = (status: string): boolean => status === 'ended' || status === 'archived';
 
 export function createDefaultSessionResolutionDeps(services: {
   sessionManager: SessionManager;
@@ -35,6 +41,7 @@ export function createDefaultSessionResolutionDeps(services: {
   spaceWorkflowManager: SpaceWorkflowManager;
   spaceManager?: Pick<SpaceManager, 'getSpace'>;
   artifactProfile?: Pick<WorkflowArtifactProfile, 'resolveInitialPrimaryLinkUrl'>;
+  internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 }): SessionResolutionDeps {
   const {
     sessionManager,
@@ -47,37 +54,55 @@ export function createDefaultSessionResolutionDeps(services: {
     spaceWorkflowManager,
     spaceManager,
     artifactProfile,
+    internalEventBus,
   } = services;
 
   const runSpawnPostApprovalWorker = (
     superpipe({
+      spawnHalted,
       taskRepo,
       workflowRunRepo,
       spaceWorkflowManager,
       taskAgentManager,
       spaceManager,
       artifactProfile,
+      internalEventBus,
     })('spawn-post-approval-worker') as PipelineAPI
   )
     .input(['taskId', 'agentName', 'workflowNodeId'])
     .pipe(
       resolveSpawnRouteStage,
       ['taskId', 'agentName', 'taskRepo', 'workflowRunRepo', 'spaceWorkflowManager'],
-      'result:spawnRoute'
+      ['spawnRoute', 'routeHalt']
     )
+    .pipe('!spawnHalted', 'routeHalt')
     .pipe(
       buildKickoffStage,
       ['spawnRoute', 'spaceManager', 'artifactProfile'],
-      'result:kickoffMessage'
+      ['kickoffMessage', 'kickoffHalt']
     )
+    .pipe('!spawnHalted', 'kickoffHalt')
     .pipe(
       spawnWorkerStage,
-      ['spawnRoute', 'kickoffMessage', 'agentName', 'workflowNodeId', 'taskAgentManager'],
-      'result:sessionId'
+      [
+        'spawnRoute',
+        'kickoffMessage',
+        'agentName',
+        'workflowNodeId',
+        'taskAgentManager',
+        'taskId',
+        'taskRepo',
+      ],
+      ['sessionId', 'spawnHalt']
     )
-    .pipe(recordRoutedSessionStage, ['taskId', 'sessionId', 'taskRepo'])
+    .pipe('!spawnHalted', 'spawnHalt')
+    .pipe(
+      recordRoutedSessionStage,
+      ['taskId', 'sessionId', 'taskRepo', 'spawnRoute', 'internalEventBus'],
+      'recordedSessionId'
+    )
     .error(() => undefined, ['error'])
-    .endAsync('sessionId') as (
+    .endAsync('recordedSessionId') as (
     taskId: string,
     agentName: string,
     workflowNodeId?: string
@@ -88,7 +113,7 @@ export function createDefaultSessionResolutionDeps(services: {
       const indexed = taskAgentManager.getSubSession(sessionId);
       if (indexed !== undefined && sessionManager.getCachedSession(sessionId) === indexed) {
         const data = indexed.getSessionData();
-        if (data.status === 'ended') return null;
+        if (sessionUnavailable(data.status)) return null;
         if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeNodeAgentServer(data.config)) {
           return null;
         }
@@ -96,7 +121,7 @@ export function createDefaultSessionResolutionDeps(services: {
       }
       const session = await sessionManager.getSessionAsync(sessionId);
       if (session === null) return null;
-      if (session.getSessionData().status === 'ended') return null;
+      if (sessionUnavailable(session.getSessionData().status)) return null;
       if (
         isWorkflowSubSessionIdentity(sessionId) &&
         !hasRuntimeNodeAgentServer(session.getSessionData().config)
@@ -108,7 +133,7 @@ export function createDefaultSessionResolutionDeps(services: {
 
     async rehydrateSubSession(sessionId) {
       const restored = await taskAgentManager.rehydrateSubSessionById(sessionId);
-      if (restored === null || restored.getSessionData().status === 'ended') return null;
+      if (restored === null || sessionUnavailable(restored.getSessionData().status)) return null;
       return restored;
     },
 
@@ -193,23 +218,26 @@ async function resolveSpawnRouteStage(
   taskRepo: Pick<SpaceTaskRepository, 'getTask'>,
   workflowRunRepo: SpaceWorkflowRunRepository,
   spaceWorkflowManager: SpaceWorkflowManager
-): Promise<{ value: SpawnRoute } | { reason: string }> {
+): Promise<{ spawnRoute: SpawnRoute | undefined; routeHalt: string | undefined }> {
   const task = taskRepo.getTask(taskId);
-  if (task === null || task.workflowRunId == null) return { reason: 'task_not_routable' };
+  if (task === null || task.workflowRunId == null) {
+    return { spawnRoute: undefined, routeHalt: 'task_not_routable' };
+  }
   const run = workflowRunRepo.getRun(task.workflowRunId);
-  if (run === null) return { reason: 'run_not_found' };
+  if (run === null) return { spawnRoute: undefined, routeHalt: 'run_not_found' };
   const workflow = spaceWorkflowManager.getWorkflowForRun(run);
-  if (workflow === null) return { reason: 'workflow_not_found' };
+  if (workflow === null) return { spawnRoute: undefined, routeHalt: 'workflow_not_found' };
   const route = canonicalPostApprovalRouteForAgent(workflow, agentName);
-  if (route === null) return { reason: 'route_mismatch' };
-  return { value: { task, workflow, route } };
+  if (route === null) return { spawnRoute: undefined, routeHalt: 'route_mismatch' };
+  return { spawnRoute: { task, workflow, route }, routeHalt: undefined };
 }
 
 async function buildKickoffStage(
-  spawnRoute: SpawnRoute,
+  spawnRoute: SpawnRoute | undefined,
   spaceManager: Pick<SpaceManager, 'getSpace'> | undefined,
   artifactProfile: Pick<WorkflowArtifactProfile, 'resolveInitialPrimaryLinkUrl'> | undefined
-): Promise<{ value: string } | { reason: string }> {
+): Promise<{ kickoffMessage: string | undefined; kickoffHalt: string | undefined }> {
+  if (spawnRoute === undefined) return { kickoffMessage: undefined, kickoffHalt: undefined };
   const space =
     spaceManager === undefined
       ? null
@@ -224,17 +252,33 @@ async function buildKickoffStage(
     spawnRoute.route.instructions,
     postApprovalTemplateContextOf(spawnRoute.task, space, artifactProfile, approvalAuthority)
   );
-  if (!text.trim()) return { reason: 'empty_kickoff' };
-  return { value: appendPostApprovalCompletionInstructions(text) };
+  if (!text.trim()) return { kickoffMessage: undefined, kickoffHalt: 'empty_kickoff' };
+  return {
+    kickoffMessage: appendPostApprovalCompletionInstructions(text),
+    kickoffHalt: undefined,
+  };
 }
 
 async function spawnWorkerStage(
-  spawnRoute: SpawnRoute,
-  kickoffMessage: string,
+  spawnRoute: SpawnRoute | undefined,
+  kickoffMessage: string | undefined,
   agentName: string,
   workflowNodeId: string | undefined,
-  taskAgentManager: Pick<TaskAgentManager, 'spawnPostApprovalSubSession'>
-): Promise<{ value: string } | { reason: string }> {
+  taskAgentManager: Pick<TaskAgentManager, 'spawnPostApprovalSubSession'>,
+  taskId: string,
+  taskRepo: Pick<SpaceTaskRepository, 'getTask'>
+): Promise<{ sessionId: string | undefined; spawnHalt: string | undefined }> {
+  if (spawnRoute === undefined || kickoffMessage === undefined) {
+    return { sessionId: undefined, spawnHalt: undefined };
+  }
+  const current = taskRepo.getTask(taskId);
+  if (
+    current === null ||
+    current.status !== 'approved' ||
+    current.workflowRunId !== spawnRoute.task.workflowRunId
+  ) {
+    return { sessionId: undefined, spawnHalt: 'task_changed' };
+  }
   try {
     const { sessionId } = await taskAgentManager.spawnPostApprovalSubSession({
       task: spawnRoute.task,
@@ -243,22 +287,45 @@ async function spawnWorkerStage(
       kickoffMessage,
       nodeId: workflowNodeId,
     });
-    return { value: sessionId };
+    return { sessionId, spawnHalt: undefined };
   } catch {
-    return { reason: 'spawn_failed' };
+    return { sessionId: undefined, spawnHalt: 'spawn_failed' };
   }
 }
 
-function recordRoutedSessionStage(
+async function recordRoutedSessionStage(
   taskId: string,
-  sessionId: string,
-  taskRepo: Pick<SpaceTaskRepository, 'updateTask'>
-): void {
-  taskRepo.updateTask(taskId, {
-    postApprovalSessionId: sessionId,
-    postApprovalStartedAt: Date.now(),
-    postApprovalBlockedReason: null,
-  });
+  sessionId: string | undefined,
+  taskRepo: Pick<SpaceTaskRepository, 'getTask' | 'updateTask'>,
+  spawnRoute: SpawnRoute | undefined,
+  internalEventBus: InternalEventBus<DaemonInternalEventMap> | undefined
+): Promise<string | undefined> {
+  if (sessionId === undefined || spawnRoute === undefined) return undefined;
+  const current = taskRepo.getTask(taskId);
+  if (
+    current === null ||
+    current.status !== 'approved' ||
+    current.workflowRunId !== spawnRoute.task.workflowRunId
+  ) {
+    return undefined;
+  }
+  const updated =
+    taskRepo.updateTask(taskId, {
+      postApprovalSessionId: sessionId,
+      postApprovalStartedAt: Date.now(),
+      postApprovalBlockedReason: null,
+    }) ?? current;
+  try {
+    await internalEventBus?.publish('space.task.updated', {
+      sessionId: 'global',
+      spaceId: updated.spaceId,
+      taskId: updated.id,
+      task: updated,
+    });
+  } catch {
+    return sessionId;
+  }
+  return sessionId;
 }
 
 function canonicalPostApprovalRouteForAgent(
@@ -281,7 +348,7 @@ function postApprovalTemplateContextOf(
     space_id: task.spaceId,
   };
   if (task.approvalSource != null) context.approval_source = task.approvalSource;
-  const workspacePath = space?.workspacePath ?? task.workspacePath;
+  const workspacePath = space !== null ? resolveTaskWorkspace(space, task) : task.workspacePath;
   if (workspacePath != null && workspacePath !== '') context.workspace_path = workspacePath;
   if (space?.autonomyLevel != null) context.autonomy_level = space.autonomyLevel;
   if (approvalAuthority !== undefined) context.approval_authority = approvalAuthority;

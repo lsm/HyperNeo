@@ -5350,6 +5350,15 @@ export class TaskAgentManager {
         `spawnPostApprovalSubSession: task ${taskId} moved to workflow run ${freshTask.workflowRunId ?? 'detached'} before creating a fresh session`
       );
     }
+    if (
+      freshTask.status === 'cancelled' ||
+      freshTask.status === 'archived' ||
+      freshTask.status === 'stopped'
+    ) {
+      throw new Error(
+        `spawnPostApprovalSubSession: task ${taskId} is ${freshTask.status}; refusing to spawn a post-approval session`
+      );
+    }
     const workspacePath = resolveSpawnWorkspace({
       cachedTaskWorktreePath: this.getTaskWorktreePath(taskId),
       hasWorktreeManager: false,

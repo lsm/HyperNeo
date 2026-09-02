@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { POST_APPROVAL_COMPLETION_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { Space, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../../src/lib/internal-event-bus';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import { createDefaultSessionResolutionDeps } from '../../../../src/lib/session-resolution/default-deps';
 import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
@@ -56,6 +60,8 @@ interface HarnessConfig {
   workflow?: Partial<SpaceWorkflow> | null;
   prUrl?: string | null;
   space?: Partial<Space> | null;
+  taskReads?: Array<Partial<SpaceTask> | null | undefined>;
+  publishTaskUpdated?: boolean;
 }
 
 interface Harness {
@@ -72,6 +78,7 @@ interface Harness {
   getRunCalls: string[];
   prUrlCalls: string[];
   getSpaceCalls: string[];
+  publishedTaskUpdates: Array<{ taskId: string; spaceId: string }>;
 }
 
 function makeHarness(config: HarnessConfig = {}): Harness {
@@ -89,6 +96,7 @@ function makeHarness(config: HarnessConfig = {}): Harness {
     getRunCalls: [],
     prUrlCalls: [],
     getSpaceCalls: [],
+    publishedTaskUpdates: [],
   };
   const task = (
     config.task === undefined || config.task === null ? null : config.task
@@ -150,6 +158,10 @@ function makeHarness(config: HarnessConfig = {}): Harness {
   const taskRepo = {
     getTask: (taskId: string) => {
       harness.getTaskCalls.push(taskId);
+      const override = config.taskReads?.[harness.getTaskCalls.length - 1];
+      if (override !== undefined) {
+        return override === null ? null : (override as SpaceTask);
+      }
       return task;
     },
     updateTask: (taskId: string, params: Record<string, unknown>) => {
@@ -205,6 +217,17 @@ function makeHarness(config: HarnessConfig = {}): Harness {
           } as SpaceManager,
         }
       : {}),
+    ...(config.publishTaskUpdated
+      ? {
+          internalEventBus: {
+            publish: (topic: string, payload: { taskId: string; spaceId: string }) => {
+              expect(topic).toBe('space.task.updated');
+              harness.publishedTaskUpdates.push(payload);
+              return Promise.resolve({ delivered: 0, failures: [] });
+            },
+          } as unknown as InternalEventBus<DaemonInternalEventMap>,
+        }
+      : {}),
   });
   return harness;
 }
@@ -225,6 +248,13 @@ describe('getSession', () => {
   test('ended indexed sub-session resolves null', async () => {
     const ended = fakeSession('sub-1', 'ended');
     const { deps } = makeHarness({ indexedSubSession: ended, cachedSession: ended });
+
+    await expect(deps.getSession('sub-1')).resolves.toBeNull();
+  });
+
+  test('archived indexed sub-session resolves null', async () => {
+    const archived = fakeSession('sub-1', 'archived');
+    const { deps } = makeHarness({ indexedSubSession: archived, cachedSession: archived });
 
     await expect(deps.getSession('sub-1')).resolves.toBeNull();
   });
@@ -259,6 +289,12 @@ describe('getSession', () => {
     await expect(deps.getSession('sess-1')).resolves.toBeNull();
   });
 
+  test('archived async session resolves null', async () => {
+    const { deps } = makeHarness({ asyncSession: fakeSession('sess-1', 'archived') });
+
+    await expect(deps.getSession('sess-1')).resolves.toBeNull();
+  });
+
   test('non-indexed workflow sub-session without a runtime node-agent server resolves null', async () => {
     const { deps } = makeHarness({
       asyncSession: fakeSession('space:s1:task:t1:post-approval:coder', 'active', {}),
@@ -284,6 +320,14 @@ describe('rehydrateSubSession', () => {
 
     await expect(deps.rehydrateSubSession('sub-1')).resolves.toBeNull();
     expect(rehydrateCalls).toEqual(['sub-1']);
+  });
+
+  test('restored session whose persisted status is archived resolves null', async () => {
+    const { deps } = makeHarness({
+      rehydratedSession: fakeSession('sub-1', 'archived'),
+    });
+
+    await expect(deps.rehydrateSubSession('sub-1')).resolves.toBeNull();
   });
 });
 
@@ -523,6 +567,7 @@ describe('spawnPostApprovalWorker', () => {
         id: 't-1',
         title: 'Ship the release',
         spaceId: 'space-1',
+        status: 'approved',
         workflowRunId: 'run-1',
         approvalSource: 'human',
         workspacePath: '/ws/space-1',
@@ -569,6 +614,23 @@ describe('spawnPostApprovalWorker', () => {
         },
       ],
     ]);
+  });
+
+  test('records the routing without publishing when no event bus is wired', async () => {
+    const { deps, publishedTaskUpdates } = spawnHarness();
+
+    await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBe('spawned-9');
+    expect(publishedTaskUpdates).toHaveLength(0);
+  });
+
+  test('publishes the recovered task update on the internal event bus after recording', async () => {
+    const { deps, publishedTaskUpdates, updateTaskCalls } = spawnHarness({
+      publishTaskUpdated: true,
+    });
+
+    await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBe('spawned-9');
+    expect(updateTaskCalls).toHaveLength(1);
+    expect(publishedTaskUpdates).toEqual([{ taskId: 't-1', spaceId: 'space-1' }]);
   });
 
   test('node id constrains the spawn slot while the canonical first route provides the kickoff', async () => {
@@ -626,7 +688,7 @@ describe('spawnPostApprovalWorker', () => {
     expect(updateTaskCalls).toHaveLength(0);
   });
 
-  test('interpolates autonomy_level and space workspace_path from the space service', async () => {
+  test('interpolates autonomy_level and the task-bound workspace from the space service', async () => {
     const { deps, spawnCalls, getSpaceCalls } = spawnHarness({
       space: { autonomyLevel: 3, workspacePath: '/ws/space-root' },
       workflow: {
@@ -648,8 +710,70 @@ describe('spawnPostApprovalWorker', () => {
     await deps.spawnPostApprovalWorker('t-1', 'publisher');
     expect(getSpaceCalls).toEqual(['space-1']);
     expect(spawnCalls[0]?.kickoffMessage).toBe(
-      `Deploy at autonomy 3 from /ws/space-root\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`
+      `Deploy at autonomy 3 from /ws/space-1\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`
     );
+  });
+
+  test('task without its own workspace falls back to the space primary workspace', async () => {
+    const { deps, spawnCalls } = spawnHarness({
+      space: { autonomyLevel: 3, workspacePath: '/ws/space-root' },
+      task: {
+        id: 't-1',
+        title: 'Ship the release',
+        spaceId: 'space-1',
+        status: 'approved',
+        workflowRunId: 'run-1',
+        workspacePath: null,
+      },
+      workflow: {
+        id: 'wf-1',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'build',
+            agents: [],
+            postApproval: {
+              targetAgent: 'publisher',
+              instructions: 'Deploy from {{workspace_path}}',
+            },
+          },
+        ],
+      } as Partial<SpaceWorkflow>,
+    });
+
+    await deps.spawnPostApprovalWorker('t-1', 'publisher');
+    expect(spawnCalls[0]?.kickoffMessage).toBe(
+      `Deploy from /ws/space-root\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`
+    );
+  });
+
+  test('task cancelled between route resolution and spawn aborts without spawning', async () => {
+    const { deps, spawnCalls, updateTaskCalls } = spawnHarness({
+      taskReads: [undefined, { id: 't-1', status: 'cancelled', workflowRunId: 'run-1' }],
+    });
+
+    await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBeNull();
+    expect(spawnCalls).toHaveLength(0);
+    expect(updateTaskCalls).toHaveLength(0);
+  });
+
+  test('task cancelled between spawn and recording resolves null without the routing write', async () => {
+    const { deps, spawnCalls, updateTaskCalls } = spawnHarness({
+      taskReads: [undefined, undefined, { id: 't-1', status: 'cancelled', workflowRunId: 'run-1' }],
+    });
+
+    await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBeNull();
+    expect(spawnCalls).toHaveLength(1);
+    expect(updateTaskCalls).toHaveLength(0);
+  });
+
+  test('task moved to another workflow run before spawn aborts without spawning', async () => {
+    const { deps, spawnCalls } = spawnHarness({
+      taskReads: [undefined, { id: 't-1', status: 'approved', workflowRunId: 'run-9' }],
+    });
+
+    await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBeNull();
+    expect(spawnCalls).toHaveLength(0);
   });
 
   test('prefers the node-level route over the workflow-level route', async () => {

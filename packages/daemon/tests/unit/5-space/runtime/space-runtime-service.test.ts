@@ -2008,9 +2008,21 @@ describe('SpaceRuntimeService', () => {
       const longHorizonAgentRepo = {
         getCoordinator: mock(() => coordinatorRow),
         getById: mock(() => coordinatorRow),
+        ensureCoordinator: mock(() => coordinatorRow ?? buildLongHorizonAgent()),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const svc = new SpaceRuntimeService({
-        ...buildConfig(createMockSpaceManager(mockSpace)),
+        db: {} as BunDatabase,
+        spaceManager: createMockSpaceManager(mockSpace),
+        spaceAgentManager: {
+          listBySpaceId: mock(() => []),
+        } as unknown as SpaceAgentManager,
+        spaceWorkflowManager: {
+          listWorkflows: mock(() => []),
+        } as unknown as SpaceWorkflowManager,
+        workflowRunRepo: {} as SpaceWorkflowRunRepository,
+        taskRepo: {} as SpaceTaskRepository,
+        nodeExecutionRepo: makeNoopNodeExecutionRepo(),
+        tickIntervalMs: 60_000,
         sessionManager,
         longHorizonAgentRepo,
       });
