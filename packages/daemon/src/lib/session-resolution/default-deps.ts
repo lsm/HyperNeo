@@ -271,6 +271,9 @@ async function buildKickoffStage(
     spaceManager === undefined
       ? null
       : ((await spaceManager.getSpace(spawnRoute.task.spaceId).catch(() => null)) as Space | null);
+  if (space !== null && (space.paused || space.stopped || space.status === 'archived')) {
+    return { kickoffMessage: undefined, kickoffHalt: 'space_inactive' };
+  }
   const authorityNodeId =
     spawnRoute.task.postApprovalSourceNodeId ?? spawnRoute.workflow.endNodeId ?? null;
   const approvalAuthority =

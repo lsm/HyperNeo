@@ -823,6 +823,17 @@ describe('spawnPostApprovalWorker', () => {
     );
   });
 
+  test('paused space rejects post-approval recovery before spawning', async () => {
+    const { deps, spawnCalls, casCalls, cancelCalls } = spawnHarness({
+      space: { paused: true, workspacePath: '/ws/space-root' },
+    });
+
+    await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBeNull();
+    expect(spawnCalls).toHaveLength(0);
+    expect(casCalls).toHaveLength(0);
+    expect(cancelCalls).toHaveLength(0);
+  });
+
   test('task cancelled between route resolution and spawn aborts without spawning', async () => {
     const { deps, spawnCalls, casCalls } = spawnHarness({
       taskReads: [undefined, { id: 't-1', status: 'cancelled', workflowRunId: 'run-1' }],

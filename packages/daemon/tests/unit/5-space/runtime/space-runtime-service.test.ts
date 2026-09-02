@@ -2011,7 +2011,10 @@ describe('SpaceRuntimeService', () => {
       } as unknown as SessionManager;
       const longHorizonAgentRepo = {
         getCoordinator: mock(() => coordinatorRow),
-        getById: mock(() => (canonicalRow === undefined ? coordinatorRow : canonicalRow)),
+        getById: mock((id: string) => {
+          if (canonicalRow != null) return canonicalRow.id === id ? canonicalRow : null;
+          return coordinatorRow !== null && coordinatorRow.id === id ? coordinatorRow : null;
+        }),
         ensureCoordinator: mock(() => coordinatorRow ?? buildLongHorizonAgent()),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const svc = new SpaceRuntimeService({
@@ -2118,6 +2121,20 @@ describe('SpaceRuntimeService', () => {
 
       await expect(svc.ensureAgentSession(mockSpace.id, 'coordinator')).resolves.toBeNull();
       expect(sessionManager.getSessionAsync).not.toHaveBeenCalled();
+    });
+
+    test('inactive coordinator does not halt provisioning of an active long-horizon agent', async () => {
+      const { svc, sessionManager } = buildEnsureService(
+        buildLongHorizonAgent({ id: 'coord-row', status: 'paused' }),
+        mockSpace,
+        buildLongHorizonAgent({ id: 'lh-agent-1', status: 'active' })
+      );
+
+      await svc.ensureAgentSession(mockSpace.id, 'lh-agent-1');
+
+      expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(
+        longTermAgentSessionId(mockSpace.id, 'lh-agent-1')
+      );
     });
   });
 

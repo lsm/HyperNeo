@@ -5284,6 +5284,11 @@ export class TaskAgentManager {
     if (!space) {
       throw new Error(`spawnPostApprovalSubSession: space ${spaceId} not found for task ${taskId}`);
     }
+    if (space.paused || space.stopped || space.status === 'archived') {
+      throw new Error(
+        `spawnPostApprovalSubSession: space ${spaceId} is ${space.status}${space.paused ? ' (paused)' : ''}${space.stopped ? ' (stopped)' : ''}; refusing to spawn`
+      );
+    }
 
     let matchedSlot: ReturnType<typeof resolveNodeAgents>[number] | null = null;
     let matchedNodeId: string | null = null;

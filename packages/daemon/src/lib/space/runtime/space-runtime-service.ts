@@ -2500,10 +2500,10 @@ function classifyAgentStage(
   const coordinator =
     getCoordinator(spaceId) ?? getAgentById(coordinatorLongHorizonAgentId(spaceId));
   if (coordinator !== null) {
-    if (coordinator.status !== 'active') {
-      return { provisionArm: 'actor', classifyHalt: 'coordinator_inactive' };
-    }
     if (agentSessionIdOf(spaceId, agentId, coordinator.id) === coordinatorSessionId(spaceId)) {
+      if (coordinator.status !== 'active') {
+        return { provisionArm: 'actor', classifyHalt: 'coordinator_inactive' };
+      }
       return { provisionArm: 'coordinator', classifyHalt: undefined };
     }
   } else if (agentId === 'coordinator' || agentId === coordinatorLongHorizonAgentId(spaceId)) {
