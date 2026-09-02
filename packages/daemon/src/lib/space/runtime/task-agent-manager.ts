@@ -49,6 +49,7 @@ import type { SkillsManager } from '../../skills-manager.ts';
 import {
   isRunnableUnifiedAgent,
   longHorizonAgentToWorkerView,
+  MIGRATED_WORKER_TEMPLATE_KEY,
 } from '../agents/worker-long-horizon-mapper.ts';
 import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
@@ -3514,11 +3515,12 @@ export class TaskAgentManager {
     const unified = this.config.longHorizonAgentRepo?.getById(agentId) ?? null;
     if (unified && unified.spaceId === spaceId) {
       if (!isRunnableUnifiedAgent(unified)) return null;
+      if (unified.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
+        return this.config.spaceAgentManager.getById(agentId)?.spaceId === spaceId
+          ? longHorizonAgentToWorkerView(unified)
+          : null;
+      }
       return longHorizonAgentToWorkerView(unified);
-    }
-    if (unified) {
-      const worker = this.config.spaceAgentManager.getById(agentId);
-      return worker?.spaceId === spaceId ? worker : null;
     }
     const worker = this.config.spaceAgentManager.getById(agentId);
     return worker?.spaceId === spaceId ? worker : null;
