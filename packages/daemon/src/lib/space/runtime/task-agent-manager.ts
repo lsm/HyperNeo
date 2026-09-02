@@ -2169,6 +2169,8 @@ export class TaskAgentManager {
     task: Pick<SpaceTask, 'id' | 'approvedAt'>
   ): string | undefined {
     try {
+      const approvedAt = task.approvedAt;
+      if (approvedAt === null || approvedAt === undefined) return undefined;
       const db = this.config.db.getDatabase();
       const sdkMessageRepo = new SDKMessageRepository(db);
       const rows = db
@@ -2184,11 +2186,7 @@ export class TaskAgentManager {
         .all(task.id) as Array<{ id: string }>;
       return rows.find((row) => {
         if (!sdkMessageRepo.hasConsumedTaskInputForSession(row.id, task.id)) return false;
-        return (
-          task.approvedAt === null ||
-          task.approvedAt === undefined ||
-          this.hasConsumedTaskInputSince(row.id, task.id, task.approvedAt)
-        );
+        return this.hasConsumedTaskInputSince(row.id, task.id, approvedAt);
       })?.id;
     } catch {
       return undefined;
@@ -2205,6 +2203,7 @@ export class TaskAgentManager {
         `SELECT 1 FROM sdk_messages
           WHERE session_id = ? AND task_id = ? AND message_type = 'user'
             AND consumed_seq IS NOT NULL AND timestamp >= ?
+            AND NOT EXISTS (SELECT 1 FROM pending_agent_messages p WHERE p.id = sdk_messages.sdk_uuid)
             AND json_valid(sdk_message)
             AND json_extract(sdk_message, '$.type') = 'user'
             AND (

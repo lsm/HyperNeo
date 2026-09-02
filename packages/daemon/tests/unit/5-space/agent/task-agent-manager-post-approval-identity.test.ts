@@ -59,6 +59,7 @@ function makeDb(): BunDatabase {
       completed_at INTEGER,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS pending_agent_messages (id TEXT PRIMARY KEY);
   `);
   return db;
 }
@@ -123,8 +124,8 @@ function insertTaskInput(
   const id = `input-${sessionId}`;
   db.prepare(
     `INSERT INTO sdk_messages (
-       id, session_id, message_type, sdk_message, timestamp, send_status, task_id, consumed_seq
-     ) VALUES (?, ?, 'user', ?, ?, ?, ?, ?)`
+       id, session_id, message_type, sdk_message, timestamp, send_status, task_id, consumed_seq, sdk_uuid
+     ) VALUES (?, ?, 'user', ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     sessionId,
@@ -138,7 +139,8 @@ function insertTaskInput(
     new Date(options.timestamp ?? 1).toISOString(),
     status,
     options.taskId ?? TASK_ID,
-    options.consumedSeq === undefined ? (status === 'consumed' ? 1 : null) : options.consumedSeq
+    options.consumedSeq === undefined ? (status === 'consumed' ? 1 : null) : options.consumedSeq,
+    id
   );
 }
 
@@ -150,17 +152,16 @@ function insertTask(
     approvedAt?: number | null;
   } = {}
 ): void {
+  const status = overrides.status ?? 'in_progress';
+  const approvedAt = Object.hasOwn(overrides, 'approvedAt')
+    ? overrides.approvedAt
+    : status === 'approved' || status === 'done'
+      ? 0
+      : null;
   db.prepare(
     `INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, workflow_run_id, post_approval_session_id, approved_at, depends_on, created_at, updated_at)
      VALUES (?, ?, 1, 'T', '', ?, 'normal', ?, ?, ?, '[]', 0, 0)`
-  ).run(
-    TASK_ID,
-    SPACE_ID,
-    overrides.status ?? 'in_progress',
-    RUN_ID,
-    overrides.postApprovalSessionId ?? null,
-    overrides.approvedAt ?? null
-  );
+  ).run(TASK_ID, SPACE_ID, status, RUN_ID, overrides.postApprovalSessionId ?? null, approvedAt);
 }
 
 function makeManager(db: BunDatabase): TaskAgentManager {
@@ -303,11 +304,28 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
   });
 
+  it('rejects consumed evidence without a current approval boundary', () => {
+    const sessionId = postApprovalSessionId('unbounded');
+    insertTask(db, { status: 'done', postApprovalSessionId: null, approvedAt: null });
+    insertWorkerSession(db, { sessionId, lastActiveAt: 9 });
+    insertTaskInput(db, sessionId, { timestamp: 9 });
+    expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
+  });
+
   it('rejects a consumed post-approval worker from a prior approval cycle', () => {
     const staleSessionId = postApprovalSessionId('stale');
     insertTask(db, { status: 'approved', postApprovalSessionId: null, approvedAt: 10 });
     insertWorkerSession(db, { sessionId: staleSessionId, createdAt: 5, lastActiveAt: 9 });
     insertTaskInput(db, staleSessionId, { timestamp: 9 });
+    expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
+  });
+
+  it('rejects a consumed pending-queue input before kickoff injection', () => {
+    const sessionId = postApprovalSessionId('queue-drain');
+    insertTask(db, { status: 'approved', postApprovalSessionId: null, approvedAt: 10 });
+    insertWorkerSession(db, { sessionId, createdAt: 10, lastActiveAt: 11 });
+    insertTaskInput(db, sessionId, { timestamp: 11 });
+    db.prepare('INSERT INTO pending_agent_messages (id) VALUES (?)').run(`input-${sessionId}`);
     expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
   });
 
