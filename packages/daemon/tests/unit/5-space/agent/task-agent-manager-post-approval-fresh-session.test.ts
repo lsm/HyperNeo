@@ -829,14 +829,14 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     };
   }
 
-  test('rejects the spawn for an inactive space or a terminal task', async () => {
+  test('rejects the spawn for an inactive space or a non-post-approval task', async () => {
     for (const opts of [
-      { spacePaused: true },
       { spaceStopped: true },
       { spaceArchived: true },
       { taskStatus: 'cancelled' },
       { taskStatus: 'archived' },
       { taskStatus: 'stopped' },
+      { taskStatus: 'in_progress' },
     ]) {
       const tam = makeManager([], opts);
       await expect(
@@ -920,9 +920,7 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     const opts = { spacePaused: false };
     const tam = makeManager([], opts);
     const stub = tam as unknown as { findLiveSubSessionForAgent: () => Promise<string | null> };
-    stub.findLiveSubSessionForAgent = async () => {
-      opts.spacePaused = true;
-    };
+    stub.findLiveSubSessionForAgent = async () => ((opts.spacePaused = true), null);
 
     await expect(
       tam.spawnPostApprovalSubSession(postApprovalSpawn(minimalWorkflow()))

@@ -5394,17 +5394,7 @@ export class TaskAgentManager {
       matchedSlot.name,
       matchedNodeId
     );
-    const preEffectSpace = await this.config.spaceManager.getSpace(spaceId);
-    if (
-      !preEffectSpace ||
-      preEffectSpace.paused ||
-      preEffectSpace.stopped ||
-      preEffectSpace.status === 'archived'
-    ) {
-      throw new Error(
-        `spawnPostApprovalSubSession: space ${spaceId} became inactive before worker effects; refusing to spawn`
-      );
-    }
+    await this.assertPostApprovalSpawnAdmissible(spaceId, taskId);
     if (existingSessionId) {
       const existing = this.getSubSession(existingSessionId);
       if (!existing) {
@@ -5413,6 +5403,7 @@ export class TaskAgentManager {
         );
       }
       await this.withSessionInjectLock(existing.session.id, async () => {
+        await this.assertPostApprovalSpawnAdmissible(spaceId, taskId);
         const terminalStatus = task.workflowRunId
           ? this.resolveTerminalInjectionStatus(task.workflowRunId, taskId)
           : null;
@@ -5471,15 +5462,6 @@ export class TaskAgentManager {
     if (freshTask.workflowRunId !== task.workflowRunId) {
       throw new Error(
         `spawnPostApprovalSubSession: task ${taskId} moved to workflow run ${freshTask.workflowRunId ?? 'detached'} before creating a fresh session`
-      );
-    }
-    if (
-      freshTask.status === 'cancelled' ||
-      freshTask.status === 'archived' ||
-      freshTask.status === 'stopped'
-    ) {
-      throw new Error(
-        `spawnPostApprovalSubSession: task ${taskId} is ${freshTask.status}; refusing to spawn a post-approval session`
       );
     }
     const workspacePath = resolveSpawnWorkspace({
@@ -5611,6 +5593,26 @@ export class TaskAgentManager {
     } catch (err) {
       releaseModelPoolReservation(this.modelPoolAssignments, reservationKey);
       throw err;
+    }
+  }
+
+  private async assertPostApprovalSpawnAdmissible(spaceId: string, taskId: string): Promise<void> {
+    const freshTask = this.config.taskRepo.getTask(taskId);
+    if (freshTask?.status && freshTask.status !== 'approved' && freshTask.status !== 'done') {
+      throw new Error(
+        `spawnPostApprovalSubSession: task ${taskId} is ${freshTask.status}; refusing to spawn a post-approval session`
+      );
+    }
+    const freshSpace = await this.config.spaceManager.getSpace(spaceId);
+    if (
+      !freshSpace ||
+      freshSpace.paused ||
+      freshSpace.stopped ||
+      freshSpace.status === 'archived'
+    ) {
+      throw new Error(
+        `spawnPostApprovalSubSession: space ${spaceId} became inactive; refusing to spawn`
+      );
     }
   }
 
