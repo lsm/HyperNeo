@@ -38,7 +38,7 @@ export function classifyAgentStage(
   }
   if (
     resolution.kind === 'worker' &&
-    (resolution.agent.status === 'paused' || resolution.agent.status === 'archived')
+    ['paused', 'archived'].includes(resolution.agent.status ?? '')
   ) {
     return { resolution: null, classifyHalt: 'agent_inactive' };
   }
@@ -63,12 +63,12 @@ export async function gateEnsuredSessionStage(
   agentId: string,
   deps: EnsureAgentSessionDeps
 ): Promise<{ ensuredSession: EnsuredSession | null }> {
-  if (['ended', 'archived'].includes(ensured?.getSessionData().status ?? ''))
-    return { ensuredSession: null };
   if ((await admitSpaceStage(deps, spaceId)) !== undefined) return { ensuredSession: null };
   if (classifyAgentStage(spaceId, agentId, deps).resolution === null) {
     return { ensuredSession: null };
   }
+  if (['ended', 'archived'].includes(ensured?.getSessionData().status ?? ''))
+    return { ensuredSession: null };
   return { ensuredSession: ensured };
 }
 

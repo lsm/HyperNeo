@@ -103,6 +103,8 @@ export class SpaceLongHorizonAgentRepository {
   }
 
   ensureCoordinator(spaceId: string): SpaceLongHorizonAgent {
+    const existingByHandle = this.getCoordinator(spaceId);
+    if (existingByHandle) return existingByHandle;
     const existingById = this.getById(coordinatorLongHorizonAgentId(spaceId));
     if (existingById) {
       if (existingById.status === 'archived') {
@@ -114,9 +116,6 @@ export class SpaceLongHorizonAgentRepository {
       }
       return existingById;
     }
-
-    const existingByHandle = this.getCoordinator(spaceId);
-    if (existingByHandle) return existingByHandle;
 
     const template = getLongHorizonAgentTemplate('coordinator.default');
 
