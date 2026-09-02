@@ -79,6 +79,7 @@ interface Harness {
   prUrlCalls: string[];
   getSpaceCalls: string[];
   publishedTaskUpdates: Array<{ taskId: string; spaceId: string }>;
+  cancelCalls: string[];
 }
 
 function makeHarness(config: HarnessConfig = {}): Harness {
@@ -97,6 +98,7 @@ function makeHarness(config: HarnessConfig = {}): Harness {
     prUrlCalls: [],
     getSpaceCalls: [],
     publishedTaskUpdates: [],
+    cancelCalls: [],
   };
   const task = (
     config.task === undefined || config.task === null ? null : config.task
@@ -138,6 +140,9 @@ function makeHarness(config: HarnessConfig = {}): Harness {
     getPostApprovalWorkerSession: (taskId: string) => {
       harness.workerSessionCalls.push(taskId);
       return config.postApprovalWorkerSession ?? null;
+    },
+    cancelBySessionId: (sessionId: string) => {
+      harness.cancelCalls.push(sessionId);
     },
   } as unknown as TaskAgentManager;
 
@@ -337,6 +342,24 @@ describe('rehydrateSubSession', () => {
     });
 
     await expect(deps.rehydrateSubSession('sub-1')).resolves.toBeNull();
+  });
+
+  test('restored workflow sub-session without a node-agent server resolves null', async () => {
+    const { deps, rehydrateCalls } = makeHarness({
+      rehydratedSession: fakeSession('space:s1:task:t1:exec:e1', 'active', {}),
+    });
+
+    await expect(deps.rehydrateSubSession('space:s1:task:t1:exec:e1')).resolves.toBeNull();
+    expect(rehydrateCalls).toEqual(['space:s1:task:t1:exec:e1']);
+  });
+
+  test('restored workflow sub-session with a node-agent server resolves', async () => {
+    const restored = fakeSession('space:s1:task:t1:exec:e1', 'active', {
+      mcpServers: { 'node-agent': { type: 'sdk' } },
+    });
+    const { deps } = makeHarness({ rehydratedSession: restored });
+
+    await expect(deps.rehydrateSubSession('space:s1:task:t1:exec:e1')).resolves.toBe(restored);
   });
 });
 
@@ -806,14 +829,22 @@ describe('spawnPostApprovalWorker', () => {
     expect(updateTaskCalls).toHaveLength(0);
   });
 
-  test('task cancelled between spawn and recording resolves null without the routing write', async () => {
-    const { deps, spawnCalls, updateTaskCalls } = spawnHarness({
+  test('task cancelled between spawn and recording cancels the spawned worker without recording', async () => {
+    const { deps, spawnCalls, updateTaskCalls, cancelCalls } = spawnHarness({
       taskReads: [undefined, undefined, { id: 't-1', status: 'cancelled', workflowRunId: 'run-1' }],
     });
 
     await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBeNull();
     expect(spawnCalls).toHaveLength(1);
     expect(updateTaskCalls).toHaveLength(0);
+    expect(cancelCalls).toEqual(['spawned-9']);
+  });
+
+  test('successful spawn never cancels the worker', async () => {
+    const { deps, cancelCalls } = spawnHarness();
+
+    await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBe('spawned-9');
+    expect(cancelCalls).toHaveLength(0);
   });
 
   test('task moved to another workflow run before spawn aborts without spawning', async () => {

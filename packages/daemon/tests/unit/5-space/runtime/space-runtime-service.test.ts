@@ -1995,7 +1995,10 @@ describe('SpaceRuntimeService', () => {
       } as unknown as AgentSession;
     }
 
-    function buildEnsureService(coordinatorRow: SpaceLongHorizonAgent | null): {
+    function buildEnsureService(
+      coordinatorRow: SpaceLongHorizonAgent | null,
+      space: Space | null = mockSpace
+    ): {
       svc: SpaceRuntimeService;
       session: AgentSession;
       sessionManager: SessionManager;
@@ -2012,7 +2015,7 @@ describe('SpaceRuntimeService', () => {
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const svc = new SpaceRuntimeService({
         db: {} as BunDatabase,
-        spaceManager: createMockSpaceManager(mockSpace),
+        spaceManager: createMockSpaceManager(space),
         spaceAgentManager: {
           listBySpaceId: mock(() => []),
         } as unknown as SpaceAgentManager,
@@ -2028,6 +2031,26 @@ describe('SpaceRuntimeService', () => {
       });
       return { svc, session, sessionManager };
     }
+
+    test('paused space resolves null without provisioning any branch', async () => {
+      const { svc, sessionManager } = buildEnsureService(
+        buildLongHorizonAgent({ status: 'active' }),
+        { ...mockSpace, paused: true }
+      );
+
+      await expect(svc.ensureAgentSession(mockSpace.id, 'coordinator')).resolves.toBeNull();
+      expect(sessionManager.getSessionAsync).not.toHaveBeenCalled();
+    });
+
+    test('stopped space resolves null without provisioning any branch', async () => {
+      const { svc, sessionManager } = buildEnsureService(
+        buildLongHorizonAgent({ status: 'active' }),
+        { ...mockSpace, stopped: true }
+      );
+
+      await expect(svc.ensureAgentSession(mockSpace.id, 'lh-agent-1')).resolves.toBeNull();
+      expect(sessionManager.getSessionAsync).not.toHaveBeenCalled();
+    });
 
     test('canonical coordinator id with an inactive coordinator row resolves null without provisioning', async () => {
       for (const status of ['paused', 'disabled', 'archived'] as const) {

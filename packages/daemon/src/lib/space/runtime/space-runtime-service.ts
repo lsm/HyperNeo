@@ -991,6 +991,10 @@ export class SpaceRuntimeService {
 
   async ensureAgentSession(spaceId: string, agentId: string): Promise<AgentSession | null> {
     const repo = this.config.longHorizonAgentRepo;
+    const space = await this.config.spaceManager.getSpace(spaceId);
+    if (space === null || space.paused || space.stopped || space.status === 'archived') {
+      return null;
+    }
     const coordinator = repo?.getCoordinator(spaceId) ?? null;
     if (agentSessionIdOf(spaceId, agentId, coordinator?.id) === coordinatorSessionId(spaceId)) {
       if (coordinator !== null && coordinator.status !== 'active') return null;

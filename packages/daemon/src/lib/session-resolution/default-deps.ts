@@ -124,7 +124,7 @@ export function createDefaultSessionResolutionDeps(services: {
     .pipe('!spawnHalted', 'spawnHalt')
     .pipe(
       recordRoutedSessionStage,
-      ['taskId', 'sessionId', 'taskRepo', 'spawnRoute', 'internalEventBus'],
+      ['taskId', 'sessionId', 'taskRepo', 'spawnRoute', 'internalEventBus', 'taskAgentManager'],
       'recordedSessionId'
     )
     .error(() => undefined, ['error'])
@@ -139,7 +139,12 @@ export function createDefaultSessionResolutionDeps(services: {
 
     async rehydrateSubSession(sessionId) {
       const restored = await taskAgentManager.rehydrateSubSessionById(sessionId);
-      if (restored === null || sessionUnavailable(restored.getSessionData().status)) return null;
+      if (restored === null) return null;
+      const data = restored.getSessionData();
+      if (sessionUnavailable(data.status)) return null;
+      if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeNodeAgentServer(data.config)) {
+        return null;
+      }
       return restored;
     },
 
@@ -322,7 +327,8 @@ async function recordRoutedSessionStage(
   sessionId: string | undefined,
   taskRepo: Pick<SpaceTaskRepository, 'getTask' | 'updateTask'>,
   spawnRoute: SpawnRoute | undefined,
-  internalEventBus: InternalEventBus<DaemonInternalEventMap> | undefined
+  internalEventBus: InternalEventBus<DaemonInternalEventMap> | undefined,
+  taskAgentManager: Pick<TaskAgentManager, 'cancelBySessionId'>
 ): Promise<string | undefined> {
   if (sessionId === undefined || spawnRoute === undefined) return undefined;
   const current = taskRepo.getTask(taskId);
@@ -331,6 +337,7 @@ async function recordRoutedSessionStage(
     current.status !== 'approved' ||
     current.workflowRunId !== spawnRoute.task.workflowRunId
   ) {
+    taskAgentManager.cancelBySessionId(sessionId);
     return undefined;
   }
   const updated =
