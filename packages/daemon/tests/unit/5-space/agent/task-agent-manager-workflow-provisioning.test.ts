@@ -9,6 +9,7 @@ const EXEC_SESSION_ID = `space:space-1:task:${TASK_ID}:exec:e1`;
 function makeManager(input: {
   taskStatus?: string;
   runStatus?: string;
+  runMissing?: boolean;
   spaceStopped?: boolean;
   spacePaused?: boolean;
   spaceArchived?: boolean;
@@ -16,6 +17,7 @@ function makeManager(input: {
   spaceError?: Error;
   postApprovalSessionId?: string | null;
   restoreResult?: string | null;
+  routingPointerTaskId?: string;
 }) {
   const restorePostApprovalWorkerSession = mock(async () => input.restoreResult ?? null);
   const rehydrateSubSession = mock(async () => null);
@@ -32,7 +34,8 @@ function makeManager(input: {
         }),
       },
       workflowRunRepo: {
-        getRun: () => ({ id: 'run-1', status: input.runStatus ?? 'in_progress' }),
+        getRun: () =>
+          input.runMissing ? null : { id: 'run-1', status: input.runStatus ?? 'in_progress' },
       },
       spaceManager: {
         getSpace: async () => {
@@ -45,20 +48,33 @@ function makeManager(input: {
           };
         },
       },
+      ...(input.routingPointerTaskId
+        ? {
+            db: {
+              getDatabase: () => ({
+                prepare: () => ({ get: () => ({ id: input.routingPointerTaskId }) }),
+              }),
+            },
+          }
+        : {}),
     },
   });
   Object.defineProperty(manager, 'restorePostApprovalWorkerSession', {
     value: restorePostApprovalWorkerSession,
+    configurable: true,
   });
-  Object.defineProperty(manager, 'rehydrateSubSession', { value: rehydrateSubSession });
+  Object.defineProperty(manager, 'rehydrateSubSession', {
+    value: rehydrateSubSession,
+    configurable: true,
+  });
   const restored = { marker: 'restored' } as unknown as AgentSession;
-  Object.defineProperty(manager, 'getSubSession', { value: () => restored });
+  Object.defineProperty(manager, 'getSubSession', { value: () => restored, configurable: true });
   if (input.cooldown) {
     Object.defineProperty(manager, 'readPersistedRateLimitCooldown', {
       value: () => ({ retryAt: Date.now() + 60_000 }),
     });
   }
-  return { manager, restorePostApprovalWorkerSession, rehydrateSubSession, restored };
+  return { manager, restorePostApprovalWorkerSession, rehydrateSubSession };
 }
 
 function workflowSession(): AgentSession {
@@ -216,34 +232,33 @@ describe('TaskAgentManager workflow session provisioning', () => {
 });
 
 describe('TaskAgentManager rehydrateSubSessionById post-approval routing and admission', () => {
-  it('routes a post-approval session id through the dedicated restore', async () => {
-    const { manager, restorePostApprovalWorkerSession, restored } = makeManager({
-      taskStatus: 'approved',
-      postApprovalSessionId: SESSION_ID,
-      restoreResult: SESSION_ID,
-    });
+  it('routes post-approval ids and recorded exec pointers through the dedicated restore', async () => {
+    for (const target of [SESSION_ID, EXEC_SESSION_ID]) {
+      const { manager, restorePostApprovalWorkerSession } = makeManager({
+        taskStatus: 'approved',
+        postApprovalSessionId: target,
+        restoreResult: target,
+      });
 
-    await expect(manager.rehydrateSubSessionById(SESSION_ID)).resolves.toBe(restored);
-    expect(restorePostApprovalWorkerSession).toHaveBeenCalledWith(
-      TASK_ID,
-      SESSION_ID,
-      undefined,
-      {}
-    );
+      await manager.rehydrateSubSessionById(target);
+
+      expect(restorePostApprovalWorkerSession).toHaveBeenCalledWith(TASK_ID, target, undefined, {});
+    }
   });
 
-  it('routes a recorded exec routing pointer through the dedicated restore', async () => {
+  it('routes a legacy (non-canonical) routing pointer through the dedicated restore', async () => {
     const { manager, restorePostApprovalWorkerSession } = makeManager({
       taskStatus: 'approved',
-      postApprovalSessionId: EXEC_SESSION_ID,
-      restoreResult: EXEC_SESSION_ID,
+      postApprovalSessionId: 'legacy-worker',
+      routingPointerTaskId: TASK_ID,
+      restoreResult: 'legacy-worker',
     });
 
-    await manager.rehydrateSubSessionById(EXEC_SESSION_ID);
+    await manager.rehydrateSubSessionById('legacy-worker');
 
     expect(restorePostApprovalWorkerSession).toHaveBeenCalledWith(
       TASK_ID,
-      EXEC_SESSION_ID,
+      'legacy-worker',
       undefined,
       {}
     );
@@ -260,10 +275,17 @@ describe('TaskAgentManager rehydrateSubSessionById post-approval routing and adm
     expect(restorePostApprovalWorkerSession).not.toHaveBeenCalled();
   });
 
-  it('rejects restores for stopped, cancelled, or archived tasks', async () => {
-    for (const status of ['stopped', 'cancelled', 'archived']) {
+  it('rejects restores for terminal tasks or inactive spaces', async () => {
+    for (const input of [
+      { taskStatus: 'stopped' },
+      { taskStatus: 'cancelled' },
+      { taskStatus: 'archived' },
+      { taskStatus: 'approved', spacePaused: true },
+      { taskStatus: 'approved', spaceStopped: true },
+      { taskStatus: 'approved', spaceArchived: true },
+    ]) {
       const { manager, restorePostApprovalWorkerSession } = makeManager({
-        taskStatus: status,
+        ...input,
         postApprovalSessionId: SESSION_ID,
         restoreResult: SESSION_ID,
       });
@@ -273,8 +295,8 @@ describe('TaskAgentManager rehydrateSubSessionById post-approval routing and adm
     }
   });
 
-  it('rejects restores for paused, stopped, or archived spaces', async () => {
-    for (const input of [{ spacePaused: true }, { spaceStopped: true }, { spaceArchived: true }]) {
+  it('rejects restores for a missing or cancelled workflow run', async () => {
+    for (const input of [{ runMissing: true }, { runStatus: 'cancelled' }]) {
       const { manager, restorePostApprovalWorkerSession } = makeManager({
         ...input,
         taskStatus: 'approved',
@@ -302,14 +324,30 @@ describe('TaskAgentManager rehydrateSubSessionById post-approval routing and adm
     });
   });
 
-  it('returns null when the dedicated restore finds no worker', async () => {
-    const { manager } = makeManager({
-      taskStatus: 'approved',
-      postApprovalSessionId: SESSION_ID,
-      restoreResult: null,
-    });
+  it('returns null when the restore finds no worker or the restored session is dead', async () => {
+    for (const scenario of [
+      { restoreResult: null as string | null, deadStatus: null as string | null },
+      { restoreResult: SESSION_ID, deadStatus: 'ended' },
+      { restoreResult: SESSION_ID, deadStatus: 'archived' },
+    ]) {
+      const { manager, restorePostApprovalWorkerSession } = makeManager({
+        taskStatus: 'approved',
+        postApprovalSessionId: SESSION_ID,
+        restoreResult: scenario.restoreResult,
+      });
+      if (scenario.deadStatus !== null) {
+        Object.defineProperty(manager, 'getSubSession', {
+          value: () =>
+            ({
+              getSessionData: () => ({ status: scenario.deadStatus }),
+            }) as unknown as AgentSession,
+          configurable: true,
+        });
+      }
 
-    await expect(manager.rehydrateSubSessionById(SESSION_ID)).resolves.toBeNull();
+      await expect(manager.rehydrateSubSessionById(SESSION_ID)).resolves.toBeNull();
+      expect(restorePostApprovalWorkerSession).toHaveBeenCalledTimes(1);
+    }
   });
 });
 

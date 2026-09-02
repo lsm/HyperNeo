@@ -3805,7 +3805,8 @@ export class TaskAgentManager {
   }
 
   async rehydrateSubSessionById(sessionId: string): Promise<AgentSession | null> {
-    const taskId = taskIdFromSubSessionIdentity(sessionId);
+    const taskId =
+      taskIdFromSubSessionIdentity(sessionId) ?? this.findTaskIdByRoutingPointer(sessionId);
     if (taskId !== null) {
       const task = this.config.taskRepo.getTask(taskId);
       const recordedRouting = task?.postApprovalSessionId ?? null;
@@ -3816,6 +3817,12 @@ export class TaskAgentManager {
           task.status === 'archived' ||
           task.status === 'stopped'
         ) {
+          return null;
+        }
+        const workflowRun = task.workflowRunId
+          ? this.config.workflowRunRepo.getRun(task.workflowRunId)
+          : null;
+        if (!workflowRun || workflowRun.status === 'cancelled') {
           return null;
         }
         const space = await this.config.spaceManager.getSpace(task.spaceId);
@@ -3831,10 +3838,26 @@ export class TaskAgentManager {
           undefined,
           restoreOptions
         );
-        return restoredId === null ? null : (this.getSubSession(restoredId) ?? null);
+        if (restoredId === null) return null;
+        const restored = this.getSubSession(restoredId) ?? null;
+        if (restored === null) return null;
+        const restoredStatus = restored.getSessionData().status;
+        return restoredStatus === 'ended' || restoredStatus === 'archived' ? null : restored;
       }
     }
     return this.rehydrateSubSession(sessionId);
+  }
+
+  private findTaskIdByRoutingPointer(sessionId: string): string | null {
+    try {
+      const row = this.config.db
+        .getDatabase()
+        .prepare('SELECT id FROM space_tasks WHERE post_approval_session_id = ?')
+        .get(sessionId) as { id?: string } | undefined;
+      return row?.id ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private async rehydrateSubSession(
@@ -5362,7 +5385,7 @@ export class TaskAgentManager {
       );
     }
 
-    const existingSessionId = this.findLiveSubSessionForAgent(
+    const existingSessionId = await this.findLiveSubSessionForAgent(
       task,
       matchedSlot.name,
       matchedNodeId
@@ -5576,11 +5599,11 @@ export class TaskAgentManager {
     }
   }
 
-  private findLiveSubSessionForAgent(
+  private async findLiveSubSessionForAgent(
     task: SpaceTask,
     agentName: string,
     nodeId?: string
-  ): string | null {
+  ): Promise<string | null> {
     if (!task.workflowRunId) return null;
     const prevExec = this.config.nodeExecutionRepo
       .listByWorkflowRun(task.workflowRunId)
@@ -5589,7 +5612,8 @@ export class TaskAgentManager {
       .at(-1);
     const candidateId = prevExec?.agentSessionId ?? null;
     if (!candidateId) return null;
-    const candidate = this.getSubSession(candidateId);
+    const candidate =
+      this.getSubSession(candidateId) ?? (await this.rehydrateSubSession(candidateId));
     if (!candidate) return null;
     const data = candidate.getSessionData();
     if (data.status === 'ended' || data.status === 'archived') return null;

@@ -788,36 +788,39 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     return { ...reviewerExec(sessionId), id: `exec-${nodeId}`, workflowNodeId: nodeId };
   }
 
+  function stubReuseInjection(
+    tam: TaskAgentManager
+  ): Array<{ sessionId: string; message: string }> {
+    const injected: Array<{ sessionId: string; message: string }> = [];
+    (
+      tam as unknown as { reinjectNodeAgentMcpServer: (...a: unknown[]) => Promise<void> }
+    ).reinjectNodeAgentMcpServer = async () => {};
+    (
+      tam as unknown as {
+        injectMessageIntoSession: (s: { session: { id: string } }, m: string) => Promise<string>;
+      }
+    ).injectMessageIntoSession = async (s, m) => {
+      injected.push({ sessionId: s.session.id, message: m });
+      return 'msg-id';
+    };
+    return injected;
+  }
+
   function twoReviewerNodeWorkflow(): SpaceWorkflow {
     return {
       id: 'wf-1',
       spaceId: SPACE_ID,
-      name: 'Coding',
       nodes: [
-        {
-          id: REVIEWER_NODE_ID,
-          name: 'Review',
-          agents: [{ agentId: 'agent-reviewer', name: REVIEWER_AGENT }],
-        },
-        {
-          id: OTHER_NODE,
-          name: 'Other',
-          agents: [{ agentId: 'agent-reviewer', name: REVIEWER_AGENT }],
-        },
+        { id: REVIEWER_NODE_ID, agents: [{ agentId: 'agent-reviewer', name: REVIEWER_AGENT }] },
+        { id: OTHER_NODE, agents: [{ agentId: 'agent-reviewer', name: REVIEWER_AGENT }] },
       ],
       channels: [],
-      gates: [],
       startNodeId: REVIEWER_NODE_ID,
       endNodeId: REVIEWER_NODE_ID,
     } as unknown as SpaceWorkflow;
   }
 
-  function postApprovalSpawn(workflow: SpaceWorkflow): {
-    task: SpaceTask;
-    workflow: SpaceWorkflow;
-    targetAgent: string;
-    kickoffMessage: string;
-  } {
+  function postApprovalSpawn(workflow: SpaceWorkflow) {
     return {
       task: { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID } as unknown as SpaceTask,
       workflow,
@@ -826,21 +829,19 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     };
   }
 
-  test('rejects the spawn for a paused, stopped, or archived space', async () => {
-    for (const opts of [{ spacePaused: true }, { spaceStopped: true }, { spaceArchived: true }]) {
+  test('rejects the spawn for an inactive space or a terminal task', async () => {
+    for (const opts of [
+      { spacePaused: true },
+      { spaceStopped: true },
+      { spaceArchived: true },
+      { taskStatus: 'cancelled' },
+      { taskStatus: 'archived' },
+      { taskStatus: 'stopped' },
+    ]) {
       const tam = makeManager([], opts);
       await expect(
         tam.spawnPostApprovalSubSession(postApprovalSpawn(minimalWorkflow()))
       ).rejects.toThrow('refusing to spawn');
-    }
-  });
-
-  test('rejects the fresh spawn for a cancelled, archived, or stopped task', async () => {
-    for (const status of ['cancelled', 'archived', 'stopped']) {
-      const tam = makeManager([], { taskStatus: status });
-      await expect(
-        tam.spawnPostApprovalSubSession(postApprovalSpawn(minimalWorkflow()))
-      ).rejects.toThrow('refusing to spawn a post-approval session');
     }
   });
 
@@ -851,33 +852,24 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     ]);
     seedLiveSession(tam, REVIEWER_SESSION_ID);
     seedLiveSession(tam, OTHER_SESSION_ID);
-    (
-      tam as unknown as { reinjectNodeAgentMcpServer: (...a: unknown[]) => Promise<void> }
-    ).reinjectNodeAgentMcpServer = async () => {};
-    const injected: Array<{ sessionId: string; message: string }> = [];
-    (
-      tam as unknown as {
-        injectMessageIntoSession: (s: { session: { id: string } }, m: string) => Promise<string>;
-      }
-    ).injectMessageIntoSession = async (s, m) => {
-      injected.push({ sessionId: s.session.id, message: m });
-      return 'msg-id';
-    };
+    const injected = stubReuseInjection(tam);
 
     const result = await tam.spawnPostApprovalSubSession(
       postApprovalSpawn(twoReviewerNodeWorkflow())
     );
 
     expect(result.sessionId).toBe(REVIEWER_SESSION_ID);
-    expect(injected).toHaveLength(1);
-    expect(injected[0].sessionId).toBe(REVIEWER_SESSION_ID);
+    expect(injected).toEqual([{ sessionId: REVIEWER_SESSION_ID, message: 'merge the PR' }]);
     expect(fromInitSpy).not.toHaveBeenCalled();
   });
 
-  test('ended or archived live sessions are not reused and fall back to a fresh spawn', async () => {
-    for (const status of ['ended', 'archived']) {
-      const tam = makeManager([reviewerExec()]);
-      seedLiveSession(tam, REVIEWER_SESSION_ID, { status });
+  test('ended, archived, or serverless live sessions are not reused and fall back to fresh', async () => {
+    for (const seed of [{ status: 'ended' }, { status: 'archived' }, { config: {} }] as Array<{
+      status?: string;
+      config?: Record<string, unknown>;
+    }>) {
+      const tam = makeManager([reviewerExec(EXEC_LIVE_SESSION_ID)]);
+      seedLiveSession(tam, EXEC_LIVE_SESSION_ID, seed);
       stubFreshCreateSpawnPath(tam);
 
       const result = await tam.spawnPostApprovalSubSession(
@@ -890,43 +882,24 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     }
   });
 
-  test('a workflow sub-session missing its runtime node-agent server is not reused', async () => {
-    const tam = makeManager([reviewerExec(EXEC_LIVE_SESSION_ID)]);
-    seedLiveSession(tam, EXEC_LIVE_SESSION_ID, { config: {} });
-    stubFreshCreateSpawnPath(tam);
-
-    const result = await tam.spawnPostApprovalSubSession(
-      postApprovalSpawn(twoReviewerNodeWorkflow())
-    );
-
-    expect(result.sessionId).toBe(FRESH_PA_SESSION_ID);
-    expect(fromInitSpy).toHaveBeenCalledTimes(1);
-  });
-
-  test('a workflow sub-session retaining its node-agent server is still reused', async () => {
-    const tam = makeManager([reviewerExec(EXEC_LIVE_SESSION_ID)]);
-    seedLiveSession(tam, EXEC_LIVE_SESSION_ID, {
-      config: { mcpServers: { 'node-agent': { type: 'sdk' } } },
-    });
-    (
-      tam as unknown as { reinjectNodeAgentMcpServer: (...a: unknown[]) => Promise<void> }
-    ).reinjectNodeAgentMcpServer = async () => {};
-    const injected: Array<{ sessionId: string; message: string }> = [];
+  test('rehydrates the requested node persisted workflow session instead of spawning fresh', async () => {
+    const tam = makeManager([execOnNode(REVIEWER_NODE_ID, EXEC_LIVE_SESSION_ID)]);
     (
       tam as unknown as {
-        injectMessageIntoSession: (s: { session: { id: string } }, m: string) => Promise<string>;
+        rehydrateSubSession: (id: string) => Promise<AgentSessionType | null>;
       }
-    ).injectMessageIntoSession = async (s, m) => {
-      injected.push({ sessionId: s.session.id, message: m });
-      return 'msg-id';
-    };
+    ).rehydrateSubSession = async (id) =>
+      seedLiveSession(tam, id, {
+        config: { mcpServers: { 'node-agent': { type: 'sdk' } } },
+      }).session;
+    const injected = stubReuseInjection(tam);
 
     const result = await tam.spawnPostApprovalSubSession(
       postApprovalSpawn(twoReviewerNodeWorkflow())
     );
 
     expect(result.sessionId).toBe(EXEC_LIVE_SESSION_ID);
-    expect(injected).toHaveLength(1);
+    expect(injected).toEqual([{ sessionId: EXEC_LIVE_SESSION_ID, message: 'merge the PR' }]);
     expect(fromInitSpy).not.toHaveBeenCalled();
   });
 

@@ -158,16 +158,10 @@ describe('restored worker admission decisionRun gates', () => {
       execution: makeExecution({ status: 'idle' }),
     });
     await expect(decideRestoredWorkerAdmission(unrecorded)).resolves.toBe(false);
-  });
-
-  test('a recorded exec routing pointer admits only while the task is approved', async () => {
-    await expect(
-      decideRestoredWorkerAdmission(
-        undecided({
-          task: makeTask({ status: 'done', postApprovalSessionId: EXECUTION_SESSION_ID }),
-        })
-      )
-    ).resolves.toBe(false);
+    const recordedDone = undecided({
+      task: makeTask({ status: 'done', postApprovalSessionId: EXECUTION_SESSION_ID }),
+    });
+    await expect(decideRestoredWorkerAdmission(recordedDone)).resolves.toBe(false);
   });
 
   test('terminal task or finished run denies ordinary workers', async () => {
