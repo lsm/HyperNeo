@@ -1022,9 +1022,16 @@ export class SpaceRuntimeService {
     };
   }
 
-  private agentRecordExists(agentId: string): boolean {
+  private agentRecordExists(agentId: string, expectedSpaceId?: string): boolean {
     const unified = this.config.longHorizonAgentRepo?.getById(agentId);
-    if (unified) return isRunnableUnifiedAgent(unified);
+    if (unified) {
+      if (expectedSpaceId && unified.spaceId !== expectedSpaceId) return false;
+      return isRunnableUnifiedAgent(unified);
+    }
+    if (expectedSpaceId) {
+      const worker = this.config.spaceAgentManager.getById(agentId);
+      return worker != null && worker.spaceId === expectedSpaceId;
+    }
     return this.config.spaceAgentManager.getById(agentId) !== null;
   }
 
@@ -2256,11 +2263,12 @@ export class SpaceRuntimeService {
 
   async activateWorkflowNode(runId: string, nodeId: string): Promise<SpaceTask[]> {
     const taskAgentManager = this.taskAgentManager;
+    const run = this.config.workflowRunRepo.getRun(runId);
     const router = new ChannelRouter({
       taskRepo: this.config.taskRepo,
       workflowRunRepo: this.config.workflowRunRepo,
       workflowManager: this.config.spaceWorkflowManager,
-      agentExists: (id) => this.agentRecordExists(id),
+      agentExists: (id) => this.agentRecordExists(id, run?.spaceId),
       nodeExecutionRepo: this.nodeExecutionRepo,
       channelCycleRepo: this.config.channelCycleRepo,
       isSessionAlive: taskAgentManager ? (sid) => taskAgentManager.isSessionAlive(sid) : undefined,

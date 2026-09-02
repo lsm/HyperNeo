@@ -4496,7 +4496,11 @@ describe('ensureLongTermAgentSession — id→session routing table (dual-family
       const svc = new SpaceRuntimeService({
         ...buildConfig(createMockSpaceManager(mockSpace)),
         sessionManager,
-        spaceAgentManager: { getById: mock(() => null) } as unknown as SpaceAgentManager,
+        spaceAgentManager: {
+          getById: mock((id: string) =>
+            id === agent.id ? { id: agent.id, spaceId: 'space-1', name: agent.displayName } : null
+          ),
+        } as unknown as SpaceAgentManager,
         longHorizonAgentRepo: {
           getById: mock((id: string) => (id === agent.id ? agent : null)),
           getCoordinator: mock(() => null),

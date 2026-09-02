@@ -61,17 +61,14 @@ export function workerAgentToLongHorizonParams(
 ): WorkerAgentToLongHorizonParams {
   const baseHandle = worker.handle ?? worker.name ?? worker.id;
   const idSegment = `-${worker.id}`;
-  const boundLength = (s: string): string => (s.length <= 60 ? s : s.slice(0, 60));
-  const boundedBase = boundLength(baseHandle);
-  let handle = boundedBase;
+  let handle = baseHandle.length <= 60 ? baseHandle : baseHandle.slice(0, 60);
   let probe = 0;
   while (options.occupiedHandles.has(handle)) {
-    const candidate =
-      probe === 0
-        ? boundLength(`${boundedBase}${idSegment}`)
-        : boundLength(`${boundedBase}${idSegment}-${probe + 1}`);
+    const suffix = probe === 0 ? idSegment : `${idSegment}-${probe + 1}`;
+    const room = Math.max(1, 60 - suffix.length);
+    const stem = baseHandle.length > room ? baseHandle.slice(0, room) : baseHandle;
+    handle = `${stem}${suffix}`;
     probe += 1;
-    handle = candidate;
   }
   const tools = worker.tools ?? [];
   return {

@@ -438,6 +438,18 @@ describe('SpaceAgentRepository', () => {
       expect(unifiedRow(agent.id)?.handle).toBe('renamed');
     });
 
+    it('worker edits preserve a runtime-bound mirror session_id', () => {
+      const agent = repo.create({ spaceId: 'space-1', name: 'Coder' });
+      db.prepare(
+        `UPDATE space_long_horizon_agents SET session_id = 'bound-session-1' WHERE id = ?`
+      ).run(agent.id);
+
+      repo.update(agent.id, { name: 'Senior Coder', model: 'm2' });
+
+      expect(repo.getById(agent.id)?.name).toBe('Senior Coder');
+      expect(unifiedRow(agent.id)?.session_id).toBe('bound-session-1');
+    });
+
     it('update aligns a colliding rename onto the same suffixed handle in both rows', () => {
       insertLongHorizonAgent('lh-1', 'renamed', 'coordinator.default');
       const agent = repo.create({ spaceId: 'space-1', name: 'Coder' });

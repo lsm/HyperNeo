@@ -405,6 +405,21 @@ describe('workerAgentToLongHorizonParams — typed extensions beyond m155', () =
     expect(params.handle).toBe('researcher-w-1-2');
   });
 
+  test('uuid-length ids trim the stem so the counter survives the 60-char bound', () => {
+    const uuid = '5fb7c7e2-91a3-4d64-9f0e-1a2b3c4d5e6f';
+    const base = 'abcdefghijklmnopqrstuvw';
+    const first = `${base}-${uuid}`;
+    const second = `${base.slice(0, 21)}-${uuid}-2`;
+    const params = workerAgentToLongHorizonParams(
+      rowSource({ id: uuid, spaceId: 'space-a', handle: base, name: 'Base' }),
+      { occupiedHandles: new Set<string>([base, first]), now: NOW }
+    );
+
+    expect(params.handle.length).toBeLessThanOrEqual(60);
+    expect(params.handle).toBe(second);
+    expect(params.handle).not.toBe(first);
+  });
+
   test('batch callers reserve each chosen handle so converted rows cannot collide', () => {
     const reserved = new Set<string>(['researcher']);
     const first = workerAgentToLongHorizonParams(

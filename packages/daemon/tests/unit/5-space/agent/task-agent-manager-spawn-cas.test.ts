@@ -59,7 +59,14 @@ function fakeSession(id: string): AgentSession {
 }
 
 function fakeCustomAgent() {
-  return { id: AGENT_ID, name: AGENT_NAME, customPrompt: 'work', model: 'm', tools: [] };
+  return {
+    id: AGENT_ID,
+    spaceId: SPACE_ID,
+    name: AGENT_NAME,
+    customPrompt: 'work',
+    model: 'm',
+    tools: [],
+  };
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {

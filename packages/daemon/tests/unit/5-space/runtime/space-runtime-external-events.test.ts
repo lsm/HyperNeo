@@ -215,7 +215,11 @@ describe('SpaceRuntime external event subscriptions', () => {
 
   function createWorkflow(
     nodeId = 'code',
-    options: { eventInterests?: Array<{ topic: string }>; spaceId?: string } = {}
+    options: {
+      eventInterests?: Array<{ topic: string }>;
+      spaceId?: string;
+      agentId?: string;
+    } = {}
   ): SpaceWorkflow {
     return workflowManager.createWorkflow({
       spaceId: options.spaceId ?? SPACE_ID,
@@ -227,7 +231,7 @@ describe('SpaceRuntime external event subscriptions', () => {
           name: 'Code',
           agents: [
             {
-              agentId: AGENT_ID,
+              agentId: options.agentId ?? AGENT_ID,
               name: 'coder',
               ...(options.eventInterests ? { eventInterests: options.eventInterests } : {}),
             },
@@ -4144,7 +4148,16 @@ describe('SpaceRuntime external event subscriptions', () => {
         `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?)`
       ).run(OTHER_SPACE_ID, OTHER_SPACE_ID, '/tmp/runtime-events-other', 'Other', now, now);
-      const otherWorkflow = createWorkflow('code-other', { spaceId: OTHER_SPACE_ID });
+      const OTHER_AGENT_ID = `${AGENT_ID}-other`;
+      db.prepare(
+        `INSERT INTO space_agents (id, space_id, name, description, tools, system_prompt, created_at, updated_at)
+         VALUES (?, ?, 'Coder', '', '[]', '', ?, ?)`
+      ).run(OTHER_AGENT_ID, OTHER_SPACE_ID, now, now);
+      seedUnifiedAgentMirror(db, { id: OTHER_AGENT_ID, spaceId: OTHER_SPACE_ID, name: 'Coder' });
+      const otherWorkflow = createWorkflow('code-other', {
+        spaceId: OTHER_SPACE_ID,
+        agentId: OTHER_AGENT_ID,
+      });
       const { run: otherRun, tasks: otherTasks } = await runtime.startWorkflowRun(
         OTHER_SPACE_ID,
         otherWorkflow.id,
