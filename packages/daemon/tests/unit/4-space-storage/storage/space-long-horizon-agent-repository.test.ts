@@ -686,18 +686,18 @@ describe('SpaceLongHorizonAgentRepository', () => {
     ).run(shared);
     db.prepare(
       `INSERT INTO space_agents (id, space_id, name, handle, status, description, model, tools, custom_prompt, system_prompt, created_at, updated_at)
-       VALUES (?, 'space-1', 'Refreshed', 'refreshed-handle', 'active', 'new desc', 'm1', '["Read"]', 'new prompt', '', 2, 2)`
+       VALUES (?, 'space-1', 'Refreshed', 'unique-handle', 'active', 'new desc', 'm1', '["Read"]', 'new prompt', '', 2, 2)`
     ).run(shared);
 
     repo.create({
       id: shared,
       spaceId: 'space-1',
-      handle: 'refreshed-handle',
+      handle: 'unique-handle',
       displayName: 'Refreshed',
     });
 
     const mirror = repo.getById(shared);
-    expect(mirror?.handle).toBe('refreshed-handle');
+    expect(mirror?.handle).toBe('unique-handle');
     expect(mirror?.displayName).toBe('Refreshed');
     expect(mirror?.status).toBe('active');
     expect(mirror?.instructions).toBe('new prompt');

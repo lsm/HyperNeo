@@ -62,7 +62,14 @@ export function workerAgentToLongHorizonParams(
   const baseHandle = worker.handle ?? worker.name ?? worker.id;
   let handle = baseHandle;
   while (options.occupiedHandles.has(handle)) {
-    handle = `${handle}-${worker.id}`;
+    const suffix = `-${worker.id}`;
+    if (baseHandle.length + suffix.length <= 60) {
+      handle = `${baseHandle}${suffix}`;
+    } else {
+      const trimmed = baseHandle.slice(0, Math.max(1, 60 - suffix.length));
+      handle = `${trimmed}${suffix}`;
+    }
+    if (handle.length <= 60) break;
   }
   const tools = worker.tools ?? [];
   return {
