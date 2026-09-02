@@ -91,7 +91,11 @@ export class SpaceLongHorizonAgentRepository {
     const existingById = this.getById(coordinatorLongHorizonAgentId(spaceId));
     if (existingById) {
       if (existingById.status === 'archived') {
-        return this.update(existingById.id, { status: 'active' }) as SpaceLongHorizonAgent;
+        return this.update(existingById.id, {
+          status: 'active',
+          description: existingById.description ?? null,
+          modelPool: existingById.modelPool ?? null,
+        }) as SpaceLongHorizonAgent;
       }
       return existingById;
     }
@@ -219,12 +223,25 @@ export class SpaceLongHorizonAgentRepository {
             `deleting only the mirror would strip its execution history.`
         );
       }
+      const hasSiblingWorkerLha =
+        !!this.db
+          .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agents'`)
+          .get() &&
+        !!this.db
+          .prepare(`SELECT 1 FROM space_agents WHERE id = ? AND space_id = ?`)
+          .get(id, row?.space_id ?? '');
+      if (hasSiblingWorkerLha) {
+        throw new Error(
+          `Agent ${id} is a same-id worker overlay — delete the worker agent instead; ` +
+            `the unified table's ON DELETE SET NULL would strip every associated node_executions.agent_id.`
+        );
+      }
       const hasInbox = !!this.db
         .prepare(
           `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_inbox_messages'`
         )
         .get();
-      const hasSiblingWorker =
+      const hasSiblingWorkerForInbox =
         row != null &&
         this.db
           .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agents'`)
@@ -233,7 +250,7 @@ export class SpaceLongHorizonAgentRepository {
               .prepare(`SELECT 1 FROM space_agents WHERE id = ? AND space_id = ?`)
               .get(id, row.space_id)
           : false;
-      if (hasInbox && !hasSiblingWorker && row != null) {
+      if (hasInbox && !hasSiblingWorkerForInbox && row != null) {
         this.db
           .prepare(
             `DELETE FROM space_agent_inbox_messages WHERE target_agent_id = ? AND space_id = ?`

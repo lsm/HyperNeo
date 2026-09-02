@@ -284,13 +284,50 @@ export class SpaceAgentRepository {
       occupiedHandles: this.getUnifiedHandlesExcluding(agent.spaceId, agent.id),
       now: Date.now(),
     });
+    const cols = [
+      'id',
+      'space_id',
+      'handle',
+      'display_name',
+      'template_key',
+      'status',
+      'session_id',
+      'instructions',
+      'autonomy_level',
+      'model',
+      'thinking_level',
+      'provider',
+      'setting_sources',
+      'tool_permissions_json',
+      'description',
+      'model_pool',
+      'created_at',
+      'updated_at',
+    ];
+    const updateCols = [
+      'space_id',
+      'handle',
+      'display_name',
+      'status',
+      'session_id',
+      'instructions',
+      'autonomy_level',
+      'model',
+      'thinking_level',
+      'provider',
+      'setting_sources',
+      'tool_permissions_json',
+      'description',
+      'model_pool',
+      'updated_at',
+    ];
+    const placeholders = cols.map(() => '?').join(', ');
+    const setClause = updateCols.map((c) => `${c} = excluded.${c}`).join(', ');
     this.db
       .prepare(
-        `INSERT INTO space_long_horizon_agents (
-					id, space_id, handle, display_name, template_key, status, session_id,
-					instructions, autonomy_level, model, thinking_level, provider, setting_sources,
-					tool_permissions_json, description, model_pool, created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO space_long_horizon_agents (${cols.join(', ')}) VALUES (${placeholders})
+         ON CONFLICT(id) DO UPDATE SET ${setClause}
+         WHERE space_long_horizon_agents.template_key = 'migration.legacy_space_agent'`
       )
       .run(
         params.id,

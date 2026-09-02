@@ -1579,6 +1579,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           if (modelError) return jsonResult({ success: false, error: modelError });
         }
         const agent = requireLongHorizonAgentRepo().update(args.agent_id, {
+          description: null,
+          modelPool: null,
           displayName: args.name,
           status:
             args.status === 'active' ||

@@ -224,6 +224,8 @@ export function setupSpaceLongHorizonAgentHandlers(
       settingSources?: SpaceLongHorizonAgent['settingSources'];
       toolPermissions?: Record<string, unknown>;
       status?: string;
+      description?: string;
+      modelPool?: SpaceLongHorizonAgent['modelPool'];
     };
     if (!params.spaceId) throw new Error('spaceId is required');
     if (!params.handle) throw new Error('handle is required');
@@ -250,6 +252,8 @@ export function setupSpaceLongHorizonAgentHandlers(
       settingSources: params.settingSources,
       toolPermissions: params.toolPermissions,
       status: params.status as 'active' | 'paused' | 'disabled' | 'archived' | undefined,
+      description: params.description,
+      modelPool: params.modelPool,
     });
     await publishAgentCreated(agent);
     return { agent };
@@ -269,6 +273,8 @@ export function setupSpaceLongHorizonAgentHandlers(
       settingSources?: SpaceLongHorizonAgent['settingSources'];
       toolPermissions?: Record<string, unknown> | null;
       status?: string;
+      description?: string | null;
+      modelPool?: SpaceLongHorizonAgent['modelPool'] | null;
     };
     if (!params.agentId) throw new Error('agentId is required');
     const existing = repo.getById(params.agentId);
@@ -296,6 +302,8 @@ export function setupSpaceLongHorizonAgentHandlers(
       settingSources: params.settingSources,
       toolPermissions: params.toolPermissions,
       status: params.status as 'active' | 'paused' | 'disabled' | 'archived' | undefined,
+      description: params.description ?? null,
+      modelPool: params.modelPool ?? null,
     });
     if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
     if (params.provider === null) {

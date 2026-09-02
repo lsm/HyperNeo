@@ -897,7 +897,13 @@ export class SpaceRuntimeService {
     } else {
       await this.refreshLongHorizonAgentSessionConfig(session, config);
     }
-    if (agent.sessionId !== sessionId) repo.update(agent.id, { sessionId });
+    if (agent.sessionId !== sessionId) {
+      repo.update(agent.id, {
+        sessionId,
+        description: agent.description ?? null,
+        modelPool: agent.modelPool ?? null,
+      });
+    }
     const currentMetadata = session.getSessionData().metadata;
     this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
       metadata: {

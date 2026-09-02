@@ -661,6 +661,53 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(repo.getById(mirror.id)?.displayName).toBe('Migrated Worker');
   });
 
+  test('delete rejects same-id worker overlays to preserve execution identity', () => {
+    const agent = repo.create({
+      spaceId: 'space-1',
+      handle: 'shared',
+      displayName: 'Shared',
+    });
+    db.prepare(
+      `INSERT INTO space_agents (id, space_id, name, created_at, updated_at)
+       VALUES (?, 'space-1', 'Worker', 1, 1)`
+    ).run(agent.id);
+
+    expect(() => repo.delete(agent.id)).toThrow(/same-id worker overlay/);
+    expect(repo.getById(agent.id)).not.toBeNull();
+  });
+
+  test('create refreshes an existing migration mirror in place', () => {
+    const shared = 'refresh-id';
+    db.prepare(
+      `INSERT INTO space_long_horizon_agents
+         (id, space_id, handle, display_name, template_key, status, instructions,
+          tool_permissions_json, created_at, updated_at)
+       VALUES (?, 'space-1', 'stale-handle', 'Stale Name', 'migration.legacy_space_agent', 'paused', 'old prompt', '{}', 1, 1)`
+    ).run(shared);
+    db.prepare(
+      `INSERT INTO space_agents (id, space_id, name, handle, status, description, model, tools, custom_prompt, system_prompt, created_at, updated_at)
+       VALUES (?, 'space-1', 'Refreshed', 'refreshed-handle', 'active', 'new desc', 'm1', '["Read"]', 'new prompt', '', 2, 2)`
+    ).run(shared);
+
+    repo.create({
+      id: shared,
+      spaceId: 'space-1',
+      handle: 'refreshed-handle',
+      displayName: 'Refreshed',
+    });
+
+    const mirror = repo.getById(shared);
+    expect(mirror?.handle).toBe('refreshed-handle');
+    expect(mirror?.displayName).toBe('Refreshed');
+    expect(mirror?.status).toBe('active');
+    expect(mirror?.instructions).toBe('new prompt');
+    expect(
+      JSON.parse(mirror?.toolPermissions.tools ? JSON.stringify(mirror?.toolPermissions) : '{}')
+    ).toEqual({
+      tools: ['Read'],
+    });
+  });
+
   test('update permits the runtime session binding on migrated worker mirrors', () => {
     const mirror = repo.create({
       spaceId: 'space-1',
