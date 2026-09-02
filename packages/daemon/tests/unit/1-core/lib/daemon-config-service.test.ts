@@ -244,6 +244,31 @@ describe('DaemonConfigService', () => {
     db.close();
   });
 
+  test('an update that loses the CAS reports superseded without publishing or caching', async () => {
+    const db = createDb();
+    const bus = createDaemonInternalEventBus();
+    const service = new DaemonConfigService(db, bus);
+    const seen: Array<{ changedKeys: string[] }> = [];
+    bus.subscribe(
+      DAEMON_CONFIG_UPDATED,
+      (event) => {
+        seen.push({ changedKeys: event.changedKeys });
+      },
+      { subscriberName: 'daemon-config-service-test' }
+    );
+    writeConfigRow(db, { deliveryPolicy: { messageDeliveryMaxRetries: 9 } });
+    (service as unknown as Record<string, unknown>).readConfigRow = () => null;
+    const result = service.updateConfig({ deliveryPolicy: { messageDeliveryMaxRetries: 4 } });
+    expect(result.status).toBe('superseded');
+    expect(readConfigRow(db)?.config_json).toBe(
+      '{"deliveryPolicy":{"messageDeliveryMaxRetries":9}}'
+    );
+    await flushEvents();
+    expect(seen).toEqual([]);
+    expect(service.getConfig().deliveryPolicy?.messageDeliveryMaxRetries).toBe(9);
+    db.close();
+  });
+
   test('updateConfig rejects unknown families and keys without writing', () => {
     const db = createDb();
     const service = new DaemonConfigService(db);
@@ -346,6 +371,18 @@ describe('DaemonConfigService', () => {
     expect(readConfigRow(db)?.config_json).toBe('{}');
     expect(service.seedFromLegacyEnv({ HYPERNEO_WORKFLOW_CONNECTORS: '0' })).toBe(false);
     expect(service.getConfig().flags?.workflowConnectors).toBe(true);
+    db.close();
+  });
+
+  test('a seed that loses the atomic claim reports false and leaves the winner intact', () => {
+    const db = createDb();
+    const service = new DaemonConfigService(db);
+    (service as unknown as Record<string, unknown>).readConfigRow = () => {
+      writeConfigRow(db, { flags: { workflowConnectors: false } });
+      return null;
+    };
+    expect(service.seedFromLegacyEnv({ HYPERNEO_WORKFLOW_CONNECTORS: '0' })).toBe(false);
+    expect(readConfigRow(db)?.config_json).toBe('{"flags":{"workflowConnectors":false}}');
     db.close();
   });
 });
