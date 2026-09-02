@@ -13,6 +13,7 @@ import {
   isWorkflowSubSessionIdentity,
 } from './lib/session/sub-session-identity.ts';
 import { AuthManager } from './lib/auth-manager.ts';
+import { DaemonConfigService } from './lib/daemon-config-service.ts';
 import { SettingsManager } from './lib/settings-manager.ts';
 import { StateProjectionService } from './lib/state-projection-service.ts';
 import { createClientEventBridge } from './lib/client-event-bridge.ts';
@@ -284,6 +285,7 @@ export interface DaemonAppContext {
   sessionManager: SessionManager;
   authManager: AuthManager;
   settingsManager: SettingsManager;
+  daemonConfigService: DaemonConfigService;
   stateManager: StateProjectionService;
   transport: WebSocketServerTransport;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
@@ -395,6 +397,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     const logInfo = verbose ? console.log : () => {};
     const logError = verbose ? console.error : () => {};
+
+    const internalEventBus = createDaemonInternalEventBus();
+    const daemonConfigService = new DaemonConfigService(db.getDatabase(), internalEventBus);
+    if (daemonConfigService.seedFromLegacyEnv()) {
+      logInfo('[Daemon] Seeded daemon config from legacy environment variables');
+    }
 
     const jobQueue = new JobQueueRepository(db.getDatabase());
     const workflowHookStateRepository = new WorkflowHookStateRepository(db.getDatabase());
@@ -543,7 +551,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     messageHub.registerTransport(transport);
 
-    const internalEventBus = createDaemonInternalEventBus();
     unsubscribeProviderFailureChanges = subscribeProviderFailureChanges((change) => {
       credentialManager.markProviderHealth(
         change.providerId,
@@ -1396,6 +1403,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       sessionManager,
       authManager,
       settingsManager,
+      daemonConfigService,
       stateManager,
       transport,
       internalEventBus,
