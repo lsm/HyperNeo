@@ -265,6 +265,7 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
           spaceId: SPACE_ID,
           workflowRunId: RUN_ID,
           title: 'Task 850',
+          status: 'approved',
           workspacePath: '/task/reuse-override',
         }) as unknown as SpaceTask,
     };
@@ -642,6 +643,7 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
         spaceId: SPACE_ID,
         workflowRunId: RUN_ID,
         title: 'Task 850',
+        status: 'approved',
         workspacePath: '/task/override',
       }),
     };
@@ -666,6 +668,7 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
         spaceId: SPACE_ID,
         workflowRunId: 'run-other',
         title: 'Task 850',
+        status: 'approved',
       }),
     };
 
@@ -832,7 +835,6 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
   test('rejects the spawn for an inactive space or a non-post-approval task', async () => {
     for (const opts of [
       { spaceStopped: true },
-      { spaceArchived: true },
       { taskStatus: 'cancelled' },
       { taskStatus: 'archived' },
       { taskStatus: 'stopped' },

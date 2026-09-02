@@ -5581,9 +5581,10 @@ export class TaskAgentManager {
         phase: 'spawn',
       });
 
-      await this.withSessionInjectLock(spawned.session.id, () =>
-        this.injectMessageIntoSession(spawned, kickoffMessage)
-      );
+      await this.withSessionInjectLock(spawned.session.id, async () => {
+        await this.assertPostApprovalSpawnAdmissible(spaceId, taskId);
+        await this.injectMessageIntoSession(spawned, kickoffMessage);
+      });
 
       log.info(
         `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${slot.name}" (task ${taskId}, node ${matchedNodeId})`
@@ -5598,9 +5599,9 @@ export class TaskAgentManager {
 
   private async assertPostApprovalSpawnAdmissible(spaceId: string, taskId: string): Promise<void> {
     const freshTask = this.config.taskRepo.getTask(taskId);
-    if (freshTask?.status && freshTask.status !== 'approved' && freshTask.status !== 'done') {
+    if (!freshTask || (freshTask.status !== 'approved' && freshTask.status !== 'done')) {
       throw new Error(
-        `spawnPostApprovalSubSession: task ${taskId} is ${freshTask.status}; refusing to spawn a post-approval session`
+        `spawnPostApprovalSubSession: task ${taskId} is ${freshTask?.status ?? 'missing'}; refusing to spawn a post-approval session`
       );
     }
     const freshSpace = await this.config.spaceManager.getSpace(spaceId);
