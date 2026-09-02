@@ -22,6 +22,8 @@ import { setupAuthHandlers } from './auth-handlers.ts';
 import { setupCommandHandlers } from './command-handlers.ts';
 import { registerMcpHandlers } from './mcp-handlers.ts';
 import { registerSettingsHandlers } from './settings-handlers.ts';
+import { setupDaemonConfigHandlers } from './daemon-config-handlers.ts';
+import type { DaemonConfigService } from '../daemon-config-service.ts';
 import { registerCustomEndpointHandlers } from './custom-endpoint-handlers.ts';
 import { registerVoiceHandlers } from './voice-handlers.ts';
 import { setupProviderHandlers } from './provider-handlers.ts';
@@ -179,6 +181,7 @@ export interface RPCHandlerDependencies {
   authManager: AuthManager;
   credentialManager?: ProviderCredentialManager;
   settingsManager: SettingsManager;
+  daemonConfigService?: DaemonConfigService;
   config: Config;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   commandBus: InternalCommandBus<DaemonCommandMap>;
@@ -339,6 +342,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.mcpImportService,
     deps.credentialManager
   );
+  if (deps.daemonConfigService) {
+    setupDaemonConfigHandlers(deps.messageHub, { service: deps.daemonConfigService });
+  }
   registerCustomEndpointHandlers(
     deps.messageHub,
     deps.settingsManager,
