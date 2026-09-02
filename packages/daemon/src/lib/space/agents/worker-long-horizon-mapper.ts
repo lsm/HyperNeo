@@ -60,16 +60,18 @@ export function workerAgentToLongHorizonParams(
   options: WorkerAgentToLongHorizonOptions
 ): WorkerAgentToLongHorizonParams {
   const baseHandle = worker.handle ?? worker.name ?? worker.id;
-  let handle = baseHandle;
+  const idSegment = `-${worker.id}`;
+  const maxBaseLen = Math.max(1, 60 - idSegment.length);
+  const trimmedBase = baseHandle.length > maxBaseLen ? baseHandle.slice(0, maxBaseLen) : baseHandle;
+  let handle = trimmedBase;
   while (options.occupiedHandles.has(handle)) {
-    const suffix = `-${worker.id}`;
-    if (baseHandle.length + suffix.length <= 60) {
-      handle = `${baseHandle}${suffix}`;
-    } else {
-      const trimmed = baseHandle.slice(0, Math.max(1, 60 - suffix.length));
-      handle = `${trimmed}${suffix}`;
+    const compound = `${handle}${idSegment}`;
+    if (compound.length <= 60) {
+      handle = compound;
+      continue;
     }
-    if (handle.length <= 60) break;
+    const room = Math.max(1, 60 - idSegment.length);
+    handle = `${handle.slice(0, room)}${idSegment}`;
   }
   const tools = worker.tools ?? [];
   return {

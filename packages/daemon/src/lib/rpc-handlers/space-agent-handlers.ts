@@ -438,7 +438,7 @@ export function setupSpaceAgentHandlers(
       const detailsMsg = result.details?.length ? `\n${result.details.join('\n')}` : '';
       throw new Error(`${result.error}${detailsMsg}`);
     }
-    void runtimeService;
+    runtimeService?.removeLongHorizonAgentSubscriptions(existing.spaceId, existing.id);
 
     await internalEventBus
       .publish('spaceAgent.deleted', {

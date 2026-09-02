@@ -357,83 +357,83 @@ export class SpaceAgentRepository {
 
   private mirrorUpdate(id: string, params: UpdateSpaceWorkerAgentParams): void {
     if (!this.unifiedTableExists()) return;
-    const fields: string[] = [];
-    const values: SQLiteValue[] = [];
-
-    if (params.name !== undefined) {
-      fields.push('display_name = ?');
-      values.push(params.name);
-    }
-    if (params.handle !== undefined && params.handle !== null) {
-      const worker = this.getById(id);
-      if (worker) {
-        fields.push('handle = ?');
-        values.push(
-          workerAgentToLongHorizonParams(
-            { ...worker, handle: params.handle },
-            {
-              occupiedHandles: this.getUnifiedHandlesExcluding(worker.spaceId, id),
-              now: Date.now(),
-            }
-          ).handle
-        );
-      }
-    }
-    if (params.status !== undefined) {
-      fields.push('status = ?');
-      values.push(params.status);
-    }
-    if (params.description !== undefined) {
-      fields.push('description = ?');
-      values.push(params.description ?? null);
-    }
-    if (params.model !== undefined) {
-      fields.push('model = ?');
-      values.push(params.model ?? null);
-    }
-    if (params.thinkingLevel !== undefined) {
-      fields.push('thinking_level = ?');
-      values.push(params.thinkingLevel ?? null);
-    }
-    if (params.provider !== undefined) {
-      fields.push('provider = ?');
-      values.push(params.provider ?? null);
-    }
-    if (params.customPrompt !== undefined) {
-      fields.push('instructions = ?');
-      values.push(params.customPrompt ?? '');
-    }
-    if (params.tools !== undefined) {
-      fields.push('tool_permissions_json = ?');
-      values.push(
-        params.tools != null && params.tools.length > 0
-          ? JSON.stringify({ tools: params.tools })
-          : '{}'
-      );
-    }
-    if (params.settingSources !== undefined) {
-      fields.push('setting_sources = ?');
-      values.push(params.settingSources != null ? JSON.stringify(params.settingSources) : null);
-    }
-    if (params.modelPool !== undefined) {
-      fields.push('model_pool = ?');
-      values.push(
-        params.modelPool != null && params.modelPool.length > 0
-          ? JSON.stringify(params.modelPool)
-          : null
-      );
-    }
-
-    if (fields.length === 0) return;
-
-    fields.push('updated_at = ?');
-    values.push(Date.now(), id, MIGRATED_WORKER_TEMPLATE_KEY);
+    const worker = this.getById(id);
+    if (!worker) return;
+    const merged: SpaceWorkerAgent = { ...worker, ...params } as SpaceWorkerAgent;
+    const handle = this.alignHandleWithUnified(merged.spaceId, id, merged.handle, merged.name);
+    const mirrorParams = workerAgentToLongHorizonParams(
+      { ...merged, handle },
+      { occupiedHandles: this.getUnifiedHandlesExcluding(merged.spaceId, id), now: Date.now() }
+    );
+    const cols = [
+      'id',
+      'space_id',
+      'handle',
+      'display_name',
+      'template_key',
+      'status',
+      'session_id',
+      'instructions',
+      'autonomy_level',
+      'model',
+      'thinking_level',
+      'provider',
+      'setting_sources',
+      'tool_permissions_json',
+      'description',
+      'model_pool',
+      'created_at',
+      'updated_at',
+    ];
+    const placeholders = cols.map(() => '?').join(', ');
+    const updateCols = [
+      'space_id',
+      'handle',
+      'display_name',
+      'status',
+      'session_id',
+      'instructions',
+      'autonomy_level',
+      'model',
+      'thinking_level',
+      'provider',
+      'setting_sources',
+      'tool_permissions_json',
+      'description',
+      'model_pool',
+      'updated_at',
+    ];
+    const setClause = updateCols.map((c) => `${c} = excluded.${c}`).join(', ');
     this.db
       .prepare(
-        `UPDATE space_long_horizon_agents SET ${fields.join(', ')}
-			 WHERE id = ? AND template_key = ?`
+        `INSERT INTO space_long_horizon_agents (${cols.join(', ')}) VALUES (${placeholders})
+         ON CONFLICT(id) DO UPDATE SET ${setClause}
+         WHERE space_long_horizon_agents.template_key = '${MIGRATED_WORKER_TEMPLATE_KEY}'`
       )
-      .run(...values);
+      .run(
+        mirrorParams.id,
+        mirrorParams.spaceId,
+        mirrorParams.handle,
+        mirrorParams.displayName,
+        mirrorParams.templateKey,
+        mirrorParams.status,
+        mirrorParams.sessionId,
+        mirrorParams.instructions,
+        mirrorParams.autonomyLevel,
+        mirrorParams.model,
+        mirrorParams.thinkingLevel,
+        mirrorParams.provider,
+        mirrorParams.settingSources === null || mirrorParams.settingSources === undefined
+          ? null
+          : JSON.stringify(mirrorParams.settingSources),
+        JSON.stringify(mirrorParams.toolPermissions),
+        mirrorParams.description ?? null,
+        mirrorParams.modelPool != null && mirrorParams.modelPool.length > 0
+          ? JSON.stringify(mirrorParams.modelPool)
+          : null,
+        mirrorParams.createdAt,
+        mirrorParams.updatedAt
+      );
   }
 
   private deleteUnifiedMirror(id: string, spaceId: string | undefined): void {

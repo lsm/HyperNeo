@@ -517,6 +517,7 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     (tam.config as unknown as Record<string, unknown>).spaceAgentManager = {
       getById: () => ({
         id: 'agent-reviewer',
+        spaceId: SPACE_ID,
         name: REVIEWER_AGENT,
         customPrompt: 'merge the approved PR',
         model: 'm',
@@ -678,6 +679,7 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     (tam.config as unknown as Record<string, unknown>).spaceAgentManager = {
       getById: () => ({
         id: 'agent-reviewer',
+        spaceId: SPACE_ID,
         name: REVIEWER_AGENT,
         customPrompt: 'merge the approved PR',
         model: 'm',
