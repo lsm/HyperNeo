@@ -141,17 +141,22 @@ function insertTaskInput(
 
 function insertTask(
   db: BunDatabase,
-  overrides: { status?: string; postApprovalSessionId?: string | null } = {}
+  overrides: {
+    status?: string;
+    postApprovalSessionId?: string | null;
+    approvedAt?: number | null;
+  } = {}
 ): void {
   db.prepare(
-    `INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, workflow_run_id, post_approval_session_id, depends_on, created_at, updated_at)
-     VALUES (?, ?, 1, 'T', '', ?, 'normal', ?, ?, '[]', 0, 0)`
+    `INSERT INTO space_tasks (id, space_id, task_number, title, description, status, priority, workflow_run_id, post_approval_session_id, approved_at, depends_on, created_at, updated_at)
+     VALUES (?, ?, 1, 'T', '', ?, 'normal', ?, ?, ?, '[]', 0, 0)`
   ).run(
     TASK_ID,
     SPACE_ID,
     overrides.status ?? 'in_progress',
     RUN_ID,
-    overrides.postApprovalSessionId ?? null
+    overrides.postApprovalSessionId ?? null,
+    overrides.approvedAt ?? null
   );
 }
 
@@ -282,6 +287,22 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     });
     insertTaskInput(db, 'space:space-id:task:task-1:exec:normal');
     expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
+  });
+
+  it('rejects a consumed post-approval worker from a prior approval cycle', () => {
+    const staleSessionId = postApprovalSessionId('stale');
+    insertTask(db, { status: 'approved', postApprovalSessionId: null, approvedAt: 10 });
+    insertWorkerSession(db, { sessionId: staleSessionId, createdAt: 5, lastActiveAt: 9 });
+    insertTaskInput(db, staleSessionId);
+    expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
+  });
+
+  it('accepts a consumed post-approval worker from the current approval cycle', () => {
+    const sessionId = postApprovalSessionId('current');
+    insertTask(db, { status: 'approved', postApprovalSessionId: null, approvedAt: 10 });
+    insertWorkerSession(db, { sessionId, createdAt: 10, lastActiveAt: 10 });
+    insertTaskInput(db, sessionId);
+    expect(tam.getPostApprovalWorkerSession(TASK_ID)?.sessionId).toBe(sessionId);
   });
 
   it('requires consumed kickoff evidence for the same task', () => {

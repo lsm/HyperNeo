@@ -2129,7 +2129,7 @@ export class TaskAgentManager {
     let sessionId = task?.postApprovalSessionId;
     let provenance = sessionId ? this.readProvenanceFromSessionRow(sessionId) : null;
     if (!provenance && !sessionId && (task?.status === 'approved' || task?.status === 'done')) {
-      const durableId = this.findDurableWorkerSessionId(taskId);
+      const durableId = this.findDurableWorkerSessionId(taskId, task.approvedAt);
       if (durableId) {
         sessionId = durableId;
         provenance = this.readProvenanceFromSessionRow(durableId);
@@ -2165,7 +2165,10 @@ export class TaskAgentManager {
     }
   }
 
-  private findDurableWorkerSessionId(taskId: string): string | undefined {
+  private findDurableWorkerSessionId(
+    taskId: string,
+    approvedAt: number | null | undefined
+  ): string | undefined {
     try {
       const db = this.config.db.getDatabase();
       const sdkMessageRepo = new SDKMessageRepository(db);
@@ -2176,10 +2179,11 @@ export class TaskAgentManager {
             WHERE s.type = 'worker'
               AND s.task_id = ?
               AND instr(s.id, ':post-approval:') > 0
+              AND (? IS NULL OR s.created_at >= ?)
               AND NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)
             ORDER BY s.last_active_at DESC`
         )
-        .all(taskId) as Array<{ id: string }>;
+        .all(taskId, approvedAt ?? null, approvedAt ?? null) as Array<{ id: string }>;
       return rows.find((row) => sdkMessageRepo.hasConsumedTaskInputForSession(row.id, taskId))?.id;
     } catch {
       return undefined;
