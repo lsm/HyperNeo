@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { POST_APPROVAL_COMPLETION_INSTRUCTIONS } from '@hyperneo/prompts';
-import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import type { Space, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import { createDefaultSessionResolutionDeps } from '../../../../src/lib/session-resolution/default-deps';
 import type { SessionResolutionDeps } from '../../../../src/lib/session-resolution/deps';
+import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
@@ -53,6 +54,8 @@ interface HarnessConfig {
   spawnResult?: { sessionId: string } | Error;
   run?: { id: string; workflowId: string; spaceId: string } | null;
   workflow?: Partial<SpaceWorkflow> | null;
+  prUrl?: string | null;
+  space?: Partial<Space> | null;
 }
 
 interface Harness {
@@ -67,6 +70,8 @@ interface Harness {
   updateTaskCalls: Array<[string, Record<string, unknown>]>;
   getTaskCalls: string[];
   getRunCalls: string[];
+  prUrlCalls: string[];
+  getSpaceCalls: string[];
 }
 
 function makeHarness(config: HarnessConfig = {}): Harness {
@@ -82,6 +87,8 @@ function makeHarness(config: HarnessConfig = {}): Harness {
     updateTaskCalls: [],
     getTaskCalls: [],
     getRunCalls: [],
+    prUrlCalls: [],
+    getSpaceCalls: [],
   };
   const task = (
     config.task === undefined || config.task === null ? null : config.task
@@ -178,6 +185,26 @@ function makeHarness(config: HarnessConfig = {}): Harness {
     longHorizonAgentRepo,
     workflowRunRepo,
     spaceWorkflowManager,
+    ...(config.prUrl !== undefined
+      ? {
+          artifactProfile: {
+            resolveInitialPrimaryLinkUrl: (runId: string) => {
+              harness.prUrlCalls.push(runId);
+              return config.prUrl ?? '';
+            },
+          },
+        }
+      : {}),
+    ...(config.space !== undefined
+      ? {
+          spaceManager: {
+            getSpace: (spaceId: string) => {
+              harness.getSpaceCalls.push(spaceId);
+              return Promise.resolve(config.space === null ? null : (config.space as Space));
+            },
+          } as SpaceManager,
+        }
+      : {}),
   });
   return harness;
 }
@@ -247,6 +274,15 @@ describe('rehydrateSubSession', () => {
     const { deps, rehydrateCalls } = makeHarness({ rehydratedSession: restored });
 
     await expect(deps.rehydrateSubSession('sub-1')).resolves.toBe(restored);
+    expect(rehydrateCalls).toEqual(['sub-1']);
+  });
+
+  test('restored session whose persisted status is ended resolves null', async () => {
+    const { deps, rehydrateCalls } = makeHarness({
+      rehydratedSession: fakeSession('sub-1', 'ended'),
+    });
+
+    await expect(deps.rehydrateSubSession('sub-1')).resolves.toBeNull();
     expect(rehydrateCalls).toEqual(['sub-1']);
   });
 });
@@ -535,7 +571,7 @@ describe('spawnPostApprovalWorker', () => {
     ]);
   });
 
-  test('spawns with the node id and the node-matching route when constrained', async () => {
+  test('node id constrains the spawn slot while the canonical first route provides the kickoff', async () => {
     const { deps, spawnCalls } = spawnHarness({
       workflow: {
         id: 'wf-1',
@@ -560,7 +596,59 @@ describe('spawnPostApprovalWorker', () => {
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0]?.nodeId).toBe('node-2');
     expect(spawnCalls[0]?.kickoffMessage).toBe(
-      `Node two t-1\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`
+      `Node one t-1\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`
+    );
+  });
+
+  test('a route for the agent that is not the canonical dispatch target resolves null', async () => {
+    const { deps, spawnCalls, updateTaskCalls } = spawnHarness({
+      workflow: {
+        id: 'wf-1',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'build',
+            agents: [],
+            postApproval: { targetAgent: 'reviewer', instructions: 'Review {{task_id}}' },
+          },
+          {
+            id: 'node-2',
+            name: 'publish',
+            agents: [],
+            postApproval: { targetAgent: 'publisher', instructions: 'Publish {{task_id}}' },
+          },
+        ],
+      } as Partial<SpaceWorkflow>,
+    });
+
+    await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBeNull();
+    expect(spawnCalls).toHaveLength(0);
+    expect(updateTaskCalls).toHaveLength(0);
+  });
+
+  test('interpolates autonomy_level and space workspace_path from the space service', async () => {
+    const { deps, spawnCalls, getSpaceCalls } = spawnHarness({
+      space: { autonomyLevel: 3, workspacePath: '/ws/space-root' },
+      workflow: {
+        id: 'wf-1',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'build',
+            agents: [],
+            postApproval: {
+              targetAgent: 'publisher',
+              instructions: 'Deploy at autonomy {{autonomy_level}} from {{workspace_path}}',
+            },
+          },
+        ],
+      } as Partial<SpaceWorkflow>,
+    });
+
+    await deps.spawnPostApprovalWorker('t-1', 'publisher');
+    expect(getSpaceCalls).toEqual(['space-1']);
+    expect(spawnCalls[0]?.kickoffMessage).toBe(
+      `Deploy at autonomy 3 from /ws/space-root\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`
     );
   });
 
@@ -619,6 +707,50 @@ describe('spawnPostApprovalWorker', () => {
     await deps.spawnPostApprovalWorker('t-1', 'publisher');
     expect(spawnCalls[0]?.kickoffMessage).toBe(
       `Check {{autonomy_level}}\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`
+    );
+  });
+
+  test('interpolates the run primary-link pr_url from the artifact profile', async () => {
+    const { deps, spawnCalls, prUrlCalls } = spawnHarness({
+      prUrl: 'https://github.com/lsm/HyperNeo/pull/3565',
+      workflow: {
+        id: 'wf-1',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'build',
+            agents: [],
+            postApproval: { targetAgent: 'publisher', instructions: 'Merge {{pr_url}} now' },
+          },
+        ],
+      } as Partial<SpaceWorkflow>,
+    });
+
+    await deps.spawnPostApprovalWorker('t-1', 'publisher');
+    expect(prUrlCalls).toEqual(['run-1']);
+    expect(spawnCalls[0]?.kickoffMessage).toBe(
+      `Merge https://github.com/lsm/HyperNeo/pull/3565 now\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`
+    );
+  });
+
+  test('pr_url stays a token when no artifact profile is wired', async () => {
+    const { deps, spawnCalls } = spawnHarness({
+      workflow: {
+        id: 'wf-1',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'build',
+            agents: [],
+            postApproval: { targetAgent: 'publisher', instructions: 'Merge {{pr_url}} now' },
+          },
+        ],
+      } as Partial<SpaceWorkflow>,
+    });
+
+    await deps.spawnPostApprovalWorker('t-1', 'publisher');
+    expect(spawnCalls[0]?.kickoffMessage).toBe(
+      `Merge {{pr_url}} now\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`
     );
   });
 

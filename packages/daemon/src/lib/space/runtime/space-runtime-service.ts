@@ -993,6 +993,7 @@ export class SpaceRuntimeService {
     const repo = this.config.longHorizonAgentRepo;
     const coordinator = repo?.getCoordinator(spaceId) ?? null;
     if (agentSessionIdOf(spaceId, agentId, coordinator?.id) === coordinatorSessionId(spaceId)) {
+      if (coordinator !== null && coordinator.status !== 'active') return null;
       return this.ensureCoordinatorSession(spaceId);
     }
     if (repo?.getById(agentId)?.spaceId === spaceId) {

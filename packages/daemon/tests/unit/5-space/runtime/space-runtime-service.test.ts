@@ -54,6 +54,10 @@ import type { SpaceAgentInboxMessageRecord } from '../../../../src/storage/repos
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import {
+  coordinatorLongHorizonAgentId,
+  coordinatorSessionId,
+} from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceTaskRepository as SpaceTaskRepo } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -1975,6 +1979,95 @@ describe('SpaceRuntimeService', () => {
       await svc.stop();
 
       expect(unsubFn).toHaveBeenCalledTimes(10);
+    });
+  });
+
+  describe('ensureAgentSession()', () => {
+    function makeCoordinatorSession(): AgentSession {
+      return {
+        setRuntimeMcpServers: mock(() => {}),
+        mergeRuntimeMcpServers: mock(() => {}),
+        setRuntimeSystemPrompt: mock(() => {}),
+        updateConfig: mock(async () => {}),
+        resetQuery: mock(async () => ({ success: true })),
+        restart: mock(async () => {}),
+        getSessionData: mock(() => ({ id: 'session-1', metadata: {}, config: {} }) as Session),
+      } as unknown as AgentSession;
+    }
+
+    function buildEnsureService(coordinatorRow: SpaceLongHorizonAgent | null): {
+      svc: SpaceRuntimeService;
+      session: AgentSession;
+      sessionManager: SessionManager;
+    } {
+      const session = makeCoordinatorSession();
+      const sessionManager = {
+        getSessionAsync: mock(async () => session),
+        createSession: mock(async () => `space:chat:${mockSpace.id}`),
+      } as unknown as SessionManager;
+      const longHorizonAgentRepo = {
+        getCoordinator: mock(() => coordinatorRow),
+        getById: mock(() => coordinatorRow),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager(mockSpace)),
+        sessionManager,
+        longHorizonAgentRepo,
+      });
+      return { svc, session, sessionManager };
+    }
+
+    test('canonical coordinator id with an inactive coordinator row resolves null without provisioning', async () => {
+      for (const status of ['paused', 'disabled', 'archived'] as const) {
+        const { svc, sessionManager } = buildEnsureService(buildLongHorizonAgent({ status }));
+
+        await expect(svc.ensureAgentSession(mockSpace.id, 'coordinator')).resolves.toBeNull();
+        expect(sessionManager.getSessionAsync).not.toHaveBeenCalled();
+        expect(sessionManager.createSession).not.toHaveBeenCalled();
+      }
+    });
+
+    test('generated coordinator id with an inactive row resolves null without provisioning', async () => {
+      const { svc, sessionManager } = buildEnsureService(
+        buildLongHorizonAgent({
+          id: coordinatorLongHorizonAgentId(mockSpace.id),
+          status: 'disabled',
+        })
+      );
+
+      await expect(
+        svc.ensureAgentSession(mockSpace.id, coordinatorLongHorizonAgentId(mockSpace.id))
+      ).resolves.toBeNull();
+      expect(sessionManager.getSessionAsync).not.toHaveBeenCalled();
+    });
+
+    test('repository coordinator id with an inactive row resolves null without provisioning', async () => {
+      const { svc, sessionManager } = buildEnsureService(
+        buildLongHorizonAgent({ id: 'coordinator-alt', status: 'paused' })
+      );
+
+      await expect(svc.ensureAgentSession(mockSpace.id, 'coordinator-alt')).resolves.toBeNull();
+      expect(sessionManager.getSessionAsync).not.toHaveBeenCalled();
+    });
+
+    test('active coordinator row provisions the coordinator session', async () => {
+      const { svc, session, sessionManager } = buildEnsureService(
+        buildLongHorizonAgent({ status: 'active' })
+      );
+
+      await expect(svc.ensureAgentSession(mockSpace.id, 'coordinator')).resolves.toBe(session);
+      expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(
+        coordinatorSessionId(mockSpace.id)
+      );
+    });
+
+    test('space without a coordinator row keeps the bootstrap provisioning path', async () => {
+      const { svc, session, sessionManager } = buildEnsureService(null);
+
+      await expect(svc.ensureAgentSession(mockSpace.id, 'coordinator')).resolves.toBe(session);
+      expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(
+        coordinatorSessionId(mockSpace.id)
+      );
     });
   });
 

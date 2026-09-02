@@ -3751,6 +3751,13 @@ export class TaskAgentManager {
   }
 
   async rehydrateSubSessionById(sessionId: string): Promise<AgentSession | null> {
+    if (sessionId.includes(':post-approval:')) {
+      const taskId = taskIdFromSubSessionIdentity(sessionId);
+      if (taskId !== null) {
+        const restoredId = await this.restorePostApprovalWorkerSession(taskId, sessionId);
+        return restoredId === null ? null : (this.getSubSession(restoredId) ?? null);
+      }
+    }
     return this.rehydrateSubSession(sessionId);
   }
 
@@ -5274,7 +5281,7 @@ export class TaskAgentManager {
       );
     }
 
-    const existingSessionId = this.findLiveSubSessionForAgent(task, matchedSlot.name);
+    const existingSessionId = this.findLiveSubSessionForAgent(task, matchedSlot.name, nodeId);
     if (existingSessionId) {
       const existing = this.getSubSession(existingSessionId);
       if (!existing) {
@@ -5473,11 +5480,16 @@ export class TaskAgentManager {
     }
   }
 
-  private findLiveSubSessionForAgent(task: SpaceTask, agentName: string): string | null {
+  private findLiveSubSessionForAgent(
+    task: SpaceTask,
+    agentName: string,
+    nodeId?: string
+  ): string | null {
     if (!task.workflowRunId) return null;
     const prevExec = this.config.nodeExecutionRepo
       .listByWorkflowRun(task.workflowRunId)
       .filter((e) => e.agentName === agentName && e.agentSessionId)
+      .filter((e) => nodeId === undefined || e.workflowNodeId === nodeId)
       .at(-1);
     const candidateId = prevExec?.agentSessionId ?? null;
     if (!candidateId) return null;
