@@ -30,7 +30,6 @@ function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   createTables(db);
   db.exec(`
-    ALTER TABLE space_tasks ADD COLUMN approved_at INTEGER;
     CREATE TABLE IF NOT EXISTS space_tasks (
       id TEXT PRIMARY KEY,
       space_id TEXT NOT NULL,
@@ -41,6 +40,7 @@ function makeDb(): BunDatabase {
       priority TEXT NOT NULL DEFAULT 'normal',
       workflow_run_id TEXT,
       post_approval_session_id TEXT,
+      approved_at INTEGER,
       depends_on TEXT NOT NULL DEFAULT '[]',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
@@ -164,13 +164,24 @@ function insertTask(
 }
 
 function makeManager(db: BunDatabase): TaskAgentManager {
+  const workflow = {
+    id: 'wf-1',
+    nodes: [
+      {
+        id: POST_APPROVAL_NODE,
+        agents: [{ name: 'merger' }],
+        postApproval: { targetAgent: 'merger' },
+      },
+    ],
+  };
   return new TaskAgentManager({
     db: { getDatabase: () => db },
     taskRepo: new SpaceTaskRepository(db),
     sessionManager: { registerSession: () => {} },
     internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
-    spaceWorkflowManager: { getWorkflow: () => null, getWorkflowForRun: () => null },
+    workflowRunRepo: { getRun: () => ({ id: RUN_ID, workflowId: workflow.id }) },
+    spaceWorkflowManager: { getWorkflow: () => workflow, getWorkflowForRun: () => workflow },
     nodeExecutionRepo: { listByWorkflowRun: () => [], listByNode: () => [], update: () => null },
   } as unknown as TaskAgentManagerConfig);
 }
@@ -308,12 +319,20 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     expect(tam.getPostApprovalWorkerSession(TASK_ID)?.sessionId).toBe(sessionId);
   });
 
-  it('recovers a current-cycle kickoff consumed by a reused execution session', () => {
+  it('recovers a current-cycle kickoff consumed by the routed reused execution session', () => {
     const sessionId = 'space:space-id:task:task-1:exec:reused';
     insertTask(db, { status: 'approved', postApprovalSessionId: null, approvedAt: 10 });
+    insertWorkerSession(db, {
+      sessionId: 'space:space-id:task:task-1:exec:unrelated',
+      agentName: 'reviewer',
+      lastActiveAt: 11,
+      withExecution: true,
+    });
+    insertTaskInput(db, 'space:space-id:task:task-1:exec:unrelated', { timestamp: 11 });
     insertWorkerSession(db, { sessionId, createdAt: 1, lastActiveAt: 10, withExecution: true });
     insertTaskInput(db, sessionId, { timestamp: 10 });
     expect(tam.getPostApprovalWorkerSession(TASK_ID)?.sessionId).toBe(sessionId);
+    expect(tam.getPostApprovalWorkerSession(TASK_ID, sessionId)?.sessionId).toBe(sessionId);
   });
 
   it('requires consumed kickoff evidence for the same task', () => {

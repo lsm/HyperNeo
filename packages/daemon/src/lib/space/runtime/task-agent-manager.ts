@@ -2114,7 +2114,14 @@ export class TaskAgentManager {
     const task = this.config.taskRepo.getTask(taskId);
     if (task?.status === 'cancelled' || task?.status === 'archived') return null;
     if (hintSessionId) {
-      if (!this.sessionIsWorkerForTask(hintSessionId, taskId)) return null;
+      if (
+        !this.sessionIsWorkerForTask(hintSessionId, taskId) &&
+        (!task ||
+          task.postApprovalSessionId ||
+          (task.status !== 'approved' && task.status !== 'done') ||
+          this.findDurableWorkerSessionId(task) !== hintSessionId)
+      )
+        return null;
       const provenance = this.readProvenanceFromSessionRow(hintSessionId);
       const agentName = provenance?.agentName ?? this.legacyWorkflowRouteAgentName(task);
       if (!agentName) return null;
@@ -2129,7 +2136,7 @@ export class TaskAgentManager {
     let sessionId = task?.postApprovalSessionId;
     let provenance = sessionId ? this.readProvenanceFromSessionRow(sessionId) : null;
     if (!provenance && !sessionId && (task?.status === 'approved' || task?.status === 'done')) {
-      const durableId = this.findDurableWorkerSessionId(taskId, task.approvedAt);
+      const durableId = this.findDurableWorkerSessionId(task);
       if (durableId) {
         sessionId = durableId;
         provenance = this.readProvenanceFromSessionRow(durableId);
@@ -2166,35 +2173,44 @@ export class TaskAgentManager {
   }
 
   private findDurableWorkerSessionId(
-    taskId: string,
-    approvedAt: number | null | undefined
+    task: Pick<SpaceTask, 'id' | 'workflowRunId' | 'approvedAt'>
   ): string | undefined {
     try {
       const db = this.config.db.getDatabase();
       const sdkMessageRepo = new SDKMessageRepository(db);
+      const routeAgent = this.legacyWorkflowRouteAgentName(task);
+      const routeNode = this.legacyWorkflowRouteNodeId(task);
       const rows = db
         .prepare(
-          `SELECT s.id AS id,
-                  EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id) AS hasExecution
+          `SELECT s.id AS id, ne.agent_session_id AS executionId
              FROM sessions s
+             LEFT JOIN node_executions ne ON ne.agent_session_id = s.id
             WHERE s.type = 'worker'
               AND s.task_id = ?
+              AND (
+                ne.agent_session_id IS NULL
+                OR (
+                  ne.workflow_run_id = ? AND ne.workflow_node_id = ? AND ne.agent_name = ?
+                )
+              )
             ORDER BY s.last_active_at DESC`
         )
-        .all(taskId) as Array<{ id: string; hasExecution: number }>;
+        .all(task.id, task.workflowRunId, routeNode, routeAgent) as Array<{
+        id: string;
+        executionId?: string;
+      }>;
       return rows.find((row) => {
-        if (!sdkMessageRepo.hasConsumedTaskInputForSession(row.id, taskId)) return false;
-        if (approvedAt === null || approvedAt === undefined) {
-          return row.hasExecution === 0 && row.id.includes(':post-approval:');
+        if (!sdkMessageRepo.hasConsumedTaskInputForSession(row.id, task.id)) return false;
+        if (task.approvedAt === null || task.approvedAt === undefined) {
+          return !row.executionId && row.id.includes(':post-approval:');
         }
-        if (row.hasExecution === 0 && !row.id.includes(':post-approval:')) return false;
-        return this.hasConsumedTaskInputSince(row.id, taskId, approvedAt);
+        if (!row.executionId && !row.id.includes(':post-approval:')) return false;
+        return this.hasConsumedTaskInputSince(row.id, task.id, task.approvedAt);
       })?.id;
     } catch {
       return undefined;
     }
   }
-
   private hasConsumedTaskInputSince(
     sessionId: string,
     taskId: string,
