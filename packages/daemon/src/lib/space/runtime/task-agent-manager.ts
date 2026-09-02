@@ -37,6 +37,7 @@ import type {
   PendingAgentMessageRecord,
   PendingAgentMessageRepository,
 } from '../../../storage/repositories/pending-agent-message-repository.ts';
+import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
@@ -2026,34 +2027,12 @@ export class TaskAgentManager {
     taskId: string,
     hintSessionId?: string
   ): { sessionId: string; agentName: string; nodeId?: string | null } | null {
-    if (hintSessionId) {
-      return this.validateWorkerSessionForTask(taskId, hintSessionId);
-    }
-    const identity = this.readPostApprovalWorkerIdentity(taskId);
+    const identity = this.readPostApprovalWorkerIdentity(taskId, hintSessionId);
     return identity
       ? {
           sessionId: identity.sessionId,
           agentName: identity.agentName,
           nodeId: identity.nodeId ?? null,
-        }
-      : null;
-  }
-
-  private validateWorkerSessionForTask(
-    taskId: string,
-    sessionId: string
-  ): { sessionId: string; agentName: string; nodeId?: string | null } | null {
-    const task = this.config.taskRepo.getTask(taskId);
-    if (!task?.workflowRunId) return null;
-    if (task.status === 'cancelled' || task.status === 'archived') return null;
-    if (!this.sessionIsWorkerForTask(sessionId, taskId)) return null;
-    const provenance = this.readProvenanceFromSessionRow(sessionId);
-    const agentName = provenance?.agentName ?? this.legacyWorkflowRouteAgentName(task);
-    return agentName
-      ? {
-          sessionId,
-          agentName,
-          nodeId: provenance?.nodeId ?? this.legacyWorkflowRouteNodeId(task) ?? null,
         }
       : null;
   }
@@ -2113,7 +2092,14 @@ export class TaskAgentManager {
     const task = this.config.taskRepo.getTask(taskId);
     if (task?.status === 'cancelled' || task?.status === 'archived') return null;
     if (hintSessionId) {
-      if (!this.sessionIsWorkerForTask(hintSessionId, taskId)) return null;
+      if (!task?.workflowRunId) return null;
+      if (
+        (!task.postApprovalSessionId &&
+          (task.status === 'approved' || task.status === 'done') &&
+          this.findDurableWorkerSessionId(task) !== hintSessionId) ||
+        !this.sessionIsWorkerForTask(hintSessionId, taskId)
+      )
+        return null;
       const provenance = this.readProvenanceFromSessionRow(hintSessionId);
       const agentName = provenance?.agentName ?? this.legacyWorkflowRouteAgentName(task);
       if (!agentName) return null;
@@ -2127,8 +2113,8 @@ export class TaskAgentManager {
     }
     let sessionId = task?.postApprovalSessionId;
     let provenance = sessionId ? this.readProvenanceFromSessionRow(sessionId) : null;
-    if (!provenance && !sessionId && task?.status === 'done') {
-      const durableId = this.findDurableWorkerSessionId(taskId);
+    if (!provenance && !sessionId && (task?.status === 'approved' || task?.status === 'done')) {
+      const durableId = this.findDurableWorkerSessionId(task);
       if (durableId) {
         sessionId = durableId;
         provenance = this.readProvenanceFromSessionRow(durableId);
@@ -2164,24 +2150,58 @@ export class TaskAgentManager {
     }
   }
 
-  private findDurableWorkerSessionId(taskId: string): string | undefined {
+  private findDurableWorkerSessionId(
+    task: Pick<SpaceTask, 'id' | 'approvedAt'>
+  ): string | undefined {
     try {
-      const row = this.config.db
-        .getDatabase()
+      const approvedAt = task.approvedAt;
+      if (approvedAt === null || approvedAt === undefined) return undefined;
+      const db = this.config.db.getDatabase();
+      const sdkMessageRepo = new SDKMessageRepository(db);
+      const rows = db
         .prepare(
           `SELECT s.id AS id
              FROM sessions s
             WHERE s.type = 'worker'
               AND s.task_id = ?
+              AND s.id LIKE '%:post-approval:%'
               AND NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)
-            ORDER BY s.last_active_at DESC
-            LIMIT 1`
+            ORDER BY s.last_active_at DESC`
         )
-        .get(taskId) as { id?: string } | undefined;
-      return row?.id;
+        .all(task.id) as Array<{ id: string }>;
+      return rows.find((row) => {
+        if (!sdkMessageRepo.hasConsumedTaskInputForSession(row.id, task.id)) return false;
+        return this.hasConsumedTaskInputSince(row.id, task.id, approvedAt);
+      })?.id;
     } catch {
       return undefined;
     }
+  }
+  private hasConsumedTaskInputSince(
+    sessionId: string,
+    taskId: string,
+    approvedAt: number
+  ): boolean {
+    const row = this.config.db
+      .getDatabase()
+      .prepare(
+        `SELECT 1 FROM sdk_messages
+          WHERE session_id = ? AND task_id = ? AND message_type = 'user'
+            AND consumed_seq IS NOT NULL AND timestamp >= ?
+            AND NOT EXISTS (SELECT 1 FROM pending_agent_messages p WHERE p.id = sdk_messages.sdk_uuid)
+            AND json_valid(sdk_message)
+            AND json_extract(sdk_message, '$.type') = 'user'
+            AND (
+              json_extract(sdk_message, '$.inputKind') = 'task'
+              OR (
+                json_type(sdk_message, '$.inputKind') IS NULL
+                AND COALESCE(CAST(json_extract(sdk_message, '$.isSynthetic') AS INTEGER), 0) = 1
+              )
+            )
+          LIMIT 1`
+      )
+      .get(sessionId, taskId, new Date(approvedAt).toISOString());
+    return row !== null && row !== undefined;
   }
 
   private readPersistedRateLimitCooldown(sessionId: string): { retryAt: number } | null {
