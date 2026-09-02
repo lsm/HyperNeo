@@ -3051,26 +3051,64 @@ describe('seedBuiltInWorkflows()', () => {
     expect(after.find((w) => w.id === stableCoding.id)!.tags).not.toContain('default');
   });
 
-  test('seed syncs drifted template tags onto existing rows', () => {
+  test('seed syncs only default-tag membership onto drifted rows, preserving custom tags', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const seeded = manager.listWorkflows(SPACE_ID);
     const coderOnly = seeded.find((w) => w.name === CODER_ONLY_WORKFLOW.name)!;
     const stableCoding = seeded.find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    const research = seeded.find((w) => w.name === RESEARCH_WORKFLOW.name)!;
     db.prepare(`UPDATE space_workflows SET tags = ? WHERE id = ?`).run(
-      JSON.stringify(['coding', 'external-review']),
+      JSON.stringify(['coding', 'external-review', 'team-infra']),
       coderOnly.id
     );
     db.prepare(`UPDATE space_workflows SET tags = ? WHERE id = ?`).run(
-      JSON.stringify(['coding', 'default']),
+      JSON.stringify(['coding', 'default', 'team-infra']),
       stableCoding.id
+    );
+    db.prepare(`UPDATE space_workflows SET tags = ? WHERE id = ?`).run(
+      JSON.stringify(['research', 'default', 'team-infra']),
+      research.id
     );
 
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
     const after = manager.listWorkflows(SPACE_ID);
-    expect(after.find((w) => w.id === coderOnly.id)!.tags).toContain('default');
-    expect(after.find((w) => w.id === coderOnly.id)!.tags).toContain('external-review');
-    expect(after.find((w) => w.id === stableCoding.id)!.tags).not.toContain('default');
+    const coderOnlyAfter = after.find((w) => w.id === coderOnly.id)!.tags;
+    expect(coderOnlyAfter).toContain('default');
+    expect(coderOnlyAfter).toContain('external-review');
+    expect(coderOnlyAfter).toContain('team-infra');
+    const stableCodingAfter = after.find((w) => w.id === stableCoding.id)!.tags;
+    expect(stableCodingAfter).not.toContain('default');
+    expect(stableCodingAfter).toContain('coding');
+    expect(stableCodingAfter).toContain('team-infra');
+    const researchAfter = after.find((w) => w.id === research.id)!.tags;
+    expect(researchAfter).not.toContain('default');
+    expect(researchAfter).toContain('research');
+    expect(researchAfter).toContain('team-infra');
+  });
+
+  test('tag sync failure is recorded in errors and leaves the drift retryable', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const stableCoding = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    db.prepare(`UPDATE space_workflows SET tags = ? WHERE id = ?`).run(
+      JSON.stringify(['coding', 'default']),
+      stableCoding.id
+    );
+    manager.stampBuiltInTags = () => {
+      throw new Error('Simulated tag stamp failure');
+    };
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]!.name).toBe(STABLE_CODING_WORKFLOW.name);
+    expect(result.errors[0]!.error).toContain('Simulated tag stamp failure');
+    expect(result.skipped).toBe(false);
+    expect(manager.listWorkflows(SPACE_ID).find((w) => w.id === stableCoding.id)!.tags).toContain(
+      'default'
+    );
   });
 
   test('throws if resolveAgentId returns undefined for a required role', () => {

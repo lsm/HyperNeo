@@ -2446,10 +2446,20 @@ export function seedBuiltInWorkflows(
       if (!row.templateName) continue;
       const template = templatesByName.get(row.templateName);
       if (!template) continue;
-      if (JSON.stringify(row.tags ?? []) !== JSON.stringify(template.tags ?? [])) {
+      const rowTags = row.tags ?? [];
+      const wantsDefault = (template.tags ?? []).includes('default');
+      if (wantsDefault !== rowTags.includes('default')) {
         try {
-          workflowManager.stampBuiltInTags(row.id, template.tags ?? []);
-        } catch {}
+          workflowManager.stampBuiltInTags(
+            row.id,
+            wantsDefault ? [...rowTags, 'default'] : rowTags.filter((tag) => tag !== 'default')
+          );
+        } catch (err) {
+          errors.push({
+            name: template.name,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
       const expectedHash = computeWorkflowHash(template);
       if (row.templateHash === expectedHash) continue;
