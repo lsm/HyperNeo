@@ -2037,7 +2037,12 @@ export class TaskAgentManager {
     const task = this.config.taskRepo.getTask(taskId);
     if (!task?.workflowRunId) return null;
     if (task.status === 'cancelled' || task.status === 'archived') return null;
-    if (!this.sessionIsWorkerForTask(sessionId, taskId)) return null;
+    if (
+      task.postApprovalSessionId !== sessionId &&
+      !this.sessionIsWorkerForTask(sessionId, taskId)
+    ) {
+      return null;
+    }
     const provenance = this.readProvenanceFromSessionRow(sessionId);
     const agentName = provenance?.agentName ?? this.legacyWorkflowRouteAgentName(task);
     return agentName
@@ -3753,10 +3758,11 @@ export class TaskAgentManager {
   }
 
   async rehydrateSubSessionById(sessionId: string): Promise<AgentSession | null> {
-    if (sessionId.includes(':post-approval:')) {
-      const taskId = taskIdFromSubSessionIdentity(sessionId);
-      if (taskId !== null) {
-        const task = this.config.taskRepo.getTask(taskId);
+    const taskId = taskIdFromSubSessionIdentity(sessionId);
+    if (taskId !== null) {
+      const task = this.config.taskRepo.getTask(taskId);
+      const recordedRouting = task?.postApprovalSessionId ?? null;
+      if (sessionId.includes(':post-approval:') || recordedRouting === sessionId) {
         if (
           task === null ||
           task.status === 'cancelled' ||

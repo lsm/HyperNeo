@@ -1983,7 +1983,7 @@ describe('SpaceRuntimeService', () => {
   });
 
   describe('ensureAgentSession()', () => {
-    function makeCoordinatorSession(): AgentSession {
+    function makeCoordinatorSession(status = 'active'): AgentSession {
       return {
         setRuntimeMcpServers: mock(() => {}),
         mergeRuntimeMcpServers: mock(() => {}),
@@ -1991,20 +1991,23 @@ describe('SpaceRuntimeService', () => {
         updateConfig: mock(async () => {}),
         resetQuery: mock(async () => ({ success: true })),
         restart: mock(async () => {}),
-        getSessionData: mock(() => ({ id: 'session-1', metadata: {}, config: {} }) as Session),
+        getSessionData: mock(
+          () => ({ id: 'session-1', metadata: {}, config: {}, status }) as Session
+        ),
       } as unknown as AgentSession;
     }
 
     function buildEnsureService(
       coordinatorRow: SpaceLongHorizonAgent | null,
       space: Space | null = mockSpace,
-      canonicalRow: SpaceLongHorizonAgent | null | undefined = undefined
+      canonicalRow: SpaceLongHorizonAgent | null | undefined = undefined,
+      sessionStatus = 'active'
     ): {
       svc: SpaceRuntimeService;
       session: AgentSession;
       sessionManager: SessionManager;
     } {
-      const session = makeCoordinatorSession();
+      const session = makeCoordinatorSession(sessionStatus);
       const sessionManager = {
         getSessionAsync: mock(async () => session),
         createSession: mock(async () => `space:chat:${mockSpace.id}`),
@@ -2134,6 +2137,20 @@ describe('SpaceRuntimeService', () => {
 
       expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(
         longTermAgentSessionId(mockSpace.id, 'lh-agent-1')
+      );
+    });
+
+    test('ensured session whose persisted status is ended resolves null', async () => {
+      const { svc, sessionManager } = buildEnsureService(
+        buildLongHorizonAgent({ status: 'active' }),
+        mockSpace,
+        undefined,
+        'ended'
+      );
+
+      await expect(svc.ensureAgentSession(mockSpace.id, 'coordinator')).resolves.toBeNull();
+      expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(
+        coordinatorSessionId(mockSpace.id)
       );
     });
   });

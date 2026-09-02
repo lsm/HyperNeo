@@ -146,6 +146,27 @@ describe('restored worker admission decisionRun gates', () => {
     ).resolves.toBe(false);
   });
 
+  test('recorded post-approval routing admits a reused execution id when the task is approved', async () => {
+    await expect(
+      decideRestoredWorkerAdmission(
+        undecided({
+          sessionId: EXECUTION_SESSION_ID,
+          task: makeTask({ status: 'approved', postApprovalSessionId: EXECUTION_SESSION_ID }),
+          workflowRun: makeRun({ status: 'done' }),
+        })
+      )
+    ).resolves.toBe(true);
+    await expect(
+      decideRestoredWorkerAdmission(
+        undecided({
+          sessionId: EXECUTION_SESSION_ID,
+          task: makeTask({ status: 'done', postApprovalSessionId: EXECUTION_SESSION_ID }),
+          workflowRun: makeRun({ status: 'done' }),
+        })
+      )
+    ).resolves.toBe(false);
+  });
+
   test('terminal task or finished run denies ordinary workers', async () => {
     await expect(
       decideRestoredWorkerAdmission(undecided({ task: makeTask({ status: 'done' }) }))
