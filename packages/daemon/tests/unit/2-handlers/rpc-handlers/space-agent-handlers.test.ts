@@ -1098,6 +1098,63 @@ describe('Space Agent RPC Handlers', () => {
       expect(manager.getById(workerId)?.status ?? 'active').toBe('active');
     });
 
+    it('refreshes runtime subscriptions after twin updates', async () => {
+      const runtimeService = createRuntimeServiceMock();
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        manager,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        runtimeService
+      );
+      const workerId = await createWorkerAgent(manager, {
+        spaceId: 'space-1',
+        name: 'Twin Refresh',
+      });
+
+      await call(freshHub.handlers, 'spaceAgent.update', {
+        id: workerId,
+        status: 'paused',
+      });
+
+      expect(runtimeService.refreshLongHorizonAgentSubscriptions).toHaveBeenCalledWith(
+        'space-1',
+        workerId
+      );
+    });
+
+    it('rejects disabled status on worker twins', async () => {
+      const workerId = await createWorkerAgent(manager, {
+        spaceId: 'space-1',
+        name: 'Twin Disabled',
+      });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', {
+          id: workerId,
+          status: 'disabled',
+        })
+      ).rejects.toThrow('disabled" cannot be set on a migrated worker agent');
+    });
+
+    it('rejects blank display names before twin routing', async () => {
+      const workerId = await createWorkerAgent(manager, {
+        spaceId: 'space-1',
+        name: 'Twin Blank Name',
+      });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', {
+          id: workerId,
+          displayName: '   ',
+        })
+      ).rejects.toThrow('displayName cannot be blank');
+      expect(manager.getById(workerId)?.name).toBe('Twin Blank Name');
+    });
+
     it('forwards template tracking hashes on twin updates', async () => {
       const workerId = await createWorkerAgent(manager, {
         spaceId: 'space-1',

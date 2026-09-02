@@ -11,6 +11,7 @@ import type {
   WorkerAgentModelPoolEntry,
 } from '@hyperneo/shared';
 import { isKnownToolEntry, isScopedBashToolEntry } from '@hyperneo/shared';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/index.ts';
 import {
   coordinatorLongHorizonAgentId,
@@ -550,6 +551,146 @@ async function updateUnifiedAgentTwin(
   return result.value;
 }
 
+interface UpdateUnifiedAgentCtx extends UnifiedSpaceAgentMethodDeps {
+  params: UnifiedAgentUpdateInput;
+  agentId: string;
+  existing: SpaceLongHorizonAgent | null;
+  workerTwin: SpaceWorkerAgent | null;
+  spaceId: string;
+  routeTwin: boolean;
+  unifiedAfter: SpaceLongHorizonAgent | null;
+  agent: SpaceLongHorizonAgent | SpaceWorkerAgent | null;
+}
+
+function updateResolveTargetStage(ctx: UpdateUnifiedAgentCtx): UpdateUnifiedAgentCtx {
+  const params = ctx.params;
+  const agentId = params.id ?? params.agentId;
+  if (!agentId) throw new Error('id is required');
+  const existing = ctx.repo.getById(agentId);
+  const workerTwin = ctx.spaceAgentManager?.getById(agentId) ?? null;
+  if (!existing && !workerTwin) throw new Error(`Agent not found: ${agentId}`);
+  const spaceId = existing?.spaceId ?? workerTwin!.spaceId;
+  if (params.spaceId && spaceId !== params.spaceId)
+    throw new Error(`Agent ${agentId} does not belong to space ${params.spaceId}`);
+  const isMigratedMirror = existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY;
+  const routeTwin =
+    !!workerTwin && workerTwin.spaceId === spaceId && (!existing || isMigratedMirror);
+  return { ...ctx, agentId, existing, workerTwin, spaceId, routeTwin };
+}
+
+function updateValidateRequestStage(ctx: UpdateUnifiedAgentCtx): UpdateUnifiedAgentCtx {
+  assertUnifiedAgentStatus(ctx.params.status);
+  const displayName =
+    ctx.params.displayName !== undefined ? ctx.params.displayName : ctx.params.name;
+  if (displayName !== undefined && displayName.trim() === '') {
+    throw new Error('displayName cannot be blank');
+  }
+  return ctx;
+}
+
+async function updateApplyTwinStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
+  if (!ctx.routeTwin) return ctx;
+  const { params, agentId, spaceId } = ctx;
+  if (params.status === 'disabled') {
+    throw new Error('Agent status "disabled" cannot be set on a migrated worker agent');
+  }
+  const updated = await updateUnifiedAgentTwin(ctx, agentId, spaceId, params);
+  if (params.provider === null) {
+    await ctx.runtimeService?.clearLongTermAgentSessionProvider(spaceId, agentId);
+  }
+  if (ctx.runtimeService) {
+    const refresh = ctx.runtimeService.refreshLongHorizonAgentSubscriptions(spaceId, agentId);
+    if (!refresh.success) throw new Error(refresh.error ?? 'Failed to refresh subscriptions');
+  }
+  const unifiedAfter = ctx.repo.getById(agentId);
+  return { ...ctx, unifiedAfter, agent: unifiedAfter ?? updated };
+}
+
+async function updateApplyNativeStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
+  if (ctx.routeTwin) return ctx;
+  const { params, agentId, existing } = ctx;
+  if (!existing) throw new Error(`Agent not found: ${agentId}`);
+  const displayName = params.displayName !== undefined ? params.displayName : params.name;
+  const handle =
+    params.handle === undefined
+      ? undefined
+      : validateLongHorizonAgentUpdateHandle(ctx, existing.spaceId, agentId, params.handle);
+  const unarchiving =
+    existing.status === 'archived' && params.status !== undefined && params.status !== 'archived';
+  if (displayName !== undefined || unarchiving) {
+    ensureUnifiedDisplayNameAvailable(
+      ctx,
+      existing.spaceId,
+      displayName ?? existing.displayName,
+      agentId
+    );
+  }
+
+  const tools = params.tools ?? toolPermissionsToolsList(params.toolPermissions);
+  if (tools) {
+    const toolError = validateSpaceAgentTools(tools);
+    if (toolError) throw new Error(toolError);
+  }
+  if (params.model) {
+    const provider = params.provider !== undefined ? params.provider : existing.provider;
+    const modelError = await validateAgentModel(params.model, provider);
+    if (modelError) throw new Error(modelError);
+  }
+  if (params.modelPool && params.modelPool.length > 0) {
+    const poolError = await validateAgentModelPool(params.modelPool);
+    if (poolError) throw new Error(poolError);
+  }
+  if (resolveUnifiedTemplateKey(params) === MIGRATED_WORKER_TEMPLATE_KEY) {
+    throw new Error(
+      `Template key ${MIGRATED_WORKER_TEMPLATE_KEY} is reserved for migrated worker mirrors`
+    );
+  }
+
+  const agent = ctx.repo.update(agentId, {
+    handle,
+    displayName,
+    templateKey: resolveUnifiedTemplateKey(params),
+    status: params.status as SpaceLongHorizonAgent['status'],
+    instructions: resolveUnifiedInstructions(params),
+    autonomyLevel: params.autonomyLevel as SpaceLongHorizonAgent['autonomyLevel'],
+    model: params.model,
+    thinkingLevel: params.thinkingLevel as SpaceLongHorizonAgent['thinkingLevel'],
+    provider: params.provider,
+    settingSources: params.settingSources,
+    toolPermissions: buildUnifiedToolPermissions(params),
+    description: params.description,
+    modelPool: params.modelPool,
+  });
+  if (!agent) throw new Error(`Agent not found: ${agentId}`);
+  if (params.provider === null) {
+    await ctx.runtimeService?.clearLongTermAgentSessionProvider(agent.spaceId, agent.id);
+  }
+  if (ctx.runtimeService) {
+    const refresh = ctx.runtimeService.refreshLongHorizonAgentSubscriptions(
+      agent.spaceId,
+      agent.id
+    );
+    if (!refresh.success) throw new Error(refresh.error ?? 'Failed to refresh subscriptions');
+  }
+  return { ...ctx, unifiedAfter: agent, agent };
+}
+
+async function updatePublishStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
+  if (ctx.unifiedAfter) {
+    await publishUnifiedAgentUpdated(ctx.internalEventBus, ctx.unifiedAfter);
+  }
+  return ctx;
+}
+
+const runUpdateUnifiedSpaceAgent = (superpipe({})('update-unified-space-agent') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(updateResolveTargetStage, 'ctx', 'ctx')
+  .pipe(updateValidateRequestStage, 'ctx', 'ctx')
+  .pipe(updateApplyTwinStage, 'ctx', 'ctx')
+  .pipe(updateApplyNativeStage, 'ctx', 'ctx')
+  .pipe(updatePublishStage, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: UpdateUnifiedAgentCtx) => Promise<UpdateUnifiedAgentCtx>;
+
 export function registerUnifiedSpaceAgentMethods(
   messageHub: MessageHub,
   namespace: UnifiedSpaceAgentNamespace,
@@ -582,98 +723,18 @@ export function registerUnifiedSpaceAgentMethods(
   });
 
   messageHub.onRequest(method('update'), async (data) => {
-    const params = data as UnifiedAgentUpdateInput;
-    const agentId = params.id ?? params.agentId;
-    if (!agentId) throw new Error('id is required');
-    const existing = deps.repo.getById(agentId);
-    const workerTwin = deps.spaceAgentManager?.getById(agentId) ?? null;
-    if (!existing && !workerTwin) throw new Error(`Agent not found: ${agentId}`);
-    const spaceId = existing?.spaceId ?? workerTwin!.spaceId;
-    if (params.spaceId && spaceId !== params.spaceId)
-      throw new Error(`Agent ${agentId} does not belong to space ${params.spaceId}`);
-    assertUnifiedAgentStatus(params.status);
-    const isMigratedMirror = existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY;
-    if (workerTwin && workerTwin.spaceId === spaceId && (!existing || isMigratedMirror)) {
-      const updated = await updateUnifiedAgentTwin(deps, agentId, spaceId, params);
-      if (params.provider === null) {
-        await deps.runtimeService?.clearLongTermAgentSessionProvider(spaceId, agentId);
-      }
-      const unifiedAfter = deps.repo.getById(agentId);
-      if (unifiedAfter) {
-        await publishUnifiedAgentUpdated(deps.internalEventBus, unifiedAfter);
-        return { agent: unifiedAfter };
-      }
-      return { agent: updated };
-    }
-    if (!existing) throw new Error(`Agent not found: ${agentId}`);
-
-    const displayName = params.displayName !== undefined ? params.displayName : params.name;
-    if (displayName !== undefined && displayName.trim() === '') {
-      throw new Error('displayName cannot be blank');
-    }
-    const handle =
-      params.handle === undefined
-        ? undefined
-        : validateLongHorizonAgentUpdateHandle(deps, existing.spaceId, agentId, params.handle);
-    const unarchiving =
-      existing.status === 'archived' && params.status !== undefined && params.status !== 'archived';
-    if (displayName !== undefined || unarchiving) {
-      ensureUnifiedDisplayNameAvailable(
-        deps,
-        existing.spaceId,
-        displayName ?? existing.displayName,
-        agentId
-      );
-    }
-
-    const tools = params.tools ?? toolPermissionsToolsList(params.toolPermissions);
-    if (tools) {
-      const toolError = validateSpaceAgentTools(tools);
-      if (toolError) throw new Error(toolError);
-    }
-    if (params.model) {
-      const provider = params.provider !== undefined ? params.provider : existing.provider;
-      const modelError = await validateAgentModel(params.model, provider);
-      if (modelError) throw new Error(modelError);
-    }
-    if (params.modelPool && params.modelPool.length > 0) {
-      const poolError = await validateAgentModelPool(params.modelPool);
-      if (poolError) throw new Error(poolError);
-    }
-    if (resolveUnifiedTemplateKey(params) === MIGRATED_WORKER_TEMPLATE_KEY) {
-      throw new Error(
-        `Template key ${MIGRATED_WORKER_TEMPLATE_KEY} is reserved for migrated worker mirrors`
-      );
-    }
-
-    const agent = deps.repo.update(agentId, {
-      handle,
-      displayName,
-      templateKey: resolveUnifiedTemplateKey(params),
-      status: params.status as SpaceLongHorizonAgent['status'],
-      instructions: resolveUnifiedInstructions(params),
-      autonomyLevel: params.autonomyLevel as SpaceLongHorizonAgent['autonomyLevel'],
-      model: params.model,
-      thinkingLevel: params.thinkingLevel as SpaceLongHorizonAgent['thinkingLevel'],
-      provider: params.provider,
-      settingSources: params.settingSources,
-      toolPermissions: buildUnifiedToolPermissions(params),
-      description: params.description,
-      modelPool: params.modelPool,
+    const ctx = await runUpdateUnifiedSpaceAgent({
+      ...deps,
+      params: data as UnifiedAgentUpdateInput,
+      agentId: '',
+      existing: null,
+      workerTwin: null,
+      spaceId: '',
+      routeTwin: false,
+      unifiedAfter: null,
+      agent: null,
     });
-    if (!agent) throw new Error(`Agent not found: ${agentId}`);
-    if (params.provider === null) {
-      await deps.runtimeService?.clearLongTermAgentSessionProvider(agent.spaceId, agent.id);
-    }
-    if (deps.runtimeService) {
-      const refresh = deps.runtimeService.refreshLongHorizonAgentSubscriptions(
-        agent.spaceId,
-        agent.id
-      );
-      if (!refresh.success) throw new Error(refresh.error ?? 'Failed to refresh subscriptions');
-    }
-    await publishUnifiedAgentUpdated(deps.internalEventBus, agent);
-    return { agent };
+    return { agent: ctx.agent };
   });
 
   messageHub.onRequest(method('delete'), async (data) => {
