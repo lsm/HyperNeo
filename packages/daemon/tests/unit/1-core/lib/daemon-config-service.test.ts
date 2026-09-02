@@ -259,6 +259,7 @@ describe('DaemonConfigService', () => {
     writeConfigRow(db, { deliveryPolicy: { messageDeliveryMaxRetries: 9 } });
     (service as unknown as Record<string, unknown>).readConfigRow = () => null;
     const result = service.updateConfig({ deliveryPolicy: { messageDeliveryMaxRetries: 4 } });
+    delete (service as unknown as Record<string, unknown>).readConfigRow;
     expect(result.status).toBe('superseded');
     expect(readConfigRow(db)?.config_json).toBe(
       '{"deliveryPolicy":{"messageDeliveryMaxRetries":9}}'
@@ -383,6 +384,7 @@ describe('DaemonConfigService', () => {
       return null;
     };
     expect(service.seedFromLegacyEnv({ HYPERNEO_WORKFLOW_CONNECTORS: '0' })).toBe(false);
+    delete (service as unknown as Record<string, unknown>).readConfigRow;
     expect(readConfigRow(db)?.config_json).toBe('{"flags":{"workflowConnectors":false}}');
     expect(service.getConfig().flags?.workflowConnectors).toBe(false);
     db.close();
