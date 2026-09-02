@@ -12,7 +12,10 @@ import type {
 } from '@hyperneo/shared';
 import { isKnownToolEntry, isScopedBashToolEntry } from '@hyperneo/shared';
 import type { Database } from '../../storage/index.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import {
+  coordinatorLongHorizonAgentId,
+  type SpaceLongHorizonAgentRepository,
+} from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { composeLongHorizonSubscriptionPattern } from '../external-events/long-horizon-subscription-pattern.ts';
 import { validateGlobPattern, validateSource } from '../external-events/topic-validator.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -87,6 +90,7 @@ interface UnifiedAgentUpdateInput {
   displayName?: string;
   templateKey?: string | null;
   templateName?: string | null;
+  templateHash?: string | null;
   instructions?: string;
   customPrompt?: string | null;
   autonomyLevel?: number | null;
@@ -408,6 +412,17 @@ function buildUnifiedToolPermissions(
   return undefined;
 }
 
+const UNIFIED_AGENT_STATUSES = ['active', 'paused', 'disabled', 'archived'] as const;
+
+function assertUnifiedAgentStatus(status: string | undefined): void {
+  if (status === undefined) return;
+  if (!(UNIFIED_AGENT_STATUSES as readonly string[]).includes(status)) {
+    throw new Error(
+      `Invalid agent status: ${status}. Valid statuses: ${UNIFIED_AGENT_STATUSES.join(', ')}`
+    );
+  }
+}
+
 function mapUnifiedStatusToWorkerStatus(status: string): UpdateSpaceWorkerAgentParams['status'] {
   if (status === 'paused' || status === 'disabled') return 'paused';
   if (status === 'archived') return 'archived';
@@ -528,6 +543,7 @@ async function updateUnifiedAgentTwin(
           : undefined,
     settingSources: params.settingSources,
     templateName: resolveUnifiedTemplateKey(params) as UpdateSpaceWorkerAgentParams['templateName'],
+    templateHash: params.templateHash,
     modelPool: params.modelPool,
   });
   if (!result.ok) throw new Error(result.error);
@@ -575,6 +591,7 @@ export function registerUnifiedSpaceAgentMethods(
     const spaceId = existing?.spaceId ?? workerTwin!.spaceId;
     if (params.spaceId && spaceId !== params.spaceId)
       throw new Error(`Agent ${agentId} does not belong to space ${params.spaceId}`);
+    assertUnifiedAgentStatus(params.status);
     const isMigratedMirror = existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY;
     if (workerTwin && workerTwin.spaceId === spaceId && (!existing || isMigratedMirror)) {
       const updated = await updateUnifiedAgentTwin(deps, agentId, spaceId, params);
@@ -622,6 +639,11 @@ export function registerUnifiedSpaceAgentMethods(
     if (params.modelPool && params.modelPool.length > 0) {
       const poolError = await validateAgentModelPool(params.modelPool);
       if (poolError) throw new Error(poolError);
+    }
+    if (resolveUnifiedTemplateKey(params) === MIGRATED_WORKER_TEMPLATE_KEY) {
+      throw new Error(
+        `Template key ${MIGRATED_WORKER_TEMPLATE_KEY} is reserved for migrated worker mirrors`
+      );
     }
 
     const agent = deps.repo.update(agentId, {
@@ -672,6 +694,13 @@ export function registerUnifiedSpaceAgentMethods(
         `Cannot delete agent "${displayName}" - it is referenced by workflow nodes` +
           referenceCheck.workflowNames.map((n) => ` (Workflow: ${n})`).join('')
       );
+    }
+    const coordinatorId =
+      agentId === coordinatorLongHorizonAgentId(spaceId)
+        ? agentId
+        : (deps.repo.getCoordinator(spaceId)?.id ?? null);
+    if (coordinatorId === agentId) {
+      throw new Error('The coordinator agent cannot be deleted');
     }
     const isMigratedMirror = existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY;
     if (workerTwin && workerTwin.spaceId === spaceId && (!existing || isMigratedMirror)) {

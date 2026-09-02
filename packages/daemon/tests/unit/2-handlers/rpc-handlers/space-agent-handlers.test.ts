@@ -1065,6 +1065,56 @@ describe('Space Agent RPC Handlers', () => {
       ).rejects.toThrow('autonomyLevel cannot be set on a migrated worker agent');
     });
 
+    it('rejects deleting the coordinator through the unified namespace', async () => {
+      const coordinator = longHorizonRepo.ensureCoordinator('space-1');
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.delete', { id: coordinator.id })
+      ).rejects.toThrow('The coordinator agent cannot be deleted');
+      expect(longHorizonRepo.getById(coordinator.id)?.status).toBe('active');
+    });
+
+    it('rejects the reserved migration template key on native updates', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', {
+          id: agentId,
+          templateKey: 'migration.legacy_space_agent',
+        })
+      ).rejects.toThrow('is reserved for migrated worker mirrors');
+    });
+
+    it('rejects unknown statuses on twin updates instead of reactivating', async () => {
+      const workerId = await createWorkerAgent(manager, {
+        spaceId: 'space-1',
+        name: 'Twin Bad Status',
+      });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', {
+          id: workerId,
+          status: 'archive',
+        })
+      ).rejects.toThrow('Invalid agent status: archive');
+      expect(manager.getById(workerId)?.status ?? 'active').toBe('active');
+    });
+
+    it('forwards template tracking hashes on twin updates', async () => {
+      const workerId = await createWorkerAgent(manager, {
+        spaceId: 'space-1',
+        name: 'Twin Template Hash',
+        templateName: 'Coder',
+        templateHash: 'stale-hash',
+      });
+
+      await call(hubData.handlers, 'spaceAgent.update', {
+        id: workerId,
+        templateName: 'Coder',
+        templateHash: 'fresh-hash',
+      });
+
+      expect(manager.getById(workerId)?.templateHash).toBe('fresh-hash');
+    });
+
     it('treats an empty model pool as a clear on unified updates', async () => {
       const result = await call<{ agent: { modelPool: Array<{ model: string }> | null } }>(
         hubData.handlers,
