@@ -37,6 +37,7 @@ import type {
   PendingAgentMessageRecord,
   PendingAgentMessageRepository,
 } from '../../../storage/repositories/pending-agent-message-repository.ts';
+import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
@@ -2166,19 +2167,19 @@ export class TaskAgentManager {
 
   private findDurableWorkerSessionId(taskId: string): string | undefined {
     try {
-      const row = this.config.db
-        .getDatabase()
+      const db = this.config.db.getDatabase();
+      const sdkMessageRepo = new SDKMessageRepository(db);
+      const rows = db
         .prepare(
           `SELECT s.id AS id
              FROM sessions s
             WHERE s.type = 'worker'
               AND s.task_id = ?
               AND NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)
-            ORDER BY s.last_active_at DESC
-            LIMIT 1`
+            ORDER BY s.last_active_at DESC`
         )
-        .get(taskId) as { id?: string } | undefined;
-      return row?.id;
+        .all(taskId) as Array<{ id: string }>;
+      return rows.find((row) => sdkMessageRepo.hasConsumedTaskInputForSession(row.id, taskId))?.id;
     } catch {
       return undefined;
     }

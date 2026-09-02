@@ -1,11 +1,11 @@
-import { describe, expect, it, beforeEach } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { createTables } from '../../../../src/storage/schema';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
-import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
-import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
-import { InternalEventBus } from '../../../../src/lib/internal-event-bus';
+import { beforeEach, describe, expect, it } from 'bun:test';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus';
+import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
+import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { createTables } from '../../../../src/storage/schema';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const SPACE_ID = 'space-id';
 const RUN_ID = 'run-1';
@@ -17,6 +17,7 @@ interface WorkerSessionOpts {
   agentName?: string;
   workflowRunId?: string;
   taskId?: string;
+  createdAt?: number;
   lastActiveAt?: number;
   withExecution?: boolean;
 }
@@ -76,13 +77,15 @@ function provenanceMetadata(
 
 function insertWorkerSession(db: BunDatabase, opts: WorkerSessionOpts): void {
   const agentName = opts.agentName ?? 'merger';
+  const createdAt = opts.createdAt ?? 0;
   const lastActiveAt = opts.lastActiveAt ?? 1;
   const sessionTaskId = opts.taskId ?? TASK_ID;
   db.prepare(
     `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, type, session_context)
-     VALUES (?, 'Worker', '/tmp/ws', 0, ?, 'active', '{}', ?, 0, 'worker', ?)`
+     VALUES (?, 'Worker', '/tmp/ws', ?, ?, 'active', '{}', ?, 0, 'worker', ?)`
   ).run(
     opts.sessionId,
+    createdAt,
     lastActiveAt,
     provenanceMetadata(agentName, { workflowRunId: opts.workflowRunId }),
     JSON.stringify({ spaceId: SPACE_ID, taskId: sessionTaskId })
@@ -99,6 +102,37 @@ function insertWorkerSession(db: BunDatabase, opts: WorkerSessionOpts): void {
       opts.sessionId
     );
   }
+}
+
+function insertTaskInput(
+  db: BunDatabase,
+  sessionId: string,
+  options: {
+    taskId?: string;
+    status?: 'deferred' | 'enqueued' | 'submitted' | 'consumed' | 'failed';
+    consumedSeq?: number | null;
+  } = {}
+): void {
+  const status = options.status ?? 'consumed';
+  const id = `input-${sessionId}`;
+  db.prepare(
+    `INSERT INTO sdk_messages (
+       id, session_id, message_type, sdk_message, timestamp, send_status, task_id, consumed_seq
+     ) VALUES (?, ?, 'user', ?, '2026-09-02T00:00:00.000Z', ?, ?, ?)`
+  ).run(
+    id,
+    sessionId,
+    JSON.stringify({
+      type: 'user',
+      uuid: id,
+      isSynthetic: true,
+      inputKind: 'task',
+      message: { role: 'user', content: [{ type: 'text', text: id }] },
+    }),
+    status,
+    options.taskId ?? TASK_ID,
+    options.consumedSeq === undefined ? (status === 'consumed' ? 1 : null) : options.consumedSeq
+  );
 }
 
 function insertTask(
@@ -194,15 +228,55 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
   });
 
-  it('falls back to durable provenance when the pointer is cleared (done task)', () => {
+  it('falls back to consumed kickoff evidence before any activity timestamp change', () => {
     insertTask(db, { status: 'done', postApprovalSessionId: null });
-    insertWorkerSession(db, { sessionId: 'worker-done', lastActiveAt: 9 });
+    insertWorkerSession(db, { sessionId: 'worker-done', createdAt: 9, lastActiveAt: 9 });
+    insertTaskInput(db, 'worker-done');
     const res = tam.getPostApprovalWorkerSession(TASK_ID);
     expect(res).toEqual({
       sessionId: 'worker-done',
       agentName: 'merger',
       nodeId: POST_APPROVAL_NODE,
     });
+  });
+
+  it('rejects an unrecorded worker created without kickoff evidence', () => {
+    insertTask(db, { status: 'done', postApprovalSessionId: null });
+    insertWorkerSession(db, { sessionId: 'worker-created', lastActiveAt: 9 });
+    expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
+  });
+
+  for (const status of ['deferred', 'enqueued', 'submitted', 'failed'] as const) {
+    it(`rejects an unrecorded worker whose kickoff is ${status} without consumption`, () => {
+      insertTask(db, { status: 'done', postApprovalSessionId: null });
+      insertWorkerSession(db, { sessionId: `worker-${status}`, lastActiveAt: 9 });
+      insertTaskInput(db, `worker-${status}`, { status });
+      expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
+    });
+  }
+
+  it('skips a newer partial worker to recover an older evidence-qualified worker', () => {
+    insertTask(db, { status: 'done', postApprovalSessionId: null });
+    insertWorkerSession(db, { sessionId: 'worker-valid', lastActiveAt: 5 });
+    insertTaskInput(db, 'worker-valid');
+    insertWorkerSession(db, { sessionId: 'worker-partial', lastActiveAt: 9 });
+    const res = tam.getPostApprovalWorkerSession(TASK_ID);
+    expect(res?.sessionId).toBe('worker-valid');
+  });
+
+  it('requires consumed kickoff evidence for the same task', () => {
+    insertTask(db, { status: 'done', postApprovalSessionId: null });
+    insertWorkerSession(db, { sessionId: 'worker-other-task', lastActiveAt: 9 });
+    insertTaskInput(db, 'worker-other-task', { taskId: 'other-task' });
+    expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
+  });
+
+  it('keeps the recorded session canonical without fallback evidence', () => {
+    insertTask(db, { status: 'done', postApprovalSessionId: 'worker-recorded' });
+    insertWorkerSession(db, { sessionId: 'worker-recorded', lastActiveAt: 1 });
+    insertWorkerSession(db, { sessionId: 'worker-consumed', lastActiveAt: 9 });
+    insertTaskInput(db, 'worker-consumed');
+    expect(tam.getPostApprovalWorkerSession(TASK_ID)?.sessionId).toBe('worker-recorded');
   });
 
   it('derives a legacy (pre-provenance) worker nodeId from the workflow route', () => {
