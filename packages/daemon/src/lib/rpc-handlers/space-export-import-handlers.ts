@@ -546,8 +546,14 @@ export function setupSpaceExportImportHandlers(
           const clearAgentHandle = db.prepare(
             `UPDATE space_agents SET handle = NULL, updated_at = ? WHERE id = ?`
           );
+          const reserveMirrorHandle = db.prepare(
+            `UPDATE space_long_horizon_agents
+             SET handle = 'import-swap:' || id, updated_at = ?
+             WHERE id = ? AND template_key = 'migration.legacy_space_agent'`
+          );
           for (const agent of replacedAgentByName.values()) {
             clearAgentHandle.run(now, agent.id);
+            reserveMirrorHandle.run(now, agent.id);
           }
         }
 

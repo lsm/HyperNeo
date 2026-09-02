@@ -4445,35 +4445,41 @@ describe('ensureLongTermAgentSession — id→session routing table (dual-family
       instructions: 'Worker prompt',
       toolPermissions: { tools: ['Read'] },
     });
-    const createdConfigs: Array<{ sessionId?: string; title?: string; config?: unknown }> = [];
-    const sessionManager = {
-      getSessionAsync: mock(async (sessionId: string) =>
-        sessionId.startsWith('space:agent:') ? null : { getSessionData: () => ({ metadata: {} }) }
-      ),
-      createSession: mock(
-        async (opts: { sessionId?: string; title?: string; config?: unknown }) => {
-          createdConfigs.push(opts);
-        }
-      ),
-    } as unknown as SessionManager;
-    const svc = new SpaceRuntimeService({
-      ...buildConfig(createMockSpaceManager(mockSpace)),
-      sessionManager,
-      spaceAgentManager: { getById: mock(() => null) } as unknown as SpaceAgentManager,
-      longHorizonAgentRepo: {
-        getById: mock((id: string) => (id === mirror.id ? mirror : null)),
-        getCoordinator: mock(() => null),
-        update: mock(() => ({})),
-      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'],
-    });
-    (
-      svc as unknown as { attachLongTermAgentMcpServers: () => void }
-    ).attachLongTermAgentMcpServers = () => {};
-    (
-      svc as unknown as { missingLongTermAgentMcpServers: () => boolean }
-    ).missingLongTermAgentMcpServers = () => false;
+    const runFor = async (agent: typeof mirror) => {
+      const createdConfigs: Array<{ sessionId?: string; title?: string; config?: unknown }> = [];
+      const sessionManager = {
+        getSessionAsync: mock(async (sessionId: string) =>
+          sessionId.startsWith('space:agent:') ? null : { getSessionData: () => ({ metadata: {} }) }
+        ),
+        createSession: mock(
+          async (opts: { sessionId?: string; title?: string; config?: unknown }) => {
+            createdConfigs.push(opts);
+          }
+        ),
+      } as unknown as SessionManager;
+      const svc = new SpaceRuntimeService({
+        ...buildConfig(createMockSpaceManager(mockSpace)),
+        sessionManager,
+        spaceAgentManager: { getById: mock(() => null) } as unknown as SpaceAgentManager,
+        longHorizonAgentRepo: {
+          getById: mock((id: string) => (id === agent.id ? agent : null)),
+          getCoordinator: mock(() => null),
+          update: mock(() => ({})),
+        } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'],
+      });
+      (
+        svc as unknown as { attachLongTermAgentMcpServers: () => void }
+      ).attachLongTermAgentMcpServers = () => {};
+      (
+        svc as unknown as { missingLongTermAgentMcpServers: () => boolean }
+      ).missingLongTermAgentMcpServers = () => false;
 
-    await route(svc, 'worker-migrated');
+      await route(svc, agent.id);
+
+      return createdConfigs;
+    };
+
+    const createdConfigs = await runFor(mirror);
 
     expect(createdConfigs).toHaveLength(1);
     expect(createdConfigs[0]).toEqual(
@@ -4489,6 +4495,16 @@ describe('ensureLongTermAgentSession — id→session routing table (dual-family
       append: 'Worker prompt',
     });
     expect(config.sdkToolsPreset).toBeUndefined();
+
+    const pausedConfigs = await runFor({ ...mirror, status: 'paused' });
+    expect(pausedConfigs).toHaveLength(1);
+    expect(pausedConfigs[0]).toEqual(
+      expect.objectContaining({
+        sessionId: 'space:agent:space-1:worker-migrated',
+        title: 'Migrated Worker',
+      })
+    );
+    expect((pausedConfigs[0].config as Record<string, unknown>).sdkToolsPreset).toBeUndefined();
   });
 });
 

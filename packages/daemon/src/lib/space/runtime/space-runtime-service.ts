@@ -927,19 +927,25 @@ export class SpaceRuntimeService {
     if (!sessionManager) return null;
     const agentId = agentIdFromActorId(actor.actorId);
     if (!agentId) return null;
+    const mirror = this.findMigratedWorkerMirror(actor.spaceId, agentId);
+    if (mirror) {
+      return this.ensureWorkerAgentSession(actor.spaceId, longHorizonAgentToWorkerView(mirror));
+    }
     const resolution = resolveAgentRecord(actor.spaceId, agentId, this.agentRecordDeps());
     if (resolution.kind === 'missing') return null;
     if (resolution.kind === 'coordinator') return this.resolveCoordinatorSession(actor.spaceId);
     if (resolution.kind === 'long_horizon') {
-      if (resolution.agent.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY) {
-        return this.ensureLongHorizonAgentSession(actor.spaceId, agentId);
-      }
-      return this.ensureWorkerAgentSession(
-        actor.spaceId,
-        longHorizonAgentToWorkerView(resolution.agent)
-      );
+      return this.ensureLongHorizonAgentSession(actor.spaceId, agentId);
     }
     return this.ensureWorkerAgentSession(actor.spaceId, resolution.agent);
+  }
+
+  private findMigratedWorkerMirror(spaceId: string, agentId: string): SpaceLongHorizonAgent | null {
+    const unified = this.config.longHorizonAgentRepo?.getById(agentId) ?? null;
+    if (unified?.spaceId === spaceId && unified.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
+      return unified;
+    }
+    return null;
   }
 
   private async ensureWorkerAgentSession(spaceId: string, agent: SpaceWorkerAgent) {
@@ -1403,7 +1409,12 @@ export class SpaceRuntimeService {
       inboxRepo.expireStale(spaceId);
       for (const row of inboxRepo.listPendingForSpace(spaceId)) {
         const resolution = resolveAgentRecord(spaceId, row.targetAgentId, this.agentRecordDeps());
-        if (resolution.kind === 'missing') continue;
+        if (
+          resolution.kind === 'missing' &&
+          !this.findMigratedWorkerMirror(spaceId, row.targetAgentId)
+        ) {
+          continue;
+        }
         void this.activateLongTermAgentAndFlush(
           {
             actorId: `agent:${encodeActorIdComponent(row.targetAgentId)}`,
