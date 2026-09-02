@@ -55,11 +55,15 @@ export function workerAgentToLongHorizonParams(
   options: WorkerAgentToLongHorizonOptions
 ): WorkerAgentToLongHorizonParams {
   const baseHandle = worker.handle ?? worker.name ?? worker.id;
+  let handle = baseHandle;
+  while (options.occupiedHandles.has(handle)) {
+    handle = `${handle}-${worker.id}`;
+  }
   const tools = worker.tools ?? [];
   return {
     id: worker.id,
     spaceId: worker.spaceId,
-    handle: options.occupiedHandles.has(baseHandle) ? `${baseHandle}-${worker.id}` : baseHandle,
+    handle,
     displayName: worker.name ?? worker.handle ?? worker.id,
     templateKey: 'migration.legacy_space_agent',
     status: mapWorkerStatus(worker.status),

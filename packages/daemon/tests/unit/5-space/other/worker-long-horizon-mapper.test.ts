@@ -394,6 +394,35 @@ describe('workerAgentToLongHorizonParams — typed extensions beyond m155', () =
     expect(params.displayName).toBe('Researcher');
   });
 
+  test('re-suffixed handles stay clear when both the base and first suffix are occupied', () => {
+    const params = workerAgentToLongHorizonParams(
+      rowSource({ id: 'w-1', spaceId: 'space-a', handle: 'researcher', name: 'Researcher' }),
+      { occupiedHandles: new Set<string>(['researcher', 'researcher-w-1']), now: NOW }
+    );
+
+    expect(params.handle).toBe('researcher-w-1-w-1');
+  });
+
+  test('batch callers reserve each chosen handle so converted rows cannot collide', () => {
+    const reserved = new Set<string>(['researcher']);
+    const first = workerAgentToLongHorizonParams(
+      rowSource({ id: 'w-1', spaceId: 'space-a', handle: 'researcher' }),
+      {
+        occupiedHandles: reserved,
+        now: NOW,
+      }
+    );
+    reserved.add(first.handle);
+    const second = workerAgentToLongHorizonParams(
+      rowSource({ id: 'w-2', spaceId: 'space-a', handle: 'researcher' }),
+      { occupiedHandles: reserved, now: NOW }
+    );
+    reserved.add(second.handle);
+
+    expect(first.handle).toBe('researcher-w-1');
+    expect(second.handle).toBe('researcher-w-2');
+  });
+
   test('name and id fill the handle and displayName fallbacks in COALESCE order', () => {
     const params = workerAgentToLongHorizonParams(
       { ...rowSource({ id: 'w-9', spaceId: 'space-a', name: 'Named' }), handle: null },

@@ -112,6 +112,17 @@ describe('resolveAgentRecord', () => {
     ).toEqual({ kind: 'missing' });
   });
 
+  test('inactive coordinator row resolves missing through every alias form', () => {
+    const coordinator = makeAgent('discovered-coordinator', {
+      handle: 'coordinator',
+      status: 'paused',
+    });
+    const deps = makeDeps({ longHorizonAgents: [coordinator], coordinatorId: coordinator.id });
+
+    expect(resolveAgentRecord('space-1', 'coordinator', deps)).toEqual({ kind: 'missing' });
+    expect(resolveAgentRecord('space-1', 'coordinator:space-1', deps)).toEqual({ kind: 'missing' });
+  });
+
   test('coordinator discovered by handle resolves the coordinator kind', () => {
     const discovered = makeAgent('legacy-coordinator-row', { handle: 'coordinator' });
     const deps = makeDeps({ longHorizonAgents: [discovered], coordinatorId: discovered.id });

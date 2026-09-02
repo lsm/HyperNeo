@@ -19,7 +19,9 @@ export function resolveAgentRecord(
   deps: ResolveAgentRecordDeps
 ): AgentRecordResolution {
   if (agentId === 'coordinator' || agentId === `coordinator:${spaceId}`) {
-    return { kind: 'coordinator', agent: deps.getCoordinator(spaceId) };
+    const coordinator = deps.getCoordinator(spaceId);
+    if (coordinator != null && coordinator.status !== 'active') return { kind: 'missing' };
+    return { kind: 'coordinator', agent: coordinator };
   }
   const longHorizonAgent = deps.getLongHorizonAgent(agentId);
   if (longHorizonAgent?.spaceId === spaceId) {
