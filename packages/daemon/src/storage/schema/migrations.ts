@@ -33,6 +33,7 @@ import { runMigration219 } from './m219-space-tasks-workspace-path.ts';
 import { runMigration220 } from './m220-space-external-events-urgency-render.ts';
 import { runMigration221 } from './m221-drop-message-delivery-active-turn-index.ts';
 import { runMigration222 } from './m222-daemon-config.ts';
+import { runMigration223 } from './m223-unify-space-agents-copy.ts';
 import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration.ts';
 import {
   findPendingMigrationSpaceReclaims,
@@ -508,6 +509,8 @@ export function runMigrations(
   run(migrationMarkerKey(221), () => runMigration221(db));
 
   run(migrationMarkerKey(222), () => runMigration222(db));
+
+  run(migrationMarkerKey(223), () => runMigration223(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

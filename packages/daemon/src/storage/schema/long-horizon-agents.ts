@@ -19,6 +19,8 @@ export function createLongHorizonAgentTables(db: BunDatabase): void {
 			provider TEXT DEFAULT NULL,
 			setting_sources TEXT DEFAULT NULL,
 			tool_permissions_json TEXT NOT NULL DEFAULT '{}',
+			description TEXT DEFAULT NULL,
+			model_pool TEXT DEFAULT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
