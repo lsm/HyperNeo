@@ -539,6 +539,35 @@ describe('Space Export/Import RPC Handlers', () => {
       );
     });
 
+    it('flags skipped non-runnable conflicts as unresolved references', async () => {
+      longHorizonAgentRepo.create({
+        spaceId: SPACE_ID,
+        handle: 'sleeper',
+        displayName: 'Sleeper',
+        status: 'paused',
+      });
+
+      const bundle = makeBundle(
+        [{ name: 'Sleeper' }],
+        [{ name: 'Pipe', nodes: [{ agentRef: 'Sleeper', name: 'S' }] }]
+      );
+      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+      expect(preview.validationErrors.some((e) => e.includes('unknown agent "Sleeper"'))).toBe(
+        true
+      );
+
+      await expect(
+        call(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle,
+          conflictResolution: { agents: { Sleeper: 'skip' } },
+        })
+      ).rejects.toThrow('unresolved agent reference');
+    });
+
     it('flags workflow references to paused native agents as unknown', async () => {
       longHorizonAgentRepo.create({
         spaceId: SPACE_ID,

@@ -692,7 +692,14 @@ export function setupSpaceExportImportHandlers(
     const workflowPreviews: ImportPreview[] = [];
     const validationErrors: string[] = [];
 
-    const importedAgentNames = new Set(bundle.agents.map((a) => nameKey(a.name)));
+    const importedAgentNames = new Set(
+      bundle.agents
+        .filter((a) => {
+          const existing = existingAgentByName.get(nameKey(a.name));
+          return !existing || !nonRunnableIds.has(existing.id);
+        })
+        .map((a) => nameKey(a.name))
+    );
 
     for (const wf of bundle.workflows) {
       const existing = existingWorkflowByName.get(wf.name);
@@ -882,7 +889,9 @@ export function setupSpaceExportImportHandlers(
           const strategy: ConflictResolutionStrategy = res.agents?.[exportedAgent.name] ?? 'skip';
 
           if (strategy === 'skip') {
-            importedAgentNameToId.set(nameKey(exportedAgent.name), existing.id);
+            if (!nonRunnableIds.has(existing.id)) {
+              importedAgentNameToId.set(nameKey(exportedAgent.name), existing.id);
+            }
 
             agentResults.push({ name: exportedAgent.name, id: existing.id, action: 'skipped' });
           } else if (strategy === 'replace') {
