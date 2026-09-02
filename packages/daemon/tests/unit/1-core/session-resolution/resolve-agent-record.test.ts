@@ -173,6 +173,16 @@ describe('resolveAgentRecord', () => {
     );
   });
 
+  test('inactive non-coordinator long-horizon row resolves missing, matching the inner routing gate', () => {
+    for (const status of ['paused', 'disabled', 'archived'] as const) {
+      const agent = makeAgent('lh-1', { handle: 'researcher', status });
+
+      expect(
+        resolveAgentRecord('space-1', 'lh-1', makeDeps({ longHorizonAgents: [agent] }))
+      ).toEqual({ kind: 'missing' });
+    }
+  });
+
   test('long-horizon row wins over a same-id worker row', () => {
     const overlay = makeAgent('shared-1', { handle: 'overlay' });
     const worker = makeWorker('shared-1');

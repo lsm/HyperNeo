@@ -26,12 +26,12 @@ export function resolveAgentRecord(
   }
   const longHorizonAgent = deps.getLongHorizonAgent(agentId);
   if (longHorizonAgent?.spaceId === spaceId) {
+    if (longHorizonAgent.status !== 'active') return { kind: 'missing' };
     const coordinator = deps.getCoordinator(spaceId);
     if (
       longHorizonAgent.id === coordinatorLongHorizonAgentId(spaceId) ||
       coordinator?.id === longHorizonAgent.id
     ) {
-      if (longHorizonAgent.status !== 'active') return { kind: 'missing' };
       return { kind: 'coordinator', agent: longHorizonAgent };
     }
     return { kind: 'long_horizon', agent: longHorizonAgent };
