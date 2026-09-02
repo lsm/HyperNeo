@@ -20,7 +20,6 @@ interface WorkerSessionOpts {
   sessionId: string;
   agentName?: string;
   workflowRunId?: string;
-  nodeId?: string;
   taskId?: string;
   createdAt?: number;
   lastActiveAt?: number;
@@ -93,7 +92,7 @@ function insertWorkerSession(db: BunDatabase, opts: WorkerSessionOpts): void {
     opts.sessionId,
     createdAt,
     lastActiveAt,
-    provenanceMetadata(agentName, { workflowRunId: opts.workflowRunId, nodeId: opts.nodeId }),
+    provenanceMetadata(agentName, { workflowRunId: opts.workflowRunId }),
     JSON.stringify({ spaceId: SPACE_ID, taskId: sessionTaskId })
   );
   if (opts.withExecution) {
@@ -103,7 +102,7 @@ function insertWorkerSession(db: BunDatabase, opts: WorkerSessionOpts): void {
     ).run(
       `exec-${opts.sessionId}`,
       opts.workflowRunId ?? RUN_ID,
-      opts.nodeId ?? POST_APPROVAL_NODE,
+      POST_APPROVAL_NODE,
       agentName,
       opts.sessionId
     );
@@ -320,26 +319,12 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     expect(tam.getPostApprovalWorkerSession(TASK_ID)?.sessionId).toBe(sessionId);
   });
 
-  it('recovers a current-cycle kickoff consumed by the routed reused execution session', () => {
+  it('rejects ambiguous current-cycle evidence from an execution-backed worker', () => {
     const sessionId = 'space:space-id:task:task-1:exec:reused';
     insertTask(db, { status: 'approved', postApprovalSessionId: null, approvedAt: 10 });
-    insertWorkerSession(db, {
-      sessionId: 'space:space-id:task:task-1:exec:unrelated',
-      agentName: 'reviewer',
-      lastActiveAt: 11,
-      withExecution: true,
-    });
-    insertTaskInput(db, 'space:space-id:task:task-1:exec:unrelated', { timestamp: 11 });
-    insertWorkerSession(db, {
-      sessionId,
-      nodeId: 'node-earlier-merger',
-      createdAt: 1,
-      lastActiveAt: 10,
-      withExecution: true,
-    });
+    insertWorkerSession(db, { sessionId, lastActiveAt: 10, withExecution: true });
     insertTaskInput(db, sessionId, { timestamp: 10 });
-    expect(tam.getPostApprovalWorkerSession(TASK_ID)?.sessionId).toBe(sessionId);
-    expect(tam.getPostApprovalWorkerSession(TASK_ID, sessionId)?.sessionId).toBe(sessionId);
+    expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
   });
 
   it('requires consumed kickoff evidence for the same task', () => {
