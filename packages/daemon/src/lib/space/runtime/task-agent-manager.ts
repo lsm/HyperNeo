@@ -2128,7 +2128,7 @@ export class TaskAgentManager {
     }
     let sessionId = task?.postApprovalSessionId;
     let provenance = sessionId ? this.readProvenanceFromSessionRow(sessionId) : null;
-    if (!provenance && !sessionId && task?.status === 'done') {
+    if (!provenance && !sessionId && (task?.status === 'approved' || task?.status === 'done')) {
       const durableId = this.findDurableWorkerSessionId(taskId);
       if (durableId) {
         sessionId = durableId;
@@ -2175,6 +2175,7 @@ export class TaskAgentManager {
              FROM sessions s
             WHERE s.type = 'worker'
               AND s.task_id = ?
+              AND instr(s.id, ':post-approval:') > 0
               AND NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)
             ORDER BY s.last_active_at DESC`
         )

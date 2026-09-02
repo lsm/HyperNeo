@@ -12,6 +12,10 @@ const RUN_ID = 'run-1';
 const TASK_ID = 'task-1';
 const POST_APPROVAL_NODE = 'node-post-approval';
 
+function postApprovalSessionId(name: string): string {
+  return `space:${SPACE_ID}:task:${TASK_ID}:post-approval:${name}`;
+}
+
 interface WorkerSessionOpts {
   sessionId: string;
   agentName?: string;
@@ -228,54 +232,72 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
   });
 
-  it('falls back to consumed kickoff evidence before any activity timestamp change', () => {
-    insertTask(db, { status: 'done', postApprovalSessionId: null });
-    insertWorkerSession(db, { sessionId: 'worker-done', createdAt: 9, lastActiveAt: 9 });
-    insertTaskInput(db, 'worker-done');
-    const res = tam.getPostApprovalWorkerSession(TASK_ID);
-    expect(res).toEqual({
-      sessionId: 'worker-done',
-      agentName: 'merger',
-      nodeId: POST_APPROVAL_NODE,
+  for (const status of ['approved', 'done'] as const) {
+    it(`falls back for a pointerless ${status} task before any activity timestamp change`, () => {
+      const sessionId = postApprovalSessionId(status);
+      insertTask(db, { status, postApprovalSessionId: null });
+      insertWorkerSession(db, { sessionId, createdAt: 9, lastActiveAt: 9 });
+      insertTaskInput(db, sessionId);
+      const res = tam.getPostApprovalWorkerSession(TASK_ID);
+      expect(res).toEqual({
+        sessionId,
+        agentName: 'merger',
+        nodeId: POST_APPROVAL_NODE,
+      });
     });
-  });
+  }
 
   it('rejects an unrecorded worker created without kickoff evidence', () => {
+    const sessionId = postApprovalSessionId('created');
     insertTask(db, { status: 'done', postApprovalSessionId: null });
-    insertWorkerSession(db, { sessionId: 'worker-created', lastActiveAt: 9 });
+    insertWorkerSession(db, { sessionId, lastActiveAt: 9 });
     expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
   });
 
   for (const status of ['deferred', 'enqueued', 'submitted', 'failed'] as const) {
     it(`rejects an unrecorded worker whose kickoff is ${status} without consumption`, () => {
+      const sessionId = postApprovalSessionId(status);
       insertTask(db, { status: 'done', postApprovalSessionId: null });
-      insertWorkerSession(db, { sessionId: `worker-${status}`, lastActiveAt: 9 });
-      insertTaskInput(db, `worker-${status}`, { status });
+      insertWorkerSession(db, { sessionId, lastActiveAt: 9 });
+      insertTaskInput(db, sessionId, { status });
       expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
     });
   }
 
   it('skips a newer partial worker to recover an older evidence-qualified worker', () => {
+    const validSessionId = postApprovalSessionId('valid');
     insertTask(db, { status: 'done', postApprovalSessionId: null });
-    insertWorkerSession(db, { sessionId: 'worker-valid', lastActiveAt: 5 });
-    insertTaskInput(db, 'worker-valid');
-    insertWorkerSession(db, { sessionId: 'worker-partial', lastActiveAt: 9 });
+    insertWorkerSession(db, { sessionId: validSessionId, lastActiveAt: 5 });
+    insertTaskInput(db, validSessionId);
+    insertWorkerSession(db, { sessionId: postApprovalSessionId('partial'), lastActiveAt: 9 });
     const res = tam.getPostApprovalWorkerSession(TASK_ID);
-    expect(res?.sessionId).toBe('worker-valid');
+    expect(res?.sessionId).toBe(validSessionId);
+  });
+
+  it('rejects a consumed task input from an execution-less normal worker', () => {
+    insertTask(db, { status: 'done', postApprovalSessionId: null });
+    insertWorkerSession(db, {
+      sessionId: 'space:space-id:task:task-1:exec:normal',
+      lastActiveAt: 9,
+    });
+    insertTaskInput(db, 'space:space-id:task:task-1:exec:normal');
+    expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
   });
 
   it('requires consumed kickoff evidence for the same task', () => {
+    const sessionId = postApprovalSessionId('other-task');
     insertTask(db, { status: 'done', postApprovalSessionId: null });
-    insertWorkerSession(db, { sessionId: 'worker-other-task', lastActiveAt: 9 });
-    insertTaskInput(db, 'worker-other-task', { taskId: 'other-task' });
+    insertWorkerSession(db, { sessionId, lastActiveAt: 9 });
+    insertTaskInput(db, sessionId, { taskId: 'other-task' });
     expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
   });
 
   it('keeps the recorded session canonical without fallback evidence', () => {
+    const consumedSessionId = postApprovalSessionId('consumed');
     insertTask(db, { status: 'done', postApprovalSessionId: 'worker-recorded' });
     insertWorkerSession(db, { sessionId: 'worker-recorded', lastActiveAt: 1 });
-    insertWorkerSession(db, { sessionId: 'worker-consumed', lastActiveAt: 9 });
-    insertTaskInput(db, 'worker-consumed');
+    insertWorkerSession(db, { sessionId: consumedSessionId, lastActiveAt: 9 });
+    insertTaskInput(db, consumedSessionId);
     expect(tam.getPostApprovalWorkerSession(TASK_ID)?.sessionId).toBe('worker-recorded');
   });
 
