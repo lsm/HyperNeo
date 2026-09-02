@@ -30,6 +30,7 @@ function makeDeps(config?: {
     rehydrateSubSession: async () => null,
     getCoordinator: async () =>
       config?.coordinatorId === undefined ? null : { id: config.coordinatorId },
+    isAgentTargetLifecycleEligible: async () => true,
     listWorkerExecutions: () => [],
     readWorkerTaskPhase: () => 'run_active',
     getTaskSpaceId: async () => null,

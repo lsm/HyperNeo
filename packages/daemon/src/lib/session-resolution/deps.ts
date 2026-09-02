@@ -39,6 +39,7 @@ export interface SessionResolutionDeps {
   rehydrateSubSession(sessionId: string): Promise<unknown | null>;
   getCoordinator(spaceId: string): Promise<{ id: string } | null>;
   ensureLongTermAgent(spaceId: string, agentId: string): Promise<unknown | null>;
+  isAgentTargetLifecycleEligible(spaceId: string, agentId: string): Promise<boolean>;
   listWorkerExecutions(target: SessionTargetWorker): WorkerExecutionSession[];
   readWorkerTaskPhase(taskId: string): WorkerTaskPhase;
   getTaskSpaceId(taskId: string): Promise<string | null>;

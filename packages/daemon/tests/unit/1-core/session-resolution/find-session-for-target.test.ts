@@ -6,9 +6,11 @@ import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agen
 import { coordinatorSessionId } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 
 interface DepsLog {
+  order: string[];
   getSession: string[];
   rehydrateSubSession: string[];
   ensureLongTermAgent: Array<[spaceId: string, agentId: string]>;
+  isAgentTargetLifecycleEligible: Array<[spaceId: string, agentId: string]>;
   activateTaskAgent: number;
   spawnPostApprovalWorker: number;
 }
@@ -18,17 +20,21 @@ function makeDeps(
     getSession?: (sessionId: string) => unknown;
     rehydrateSubSession?: (sessionId: string) => unknown;
     getCoordinator?: () => { id: string } | null;
+    isAgentTargetLifecycleEligible?: (spaceId: string, agentId: string) => boolean;
   } = {}
 ): { deps: SessionResolutionDeps; log: DepsLog } {
   const log: DepsLog = {
+    order: [],
     getSession: [],
     rehydrateSubSession: [],
     ensureLongTermAgent: [],
+    isAgentTargetLifecycleEligible: [],
     activateTaskAgent: 0,
     spawnPostApprovalWorker: 0,
   };
   const deps: SessionResolutionDeps = {
     getSession: async (sessionId) => {
+      log.order.push(`getSession:${sessionId}`);
       log.getSession.push(sessionId);
       return handlers.getSession ? handlers.getSession(sessionId) : null;
     },
@@ -36,10 +42,20 @@ function makeDeps(
       log.rehydrateSubSession.push(sessionId);
       return handlers.rehydrateSubSession ? handlers.rehydrateSubSession(sessionId) : null;
     },
-    getCoordinator: async () => (handlers.getCoordinator ? handlers.getCoordinator() : null),
+    getCoordinator: async () => {
+      log.order.push('getCoordinator');
+      return handlers.getCoordinator ? handlers.getCoordinator() : null;
+    },
     ensureLongTermAgent: async (spaceId, agentId) => {
       log.ensureLongTermAgent.push([spaceId, agentId]);
       return null;
+    },
+    isAgentTargetLifecycleEligible: async (spaceId, agentId) => {
+      log.order.push(`isAgentTargetLifecycleEligible:${spaceId}:${agentId}`);
+      log.isAgentTargetLifecycleEligible.push([spaceId, agentId]);
+      return handlers.isAgentTargetLifecycleEligible
+        ? handlers.isAgentTargetLifecycleEligible(spaceId, agentId)
+        : true;
     },
     listWorkerExecutions: () => [],
     readWorkerTaskPhase: () => 'run_active',
@@ -92,6 +108,17 @@ describe('findSessionForTarget', () => {
       });
       expect(log.getSession).toEqual(['sess-1']);
       expect(log.rehydrateSubSession).toEqual(['sess-1']);
+    });
+
+    test('lifecycle eligibility is never consulted for direct session targets', async () => {
+      const { deps, log } = makeDeps({ getSession: () => ({ id: 'sess-1' }) });
+      const target: FindTarget = { kind: 'session', sessionId: 'sess-1' };
+      expect(await findSessionForTarget(target, deps)).toEqual({
+        kind: 'resolved',
+        sessionId: 'sess-1',
+        created: false,
+      });
+      expect(log.isAgentTargetLifecycleEligible).toEqual([]);
     });
   });
 
@@ -169,6 +196,59 @@ describe('findSessionForTarget', () => {
       });
       expect(log.getSession).toEqual([longTermAgentSessionId('space-1', 'agent-7')]);
       expect(log.rehydrateSubSession).toEqual([]);
+    });
+
+    test('cache miss leaves lifecycle eligibility unconsumed', async () => {
+      const { deps, log } = makeDeps();
+      const target: FindTarget = { kind: 'agent', spaceId: 'space-1', agentId: 'agent-7' };
+      expect(await findSessionForTarget(target, deps)).toEqual({
+        kind: 'unresolved',
+        reason: 'not_found',
+      });
+      expect(log.isAgentTargetLifecycleEligible).toEqual([]);
+    });
+
+    test('cached hit consults eligibility after the session lookup, in target-argument order', async () => {
+      const spaceId = 'space-1';
+      const agentId = 'agent-7';
+      const sessionId = longTermAgentSessionId(spaceId, agentId);
+      const { deps, log } = makeDeps({
+        getCoordinator: () => ({ id: 'coordinator-row-9' }),
+        getSession: (queried) => (queried === sessionId ? { id: sessionId } : null),
+      });
+      const target: FindTarget = { kind: 'agent', spaceId, agentId };
+      expect(await findSessionForTarget(target, deps)).toEqual({
+        kind: 'resolved',
+        sessionId,
+        created: false,
+      });
+      expect(log.order).toEqual([
+        'getCoordinator',
+        `getSession:${sessionId}`,
+        `isAgentTargetLifecycleEligible:${spaceId}:${agentId}`,
+      ]);
+      expect(log.isAgentTargetLifecycleEligible).toEqual([[spaceId, agentId]]);
+    });
+
+    test('lifecycle-ineligible target rejects the cached session as not_found', async () => {
+      const spaceId = 'space-1';
+      const agentId = 'agent-7';
+      const sessionId = longTermAgentSessionId(spaceId, agentId);
+      const { deps, log } = makeDeps({
+        getSession: (queried) => (queried === sessionId ? { id: sessionId } : null),
+        isAgentTargetLifecycleEligible: () => false,
+      });
+      const target: FindTarget = { kind: 'agent', spaceId, agentId };
+      expect(await findSessionForTarget(target, deps)).toEqual({
+        kind: 'unresolved',
+        reason: 'not_found',
+      });
+      expect(log.getSession).toEqual([sessionId]);
+      expect(log.isAgentTargetLifecycleEligible).toEqual([[spaceId, agentId]]);
+      expect(log.rehydrateSubSession).toEqual([]);
+      expect(log.ensureLongTermAgent).toEqual([]);
+      expect(log.activateTaskAgent).toBe(0);
+      expect(log.spawnPostApprovalWorker).toBe(0);
     });
   });
 

@@ -17,7 +17,10 @@ export async function findSessionForTarget(
   }
   const coordinator = await deps.getCoordinator(target.spaceId);
   const sessionId = agentSessionIdOf(target.spaceId, target.agentId, coordinator?.id);
-  if ((await deps.getSession(sessionId)) !== null) {
+  if (
+    (await deps.getSession(sessionId)) !== null &&
+    (await deps.isAgentTargetLifecycleEligible(target.spaceId, target.agentId))
+  ) {
     return { kind: 'resolved', sessionId, created: false };
   }
   return { kind: 'unresolved', reason: 'not_found' };
