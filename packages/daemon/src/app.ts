@@ -803,6 +803,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       authManager,
       credentialManager,
       settingsManager,
+      daemonConfigService,
       config,
       internalEventBus,
       commandBus,
