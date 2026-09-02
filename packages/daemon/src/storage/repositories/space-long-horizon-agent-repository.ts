@@ -92,6 +92,15 @@ export class SpaceLongHorizonAgentRepository {
     return this.getByHandle(spaceId, 'coordinator');
   }
 
+  getCoordinatorRecord(spaceId: string): SpaceLongHorizonAgent | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM space_long_horizon_agents WHERE space_id = ? AND handle = 'coordinator'`
+      )
+      .get(spaceId) as Record<string, unknown> | undefined;
+    return row ? rowToAgent(row) : null;
+  }
+
   ensureCoordinator(spaceId: string): SpaceLongHorizonAgent {
     const existingById = this.getById(coordinatorLongHorizonAgentId(spaceId));
     if (existingById) {

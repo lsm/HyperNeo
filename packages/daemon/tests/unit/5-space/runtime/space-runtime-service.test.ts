@@ -31,6 +31,7 @@ import {
   resetProviderRegistry,
 } from '../../../../src/lib/providers/registry.ts';
 import type { SessionManager } from '../../../../src/lib/session-manager.ts';
+import { buildAgentSessionConfig } from '../../../../src/lib/session-resolution/agent-session-config.ts';
 import {
   LONG_HORIZON_AGENT_BUILTIN_TOOLS,
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
@@ -45,7 +46,6 @@ import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/space/m
 import type { MailboxHandoffOutcome } from '../../../../src/lib/space/runtime/prompt-mailbox-handoff.ts';
 import type { SpaceRuntimeServiceConfig } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
-import { buildAgentSessionConfig } from '../../../../src/lib/session-resolution/agent-session-config.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
@@ -54,7 +54,10 @@ import { SessionRepository } from '../../../../src/storage/repositories/session-
 import type { SpaceAgentInboxMessageRecord } from '../../../../src/storage/repositories/space-agent-inbox-repository.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import {
+  coordinatorLongHorizonAgentId,
+  SpaceLongHorizonAgentRepository,
+} from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceTaskRepository as SpaceTaskRepo } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -4591,5 +4594,113 @@ describe('clearLongTermAgentSessionProvider — provider-override clear (P2)', (
     await expect(
       svc.clearLongTermAgentSessionProvider('space-1', 'agent-1')
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
+  const ENSURE_SPACE_ID = 'space-ensure-1';
+  const ENSURE_SESSION_ID = `space:chat:${ENSURE_SPACE_ID}`;
+
+  function makeEnsureSpace(overrides: Partial<Space> = {}): Space {
+    return {
+      ...mockSpace,
+      id: ENSURE_SPACE_ID,
+      paused: false,
+      stopped: false,
+      ...overrides,
+    } as Space;
+  }
+
+  function makeEnsureSpaceManager(space: Space | null): SpaceManager {
+    return {
+      getSpace: mock(async () => space),
+      addSession: mock(async () => {}),
+    } as unknown as SpaceManager;
+  }
+
+  function makeEnsureSession(status = 'active'): AgentSession {
+    return {
+      setRuntimeMcpServers: mock(() => {}),
+      mergeRuntimeMcpServers: mock(() => {}),
+      setRuntimeSystemPrompt: mock(() => {}),
+      updateConfig: mock(async () => {}),
+      resetQuery: mock(async () => ({ success: true })),
+      restart: mock(async () => {}),
+      getSessionData: mock(
+        () => ({ id: `space:chat:${ENSURE_SPACE_ID}`, status, metadata: {}, config: {} }) as Session
+      ),
+    } as unknown as AgentSession;
+  }
+
+  function buildEnsureConfig(
+    db: BunDatabase,
+    repo: SpaceLongHorizonAgentRepository,
+    spaceManager: SpaceManager,
+    sessionManager: SessionManager
+  ): SpaceRuntimeServiceConfig {
+    return {
+      db,
+      spaceManager,
+      spaceAgentManager: {
+        getById: mock(() => null),
+        listBySpaceId: mock(() => []),
+      } as unknown as SpaceAgentManager,
+      spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
+      workflowRunRepo: {} as SpaceWorkflowRunRepository,
+      taskRepo: {} as SpaceTaskRepository,
+      nodeExecutionRepo: makeNoopNodeExecutionRepo(),
+      tickIntervalMs: 60_000,
+      sessionManager,
+      longHorizonAgentRepo: repo,
+    };
+  }
+
+  test('archived noncanonical coordinator rejects the coordinator target', async () => {
+    const db = makeTestDb();
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    repo.create({
+      id: 'lha-archived-co',
+      spaceId: ENSURE_SPACE_ID,
+      handle: 'coordinator',
+      status: 'archived',
+    });
+    expect(repo.getCoordinator(ENSURE_SPACE_ID)).toBeNull();
+    expect(repo.getCoordinatorRecord(ENSURE_SPACE_ID)?.id).toBe('lha-archived-co');
+    const sessionManager = {
+      getSessionAsync: mock(async () => null),
+      createSession: mock(async () => ENSURE_SESSION_ID),
+    } as unknown as SessionManager;
+    const svc = new SpaceRuntimeService(
+      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
+    );
+
+    expect(await svc.isAgentTargetLifecycleEligible(ENSURE_SPACE_ID, 'coordinator')).toBeFalse();
+    expect(await svc.ensureAgentSession(ENSURE_SPACE_ID, 'coordinator')).toBeNull();
+    expect(sessionManager.createSession).not.toHaveBeenCalled();
+  });
+
+  test('a space with no coordinator record bootstraps the coordinator session', async () => {
+    const db = makeTestDb();
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    const session = makeEnsureSession('active');
+    let live: AgentSession | null = null;
+    const sessionManager = {
+      getSessionAsync: mock(async () => live),
+      createSession: mock(async () => {
+        live = session;
+        return ENSURE_SESSION_ID;
+      }),
+      listSessions: mock(() => [] as Session[]),
+      registerSessionResetSubscriber: mock(() => () => {}),
+    } as unknown as SessionManager;
+    const svc = new SpaceRuntimeService(
+      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
+    );
+
+    const ensured = await svc.ensureAgentSession(ENSURE_SPACE_ID, 'coordinator');
+
+    expect(ensured).not.toBeNull();
+    expect(sessionManager.createSession).toHaveBeenCalledTimes(1);
+    expect(repo.getById(coordinatorLongHorizonAgentId(ENSURE_SPACE_ID))?.status).toBe('active');
   });
 });
