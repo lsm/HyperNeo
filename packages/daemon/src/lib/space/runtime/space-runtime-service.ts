@@ -1036,7 +1036,7 @@ export class SpaceRuntimeService {
         agentId: string
       ) => Promise<AgentSession | null>;
     }
-    return this.ensureAgentSessionRunner(spaceId, agentId).catch(() => null);
+    return (await this.ensureAgentSessionRunner(spaceId, agentId).catch(() => null)) ?? null;
   }
 
   private async ensureLongTermAgentSession(actor: ActorRef) {

@@ -82,6 +82,7 @@ import {
   buildExecutionBaseSessionId,
   buildPostApprovalSessionId,
   hasRuntimeNodeAgentServer,
+  isWorkflowSubSessionIdentity,
   sanitizeAgentNameForId,
   taskIdFromSubSessionIdentity,
 } from '../../session/sub-session-identity.ts';
@@ -5529,7 +5530,9 @@ export class TaskAgentManager {
     if (!candidate) return null;
     const data = candidate.getSessionData();
     if (data.status === 'ended' || data.status === 'archived') return null;
-    if (!hasRuntimeNodeAgentServer(data.config)) return null;
+    if (isWorkflowSubSessionIdentity(candidateId) && !hasRuntimeNodeAgentServer(data.config)) {
+      return null;
+    }
     return candidateId;
   }
 }
