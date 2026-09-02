@@ -539,6 +539,31 @@ describe('Space Export/Import RPC Handlers', () => {
       );
     });
 
+    it('flags workflow references to paused native agents as unknown', async () => {
+      longHorizonAgentRepo.create({
+        spaceId: SPACE_ID,
+        handle: 'sleeper',
+        displayName: 'Sleeper',
+        status: 'paused',
+      });
+
+      const bundle = makeBundle(
+        [],
+        [{ name: 'Pipe', nodes: [{ agentRef: 'Sleeper', name: 'S' }] }]
+      );
+      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+      expect(preview.validationErrors.some((e) => e.includes('unknown agent "Sleeper"'))).toBe(
+        true
+      );
+
+      await expect(
+        call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+      ).rejects.toThrow('unresolved agent reference');
+    });
+
     it('treats orphaned migration mirrors as missing in imports', async () => {
       const worker = seedAgent({ spaceId: SPACE_ID, name: 'Ghost Twin', handle: 'ghost' });
       db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(worker.id);

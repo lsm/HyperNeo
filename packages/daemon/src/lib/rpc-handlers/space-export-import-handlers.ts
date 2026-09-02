@@ -24,7 +24,10 @@ import {
 } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import { exportBundle, validateExportBundle, normalizeOverride } from '../space/export-format.ts';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from '../space/agents/worker-long-horizon-mapper.ts';
+import {
+  MIGRATED_WORKER_TEMPLATE_KEY,
+  isRunnableUnifiedAgent,
+} from '../space/agents/worker-long-horizon-mapper.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug.ts';
 import { Logger } from '../logger.ts';
 
@@ -128,6 +131,18 @@ function assertExportableAgentNames(agents: Array<{ id: string; name: string }>)
     }
     idByName.set(key, agent.id);
   }
+}
+
+function nonRunnableUnifiedIds(
+  longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
+  spaceId: string
+): Set<string> {
+  return new Set(
+    longHorizonAgentRepo
+      .listBySpaceId(spaceId)
+      .filter((a) => !isRunnableUnifiedAgent(a))
+      .map((a) => a.id)
+  );
 }
 
 function findDuplicateBundleAgentNames(agents: Array<{ name: string }>): string[] {
@@ -659,7 +674,10 @@ export function setupSpaceExportImportHandlers(
     const agentNameAmbiguities = findAmbiguousAgentNames(existingAgents);
     const existingAgentByName = new Map(existingAgents.map((a) => [nameKey(a.name), a]));
     const existingWorkflowByName = new Map(existingWorkflows.map((w) => [w.name, w]));
-    const existingAgentNameToId = new Map(existingAgents.map((a) => [nameKey(a.name), a.id]));
+    const nonRunnableIds = nonRunnableUnifiedIds(longHorizonAgentRepo, params.spaceId);
+    const existingAgentNameToId = new Map(
+      existingAgents.filter((a) => !nonRunnableIds.has(a.id)).map((a) => [nameKey(a.name), a.id])
+    );
 
     const agentNameToRole = new Map<string, string>(
       existingAgents.map((a) => [nameKey(a.name), a.name])
@@ -763,7 +781,12 @@ export function setupSpaceExportImportHandlers(
         if (duplicateBundleNames.length > 0) throw new Error(duplicateBundleNames[0]);
         const existingAgentByName = new Map(existingAgents.map((a) => [nameKey(a.name), a]));
         const existingWorkflowByName = new Map(existingWorkflows.map((w) => [w.name, w]));
-        const existingAgentNameToId = new Map(existingAgents.map((a) => [nameKey(a.name), a.id]));
+        const nonRunnableIds = nonRunnableUnifiedIds(longHorizonAgentRepo, spaceId);
+        const existingAgentNameToId = new Map(
+          existingAgents
+            .filter((a) => !nonRunnableIds.has(a.id))
+            .map((a) => [nameKey(a.name), a.id])
+        );
 
         const usedAgentNames = new Set(existingAgents.map((a) => nameKey(a.name)));
         const usedAgentHandles = new Set<string>([
