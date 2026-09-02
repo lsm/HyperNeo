@@ -1445,6 +1445,40 @@ describe('Space Export/Import RPC Handlers', () => {
         expect(overlay.templateKey).toBe('custom.overlay');
       });
 
+      it('swaps handles between two unified-only replacements', async () => {
+        longHorizonAgentRepo.create({
+          spaceId: SPACE_ID,
+          handle: 'aaa',
+          displayName: 'Agent A',
+        });
+        longHorizonAgentRepo.create({
+          spaceId: SPACE_ID,
+          handle: 'bbb',
+          displayName: 'Agent B',
+        });
+        const rows = longHorizonAgentRepo.listBySpaceId(SPACE_ID);
+        const idA = rows.find((a) => a.displayName === 'Agent A')!.id;
+        const idB = rows.find((a) => a.displayName === 'Agent B')!.id;
+
+        const bundle = makeBundle(
+          [
+            { name: 'Agent A', handle: 'bbb', customPrompt: 'A now.' },
+            { name: 'Agent B', handle: 'aaa', customPrompt: 'B now.' },
+          ],
+          []
+        );
+
+        const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+          spaceId: SPACE_ID,
+          bundle,
+          conflictResolution: { agents: { 'Agent A': 'replace', 'Agent B': 'replace' } },
+        });
+
+        expect(result.agents.map((a) => a.action)).toEqual(['replaced', 'replaced']);
+        expect(longHorizonAgentRepo.getById(idA)!.handle).toBe('bbb');
+        expect(longHorizonAgentRepo.getById(idB)!.handle).toBe('aaa');
+      });
+
       it('parks replacement handles without colliding with an existing suffixed handle', async () => {
         const alpha = seedAgent({ spaceId: SPACE_ID, name: 'Alpha', handle: 'alpha' });
         seedAgent({ spaceId: SPACE_ID, name: 'Beta', handle: `alpha-${alpha.id}` });

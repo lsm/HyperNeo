@@ -604,7 +604,7 @@ sdk_rows AS (
     NULL AS eventRef,
     json_object(
       'kind', CASE WHEN sm.origin = 'human' THEN 'human' WHEN sm.origin = 'system' THEN 'system' ELSE 'worker' END,
-      'label', CASE WHEN sm.origin = 'human' THEN 'Human' WHEN sm.origin = 'system' THEN 'System' ELSE COALESCE(sa.display_name, ne.agent_name, sm.provenance_agent_name, '') END,
+      'label', CASE WHEN sm.origin = 'human' THEN 'Human' WHEN sm.origin = 'system' THEN 'System' ELSE COALESCE(sa.display_name, wa.name, ne.agent_name, sm.provenance_agent_name, '') END,
       'role', CASE WHEN sm.origin = 'human' THEN 'human' WHEN sm.origin = 'system' THEN 'system' ELSE COALESCE(ne.agent_name, sm.provenance_agent_name, '') END,
       'sessionId', sm.session_id,
       'nodeExecutionId', ne.id,
@@ -614,7 +614,7 @@ sdk_rows AS (
     CASE
       WHEN sm.message_type = 'user' THEN json_object(
         'kind', 'worker',
-        'label', COALESCE(sa.display_name, ne.agent_name, sm.provenance_agent_name, ''),
+        'label', COALESCE(sa.display_name, wa.name, ne.agent_name, sm.provenance_agent_name, ''),
         'role', COALESCE(ne.agent_name, sm.provenance_agent_name, ''),
         'sessionId', sm.session_id,
         'nodeExecutionId', ne.id,
@@ -730,6 +730,8 @@ sdk_rows AS (
   -- the merger shows 'PR Merger' rather than collapsing to 'Agent'.
   LEFT JOIN space_long_horizon_agents sa
     ON sa.id = COALESCE(ne.agent_id, sm.provenance_agent_id)
+  LEFT JOIN space_agents wa
+    ON wa.id = COALESCE(ne.agent_id, sm.provenance_agent_id)
   LEFT JOIN sdk_replacement_status srs ON srs.id = sm.id
   WHERE (sm.message_type != 'user' OR COALESCE(sm.send_status, 'consumed') IN ('consumed', 'failed'))
     AND (
@@ -817,7 +819,7 @@ node_rows AS (
     NULL AS messageId,
     ne.id AS eventRef,
     json_object('kind', 'system', 'label', 'Workflow runtime', 'role', 'runtime') AS fromActor,
-    json_object('kind', 'worker', 'label', COALESCE(sa.display_name, ne.agent_name), 'role', ne.agent_name, 'sessionId', ne.agent_session_id, 'nodeExecutionId', ne.id) AS targetActor,
+    json_object('kind', 'worker', 'label', COALESCE(sa.display_name, wa.name, ne.agent_name), 'role', ne.agent_name, 'sessionId', ne.agent_session_id, 'nodeExecutionId', ne.id) AS targetActor,
     'system' AS targetResolution,
     NULL AS deliveryState,
     nse.title AS title,
@@ -834,6 +836,7 @@ node_rows AS (
     ON nse.status = ne.status
     OR (nse.status = 'in_progress' AND ne.status IN ('idle', 'done', 'blocked', 'cancelled', 'waiting_rebind'))
   LEFT JOIN space_long_horizon_agents sa ON sa.id = ne.agent_id
+  LEFT JOIN space_agents wa ON wa.id = ne.agent_id
   WHERE ne.workflow_run_id = ?
 ),
 delivery_rows AS (
@@ -1107,7 +1110,7 @@ answer_candidates AS (
       WHERE json_extract(je.value, '$.type') = 'text'
         AND COALESCE(json_extract(je.value, '$.text'), '') != ''
     ), 1, 500) AS body,
-    COALESCE(sa.display_name, ne.agent_name, sp.provenance_agent_name) AS sourceLabel,
+    COALESCE(sa.display_name, wa.name, ne.agent_name, sp.provenance_agent_name) AS sourceLabel,
     'agent' AS sourceKind,
     tsm.session_id AS sourceId,
     CAST((julianday(tsm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
@@ -1121,6 +1124,8 @@ answer_candidates AS (
    AND ne.rn = 1
   LEFT JOIN space_long_horizon_agents sa
     ON sa.id = COALESCE(ne.agent_id, sp.provenance_agent_id)
+  LEFT JOIN space_agents wa
+    ON wa.id = COALESCE(ne.agent_id, sp.provenance_agent_id)
   LEFT JOIN sdk_replacement_status srs ON srs.id = tsm.id
   WHERE tsm.message_type = 'assistant'
     AND json_valid(msg.sdk_message)

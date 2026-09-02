@@ -797,7 +797,7 @@ export function setupSpaceExportImportHandlers(
           for (const agent of replacedAgentByName.values()) {
             clearAgentHandle.run(now, agent.id);
             const twin = longHorizonAgentRepo.getById(agent.id);
-            if (!twin || twin.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY) continue;
+            if (!twin) continue;
             let parked = `${twin.handle}-${agent.id}`;
             let holder = longHorizonAgentRepo.getByHandle(spaceId, parked);
             while (holder && holder.id !== agent.id) {

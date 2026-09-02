@@ -25,7 +25,6 @@ import {
   RETIRED_PR_MERGER_PROMPT,
   RETIRED_PR_MERGER_TOOLS,
 } from '../../../../src/lib/space/agents/seed-agents';
-import { workerAgentToLongHorizonParams } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
 import { restampBuiltInWorkflowsOnStartup } from '../../../../src/lib/rpc-handlers/space-workflow-handlers';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import type {
