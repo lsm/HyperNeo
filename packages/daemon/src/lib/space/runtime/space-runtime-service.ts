@@ -1003,6 +1003,7 @@ export class SpaceRuntimeService {
           getSpace: (spaceId: string) => this.config.spaceManager.getSpace(spaceId),
           getCoordinator: (spaceId: string) => repo?.getCoordinator(spaceId) ?? null,
           getAgentById: (agentId: string) => repo?.getById(agentId) ?? null,
+          getCoordinatorRecord: (spaceId: string) => repo?.getCoordinatorRecord(spaceId) ?? null,
           ensureCoordinatorSession: (spaceId: string) => this.ensureCoordinatorSession(spaceId),
           ensureLongHorizonAgentSession: (spaceId: string, agentId: string) =>
             this.ensureLongHorizonAgentSession(spaceId, agentId),
@@ -1014,7 +1015,7 @@ export class SpaceRuntimeService {
         .pipe('!ensureHalted', 'spaceHalt')
         .pipe(
           classifyAgentStage,
-          ['spaceId', 'agentId', 'getCoordinator', 'getAgentById'],
+          ['spaceId', 'agentId', 'getCoordinator', 'getAgentById', 'getCoordinatorRecord'],
           ['provisionArm', 'classifyHalt']
         )
         .pipe('!ensureHalted', 'classifyHalt')
@@ -1062,6 +1063,7 @@ export class SpaceRuntimeService {
     }
     const agent = this.config.spaceAgentManager.getById(agentId);
     if (!agent || agent.spaceId !== actor.spaceId) return null;
+    if (agent.status === 'paused' || agent.status === 'archived') return null;
     const space = await this.config.spaceManager.getSpace(actor.spaceId);
     if (!space) return null;
     const sessionId = longTermAgentSessionId(actor.spaceId, agentId);
@@ -2499,10 +2501,13 @@ function classifyAgentStage(
   spaceId: string,
   agentId: string,
   getCoordinator: (spaceId: string) => SpaceLongHorizonAgent | null,
-  getAgentById: (agentId: string) => SpaceLongHorizonAgent | null
+  getAgentById: (agentId: string) => SpaceLongHorizonAgent | null,
+  getCoordinatorRecord: (spaceId: string) => SpaceLongHorizonAgent | null
 ): { provisionArm: 'coordinator' | 'long_horizon' | 'actor'; classifyHalt: string | undefined } {
   const coordinator =
-    getCoordinator(spaceId) ?? getAgentById(coordinatorLongHorizonAgentId(spaceId));
+    getCoordinator(spaceId) ??
+    getAgentById(coordinatorLongHorizonAgentId(spaceId)) ??
+    getCoordinatorRecord(spaceId);
   if (coordinator !== null) {
     if (agentSessionIdOf(spaceId, agentId, coordinator.id) === coordinatorSessionId(spaceId)) {
       if (coordinator.status !== 'active') {

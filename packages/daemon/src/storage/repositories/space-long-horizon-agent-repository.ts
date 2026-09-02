@@ -1,15 +1,7 @@
-import type { Database as BunDatabase } from '../sqlite-compat.ts';
-import { generateUUID } from '@hyperneo/shared';
-import {
-  decideGoalOwnerResolution,
-  type GoalOwnerAgentState,
-  type GoalOwnerResolutionDecision,
-} from '../../lib/space/goals/goal-owner-resolution.ts';
 import type {
   CreateSpaceLongHorizonAgentParams,
   CreateSpaceLongHorizonAgentReminderParams,
   CreateSpaceLongHorizonAgentSubscriptionParams,
-  UpdateSpaceLongHorizonAgentSubscriptionParams,
   SpaceAgentAutonomyLevel,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentEventSubscription,
@@ -18,8 +10,16 @@ import type {
   SpaceLongHorizonAgentReminder,
   SpaceLongHorizonAgentStatus,
   UpdateSpaceLongHorizonAgentParams,
+  UpdateSpaceLongHorizonAgentSubscriptionParams,
 } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates.ts';
+import {
+  decideGoalOwnerResolution,
+  type GoalOwnerAgentState,
+  type GoalOwnerResolutionDecision,
+} from '../../lib/space/goals/goal-owner-resolution.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
 
 const DEFAULT_TOOL_PERMISSIONS: Record<string, never> = {};
@@ -80,6 +80,15 @@ export class SpaceLongHorizonAgentRepository {
 
   getCoordinator(spaceId: string): SpaceLongHorizonAgent | null {
     return this.getByHandle(spaceId, 'coordinator');
+  }
+
+  getCoordinatorRecord(spaceId: string): SpaceLongHorizonAgent | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM space_long_horizon_agents WHERE space_id = ? AND handle = 'coordinator'`
+      )
+      .get(spaceId) as Record<string, unknown> | undefined;
+    return row ? rowToAgent(row) : null;
   }
 
   ensureCoordinator(spaceId: string): SpaceLongHorizonAgent {
@@ -194,7 +203,7 @@ export class SpaceLongHorizonAgentRepository {
         .get();
       const hasSiblingWorker =
         row != null &&
-        !!this.db
+        this.db
           .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agents'`)
           .get()
           ? !!this.db

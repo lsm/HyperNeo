@@ -2109,7 +2109,12 @@ export class TaskAgentManager {
     const task = this.config.taskRepo.getTask(taskId);
     if (task?.status === 'cancelled' || task?.status === 'archived') return null;
     if (hintSessionId) {
-      if (!this.sessionIsWorkerForTask(hintSessionId, taskId)) return null;
+      if (
+        task?.postApprovalSessionId !== hintSessionId &&
+        !this.sessionIsWorkerForTask(hintSessionId, taskId)
+      ) {
+        return null;
+      }
       const provenance = this.readProvenanceFromSessionRow(hintSessionId);
       const agentName = provenance?.agentName ?? this.legacyWorkflowRouteAgentName(task);
       if (!agentName) return null;
@@ -2123,7 +2128,7 @@ export class TaskAgentManager {
     }
     let sessionId = task?.postApprovalSessionId;
     let provenance = sessionId ? this.readProvenanceFromSessionRow(sessionId) : null;
-    if (!provenance && !sessionId && task?.status === 'done') {
+    if (!provenance && !sessionId && (task?.status === 'done' || task?.status === 'approved')) {
       const durableId = this.findDurableWorkerSessionId(taskId);
       if (durableId) {
         sessionId = durableId;

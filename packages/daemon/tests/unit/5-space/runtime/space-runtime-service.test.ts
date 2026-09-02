@@ -2001,7 +2001,9 @@ describe('SpaceRuntimeService', () => {
       coordinatorRow: SpaceLongHorizonAgent | null,
       space: Space | null = mockSpace,
       canonicalRow: SpaceLongHorizonAgent | null | undefined = undefined,
-      sessionStatus = 'active'
+      sessionStatus = 'active',
+      coordinatorRecordRow: SpaceLongHorizonAgent | null | undefined = undefined,
+      workerAgent: SpaceWorkerAgent | null = null
     ): {
       svc: SpaceRuntimeService;
       session: AgentSession;
@@ -2014,6 +2016,7 @@ describe('SpaceRuntimeService', () => {
       } as unknown as SessionManager;
       const longHorizonAgentRepo = {
         getCoordinator: mock(() => coordinatorRow),
+        getCoordinatorRecord: mock(() => coordinatorRecordRow ?? coordinatorRow),
         getById: mock((id: string) => {
           if (canonicalRow != null) return canonicalRow.id === id ? canonicalRow : null;
           return coordinatorRow !== null && coordinatorRow.id === id ? coordinatorRow : null;
@@ -2025,6 +2028,7 @@ describe('SpaceRuntimeService', () => {
         spaceManager: createMockSpaceManager(space),
         spaceAgentManager: {
           listBySpaceId: mock(() => []),
+          getById: mock(() => workerAgent),
         } as unknown as SpaceAgentManager,
         spaceWorkflowManager: {
           listWorkflows: mock(() => []),
@@ -2152,6 +2156,33 @@ describe('SpaceRuntimeService', () => {
       expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(
         coordinatorSessionId(mockSpace.id)
       );
+    });
+
+    test('archived noncanonical coordinator record blocks the bootstrap path', async () => {
+      const { svc, sessionManager } = buildEnsureService(
+        null,
+        mockSpace,
+        null,
+        'active',
+        buildLongHorizonAgent({ id: 'coordinator-alt', status: 'archived' })
+      );
+
+      await expect(svc.ensureAgentSession(mockSpace.id, 'coordinator')).resolves.toBeNull();
+      expect(sessionManager.getSessionAsync).not.toHaveBeenCalled();
+    });
+
+    test('paused worker agent resolves null before actor provisioning', async () => {
+      const { svc, sessionManager } = buildEnsureService(
+        null,
+        mockSpace,
+        null,
+        'active',
+        undefined,
+        { id: 'worker-1', spaceId: mockSpace.id, status: 'paused' } as SpaceWorkerAgent
+      );
+
+      await expect(svc.ensureAgentSession(mockSpace.id, 'worker-1')).resolves.toBeNull();
+      expect(sessionManager.getSessionAsync).not.toHaveBeenCalled();
     });
   });
 
