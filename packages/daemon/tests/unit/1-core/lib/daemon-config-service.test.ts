@@ -7,6 +7,7 @@ import {
   DAEMON_CONFIG_UPDATED,
   DaemonConfigService,
   DaemonConfigValidationError,
+  casDaemonConfigRow,
 } from '../../../../src/lib/daemon-config-service.ts';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 
@@ -307,10 +308,20 @@ describe('DaemonConfigService', () => {
     });
     expect(seeded).toBe(true);
     expect(readConfigRow(db)?.config_json).toBe(
-      '{"deliveryPolicy":{"messageDeliveryMaxRetries":3},"providersMisc":{"providerMaxRetries":0},"startup":{"disableWorktrees":true,"logRetainedFiles":1000},"flags":{"workflowConnectors":false}}'
+      '{"deliveryPolicy":{"messageDeliveryMaxRetries":3,"messageDeliveryMaxConcurrent":64},"providersMisc":{"providerMaxRetries":0},"startup":{"disableWorktrees":true,"logRetainedFiles":1000},"flags":{"workflowConnectors":false}}'
     );
     const config = service.getConfig();
     expect(config.deliveryPolicy?.messageDeliveryMaxConcurrent).toBe(64);
+    db.close();
+  });
+
+  test('an empty legacy boolean env value passes through the resolver as disabled', () => {
+    const db = createDb();
+    const service = new DaemonConfigService(db);
+    const seeded = service.seedFromLegacyEnv({ HYPERNEO_SPACE_ACTIONS_DISPATCHER: '' });
+    expect(seeded).toBe(true);
+    expect(readConfigRow(db)?.config_json).toBe('{"flags":{"spaceActionsDispatcher":false}}');
+    expect(service.getConfig().flags?.spaceActionsDispatcher).toBe(false);
     db.close();
   });
 
@@ -335,6 +346,47 @@ describe('DaemonConfigService', () => {
     expect(readConfigRow(db)?.config_json).toBe('{}');
     expect(service.seedFromLegacyEnv({ HYPERNEO_WORKFLOW_CONNECTORS: '0' })).toBe(false);
     expect(service.getConfig().flags?.workflowConnectors).toBe(true);
+    db.close();
+  });
+});
+
+describe('casDaemonConfigRow', () => {
+  test('claims the absent row through an atomic insert', () => {
+    const db = createDb();
+    expect(casDaemonConfigRow(db, null, { flags: { workflowConnectors: false } })).toBe(true);
+    expect(readConfigRow(db)?.config_json).toBe('{"flags":{"workflowConnectors":false}}');
+    db.close();
+  });
+
+  test('loses the claim when the row appeared concurrently', () => {
+    const db = createDb();
+    writeConfigRow(db, { flags: { workflowConnectors: false } });
+    expect(casDaemonConfigRow(db, null, { flags: { taskAgentPostApprovalRouting: false } })).toBe(
+      false
+    );
+    expect(readConfigRow(db)?.config_json).toBe('{"flags":{"workflowConnectors":false}}');
+    db.close();
+  });
+
+  test('replaces the row when the expected json still matches', () => {
+    const db = createDb();
+    writeConfigRow(db, { flags: { workflowConnectors: false } });
+    const expected = JSON.stringify({ flags: { workflowConnectors: false } });
+    expect(
+      casDaemonConfigRow(db, expected, { flags: { taskAgentPostApprovalRouting: false } })
+    ).toBe(true);
+    expect(readConfigRow(db)?.config_json).toBe('{"flags":{"taskAgentPostApprovalRouting":false}}');
+    db.close();
+  });
+
+  test('returns false and leaves the row untouched when superseded', () => {
+    const db = createDb();
+    writeConfigRow(db, { flags: { workflowConnectors: false } });
+    const stale = JSON.stringify({ flags: { workflowConnectors: true } });
+    expect(casDaemonConfigRow(db, stale, { flags: { taskAgentPostApprovalRouting: false } })).toBe(
+      false
+    );
+    expect(readConfigRow(db)?.config_json).toBe('{"flags":{"workflowConnectors":false}}');
     db.close();
   });
 });

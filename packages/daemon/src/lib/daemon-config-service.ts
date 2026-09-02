@@ -20,9 +20,20 @@ export class DaemonConfigValidationError extends Error {
   }
 }
 
+export class DaemonConfigSupersededError extends Error {
+  constructor() {
+    super('daemon config row changed concurrently; re-read and retry the update');
+    this.name = 'DaemonConfigSupersededError';
+  }
+}
+
 export interface DaemonConfigUpdateResult {
   config: DaemonBehaviorConfig;
   changedKeys: string[];
+}
+
+interface DaemonConfigRow {
+  config_json: string;
 }
 
 const CATALOG_BY_FAMILY = new Map<string, Map<string, DaemonConfigKeyEntry>>();
@@ -105,10 +116,25 @@ function unchanged(changedKeys: string[] | undefined): boolean {
   return (changedKeys?.length ?? 0) === 0;
 }
 
-function loadStoredConfig(
-  readStoredConfig: () => Partial<DaemonBehaviorConfig>
+function adopted(existingRow: DaemonConfigRow | null | undefined): boolean {
+  return existingRow != null;
+}
+
+function loadConfigRow(
+  readConfigRow: () => DaemonConfigRow | null | undefined
+): DaemonConfigRow | null | undefined {
+  return readConfigRow();
+}
+
+function storedConfigFromRow(
+  row: DaemonConfigRow | null | undefined
 ): Partial<DaemonBehaviorConfig> {
-  return readStoredConfig();
+  if (!row) return {};
+  try {
+    return JSON.parse(row.config_json) as Partial<DaemonBehaviorConfig>;
+  } catch {
+    return {};
+  }
 }
 
 function completeDaemonConfigUpdate(
@@ -118,23 +144,112 @@ function completeDaemonConfigUpdate(
   return { config, changedKeys: changedKeys ?? [] };
 }
 
+function persistDaemonConfigUpdate(
+  casStoredConfig: (
+    expectedConfigJson: string | null,
+    config: Partial<DaemonBehaviorConfig>
+  ) => boolean,
+  existingRow: DaemonConfigRow | null | undefined,
+  merged: Partial<DaemonBehaviorConfig>
+): void {
+  if (!casStoredConfig(existingRow ? existingRow.config_json : null, merged)) {
+    throw new DaemonConfigSupersededError();
+  }
+}
+
+export function casDaemonConfigRow(
+  db: BunDatabase,
+  expectedConfigJson: string | null,
+  config: Partial<DaemonBehaviorConfig>
+): boolean {
+  const configJson = JSON.stringify(config);
+  if (expectedConfigJson === null) {
+    const result = db
+      .prepare(`INSERT OR IGNORE INTO daemon_config (id, config_json, updated_at) VALUES (1, ?, ?)`)
+      .run(configJson, Date.now());
+    return result.changes > 0;
+  }
+  const result = db
+    .prepare(
+      `UPDATE daemon_config SET config_json = ?, updated_at = ? WHERE id = 1 AND config_json = ?`
+    )
+    .run(configJson, Date.now(), expectedConfigJson);
+  return result.changes > 0;
+}
+
 const runUpdateDaemonConfig = (superpipe({ unchanged })('update-daemon-config') as PipelineAPI)
-  .input(['patch', 'readStoredConfig', 'writeStoredConfig', 'publishConfigUpdated'])
-  .pipe(loadStoredConfig, 'readStoredConfig', 'stored')
+  .input(['patch', 'readConfigRow', 'casStoredConfig', 'publishConfigUpdated'])
+  .pipe(loadConfigRow, 'readConfigRow', 'existingRow')
+  .pipe(storedConfigFromRow, 'existingRow', 'stored')
   .pipe(resolveDaemonConfig, 'stored', 'before')
   .pipe(applyValidatedPatch, ['stored', 'patch'], 'merged')
   .pipe(resolveDaemonConfig, 'merged', 'after')
   .pipe(changedCatalogKeys, ['before', 'after'], 'changedKeys')
   .pipe(completeDaemonConfigUpdate, ['after', 'changedKeys'], 'result')
   .pipe('!unchanged', 'changedKeys')
-  .pipe('writeStoredConfig', 'merged')
+  .pipe(persistDaemonConfigUpdate, ['casStoredConfig', 'existingRow', 'merged'])
   .pipe('publishConfigUpdated', 'changedKeys')
   .end('result') as (
   patch: Partial<DaemonBehaviorConfig>,
-  readStoredConfig: () => Partial<DaemonBehaviorConfig>,
-  writeStoredConfig: (config: Partial<DaemonBehaviorConfig>) => void,
+  readConfigRow: () => DaemonConfigRow | null | undefined,
+  casStoredConfig: (
+    expectedConfigJson: string | null,
+    config: Partial<DaemonBehaviorConfig>
+  ) => boolean,
   publishConfigUpdated: (changedKeys: string[]) => void
 ) => DaemonConfigUpdateResult;
+
+interface DaemonConfigSeedPlan {
+  patch: Record<string, Record<string, number | boolean>>;
+  seededKeys: number;
+}
+
+function planLegacySeed(env: Record<string, string | undefined>): DaemonConfigSeedPlan {
+  const patch: Record<string, Record<string, number | boolean>> = {};
+  let seededKeys = 0;
+  for (const entry of DAEMON_CONFIG_KEY_CATALOG) {
+    const raw = env[entry.legacyEnvName];
+    if (raw === undefined) continue;
+    const resolved = resolveDaemonConfig({
+      [entry.family]: { [entry.key]: raw },
+    } as Partial<DaemonBehaviorConfig>);
+    const value = catalogValue(resolved, entry);
+    if (value === undefined) continue;
+    const familyPatch = (patch[entry.family] ??= {});
+    familyPatch[entry.key] = value;
+    seededKeys++;
+  }
+  return { patch, seededKeys };
+}
+
+function completeLegacySeed(
+  existingRow: DaemonConfigRow | null | undefined,
+  seedPlan: DaemonConfigSeedPlan
+): { seeded: boolean } {
+  return { seeded: existingRow != null ? false : seedPlan.seededKeys > 0 };
+}
+
+function persistLegacySeed(
+  claimStoredConfig: (config: Partial<DaemonBehaviorConfig>) => void,
+  seedPlan: DaemonConfigSeedPlan
+): void {
+  claimStoredConfig(seedPlan.patch as Partial<DaemonBehaviorConfig>);
+}
+
+const runSeedDaemonConfigFromLegacyEnv = (
+  superpipe({ adopted })('seed-daemon-config-from-legacy-env') as PipelineAPI
+)
+  .input(['env', 'readConfigRow', 'claimStoredConfig'])
+  .pipe(loadConfigRow, 'readConfigRow', 'existingRow')
+  .pipe(planLegacySeed, 'env', 'seedPlan')
+  .pipe(completeLegacySeed, ['existingRow', 'seedPlan'], 'result')
+  .pipe('!adopted', 'existingRow')
+  .pipe(persistLegacySeed, ['claimStoredConfig', 'seedPlan'])
+  .end('result') as (
+  env: Record<string, string | undefined>,
+  readConfigRow: () => DaemonConfigRow | null | undefined,
+  claimStoredConfig: (config: Partial<DaemonBehaviorConfig>) => void
+) => { seeded: boolean };
 
 export class DaemonConfigService {
   private cachedConfig: DaemonBehaviorConfig | undefined;
@@ -154,8 +269,8 @@ export class DaemonConfigService {
   updateConfig(patch: Partial<DaemonBehaviorConfig>): DaemonConfigUpdateResult {
     const outcome = runUpdateDaemonConfig(
       patch,
-      () => this.readStoredConfig(),
-      (config) => this.writeStoredConfig(config),
+      () => this.readConfigRow(),
+      (expectedConfigJson, config) => this.casStoredConfig(expectedConfigJson, config),
       (changedKeys) => {
         this.internalEventBus?.publishAsync(DAEMON_CONFIG_UPDATED, { changedKeys });
       }
@@ -165,49 +280,37 @@ export class DaemonConfigService {
   }
 
   seedFromLegacyEnv(env: Record<string, string | undefined> = process.env): boolean {
-    if (this.readConfigRow()) return false;
-
-    const patch: Record<string, Record<string, number | boolean>> = {};
-    let seededKeys = 0;
-    for (const entry of DAEMON_CONFIG_KEY_CATALOG) {
-      const raw = env[entry.legacyEnvName];
-      if (raw === undefined || raw === '') continue;
-      const resolved = resolveDaemonConfig({
-        [entry.family]: { [entry.key]: raw },
-      } as Partial<DaemonBehaviorConfig>);
-      const value = catalogValue(resolved, entry);
-      if (value === undefined) continue;
-      const familyPatch = (patch[entry.family] ??= {});
-      familyPatch[entry.key] = value;
-      seededKeys++;
-    }
-
-    this.writeStoredConfig(patch as Partial<DaemonBehaviorConfig>);
-    return seededKeys > 0;
+    const outcome = runSeedDaemonConfigFromLegacyEnv(
+      env,
+      () => this.readConfigRow(),
+      (config) => this.claimStoredConfig(config)
+    );
+    return outcome.seeded;
   }
 
-  private readConfigRow(): { config_json: string } | null | undefined {
+  private readConfigRow(): DaemonConfigRow | null | undefined {
     return this.db.prepare(`SELECT config_json FROM daemon_config WHERE id = 1`).get() as
-      | { config_json: string }
+      | DaemonConfigRow
       | null
       | undefined;
   }
 
   private readStoredConfig(): Partial<DaemonBehaviorConfig> {
-    const row = this.readConfigRow();
-    if (!row) return {};
-    try {
-      return JSON.parse(row.config_json) as Partial<DaemonBehaviorConfig>;
-    } catch {
-      return {};
-    }
+    return storedConfigFromRow(this.readConfigRow());
   }
 
-  private writeStoredConfig(config: Partial<DaemonBehaviorConfig>): void {
+  private casStoredConfig(
+    expectedConfigJson: string | null,
+    config: Partial<DaemonBehaviorConfig>
+  ): boolean {
+    const applied = casDaemonConfigRow(this.db, expectedConfigJson, config);
+    if (applied) this.cachedConfig = undefined;
+    return applied;
+  }
+
+  private claimStoredConfig(config: Partial<DaemonBehaviorConfig>): void {
     this.db
-      .prepare(
-        `INSERT OR REPLACE INTO daemon_config (id, config_json, updated_at) VALUES (1, ?, ?)`
-      )
+      .prepare(`INSERT OR IGNORE INTO daemon_config (id, config_json, updated_at) VALUES (1, ?, ?)`)
       .run(JSON.stringify(config), Date.now());
     this.cachedConfig = undefined;
   }
