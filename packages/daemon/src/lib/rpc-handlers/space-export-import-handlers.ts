@@ -94,17 +94,23 @@ export function longHorizonAgentToWorkerView(agent: SpaceLongHorizonAgent): Spac
 }
 
 function unifiedExportAgents(
+  agentRepo: SpaceAgentRepository,
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
   spaceId: string
 ): SpaceWorkerAgent[] {
   const coordinatorByHandle = longHorizonAgentRepo.getCoordinator(spaceId);
-  return longHorizonAgentRepo
-    .listBySpaceId(spaceId)
+  const unifiedRows = longHorizonAgentRepo.listBySpaceId(spaceId);
+  const unifiedViews = unifiedRows
     .filter((a) => a.id !== coordinatorLongHorizonAgentId(spaceId))
     .filter((a) => !coordinatorByHandle || a.id !== coordinatorByHandle.id)
     .filter((a) => a.status === 'active')
     .filter((a) => a.autonomyLevel == null)
     .map(longHorizonAgentToWorkerView);
+  const unifiedIds = new Set(unifiedRows.map((a) => a.id));
+  const workerOnlyRows = agentRepo
+    .getBySpaceId(spaceId)
+    .filter((w) => !unifiedIds.has(w.id) && w.status !== 'archived');
+  return [...unifiedViews, ...workerOnlyRows];
 }
 
 function assertExportableAgentNames(agents: Array<{ id: string; name: string }>): void {
@@ -467,7 +473,11 @@ export function setupSpaceExportImportHandlers(
     const params = data as { spaceId: string; agentIds?: string[] };
     const space = await requireSpace(spaceManager, params.spaceId);
 
-    let agents: SpaceWorkerAgent[] = unifiedExportAgents(longHorizonAgentRepo, params.spaceId);
+    let agents: SpaceWorkerAgent[] = unifiedExportAgents(
+      agentRepo,
+      longHorizonAgentRepo,
+      params.spaceId
+    );
     if (params.agentIds?.length) {
       const idSet = new Set(params.agentIds);
       agents = agents.filter((a) => idSet.has(a.id));
@@ -490,7 +500,7 @@ export function setupSpaceExportImportHandlers(
       workflows = workflows.filter((w) => idSet.has(w.id));
     }
 
-    const allAgents = unifiedExportAgents(longHorizonAgentRepo, params.spaceId);
+    const allAgents = unifiedExportAgents(agentRepo, longHorizonAgentRepo, params.spaceId);
 
     const referencedAgentIds = new Set<string>();
     for (const wf of workflows) {
@@ -561,7 +571,7 @@ export function setupSpaceExportImportHandlers(
     const params = data as { spaceId: string; agentIds?: string[]; workflowIds?: string[] };
     const space = await requireSpace(spaceManager, params.spaceId);
 
-    let agents = unifiedExportAgents(longHorizonAgentRepo, params.spaceId);
+    let agents = unifiedExportAgents(agentRepo, longHorizonAgentRepo, params.spaceId);
     if (params.agentIds?.length) {
       const idSet = new Set(params.agentIds);
       agents = agents.filter((a) => idSet.has(a.id));

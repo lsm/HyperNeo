@@ -533,6 +533,19 @@ describe('Space Export/Import RPC Handlers', () => {
       );
     });
 
+    it('includes worker-only agents without unified mirrors in exports', async () => {
+      db.prepare(
+        `INSERT INTO space_agents (id, space_id, name, handle, status, description, tools, custom_prompt, created_at, updated_at)
+           VALUES ('worker-only-1', ?, 'Legacy Worker', 'legacy-worker', 'active', '', '[]', NULL, 1, 1)`
+      ).run(SPACE_ID);
+
+      const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
+        spaceId: SPACE_ID,
+      });
+
+      expect(bundle.agents.map((a: any) => a.name)).toContain('Legacy Worker');
+    });
+
     it('excludes paused native agents from agents exports', async () => {
       seedAgent({ spaceId: SPACE_ID, name: 'Active One' });
       longHorizonAgentRepo.create({

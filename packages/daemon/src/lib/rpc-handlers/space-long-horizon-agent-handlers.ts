@@ -334,7 +334,9 @@ export function setupSpaceLongHorizonAgentHandlers(
     if (params.displayName !== undefined && params.displayName.trim() === '') {
       throw new Error('displayName cannot be blank');
     }
-    if (params.displayName !== undefined || params.status === 'active') {
+    const unarchiving =
+      existing.status === 'archived' && params.status !== undefined && params.status !== 'archived';
+    if (params.displayName !== undefined || unarchiving) {
       ensureUnifiedDisplayNameAvailable(
         repo,
         spaceAgentManager,

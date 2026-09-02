@@ -61,7 +61,7 @@ function isPristineUnifiedRetiredPresetTwin(twin: SpaceLongHorizonAgent | null):
   return (
     twin.displayName === 'PR Merger' &&
     twin.handle === 'merger' &&
-    (twin.templateKey === null || twin.templateKey === 'migration.legacy_space_agent') &&
+    twin.templateKey === 'migration.legacy_space_agent' &&
     twin.instructions === RETIRED_PR_MERGER_PROMPT &&
     tools.length === RETIRED_PR_MERGER_TOOLS.length &&
     RETIRED_PR_MERGER_TOOLS.every((tool, i) => tools[i] === tool) &&
@@ -83,9 +83,11 @@ function buildTemplateUpdateParams(
   errorVerb: 'sync' | 'resync',
   existingWorkflow?: SpaceWorkflow
 ): UpdateSpaceWorkflowParams {
+  const coordinatorByHandle = longHorizonAgentRepo.getCoordinator(spaceId);
   const spaceAgents = longHorizonAgentRepo
     .listBySpaceId(spaceId)
     .filter((a) => a.id !== coordinatorLongHorizonAgentId(spaceId))
+    .filter((a) => !coordinatorByHandle || a.id !== coordinatorByHandle.id)
     .filter((a) => a.status !== 'archived');
   function resolveAgentId(roleName: string): string | undefined {
     const role = roleName.toLowerCase();
@@ -323,9 +325,11 @@ export async function restampBuiltInWorkflowsOnStartup(
     let totalRestamped = 0;
     for (const space of spaces) {
       try {
+        const restampCoordinatorByHandle = longHorizonAgentRepo.getCoordinator(space.id);
         const agents = longHorizonAgentRepo
           .listBySpaceId(space.id)
           .filter((a) => a.id !== coordinatorLongHorizonAgentId(space.id))
+          .filter((a) => !restampCoordinatorByHandle || a.id !== restampCoordinatorByHandle.id)
           .filter((a) => a.status !== 'archived');
         const result = seedBuiltInWorkflows(
           space.id,
