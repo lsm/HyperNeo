@@ -471,12 +471,12 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
   'spaceAgent.created': {
     sessionId: string;
     spaceId: string;
-    agent: import('@hyperneo/shared').SpaceWorkerAgent;
+    agent: import('@hyperneo/shared').SpaceLongHorizonAgent;
   };
   'spaceAgent.updated': {
     sessionId: string;
     spaceId: string;
-    agent: import('@hyperneo/shared').SpaceWorkerAgent;
+    agent: import('@hyperneo/shared').SpaceLongHorizonAgent;
   };
   'spaceAgent.deleted': {
     sessionId: string;

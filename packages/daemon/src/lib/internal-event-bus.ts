@@ -513,12 +513,12 @@ interface ClientForwardingEvents {
   'spaceAgent.created': {
     sessionId: string;
     spaceId: string;
-    agent: import('@hyperneo/shared').SpaceWorkerAgent;
+    agent: import('@hyperneo/shared').SpaceLongHorizonAgent;
   };
   'spaceAgent.updated': {
     sessionId: string;
     spaceId: string;
-    agent: import('@hyperneo/shared').SpaceWorkerAgent;
+    agent: import('@hyperneo/shared').SpaceLongHorizonAgent;
   };
   'spaceAgent.deleted': { sessionId: string; spaceId: string; agentId: string };
   'spaceLongHorizonAgent.created': {

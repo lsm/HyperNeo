@@ -1768,6 +1768,11 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       spaceId: ctx.spaceId,
       agent: expect.objectContaining({ id: created.agent.id, displayName: 'Notifier' }),
     });
+    expect(publish).toHaveBeenCalledWith('spaceAgent.created', {
+      sessionId: 'mcp-session',
+      spaceId: ctx.spaceId,
+      agent: expect.objectContaining({ id: created.agent.id, displayName: 'Notifier' }),
+    });
 
     const updated = JSON.parse(
       (
@@ -1779,6 +1784,11 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(updated.success).toBe(true);
     expect(publish).toHaveBeenCalledWith('spaceLongHorizonAgent.updated', {
+      sessionId: 'mcp-session',
+      spaceId: ctx.spaceId,
+      agent: expect.objectContaining({ id: created.agent.id, displayName: 'Notifier Renamed' }),
+    });
+    expect(publish).toHaveBeenCalledWith('spaceAgent.updated', {
       sessionId: 'mcp-session',
       spaceId: ctx.spaceId,
       agent: expect.objectContaining({ id: created.agent.id, displayName: 'Notifier Renamed' }),

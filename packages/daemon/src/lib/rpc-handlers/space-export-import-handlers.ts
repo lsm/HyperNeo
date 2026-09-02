@@ -28,6 +28,10 @@ import {
   MIGRATED_WORKER_TEMPLATE_KEY,
   isRunnableUnifiedAgent,
 } from '../space/agents/worker-long-horizon-mapper.ts';
+import {
+  publishUnifiedAgentCreated,
+  publishUnifiedAgentUpdated,
+} from '../space/agents/unified-agent-events.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug.ts';
 import { Logger } from '../logger.ts';
 
@@ -1118,15 +1122,7 @@ export function setupSpaceExportImportHandlers(
     for (const ref of importResult.deferredUnifiedUpdates ?? []) {
       const unified = longHorizonAgentRepo.getById(ref.agentId);
       if (unified) {
-        internalEventBus
-          .publish('spaceLongHorizonAgent.updated', {
-            sessionId: `space:${ref.spaceId}`,
-            spaceId: ref.spaceId,
-            agent: unified,
-          })
-          .catch((err) => {
-            log.warn('Failed to emit spaceLongHorizonAgent.updated for imported agent:', err);
-          });
+        void publishUnifiedAgentUpdated(internalEventBus, unified, `space:${ref.spaceId}`);
       }
     }
 
@@ -1138,34 +1134,15 @@ export function setupSpaceExportImportHandlers(
 
     for (const item of importResult.agents) {
       if (item.action === 'skipped') continue;
-      const agent: SpaceWorkerAgent | null = agentRepo.getById(item.id);
-      if (!agent) continue;
-      const eventName = item.action === 'replaced' ? 'spaceAgent.updated' : 'spaceAgent.created';
-      internalEventBus
-        .publish(eventName, {
-          sessionId: `space:${spaceId}`,
-          spaceId,
-          agent,
-        })
-        .catch((err) => {
-          log.warn(`Failed to emit ${eventName} for imported agent "${item.name}":`, err);
-        });
       const mirror = longHorizonAgentRepo.getById(item.id);
-      if (mirror) {
-        internalEventBus
-          .publish(
-            item.action === 'replaced'
-              ? 'spaceLongHorizonAgent.updated'
-              : 'spaceLongHorizonAgent.created',
-            {
-              sessionId: `space:${spaceId}`,
-              spaceId,
-              agent: mirror,
-            }
-          )
-          .catch((err) => {
-            log.warn(`Failed to emit unified ${eventName} for imported agent "${item.name}":`, err);
-          });
+      if (!mirror) {
+        log.warn(`Imported agent "${item.name}" has no unified record; skipping agent events`);
+        continue;
+      }
+      if (item.action === 'replaced') {
+        void publishUnifiedAgentUpdated(internalEventBus, mirror, `space:${spaceId}`);
+      } else {
+        void publishUnifiedAgentCreated(internalEventBus, mirror, `space:${spaceId}`);
       }
     }
 
