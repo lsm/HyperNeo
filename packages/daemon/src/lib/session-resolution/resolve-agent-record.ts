@@ -10,6 +10,7 @@ export type AgentRecordResolution =
 export interface ResolveAgentRecordDeps {
   getLongHorizonAgent(agentId: string): SpaceLongHorizonAgent | null;
   getCoordinator(spaceId: string): SpaceLongHorizonAgent | null;
+  getCoordinatorRecord(spaceId: string): SpaceLongHorizonAgent | null;
   getWorkerAgent(agentId: string): SpaceWorkerAgent | null;
 }
 
@@ -19,9 +20,9 @@ export function resolveAgentRecord(
   deps: ResolveAgentRecordDeps
 ): AgentRecordResolution {
   if (agentId === 'coordinator' || agentId === `coordinator:${spaceId}`) {
-    const coordinator = deps.getCoordinator(spaceId);
-    if (coordinator != null && coordinator.status !== 'active') return { kind: 'missing' };
-    return { kind: 'coordinator', agent: coordinator };
+    const record = deps.getCoordinatorRecord(spaceId);
+    if (record != null && record.status !== 'active') return { kind: 'missing' };
+    return { kind: 'coordinator', agent: record };
   }
   const longHorizonAgent = deps.getLongHorizonAgent(agentId);
   if (longHorizonAgent?.spaceId === spaceId) {

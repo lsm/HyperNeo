@@ -51,13 +51,18 @@ function makeDeps(config?: {
   workers?: SpaceWorkerAgent[];
 }): ResolveAgentRecordDeps {
   const longHorizonAgents = config?.longHorizonAgents ?? [];
+  const coordinatorRecord = (spaceId: string) =>
+    longHorizonAgents.find(
+      (agent) => agent.handle === 'coordinator' && agent.spaceId === spaceId
+    ) ?? null;
   return {
     getLongHorizonAgent: (agentId) =>
       longHorizonAgents.find((agent) => agent.id === agentId) ?? null,
-    getCoordinator: (spaceId) =>
-      longHorizonAgents.find(
-        (agent) => agent.id === config?.coordinatorId && agent.spaceId === spaceId
-      ) ?? null,
+    getCoordinator: (spaceId) => {
+      const record = coordinatorRecord(spaceId);
+      return record != null && record.status !== 'archived' ? record : null;
+    },
+    getCoordinatorRecord: coordinatorRecord,
     getWorkerAgent: (agentId) =>
       (config?.workers ?? []).find((agent) => agent.id === agentId) ?? null,
   };
@@ -121,6 +126,30 @@ describe('resolveAgentRecord', () => {
 
     expect(resolveAgentRecord('space-1', 'coordinator', deps)).toEqual({ kind: 'missing' });
     expect(resolveAgentRecord('space-1', 'coordinator:space-1', deps)).toEqual({ kind: 'missing' });
+  });
+
+  test('archived coordinator row resolves missing through every alias form', () => {
+    const coordinator = makeAgent('space-lh-agent:coordinator:space-1', {
+      handle: 'coordinator',
+      status: 'archived',
+    });
+    const deps = makeDeps({ longHorizonAgents: [coordinator] });
+
+    expect(resolveAgentRecord('space-1', 'coordinator', deps)).toEqual({ kind: 'missing' });
+    expect(resolveAgentRecord('space-1', 'coordinator:space-1', deps)).toEqual({ kind: 'missing' });
+  });
+
+  test('alias with no coordinator row at any status still resolves the coordinator kind', () => {
+    const deps = makeDeps({ longHorizonAgents: [makeAgent('lh-1')] });
+
+    expect(resolveAgentRecord('space-1', 'coordinator', deps)).toEqual({
+      kind: 'coordinator',
+      agent: null,
+    });
+    expect(resolveAgentRecord('space-1', 'coordinator:space-1', deps)).toEqual({
+      kind: 'coordinator',
+      agent: null,
+    });
   });
 
   test('coordinator discovered by handle resolves the coordinator kind', () => {
