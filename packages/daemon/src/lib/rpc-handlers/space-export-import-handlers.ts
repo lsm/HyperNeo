@@ -122,6 +122,25 @@ function assertExportableAgentNames(agents: Array<{ id: string; name: string }>)
   }
 }
 
+function findDuplicateBundleAgentNames(agents: Array<{ name: string }>): string[] {
+  const seen = new Map<string, string>();
+  const duplicates = new Set<string>();
+  for (const agent of agents) {
+    const key = nameKey(agent.name);
+    const first = seen.get(key);
+    if (first !== undefined) {
+      duplicates.add(`"${first}" / "${agent.name}"`);
+    } else {
+      seen.set(key, agent.name);
+    }
+  }
+  return [...duplicates].map(
+    (pair) =>
+      `Bundle contains agent names that normalize to the same value: ${pair}. ` +
+      `Rename one of them in the bundle and retry.`
+  );
+}
+
 function findAmbiguousAgentNames(agents: Array<{ name: string; id: string }>): string[] {
   const idsByName = new Map<string, Set<string>>();
   for (const agent of agents) {
@@ -607,7 +626,22 @@ export function setupSpaceExportImportHandlers(
           !workerAgents.some((w) => w.id === a.id) || a.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY
       )
       .map(longHorizonAgentToWorkerView);
-    const existingAgents = [...workerAgents, ...unifiedOnlyAgents];
+    const overlayShadowedWorkerIds = new Set(
+      longHorizonAgentRepo
+        .listBySpaceId(params.spaceId)
+        .filter(
+          (a) =>
+            a.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY &&
+            a.id !== coordinatorLongHorizonAgentId(params.spaceId) &&
+            (!coordinatorByHandle || a.id !== coordinatorByHandle.id) &&
+            workerAgents.some((w) => w.id === a.id)
+        )
+        .map((a) => a.id)
+    );
+    const existingAgents = [
+      ...workerAgents.filter((w) => !overlayShadowedWorkerIds.has(w.id)),
+      ...unifiedOnlyAgents,
+    ];
     const existingWorkflows = workflowRepo.listWorkflows(params.spaceId);
 
     const agentNameAmbiguities = findAmbiguousAgentNames(existingAgents);
@@ -650,6 +684,7 @@ export function setupSpaceExportImportHandlers(
     }
 
     validationErrors.push(...agentNameAmbiguities);
+    validationErrors.push(...findDuplicateBundleAgentNames(bundle.agents));
     const result: ImportPreviewResult = {
       agents: agentPreviews,
       workflows: workflowPreviews,
@@ -693,10 +728,27 @@ export function setupSpaceExportImportHandlers(
               a.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY
           )
           .map(longHorizonAgentToWorkerView);
-        const existingAgents = [...workerAgents, ...unifiedOnlyAgents];
+        const overlayShadowedWorkerIds = new Set(
+          longHorizonAgentRepo
+            .listBySpaceId(spaceId)
+            .filter(
+              (a) =>
+                a.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY &&
+                a.id !== coordinatorLongHorizonAgentId(spaceId) &&
+                (!coordinatorByHandle || a.id !== coordinatorByHandle.id) &&
+                workerAgents.some((w) => w.id === a.id)
+            )
+            .map((a) => a.id)
+        );
+        const existingAgents = [
+          ...workerAgents.filter((w) => !overlayShadowedWorkerIds.has(w.id)),
+          ...unifiedOnlyAgents,
+        ];
         const existingWorkflows = workflowRepo.listWorkflows(spaceId);
 
         assertUnambiguousAgentNames(existingAgents);
+        const duplicateBundleNames = findDuplicateBundleAgentNames(bundle.agents);
+        if (duplicateBundleNames.length > 0) throw new Error(duplicateBundleNames[0]);
         const existingAgentByName = new Map(existingAgents.map((a) => [nameKey(a.name), a]));
         const existingWorkflowByName = new Map(existingWorkflows.map((w) => [w.name, w]));
         const existingAgentNameToId = new Map(existingAgents.map((a) => [nameKey(a.name), a.id]));

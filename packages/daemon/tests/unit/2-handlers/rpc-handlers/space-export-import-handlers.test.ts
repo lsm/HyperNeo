@@ -1330,6 +1330,37 @@ describe('Space Export/Import RPC Handlers', () => {
         expect((unifiedEvent!.data as { agent: { id: string } }).agent.id).toBe(unifiedId);
       });
 
+      it('suppresses worker names shadowed by a native overlay', async () => {
+        const worker = seedAgent({ spaceId: SPACE_ID, name: 'Alpha', handle: 'alpha' });
+        db.prepare(
+          `UPDATE space_long_horizon_agents SET template_key = 'custom.overlay', display_name = 'Overlay Name' WHERE id = ?`
+        ).run(worker.id);
+
+        const bundle = makeBundle([{ name: 'Alpha' }], []);
+        const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+          spaceId: SPACE_ID,
+          bundle,
+        });
+
+        expect(preview.agents[0]).toEqual({ name: 'Alpha', action: 'create' });
+      });
+
+      it('rejects bundles whose agent names normalize to the same value', async () => {
+        const bundle = makeBundle([{ name: 'Coder' }, { name: ' coder ' }], []);
+
+        const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+          spaceId: SPACE_ID,
+          bundle,
+        });
+        expect(
+          preview.validationErrors.some((e) => e.includes('normalize to the same value'))
+        ).toBe(true);
+
+        await expect(
+          call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+        ).rejects.toThrow('normalize to the same value');
+      });
+
       it('resolves native overlays by their display name in imports', async () => {
         const worker = seedAgent({ spaceId: SPACE_ID, name: 'Alpha', handle: 'alpha' });
         db.prepare(
@@ -1397,7 +1428,7 @@ describe('Space Export/Import RPC Handlers', () => {
 
         expect(result.agents[0].action).toBe('replaced');
         const overlay = longHorizonAgentRepo.getById(worker.id)!;
-        expect(overlay.handle).toBe('overlay-handle');
+        expect(overlay.handle).toBe('alpha');
         expect(overlay.templateKey).toBe('custom.overlay');
       });
 

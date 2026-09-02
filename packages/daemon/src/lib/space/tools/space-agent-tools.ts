@@ -1628,7 +1628,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           const modelError = await validateLongHorizonModel(effectiveModel, effectiveProvider);
           if (modelError) return jsonResult({ success: false, error: modelError });
         }
-        if (args.name !== undefined) ensureUniqueAgentDisplayName(args.name, args.agent_id);
+        if (
+          args.name !== undefined ||
+          (args.status === 'active' && existingAgent.status === 'archived')
+        ) {
+          ensureUniqueAgentDisplayName(args.name ?? existingAgent.displayName, args.agent_id);
+        }
         const agent = requireLongHorizonAgentRepo().update(args.agent_id, {
           description: args.description,
           modelPool: undefined,
