@@ -560,7 +560,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceWorkflowManager,
     deps.internalEventBus,
     longHorizonAgentRepo,
-    spaceWorkflowRunRepo
+    spaceWorkflowRunRepo,
+    deps.spaceAgentManager
   );
 
   void restampBuiltInWorkflowsOnStartup(

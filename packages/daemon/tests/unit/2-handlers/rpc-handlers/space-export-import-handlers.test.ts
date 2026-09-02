@@ -452,13 +452,16 @@ describe('Space Export/Import RPC Handlers', () => {
 
     it('rejects when a workflow references the space coordinator', async () => {
       const coordinator = longHorizonAgentRepo.ensureCoordinator(SPACE_ID);
-      workflowManager.createWorkflow({
+      workflowRepo.createWorkflow({
         spaceId: SPACE_ID,
         name: 'Pipe',
-        nodes: [{ name: 'S', agentId: coordinator.id }],
-        transitions: [],
+        nodes: [{ name: 'S', agents: [{ agentId: coordinator.id, name: 'coordinator' }] }],
+        startNodeId: 'S',
+        tags: [],
         completionAutonomyLevel: 3,
-      });
+        createdAt: 1,
+        updatedAt: 1,
+      } as never);
 
       await expect(call(handlers, 'spaceExport.workflows', { spaceId: SPACE_ID })).rejects.toThrow(
         'coordinator is not exportable'
@@ -531,6 +534,17 @@ describe('Space Export/Import RPC Handlers', () => {
       await expect(call(handlers, 'spaceExport.agents', { spaceId: SPACE_ID })).rejects.toThrow(
         'duplicate agent name'
       );
+    });
+
+    it('excludes orphaned migration mirrors from exports', async () => {
+      const worker = seedAgent({ spaceId: SPACE_ID, name: 'Ghost Twin', handle: 'ghost' });
+      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(worker.id);
+
+      const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
+        spaceId: SPACE_ID,
+      });
+
+      expect(bundle.agents.map((a: any) => a.name)).not.toContain('Ghost Twin');
     });
 
     it('includes worker-only agents without unified mirrors in exports', async () => {

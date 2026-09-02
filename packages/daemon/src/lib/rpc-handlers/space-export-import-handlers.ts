@@ -100,11 +100,13 @@ function unifiedExportAgents(
 ): SpaceWorkerAgent[] {
   const coordinatorByHandle = longHorizonAgentRepo.getCoordinator(spaceId);
   const unifiedRows = longHorizonAgentRepo.listBySpaceId(spaceId);
+  const workerIds = new Set(agentRepo.getBySpaceId(spaceId).map((w) => w.id));
   const unifiedViews = unifiedRows
     .filter((a) => a.id !== coordinatorLongHorizonAgentId(spaceId))
     .filter((a) => !coordinatorByHandle || a.id !== coordinatorByHandle.id)
     .filter((a) => a.status === 'active')
     .filter((a) => a.autonomyLevel == null)
+    .filter((a) => a.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY || workerIds.has(a.id))
     .map(longHorizonAgentToWorkerView);
   const unifiedIds = new Set(unifiedRows.map((a) => a.id));
   const workerOnlyRows = agentRepo

@@ -14,6 +14,7 @@ import type { SpaceWorkflowRepository } from '../../../storage/repositories/spac
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
 import { Logger } from '../../logger.ts';
+import { coordinatorLongHorizonAgentId } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import {
   validatePostApproval,
   validatePostApprovalRoutes,
@@ -41,12 +42,19 @@ export interface SpaceAgentLookup {
 
 export function createSpaceAgentLookup(
   spaceAgentRepo: Pick<SpaceAgentRepository, 'getById'>,
-  longHorizonAgentRepo: Pick<SpaceLongHorizonAgentRepository, 'getById'>
+  longHorizonAgentRepo: Pick<SpaceLongHorizonAgentRepository, 'getById' | 'getCoordinator'>
 ): SpaceAgentLookup {
   return {
     getAgentById(spaceId: string, id: string) {
       const unified = longHorizonAgentRepo.getById(id);
       if (unified && unified.spaceId === spaceId) {
+        const coordinator = longHorizonAgentRepo.getCoordinator(spaceId);
+        if (
+          unified.id === coordinatorLongHorizonAgentId(spaceId) ||
+          (coordinator && unified.id === coordinator.id)
+        ) {
+          return null;
+        }
         if (unified.templateKey === 'migration.legacy_space_agent') {
           const legacyTwin = spaceAgentRepo.getById(id);
           if (!legacyTwin || legacyTwin.spaceId !== spaceId) return null;

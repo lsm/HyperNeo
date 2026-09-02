@@ -1345,6 +1345,8 @@ describe('createSpaceAgentLookup — runtime-shaped resolution', () => {
     });
     expect(lookup.getAgentById('space-1', crossSpaceId)).toBeNull();
     expect(lookup.getAgentById('space-1', orphanedMirrorId)).toBeNull();
+    const coordinator = longHorizonAgentRepo.ensureCoordinator('space-1');
+    expect(lookup.getAgentById('space-1', coordinator.id)).toBeNull();
     expect(lookup.getAgentById('space-1', 'agent-missing')).toBeNull();
     db.close();
   });
