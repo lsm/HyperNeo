@@ -852,10 +852,17 @@ export class SpaceRuntime {
     return this.config.nodeExecutionRepo.createOrIgnore(params);
   }
 
+  private agentRecordExists(agentId: string): boolean {
+    return (
+      (this.config.longHorizonAgentRepo?.getById(agentId) ?? null) !== null ||
+      this.config.spaceAgentManager.getById(agentId) !== null
+    );
+  }
+
   private assertAgentReferenceExists(params: CreateNodeExecutionParams): void {
     const agentId = params.agentId;
     if (!agentId) return;
-    if (this.config.spaceAgentManager.getById(agentId)) return;
+    if (this.agentRecordExists(agentId)) return;
     throw new MissingWorkflowAgentError(
       formatMissingAgentReference({
         runId: params.workflowRunId,
@@ -5022,9 +5029,8 @@ export class SpaceRuntime {
         const targetNode = nodeByName.get(targetName);
         if (!targetNode || targetNode.id === sourceNode.id) continue;
 
-        const missing = findMissingNodeAgentReferences(
-          targetNode,
-          (id) => this.config.spaceAgentManager.getById(id) !== null
+        const missing = findMissingNodeAgentReferences(targetNode, (id) =>
+          this.agentRecordExists(id)
         );
         if (missing.length > 0) {
           const first = missing[0];

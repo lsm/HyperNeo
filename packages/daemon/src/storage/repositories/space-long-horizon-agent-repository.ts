@@ -37,8 +37,8 @@ export class SpaceLongHorizonAgentRepository {
         `INSERT INTO space_long_horizon_agents (
 					id, space_id, handle, display_name, template_key, status, session_id,
 					instructions, autonomy_level, model, thinking_level, provider, setting_sources,
-					tool_permissions_json, created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					tool_permissions_json, description, model_pool, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -55,6 +55,10 @@ export class SpaceLongHorizonAgentRepository {
         params.provider ?? null,
         params.settingSources === undefined ? null : JSON.stringify(params.settingSources),
         JSON.stringify(params.toolPermissions ?? DEFAULT_TOOL_PERMISSIONS),
+        params.description ?? null,
+        params.modelPool != null && params.modelPool.length > 0
+          ? JSON.stringify(params.modelPool)
+          : null,
         now,
         now
       );
@@ -170,6 +174,18 @@ export class SpaceLongHorizonAgentRepository {
     if (params.toolPermissions !== undefined) {
       fields.push('tool_permissions_json = ?');
       values.push(JSON.stringify(params.toolPermissions ?? DEFAULT_TOOL_PERMISSIONS));
+    }
+    if (params.description !== undefined) {
+      fields.push('description = ?');
+      values.push(params.description ?? null);
+    }
+    if (params.modelPool !== undefined) {
+      fields.push('model_pool = ?');
+      values.push(
+        params.modelPool != null && params.modelPool.length > 0
+          ? JSON.stringify(params.modelPool)
+          : null
+      );
     }
 
     if (fields.length === 0) return this.getById(id);
@@ -659,6 +675,10 @@ function rowToAgent(row: Record<string, unknown>): SpaceLongHorizonAgent {
       ? (JSON.parse(row.setting_sources as string) as SpaceLongHorizonAgent['settingSources'])
       : null,
     toolPermissions: parseObject(row.tool_permissions_json),
+    description: (row.description as string | null | undefined) || undefined,
+    modelPool: row.model_pool
+      ? (JSON.parse(row.model_pool as string) as SpaceLongHorizonAgent['modelPool'])
+      : undefined,
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number,
   };

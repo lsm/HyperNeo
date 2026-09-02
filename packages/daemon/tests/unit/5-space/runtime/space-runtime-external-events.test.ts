@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
 import type {
   NodeExecutionStatus,
   SpaceTask,
@@ -7,10 +6,10 @@ import type {
   SpaceWorkflow,
 } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
-import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
 import { renderEventBlock } from '../../../../src/lib/external-events/deferred-event-digest';
 import { essenceEntryFromExternalEvent } from '../../../../src/lib/external-events/event-essence-entry';
+import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
+import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store';
 import { ExternalEventQueueMetrics } from '../../../../src/lib/external-events/queue-health-metrics';
 import type {
   ExternalEvent,
@@ -21,10 +20,12 @@ import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
+import type { WorkflowArtifactProfile } from '../../../../src/lib/space/runtime/artifact-profile';
 import {
   parsePositiveIntegerEnv,
   SpaceRuntime,
 } from '../../../../src/lib/space/runtime/space-runtime';
+import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
@@ -33,8 +34,8 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository';
-import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile';
-import type { WorkflowArtifactProfile } from '../../../../src/lib/space/runtime/artifact-profile';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 setDefaultTimeout(10_000);
@@ -77,6 +78,7 @@ function makeDb(): Database {
     `INSERT INTO space_agents (id, space_id, name, description, tools, system_prompt, created_at, updated_at)
 		 VALUES (?, ?, ?, '', '[]', '', ?, ?)`
   ).run(AGENT_ID, SPACE_ID, 'Coder', now, now);
+  seedUnifiedAgentMirror(db, { id: AGENT_ID, spaceId: SPACE_ID, name: 'Coder' });
   return db;
 }
 

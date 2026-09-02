@@ -1,8 +1,8 @@
-import type { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 import { createEvolutionTables } from '../../../src/storage/schema/evolution';
 import { createLongHorizonAgentTables } from '../../../src/storage/schema/long-horizon-agents';
-import { createWorkflowEventSubscriptionTables } from '../../../src/storage/schema/workflow-event-subscriptions';
 import { createSessionCounters } from '../../../src/storage/schema/session-counters';
+import { createWorkflowEventSubscriptionTables } from '../../../src/storage/schema/workflow-event-subscriptions';
+import type { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 
 export function createSpaceTables(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = ON');
@@ -244,7 +244,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			updated_at INTEGER NOT NULL,
 			last_activity_at INTEGER,
 			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE,
-			FOREIGN KEY (agent_id) REFERENCES space_agents(id) ON DELETE SET NULL
+			FOREIGN KEY (agent_id) REFERENCES space_long_horizon_agents(id) ON DELETE SET NULL
 		)
 	`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_node_executions_run ON node_executions(workflow_run_id)`);

@@ -1,6 +1,9 @@
 import type {
   SettingSource,
+  SpaceLongHorizonAgent,
   SpaceLongHorizonAgentStatus,
+  SpaceWorkerAgent,
+  SpaceWorkerAgentStatus,
   ThinkingLevel,
   WorkerAgentModelPoolEntry,
 } from '@hyperneo/shared';
@@ -84,6 +87,37 @@ export function workerAgentToLongHorizonParams(
 
 function mapWorkerStatus(status: string | null | undefined): SpaceLongHorizonAgentStatus {
   if (status === 'paused') return 'paused';
+  if (status === 'archived') return 'archived';
+  return 'active';
+}
+
+export function longHorizonAgentToWorkerView(agent: SpaceLongHorizonAgent): SpaceWorkerAgent {
+  const tools = Array.isArray(agent.toolPermissions.tools)
+    ? agent.toolPermissions.tools.filter((tool): tool is string => typeof tool === 'string')
+    : undefined;
+  return {
+    id: agent.id,
+    spaceId: agent.spaceId,
+    name: agent.displayName,
+    handle: agent.handle,
+    status: mapLongHorizonStatus(agent.status),
+    description: agent.description,
+    model: agent.model ?? undefined,
+    thinkingLevel: agent.thinkingLevel ?? undefined,
+    provider: agent.provider ?? undefined,
+    customPrompt: agent.instructions,
+    tools,
+    settingSources: agent.settingSources ?? undefined,
+    templateName: agent.templateKey,
+    templateHash: null,
+    modelPool: agent.modelPool,
+    createdAt: agent.createdAt,
+    updatedAt: agent.updatedAt,
+  };
+}
+
+function mapLongHorizonStatus(status: SpaceLongHorizonAgentStatus): SpaceWorkerAgentStatus {
+  if (status === 'paused' || status === 'disabled') return 'paused';
   if (status === 'archived') return 'archived';
   return 'active';
 }

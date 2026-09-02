@@ -7,6 +7,9 @@ import type {
   UpdateSpaceWorkerAgentParams,
 } from '@hyperneo/shared';
 import type { SQLiteValue } from '../types.ts';
+import { workerAgentToLongHorizonParams } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
+
+const MIRROR_TEMPLATE_KEY = 'migration.legacy_space_agent';
 
 export class SpaceAgentRepository {
   constructor(private db: BunDatabase) {}
@@ -45,7 +48,9 @@ export class SpaceAgentRepository {
         now
       );
 
-    return this.getById(id)!;
+    const agent = this.getById(id)!;
+    this.mirrorCreate(agent);
+    return agent;
   }
 
   getById(id: string): SpaceWorkerAgent | null {
@@ -175,6 +180,7 @@ export class SpaceAgentRepository {
     values.push(id);
 
     this.db.prepare(`UPDATE space_agents SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    this.mirrorUpdate(id, params);
 
     return this.getById(id);
   }
@@ -184,6 +190,7 @@ export class SpaceAgentRepository {
       const row = this.db.prepare(`SELECT space_id FROM space_agents WHERE id = ?`).get(id) as {
         space_id: string;
       } | null;
+      this.deleteUnifiedMirror(id, row?.space_id);
       const hasInbox = !!this.db
         .prepare(
           `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_inbox_messages'`
@@ -228,8 +235,165 @@ export class SpaceAgentRepository {
   private generateUniqueHandle(spaceId: string, name: string): string {
     return slugifyWithinLimit(name, [
       ...this.getHandlesForSpace(spaceId),
+      ...this.getUnifiedHandlesForSpace(spaceId),
       ...RESERVED_SPACE_AGENT_HANDLES,
     ]);
+  }
+
+  private mirrorCreate(agent: SpaceWorkerAgent): void {
+    if (!this.unifiedTableExists()) return;
+    const params = workerAgentToLongHorizonParams(agent, {
+      occupiedHandles: this.getUnifiedHandlesExcluding(agent.spaceId, agent.id),
+      now: Date.now(),
+    });
+    this.db
+      .prepare(
+        `INSERT INTO space_long_horizon_agents (
+					id, space_id, handle, display_name, template_key, status, session_id,
+					instructions, autonomy_level, model, thinking_level, provider, setting_sources,
+					tool_permissions_json, description, model_pool, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        params.id,
+        params.spaceId,
+        params.handle,
+        params.displayName,
+        params.templateKey,
+        params.status,
+        params.sessionId,
+        params.instructions,
+        params.autonomyLevel,
+        params.model,
+        params.thinkingLevel,
+        params.provider,
+        params.settingSources === null || params.settingSources === undefined
+          ? null
+          : JSON.stringify(params.settingSources),
+        JSON.stringify(params.toolPermissions),
+        params.description ?? null,
+        params.modelPool != null && params.modelPool.length > 0
+          ? JSON.stringify(params.modelPool)
+          : null,
+        params.createdAt,
+        params.updatedAt
+      );
+  }
+
+  private mirrorUpdate(id: string, params: UpdateSpaceWorkerAgentParams): void {
+    if (!this.unifiedTableExists()) return;
+    const fields: string[] = [];
+    const values: SQLiteValue[] = [];
+
+    if (params.name !== undefined) {
+      fields.push('display_name = ?');
+      values.push(params.name);
+    }
+    if (params.handle !== undefined && params.handle !== null) {
+      const worker = this.getById(id);
+      if (worker) {
+        fields.push('handle = ?');
+        values.push(
+          workerAgentToLongHorizonParams(
+            { ...worker, handle: params.handle },
+            {
+              occupiedHandles: this.getUnifiedHandlesExcluding(worker.spaceId, id),
+              now: Date.now(),
+            }
+          ).handle
+        );
+      }
+    }
+    if (params.status !== undefined) {
+      fields.push('status = ?');
+      values.push(params.status);
+    }
+    if (params.description !== undefined) {
+      fields.push('description = ?');
+      values.push(params.description ?? null);
+    }
+    if (params.model !== undefined) {
+      fields.push('model = ?');
+      values.push(params.model ?? null);
+    }
+    if (params.thinkingLevel !== undefined) {
+      fields.push('thinking_level = ?');
+      values.push(params.thinkingLevel ?? null);
+    }
+    if (params.provider !== undefined) {
+      fields.push('provider = ?');
+      values.push(params.provider ?? null);
+    }
+    if (params.customPrompt !== undefined) {
+      fields.push('instructions = ?');
+      values.push(params.customPrompt ?? '');
+    }
+    if (params.tools !== undefined) {
+      fields.push('tool_permissions_json = ?');
+      values.push(
+        params.tools != null && params.tools.length > 0
+          ? JSON.stringify({ tools: params.tools })
+          : '{}'
+      );
+    }
+    if (params.settingSources !== undefined) {
+      fields.push('setting_sources = ?');
+      values.push(params.settingSources != null ? JSON.stringify(params.settingSources) : null);
+    }
+    if (params.modelPool !== undefined) {
+      fields.push('model_pool = ?');
+      values.push(
+        params.modelPool != null && params.modelPool.length > 0
+          ? JSON.stringify(params.modelPool)
+          : null
+      );
+    }
+
+    if (fields.length === 0) return;
+
+    fields.push('updated_at = ?');
+    values.push(Date.now(), id);
+    this.db
+      .prepare(`UPDATE space_long_horizon_agents SET ${fields.join(', ')} WHERE id = ?`)
+      .run(...values);
+  }
+
+  private deleteUnifiedMirror(id: string, spaceId: string | undefined): void {
+    if (spaceId === undefined || !this.unifiedTableExists()) return;
+    this.db
+      .prepare(
+        `DELETE FROM space_long_horizon_agents
+			 WHERE id = ? AND space_id = ? AND template_key = '${MIRROR_TEMPLATE_KEY}'`
+      )
+      .run(id, spaceId);
+  }
+
+  private unifiedTableExists(): boolean {
+    return !!this.db
+      .prepare(
+        `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_long_horizon_agents'`
+      )
+      .get();
+  }
+
+  private getUnifiedHandlesForSpace(spaceId: string): string[] {
+    if (!this.unifiedTableExists()) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT handle FROM space_long_horizon_agents WHERE space_id = ? AND handle IS NOT NULL`
+      )
+      .all(spaceId) as Array<{ handle: string }>;
+    return rows.map((row) => row.handle);
+  }
+
+  private getUnifiedHandlesExcluding(spaceId: string, id: string): Set<string> {
+    if (!this.unifiedTableExists()) return new Set();
+    const rows = this.db
+      .prepare(
+        `SELECT handle FROM space_long_horizon_agents WHERE space_id = ? AND handle IS NOT NULL AND id != ? AND status != 'archived'`
+      )
+      .all(spaceId, id) as Array<{ handle: string }>;
+    return new Set(rows.map((row) => row.handle));
   }
 
   private rowToAgent(row: Record<string, unknown>): SpaceWorkerAgent {

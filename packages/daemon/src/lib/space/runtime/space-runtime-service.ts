@@ -1,5 +1,4 @@
 import type {
-  AgentDefinition,
   McpServerConfig,
   Session,
   Space,
@@ -10,7 +9,7 @@ import type {
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
-import { generateUUID, isRateOrUsageLimited, isScopedBashToolEntry } from '@hyperneo/shared';
+import { generateUUID, isRateOrUsageLimited } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
@@ -52,24 +51,22 @@ import {
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
-import { findInModels, getAvailableModels } from '../../model-service.ts';
-import { inferPersistableProviderForModel } from '../../providers/registry.ts';
 import type { SessionManager } from '../../session-manager.ts';
+import { buildAgentSessionConfig } from '../../session-resolution/agent-session-config.ts';
+import {
+  type ResolveAgentRecordDeps,
+  resolveAgentRecord,
+} from '../../session-resolution/resolve-agent-record.ts';
 import { isSpaceActionsDispatcherEnabled } from '../actions/dispatcher-flag.ts';
 import {
   createSpaceActionsMcpServer,
   type SpaceActionsMcpServer,
   type SpaceActionsServerConfig,
 } from '../actions/space-actions-server.ts';
-import { canonicalAgentHandle, SpaceActorRegistryAdapter } from '../actor-registry.ts';
+import { SpaceActorRegistryAdapter } from '../actor-registry.ts';
 import { resolveCustomAgentPrompt } from '../agents/custom-agent.ts';
-import {
-  LONG_HORIZON_AGENT_BUILTIN_TOOLS,
-  LONG_HORIZON_OWNER_REVIEW_CONTRACT,
-  LONG_HORIZON_SCHEDULING_GUARDRAIL,
-} from '../agents/long-horizon-agent-tools.ts';
+import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../agents/long-horizon-agent-tools.ts';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent.ts';
-import { deriveWorkerDisallowedTools } from '../agents/tool-policy.ts';
 import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session.ts';
 import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
@@ -102,16 +99,6 @@ import type { TaskAgentManager } from './task-agent-manager.ts';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine.ts';
 
 const log = new Logger('space-runtime-service');
-
-const LONG_TERM_AGENT_SESSION_FEATURES = {
-  rewind: false,
-  worktree: false,
-  coordinator: false,
-  archive: false,
-  sessionInfo: false,
-} as const;
-
-const DEFAULT_LONG_HORIZON_AGENT_MODEL = 'claude-sonnet-4-6';
 
 type LongTermAgentDirectDelivery =
   | { state: 'delivered'; sessionId: string }
@@ -802,63 +789,6 @@ export class SpaceRuntimeService {
       .catch(() => {});
   }
 
-  private async buildLongHorizonAgentSessionConfig(
-    space: Space,
-    agent: SpaceLongHorizonAgent,
-    currentProvider?: string,
-    currentModel?: string
-  ): Promise<Partial<Session['config']>> {
-    const customTools = Array.isArray(agent.toolPermissions.tools)
-      ? (agent.toolPermissions.tools.filter((tool) => typeof tool === 'string') as string[])
-      : undefined;
-    const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
-    const scopedBashToolEntries = customTools?.filter((tool) => isScopedBashToolEntry(tool));
-    const agentKey = sanitizeLongTermAgentKey(agent.displayName);
-
-    const model =
-      agent.model ??
-      space.defaultModel ??
-      (agent.provider ? undefined : DEFAULT_LONG_HORIZON_AGENT_MODEL);
-    const provider = (agent.provider ??
-      (model
-        ? await resolveAgentConfigProvider(model, currentProvider, currentModel)
-        : undefined)) as Session['config']['provider'];
-    const instructions = agent.instructions?.trim();
-    const systemPromptAppend = instructions
-      ? `${instructions}\n\n${LONG_HORIZON_OWNER_REVIEW_CONTRACT}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`
-      : `${LONG_HORIZON_OWNER_REVIEW_CONTRACT}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`;
-    return {
-      model,
-      provider,
-      thinkingLevel: agent.thinkingLevel ?? undefined,
-      systemPrompt: {
-        type: 'preset',
-        preset: 'claude_code',
-        append: systemPromptAppend,
-      },
-      sdkToolsPreset: [...LONG_HORIZON_AGENT_BUILTIN_TOOLS],
-      features: LONG_TERM_AGENT_SESSION_FEATURES,
-      allowedTools:
-        scopedBashToolEntries && scopedBashToolEntries.length > 0
-          ? scopedBashToolEntries
-          : undefined,
-      disallowedTools: customDisallowedBuiltins.length > 0 ? customDisallowedBuiltins : undefined,
-      agent: customDisallowedBuiltins.length > 0 ? agentKey : undefined,
-      agents:
-        customDisallowedBuiltins.length > 0
-          ? {
-              [agentKey]: {
-                description: `Long-horizon Space agent: ${agent.displayName}`,
-                disallowedTools: customDisallowedBuiltins,
-                model: 'inherit',
-                prompt: agent.instructions,
-              } satisfies AgentDefinition,
-            }
-          : undefined,
-      settingSources: agent.settingSources ?? space.settingSources,
-    };
-  }
-
   private async refreshLongHorizonAgentSessionConfig(
     session: AgentSession,
     config: Partial<Session['config']>
@@ -938,11 +868,10 @@ export class SpaceRuntimeService {
     const sessionId = longTermAgentSessionId(spaceId, agentId);
     let session = await sessionManager.getSessionAsync(sessionId);
     const currentConfig = session?.getSessionData().config;
-    const config = await this.buildLongHorizonAgentSessionConfig(
+    const config = await buildAgentSessionConfig(
+      { kind: 'long_horizon', agent },
       space,
-      agent,
-      currentConfig?.provider,
-      currentConfig?.model
+      currentConfig
     );
     if (!session) {
       try {
@@ -993,20 +922,13 @@ export class SpaceRuntimeService {
     if (!sessionManager) return null;
     const agentId = agentIdFromActorId(actor.actorId);
     if (!agentId) return null;
-    const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(agentId);
-    if (longHorizonAgent?.spaceId === actor.spaceId) {
-      const coordinator = this.config.longHorizonAgentRepo?.getCoordinator(actor.spaceId);
-      if (
-        longHorizonAgent.id === coordinatorLongHorizonAgentId(actor.spaceId) ||
-        coordinator?.id === longHorizonAgent.id
-      ) {
-        if (longHorizonAgent.status !== 'active') return null;
-        return this.resolveCoordinatorSession(actor.spaceId);
-      }
+    const resolution = resolveAgentRecord(actor.spaceId, agentId, this.agentRecordDeps());
+    if (resolution.kind === 'missing') return null;
+    if (resolution.kind === 'coordinator') return this.resolveCoordinatorSession(actor.spaceId);
+    if (resolution.kind === 'long_horizon') {
       return this.ensureLongHorizonAgentSession(actor.spaceId, agentId);
     }
-    const agent = this.config.spaceAgentManager.getById(agentId);
-    if (!agent || agent.spaceId !== actor.spaceId) return null;
+    const agent = resolution.agent;
     const space = await this.config.spaceManager.getSpace(actor.spaceId);
     if (!space) return null;
     const sessionId = longTermAgentSessionId(actor.spaceId, agentId);
@@ -1015,42 +937,12 @@ export class SpaceRuntimeService {
     const resolvedPrompt = resolveCustomAgentPrompt(agent, {
       resolutionContext: { agentId: agent.id, agentName: agent.name },
     });
-    const customTools = agent.tools;
-    const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
-    const agentKey = sanitizeLongTermAgentKey(agent.name);
-    const model = agent.model ?? space.defaultModel;
     const currentConfig = session?.getSessionData().config;
-    const provider = (agent.provider ??
-      (model
-        ? await resolveAgentConfigProvider(model, currentConfig?.provider, currentConfig?.model)
-        : undefined)) as Session['config']['provider'];
-    const regularAgentConfig: Partial<Session['config']> = {
-      model,
-      provider,
-      thinkingLevel: agent.thinkingLevel,
-      systemPrompt: {
-        type: 'preset',
-        preset: 'claude_code',
-        append: resolvedPrompt.value,
-      },
-      features: LONG_TERM_AGENT_SESSION_FEATURES,
-      sdkToolsPreset: undefined,
-      allowedTools: undefined,
-      disallowedTools: customDisallowedBuiltins.length > 0 ? customDisallowedBuiltins : undefined,
-      agent: customDisallowedBuiltins.length > 0 ? agentKey : undefined,
-      agents:
-        customDisallowedBuiltins.length > 0
-          ? {
-              [agentKey]: {
-                description: agent.description ?? `Space agent: ${agent.name}`,
-                disallowedTools: customDisallowedBuiltins,
-                model: 'inherit',
-                prompt: resolvedPrompt.value,
-              } satisfies AgentDefinition,
-            }
-          : undefined,
-      settingSources: agent.settingSources ?? space.settingSources,
-    };
+    const regularAgentConfig = await buildAgentSessionConfig(
+      { kind: 'worker', agent },
+      space,
+      currentConfig
+    );
     if (!session) {
       try {
         await sessionManager.createSession({
@@ -1087,6 +979,50 @@ export class SpaceRuntimeService {
       this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId, agent, agentId);
     }
     return session;
+  }
+
+  private agentRecordDeps(): ResolveAgentRecordDeps {
+    const repo = this.config.longHorizonAgentRepo;
+    return {
+      getLongHorizonAgent: (agentId) => repo?.getById(agentId) ?? null,
+      getCoordinator: (spaceId) => repo?.getCoordinator(spaceId) ?? null,
+      getCoordinatorRecord: (spaceId) =>
+        repo?.getById(coordinatorLongHorizonAgentId(spaceId)) ??
+        repo?.getCoordinator(spaceId) ??
+        null,
+      getWorkerAgent: (agentId) => this.config.spaceAgentManager.getById(agentId),
+    };
+  }
+
+  private agentRecordExists(agentId: string): boolean {
+    return (
+      (this.config.longHorizonAgentRepo?.getById(agentId) ?? null) !== null ||
+      this.config.spaceAgentManager.getById(agentId) !== null
+    );
+  }
+
+  private listPromptRestampAgents(
+    spaceId: string,
+    spaceAgentManager: SpaceAgentManager
+  ): Array<{ id: string; name: string; description?: string }> {
+    const unified = this.config.longHorizonAgentRepo?.listBySpaceId(spaceId);
+    if (unified) {
+      return unified
+        .filter(
+          (agent) =>
+            agent.id !== coordinatorLongHorizonAgentId(spaceId) && agent.handle !== 'coordinator'
+        )
+        .map((agent) => ({
+          id: agent.id,
+          name: agent.displayName,
+          description: agent.description,
+        }));
+    }
+    return spaceAgentManager.listBySpaceId(spaceId).map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      description: agent.description,
+    }));
   }
 
   private async attachLongTermAgentMcpServersForSession(
@@ -1128,7 +1064,7 @@ export class SpaceRuntimeService {
       space,
       agentName,
       session.id,
-      persistedAgent,
+      longHorizonAgent ?? persistedAgent,
       agentId,
       agentHandleAliases
     );
@@ -1152,7 +1088,7 @@ export class SpaceRuntimeService {
     space: Space,
     agentName: string,
     sessionId: string,
-    agent: SpaceWorkerAgent | null,
+    agent: SpaceLongHorizonAgent | SpaceWorkerAgent | null,
     agentId: string | null,
     agentHandleAliases?: string[]
   ): void {
@@ -1237,13 +1173,11 @@ export class SpaceRuntimeService {
     space: Space,
     agentName: string,
     sessionId: string,
-    agent: SpaceWorkerAgent | null,
+    agent: SpaceLongHorizonAgent | SpaceWorkerAgent | null,
     agentId: string | null,
     agentHandleAliases?: string[]
   ): SpaceAgentToolsConfig {
-    const agents = this.config.spaceAgentManager.listBySpaceId(space.id);
-    const agentHandle = agent ? canonicalAgentHandle(agents, agent) : undefined;
-    const aliases = agentHandleAliases ?? (agentHandle ? [agentHandle] : undefined);
+    const aliases = agentHandleAliases ?? (agent ? [`@${agent.handle}`] : undefined);
     return {
       spaceId: space.id,
       db: this.config.db,
@@ -1453,9 +1387,8 @@ export class SpaceRuntimeService {
     try {
       inboxRepo.expireStale(spaceId);
       for (const row of inboxRepo.listPendingForSpace(spaceId)) {
-        const workerAgent = this.config.spaceAgentManager.getById(row.targetAgentId);
-        const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(row.targetAgentId);
-        if (workerAgent?.spaceId !== spaceId && longHorizonAgent?.spaceId !== spaceId) continue;
+        const resolution = resolveAgentRecord(spaceId, row.targetAgentId, this.agentRecordDeps());
+        if (resolution.kind === 'missing') continue;
         void this.activateLongTermAgentAndFlush(
           {
             actorId: `agent:${encodeActorIdComponent(row.targetAgentId)}`,
@@ -2040,7 +1973,7 @@ export class SpaceRuntimeService {
     }
 
     const coordinator = this.config.longHorizonAgentRepo?.ensureCoordinator(space.id) ?? null;
-    const agents = spaceAgentManager.listBySpaceId(space.id);
+    const agents = this.listPromptRestampAgents(space.id, spaceAgentManager);
     const workflows = spaceWorkflowManager.listWorkflows(space.id);
 
     const spaceManagerForApproval = this.config.spaceManager;
@@ -2295,7 +2228,7 @@ export class SpaceRuntimeService {
       taskRepo: this.config.taskRepo,
       workflowRunRepo: this.config.workflowRunRepo,
       workflowManager: this.config.spaceWorkflowManager,
-      agentManager: this.config.spaceAgentManager,
+      agentExists: (id) => this.agentRecordExists(id),
       nodeExecutionRepo: this.nodeExecutionRepo,
       channelCycleRepo: this.config.channelCycleRepo,
       isSessionAlive: taskAgentManager ? (sid) => taskAgentManager.isSessionAlive(sid) : undefined,
@@ -2387,27 +2320,6 @@ function agentIdFromActorId(actorId: string): string | null {
   }
 }
 
-async function resolveAgentConfigProvider(
-  model: string,
-  preferredProvider?: string,
-  currentModel?: string
-): Promise<Session['config']['provider']> {
-  const models = getAvailableModels('global');
-  if (preferredProvider) {
-    if (currentModel && model === currentModel) {
-      return preferredProvider as Session['config']['provider'];
-    }
-    const stillOffered = findInModels(
-      models.filter((m) => m.provider === preferredProvider),
-      model
-    );
-    if (stillOffered) return preferredProvider as Session['config']['provider'];
-  }
-  const cached = findInModels(models, model);
-  if (cached?.provider) return cached.provider as Session['config']['provider'];
-  return (await inferPersistableProviderForModel(model)) as Session['config']['provider'];
-}
-
 function sourceSessionIdFromActorId(actorId: string): string | null {
   if (!actorId.startsWith('session:')) return null;
   return actorId.slice('session:'.length) || null;
@@ -2415,14 +2327,4 @@ function sourceSessionIdFromActorId(actorId: string): string | null {
 
 function generateRuntimeMessageId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-}
-
-function sanitizeLongTermAgentKey(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 40) || 'space-agent'
-  );
 }

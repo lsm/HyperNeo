@@ -493,6 +493,7 @@ export interface ResolveAgentInitConfig {
   task: SpaceTask;
   space: Space;
   agentManager: SpaceAgentManager;
+  agent?: SpaceWorkerAgent;
   sessionId: string;
   workspacePath: string;
   workflowRun?: SpaceWorkflowRun | null;
@@ -507,6 +508,7 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
     task,
     space,
     agentManager,
+    agent: resolvedAgent,
     sessionId,
     workspacePath,
     workflowRun,
@@ -516,7 +518,7 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
     agentId,
   } = config;
 
-  const agent = agentManager.getById(agentId);
+  const agent = resolvedAgent ?? agentManager.getById(agentId);
   if (!agent) {
     throw new Error(`Agent not found: ${agentId} (task: ${task.id})`);
   }

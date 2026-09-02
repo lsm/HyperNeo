@@ -1,26 +1,27 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { Space, SpaceTask, SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
+import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
+import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
+import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
+import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
+import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository.ts';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
-import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
-import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
-import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
-import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository.ts';
-import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
-import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import type { SpaceWorkflow, SpaceTask, SpaceWorkflowRun, Space } from '@hyperneo/shared';
-import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 
 type BusEventKind =
   | 'task_blocked'
@@ -113,6 +114,7 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
     `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
      VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
   ).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
+  seedUnifiedAgentMirror(db, { id: agentId, spaceId, name: `Agent ${agentId}` });
 }
 
 function buildLinearWorkflow(

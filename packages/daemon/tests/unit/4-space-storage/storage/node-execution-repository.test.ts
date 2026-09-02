@@ -1,8 +1,9 @@
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
-import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('NodeExecutionRepository', () => {
@@ -47,6 +48,14 @@ describe('NodeExecutionRepository', () => {
         `INSERT INTO space_agents (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
       )
       .run(agentId, spaceId, 'Coder', now, now);
+    (db as any)
+      .prepare(
+        `INSERT INTO space_long_horizon_agents (
+         id, space_id, handle, display_name, template_key, status, instructions,
+         tool_permissions_json, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, 'migration.legacy_space_agent', 'active', '', '{}', ?, ?)`
+      )
+      .run(agentId, spaceId, agentId, 'Coder', now, now);
   });
 
   afterEach(() => {

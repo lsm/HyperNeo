@@ -1,23 +1,24 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
-import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
-import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { SpaceWorkerAgent, WorkflowNode } from '@hyperneo/shared';
+import { resolveNodeAgents } from '@hyperneo/shared';
 import { NodeExecutionManager } from '../../../../src/lib/space/managers/node-execution-manager.ts';
-import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
+import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import type { SpaceAgentLookup } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
   SpaceWorkflowManager,
   WorkflowValidationError,
 } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import type { SpaceAgentLookup } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { resolveNodeAgents } from '@hyperneo/shared';
-import type { SpaceWorkerAgent, WorkflowNode } from '@hyperneo/shared';
+import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -39,6 +40,7 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: stri
     `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
      VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
   ).run(agentId, spaceId, name, Date.now(), Date.now());
+  seedUnifiedAgentMirror(db, { id: agentId, spaceId, name });
 }
 
 function makeSpaceAgent(id: string, name: string): SpaceWorkerAgent {

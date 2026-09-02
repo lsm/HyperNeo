@@ -62,6 +62,7 @@ import { SpaceWorkflowRunRepository as SpaceWorkflowRunRepo } from '../../../../
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createTestInternalEventBus } from '../../../helpers/database.ts';
+import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 
 const NOW = Date.now();
 
@@ -3685,6 +3686,7 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
         `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
 				 VALUES (?, ?, 'A', '', null, '[]', '', ?, ?)`
       ).run(AGENT_ID, SPACE_ID, Date.now(), Date.now());
+      seedUnifiedAgentMirror(db, { id: AGENT_ID, spaceId: SPACE_ID, name: 'A' });
 
       const taskRepo = new SpaceTaskRepo(db);
       const workflowRunRepo = new SpaceWorkflowRunRepo(db);

@@ -62,6 +62,8 @@ export interface SpaceLongHorizonAgent {
   provider: string | null;
   settingSources: SettingSource[] | null;
   toolPermissions: Record<string, unknown>;
+  description?: string;
+  modelPool?: WorkerAgentModelPoolEntry[];
   createdAt: number;
   updatedAt: number;
 }
@@ -81,6 +83,8 @@ export interface CreateSpaceLongHorizonAgentParams {
   provider?: string | null;
   settingSources?: SettingSource[] | null;
   toolPermissions?: Record<string, unknown>;
+  description?: string;
+  modelPool?: WorkerAgentModelPoolEntry[];
 }
 
 export interface UpdateSpaceLongHorizonAgentParams {
@@ -96,6 +100,8 @@ export interface UpdateSpaceLongHorizonAgentParams {
   provider?: string | null;
   settingSources?: SettingSource[] | null;
   toolPermissions?: Record<string, unknown> | null;
+  description?: string | null;
+  modelPool?: WorkerAgentModelPoolEntry[] | null;
 }
 
 export interface SpaceLongHorizonAgentGoal {

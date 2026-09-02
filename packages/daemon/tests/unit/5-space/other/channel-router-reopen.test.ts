@@ -1,25 +1,25 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
-import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
-import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
-import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository.ts';
-import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import {
-  ChannelRouter,
-  ActivationError,
-  ARCHIVED_TASK_ERROR_MESSAGE,
-} from '../../../../src/lib/space/runtime/channel-router.ts';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
-import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type {
   DaemonInternalEventMap,
   SpaceWorkflowRunReopenedEvent,
 } from '../../../../src/lib/internal-event-bus.ts';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
+import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import {
+  ActivationError,
+  ARCHIVED_TASK_ERROR_MESSAGE,
+  ChannelRouter,
+} from '../../../../src/lib/space/runtime/channel-router.ts';
+import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository.ts';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -139,7 +139,7 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
       taskRepo,
       workflowRunRepo,
       workflowManager,
-      agentManager,
+      agentExists: (id) => agentManager.getById(id) !== null,
       channelCycleRepo,
       db,
       nodeExecutionRepo: new NodeExecutionRepository(db),
@@ -289,7 +289,7 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
         taskRepo,
         workflowRunRepo,
         workflowManager,
-        agentManager,
+        agentExists: (id) => agentManager.getById(id) !== null,
         channelCycleRepo,
         db,
         nodeExecutionRepo: new NodeExecutionRepository(db),

@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import type { SettingSource, ThinkingLevel } from '@hyperneo/shared';
-import {
-  workerAgentToLongHorizonParams,
-  type WorkerAgentRowSource,
-} from '../../../../src/lib/space/agents/worker-long-horizon-mapper.ts';
+import type { SettingSource, SpaceLongHorizonAgent, ThinkingLevel } from '@hyperneo/shared';
 import { migrateLegacyLongHorizonAgentData } from '../../../../src/lib/space/agents/legacy-long-horizon-migration.ts';
+import {
+  longHorizonAgentToWorkerView,
+  type WorkerAgentRowSource,
+  workerAgentToLongHorizonParams,
+} from '../../../../src/lib/space/agents/worker-long-horizon-mapper.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { createLongHorizonAgentTables } from '../../../../src/storage/schema/long-horizon-agents.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat.ts';
@@ -431,5 +432,75 @@ describe('workerAgentToLongHorizonParams — typed extensions beyond m155', () =
 
     expect(params.handle).toBe('Named');
     expect(params.displayName).toBe('Named');
+  });
+});
+
+describe('longHorizonAgentToWorkerView — unified row to worker view (U3a)', () => {
+  function longHorizonAgent(overrides: Partial<SpaceLongHorizonAgent> = {}): SpaceLongHorizonAgent {
+    return {
+      id: 'lh-1',
+      spaceId: 'space-a',
+      handle: 'researcher',
+      displayName: 'Researcher',
+      templateKey: 'migration.legacy_space_agent',
+      status: 'active',
+      sessionId: null,
+      instructions: 'Investigate thoroughly',
+      autonomyLevel: null,
+      model: 'kimi-for-coding',
+      thinkingLevel: null,
+      provider: 'kimi',
+      settingSources: null,
+      toolPermissions: { tools: ['Bash', 'Read'] },
+      description: 'Does research',
+      modelPool: [{ model: 'kimi-for-coding', maxConcurrent: 2, weight: 1 }],
+      createdAt: 10,
+      updatedAt: 20,
+      ...overrides,
+    };
+  }
+
+  test('maps unified fields onto the SpaceWorkerAgent shape', () => {
+    const view = longHorizonAgentToWorkerView(longHorizonAgent());
+
+    expect(view.id).toBe('lh-1');
+    expect(view.spaceId).toBe('space-a');
+    expect(view.name).toBe('Researcher');
+    expect(view.handle).toBe('researcher');
+    expect(view.status).toBe('active');
+    expect(view.description).toBe('Does research');
+    expect(view.model).toBe('kimi-for-coding');
+    expect(view.provider).toBe('kimi');
+    expect(view.customPrompt).toBe('Investigate thoroughly');
+    expect(view.tools).toEqual(['Bash', 'Read']);
+    expect(view.templateName).toBe('migration.legacy_space_agent');
+    expect(view.templateHash).toBeNull();
+    expect(view.modelPool).toEqual([{ model: 'kimi-for-coding', maxConcurrent: 2, weight: 1 }]);
+    expect(view.createdAt).toBe(10);
+    expect(view.updatedAt).toBe(20);
+  });
+
+  test('empty tool permissions read as the inherit-all undefined tools profile', () => {
+    const view = longHorizonAgentToWorkerView(longHorizonAgent({ toolPermissions: {} }));
+    expect(view.tools).toBeUndefined();
+  });
+
+  test('non-string tool entries are filtered out of the view', () => {
+    const view = longHorizonAgentToWorkerView(
+      longHorizonAgent({ toolPermissions: { tools: ['Bash', 7, null] } })
+    );
+    expect(view.tools).toEqual(['Bash']);
+  });
+
+  test('non-worker statuses collapse onto the worker status set', () => {
+    expect(longHorizonAgentToWorkerView(longHorizonAgent({ status: 'paused' })).status).toBe(
+      'paused'
+    );
+    expect(longHorizonAgentToWorkerView(longHorizonAgent({ status: 'disabled' })).status).toBe(
+      'paused'
+    );
+    expect(longHorizonAgentToWorkerView(longHorizonAgent({ status: 'archived' })).status).toBe(
+      'archived'
+    );
   });
 });
