@@ -99,6 +99,12 @@ function unchanged(changedKeys: string[] | undefined): boolean {
   return (changedKeys?.length ?? 0) === 0;
 }
 
+function loadStoredConfig(
+  readStoredConfig: () => Partial<DaemonBehaviorConfig>
+): Partial<DaemonBehaviorConfig> {
+  return readStoredConfig();
+}
+
 function completeDaemonConfigUpdate(
   config: DaemonBehaviorConfig,
   changedKeys: string[]
@@ -108,7 +114,7 @@ function completeDaemonConfigUpdate(
 
 const runUpdateDaemonConfig = (superpipe({ unchanged })('update-daemon-config') as PipelineAPI)
   .input(['patch', 'readStoredConfig', 'writeStoredConfig', 'publishConfigUpdated'])
-  .pipe('readStoredConfig', [], 'stored')
+  .pipe(loadStoredConfig, 'readStoredConfig', 'stored')
   .pipe(resolveDaemonConfig, 'stored', 'before')
   .pipe(applyValidatedPatch, ['stored', 'patch'], 'merged')
   .pipe(resolveDaemonConfig, 'merged', 'after')
