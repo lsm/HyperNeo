@@ -79,6 +79,7 @@ function makeDeps(
       log.ensureLongTermAgent.push([spaceId, agentId]);
       return handlers.ensureLongTermAgent ? handlers.ensureLongTermAgent(spaceId, agentId) : null;
     },
+    isAgentTargetLifecycleEligible: async () => true,
     listWorkerExecutions: () => {
       log.listWorkerExecutions += 1;
       return handlers.listWorkerExecutions ? handlers.listWorkerExecutions() : [];

@@ -40,6 +40,7 @@ const buildDeps = (overrides: Partial<SessionResolutionDeps> = {}): SessionResol
   rehydrateSubSession: async () => null,
   getCoordinator: async () => null,
   ensureLongTermAgent: async () => null,
+  isAgentTargetLifecycleEligible: async () => true,
   listWorkerExecutions: () => [],
   readWorkerTaskPhase: () => 'run_active',
   getTaskSpaceId: async () => null,
