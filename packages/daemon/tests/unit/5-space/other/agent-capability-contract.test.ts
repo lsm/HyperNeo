@@ -391,4 +391,22 @@ describe('additive validation: requireAgentFamily + task-scoped resolution', () 
     ).toThrow('Agent not found: no-such-agent (task: task-42)');
     db.close();
   });
+
+  test('an explicit null agent preserves a blocked unified lookup instead of falling back', () => {
+    const { db, spaceAgentManager } = setup();
+    const task: Partial<SpaceTask> = { id: 'task-43' };
+    const space: Partial<Space> = { id: 'space-a' };
+    expect(() =>
+      resolveAgentInit({
+        task: task as SpaceTask,
+        space: space as Space,
+        agentManager: spaceAgentManager,
+        agent: null,
+        sessionId: 'sess',
+        workspacePath: '/tmp',
+        agentId: 'worker-only',
+      })
+    ).toThrow('Agent not found: worker-only (task: task-43)');
+    db.close();
+  });
 });

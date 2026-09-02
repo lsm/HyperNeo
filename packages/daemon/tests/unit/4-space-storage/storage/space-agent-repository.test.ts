@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import {
   createSpaceAgentSchema,
   insertSpace,
@@ -294,9 +294,7 @@ describe('SpaceAgentRepository', () => {
       createInboxTable();
       const worker = repo.create({ spaceId: 'space-1', name: 'Shared' });
       db.prepare(
-        `INSERT INTO space_long_horizon_agents
-         (id, space_id, handle, display_name, created_at, updated_at)
-         VALUES (?, 'space-1', 'shared', 'Shared', 1, 1)`
+        `UPDATE space_long_horizon_agents SET template_key = 'coordinator.default' WHERE id = ?`
       ).run(worker.id);
       seedInboxRow('in-shared', 'space-1', worker.id);
 
@@ -310,10 +308,11 @@ describe('SpaceAgentRepository', () => {
       createInboxTable();
       insertSpace(db, 'space-2');
       const worker = repo.create({ spaceId: 'space-1', name: 'Shared' });
+      db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(worker.id);
       db.prepare(
         `INSERT INTO space_long_horizon_agents
-         (id, space_id, handle, display_name, created_at, updated_at)
-         VALUES (?, 'space-2', 'shared', 'Shared', 1, 1)`
+       (id, space_id, handle, display_name, created_at, updated_at)
+       VALUES (?, 'space-2', 'shared', 'Shared', 1, 1)`
       ).run(worker.id);
       seedInboxRow('in-shared', 'space-1', worker.id);
 
@@ -350,6 +349,259 @@ describe('SpaceAgentRepository', () => {
       const result = repo.isAgentReferenced(agent.id);
       expect(result.workflowNames).toHaveLength(1);
       expect(result.workflowNames[0]).toBe('CI Workflow');
+    });
+  });
+
+  describe('unified-table mirror (U3a write sync)', () => {
+    function unifiedRow(agentId: string): Record<string, unknown> | undefined {
+      return db.prepare(`SELECT * FROM space_long_horizon_agents WHERE id = ?`).get(agentId) as
+        | Record<string, unknown>
+        | undefined;
+    }
+
+    function insertLongHorizonAgent(id: string, handle: string, templateKey: string | null): void {
+      db.prepare(
+        `INSERT INTO space_long_horizon_agents
+           (id, space_id, handle, display_name, template_key, status, instructions,
+            tool_permissions_json, created_at, updated_at)
+         VALUES (?, 'space-1', ?, 'Other', ?, 'active', '', '{}', 1, 1)`
+      ).run(id, handle, templateKey);
+    }
+
+    it('create mirrors the worker row into the unified table with the same id', () => {
+      const agent = repo.create({
+        spaceId: 'space-1',
+        name: 'Coder',
+        description: 'Writes code',
+        model: 'kimi-for-coding',
+        provider: 'kimi',
+        customPrompt: 'Do the work',
+        tools: ['Bash', 'Read'],
+        modelPool: [{ model: 'kimi-for-coding', maxConcurrent: 1, weight: 1 }],
+      });
+
+      const row = unifiedRow(agent.id);
+      expect(row).toBeDefined();
+      expect(row?.space_id).toBe('space-1');
+      expect(row?.handle).toBe('coder');
+      expect(row?.display_name).toBe('Coder');
+      expect(row?.template_key).toBe('migration.legacy_space_agent');
+      expect(row?.status).toBe('active');
+      expect(row?.instructions).toBe('Do the work');
+      expect(JSON.parse(row?.tool_permissions_json as string)).toEqual({ tools: ['Bash', 'Read'] });
+      expect(row?.model).toBe('kimi-for-coding');
+      expect(row?.provider).toBe('kimi');
+      expect(row?.description).toBe('Writes code');
+      expect(JSON.parse(row?.model_pool as string)).toEqual([
+        { model: 'kimi-for-coding', maxConcurrent: 1, weight: 1 },
+      ]);
+    });
+
+    it('create maps an empty tool list to the inherit-all permission object', () => {
+      const agent = repo.create({ spaceId: 'space-1', name: 'Plain' });
+      const row = unifiedRow(agent.id);
+      expect(row?.tool_permissions_json).toBe('{}');
+      expect(row?.model_pool).toBeNull();
+    });
+
+    it('update mirrors field edits into the unified row', () => {
+      const agent = repo.create({
+        spaceId: 'space-1',
+        name: 'Original',
+        customPrompt: 'Old prompt',
+        tools: ['Bash'],
+      });
+
+      repo.update(agent.id, {
+        name: 'Renamed',
+        customPrompt: 'New prompt',
+        tools: ['Read'],
+        model: 'claude-sonnet-4-6',
+        status: 'paused',
+      });
+
+      const row = unifiedRow(agent.id);
+      expect(row?.display_name).toBe('Renamed');
+      expect(row?.instructions).toBe('New prompt');
+      expect(JSON.parse(row?.tool_permissions_json as string)).toEqual({ tools: ['Read'] });
+      expect(row?.model).toBe('claude-sonnet-4-6');
+      expect(row?.status).toBe('paused');
+    });
+
+    it('update keeps the worker and mirror handles in sync when the handle is renamed', () => {
+      const agent = repo.create({ spaceId: 'space-1', name: 'Coder' });
+      expect(unifiedRow(agent.id)?.handle).toBe('coder');
+
+      repo.update(agent.id, { handle: 'renamed' });
+
+      expect(repo.getById(agent.id)?.handle).toBe('renamed');
+      expect(unifiedRow(agent.id)?.handle).toBe('renamed');
+    });
+
+    it('worker edits preserve a runtime-bound mirror session_id', () => {
+      const agent = repo.create({ spaceId: 'space-1', name: 'Coder' });
+      db.prepare(
+        `UPDATE space_long_horizon_agents SET session_id = 'bound-session-1' WHERE id = ?`
+      ).run(agent.id);
+
+      repo.update(agent.id, { name: 'Senior Coder', model: 'm2' });
+
+      expect(repo.getById(agent.id)?.name).toBe('Senior Coder');
+      expect(unifiedRow(agent.id)?.session_id).toBe('bound-session-1');
+    });
+
+    it('reactivating an archived worker whose handle was claimed aligns both rows', () => {
+      const agent = repo.create({ spaceId: 'space-1', name: 'Coder', handle: 'coder' });
+      repo.update(agent.id, { status: 'archived' });
+      insertLongHorizonAgent('lh-claimed', 'coder', 'coordinator.default');
+
+      repo.update(agent.id, { status: 'active' });
+
+      const expected = `coder-${agent.id}`;
+      expect(repo.getById(agent.id)?.handle).toBe(expected);
+      expect(unifiedRow(agent.id)?.handle).toBe(expected);
+      expect(unifiedRow(agent.id)?.status).toBe('active');
+    });
+
+    it('update aligns a colliding rename onto the same suffixed handle in both rows', () => {
+      insertLongHorizonAgent('lh-1', 'renamed', 'coordinator.default');
+      const agent = repo.create({ spaceId: 'space-1', name: 'Coder' });
+
+      repo.update(agent.id, { handle: 'renamed' });
+
+      const expected =
+        `renamed-${agent.id}`.length <= 60
+          ? `renamed-${agent.id}`
+          : `renamed-${agent.id}`.slice(0, 60);
+      expect(repo.getById(agent.id)?.handle).toBe(expected);
+      expect(unifiedRow(agent.id)?.handle).toBe(expected);
+    });
+
+    it('worker edits leave a genuine same-id overlay untouched', () => {
+      const agent = repo.create({
+        spaceId: 'space-1',
+        name: 'Original',
+        handle: 'original',
+        customPrompt: 'Old prompt',
+        tools: ['Bash'],
+        model: 'm1',
+        provider: 'p1',
+        modelPool: [{ model: 'm1', maxConcurrent: 1, weight: 1 }],
+      });
+      db.prepare(
+        `UPDATE space_long_horizon_agents SET template_key = 'coordinator.default' WHERE id = ?`
+      ).run(agent.id);
+      const overlayBefore = { ...unifiedRow(agent.id) };
+
+      repo.update(agent.id, {
+        name: 'Renamed',
+        handle: 'renamed',
+        status: 'paused',
+        description: 'New description',
+        model: 'm2',
+        provider: 'p2',
+        customPrompt: 'New prompt',
+        tools: ['Read'],
+        settingSources: ['project'],
+        modelPool: [{ model: 'm2', maxConcurrent: 2, weight: 1 }],
+      });
+
+      expect(repo.getById(agent.id)).toEqual(
+        expect.objectContaining({
+          name: 'Renamed',
+          handle: 'renamed',
+          status: 'paused',
+          description: 'New description',
+          model: 'm2',
+          provider: 'p2',
+          customPrompt: 'New prompt',
+        })
+      );
+      expect(unifiedRow(agent.id)).toEqual(overlayBefore);
+    });
+
+    it('create aligns the worker handle with the mirror when a genuine agent holds it', () => {
+      insertLongHorizonAgent('lh-1', 'coder', 'coordinator.default');
+
+      const agent = repo.create({ spaceId: 'space-1', name: 'Coder', handle: 'coder' });
+
+      const expectedHandle =
+        `coder-${agent.id}`.length <= 60 ? `coder-${agent.id}` : `coder-${agent.id}`.slice(0, 60);
+      expect(agent.handle).toBe(expectedHandle);
+      expect(repo.getById(agent.id)?.handle).toBe(expectedHandle);
+      expect(unifiedRow(agent.id)?.handle).toBe(expectedHandle);
+    });
+
+    it('generated handles avoid unified-table handles alongside worker handles', () => {
+      insertLongHorizonAgent('lh-1', 'coder', 'coordinator.default');
+
+      const agent = repo.create({ spaceId: 'space-1', name: 'Coder' });
+
+      expect(agent.handle).toBe('coder-2');
+      expect(unifiedRow(agent.id)?.handle).toBe('coder-2');
+    });
+
+    it('delete removes the unified mirror and purges inbox rows with it', () => {
+      db.exec(`
+        CREATE TABLE space_agent_inbox_messages (
+          id TEXT PRIMARY KEY,
+          space_id TEXT NOT NULL,
+          target_agent_id TEXT NOT NULL,
+          source_actor_id TEXT NOT NULL,
+          message TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          created_at INTEGER NOT NULL
+        )
+      `);
+      const agent = repo.create({ spaceId: 'space-1', name: 'Coder' });
+      db.prepare(
+        `INSERT INTO space_agent_inbox_messages
+         (id, space_id, target_agent_id, source_actor_id, message, expires_at, created_at)
+         VALUES ('in-1', 'space-1', ?, 'src', 'hello', 9999, 1)`
+      ).run(agent.id);
+
+      repo.delete(agent.id);
+
+      expect(repo.getById(agent.id)).toBeNull();
+      expect(unifiedRow(agent.id)).toBeNull();
+      const inbox = db
+        .prepare(`SELECT COUNT(*) AS n FROM space_agent_inbox_messages WHERE target_agent_id = ?`)
+        .get(agent.id) as { n: number };
+      expect(inbox.n).toBe(0);
+    });
+
+    it('delete keeps a same-id long-horizon overlay row and its inbox rows', () => {
+      db.exec(`
+        CREATE TABLE space_agent_inbox_messages (
+          id TEXT PRIMARY KEY,
+          space_id TEXT NOT NULL,
+          target_agent_id TEXT NOT NULL,
+          source_actor_id TEXT NOT NULL,
+          message TEXT NOT NULL,
+          expires_at INTEGER NOT NULL,
+          created_at INTEGER NOT NULL
+        )
+      `);
+      const agent = repo.create({ spaceId: 'space-1', name: 'Shared' });
+      db.prepare(
+        `UPDATE space_long_horizon_agents SET template_key = 'coordinator.default' WHERE id = ?`
+      ).run(agent.id);
+      db.prepare(
+        `INSERT INTO space_agent_inbox_messages
+         (id, space_id, target_agent_id, source_actor_id, message, expires_at, created_at)
+         VALUES ('in-1', 'space-1', ?, 'src', 'hello', 9999, 1)`
+      ).run(agent.id);
+
+      repo.delete(agent.id);
+
+      expect(repo.getById(agent.id)).toBeNull();
+      const row = unifiedRow(agent.id);
+      expect(row).toBeDefined();
+      expect(row?.template_key).toBe('coordinator.default');
+      const inbox = db
+        .prepare(`SELECT COUNT(*) AS n FROM space_agent_inbox_messages WHERE target_agent_id = ?`)
+        .get(agent.id) as { n: number };
+      expect(inbox.n).toBe(1);
     });
   });
 });

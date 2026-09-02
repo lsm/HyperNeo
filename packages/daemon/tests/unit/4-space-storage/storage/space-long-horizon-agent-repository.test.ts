@@ -1,10 +1,11 @@
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import {
   coordinatorLongHorizonAgentId,
   coordinatorSessionId,
   SpaceLongHorizonAgentRepository,
 } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 describe('SpaceLongHorizonAgentRepository', () => {
@@ -610,13 +611,9 @@ describe('SpaceLongHorizonAgentRepository', () => {
     ).n;
   }
 
-  test('delete purges sibling inbox rows only when no worker row shares the id', () => {
+  test('delete purges inbox rows for an LHA-only agent (no worker mirror)', () => {
     const solo = repo.create({ spaceId: 'space-1', handle: 'solo', displayName: 'Solo' });
     const shared = repo.create({ spaceId: 'space-1', handle: 'shared', displayName: 'Shared' });
-    db.prepare(
-      `INSERT INTO space_agents (id, space_id, name, created_at, updated_at)
-       VALUES (?, 'space-1', 'Shared Worker', 1, 1)`
-    ).run(shared.id);
     seedInboxRow('in-solo', solo.id);
     seedInboxRow('in-shared', shared.id);
 
@@ -624,7 +621,24 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(inboxRowsFor(solo.id)).toBe(0);
 
     repo.delete(shared.id);
-    expect(inboxRowsFor(shared.id)).toBe(1);
+    expect(inboxRowsFor(shared.id)).toBe(0);
+  });
+
+  test('delete rejects same-space worker overlays to preserve node_executions identity', () => {
+    const agent = repo.create({
+      spaceId: 'space-1',
+      handle: 'shared',
+      displayName: 'Shared',
+    });
+    db.prepare(
+      `INSERT INTO space_agents (id, space_id, name, created_at, updated_at)
+       VALUES (?, 'space-1', 'Shared Worker', 1, 1)`
+    ).run(agent.id);
+    seedInboxRow('in-overlay', agent.id);
+
+    expect(() => repo.delete(agent.id)).toThrow(/same-id worker overlay/);
+    expect(inboxRowsFor(agent.id)).toBe(1);
+    expect(repo.getById(agent.id)).not.toBeNull();
   });
 
   test('delete purges inbox rows when the same-id worker row lives in another space', () => {
@@ -645,6 +659,113 @@ describe('SpaceLongHorizonAgentRepository', () => {
     repo.delete(agent.id);
 
     expect(inboxRowsFor(agent.id)).toBe(0);
+  });
+
+  test('create rejects the reserved migration template key', () => {
+    expect(() =>
+      repo.create({
+        spaceId: 'space-1',
+        handle: 'fake-mirror',
+        displayName: 'Fake Mirror',
+        templateKey: 'migration.legacy_space_agent',
+      })
+    ).toThrow(/reserved for migrated worker mirrors/);
+  });
+
+  test('update rejects migrated worker mirrors so the worker row stays authoritative', () => {
+    db.prepare(
+      `INSERT INTO space_long_horizon_agents
+         (id, space_id, handle, display_name, template_key, status, instructions,
+          tool_permissions_json, created_at, updated_at)
+       VALUES (?, 'space-1', 'mirror-edit', 'Migrated Worker', 'migration.legacy_space_agent', 'active', '', '{}', 1, 1)`
+    ).run('mirror-edit-id');
+    const mirror = repo.getById('mirror-edit-id')!;
+
+    expect(() => repo.update(mirror.id, { displayName: 'Edited' })).toThrow(
+      /migrated worker mirror/
+    );
+    expect(repo.getById(mirror.id)?.displayName).toBe('Migrated Worker');
+  });
+
+  test('delete rejects same-id worker overlays to preserve execution identity', () => {
+    const agent = repo.create({
+      spaceId: 'space-1',
+      handle: 'shared',
+      displayName: 'Shared',
+    });
+    db.prepare(
+      `INSERT INTO space_agents (id, space_id, name, created_at, updated_at)
+       VALUES (?, 'space-1', 'Worker', 1, 1)`
+    ).run(agent.id);
+
+    expect(() => repo.delete(agent.id)).toThrow(/same-id worker overlay/);
+    expect(repo.getById(agent.id)).not.toBeNull();
+  });
+
+  test('create refreshes an existing migration mirror in place', () => {
+    const shared = 'refresh-id';
+    db.prepare(
+      `INSERT INTO space_long_horizon_agents
+         (id, space_id, handle, display_name, template_key, status, instructions,
+          tool_permissions_json, created_at, updated_at)
+       VALUES (?, 'space-1', 'stale-handle', 'Stale Name', 'migration.legacy_space_agent', 'paused', 'old prompt', '{}', 1, 1)`
+    ).run(shared);
+    db.prepare(
+      `INSERT INTO space_agents (id, space_id, name, handle, status, description, model, tools, custom_prompt, system_prompt, created_at, updated_at)
+       VALUES (?, 'space-1', 'Refreshed', 'unique-handle', 'active', 'new desc', 'm1', '["Read"]', 'new prompt', '', 2, 2)`
+    ).run(shared);
+
+    const workerRepo = new SpaceAgentRepository(db as any);
+    const refreshed = workerRepo.update(shared, {
+      name: 'Refreshed',
+      customPrompt: 'new prompt',
+      tools: ['Read'],
+      model: 'm1',
+      provider: 'openrouter',
+      status: 'active',
+      description: 'new desc',
+    });
+
+    expect(refreshed?.handle).toBe('unique-handle');
+    const mirror = repo.getById(shared);
+    expect(mirror?.handle).toBe('unique-handle');
+    expect(mirror?.displayName).toBe('Refreshed');
+    expect(mirror?.status).toBe('active');
+    expect(mirror?.instructions).toBe('new prompt');
+    expect(mirror?.toolPermissions).toEqual({ tools: ['Read'] });
+    expect(mirror?.model).toBe('m1');
+    expect(mirror?.provider).toBe('openrouter');
+    expect(mirror?.description).toBe('new desc');
+  });
+
+  test('update permits the runtime session binding on migrated worker mirrors', () => {
+    db.prepare(
+      `INSERT INTO space_long_horizon_agents
+         (id, space_id, handle, display_name, template_key, status, instructions,
+          tool_permissions_json, created_at, updated_at)
+       VALUES (?, 'space-1', 'mirror-bind', 'Migrated Worker', 'migration.legacy_space_agent', 'active', '', '{}', 1, 1)`
+    ).run('mirror-bind-id');
+
+    const bound = repo.update('mirror-bind-id', { sessionId: 'space:agent:space-1:sess' });
+
+    expect(bound?.sessionId).toBe('space:agent:space-1:sess');
+    expect(repo.update('mirror-bind-id', { sessionId: null })?.sessionId).toBeNull();
+  });
+
+  test('delete rejects migrated worker mirrors so execution identity survives', () => {
+    db.prepare(
+      `INSERT INTO space_long_horizon_agents
+         (id, space_id, handle, display_name, template_key, status, instructions,
+          tool_permissions_json, created_at, updated_at)
+       VALUES (?, 'space-1', 'mirror', 'Migrated Worker', 'migration.legacy_space_agent', 'active', '', '{}', 1, 1)`
+    ).run('mirror-del-id');
+    db.prepare(
+      `INSERT INTO space_agents (id, space_id, name, created_at, updated_at)
+       VALUES (?, 'space-1', 'Migrated Worker', 1, 1)`
+    ).run('mirror-del-id');
+
+    expect(() => repo.delete('mirror-del-id')).toThrow(/migrated worker mirror/);
+    expect(repo.getById('mirror-del-id')).not.toBeNull();
   });
 
   test('coordinator row is mutable today — rename and archive succeed without guards', () => {

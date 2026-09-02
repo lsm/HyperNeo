@@ -69,6 +69,7 @@ import type {
 import { Logger } from '../../logger.ts';
 import type { SpaceActorRegistryAdapter } from '../actor-registry.ts';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
+import { unifiedAgentRecordExists } from '../agents/worker-long-horizon-mapper.ts';
 import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import {
@@ -852,10 +853,25 @@ export class SpaceRuntime {
     return this.config.nodeExecutionRepo.createOrIgnore(params);
   }
 
+  private agentRecordExists(agentId: string, expectedSpaceId?: string): boolean {
+    const unified = this.config.longHorizonAgentRepo?.getById(agentId);
+    if (unified) {
+      return unifiedAgentRecordExists(unified, expectedSpaceId, (id) =>
+        this.config.spaceAgentManager.getById(id)
+      );
+    }
+    if (expectedSpaceId) {
+      const worker = this.config.spaceAgentManager.getById(agentId);
+      return worker != null && worker.spaceId === expectedSpaceId;
+    }
+    return this.config.spaceAgentManager.getById(agentId) !== null;
+  }
+
   private assertAgentReferenceExists(params: CreateNodeExecutionParams): void {
     const agentId = params.agentId;
     if (!agentId) return;
-    if (this.config.spaceAgentManager.getById(agentId)) return;
+    const run = this.config.workflowRunRepo.getRun(params.workflowRunId);
+    if (this.agentRecordExists(agentId, run?.spaceId)) return;
     throw new MissingWorkflowAgentError(
       formatMissingAgentReference({
         runId: params.workflowRunId,
@@ -5022,9 +5038,8 @@ export class SpaceRuntime {
         const targetNode = nodeByName.get(targetName);
         if (!targetNode || targetNode.id === sourceNode.id) continue;
 
-        const missing = findMissingNodeAgentReferences(
-          targetNode,
-          (id) => this.config.spaceAgentManager.getById(id) !== null
+        const missing = findMissingNodeAgentReferences(targetNode, (id) =>
+          this.agentRecordExists(id, run.spaceId)
         );
         if (missing.length > 0) {
           const first = missing[0];

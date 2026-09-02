@@ -1,15 +1,7 @@
-import type { Database as BunDatabase } from '../sqlite-compat.ts';
-import { generateUUID } from '@hyperneo/shared';
-import {
-  decideGoalOwnerResolution,
-  type GoalOwnerAgentState,
-  type GoalOwnerResolutionDecision,
-} from '../../lib/space/goals/goal-owner-resolution.ts';
 import type {
   CreateSpaceLongHorizonAgentParams,
   CreateSpaceLongHorizonAgentReminderParams,
   CreateSpaceLongHorizonAgentSubscriptionParams,
-  UpdateSpaceLongHorizonAgentSubscriptionParams,
   SpaceAgentAutonomyLevel,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentEventSubscription,
@@ -18,8 +10,17 @@ import type {
   SpaceLongHorizonAgentReminder,
   SpaceLongHorizonAgentStatus,
   UpdateSpaceLongHorizonAgentParams,
+  UpdateSpaceLongHorizonAgentSubscriptionParams,
 } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
 import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
+import {
+  decideGoalOwnerResolution,
+  type GoalOwnerAgentState,
+  type GoalOwnerResolutionDecision,
+} from '../../lib/space/goals/goal-owner-resolution.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
 
 const DEFAULT_TOOL_PERMISSIONS: Record<string, never> = {};
@@ -28,6 +29,11 @@ export class SpaceLongHorizonAgentRepository {
   constructor(private db: BunDatabase) {}
 
   create(params: CreateSpaceLongHorizonAgentParams): SpaceLongHorizonAgent {
+    if (params.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
+      throw new Error(
+        `Template key ${MIGRATED_WORKER_TEMPLATE_KEY} is reserved for migrated worker mirrors`
+      );
+    }
     const id = params.id ?? generateUUID();
     const now = Date.now();
     const displayName = params.displayName ?? params.handle;
@@ -37,8 +43,8 @@ export class SpaceLongHorizonAgentRepository {
         `INSERT INTO space_long_horizon_agents (
 					id, space_id, handle, display_name, template_key, status, session_id,
 					instructions, autonomy_level, model, thinking_level, provider, setting_sources,
-					tool_permissions_json, created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					tool_permissions_json, description, model_pool, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -55,6 +61,10 @@ export class SpaceLongHorizonAgentRepository {
         params.provider ?? null,
         params.settingSources === undefined ? null : JSON.stringify(params.settingSources),
         JSON.stringify(params.toolPermissions ?? DEFAULT_TOOL_PERMISSIONS),
+        params.description ?? null,
+        params.modelPool != null && params.modelPool.length > 0
+          ? JSON.stringify(params.modelPool)
+          : null,
         now,
         now
       );
@@ -86,7 +96,11 @@ export class SpaceLongHorizonAgentRepository {
     const existingById = this.getById(coordinatorLongHorizonAgentId(spaceId));
     if (existingById) {
       if (existingById.status === 'archived') {
-        return this.update(existingById.id, { status: 'active' }) as SpaceLongHorizonAgent;
+        return this.update(existingById.id, {
+          status: 'active',
+          description: existingById.description ?? null,
+          modelPool: existingById.modelPool ?? null,
+        }) as SpaceLongHorizonAgent;
       }
       return existingById;
     }
@@ -120,6 +134,15 @@ export class SpaceLongHorizonAgentRepository {
   }
 
   update(id: string, params: UpdateSpaceLongHorizonAgentParams): SpaceLongHorizonAgent | null {
+    const existing = this.getById(id);
+    const sessionBindingOnly =
+      Object.keys(params).length > 0 && Object.keys(params).every((key) => key === 'sessionId');
+    if (existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY && !sessionBindingOnly) {
+      throw new Error(
+        `Agent ${id} is a migrated worker mirror — edit the worker agent instead; ` +
+          `worker edits propagate to the mirror.`
+      );
+    }
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
 
@@ -171,6 +194,18 @@ export class SpaceLongHorizonAgentRepository {
       fields.push('tool_permissions_json = ?');
       values.push(JSON.stringify(params.toolPermissions ?? DEFAULT_TOOL_PERMISSIONS));
     }
+    if (params.description !== undefined) {
+      fields.push('description = ?');
+      values.push(params.description ?? null);
+    }
+    if (params.modelPool !== undefined) {
+      fields.push('model_pool = ?');
+      values.push(
+        params.modelPool != null && params.modelPool.length > 0
+          ? JSON.stringify(params.modelPool)
+          : null
+      );
+    }
 
     if (fields.length === 0) return this.getById(id);
 
@@ -185,23 +220,42 @@ export class SpaceLongHorizonAgentRepository {
   delete(id: string): void {
     this.db.transaction(() => {
       const row = this.db
-        .prepare(`SELECT space_id FROM space_long_horizon_agents WHERE id = ?`)
-        .get(id) as { space_id: string } | null;
+        .prepare(`SELECT space_id, template_key FROM space_long_horizon_agents WHERE id = ?`)
+        .get(id) as { space_id: string; template_key: string | null } | null;
+      if (row?.template_key === MIGRATED_WORKER_TEMPLATE_KEY) {
+        throw new Error(
+          `Agent ${id} is a migrated worker mirror — delete the worker agent instead; ` +
+            `deleting only the mirror would strip its execution history.`
+        );
+      }
+      const hasSiblingWorkerLha =
+        !!this.db
+          .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agents'`)
+          .get() &&
+        !!this.db
+          .prepare(`SELECT 1 FROM space_agents WHERE id = ? AND space_id = ?`)
+          .get(id, row?.space_id ?? '');
+      if (hasSiblingWorkerLha) {
+        throw new Error(
+          `Agent ${id} is a same-id worker overlay — delete the worker agent instead; ` +
+            `the unified table's ON DELETE SET NULL would strip every associated node_executions.agent_id.`
+        );
+      }
       const hasInbox = !!this.db
         .prepare(
           `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_inbox_messages'`
         )
         .get();
-      const hasSiblingWorker =
+      const hasSiblingWorkerForInbox =
         row != null &&
-        !!this.db
+        this.db
           .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agents'`)
           .get()
           ? !!this.db
               .prepare(`SELECT 1 FROM space_agents WHERE id = ? AND space_id = ?`)
               .get(id, row.space_id)
           : false;
-      if (hasInbox && !hasSiblingWorker && row != null) {
+      if (hasInbox && !hasSiblingWorkerForInbox && row != null) {
         this.db
           .prepare(
             `DELETE FROM space_agent_inbox_messages WHERE target_agent_id = ? AND space_id = ?`
@@ -659,6 +713,10 @@ function rowToAgent(row: Record<string, unknown>): SpaceLongHorizonAgent {
       ? (JSON.parse(row.setting_sources as string) as SpaceLongHorizonAgent['settingSources'])
       : null,
     toolPermissions: parseObject(row.tool_permissions_json),
+    description: (row.description as string | null | undefined) || undefined,
+    modelPool: row.model_pool
+      ? (JSON.parse(row.model_pool as string) as SpaceLongHorizonAgent['modelPool'])
+      : undefined,
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number,
   };

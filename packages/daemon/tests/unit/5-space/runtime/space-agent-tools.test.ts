@@ -1,38 +1,21 @@
-import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import type { ModelInfo, SpaceTask, SpaceTaskStatus, SpaceWorkflow } from '@hyperneo/shared';
 import { z } from 'zod';
-import type { ModelInfo } from '@hyperneo/shared';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
-import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
-import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';
-import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
-import { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
-import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
-import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository.ts';
-import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository.ts';
-import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
-import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
-import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
-import { SpaceAgentInactivityConfigRepository } from '../../../../src/storage/repositories/space-agent-inactivity-repository.ts';
-import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
-import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service.ts';
-import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
-import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
+import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
+import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
+import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
+import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope.ts';
+import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
 import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution-episode-service.ts';
-import {
-  createSpaceAgentMcpServer,
-  createSpaceAgentToolHandlers,
-  validateTemplateReminder,
-} from '../../../../src/lib/space/tools/space-agent-tools.ts';
+import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
+import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
+import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
+import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { ScheduleService } from '../../../../src/lib/space/schedule/schedule-service.ts';
 import {
   EXTERNAL_EVENT_TOOL_SCHEMAS,
   INACTIVITY_TOOL_SCHEMAS,
@@ -43,13 +26,31 @@ import {
   SPACE_GOAL_TOOL_SCHEMAS,
   type SpaceAgentToolName,
 } from '../../../../src/lib/space/tools/space-agent-tool-schemas.ts';
-import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
-import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
-import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
-import type { SpaceTask, SpaceTaskStatus, SpaceWorkflow } from '@hyperneo/shared';
-import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope.ts';
-import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
+import {
+  createSpaceAgentMcpServer,
+  createSpaceAgentToolHandlers,
+  validateTemplateReminder,
+} from '../../../../src/lib/space/tools/space-agent-tools.ts';
+import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository.ts';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
+import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { SpaceAgentInactivityConfigRepository } from '../../../../src/storage/repositories/space-agent-inactivity-repository.ts';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';
+import { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
+import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { TaskScheduleRepository } from '../../../../src/storage/repositories/task-schedule-repository.ts';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
+import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
+
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
@@ -143,6 +144,7 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: s
     `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
      VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
   ).run(agentId, spaceId, name, Date.now(), Date.now());
+  seedUnifiedAgentMirror(db, { id: agentId, spaceId, name });
 }
 
 function buildSingleStepWorkflow(
@@ -1910,6 +1912,9 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     });
     expect(workerOnlyAgent.ok).toBe(true);
     if (!workerOnlyAgent.ok) throw new Error(workerOnlyAgent.error);
+    ctx.db
+      .prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`)
+      .run(workerOnlyAgent.value.id);
 
     const listedWorkerOnly = JSON.parse(
       (await handlers.list_agent_event_subscriptions({ agent_id: workerOnlyAgent.value.id }))
@@ -2092,6 +2097,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(workerOnly.ok).toBe(true);
     if (!workerOnly.ok) throw new Error(workerOnly.error);
     const workerId = workerOnly.value.id;
+    ctx.db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(workerId);
 
     const goal = ctx.goalService.createGoal({
       spaceId: ctx.spaceId,

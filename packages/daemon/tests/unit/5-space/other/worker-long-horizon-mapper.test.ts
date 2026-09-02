@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import type { SettingSource, ThinkingLevel } from '@hyperneo/shared';
-import {
-  workerAgentToLongHorizonParams,
-  type WorkerAgentRowSource,
-} from '../../../../src/lib/space/agents/worker-long-horizon-mapper.ts';
+import type { SettingSource, SpaceLongHorizonAgent, ThinkingLevel } from '@hyperneo/shared';
 import { migrateLegacyLongHorizonAgentData } from '../../../../src/lib/space/agents/legacy-long-horizon-migration.ts';
+import {
+  isRunnableUnifiedAgent,
+  longHorizonAgentToWorkerView,
+  type WorkerAgentRowSource,
+  workerAgentToLongHorizonParams,
+} from '../../../../src/lib/space/agents/worker-long-horizon-mapper.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { createLongHorizonAgentTables } from '../../../../src/storage/schema/long-horizon-agents.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat.ts';
@@ -400,7 +402,22 @@ describe('workerAgentToLongHorizonParams — typed extensions beyond m155', () =
       { occupiedHandles: new Set<string>(['researcher', 'researcher-w-1']), now: NOW }
     );
 
-    expect(params.handle).toBe('researcher-w-1-w-1');
+    expect(params.handle).toBe('researcher-w-1-2');
+  });
+
+  test('uuid-length ids trim the stem so the counter survives the 60-char bound', () => {
+    const uuid = '5fb7c7e2-91a3-4d64-9f0e-1a2b3c4d5e6f';
+    const base = 'abcdefghijklmnopqrstuvw';
+    const first = `${base}-${uuid}`;
+    const second = `${base.slice(0, 21)}-${uuid}-2`;
+    const params = workerAgentToLongHorizonParams(
+      rowSource({ id: uuid, spaceId: 'space-a', handle: base, name: 'Base' }),
+      { occupiedHandles: new Set<string>([base, first]), now: NOW }
+    );
+
+    expect(params.handle.length).toBeLessThanOrEqual(60);
+    expect(params.handle).toBe(second);
+    expect(params.handle).not.toBe(first);
   });
 
   test('batch callers reserve each chosen handle so converted rows cannot collide', () => {
@@ -431,5 +448,103 @@ describe('workerAgentToLongHorizonParams — typed extensions beyond m155', () =
 
     expect(params.handle).toBe('Named');
     expect(params.displayName).toBe('Named');
+  });
+});
+
+function longHorizonAgent(overrides: Partial<SpaceLongHorizonAgent> = {}): SpaceLongHorizonAgent {
+  return {
+    id: 'lh-1',
+    spaceId: 'space-a',
+    handle: 'researcher',
+    displayName: 'Researcher',
+    templateKey: 'migration.legacy_space_agent',
+    status: 'active',
+    sessionId: null,
+    instructions: 'Investigate thoroughly',
+    autonomyLevel: null,
+    model: 'kimi-for-coding',
+    thinkingLevel: null,
+    provider: 'kimi',
+    settingSources: null,
+    toolPermissions: { tools: ['Bash', 'Read'] },
+    description: 'Does research',
+    modelPool: [{ model: 'kimi-for-coding', maxConcurrent: 2, weight: 1 }],
+    createdAt: 10,
+    updatedAt: 20,
+    ...overrides,
+  };
+}
+
+describe('longHorizonAgentToWorkerView — unified row to worker view (U3a)', () => {
+  test('maps unified fields onto the SpaceWorkerAgent shape', () => {
+    const view = longHorizonAgentToWorkerView(longHorizonAgent());
+
+    expect(view.id).toBe('lh-1');
+    expect(view.spaceId).toBe('space-a');
+    expect(view.name).toBe('Researcher');
+    expect(view.handle).toBe('researcher');
+    expect(view.status).toBe('active');
+    expect(view.description).toBe('Does research');
+    expect(view.model).toBe('kimi-for-coding');
+    expect(view.provider).toBe('kimi');
+    expect(view.customPrompt).toBe('Investigate thoroughly');
+    expect(view.tools).toEqual(['Bash', 'Read']);
+    expect(view.templateName).toBe('migration.legacy_space_agent');
+    expect(view.templateHash).toBeNull();
+    expect(view.modelPool).toEqual([{ model: 'kimi-for-coding', maxConcurrent: 2, weight: 1 }]);
+    expect(view.createdAt).toBe(10);
+    expect(view.updatedAt).toBe(20);
+  });
+
+  test('empty tool permissions read as the inherit-all undefined tools profile', () => {
+    const view = longHorizonAgentToWorkerView(longHorizonAgent({ toolPermissions: {} }));
+    expect(view.tools).toBeUndefined();
+  });
+
+  test('non-string tool entries are filtered out of the view', () => {
+    const view = longHorizonAgentToWorkerView(
+      longHorizonAgent({ toolPermissions: { tools: ['Bash', 7, null] } })
+    );
+    expect(view.tools).toEqual(['Bash']);
+  });
+
+  test('non-worker statuses collapse onto the worker status set', () => {
+    expect(longHorizonAgentToWorkerView(longHorizonAgent({ status: 'paused' })).status).toBe(
+      'paused'
+    );
+    expect(longHorizonAgentToWorkerView(longHorizonAgent({ status: 'disabled' })).status).toBe(
+      'paused'
+    );
+    expect(longHorizonAgentToWorkerView(longHorizonAgent({ status: 'archived' })).status).toBe(
+      'archived'
+    );
+  });
+});
+
+describe('isRunnableUnifiedAgent — activity contract (U3a)', () => {
+  test('migrated worker mirrors stay runnable in every status', () => {
+    for (const status of ['active', 'paused', 'disabled', 'archived'] as const) {
+      expect(
+        isRunnableUnifiedAgent(
+          longHorizonAgent({ templateKey: 'migration.legacy_space_agent', status })
+        )
+      ).toBe(true);
+    }
+  });
+
+  test('genuine long-horizon rows are runnable only while active', () => {
+    expect(isRunnableUnifiedAgent(longHorizonAgent({ templateKey: null }))).toBe(true);
+    expect(isRunnableUnifiedAgent(longHorizonAgent({ templateKey: 'coordinator.default' }))).toBe(
+      true
+    );
+    expect(isRunnableUnifiedAgent(longHorizonAgent({ templateKey: null, status: 'paused' }))).toBe(
+      false
+    );
+    expect(
+      isRunnableUnifiedAgent(longHorizonAgent({ templateKey: null, status: 'disabled' }))
+    ).toBe(false);
+    expect(
+      isRunnableUnifiedAgent(longHorizonAgent({ templateKey: null, status: 'archived' }))
+    ).toBe(false);
   });
 });

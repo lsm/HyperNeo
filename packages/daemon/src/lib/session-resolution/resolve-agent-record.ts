@@ -1,5 +1,6 @@
 import type { SpaceLongHorizonAgent, SpaceWorkerAgent } from '@hyperneo/shared';
 import { coordinatorLongHorizonAgentId } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../space/agents/worker-long-horizon-mapper.ts';
 
 export type AgentRecordResolution =
   | { kind: 'coordinator'; agent: SpaceLongHorizonAgent | null }
@@ -25,7 +26,10 @@ export function resolveAgentRecord(
     return { kind: 'coordinator', agent: record };
   }
   const longHorizonAgent = deps.getLongHorizonAgent(agentId);
-  if (longHorizonAgent?.spaceId === spaceId) {
+  if (
+    longHorizonAgent?.spaceId === spaceId &&
+    longHorizonAgent.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY
+  ) {
     if (longHorizonAgent.status !== 'active') return { kind: 'missing' };
     const coordinator = deps.getCoordinator(spaceId);
     if (

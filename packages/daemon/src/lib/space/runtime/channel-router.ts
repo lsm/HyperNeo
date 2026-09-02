@@ -14,7 +14,6 @@ import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
 } from '../managers/space-workflow-manager.ts';
-import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
 import { TERMINAL_NODE_EXECUTION_STATUSES } from '../managers/node-execution-manager.ts';
 import type {
   InternalEventBus,
@@ -73,7 +72,7 @@ export interface ChannelRouterConfig {
   taskRepo: SpaceTaskRepository;
   workflowRunRepo: SpaceWorkflowRunRepository;
   workflowManager: SpaceWorkflowManager;
-  agentManager: SpaceAgentManager;
+  agentExists: (agentId: string) => boolean;
   nodeExecutionRepo: NodeExecutionRepository;
   channelCycleRepo?: ChannelCycleRepository;
   isSessionAlive?: (sessionId: string) => boolean;
@@ -157,7 +156,7 @@ export class ChannelRouter {
     const targetAgentName = options?.targetAgentName;
     const missingAgent = findMissingNodeAgentReferences(
       node,
-      (id) => this.config.agentManager.getById(id) !== null,
+      (id) => this.config.agentExists(id),
       targetAgentName ? { slotNames: new Set([targetAgentName]) } : undefined
     );
     if (missingAgent.length > 0) {

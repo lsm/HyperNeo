@@ -9,6 +9,7 @@ import type {
   Session,
   Space,
   SpaceTask,
+  SpaceWorkerAgent,
   SpaceWorkflow,
   SpaceWorkflowRun,
   WorkflowNode,
@@ -36,6 +37,7 @@ import type {
   PendingAgentMessageRecord,
   PendingAgentMessageRepository,
 } from '../../../storage/repositories/pending-agent-message-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
@@ -44,6 +46,11 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-ev
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import { CleanupState, type SessionManager } from '../../session-manager.ts';
 import type { SkillsManager } from '../../skills-manager.ts';
+import {
+  isRunnableUnifiedAgent,
+  longHorizonAgentToWorkerView,
+  MIGRATED_WORKER_TEMPLATE_KEY,
+} from '../agents/worker-long-horizon-mapper.ts';
 import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
@@ -229,6 +236,7 @@ export interface TaskAgentManagerConfig {
   reactiveDb?: ReactiveDatabase;
   spaceManager: SpaceManager;
   spaceAgentManager: SpaceAgentManager;
+  longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   spaceWorkflowManager: SpaceWorkflowManager;
   spaceRuntimeService: SpaceRuntimeService;
   taskRepo: SpaceTaskRepository;
@@ -893,7 +901,7 @@ export class TaskAgentManager {
       resolveSlot: (_space, workflow, execution, _task) =>
         resolveWorkflowNodeSlot(workflow, execution.workflowNodeId, execution.agentName) ?? null,
       createSpawnedSession: async (request) => {
-        const customAgent = this.config.spaceAgentManager.getById(request.slot.agentId);
+        const customAgent = this.resolveUnifiedSlotAgent(request.space.id, request.slot.agentId);
         let slot = request.slot;
         let poolProvider: string | undefined;
         if (customAgent) {
@@ -938,10 +946,17 @@ export class TaskAgentManager {
             ...(poolProvider ? { provider: poolProvider } : {}),
           };
 
+          if (!customAgent) {
+            throw new PermanentSpawnError(
+              `Agent not found: ${slot.agentId} (task: ${request.task.id})`
+            );
+          }
+
           let init = resolveAgentInit({
             task: request.task,
             space: request.space,
             agentManager: this.config.spaceAgentManager,
+            agent: customAgent,
             sessionId: request.sessionId,
             workspacePath: request.workspacePath,
             workflowRun: request.workflowRun,
@@ -949,10 +964,6 @@ export class TaskAgentManager {
             slotOverrides,
             agentId: slot.agentId,
           });
-
-          if (request.kickoff && !customAgent) {
-            throw new PermanentSpawnError(`Agent not found: ${slot.agentId}`);
-          }
 
           const nodeAgentMcpServers = this.buildNodeAgentMcpServersForSession(
             request.task.id,
@@ -1076,7 +1087,7 @@ export class TaskAgentManager {
             })
           : [];
 
-        const customAgent = this.config.spaceAgentManager.getById(request.slot.agentId);
+        const customAgent = this.resolveUnifiedSlotAgent(request.space.id, request.slot.agentId);
         const initialMessage = buildCustomAgentTaskMessage({
           customAgent: customAgent!,
           task: request.task,
@@ -2389,6 +2400,7 @@ export class TaskAgentManager {
         task,
         space,
         agentManager: this.config.spaceAgentManager,
+        agent: this.resolveUnifiedSlotAgent(space.id, matchedSlot.agentId),
         sessionId,
         workspacePath,
         workflowRun: workflowRun ?? undefined,
@@ -2680,7 +2692,7 @@ export class TaskAgentManager {
         taskRepo: this.config.taskRepo,
         workflowRunRepo: this.config.workflowRunRepo,
         workflowManager: this.config.spaceWorkflowManager,
-        agentManager: this.config.spaceAgentManager,
+        agentExists: (id) => this.slotAgentExists(space.id, id),
         nodeExecutionRepo: this.config.nodeExecutionRepo,
         channelCycleRepo: this.config.channelCycleRepo,
         isSessionAlive: (sid) => this.isSessionAlive(sid),
@@ -3499,6 +3511,25 @@ export class TaskAgentManager {
       this.config.spaceRuntimeService.renderPendingDigestForSession(targetSessionId, digestTaskId);
   }
 
+  private resolveUnifiedSlotAgent(spaceId: string, agentId: string): SpaceWorkerAgent | null {
+    const unified = this.config.longHorizonAgentRepo?.getById(agentId) ?? null;
+    if (unified && unified.spaceId === spaceId) {
+      if (!isRunnableUnifiedAgent(unified)) return null;
+      if (unified.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
+        return this.config.spaceAgentManager.getById(agentId)?.spaceId === spaceId
+          ? longHorizonAgentToWorkerView(unified)
+          : null;
+      }
+      return longHorizonAgentToWorkerView(unified);
+    }
+    const worker = this.config.spaceAgentManager.getById(agentId);
+    return worker?.spaceId === spaceId ? worker : null;
+  }
+
+  private slotAgentExists(spaceId: string, agentId: string): boolean {
+    return this.resolveUnifiedSlotAgent(spaceId, agentId) !== null;
+  }
+
   private buildAgentNameAliasesForExecution(
     workflow: SpaceWorkflow | null,
     execution: NodeExecution
@@ -3528,8 +3559,8 @@ export class TaskAgentManager {
     }
 
     const spaceAgentId = execution.agentId ?? slot?.agentId;
-    if (spaceAgentId) {
-      const spaceAgent = this.config.spaceAgentManager.getById(spaceAgentId);
+    if (spaceAgentId && workflow) {
+      const spaceAgent = this.resolveUnifiedSlotAgent(workflow.spaceId, spaceAgentId);
       if (spaceAgent?.name) {
         for (const variant of this.agentNameVariants(spaceAgent.name)) {
           aliases.add(variant);
@@ -4102,6 +4133,7 @@ export class TaskAgentManager {
       task,
       space,
       agentManager: this.config.spaceAgentManager,
+      agent: this.resolveUnifiedSlotAgent(space.id, slot.agentId),
       sessionId,
       workspacePath,
       workflowRun,
@@ -4810,7 +4842,7 @@ export class TaskAgentManager {
       taskRepo: this.config.taskRepo,
       workflowRunRepo: this.config.workflowRunRepo,
       workflowManager: this.config.spaceWorkflowManager,
-      agentManager: this.config.spaceAgentManager,
+      agentExists: (id) => this.slotAgentExists(spaceId, id),
       nodeExecutionRepo: this.config.nodeExecutionRepo,
       channelCycleRepo: this.config.channelCycleRepo,
       isSessionAlive: (sid) => this.isSessionAlive(sid),
@@ -5344,7 +5376,7 @@ export class TaskAgentManager {
     }).workspacePath;
 
     const matchedNode = workflow.nodes.find((node) => node.id === matchedNodeId);
-    const poolAgent = this.config.spaceAgentManager.getById(matchedSlot.agentId);
+    const poolAgent = this.resolveUnifiedSlotAgent(spaceId, matchedSlot.agentId);
     let slot = matchedSlot;
     let poolProvider: string | undefined;
     if (poolAgent) {
@@ -5393,6 +5425,7 @@ export class TaskAgentManager {
         task,
         space,
         agentManager: this.config.spaceAgentManager,
+        agent: poolAgent,
         sessionId,
         workspacePath,
         workflowRun: workflowRun ?? undefined,

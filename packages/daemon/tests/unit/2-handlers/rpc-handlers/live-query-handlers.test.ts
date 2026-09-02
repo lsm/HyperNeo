@@ -1,24 +1,25 @@
-import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { createTables, runMigration74, runMigrations } from '../../../../src/storage/schema';
-import { runMigration191 } from '../../../../src/storage/schema/migrations';
+import type { NeoTask, RoomGoal, Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/rpc-handlers/live-query-handlers';
+import { Database } from '../../../../src/storage/index';
+import type { QueryDiff } from '../../../../src/storage/live-query';
+import { LiveQueryEngine } from '../../../../src/storage/live-query';
+import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
+import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import {
   computeIsRenderable,
   computeIsTerminal,
   extractParentToolUseId,
 } from '../../../../src/storage/repositories/sdk-message-repository';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
-import type { NeoTask, RoomGoal, Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
-import { Database } from '../../../../src/storage/index';
-import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
-import type { ReactiveDatabase } from '../../../../src/storage/reactive-database';
-import { LiveQueryEngine } from '../../../../src/storage/live-query';
-import type { QueryDiff } from '../../../../src/storage/live-query';
+import { createTables, runMigration74, runMigrations } from '../../../../src/storage/schema';
+import { runMigration191 } from '../../../../src/storage/schema/migrations';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 
 describe('NAMED_QUERY_REGISTRY', () => {
   let db: BunDatabase;
@@ -646,6 +647,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       db.prepare(
         `INSERT INTO space_agents (id, space_id, name) VALUES ('agent-reviewer', ?, 'Reviewer')`
       ).run(spaceId);
+      seedUnifiedAgentMirror(db, { id: 'agent-reviewer', spaceId, name: 'Reviewer' });
       db.prepare(
         `INSERT INTO sdk_messages (id, session_id, message_type, message_subtype, sdk_message, timestamp, send_status, origin, task_id)
          VALUES ('sdk-reviewer-1', ?, 'assistant', NULL, ?, ?, 'consumed', NULL, ?)`
@@ -2788,6 +2790,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         db.prepare(
           `INSERT INTO space_agents (id, space_id, name) VALUES ('agent-merger', ?, 'PR Merger')`
         ).run(spaceId);
+        seedUnifiedAgentMirror(db, { id: 'agent-merger', spaceId, name: 'PR Merger' });
         sessionTaskIds.set(mergerSessionId, taskId);
         insertSdkMessageAt(
           'sdk-ms-prov-1',
@@ -3023,6 +3026,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         db.prepare(
           `INSERT INTO space_agents (id, space_id, name) VALUES ('agent-label', ?, 'Fresh Label')`
         ).run(spaceId);
+        seedUnifiedAgentMirror(db, { id: 'agent-label', spaceId, name: 'Fresh Label' });
         insertNodeExecution({
           id: 'ne-label',
           workflowRunId,

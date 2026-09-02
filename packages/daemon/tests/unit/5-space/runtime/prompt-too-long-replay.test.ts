@@ -1,27 +1,28 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
-import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
-import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
-import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
-import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { ApiErrorCircuitBreaker } from '../../../../src/lib/agent/api-error-circuit-breaker';
-import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
-import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceWorkflow } from '@hyperneo/shared';
+import { ApiErrorCircuitBreaker } from '../../../../src/lib/agent/api-error-circuit-breaker';
+import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
+import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
+import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
-  isPromptTooLongErrorMessage,
   buildPromptTooLongContinueNag,
   COMPACT_RESULT_TIMEOUT_MS,
+  isPromptTooLongErrorMessage,
   MAX_PROMPT_TOO_LONG_RECOVERY_ATTEMPTS,
 } from '../../../../src/lib/space/runtime/prompt-too-long-recovery';
+import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 
 const RESULT_ENCODINGS: Array<{ name: string; message: unknown; detected: boolean }> = [
   {
@@ -246,6 +247,7 @@ function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: s
     `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
      VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
   ).run(agentId, spaceId, name, Date.now(), Date.now());
+  seedUnifiedAgentMirror(db, { id: agentId, spaceId, name });
 }
 
 function buildLinearWorkflow(

@@ -16,6 +16,7 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 const TASK_ID = 'task-1241';
@@ -58,7 +59,14 @@ function fakeSession(id: string): AgentSession {
 }
 
 function fakeCustomAgent() {
-  return { id: AGENT_ID, name: AGENT_NAME, customPrompt: 'work', model: 'm', tools: [] };
+  return {
+    id: AGENT_ID,
+    spaceId: SPACE_ID,
+    name: AGENT_NAME,
+    customPrompt: 'work',
+    model: 'm',
+    tools: [],
+  };
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -102,6 +110,7 @@ function makeRealRepoHarness(options: { taskStatus?: string } = {}): RealRepoHar
   db.prepare(
     `INSERT INTO space_agents (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
   ).run(AGENT_ID, spaceId, 'Coder', now, now);
+  seedUnifiedAgentMirror(db, { id: AGENT_ID, spaceId, name: 'Coder' });
   const execRepo = new NodeExecutionRepository(db);
   const taskRepo = new SpaceTaskRepository(db);
   const cancels: string[] = [];

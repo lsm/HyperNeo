@@ -226,6 +226,27 @@ describe('resolveAgentRecord', () => {
     });
   });
 
+  test('an orphan migration mirror resolves missing, not long_horizon', () => {
+    const mirror = makeAgent('mirror-1', { templateKey: 'migration.legacy_space_agent' });
+
+    expect(
+      resolveAgentRecord('space-1', 'mirror-1', makeDeps({ longHorizonAgents: [mirror] }))
+    ).toEqual({ kind: 'missing' });
+  });
+
+  test('a migration mirror with a sibling worker resolves worker', () => {
+    const mirror = makeAgent('mirror-1', { templateKey: 'migration.legacy_space_agent' });
+    const worker = makeWorker('mirror-1');
+
+    expect(
+      resolveAgentRecord(
+        'space-1',
+        'mirror-1',
+        makeDeps({ longHorizonAgents: [mirror], workers: [worker] })
+      )
+    ).toEqual({ kind: 'worker', agent: worker });
+  });
+
   test('resolution kinds compose with agentSessionIdOf routing', () => {
     const spaceId = 'space-1';
     const coordinator = makeAgent('space-lh-agent:coordinator:space-1', { handle: 'coordinator' });
