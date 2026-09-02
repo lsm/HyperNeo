@@ -437,13 +437,16 @@ describe('Space Export/Import RPC Handlers', () => {
         status: 'paused',
       });
       const sleeperId = longHorizonAgentRepo.listBySpaceId(SPACE_ID)[0].id;
-      workflowManager.createWorkflow({
+      workflowRepo.createWorkflow({
         spaceId: SPACE_ID,
         name: 'Pipe',
-        nodes: [{ name: 'S', agentId: sleeperId }],
-        transitions: [],
+        nodes: [{ name: 'S', agents: [{ agentId: sleeperId, name: 'sleeper' }] }],
+        startNodeId: 'S',
+        tags: [],
         completionAutonomyLevel: 3,
-      });
+        createdAt: 1,
+        updatedAt: 1,
+      } as never);
 
       await expect(call(handlers, 'spaceExport.workflows', { spaceId: SPACE_ID })).rejects.toThrow(
         'only active agents are exportable'
@@ -564,17 +567,23 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(bundle.agents.map((a: any) => a.name)).not.toContain('Ghost Twin');
     });
 
-    it('includes worker-only agents without unified mirrors in exports', async () => {
+    it('includes active worker-only agents and excludes paused ones', async () => {
       db.prepare(
         `INSERT INTO space_agents (id, space_id, name, handle, status, description, tools, custom_prompt, created_at, updated_at)
            VALUES ('worker-only-1', ?, 'Legacy Worker', 'legacy-worker', 'active', '', '[]', NULL, 1, 1)`
+      ).run(SPACE_ID);
+      db.prepare(
+        `INSERT INTO space_agents (id, space_id, name, handle, status, description, tools, custom_prompt, created_at, updated_at)
+           VALUES ('worker-only-2', ?, 'Paused Worker', 'paused-worker', 'paused', '', '[]', NULL, 1, 1)`
       ).run(SPACE_ID);
 
       const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
         spaceId: SPACE_ID,
       });
 
-      expect(bundle.agents.map((a: any) => a.name)).toContain('Legacy Worker');
+      const names = bundle.agents.map((a: any) => a.name);
+      expect(names).toContain('Legacy Worker');
+      expect(names).not.toContain('Paused Worker');
     });
 
     it('excludes paused native agents from agents exports', async () => {

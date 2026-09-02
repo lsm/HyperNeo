@@ -111,7 +111,7 @@ function unifiedExportAgents(
   const unifiedIds = new Set(unifiedRows.map((a) => a.id));
   const workerOnlyRows = agentRepo
     .getBySpaceId(spaceId)
-    .filter((w) => !unifiedIds.has(w.id) && w.status !== 'archived');
+    .filter((w) => !unifiedIds.has(w.id) && w.status === 'active');
   return [...unifiedViews, ...workerOnlyRows];
 }
 

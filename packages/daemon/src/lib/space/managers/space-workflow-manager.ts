@@ -15,6 +15,7 @@ import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
 import { Logger } from '../../logger.ts';
 import { coordinatorLongHorizonAgentId } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
 import {
   validatePostApproval,
   validatePostApprovalRoutes,
@@ -59,6 +60,7 @@ export function createSpaceAgentLookup(
           const legacyTwin = spaceAgentRepo.getById(id);
           if (!legacyTwin || legacyTwin.spaceId !== spaceId) return null;
         }
+        if (!isRunnableUnifiedAgent(unified)) return null;
         return { id: unified.id, name: unified.displayName };
       }
       const worker = spaceAgentRepo.getById(id);
