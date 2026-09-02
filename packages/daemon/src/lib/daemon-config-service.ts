@@ -69,7 +69,13 @@ function applyValidatedPatch(
   for (const [family, familyPatch] of Object.entries(patch) as Array<
     [string, Record<string, unknown> | undefined]
   >) {
-    if (!familyPatch) continue;
+    if (familyPatch === undefined) continue;
+    if (typeof familyPatch !== 'object' || familyPatch === null || Array.isArray(familyPatch)) {
+      throw new DaemonConfigValidationError(
+        family,
+        `daemon config family ${family} must be an object`
+      );
+    }
     const familyCatalog = CATALOG_BY_FAMILY.get(family);
     if (!familyCatalog) {
       throw new DaemonConfigValidationError(family, `unknown daemon config family: ${family}`);
@@ -155,7 +161,7 @@ export class DaemonConfigService {
       }
     );
     this.cachedConfig = outcome.config;
-    return { config: structuredClone(outcome.config), changedKeys: outcome.changedKeys };
+    return { config: structuredClone(outcome.config), changedKeys: [...outcome.changedKeys] };
   }
 
   seedFromLegacyEnv(env: Record<string, string | undefined> = process.env): boolean {

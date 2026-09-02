@@ -208,6 +208,41 @@ describe('DaemonConfigService', () => {
     db.close();
   });
 
+  test('mutating the returned changedKeys cannot alter the published event payload', async () => {
+    const db = createDb();
+    const bus = createDaemonInternalEventBus();
+    const service = new DaemonConfigService(db, bus);
+    const seen: Array<{ changedKeys: string[] }> = [];
+    bus.subscribe(
+      DAEMON_CONFIG_UPDATED,
+      (event) => {
+        seen.push({ changedKeys: event.changedKeys });
+      },
+      { subscriberName: 'daemon-config-service-test' }
+    );
+    const result = service.updateConfig({ deliveryPolicy: { messageDeliveryMaxRetries: 4 } });
+    result.changedKeys.length = 0;
+    await flushEvents();
+    expect(seen).toEqual([{ changedKeys: ['messageDeliveryMaxRetries'] }]);
+    db.close();
+  });
+
+  test('updateConfig rejects non-object families instead of treating them as no-ops', () => {
+    const db = createDb();
+    const service = new DaemonConfigService(db);
+    expect(() => service.updateConfig(badPatch({ deliveryPolicy: null }))).toThrow(
+      'daemon config family deliveryPolicy must be an object'
+    );
+    expect(() => service.updateConfig(badPatch({ flags: 'yes' }))).toThrow(
+      'daemon config family flags must be an object'
+    );
+    expect(() => service.updateConfig(badPatch({ startup: [] }))).toThrow(
+      'daemon config family startup must be an object'
+    );
+    expect(readConfigRow(db)).toBeNull();
+    db.close();
+  });
+
   test('updateConfig rejects unknown families and keys without writing', () => {
     const db = createDb();
     const service = new DaemonConfigService(db);
