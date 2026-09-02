@@ -573,7 +573,7 @@ describe('Space Agent RPC Handlers', () => {
           spaceId: 'space-1',
           name: 'Duplicate',
         })
-      ).rejects.toThrow('"Duplicate" already exists');
+      ).rejects.toThrow(/already (exists|used by a worker agent)/);
     });
   });
 
@@ -887,6 +887,24 @@ describe('Space Agent RPC Handlers', () => {
       ).rejects.toThrow('Agent not found');
     });
 
+    it('rejects worker names that collide with a native overlay display name', async () => {
+      await call(hubData.handlers, 'spaceAgent.create', {
+        spaceId: 'space-1',
+        name: 'Worker One',
+      });
+      const workerId = manager.listBySpaceId('space-1')[0].id;
+      db.prepare(
+        `UPDATE space_long_horizon_agents SET template_key = 'custom.overlay', display_name = 'Overlay Name' WHERE id = ?`
+      ).run(workerId);
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.create', {
+          spaceId: 'space-1',
+          name: 'overlay name',
+        })
+      ).rejects.toThrow('already used by a unified agent');
+    });
+
     it('throws on duplicate name conflict', async () => {
       await call(hubData.handlers, 'spaceAgent.create', {
         spaceId: 'space-1',
@@ -895,7 +913,7 @@ describe('Space Agent RPC Handlers', () => {
 
       await expect(
         call(hubData.handlers, 'spaceAgent.update', { id: agentId, name: 'OtherAgent' })
-      ).rejects.toThrow('already exists');
+      ).rejects.toThrow(/already (exists|used by a worker agent)/);
     });
 
     it('updates agent name successfully', async () => {

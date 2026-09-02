@@ -13,6 +13,7 @@ import { NodeExecutionRepository } from '../../../src/storage/repositories/node-
 import { PendingAgentMessageRepository } from '../../../src/storage/repositories/pending-agent-message-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
 import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
@@ -24,6 +25,7 @@ describe('Space messaging adapter', () => {
   let spaceRepo: SpaceRepository;
   let sessionRepo: SessionRepository;
   let spaceAgentRepo: SpaceAgentRepository;
+  let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   let workflowRepo: SpaceWorkflowRepository;
   let workflowRunRepo: SpaceWorkflowRunRepository;
   let nodeExecutionRepo: NodeExecutionRepository;
@@ -40,6 +42,7 @@ describe('Space messaging adapter', () => {
     spaceRepo = new SpaceRepository(db);
     sessionRepo = new SessionRepository(db);
     spaceAgentRepo = new SpaceAgentRepository(db);
+    longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
     workflowRepo = new SpaceWorkflowRepository(db);
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     nodeExecutionRepo = new NodeExecutionRepository(db);
@@ -48,6 +51,7 @@ describe('Space messaging adapter', () => {
       spaceRepo,
       sessionRepo,
       spaceAgentRepo,
+      longHorizonAgentRepo,
       workflowRepo,
       workflowRunRepo,
       nodeExecutionRepo,
@@ -267,8 +271,12 @@ describe('Space messaging adapter', () => {
     ]);
   });
 
-  it('resolves inactive long-term agents by handle and role', async () => {
-    const agent = spaceAgentRepo.create({ spaceId, name: 'Task Manager' });
+  it('resolves long-term agents by handle and role', async () => {
+    const agent = longHorizonAgentRepo.create({
+      spaceId,
+      handle: 'task-manager',
+      displayName: 'Task Manager',
+    });
     const resolver = new SpaceMessageResolver(
       { actorRegistry: registry, workflowRepo, workflowRunRepo },
       { spaceId }
@@ -283,17 +291,16 @@ describe('Space messaging adapter', () => {
     expect(result.resolved.map((target) => target.actor)).toEqual([
       expect.objectContaining({
         actorId: `agent:${encodeURIComponent(agent.id)}`,
-        status: 'inactive',
+        status: 'active',
       }),
       expect.objectContaining({
         actorId: `agent:${encodeURIComponent(agent.id)}`,
-        status: 'inactive',
+        status: 'active',
       }),
     ]);
   });
 
-  it('queues inactive long-term agent deliveries via activation callback', async () => {
-    const agent = spaceAgentRepo.create({ spaceId, name: 'Task Manager' });
+  it('queues inactive actor deliveries via activation callback', async () => {
     const resolver = new SpaceMessageResolver(
       { actorRegistry: registry, workflowRepo, workflowRunRepo },
       { spaceId }
@@ -310,14 +317,14 @@ describe('Space messaging adapter', () => {
     const result = await facade.routeMessage({
       ...message,
       workflowRunId: undefined,
-      targets: ['@task-manager'],
+      targets: ['@coordinator'],
     });
 
-    expect(queued).toEqual([`agent:${encodeURIComponent(agent.id)}`]);
+    expect(queued).toEqual([`agent:coordinator:${spaceId}`]);
     expect(result.deliveries).toHaveLength(1);
     expect(result.deliveries[0]).toMatchObject({
-      targetActorId: `agent:${encodeURIComponent(agent.id)}`,
-      targetRef: '@task-manager',
+      targetActorId: `agent:coordinator:${spaceId}`,
+      targetRef: '@coordinator',
       state: 'queued',
       deliveryId: 'delivery_inbox-1',
     });

@@ -1517,8 +1517,8 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     const workerHandleCollision = JSON.parse(
       (await handlers.create_agent({ name: 'Coder' })).content[0].text
     );
-    expect(workerHandleCollision.success).toBe(true);
-    expect(workerHandleCollision.agent.handle).toBe('coder-2');
+    expect(workerHandleCollision.success).toBe(false);
+    expect(workerHandleCollision.error).toContain('already used');
 
     const slugged = JSON.parse(
       (await handlers.create_agent({ name: 'QA/Review:@Lead' })).content[0].text
@@ -1543,7 +1543,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(updated.success).toBe(true);
     expect(updated.agent.thinkingLevel).toBe('think8k');
-    expect(updated.agent.instructions).toBe('Tracks product-quality signals');
+    expect(updated.agent.description).toBe('Tracks product-quality signals');
 
     const cleared = JSON.parse(
       (
@@ -1578,6 +1578,22 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(archived.agent.status).toBe('archived');
 
+    ctx.db
+      .prepare(
+        `INSERT INTO space_agents (id, space_id, name, handle, status, description, tools, custom_prompt, created_at, updated_at)
+         VALUES ('worker-only-reviewer', ?, 'Reviewer', 'worker-reviewer', 'active', '', '[]', NULL, 1, 1)`
+      )
+      .run(ctx.spaceId);
+    const workerNameTemplate = JSON.parse(
+      (
+        await handlers.create_agent_from_template({
+          template_name: 'Reviewer',
+        })
+      ).content[0].text
+    );
+    expect(workerNameTemplate.success).toBe(true);
+    expect(workerNameTemplate.agent.displayName).toBe('Reviewer (2)');
+
     const templated = JSON.parse(
       (
         await handlers.create_agent_from_template({
@@ -1597,8 +1613,8 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
         })
       ).content[0].text
     );
-    expect(templatedWorkerHandleCollision.success).toBe(true);
-    expect(templatedWorkerHandleCollision.agent.handle).toBe('coder-3');
+    expect(templatedWorkerHandleCollision.success).toBe(false);
+    expect(templatedWorkerHandleCollision.error).toContain('already used');
     const duplicateTemplate = JSON.parse(
       (
         await handlers.create_agent_from_template({
@@ -1607,8 +1623,8 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
         })
       ).content[0].text
     );
-    expect(duplicateTemplate.success).toBe(true);
-    expect(duplicateTemplate.agent.handle).toBe('reviewer-copy-2');
+    expect(duplicateTemplate.success).toBe(false);
+    expect(duplicateTemplate.error).toContain('already used');
 
     const blankTemplateName = JSON.parse(
       (

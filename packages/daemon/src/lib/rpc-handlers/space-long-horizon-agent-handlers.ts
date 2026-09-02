@@ -29,6 +29,36 @@ function validateLongHorizonSubscriptionPattern(
   return pattern;
 }
 
+function ensureUnifiedDisplayNameAvailable(
+  repo: SpaceLongHorizonAgentRepository,
+  spaceAgentManager: SpaceAgentManager | undefined,
+  spaceId: string,
+  displayName: string,
+  excludeId?: string
+): void {
+  const target = displayName.trim().toLowerCase();
+  if (!target) return;
+  const unifiedConflict = repo
+    .listBySpaceId(spaceId)
+    .find(
+      (a) =>
+        a.status !== 'archived' &&
+        a.id !== excludeId &&
+        (a.displayName ?? '').trim().toLowerCase() === target
+    );
+  if (unifiedConflict) {
+    throw new Error(
+      `Agent name "${displayName}" is already used by another unified agent in this space`
+    );
+  }
+  const workerConflict = spaceAgentManager
+    ?.listBySpaceId(spaceId)
+    .find((a) => a.id !== excludeId && (a.name ?? '').trim().toLowerCase() === target);
+  if (workerConflict) {
+    throw new Error(`Agent name "${displayName}" is already used by a worker agent in this space`);
+  }
+}
+
 function resolveLongHorizonAgentCreateHandle(
   repo: SpaceLongHorizonAgentRepository,
   spaceAgentManager: SpaceAgentManager | undefined,
@@ -229,6 +259,9 @@ export function setupSpaceLongHorizonAgentHandlers(
     };
     if (!params.spaceId) throw new Error('spaceId is required');
     if (!params.handle) throw new Error('handle is required');
+    if (params.displayName !== undefined && params.displayName.trim() === '') {
+      throw new Error('displayName cannot be blank');
+    }
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
     const handle = resolveLongHorizonAgentCreateHandle(
@@ -237,6 +270,13 @@ export function setupSpaceLongHorizonAgentHandlers(
       params.spaceId,
       params.id ?? '',
       params.handle
+    );
+    ensureUnifiedDisplayNameAvailable(
+      repo,
+      spaceAgentManager,
+      params.spaceId,
+      params.displayName ?? handle,
+      params.id
     );
     const agent = repo.create({
       id: params.id,
@@ -291,6 +331,20 @@ export function setupSpaceLongHorizonAgentHandlers(
             params.agentId,
             params.handle
           );
+    if (params.displayName !== undefined && params.displayName.trim() === '') {
+      throw new Error('displayName cannot be blank');
+    }
+    const unarchiving =
+      existing.status === 'archived' && params.status !== undefined && params.status !== 'archived';
+    if (params.displayName !== undefined || unarchiving) {
+      ensureUnifiedDisplayNameAvailable(
+        repo,
+        spaceAgentManager,
+        existing.spaceId,
+        params.displayName ?? existing.displayName,
+        params.agentId
+      );
+    }
     const agent = repo.update(params.agentId, {
       handle,
       displayName: params.displayName,
@@ -324,6 +378,15 @@ export function setupSpaceLongHorizonAgentHandlers(
     if (!existing) throw new Error(`Agent not found: ${params.agentId}`);
     if (params.spaceId && existing.spaceId !== params.spaceId)
       throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
+    if (spaceAgentManager) {
+      const { referenced, workflowNames } = spaceAgentManager.isAgentReferenced(existing.id);
+      if (referenced) {
+        throw new Error(
+          `Cannot delete agent "${existing.displayName}" - it is referenced by workflow nodes` +
+            workflowNames.map((n) => ` (Workflow: ${n})`).join('')
+        );
+      }
+    }
     repo.delete(params.agentId);
     runtimeService?.removeLongHorizonAgentSubscriptions(existing.spaceId, existing.id);
     await publishAgentDeleted(existing.spaceId, existing.id);

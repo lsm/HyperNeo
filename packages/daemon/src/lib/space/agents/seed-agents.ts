@@ -1,6 +1,6 @@
 import type { SpaceAgentManager, SpaceAgentResult } from '../managers/space-agent-manager.ts';
 import { computeAgentTemplateHash } from './agent-template-hash.ts';
-import type { SpaceWorkerAgent } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent, SpaceWorkerAgent } from '@hyperneo/shared';
 import {
   QA_SYSTEM_CONTRACT,
   REVIEWER_SYSTEM_CONTRACT,
@@ -189,6 +189,7 @@ export function isPristineRetiredPrMergerRow(agent: SpaceWorkerAgent): boolean {
 export interface RetireRemovedPresetAgentsDeps {
   agentManager: Pick<SpaceAgentManager, 'listBySpaceId' | 'delete'>;
   referencedAgentIds: ReadonlySet<string>;
+  shouldRetireUnifiedTwin?: (agentId: string) => boolean;
 }
 
 export function retireRemovedPresetAgents(
@@ -199,6 +200,7 @@ export function retireRemovedPresetAgents(
   for (const agent of deps.agentManager.listBySpaceId(spaceId)) {
     if (!isPristineRetiredPrMergerRow(agent)) continue;
     if (deps.referencedAgentIds.has(agent.id)) continue;
+    if (deps.shouldRetireUnifiedTwin && !deps.shouldRetireUnifiedTwin(agent.id)) continue;
     try {
       deps.agentManager.delete(agent.id);
       retired.push(agent.name);
@@ -241,4 +243,9 @@ export async function seedPresetAgents(
   }
 
   return { seeded, errors };
+}
+
+export interface SeedUnifiedSpaceAgentsResult {
+  seeded: SpaceLongHorizonAgent[];
+  errors: Array<{ name: string; error: string }>;
 }

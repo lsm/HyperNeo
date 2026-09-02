@@ -48,7 +48,12 @@ describe('Space long-horizon agent handlers', () => {
     removeLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
     clearLongTermAgentSessionProvider: ReturnType<typeof mock>;
   };
-  let spaceAgentManager: { listBySpaceId: ReturnType<typeof mock> };
+  let spaceAgentManager: {
+    listBySpaceId: ReturnType<typeof mock>;
+    isAgentReferenced: ReturnType<typeof mock>;
+    getById: ReturnType<typeof mock>;
+    delete: ReturnType<typeof mock>;
+  };
   let internalEventBus: { publish: ReturnType<typeof mock> };
 
   beforeEach(() => {
@@ -105,7 +110,12 @@ describe('Space long-horizon agent handlers', () => {
       removeLongHorizonAgentSubscriptions: mock(() => {}),
       clearLongTermAgentSessionProvider: mock(async () => {}),
     };
-    spaceAgentManager = { listBySpaceId: mock(() => []) };
+    spaceAgentManager = {
+      listBySpaceId: mock(() => []),
+      isAgentReferenced: mock(() => ({ referenced: false, workflowNames: [] as string[] })),
+      getById: mock(() => null),
+      delete: mock(() => ({ ok: true })),
+    };
     internalEventBus = { publish: mock(async () => {}) };
     setupSpaceLongHorizonAgentHandlers(
       hubData.hub,
@@ -118,6 +128,40 @@ describe('Space long-horizon agent handlers', () => {
   });
 
   describe('spaceLongHorizonAgent.create', () => {
+    it('rejects a display name already used by another unified agent (case-insensitive)', async () => {
+      repo.listBySpaceId = mock(() => [
+        {
+          id: 'other-agent',
+          spaceId: 'space-1',
+          handle: 'other',
+          displayName: 'Existing Agent',
+          status: 'active',
+        },
+      ]) as SpaceLongHorizonAgentRepository['listBySpaceId'];
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.create', {
+          spaceId: 'space-1',
+          handle: 'fresh',
+          displayName: 'existing agent',
+        })
+      ).rejects.toThrow('already used by another unified agent');
+    });
+
+    it('rejects a display name already used by a worker agent', async () => {
+      spaceAgentManager.listBySpaceId = mock(() => [
+        { id: 'worker-1', spaceId: 'space-1', name: 'Worker Name' },
+      ]);
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.create', {
+          spaceId: 'space-1',
+          handle: 'fresh',
+          displayName: 'Worker Name',
+        })
+      ).rejects.toThrow('already used by a worker agent');
+    });
+
     it('uses a non-conflicting mirror handle when requested handle belongs to another row', async () => {
       repo.getByHandle = mock(() => ({
         id: 'standalone-agent',
@@ -233,6 +277,48 @@ describe('Space long-horizon agent handlers', () => {
       expect(repo.update).not.toHaveBeenCalled();
     });
 
+    it('rejects display-name updates that collide with another unified agent', async () => {
+      repo.listBySpaceId = mock(() => [
+        {
+          id: 'other-agent',
+          spaceId: 'space-1',
+          handle: 'other',
+          displayName: 'Taken Name',
+          status: 'active',
+        },
+      ]) as SpaceLongHorizonAgentRepository['listBySpaceId'];
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+          agentId: 'agent-1',
+          spaceId: 'space-1',
+          displayName: 'taken name',
+        })
+      ).rejects.toThrow('already used by another unified agent');
+
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('allows keeping your own display name on update', async () => {
+      repo.listBySpaceId = mock(() => [
+        {
+          id: 'agent-1',
+          spaceId: 'space-1',
+          handle: 'mine',
+          displayName: 'Same Name',
+          status: 'active',
+        },
+      ]) as SpaceLongHorizonAgentRepository['listBySpaceId'];
+
+      await call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+        agentId: 'agent-1',
+        spaceId: 'space-1',
+        displayName: 'Same Name',
+      });
+
+      expect(repo.update).toHaveBeenCalled();
+    });
+
     it('allows shared-ID long-horizon agents to keep their worker handle', async () => {
       spaceAgentManager.listBySpaceId = mock(() => [
         { id: 'agent-1', spaceId: 'space-1', handle: 'coder' },
@@ -322,6 +408,100 @@ describe('Space long-horizon agent handlers', () => {
   });
 
   describe('spaceLongHorizonAgent.delete', () => {
+    it('rejects deleting an agent referenced by workflow nodes', async () => {
+      spaceAgentManager.isAgentReferenced = mock(() => ({
+        referenced: true,
+        workflowNames: ['Pipe'],
+      }));
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.delete', {
+          agentId: 'agent-1',
+          spaceId: 'space-1',
+        })
+      ).rejects.toThrow('referenced by workflow nodes');
+
+      expect(repo.delete).not.toHaveBeenCalled();
+    });
+
+    it('rejects blank display names on create', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.create', {
+          spaceId: 'space-1',
+          handle: 'fresh',
+          displayName: '   ',
+        })
+      ).rejects.toThrow('displayName cannot be blank');
+    });
+
+    it('rechecks the display name on every unarchive transition', async () => {
+      repo.getById = mock(() => ({
+        id: 'agent-1',
+        spaceId: 'space-1',
+        status: 'archived',
+        displayName: 'Sleeper',
+      })) as unknown as SpaceLongHorizonAgentRepository['getById'];
+      repo.listBySpaceId = mock(() => [
+        {
+          id: 'agent-2',
+          spaceId: 'space-1',
+          handle: 'sleeper-2',
+          displayName: 'Sleeper',
+          status: 'active',
+        },
+      ]) as SpaceLongHorizonAgentRepository['listBySpaceId'];
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+          agentId: 'agent-1',
+          spaceId: 'space-1',
+          status: 'paused',
+        })
+      ).rejects.toThrow('already used by another unified agent');
+
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('rechecks the display name when unarchiving', async () => {
+      repo.getById = mock(() => ({
+        id: 'agent-1',
+        spaceId: 'space-1',
+        status: 'archived',
+        displayName: 'Sleeper',
+      })) as unknown as SpaceLongHorizonAgentRepository['getById'];
+      repo.listBySpaceId = mock(() => [
+        {
+          id: 'agent-2',
+          spaceId: 'space-1',
+          handle: 'sleeper-2',
+          displayName: 'Sleeper',
+          status: 'active',
+        },
+      ]) as SpaceLongHorizonAgentRepository['listBySpaceId'];
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+          agentId: 'agent-1',
+          spaceId: 'space-1',
+          status: 'active',
+        })
+      ).rejects.toThrow('already used by another unified agent');
+
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects blank display names on update', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+          agentId: 'agent-1',
+          spaceId: 'space-1',
+          displayName: '  ',
+        })
+      ).rejects.toThrow('displayName cannot be blank');
+
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
     it('removes runtime subscriptions before deleting the agent row', async () => {
       const result = await call<{ success: boolean }>(
         hubData.handlers,

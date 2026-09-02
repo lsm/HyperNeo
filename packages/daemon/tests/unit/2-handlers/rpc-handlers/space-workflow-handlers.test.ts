@@ -5,14 +5,27 @@ import {
   setupSpaceWorkflowHandlers,
   checkBuiltInWorkflowDriftOnStartup,
 } from '../../../../src/lib/rpc-handlers/space-workflow-handlers';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceWorkflowSummary } from '@hyperneo/shared';
 import {
   WorkflowValidationError,
   WorkflowDeletionBlockedError,
 } from '../../../../src/lib/space/managers/space-workflow-manager';
-import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import { SpaceAgentManager as RealSpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
+import { SpaceWorkflowRepository as RealSpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { SpaceWorkflowManager as RealSpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
+import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { createSpaceTables } from '../../helpers/space-test-db';
+import {
+  seedPresetAgents,
+  RETIRED_PR_MERGER_DESCRIPTION,
+  RETIRED_PR_MERGER_PROMPT,
+  RETIRED_PR_MERGER_TOOLS,
+} from '../../../../src/lib/space/agents/seed-agents';
+import { restampBuiltInWorkflowsOnStartup } from '../../../../src/lib/rpc-handlers/space-workflow-handlers';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import type {
   DaemonInternalEventMap,
@@ -134,12 +147,13 @@ function createMockWorkflowManager(
   } as unknown as SpaceWorkflowManager;
 }
 
-function createMockSpaceAgentManager(
-  agents: Array<{ id: string; name: string }> = []
-): SpaceAgentManager {
+function createMockLongHorizonAgentRepo(
+  agents: Array<{ id: string; displayName: string }> = []
+): SpaceLongHorizonAgentRepository {
   return {
     listBySpaceId: mock(() => agents),
-  } as unknown as SpaceAgentManager;
+    getCoordinator: mock(() => null),
+  } as unknown as SpaceLongHorizonAgentRepository;
 }
 
 function createMockWorkflowRunRepo(): SpaceWorkflowRunRepository {
@@ -154,13 +168,13 @@ describe('space-workflow-handlers', () => {
   let internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   let spaceManager: SpaceManager;
   let workflowManager: SpaceWorkflowManager;
-  let spaceAgentManager: SpaceAgentManager;
+  let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   let workflowRunRepo: SpaceWorkflowRunRepository;
 
   function setup(
     space: Space | null = mockSpace,
     workflow: SpaceWorkflow | null = mockWorkflow,
-    agents: Array<{ id: string; name: string }> = []
+    agents: Array<{ id: string; displayName: string }> = []
   ) {
     const mh = createMockMessageHub();
     hub = mh.hub;
@@ -168,14 +182,14 @@ describe('space-workflow-handlers', () => {
     internalEventBus = createMockInternalEventBus<DaemonInternalEventMap>();
     spaceManager = createMockSpaceManager(space);
     workflowManager = createMockWorkflowManager(workflow);
-    spaceAgentManager = createMockSpaceAgentManager(agents);
+    longHorizonAgentRepo = createMockLongHorizonAgentRepo(agents);
     workflowRunRepo = createMockWorkflowRunRepo();
     setupSpaceWorkflowHandlers(
       hub,
       spaceManager,
       workflowManager,
       internalEventBus,
-      spaceAgentManager,
+      longHorizonAgentRepo,
       workflowRunRepo
     );
   }
@@ -490,7 +504,7 @@ describe('space-workflow-handlers', () => {
     it('propagates step validation error (unknown agentId)', async () => {
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockImplementation(() => {
         throw new WorkflowValidationError(
-          'step[0]: agentId "unknown-uuid" does not match any SpaceWorkerAgent in this space'
+          'step[0]: agentId "unknown-uuid" does not match any SpaceLongHorizonAgent in this space'
         );
       });
 
@@ -499,7 +513,7 @@ describe('space-workflow-handlers', () => {
           id: 'wf-1',
           nodes: [{ id: 's1', name: 'Lead', agentId: 'unknown-uuid', order: 0 }],
         })
-      ).rejects.toThrow('does not match any SpaceWorkerAgent in this space');
+      ).rejects.toThrow('does not match any SpaceLongHorizonAgent in this space');
     });
   });
 
@@ -802,14 +816,16 @@ describe('space-workflow-handlers', () => {
   });
 
   describe('spaceWorkflow.syncFromTemplate', () => {
-    function agentsForTemplate(template: SpaceWorkflow): Array<{ id: string; name: string }> {
+    function agentsForTemplate(
+      template: SpaceWorkflow
+    ): Array<{ id: string; displayName: string }> {
       const names = new Set<string>();
       for (const node of template.nodes) {
         for (const a of node.agents) {
           names.add(a.agentId);
         }
       }
-      return Array.from(names).map((name, i) => ({ id: `agent-uuid-${i}`, name }));
+      return Array.from(names).map((name, i) => ({ id: `agent-uuid-${i}`, displayName: name }));
     }
 
     it('syncs a workflow from its template and emits spaceWorkflow.updated', async () => {
@@ -838,7 +854,7 @@ describe('space-workflow-handlers', () => {
       expect(calledParams.name).toBe(template.name);
       expect(calledParams.templateName).toBe(template.name);
       expect(calledParams.templateHash).toBe(templateHash);
-      const calledNodes = calledParams.nodes as Array<{ id: string; name: string }>;
+      const calledNodes = calledParams.nodes as Array<{ id: string; displayName: string }>;
       expect(calledNodes.map((node) => node.id)).toContain('step-1');
       expect(calledNodes.find((node) => node.id === 'step-1')?.name).toBe(template.nodes[0].name);
       expect(calledParams.startNodeId).toBe('step-1');
@@ -895,7 +911,7 @@ describe('space-workflow-handlers', () => {
 
       const [, calledParams] = (workflowManager.updateWorkflow as ReturnType<typeof mock>).mock
         .calls[0] as [string, Record<string, unknown>];
-      const calledNodes = calledParams.nodes as Array<{ id: string; name: string }>;
+      const calledNodes = calledParams.nodes as Array<{ id: string; displayName: string }>;
       expect(calledNodes.find((node) => node.name === 'Review')?.id).toBe('existing-review');
       const insertedCoding = calledNodes.find((node) => node.name === 'Coding');
       expect(insertedCoding?.id).not.toBe('existing-review');
@@ -958,7 +974,7 @@ describe('space-workflow-handlers', () => {
       ).rejects.toThrow('Built-in template "Unknown Template" not found');
     });
 
-    it('throws when a required agent role cannot be resolved to a SpaceWorkerAgent', async () => {
+    it('throws when a required agent role cannot be resolved to a SpaceLongHorizonAgent', async () => {
       const [template] = getBuiltInWorkflows();
       const wfLinked: SpaceWorkflow = { ...mockWorkflow, templateName: template.name };
       setup(mockSpace, wfLinked, []);
@@ -970,7 +986,7 @@ describe('space-workflow-handlers', () => {
     it('throws a preset-specific message with a repair hint when a preset is missing', async () => {
       const template = getBuiltInWorkflows().find((t) => t.name === 'Coding')!;
       const wfLinked: SpaceWorkflow = { ...mockWorkflow, templateName: template.name };
-      setup(mockSpace, wfLinked, [{ id: 'coder-id', name: 'Coder' }]);
+      setup(mockSpace, wfLinked, [{ id: 'coder-id', displayName: 'Coder' }]);
       await expect(
         call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' })
       ).rejects.toThrow(/preset agent "Reviewer" is missing[\s\S]*backfill migration/i);
@@ -1222,19 +1238,21 @@ describe('space-workflow-handlers', () => {
   });
 
   describe('spaceWorkflow.resyncDuplicates', () => {
-    function agentsForTemplate(template: SpaceWorkflow): Array<{ id: string; name: string }> {
+    function agentsForTemplate(
+      template: SpaceWorkflow
+    ): Array<{ id: string; displayName: string }> {
       const names = new Set<string>();
       for (const node of template.nodes) {
         for (const a of node.agents) {
           names.add(a.agentId);
         }
       }
-      return Array.from(names).map((name, i) => ({ id: `agent-uuid-${i}`, name }));
+      return Array.from(names).map((name, i) => ({ id: `agent-uuid-${i}`, displayName: name }));
     }
 
     function setupWithGroup(
       group: SpaceWorkflow[],
-      agents: Array<{ id: string; name: string }> = []
+      agents: Array<{ id: string; displayName: string }> = []
     ) {
       setup(mockSpace, group[0] ?? null, agents);
       (workflowManager.listWorkflows as ReturnType<typeof mock>).mockReturnValue(group);
@@ -1326,7 +1344,7 @@ describe('space-workflow-handlers', () => {
       expect(calledParams.name).toBe(template.name);
       expect(calledParams.templateName).toBe(template.name);
       expect(calledParams.templateHash).toBe(templateHash);
-      const calledNodes = calledParams.nodes as Array<{ id: string; name: string }>;
+      const calledNodes = calledParams.nodes as Array<{ id: string; displayName: string }>;
       expect(calledNodes.map((node) => node.id)).toContain('step-1');
       expect(calledNodes.find((node) => node.id === 'step-1')?.name).toBe(template.nodes[0].name);
       expect(calledParams.startNodeId).toBe('step-1');
@@ -1415,7 +1433,7 @@ describe('space-workflow-handlers', () => {
       expect(workflowManager.updateWorkflow).toHaveBeenCalledTimes(1);
     });
 
-    it('throws when no SpaceWorkerAgent resolves a required role — and does NOT delete any duplicates or mutate the kept row', async () => {
+    it('throws when no SpaceLongHorizonAgent resolves a required role — and does NOT delete any duplicates or mutate the kept row', async () => {
       const [template] = getBuiltInWorkflows();
       const older: SpaceWorkflow = {
         ...mockWorkflow,
@@ -1790,5 +1808,292 @@ describe('checkBuiltInWorkflowDriftOnStartup', () => {
     const wm = makeWorkflowManager({});
 
     await expect(checkBuiltInWorkflowDriftOnStartup(wm, sm)).resolves.toBeUndefined();
+  });
+});
+
+describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard', () => {
+  function makeRealEnv() {
+    const db = new Database(':memory:');
+    createSpaceTables(db);
+    db.prepare(
+      `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+       VALUES ('space-retire', 'space-retire', '/tmp/retire', 'Retire', 1, 1)`
+    ).run();
+    const spaceAgentRepo = new SpaceAgentRepository(db);
+    const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
+    const spaceWorkflowRepo = new RealSpaceWorkflowRepository(db);
+    const workflowManager = new RealSpaceWorkflowManager(spaceWorkflowRepo);
+    const spaceManager = {
+      listSpaces: async () => [{ id: 'space-retire', name: 'Retire' }],
+    } as unknown as SpaceManager;
+    const spaceAgentManager = new RealSpaceAgentManager(spaceAgentRepo);
+    return {
+      db,
+      spaceAgentRepo,
+      longHorizonAgentRepo,
+      workflowRepo: spaceWorkflowRepo,
+      workflowManager,
+      spaceManager,
+      spaceAgentManager,
+    };
+  }
+
+  function seedRetiree(
+    env: ReturnType<typeof makeRealEnv>,
+    twinOverrides: { instructions?: string } = {}
+  ): string {
+    const worker = env.spaceAgentRepo.create({
+      spaceId: 'space-retire',
+      name: 'PR Merger',
+      handle: 'merger',
+      description: RETIRED_PR_MERGER_DESCRIPTION,
+      customPrompt: RETIRED_PR_MERGER_PROMPT,
+      templateName: 'PR Merger',
+      tools: [...RETIRED_PR_MERGER_TOOLS],
+    });
+    if (twinOverrides.instructions !== undefined) {
+      env.db
+        .prepare(`UPDATE space_long_horizon_agents SET instructions = ? WHERE id = ?`)
+        .run(twinOverrides.instructions, worker.id);
+    }
+    return worker.id;
+  }
+
+  it('retires the unified twin of a pristine removed preset', async () => {
+    const env = makeRealEnv();
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    const id = seedRetiree(env);
+    await restampBuiltInWorkflowsOnStartup(
+      env.workflowManager,
+      env.spaceManager,
+      env.spaceAgentManager,
+      env.longHorizonAgentRepo,
+      () => false
+    );
+    expect(env.spaceAgentRepo.getById(id)).toBeNull();
+    expect(env.longHorizonAgentRepo.getById(id)).toBeNull();
+    env.db.close();
+  });
+
+  it('keeps a diverged unified twin and its worker row on retirement', async () => {
+    const env = makeRealEnv();
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    const id = seedRetiree(env, { instructions: 'Customized by the owner.' });
+    await restampBuiltInWorkflowsOnStartup(
+      env.workflowManager,
+      env.spaceManager,
+      env.spaceAgentManager,
+      env.longHorizonAgentRepo,
+      () => false
+    );
+    expect(env.spaceAgentRepo.getById(id)).not.toBeNull();
+    expect(env.longHorizonAgentRepo.getById(id)).not.toBeNull();
+    env.db.close();
+  });
+
+  it('keeps a goal-owning unified twin and its worker row on retirement', async () => {
+    const env = makeRealEnv();
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    const id = seedRetiree(env);
+    env.db
+      .prepare(
+        `INSERT INTO space_goals (id, space_id, title, created_at, updated_at)
+         VALUES ('goal-own', 'space-retire', 'Own me', 1000, 1000)`
+      )
+      .run();
+    env.longHorizonAgentRepo.assignGoal(id, 'goal-own', 'owner');
+    await restampBuiltInWorkflowsOnStartup(
+      env.workflowManager,
+      env.spaceManager,
+      env.spaceAgentManager,
+      env.longHorizonAgentRepo,
+      () => false
+    );
+    expect(env.spaceAgentRepo.getById(id)).not.toBeNull();
+    expect(env.longHorizonAgentRepo.getById(id)).not.toBeNull();
+    env.db.close();
+  });
+
+  it('keeps a reminder-owning unified twin and its worker row on retirement', async () => {
+    const env = makeRealEnv();
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    const id = seedRetiree(env);
+    env.longHorizonAgentRepo.createReminder({
+      spaceId: 'space-retire',
+      agentId: id,
+      title: 'Standup notes',
+      triggerType: 'at',
+    });
+    await restampBuiltInWorkflowsOnStartup(
+      env.workflowManager,
+      env.spaceManager,
+      env.spaceAgentManager,
+      env.longHorizonAgentRepo,
+      () => false
+    );
+    expect(env.spaceAgentRepo.getById(id)).not.toBeNull();
+    expect(env.longHorizonAgentRepo.getById(id)).not.toBeNull();
+    expect(env.longHorizonAgentRepo.listReminders(id)).toHaveLength(1);
+    env.db.close();
+  });
+
+  it('keeps a subscription-owning unified twin and its worker row on retirement', async () => {
+    const env = makeRealEnv();
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    const id = seedRetiree(env);
+    env.longHorizonAgentRepo.createSubscription({
+      spaceId: 'space-retire',
+      agentId: id,
+      source: 'github',
+      topic: 'github/*/*/pull_request/*',
+    });
+    await restampBuiltInWorkflowsOnStartup(
+      env.workflowManager,
+      env.spaceManager,
+      env.spaceAgentManager,
+      env.longHorizonAgentRepo,
+      () => false
+    );
+    expect(env.spaceAgentRepo.getById(id)).not.toBeNull();
+    expect(env.longHorizonAgentRepo.getById(id)).not.toBeNull();
+    expect(env.longHorizonAgentRepo.listSubscriptions(id)).toHaveLength(1);
+    env.db.close();
+  });
+
+  it('does not resolve orphaned migration mirrors as role targets', async () => {
+    const env = makeRealEnv();
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    const coder = env.spaceAgentRepo.getBySpaceId('space-retire').find((w) => w.name === 'Coder')!;
+    env.db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(coder.id);
+
+    await restampBuiltInWorkflowsOnStartup(
+      env.workflowManager,
+      env.spaceManager,
+      env.spaceAgentManager,
+      env.longHorizonAgentRepo,
+      () => false
+    );
+
+    const boundAgentIds = env.workflowRepo
+      .listWorkflows('space-retire')
+      .flatMap((w) => w.nodes.flatMap((n) => n.agents ?? []))
+      .map((a) => a.agentId);
+    expect(boundAgentIds).not.toContain(coder.id);
+    env.db.close();
+  });
+
+  it('resolves worker-only preset rows during built-in sync', async () => {
+    const env = makeRealEnv();
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    const worker = env.spaceAgentRepo.getBySpaceId('space-retire').find((w) => w.name === 'Coder')!;
+    env.db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(worker.id);
+
+    await restampBuiltInWorkflowsOnStartup(
+      env.workflowManager,
+      env.spaceManager,
+      env.spaceAgentManager,
+      env.longHorizonAgentRepo,
+      () => false
+    );
+
+    const boundAgentIds = env.workflowRepo
+      .listWorkflows('space-retire')
+      .flatMap((w) => w.nodes.flatMap((n) => n.agents ?? []))
+      .map((a) => a.agentId);
+    expect(boundAgentIds).toContain(worker.id);
+    env.db.close();
+  });
+
+  it('does not bind handle-discovered coordinators as role targets', async () => {
+    const env = makeRealEnv();
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    const coordinator = env.longHorizonAgentRepo.ensureCoordinator('space-retire');
+    env.db
+      .prepare(`UPDATE space_long_horizon_agents SET display_name = 'Coder' WHERE id = ?`)
+      .run(coordinator.id);
+
+    await restampBuiltInWorkflowsOnStartup(
+      env.workflowManager,
+      env.spaceManager,
+      env.spaceAgentManager,
+      env.longHorizonAgentRepo,
+      () => false
+    );
+
+    const boundAgentIds = env.workflowRepo
+      .listWorkflows('space-retire')
+      .flatMap((w) => w.nodes.flatMap((n) => n.agents ?? []))
+      .map((a) => a.agentId);
+    expect(boundAgentIds).not.toContain(coordinator.id);
+    env.db.close();
+  });
+
+  it('keeps a native twin and its worker row on retirement', async () => {
+    const env = makeRealEnv();
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    const id = seedRetiree(env);
+    env.db.prepare(`UPDATE space_long_horizon_agents SET template_key = NULL WHERE id = ?`).run(id);
+
+    await restampBuiltInWorkflowsOnStartup(
+      env.workflowManager,
+      env.spaceManager,
+      env.spaceAgentManager,
+      env.longHorizonAgentRepo,
+      () => false
+    );
+
+    expect(env.spaceAgentRepo.getById(id)).not.toBeNull();
+    expect(env.longHorizonAgentRepo.getById(id)).not.toBeNull();
+    env.db.close();
+  });
+
+  it('resolves whitespace-padded preset display names during restamp', async () => {
+    const env = makeRealEnv();
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    const coderTwin = env.longHorizonAgentRepo
+      .listBySpaceId('space-retire')
+      .find((a) => (a.displayName ?? '').trim() === 'Coder')!;
+    env.db
+      .prepare(`UPDATE space_long_horizon_agents SET display_name = ' Coder ' WHERE id = ?`)
+      .run(coderTwin.id);
+
+    await restampBuiltInWorkflowsOnStartup(
+      env.workflowManager,
+      env.spaceManager,
+      env.spaceAgentManager,
+      env.longHorizonAgentRepo,
+      () => false
+    );
+
+    const boundAgentIds = env.workflowRepo
+      .listWorkflows('space-retire')
+      .flatMap((w) => w.nodes.flatMap((n) => n.agents ?? []))
+      .map((a) => a.agentId);
+    expect(boundAgentIds).toContain(coderTwin.id);
+    env.db.close();
+  });
+
+  it('does not resolve archived preset twins as built-in role targets', async () => {
+    const env = makeRealEnv();
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    const coderTwin = env.longHorizonAgentRepo
+      .listBySpaceId('space-retire')
+      .find((a) => a.displayName === 'Coder')!;
+    env.spaceAgentRepo.update(coderTwin.id, { status: 'archived' });
+
+    await restampBuiltInWorkflowsOnStartup(
+      env.workflowManager,
+      env.spaceManager,
+      env.spaceAgentManager,
+      env.longHorizonAgentRepo,
+      () => false
+    );
+
+    const boundAgentIds = env.workflowRepo
+      .listWorkflows('space-retire')
+      .flatMap((w) => w.nodes.flatMap((n) => n.agents ?? []))
+      .map((a) => a.agentId);
+    expect(boundAgentIds).not.toContain(coderTwin.id);
+    env.db.close();
   });
 });
