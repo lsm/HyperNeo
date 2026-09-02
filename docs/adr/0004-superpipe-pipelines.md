@@ -13,10 +13,10 @@ reference only; this ADR is the normative document.
 Runtime and domain classes accumulated long imperative cascades that interleave
 reads, decisions, and effects — gate order lived only in control flow, invisible
 to unit tests without the whole runtime. [superpipe](https://github.com/lsm/superpipe)
-(pinned exact `0.17.0` in `packages/daemon`; `packages/web` adds the dependency
-when its first direct pipeline lands) is the composition engine: dependency-injected
-named stages, ctx threading, `!dep`/`?dep` control-flow prefixes, per-stage error
-handlers, output picking/merging, sync (`.end`) and async (`.endAsync`) executors,
+(pinned exact `0.18.0` in `packages/daemon` and `packages/web`) is the composition
+engine: dependency-injected named stages, ctx threading, `!dep`/`?dep` control-flow
+prefixes, per-stage error handlers, output picking/merging, sync (`.end`) and async
+(`.endAsync`) executors,
 `withSignal` cancellation. It has been used for years on complex codebases; this
 ADR adopts it directly, without an intermediate abstraction layer.
 
@@ -66,6 +66,16 @@ as decision vs staged vs transform; do not split one path across pipelines.
 8. **Hot paths stay inline.** Pipeline overhead is ~2-2.6 µs/decision vs ~75 ns
    for an if-cascade (benchmark: `packages/daemon/scripts/benchmark/decision-pipeline.ts`).
    Awaited boundaries are fine; tight per-token/per-event loops are not.
+
+### Early return (superpipe ≥ 0.18.0)
+
+Superpipe 0.18.0 adds opt-in `result:<name>` outputs: a stage returns exactly
+one own arm — `{ value }` binds `<name>` and the run continues; `{ reason }`
+binds `<name>` and resolves the run without starting the remaining stages. For
+a typed business early exit, the `reason` arm is the preferred idiom over
+hand-rolled halt flags; `!dep` remains valid for data-dependent dependency
+halts. Adoption is per-pipeline in the slices that touch them — no prescription
+changes for in-flight work.
 
 ### Where superpipe must not be used
 
