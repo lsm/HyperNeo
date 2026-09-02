@@ -193,6 +193,101 @@ describe('SDKMessageRepository', () => {
     );
   }
 
+  describe('hasConsumedTaskInputForSession', () => {
+    function insertTaskInput(
+      id: string,
+      sessionId: string,
+      taskId: string,
+      options: {
+        status?: string;
+        consumedSeq?: number;
+        inputKind?: string;
+        isSynthetic?: boolean;
+        text?: string;
+      } = {}
+    ): void {
+      const message = {
+        type: 'user',
+        uuid: id,
+        isSynthetic: options.isSynthetic ?? true,
+        ...(options.inputKind === undefined ? {} : { inputKind: options.inputKind }),
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: options.text ?? id }],
+        },
+      };
+      db.prepare(
+        `INSERT INTO sdk_messages (
+           id, session_id, message_type, sdk_message, timestamp, send_status, task_id, consumed_seq
+         ) VALUES (?, ?, 'user', ?, ?, ?, ?, ?)`
+      ).run(
+        id,
+        sessionId,
+        JSON.stringify(message),
+        new Date().toISOString(),
+        options.status ?? 'consumed',
+        taskId,
+        options.consumedSeq ?? null
+      );
+    }
+
+    it('requires consumed_seq for matching task input evidence', () => {
+      expect(repository.hasConsumedTaskInputForSession('session-1', 'task-1')).toBe(false);
+
+      for (const status of ['deferred', 'enqueued', 'submitted', 'failed']) {
+        insertTaskInput(`${status}-input`, 'session-1', 'task-1', {
+          status,
+          inputKind: 'task',
+        });
+      }
+
+      expect(repository.hasConsumedTaskInputForSession('session-1', 'task-1')).toBe(false);
+
+      insertTaskInput('consumed-input', 'session-1', 'task-1', {
+        consumedSeq: 7,
+        inputKind: 'task',
+      });
+
+      expect(repository.hasConsumedTaskInputForSession('session-1', 'task-1')).toBe(true);
+    });
+
+    it('isolates evidence by session, task, and structural input kind', () => {
+      insertTaskInput('matching-input', 'session-1', 'task-1', {
+        consumedSeq: 1,
+        inputKind: 'task',
+        text: 'unrelated body',
+      });
+      expect(repository.hasConsumedTaskInputForSession('session-2', 'task-1')).toBe(false);
+      expect(repository.hasConsumedTaskInputForSession('session-1', 'task-2')).toBe(false);
+
+      insertTaskInput('rendered-match', 'session-3', 'task-3', {
+        consumedSeq: 2,
+        inputKind: 'human',
+        isSynthetic: false,
+        text: 'task-1 kickoff text',
+      });
+      insertTaskInput('system-input', 'session-4', 'task-4', {
+        consumedSeq: 3,
+        inputKind: 'system',
+      });
+
+      expect(repository.hasConsumedTaskInputForSession('session-1', 'task-1')).toBe(true);
+      expect(repository.hasConsumedTaskInputForSession('session-3', 'task-3')).toBe(false);
+      expect(repository.hasConsumedTaskInputForSession('session-4', 'task-4')).toBe(false);
+    });
+
+    it('accepts legacy synthetic task inputs only when inputKind is absent', () => {
+      insertTaskInput('legacy-input', 'session-1', 'task-1', { consumedSeq: 1 });
+      insertTaskInput('explicit-system-input', 'session-2', 'task-1', {
+        consumedSeq: 2,
+        inputKind: 'system',
+      });
+
+      expect(repository.hasConsumedTaskInputForSession('session-1', 'task-1')).toBe(true);
+      expect(repository.hasConsumedTaskInputForSession('session-2', 'task-1')).toBe(false);
+    });
+  });
+
   describe('hasUnresolvedHyperNeoAction', () => {
     function insertActionCard(sessionId: string, resolved: boolean): void {
       db.prepare(
