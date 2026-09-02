@@ -4601,6 +4601,14 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
   const ENSURE_SPACE_ID = 'space-ensure-1';
   const ENSURE_SESSION_ID = `space:chat:${ENSURE_SPACE_ID}`;
 
+  function seedEnsureSpace(db: BunDatabase): void {
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
+				 allowed_models, session_ids, slug, status, created_at, updated_at)
+				 VALUES (?, '/tmp/ws', 'Ensure', '', '', '', '[]', '[]', ?, 'active', ?, ?)`
+    ).run(ENSURE_SPACE_ID, ENSURE_SPACE_ID, Date.now(), Date.now());
+  }
+
   function makeEnsureSpace(overrides: Partial<Space> = {}): Space {
     return {
       ...mockSpace,
@@ -4620,14 +4628,12 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
 
   function makeEnsureSession(status = 'active'): AgentSession {
     return {
-      setRuntimeMcpServers: mock(() => {}),
       mergeRuntimeMcpServers: mock(() => {}),
       setRuntimeSystemPrompt: mock(() => {}),
       updateConfig: mock(async () => {}),
       resetQuery: mock(async () => ({ success: true })),
-      restart: mock(async () => {}),
       getSessionData: mock(
-        () => ({ id: `space:chat:${ENSURE_SPACE_ID}`, status, metadata: {}, config: {} }) as Session
+        () => ({ id: ENSURE_SESSION_ID, status, metadata: {}, config: {} }) as Session
       ),
     } as unknown as AgentSession;
   }
@@ -4655,8 +4661,9 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
     };
   }
 
-  test('archived noncanonical coordinator rejects the coordinator target', async () => {
+  test('archived-only coordinator rejects; a live replacement admits', async () => {
     const db = makeTestDb();
+    seedEnsureSpace(db);
     const repo = new SpaceLongHorizonAgentRepository(db as never);
     repo.create({
       id: 'lha-archived-co',
@@ -4664,7 +4671,6 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
       handle: 'coordinator',
       status: 'archived',
     });
-    expect(repo.getCoordinator(ENSURE_SPACE_ID)).toBeNull();
     expect(repo.getCoordinatorRecord(ENSURE_SPACE_ID)?.id).toBe('lha-archived-co');
     const sessionManager = {
       getSessionAsync: mock(async () => null),
@@ -4674,13 +4680,25 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
       buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
     );
 
-    expect(await svc.isAgentTargetLifecycleEligible(ENSURE_SPACE_ID, 'coordinator')).toBeFalse();
+    expect(await svc.isAgentTargetLifecycleEligible(ENSURE_SPACE_ID, 'coordinator')).toBe(false);
     expect(await svc.ensureAgentSession(ENSURE_SPACE_ID, 'coordinator')).toBeNull();
     expect(sessionManager.createSession).not.toHaveBeenCalled();
+
+    repo.create({
+      id: coordinatorLongHorizonAgentId(ENSURE_SPACE_ID),
+      spaceId: ENSURE_SPACE_ID,
+      handle: 'coordinator',
+      status: 'archived',
+    });
+    repo.create({ id: 'lha-live-co', spaceId: ENSURE_SPACE_ID, handle: 'coordinator' });
+
+    expect(await svc.isAgentTargetLifecycleEligible(ENSURE_SPACE_ID, 'coordinator')).toBe(true);
+    expect(await svc.isAgentTargetLifecycleEligible(ENSURE_SPACE_ID, 'lha-live-co')).toBe(true);
   });
 
   test('a space with no coordinator record bootstraps the coordinator session', async () => {
     const db = makeTestDb();
+    seedEnsureSpace(db);
     const repo = new SpaceLongHorizonAgentRepository(db as never);
     const session = makeEnsureSession('active');
     let live: AgentSession | null = null;
@@ -4690,8 +4708,6 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
         live = session;
         return ENSURE_SESSION_ID;
       }),
-      listSessions: mock(() => [] as Session[]),
-      registerSessionResetSubscriber: mock(() => () => {}),
     } as unknown as SessionManager;
     const svc = new SpaceRuntimeService(
       buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)

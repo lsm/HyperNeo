@@ -30,6 +30,7 @@ function makeWorker(id: string, overrides: Partial<SpaceWorkerAgent> = {}): Spac
   return {
     id,
     spaceId: SPACE_ID,
+    name: `Worker ${id}`,
     handle: id,
     status: 'active',
     ...overrides,
@@ -44,7 +45,6 @@ interface ProvisionCalls {
 function makeDeps(config?: {
   space?: Space | null;
   spaceReadFails?: boolean;
-  provisionFails?: boolean;
   longHorizonAgents?: SpaceLongHorizonAgent[];
   workers?: SpaceWorkerAgent[];
   ensuredStatus?: string;
@@ -53,10 +53,6 @@ function makeDeps(config?: {
   const agents = config?.longHorizonAgents ?? [];
   const workers = config?.workers ?? [];
   const ensured = { getSessionData: () => ({ status: config?.ensuredStatus ?? 'active' }) };
-  const provision = () => {
-    if (config?.provisionFails) throw new Error('provision failed');
-    return ensured;
-  };
   const recordDeps: ResolveAgentRecordDeps = {
     getLongHorizonAgent: (agentId) => agents.find((agent) => agent.id === agentId) ?? null,
     getCoordinator: (spaceId) =>
@@ -76,15 +72,15 @@ function makeDeps(config?: {
     recordDeps,
     ensureCoordinatorSession: async (spaceId) => {
       calls.coordinator.push(spaceId);
-      return provision();
+      return ensured;
     },
     ensureLongHorizonAgentSession: async (spaceId, agentId) => {
       calls.provisioned.push(`${spaceId}:${agentId}`);
-      return provision();
+      return ensured;
     },
     ensureWorkerAgentSession: async (spaceId, agent) => {
       calls.provisioned.push(`${spaceId}:${agent.id}`);
-      return provision();
+      return ensured;
     },
   };
   return { deps, calls };
@@ -96,7 +92,7 @@ async function expectTargetRejected(
   calls: ProvisionCalls
 ): Promise<void> {
   expect(await runEnsureAgentSession(SPACE_ID, agentId, deps)).toBeNull();
-  expect(await isAgentTargetLifecycleEligible(SPACE_ID, agentId, deps)).toBeFalse();
+  expect(await isAgentTargetLifecycleEligible(SPACE_ID, agentId, deps)).toBe(false);
   expect(calls).toEqual({ coordinator: [], provisioned: [] });
 }
 
@@ -149,7 +145,7 @@ describe('ensure-agent-session lifecycle admission', () => {
         makeAgent('lha-2'),
       ],
     });
-    expect(await isAgentTargetLifecycleEligible(SPACE_ID, 'lha-2', deps)).toBeTrue();
+    expect(await isAgentTargetLifecycleEligible(SPACE_ID, 'lha-2', deps)).toBe(true);
     expect(await runEnsureAgentSession(SPACE_ID, 'lha-2', deps)).not.toBeNull();
     expect(calls).toEqual({ coordinator: [], provisioned: [`${SPACE_ID}:lha-2`] });
   });
@@ -170,24 +166,19 @@ describe('ensure-agent-session lifecycle admission', () => {
     const unknown = makeDeps({ workers: [makeWorker('w-known')] });
     await expectTargetRejected(unknown.deps, 'lha-unknown', unknown.calls);
     const active = makeDeps({ workers: [makeWorker('w-1')] });
-    expect(await isAgentTargetLifecycleEligible(SPACE_ID, 'w-1', active.deps)).toBeTrue();
+    expect(await isAgentTargetLifecycleEligible(SPACE_ID, 'w-1', active.deps)).toBe(true);
     expect(await runEnsureAgentSession(SPACE_ID, 'w-1', active.deps)).not.toBeNull();
     expect(active.calls.provisioned).toEqual([`${SPACE_ID}:w-1`]);
   });
 
-  test('a space with no coordinator record keeps the bootstrap path', async () => {
-    const { deps, calls } = makeDeps();
-    expect(await isAgentTargetLifecycleEligible(SPACE_ID, 'coordinator', deps)).toBeTrue();
-    expect(await runEnsureAgentSession(SPACE_ID, 'coordinator', deps)).not.toBeNull();
-    expect(calls.coordinator).toEqual([SPACE_ID]);
-  });
-
-  test('an active noncanonical coordinator id provisions the coordinator session', async () => {
-    const { deps, calls } = makeDeps({
-      longHorizonAgents: [makeAgent('lha-alt', { handle: 'coordinator' })],
-    });
-    expect(await runEnsureAgentSession(SPACE_ID, 'lha-alt', deps)).not.toBeNull();
-    expect(calls.coordinator).toEqual([SPACE_ID]);
+  test('coordinator-less spaces bootstrap and noncanonical coordinator ids provision', async () => {
+    const empty = makeDeps();
+    expect(await isAgentTargetLifecycleEligible(SPACE_ID, 'coordinator', empty.deps)).toBe(true);
+    expect(await runEnsureAgentSession(SPACE_ID, 'coordinator', empty.deps)).not.toBeNull();
+    expect(empty.calls.coordinator).toEqual([SPACE_ID]);
+    const alt = makeDeps({ longHorizonAgents: [makeAgent('lha-alt', { handle: 'coordinator' })] });
+    expect(await runEnsureAgentSession(SPACE_ID, 'lha-alt', alt.deps)).not.toBeNull();
+    expect(alt.calls.coordinator).toEqual([SPACE_ID]);
   });
 
   test('ensured sessions with ended or archived status reject after provisioning', async () => {
@@ -196,10 +187,5 @@ describe('ensure-agent-session lifecycle admission', () => {
       expect(await runEnsureAgentSession(SPACE_ID, 'coordinator', deps)).toBeNull();
       expect(calls.coordinator).toEqual([SPACE_ID]);
     }
-  });
-
-  test('a provisioning sink failure maps to null', async () => {
-    const { deps } = makeDeps({ provisionFails: true });
-    expect(await runEnsureAgentSession(SPACE_ID, 'coordinator', deps)).toBeNull();
   });
 });

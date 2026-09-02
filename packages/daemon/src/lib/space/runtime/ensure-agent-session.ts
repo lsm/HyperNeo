@@ -1,4 +1,4 @@
-import type { Space, SpaceWorkerAgent } from '@hyperneo/shared';
+import type { Space, SpaceWorkerAgent as WorkerAgent } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   type AgentRecordResolution,
@@ -14,11 +14,8 @@ export interface EnsureAgentSessionDeps {
   getSpace(spaceId: string): Promise<Space | null>;
   recordDeps: ResolveAgentRecordDeps;
   ensureCoordinatorSession(spaceId: string): Promise<EnsuredSession | null>;
-  ensureLongHorizonAgentSession(spaceId: string, agentId: string): Promise<EnsuredSession | null>;
-  ensureWorkerAgentSession(
-    spaceId: string,
-    agent: SpaceWorkerAgent
-  ): Promise<EnsuredSession | null>;
+  ensureLongHorizon(spaceId: string, agentId: string): Promise<EnsuredSession | null>;
+  ensureWorkerAgentSession(spaceId: string, agent: WorkerAgent): Promise<EnsuredSession | null>;
 }
 
 const ensureHalted = (halt?: string): boolean => halt !== undefined;
@@ -28,9 +25,9 @@ export async function admitSpaceStage(
   spaceId: string
 ): Promise<string | undefined> {
   const space = await deps.getSpace(spaceId).catch(() => null);
-  return space !== null && !space.paused && !space.stopped && space.status !== 'archived'
-    ? undefined
-    : 'space_inactive';
+  if (space === null || space.paused || space.stopped || space.status === 'archived') {
+    return 'space_inactive';
+  }
 }
 
 export function classifyAgentStage(
@@ -57,19 +54,26 @@ export async function provisionAgentSessionStage(
   agentId: string,
   deps: EnsureAgentSessionDeps
 ): Promise<EnsuredSession | null> {
-  if (resolution === null) return null;
+  if (resolution === null || resolution.kind === 'missing') return null;
   if (resolution.kind === 'coordinator') return deps.ensureCoordinatorSession(spaceId);
-  if (resolution.kind === 'long_horizon') {
-    return deps.ensureLongHorizonAgentSession(spaceId, agentId);
-  }
-  if (resolution.kind === 'worker') return deps.ensureWorkerAgentSession(spaceId, resolution.agent);
-  return null;
+  if (resolution.kind === 'long_horizon') return deps.ensureLongHorizon(spaceId, agentId);
+  return deps.ensureWorkerAgentSession(spaceId, resolution.agent);
 }
 
-export function gateEnsuredSessionStage(ensured: EnsuredSession | null): EnsuredSession | null {
-  if (ensured === null) return null;
-  const status = ensured.getSessionData().status;
-  return status === 'ended' || status === 'archived' ? null : ensured;
+export async function gateEnsuredSessionStage(
+  ensured: EnsuredSession | null,
+  spaceId: string,
+  agentId: string,
+  deps: EnsureAgentSessionDeps
+): Promise<{ ensuredSession: EnsuredSession | null }> {
+  const status = ensured?.getSessionData().status;
+  if (status === undefined || status === 'ended' || status === 'archived')
+    return { ensuredSession: null };
+  if ((await admitSpaceStage(deps, spaceId)) !== undefined) return { ensuredSession: null };
+  if (classifyAgentStage(spaceId, agentId, deps).resolution === null) {
+    return { ensuredSession: null };
+  }
+  return { ensuredSession: ensured };
 }
 
 const runEnsureAgentSessionPipeline = (
@@ -81,7 +85,7 @@ const runEnsureAgentSessionPipeline = (
   .pipe(classifyAgentStage, ['spaceId', 'agentId', 'deps'], ['resolution', 'classifyHalt'])
   .pipe('!ensureHalted', 'classifyHalt')
   .pipe(provisionAgentSessionStage, ['resolution', 'spaceId', 'agentId', 'deps'], 'ensuredSession')
-  .pipe(gateEnsuredSessionStage, 'ensuredSession', 'ensuredSession')
+  .pipe(gateEnsuredSessionStage, ['ensuredSession', 'spaceId', 'agentId', 'deps'], '{...}')
   .endAsync('ensuredSession');
 
 export async function runEnsureAgentSession(
@@ -98,6 +102,10 @@ export async function isAgentTargetLifecycleEligible(
   agentId: string,
   deps: EnsureAgentSessionDeps
 ): Promise<boolean> {
-  if ((await admitSpaceStage(deps, spaceId)) !== undefined) return false;
-  return classifyAgentStage(spaceId, agentId, deps).resolution !== null;
+  try {
+    if ((await admitSpaceStage(deps, spaceId)) !== undefined) return false;
+    return classifyAgentStage(spaceId, agentId, deps).resolution !== null;
+  } catch {
+    return false;
+  }
 }
