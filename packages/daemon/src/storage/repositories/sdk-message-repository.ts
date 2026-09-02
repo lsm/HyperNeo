@@ -1994,6 +1994,30 @@ export class SDKMessageRepository {
     return row !== null && row !== undefined;
   }
 
+  hasConsumedTaskInputForSession(sessionId: string, taskId: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM sdk_messages
+         WHERE session_id = ?
+           AND task_id = ?
+           AND message_type = 'user'
+           AND consumed_seq IS NOT NULL
+           AND CASE WHEN json_valid(sdk_message) THEN
+             json_extract(sdk_message, '$.type') = 'user'
+             AND (
+               json_extract(sdk_message, '$.inputKind') = 'task'
+               OR (
+                 json_type(sdk_message, '$.inputKind') IS NULL
+                 AND COALESCE(CAST(json_extract(sdk_message, '$.isSynthetic') AS INTEGER), 0) = 1
+               )
+             )
+           ELSE 0 END
+         LIMIT 1`
+      )
+      .get(sessionId, taskId);
+    return row !== null && row !== undefined;
+  }
+
   getSettledDeliveryMessageId(sessionId: string, uuid: string): string | null {
     const row = this.db
       .prepare(
