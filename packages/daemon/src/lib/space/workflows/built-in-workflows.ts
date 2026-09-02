@@ -348,7 +348,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
   ],
   startNodeId: 'tpl-stable-coding-code',
   endNodeId: 'tpl-stable-coding-review',
-  tags: ['coding', 'default'],
+  tags: ['coding'],
   createdAt: 0,
   updatedAt: 0,
   completionAutonomyLevel: 3,
@@ -639,7 +639,7 @@ export const CODER_ONLY_WORKFLOW: SpaceWorkflow = {
   ],
   startNodeId: CODER_ONLY_NODE,
   endNodeId: CODER_ONLY_NODE,
-  tags: ['coding', 'external-review'],
+  tags: ['coding', 'external-review', 'default'],
   createdAt: 0,
   updatedAt: 0,
   completionAutonomyLevel: 5,
@@ -2446,6 +2446,11 @@ export function seedBuiltInWorkflows(
       if (!row.templateName) continue;
       const template = templatesByName.get(row.templateName);
       if (!template) continue;
+      if (JSON.stringify(row.tags ?? []) !== JSON.stringify(template.tags ?? [])) {
+        try {
+          workflowManager.stampBuiltInTags(row.id, template.tags ?? []);
+        } catch {}
+      }
       const expectedHash = computeWorkflowHash(template);
       if (row.templateHash === expectedHash) continue;
 

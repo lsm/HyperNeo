@@ -258,9 +258,10 @@ describe('stable coding workflow templates', () => {
     }
   });
 
-  test('only the stable Coding template is tagged default', () => {
-    expect(STABLE_CODING_WORKFLOW.tags).toContain('default');
+  test('only the coder-only template is tagged default', () => {
+    expect(STABLE_CODING_WORKFLOW.tags).not.toContain('default');
     expect(CODING_WITH_QA_WORKFLOW.tags).not.toContain('default');
+    expect(CODER_ONLY_WORKFLOW.tags).toContain('default');
   });
 
   test('coder-owned merge instructions verify the Space checkout is not ahead of origin', () => {
@@ -281,7 +282,7 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_WORKFLOW.nodes[0]!.name).toBe('Coding');
     expect(CODER_ONLY_WORKFLOW.startNodeId).toBe(CODER_ONLY_WORKFLOW.endNodeId);
     expect(CODER_ONLY_WORKFLOW.channels ?? []).toHaveLength(0);
-    expect(CODER_ONLY_WORKFLOW.tags).not.toContain('default');
+    expect(CODER_ONLY_WORKFLOW.tags).toContain('default');
   });
 
   test('coder owns the post-approval merge via the node-level route', () => {
@@ -3047,7 +3048,29 @@ describe('seedBuiltInWorkflows()', () => {
     const migrated = after.find((w) => w.id === qaRow.id)!;
     expect(migrated.name).toBe('Coding with QA');
     expect(migrated.tags).not.toContain('default');
-    expect(after.find((w) => w.id === stableCoding.id)!.tags).toContain('default');
+    expect(after.find((w) => w.id === stableCoding.id)!.tags).not.toContain('default');
+  });
+
+  test('seed syncs drifted template tags onto existing rows', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const seeded = manager.listWorkflows(SPACE_ID);
+    const coderOnly = seeded.find((w) => w.name === CODER_ONLY_WORKFLOW.name)!;
+    const stableCoding = seeded.find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
+    db.prepare(`UPDATE space_workflows SET tags = ? WHERE id = ?`).run(
+      JSON.stringify(['coding', 'external-review']),
+      coderOnly.id
+    );
+    db.prepare(`UPDATE space_workflows SET tags = ? WHERE id = ?`).run(
+      JSON.stringify(['coding', 'default']),
+      stableCoding.id
+    );
+
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+
+    const after = manager.listWorkflows(SPACE_ID);
+    expect(after.find((w) => w.id === coderOnly.id)!.tags).toContain('default');
+    expect(after.find((w) => w.id === coderOnly.id)!.tags).toContain('external-review');
+    expect(after.find((w) => w.id === stableCoding.id)!.tags).not.toContain('default');
   });
 
   test('throws if resolveAgentId returns undefined for a required role', () => {
@@ -3197,15 +3220,19 @@ describe('seedBuiltInWorkflows()', () => {
     }
   });
 
-  test('stable Coding is seeded with coding + default; Coding with QA is not default', () => {
+  test('coder-only is seeded with the default tag; stable Coding and QA are not', () => {
     seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     expect(coding.tags).toContain('coding');
-    expect(coding.tags).toContain('default');
+    expect(coding.tags).not.toContain('default');
     const qa = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
     expect(qa.tags).not.toContain('default');
+    const coderOnly = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === CODER_ONLY_WORKFLOW.name)!;
+    expect(coderOnly.tags).toContain('default');
   });
 
   test('RESEARCH_WORKFLOW seeded with research tag', () => {
