@@ -536,6 +536,23 @@ describe('Space Export/Import RPC Handlers', () => {
       );
     });
 
+    it('treats orphaned migration mirrors as missing in imports', async () => {
+      const worker = seedAgent({ spaceId: SPACE_ID, name: 'Ghost Twin', handle: 'ghost' });
+      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(worker.id);
+
+      const bundle = makeBundle(
+        [],
+        [{ name: 'Pipe', nodes: [{ agentRef: 'Ghost Twin', name: 'S' }] }]
+      );
+      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+      expect(preview.validationErrors.some((e) => e.includes('unknown agent "Ghost Twin"'))).toBe(
+        true
+      );
+    });
+
     it('excludes orphaned migration mirrors from exports', async () => {
       const worker = seedAgent({ spaceId: SPACE_ID, name: 'Ghost Twin', handle: 'ghost' });
       db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(worker.id);

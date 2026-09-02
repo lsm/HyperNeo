@@ -1155,7 +1155,7 @@ retry_rows AS (
     ELSE 'API retry' END AS body,
     -- Carry the owning agent so the renderer can scope a retry burst to one
     -- worker instead of folding retries from different sessions together.
-    COALESCE(sa.display_name, ne.agent_name, sp.provenance_agent_name) AS sourceLabel,
+    COALESCE(sa.display_name, wa.name, ne.agent_name, sp.provenance_agent_name) AS sourceLabel,
     'agent' AS sourceKind,
     tsm.session_id AS sourceId,
     CAST((julianday(tsm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
@@ -1169,6 +1169,8 @@ retry_rows AS (
    AND ne.rn = 1
   LEFT JOIN space_long_horizon_agents sa
     ON sa.id = COALESCE(ne.agent_id, sp.provenance_agent_id)
+  LEFT JOIN space_agents wa
+    ON wa.id = COALESCE(ne.agent_id, sp.provenance_agent_id)
   WHERE tsm.message_type = 'system'
     AND tsm.message_subtype = 'api_retry'
 ),
@@ -1664,7 +1666,7 @@ all_sessions AS (
       -- Post-approval workers have no node_executions row (sne is NULL), so
       -- fall through to the session's promptProvenance.agentName. sa resolves
       -- via provenance.agentId.
-      ELSE COALESCE(sa.display_name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
+      ELSE COALESCE(sa.display_name, wa.name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS label,
     CASE
       WHEN s_kind.type = 'space_task_agent' THEN 'task-agent'
@@ -1694,6 +1696,8 @@ all_sessions AS (
   -- it would show with an execution row.
   LEFT JOIN space_long_horizon_agents sa
     ON sa.id = COALESCE(sne.agent_id, json_extract(s_kind.metadata, '$.promptProvenance.agentId'))
+  LEFT JOIN space_agents wa
+    ON wa.id = COALESCE(sne.agent_id, json_extract(s_kind.metadata, '$.promptProvenance.agentId'))
 ),
 -- Deduplicate session IDs to prevent fan-out in message_stats JOIN
 unique_session_ids AS (
@@ -1923,7 +1927,7 @@ sdk_rows_raw AS (
     END AS role,
     CASE
       WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent'
-      ELSE COALESCE(sa.display_name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
+      ELSE COALESCE(sa.display_name, wa.name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS label,
     sne.node_execution_id AS nodeExecutionId,
     tt.id AS taskId,
@@ -1953,6 +1957,8 @@ sdk_rows_raw AS (
    AND sne.rn = 1
   LEFT JOIN space_long_horizon_agents sa
     ON sa.id = COALESCE(sne.agent_id, json_extract(s_kind.metadata, '$.promptProvenance.agentId'))
+  LEFT JOIN space_agents wa
+    ON wa.id = COALESCE(sne.agent_id, json_extract(s_kind.metadata, '$.promptProvenance.agentId'))
   WHERE (
       sm.message_type != 'system'
       OR sm.message_subtype_norm != 'informational'
@@ -2307,7 +2313,7 @@ ${admitArtifactState ? SPACE_TASK_CONV_ARTIFACT_STATE_CTES : ''}sdk_rows AS (
     END AS role,
     CASE
       WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent'
-      ELSE COALESCE(sa.display_name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
+      ELSE COALESCE(sa.display_name, wa.name, sne.agent_name, json_extract(s_kind.metadata, '$.promptProvenance.agentName'))
     END AS label,
     sne.node_execution_id AS nodeExecutionId,
     tt.id AS taskId,
@@ -2335,6 +2341,8 @@ ${admitArtifactState ? SPACE_TASK_CONV_ARTIFACT_STATE_CTES : ''}sdk_rows AS (
    AND sne.rn = 1
   LEFT JOIN space_long_horizon_agents sa
     ON sa.id = COALESCE(sne.agent_id, json_extract(s_kind.metadata, '$.promptProvenance.agentId'))
+  LEFT JOIN space_agents wa
+    ON wa.id = COALESCE(sne.agent_id, json_extract(s_kind.metadata, '$.promptProvenance.agentId'))
   WHERE (
     sm.conversation_turn_index >= rt.minTurn
     OR (

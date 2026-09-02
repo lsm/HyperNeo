@@ -635,7 +635,7 @@ export function setupSpaceExportImportHandlers(
       )
       .filter(
         (a) =>
-          !workerAgents.some((w) => w.id === a.id) || a.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY
+          a.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY || workerAgents.some((w) => w.id === a.id)
       )
       .map(longHorizonAgentToWorkerView);
     const overlayShadowedWorkerIds = new Set(
@@ -736,8 +736,8 @@ export function setupSpaceExportImportHandlers(
           )
           .filter(
             (a) =>
-              !workerAgents.some((w) => w.id === a.id) ||
-              a.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY
+              a.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY ||
+              workerAgents.some((w) => w.id === a.id)
           )
           .map(longHorizonAgentToWorkerView);
         const overlayShadowedWorkerIds = new Set(

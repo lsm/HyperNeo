@@ -1578,6 +1578,22 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(archived.agent.status).toBe('archived');
 
+    ctx.db
+      .prepare(
+        `INSERT INTO space_agents (id, space_id, name, handle, status, description, tools, custom_prompt, created_at, updated_at)
+         VALUES ('worker-only-reviewer', ?, 'Reviewer', 'worker-reviewer', 'active', '', '[]', NULL, 1, 1)`
+      )
+      .run(ctx.spaceId);
+    const workerNameTemplate = JSON.parse(
+      (
+        await handlers.create_agent_from_template({
+          template_name: 'Reviewer',
+        })
+      ).content[0].text
+    );
+    expect(workerNameTemplate.success).toBe(true);
+    expect(workerNameTemplate.agent.displayName).toBe('Reviewer (2)');
+
     const templated = JSON.parse(
       (
         await handlers.create_agent_from_template({

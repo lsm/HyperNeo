@@ -559,15 +559,24 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   const uniqueAgentDisplayName = (base: string): string => {
     let candidate = base;
     let counter = 1;
-    while (
-      requireLongHorizonAgentRepo()
-        .listBySpaceId(spaceId)
-        .some(
-          (existing) =>
-            existing.status !== 'archived' &&
-            (existing.displayName ?? '').trim().toLowerCase() === candidate.trim().toLowerCase()
-        )
-    ) {
+    const taken = (name: string) => {
+      const normalized = name.trim().toLowerCase();
+      if (
+        requireLongHorizonAgentRepo()
+          .listBySpaceId(spaceId)
+          .some(
+            (existing) =>
+              existing.status !== 'archived' &&
+              (existing.displayName ?? '').trim().toLowerCase() === normalized
+          )
+      ) {
+        return true;
+      }
+      return config.spaceAgentManager
+        ?.listBySpaceId(spaceId)
+        .some((worker) => worker.name.trim().toLowerCase() === normalized);
+    };
+    while (taken(candidate)) {
       counter += 1;
       candidate = `${base} (${counter})`;
     }
