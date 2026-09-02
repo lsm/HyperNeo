@@ -316,13 +316,13 @@ export class DaemonConfigService {
     config: Partial<DaemonBehaviorConfig>
   ): boolean {
     const applied = casDaemonConfigRow(this.db, expectedConfigJson, config);
-    if (applied) this.cachedConfig = undefined;
+    this.cachedConfig = undefined;
     return applied;
   }
 
   private claimStoredConfig(config: Partial<DaemonBehaviorConfig>): boolean {
     const applied = casDaemonConfigRow(this.db, null, config);
-    if (applied) this.cachedConfig = undefined;
+    this.cachedConfig = undefined;
     return applied;
   }
 }

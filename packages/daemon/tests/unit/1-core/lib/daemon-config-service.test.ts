@@ -377,12 +377,14 @@ describe('DaemonConfigService', () => {
   test('a seed that loses the atomic claim reports false and leaves the winner intact', () => {
     const db = createDb();
     const service = new DaemonConfigService(db);
+    expect(service.getConfig().flags?.workflowConnectors).toBe(true);
     (service as unknown as Record<string, unknown>).readConfigRow = () => {
       writeConfigRow(db, { flags: { workflowConnectors: false } });
       return null;
     };
     expect(service.seedFromLegacyEnv({ HYPERNEO_WORKFLOW_CONNECTORS: '0' })).toBe(false);
     expect(readConfigRow(db)?.config_json).toBe('{"flags":{"workflowConnectors":false}}');
+    expect(service.getConfig().flags?.workflowConnectors).toBe(false);
     db.close();
   });
 });
