@@ -72,6 +72,9 @@ function applyValidatedPatch(
   stored: Partial<DaemonBehaviorConfig>,
   patch: Partial<DaemonBehaviorConfig>
 ): Partial<DaemonBehaviorConfig> {
+  if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) {
+    throw new DaemonConfigValidationError('patch', 'daemon config patch must be an object');
+  }
   const merged = { ...stored } as Record<string, Record<string, unknown>>;
   for (const [family, familyPatch] of Object.entries(patch) as Array<
     [string, Record<string, unknown> | undefined]
@@ -297,6 +300,7 @@ export class DaemonConfigService {
       () => this.readConfigRow(),
       (config) => this.claimStoredConfig(config)
     );
+    if (outcome === undefined) this.cachedConfig = undefined;
     return outcome?.seeded ?? false;
   }
 

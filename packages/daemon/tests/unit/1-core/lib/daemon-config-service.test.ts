@@ -244,6 +244,22 @@ describe('DaemonConfigService', () => {
     db.close();
   });
 
+  test('updateConfig rejects non-object top-level patches', () => {
+    const db = createDb();
+    const service = new DaemonConfigService(db);
+    expect(() => service.updateConfig([] as unknown as Partial<DaemonBehaviorConfig>)).toThrow(
+      'daemon config patch must be an object'
+    );
+    expect(() => service.updateConfig('nope' as unknown as Partial<DaemonBehaviorConfig>)).toThrow(
+      'daemon config patch must be an object'
+    );
+    expect(() => service.updateConfig(null as unknown as Partial<DaemonBehaviorConfig>)).toThrow(
+      DaemonConfigValidationError
+    );
+    expect(readConfigRow(db)).toBeNull();
+    db.close();
+  });
+
   test('an update that loses the CAS reports superseded without publishing or caching', async () => {
     const db = createDb();
     const bus = createDaemonInternalEventBus();
@@ -372,6 +388,16 @@ describe('DaemonConfigService', () => {
     expect(readConfigRow(db)?.config_json).toBe('{}');
     expect(service.seedFromLegacyEnv({ HYPERNEO_WORKFLOW_CONNECTORS: '0' })).toBe(false);
     expect(service.getConfig().flags?.workflowConnectors).toBe(true);
+    db.close();
+  });
+
+  test('a seed that observes an already-adopted row drops cached defaults', () => {
+    const db = createDb();
+    const service = new DaemonConfigService(db);
+    expect(service.getConfig().flags?.workflowConnectors).toBe(true);
+    writeConfigRow(db, { flags: { workflowConnectors: false } });
+    expect(service.seedFromLegacyEnv({ HYPERNEO_WORKFLOW_CONNECTORS: '0' })).toBe(false);
+    expect(service.getConfig().flags?.workflowConnectors).toBe(false);
     db.close();
   });
 
