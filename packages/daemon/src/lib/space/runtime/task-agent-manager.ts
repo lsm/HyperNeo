@@ -2027,34 +2027,12 @@ export class TaskAgentManager {
     taskId: string,
     hintSessionId?: string
   ): { sessionId: string; agentName: string; nodeId?: string | null } | null {
-    if (hintSessionId) {
-      return this.validateWorkerSessionForTask(taskId, hintSessionId);
-    }
-    const identity = this.readPostApprovalWorkerIdentity(taskId);
+    const identity = this.readPostApprovalWorkerIdentity(taskId, hintSessionId);
     return identity
       ? {
           sessionId: identity.sessionId,
           agentName: identity.agentName,
           nodeId: identity.nodeId ?? null,
-        }
-      : null;
-  }
-
-  private validateWorkerSessionForTask(
-    taskId: string,
-    sessionId: string
-  ): { sessionId: string; agentName: string; nodeId?: string | null } | null {
-    const task = this.config.taskRepo.getTask(taskId);
-    if (!task?.workflowRunId) return null;
-    if (task.status === 'cancelled' || task.status === 'archived') return null;
-    if (!this.sessionIsWorkerForTask(sessionId, taskId)) return null;
-    const provenance = this.readProvenanceFromSessionRow(sessionId);
-    const agentName = provenance?.agentName ?? this.legacyWorkflowRouteAgentName(task);
-    return agentName
-      ? {
-          sessionId,
-          agentName,
-          nodeId: provenance?.nodeId ?? this.legacyWorkflowRouteNodeId(task) ?? null,
         }
       : null;
   }
@@ -2114,7 +2092,14 @@ export class TaskAgentManager {
     const task = this.config.taskRepo.getTask(taskId);
     if (task?.status === 'cancelled' || task?.status === 'archived') return null;
     if (hintSessionId) {
-      if (!this.sessionIsWorkerForTask(hintSessionId, taskId)) return null;
+      if (!task?.workflowRunId) return null;
+      if (
+        (!task.postApprovalSessionId &&
+          (task.status === 'approved' || task.status === 'done') &&
+          this.findDurableWorkerSessionId(task) !== hintSessionId) ||
+        !this.sessionIsWorkerForTask(hintSessionId, taskId)
+      )
+        return null;
       const provenance = this.readProvenanceFromSessionRow(hintSessionId);
       const agentName = provenance?.agentName ?? this.legacyWorkflowRouteAgentName(task);
       if (!agentName) return null;

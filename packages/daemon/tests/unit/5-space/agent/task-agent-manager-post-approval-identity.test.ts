@@ -272,6 +272,7 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     insertTask(db, { status: 'done', postApprovalSessionId: null });
     insertWorkerSession(db, { sessionId, lastActiveAt: 9 });
     expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
+    expect(tam.getPostApprovalWorkerSession(TASK_ID, sessionId)).toBeNull();
   });
 
   for (const status of ['deferred', 'enqueued', 'submitted', 'failed'] as const) {
@@ -335,6 +336,7 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     insertWorkerSession(db, { sessionId, createdAt: 10, lastActiveAt: 10 });
     insertTaskInput(db, sessionId, { timestamp: 10 });
     expect(tam.getPostApprovalWorkerSession(TASK_ID)?.sessionId).toBe(sessionId);
+    expect(tam.getPostApprovalWorkerSession(TASK_ID, sessionId)?.sessionId).toBe(sessionId);
   });
 
   it('rejects ambiguous current-cycle evidence from an execution-backed worker', () => {
