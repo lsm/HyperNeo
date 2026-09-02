@@ -302,8 +302,8 @@ export function setupSpaceLongHorizonAgentHandlers(
       settingSources: params.settingSources,
       toolPermissions: params.toolPermissions,
       status: params.status as 'active' | 'paused' | 'disabled' | 'archived' | undefined,
-      description: params.description ?? null,
-      modelPool: params.modelPool ?? null,
+      description: params.description,
+      modelPool: params.modelPool,
     });
     if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
     if (params.provider === null) {
@@ -324,8 +324,8 @@ export function setupSpaceLongHorizonAgentHandlers(
     if (!existing) throw new Error(`Agent not found: ${params.agentId}`);
     if (params.spaceId && existing.spaceId !== params.spaceId)
       throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
-    runtimeService?.removeLongHorizonAgentSubscriptions(existing.spaceId, existing.id);
     repo.delete(params.agentId);
+    runtimeService?.removeLongHorizonAgentSubscriptions(existing.spaceId, existing.id);
     await publishAgentDeleted(existing.spaceId, existing.id);
     return { success: true };
   });

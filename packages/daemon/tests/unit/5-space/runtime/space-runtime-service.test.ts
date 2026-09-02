@@ -4436,6 +4436,42 @@ describe('ensureLongTermAgentSession — id→session routing table (dual-family
     );
   });
 
+  test('an orphan migration mirror (no sibling worker) is not dispatched as a worker', async () => {
+    const mirror = buildLongHorizonAgent({
+      id: 'orphan-mirror',
+      handle: 'orphan',
+      displayName: 'Orphan',
+      templateKey: 'migration.legacy_space_agent',
+    });
+    const createdConfigs: Array<{ sessionId?: string }> = [];
+    const sessionManager = {
+      getSessionAsync: mock(async () => null),
+      createSession: mock(async (opts: { sessionId?: string }) => {
+        createdConfigs.push(opts);
+      }),
+    } as unknown as SessionManager;
+    const svc = new SpaceRuntimeService({
+      ...buildConfig(createMockSpaceManager(mockSpace)),
+      sessionManager,
+      spaceAgentManager: { getById: mock(() => null) } as unknown as SpaceAgentManager,
+      longHorizonAgentRepo: {
+        getById: mock((id: string) => (id === mirror.id ? mirror : null)),
+        getCoordinator: mock(() => null),
+        update: mock(() => ({})),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'],
+    });
+    (
+      svc as unknown as { attachLongTermAgentMcpServers: () => void }
+    ).attachLongTermAgentMcpServers = () => {};
+    (
+      svc as unknown as { missingLongTermAgentMcpServers: () => boolean }
+    ).missingLongTermAgentMcpServers = () => false;
+
+    await route(svc, mirror.id);
+
+    expect(createdConfigs).toHaveLength(0);
+  });
+
   test('a migrated worker mirror keeps worker session semantics, not long-horizon ones', async () => {
     const mirror = buildLongHorizonAgent({
       id: 'worker-migrated',

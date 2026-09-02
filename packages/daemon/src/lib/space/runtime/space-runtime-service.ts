@@ -898,11 +898,7 @@ export class SpaceRuntimeService {
       await this.refreshLongHorizonAgentSessionConfig(session, config);
     }
     if (agent.sessionId !== sessionId) {
-      repo.update(agent.id, {
-        sessionId,
-        description: agent.description ?? null,
-        modelPool: agent.modelPool ?? null,
-      });
+      repo.update(agent.id, { sessionId });
     }
     const currentMetadata = session.getSessionData().metadata;
     this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
@@ -948,7 +944,11 @@ export class SpaceRuntimeService {
 
   private findMigratedWorkerMirror(spaceId: string, agentId: string): SpaceLongHorizonAgent | null {
     const unified = this.config.longHorizonAgentRepo?.getById(agentId) ?? null;
-    if (unified?.spaceId === spaceId && unified.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
+    if (
+      unified?.spaceId === spaceId &&
+      unified.templateKey === MIGRATED_WORKER_TEMPLATE_KEY &&
+      this.config.spaceAgentManager.getById(agentId)?.spaceId === spaceId
+    ) {
       return unified;
     }
     return null;
