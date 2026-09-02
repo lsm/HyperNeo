@@ -1,14 +1,14 @@
-import type { Database as BunDatabase } from '../sqlite-compat.ts';
-import { generateUUID, isRateOrUsageLimited } from '@hyperneo/shared';
 import type {
-  SpaceTask,
-  SpaceBlockReason,
-  SpaceTaskStatus,
   InternalCreateSpaceTaskParams,
   InternalUpdateSpaceTaskParams,
+  SpaceBlockReason,
+  SpaceTask,
+  SpaceTaskStatus,
 } from '@hyperneo/shared';
+import { generateUUID, isRateOrUsageLimited } from '@hyperneo/shared';
 import type { TaskRestriction } from '@hyperneo/shared/types/neo';
 import type { ReactiveDatabase } from '../reactive-database.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
 
 export class SpaceTaskRepository {
@@ -692,6 +692,35 @@ export class SpaceTaskRepository {
     if (result.changes === 0) return 'superseded';
     this.upsertTaskSearchRow(taskId);
     this.deleteExpiredTerminalTaskMessageRows(taskId);
+    this.reactiveDb?.notifyChange('space_tasks');
+    return 'won';
+  }
+
+  casRecordPostApprovalRouting(
+    taskId: string,
+    expectedWorkflowRunId: string,
+    params: {
+      postApprovalSessionId: string;
+      postApprovalStartedAt: number;
+    }
+  ): 'won' | 'superseded' {
+    const result = this.db
+      .prepare(
+        `UPDATE space_tasks
+            SET post_approval_session_id = ?,
+                post_approval_started_at = ?,
+                post_approval_blocked_reason = NULL,
+                updated_at = ?
+          WHERE id = ? AND status = 'approved' AND workflow_run_id = ?`
+      )
+      .run(
+        params.postApprovalSessionId,
+        params.postApprovalStartedAt,
+        Date.now(),
+        taskId,
+        expectedWorkflowRunId
+      );
+    if (result.changes === 0) return 'superseded';
     this.reactiveDb?.notifyChange('space_tasks');
     return 'won';
   }

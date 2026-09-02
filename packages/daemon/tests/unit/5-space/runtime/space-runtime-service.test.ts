@@ -1997,7 +1997,8 @@ describe('SpaceRuntimeService', () => {
 
     function buildEnsureService(
       coordinatorRow: SpaceLongHorizonAgent | null,
-      space: Space | null = mockSpace
+      space: Space | null = mockSpace,
+      canonicalRow: SpaceLongHorizonAgent | null | undefined = undefined
     ): {
       svc: SpaceRuntimeService;
       session: AgentSession;
@@ -2010,7 +2011,7 @@ describe('SpaceRuntimeService', () => {
       } as unknown as SessionManager;
       const longHorizonAgentRepo = {
         getCoordinator: mock(() => coordinatorRow),
-        getById: mock(() => coordinatorRow),
+        getById: mock(() => (canonicalRow === undefined ? coordinatorRow : canonicalRow)),
         ensureCoordinator: mock(() => coordinatorRow ?? buildLongHorizonAgent()),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const svc = new SpaceRuntimeService({
@@ -2103,6 +2104,20 @@ describe('SpaceRuntimeService', () => {
       expect(sessionManager.getSessionAsync).toHaveBeenCalledWith(
         coordinatorSessionId(mockSpace.id)
       );
+    });
+
+    test('archived canonical coordinator row blocks the bootstrap path', async () => {
+      const { svc, sessionManager } = buildEnsureService(
+        null,
+        mockSpace,
+        buildLongHorizonAgent({
+          id: coordinatorLongHorizonAgentId(mockSpace.id),
+          status: 'archived',
+        })
+      );
+
+      await expect(svc.ensureAgentSession(mockSpace.id, 'coordinator')).resolves.toBeNull();
+      expect(sessionManager.getSessionAsync).not.toHaveBeenCalled();
     });
   });
 

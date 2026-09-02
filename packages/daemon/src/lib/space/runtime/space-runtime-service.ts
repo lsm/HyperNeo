@@ -13,6 +13,7 @@ import type {
 import { generateUUID, isRateOrUsageLimited, isScopedBashToolEntry } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
@@ -989,26 +990,53 @@ export class SpaceRuntimeService {
     return session;
   }
 
+  private ensureAgentSessionRunner:
+    | ((spaceId: string, agentId: string) => Promise<AgentSession | null>)
+    | null = null;
+
   async ensureAgentSession(spaceId: string, agentId: string): Promise<AgentSession | null> {
-    const repo = this.config.longHorizonAgentRepo;
-    const space = await this.config.spaceManager.getSpace(spaceId);
-    if (space === null || space.paused || space.stopped || space.status === 'archived') {
-      return null;
+    if (this.ensureAgentSessionRunner === null) {
+      const repo = this.config.longHorizonAgentRepo;
+      this.ensureAgentSessionRunner = (
+        superpipe({
+          ensureHalted,
+          getSpace: (spaceId: string) => this.config.spaceManager.getSpace(spaceId),
+          getCoordinator: (spaceId: string) => repo?.getCoordinator(spaceId) ?? null,
+          getAgentById: (agentId: string) => repo?.getById(agentId) ?? null,
+          ensureCoordinatorSession: (spaceId: string) => this.ensureCoordinatorSession(spaceId),
+          ensureLongHorizonAgentSession: (spaceId: string, agentId: string) =>
+            this.ensureLongHorizonAgentSession(spaceId, agentId),
+          ensureLongTermAgentSession: (actor: ActorRef) => this.ensureLongTermAgentSession(actor),
+        })('ensure-agent-session') as PipelineAPI
+      )
+        .input(['spaceId', 'agentId'])
+        .pipe(admitSpaceStage, ['getSpace', 'spaceId'], 'spaceHalt')
+        .pipe('!ensureHalted', 'spaceHalt')
+        .pipe(
+          classifyAgentStage,
+          ['spaceId', 'agentId', 'getCoordinator', 'getAgentById'],
+          ['provisionArm', 'classifyHalt']
+        )
+        .pipe('!ensureHalted', 'classifyHalt')
+        .pipe(
+          provisionAgentSessionStage,
+          [
+            'provisionArm',
+            'spaceId',
+            'agentId',
+            'ensureCoordinatorSession',
+            'ensureLongHorizonAgentSession',
+            'ensureLongTermAgentSession',
+          ],
+          'ensuredSession'
+        )
+        .error(() => null, ['error'])
+        .endAsync('ensuredSession') as (
+        spaceId: string,
+        agentId: string
+      ) => Promise<AgentSession | null>;
     }
-    const coordinator = repo?.getCoordinator(spaceId) ?? null;
-    if (agentSessionIdOf(spaceId, agentId, coordinator?.id) === coordinatorSessionId(spaceId)) {
-      if (coordinator !== null && coordinator.status !== 'active') return null;
-      return this.ensureCoordinatorSession(spaceId);
-    }
-    if (repo?.getById(agentId)?.spaceId === spaceId) {
-      return this.ensureLongHorizonAgentSession(spaceId, agentId);
-    }
-    return this.ensureLongTermAgentSession({
-      actorId: `agent:${encodeActorIdComponent(agentId)}`,
-      kind: 'agent',
-      spaceId,
-      status: 'inactive',
-    });
+    return this.ensureAgentSessionRunner(spaceId, agentId).catch(() => null);
   }
 
   private async ensureLongTermAgentSession(actor: ActorRef) {
@@ -2448,4 +2476,59 @@ function sanitizeLongTermAgentKey(name: string): string {
       .replace(/^-+|-+$/g, '')
       .slice(0, 40) || 'space-agent'
   );
+}
+
+const ensureHalted = (halt?: string): boolean => halt !== undefined;
+
+async function admitSpaceStage(
+  getSpace: (spaceId: string) => Promise<Space | null>,
+  spaceId: string
+): Promise<string | undefined> {
+  const space = await getSpace(spaceId).catch(() => null);
+  if (space === null || space.paused || space.stopped || space.status === 'archived') {
+    return 'space_inactive';
+  }
+  return undefined;
+}
+
+function classifyAgentStage(
+  spaceId: string,
+  agentId: string,
+  getCoordinator: (spaceId: string) => SpaceLongHorizonAgent | null,
+  getAgentById: (agentId: string) => SpaceLongHorizonAgent | null
+): { provisionArm: 'coordinator' | 'long_horizon' | 'actor'; classifyHalt: string | undefined } {
+  const coordinator =
+    getCoordinator(spaceId) ?? getAgentById(coordinatorLongHorizonAgentId(spaceId));
+  if (coordinator !== null) {
+    if (coordinator.status !== 'active') {
+      return { provisionArm: 'actor', classifyHalt: 'coordinator_inactive' };
+    }
+    if (agentSessionIdOf(spaceId, agentId, coordinator.id) === coordinatorSessionId(spaceId)) {
+      return { provisionArm: 'coordinator', classifyHalt: undefined };
+    }
+  } else if (agentId === 'coordinator' || agentId === coordinatorLongHorizonAgentId(spaceId)) {
+    return { provisionArm: 'coordinator', classifyHalt: undefined };
+  }
+  if (getAgentById(agentId)?.spaceId === spaceId) {
+    return { provisionArm: 'long_horizon', classifyHalt: undefined };
+  }
+  return { provisionArm: 'actor', classifyHalt: undefined };
+}
+
+async function provisionAgentSessionStage(
+  provisionArm: 'coordinator' | 'long_horizon' | 'actor',
+  spaceId: string,
+  agentId: string,
+  ensureCoordinatorSession: (spaceId: string) => Promise<AgentSession | null>,
+  ensureLongHorizonAgentSession: (spaceId: string, agentId: string) => Promise<AgentSession | null>,
+  ensureLongTermAgentSession: (actor: ActorRef) => Promise<AgentSession | null>
+): Promise<AgentSession | null> {
+  if (provisionArm === 'coordinator') return ensureCoordinatorSession(spaceId);
+  if (provisionArm === 'long_horizon') return ensureLongHorizonAgentSession(spaceId, agentId);
+  return ensureLongTermAgentSession({
+    actorId: `agent:${encodeActorIdComponent(agentId)}`,
+    kind: 'agent',
+    spaceId,
+    status: 'inactive',
+  });
 }

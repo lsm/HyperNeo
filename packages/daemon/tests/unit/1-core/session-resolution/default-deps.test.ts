@@ -62,6 +62,7 @@ interface HarnessConfig {
   space?: Partial<Space> | null;
   taskReads?: Array<Partial<SpaceTask> | null | undefined>;
   publishTaskUpdated?: boolean;
+  casOutcome?: 'won' | 'superseded';
 }
 
 interface Harness {
@@ -73,7 +74,7 @@ interface Harness {
   workerSessionCalls: string[];
   activationCalls: Array<[string, string, { workflowNodeId?: string }]>;
   spawnCalls: SpawnCall[];
-  updateTaskCalls: Array<[string, Record<string, unknown>]>;
+  casCalls: Array<[string, string, Record<string, unknown>]>;
   getTaskCalls: string[];
   getRunCalls: string[];
   prUrlCalls: string[];
@@ -92,7 +93,7 @@ function makeHarness(config: HarnessConfig = {}): Harness {
     workerSessionCalls: [],
     activationCalls: [],
     spawnCalls: [],
-    updateTaskCalls: [],
+    casCalls: [],
     getTaskCalls: [],
     getRunCalls: [],
     prUrlCalls: [],
@@ -169,15 +170,18 @@ function makeHarness(config: HarnessConfig = {}): Harness {
       }
       return task;
     },
-    updateTask: (taskId: string, params: Record<string, unknown>) => {
-      harness.updateTaskCalls.push([taskId, params]);
-      if (typeof params.postApprovalSessionId === 'string') {
-        config.postApprovalWorkerSession = {
-          sessionId: params.postApprovalSessionId,
-          agentName: 'publisher',
-        };
-      }
-      return task;
+    casRecordPostApprovalRouting: (
+      taskId: string,
+      expectedWorkflowRunId: string,
+      params: { postApprovalSessionId: string; postApprovalStartedAt: number }
+    ) => {
+      harness.casCalls.push([taskId, expectedWorkflowRunId, { ...params }]);
+      if (config.casOutcome === 'superseded') return 'superseded';
+      config.postApprovalWorkerSession = {
+        sessionId: params.postApprovalSessionId,
+        agentName: 'publisher',
+      };
+      return 'won';
     },
   } as unknown as SpaceTaskRepository;
 
@@ -625,10 +629,10 @@ describe('spawnPostApprovalWorker', () => {
   }
 
   test('spawns via the mapped chain, unwraps the session id, and records the routing', async () => {
-    const { deps, spawnCalls, updateTaskCalls, getTaskCalls, getRunCalls } = spawnHarness();
+    const { deps, spawnCalls, casCalls, getTaskCalls, getRunCalls } = spawnHarness();
 
     await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBe('spawned-9');
-    expect(getTaskCalls).toEqual(['t-1', 't-1', 't-1']);
+    expect(getTaskCalls).toEqual(['t-1', 't-1']);
     expect(getRunCalls).toEqual(['run-1']);
     expect(spawnCalls).toHaveLength(1);
     expect(spawnCalls[0]?.targetAgent).toBe('publisher');
@@ -636,13 +640,13 @@ describe('spawnPostApprovalWorker', () => {
     expect(spawnCalls[0]?.kickoffMessage).toBe(
       `Publish t-1 (Ship the release) from /ws/space-1\n\n${POST_APPROVAL_COMPLETION_INSTRUCTIONS}`
     );
-    expect(updateTaskCalls).toEqual([
+    expect(casCalls).toEqual([
       [
         't-1',
+        'run-1',
         {
           postApprovalSessionId: 'spawned-9',
           postApprovalStartedAt: expect.any(Number),
-          postApprovalBlockedReason: null,
         },
       ],
     ]);
@@ -656,24 +660,24 @@ describe('spawnPostApprovalWorker', () => {
   });
 
   test('publishes the recovered task update on the internal event bus after recording', async () => {
-    const { deps, publishedTaskUpdates, updateTaskCalls } = spawnHarness({
+    const { deps, publishedTaskUpdates, casCalls } = spawnHarness({
       publishTaskUpdated: true,
     });
 
     await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBe('spawned-9');
-    expect(updateTaskCalls).toHaveLength(1);
+    expect(casCalls).toHaveLength(1);
     expect(publishedTaskUpdates).toEqual([{ taskId: 't-1', spaceId: 'space-1' }]);
   });
 
   test('a live recorded routing matching the target resolves without spawning', async () => {
-    const { deps, spawnCalls, updateTaskCalls } = spawnHarness({
+    const { deps, spawnCalls, casCalls } = spawnHarness({
       postApprovalWorkerSession: { sessionId: 'pa-live-1', agentName: 'publisher' },
       asyncSession: fakeSession('pa-live-1', 'active'),
     });
 
     await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBe('pa-live-1');
     expect(spawnCalls).toHaveLength(0);
-    expect(updateTaskCalls).toHaveLength(0);
+    expect(casCalls).toHaveLength(0);
   });
 
   test('a dead recorded routing matching the target still spawns a replacement', async () => {
@@ -690,7 +694,7 @@ describe('spawnPostApprovalWorker', () => {
     const gatedSpawn = new Promise<{ sessionId: string }>((resolve) => {
       releaseSpawn = resolve;
     });
-    const { deps, spawnCalls, updateTaskCalls } = spawnHarness({
+    const { deps, spawnCalls, casCalls } = spawnHarness({
       spawnResult: gatedSpawn,
       asyncSession: fakeSession('spawned-9', 'active'),
     });
@@ -702,7 +706,7 @@ describe('spawnPostApprovalWorker', () => {
     await expect(first).resolves.toBe('spawned-9');
     await expect(second).resolves.toBe('spawned-9');
     expect(spawnCalls).toHaveLength(1);
-    expect(updateTaskCalls).toHaveLength(1);
+    expect(casCalls).toHaveLength(1);
   });
 
   test('node id constrains the spawn slot while the canonical first route provides the kickoff', async () => {
@@ -735,7 +739,7 @@ describe('spawnPostApprovalWorker', () => {
   });
 
   test('a route for the agent that is not the canonical dispatch target resolves null', async () => {
-    const { deps, spawnCalls, updateTaskCalls } = spawnHarness({
+    const { deps, spawnCalls, casCalls } = spawnHarness({
       workflow: {
         id: 'wf-1',
         nodes: [
@@ -757,7 +761,7 @@ describe('spawnPostApprovalWorker', () => {
 
     await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBeNull();
     expect(spawnCalls).toHaveLength(0);
-    expect(updateTaskCalls).toHaveLength(0);
+    expect(casCalls).toHaveLength(0);
   });
 
   test('interpolates autonomy_level and the task-bound workspace from the space service', async () => {
@@ -820,23 +824,23 @@ describe('spawnPostApprovalWorker', () => {
   });
 
   test('task cancelled between route resolution and spawn aborts without spawning', async () => {
-    const { deps, spawnCalls, updateTaskCalls } = spawnHarness({
+    const { deps, spawnCalls, casCalls } = spawnHarness({
       taskReads: [undefined, { id: 't-1', status: 'cancelled', workflowRunId: 'run-1' }],
     });
 
     await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBeNull();
     expect(spawnCalls).toHaveLength(0);
-    expect(updateTaskCalls).toHaveLength(0);
+    expect(casCalls).toHaveLength(0);
   });
 
-  test('task cancelled between spawn and recording cancels the spawned worker without recording', async () => {
-    const { deps, spawnCalls, updateTaskCalls, cancelCalls } = spawnHarness({
-      taskReads: [undefined, undefined, { id: 't-1', status: 'cancelled', workflowRunId: 'run-1' }],
+  test('routing superseded after the spawn cancels the spawned worker without recording', async () => {
+    const { deps, spawnCalls, casCalls, cancelCalls } = spawnHarness({
+      casOutcome: 'superseded',
     });
 
     await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBeNull();
     expect(spawnCalls).toHaveLength(1);
-    expect(updateTaskCalls).toHaveLength(0);
+    expect(casCalls).toHaveLength(1);
     expect(cancelCalls).toEqual(['spawned-9']);
   });
 
@@ -959,7 +963,7 @@ describe('spawnPostApprovalWorker', () => {
   });
 
   test('empty interpolated instructions resolve null without spawning', async () => {
-    const { deps, spawnCalls, updateTaskCalls } = spawnHarness({
+    const { deps, spawnCalls, casCalls } = spawnHarness({
       workflow: {
         id: 'wf-1',
         nodes: [
@@ -975,7 +979,7 @@ describe('spawnPostApprovalWorker', () => {
 
     await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBeNull();
     expect(spawnCalls).toHaveLength(0);
-    expect(updateTaskCalls).toHaveLength(0);
+    expect(casCalls).toHaveLength(0);
   });
 
   test('no route targeting the agent resolves null without spawning', async () => {
@@ -998,13 +1002,13 @@ describe('spawnPostApprovalWorker', () => {
   });
 
   test('spawn failure resolves null without recording the routing', async () => {
-    const { deps, spawnCalls, updateTaskCalls } = spawnHarness({
+    const { deps, spawnCalls, casCalls } = spawnHarness({
       spawnResult: new Error('spawn exploded'),
     });
 
     await expect(deps.spawnPostApprovalWorker('t-1', 'publisher')).resolves.toBeNull();
     expect(spawnCalls).toHaveLength(1);
-    expect(updateTaskCalls).toHaveLength(0);
+    expect(casCalls).toHaveLength(0);
   });
 
   test('missing task, run, or workflow resolves null without spawning', async () => {

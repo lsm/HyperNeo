@@ -325,36 +325,39 @@ async function spawnWorkerStage(
 async function recordRoutedSessionStage(
   taskId: string,
   sessionId: string | undefined,
-  taskRepo: Pick<SpaceTaskRepository, 'getTask' | 'updateTask'>,
+  taskRepo: Pick<SpaceTaskRepository, 'getTask' | 'casRecordPostApprovalRouting'>,
   spawnRoute: SpawnRoute | undefined,
   internalEventBus: InternalEventBus<DaemonInternalEventMap> | undefined,
   taskAgentManager: Pick<TaskAgentManager, 'cancelBySessionId'>
 ): Promise<string | undefined> {
   if (sessionId === undefined || spawnRoute === undefined) return undefined;
-  const current = taskRepo.getTask(taskId);
-  if (
-    current === null ||
-    current.status !== 'approved' ||
-    current.workflowRunId !== spawnRoute.task.workflowRunId
-  ) {
+  const workflowRunId = spawnRoute.task.workflowRunId;
+  if (workflowRunId == null) {
     taskAgentManager.cancelBySessionId(sessionId);
     return undefined;
   }
-  const updated =
-    taskRepo.updateTask(taskId, {
-      postApprovalSessionId: sessionId,
-      postApprovalStartedAt: Date.now(),
-      postApprovalBlockedReason: null,
-    }) ?? current;
-  try {
-    await internalEventBus?.publish('space.task.updated', {
-      sessionId: 'global',
-      spaceId: updated.spaceId,
-      taskId: updated.id,
-      task: updated,
-    });
-  } catch {
-    return sessionId;
+  const outcome = taskRepo.casRecordPostApprovalRouting(taskId, workflowRunId, {
+    postApprovalSessionId: sessionId,
+    postApprovalStartedAt: Date.now(),
+  });
+  if (outcome === 'superseded') {
+    taskAgentManager.cancelBySessionId(sessionId);
+    return undefined;
+  }
+  if (internalEventBus !== undefined) {
+    const updated = taskRepo.getTask(taskId);
+    if (updated !== null) {
+      try {
+        await internalEventBus.publish('space.task.updated', {
+          sessionId: 'global',
+          spaceId: updated.spaceId,
+          taskId: updated.id,
+          task: updated,
+        });
+      } catch {
+        return sessionId;
+      }
+    }
   }
   return sessionId;
 }

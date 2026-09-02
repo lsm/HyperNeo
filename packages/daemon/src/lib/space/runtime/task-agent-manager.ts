@@ -81,6 +81,7 @@ import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-m
 import {
   buildExecutionBaseSessionId,
   buildPostApprovalSessionId,
+  hasRuntimeNodeAgentServer,
   sanitizeAgentNameForId,
   taskIdFromSubSessionIdentity,
 } from '../../session/sub-session-identity.ts';
@@ -3755,7 +3756,14 @@ export class TaskAgentManager {
       const taskId = taskIdFromSubSessionIdentity(sessionId);
       if (taskId !== null) {
         const task = this.config.taskRepo.getTask(taskId);
-        if (task === null) return null;
+        if (
+          task === null ||
+          task.status === 'cancelled' ||
+          task.status === 'archived' ||
+          task.status === 'stopped'
+        ) {
+          return null;
+        }
         const space = await this.config.spaceManager.getSpace(task.spaceId);
         if (space === null || space.paused || space.stopped || space.status === 'archived') {
           return null;
@@ -5517,6 +5525,11 @@ export class TaskAgentManager {
       .at(-1);
     const candidateId = prevExec?.agentSessionId ?? null;
     if (!candidateId) return null;
-    return this.getSubSession(candidateId) ? candidateId : null;
+    const candidate = this.getSubSession(candidateId);
+    if (!candidate) return null;
+    const data = candidate.getSessionData();
+    if (data.status === 'ended' || data.status === 'archived') return null;
+    if (!hasRuntimeNodeAgentServer(data.config)) return null;
+    return candidateId;
   }
 }
