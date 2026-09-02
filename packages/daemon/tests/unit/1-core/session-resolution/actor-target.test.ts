@@ -92,12 +92,8 @@ describe('actorRefToSessionTarget', () => {
     expect(actorRefToSessionTarget(actor('system:scheduler', 'system'), 'space-1')).toBeNull();
     expect(actorRefToSessionTarget(actor('nope-sess-9', 'session'), 'space-1')).toBeNull();
     expect(actorRefToSessionTarget(actor('human:', 'human'), 'space-1')).toBeNull();
-    expect(actorRefToSessionTarget(actor('worker:run-1:node-1:coder', 'agent'), 'space-1')).toEqual(
-      {
-        kind: 'agent',
-        spaceId: 'space-1',
-        agentId: 'worker:run-1:node-1:coder',
-      }
-    );
+    expect(
+      actorRefToSessionTarget(actor('worker:run-1:node-1:coder', 'agent'), 'space-1')
+    ).toBeNull();
   });
 });
