@@ -74,7 +74,7 @@ function makeDeps(config?: {
       calls.coordinator.push(spaceId);
       return ensured;
     },
-    ensureLongHorizonAgentSession: async (spaceId, agentId) => {
+    ensureLongHorizon: async (spaceId, agentId) => {
       calls.provisioned.push(`${spaceId}:${agentId}`);
       return ensured;
     },
