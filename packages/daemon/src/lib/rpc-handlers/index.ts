@@ -181,7 +181,7 @@ export interface RPCHandlerDependencies {
   authManager: AuthManager;
   credentialManager?: ProviderCredentialManager;
   settingsManager: SettingsManager;
-  daemonConfigService?: DaemonConfigService;
+  daemonConfigService: DaemonConfigService;
   config: Config;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   commandBus: InternalCommandBus<DaemonCommandMap>;
@@ -342,9 +342,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.mcpImportService,
     deps.credentialManager
   );
-  if (deps.daemonConfigService) {
-    setupDaemonConfigHandlers(deps.messageHub, { service: deps.daemonConfigService });
-  }
+  setupDaemonConfigHandlers(deps.messageHub, { service: deps.daemonConfigService });
   registerCustomEndpointHandlers(
     deps.messageHub,
     deps.settingsManager,

@@ -199,6 +199,19 @@ try {
     log('  PASS: Session deleted');
   }
 
+  log('Test 8: daemonConfig.get RPC...');
+  const configResult = await rpcCall(ws, 'daemonConfig.get');
+  if (configResult.error) {
+    throw new SmokeTestError(`daemonConfig.get failed: ${configResult.error}`);
+  }
+  const configData = configResult.data as { config: unknown; catalog: unknown[] };
+  if (!configData.config || !Array.isArray(configData.catalog) || !configData.catalog.length) {
+    throw new SmokeTestError(
+      `Expected config and non-empty catalog, got: ${JSON.stringify(configData).slice(0, 200)}`
+    );
+  }
+  log(`  PASS: daemonConfig.get returned config and ${configData.catalog.length} catalog entries`);
+
   ws.close();
   log('\nAll smoke tests passed!');
 } catch (error) {

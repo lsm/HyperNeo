@@ -4,7 +4,9 @@
 # Boots the daemon under Deno and verifies the boot contract from the
 # 2026-08 dual-runtime spike:
 #   1. HTTP GET / answers 200 (there is no /api/health route)
-#   2. the WebSocket /ws handshake completes
+#   2. the WebSocket /ws handshake completes and the daemonConfig.get RPC
+#      answers with config + catalog (boot wiring regression for issue #3563:
+#      handler registration lives in setupRPCHandlers, invisible to unit shards)
 #   3. migrations ran — sqlite_master holds > 80 tables (read-only probe)
 #   4. SIGTERM triggers a graceful shutdown
 #
@@ -101,8 +103,42 @@ if ! SMOKE_WS_URL="ws://localhost:$PORT/ws" deno eval '
 	ws.addEventListener("open", () => {
 		clearTimeout(timer);
 		console.log("[deno-smoke] WebSocket /ws handshake OPEN");
-		ws.close();
-		Deno.exit(0);
+		const id = crypto.randomUUID();
+		const rpcTimer = setTimeout(() => {
+			console.error("[deno-smoke] FAIL: daemonConfig.get RPC timed out");
+			Deno.exit(1);
+		}, 15000);
+		ws.addEventListener("message", (event) => {
+			let msg;
+			try {
+				msg = JSON.parse(event.data);
+			} catch {
+				return;
+			}
+			if (msg.requestId !== id && msg.id !== id) return;
+			clearTimeout(rpcTimer);
+			if (msg.error) {
+				console.error(`[deno-smoke] FAIL: daemonConfig.get errored: ${msg.error}`);
+				Deno.exit(1);
+			}
+			const data = msg.data ?? {};
+			if (typeof data.config !== "object" || data.config === null || !Array.isArray(data.catalog) || data.catalog.length === 0) {
+				console.error(`[deno-smoke] FAIL: daemonConfig.get returned unexpected payload: ${JSON.stringify(data).slice(0, 200)}`);
+				Deno.exit(1);
+			}
+			console.log(`[deno-smoke] daemonConfig.get RPC ok (catalog entries: ${data.catalog.length})`);
+			ws.close();
+			Deno.exit(0);
+		});
+		ws.send(JSON.stringify({
+			id,
+			type: "REQ",
+			sessionId: "global",
+			method: "daemonConfig.get",
+			data: {},
+			timestamp: new Date().toISOString(),
+			version: "1.0.0",
+		}));
 	});
 	ws.addEventListener("error", () => {
 		clearTimeout(timer);
@@ -164,4 +200,4 @@ if ! grep -q "Graceful shutdown complete" "$LOG_FILE"; then
 fi
 DAEMON_PID=""
 
-echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, migrations, graceful SIGTERM)"
+echo "[deno-smoke] PASS: Deno daemon boots (HTTP 200, /ws OPEN, daemonConfig.get, migrations, graceful SIGTERM)"
