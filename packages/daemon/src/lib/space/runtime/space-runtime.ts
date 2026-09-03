@@ -2832,9 +2832,12 @@ export class SpaceRuntime {
         (options.expectedWorkflowRunId !== undefined &&
           (rechecked.workflowRunId ?? null) !== options.expectedWorkflowRunId) ||
         (options.expectedApprovedAt !== undefined &&
-          (rechecked.approvedAt ?? null) !== options.expectedApprovedAt)
+          (rechecked.approvedAt ?? null) !== options.expectedApprovedAt) ||
+        (options.requireSucceededRun &&
+          rechecked.workflowRunId &&
+          this.config.workflowRunRepo.getRun(rechecked.workflowRunId)?.status !== 'done')
       ) {
-        const reason = `task ${taskId} changed approval generation while the dispatch was awaiting lookups; refusing the stale dispatch`;
+        const reason = `task ${taskId} changed approval generation or its workflow run left the succeeded state while the dispatch was awaiting lookups; refusing the stale dispatch`;
         log.warn(`dispatchPostApproval: ${reason}`);
         return { mode: 'skipped', reason };
       }

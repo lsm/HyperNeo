@@ -453,4 +453,50 @@ describe('SpaceRuntime.retryPostApprovalDispatch — canonical serialized retry'
     expect(reactive.spawned).toHaveLength(0);
     expect(reactive.taskRepo.getTask(task.id)?.postApprovalSessionId).toBeNull();
   });
+
+  test('retry dispatch refuses a re-activated run before no-route completion', async () => {
+    let activeRunId = '';
+    const reactive = buildRuntime({
+      onSpaceLookup: () => {
+        if (activeRunId) {
+          reactive.workflowRunRepo.updateStatusUnchecked(activeRunId, 'in_progress');
+        }
+      },
+    });
+    const workflow = reactive.workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'No-route WF',
+      description: '',
+      nodes: [{ id: 'n1', name: 'Build', agents: [{ agentId: 'coder-id', name: 'coder' }] }],
+      startNodeId: 'n1',
+      tags: [],
+      completionAutonomyLevel: 3,
+    });
+    const run = reactive.workflowRunRepo.createRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'Ship it',
+      description: '',
+    });
+    reactive.workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+    const task = reactive.taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Ship it',
+      description: '',
+      status: 'in_progress',
+      workflowRunId: run.id,
+    });
+    reactive.taskRepo.updateTask(task.id, {
+      status: 'approved',
+      approvalSource: 'human',
+      approvedAt: Date.now(),
+      postApprovalBlockedReason: 'post-approval completion threw after approval',
+    });
+    activeRunId = run.id;
+
+    const result = await reactive.runtime.retryPostApprovalDispatch(task.id);
+
+    expect(result.mode).toBe('skipped');
+    expect(reactive.taskRepo.getTask(task.id)?.status).toBe('approved');
+  });
 });
