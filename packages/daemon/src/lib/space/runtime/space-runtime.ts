@@ -2723,6 +2723,7 @@ export class SpaceRuntime {
               requireAlreadyApproved: true,
               expectedWorkflowRunId: dispatchOptions?.expectedWorkflowRunId,
               expectedApprovedAt: dispatchOptions?.expectedApprovedAt,
+              requireSucceededRun: true,
             }
           ),
       })
@@ -2769,6 +2770,7 @@ export class SpaceRuntime {
       requireAlreadyApproved?: boolean;
       expectedWorkflowRunId?: string | null;
       expectedApprovedAt?: number | null;
+      requireSucceededRun?: boolean;
     } = {}
   ): Promise<PostApprovalRouteResult> {
     const router = this.getPostApprovalRouter();
@@ -2877,7 +2879,9 @@ export class SpaceRuntime {
     };
     let routeResult: PostApprovalRouteResult;
     try {
-      routeResult = await router.route(approvedTask, workflow, routeContext);
+      routeResult = await router.route(approvedTask, workflow, routeContext, {
+        requireSucceededRun: options.requireSucceededRun,
+      });
     } finally {
       const latest = this.config.taskRepo.getTask(taskId);
       if (

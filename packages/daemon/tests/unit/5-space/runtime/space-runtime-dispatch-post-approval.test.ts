@@ -36,9 +36,10 @@ interface Ctx {
   emitted: Array<{ spaceId: string; task: SpaceTask }>;
   injected: string[];
   spawned: Array<{ targetAgent: string; kickoffMessage: string }>;
+  cancelled: string[];
 }
 
-function buildRuntime(options: { prUrl?: string } = {}): Ctx {
+function buildRuntime(options: { prUrl?: string; onSpawn?: () => void } = {}): Ctx {
   const db = makeDb();
   const workflowRunRepo = new SpaceWorkflowRunRepository(db);
   const taskRepo = new SpaceTaskRepository(db);
@@ -52,6 +53,7 @@ function buildRuntime(options: { prUrl?: string } = {}): Ctx {
   const emitted: Array<{ spaceId: string; task: SpaceTask }> = [];
   const injected: string[] = [];
   const spawned: Ctx['spawned'] = [];
+  const cancelled: string[] = [];
   const config: SpaceRuntimeConfig = {
     db,
     spaceManager,
@@ -81,6 +83,7 @@ function buildRuntime(options: { prUrl?: string } = {}): Ctx {
         targetAgent: string;
         kickoffMessage: string;
       }) => {
+        options.onSpawn?.();
         spawned.push({
           targetAgent: args.targetAgent,
           kickoffMessage: args.kickoffMessage,
@@ -89,12 +92,24 @@ function buildRuntime(options: { prUrl?: string } = {}): Ctx {
       },
       isSessionAlive: () => false,
       isSessionOnPostApprovalRoute: () => true,
-      cancelBySessionId: () => {},
+      cancelBySessionId: (sessionId: string) => {
+        cancelled.push(sessionId);
+      },
     } as unknown as NonNullable<SpaceRuntimeConfig['taskAgentManager']>,
   };
 
   const runtime = new SpaceRuntime(config);
-  return { db, runtime, taskRepo, workflowManager, workflowRunRepo, emitted, injected, spawned };
+  return {
+    db,
+    runtime,
+    taskRepo,
+    workflowManager,
+    workflowRunRepo,
+    emitted,
+    injected,
+    spawned,
+    cancelled,
+  };
 }
 
 function seedReviewTask(taskRepo: SpaceTaskRepository): SpaceTask {
@@ -208,8 +223,8 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
 describe('SpaceRuntime.retryPostApprovalDispatch — canonical serialized retry', () => {
   let ctx: Ctx;
 
-  function seedBlockedRoutedTask(): SpaceTask {
-    const workflow = ctx.workflowManager.createWorkflow({
+  function seedBlockedRoutedTask(target: Ctx = ctx): SpaceTask {
+    const workflow = target.workflowManager.createWorkflow({
       spaceId: SPACE_ID,
       name: 'Routed WF',
       description: '',
@@ -230,21 +245,21 @@ describe('SpaceRuntime.retryPostApprovalDispatch — canonical serialized retry'
       tags: [],
       completionAutonomyLevel: 3,
     });
-    const run = ctx.workflowRunRepo.createRun({
+    const run = target.workflowRunRepo.createRun({
       spaceId: SPACE_ID,
       workflowId: workflow.id,
       title: 'Ship it',
       description: '',
     });
-    ctx.workflowRunRepo.updateStatusUnchecked(run.id, 'done');
-    const task = ctx.taskRepo.createTask({
+    target.workflowRunRepo.updateStatusUnchecked(run.id, 'done');
+    const task = target.taskRepo.createTask({
       spaceId: SPACE_ID,
       title: 'Ship it',
       description: '',
       status: 'in_progress',
       workflowRunId: run.id,
     });
-    const approved = ctx.taskRepo.updateTask(task.id, {
+    const approved = target.taskRepo.updateTask(task.id, {
       status: 'approved',
       approvalSource: 'human',
       approvedAt: Date.now(),
@@ -382,5 +397,25 @@ describe('SpaceRuntime.retryPostApprovalDispatch — canonical serialized retry'
     }
 
     expect(ctx.spawned).toHaveLength(0);
+  });
+
+  test('retry dispatch cancels the spawned worker when the run was re-activated mid-flight', async () => {
+    let runIdToFlip: string | null = null;
+    const reactive = buildRuntime({
+      prUrl: 'https://github.com/lsm/HyperNeo/pull/7',
+      onSpawn: () => {
+        if (runIdToFlip) {
+          reactive.workflowRunRepo.updateStatusUnchecked(runIdToFlip, 'in_progress');
+        }
+      },
+    });
+    const task = seedBlockedRoutedTask(reactive);
+    runIdToFlip = task.workflowRunId ?? null;
+
+    const result = await reactive.runtime.retryPostApprovalDispatch(task.id);
+
+    expect(result.mode).toBe('skipped');
+    expect(reactive.cancelled).toEqual(['stub-session']);
+    expect(reactive.taskRepo.getTask(task.id)?.postApprovalSessionId).toBeNull();
   });
 });

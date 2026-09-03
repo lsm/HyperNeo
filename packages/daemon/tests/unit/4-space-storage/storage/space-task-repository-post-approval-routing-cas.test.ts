@@ -270,4 +270,36 @@ describe('SpaceTaskRepository.casPostApprovalRouting', () => {
     expect(outcome).toBe('superseded');
     expect(repo.getTask(task.id)?.postApprovalSessionId).toBeNull();
   });
+
+  test('requireSucceededRun loses when a completed run was re-activated mid-flight', () => {
+    const task = seedApprovedTask(repo, { workflowRunId: 'run-1' });
+    db.prepare(`UPDATE space_workflow_runs SET status = 'in_progress' WHERE id = 'run-1'`).run();
+    const outcome = repo.casPostApprovalRouting(
+      task.id,
+      {
+        workflowRunId: 'run-1',
+        approvedAt: task.approvedAt ?? null,
+        priorPostApprovalSessionId: null,
+      },
+      { postApprovalSessionId: 'worker-1', postApprovalStartedAt: 1234 },
+      { requireSucceededRun: true }
+    );
+    expect(outcome).toBe('superseded');
+    expect(repo.getTask(task.id)?.postApprovalSessionId).toBeNull();
+  });
+
+  test('requireSucceededRun wins while the run is still done', () => {
+    const task = seedApprovedTask(repo, { workflowRunId: 'run-1' });
+    const outcome = repo.casPostApprovalRouting(
+      task.id,
+      {
+        workflowRunId: 'run-1',
+        approvedAt: task.approvedAt ?? null,
+        priorPostApprovalSessionId: null,
+      },
+      { postApprovalSessionId: 'worker-1', postApprovalStartedAt: 1234 },
+      { requireSucceededRun: true }
+    );
+    expect(outcome).toBe('won');
+  });
 });

@@ -194,7 +194,8 @@ export class PostApprovalRouter {
   async route(
     task: SpaceTask,
     workflow: SpaceWorkflow | null,
-    context: PostApprovalRouteContext
+    context: PostApprovalRouteContext,
+    routeOptions: { requireSucceededRun?: boolean } = {}
   ): Promise<PostApprovalRouteResult> {
     if (task.status !== 'approved') {
       const reason = `task ${task.id} is not in 'approved' (status=${task.status}); router will not dispatch`;
@@ -366,7 +367,8 @@ export class PostApprovalRouter {
         approvedAt: task.approvedAt ?? null,
         priorPostApprovalSessionId: task.postApprovalSessionId ?? null,
       },
-      { postApprovalSessionId: sessionId, postApprovalStartedAt: startedAt }
+      { postApprovalSessionId: sessionId, postApprovalStartedAt: startedAt },
+      { requireSucceededRun: routeOptions.requireSucceededRun }
     );
     if (recorded !== 'won') {
       const fresh = this.deps.taskRepo.getTask(task.id);

@@ -703,7 +703,8 @@ export class SpaceTaskRepository {
       approvedAt: number | null;
       priorPostApprovalSessionId: string | null;
     },
-    routing: { postApprovalSessionId: string; postApprovalStartedAt: number }
+    routing: { postApprovalSessionId: string; postApprovalStartedAt: number },
+    options: { requireSucceededRun?: boolean } = {}
   ): 'won' | 'superseded' {
     const now = Date.now();
     const stealDuplicatePointer = this.db.prepare(
@@ -735,6 +736,13 @@ export class SpaceTaskRepository {
          AND NOT EXISTS (
            SELECT 1 FROM space_workflow_runs r
             WHERE r.id = space_tasks.workflow_run_id AND r.status = 'cancelled'
+         )
+         AND (
+           ? = 0
+           OR EXISTS (
+             SELECT 1 FROM space_workflow_runs r
+              WHERE r.id = space_tasks.workflow_run_id AND r.status = 'done'
+           )
          )`
     );
     const tx = this.db.transaction(() => {
@@ -748,7 +756,8 @@ export class SpaceTaskRepository {
         expect.approvedAt,
         expect.approvedAt,
         expect.priorPostApprovalSessionId,
-        expect.priorPostApprovalSessionId
+        expect.priorPostApprovalSessionId,
+        options.requireSucceededRun ? 1 : 0
       );
       if (result.changes === 0) return false;
       stealDuplicatePointer.run(
