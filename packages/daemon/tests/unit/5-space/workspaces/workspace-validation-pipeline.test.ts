@@ -21,7 +21,6 @@ function fakeIo(overrides: Partial<WorkspaceValidationIo> = {}): WorkspaceValida
   return {
     realpath: async (path) => path,
     isDirectory: async () => true,
-    isGitRepositoryRoot: async () => true,
     ...overrides,
   };
 }
@@ -94,27 +93,19 @@ describe('workspace-validation-pipeline', () => {
     });
   });
 
-  describe('git repository root gate', () => {
-    test('hard-fails when the path is not a git repository root', async () => {
-      const verdict = await validate({
-        io: fakeIo({ isGitRepositoryRoot: async () => false }),
-      });
-      expect(verdict.accepted).toBe(false);
-      if (verdict.accepted) return;
-      expect(verdict.reason).toBe('not_a_git_repository_root');
-      expect(verdict.message).toContain('/repo');
+  describe('non-git workspaces', () => {
+    test('accepts a directory that is not a git repository', async () => {
+      const verdict = await validate({});
+      expect(verdict).toEqual({ accepted: true, canonicalPath: '/repo' });
     });
 
-    test('runs before registry gates', async () => {
+    test('still enforces registry gates for non-git directories', async () => {
       const verdict = await validate({
-        io: fakeIo({
-          isGitRepositoryRoot: async () => false,
-        }),
         snap: snapshot([primaryClaim(SPACE_B, '/repo')], MAX_WORKSPACES_PER_SPACE),
       });
       expect(verdict.accepted).toBe(false);
       if (verdict.accepted) return;
-      expect(verdict.reason).toBe('not_a_git_repository_root');
+      expect(verdict.reason).toBe('path_claimed_by_another_space');
     });
   });
 
@@ -338,14 +329,12 @@ describe('workspace-validation-pipeline', () => {
       expect(verdict.reason).toBe('path_not_a_directory');
     });
 
-    test('reports a plain directory as not a git repository root', async () => {
+    test('accepts a plain directory that is not a git repository', async () => {
       const verdict = await validate({
         io: nodeWorkspaceValidationIo,
         rawPath: ioPath('plain-dir'),
       });
-      expect(verdict.accepted).toBe(false);
-      if (verdict.accepted) return;
-      expect(verdict.reason).toBe('not_a_git_repository_root');
+      expect(verdict).toEqual({ accepted: true, canonicalPath: ioPath('plain-dir') });
     });
 
     test('accepts a git repository root', async () => {
@@ -356,14 +345,12 @@ describe('workspace-validation-pipeline', () => {
       expect(verdict).toEqual({ accepted: true, canonicalPath: root });
     });
 
-    test('rejects a subdirectory inside a git repository', async () => {
+    test('accepts a subdirectory inside a git repository', async () => {
       const verdict = await validate({
         io: nodeWorkspaceValidationIo,
         rawPath: ioPath('repo-inner-dir'),
       });
-      expect(verdict.accepted).toBe(false);
-      if (verdict.accepted) return;
-      expect(verdict.reason).toBe('not_a_git_repository_root');
+      expect(verdict).toEqual({ accepted: true, canonicalPath: ioPath('repo-inner-dir') });
     });
 
     test('resolves a symlinked repository to its canonical root', async () => {
@@ -390,16 +377,14 @@ describe('workspace-validation-pipeline', () => {
       expect(verdict).toEqual({ accepted: true, canonicalPath: join(root, 'cr-dir\r') });
     });
 
-    test('rejects a bare repository', async () => {
+    test('accepts a bare repository as a plain workspace directory', async () => {
       const bare = join(root, 'bare-repo.git');
       execSync('git init -q --bare bare-repo.git', { cwd: root });
       const verdict = await validate({
         io: nodeWorkspaceValidationIo,
         rawPath: bare,
       });
-      expect(verdict.accepted).toBe(false);
-      if (verdict.accepted) return;
-      expect(verdict.reason).toBe('not_a_git_repository_root');
+      expect(verdict).toEqual({ accepted: true, canonicalPath: bare });
     });
   });
 

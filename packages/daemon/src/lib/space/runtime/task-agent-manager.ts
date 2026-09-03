@@ -878,6 +878,13 @@ export class TaskAgentManager {
           spaceWorkspacePath: ownsSpace ? resolveTaskWorkspace(space, task) : space.workspacePath,
         });
         if (workspace.createWorktree && this.config.worktreeManager) {
+          const repoRoot = ownsSpace ? resolveTaskWorkspace(space, task) : space.workspacePath;
+          if (!this.config.worktreeManager.isGitRepoRoot(repoRoot)) {
+            log.info(
+              `TaskAgentManager: workspace ${repoRoot} for task ${task.id} is not a git repository; running the node agent directly in the workspace`
+            );
+            return repoRoot;
+          }
           try {
             const result = await this.config.worktreeManager.createTaskWorktree(
               space.id,
@@ -885,7 +892,7 @@ export class TaskAgentManager {
               task.title,
               task.taskNumber,
               undefined,
-              ownsSpace ? resolveTaskWorkspace(space, task) : space.workspacePath
+              repoRoot
             );
             this.taskWorktreePaths.set(task.id, result.path);
             return result.path;

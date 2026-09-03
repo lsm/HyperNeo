@@ -221,7 +221,7 @@ function createResolveRepo(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
 function createAssertGitRepo(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
   if (!ctx.repo!.gitRepo) {
     throw new Error(
-      `Workspace "${ctx.repoRoot ?? ctx.workspacePath}" is not a git repository; cannot create a task worktree. Spaces whose primary workspace is not a git repository require tasks with an explicit registered workspace.`
+      `Workspace "${ctx.repoRoot ?? ctx.workspacePath}" is not a git repository; cannot create a task worktree. Non-git workspaces are used directly by the task runtime instead of worktrees.`
     );
   }
   return ctx;
@@ -619,6 +619,10 @@ export class SpaceWorktreeManager {
     taskId: string
   ): { path: string; slug: string } | null {
     return this.worktreeRepo.getByTaskId(spaceId, taskId);
+  }
+
+  isGitRepoRoot(repoRoot: string): boolean {
+    return resolveRepoRoot(repoRoot).gitRepo;
   }
 
   async listWorktrees(spaceId: string): Promise<SpaceWorktreeInfo[]> {

@@ -159,7 +159,7 @@ function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
 }
 
 function registrationError(
-  reason: 'path_claimed_by_another_space' | 'not_a_git_repository_root',
+  reason: 'path_claimed_by_another_space' | 'path_not_a_directory',
   message: string
 ): WorkspaceRegistrationError {
   return new WorkspaceRegistrationError(message, reason, {
@@ -420,8 +420,8 @@ describe('space-handlers', () => {
     it('propagates registration errors and publishes nothing when a secondary is invalid', async () => {
       (spaceManager.createSpace as ReturnType<typeof mock>).mockImplementation(async () => {
         throw registrationError(
-          'not_a_git_repository_root',
-          'Workspace path is not a git repository root: /tmp/plain-dir'
+          'path_not_a_directory',
+          'Workspace path is not an accessible directory: /tmp/plain-dir'
         );
       });
 
@@ -1142,17 +1142,17 @@ describe('space-handlers', () => {
       ).rejects.toThrow('already claimed by space space-2');
     });
 
-    it('rejects paths that are not git repository roots', async () => {
+    it('rejects paths that are not accessible directories', async () => {
       (spaceManager.registerWorkspace as ReturnType<typeof mock>).mockImplementation(async () => {
         throw registrationError(
-          'not_a_git_repository_root',
-          'Workspace path is not a git repository root: /tmp/plain-dir'
+          'path_not_a_directory',
+          'Workspace path is not an accessible directory: /tmp/plain-dir'
         );
       });
 
       await expect(
         call('space.workspace.add', { spaceId: 'space-1', path: '/tmp/plain-dir' })
-      ).rejects.toThrow('not a git repository root');
+      ).rejects.toThrow('not an accessible directory');
     });
   });
 

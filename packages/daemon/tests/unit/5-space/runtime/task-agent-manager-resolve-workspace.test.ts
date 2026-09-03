@@ -24,6 +24,7 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     taskWorkspacePath?: string;
     cachedTaskWorktreePath: string | undefined;
     storedTaskWorktreePath?: string;
+    nonGitRepoRoots?: string[];
     hasWorktreeManager: boolean;
     createResult: 'success' | 'fail' | 'n/a';
     expectedOutcome: { kind: 'path'; value: string } | { kind: 'error'; message: string };
@@ -98,10 +99,14 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
       if (row.createResult === 'fail') throw new Error(CREATE_ERROR);
       return { path: CREATED_PATH, slug: 'task-9-abc' };
     });
+    const isGitRepoRoot = mock((repoRoot: string) => {
+      if (row.nonGitRepoRoots?.includes(repoRoot)) return false;
+      return true;
+    });
 
     const manager = makeManager(
       row.hasWorktreeManager
-        ? ({ createTaskWorktree } as unknown as SpaceWorktreeManager)
+        ? ({ createTaskWorktree, isGitRepoRoot } as unknown as SpaceWorktreeManager)
         : undefined,
       { storedTaskWorktreePath: row.storedTaskWorktreePath }
     );
@@ -151,7 +156,7 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         )
       ).toBe(true);
     } else {
-      expect(logEvents).toEqual([]);
+      expect(logEvents.filter((event) => event.level === 'warn')).toEqual([]);
     }
   }
 
@@ -201,6 +206,22 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     });
   });
 
+  describe('non-git primary family', () => {
+    test('runs directly in the non-git space primary without creating a worktree', async () => {
+      await runRow({
+        name: 'non-git primary: runs directly in the space workspace',
+        nonGitRepoRoots: [SPACE_WORKSPACE],
+        cachedTaskWorktreePath: undefined,
+        hasWorktreeManager: true,
+        createResult: 'n/a',
+        expectedOutcome: { kind: 'path', value: SPACE_WORKSPACE },
+        expectedCreateCalled: false,
+        expectedCachedPath: undefined,
+        expectedWarning: '',
+      });
+    });
+  });
+
   describe('explicit task workspace family (WS10)', () => {
     test.each([
       {
@@ -213,6 +234,18 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         expectedCreateCalled: true,
         expectedRepoRoot: TASK_WORKSPACE,
         expectedCachedPath: CREATED_PATH,
+        expectedWarning: '',
+      },
+      {
+        name: 'non-git task workspace runs the agent directly in the workspace',
+        taskWorkspacePath: TASK_WORKSPACE,
+        nonGitRepoRoots: [TASK_WORKSPACE],
+        cachedTaskWorktreePath: undefined,
+        hasWorktreeManager: true,
+        createResult: 'n/a',
+        expectedOutcome: { kind: 'path', value: TASK_WORKSPACE },
+        expectedCreateCalled: false,
+        expectedCachedPath: undefined,
         expectedWarning: '',
       },
       {

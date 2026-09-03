@@ -239,7 +239,7 @@ describe('createTaskWorktree', () => {
       await expect(
         localManager.createTaskWorktree(local.spaceId, taskId, 'Plain Primary Task', 66)
       ).rejects.toThrow(
-        `Workspace "${realpathSync(plainDir)}" is not a git repository; cannot create a task worktree. Spaces whose primary workspace is not a git repository require tasks with an explicit registered workspace.`
+        `Workspace "${realpathSync(plainDir)}" is not a git repository; cannot create a task worktree. Non-git workspaces are used directly by the task runtime instead of worktrees.`
       );
       expect(localManager.getTaskWorktreePathSync(local.spaceId, taskId)).toBeNull();
     } finally {
@@ -371,7 +371,7 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
       await expect(
         manager.createTaskWorktree(spaceId, taskId, 'Plain Dir Task', 65, undefined, plainDir)
       ).rejects.toThrow(
-        `Workspace "${realpathSync(plainDir)}" is not a git repository; cannot create a task worktree. Spaces whose primary workspace is not a git repository require tasks with an explicit registered workspace.`
+        `Workspace "${realpathSync(plainDir)}" is not a git repository; cannot create a task worktree. Non-git workspaces are used directly by the task runtime instead of worktrees.`
       );
       expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
     } finally {

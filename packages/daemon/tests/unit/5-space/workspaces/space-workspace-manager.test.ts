@@ -131,7 +131,6 @@ function fakeIo(overrides: Partial<WorkspaceValidationIo> = {}): WorkspaceValida
   return {
     realpath: async (path) => path,
     isDirectory: async () => true,
-    isGitRepositoryRoot: async () => true,
     ...overrides,
   };
 }
