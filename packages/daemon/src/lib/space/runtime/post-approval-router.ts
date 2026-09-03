@@ -40,6 +40,7 @@ export interface PostApprovalSubSessionSpawner {
     workflow: SpaceWorkflow;
     targetAgent: string;
     kickoffMessage: string;
+    requireSucceededRun?: boolean;
   }): Promise<{ sessionId: string }>;
 }
 
@@ -342,6 +343,7 @@ export class PostApprovalRouter {
         workflow,
         targetAgent: route.targetAgent!,
         kickoffMessage,
+        requireSucceededRun: routeOptions.requireSucceededRun,
       }));
     } catch (err) {
       if (isSpawnSupersededError(err)) {

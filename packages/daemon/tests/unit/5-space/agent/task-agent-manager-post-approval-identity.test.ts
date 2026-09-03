@@ -692,3 +692,74 @@ describe('TaskAgentManager.isSessionOnPostApprovalRoute — execution run bindin
     ).toBe(true);
   });
 });
+
+describe('TaskAgentManager.spawnPostApprovalSubSession — succeeded-run admission', () => {
+  const WORKFLOW = {
+    id: 'wf-1',
+    nodes: [
+      {
+        id: POST_APPROVAL_NODE,
+        agents: [{ name: 'merger', agentId: 'agent-merger' }],
+        postApproval: { targetAgent: 'merger' },
+      },
+    ],
+  };
+
+  function makeSpawnManager(db: BunDatabase, runStatus: string): TaskAgentManager {
+    return new TaskAgentManager({
+      db: { getDatabase: () => db },
+      taskRepo: new SpaceTaskRepository(db),
+      sessionManager: { registerSession: () => {} },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+      workflowRunRepo: { getRun: () => ({ id: RUN_ID, workflowId: 'wf-1', status: runStatus }) },
+      spaceWorkflowManager: { getWorkflow: () => WORKFLOW, getWorkflowForRun: () => WORKFLOW },
+      nodeExecutionRepo: { listByWorkflowRun: () => [], listByNode: () => [], update: () => null },
+    } as unknown as TaskAgentManagerConfig);
+  }
+
+  it('refuses the retry kickoff when the workflow run is not done', async () => {
+    const db = makeDb();
+    insertTask(db, { status: 'approved' });
+    const tam = makeSpawnManager(db, 'in_progress');
+    await expect(
+      tam.spawnPostApprovalSubSession({
+        task: {
+          id: TASK_ID,
+          spaceId: SPACE_ID,
+          workflowRunId: RUN_ID,
+        } as unknown as Parameters<TaskAgentManager['spawnPostApprovalSubSession']>[0]['task'],
+        workflow: WORKFLOW as unknown as Parameters<
+          TaskAgentManager['spawnPostApprovalSubSession']
+        >[0]['workflow'],
+        targetAgent: 'merger',
+        kickoffMessage: 'Merge it.',
+        requireSucceededRun: true,
+      })
+    ).rejects.toThrow('run-not-succeeded-before-kickoff');
+  });
+
+  it('leaves ordinary dispatches unaffected by the succeeded-run requirement', async () => {
+    const db = makeDb();
+    insertTask(db, { status: 'approved' });
+    const tam = makeSpawnManager(db, 'in_progress');
+    let error: unknown = null;
+    try {
+      await tam.spawnPostApprovalSubSession({
+        task: {
+          id: TASK_ID,
+          spaceId: SPACE_ID,
+          workflowRunId: RUN_ID,
+        } as unknown as Parameters<TaskAgentManager['spawnPostApprovalSubSession']>[0]['task'],
+        workflow: WORKFLOW as unknown as Parameters<
+          TaskAgentManager['spawnPostApprovalSubSession']
+        >[0]['workflow'],
+        targetAgent: 'merger',
+        kickoffMessage: 'Merge it.',
+      });
+    } catch (err) {
+      error = err;
+    }
+    expect(error === null ? '' : String(error)).not.toContain('run-not-succeeded-before-kickoff');
+  });
+});
