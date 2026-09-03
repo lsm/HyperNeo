@@ -2086,6 +2086,10 @@ export class TaskAgentManager {
     }
   }
 
+  isSessionWorkerForTask(sessionId: string, taskId: string): boolean {
+    return this.sessionIsWorkerForTask(sessionId, taskId, true);
+  }
+
   isSessionOnPostApprovalRoute(args: {
     sessionId: string;
     taskId: string;

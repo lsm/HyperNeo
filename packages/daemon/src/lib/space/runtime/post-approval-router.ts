@@ -68,6 +68,7 @@ export interface PostApprovalRouterDeps {
     workflowRunId: string | null;
   }) => boolean;
   cancelSpawnedWorker?: (sessionId: string) => void;
+  ownsRecordedPointer?: (args: { sessionId: string; taskId: string }) => boolean;
 }
 
 export interface PostApprovalRouteContext extends PostApprovalTemplateContext {
@@ -229,7 +230,14 @@ export class PostApprovalRouter {
     }
 
     if (dispatchable.length === 0) {
-      if (task.postApprovalSessionId) {
+      if (
+        task.postApprovalSessionId &&
+        (!this.deps.ownsRecordedPointer ||
+          this.deps.ownsRecordedPointer({
+            sessionId: task.postApprovalSessionId,
+            taskId: task.id,
+          }))
+      ) {
         this.deps.cancelSpawnedWorker?.(task.postApprovalSessionId);
       }
       const outcomeUpdates = this.deps.resolveCompletionOutcome?.(task) ?? null;
@@ -397,7 +405,15 @@ export class PostApprovalRouter {
       log.warn(`PostApprovalRouter.route: ${reason}`);
       return { mode: 'skipped', reason };
     }
-    if (staleReplacedSessionId !== null && staleReplacedSessionId !== sessionId) {
+    if (
+      staleReplacedSessionId !== null &&
+      staleReplacedSessionId !== sessionId &&
+      (!this.deps.ownsRecordedPointer ||
+        this.deps.ownsRecordedPointer({
+          sessionId: staleReplacedSessionId,
+          taskId: task.id,
+        }))
+    ) {
       this.deps.cancelSpawnedWorker?.(staleReplacedSessionId);
     }
 

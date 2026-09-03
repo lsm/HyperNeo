@@ -2756,6 +2756,8 @@ export class SpaceRuntime {
       },
       validateRecordedPointer: (args) => manager.isSessionOnPostApprovalRoute(args),
       cancelSpawnedWorker: (sessionId) => manager.cancelBySessionId(sessionId),
+      ownsRecordedPointer: ({ sessionId, taskId }) =>
+        manager.isSessionWorkerForTask(sessionId, taskId),
       goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
     });

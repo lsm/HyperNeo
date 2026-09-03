@@ -963,6 +963,7 @@ describe('PostApprovalRouter.route — cycle-13 guards', () => {
       spawner: delegates.spawner,
       livenessProbe: delegates.liveness,
       cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),
+      ownsRecordedPointer: () => true,
     });
 
     const result = await router.route(updated, stubWorkflow(), { approvalSource: 'agent' });
@@ -972,5 +973,42 @@ describe('PostApprovalRouter.route — cycle-13 guards', () => {
     const final = taskRepo.getTask(task.id);
     expect(final?.status).toBe('done');
     expect(final?.postApprovalSessionId).toBeNull();
+  });
+});
+
+describe('PostApprovalRouter.route — pointer ownership before cancel', () => {
+  let db: BunDatabase;
+  let taskRepo: SpaceTaskRepository;
+
+  beforeEach(() => {
+    db = makeDb();
+    taskRepo = new SpaceTaskRepository(db);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  test('no-route completion spares a pointer owned by another task', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, {
+      postApprovalSessionId: 'foreign-worker',
+      postApprovalStartedAt: 99,
+    });
+    const updated = taskRepo.getTask(task.id)!;
+    const cancelled: string[] = [];
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+      cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),
+      ownsRecordedPointer: ({ taskId }) => taskId === 'some-other-task',
+    });
+
+    const result = await router.route(updated, stubWorkflow(), { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('no-route');
+    expect(cancelled).toEqual([]);
+    expect(taskRepo.getTask(task.id)?.postApprovalSessionId).toBeNull();
   });
 });
