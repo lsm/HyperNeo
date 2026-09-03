@@ -193,7 +193,12 @@ function AgentIcon() {
 export function SpaceWorkerAgentList() {
   const agents = spaceStore.agents.value;
   const sortedAgents = useMemo(
-    () => [...agents].sort((a, b) => a.name.localeCompare(b.name)),
+    () =>
+      [...agents].sort((a, b) =>
+        (a.name ?? (a as { displayName?: string }).displayName ?? '').localeCompare(
+          b.name ?? (b as { displayName?: string }).displayName ?? ''
+        )
+      ),
     [agents]
   );
   const loading = spaceStore.loading.value;

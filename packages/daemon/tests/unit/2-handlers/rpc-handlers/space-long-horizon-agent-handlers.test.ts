@@ -60,6 +60,7 @@ describe('Space long-horizon agent handlers', () => {
     hubData = createMockMessageHub();
     repo = {
       ensureCoordinator: mock(() => {}),
+      getCoordinator: mock(() => null),
       listBySpaceId: mock(() => []),
       create: mock((params) => ({
         id: params.id ?? 'agent-new',

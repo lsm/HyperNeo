@@ -3,23 +3,108 @@ import type {
   Session,
   SettingSource,
   SpaceLongHorizonAgent,
+  SpaceLongHorizonAgentEventSubscriptionStatus,
   SpaceWorkerAgent,
   SpaceWorkerAgentPromotionDraft,
   ThinkingLevel,
+  UpdateSpaceWorkerAgentParams,
+  WorkerAgentModelPoolEntry,
 } from '@hyperneo/shared';
 import { isKnownToolEntry, isScopedBashToolEntry } from '@hyperneo/shared';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/index.ts';
+import {
+  coordinatorLongHorizonAgentId,
+  type SpaceLongHorizonAgentRepository,
+} from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import { composeLongHorizonSubscriptionPattern } from '../external-events/long-horizon-subscription-pattern.ts';
+import { validateGlobPattern, validateSource } from '../external-events/topic-validator.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import { Logger } from '../logger.ts';
-import { computeAgentTemplateHash } from '../space/agents/agent-template-hash.ts';
-import { getPresetAgentTemplates } from '../space/agents/seed-agents.ts';
+import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates.ts';
+import {
+  publishUnifiedAgentCreated,
+  publishUnifiedAgentDeleted,
+  publishUnifiedAgentUpdated,
+} from '../space/agents/unified-agent-events.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../space/agents/worker-long-horizon-mapper.ts';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager.ts';
+import {
+  validateAgentModel,
+  validateAgentModelPool,
+  validateSpaceAgentTools,
+} from '../space/managers/space-agent-manager.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
-
-const log = new Logger('space-agent-handlers');
+import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import { getNextRunAt, isValidCronExpression } from '../space/schedule/cron-utils.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit, validateSlug } from '../space/slug.ts';
 
 const PROMOTION_MESSAGE_LIMIT = 24;
 const PROMOTION_CONTEXT_CHAR_LIMIT = 6000;
+
+export type UnifiedSpaceAgentRuntimeService = Pick<
+  SpaceRuntimeService,
+  | 'refreshLongHorizonAgentSubscriptions'
+  | 'removeLongHorizonAgentSubscriptions'
+  | 'refreshLongHorizonSubscription'
+  | 'removeLongHorizonSubscription'
+  | 'clearLongTermAgentSessionProvider'
+>;
+
+interface UnifiedSpaceAgentMethodDeps {
+  spaceManager: SpaceManager;
+  repo: SpaceLongHorizonAgentRepository;
+  spaceAgentManager?: SpaceAgentManager;
+  runtimeService?: UnifiedSpaceAgentRuntimeService;
+  internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
+}
+
+type UnifiedSpaceAgentNamespace = 'spaceAgent' | 'spaceLongHorizonAgent';
+
+interface UnifiedAgentCreateInput {
+  id?: string;
+  spaceId: string;
+  name?: string;
+  handle?: string;
+  displayName?: string;
+  templateKey?: string | null;
+  templateName?: string | null;
+  instructions?: string;
+  customPrompt?: string | null;
+  autonomyLevel?: number | null;
+  model?: string | null;
+  thinkingLevel?: ThinkingLevel | string | null;
+  provider?: string | null;
+  settingSources?: SettingSource[] | null;
+  toolPermissions?: Record<string, unknown>;
+  tools?: string[];
+  status?: string;
+  description?: string;
+  modelPool?: WorkerAgentModelPoolEntry[];
+}
+
+interface UnifiedAgentUpdateInput {
+  id?: string;
+  agentId?: string;
+  spaceId?: string;
+  handle?: string;
+  name?: string;
+  displayName?: string;
+  templateKey?: string | null;
+  templateName?: string | null;
+  templateHash?: string | null;
+  instructions?: string;
+  customPrompt?: string | null;
+  autonomyLevel?: number | null;
+  model?: string | null;
+  thinkingLevel?: ThinkingLevel | string | null;
+  provider?: string | null;
+  settingSources?: SettingSource[] | null;
+  toolPermissions?: Record<string, unknown> | null;
+  tools?: string[] | null;
+  status?: string;
+  description?: string | null;
+  modelPool?: WorkerAgentModelPoolEntry[] | null;
+}
 
 function clampText(value: string, limit: number): string {
   if (value.length <= limit) return value;
@@ -136,19 +221,843 @@ function buildPromotionDraft(session: Session, db: Database): SpaceWorkerAgentPr
   };
 }
 
-async function publishAgentCreated(
-  internalEventBus: InternalEventBus<DaemonInternalEventMap>,
-  agent: SpaceWorkerAgent
-): Promise<void> {
-  await internalEventBus
-    .publish('spaceAgent.created', {
-      sessionId: `space:${agent.spaceId}`,
-      spaceId: agent.spaceId,
-      agent,
-    })
-    .catch((err) => {
-      log.warn('Failed to emit spaceAgent.created:', err);
+function validateLongHorizonSubscriptionPattern(
+  source: string,
+  topic: string,
+  options: { allowWildcardSource?: boolean } = {}
+): string {
+  if (source !== '*' || !options.allowWildcardSource) {
+    const sourceValidation = validateSource(source);
+    if (!sourceValidation.valid) throw new Error(sourceValidation.reason ?? 'invalid source');
+  }
+  const pattern = composeLongHorizonSubscriptionPattern(source, topic);
+  const validation = validateGlobPattern(pattern);
+  if (!validation.valid) throw new Error(validation.reason ?? 'invalid pattern');
+  return pattern;
+}
+
+function ensureUnifiedDisplayNameAvailable(
+  deps: UnifiedSpaceAgentMethodDeps,
+  spaceId: string,
+  displayName: string,
+  excludeId?: string
+): void {
+  const target = displayName.trim().toLowerCase();
+  if (!target) return;
+  const unifiedConflict = deps.repo
+    .listBySpaceId(spaceId)
+    .find(
+      (a) =>
+        a.status !== 'archived' &&
+        a.id !== excludeId &&
+        (a.displayName ?? '').trim().toLowerCase() === target
+    );
+  if (unifiedConflict) {
+    throw new Error(
+      `Agent name "${displayName}" is already used by another unified agent in this space`
+    );
+  }
+  const workerConflict = deps.spaceAgentManager
+    ?.listBySpaceId(spaceId)
+    .find((a) => a.id !== excludeId && (a.name ?? '').trim().toLowerCase() === target);
+  if (workerConflict) {
+    throw new Error(`Agent name "${displayName}" is already used by a worker agent in this space`);
+  }
+}
+
+function ensureWorkerDisplayNameAvailable(
+  deps: UnifiedSpaceAgentMethodDeps,
+  spaceId: string,
+  name: string,
+  excludeId?: string
+): void {
+  const target = name.trim().toLowerCase();
+  if (!target) return;
+  const conflict = deps.repo.listBySpaceId(spaceId).find((a) => {
+    if (
+      a.status === 'archived' ||
+      a.id === excludeId ||
+      (a.displayName ?? '').trim().toLowerCase() !== target
+    ) {
+      return false;
+    }
+    const worker = deps.spaceAgentManager?.getById(a.id);
+    return !worker || a.templateKey !== 'migration.legacy_space_agent';
+  });
+  if (conflict) {
+    throw new Error(`Agent name "${name}" is already used by a unified agent in this space`);
+  }
+  const workerConflict = deps.spaceAgentManager
+    ?.listBySpaceId(spaceId)
+    .find((a) => a.id !== excludeId && a.name.trim().toLowerCase() === target);
+  if (workerConflict) {
+    throw new Error(`Agent name "${name}" is already used by a worker agent in this space`);
+  }
+}
+
+function validateLongHorizonAgentHandle(
+  deps: UnifiedSpaceAgentMethodDeps,
+  spaceId: string,
+  handle: string,
+  excludeId: string,
+  rawHandle = handle
+): string | null {
+  if (rawHandle !== handle) return 'Agent handle must not have leading or trailing whitespace';
+  const slugError = validateSlug(handle);
+  if (slugError) return `Invalid agent handle: ${slugError}`;
+  if (
+    RESERVED_SPACE_AGENT_HANDLES.includes(handle as (typeof RESERVED_SPACE_AGENT_HANDLES)[number])
+  ) {
+    return `Agent handle "${handle}" is reserved`;
+  }
+  const longHorizonOwner = deps.repo.getByHandle(spaceId, handle);
+  if (longHorizonOwner && longHorizonOwner.id !== excludeId) {
+    return `An agent with handle "${handle}" already exists in this Space`;
+  }
+  const workerOwner = deps.spaceAgentManager
+    ?.listBySpaceId(spaceId)
+    .find((agent) => agent.handle === handle && agent.id !== excludeId);
+  if (workerOwner) return `An agent with handle "${handle}" already exists in this Space`;
+  return null;
+}
+
+function reservedLongHorizonHandles(
+  deps: UnifiedSpaceAgentMethodDeps,
+  spaceId: string,
+  excludeId: string
+): string[] {
+  return [
+    ...deps.repo
+      .listBySpaceId(spaceId)
+      .filter((agent) => agent.id !== excludeId)
+      .map((agent) => agent.handle),
+    ...(deps.spaceAgentManager
+      ?.listBySpaceId(spaceId)
+      .filter((agent) => agent.id !== excludeId)
+      .map((agent) => agent.handle) ?? []),
+    ...RESERVED_SPACE_AGENT_HANDLES,
+  ];
+}
+
+function resolveLongHorizonAgentCreateHandle(
+  deps: UnifiedSpaceAgentMethodDeps,
+  spaceId: string,
+  agentId: string,
+  handle: string
+): string {
+  const normalized = slugifyWithinLimit(handle, reservedLongHorizonHandles(deps, spaceId, agentId));
+  if (normalized !== handle) return normalized;
+
+  const handleError = validateLongHorizonAgentHandle(deps, spaceId, normalized, agentId);
+  if (handleError) throw new Error(handleError);
+  return normalized;
+}
+
+function validateLongHorizonAgentUpdateHandle(
+  deps: UnifiedSpaceAgentMethodDeps,
+  spaceId: string,
+  agentId: string,
+  handle: string
+): string {
+  const trimmed = handle.trim();
+  const handleError = validateLongHorizonAgentHandle(deps, spaceId, trimmed, agentId, handle);
+  if (handleError) throw new Error(handleError);
+  return trimmed;
+}
+
+function assertNoDuplicateLongHorizonSubscriptionPattern(
+  repo: SpaceLongHorizonAgentRepository,
+  agentId: string,
+  source: string,
+  topic: string,
+  pattern: string,
+  currentSubscriptionId?: string
+): void {
+  const duplicate = repo.listSubscriptions(agentId).find((subscription) => {
+    if (subscription.id === currentSubscriptionId) return false;
+    try {
+      return (
+        composeLongHorizonSubscriptionPattern(
+          subscription.source,
+          subscription.topic
+        ).toLowerCase() === pattern.toLowerCase()
+      );
+    } catch {
+      return false;
+    }
+  });
+  if (duplicate) {
+    throw new Error(
+      `Subscription pattern duplicates existing subscription ${duplicate.id}: ${pattern}`
+    );
+  }
+}
+
+function toolPermissionsToolsList(
+  toolPermissions: Record<string, unknown> | null | undefined
+): string[] | undefined {
+  if (!toolPermissions || !Array.isArray(toolPermissions.tools)) return undefined;
+  const tools = toolPermissions.tools.filter((tool): tool is string => typeof tool === 'string');
+  return tools.length > 0 ? tools : undefined;
+}
+
+function buildUnifiedToolPermissions(
+  params: UnifiedAgentCreateInput | UnifiedAgentUpdateInput
+): Record<string, unknown> | undefined {
+  if (params.tools !== undefined) {
+    return params.tools && params.tools.length > 0 ? { tools: params.tools } : {};
+  }
+  if (params.toolPermissions !== undefined) {
+    return params.toolPermissions ?? {};
+  }
+  return undefined;
+}
+
+const UNIFIED_AGENT_STATUSES = ['active', 'paused', 'disabled', 'archived'] as const;
+
+function assertUnifiedAgentStatus(status: string | undefined): void {
+  if (status === undefined) return;
+  if (!(UNIFIED_AGENT_STATUSES as readonly string[]).includes(status)) {
+    throw new Error(
+      `Invalid agent status: ${status}. Valid statuses: ${UNIFIED_AGENT_STATUSES.join(', ')}`
+    );
+  }
+}
+
+function mapUnifiedStatusToWorkerStatus(status: string): UpdateSpaceWorkerAgentParams['status'] {
+  if (status === 'paused' || status === 'disabled') return 'paused';
+  if (status === 'archived') return 'archived';
+  return 'active';
+}
+
+function resolveUnifiedTemplateKey(
+  params: UnifiedAgentCreateInput | UnifiedAgentUpdateInput
+): string | null | undefined {
+  if (params.templateKey !== undefined) return params.templateKey;
+  if (params.templateName !== undefined) return params.templateName;
+  return undefined;
+}
+
+function resolveUnifiedInstructions(
+  params: UnifiedAgentCreateInput | UnifiedAgentUpdateInput
+): string | undefined {
+  if (params.instructions !== undefined) return params.instructions;
+  if (params.customPrompt !== undefined) return params.customPrompt ?? '';
+  return undefined;
+}
+
+interface CreateUnifiedAgentCtx extends UnifiedSpaceAgentMethodDeps {
+  params: UnifiedAgentCreateInput;
+  agentId: string;
+  handle: string;
+  displayName: string;
+  agent: SpaceLongHorizonAgent | null;
+}
+
+async function createAdmitRequestStage(ctx: CreateUnifiedAgentCtx): Promise<CreateUnifiedAgentCtx> {
+  const { params } = ctx;
+  if (!params.spaceId) throw new Error('spaceId is required');
+  const displayName = params.displayName ?? params.name;
+  if (!displayName && !params.handle) throw new Error('name is required');
+  const space = await ctx.spaceManager.getSpace(params.spaceId);
+  if (!space) throw new Error(`Space not found: ${params.spaceId}`);
+  return { ...ctx, agentId: params.id ?? '', displayName: displayName ?? '' };
+}
+
+function createResolveIdentityStage(ctx: CreateUnifiedAgentCtx): CreateUnifiedAgentCtx {
+  const { params, agentId } = ctx;
+  const handleSource = params.handle ?? ctx.displayName;
+  if (!handleSource) throw new Error('handle is required');
+  const handle = params.handle
+    ? resolveLongHorizonAgentCreateHandle(ctx, params.spaceId, agentId, params.handle)
+    : slugifyWithinLimit(handleSource, reservedLongHorizonHandles(ctx, params.spaceId, agentId));
+  const displayName = ctx.displayName || handle;
+  if (displayName.trim() === '') {
+    throw new Error('displayName cannot be blank');
+  }
+  ensureUnifiedDisplayNameAvailable(ctx, params.spaceId, displayName, agentId || undefined);
+  return { ...ctx, handle, displayName };
+}
+
+async function createValidateConfigStage(
+  ctx: CreateUnifiedAgentCtx
+): Promise<CreateUnifiedAgentCtx> {
+  const { params } = ctx;
+  const tools = params.tools ?? toolPermissionsToolsList(params.toolPermissions);
+  if (tools) {
+    const toolError = validateSpaceAgentTools(tools);
+    if (toolError) throw new Error(toolError);
+  }
+  if (params.model) {
+    const modelError = await validateAgentModel(params.model, params.provider ?? undefined);
+    if (modelError) throw new Error(modelError);
+  }
+  if (params.modelPool && params.modelPool.length > 0) {
+    const poolError = await validateAgentModelPool(params.modelPool);
+    if (poolError) throw new Error(poolError);
+  }
+  return ctx;
+}
+
+function createPersistStage(ctx: CreateUnifiedAgentCtx): CreateUnifiedAgentCtx {
+  const { params } = ctx;
+  const agent = ctx.repo.create({
+    id: params.id,
+    spaceId: params.spaceId,
+    handle: ctx.handle,
+    displayName: ctx.displayName,
+    templateKey: resolveUnifiedTemplateKey(params) ?? undefined,
+    status: params.status as SpaceLongHorizonAgent['status'],
+    instructions: resolveUnifiedInstructions(params) ?? '',
+    autonomyLevel: params.autonomyLevel as SpaceLongHorizonAgent['autonomyLevel'],
+    model: params.model ?? null,
+    thinkingLevel: params.thinkingLevel as SpaceLongHorizonAgent['thinkingLevel'],
+    provider: params.provider ?? null,
+    settingSources: params.settingSources ?? null,
+    toolPermissions: buildUnifiedToolPermissions(params) ?? {},
+    description: params.description,
+    modelPool: params.modelPool,
+  });
+  return { ...ctx, agent };
+}
+
+async function createPublishStage(ctx: CreateUnifiedAgentCtx): Promise<CreateUnifiedAgentCtx> {
+  await publishUnifiedAgentCreated(ctx.internalEventBus, ctx.agent!);
+  return ctx;
+}
+
+const runCreateUnifiedSpaceAgent = (superpipe({})('create-unified-space-agent') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(createAdmitRequestStage, 'ctx', 'ctx')
+  .pipe(createResolveIdentityStage, 'ctx', 'ctx')
+  .pipe(createValidateConfigStage, 'ctx', 'ctx')
+  .pipe(createPersistStage, 'ctx', 'ctx')
+  .pipe(createPublishStage, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: CreateUnifiedAgentCtx) => Promise<CreateUnifiedAgentCtx>;
+
+function buildUnifiedAgentCreate(
+  deps: UnifiedSpaceAgentMethodDeps
+): (params: UnifiedAgentCreateInput) => Promise<SpaceLongHorizonAgent> {
+  return async (params: UnifiedAgentCreateInput): Promise<SpaceLongHorizonAgent> => {
+    const ctx = await runCreateUnifiedSpaceAgent({
+      ...deps,
+      params,
+      agentId: '',
+      handle: '',
+      displayName: '',
+      agent: null,
     });
+    return ctx.agent!;
+  };
+}
+
+async function updateUnifiedAgentTwin(
+  deps: UnifiedSpaceAgentMethodDeps,
+  agentId: string,
+  spaceId: string,
+  params: UnifiedAgentUpdateInput
+): Promise<SpaceWorkerAgent> {
+  const displayName = params.displayName !== undefined ? params.displayName : params.name;
+  if (displayName !== undefined) {
+    ensureWorkerDisplayNameAvailable(deps, spaceId, displayName, agentId);
+  }
+  if (params.autonomyLevel !== undefined) {
+    throw new Error('autonomyLevel cannot be set on a migrated worker agent');
+  }
+  const customPrompt =
+    params.customPrompt !== undefined
+      ? params.customPrompt
+      : params.instructions !== undefined
+        ? params.instructions || null
+        : undefined;
+  const result = await deps.spaceAgentManager!.update(agentId, {
+    name: displayName,
+    handle: params.handle,
+    status: params.status === undefined ? undefined : mapUnifiedStatusToWorkerStatus(params.status),
+    description: params.description,
+    model: params.model,
+    thinkingLevel: params.thinkingLevel as UpdateSpaceWorkerAgentParams['thinkingLevel'],
+    provider: params.provider,
+    customPrompt,
+    tools:
+      params.tools !== undefined
+        ? params.tools
+        : params.toolPermissions !== undefined
+          ? (toolPermissionsToolsList(params.toolPermissions) ?? [])
+          : undefined,
+    settingSources: params.settingSources,
+    templateName: resolveUnifiedTemplateKey(params) as UpdateSpaceWorkerAgentParams['templateName'],
+    templateHash: params.templateHash,
+    modelPool: params.modelPool,
+  });
+  if (!result.ok) throw new Error(result.error);
+  return result.value;
+}
+
+interface DeleteUnifiedAgentCtx extends UnifiedSpaceAgentMethodDeps {
+  params: { id?: string; agentId?: string; spaceId?: string };
+  agentId: string;
+  existing: SpaceLongHorizonAgent | null;
+  workerTwin: SpaceWorkerAgent | null;
+  spaceId: string;
+  routeTwin: boolean;
+}
+
+function deleteResolveTargetStage(ctx: DeleteUnifiedAgentCtx): DeleteUnifiedAgentCtx {
+  const agentId = ctx.params.id ?? ctx.params.agentId;
+  if (!agentId) throw new Error('id is required');
+  const existing = ctx.repo.getById(agentId);
+  const workerTwin = ctx.spaceAgentManager?.getById(agentId) ?? null;
+  if (!existing && !workerTwin) throw new Error(`Agent not found: ${agentId}`);
+  const spaceId = existing?.spaceId ?? workerTwin!.spaceId;
+  if (ctx.params.spaceId && spaceId !== ctx.params.spaceId) {
+    throw new Error(`Agent ${agentId} does not belong to space ${ctx.params.spaceId}`);
+  }
+  const isMigratedMirror = existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY;
+  const routeTwin =
+    !!workerTwin && workerTwin.spaceId === spaceId && (!existing || isMigratedMirror);
+  return { ...ctx, agentId, existing, workerTwin, spaceId, routeTwin };
+}
+
+function deleteAuthorizeStage(ctx: DeleteUnifiedAgentCtx): DeleteUnifiedAgentCtx {
+  const { agentId, existing, workerTwin, spaceId } = ctx;
+  const referenceCheck = ctx.spaceAgentManager?.isAgentReferenced(agentId);
+  if (referenceCheck?.referenced) {
+    const displayName = existing?.displayName ?? workerTwin?.name ?? agentId;
+    throw new Error(
+      `Cannot delete agent "${displayName}" - it is referenced by workflow nodes` +
+        referenceCheck.workflowNames.map((n) => ` (Workflow: ${n})`).join('')
+    );
+  }
+  const coordinatorId =
+    agentId === coordinatorLongHorizonAgentId(spaceId)
+      ? agentId
+      : (ctx.repo.getCoordinator(spaceId)?.id ?? null);
+  if (coordinatorId === agentId) {
+    throw new Error('The coordinator agent cannot be deleted');
+  }
+  return ctx;
+}
+
+function deleteApplyStage(ctx: DeleteUnifiedAgentCtx): DeleteUnifiedAgentCtx {
+  const { agentId, existing, spaceId, routeTwin } = ctx;
+  if (routeTwin) {
+    const mirrorBefore = existing != null;
+    const result = ctx.spaceAgentManager!.delete(agentId);
+    if (!result.ok) {
+      const detailsMsg = result.details?.length ? `\n${result.details.join('\n')}` : '';
+      throw new Error(`${result.error}${detailsMsg}`);
+    }
+    const mirrorStillExists = ctx.repo.getById(agentId) != null;
+    if (mirrorBefore && !mirrorStillExists) {
+      ctx.runtimeService?.removeLongHorizonAgentSubscriptions(spaceId, agentId);
+    }
+    return ctx;
+  }
+  ctx.repo.delete(agentId);
+  ctx.runtimeService?.removeLongHorizonAgentSubscriptions(spaceId, agentId);
+  return ctx;
+}
+
+async function deletePublishStage(ctx: DeleteUnifiedAgentCtx): Promise<DeleteUnifiedAgentCtx> {
+  await publishUnifiedAgentDeleted(ctx.internalEventBus, ctx.spaceId, ctx.agentId);
+  return ctx;
+}
+
+const runDeleteUnifiedSpaceAgent = (superpipe({})('delete-unified-space-agent') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(deleteResolveTargetStage, 'ctx', 'ctx')
+  .pipe(deleteAuthorizeStage, 'ctx', 'ctx')
+  .pipe(deleteApplyStage, 'ctx', 'ctx')
+  .pipe(deletePublishStage, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: DeleteUnifiedAgentCtx) => Promise<DeleteUnifiedAgentCtx>;
+
+interface UpdateUnifiedAgentCtx extends UnifiedSpaceAgentMethodDeps {
+  params: UnifiedAgentUpdateInput;
+  agentId: string;
+  existing: SpaceLongHorizonAgent | null;
+  workerTwin: SpaceWorkerAgent | null;
+  spaceId: string;
+  routeTwin: boolean;
+  unifiedAfter: SpaceLongHorizonAgent | null;
+  agent: SpaceLongHorizonAgent | SpaceWorkerAgent | null;
+}
+
+function updateResolveTargetStage(ctx: UpdateUnifiedAgentCtx): UpdateUnifiedAgentCtx {
+  const params = ctx.params;
+  const agentId = params.id ?? params.agentId;
+  if (!agentId) throw new Error('id is required');
+  const existing = ctx.repo.getById(agentId);
+  const workerTwin = ctx.spaceAgentManager?.getById(agentId) ?? null;
+  if (!existing && !workerTwin) throw new Error(`Agent not found: ${agentId}`);
+  const spaceId = existing?.spaceId ?? workerTwin!.spaceId;
+  if (params.spaceId && spaceId !== params.spaceId)
+    throw new Error(`Agent ${agentId} does not belong to space ${params.spaceId}`);
+  const isMigratedMirror = existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY;
+  const routeTwin =
+    !!workerTwin && workerTwin.spaceId === spaceId && (!existing || isMigratedMirror);
+  return { ...ctx, agentId, existing, workerTwin, spaceId, routeTwin };
+}
+
+function updateValidateRequestStage(ctx: UpdateUnifiedAgentCtx): UpdateUnifiedAgentCtx {
+  assertUnifiedAgentStatus(ctx.params.status);
+  const displayName =
+    ctx.params.displayName !== undefined ? ctx.params.displayName : ctx.params.name;
+  if (displayName !== undefined && displayName.trim() === '') {
+    throw new Error('displayName cannot be blank');
+  }
+  return ctx;
+}
+
+async function updateApplyTwinStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
+  if (!ctx.routeTwin) return ctx;
+  const { params, agentId, spaceId } = ctx;
+  if (params.status === 'disabled') {
+    throw new Error('Agent status "disabled" cannot be set on a migrated worker agent');
+  }
+  const updated = await updateUnifiedAgentTwin(ctx, agentId, spaceId, params);
+  if (params.provider === null) {
+    await ctx.runtimeService?.clearLongTermAgentSessionProvider(spaceId, agentId);
+  }
+  if (ctx.runtimeService) {
+    const refresh = ctx.runtimeService.refreshLongHorizonAgentSubscriptions(spaceId, agentId);
+    if (!refresh.success) throw new Error(refresh.error ?? 'Failed to refresh subscriptions');
+  }
+  const unifiedAfter = ctx.repo.getById(agentId);
+  return { ...ctx, unifiedAfter, agent: unifiedAfter ?? updated };
+}
+
+async function updateApplyNativeStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
+  if (ctx.routeTwin) return ctx;
+  const { params, agentId, existing } = ctx;
+  if (!existing) throw new Error(`Agent not found: ${agentId}`);
+  const displayName = params.displayName !== undefined ? params.displayName : params.name;
+  const handle =
+    params.handle === undefined
+      ? undefined
+      : validateLongHorizonAgentUpdateHandle(ctx, existing.spaceId, agentId, params.handle);
+  const unarchiving =
+    existing.status === 'archived' && params.status !== undefined && params.status !== 'archived';
+  if (displayName !== undefined || unarchiving) {
+    ensureUnifiedDisplayNameAvailable(
+      ctx,
+      existing.spaceId,
+      displayName ?? existing.displayName,
+      agentId
+    );
+  }
+
+  const tools = params.tools ?? toolPermissionsToolsList(params.toolPermissions);
+  if (tools) {
+    const toolError = validateSpaceAgentTools(tools);
+    if (toolError) throw new Error(toolError);
+  }
+  if (params.model) {
+    const provider = params.provider !== undefined ? params.provider : existing.provider;
+    const modelError = await validateAgentModel(params.model, provider);
+    if (modelError) throw new Error(modelError);
+  }
+  if (params.modelPool && params.modelPool.length > 0) {
+    const poolError = await validateAgentModelPool(params.modelPool);
+    if (poolError) throw new Error(poolError);
+  }
+  if (resolveUnifiedTemplateKey(params) === MIGRATED_WORKER_TEMPLATE_KEY) {
+    throw new Error(
+      `Template key ${MIGRATED_WORKER_TEMPLATE_KEY} is reserved for migrated worker mirrors`
+    );
+  }
+
+  const agent = ctx.repo.update(agentId, {
+    handle,
+    displayName,
+    templateKey: resolveUnifiedTemplateKey(params),
+    status: params.status as SpaceLongHorizonAgent['status'],
+    instructions: resolveUnifiedInstructions(params),
+    autonomyLevel: params.autonomyLevel as SpaceLongHorizonAgent['autonomyLevel'],
+    model: params.model,
+    thinkingLevel: params.thinkingLevel as SpaceLongHorizonAgent['thinkingLevel'],
+    provider: params.provider,
+    settingSources: params.settingSources,
+    toolPermissions: buildUnifiedToolPermissions(params),
+    description: params.description,
+    modelPool: params.modelPool,
+  });
+  if (!agent) throw new Error(`Agent not found: ${agentId}`);
+  if (params.provider === null) {
+    await ctx.runtimeService?.clearLongTermAgentSessionProvider(agent.spaceId, agent.id);
+  }
+  if (ctx.runtimeService) {
+    const refresh = ctx.runtimeService.refreshLongHorizonAgentSubscriptions(
+      agent.spaceId,
+      agent.id
+    );
+    if (!refresh.success) throw new Error(refresh.error ?? 'Failed to refresh subscriptions');
+  }
+  return { ...ctx, unifiedAfter: agent, agent };
+}
+
+async function updatePublishStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
+  if (ctx.unifiedAfter) {
+    await publishUnifiedAgentUpdated(ctx.internalEventBus, ctx.unifiedAfter);
+  }
+  return ctx;
+}
+
+const runUpdateUnifiedSpaceAgent = (superpipe({})('update-unified-space-agent') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(updateResolveTargetStage, 'ctx', 'ctx')
+  .pipe(updateValidateRequestStage, 'ctx', 'ctx')
+  .pipe(updateApplyTwinStage, 'ctx', 'ctx')
+  .pipe(updateApplyNativeStage, 'ctx', 'ctx')
+  .pipe(updatePublishStage, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: UpdateUnifiedAgentCtx) => Promise<UpdateUnifiedAgentCtx>;
+
+export function registerUnifiedSpaceAgentMethods(
+  messageHub: MessageHub,
+  namespace: UnifiedSpaceAgentNamespace,
+  deps: UnifiedSpaceAgentMethodDeps
+): void {
+  const method = (name: string): string => `${namespace}.${name}`;
+  const createUnifiedAgent = buildUnifiedAgentCreate(deps);
+
+  messageHub.onRequest(method('listBuiltInTemplates'), async (data) => {
+    const params = data as { spaceId: string };
+    if (!params.spaceId) throw new Error('spaceId is required');
+    const space = await deps.spaceManager.getSpace(params.spaceId);
+    if (!space) throw new Error(`Space not found: ${params.spaceId}`);
+    return { templates: getLongHorizonAgentTemplates() };
+  });
+
+  messageHub.onRequest(method('list'), async (data) => {
+    const params = data as { spaceId: string };
+    if (!params.spaceId) throw new Error('spaceId is required');
+    const space = await deps.spaceManager.getSpace(params.spaceId);
+    if (!space) throw new Error(`Space not found: ${params.spaceId}`);
+    deps.repo.ensureCoordinator(params.spaceId);
+    return { agents: deps.repo.listBySpaceId(params.spaceId) };
+  });
+
+  messageHub.onRequest(method('create'), async (data) => {
+    const params = data as UnifiedAgentCreateInput;
+    const agent = await createUnifiedAgent(params);
+    return { agent };
+  });
+
+  messageHub.onRequest(method('update'), async (data) => {
+    const ctx = await runUpdateUnifiedSpaceAgent({
+      ...deps,
+      params: data as UnifiedAgentUpdateInput,
+      agentId: '',
+      existing: null,
+      workerTwin: null,
+      spaceId: '',
+      routeTwin: false,
+      unifiedAfter: null,
+      agent: null,
+    });
+    return { agent: ctx.agent };
+  });
+
+  messageHub.onRequest(method('delete'), async (data) => {
+    await runDeleteUnifiedSpaceAgent({
+      ...deps,
+      params: data as { id?: string; agentId?: string; spaceId?: string },
+      agentId: '',
+      existing: null,
+      workerTwin: null,
+      spaceId: '',
+      routeTwin: false,
+    });
+    return { success: true };
+  });
+
+  messageHub.onRequest(method('listReminders'), async (data) => {
+    const params = data as { agentId: string };
+    if (!params.agentId) throw new Error('agentId is required');
+    return { reminders: deps.repo.listReminders(params.agentId) };
+  });
+
+  messageHub.onRequest(method('listReminderCounts'), async (data) => {
+    const params = data as { agentIds: string[] };
+    if (!Array.isArray(params.agentIds)) throw new Error('agentIds is required');
+    const counts: Record<string, number> = {};
+    for (const agentId of params.agentIds) {
+      const reminders = deps.repo.listReminders(agentId);
+      counts[agentId] = reminders.filter((r) => r.status === 'active').length;
+    }
+    return { counts };
+  });
+
+  messageHub.onRequest(method('createReminder'), async (data) => {
+    const params = data as {
+      spaceId: string;
+      agentId: string;
+      title: string;
+      body?: string;
+      triggerType: 'at' | 'cron';
+      runAt?: number | null;
+      cronExpression?: string | null;
+      timezone?: string;
+    };
+    if (!params.spaceId) throw new Error('spaceId is required');
+    if (!params.agentId) throw new Error('agentId is required');
+    if (!params.title) throw new Error('title is required');
+    if (!params.triggerType) throw new Error('triggerType is required');
+    let nextRunAt: number | null = null;
+    if (params.triggerType === 'at') {
+      if (typeof params.runAt !== 'number') {
+        throw new Error('runAt is required for triggerType "at"');
+      }
+      nextRunAt = params.runAt;
+    } else {
+      const expression = params.cronExpression;
+      if (!expression) throw new Error('cronExpression is required for triggerType "cron"');
+      if (!isValidCronExpression(expression)) {
+        throw new Error(`Invalid cron expression: ${expression}`);
+      }
+      const timezone = params.timezone ?? 'UTC';
+      const firstRunAt = getNextRunAt(expression, timezone);
+      if (firstRunAt === null) {
+        throw new Error(`Invalid timezone or cron expression for reminder: ${timezone}`);
+      }
+      nextRunAt = firstRunAt;
+    }
+    const reminder = deps.repo.createReminder({
+      spaceId: params.spaceId,
+      agentId: params.agentId,
+      title: params.title,
+      body: params.body,
+      triggerType: params.triggerType,
+      runAt: params.runAt,
+      cronExpression: params.cronExpression,
+      timezone: params.timezone,
+      nextRunAt,
+    });
+    return { reminder };
+  });
+
+  messageHub.onRequest(method('deleteReminder'), async (data) => {
+    const params = data as { reminderId: string };
+    if (!params.reminderId) throw new Error('reminderId is required');
+    const existing = deps.repo.getReminder(params.reminderId);
+    if (!existing) throw new Error(`Reminder not found: ${params.reminderId}`);
+    deps.repo.deleteReminder(params.reminderId);
+    return { success: true };
+  });
+
+  messageHub.onRequest(method('listSubscriptions'), async (data) => {
+    const params = data as { agentId: string; spaceId?: string };
+    if (!params.agentId) throw new Error('agentId is required');
+    const agent = deps.repo.getById(params.agentId);
+    if (!agent) throw new Error(`Agent not found: ${params.agentId}`);
+    if (params.spaceId && agent.spaceId !== params.spaceId) {
+      throw new Error(`Agent ${params.agentId} does not belong to space ${params.spaceId}`);
+    }
+    return { subscriptions: deps.repo.listSubscriptions(params.agentId) };
+  });
+
+  messageHub.onRequest(method('createSubscription'), async (data) => {
+    const params = data as {
+      spaceId: string;
+      agentId: string;
+      source: string;
+      topic: string;
+      filter?: Record<string, unknown>;
+      status?: SpaceLongHorizonAgentEventSubscriptionStatus;
+    };
+    if (!params.spaceId) throw new Error('spaceId is required');
+    if (!params.agentId) throw new Error('agentId is required');
+    if (!params.source?.trim()) throw new Error('source is required');
+    if (!params.topic?.trim()) throw new Error('topic is required');
+    const source = params.source.trim();
+    const topic = params.topic.trim();
+    const pattern = validateLongHorizonSubscriptionPattern(source, topic);
+    assertNoDuplicateLongHorizonSubscriptionPattern(
+      deps.repo,
+      params.agentId,
+      source,
+      topic,
+      pattern
+    );
+    const subscription = deps.repo.createSubscription({
+      spaceId: params.spaceId,
+      agentId: params.agentId,
+      source,
+      topic,
+      filter: params.filter,
+      status: params.status,
+    });
+    const refresh = deps.runtimeService?.refreshLongHorizonSubscription(
+      subscription.spaceId,
+      subscription.id
+    );
+    if (refresh && !refresh.success)
+      throw new Error(refresh.error ?? 'Failed to refresh subscription');
+    return { subscription };
+  });
+
+  messageHub.onRequest(method('updateSubscription'), async (data) => {
+    const params = data as {
+      subscriptionId: string;
+      spaceId?: string;
+      source?: string;
+      topic?: string;
+      filter?: Record<string, unknown>;
+      status?: SpaceLongHorizonAgentEventSubscriptionStatus;
+    };
+    if (!params.subscriptionId) throw new Error('subscriptionId is required');
+    if (params.source !== undefined && !params.source.trim()) throw new Error('source is required');
+    if (params.topic !== undefined && !params.topic.trim()) throw new Error('topic is required');
+    const existing = deps.repo.getSubscription(params.subscriptionId);
+    if (!existing) throw new Error(`Subscription not found: ${params.subscriptionId}`);
+    if (params.spaceId && existing.spaceId !== params.spaceId) {
+      throw new Error(
+        `Subscription ${params.subscriptionId} does not belong to space ${params.spaceId}`
+      );
+    }
+    const source = params.source?.trim() ?? existing.source;
+    const topic = params.topic?.trim() ?? existing.topic;
+    const pattern = validateLongHorizonSubscriptionPattern(source, topic, {
+      allowWildcardSource: params.source === undefined && params.topic === undefined,
+    });
+    assertNoDuplicateLongHorizonSubscriptionPattern(
+      deps.repo,
+      existing.agentId,
+      source,
+      topic,
+      pattern,
+      existing.id
+    );
+    const subscription = deps.repo.updateSubscription(params.subscriptionId, {
+      ...(params.source !== undefined ? { source } : {}),
+      ...(params.topic !== undefined ? { topic } : {}),
+      ...(params.filter !== undefined ? { filter: params.filter } : {}),
+      ...(params.status !== undefined ? { status: params.status } : {}),
+    });
+    if (!subscription) throw new Error(`Subscription not found: ${params.subscriptionId}`);
+    const refresh = deps.runtimeService?.refreshLongHorizonSubscription(
+      subscription.spaceId,
+      subscription.id
+    );
+    if (refresh && !refresh.success)
+      throw new Error(refresh.error ?? 'Failed to refresh subscription');
+    return { subscription };
+  });
+
+  messageHub.onRequest(method('deleteSubscription'), async (data) => {
+    const params = data as { subscriptionId: string; spaceId?: string };
+    if (!params.subscriptionId) throw new Error('subscriptionId is required');
+    const existing = deps.repo.getSubscription(params.subscriptionId);
+    if (!existing) throw new Error(`Subscription not found: ${params.subscriptionId}`);
+    if (params.spaceId && existing.spaceId !== params.spaceId) {
+      throw new Error(
+        `Subscription ${params.subscriptionId} does not belong to space ${params.spaceId}`
+      );
+    }
+    deps.runtimeService?.removeLongHorizonSubscription(existing.spaceId, existing.id);
+    deps.repo.deleteSubscription(params.subscriptionId);
+    return { success: true };
+  });
 }
 
 export function setupSpaceAgentHandlers(
@@ -157,101 +1066,28 @@ export function setupSpaceAgentHandlers(
   spaceAgentManager: SpaceAgentManager,
   spaceManager: SpaceManager,
   db: Database,
-  longHorizonAgentRepo: {
-    getById(id: string): SpaceLongHorizonAgent | null;
-    listBySpaceId(spaceId: string): SpaceLongHorizonAgent[];
-  },
-  runtimeService?: {
-    removeLongHorizonAgentSubscriptions(spaceId: string, agentId: string): void;
-    clearLongTermAgentSessionProvider(spaceId: string, agentId: string): Promise<void>;
-  }
+  longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
+  runtimeService?: UnifiedSpaceAgentRuntimeService
 ): void {
-  async function ensureDisplayNameAvailable(
-    spaceId: string,
-    name: string,
-    excludeId?: string
-  ): Promise<void> {
-    const target = name.trim().toLowerCase();
-    if (!target) return;
-    const conflict = longHorizonAgentRepo.listBySpaceId(spaceId).find((a) => {
-      if (
-        a.status === 'archived' ||
-        a.id === excludeId ||
-        (a.displayName ?? '').trim().toLowerCase() !== target
-      ) {
-        return false;
-      }
-      const worker = spaceAgentManager.getById(a.id);
-      return !worker || a.templateKey !== 'migration.legacy_space_agent';
-    });
-    if (conflict) {
-      throw new Error(`Agent name "${name}" is already used by a unified agent in this space`);
-    }
-    const workerConflict = spaceAgentManager
-      .listBySpaceId(spaceId)
-      .find((a) => a.id !== excludeId && a.name.trim().toLowerCase() === target);
-    if (workerConflict) {
-      throw new Error(`Agent name "${name}" is already used by a worker agent in this space`);
-    }
-  }
+  const deps: UnifiedSpaceAgentMethodDeps = {
+    spaceManager,
+    repo: longHorizonAgentRepo,
+    spaceAgentManager,
+    runtimeService,
+    internalEventBus,
+  };
+  const createUnifiedAgent = buildUnifiedAgentCreate(deps);
 
-  messageHub.onRequest('spaceAgent.listBuiltInTemplates', async (data) => {
-    const params = data as { spaceId: string };
-    if (!params.spaceId) throw new Error('spaceId is required');
+  registerUnifiedSpaceAgentMethods(messageHub, 'spaceAgent', deps);
 
-    const space = await spaceManager.getSpace(params.spaceId);
-    if (!space) throw new Error(`Space not found: ${params.spaceId}`);
+  messageHub.onRequest('spaceAgent.get', async (data) => {
+    const params = data as { id: string };
+    if (!params.id) throw new Error('id is required');
 
-    return {
-      templates: getPresetAgentTemplates().map((template) => ({
-        ...template,
-        templateHash: computeAgentTemplateHash(template),
-      })),
-    };
-  });
+    const agent = longHorizonAgentRepo.getById(params.id);
+    if (!agent) throw new Error(`Agent not found: ${params.id}`);
 
-  messageHub.onRequest('spaceAgent.create', async (data) => {
-    const params = data as {
-      spaceId: string;
-      name: string;
-      handle?: string;
-      description?: string;
-      model?: string;
-      thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
-      provider?: string;
-      customPrompt?: string | null;
-      tools?: string[];
-      settingSources?: import('@hyperneo/shared').SettingSource[];
-      templateName?: string | null;
-      templateHash?: string | null;
-      modelPool?: import('@hyperneo/shared').WorkerAgentModelPoolEntry[];
-    };
-
-    if (!params.spaceId) throw new Error('spaceId is required');
-    if (!params.name) throw new Error('name is required');
-    await ensureDisplayNameAvailable(params.spaceId, params.name);
-
-    const result = await spaceAgentManager.create({
-      spaceId: params.spaceId,
-      name: params.name,
-      handle: params.handle,
-      description: params.description,
-      model: params.model,
-      thinkingLevel: params.thinkingLevel,
-      provider: params.provider,
-      customPrompt: params.customPrompt,
-      tools: params.tools,
-      settingSources: params.settingSources,
-      templateName: params.templateName,
-      templateHash: params.templateHash,
-      modelPool: params.modelPool,
-    });
-
-    if (!result.ok) throw new Error(result.error);
-
-    await publishAgentCreated(internalEventBus, result.value);
-
-    return { agent: result.value };
+    return { agent };
   });
 
   messageHub.onRequest('spaceAgent.getPromotionDraft', async (data) => {
@@ -275,26 +1111,10 @@ export function setupSpaceAgentHandlers(
   });
 
   messageHub.onRequest('spaceAgent.promoteSession', async (data) => {
-    const params = data as {
-      spaceId: string;
-      sessionId: string;
-      name: string;
-      handle?: string;
-      description?: string;
-      model?: string;
-      thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
-      provider?: string;
-      customPrompt?: string | null;
-      tools?: string[];
-      settingSources?: import('@hyperneo/shared').SettingSource[];
-      templateName?: string | null;
-      templateHash?: string | null;
-      modelPool?: import('@hyperneo/shared').WorkerAgentModelPoolEntry[];
-    };
+    const params = data as UnifiedAgentCreateInput & { sessionId: string };
     if (!params.spaceId) throw new Error('spaceId is required');
     if (!params.sessionId) throw new Error('sessionId is required');
     if (!params.name) throw new Error('name is required');
-    await ensureDisplayNameAvailable(params.spaceId, params.name);
 
     const space = await spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
@@ -308,101 +1128,8 @@ export function setupSpaceAgentHandlers(
       throw new Error('Task agent sessions cannot be promoted');
     }
 
-    const result = await spaceAgentManager.create({
-      spaceId: params.spaceId,
-      name: params.name,
-      handle: params.handle,
-      description: params.description,
-      model: params.model,
-      thinkingLevel: params.thinkingLevel,
-      provider: params.provider,
-      customPrompt: params.customPrompt,
-      tools: params.tools,
-      settingSources: params.settingSources,
-      templateName: params.templateName,
-      templateHash: params.templateHash,
-      modelPool: params.modelPool,
-    });
-    if (!result.ok) throw new Error(result.error);
-
-    await publishAgentCreated(internalEventBus, result.value);
-    return { agent: result.value };
-  });
-
-  messageHub.onRequest('spaceAgent.list', async (data) => {
-    const params = data as { spaceId: string };
-    if (!params.spaceId) throw new Error('spaceId is required');
-
-    const agents = spaceAgentManager.listBySpaceId(params.spaceId);
-    return { agents };
-  });
-
-  messageHub.onRequest('spaceAgent.get', async (data) => {
-    const params = data as { id: string };
-    if (!params.id) throw new Error('id is required');
-
-    const agent = spaceAgentManager.getById(params.id);
-    if (!agent) throw new Error(`Agent not found: ${params.id}`);
-
+    const agent = await createUnifiedAgent(params);
     return { agent };
-  });
-
-  messageHub.onRequest('spaceAgent.update', async (data) => {
-    const params = data as {
-      id: string;
-      name?: string;
-      handle?: string;
-      description?: string | null;
-      model?: string | null;
-      thinkingLevel?: import('@hyperneo/shared').ThinkingLevel | null;
-      provider?: string | null;
-      customPrompt?: string | null;
-      tools?: string[] | null;
-      settingSources?: import('@hyperneo/shared').SettingSource[] | null;
-      templateName?: string | null;
-      templateHash?: string | null;
-      modelPool?: import('@hyperneo/shared').WorkerAgentModelPoolEntry[] | null;
-    };
-
-    if (!params.id) throw new Error('id is required');
-
-    const { id, ...updateFields } = params;
-    if (updateFields.name !== undefined) {
-      const existing = spaceAgentManager.getById(id);
-      if (existing) await ensureDisplayNameAvailable(existing.spaceId, updateFields.name, id);
-    }
-    const result = await spaceAgentManager.update(id, {
-      name: updateFields.name,
-      handle: updateFields.handle,
-      description: updateFields.description,
-      model: updateFields.model,
-      thinkingLevel: updateFields.thinkingLevel,
-      provider: updateFields.provider,
-      customPrompt: updateFields.customPrompt,
-      tools: updateFields.tools,
-      settingSources: updateFields.settingSources,
-      templateName: updateFields.templateName,
-      templateHash: updateFields.templateHash,
-      modelPool: updateFields.modelPool,
-    });
-
-    if (!result.ok) throw new Error(result.error);
-
-    if (updateFields.provider === null && runtimeService) {
-      await runtimeService.clearLongTermAgentSessionProvider(result.value.spaceId, result.value.id);
-    }
-
-    internalEventBus
-      .publish('spaceAgent.updated', {
-        sessionId: `space:${result.value.spaceId}`,
-        spaceId: result.value.spaceId,
-        agent: result.value,
-      })
-      .catch((err) => {
-        log.warn('Failed to emit spaceAgent.updated:', err);
-      });
-
-    return { agent: result.value };
   });
 
   messageHub.onRequest('spaceAgent.getDriftReport', async (data) => {
@@ -453,47 +1180,11 @@ export function setupSpaceAgentHandlers(
     const result = await spaceAgentManager.syncFromTemplate(params.agentId, params.expectedRowHash);
     if (!result.ok) throw new Error(result.error);
 
-    internalEventBus
-      .publish('spaceAgent.updated', {
-        sessionId: `space:${result.value.spaceId}`,
-        spaceId: result.value.spaceId,
-        agent: result.value,
-      })
-      .catch((err) => {
-        log.warn('Failed to emit spaceAgent.updated:', err);
-      });
+    const unifiedAfter = longHorizonAgentRepo.getById(result.value.id);
+    if (unifiedAfter) {
+      await publishUnifiedAgentUpdated(internalEventBus, unifiedAfter);
+    }
 
     return { agent: result.value };
-  });
-
-  messageHub.onRequest('spaceAgent.delete', async (data) => {
-    const params = data as { id: string };
-    if (!params.id) throw new Error('id is required');
-
-    const existing = spaceAgentManager.getById(params.id);
-    if (!existing) throw new Error(`Agent not found: ${params.id}`);
-
-    const mirrorBefore = longHorizonAgentRepo.getById(existing.id);
-    const result = spaceAgentManager.delete(params.id);
-    if (!result.ok) {
-      const detailsMsg = result.details?.length ? `\n${result.details.join('\n')}` : '';
-      throw new Error(`${result.error}${detailsMsg}`);
-    }
-    const mirrorStillExists = longHorizonAgentRepo.getById(existing.id) != null;
-    if (mirrorBefore && !mirrorStillExists) {
-      runtimeService?.removeLongHorizonAgentSubscriptions(existing.spaceId, existing.id);
-    }
-
-    await internalEventBus
-      .publish('spaceAgent.deleted', {
-        sessionId: `space:${existing.spaceId}`,
-        spaceId: existing.spaceId,
-        agentId: params.id,
-      })
-      .catch((err) => {
-        log.warn('Failed to emit spaceAgent.deleted:', err);
-      });
-
-    return { success: true };
   });
 }

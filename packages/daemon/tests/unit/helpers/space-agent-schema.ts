@@ -87,6 +87,29 @@ export function createSpaceAgentSchema(db: Database): void {
       `ON space_long_horizon_agents(space_id, handle) WHERE status != 'archived'`
   );
   db.exec(`
+		CREATE TABLE space_long_horizon_agent_reminders (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			body TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'paused', 'fired', 'cancelled')),
+			trigger_type TEXT NOT NULL CHECK(trigger_type IN ('at', 'cron')),
+			run_at INTEGER DEFAULT NULL,
+			cron_expression TEXT DEFAULT NULL,
+			timezone TEXT NOT NULL DEFAULT 'UTC',
+			next_run_at INTEGER DEFAULT NULL,
+			last_fired_at INTEGER DEFAULT NULL,
+			created_by_session TEXT DEFAULT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (agent_id) REFERENCES space_long_horizon_agents(id) ON DELETE CASCADE
+		)
+	`);
+
+  db.exec(`
 		CREATE TABLE space_long_horizon_agent_event_subscriptions (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,

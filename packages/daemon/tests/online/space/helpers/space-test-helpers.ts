@@ -3,7 +3,7 @@ import type {
   NodeExecution,
   NodeExecutionStatus,
   Space,
-  SpaceWorkerAgent,
+  SpaceLongHorizonAgent,
   SpaceWorkflow,
   SpaceWorkflowRun,
   SpaceTask,
@@ -12,7 +12,7 @@ import type {
 
 export interface TestSpaceFixture {
   space: Space;
-  agents: SpaceWorkerAgent[];
+  agents: SpaceLongHorizonAgent[];
   workflow: SpaceWorkflow;
 }
 
@@ -215,9 +215,9 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
 
   const { agents } = (await daemon.messageHub.request('spaceAgent.list', {
     spaceId: space.id,
-  })) as { agents: SpaceWorkerAgent[] };
+  })) as { agents: SpaceLongHorizonAgent[] };
 
-  const agentByName = new Map(agents.map((agent) => [agent.name, agent.id]));
+  const agentByName = new Map(agents.map((agent) => [agent.displayName, agent.id]));
   const requireAgentId = (name: string): string => {
     const id = agentByName.get(name);
     if (!id) throw new Error(`Pre-seeded agent not found: ${name}`);

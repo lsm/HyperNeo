@@ -47,6 +47,10 @@ import { Logger } from '../../logger.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers.ts';
 import { requireAgentFamily } from '../agents/agent-family-resolver.ts';
+import {
+  publishUnifiedAgentCreated,
+  publishUnifiedAgentUpdated,
+} from '../agents/unified-agent-events.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import { formatAgentMessage } from '../agent-message-envelope.ts';
 import { getLongHorizonAgentTemplates } from '../agents/long-horizon-agent-templates.ts';
@@ -1019,23 +1023,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   }
 
   function emitLongHorizonAgentCreated(agent: SpaceLongHorizonAgent): void {
-    internalEventBus
-      ?.publish('spaceLongHorizonAgent.created', {
-        sessionId: mySessionId ?? 'space-agent-tools',
-        spaceId,
-        agent,
-      })
-      .catch(() => {});
+    void publishUnifiedAgentCreated(internalEventBus, agent, mySessionId ?? 'space-agent-tools');
   }
 
   function emitLongHorizonAgentUpdated(agent: SpaceLongHorizonAgent): void {
-    internalEventBus
-      ?.publish('spaceLongHorizonAgent.updated', {
-        sessionId: mySessionId ?? 'space-agent-tools',
-        spaceId,
-        agent,
-      })
-      .catch(() => {});
+    void publishUnifiedAgentUpdated(internalEventBus, agent, mySessionId ?? 'space-agent-tools');
   }
 
   function emitGoalOwnerChanged(goalId: string): void {

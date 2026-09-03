@@ -2075,7 +2075,9 @@ describe('Space Export/Import RPC Handlers', () => {
       const agentCreated = emittedEvents.filter((e) => e.name === 'spaceAgent.created');
       expect(agentCreated).toHaveLength(1);
       expect((agentCreated[0].data as { spaceId: string }).spaceId).toBe(SPACE_ID);
-      expect((agentCreated[0].data as { agent: { name: string } }).agent.name).toBe('NewAgent');
+      expect((agentCreated[0].data as { agent: { displayName: string } }).agent.displayName).toBe(
+        'NewAgent'
+      );
     });
 
     it('emits unified mirror events for worker-backed import creates', async () => {
@@ -2107,7 +2109,9 @@ describe('Space Export/Import RPC Handlers', () => {
 
       const agentUpdated = emittedEvents.filter((e) => e.name === 'spaceAgent.updated');
       expect(agentUpdated).toHaveLength(1);
-      expect((agentUpdated[0].data as { agent: { name: string } }).agent.name).toBe('Coder');
+      expect((agentUpdated[0].data as { agent: { displayName: string } }).agent.displayName).toBe(
+        'Coder'
+      );
     });
 
     it('does not emit event for skipped agent', async () => {
@@ -2877,7 +2881,7 @@ describe('full export→import round-trip', () => {
     const wfCreatedEvents = emittedEvents.filter((e) => e.name === 'spaceWorkflow.created');
     expect(agentCreatedEvents).toHaveLength(1);
     expect(wfCreatedEvents).toHaveLength(1);
-    expect((agentCreatedEvents[0].data as any).agent.name).toBe('My Coder');
+    expect((agentCreatedEvents[0].data as any).agent.displayName).toBe('My Coder');
     expect((wfCreatedEvents[0].data as any).workflow.name).toBe('Code Pipeline');
   });
 
