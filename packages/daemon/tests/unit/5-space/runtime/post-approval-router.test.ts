@@ -2,7 +2,10 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import { SpawnSupersededError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
+import {
+  SpawnSupersededError,
+  TransientSpawnError,
+} from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import {
   PostApprovalRouter,
   isPostApprovalRoutingEnabled,
@@ -674,5 +677,126 @@ describe('PostApprovalRouter.route — routing CAS', () => {
     const selected = selectFirstDispatchablePostApprovalRoute(workflow);
     expect(selected?.route.targetAgent).toBe('ghost');
     expect(selected?.nodeId).toBeNull();
+  });
+});
+
+describe('PostApprovalRouter.route — replacement and failure-write guards', () => {
+  let db: BunDatabase;
+  let taskRepo: SpaceTaskRepository;
+
+  beforeEach(() => {
+    db = makeDb();
+    taskRepo = new SpaceTaskRepository(db);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  test('cancels the stale off-route worker after the replacement routing wins', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, { postApprovalSessionId: 'stale-off-route' });
+    const updated = taskRepo.getTask(task.id)!;
+    const cancelled: string[] = [];
+    const delegates = makeDelegates();
+    delegates.aliveSessions.add('stale-off-route');
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+      validateRecordedPointer: ({ sessionId }) => sessionId === 'worker-on-slot',
+      cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),
+    });
+    const workflow = stubWorkflow({
+      postApproval: { targetAgent: 'deployer', instructions: 'Deploy.' },
+    });
+
+    const result = await router.route(updated, workflow, { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('spawn');
+    expect(cancelled).toEqual(['stale-off-route']);
+    expect(taskRepo.getTask(task.id)?.postApprovalSessionId).toBe('spawned-session-1');
+  });
+
+  test('does not cancel the stale worker when the replacement CAS loses', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, { postApprovalSessionId: 'stale-off-route' });
+    const updated = taskRepo.getTask(task.id)!;
+    const cancelled: string[] = [];
+    const delegates = makeDelegates();
+    delegates.aliveSessions.add('stale-off-route');
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: {
+        spawnPostApprovalSubSession: async (args) => {
+          taskRepo.updateTask(args.task.id, { status: 'done' });
+          return delegates.spawner.spawnPostApprovalSubSession(args);
+        },
+      },
+      livenessProbe: delegates.liveness,
+      validateRecordedPointer: () => false,
+      cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),
+    });
+    const workflow = stubWorkflow({
+      postApproval: { targetAgent: 'deployer', instructions: 'Deploy.' },
+    });
+
+    const result = await router.route(updated, workflow, { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('skipped');
+    expect(cancelled).toEqual(['spawned-session-1']);
+  });
+
+  test('a transient spawn failure does not stamp the blocked reason after the task re-parented', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, { postApprovalBlockedReason: 'original-block' });
+    db.prepare(
+      `INSERT INTO space_workflows (id, space_id, name, created_at, updated_at)
+       VALUES ('wf-guard', ?, 'Guard WF', ?, ?)`
+    ).run(SPACE_ID, Date.now(), Date.now());
+    db.prepare(
+      `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+       VALUES ('run-moved', ?, 'wf-guard', 'Moved run', 'done', ?, ?)`
+    ).run(SPACE_ID, Date.now(), Date.now());
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: {
+        spawnPostApprovalSubSession: async (args) => {
+          taskRepo.updateTask(args.task.id, { workflowRunId: 'run-moved' });
+          throw new TransientSpawnError('spawn deferred: model pool busy');
+        },
+      },
+      livenessProbe: delegates.liveness,
+    });
+    const workflow = stubWorkflow({
+      postApproval: { targetAgent: 'deployer', instructions: 'Deploy.' },
+    });
+
+    const result = await router.route(task, workflow, { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('skipped');
+    expect(taskRepo.getTask(task.id)?.postApprovalBlockedReason).toBe('original-block');
+  });
+
+  test('a transient spawn failure stamps the blocked reason while the approval generation holds', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: {
+        spawnPostApprovalSubSession: async () => {
+          throw new TransientSpawnError('spawn deferred: model pool busy');
+        },
+      },
+      livenessProbe: delegates.liveness,
+    });
+    const workflow = stubWorkflow({
+      postApproval: { targetAgent: 'deployer', instructions: 'Deploy.' },
+    });
+
+    const result = await router.route(task, workflow, { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('skipped');
+    expect(taskRepo.getTask(task.id)?.postApprovalBlockedReason).toContain('deferred');
   });
 });

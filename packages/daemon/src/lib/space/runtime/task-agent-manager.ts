@@ -2091,6 +2091,7 @@ export class TaskAgentManager {
     taskId: string;
     routeNodeId: string | null;
     routeAgentName: string;
+    workflowRunId: string | null;
   }): boolean {
     try {
       const row = this.config.db
@@ -2102,12 +2103,25 @@ export class TaskAgentManager {
               AND s.type = 'worker'
               AND s.task_id = ?
               AND (
-                NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)
-                OR EXISTS (
+                EXISTS (
                   SELECT 1 FROM node_executions ne
                    WHERE ne.agent_session_id = s.id
                      AND ne.agent_name = ?
                      AND (? IS NULL OR ne.workflow_node_id = ?)
+                )
+                OR (
+                  NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)
+                  AND (
+                    json_extract(s.metadata, '$.promptProvenance') IS NULL
+                    OR (
+                      json_extract(s.metadata, '$.promptProvenance.agentName') = ?
+                      AND (? IS NULL OR json_extract(s.metadata, '$.promptProvenance.nodeId') = ?)
+                      AND (
+                        ? IS NULL
+                        OR json_extract(s.metadata, '$.promptProvenance.workflowRunId') = ?
+                      )
+                    )
+                  )
                 )
               )`
         )
@@ -2116,7 +2130,12 @@ export class TaskAgentManager {
           args.taskId,
           args.routeAgentName,
           args.routeNodeId,
-          args.routeNodeId
+          args.routeNodeId,
+          args.routeAgentName,
+          args.routeNodeId,
+          args.routeNodeId,
+          args.workflowRunId,
+          args.workflowRunId
         ) as { ok?: number } | undefined;
       return Boolean(row);
     } catch {

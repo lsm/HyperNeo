@@ -80,10 +80,15 @@ describe('SpaceTaskRepository.casPostApprovalRouting', () => {
       postApprovalBlockedReason: 'deferred',
       pendingCompletion: true,
     });
-    const outcome = repo.casPostApprovalRouting(task.id, 'run-1', {
-      postApprovalSessionId: 'worker-1',
-      postApprovalStartedAt: 1234,
-    });
+    const outcome = repo.casPostApprovalRouting(
+      task.id,
+      {
+        workflowRunId: 'run-1',
+        approvedAt: task.approvedAt ?? null,
+        priorPostApprovalSessionId: null,
+      },
+      { postApprovalSessionId: 'worker-1', postApprovalStartedAt: 1234 }
+    );
     expect(outcome).toBe('won');
     const final = repo.getTask(task.id);
     expect(final?.postApprovalSessionId).toBe('worker-1');
@@ -97,39 +102,59 @@ describe('SpaceTaskRepository.casPostApprovalRouting', () => {
   test('loses when the task left approved (terminal transition cannot be recorded)', () => {
     const task = seedApprovedTask(repo, { workflowRunId: 'run-1' });
     repo.updateTask(task.id, { status: 'done' });
-    const outcome = repo.casPostApprovalRouting(task.id, 'run-1', {
-      postApprovalSessionId: 'worker-1',
-      postApprovalStartedAt: 1234,
-    });
+    const outcome = repo.casPostApprovalRouting(
+      task.id,
+      {
+        workflowRunId: 'run-1',
+        approvedAt: task.approvedAt ?? null,
+        priorPostApprovalSessionId: null,
+      },
+      { postApprovalSessionId: 'worker-1', postApprovalStartedAt: 1234 }
+    );
     expect(outcome).toBe('superseded');
     expect(repo.getTask(task.id)?.postApprovalSessionId).toBeNull();
   });
 
   test('loses when the task re-parented to a different workflow run', () => {
     const task = seedApprovedTask(repo, { workflowRunId: 'run-1' });
-    const outcome = repo.casPostApprovalRouting(task.id, 'run-2', {
-      postApprovalSessionId: 'worker-1',
-      postApprovalStartedAt: 1234,
-    });
+    const outcome = repo.casPostApprovalRouting(
+      task.id,
+      {
+        workflowRunId: 'run-2',
+        approvedAt: task.approvedAt ?? null,
+        priorPostApprovalSessionId: null,
+      },
+      { postApprovalSessionId: 'worker-1', postApprovalStartedAt: 1234 }
+    );
     expect(outcome).toBe('superseded');
     expect(repo.getTask(task.id)?.postApprovalSessionId).toBeNull();
   });
 
   test('loses when the row gained a run the router did not act on (null expectation)', () => {
     const task = seedApprovedTask(repo, { workflowRunId: 'run-1' });
-    const outcome = repo.casPostApprovalRouting(task.id, null, {
-      postApprovalSessionId: 'worker-1',
-      postApprovalStartedAt: 1234,
-    });
+    const outcome = repo.casPostApprovalRouting(
+      task.id,
+      {
+        workflowRunId: null,
+        approvedAt: task.approvedAt ?? null,
+        priorPostApprovalSessionId: null,
+      },
+      { postApprovalSessionId: 'worker-1', postApprovalStartedAt: 1234 }
+    );
     expect(outcome).toBe('superseded');
   });
 
   test('wins for a standalone task when both expectation and row are run-less', () => {
     const task = seedApprovedTask(repo, {});
-    const outcome = repo.casPostApprovalRouting(task.id, null, {
-      postApprovalSessionId: 'worker-1',
-      postApprovalStartedAt: 1234,
-    });
+    const outcome = repo.casPostApprovalRouting(
+      task.id,
+      {
+        workflowRunId: null,
+        approvedAt: task.approvedAt ?? null,
+        priorPostApprovalSessionId: null,
+      },
+      { postApprovalSessionId: 'worker-1', postApprovalStartedAt: 1234 }
+    );
     expect(outcome).toBe('won');
     expect(repo.getTask(task.id)?.postApprovalSessionId).toBe('worker-1');
   });
@@ -141,10 +166,15 @@ describe('SpaceTaskRepository.casPostApprovalRouting', () => {
       postApprovalSessionId: 'shared-worker',
       postApprovalStartedAt: 99,
     });
-    const outcome = repo.casPostApprovalRouting(task.id, 'run-1', {
-      postApprovalSessionId: 'shared-worker',
-      postApprovalStartedAt: 1234,
-    });
+    const outcome = repo.casPostApprovalRouting(
+      task.id,
+      {
+        workflowRunId: 'run-1',
+        approvedAt: task.approvedAt ?? null,
+        priorPostApprovalSessionId: null,
+      },
+      { postApprovalSessionId: 'shared-worker', postApprovalStartedAt: 1234 }
+    );
     expect(outcome).toBe('won');
     expect(repo.getTask(other.id)?.postApprovalSessionId).toBeNull();
     expect(repo.getTask(other.id)?.postApprovalStartedAt).toBeNull();
@@ -156,12 +186,64 @@ describe('SpaceTaskRepository.casPostApprovalRouting', () => {
     const other = seedApprovedTask(repo, { workflowRunId: 'run-2' });
     repo.updateTask(other.id, { postApprovalSessionId: 'shared-worker' });
     repo.updateTask(task.id, { status: 'done' });
-    const outcome = repo.casPostApprovalRouting(task.id, 'run-1', {
-      postApprovalSessionId: 'shared-worker',
-      postApprovalStartedAt: 1234,
-    });
+    const outcome = repo.casPostApprovalRouting(
+      task.id,
+      {
+        workflowRunId: 'run-1',
+        approvedAt: task.approvedAt ?? null,
+        priorPostApprovalSessionId: null,
+      },
+      { postApprovalSessionId: 'shared-worker', postApprovalStartedAt: 1234 }
+    );
     expect(outcome).toBe('superseded');
     expect(repo.getTask(other.id)?.postApprovalSessionId).toBe('shared-worker');
+    expect(repo.getTask(task.id)?.postApprovalSessionId).toBeNull();
+  });
+
+  test('loses when the prior pointer moved under the router (double-spawn race)', () => {
+    const task = seedApprovedTask(repo, { workflowRunId: 'run-1' });
+    repo.updateTask(task.id, { postApprovalSessionId: 'raced-worker' });
+    const outcome = repo.casPostApprovalRouting(
+      task.id,
+      {
+        workflowRunId: 'run-1',
+        approvedAt: task.approvedAt ?? null,
+        priorPostApprovalSessionId: null,
+      },
+      { postApprovalSessionId: 'worker-1', postApprovalStartedAt: 1234 }
+    );
+    expect(outcome).toBe('superseded');
+    expect(repo.getTask(task.id)?.postApprovalSessionId).toBe('raced-worker');
+  });
+
+  test('loses when the approval generation changed (reopen and re-approve race)', () => {
+    const task = seedApprovedTask(repo, { workflowRunId: 'run-1' });
+    const outcome = repo.casPostApprovalRouting(
+      task.id,
+      {
+        workflowRunId: 'run-1',
+        approvedAt: (task.approvedAt ?? 0) + 5,
+        priorPostApprovalSessionId: null,
+      },
+      { postApprovalSessionId: 'worker-1', postApprovalStartedAt: 1234 }
+    );
+    expect(outcome).toBe('superseded');
+    expect(repo.getTask(task.id)?.postApprovalSessionId).toBeNull();
+  });
+
+  test('loses when the workflow run was cancelled while the spawn was in flight', () => {
+    const task = seedApprovedTask(repo, { workflowRunId: 'run-1' });
+    db.prepare(`UPDATE space_workflow_runs SET status = 'cancelled' WHERE id = 'run-1'`).run();
+    const outcome = repo.casPostApprovalRouting(
+      task.id,
+      {
+        workflowRunId: 'run-1',
+        approvedAt: task.approvedAt ?? null,
+        priorPostApprovalSessionId: null,
+      },
+      { postApprovalSessionId: 'worker-1', postApprovalStartedAt: 1234 }
+    );
+    expect(outcome).toBe('superseded');
     expect(repo.getTask(task.id)?.postApprovalSessionId).toBeNull();
   });
 });

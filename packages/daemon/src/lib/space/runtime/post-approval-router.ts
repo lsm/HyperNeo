@@ -62,6 +62,7 @@ export interface PostApprovalRouterDeps {
     taskId: string;
     routeNodeId: string | null;
     routeAgentName: string;
+    workflowRunId: string | null;
   }) => boolean;
   cancelSpawnedWorker?: (sessionId: string) => void;
 }
@@ -169,6 +170,17 @@ export function mapPostApprovalDispatchWarning(detail: string): string {
 export class PostApprovalRouter {
   constructor(private readonly deps: PostApprovalRouterDeps) {}
 
+  private recordBlockedReasonIfCurrent(task: SpaceTask, reason: string): void {
+    const fresh = this.deps.taskRepo.getTask(task.id);
+    if (
+      fresh?.status === 'approved' &&
+      fresh.workflowRunId === task.workflowRunId &&
+      fresh.approvedAt === task.approvedAt
+    ) {
+      this.deps.taskRepo.updateTask(task.id, { postApprovalBlockedReason: reason });
+    }
+  }
+
   async route(
     task: SpaceTask,
     workflow: SpaceWorkflow | null,
@@ -251,6 +263,7 @@ export class PostApprovalRouter {
     }
 
     const selected = selectFirstDispatchablePostApprovalRoute(workflow);
+    let staleReplacedSessionId: string | null = null;
 
     if (task.postApprovalSessionId) {
       const alive = this.deps.livenessProbe
@@ -263,6 +276,7 @@ export class PostApprovalRouter {
               taskId: task.id,
               routeNodeId: selected?.nodeId ?? null,
               routeAgentName: selected?.route.targetAgent ?? '',
+              workflowRunId: task.workflowRunId ?? null,
             })
           : true;
         if (onRouteSlot) {
@@ -274,6 +288,7 @@ export class PostApprovalRouter {
             postApprovalSessionId: task.postApprovalSessionId,
           };
         }
+        staleReplacedSessionId = task.postApprovalSessionId;
         log.warn(
           `PostApprovalRouter.route: task ${task.id} recorded pointer ${task.postApprovalSessionId} is not a worker on the post-approval route slot (targetAgent=${selected?.route.targetAgent ?? 'unknown'}); treating it as stale and re-dispatching`
         );
@@ -319,14 +334,14 @@ export class PostApprovalRouter {
         const reason = `post-approval spawn for task ${task.id} superseded at ${err.stage ?? 'unknown'} — a concurrent writer moved the guarded row; the dispatch stays recorded as blocked for retry`;
         log.warn(`PostApprovalRouter.route: ${reason}`);
         clearPendingCompletionState(this.deps.taskRepo, task.id);
-        this.deps.taskRepo.updateTask(task.id, { postApprovalBlockedReason: reason });
+        this.recordBlockedReasonIfCurrent(task, reason);
         return { mode: 'skipped', reason };
       }
       if (isTransientSpawnError(err)) {
         const reason = `post-approval spawn for task ${task.id} deferred: ${err.message}; the dispatch stays recorded as blocked for retry`;
         log.warn(`PostApprovalRouter.route: ${reason}`);
         clearPendingCompletionState(this.deps.taskRepo, task.id);
-        this.deps.taskRepo.updateTask(task.id, { postApprovalBlockedReason: reason });
+        this.recordBlockedReasonIfCurrent(task, reason);
         return { mode: 'skipped', reason };
       }
       throw err;
@@ -335,7 +350,11 @@ export class PostApprovalRouter {
 
     const recorded = this.deps.taskRepo.casPostApprovalRouting(
       task.id,
-      task.workflowRunId ?? null,
+      {
+        workflowRunId: task.workflowRunId ?? null,
+        approvedAt: task.approvedAt ?? null,
+        priorPostApprovalSessionId: task.postApprovalSessionId ?? null,
+      },
       { postApprovalSessionId: sessionId, postApprovalStartedAt: startedAt }
     );
     if (recorded !== 'won') {
@@ -344,6 +363,9 @@ export class PostApprovalRouter {
       const reason = `post-approval routing for task ${task.id} lost the conditional write (status=${fresh?.status ?? 'missing'}, workflowRunId=${fresh?.workflowRunId ?? 'none'}); spawned worker ${sessionId} cancelled`;
       log.warn(`PostApprovalRouter.route: ${reason}`);
       return { mode: 'skipped', reason };
+    }
+    if (staleReplacedSessionId !== null) {
+      this.deps.cancelSpawnedWorker?.(staleReplacedSessionId);
     }
 
     log.info(

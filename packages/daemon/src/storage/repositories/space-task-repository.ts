@@ -698,7 +698,11 @@ export class SpaceTaskRepository {
 
   casPostApprovalRouting(
     taskId: string,
-    expectedWorkflowRunId: string | null,
+    expect: {
+      workflowRunId: string | null;
+      approvedAt: number | null;
+      priorPostApprovalSessionId: string | null;
+    },
     routing: { postApprovalSessionId: string; postApprovalStartedAt: number }
   ): 'won' | 'superseded' {
     const now = Date.now();
@@ -719,7 +723,13 @@ export class SpaceTaskRepository {
              updated_at = ?
        WHERE id = ?
          AND status = 'approved'
-         AND ((? IS NULL AND workflow_run_id IS NULL) OR workflow_run_id = ?)`
+         AND ((? IS NULL AND workflow_run_id IS NULL) OR workflow_run_id = ?)
+         AND ((? IS NULL AND approved_at IS NULL) OR approved_at = ?)
+         AND ((? IS NULL AND post_approval_session_id IS NULL) OR post_approval_session_id = ?)
+         AND NOT EXISTS (
+           SELECT 1 FROM space_workflow_runs r
+            WHERE r.id = space_tasks.workflow_run_id AND r.status = 'cancelled'
+         )`
     );
     const tx = this.db.transaction(() => {
       const result = recordRouting.run(
@@ -727,8 +737,12 @@ export class SpaceTaskRepository {
         routing.postApprovalStartedAt,
         now,
         taskId,
-        expectedWorkflowRunId,
-        expectedWorkflowRunId
+        expect.workflowRunId,
+        expect.workflowRunId,
+        expect.approvedAt,
+        expect.approvedAt,
+        expect.priorPostApprovalSessionId,
+        expect.priorPostApprovalSessionId
       );
       if (result.changes === 0) return false;
       stealDuplicatePointer.run(now, routing.postApprovalSessionId, taskId);

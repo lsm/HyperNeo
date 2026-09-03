@@ -475,6 +475,7 @@ describe('TaskAgentManager.isSessionOnPostApprovalRoute', () => {
         taskId: TASK_ID,
         routeNodeId: POST_APPROVAL_NODE,
         routeAgentName: 'merger',
+        workflowRunId: RUN_ID,
       })
     ).toBe(true);
   });
@@ -488,6 +489,7 @@ describe('TaskAgentManager.isSessionOnPostApprovalRoute', () => {
         taskId: TASK_ID,
         routeNodeId: POST_APPROVAL_NODE,
         routeAgentName: 'merger',
+        workflowRunId: RUN_ID,
       })
     ).toBe(false);
   });
@@ -501,6 +503,7 @@ describe('TaskAgentManager.isSessionOnPostApprovalRoute', () => {
         taskId: TASK_ID,
         routeNodeId: POST_APPROVAL_NODE,
         routeAgentName: 'merger',
+        workflowRunId: RUN_ID,
       })
     ).toBe(false);
   });
@@ -513,6 +516,7 @@ describe('TaskAgentManager.isSessionOnPostApprovalRoute', () => {
         taskId: TASK_ID,
         routeNodeId: POST_APPROVAL_NODE,
         routeAgentName: 'merger',
+        workflowRunId: RUN_ID,
       })
     ).toBe(true);
   });
@@ -525,6 +529,7 @@ describe('TaskAgentManager.isSessionOnPostApprovalRoute', () => {
         taskId: TASK_ID,
         routeNodeId: POST_APPROVAL_NODE,
         routeAgentName: 'merger',
+        workflowRunId: RUN_ID,
       })
     ).toBe(false);
   });
@@ -538,6 +543,72 @@ describe('TaskAgentManager.isSessionOnPostApprovalRoute', () => {
         taskId: TASK_ID,
         routeNodeId: null,
         routeAgentName: 'merger',
+        workflowRunId: RUN_ID,
+      })
+    ).toBe(true);
+  });
+});
+
+describe('TaskAgentManager.isSessionOnPostApprovalRoute — provenance binding', () => {
+  let db: BunDatabase;
+  let tam: TaskAgentManager;
+
+  beforeEach(() => {
+    db = makeDb();
+    tam = makeManager(db);
+  });
+
+  it('rejects an execution-less worker whose provenance names another workflow run', () => {
+    insertWorkerSession(db, { sessionId: 'stale-run-worker', workflowRunId: 'run-old' });
+    expect(
+      tam.isSessionOnPostApprovalRoute({
+        sessionId: 'stale-run-worker',
+        taskId: TASK_ID,
+        routeNodeId: POST_APPROVAL_NODE,
+        routeAgentName: 'merger',
+        workflowRunId: RUN_ID,
+      })
+    ).toBe(false);
+  });
+
+  it('rejects an execution-less worker whose provenance names another agent', () => {
+    insertWorkerSession(db, { sessionId: 'other-name-worker', agentName: 'observer' });
+    expect(
+      tam.isSessionOnPostApprovalRoute({
+        sessionId: 'other-name-worker',
+        taskId: TASK_ID,
+        routeNodeId: POST_APPROVAL_NODE,
+        routeAgentName: 'merger',
+        workflowRunId: RUN_ID,
+      })
+    ).toBe(false);
+  });
+
+  it('admits a legacy execution-less worker without provenance metadata', () => {
+    db.prepare(
+      `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, type, session_context)
+       VALUES ('legacy-no-provenance', 'Worker', '/tmp/ws', 0, 1, 'active', '{}', '{}', 0, 'worker', ?)`
+    ).run(JSON.stringify({ spaceId: SPACE_ID, taskId: TASK_ID }));
+    expect(
+      tam.isSessionOnPostApprovalRoute({
+        sessionId: 'legacy-no-provenance',
+        taskId: TASK_ID,
+        routeNodeId: POST_APPROVAL_NODE,
+        routeAgentName: 'merger',
+        workflowRunId: RUN_ID,
+      })
+    ).toBe(true);
+  });
+
+  it('admits an execution-less worker whose provenance matches agent, node, and run', () => {
+    insertWorkerSession(db, { sessionId: 'matching-worker' });
+    expect(
+      tam.isSessionOnPostApprovalRoute({
+        sessionId: 'matching-worker',
+        taskId: TASK_ID,
+        routeNodeId: POST_APPROVAL_NODE,
+        routeAgentName: 'merger',
+        workflowRunId: RUN_ID,
       })
     ).toBe(true);
   });
