@@ -547,7 +547,7 @@ export class QueryOptionsBuilder {
         config.agents as Record<string, AgentDefinition> | undefined
       );
 
-      if (this.ctx.session.worktree) {
+      if (this.resolveWorktreeIsolationSource()) {
         const worktreeText = this.getWorktreeIsolationText();
         for (const [name, agent] of Object.entries(agents)) {
           if (name === 'Coordinator') continue;
@@ -696,6 +696,12 @@ export class QueryOptionsBuilder {
     return this.ctx.session.workspacePath ?? undefined;
   }
 
+  private resolveWorktreeIsolationSource():
+    | { worktreePath: string; branch: string; mainRepoPath: string }
+    | undefined {
+    return this.ctx.session.worktree ?? this.ctx.session.context?.taskWorktree;
+  }
+
   private buildSystemPrompt(): Options['systemPrompt'] {
     const config = this.ctx.session.config;
 
@@ -713,7 +719,7 @@ export class QueryOptionsBuilder {
       };
 
       const append = this.joinSystemPromptAppendParts([
-        this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
+        this.resolveWorktreeIsolationSource() ? this.getWorktreeIsolationText() : undefined,
       ]);
       if (append) {
         presetConfig.append = append;
@@ -722,7 +728,7 @@ export class QueryOptionsBuilder {
       return presetConfig;
     }
 
-    if (this.ctx.session.worktree) {
+    if (this.resolveWorktreeIsolationSource()) {
       return this.joinSystemPromptAppendParts([this.getMinimalWorktreePrompt()]);
     }
 
@@ -733,7 +739,7 @@ export class QueryOptionsBuilder {
     if (typeof systemPrompt === 'string') {
       return this.joinSystemPromptAppendParts([
         systemPrompt,
-        this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
+        this.resolveWorktreeIsolationSource() ? this.getWorktreeIsolationText() : undefined,
       ]);
     }
 
@@ -745,7 +751,7 @@ export class QueryOptionsBuilder {
 
       const append = this.joinSystemPromptAppendParts([
         systemPrompt.append,
-        this.ctx.session.worktree ? this.getWorktreeIsolationText() : undefined,
+        this.resolveWorktreeIsolationSource() ? this.getWorktreeIsolationText() : undefined,
       ]);
       if (append) {
         presetConfig.append = append;
@@ -765,7 +771,7 @@ export class QueryOptionsBuilder {
   }
 
   private getWorktreeIsolationText(): string {
-    const wt = this.ctx.session.worktree!;
+    const wt = this.resolveWorktreeIsolationSource()!;
     return `
 IMPORTANT: Git Worktree Isolation
 
@@ -780,7 +786,7 @@ Your cwd is already the worktree path. Do not modify files in the main repositor
   }
 
   private getMinimalWorktreePrompt(): string {
-    const wt = this.ctx.session.worktree!;
+    const wt = this.resolveWorktreeIsolationSource()!;
     return `
 You are an AI assistant helping with coding tasks.
 
@@ -844,7 +850,7 @@ CRITICAL RULES:
     directories.push(join(homedir(), '.claude'));
     directories.push(dataDir);
 
-    if (this.ctx.session.worktree) {
+    if (this.resolveWorktreeIsolationSource()) {
       const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
       directories.push('/tmp', '/tmp/claude', `/tmp/zsh-${uid}`);
     }

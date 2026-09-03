@@ -1733,6 +1733,92 @@ describe('QueryOptionsBuilder', () => {
       expect(typeof options.systemPrompt).toBe('string');
       expect(options.systemPrompt).toContain('Git Worktree Isolation');
     });
+
+    it('should append worktree isolation text for a space task worktree context', async () => {
+      mockSession.context = {
+        taskWorktree: {
+          worktreePath: '/task/worktree',
+          mainRepoPath: '/task/main-repo',
+          branch: 'space/task-9-slug',
+        },
+      };
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+      });
+      const options = await newBuilder.build();
+
+      expect(options.systemPrompt).toEqual(
+        expect.objectContaining({
+          type: 'preset',
+          preset: 'claude_code',
+          append: expect.stringContaining('Git Worktree Isolation'),
+        })
+      );
+      expect(options.systemPrompt?.append).toContain('/task/worktree');
+      expect(options.systemPrompt?.append).toContain('space/task-9-slug');
+    });
+
+    it('should combine custom prompt with task worktree isolation', async () => {
+      mockSession.config.systemPrompt = 'Custom prompt';
+      mockSession.context = {
+        taskWorktree: {
+          worktreePath: '/task/worktree',
+          mainRepoPath: '/task/main-repo',
+          branch: 'space/task-9-slug',
+        },
+      };
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+      });
+      const options = await newBuilder.build();
+
+      expect(options.systemPrompt).toContain('Custom prompt');
+      expect(options.systemPrompt).toContain('Git Worktree Isolation');
+    });
+
+    it('should use minimal worktree prompt for task worktree when preset disabled', async () => {
+      mockSession.config.tools = { useClaudeCodePreset: false };
+      mockSession.context = {
+        taskWorktree: {
+          worktreePath: '/task/worktree',
+          mainRepoPath: '/task/main-repo',
+          branch: 'space/task-9-slug',
+        },
+      };
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+      });
+      const options = await newBuilder.build();
+
+      expect(typeof options.systemPrompt).toBe('string');
+      expect(options.systemPrompt).toContain('Git Worktree Isolation');
+    });
+
+    it('should prefer the interactive session worktree over the task worktree context', async () => {
+      mockSession.worktree = {
+        worktreePath: '/interactive/worktree',
+        mainRepoPath: '/interactive/main',
+        branch: 'session/interactive',
+      };
+      mockSession.context = {
+        taskWorktree: {
+          worktreePath: '/task/worktree',
+          mainRepoPath: '/task/main-repo',
+          branch: 'space/task-9-slug',
+        },
+      };
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+      });
+      const options = await newBuilder.build();
+
+      expect(options.systemPrompt?.append).toContain('/interactive/worktree');
+      expect(options.systemPrompt?.append).not.toContain('/task/worktree');
+    });
   });
 
   describe('tools configuration', () => {
@@ -1974,6 +2060,25 @@ describe('QueryOptionsBuilder', () => {
         worktreePath: '/worktree',
         mainRepoPath: '/main',
         branch: 'session/test',
+      };
+      const newBuilder = new QueryOptionsBuilder({
+        session: mockSession,
+        settingsManager: mockSettingsManager,
+      });
+      const options = await newBuilder.build();
+
+      const expected = [homedir() + '/.claude', homedir() + '/.hyperneo'];
+      expected.push('/tmp', '/tmp/claude', expect.stringContaining('/tmp/zsh-'));
+      expect(options.additionalDirectories).toEqual(expected);
+    });
+
+    it('should allow temp directories for shell operations for a task worktree context', async () => {
+      mockSession.context = {
+        taskWorktree: {
+          worktreePath: '/task/worktree',
+          mainRepoPath: '/task/main-repo',
+          branch: 'space/task-9-slug',
+        },
       };
       const newBuilder = new QueryOptionsBuilder({
         session: mockSession,

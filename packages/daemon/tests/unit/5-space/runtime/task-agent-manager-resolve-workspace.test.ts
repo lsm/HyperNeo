@@ -323,6 +323,147 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
   });
 });
 
+describe('TaskAgentManager resolveTaskWorktreeContext — isolation prompt context', () => {
+  const SPACE_ID = 'space-wtw-ctx';
+  const TASK_ID = 'task-wtw-ctx';
+  const SPACE_WORKSPACE = '/space/wtw-ctx';
+  const TASK_WORKSPACE = '/task/wtw-ctx-override';
+  const WORKTREE_PATH = '/space/wtw-ctx/.hyperneo-worktrees/task-9-abc';
+  const WORKTREE_SLUG = 'task-9-abc';
+
+  function makeManager(record: { path: string; slug: string } | null): TaskAgentManager {
+    const db = new BunDatabase(':memory:');
+    return new TaskAgentManager({
+      db: { getDatabase: () => db },
+      internalEventBus: { subscribe: () => () => {} },
+      taskRepo: { getTask: () => null },
+      worktreeManager: {
+        getTaskWorktreeRecordSync: () => record,
+      } as unknown as SpaceWorktreeManager,
+    } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
+  }
+
+  function makeTask(spaceId: string = SPACE_ID, workspacePath?: string): SpaceTask {
+    return {
+      id: TASK_ID,
+      spaceId,
+      taskNumber: 9,
+      title: 'Isolation ctx',
+      workspacePath,
+    } as unknown as SpaceTask;
+  }
+
+  function makeSpace(): Space {
+    return { id: SPACE_ID, workspacePath: SPACE_WORKSPACE } as unknown as Space;
+  }
+
+  test('builds the context from the stored worktree record for an owned task', () => {
+    const manager = makeManager({ path: WORKTREE_PATH, slug: WORKTREE_SLUG });
+    const resolve = (
+      manager as unknown as {
+        resolveTaskWorktreeContext: (space: Space, task: SpaceTask) => unknown;
+      }
+    ).resolveTaskWorktreeContext;
+
+    expect(resolve(makeSpace(), makeTask(SPACE_ID, TASK_WORKSPACE))).toEqual({
+      worktreePath: WORKTREE_PATH,
+      branch: `space/${WORKTREE_SLUG}`,
+      mainRepoPath: TASK_WORKSPACE,
+    });
+  });
+
+  test('roots mainRepoPath at the task workspace when explicit, else the space workspace', () => {
+    const manager = makeManager({ path: WORKTREE_PATH, slug: WORKTREE_SLUG });
+    const resolve = (
+      manager as unknown as {
+        resolveTaskWorktreeContext: (space: Space, task: SpaceTask) => unknown;
+      }
+    ).resolveTaskWorktreeContext;
+
+    expect(resolve(makeSpace(), makeTask(SPACE_ID, undefined))).toEqual({
+      worktreePath: WORKTREE_PATH,
+      branch: `space/${WORKTREE_SLUG}`,
+      mainRepoPath: SPACE_WORKSPACE,
+    });
+  });
+
+  test('foreign task roots mainRepoPath at the executing space workspace', () => {
+    const manager = makeManager({ path: WORKTREE_PATH, slug: WORKTREE_SLUG });
+    const resolve = (
+      manager as unknown as {
+        resolveTaskWorktreeContext: (space: Space, task: SpaceTask) => unknown;
+      }
+    ).resolveTaskWorktreeContext;
+
+    expect(resolve(makeSpace(), makeTask('foreign-space', TASK_WORKSPACE))).toEqual({
+      worktreePath: WORKTREE_PATH,
+      branch: `space/${WORKTREE_SLUG}`,
+      mainRepoPath: SPACE_WORKSPACE,
+    });
+  });
+
+  test('returns undefined without a stored worktree record', () => {
+    const manager = makeManager(null);
+    const resolve = (
+      manager as unknown as {
+        resolveTaskWorktreeContext: (space: Space, task: SpaceTask) => unknown;
+      }
+    ).resolveTaskWorktreeContext;
+
+    expect(resolve(makeSpace(), makeTask())).toBeUndefined();
+  });
+
+  test('taskWorktreeContextPatch sets, preserves, and strips the context field', () => {
+    const manager = makeManager({ path: WORKTREE_PATH, slug: WORKTREE_SLUG });
+    const patch = (
+      manager as unknown as {
+        taskWorktreeContextPatch: (
+          agentSession: { getSessionData: () => { context?: unknown } },
+          space: Space | null,
+          task: SpaceTask | null
+        ) => unknown;
+      }
+    ).taskWorktreeContextPatch;
+    const space = makeSpace();
+    const task = makeTask(SPACE_ID, TASK_WORKSPACE);
+
+    const bare = { getSessionData: () => ({ context: undefined }) };
+    expect(patch(bare, space, task)).toEqual({
+      taskWorktree: {
+        worktreePath: WORKTREE_PATH,
+        branch: `space/${WORKTREE_SLUG}`,
+        mainRepoPath: TASK_WORKSPACE,
+      },
+    });
+
+    const preserving = {
+      getSessionData: () => ({ context: { spaceId: SPACE_ID, taskId: TASK_ID } }),
+    };
+    expect(patch(preserving, space, task)).toEqual({
+      spaceId: SPACE_ID,
+      taskId: TASK_ID,
+      taskWorktree: {
+        worktreePath: WORKTREE_PATH,
+        branch: `space/${WORKTREE_SLUG}`,
+        mainRepoPath: TASK_WORKSPACE,
+      },
+    });
+
+    const stale = {
+      getSessionData: () => ({
+        context: {
+          spaceId: SPACE_ID,
+          taskWorktree: { worktreePath: '/gone', branch: 'space/gone', mainRepoPath: '/gone' },
+        },
+      }),
+    };
+    expect(patch(stale, null, null)).toEqual({ spaceId: SPACE_ID });
+
+    const unchanged = { getSessionData: () => ({ context: { spaceId: SPACE_ID } }) };
+    expect(patch(unchanged, null, null)).toBeUndefined();
+  });
+});
+
 describe('TaskAgentManager getTaskWorktreePath — cache + durable fallback (WS10)', () => {
   const SPACE_ID = 'space-ws10';
   const TASK_ID = 'task-ws10';

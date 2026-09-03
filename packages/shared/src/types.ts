@@ -50,11 +50,18 @@ export * from './types/daemon-config.ts';
 
 export type SessionType = 'worker' | 'lobby' | 'space_task_agent' | 'space_chat';
 
+export interface SessionTaskWorktree {
+  worktreePath: string;
+  branch: string;
+  mainRepoPath: string;
+}
+
 export interface SessionContext {
   roomId?: string;
   lobbyId?: string;
   spaceId?: string;
   taskId?: string;
+  taskWorktree?: SessionTaskWorktree;
 }
 
 export interface SessionFeatures {

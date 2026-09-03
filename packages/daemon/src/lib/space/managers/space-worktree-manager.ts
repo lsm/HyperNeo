@@ -614,6 +614,13 @@ export class SpaceWorktreeManager {
     return record?.path ?? null;
   }
 
+  getTaskWorktreeRecordSync(
+    spaceId: string,
+    taskId: string
+  ): { path: string; slug: string } | null {
+    return this.worktreeRepo.getByTaskId(spaceId, taskId);
+  }
+
   async listWorktrees(spaceId: string): Promise<SpaceWorktreeInfo[]> {
     const records = this.worktreeRepo.listBySpace(spaceId);
     return records.map((r) => ({ slug: r.slug, taskId: r.taskId, path: r.path }));

@@ -7,6 +7,8 @@ import type {
   MessageOrigin,
   NodeExecution,
   Session,
+  SessionContext,
+  SessionTaskWorktree,
   Space,
   SpaceTask,
   SpaceWorkerAgent,
@@ -1273,17 +1275,29 @@ export class TaskAgentManager {
                   workflowNodeId: reuseNodeId,
                 };
                 const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
+                const previousReuseContext = existing.getSessionData().context;
+                const reuseContextPatch = this.taskWorktreeContextPatch(
+                  existing,
+                  reuseSpace,
+                  lockedTask
+                );
                 const previousWorkerMcpServers = this.captureWorkerMcpServers(existing);
                 const workspaceChanged =
                   !!reuseWorkspacePath && previousReuseWorkspacePath !== reuseWorkspacePath;
                 if (workspaceChanged) {
-                  existing.updateMetadata({ workspacePath: reuseWorkspacePath });
+                  existing.updateMetadata({
+                    workspacePath: reuseWorkspacePath,
+                    ...(reuseContextPatch ? { context: reuseContextPatch } : {}),
+                  });
                 }
                 try {
                   await this.reinjectNodeAgentMcpServer(existing, reuseCtx);
                 } catch (err) {
                   if (workspaceChanged) {
-                    existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
+                    existing.updateMetadata({
+                      workspacePath: previousReuseWorkspacePath,
+                      context: previousReuseContext,
+                    });
                   }
                   this.restoreWorkerMcpServers(existing, previousWorkerMcpServers);
                   throw err;
@@ -1329,10 +1343,20 @@ export class TaskAgentManager {
     }
 
     const parentTask = this.config.taskRepo.getTask(taskId);
-    const subSessionInit =
-      parentTask && !init.title
-        ? { ...init, title: formatWorkflowNodeSessionTitle(parentTask, memberInfo?.agentName) }
-        : init;
+    const parentSpace = parentTask
+      ? await this.config.spaceManager.getSpace(parentTask.spaceId)
+      : null;
+    const taskWorktree =
+      parentTask && parentSpace
+        ? this.resolveTaskWorktreeContext(parentSpace, parentTask)
+        : undefined;
+    const subSessionInit = {
+      ...init,
+      ...(parentTask && !init.title
+        ? { title: formatWorkflowNodeSessionTitle(parentTask, memberInfo?.agentName) }
+        : {}),
+      ...(taskWorktree ? { context: { ...init.context, taskWorktree } } : {}),
+    };
     const subSession = AgentSession.fromInit(
       subSessionInit,
       this.config.db,
@@ -2410,7 +2434,11 @@ export class TaskAgentManager {
       );
     if (!agentSession) return null;
     if (workspacePath && agentSession.getSessionData().workspacePath !== workspacePath) {
-      agentSession.updateMetadata({ workspacePath: workspacePath });
+      const restoreContextPatch = this.taskWorktreeContextPatch(agentSession, space, task);
+      agentSession.updateMetadata({
+        workspacePath: workspacePath,
+        ...(restoreContextPatch ? { context: restoreContextPatch } : {}),
+      });
     }
 
     let slotInit: AgentSessionInit | null = null;
@@ -2786,6 +2814,32 @@ export class TaskAgentManager {
     return undefined;
   }
 
+  private resolveTaskWorktreeContext(
+    space: Space,
+    task: SpaceTask
+  ): SessionTaskWorktree | undefined {
+    const record = this.config.worktreeManager?.getTaskWorktreeRecordSync(space.id, task.id);
+    if (!record) return undefined;
+    const ownsSpace = task.spaceId === space.id;
+    return {
+      worktreePath: record.path,
+      branch: `space/${record.slug}`,
+      mainRepoPath: ownsSpace ? resolveTaskWorkspace(space, task) : space.workspacePath,
+    };
+  }
+
+  private taskWorktreeContextPatch(
+    agentSession: AgentSession,
+    space: Space | null,
+    task: SpaceTask | null
+  ): SessionContext | undefined {
+    const current = agentSession.getSessionData().context ?? {};
+    const { taskWorktree: _previous, ...rest } = current;
+    const taskWorktree = space && task ? this.resolveTaskWorktreeContext(space, task) : undefined;
+    const next = taskWorktree ? { ...rest, taskWorktree } : rest;
+    return JSON.stringify(next) === JSON.stringify(current) ? undefined : next;
+  }
+
   private async syncLiveSessionWorkspace(
     task: SpaceTask,
     space: Space,
@@ -2871,8 +2925,13 @@ export class TaskAgentManager {
               if (!live) return;
               const workspacePath = view.workspacePath!;
               const previousWorkspacePath = live.getSessionData().workspacePath;
+              const previousLiveContext = live.getSessionData().context;
+              const liveContextPatch = this.taskWorktreeContextPatch(live, space, view.currentTask);
               const previousWorkerMcpServers = this.captureWorkerMcpServers(live);
-              live.updateMetadata({ workspacePath });
+              live.updateMetadata({
+                workspacePath,
+                ...(liveContextPatch ? { context: liveContextPatch } : {}),
+              });
               try {
                 await this.reinjectNodeAgentMcpServer(live, {
                   taskId: view.currentTask.id,
@@ -2885,7 +2944,10 @@ export class TaskAgentManager {
                 });
               } catch (err) {
                 if (previousWorkspacePath !== undefined) {
-                  live.updateMetadata({ workspacePath: previousWorkspacePath });
+                  live.updateMetadata({
+                    workspacePath: previousWorkspacePath,
+                    context: previousLiveContext,
+                  });
                 }
                 this.restoreWorkerMcpServers(live, previousWorkerMcpServers);
                 throw err;
@@ -4042,7 +4104,11 @@ export class TaskAgentManager {
       spaceWorkspacePath: space.workspacePath,
     }).workspacePath;
     if (workspacePath && agentSession.getSessionData().workspacePath !== workspacePath) {
-      agentSession.updateMetadata({ workspacePath: workspacePath });
+      const rehydrateContextPatch = this.taskWorktreeContextPatch(agentSession, space, parentTask);
+      agentSession.updateMetadata({
+        workspacePath: workspacePath,
+        ...(rehydrateContextPatch ? { context: rehydrateContextPatch } : {}),
+      });
     }
 
     const currentInit = this.resolveCurrentNodeAgentInitForExecution({
@@ -4791,13 +4857,25 @@ export class TaskAgentManager {
                 agentSession.getSessionData().workspacePath !== healWorkspacePath
               ) {
                 const previousHealWorkspacePath = agentSession.getSessionData().workspacePath;
+                const previousHealContext = agentSession.getSessionData().context;
+                const healContextPatch = this.taskWorktreeContextPatch(
+                  agentSession,
+                  space,
+                  view.currentTask
+                );
                 const previousWorkerMcpServers = this.captureWorkerMcpServers(agentSession);
-                agentSession.updateMetadata({ workspacePath: healWorkspacePath });
+                agentSession.updateMetadata({
+                  workspacePath: healWorkspacePath,
+                  ...(healContextPatch ? { context: healContextPatch } : {}),
+                });
                 try {
                   await this.reinjectNodeAgentMcpServer(agentSession, healCtx);
                 } catch (err) {
                   if (previousHealWorkspacePath !== undefined) {
-                    agentSession.updateMetadata({ workspacePath: previousHealWorkspacePath });
+                    agentSession.updateMetadata({
+                      workspacePath: previousHealWorkspacePath,
+                      context: previousHealContext,
+                    });
                   }
                   this.restoreWorkerMcpServers(agentSession, previousWorkerMcpServers);
                   throw err;
@@ -5425,8 +5503,17 @@ export class TaskAgentManager {
         }).workspacePath;
         if (reuseWorkspacePath && existing.getSessionData().workspacePath !== reuseWorkspacePath) {
           const previousReuseWorkspacePath = existing.getSessionData().workspacePath;
+          const previousPostApprovalContext = existing.getSessionData().context;
+          const postApprovalContextPatch = this.taskWorktreeContextPatch(
+            existing,
+            space,
+            currentTask
+          );
           const previousWorkerMcpServers = this.captureWorkerMcpServers(existing);
-          existing.updateMetadata({ workspacePath: reuseWorkspacePath });
+          existing.updateMetadata({
+            workspacePath: reuseWorkspacePath,
+            ...(postApprovalContextPatch ? { context: postApprovalContextPatch } : {}),
+          });
           try {
             await this.reinjectNodeAgentMcpServer(existing, {
               taskId,
@@ -5439,7 +5526,10 @@ export class TaskAgentManager {
             });
           } catch (err) {
             if (previousReuseWorkspacePath !== undefined) {
-              existing.updateMetadata({ workspacePath: previousReuseWorkspacePath });
+              existing.updateMetadata({
+                workspacePath: previousReuseWorkspacePath,
+                context: previousPostApprovalContext,
+              });
             }
             this.restoreWorkerMcpServers(existing, previousWorkerMcpServers);
             throw err;
