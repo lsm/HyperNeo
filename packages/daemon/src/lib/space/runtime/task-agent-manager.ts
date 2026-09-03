@@ -5237,8 +5237,21 @@ export class TaskAgentManager {
       workflow_id?: string;
       depends_on?: string[];
       draft?: boolean;
+      workspace?: string;
     }) => {
       try {
+        let workspacePath: string | undefined;
+        if (args.workspace !== undefined) {
+          try {
+            workspacePath = await this.config.spaceManager.resolveWorkspaceSelection(
+              spaceId,
+              args.workspace
+            );
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            return jsonResult({ success: false, error: message });
+          }
+        }
         const task = await boundTaskManager.createTask({
           title: args.title,
           description: args.description,
@@ -5248,6 +5261,7 @@ export class TaskAgentManager {
           status: args.draft ? 'draft' : undefined,
           createdBy: agentName,
           createdBySession: subSessionId,
+          workspacePath,
         });
         return jsonResult({ success: true, task });
       } catch (err) {

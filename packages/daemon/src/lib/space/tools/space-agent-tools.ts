@@ -1998,11 +1998,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
 
         try {
           const newDescription = args.description ?? run.description;
+          const previousCanonicalTask = taskRepo.listByWorkflowRun(run.id)[0];
           const { run: newRun, tasks } = await runtime.startWorkflowRun(
             spaceId,
             targetWorkflowId,
             run.title,
-            newDescription
+            newDescription,
+            previousCanonicalTask?.workspacePath
+              ? { workspacePath: previousCanonicalTask.workspacePath }
+              : {}
           );
           return jsonResult({
             success: true,

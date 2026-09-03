@@ -164,6 +164,7 @@ export function setupSpaceWorkflowRunHandlers(
       workflowId?: string;
       title: string;
       description?: string;
+      workspacePath?: string;
     };
 
     if (!params.spaceId) throw new Error('spaceId is required');
@@ -205,7 +206,8 @@ export function setupSpaceWorkflowRunHandlers(
       params.spaceId,
       workflowId,
       params.title,
-      params.description
+      params.description,
+      params.workspacePath ? { workspacePath: params.workspacePath } : {}
     );
 
     return { run };

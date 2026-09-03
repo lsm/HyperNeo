@@ -9136,12 +9136,6 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
   test('sets the task workspace from a registered label before work starts', async () => {
     const workspaceDir = mkdtempSync(join(tmpdir(), 'hyperneo-ws-docs-'));
     try {
-      ctx.db
-        .prepare(
-          `INSERT INTO space_workspaces (id, space_id, path, label, is_primary, created_at, updated_at)
-           VALUES ('ws-docs', ?, ?, 'docs', 0, ?, ?)`
-        )
-        .run(ctx.spaceId, workspaceDir, Date.now(), Date.now());
       const taskManager = new SpaceTaskManager(
         ctx.db,
         ctx.spaceId,
@@ -9155,6 +9149,12 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
         title: 'Task',
         description: 'Desc',
       });
+      ctx.db
+        .prepare(
+          `INSERT INTO space_workspaces (id, space_id, path, label, is_primary, created_at, updated_at)
+           VALUES ('ws-docs', ?, ?, 'docs', 0, ?, ?)`
+        )
+        .run(ctx.spaceId, workspaceDir, Date.now(), Date.now());
       const result = await makeHandlers({ ...ctx, taskManager }).update_task({
         task_id: created.id,
         workspace: 'docs',
@@ -9172,16 +9172,16 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
   test('rejects an unregistered workspace with the registered list', async () => {
     const workspaceDir = mkdtempSync(join(tmpdir(), 'hyperneo-ws-docs-'));
     try {
+      const created = await ctx.taskManager.createTask({
+        title: 'Task',
+        description: 'Desc',
+      });
       ctx.db
         .prepare(
           `INSERT INTO space_workspaces (id, space_id, path, label, is_primary, created_at, updated_at)
            VALUES ('ws-docs', ?, ?, 'docs', 0, ?, ?)`
         )
         .run(ctx.spaceId, workspaceDir, Date.now(), Date.now());
-      const created = await ctx.taskManager.createTask({
-        title: 'Task',
-        description: 'Desc',
-      });
       const result = await makeHandlers(ctx).update_task({
         task_id: created.id,
         workspace: 'nope',
