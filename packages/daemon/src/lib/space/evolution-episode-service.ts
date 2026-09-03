@@ -27,6 +27,7 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID, scoreEvolutionEvidenceQuality } from '@hyperneo/shared';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
+import { SpaceWorkspaceRepository } from '../../storage/repositories/space-workspace-repository.ts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
@@ -35,6 +36,10 @@ import type {
   WorkflowRunArtifactRepository,
 } from '../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { SpaceGoalService } from './goals/goal-service.ts';
+import {
+  isExplicitWorkspaceSelection,
+  requireTaskWorkspaceSelectionSync,
+} from './workspaces/task-workspace-requirement.ts';
 import type { WorkflowArtifactProfile } from './runtime/artifact-profile.ts';
 import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.ts';
 import { Logger } from '../logger.ts';
@@ -362,6 +367,17 @@ export class EvolutionEpisodeService {
       const reason = params.reason?.trim() || existing.reason;
       const priority = params.priority ?? existing.priority;
       if (!title.trim()) throw new Error('title is required');
+      const goalWorkspacePath = scope.spaceGoalId
+        ? (this.deps.goalService?.getGoal(scope.spaceGoalId)?.workspacePath ?? null)
+        : null;
+      if (this.deps.spaceRepo && this.deps.db) {
+        requireTaskWorkspaceSelectionSync({
+          spaces: this.deps.spaceRepo,
+          workspaces: new SpaceWorkspaceRepository(this.deps.db),
+          spaceId: scope.spaceId,
+          hasExplicitSelection: isExplicitWorkspaceSelection(goalWorkspacePath),
+        });
+      }
       const task = this.deps.taskRepo.createTaskWithId(taskId, {
         spaceId: scope.spaceId,
         title,
@@ -369,6 +385,7 @@ export class EvolutionEpisodeService {
         priority,
         goalId: scope.spaceGoalId,
         evolutionScopeId: scope.id,
+        workspacePath: goalWorkspacePath,
         dependsOn,
       });
       const proposal = this.deps.evolutionRepo.updateTaskProposal(existing.id, {

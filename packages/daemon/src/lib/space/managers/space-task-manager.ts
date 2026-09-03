@@ -11,11 +11,16 @@ import { isRateOrUsageLimited } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import { SpaceWorkspaceRepository } from '../../../storage/repositories/space-workspace-repository.ts';
 import { SpaceWorktreeRepository } from '../../../storage/repositories/space-worktree-repository.ts';
 import { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
 import { Logger } from '../../logger.ts';
 import type { EvolutionScopeService } from '../evolution-scope-service.ts';
 import { arraysEqual } from '../../utils/array-utils.ts';
+import {
+  isExplicitWorkspaceSelection,
+  requireTaskWorkspaceSelection,
+} from '../workspaces/task-workspace-requirement.ts';
 
 export type WorkspacePathResolver = (rawPath: string) => Promise<string>;
 
@@ -79,6 +84,7 @@ export class SpaceTaskManager {
   private taskRepo: SpaceTaskRepository;
   private worktreeRepo: SpaceWorktreeRepository;
   private spaceRepo: SpaceRepository;
+  private workspaceRepo: SpaceWorkspaceRepository;
 
   constructor(
     private db: BunDatabase,
@@ -92,9 +98,16 @@ export class SpaceTaskManager {
     this.taskRepo = new SpaceTaskRepository(db, reactiveDb);
     this.worktreeRepo = new SpaceWorktreeRepository(db);
     this.spaceRepo = new SpaceRepository(db);
+    this.workspaceRepo = new SpaceWorkspaceRepository(db);
   }
 
   async createTask(params: Omit<InternalCreateSpaceTaskParams, 'spaceId'>): Promise<SpaceTask> {
+    await requireTaskWorkspaceSelection({
+      spaces: this.spaceRepo,
+      workspaces: this.workspaceRepo,
+      spaceId: this.spaceId,
+      hasExplicitSelection: isExplicitWorkspaceSelection(params.workspacePath),
+    });
     const resolvedParams = await this.resolveWorkspacePathParam(params);
 
     if (resolvedParams.dependsOn && resolvedParams.dependsOn.length > 0) {
@@ -466,6 +479,14 @@ export class SpaceTaskManager {
       onCascadedTasks?: (cascaded: SpaceTask[]) => Promise<void>;
     }
   ): Promise<SpaceTask> {
+    if (Object.hasOwn(params, 'workspacePath')) {
+      await requireTaskWorkspaceSelection({
+        spaces: this.spaceRepo,
+        workspaces: this.workspaceRepo,
+        spaceId: this.spaceId,
+        hasExplicitSelection: isExplicitWorkspaceSelection(params.workspacePath),
+      });
+    }
     const resolvedParams = await this.resolveWorkspacePathParam(params);
 
     const task = await this.getTask(taskId);

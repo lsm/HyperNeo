@@ -526,6 +526,7 @@ export interface TaskSchedule {
   createdBySession: string | null;
   createdAt: number;
   goalId?: string | null;
+  workspacePath?: string | null;
   updatedAt: number;
 }
 

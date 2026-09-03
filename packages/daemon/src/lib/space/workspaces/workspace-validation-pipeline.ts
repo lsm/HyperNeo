@@ -1,9 +1,5 @@
-import { exec } from 'node:child_process';
 import { promises as fs } from 'node:fs';
-import { promisify } from 'node:util';
 import superpipe, { type PipelineAPI } from 'superpipe';
-
-const execAsync = promisify(exec);
 
 export const MAX_WORKSPACES_PER_SPACE = 8;
 
@@ -28,13 +24,11 @@ export interface WorkspaceRegistrationInput {
 export interface WorkspaceValidationIo {
   realpath(path: string): Promise<string>;
   isDirectory(path: string): Promise<boolean>;
-  isGitRepositoryRoot(path: string): Promise<boolean>;
 }
 
 export type WorkspaceRejectionReason =
   | 'path_not_found'
   | 'path_not_a_directory'
-  | 'not_a_git_repository_root'
   | 'path_claimed_by_another_space'
   | 'duplicate_of_registered_workspace'
   | 'ambiguous_nesting'
@@ -69,22 +63,6 @@ export const nodeWorkspaceValidationIo: WorkspaceValidationIo = {
   async isDirectory(path) {
     try {
       return (await fs.stat(path)).isDirectory();
-    } catch {
-      return false;
-    }
-  },
-  async isGitRepositoryRoot(path) {
-    try {
-      const env = { ...process.env };
-      const local = await execAsync('git rev-parse --local-env-vars');
-      for (const key of local.stdout.split(/\s+/)) {
-        if (key) delete env[key];
-      }
-      const { stdout } = await execAsync('git rev-parse --show-toplevel', { cwd: path, env });
-      const topLevel = stdout.replace(/\n$/, '');
-      if (topLevel === path) return true;
-      const [topStat, pathStat] = await Promise.all([fs.stat(topLevel), fs.stat(path)]);
-      return topStat.dev === pathStat.dev && topStat.ino === pathStat.ino;
     } catch {
       return false;
     }
@@ -132,22 +110,6 @@ async function ensureDirectory(ctx: WorkspaceValidationCtx): Promise<WorkspaceVa
       accepted: false,
       reason: 'path_not_a_directory',
       message: `Workspace path is not an accessible directory: ${canonicalPath}`,
-      canonicalPath,
-    },
-  };
-}
-
-async function ensureGitRepositoryRoot(
-  ctx: WorkspaceValidationCtx
-): Promise<WorkspaceValidationCtx> {
-  const canonicalPath = ctx.canonicalPath!;
-  if (await ctx.io.isGitRepositoryRoot(canonicalPath)) return ctx;
-  return {
-    ...ctx,
-    verdict: {
-      accepted: false,
-      reason: 'not_a_git_repository_root',
-      message: `Workspace path is not a git repository root: ${canonicalPath}`,
       canonicalPath,
     },
   };
@@ -269,8 +231,6 @@ const run = (
   .pipe(canonicalizeCandidate, 'ctx', 'ctx')
   .pipe('!hasVerdict', 'ctx')
   .pipe(ensureDirectory, 'ctx', 'ctx')
-  .pipe('!hasVerdict', 'ctx')
-  .pipe(ensureGitRepositoryRoot, 'ctx', 'ctx')
   .pipe('!hasVerdict', 'ctx')
   .pipe(runRegistryGates, 'ctx', 'ctx')
   .pipe('!hasVerdict', 'ctx')

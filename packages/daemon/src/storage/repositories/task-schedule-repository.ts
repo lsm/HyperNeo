@@ -23,6 +23,7 @@ export interface CreateTaskScheduleParams {
   createdByAgent?: string | null;
   createdBySession?: string | null;
   goalId?: string | null;
+  workspacePath?: string | null;
 }
 
 function parseJson<T>(value: unknown, fallback: T): T {
@@ -44,6 +45,7 @@ export interface UpdateTaskScheduleParams {
   runAt?: number | null;
   timezone?: string;
   nextRunAt?: number | null;
+  workspacePath?: string | null;
 }
 
 export class TaskScheduleRepository {
@@ -59,8 +61,8 @@ export class TaskScheduleRepository {
 					id, space_id, title, description, priority, preferred_workflow_id,
 					labels, metadata_json, trigger_type, cron_expression, run_at, timezone,
 					next_run_at, last_run_at, last_created_task_id, pending_job_id,
-					status, created_by_agent, created_by_session, goal_id, created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					status, created_by_agent, created_by_session, goal_id, workspace_path, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -83,6 +85,7 @@ export class TaskScheduleRepository {
         params.createdByAgent ?? null,
         params.createdBySession ?? null,
         params.goalId ?? null,
+        params.workspacePath ?? null,
         now,
         now
       );
@@ -176,6 +179,10 @@ export class TaskScheduleRepository {
     if ('preferredWorkflowId' in params) {
       sets.push('preferred_workflow_id = ?');
       values.push(params.preferredWorkflowId ?? null);
+    }
+    if ('workspacePath' in params) {
+      sets.push('workspace_path = ?');
+      values.push(params.workspacePath ?? null);
     }
     if (params.labels !== undefined) {
       sets.push('labels = ?');
@@ -343,6 +350,7 @@ export class TaskScheduleRepository {
       createdByAgent: (row.created_by_agent as string | null) ?? null,
       createdBySession: (row.created_by_session as string | null) ?? null,
       goalId: (row.goal_id as string | null) ?? null,
+      workspacePath: (row.workspace_path as string | null) ?? null,
       createdAt: row.created_at as number,
       updatedAt: row.updated_at as number,
     };

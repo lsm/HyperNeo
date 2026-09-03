@@ -29,12 +29,16 @@ export interface SpaceWorktreeInfo {
   path: string;
 }
 
-function resolveRepoRoot(repoRoot: string): { commandCwd: string; dirKey: string } {
+function resolveRepoRoot(repoRoot: string): {
+  commandCwd: string;
+  dirKey: string;
+  gitRepo: boolean;
+} {
   let cwdRoot = repoRoot;
   try {
     cwdRoot = realpathSync(repoRoot);
   } catch {
-    return { commandCwd: repoRoot, dirKey: repoRoot };
+    return { commandCwd: repoRoot, dirKey: repoRoot, gitRepo: false };
   }
   let commonDir = '';
   try {
@@ -48,7 +52,7 @@ function resolveRepoRoot(repoRoot: string): { commandCwd: string; dirKey: string
     }
   } catch {}
   if (!commonDir) {
-    return { commandCwd: cwdRoot, dirKey: cwdRoot };
+    return { commandCwd: cwdRoot, dirKey: cwdRoot, gitRepo: false };
   }
   try {
     const topLevel = execFileSync('git', ['rev-parse', '--show-toplevel'], {
@@ -56,9 +60,9 @@ function resolveRepoRoot(repoRoot: string): { commandCwd: string; dirKey: string
       encoding: 'utf8',
       timeout: 30_000,
     }).replace(/\n$/, '');
-    return { commandCwd: topLevel || cwdRoot, dirKey: projectDirKey(commonDir) };
+    return { commandCwd: topLevel || cwdRoot, dirKey: projectDirKey(commonDir), gitRepo: true };
   } catch {
-    return { commandCwd: cwdRoot, dirKey: projectDirKey(commonDir) };
+    return { commandCwd: cwdRoot, dirKey: projectDirKey(commonDir), gitRepo: true };
   }
 }
 
@@ -194,7 +198,7 @@ interface CreateTaskWorktreeCtx {
   baseBranch?: string;
   repoRoot?: string;
   workspacePath?: string;
-  repo?: { commandCwd: string; dirKey: string };
+  repo?: { commandCwd: string; dirKey: string; gitRepo: boolean };
   worktreesDir?: string;
   slug?: string;
   worktreePath?: string;
@@ -212,6 +216,15 @@ function createLoadSpace(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
 
 function createResolveRepo(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
   return { ...ctx, repo: resolveRepoRoot(ctx.repoRoot ?? ctx.workspacePath!) };
+}
+
+function createAssertGitRepo(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
+  if (!ctx.repo!.gitRepo) {
+    throw new Error(
+      `Workspace "${ctx.repoRoot ?? ctx.workspacePath}" is not a git repository; cannot create a task worktree. Non-git workspaces are used directly by the task runtime instead of worktrees.`
+    );
+  }
+  return ctx;
 }
 
 function createFindExistingRecord(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
@@ -431,6 +444,7 @@ const runCreateTaskWorktree = (
   .pipe(createResolveRepo, 'ctx', 'ctx')
   .pipe(createFindExistingRecord, 'ctx', 'ctx')
   .pipe('!hasResult', 'ctx')
+  .pipe(createAssertGitRepo, 'ctx', 'ctx')
   .pipe(createEnsureWorktreesDir, 'ctx', 'ctx')
   .pipe(createWriteRepoCwdSentinel, 'ctx', 'ctx')
   .pipe(createComputeSlug, 'ctx', 'ctx')
@@ -598,6 +612,17 @@ export class SpaceWorktreeManager {
   getTaskWorktreePathSync(spaceId: string, taskId: string): string | null {
     const record = this.worktreeRepo.getByTaskId(spaceId, taskId);
     return record?.path ?? null;
+  }
+
+  getTaskWorktreeRecordSync(
+    spaceId: string,
+    taskId: string
+  ): { path: string; slug: string } | null {
+    return this.worktreeRepo.getByTaskId(spaceId, taskId);
+  }
+
+  isGitRepoRoot(repoRoot: string): boolean {
+    return resolveRepoRoot(repoRoot).gitRepo;
   }
 
   async listWorktrees(spaceId: string): Promise<SpaceWorktreeInfo[]> {

@@ -148,7 +148,7 @@ export function routeTaskUpdate(input: TaskUpdateRoutingInput): TaskUpdateRoutin
       action: 'reject',
       reason: 'no_updatable_fields',
       message:
-        'No fields to update. Provide at least one of: title, description, priority, depends_on, status.',
+        'No fields to update. Provide at least one of: title, description, priority, depends_on, workspace, status.',
     };
   }
   const target = routeTaskTarget(input);

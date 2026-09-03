@@ -1420,8 +1420,10 @@ describe('handleGoalAutomationExecute', () => {
         completedAt: null,
       } satisfies Job,
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         episodeService: {
@@ -1502,8 +1504,10 @@ describe('handleGoalAutomationExecute', () => {
         taskId: task.id,
       }),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         episodeService: {
@@ -1551,8 +1555,10 @@ describe('handleGoalAutomationExecute', () => {
       createdAt: 20,
     });
     const deps = {
+      db,
       goalRepo,
       taskRepo,
+      spaceRepo,
       evolutionRepo,
       cursorRepo,
       jobQueue,
@@ -1675,8 +1681,10 @@ describe('handleGoalAutomationExecute', () => {
         taskId: task.id,
       }),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         jobQueue,
@@ -1746,8 +1754,10 @@ describe('handleGoalAutomationExecute', () => {
         taskId: secondTask.id,
       }),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         jobQueue,
@@ -1829,8 +1839,10 @@ describe('handleGoalAutomationExecute', () => {
         taskId: secondTask.id,
       }),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         jobQueue,
@@ -1880,8 +1892,10 @@ describe('handleGoalAutomationExecute', () => {
         taskId: firstTask.id,
       }),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         episodeService: {
@@ -1926,8 +1940,10 @@ describe('handleGoalAutomationExecute', () => {
         taskId: firstTask.id,
       }),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         episodeService: {
@@ -1980,8 +1996,10 @@ describe('handleGoalAutomationExecute', () => {
         taskId: firstTask.id,
       }),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         episodeService: {
@@ -2023,8 +2041,10 @@ describe('handleGoalAutomationExecute', () => {
         taskId: secondTask.id,
       }),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         episodeService: {
@@ -2064,8 +2084,10 @@ describe('handleGoalAutomationExecute', () => {
         taskId: firstTask.id,
       }),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         episodeService: {
@@ -2134,8 +2156,10 @@ describe('handleGoalAutomationExecute', () => {
         activeReviewRequeueCount: 60,
       }),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         jobQueue,
@@ -2209,8 +2233,10 @@ describe('handleGoalAutomationExecute', () => {
         taskId: lastTaskId,
       }),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         jobQueue,
@@ -2305,8 +2331,10 @@ describe('handleGoalAutomationExecute', () => {
         taskId: fresh.id,
       }),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         episodeService: {
@@ -2415,8 +2443,10 @@ describe('handleGoalAutomationExecute', () => {
         taskId: freshTask.id,
       }),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         episodeService: {
@@ -2475,8 +2505,10 @@ describe('handleGoalAutomationExecute', () => {
         'job-contiguous-backlog'
       ),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         episodeService: {
@@ -2526,8 +2558,10 @@ describe('handleGoalAutomationExecute', () => {
     });
     const selected: string[][] = [];
     const deps = {
+      db,
       goalRepo,
       taskRepo,
+      spaceRepo,
       evolutionRepo,
       cursorRepo,
       episodeService: {
@@ -2610,8 +2644,10 @@ describe('handleGoalAutomationExecute', () => {
     };
     let first = true;
     const deps = {
+      db,
       goalRepo,
       taskRepo,
+      spaceRepo,
       evolutionRepo,
       cursorRepo,
       episodeService: {
@@ -2675,8 +2711,10 @@ describe('handleGoalAutomationExecute', () => {
       createdAt: 20,
     });
     const deps = {
+      db,
       goalRepo,
       taskRepo,
+      spaceRepo,
       evolutionRepo,
       cursorRepo,
       episodeService: {
@@ -2754,8 +2792,10 @@ describe('handleGoalAutomationExecute', () => {
         completedAt: null,
       } satisfies Job,
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         episodeService: {
@@ -2850,8 +2890,10 @@ describe('handleGoalAutomationExecute', () => {
         completedAt: null,
       } satisfies Job,
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         episodeService: {
@@ -2929,8 +2971,10 @@ describe('handleGoalAutomationExecute', () => {
         taskId: task.id,
       }),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         episodeService: {
@@ -3012,8 +3056,10 @@ describe('handleGoalAutomationExecute', () => {
         taskId: task.id,
       }),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         episodeService: {
@@ -3089,8 +3135,10 @@ describe('handleGoalAutomationExecute', () => {
         taskId: task.id,
       }),
       {
+        db,
         goalRepo,
         taskRepo,
+        spaceRepo,
         evolutionRepo,
         cursorRepo,
         episodeService: {
@@ -3158,8 +3206,10 @@ describe('handleGoalAutomationExecute', () => {
       completedAt: null,
     } satisfies Job;
     const deps = {
+      db,
       goalRepo,
       taskRepo,
+      spaceRepo,
       evolutionRepo,
       cursorRepo,
       episodeService: {
@@ -3220,8 +3270,10 @@ describe('handleGoalAutomationExecute', () => {
       scheduleId: 'sched-race',
     };
     const deps_base = {
+      db,
       goalRepo,
       taskRepo,
+      spaceRepo,
       evolutionRepo,
       cursorRepo,
       episodeService: {

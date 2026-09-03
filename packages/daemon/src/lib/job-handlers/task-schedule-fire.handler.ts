@@ -1,9 +1,14 @@
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import type { SpaceGoal, TaskSchedule } from '@hyperneo/shared';
+import type { TaskSchedule } from '@hyperneo/shared';
 import { TASK_SCHEDULE_FIRE } from '../job-queue-constants.ts';
 import { readSelfNagScheduleScopeId } from '../rpc-handlers/index.ts';
 import { Logger } from '../logger.ts';
 import { getNextRunAt } from '../space/schedule/cron-utils.ts';
+import {
+  isExplicitWorkspaceSelection,
+  requireTaskWorkspaceSelection,
+} from '../space/workspaces/task-workspace-requirement.ts';
+import { SpaceWorkspaceRepository } from '../../storage/repositories/space-workspace-repository.ts';
 import type { TaskScheduleRepository } from '../../storage/repositories/task-schedule-repository.ts';
 import type { JobQueueRepository, Job } from '../../storage/repositories/job-queue-repository.ts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
@@ -152,6 +157,15 @@ export async function handleTaskScheduleFire(
   let taskId: string | null = null;
   let nextRunAt: number | null = null;
 
+  const goalForWorkspace = schedule.goalId ? goalRepo.getById(schedule.goalId) : null;
+  const scheduleWorkspacePath = schedule.workspacePath ?? goalForWorkspace?.workspacePath ?? null;
+  await requireTaskWorkspaceSelection({
+    spaces: spaceRepo,
+    workspaces: new SpaceWorkspaceRepository(db),
+    spaceId: schedule.spaceId,
+    hasExplicitSelection: isExplicitWorkspaceSelection(scheduleWorkspacePath),
+  });
+
   try {
     const result = db.transaction(() => {
       let computedNextRunAt: number | null = null;
@@ -172,13 +186,11 @@ export async function handleTaskScheduleFire(
         }
       }
 
-      let claimedGoal: SpaceGoal | null = null;
       if (goalService && schedule.goalId) {
         const claimCheck = goalService.canClaimScheduledTask({
           spaceId: schedule.spaceId,
           goalId: schedule.goalId,
         });
-        claimedGoal = claimCheck.goal;
         if (!claimCheck.claimable) {
           const applied = scheduleRepo.updateAfterFireIfPending(scheduleId, job.id, {
             lastCreatedTaskId: schedule.lastCreatedTaskId,
@@ -197,7 +209,6 @@ export async function handleTaskScheduleFire(
         }
       }
 
-      const goal = claimedGoal ?? (schedule.goalId ? goalRepo.getById(schedule.goalId) : null);
       const task = taskRepo.createTask({
         spaceId: schedule.spaceId,
         title: schedule.title,
@@ -207,7 +218,7 @@ export async function handleTaskScheduleFire(
         labels: schedule.labels,
         createdByTaskScheduleId: schedule.id,
         goalId: schedule.goalId,
-        workspacePath: goal?.workspacePath ?? null,
+        workspacePath: scheduleWorkspacePath,
       });
 
       const applied = scheduleRepo.updateAfterFireIfPending(scheduleId, job.id, {

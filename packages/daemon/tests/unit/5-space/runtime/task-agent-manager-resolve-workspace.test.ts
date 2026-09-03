@@ -24,10 +24,12 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     taskWorkspacePath?: string;
     cachedTaskWorktreePath: string | undefined;
     storedTaskWorktreePath?: string;
+    nonGitRepoRoots?: string[];
     hasWorktreeManager: boolean;
     createResult: 'success' | 'fail' | 'n/a';
     expectedOutcome: { kind: 'path'; value: string } | { kind: 'error'; message: string };
     expectedCreateCalled: boolean;
+    expectedRepoRoot?: string;
     expectedCachedPath: string | undefined;
     expectedWarning: string;
   };
@@ -97,10 +99,14 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
       if (row.createResult === 'fail') throw new Error(CREATE_ERROR);
       return { path: CREATED_PATH, slug: 'task-9-abc' };
     });
+    const isGitRepoRoot = mock((repoRoot: string) => {
+      if (row.nonGitRepoRoots?.includes(repoRoot)) return false;
+      return true;
+    });
 
     const manager = makeManager(
       row.hasWorktreeManager
-        ? ({ createTaskWorktree } as unknown as SpaceWorktreeManager)
+        ? ({ createTaskWorktree, isGitRepoRoot } as unknown as SpaceWorktreeManager)
         : undefined,
       { storedTaskWorktreePath: row.storedTaskWorktreePath }
     );
@@ -135,7 +141,7 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         TASK_TITLE,
         TASK_NUMBER,
         undefined,
-        SPACE_WORKSPACE
+        row.expectedRepoRoot ?? SPACE_WORKSPACE
       );
     } else {
       expect(createTaskWorktree).not.toHaveBeenCalled();
@@ -150,7 +156,7 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         )
       ).toBe(true);
     } else {
-      expect(logEvents).toEqual([]);
+      expect(logEvents.filter((event) => event.level === 'warn')).toEqual([]);
     }
   }
 
@@ -200,11 +206,40 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     });
   });
 
+  describe('non-git primary family', () => {
+    test('runs directly in the non-git space primary without creating a worktree', async () => {
+      await runRow({
+        name: 'non-git primary: runs directly in the space workspace',
+        nonGitRepoRoots: [SPACE_WORKSPACE],
+        cachedTaskWorktreePath: undefined,
+        hasWorktreeManager: true,
+        createResult: 'n/a',
+        expectedOutcome: { kind: 'path', value: SPACE_WORKSPACE },
+        expectedCreateCalled: false,
+        expectedCachedPath: undefined,
+        expectedWarning: '',
+      });
+    });
+  });
+
   describe('explicit task workspace family (WS10)', () => {
     test.each([
       {
-        name: 'explicit task workspace is honored without creating a space-root worktree',
+        name: 'explicit task workspace creates a worktree rooted at the task workspace',
         taskWorkspacePath: TASK_WORKSPACE,
+        cachedTaskWorktreePath: undefined,
+        hasWorktreeManager: true,
+        createResult: 'success',
+        expectedOutcome: { kind: 'path', value: CREATED_PATH },
+        expectedCreateCalled: true,
+        expectedRepoRoot: TASK_WORKSPACE,
+        expectedCachedPath: CREATED_PATH,
+        expectedWarning: '',
+      },
+      {
+        name: 'non-git task workspace runs the agent directly in the workspace',
+        taskWorkspacePath: TASK_WORKSPACE,
+        nonGitRepoRoots: [TASK_WORKSPACE],
         cachedTaskWorktreePath: undefined,
         hasWorktreeManager: true,
         createResult: 'n/a',
@@ -318,6 +353,147 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     ] as Row[])('%s', async (row: Row) => {
       await runRow(row);
     });
+  });
+});
+
+describe('TaskAgentManager resolveTaskWorktreeContext — isolation prompt context', () => {
+  const SPACE_ID = 'space-wtw-ctx';
+  const TASK_ID = 'task-wtw-ctx';
+  const SPACE_WORKSPACE = '/space/wtw-ctx';
+  const TASK_WORKSPACE = '/task/wtw-ctx-override';
+  const WORKTREE_PATH = '/space/wtw-ctx/.hyperneo-worktrees/task-9-abc';
+  const WORKTREE_SLUG = 'task-9-abc';
+
+  function makeManager(record: { path: string; slug: string } | null): TaskAgentManager {
+    const db = new BunDatabase(':memory:');
+    return new TaskAgentManager({
+      db: { getDatabase: () => db },
+      internalEventBus: { subscribe: () => () => {} },
+      taskRepo: { getTask: () => null },
+      worktreeManager: {
+        getTaskWorktreeRecordSync: () => record,
+      } as unknown as SpaceWorktreeManager,
+    } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
+  }
+
+  function makeTask(spaceId: string = SPACE_ID, workspacePath?: string): SpaceTask {
+    return {
+      id: TASK_ID,
+      spaceId,
+      taskNumber: 9,
+      title: 'Isolation ctx',
+      workspacePath,
+    } as unknown as SpaceTask;
+  }
+
+  function makeSpace(): Space {
+    return { id: SPACE_ID, workspacePath: SPACE_WORKSPACE } as unknown as Space;
+  }
+
+  test('builds the context from the stored worktree record for an owned task', () => {
+    const manager = makeManager({ path: WORKTREE_PATH, slug: WORKTREE_SLUG });
+    const resolve = (
+      manager as unknown as {
+        resolveTaskWorktreeContext: (space: Space, task: SpaceTask) => unknown;
+      }
+    ).resolveTaskWorktreeContext;
+
+    expect(resolve(makeSpace(), makeTask(SPACE_ID, TASK_WORKSPACE))).toEqual({
+      worktreePath: WORKTREE_PATH,
+      branch: `space/${WORKTREE_SLUG}`,
+      mainRepoPath: TASK_WORKSPACE,
+    });
+  });
+
+  test('roots mainRepoPath at the task workspace when explicit, else the space workspace', () => {
+    const manager = makeManager({ path: WORKTREE_PATH, slug: WORKTREE_SLUG });
+    const resolve = (
+      manager as unknown as {
+        resolveTaskWorktreeContext: (space: Space, task: SpaceTask) => unknown;
+      }
+    ).resolveTaskWorktreeContext;
+
+    expect(resolve(makeSpace(), makeTask(SPACE_ID, undefined))).toEqual({
+      worktreePath: WORKTREE_PATH,
+      branch: `space/${WORKTREE_SLUG}`,
+      mainRepoPath: SPACE_WORKSPACE,
+    });
+  });
+
+  test('foreign task roots mainRepoPath at the executing space workspace', () => {
+    const manager = makeManager({ path: WORKTREE_PATH, slug: WORKTREE_SLUG });
+    const resolve = (
+      manager as unknown as {
+        resolveTaskWorktreeContext: (space: Space, task: SpaceTask) => unknown;
+      }
+    ).resolveTaskWorktreeContext;
+
+    expect(resolve(makeSpace(), makeTask('foreign-space', TASK_WORKSPACE))).toEqual({
+      worktreePath: WORKTREE_PATH,
+      branch: `space/${WORKTREE_SLUG}`,
+      mainRepoPath: SPACE_WORKSPACE,
+    });
+  });
+
+  test('returns undefined without a stored worktree record', () => {
+    const manager = makeManager(null);
+    const resolve = (
+      manager as unknown as {
+        resolveTaskWorktreeContext: (space: Space, task: SpaceTask) => unknown;
+      }
+    ).resolveTaskWorktreeContext;
+
+    expect(resolve(makeSpace(), makeTask())).toBeUndefined();
+  });
+
+  test('taskWorktreeContextPatch sets, preserves, and strips the context field', () => {
+    const manager = makeManager({ path: WORKTREE_PATH, slug: WORKTREE_SLUG });
+    const patch = (
+      manager as unknown as {
+        taskWorktreeContextPatch: (
+          agentSession: { getSessionData: () => { context?: unknown } },
+          space: Space | null,
+          task: SpaceTask | null
+        ) => unknown;
+      }
+    ).taskWorktreeContextPatch;
+    const space = makeSpace();
+    const task = makeTask(SPACE_ID, TASK_WORKSPACE);
+
+    const bare = { getSessionData: () => ({ context: undefined }) };
+    expect(patch(bare, space, task)).toEqual({
+      taskWorktree: {
+        worktreePath: WORKTREE_PATH,
+        branch: `space/${WORKTREE_SLUG}`,
+        mainRepoPath: TASK_WORKSPACE,
+      },
+    });
+
+    const preserving = {
+      getSessionData: () => ({ context: { spaceId: SPACE_ID, taskId: TASK_ID } }),
+    };
+    expect(patch(preserving, space, task)).toEqual({
+      spaceId: SPACE_ID,
+      taskId: TASK_ID,
+      taskWorktree: {
+        worktreePath: WORKTREE_PATH,
+        branch: `space/${WORKTREE_SLUG}`,
+        mainRepoPath: TASK_WORKSPACE,
+      },
+    });
+
+    const stale = {
+      getSessionData: () => ({
+        context: {
+          spaceId: SPACE_ID,
+          taskWorktree: { worktreePath: '/gone', branch: 'space/gone', mainRepoPath: '/gone' },
+        },
+      }),
+    };
+    expect(patch(stale, null, null)).toEqual({ spaceId: SPACE_ID });
+
+    const unchanged = { getSessionData: () => ({ context: { spaceId: SPACE_ID } }) };
+    expect(patch(unchanged, null, null)).toBeUndefined();
   });
 });
 

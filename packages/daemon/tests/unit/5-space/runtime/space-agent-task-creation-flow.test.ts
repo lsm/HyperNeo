@@ -425,8 +425,20 @@ describe('Agent-to-task creation flow — workspace selection', () => {
     expect(ctx.taskRepo.listBySpace(ctx.spaceId)).toHaveLength(0);
   });
 
-  test('omitting the workspace parameter keeps the task on the primary workspace', async () => {
+  test('omitting the workspace parameter is rejected once a second workspace is registered', async () => {
     seedWorkspace('docs');
+    const result = await makeHandlers(ctx).create_standalone_task({
+      title: 'Unrouted task',
+      description: 'No workspace given',
+    });
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('a task workspace is required');
+    expect(parsed.error).toContain('"docs" (');
+    expect(ctx.taskRepo.listBySpace(ctx.spaceId)).toHaveLength(0);
+  });
+
+  test('omitting the workspace parameter keeps the task on the primary in a single-workspace space', async () => {
     const result = await makeHandlers(ctx).create_standalone_task({
       title: 'Primary task',
       description: 'No workspace given',

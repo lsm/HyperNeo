@@ -240,6 +240,7 @@ export interface SpaceRuntimeConfig {
 
 interface StartWorkflowRunOptions {
   parentTaskId?: string;
+  workspacePath?: string;
 }
 
 type WorkflowTaskRecoveryTargetStatus = 'open' | 'in_progress';
@@ -3800,6 +3801,7 @@ export class SpaceRuntime {
           description: description ?? '',
           workflowRunId: run.id,
           status: 'open',
+          workspacePath: options.workspacePath,
         });
       }
       if (!canonicalTask) {

@@ -225,6 +225,30 @@ describe('createTaskWorktree', () => {
       manager.createTaskWorktree('nonexistent-space', 'any-task-id', 'Title', 1)
     ).rejects.toThrow('Space not found');
   });
+
+  test('non-git primary workspace fails with guidance instead of a raw git fatal', async () => {
+    const plainDir = join(
+      TMP_ROOT,
+      `plain-primary-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    mkdirSync(plainDir, { recursive: true });
+    const local = makeDb(plainDir);
+    try {
+      const localManager = new SpaceWorktreeManager(local.db);
+      const taskId = seedTask(local.db, local.spaceId, 'task-plain-primary', 66);
+      await expect(
+        localManager.createTaskWorktree(local.spaceId, taskId, 'Plain Primary Task', 66)
+      ).rejects.toThrow(
+        `Workspace "${realpathSync(plainDir)}" is not a git repository; cannot create a task worktree. Non-git workspaces are used directly by the task runtime instead of worktrees.`
+      );
+      expect(localManager.getTaskWorktreePathSync(local.spaceId, taskId)).toBeNull();
+    } finally {
+      local.db.close();
+      try {
+        rmSync(plainDir, { recursive: true, force: true });
+      } catch {}
+    }
+  });
 });
 
 describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
@@ -333,6 +357,28 @@ describe('createTaskWorktree — explicit repoRoot (WS11)', () => {
 
     expect(result.path).toBe(expectedPath);
     expect(existsSync(result.path)).toBe(true);
+  });
+
+  test('non-git repoRoot fails with guidance and persists no worktree row', async () => {
+    const plainDir = join(
+      TMP_ROOT,
+      `plain-secondary-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    mkdirSync(plainDir, { recursive: true });
+    const taskId = seedTask(db, spaceId, 'task-ws11-plain', 65);
+
+    try {
+      await expect(
+        manager.createTaskWorktree(spaceId, taskId, 'Plain Dir Task', 65, undefined, plainDir)
+      ).rejects.toThrow(
+        `Workspace "${realpathSync(plainDir)}" is not a git repository; cannot create a task worktree. Non-git workspaces are used directly by the task runtime instead of worktrees.`
+      );
+      expect(manager.getTaskWorktreePathSync(spaceId, taskId)).toBeNull();
+    } finally {
+      try {
+        rmSync(plainDir, { recursive: true, force: true });
+      } catch {}
+    }
   });
 
   test('removeTaskWorktree cleans up in the owning secondary repo and spares primary branches', async () => {

@@ -85,6 +85,17 @@ describe('SpaceGoalService', () => {
     db.close();
   });
 
+  it('rejects triggering an unpinned goal once a second workspace is registered', () => {
+    const goal = service.createGoal({ spaceId, title: 'Unpinned in multi-workspace space' });
+    db.prepare(
+      `INSERT INTO space_workspaces (id, space_id, path, label, is_primary, created_at, updated_at)
+       VALUES ('ws-secondary', ?, '/workspace/secondary', 'docs', 0, ?, ?)`
+    ).run(spaceId, Date.now(), Date.now());
+
+    expect(() => service.createImmediateTask(goal.id)).toThrow('a task workspace is required');
+    expect(goalRepo.getById(goal.id)?.activeTaskId).toBeNull();
+  });
+
   it('creates a goal with rolling state and an optional recurring check-in schedule', () => {
     const goal = service.createGoal({
       spaceId,

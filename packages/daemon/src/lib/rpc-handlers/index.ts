@@ -619,6 +619,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       db: deps.db.getDatabase(),
       goalRepo: spaceGoalRepo,
       taskRepo: spaceTaskRepo,
+      spaceRepo,
       evolutionRepo: deps.db.evolution,
       cursorRepo: deps.db.goalAutomationCursors,
       episodeService: evolutionEpisodeService,
