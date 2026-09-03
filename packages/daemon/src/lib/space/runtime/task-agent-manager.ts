@@ -5581,10 +5581,15 @@ export class TaskAgentManager {
         phase: 'spawn',
       });
 
-      await this.withSessionInjectLock(spawned.session.id, async () => {
-        await this.assertPostApprovalSpawnAdmissible(spaceId, taskId);
-        await this.injectMessageIntoSession(spawned, kickoffMessage);
-      });
+      try {
+        await this.withSessionInjectLock(spawned.session.id, async () => {
+          await this.assertPostApprovalSpawnAdmissible(spaceId, taskId);
+          await this.injectMessageIntoSession(spawned, kickoffMessage);
+        });
+      } catch (err) {
+        this.cancelBySessionId(actualSessionId);
+        throw err;
+      }
 
       log.info(
         `TaskAgentManager.spawnPostApprovalSubSession: spawned session ${actualSessionId} for agent "${slot.name}" (task ${taskId}, node ${matchedNodeId})`
