@@ -1132,8 +1132,12 @@ export function setupSpaceExportImportHandlers(
 
     const spaceId = params.spaceId;
 
+    const deferredAgentIds = new Set(
+      (importResult.deferredUnifiedUpdates ?? []).map((ref) => ref.agentId)
+    );
     for (const item of importResult.agents) {
       if (item.action === 'skipped') continue;
+      if (deferredAgentIds.has(item.id)) continue;
       const mirror = longHorizonAgentRepo.getById(item.id);
       if (!mirror) {
         log.warn(`Imported agent "${item.name}" has no unified record; skipping agent events`);

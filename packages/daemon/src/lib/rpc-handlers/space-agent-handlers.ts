@@ -446,65 +446,108 @@ function resolveUnifiedInstructions(
   return undefined;
 }
 
+interface CreateUnifiedAgentCtx extends UnifiedSpaceAgentMethodDeps {
+  params: UnifiedAgentCreateInput;
+  agentId: string;
+  handle: string;
+  displayName: string;
+  agent: SpaceLongHorizonAgent | null;
+}
+
+async function createAdmitRequestStage(ctx: CreateUnifiedAgentCtx): Promise<CreateUnifiedAgentCtx> {
+  const { params } = ctx;
+  if (!params.spaceId) throw new Error('spaceId is required');
+  const displayName = params.displayName ?? params.name;
+  if (!displayName && !params.handle) throw new Error('name is required');
+  const space = await ctx.spaceManager.getSpace(params.spaceId);
+  if (!space) throw new Error(`Space not found: ${params.spaceId}`);
+  return { ...ctx, agentId: params.id ?? '', displayName: displayName ?? '' };
+}
+
+function createResolveIdentityStage(ctx: CreateUnifiedAgentCtx): CreateUnifiedAgentCtx {
+  const { params, agentId } = ctx;
+  const handleSource = params.handle ?? ctx.displayName;
+  if (!handleSource) throw new Error('handle is required');
+  const handle = params.handle
+    ? resolveLongHorizonAgentCreateHandle(ctx, params.spaceId, agentId, params.handle)
+    : slugifyWithinLimit(handleSource, reservedLongHorizonHandles(ctx, params.spaceId, agentId));
+  const displayName = ctx.displayName || handle;
+  if (displayName.trim() === '') {
+    throw new Error('displayName cannot be blank');
+  }
+  ensureUnifiedDisplayNameAvailable(ctx, params.spaceId, displayName, agentId || undefined);
+  return { ...ctx, handle, displayName };
+}
+
+async function createValidateConfigStage(
+  ctx: CreateUnifiedAgentCtx
+): Promise<CreateUnifiedAgentCtx> {
+  const { params } = ctx;
+  const tools = params.tools ?? toolPermissionsToolsList(params.toolPermissions);
+  if (tools) {
+    const toolError = validateSpaceAgentTools(tools);
+    if (toolError) throw new Error(toolError);
+  }
+  if (params.model) {
+    const modelError = await validateAgentModel(params.model, params.provider ?? undefined);
+    if (modelError) throw new Error(modelError);
+  }
+  if (params.modelPool && params.modelPool.length > 0) {
+    const poolError = await validateAgentModelPool(params.modelPool);
+    if (poolError) throw new Error(poolError);
+  }
+  return ctx;
+}
+
+function createPersistStage(ctx: CreateUnifiedAgentCtx): CreateUnifiedAgentCtx {
+  const { params } = ctx;
+  const agent = ctx.repo.create({
+    id: params.id,
+    spaceId: params.spaceId,
+    handle: ctx.handle,
+    displayName: ctx.displayName,
+    templateKey: resolveUnifiedTemplateKey(params) ?? undefined,
+    status: params.status as SpaceLongHorizonAgent['status'],
+    instructions: resolveUnifiedInstructions(params) ?? '',
+    autonomyLevel: params.autonomyLevel as SpaceLongHorizonAgent['autonomyLevel'],
+    model: params.model ?? null,
+    thinkingLevel: params.thinkingLevel as SpaceLongHorizonAgent['thinkingLevel'],
+    provider: params.provider ?? null,
+    settingSources: params.settingSources ?? null,
+    toolPermissions: buildUnifiedToolPermissions(params) ?? {},
+    description: params.description,
+    modelPool: params.modelPool,
+  });
+  return { ...ctx, agent };
+}
+
+async function createPublishStage(ctx: CreateUnifiedAgentCtx): Promise<CreateUnifiedAgentCtx> {
+  await publishUnifiedAgentCreated(ctx.internalEventBus, ctx.agent!);
+  return ctx;
+}
+
+const runCreateUnifiedSpaceAgent = (superpipe({})('create-unified-space-agent') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(createAdmitRequestStage, 'ctx', 'ctx')
+  .pipe(createResolveIdentityStage, 'ctx', 'ctx')
+  .pipe(createValidateConfigStage, 'ctx', 'ctx')
+  .pipe(createPersistStage, 'ctx', 'ctx')
+  .pipe(createPublishStage, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: CreateUnifiedAgentCtx) => Promise<CreateUnifiedAgentCtx>;
+
 function buildUnifiedAgentCreate(
   deps: UnifiedSpaceAgentMethodDeps
 ): (params: UnifiedAgentCreateInput) => Promise<SpaceLongHorizonAgent> {
   return async (params: UnifiedAgentCreateInput): Promise<SpaceLongHorizonAgent> => {
-    if (!params.spaceId) throw new Error('spaceId is required');
-    const displayName = params.displayName ?? params.name;
-    if (!displayName && !params.handle) throw new Error('name is required');
-    const space = await deps.spaceManager.getSpace(params.spaceId);
-    if (!space) throw new Error(`Space not found: ${params.spaceId}`);
-    const agentId = params.id ?? '';
-    const handleSource = params.handle ?? displayName;
-    if (!handleSource) throw new Error('handle is required');
-    const handle = params.handle
-      ? resolveLongHorizonAgentCreateHandle(deps, params.spaceId, agentId, params.handle)
-      : slugifyWithinLimit(handleSource, reservedLongHorizonHandles(deps, params.spaceId, agentId));
-    const resolvedDisplayName = displayName ?? handle;
-    if (resolvedDisplayName.trim() === '') {
-      throw new Error('displayName cannot be blank');
-    }
-    ensureUnifiedDisplayNameAvailable(
-      deps,
-      params.spaceId,
-      resolvedDisplayName,
-      agentId || undefined
-    );
-
-    const tools = params.tools ?? toolPermissionsToolsList(params.toolPermissions);
-    if (tools) {
-      const toolError = validateSpaceAgentTools(tools);
-      if (toolError) throw new Error(toolError);
-    }
-    if (params.model) {
-      const modelError = await validateAgentModel(params.model, params.provider ?? undefined);
-      if (modelError) throw new Error(modelError);
-    }
-    if (params.modelPool && params.modelPool.length > 0) {
-      const poolError = await validateAgentModelPool(params.modelPool);
-      if (poolError) throw new Error(poolError);
-    }
-
-    const agent = deps.repo.create({
-      id: params.id,
-      spaceId: params.spaceId,
-      handle,
-      displayName: resolvedDisplayName,
-      templateKey: resolveUnifiedTemplateKey(params) ?? undefined,
-      status: params.status as SpaceLongHorizonAgent['status'],
-      instructions: resolveUnifiedInstructions(params) ?? '',
-      autonomyLevel: params.autonomyLevel as SpaceLongHorizonAgent['autonomyLevel'],
-      model: params.model ?? null,
-      thinkingLevel: params.thinkingLevel as SpaceLongHorizonAgent['thinkingLevel'],
-      provider: params.provider ?? null,
-      settingSources: params.settingSources ?? null,
-      toolPermissions: buildUnifiedToolPermissions(params) ?? {},
-      description: params.description,
-      modelPool: params.modelPool,
+    const ctx = await runCreateUnifiedSpaceAgent({
+      ...deps,
+      params,
+      agentId: '',
+      handle: '',
+      displayName: '',
+      agent: null,
     });
-    await publishUnifiedAgentCreated(deps.internalEventBus, agent);
-    return agent;
+    return ctx.agent!;
   };
 }
 
@@ -550,6 +593,84 @@ async function updateUnifiedAgentTwin(
   if (!result.ok) throw new Error(result.error);
   return result.value;
 }
+
+interface DeleteUnifiedAgentCtx extends UnifiedSpaceAgentMethodDeps {
+  params: { id?: string; agentId?: string; spaceId?: string };
+  agentId: string;
+  existing: SpaceLongHorizonAgent | null;
+  workerTwin: SpaceWorkerAgent | null;
+  spaceId: string;
+  routeTwin: boolean;
+}
+
+function deleteResolveTargetStage(ctx: DeleteUnifiedAgentCtx): DeleteUnifiedAgentCtx {
+  const agentId = ctx.params.id ?? ctx.params.agentId;
+  if (!agentId) throw new Error('id is required');
+  const existing = ctx.repo.getById(agentId);
+  const workerTwin = ctx.spaceAgentManager?.getById(agentId) ?? null;
+  if (!existing && !workerTwin) throw new Error(`Agent not found: ${agentId}`);
+  const spaceId = existing?.spaceId ?? workerTwin!.spaceId;
+  if (ctx.params.spaceId && spaceId !== ctx.params.spaceId) {
+    throw new Error(`Agent ${agentId} does not belong to space ${ctx.params.spaceId}`);
+  }
+  const isMigratedMirror = existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY;
+  const routeTwin =
+    !!workerTwin && workerTwin.spaceId === spaceId && (!existing || isMigratedMirror);
+  return { ...ctx, agentId, existing, workerTwin, spaceId, routeTwin };
+}
+
+function deleteAuthorizeStage(ctx: DeleteUnifiedAgentCtx): DeleteUnifiedAgentCtx {
+  const { agentId, existing, workerTwin, spaceId } = ctx;
+  const referenceCheck = ctx.spaceAgentManager?.isAgentReferenced(agentId);
+  if (referenceCheck?.referenced) {
+    const displayName = existing?.displayName ?? workerTwin?.name ?? agentId;
+    throw new Error(
+      `Cannot delete agent "${displayName}" - it is referenced by workflow nodes` +
+        referenceCheck.workflowNames.map((n) => ` (Workflow: ${n})`).join('')
+    );
+  }
+  const coordinatorId =
+    agentId === coordinatorLongHorizonAgentId(spaceId)
+      ? agentId
+      : (ctx.repo.getCoordinator(spaceId)?.id ?? null);
+  if (coordinatorId === agentId) {
+    throw new Error('The coordinator agent cannot be deleted');
+  }
+  return ctx;
+}
+
+function deleteApplyStage(ctx: DeleteUnifiedAgentCtx): DeleteUnifiedAgentCtx {
+  const { agentId, existing, spaceId, routeTwin } = ctx;
+  if (routeTwin) {
+    const mirrorBefore = existing != null;
+    const result = ctx.spaceAgentManager!.delete(agentId);
+    if (!result.ok) {
+      const detailsMsg = result.details?.length ? `\n${result.details.join('\n')}` : '';
+      throw new Error(`${result.error}${detailsMsg}`);
+    }
+    const mirrorStillExists = ctx.repo.getById(agentId) != null;
+    if (mirrorBefore && !mirrorStillExists) {
+      ctx.runtimeService?.removeLongHorizonAgentSubscriptions(spaceId, agentId);
+    }
+    return ctx;
+  }
+  ctx.repo.delete(agentId);
+  ctx.runtimeService?.removeLongHorizonAgentSubscriptions(spaceId, agentId);
+  return ctx;
+}
+
+async function deletePublishStage(ctx: DeleteUnifiedAgentCtx): Promise<DeleteUnifiedAgentCtx> {
+  await publishUnifiedAgentDeleted(ctx.internalEventBus, ctx.spaceId, ctx.agentId);
+  return ctx;
+}
+
+const runDeleteUnifiedSpaceAgent = (superpipe({})('delete-unified-space-agent') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(deleteResolveTargetStage, 'ctx', 'ctx')
+  .pipe(deleteAuthorizeStage, 'ctx', 'ctx')
+  .pipe(deleteApplyStage, 'ctx', 'ctx')
+  .pipe(deletePublishStage, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: DeleteUnifiedAgentCtx) => Promise<DeleteUnifiedAgentCtx>;
 
 interface UpdateUnifiedAgentCtx extends UnifiedSpaceAgentMethodDeps {
   params: UnifiedAgentUpdateInput;
@@ -738,48 +859,15 @@ export function registerUnifiedSpaceAgentMethods(
   });
 
   messageHub.onRequest(method('delete'), async (data) => {
-    const params = data as { id?: string; agentId?: string; spaceId?: string };
-    const agentId = params.id ?? params.agentId;
-    if (!agentId) throw new Error('id is required');
-    const existing = deps.repo.getById(agentId);
-    const workerTwin = deps.spaceAgentManager?.getById(agentId) ?? null;
-    if (!existing && !workerTwin) throw new Error(`Agent not found: ${agentId}`);
-    const spaceId = existing?.spaceId ?? workerTwin!.spaceId;
-    if (params.spaceId && spaceId !== params.spaceId) {
-      throw new Error(`Agent ${agentId} does not belong to space ${params.spaceId}`);
-    }
-    const referenceCheck = deps.spaceAgentManager?.isAgentReferenced(agentId);
-    if (referenceCheck?.referenced) {
-      const displayName = existing?.displayName ?? workerTwin?.name ?? agentId;
-      throw new Error(
-        `Cannot delete agent "${displayName}" - it is referenced by workflow nodes` +
-          referenceCheck.workflowNames.map((n) => ` (Workflow: ${n})`).join('')
-      );
-    }
-    const coordinatorId =
-      agentId === coordinatorLongHorizonAgentId(spaceId)
-        ? agentId
-        : (deps.repo.getCoordinator(spaceId)?.id ?? null);
-    if (coordinatorId === agentId) {
-      throw new Error('The coordinator agent cannot be deleted');
-    }
-    const isMigratedMirror = existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY;
-    if (workerTwin && workerTwin.spaceId === spaceId && (!existing || isMigratedMirror)) {
-      const mirrorBefore = existing != null;
-      const result = deps.spaceAgentManager!.delete(agentId);
-      if (!result.ok) {
-        const detailsMsg = result.details?.length ? `\n${result.details.join('\n')}` : '';
-        throw new Error(`${result.error}${detailsMsg}`);
-      }
-      const mirrorStillExists = deps.repo.getById(agentId) != null;
-      if (mirrorBefore && !mirrorStillExists) {
-        deps.runtimeService?.removeLongHorizonAgentSubscriptions(spaceId, agentId);
-      }
-    } else {
-      deps.repo.delete(agentId);
-      deps.runtimeService?.removeLongHorizonAgentSubscriptions(spaceId, agentId);
-    }
-    await publishUnifiedAgentDeleted(deps.internalEventBus, spaceId, agentId);
+    await runDeleteUnifiedSpaceAgent({
+      ...deps,
+      params: data as { id?: string; agentId?: string; spaceId?: string },
+      agentId: '',
+      existing: null,
+      workerTwin: null,
+      spaceId: '',
+      routeTwin: false,
+    });
     return { success: true };
   });
 
