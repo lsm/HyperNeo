@@ -265,7 +265,7 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
               type="text"
               value={tools}
               onInput={(e) => setTools((e.target as HTMLInputElement).value)}
-              class="w-full rounded-xl border border-line bg-surface-overlay/90 px-4 py-3 text-sm text-fg placeholder-gray-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
+              class="w-full rounded-xl border border-line bg-surface-overlay/90 px-4 py-3 text-sm text-fg placeholder:text-fg-faint shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
               placeholder="e.g. Read, Write, Edit, Bash"
               data-testid="lh-agent-tools-input"
             />
