@@ -178,7 +178,31 @@ describe('SpaceTaskRepository.casPostApprovalRouting', () => {
     expect(outcome).toBe('won');
     expect(repo.getTask(other.id)?.postApprovalSessionId).toBeNull();
     expect(repo.getTask(other.id)?.postApprovalStartedAt).toBeNull();
+    expect(repo.getTask(other.id)?.postApprovalBlockedReason).toContain('reclaimed');
     expect(repo.getTask(task.id)?.postApprovalSessionId).toBe('shared-worker');
+  });
+
+  test('a displaced terminal task keeps its terminal state without a blocked marker', () => {
+    const task = seedApprovedTask(repo, { workflowRunId: 'run-1' });
+    const other = seedApprovedTask(repo, { workflowRunId: 'run-2' });
+    repo.updateTask(other.id, {
+      status: 'done',
+      postApprovalSessionId: 'shared-worker',
+    });
+    const outcome = repo.casPostApprovalRouting(
+      task.id,
+      {
+        workflowRunId: 'run-1',
+        approvedAt: task.approvedAt ?? null,
+        priorPostApprovalSessionId: null,
+      },
+      { postApprovalSessionId: 'shared-worker', postApprovalStartedAt: 1234 }
+    );
+    expect(outcome).toBe('won');
+    const displaced = repo.getTask(other.id);
+    expect(displaced?.postApprovalSessionId).toBeNull();
+    expect(displaced?.postApprovalBlockedReason).toBeNull();
+    expect(displaced?.status).toBe('done');
   });
 
   test('a losing CAS does not steal the duplicate pointer either', () => {

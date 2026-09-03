@@ -708,7 +708,13 @@ export class SpaceTaskRepository {
     const now = Date.now();
     const stealDuplicatePointer = this.db.prepare(
       `UPDATE space_tasks
-         SET post_approval_session_id = NULL, post_approval_started_at = NULL, updated_at = ?
+         SET post_approval_session_id = NULL,
+             post_approval_started_at = NULL,
+             post_approval_blocked_reason = CASE
+               WHEN status = 'approved' THEN ?
+               ELSE post_approval_blocked_reason
+             END,
+             updated_at = ?
        WHERE post_approval_session_id = ? AND id != ?`
     );
     const recordRouting = this.db.prepare(
@@ -745,7 +751,12 @@ export class SpaceTaskRepository {
         expect.priorPostApprovalSessionId
       );
       if (result.changes === 0) return false;
-      stealDuplicatePointer.run(now, routing.postApprovalSessionId, taskId);
+      stealDuplicatePointer.run(
+        'post-approval routing pointer reclaimed by the canonical owner of the session; re-dispatch required',
+        now,
+        routing.postApprovalSessionId,
+        taskId
+      );
       return true;
     });
     if (!tx()) return 'superseded';

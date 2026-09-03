@@ -275,9 +275,7 @@ describe('post-approval retry pipeline stages', () => {
     });
     const ctx = await applyDispatch(ctxFor(raced, task.id, raced.repo.getTask(task.id)));
     expect(ctx.result?.mode).toBe('skipped');
-    expect(raced.repo.getTask(task.id)?.postApprovalBlockedReason).not.toContain(
-      'Approval recorded'
-    );
+    expect(raced.repo.getTask(task.id)?.postApprovalBlockedReason).toBeNull();
     expect(raced.repo.getTask(task.id)?.postApprovalSessionId).toBe('winner-session');
   });
 
