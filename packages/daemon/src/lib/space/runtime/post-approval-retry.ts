@@ -92,7 +92,8 @@ export async function applyDispatch(ctx: PostApprovalRetryCtx): Promise<PostAppr
     if (
       fresh?.status === 'approved' &&
       fresh.workflowRunId === task.workflowRunId &&
-      fresh.approvedAt === task.approvedAt
+      fresh.approvedAt === task.approvedAt &&
+      fresh.postApprovalSessionId === task.postApprovalSessionId
     ) {
       ctx.taskRepo.updateTask(task.id, {
         postApprovalBlockedReason: mapPostApprovalDispatchWarning(detail),

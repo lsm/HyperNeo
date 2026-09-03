@@ -257,6 +257,30 @@ describe('post-approval retry pipeline stages', () => {
     );
   });
 
+  test('applyDispatch does not stamp blocked after a concurrent routing recorded its worker', async () => {
+    const task = seedBlockedTask(h.repo);
+    const raced = makeHarness(db, {
+      dispatchImpl: async (taskId) => {
+        raced.repo.casPostApprovalRouting(
+          taskId,
+          {
+            workflowRunId: task.workflowRunId ?? null,
+            approvedAt: task.approvedAt ?? null,
+            priorPostApprovalSessionId: null,
+          },
+          { postApprovalSessionId: 'winner-session', postApprovalStartedAt: Date.now() }
+        );
+        throw new Error('inject failed: websocket gone');
+      },
+    });
+    const ctx = await applyDispatch(ctxFor(raced, task.id, raced.repo.getTask(task.id)));
+    expect(ctx.result?.mode).toBe('skipped');
+    expect(raced.repo.getTask(task.id)?.postApprovalBlockedReason).not.toContain(
+      'Approval recorded'
+    );
+    expect(raced.repo.getTask(task.id)?.postApprovalSessionId).toBe('winner-session');
+  });
+
   test('full retry halts on an inactive space without dispatching', async () => {
     const paused = makeHarness(db, { spaceOverrides: { paused: true } });
     const task = seedBlockedTask(paused.repo);

@@ -320,4 +320,23 @@ describe('SpaceRuntime.retryPostApprovalDispatch — canonical serialized retry'
     expect(result.mode).toBe('spawn');
     expect(ctx.taskRepo.getTask(task.id)?.approvalSource).toBeNull();
   });
+
+  test('requireAlreadyApproved dispatch refuses to approve a review checkpoint', async () => {
+    const task = seedReviewTask(ctx.taskRepo);
+
+    const result = await ctx.runtime.dispatchPostApproval(
+      task.id,
+      'human',
+      {},
+      {
+        requireAlreadyApproved: true,
+      }
+    );
+
+    expect(result.mode).toBe('skipped');
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.status).toBe('review');
+    expect(final?.approvalSource).toBeNull();
+    expect(ctx.spawned).toHaveLength(0);
+  });
 });

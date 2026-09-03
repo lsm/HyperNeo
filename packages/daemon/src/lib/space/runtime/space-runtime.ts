@@ -2714,7 +2714,8 @@ export class SpaceRuntime {
         taskRepo: this.config.taskRepo,
         workflowRunRepo: this.config.workflowRunRepo,
         spaceManager: this.config.spaceManager,
-        dispatch: (id, approvalSource) => this.dispatchPostApproval(id, approvalSource),
+        dispatch: (id, approvalSource) =>
+          this.dispatchPostApproval(id, approvalSource, {}, { requireAlreadyApproved: true }),
       })
     );
   }
@@ -2754,7 +2755,8 @@ export class SpaceRuntime {
   async dispatchPostApproval(
     taskId: string,
     approvalSource: SpaceApprovalSource,
-    contextExtras: Omit<PostApprovalRouteContext, 'approvalSource'> = {}
+    contextExtras: Omit<PostApprovalRouteContext, 'approvalSource'> = {},
+    options: { requireAlreadyApproved?: boolean } = {}
   ): Promise<PostApprovalRouteResult> {
     const router = this.getPostApprovalRouter();
     if (!router) {
@@ -2766,6 +2768,12 @@ export class SpaceRuntime {
     const current = this.config.taskRepo.getTask(taskId);
     if (!current) {
       const reason = `task ${taskId} not found`;
+      log.warn(`dispatchPostApproval: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
+
+    if (options.requireAlreadyApproved && current.status !== 'approved') {
+      const reason = `task ${taskId} is '${current.status}'; this dispatch path only serves already-approved tasks and will not approve a newer review generation`;
       log.warn(`dispatchPostApproval: ${reason}`);
       return { mode: 'skipped', reason };
     }
