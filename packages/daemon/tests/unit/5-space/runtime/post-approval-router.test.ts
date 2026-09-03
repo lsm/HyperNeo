@@ -529,8 +529,20 @@ describe('PostApprovalRouter.route — routing CAS', () => {
     });
   }
 
+  function seedReparentTargetRun(): void {
+    db.prepare(
+      `INSERT INTO space_workflows (id, space_id, name, created_at, updated_at)
+       VALUES ('wf-cas', ?, 'CAS WF', ?, ?)`
+    ).run(SPACE_ID, Date.now(), Date.now());
+    db.prepare(
+      `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+       VALUES ('run-other', ?, 'wf-cas', 'Other run', 'done', ?, ?)`
+    ).run(SPACE_ID, Date.now(), Date.now());
+  }
+
   test('cancels the spawned worker and skips when the task re-parented mid-spawn', async () => {
     const task = makeApprovedTask(taskRepo);
+    seedReparentTargetRun();
     const cancelled: string[] = [];
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({

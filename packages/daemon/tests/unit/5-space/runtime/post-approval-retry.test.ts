@@ -28,8 +28,12 @@ function makeDb(): BunDatabase {
      VALUES (?, '/tmp/ws', ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
   ).run(SPACE_ID, `Space ${SPACE_ID}`, SPACE_ID, Date.now(), Date.now());
   db.prepare(
-    `INSERT INTO space_workflow_runs (id, space_id, workflow_id, status, created_at, updated_at)
-     VALUES (?, ?, 'wf-retry', 'done', ?, ?)`
+    `INSERT INTO space_workflows (id, space_id, name, created_at, updated_at)
+     VALUES ('wf-retry', ?, 'Retry WF', ?, ?)`
+  ).run(SPACE_ID, Date.now(), Date.now());
+  db.prepare(
+    `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+     VALUES (?, ?, 'wf-retry', 'Retry run', 'done', ?, ?)`
   ).run(RUN_ID, SPACE_ID, Date.now(), Date.now());
   return db;
 }

@@ -118,8 +118,8 @@ describe('SpaceTaskManager', () => {
       const task = await manager.createTask({ title: 'T', description: '' });
       await manager.setTaskStatus(task.id, 'in_progress');
       await manager.setTaskStatus(task.id, 'approved');
+      await manager.setTaskStatus(task.id, 'done');
       await manager.updateTask(task.id, {
-        status: 'done',
         postApprovalSessionId: 'worker-1',
         postApprovalStartedAt: 1234,
         postApprovalBlockedReason: 'deferred',

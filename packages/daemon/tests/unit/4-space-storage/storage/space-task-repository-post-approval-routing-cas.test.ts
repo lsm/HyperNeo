@@ -14,6 +14,16 @@ function makeDb(): BunDatabase {
      allowed_models, session_ids, slug, status, created_at, updated_at)
      VALUES (?, '/tmp/ws', ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
   ).run(SPACE_ID, `Space ${SPACE_ID}`, SPACE_ID, Date.now(), Date.now());
+  db.prepare(
+    `INSERT INTO space_workflows (id, space_id, name, created_at, updated_at)
+     VALUES ('wf-cas', ?, 'CAS WF', ?, ?)`
+  ).run(SPACE_ID, Date.now(), Date.now());
+  for (const runId of ['run-1', 'run-2']) {
+    db.prepare(
+      `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+       VALUES (?, ?, 'wf-cas', ?, 'done', ?, ?)`
+    ).run(runId, SPACE_ID, `Run ${runId}`, Date.now(), Date.now());
+  }
   return db;
 }
 
