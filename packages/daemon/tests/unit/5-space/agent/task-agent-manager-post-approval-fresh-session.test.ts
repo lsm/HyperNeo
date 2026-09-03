@@ -18,13 +18,21 @@ const REVIEWER_NODE_ID = 'node-reviewer';
 const REVIEWER_AGENT = 'reviewer';
 const REVIEWER_SESSION_ID = 'reviewer-session-live';
 
-function makeFakeSession(id: string = REVIEWER_SESSION_ID) {
+function makeFakeSession(
+  id: string = REVIEWER_SESSION_ID,
+  opts: { status?: string; config?: Record<string, unknown> } = {}
+) {
   const calls: string[] = [];
   const configUpdates: Array<Record<string, unknown>> = [];
   const metadataUpdates: Array<Record<string, unknown>> = [];
-  const data: { id: string; workspacePath: string | null } = { id, workspacePath: null };
+  const data: {
+    id: string;
+    workspacePath: string | null;
+    status: string;
+    config?: Record<string, unknown>;
+  } = { id, workspacePath: null, status: opts.status ?? 'active', config: opts.config };
   const session = {
-    session: { id },
+    session: { id, config: opts.config },
     skillOverrides: undefined,
     toolGuards: undefined,
     onMissingWorkflowMcpServers: undefined,
@@ -37,7 +45,7 @@ function makeFakeSession(id: string = REVIEWER_SESSION_ID) {
       metadataUpdates.push(arg);
       if ('workspacePath' in arg) data.workspacePath = arg.workspacePath as string | null;
     },
-    getSessionData: (): { id: string; workspacePath: string | null } => data,
+    getSessionData: (): typeof data => data,
     mergeRuntimeMcpServers: (): void => {
       calls.push('mergeRuntimeMcpServers');
     },
@@ -109,13 +117,28 @@ function recordingCas(
   };
 }
 
-function makeManager(rows: unknown[] = [reviewerExec()]): TaskAgentManager {
+function makeManager(
+  rows: unknown[] = [reviewerExec()],
+  opts: {
+    spaceStopped?: boolean;
+    spacePaused?: boolean;
+    spaceArchived?: boolean;
+    taskStatus?: string;
+  } = {}
+): TaskAgentManager {
   return new TaskAgentManager({
     db: { getDatabase: () => new BunDatabase(':memory:') },
     sessionManager: { registerSession: () => {} },
     internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+    workflowRunRepo: { getRun: () => null },
     taskRepo: {
-      getTask: () => ({ id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID, title: 'Task 850' }),
+      getTask: () => ({
+        id: TASK_ID,
+        spaceId: SPACE_ID,
+        workflowRunId: RUN_ID,
+        title: 'Task 850',
+        status: opts.taskStatus ?? 'approved',
+      }),
     },
     nodeExecutionRepo: {
       listByWorkflowRun: () => rows,
@@ -126,15 +149,24 @@ function makeManager(rows: unknown[] = [reviewerExec()]): TaskAgentManager {
         rows.map((row) => row as Record<string, unknown>)
       ),
     },
-    spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+    spaceManager: {
+      getSpace: async () => ({
+        id: SPACE_ID,
+        workspacePath: '/tmp/ws',
+        stopped: opts.spaceStopped ?? false,
+        paused: opts.spacePaused ?? false,
+        status: opts.spaceArchived ? 'archived' : 'active',
+      }),
+    },
   } as unknown as TaskAgentManagerConfig);
 }
 
 function seedLiveSession(
   tam: TaskAgentManager,
-  sessionId: string = REVIEWER_SESSION_ID
+  sessionId: string = REVIEWER_SESSION_ID,
+  opts: { status?: string; config?: Record<string, unknown> } = {}
 ): ReturnType<typeof makeFakeSession> {
-  const fake = makeFakeSession(sessionId);
+  const fake = makeFakeSession(sessionId, opts);
   const subSessions = (
     tam as unknown as {
       subSessions: Map<string, Map<string, AgentSessionType>>;
@@ -233,6 +265,7 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
           spaceId: SPACE_ID,
           workflowRunId: RUN_ID,
           title: 'Task 850',
+          status: 'approved',
           workspacePath: '/task/reuse-override',
         }) as unknown as SpaceTask,
     };
@@ -610,6 +643,7 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
         spaceId: SPACE_ID,
         workflowRunId: RUN_ID,
         title: 'Task 850',
+        status: 'approved',
         workspacePath: '/task/override',
       }),
     };
@@ -634,6 +668,7 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
         spaceId: SPACE_ID,
         workflowRunId: 'run-other',
         title: 'Task 850',
+        status: 'approved',
       }),
     };
 
@@ -745,6 +780,153 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     expect(typeof fake.session.onMissingMemberSpaceMcpServers).toBe('function');
     await fake.session.onMissingMemberSpaceMcpServers!(result.sessionId, ['space-agent-tools']);
     expect(reattachCalls).toEqual([result.sessionId]);
+  });
+
+  const OTHER_NODE = 'node-other';
+  const OTHER_SESSION_ID = 'session-other';
+  const EXEC_LIVE_SESSION_ID = `space:${SPACE_ID}:task:${TASK_ID}:exec:exec-live`;
+  const FRESH_PA_SESSION_ID = `space:${SPACE_ID}:task:${TASK_ID}:post-approval:${REVIEWER_AGENT}`;
+
+  function execOnNode(nodeId: string, sessionId: string) {
+    return { ...reviewerExec(sessionId), id: `exec-${nodeId}`, workflowNodeId: nodeId };
+  }
+
+  function stubReuseInjection(
+    tam: TaskAgentManager
+  ): Array<{ sessionId: string; message: string }> {
+    const injected: Array<{ sessionId: string; message: string }> = [];
+    (
+      tam as unknown as { reinjectNodeAgentMcpServer: (...a: unknown[]) => Promise<void> }
+    ).reinjectNodeAgentMcpServer = async () => {};
+    (
+      tam as unknown as {
+        injectMessageIntoSession: (s: { session: { id: string } }, m: string) => Promise<string>;
+      }
+    ).injectMessageIntoSession = async (s, m) => {
+      injected.push({ sessionId: s.session.id, message: m });
+      return 'msg-id';
+    };
+    return injected;
+  }
+
+  function twoReviewerNodeWorkflow(): SpaceWorkflow {
+    return {
+      id: 'wf-1',
+      spaceId: SPACE_ID,
+      nodes: [
+        { id: REVIEWER_NODE_ID, agents: [{ agentId: 'agent-reviewer', name: REVIEWER_AGENT }] },
+        { id: OTHER_NODE, agents: [{ agentId: 'agent-reviewer', name: REVIEWER_AGENT }] },
+      ],
+      channels: [],
+      startNodeId: REVIEWER_NODE_ID,
+      endNodeId: REVIEWER_NODE_ID,
+    } as unknown as SpaceWorkflow;
+  }
+
+  function postApprovalSpawn(workflow: SpaceWorkflow) {
+    return {
+      task: { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID } as unknown as SpaceTask,
+      workflow,
+      targetAgent: REVIEWER_AGENT,
+      kickoffMessage: 'merge the PR',
+    };
+  }
+
+  test('rejects the spawn for an inactive space or a non-post-approval task', async () => {
+    for (const opts of [
+      { spaceStopped: true },
+      { taskStatus: 'cancelled' },
+      { taskStatus: 'archived' },
+      { taskStatus: 'stopped' },
+      { taskStatus: 'in_progress' },
+    ]) {
+      const tam = makeManager([], opts);
+      await expect(
+        tam.spawnPostApprovalSubSession(postApprovalSpawn(minimalWorkflow()))
+      ).rejects.toThrow('refusing to spawn');
+    }
+  });
+
+  test('reuses the live session bound to the requested node, not the newest same-name session', async () => {
+    const tam = makeManager([
+      execOnNode(REVIEWER_NODE_ID, REVIEWER_SESSION_ID),
+      execOnNode(OTHER_NODE, OTHER_SESSION_ID),
+    ]);
+    seedLiveSession(tam, REVIEWER_SESSION_ID);
+    seedLiveSession(tam, OTHER_SESSION_ID);
+    const injected = stubReuseInjection(tam);
+
+    const result = await tam.spawnPostApprovalSubSession(
+      postApprovalSpawn(twoReviewerNodeWorkflow())
+    );
+
+    expect(result.sessionId).toBe(REVIEWER_SESSION_ID);
+    expect(injected).toEqual([{ sessionId: REVIEWER_SESSION_ID, message: 'merge the PR' }]);
+    expect(fromInitSpy).not.toHaveBeenCalled();
+  });
+
+  test('ended, archived, or serverless live sessions are not reused and fall back to fresh', async () => {
+    for (const seed of [{ status: 'ended' }, { status: 'archived' }, { config: {} }] as Array<{
+      status?: string;
+      config?: Record<string, unknown>;
+    }>) {
+      const tam = makeManager([reviewerExec(EXEC_LIVE_SESSION_ID)]);
+      seedLiveSession(tam, EXEC_LIVE_SESSION_ID, seed);
+      stubFreshCreateSpawnPath(tam);
+
+      const result = await tam.spawnPostApprovalSubSession(
+        postApprovalSpawn(twoReviewerNodeWorkflow())
+      );
+
+      expect(result.sessionId).toBe(FRESH_PA_SESSION_ID);
+      expect(fromInitSpy).toHaveBeenCalledTimes(1);
+      fromInitSpy.mockClear();
+    }
+  });
+
+  test('rehydrates the requested node persisted workflow session instead of spawning fresh', async () => {
+    const tam = makeManager([execOnNode(REVIEWER_NODE_ID, EXEC_LIVE_SESSION_ID)]);
+    (
+      tam as unknown as {
+        rehydrateSubSession: (id: string) => Promise<AgentSessionType | null>;
+      }
+    ).rehydrateSubSession = async (id) =>
+      seedLiveSession(tam, id, {
+        config: { mcpServers: { 'node-agent': { type: 'sdk' } } },
+      }).session;
+    const injected = stubReuseInjection(tam);
+
+    const result = await tam.spawnPostApprovalSubSession(
+      postApprovalSpawn(twoReviewerNodeWorkflow())
+    );
+
+    expect(result.sessionId).toBe(EXEC_LIVE_SESSION_ID);
+    expect(injected).toEqual([{ sessionId: EXEC_LIVE_SESSION_ID, message: 'merge the PR' }]);
+    expect(fromInitSpy).not.toHaveBeenCalled();
+  });
+
+  test('fresh fallback does not name-reuse another node session', async () => {
+    const tam = makeManager([execOnNode(OTHER_NODE, OTHER_SESSION_ID)]);
+    seedLiveSession(tam, OTHER_SESSION_ID);
+    stubFreshCreateSpawnPath(tam);
+
+    const result = await tam.spawnPostApprovalSubSession(
+      postApprovalSpawn(twoReviewerNodeWorkflow())
+    );
+
+    expect(result.sessionId).toBe(FRESH_PA_SESSION_ID);
+    expect(fromInitSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test('rejects the spawn when the space pauses during the reuse probe', async () => {
+    const opts = { spacePaused: false };
+    const tam = makeManager([], opts);
+    const stub = tam as unknown as { findLiveSubSessionForAgent: () => Promise<string | null> };
+    stub.findLiveSubSessionForAgent = async () => ((opts.spacePaused = true), null);
+
+    await expect(
+      tam.spawnPostApprovalSubSession(postApprovalSpawn(minimalWorkflow()))
+    ).rejects.toThrow('became inactive');
   });
 });
 
