@@ -5603,12 +5603,6 @@ export class TaskAgentManager {
   }
 
   private async assertPostApprovalSpawnAdmissible(spaceId: string, taskId: string): Promise<void> {
-    const freshTask = this.config.taskRepo.getTask(taskId);
-    if (!freshTask || (freshTask.status !== 'approved' && freshTask.status !== 'done')) {
-      throw new Error(
-        `spawnPostApprovalSubSession: task ${taskId} is ${freshTask?.status ?? 'missing'}; refusing to spawn a post-approval session`
-      );
-    }
     const freshSpace = await this.config.spaceManager.getSpace(spaceId);
     if (
       !freshSpace ||
@@ -5618,6 +5612,12 @@ export class TaskAgentManager {
     ) {
       throw new Error(
         `spawnPostApprovalSubSession: space ${spaceId} became inactive; refusing to spawn`
+      );
+    }
+    const freshTask = this.config.taskRepo.getTask(taskId);
+    if (!freshTask || (freshTask.status !== 'approved' && freshTask.status !== 'done')) {
+      throw new Error(
+        `spawnPostApprovalSubSession: task ${taskId} is ${freshTask?.status ?? 'missing'}; refusing to spawn a post-approval session`
       );
     }
   }
