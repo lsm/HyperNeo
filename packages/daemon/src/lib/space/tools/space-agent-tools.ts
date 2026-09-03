@@ -2217,17 +2217,37 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       description?: string;
       priority?: SpaceTaskPriority;
       depends_on?: string[];
+      workspace?: string;
       status?: SpaceTaskStatus;
     }): Promise<ToolResult> {
       try {
         const spaceLevel = getSpaceAutonomyLevel ? await getSpaceAutonomyLevel(spaceId) : 1;
         const agentLevel = getCallingAgentAutonomyLevel();
         const { level } = resolveEffectiveAutonomyLevel({ spaceLevel, agentLevel });
+        let workspacePath: string | undefined;
+        if (args.workspace !== undefined) {
+          if (!config.spaceManager) {
+            return jsonResult({
+              success: false,
+              error: 'Workspace selection is not available for this space',
+            });
+          }
+          try {
+            workspacePath = await config.spaceManager.resolveWorkspaceSelection(
+              spaceId,
+              args.workspace
+            );
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            return jsonResult({ success: false, error: message });
+          }
+        }
         const hasChanges =
           args.title !== undefined ||
           args.description !== undefined ||
           args.priority !== undefined ||
           args.depends_on !== undefined ||
+          args.workspace !== undefined ||
           args.status !== undefined;
         const task = taskRepo.getTask(args.task_id);
         const fieldParams: UpdateSpaceTaskParams = {};
@@ -2235,6 +2255,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         if (args.description !== undefined) fieldParams.description = args.description;
         if (args.priority !== undefined) fieldParams.priority = args.priority;
         if (args.depends_on !== undefined) fieldParams.dependsOn = args.depends_on;
+        if (workspacePath !== undefined) fieldParams.workspacePath = workspacePath;
         const hasFieldUpdates = Object.keys(fieldParams).length > 0;
         const applyFieldUpdates = async (): Promise<SpaceTask> =>
           taskManager.updateTask(args.task_id, fieldParams, {
@@ -2247,6 +2268,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           description: args.description,
           priority: args.priority,
           depends_on: args.depends_on,
+          workspace: args.workspace,
           status: args.status,
           previousStatus: task?.status,
         };

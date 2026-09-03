@@ -198,6 +198,12 @@ export const UpdateTaskSchema = z.object({
     .describe(
       'New dependency list (replaces existing). All must be in the same space. Cycles and non-existent IDs are rejected.'
     ),
+  workspace: z
+    .string()
+    .optional()
+    .describe(
+      'Registered workspace label or absolute path to run this task in. Unknown labels or paths are rejected with the list of registered workspaces. Rejected when the task already has an active agent session or an existing worktree; set it before work starts.'
+    ),
   status: SpaceTaskStatusSchema.optional().describe(UpdateTaskStatusParamDescription),
 });
 

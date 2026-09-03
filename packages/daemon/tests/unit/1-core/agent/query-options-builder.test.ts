@@ -1755,8 +1755,12 @@ describe('QueryOptionsBuilder', () => {
           append: expect.stringContaining('Git Worktree Isolation'),
         })
       );
-      expect(options.systemPrompt?.append).toContain('/task/worktree');
-      expect(options.systemPrompt?.append).toContain('space/task-9-slug');
+      expect(options.systemPrompt).toEqual(
+        expect.objectContaining({ append: expect.stringContaining('/task/worktree') })
+      );
+      expect(options.systemPrompt).toEqual(
+        expect.objectContaining({ append: expect.stringContaining('space/task-9-slug') })
+      );
     });
 
     it('should combine custom prompt with task worktree isolation', async () => {
@@ -1816,8 +1820,12 @@ describe('QueryOptionsBuilder', () => {
       });
       const options = await newBuilder.build();
 
-      expect(options.systemPrompt?.append).toContain('/interactive/worktree');
-      expect(options.systemPrompt?.append).not.toContain('/task/worktree');
+      expect(options.systemPrompt).toEqual(
+        expect.objectContaining({ append: expect.stringContaining('/interactive/worktree') })
+      );
+      expect(options.systemPrompt).not.toEqual(
+        expect.objectContaining({ append: expect.stringContaining('/task/worktree') })
+      );
     });
   });
 
