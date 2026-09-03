@@ -39,7 +39,9 @@ interface Ctx {
   cancelled: string[];
 }
 
-function buildRuntime(options: { prUrl?: string; onSpawn?: () => void } = {}): Ctx {
+function buildRuntime(
+  options: { prUrl?: string; onSpawn?: () => void; onSpaceLookup?: () => void } = {}
+): Ctx {
   const db = makeDb();
   const workflowRunRepo = new SpaceWorkflowRunRepository(db);
   const taskRepo = new SpaceTaskRepository(db);
@@ -48,7 +50,15 @@ function buildRuntime(options: { prUrl?: string; onSpawn?: () => void } = {}): C
   const agentManager = new SpaceAgentManager(agentRepo);
   const workflowRepo = new SpaceWorkflowRepository(db);
   const workflowManager = new SpaceWorkflowManager(workflowRepo);
-  const spaceManager = new SpaceManager(db);
+  const realSpaceManager = new SpaceManager(db);
+  const spaceManager = options.onSpaceLookup
+    ? ({
+        getSpace: async (id: string) => {
+          options.onSpaceLookup?.();
+          return await realSpaceManager.getSpace(id);
+        },
+      } as unknown as SpaceManager)
+    : realSpaceManager;
 
   const emitted: Array<{ spaceId: string; task: SpaceTask }> = [];
   const injected: string[] = [];
@@ -416,6 +426,31 @@ describe('SpaceRuntime.retryPostApprovalDispatch — canonical serialized retry'
 
     expect(result.mode).toBe('skipped');
     expect(reactive.cancelled).toEqual(['stub-session']);
+    expect(reactive.taskRepo.getTask(task.id)?.postApprovalSessionId).toBeNull();
+  });
+
+  test('retry dispatch refuses a generation flipped during the awaited space lookup', async () => {
+    let flip: (() => void) | null = null;
+    let lookups = 0;
+    const reactive = buildRuntime({
+      prUrl: 'https://github.com/lsm/HyperNeo/pull/7',
+      onSpaceLookup: () => {
+        lookups += 1;
+        if (lookups > 1) flip?.();
+      },
+    });
+    const task = seedBlockedRoutedTask(reactive);
+    flip = () => {
+      reactive.taskRepo.updateTask(task.id, { approvedAt: Date.now() + 9000 });
+    };
+
+    const result = await reactive.runtime.retryPostApprovalDispatch(task.id);
+
+    expect(result.mode).toBe('skipped');
+    if (result.mode === 'skipped') {
+      expect(result.reason).toContain('awaiting lookups');
+    }
+    expect(reactive.spawned).toHaveLength(0);
     expect(reactive.taskRepo.getTask(task.id)?.postApprovalSessionId).toBeNull();
   });
 });

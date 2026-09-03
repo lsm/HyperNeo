@@ -2824,6 +2824,22 @@ export class SpaceRuntime {
       : null;
     const workflow = run ? (this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null) : null;
 
+    if (options.expectedApprovedAt !== undefined || options.expectedWorkflowRunId !== undefined) {
+      const rechecked = this.config.taskRepo.getTask(taskId);
+      if (
+        !rechecked ||
+        rechecked.status !== 'approved' ||
+        (options.expectedWorkflowRunId !== undefined &&
+          (rechecked.workflowRunId ?? null) !== options.expectedWorkflowRunId) ||
+        (options.expectedApprovedAt !== undefined &&
+          (rechecked.approvedAt ?? null) !== options.expectedApprovedAt)
+      ) {
+        const reason = `task ${taskId} changed approval generation while the dispatch was awaiting lookups; refusing the stale dispatch`;
+        log.warn(`dispatchPostApproval: ${reason}`);
+        return { mode: 'skipped', reason };
+      }
+    }
+
     const resolvedApprovalReason =
       typeof contextExtras.approvalReason === 'string'
         ? contextExtras.approvalReason
