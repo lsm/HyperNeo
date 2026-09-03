@@ -315,6 +315,48 @@ describe('handleTaskScheduleFire', () => {
     expect(taskRepo.getTask(result.taskId ?? '')?.workspacePath).toBe('/secondary');
   });
 
+  it('prefers the schedule workspace over the goal pin on schedule-spawned tasks', async () => {
+    const goal = goalRepo.create({
+      spaceId,
+      title: 'Pinned Goal',
+      workspacePath: '/secondary',
+    });
+    const future = Date.now() + 60_000;
+    const schedule = scheduleRepo.create({
+      spaceId,
+      title: 'Routed Standup',
+      description: 'Standup task',
+      triggerType: 'cron',
+      cronExpression: '0 9 * * 1-5',
+      timezone: 'UTC',
+      nextRunAt: future,
+      goalId: goal.id,
+      workspacePath: '/schedule-workspace',
+    });
+    scheduleRepo.updatePendingJobId(schedule.id, 'job-1');
+
+    const result = await handleTaskScheduleFire(
+      makeJob({ payload: { scheduleId: schedule.id } }),
+      makeGoalDeps()
+    );
+
+    expect(result.skipped).toBe(false);
+    expect(taskRepo.getTask(result.taskId ?? '')?.workspacePath).toBe('/schedule-workspace');
+  });
+
+  it('rejects firing a workspace-less schedule once a second workspace is registered', async () => {
+    db.prepare(
+      `INSERT INTO space_workspaces (id, space_id, path, label, is_primary, created_at, updated_at)
+       VALUES ('ws-secondary', ?, '/secondary', 'docs', 0, ?, ?)`
+    ).run(spaceId, Date.now(), Date.now());
+    const scheduleId = createCronSchedule();
+    scheduleRepo.updatePendingJobId(scheduleId, 'job-1');
+
+    await expect(
+      handleTaskScheduleFire(makeJob({ payload: { scheduleId } }), makeDeps())
+    ).rejects.toThrow('a task workspace is required');
+  });
+
   it('stores a null workspace on schedule-spawned tasks for unpinned goals', async () => {
     const goal = goalRepo.create({ spaceId, title: 'Unpinned Goal' });
     const scheduleId = createCronSchedule(goal.id);

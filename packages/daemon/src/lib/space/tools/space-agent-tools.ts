@@ -4148,9 +4148,28 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       cron_expression?: string;
       run_at?: number;
       timezone?: string;
+      workspace?: string;
     }): Promise<ToolResult> {
       if (!config.scheduleService) {
         return jsonResult({ success: false, error: 'Schedule management not available' });
+      }
+      let workspacePath: string | undefined;
+      if (args.workspace !== undefined) {
+        if (!config.spaceManager) {
+          return jsonResult({
+            success: false,
+            error: 'Workspace selection is not available for this space',
+          });
+        }
+        try {
+          workspacePath = await config.spaceManager.resolveWorkspaceSelection(
+            spaceId,
+            args.workspace
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResult({ success: false, error: message });
+        }
       }
       try {
         const schedule = config.scheduleService.createSchedule({
@@ -4166,6 +4185,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           timezone: args.timezone,
           createdByAgent: myAgentName ?? null,
           createdBySession: mySessionId ?? null,
+          workspacePath,
         });
         logAudit('create_scheduled_task', {
           title: args.title,
@@ -4173,6 +4193,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           cron_expression: args.cron_expression,
           run_at: args.run_at,
           timezone: args.timezone,
+          workspace: args.workspace,
         });
         return jsonResult({ success: true, schedule });
       } catch (err) {

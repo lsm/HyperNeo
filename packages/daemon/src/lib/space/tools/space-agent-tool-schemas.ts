@@ -963,6 +963,12 @@ export const CreateScheduledTaskSchema = z.object({
     .string()
     .optional()
     .describe('IANA timezone string (default: "UTC"). Example: "America/New_York"'),
+  workspace: z
+    .string()
+    .optional()
+    .describe(
+      'Optional workspace for tasks created by this schedule, given as the label or absolute path of a workspace registered in this space. Required when the space has more than one registered workspace and the schedule has no goal pin. Unknown labels or paths are rejected with the list of registered workspaces.'
+    ),
 });
 
 export const ListScheduledTasksSchema = z.object({

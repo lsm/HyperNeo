@@ -26,6 +26,7 @@ export interface CreateScheduleInput {
   timezone?: string;
   createdByAgent?: string | null;
   createdBySession?: string | null;
+  workspacePath?: string | null;
 }
 
 export interface CreateGoalScheduleInput extends CreateScheduleInput {
@@ -124,6 +125,7 @@ export class ScheduleService {
         createdByAgent: input.createdByAgent,
         createdBySession: input.createdBySession,
         goalId,
+        workspacePath: input.workspacePath,
       });
 
       const job = jobQueue.enqueue({
