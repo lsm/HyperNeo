@@ -869,13 +869,11 @@ export class TaskAgentManager {
         this.resolveSessionId(buildExecutionBaseSessionId(space.id, task.id, execution.id)),
       resolveWorkspacePath: async (task, space) => {
         const ownsSpace = task.spaceId === space.id;
-        const taskWorkspace = ownsSpace
-          ? (this.getTaskWorktreePath(task.id) ?? explicitTaskWorkspace(task))
-          : undefined;
+        const taskWorkspace = ownsSpace ? this.getTaskWorktreePath(task.id) : undefined;
         const workspace = resolveSpawnWorkspace({
           cachedTaskWorktreePath: taskWorkspace,
-          hasWorktreeManager: taskWorkspace ? false : Boolean(this.config.worktreeManager),
-          spaceWorkspacePath: space.workspacePath,
+          hasWorktreeManager: Boolean(this.config.worktreeManager),
+          spaceWorkspacePath: ownsSpace ? resolveTaskWorkspace(space, task) : space.workspacePath,
         });
         if (workspace.createWorktree && this.config.worktreeManager) {
           try {

@@ -28,6 +28,7 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
     createResult: 'success' | 'fail' | 'n/a';
     expectedOutcome: { kind: 'path'; value: string } | { kind: 'error'; message: string };
     expectedCreateCalled: boolean;
+    expectedRepoRoot?: string;
     expectedCachedPath: string | undefined;
     expectedWarning: string;
   };
@@ -135,7 +136,7 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         TASK_TITLE,
         TASK_NUMBER,
         undefined,
-        SPACE_WORKSPACE
+        row.expectedRepoRoot ?? SPACE_WORKSPACE
       );
     } else {
       expect(createTaskWorktree).not.toHaveBeenCalled();
@@ -203,14 +204,15 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
   describe('explicit task workspace family (WS10)', () => {
     test.each([
       {
-        name: 'explicit task workspace is honored without creating a space-root worktree',
+        name: 'explicit task workspace creates a worktree rooted at the task workspace',
         taskWorkspacePath: TASK_WORKSPACE,
         cachedTaskWorktreePath: undefined,
         hasWorktreeManager: true,
-        createResult: 'n/a',
-        expectedOutcome: { kind: 'path', value: TASK_WORKSPACE },
-        expectedCreateCalled: false,
-        expectedCachedPath: undefined,
+        createResult: 'success',
+        expectedOutcome: { kind: 'path', value: CREATED_PATH },
+        expectedCreateCalled: true,
+        expectedRepoRoot: TASK_WORKSPACE,
+        expectedCachedPath: CREATED_PATH,
         expectedWarning: '',
       },
       {
