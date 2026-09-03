@@ -3,6 +3,7 @@ import type {
   SpaceLongHorizonAgentTemplate,
   ThinkingLevel,
 } from '@hyperneo/shared';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { useEffect, useState } from 'preact/hooks';
 import { navigateToSpaceSession } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
@@ -70,17 +71,123 @@ function parseToolsInput(value: string): string[] {
     .filter(Boolean);
 }
 
+function nextFreeDisplayName(base: string, existingNames: Set<string>): string {
+  const taken = new Set([...existingNames].map((name) => name.trim().toLowerCase()));
+  if (!taken.has(base.trim().toLowerCase())) return base;
+  for (let i = 2; i < 100; i++) {
+    const candidate = `${base} ${i}`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+  return `${base} ${Date.now()}`;
+}
+
+interface AgentSaveForm {
+  displayName: string;
+  handle: string;
+  instructions: string;
+  autonomyLevel: number | null;
+  model: string;
+  thinkingLevel: '' | ThinkingLevel;
+  tools: string;
+}
+
+interface AgentSaveCtx {
+  agent: SpaceLongHorizonAgent | null;
+  template: SpaceLongHorizonAgentTemplate | null;
+  form: AgentSaveForm;
+  displayName: string;
+  handle: string;
+  instructions: string;
+  parsedTools: string[];
+  toolsChanged: boolean;
+}
+
+function agentSaveValidateStage(ctx: AgentSaveCtx): AgentSaveCtx {
+  if (!ctx.form.displayName.trim()) throw new Error('Name is required');
+  if (!ctx.form.handle.trim()) throw new Error('Handle is required');
+  return ctx;
+}
+
+function agentSaveNormalizeStage(ctx: AgentSaveCtx): AgentSaveCtx {
+  return {
+    ...ctx,
+    displayName: ctx.form.displayName.trim(),
+    handle: ctx.form.handle.trim(),
+    instructions: ctx.form.instructions.trim(),
+  };
+}
+
+function agentSaveParseToolsStage(ctx: AgentSaveCtx): AgentSaveCtx {
+  const parsedTools = parseToolsInput(ctx.form.tools);
+  return {
+    ...ctx,
+    parsedTools,
+    toolsChanged:
+      parsedTools.join('\n') !== (ctx.agent ? agentToolsList(ctx.agent).join('\n') : ''),
+  };
+}
+
+async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
+  const { form, parsedTools, toolsChanged, displayName, handle, instructions } = ctx;
+  if (ctx.agent) {
+    await spaceStore.updateAgent(ctx.agent.id, {
+      displayName,
+      instructions,
+      ...(isMigratedWorkerMirror(ctx.agent)
+        ? {}
+        : { autonomyLevel: form.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null }),
+      model: form.model.trim() || null,
+      thinkingLevel: (form.thinkingLevel || null) as ThinkingLevel | null,
+      ...(toolsChanged
+        ? isMigratedWorkerMirror(ctx.agent)
+          ? { tools: parsedTools }
+          : { toolPermissions: { ...ctx.agent.toolPermissions, tools: parsedTools } }
+        : {}),
+    });
+    return ctx;
+  }
+  await spaceStore.createAgent({
+    handle,
+    displayName,
+    templateKey: ctx.template?.key ?? null,
+    instructions,
+    autonomyLevel: form.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null,
+    model: form.model.trim() || null,
+    thinkingLevel: (form.thinkingLevel || null) as ThinkingLevel | null,
+    ...(parsedTools.length > 0 ? { tools: parsedTools } : {}),
+  });
+  return ctx;
+}
+
+const runAgentSave = (superpipe({})('save-unified-agent') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(agentSaveValidateStage, 'ctx', 'ctx')
+  .pipe(agentSaveNormalizeStage, 'ctx', 'ctx')
+  .pipe(agentSaveParseToolsStage, 'ctx', 'ctx')
+  .pipe(agentSavePersistStage, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: AgentSaveCtx) => Promise<AgentSaveCtx>;
+
 interface AgentEditorProps {
   template?: SpaceLongHorizonAgentTemplate | null;
   agent?: SpaceLongHorizonAgent | null;
   existingHandles: Set<string>;
+  existingNames: Set<string>;
   onSave: () => void;
   onCancel: () => void;
 }
 
-function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: AgentEditorProps) {
+function AgentEditor({
+  template,
+  agent,
+  existingHandles,
+  existingNames,
+  onSave,
+  onCancel,
+}: AgentEditorProps) {
   const isEdit = !!agent;
-  const [displayName, setDisplayName] = useState(agent?.displayName ?? template?.displayName ?? '');
+  const [displayName, setDisplayName] = useState(
+    agent?.displayName ?? (template ? nextFreeDisplayName(template.displayName, existingNames) : '')
+  );
   const [handle, setHandle] = useState(
     agent?.handle ?? (template ? nextFreeHandle(template.handle, existingHandles) : '')
   );
@@ -101,47 +208,27 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
   const migratedWorkerMirror = isEdit && agent ? isMigratedWorkerMirror(agent) : false;
 
   const handleSave = async () => {
-    if (!displayName.trim()) {
-      setError('Name is required');
-      return;
-    }
-    if (!handle.trim()) {
-      setError('Handle is required');
-      return;
-    }
     setSaving(true);
     setError(null);
     try {
-      const parsedTools = parseToolsInput(tools);
-      const toolsChanged =
-        parsedTools.join('\n') !== (agent ? agentToolsList(agent).join('\n') : '');
-      if (isEdit && agent) {
-        await spaceStore.updateAgent(agent.id, {
-          displayName: displayName.trim(),
-          instructions: instructions.trim(),
-          ...(migratedWorkerMirror
-            ? {}
-            : { autonomyLevel: autonomyLevel as 1 | 2 | 3 | 4 | 5 | null }),
-          model: model.trim() || null,
-          thinkingLevel: (thinkingLevel || null) as ThinkingLevel | null,
-          ...(toolsChanged
-            ? migratedWorkerMirror
-              ? { tools: parsedTools }
-              : { toolPermissions: { ...agent.toolPermissions, tools: parsedTools } }
-            : {}),
-        });
-      } else {
-        await spaceStore.createAgent({
-          handle: handle.trim(),
-          displayName: displayName.trim(),
-          templateKey: template?.key ?? null,
-          instructions: instructions.trim(),
-          autonomyLevel: autonomyLevel as 1 | 2 | 3 | 4 | 5 | null,
-          model: model.trim() || null,
-          thinkingLevel: (thinkingLevel || null) as ThinkingLevel | null,
-          ...(parsedTools.length > 0 ? { tools: parsedTools } : {}),
-        });
-      }
+      await runAgentSave({
+        agent: isEdit ? agent : null,
+        template: template ?? null,
+        form: {
+          displayName,
+          handle,
+          instructions,
+          autonomyLevel,
+          model,
+          thinkingLevel,
+          tools,
+        },
+        displayName: '',
+        handle: '',
+        instructions: '',
+        parsedTools: [],
+        toolsChanged: false,
+      });
       onSave();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save agent');
@@ -684,6 +771,7 @@ export function SpaceLongHorizonAgents({
     ? (agents.find((agent) => agent.handle === selectedHandle) ?? null)
     : null;
   const existingHandles = new Set(agents.map((a) => a.handle));
+  const existingNames = new Set(agents.map((a) => a.displayName));
 
   const templateInstanceCounts = new Map<string, number>();
   for (const agent of agents.filter((agent) => agent.status !== 'archived')) {
@@ -860,6 +948,7 @@ export function SpaceLongHorizonAgents({
           template={selectedTemplate}
           agent={editingAgent}
           existingHandles={existingHandles}
+          existingNames={existingNames}
           onSave={handleEditorSave}
           onCancel={handleEditorCancel}
         />

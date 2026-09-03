@@ -228,6 +228,25 @@ describe('SpaceLongHorizonAgents', () => {
     expect(getByText('Autonomy cannot be edited on a migrated worker agent.')).toBeTruthy();
   });
 
+  it('derives a unique display name when a template name is already taken', () => {
+    mockAgents.value = [makeLongHorizonAgent({ displayName: 'QA Engineer' })];
+    mockTemplates.value = [
+      {
+        key: 'qa',
+        handle: 'qa',
+        displayName: 'QA Engineer',
+        description: 'Validates product quality.',
+        instructions: 'Test the product.',
+        suggestedAutonomyLevel: 2,
+      },
+    ];
+    const { getByText, getByDisplayValue } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
+
+    expect(getByDisplayValue('QA Engineer 2')).toBeTruthy();
+  });
+
   it('renders a readable empty configured-agent state', () => {
     const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
