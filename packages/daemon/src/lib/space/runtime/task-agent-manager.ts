@@ -2104,7 +2104,7 @@ export class TaskAgentManager {
       if (task.workflowRunId) {
         const foreignExec = db
           .prepare(
-            `SELECT 1 AS foreign FROM node_executions
+            `SELECT 1 AS foreign_run FROM node_executions
               WHERE agent_session_id = ? AND workflow_run_id != ?`
           )
           .get(sessionId, task.workflowRunId);
