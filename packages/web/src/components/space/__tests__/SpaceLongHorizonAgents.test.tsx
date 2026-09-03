@@ -193,6 +193,39 @@ describe('SpaceLongHorizonAgents', () => {
     const params = mockUpdateAgent.mock.calls[0][1];
     expect(params.autonomyLevel).toBe(2);
     expect(params.tools).toBeUndefined();
+    expect(params.toolPermissions).toBeUndefined();
+  });
+
+  it('merges changed tools into existing toolPermissions for native agents', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({ toolPermissions: { mode: 'restricted', tools: ['Read'] } }),
+    ];
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    fireEvent.input(getByTestId('lh-agent-tools-input'), {
+      target: { value: 'Read, Bash' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    const params = mockUpdateAgent.mock.calls[0][1];
+    expect(params.tools).toBeUndefined();
+    expect(params.toolPermissions).toEqual({ mode: 'restricted', tools: ['Read', 'Bash'] });
+  });
+
+  it('disables autonomy editing for migrated worker mirrors', () => {
+    mockAgents.value = [makeLongHorizonAgent({ templateKey: 'migration.legacy_space_agent' })];
+    const { getByRole, getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+
+    for (const level of ['1', '2', '3', '4', '5']) {
+      expect(
+        (getByRole('button', { name: level, exact: true }) as HTMLButtonElement).disabled
+      ).toBe(true);
+    }
+    expect(getByText('Autonomy cannot be edited on a migrated worker agent.')).toBeTruthy();
   });
 
   it('renders a readable empty configured-agent state', () => {

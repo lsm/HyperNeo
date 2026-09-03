@@ -98,6 +98,7 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
   const [tools, setTools] = useState(agent ? agentToolsList(agent).join(', ') : '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const migratedWorkerMirror = isEdit && agent ? isMigratedWorkerMirror(agent) : false;
 
   const handleSave = async () => {
     if (!displayName.trim()) {
@@ -118,12 +119,16 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
         await spaceStore.updateAgent(agent.id, {
           displayName: displayName.trim(),
           instructions: instructions.trim(),
-          ...(isMigratedWorkerMirror(agent)
+          ...(migratedWorkerMirror
             ? {}
             : { autonomyLevel: autonomyLevel as 1 | 2 | 3 | 4 | 5 | null }),
           model: model.trim() || null,
           thinkingLevel: (thinkingLevel || null) as ThinkingLevel | null,
-          ...(toolsChanged ? { tools: parsedTools } : {}),
+          ...(toolsChanged
+            ? migratedWorkerMirror
+              ? { tools: parsedTools }
+              : { toolPermissions: { ...agent.toolPermissions, tools: parsedTools } }
+            : {}),
         });
       } else {
         await spaceStore.createAgent({
@@ -216,8 +221,9 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
                 <button
                   key={level}
                   type="button"
+                  disabled={migratedWorkerMirror}
                   onClick={() => setAutonomyLevel(autonomyLevel === level ? null : level)}
-                  class={`flex-1 rounded-xl border py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/60 ${
+                  class={`flex-1 rounded-xl border py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/60 disabled:cursor-not-allowed disabled:opacity-50 ${
                     autonomyLevel === level
                       ? 'border-warning/40 bg-warning text-on-warning shadow-[0_8px_20px_rgba(251,191,36,0.14)]'
                       : 'border-line bg-surface-overlay/85 text-fg-muted hover:border-line hover:bg-surface-raised hover:text-fg-soft'
@@ -227,8 +233,14 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
                 </button>
               ))}
             </div>
-            {autonomyLevel && (
-              <p class="mt-1 text-xs text-fg-muted">{AUTONOMY_LABELS[autonomyLevel]}</p>
+            {migratedWorkerMirror ? (
+              <p class="mt-1 text-xs text-fg-muted">
+                Autonomy cannot be edited on a migrated worker agent.
+              </p>
+            ) : (
+              autonomyLevel && (
+                <p class="mt-1 text-xs text-fg-muted">{AUTONOMY_LABELS[autonomyLevel]}</p>
+              )
             )}
           </div>
           <div class="grid grid-cols-2 gap-3">
