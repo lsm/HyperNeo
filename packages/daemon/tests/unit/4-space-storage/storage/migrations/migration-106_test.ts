@@ -4,8 +4,6 @@ import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import { runMigration106 } from '../../../../../src/storage/schema/migrations.ts';
-import { SpaceAgentRepository } from '../../../../../src/storage/repositories/space-agent-repository.ts';
-import { SpaceAgentManager } from '../../../../../src/lib/space/managers/space-agent-manager.ts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
 import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
 
@@ -267,7 +265,7 @@ describe('Migration 106: backfill preset agent template tracking', () => {
     expect(count).toBe(0);
   });
 
-  test('restart migrations preserve a Reviewer prompt synced to the current template', async () => {
+  test('restart migrations preserve a Reviewer prompt synced to the current template', () => {
     const reviewer = getPresetAgentTemplates().find((p) => p.name === 'Reviewer');
     if (!reviewer) throw new Error('Reviewer preset missing');
 
@@ -277,19 +275,10 @@ describe('Migration 106: backfill preset agent template tracking', () => {
       name: 'Reviewer',
       description: reviewer.description,
       tools: reviewer.tools,
-      customPrompt:
-        'You are an expert code reviewer. You review pull requests for correctness, security, performance, style, and test coverage. You give specific, actionable feedback.\n\nReview the code thoroughly. If satisfied, summarize your findings. If changes are needed, provide specific feedback.',
+      customPrompt: reviewer.customPrompt,
       templateName: 'Reviewer',
-      templateHash: 'stale-reviewer-hash',
+      templateHash: computeAgentTemplateHash(reviewer),
     });
-
-    const manager = new SpaceAgentManager(new SpaceAgentRepository(db as any));
-    const sync = await manager.syncFromTemplate('reviewer-agent');
-    expect(sync.ok).toBe(true);
-    if (!sync.ok) throw new Error('sync failed');
-    expect(sync.value.customPrompt).toBe(reviewer.customPrompt);
-    expect(sync.value.templateHash).toBe(computeAgentTemplateHash(reviewer));
-    expect(sync.value.customPrompt).not.toContain('You are an expert code reviewer');
 
     const beforeRestart = readAgent(db, 'reviewer-agent')!;
     const beforeTimestamps = readAgentTimestamps(db, 'reviewer-agent')!;

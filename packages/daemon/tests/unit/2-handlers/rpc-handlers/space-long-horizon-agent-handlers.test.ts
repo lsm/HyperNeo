@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { MessageHub } from '@hyperneo/shared';
-import { setupSpaceLongHorizonAgentHandlers } from '../../../../src/lib/rpc-handlers/space-long-horizon-agent-handlers';
+import { setupSpaceAgentHandlers } from '../../../../src/lib/rpc-handlers/space-agent-handlers';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
@@ -118,17 +118,21 @@ describe('Space long-horizon agent handlers', () => {
       delete: mock(() => ({ ok: true })),
     };
     internalEventBus = { publish: mock(async () => {}) };
-    setupSpaceLongHorizonAgentHandlers(
+    setupSpaceAgentHandlers(
       hubData.hub,
-      createMockSpaceManager(),
-      repo,
+      internalEventBus as never,
       spaceAgentManager as never,
-      runtimeService,
-      internalEventBus as never
+      createMockSpaceManager(),
+      {
+        getSession: () => null,
+        getRenderableTextMessages: () => [],
+      } as never,
+      repo,
+      runtimeService
     );
   });
 
-  describe('spaceLongHorizonAgent.create', () => {
+  describe('spaceAgent.create', () => {
     it('rejects a display name already used by another unified agent (case-insensitive)', async () => {
       repo.listBySpaceId = mock(() => [
         {
@@ -141,7 +145,7 @@ describe('Space long-horizon agent handlers', () => {
       ]) as SpaceLongHorizonAgentRepository['listBySpaceId'];
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.create', {
+        call(hubData.handlers, 'spaceAgent.create', {
           spaceId: 'space-1',
           handle: 'fresh',
           displayName: 'existing agent',
@@ -155,7 +159,7 @@ describe('Space long-horizon agent handlers', () => {
       ]);
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.create', {
+        call(hubData.handlers, 'spaceAgent.create', {
           spaceId: 'space-1',
           handle: 'fresh',
           displayName: 'Worker Name',
@@ -176,7 +180,7 @@ describe('Space long-horizon agent handlers', () => {
 
       const result = await call<{ agent: { id: string; handle: string } }>(
         hubData.handlers,
-        'spaceLongHorizonAgent.create',
+        'spaceAgent.create',
         {
           id: 'visible-agent',
           spaceId: 'space-1',
@@ -196,7 +200,7 @@ describe('Space long-horizon agent handlers', () => {
     it('slugifies raw RPC handles before exposing actor handles', async () => {
       const result = await call<{ agent: { id: string; handle: string } }>(
         hubData.handlers,
-        'spaceLongHorizonAgent.create',
+        'spaceAgent.create',
         {
           id: 'visible-agent',
           spaceId: 'space-1',
@@ -216,7 +220,7 @@ describe('Space long-horizon agent handlers', () => {
 
       const result = await call<{ agent: { id: string; handle: string } }>(
         hubData.handlers,
-        'spaceLongHorizonAgent.create',
+        'spaceAgent.create',
         {
           id: 'visible-agent',
           spaceId: 'space-1',
@@ -232,7 +236,7 @@ describe('Space long-horizon agent handlers', () => {
     it('publishes created events after successful RPC creates', async () => {
       const result = await call<{ agent: { id: string; spaceId: string; handle: string } }>(
         hubData.handlers,
-        'spaceLongHorizonAgent.create',
+        'spaceAgent.create',
         {
           id: 'visible-agent',
           spaceId: 'space-1',
@@ -241,7 +245,7 @@ describe('Space long-horizon agent handlers', () => {
         }
       );
 
-      expect(internalEventBus.publish).toHaveBeenCalledWith('spaceLongHorizonAgent.created', {
+      expect(internalEventBus.publish).toHaveBeenCalledWith('spaceAgent.created', {
         sessionId: 'space:space-1',
         spaceId: 'space-1',
         agent: result.agent,
@@ -249,7 +253,7 @@ describe('Space long-horizon agent handlers', () => {
     });
   });
 
-  describe('spaceLongHorizonAgent.update', () => {
+  describe('spaceAgent.update', () => {
     it('rejects handle changes on the default agent row (C-2 lock)', async () => {
       const coordinatorRow = {
         id: 'space-lh-agent:coordinator:space-1',
@@ -264,7 +268,7 @@ describe('Space long-horizon agent handlers', () => {
       ) as SpaceLongHorizonAgentRepository['getCoordinator'];
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+        call(hubData.handlers, 'spaceAgent.update', {
           agentId: coordinatorRow.id,
           spaceId: 'space-1',
           handle: 'renamed',
@@ -289,7 +293,7 @@ describe('Space long-horizon agent handlers', () => {
 
       for (const status of ['paused', 'archived', 'disabled']) {
         await expect(
-          call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+          call(hubData.handlers, 'spaceAgent.update', {
             agentId: coordinatorRow.id,
             spaceId: 'space-1',
             status,
@@ -313,7 +317,7 @@ describe('Space long-horizon agent handlers', () => {
         () => coordinatorRow
       ) as SpaceLongHorizonAgentRepository['getCoordinator'];
 
-      await call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+      await call(hubData.handlers, 'spaceAgent.update', {
         agentId: coordinatorRow.id,
         spaceId: 'space-1',
         instructions: 'Coordinate everything.',
@@ -330,7 +334,7 @@ describe('Space long-horizon agent handlers', () => {
 
     it('rejects invalid raw handle updates', async () => {
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+        call(hubData.handlers, 'spaceAgent.update', {
           agentId: 'agent-1',
           spaceId: 'space-1',
           handle: 'ops:bot',
@@ -346,7 +350,7 @@ describe('Space long-horizon agent handlers', () => {
       ]);
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+        call(hubData.handlers, 'spaceAgent.update', {
           agentId: 'agent-1',
           spaceId: 'space-1',
           handle: 'coder',
@@ -368,7 +372,7 @@ describe('Space long-horizon agent handlers', () => {
       ]) as SpaceLongHorizonAgentRepository['listBySpaceId'];
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+        call(hubData.handlers, 'spaceAgent.update', {
           agentId: 'agent-1',
           spaceId: 'space-1',
           displayName: 'taken name',
@@ -389,7 +393,7 @@ describe('Space long-horizon agent handlers', () => {
         },
       ]) as SpaceLongHorizonAgentRepository['listBySpaceId'];
 
-      await call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+      await call(hubData.handlers, 'spaceAgent.update', {
         agentId: 'agent-1',
         spaceId: 'space-1',
         displayName: 'Same Name',
@@ -405,7 +409,7 @@ describe('Space long-horizon agent handlers', () => {
 
       const result = await call<{ agent: { id: string; handle: string } }>(
         hubData.handlers,
-        'spaceLongHorizonAgent.update',
+        'spaceAgent.update',
         {
           agentId: 'agent-1',
           spaceId: 'space-1',
@@ -421,7 +425,7 @@ describe('Space long-horizon agent handlers', () => {
     });
 
     it('clears the session provider when the override is explicitly cleared (P2)', async () => {
-      await call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+      await call(hubData.handlers, 'spaceAgent.update', {
         agentId: 'agent-1',
         spaceId: 'space-1',
         provider: null,
@@ -434,12 +438,12 @@ describe('Space long-horizon agent handlers', () => {
     });
 
     it('does not clear the session provider when the override is set or untouched', async () => {
-      await call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+      await call(hubData.handlers, 'spaceAgent.update', {
         agentId: 'agent-1',
         spaceId: 'space-1',
         provider: 'kimi',
       });
-      await call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+      await call(hubData.handlers, 'spaceAgent.update', {
         agentId: 'agent-1',
         spaceId: 'space-1',
         displayName: 'Renamed',
@@ -451,7 +455,7 @@ describe('Space long-horizon agent handlers', () => {
     it('refreshes durable subscriptions and publishes updated events after policy updates', async () => {
       const result = await call<{ agent: { id: string; status: string } }>(
         hubData.handlers,
-        'spaceLongHorizonAgent.update',
+        'spaceAgent.update',
         {
           agentId: 'agent-1',
           spaceId: 'space-1',
@@ -478,7 +482,7 @@ describe('Space long-horizon agent handlers', () => {
         'space-1',
         'agent-1'
       );
-      expect(internalEventBus.publish).toHaveBeenCalledWith('spaceLongHorizonAgent.updated', {
+      expect(internalEventBus.publish).toHaveBeenCalledWith('spaceAgent.updated', {
         sessionId: 'space:space-1',
         spaceId: 'space-1',
         agent: result.agent,
@@ -486,7 +490,7 @@ describe('Space long-horizon agent handlers', () => {
     });
   });
 
-  describe('spaceLongHorizonAgent.delete', () => {
+  describe('spaceAgent.delete', () => {
     it('rejects deleting the default agent row so sessions never hold stale coordinator authority', async () => {
       const coordinatorRow = {
         id: 'space-lh-agent:coordinator:space-1',
@@ -501,7 +505,7 @@ describe('Space long-horizon agent handlers', () => {
       ) as SpaceLongHorizonAgentRepository['getCoordinator'];
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.delete', {
+        call(hubData.handlers, 'spaceAgent.delete', {
           agentId: coordinatorRow.id,
           spaceId: 'space-1',
         })
@@ -517,7 +521,7 @@ describe('Space long-horizon agent handlers', () => {
       }));
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.delete', {
+        call(hubData.handlers, 'spaceAgent.delete', {
           agentId: 'agent-1',
           spaceId: 'space-1',
         })
@@ -528,7 +532,7 @@ describe('Space long-horizon agent handlers', () => {
 
     it('rejects blank display names on create', async () => {
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.create', {
+        call(hubData.handlers, 'spaceAgent.create', {
           spaceId: 'space-1',
           handle: 'fresh',
           displayName: '   ',
@@ -554,7 +558,7 @@ describe('Space long-horizon agent handlers', () => {
       ]) as SpaceLongHorizonAgentRepository['listBySpaceId'];
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+        call(hubData.handlers, 'spaceAgent.update', {
           agentId: 'agent-1',
           spaceId: 'space-1',
           status: 'paused',
@@ -582,7 +586,7 @@ describe('Space long-horizon agent handlers', () => {
       ]) as SpaceLongHorizonAgentRepository['listBySpaceId'];
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+        call(hubData.handlers, 'spaceAgent.update', {
           agentId: 'agent-1',
           spaceId: 'space-1',
           status: 'active',
@@ -594,7 +598,7 @@ describe('Space long-horizon agent handlers', () => {
 
     it('rejects blank display names on update', async () => {
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+        call(hubData.handlers, 'spaceAgent.update', {
           agentId: 'agent-1',
           spaceId: 'space-1',
           displayName: '  ',
@@ -605,14 +609,10 @@ describe('Space long-horizon agent handlers', () => {
     });
 
     it('removes runtime subscriptions before deleting the agent row', async () => {
-      const result = await call<{ success: boolean }>(
-        hubData.handlers,
-        'spaceLongHorizonAgent.delete',
-        {
-          agentId: 'agent-1',
-          spaceId: 'space-1',
-        }
-      );
+      const result = await call<{ success: boolean }>(hubData.handlers, 'spaceAgent.delete', {
+        agentId: 'agent-1',
+        spaceId: 'space-1',
+      });
 
       expect(result).toEqual({ success: true });
       expect(runtimeService.removeLongHorizonAgentSubscriptions).toHaveBeenCalledWith(
@@ -620,7 +620,7 @@ describe('Space long-horizon agent handlers', () => {
         'agent-1'
       );
       expect(repo.delete).toHaveBeenCalledWith('agent-1');
-      expect(internalEventBus.publish).toHaveBeenCalledWith('spaceLongHorizonAgent.deleted', {
+      expect(internalEventBus.publish).toHaveBeenCalledWith('spaceAgent.deleted', {
         sessionId: 'space:space-1',
         spaceId: 'space-1',
         agentId: 'agent-1',
@@ -628,11 +628,11 @@ describe('Space long-horizon agent handlers', () => {
     });
   });
 
-  describe('spaceLongHorizonAgent.subscriptions', () => {
+  describe('spaceAgent.subscriptions', () => {
     it('lists subscriptions for an agent', async () => {
       const result = await call<{ subscriptions: unknown[] }>(
         hubData.handlers,
-        'spaceLongHorizonAgent.listSubscriptions',
+        'spaceAgent.listSubscriptions',
         { agentId: 'agent-1', spaceId: 'space-1' }
       );
 
@@ -643,7 +643,7 @@ describe('Space long-horizon agent handlers', () => {
     it('creates subscriptions and refreshes runtime target', async () => {
       const result = await call<{ subscription: { id: string; topic: string } }>(
         hubData.handlers,
-        'spaceLongHorizonAgent.createSubscription',
+        'spaceAgent.createSubscription',
         {
           spaceId: 'space-1',
           agentId: 'agent-1',
@@ -670,7 +670,7 @@ describe('Space long-horizon agent handlers', () => {
 
     it('rejects unregistered subscription sources', async () => {
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'gihub',
@@ -681,7 +681,7 @@ describe('Space long-horizon agent handlers', () => {
 
     it('rejects full topics whose source differs from the source field', async () => {
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -692,7 +692,7 @@ describe('Space long-horizon agent handlers', () => {
 
     it('rejects full topics whose source casing differs from the source field', async () => {
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -700,7 +700,7 @@ describe('Space long-horizon agent handlers', () => {
         })
       ).rejects.toThrow('Topic source "GitHub" does not match source "github"');
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -710,13 +710,13 @@ describe('Space long-horizon agent handlers', () => {
     });
 
     it('accepts GitHub owner/repo topic shorthands before known-source prefix checks', async () => {
-      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+      await call(hubData.handlers, 'spaceAgent.createSubscription', {
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',
         topic: 'space/neokai/pull_request/*',
       });
-      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+      await call(hubData.handlers, 'spaceAgent.createSubscription', {
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',
@@ -733,7 +733,7 @@ describe('Space long-horizon agent handlers', () => {
 
     it('rejects slash-separated GitHub entity actions', async () => {
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -746,7 +746,7 @@ describe('Space long-horizon agent handlers', () => {
 
     it('rejects GitHub entity patterns without dotted actions', async () => {
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -756,7 +756,7 @@ describe('Space long-horizon agent handlers', () => {
         'GitHub topic "owner/repo/pull_request/42" must use dotted entity actions like "pull_request/42.opened"'
       );
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -766,7 +766,7 @@ describe('Space long-horizon agent handlers', () => {
         'GitHub topic "github/owner/repo/pull_request/42" must use dotted entity actions like "pull_request/42.opened"'
       );
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -779,7 +779,7 @@ describe('Space long-horizon agent handlers', () => {
 
     it('rejects unsupported GitHub resources in exact and bare patterns', async () => {
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -789,7 +789,7 @@ describe('Space long-horizon agent handlers', () => {
         'GitHub topic "owner/repo/issue/42.opened" uses unsupported resource "issue"; supported resources: pull_request'
       );
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -799,7 +799,7 @@ describe('Space long-horizon agent handlers', () => {
         'GitHub topic "github/owner/repo/issue/42.opened" uses unsupported resource "issue"; supported resources: pull_request'
       );
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -809,7 +809,7 @@ describe('Space long-horizon agent handlers', () => {
         'GitHub topic "issue" uses unsupported resource "issue"; supported resources: pull_request'
       );
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -819,7 +819,7 @@ describe('Space long-horizon agent handlers', () => {
         'GitHub topic "issue.opened" uses unsupported resource "issue"; supported resources: pull_request'
       );
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -832,7 +832,7 @@ describe('Space long-horizon agent handlers', () => {
 
     it('rejects malformed GitHub entity actions and overlong shapes', async () => {
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -842,7 +842,7 @@ describe('Space long-horizon agent handlers', () => {
         'GitHub topic "owner/repo/pull_request/.opened" must use dotted entity actions like "pull_request/42.opened"'
       );
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -852,7 +852,7 @@ describe('Space long-horizon agent handlers', () => {
         'GitHub topic "owner/repo/pull_request/42." must use dotted entity actions like "pull_request/42.opened"'
       );
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -862,7 +862,7 @@ describe('Space long-horizon agent handlers', () => {
         'GitHub topic "owner/repo/pull_request/42.opened.extra" must use dotted entity actions like "pull_request/42.opened"'
       );
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -874,73 +874,73 @@ describe('Space long-horizon agent handlers', () => {
     });
 
     it('expands GitHub resource shorthands with entity wildcards', async () => {
-      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+      await call(hubData.handlers, 'spaceAgent.createSubscription', {
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',
         topic: 'pull_request.closed',
       });
-      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+      await call(hubData.handlers, 'spaceAgent.createSubscription', {
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',
         topic: 'pull_request',
       });
-      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+      await call(hubData.handlers, 'spaceAgent.createSubscription', {
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',
         topic: 'owner/repo/pull_request',
       });
-      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+      await call(hubData.handlers, 'spaceAgent.createSubscription', {
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',
         topic: 'github/owner/repo/pull_request',
       });
-      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+      await call(hubData.handlers, 'spaceAgent.createSubscription', {
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',
         topic: 'owner/repo/pull_request.closed',
       });
-      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+      await call(hubData.handlers, 'spaceAgent.createSubscription', {
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',
         topic: 'github/pull_request.closed',
       });
-      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+      await call(hubData.handlers, 'spaceAgent.createSubscription', {
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',
         topic: 'github/pull_request',
       });
-      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+      await call(hubData.handlers, 'spaceAgent.createSubscription', {
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',
         topic: 'github/pull_request/*.closed',
       });
-      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+      await call(hubData.handlers, 'spaceAgent.createSubscription', {
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',
         topic: 'github/pull_request/42.closed',
       });
-      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+      await call(hubData.handlers, 'spaceAgent.createSubscription', {
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',
         topic: 'github/neokai/pull_request/*',
       });
-      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+      await call(hubData.handlers, 'spaceAgent.createSubscription', {
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',
         topic: 'space/neokai/pull_request',
       });
-      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+      await call(hubData.handlers, 'spaceAgent.createSubscription', {
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',
@@ -972,7 +972,7 @@ describe('Space long-horizon agent handlers', () => {
       ]) as unknown as SpaceLongHorizonAgentRepository['listSubscriptions'];
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -997,7 +997,7 @@ describe('Space long-horizon agent handlers', () => {
       ]) as unknown as SpaceLongHorizonAgentRepository['listSubscriptions'];
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -1022,7 +1022,7 @@ describe('Space long-horizon agent handlers', () => {
       ]) as unknown as SpaceLongHorizonAgentRepository['listSubscriptions'];
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -1047,7 +1047,7 @@ describe('Space long-horizon agent handlers', () => {
       ]) as unknown as SpaceLongHorizonAgentRepository['listSubscriptions'];
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -1072,7 +1072,7 @@ describe('Space long-horizon agent handlers', () => {
       ]) as unknown as SpaceLongHorizonAgentRepository['listSubscriptions'];
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -1097,7 +1097,7 @@ describe('Space long-horizon agent handlers', () => {
       ]) as unknown as SpaceLongHorizonAgentRepository['listSubscriptions'];
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -1122,7 +1122,7 @@ describe('Space long-horizon agent handlers', () => {
       ]) as unknown as SpaceLongHorizonAgentRepository['listSubscriptions'];
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -1149,7 +1149,7 @@ describe('Space long-horizon agent handlers', () => {
       ]) as unknown as SpaceLongHorizonAgentRepository['listSubscriptions'];
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -1159,7 +1159,7 @@ describe('Space long-horizon agent handlers', () => {
         'Subscription pattern duplicates existing subscription sub-existing: github/*/*/pull_request/*'
       );
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -1187,7 +1187,7 @@ describe('Space long-horizon agent handlers', () => {
       ]) as unknown as SpaceLongHorizonAgentRepository['listSubscriptions'];
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+        call(hubData.handlers, 'spaceAgent.createSubscription', {
           spaceId: 'space-1',
           agentId: 'agent-1',
           source: 'github',
@@ -1213,7 +1213,7 @@ describe('Space long-horizon agent handlers', () => {
         },
       ]) as unknown as SpaceLongHorizonAgentRepository['listSubscriptions'];
 
-      await call(hubData.handlers, 'spaceLongHorizonAgent.createSubscription', {
+      await call(hubData.handlers, 'spaceAgent.createSubscription', {
         spaceId: 'space-1',
         agentId: 'agent-1',
         source: 'github',
@@ -1242,7 +1242,7 @@ describe('Space long-horizon agent handlers', () => {
 
       const result = await call<{ subscription: { id: string } }>(
         hubData.handlers,
-        'spaceLongHorizonAgent.createSubscription',
+        'spaceAgent.createSubscription',
         {
           spaceId: 'space-1',
           agentId: 'agent-1',
@@ -1258,7 +1258,7 @@ describe('Space long-horizon agent handlers', () => {
     });
 
     it('updates subscriptions and refreshes runtime target', async () => {
-      await call(hubData.handlers, 'spaceLongHorizonAgent.updateSubscription', {
+      await call(hubData.handlers, 'spaceAgent.updateSubscription', {
         subscriptionId: 'sub-1',
         spaceId: 'space-1',
         status: 'paused',
@@ -1295,7 +1295,7 @@ describe('Space long-horizon agent handlers', () => {
         updatedAt: 2,
       })) as unknown as SpaceLongHorizonAgentRepository['updateSubscription'];
 
-      await call(hubData.handlers, 'spaceLongHorizonAgent.updateSubscription', {
+      await call(hubData.handlers, 'spaceAgent.updateSubscription', {
         subscriptionId: 'sub-wildcard',
         spaceId: 'space-1',
         status: 'paused',
@@ -1318,7 +1318,7 @@ describe('Space long-horizon agent handlers', () => {
       })) as unknown as SpaceLongHorizonAgentRepository['getSubscription'];
 
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.updateSubscription', {
+        call(hubData.handlers, 'spaceAgent.updateSubscription', {
           subscriptionId: 'sub-wildcard',
           spaceId: 'space-1',
           topic: '*/space/task.done',
@@ -1329,7 +1329,7 @@ describe('Space long-horizon agent handlers', () => {
     it('deletes subscriptions and removes runtime target before deleting row', async () => {
       const result = await call<{ success: boolean }>(
         hubData.handlers,
-        'spaceLongHorizonAgent.deleteSubscription',
+        'spaceAgent.deleteSubscription',
         { subscriptionId: 'sub-1', spaceId: 'space-1' }
       );
 
@@ -1339,7 +1339,7 @@ describe('Space long-horizon agent handlers', () => {
     });
   });
 
-  describe('spaceLongHorizonAgent.listReminderCounts', () => {
+  describe('spaceAgent.listReminderCounts', () => {
     it('returns active-reminder counts for each requested agent in one call', async () => {
       repo.listReminders = mock((agentId: string) => {
         if (agentId === 'agent-1') {
@@ -1357,7 +1357,7 @@ describe('Space long-horizon agent handlers', () => {
 
       const result = await call<{ counts: Record<string, number> }>(
         hubData.handlers,
-        'spaceLongHorizonAgent.listReminderCounts',
+        'spaceAgent.listReminderCounts',
         { agentIds: ['agent-1', 'agent-2', 'agent-3'] }
       );
 
@@ -1368,15 +1368,15 @@ describe('Space long-horizon agent handlers', () => {
     });
 
     it('rejects when agentIds is missing', async () => {
-      await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.listReminderCounts', {})
-      ).rejects.toThrow('agentIds is required');
+      await expect(call(hubData.handlers, 'spaceAgent.listReminderCounts', {})).rejects.toThrow(
+        'agentIds is required'
+      );
     });
   });
 
-  describe('spaceLongHorizonAgent.listBuiltInTemplates', () => {
+  describe('spaceAgent.listBuiltInTemplates', () => {
     it('registers the handler', () => {
-      expect(hubData.handlers.has('spaceLongHorizonAgent.listBuiltInTemplates')).toBe(true);
+      expect(hubData.handlers.has('spaceAgent.listBuiltInTemplates')).toBe(true);
     });
 
     it('returns built-in long-horizon agent templates', async () => {
@@ -1387,7 +1387,7 @@ describe('Space long-horizon agent handlers', () => {
           reminderDefaults: unknown[];
           ownershipPatterns: unknown[];
         }>;
-      }>(hubData.handlers, 'spaceLongHorizonAgent.listBuiltInTemplates', {
+      }>(hubData.handlers, 'spaceAgent.listBuiltInTemplates', {
         spaceId: 'space-1',
       });
 
@@ -1401,14 +1401,14 @@ describe('Space long-horizon agent handlers', () => {
     });
 
     it('throws when spaceId is missing', async () => {
-      await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.listBuiltInTemplates', {})
-      ).rejects.toThrow('spaceId is required');
+      await expect(call(hubData.handlers, 'spaceAgent.listBuiltInTemplates', {})).rejects.toThrow(
+        'spaceId is required'
+      );
     });
 
     it('throws when space does not exist', async () => {
       await expect(
-        call(hubData.handlers, 'spaceLongHorizonAgent.listBuiltInTemplates', {
+        call(hubData.handlers, 'spaceAgent.listBuiltInTemplates', {
           spaceId: 'missing-space',
         })
       ).rejects.toThrow('Space not found: missing-space');
@@ -1416,7 +1416,7 @@ describe('Space long-horizon agent handlers', () => {
   });
 });
 
-describe('spaceLongHorizonAgent.createReminder — nextRunAt seeding', () => {
+describe('spaceAgent.createReminder — nextRunAt seeding', () => {
   let db: Database;
   let repo: SpaceLongHorizonAgentRepository;
   let handlers: Map<string, RequestHandler>;
@@ -1438,7 +1438,17 @@ describe('spaceLongHorizonAgent.createReminder — nextRunAt seeding', () => {
 
     const hubData = createMockMessageHub();
     handlers = hubData.handlers;
-    setupSpaceLongHorizonAgentHandlers(hubData.hub, createMockSpaceManager(), repo);
+    setupSpaceAgentHandlers(
+      hubData.hub,
+      { publish: mock(async () => {}) } as never,
+      {} as never,
+      createMockSpaceManager(),
+      {
+        getSession: () => null,
+        getRenderableTextMessages: () => [],
+      } as never,
+      repo
+    );
   });
 
   afterEach(() => {
@@ -1448,7 +1458,7 @@ describe('spaceLongHorizonAgent.createReminder — nextRunAt seeding', () => {
   it('seeds nextRunAt for a cron reminder so the scanner selects it when due', async () => {
     const result = await call<{ reminder: { id: string; nextRunAt: number | null } }>(
       handlers,
-      'spaceLongHorizonAgent.createReminder',
+      'spaceAgent.createReminder',
       {
         spaceId: 'space-1',
         agentId,
@@ -1467,7 +1477,7 @@ describe('spaceLongHorizonAgent.createReminder — nextRunAt seeding', () => {
     const runAt = Date.now() - 1000;
     const result = await call<{ reminder: { id: string; nextRunAt: number | null } }>(
       handlers,
-      'spaceLongHorizonAgent.createReminder',
+      'spaceAgent.createReminder',
       {
         spaceId: 'space-1',
         agentId,
@@ -1482,7 +1492,7 @@ describe('spaceLongHorizonAgent.createReminder — nextRunAt seeding', () => {
 
   it('requires runAt for triggerType "at"', async () => {
     await expect(
-      call(handlers, 'spaceLongHorizonAgent.createReminder', {
+      call(handlers, 'spaceAgent.createReminder', {
         spaceId: 'space-1',
         agentId,
         title: 'no-runat',
@@ -1493,7 +1503,7 @@ describe('spaceLongHorizonAgent.createReminder — nextRunAt seeding', () => {
 
   it('rejects an invalid cron expression', async () => {
     await expect(
-      call(handlers, 'spaceLongHorizonAgent.createReminder', {
+      call(handlers, 'spaceAgent.createReminder', {
         spaceId: 'space-1',
         agentId,
         title: 'bad-cron',

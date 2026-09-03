@@ -12,15 +12,15 @@ export async function publishUnifiedAgentCreated(
   sessionId: string = `space:${agent.spaceId}`
 ): Promise<void> {
   if (!internalEventBus) return;
-  const payload = { sessionId, spaceId: agent.spaceId, agent };
-  await Promise.all([
-    internalEventBus.publish('spaceAgent.created', payload).catch((err) => {
+  await internalEventBus
+    .publish('spaceAgent.created', {
+      sessionId,
+      spaceId: agent.spaceId,
+      agent,
+    })
+    .catch((err) => {
       log.warn('Failed to emit spaceAgent.created:', err);
-    }),
-    internalEventBus.publish('spaceLongHorizonAgent.created', payload).catch((err) => {
-      log.warn('Failed to emit spaceLongHorizonAgent.created:', err);
-    }),
-  ]);
+    });
 }
 
 export async function publishUnifiedAgentUpdated(
@@ -29,15 +29,15 @@ export async function publishUnifiedAgentUpdated(
   sessionId: string = `space:${agent.spaceId}`
 ): Promise<void> {
   if (!internalEventBus) return;
-  const payload = { sessionId, spaceId: agent.spaceId, agent };
-  await Promise.all([
-    internalEventBus.publish('spaceAgent.updated', payload).catch((err) => {
+  await internalEventBus
+    .publish('spaceAgent.updated', {
+      sessionId,
+      spaceId: agent.spaceId,
+      agent,
+    })
+    .catch((err) => {
       log.warn('Failed to emit spaceAgent.updated:', err);
-    }),
-    internalEventBus.publish('spaceLongHorizonAgent.updated', payload).catch((err) => {
-      log.warn('Failed to emit spaceLongHorizonAgent.updated:', err);
-    }),
-  ]);
+    });
 }
 
 export async function publishUnifiedAgentDeleted(
@@ -47,13 +47,9 @@ export async function publishUnifiedAgentDeleted(
   sessionId: string = `space:${spaceId}`
 ): Promise<void> {
   if (!internalEventBus) return;
-  const payload = { sessionId, spaceId, agentId };
-  await Promise.all([
-    internalEventBus.publish('spaceAgent.deleted', payload).catch((err) => {
+  await internalEventBus
+    .publish('spaceAgent.deleted', { sessionId, spaceId, agentId })
+    .catch((err) => {
       log.warn('Failed to emit spaceAgent.deleted:', err);
-    }),
-    internalEventBus.publish('spaceLongHorizonAgent.deleted', payload).catch((err) => {
-      log.warn('Failed to emit spaceLongHorizonAgent.deleted:', err);
-    }),
-  ]);
+    });
 }

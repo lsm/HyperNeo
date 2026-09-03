@@ -1460,7 +1460,7 @@ describe('Space Export/Import RPC Handlers', () => {
         expect(twin.toolPermissions).toEqual({ tools: ['Read', 'Grep'] });
 
         await Promise.resolve();
-        const unifiedEvent = emittedEvents.find((e) => e.name === 'spaceLongHorizonAgent.updated');
+        const unifiedEvent = emittedEvents.find((e) => e.name === 'spaceAgent.updated');
         expect(unifiedEvent).toBeTruthy();
         expect((unifiedEvent!.data as { agent: { id: string } }).agent.id).toBe(unifiedId);
       });
@@ -2089,9 +2089,7 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       await Promise.resolve();
-      const unifiedCreated = emittedEvents.filter(
-        (e) => e.name === 'spaceLongHorizonAgent.created'
-      );
+      const unifiedCreated = emittedEvents.filter((e) => e.name === 'spaceAgent.created');
       expect(unifiedCreated).toHaveLength(1);
     });
 

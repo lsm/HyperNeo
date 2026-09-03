@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { MessageHub, SDKMessage, Session } from '@hyperneo/shared';
 import { setupSpaceAgentHandlers } from '../../../../src/lib/rpc-handlers/space-agent-handlers';
-import { setupSpaceLongHorizonAgentHandlers } from '../../../../src/lib/rpc-handlers/space-long-horizon-agent-handlers';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import {
   coordinatorLongHorizonAgentId,
@@ -583,7 +582,7 @@ describe('Space Agent RPC Handlers', () => {
       expect(result.agent.templateKey).toBe('Coder');
     });
 
-    it('emits unified created events under both namespaces after creation', async () => {
+    it('emits unified created events after creation', async () => {
       await call(hubData.handlers, 'spaceAgent.create', {
         spaceId: 'space-1',
         name: 'EventAgent',
@@ -596,7 +595,7 @@ describe('Space Agent RPC Handlers', () => {
         [string, { spaceId: string; agent: { displayName: string } }]
       >;
       expect(published.map(([name]) => name)).toEqual(
-        expect.arrayContaining(['spaceAgent.created', 'spaceLongHorizonAgent.created'])
+        expect.arrayContaining(['spaceAgent.created'])
       );
       for (const [, payload] of published) {
         expect(payload.spaceId).toBe('space-1');
@@ -1212,14 +1211,14 @@ describe('Space Agent RPC Handlers', () => {
       expect(result.agent.modelPool ?? null).toBeNull();
     });
 
-    it('emits unified updated events under both namespaces', async () => {
+    it('emits unified updated events', async () => {
       await call(hubData.handlers, 'spaceAgent.update', { id: agentId, name: 'Updated' });
       await new Promise((r) => setTimeout(r, 0));
 
       expect(daemonData.publishMock).toHaveBeenCalled();
       const published = daemonData.publishMock.mock.calls as Array<[string, unknown]>;
       expect(published.map(([name]) => name)).toEqual(
-        expect.arrayContaining(['spaceAgent.updated', 'spaceLongHorizonAgent.updated'])
+        expect.arrayContaining(['spaceAgent.updated'])
       );
     });
 
@@ -1394,13 +1393,13 @@ describe('Space Agent RPC Handlers', () => {
       );
     });
 
-    it('emits deleted events under both namespaces', async () => {
+    it('emits deleted events', async () => {
       await call(hubData.handlers, 'spaceAgent.delete', { id: agentId });
 
       expect(daemonData.publishMock).toHaveBeenCalled();
       const published = daemonData.publishMock.mock.calls as Array<[string, { agentId: string }]>;
       expect(published.map(([name]) => name)).toEqual(
-        expect.arrayContaining(['spaceAgent.deleted', 'spaceLongHorizonAgent.deleted'])
+        expect.arrayContaining(['spaceAgent.deleted'])
       );
       for (const [, payload] of published) {
         expect(payload.agentId).toBe(agentId);
@@ -1450,51 +1449,7 @@ describe('Space Agent RPC Handlers', () => {
     });
   });
 
-  describe('spaceLongHorizonAgent namespace aliases', () => {
-    it('registers the legacy CRUD names as aliases of the unified handlers', async () => {
-      const aliasHub = createMockMessageHub();
-      setupSpaceLongHorizonAgentHandlers(
-        aliasHub.hub,
-        spaceManagerData.spaceManager,
-        longHorizonRepo,
-        manager,
-        undefined,
-        daemonData.internalEventBus
-      );
-
-      for (const name of [
-        'spaceLongHorizonAgent.list',
-        'spaceLongHorizonAgent.create',
-        'spaceLongHorizonAgent.update',
-        'spaceLongHorizonAgent.delete',
-        'spaceLongHorizonAgent.listBuiltInTemplates',
-        'spaceLongHorizonAgent.listReminders',
-        'spaceLongHorizonAgent.listReminderCounts',
-        'spaceLongHorizonAgent.createReminder',
-        'spaceLongHorizonAgent.deleteReminder',
-        'spaceLongHorizonAgent.listSubscriptions',
-        'spaceLongHorizonAgent.createSubscription',
-        'spaceLongHorizonAgent.updateSubscription',
-        'spaceLongHorizonAgent.deleteSubscription',
-      ]) {
-        expect(aliasHub.handlers.has(name)).toBe(true);
-      }
-
-      const created = await call<{ agent: { displayName: string } }>(
-        aliasHub.handlers,
-        'spaceLongHorizonAgent.create',
-        { spaceId: 'space-1', handle: 'alias-created', displayName: 'Alias Created' }
-      );
-      expect(created.agent.displayName).toBe('Alias Created');
-
-      const listed = await call<{ agents: { handle: string }[] }>(
-        aliasHub.handlers,
-        'spaceLongHorizonAgent.list',
-        { spaceId: 'space-1' }
-      );
-      expect(listed.agents.map((a) => a.handle)).toContain('alias-created');
-    });
-
+  describe('spaceAgent reminders and subscriptions', () => {
     it('registers reminder and subscription CRUD on the spaceAgent namespace', async () => {
       for (const name of [
         'spaceAgent.listReminders',
@@ -1535,335 +1490,6 @@ describe('Space Agent RPC Handlers', () => {
         { agentIds: [created.agent.id] }
       );
       expect(counts[created.agent.id]).toBe(1);
-    });
-  });
-
-  describe('spaceAgent.getDriftReport', () => {
-    it('registers the handler', () => {
-      expect(hubData.handlers.has('spaceAgent.getDriftReport')).toBe(true);
-    });
-
-    it('returns an empty agents array for a space with no preset-tracked agents', async () => {
-      const result = await call<{
-        report: {
-          spaceId: string;
-          agents: Array<{ updateAvailable: boolean; customized: boolean }>;
-        };
-      }>(hubData.handlers, 'spaceAgent.getDriftReport', { spaceId: 'space-1' });
-
-      expect(result.report.spaceId).toBe('space-1');
-      expect(result.report.agents).toEqual([]);
-    });
-
-    it('reports an updateAvailable+customized entry when stored hash differs and row was edited', async () => {
-      await manager.create({
-        spaceId: 'space-1',
-        name: 'Coder',
-        description: 'old',
-        tools: ['Read'],
-        customPrompt: 'old',
-        templateName: 'Coder',
-        templateHash: 'stale-hash',
-      });
-
-      const result = await call<{
-        report: {
-          spaceId: string;
-          agents: Array<{
-            agentName: string;
-            updateAvailable: boolean;
-            customized: boolean;
-            storedHash: string | null;
-          }>;
-        };
-      }>(hubData.handlers, 'spaceAgent.getDriftReport', { spaceId: 'space-1' });
-
-      expect(result.report.agents).toHaveLength(1);
-      expect(result.report.agents[0].agentName).toBe('Coder');
-      expect(result.report.agents[0].updateAvailable).toBe(true);
-      expect(result.report.agents[0].customized).toBe(true);
-      expect(result.report.agents[0].storedHash).toBe('stale-hash');
-    });
-
-    it('throws when spaceId is missing', async () => {
-      await expect(call(hubData.handlers, 'spaceAgent.getDriftReport', {})).rejects.toThrow(
-        'spaceId is required'
-      );
-    });
-
-    it('throws when space does not exist', async () => {
-      await expect(
-        call(hubData.handlers, 'spaceAgent.getDriftReport', { spaceId: 'ghost' })
-      ).rejects.toThrow('Space not found');
-    });
-  });
-
-  describe('spaceAgent.syncFromTemplate', () => {
-    it('registers the handler', () => {
-      expect(hubData.handlers.has('spaceAgent.syncFromTemplate')).toBe(true);
-    });
-
-    it('throws when spaceId is missing', async () => {
-      await expect(
-        call(hubData.handlers, 'spaceAgent.syncFromTemplate', { agentId: 'a-1' })
-      ).rejects.toThrow('spaceId is required');
-    });
-
-    it('throws when agentId is missing', async () => {
-      await expect(
-        call(hubData.handlers, 'spaceAgent.syncFromTemplate', { spaceId: 'space-1' })
-      ).rejects.toThrow('agentId is required');
-    });
-
-    it('throws when space does not exist', async () => {
-      await expect(
-        call(hubData.handlers, 'spaceAgent.syncFromTemplate', {
-          spaceId: 'ghost',
-          agentId: 'a-1',
-        })
-      ).rejects.toThrow('Space not found');
-    });
-
-    it('throws when agent does not exist', async () => {
-      await expect(
-        call(hubData.handlers, 'spaceAgent.syncFromTemplate', {
-          spaceId: 'space-1',
-          agentId: 'ghost-agent',
-        })
-      ).rejects.toThrow('Agent not found');
-    });
-
-    it('throws when agent belongs to a different space (cross-space attack)', async () => {
-      insertSpace(db, 'space-2');
-      spaceManagerData.getSpaceMock.mockImplementation(async (id: string) => {
-        if (id === 'space-1' || id === 'space-2') return { id } as never;
-        return null;
-      });
-      const created = await manager.create({
-        spaceId: 'space-2',
-        name: 'Coder',
-        templateName: 'Coder',
-        templateHash: 'h',
-      });
-      if (!created.ok) throw new Error('create failed');
-
-      await expect(
-        call(hubData.handlers, 'spaceAgent.syncFromTemplate', {
-          spaceId: 'space-1',
-          agentId: created.value.id,
-        })
-      ).rejects.toThrow('Agent not found');
-    });
-
-    it('does not sync matching long-horizon event agents after template sync', async () => {
-      const created = await manager.create({
-        spaceId: 'space-1',
-        name: 'Coder',
-        description: 'old',
-        tools: ['Read'],
-        customPrompt: 'old',
-        templateName: 'Coder',
-        templateHash: 'stale',
-      });
-      if (!created.ok) throw new Error('create failed');
-      db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(created.value.id);
-      const longHorizonAgent = longHorizonRepo.create({
-        id: created.value.id,
-        spaceId: 'space-1',
-        handle: created.value.handle,
-        displayName: created.value.name,
-        instructions: 'old',
-        toolPermissions: { tools: ['Read'] },
-      });
-
-      await call(hubData.handlers, 'spaceAgent.syncFromTemplate', {
-        spaceId: 'space-1',
-        agentId: created.value.id,
-      });
-
-      expect(longHorizonRepo.getById(longHorizonAgent.id)).toEqual(
-        expect.objectContaining({
-          instructions: 'old',
-          toolPermissions: { tools: ['Read'] },
-        })
-      );
-    });
-
-    it('returns the updated agent and emits unified updated events', async () => {
-      const created = await manager.create({
-        spaceId: 'space-1',
-        name: 'Coder',
-        description: 'old',
-        tools: ['Read'],
-        customPrompt: 'old',
-        templateName: 'Coder',
-        templateHash: 'stale',
-      });
-      if (!created.ok) throw new Error('create failed');
-
-      daemonData.publishMock.mockClear();
-
-      const result = await call<{ agent: { id: string; templateName: string | null } }>(
-        hubData.handlers,
-        'spaceAgent.syncFromTemplate',
-        { spaceId: 'space-1', agentId: created.value.id }
-      );
-
-      expect(result.agent.id).toBe(created.value.id);
-      expect(result.agent.templateName).toBe('Coder');
-
-      await new Promise((r) => setTimeout(r, 0));
-      expect(daemonData.publishMock).toHaveBeenCalled();
-      const published = daemonData.publishMock.mock.calls as Array<
-        [string, { spaceId: string; agent: { id: string } }]
-      >;
-      expect(published.map(([name]) => name)).toEqual(
-        expect.arrayContaining(['spaceAgent.updated', 'spaceLongHorizonAgent.updated'])
-      );
-      for (const [, payload] of published) {
-        expect(payload.spaceId).toBe('space-1');
-        expect(payload.agent.id).toBe(created.value.id);
-      }
-    });
-  });
-
-  describe('spaceAgent.previewTemplateSync', () => {
-    it('registers the handler', () => {
-      expect(hubData.handlers.has('spaceAgent.previewTemplateSync')).toBe(true);
-    });
-
-    it('throws when spaceId is missing', async () => {
-      await expect(
-        call(hubData.handlers, 'spaceAgent.previewTemplateSync', { agentId: 'a-1' })
-      ).rejects.toThrow('spaceId is required');
-    });
-
-    it('throws when agentId is missing', async () => {
-      await expect(
-        call(hubData.handlers, 'spaceAgent.previewTemplateSync', { spaceId: 'space-1' })
-      ).rejects.toThrow('agentId is required');
-    });
-
-    it('throws when space does not exist', async () => {
-      await expect(
-        call(hubData.handlers, 'spaceAgent.previewTemplateSync', {
-          spaceId: 'ghost',
-          agentId: 'a-1',
-        })
-      ).rejects.toThrow('Space not found');
-    });
-
-    it('throws when agent does not exist', async () => {
-      await expect(
-        call(hubData.handlers, 'spaceAgent.previewTemplateSync', {
-          spaceId: 'space-1',
-          agentId: 'ghost-agent',
-        })
-      ).rejects.toThrow('Agent not found');
-    });
-
-    it('throws when agent belongs to a different space (cross-space attack)', async () => {
-      insertSpace(db, 'space-2');
-      spaceManagerData.getSpaceMock.mockImplementation(async (id: string) => {
-        if (id === 'space-1' || id === 'space-2') return { id } as never;
-        return null;
-      });
-      const created = await manager.create({
-        spaceId: 'space-2',
-        name: 'Coder',
-        templateName: 'Coder',
-        templateHash: 'h',
-      });
-      if (!created.ok) throw new Error('create failed');
-
-      await expect(
-        call(hubData.handlers, 'spaceAgent.previewTemplateSync', {
-          spaceId: 'space-1',
-          agentId: created.value.id,
-        })
-      ).rejects.toThrow('Agent not found');
-    });
-
-    it('rejects user-created (non-seeded) agents', async () => {
-      const created = await manager.create({ spaceId: 'space-1', name: 'CustomBot' });
-      if (!created.ok) throw new Error('create failed');
-
-      await expect(
-        call(hubData.handlers, 'spaceAgent.previewTemplateSync', {
-          spaceId: 'space-1',
-          agentId: created.value.id,
-        })
-      ).rejects.toThrow(/not linked to a preset/i);
-    });
-
-    it('returns a before/after diff for a drifted seeded agent', async () => {
-      const created = await manager.create({
-        spaceId: 'space-1',
-        name: 'Coder',
-        description: 'old description',
-        tools: ['Read'],
-        customPrompt: 'old prompt',
-        templateName: 'Coder',
-        templateHash: 'stale-hash',
-      });
-      if (!created.ok) throw new Error('create failed');
-
-      const result = await call<{
-        preview: {
-          updateAvailable: boolean;
-          customized: boolean;
-          storedHash: string | null;
-          diff: { customPrompt?: { before: string; after: string } };
-        };
-      }>(hubData.handlers, 'spaceAgent.previewTemplateSync', {
-        spaceId: 'space-1',
-        agentId: created.value.id,
-      });
-
-      expect(result.preview.updateAvailable).toBe(true);
-      expect(result.preview.customized).toBe(true);
-      expect(result.preview.storedHash).toBe('stale-hash');
-      expect(result.preview.diff.customPrompt?.before).toBe('old prompt');
-      expect(result.preview.diff.customPrompt?.after.length).toBeGreaterThan(0);
-
-      expect(manager.getById(created.value.id)?.customPrompt).toBe('old prompt');
-    });
-
-    it('returns updateAvailable=false with an empty diff for an in-sync agent', async () => {
-      const { getPresetAgentTemplates } = await import(
-        '../../../../src/lib/space/agents/seed-agents'
-      );
-      const { computeAgentTemplateHash } = await import(
-        '../../../../src/lib/space/agents/agent-template-hash'
-      );
-      const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder');
-      if (!coder) throw new Error('Coder preset missing');
-
-      const created = await manager.create({
-        spaceId: 'space-1',
-        name: 'Coder',
-        description: coder.description,
-        tools: coder.tools,
-        customPrompt: coder.customPrompt,
-        templateName: 'Coder',
-        templateHash: computeAgentTemplateHash(coder),
-      });
-      if (!created.ok) throw new Error('create failed');
-
-      const result = await call<{
-        preview: {
-          updateAvailable: boolean;
-          customized: boolean;
-          diff: Record<string, unknown>;
-        };
-      }>(hubData.handlers, 'spaceAgent.previewTemplateSync', {
-        spaceId: 'space-1',
-        agentId: created.value.id,
-      });
-
-      expect(result.preview.updateAvailable).toBe(false);
-      expect(result.preview.customized).toBe(false);
-      expect(result.preview.diff).toEqual({});
     });
   });
 });

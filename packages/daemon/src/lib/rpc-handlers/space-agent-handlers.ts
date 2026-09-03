@@ -45,7 +45,7 @@ import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit, validateSlug } from '
 const PROMOTION_MESSAGE_LIMIT = 24;
 const PROMOTION_CONTEXT_CHAR_LIMIT = 6000;
 
-export type UnifiedSpaceAgentRuntimeService = Pick<
+type UnifiedSpaceAgentRuntimeService = Pick<
   SpaceRuntimeService,
   | 'refreshLongHorizonAgentSubscriptions'
   | 'removeLongHorizonAgentSubscriptions'
@@ -61,8 +61,6 @@ interface UnifiedSpaceAgentMethodDeps {
   runtimeService?: UnifiedSpaceAgentRuntimeService;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 }
-
-type UnifiedSpaceAgentNamespace = 'spaceAgent' | 'spaceLongHorizonAgent';
 
 interface UnifiedAgentCreateInput {
   id?: string;
@@ -830,10 +828,9 @@ const runUpdateUnifiedSpaceAgent = (superpipe({})('update-unified-space-agent') 
 
 export function registerUnifiedSpaceAgentMethods(
   messageHub: MessageHub,
-  namespace: UnifiedSpaceAgentNamespace,
   deps: UnifiedSpaceAgentMethodDeps
 ): void {
-  const method = (name: string): string => `${namespace}.${name}`;
+  const method = (name: string): string => `spaceAgent.${name}`;
   const createUnifiedAgent = buildUnifiedAgentCreate(deps);
 
   messageHub.onRequest(method('listBuiltInTemplates'), async (data) => {
@@ -1094,7 +1091,7 @@ export function setupSpaceAgentHandlers(
   };
   const createUnifiedAgent = buildUnifiedAgentCreate(deps);
 
-  registerUnifiedSpaceAgentMethods(messageHub, 'spaceAgent', deps);
+  registerUnifiedSpaceAgentMethods(messageHub, deps);
 
   messageHub.onRequest('spaceAgent.get', async (data) => {
     const params = data as { id: string };
@@ -1146,61 +1143,5 @@ export function setupSpaceAgentHandlers(
 
     const agent = await createUnifiedAgent(params);
     return { agent };
-  });
-
-  messageHub.onRequest('spaceAgent.getDriftReport', async (data) => {
-    const params = data as { spaceId: string };
-    if (!params.spaceId) throw new Error('spaceId is required');
-
-    const space = await spaceManager.getSpace(params.spaceId);
-    if (!space) throw new Error(`Space not found: ${params.spaceId}`);
-
-    const report = spaceAgentManager.getAgentDriftReport(params.spaceId);
-    return { report };
-  });
-
-  messageHub.onRequest('spaceAgent.previewTemplateSync', async (data) => {
-    const params = data as { spaceId: string; agentId: string };
-    if (!params.spaceId) throw new Error('spaceId is required');
-    if (!params.agentId) throw new Error('agentId is required');
-
-    const space = await spaceManager.getSpace(params.spaceId);
-    if (!space) throw new Error(`Space not found: ${params.spaceId}`);
-
-    const existing = spaceAgentManager.getById(params.agentId);
-    if (!existing) throw new Error(`Agent not found: ${params.agentId}`);
-    if (existing.spaceId !== params.spaceId) {
-      throw new Error(`Agent not found: ${params.agentId}`);
-    }
-
-    const result = await spaceAgentManager.getTemplateSyncPreview(params.agentId);
-    if (!result.ok) throw new Error(result.error);
-
-    return { preview: result.value };
-  });
-
-  messageHub.onRequest('spaceAgent.syncFromTemplate', async (data) => {
-    const params = data as { spaceId: string; agentId: string; expectedRowHash?: string };
-    if (!params.spaceId) throw new Error('spaceId is required');
-    if (!params.agentId) throw new Error('agentId is required');
-
-    const space = await spaceManager.getSpace(params.spaceId);
-    if (!space) throw new Error(`Space not found: ${params.spaceId}`);
-
-    const existing = spaceAgentManager.getById(params.agentId);
-    if (!existing) throw new Error(`Agent not found: ${params.agentId}`);
-    if (existing.spaceId !== params.spaceId) {
-      throw new Error(`Agent not found: ${params.agentId}`);
-    }
-
-    const result = await spaceAgentManager.syncFromTemplate(params.agentId, params.expectedRowHash);
-    if (!result.ok) throw new Error(result.error);
-
-    const unifiedAfter = longHorizonAgentRepo.getById(result.value.id);
-    if (unifiedAfter) {
-      await publishUnifiedAgentUpdated(internalEventBus, unifiedAfter);
-    }
-
-    return { agent: result.value };
   });
 }
