@@ -2900,6 +2900,7 @@ export class SpaceRuntime {
     try {
       routeResult = await router.route(approvedTask, workflow, routeContext, {
         requireSucceededRun: options.requireSucceededRun,
+        expectedApprovedAt: options.expectedApprovedAt,
       });
     } finally {
       const latest = this.config.taskRepo.getTask(taskId);

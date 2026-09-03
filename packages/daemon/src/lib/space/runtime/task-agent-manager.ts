@@ -5424,8 +5424,13 @@ export class TaskAgentManager {
     targetAgent: string;
     kickoffMessage: string;
     requireSucceededRun?: boolean;
+    expectedApprovedAt?: number | null;
   }): Promise<{ sessionId: string }> {
-    const { task, workflow, targetAgent, kickoffMessage, requireSucceededRun } = args;
+    const { task, workflow, targetAgent, kickoffMessage } = args;
+    const admission = {
+      requireSucceededRun: args.requireSucceededRun,
+      expectedApprovedAt: args.expectedApprovedAt,
+    };
     const taskId = task.id;
     const spaceId = task.spaceId;
 
@@ -5463,7 +5468,7 @@ export class TaskAgentManager {
       matchedSlot.name,
       matchedNodeId
     );
-    await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, requireSucceededRun);
+    await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, admission);
     if (existingSessionId) {
       const existing = this.getSubSession(existingSessionId);
       if (!existing) {
@@ -5472,7 +5477,7 @@ export class TaskAgentManager {
         );
       }
       await this.withSessionInjectLock(existing.session.id, async () => {
-        await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, requireSucceededRun);
+        await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, admission);
         const terminalStatus = task.workflowRunId
           ? this.resolveTerminalInjectionStatus(task.workflowRunId, taskId)
           : null;
@@ -5652,7 +5657,7 @@ export class TaskAgentManager {
 
       try {
         await this.withSessionInjectLock(spawned.session.id, async () => {
-          await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, requireSucceededRun);
+          await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, admission);
           await this.injectMessageIntoSession(spawned, kickoffMessage);
         });
       } catch (err) {
@@ -5674,7 +5679,7 @@ export class TaskAgentManager {
   private async assertPostApprovalSpawnAdmissible(
     spaceId: string,
     taskId: string,
-    requireSucceededRun = false
+    options: { requireSucceededRun?: boolean; expectedApprovedAt?: number | null } = {}
   ): Promise<void> {
     const freshSpace = await this.config.spaceManager.getSpace(spaceId);
     if (
@@ -5693,7 +5698,16 @@ export class TaskAgentManager {
         `spawnPostApprovalSubSession: task ${taskId} is ${freshTask?.status ?? 'missing'}; refusing to spawn a post-approval session`
       );
     }
-    if (requireSucceededRun && freshTask.workflowRunId) {
+    if (
+      options.expectedApprovedAt !== undefined &&
+      (freshTask.approvedAt ?? null) !== options.expectedApprovedAt
+    ) {
+      throw new SpawnSupersededError(
+        `post-approval-retry-${taskId}`,
+        'approval-generation-changed-before-kickoff'
+      );
+    }
+    if (options.requireSucceededRun && freshTask.workflowRunId) {
       const run = this.config.workflowRunRepo.getRun(freshTask.workflowRunId);
       if (run?.status !== 'done') {
         throw new SpawnSupersededError(

@@ -763,3 +763,77 @@ describe('TaskAgentManager.spawnPostApprovalSubSession — succeeded-run admissi
     expect(error === null ? '' : String(error)).not.toContain('run-not-succeeded-before-kickoff');
   });
 });
+
+describe('TaskAgentManager.spawnPostApprovalSubSession — approval-generation admission', () => {
+  const WORKFLOW = {
+    id: 'wf-1',
+    nodes: [
+      {
+        id: POST_APPROVAL_NODE,
+        agents: [{ name: 'merger', agentId: 'agent-merger' }],
+        postApproval: { targetAgent: 'merger' },
+      },
+    ],
+  };
+
+  function makeSpawnManager(db: BunDatabase): TaskAgentManager {
+    return new TaskAgentManager({
+      db: { getDatabase: () => db },
+      taskRepo: new SpaceTaskRepository(db),
+      sessionManager: { registerSession: () => {} },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+      workflowRunRepo: { getRun: () => ({ id: RUN_ID, workflowId: 'wf-1', status: 'done' }) },
+      spaceWorkflowManager: { getWorkflow: () => WORKFLOW, getWorkflowForRun: () => WORKFLOW },
+      nodeExecutionRepo: { listByWorkflowRun: () => [], listByNode: () => [], update: () => null },
+    } as unknown as TaskAgentManagerConfig);
+  }
+
+  it('refuses the kickoff when the approval generation changed before delivery', async () => {
+    const db = makeDb();
+    insertTask(db, { status: 'approved', approvedAt: 500 });
+    const tam = makeSpawnManager(db);
+    await expect(
+      tam.spawnPostApprovalSubSession({
+        task: {
+          id: TASK_ID,
+          spaceId: SPACE_ID,
+          workflowRunId: RUN_ID,
+        } as unknown as Parameters<TaskAgentManager['spawnPostApprovalSubSession']>[0]['task'],
+        workflow: WORKFLOW as unknown as Parameters<
+          TaskAgentManager['spawnPostApprovalSubSession']
+        >[0]['workflow'],
+        targetAgent: 'merger',
+        kickoffMessage: 'Merge it.',
+        expectedApprovedAt: 400,
+      })
+    ).rejects.toThrow('approval-generation-changed-before-kickoff');
+  });
+
+  it('admits the kickoff when the approval generation matches', async () => {
+    const db = makeDb();
+    insertTask(db, { status: 'approved', approvedAt: 500 });
+    const tam = makeSpawnManager(db);
+    let error: unknown = null;
+    try {
+      await tam.spawnPostApprovalSubSession({
+        task: {
+          id: TASK_ID,
+          spaceId: SPACE_ID,
+          workflowRunId: RUN_ID,
+        } as unknown as Parameters<TaskAgentManager['spawnPostApprovalSubSession']>[0]['task'],
+        workflow: WORKFLOW as unknown as Parameters<
+          TaskAgentManager['spawnPostApprovalSubSession']
+        >[0]['workflow'],
+        targetAgent: 'merger',
+        kickoffMessage: 'Merge it.',
+        expectedApprovedAt: 500,
+      });
+    } catch (err) {
+      error = err;
+    }
+    expect(error === null ? '' : String(error)).not.toContain(
+      'approval-generation-changed-before-kickoff'
+    );
+  });
+});

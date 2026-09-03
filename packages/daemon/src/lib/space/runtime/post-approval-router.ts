@@ -41,6 +41,7 @@ export interface PostApprovalSubSessionSpawner {
     targetAgent: string;
     kickoffMessage: string;
     requireSucceededRun?: boolean;
+    expectedApprovedAt?: number | null;
   }): Promise<{ sessionId: string }>;
 }
 
@@ -196,7 +197,7 @@ export class PostApprovalRouter {
     task: SpaceTask,
     workflow: SpaceWorkflow | null,
     context: PostApprovalRouteContext,
-    routeOptions: { requireSucceededRun?: boolean } = {}
+    routeOptions: { requireSucceededRun?: boolean; expectedApprovedAt?: number | null } = {}
   ): Promise<PostApprovalRouteResult> {
     if (task.status !== 'approved') {
       const reason = `task ${task.id} is not in 'approved' (status=${task.status}); router will not dispatch`;
@@ -344,6 +345,7 @@ export class PostApprovalRouter {
         targetAgent: route.targetAgent!,
         kickoffMessage,
         requireSucceededRun: routeOptions.requireSucceededRun,
+        expectedApprovedAt: routeOptions.expectedApprovedAt,
       }));
     } catch (err) {
       if (isSpawnSupersededError(err)) {
@@ -370,7 +372,9 @@ export class PostApprovalRouter {
         priorPostApprovalSessionId: task.postApprovalSessionId ?? null,
       },
       { postApprovalSessionId: sessionId, postApprovalStartedAt: startedAt },
-      { requireSucceededRun: routeOptions.requireSucceededRun }
+      {
+        requireSucceededRun: routeOptions.requireSucceededRun,
+      }
     );
     if (recorded !== 'won') {
       const fresh = this.deps.taskRepo.getTask(task.id);
