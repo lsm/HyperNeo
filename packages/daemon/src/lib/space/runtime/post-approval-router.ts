@@ -42,6 +42,7 @@ export interface PostApprovalSubSessionSpawner {
     kickoffMessage: string;
     requireSucceededRun?: boolean;
     expectedApprovedAt?: number | null;
+    expectedWorkflowRunId?: string | null;
   }): Promise<{ sessionId: string }>;
 }
 
@@ -112,7 +113,7 @@ export function collectDispatchablePostApprovalRoutes(
 
 export function selectFirstDispatchablePostApprovalRoute(
   workflow: SpaceWorkflow | null
-): { route: PostApprovalRoute; nodeId: string | null } | null {
+): { route: PostApprovalRoute; nodeId: string | null; agentName: string } | null {
   if (!workflow) return null;
   let selected: PostApprovalRoute | null = null;
   let declaredByNodeId: string | null = null;
@@ -133,17 +134,20 @@ export function selectFirstDispatchablePostApprovalRoute(
   if (!selected) return null;
   const targetAgent = selected.targetAgent;
   for (const node of workflow.nodes) {
-    let ownsTarget = false;
+    let owningSlot: { name?: string; agentId?: string } | null = null;
     try {
-      ownsTarget = resolveNodeAgents(node).some(
-        (agent) => agent.name === targetAgent || agent.agentId === targetAgent
-      );
+      owningSlot =
+        resolveNodeAgents(node).find(
+          (agent) => agent.name === targetAgent || agent.agentId === targetAgent
+        ) ?? null;
     } catch {
       continue;
     }
-    if (ownsTarget) return { route: selected, nodeId: node.id };
+    if (owningSlot) {
+      return { route: selected, nodeId: node.id, agentName: owningSlot.name ?? targetAgent };
+    }
   }
-  return { route: selected, nodeId: declaredByNodeId };
+  return { route: selected, nodeId: declaredByNodeId, agentName: targetAgent };
 }
 
 export function clearPendingCompletionState(
@@ -197,7 +201,11 @@ export class PostApprovalRouter {
     task: SpaceTask,
     workflow: SpaceWorkflow | null,
     context: PostApprovalRouteContext,
-    routeOptions: { requireSucceededRun?: boolean; expectedApprovedAt?: number | null } = {}
+    routeOptions: {
+      requireSucceededRun?: boolean;
+      expectedApprovedAt?: number | null;
+      expectedWorkflowRunId?: string | null;
+    } = {}
   ): Promise<PostApprovalRouteResult> {
     if (task.status !== 'approved') {
       const reason = `task ${task.id} is not in 'approved' (status=${task.status}); router will not dispatch`;
@@ -221,6 +229,9 @@ export class PostApprovalRouter {
     }
 
     if (dispatchable.length === 0) {
+      if (task.postApprovalSessionId) {
+        this.deps.cancelSpawnedWorker?.(task.postApprovalSessionId);
+      }
       const outcomeUpdates = this.deps.resolveCompletionOutcome?.(task) ?? null;
       const updates: UpdateSpaceTaskParams = {
         ...outcomeUpdates,
@@ -288,7 +299,7 @@ export class PostApprovalRouter {
               sessionId: task.postApprovalSessionId,
               taskId: task.id,
               routeNodeId: selected?.nodeId ?? null,
-              routeAgentName: selected?.route.targetAgent ?? '',
+              routeAgentName: selected?.agentName ?? '',
               workflowRunId: task.workflowRunId ?? null,
             })
           : true;
@@ -346,6 +357,7 @@ export class PostApprovalRouter {
         kickoffMessage,
         requireSucceededRun: routeOptions.requireSucceededRun,
         expectedApprovedAt: routeOptions.expectedApprovedAt,
+        expectedWorkflowRunId: routeOptions.expectedWorkflowRunId,
       }));
     } catch (err) {
       if (isSpawnSupersededError(err)) {

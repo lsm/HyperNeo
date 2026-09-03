@@ -920,3 +920,57 @@ describe('PostApprovalRouter.route — cycle-3 race guards', () => {
     expect(final?.pendingCompletionSubmittedByNodeId).toBe('new-review-node');
   });
 });
+
+describe('PostApprovalRouter.route — cycle-13 guards', () => {
+  let db: BunDatabase;
+  let taskRepo: SpaceTaskRepository;
+
+  beforeEach(() => {
+    db = makeDb();
+    taskRepo = new SpaceTaskRepository(db);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  test('selectFirstDispatchablePostApprovalRoute resolves the slot name for agentId targets', () => {
+    const workflow = stubWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Deploy',
+          agents: [{ agentId: 'deployer-id', name: 'deployer' }],
+          postApproval: { targetAgent: 'deployer-id', instructions: 'Deploy.' },
+        },
+      ],
+    });
+    const selected = selectFirstDispatchablePostApprovalRoute(workflow);
+    expect(selected?.nodeId).toBe('n1');
+    expect(selected?.agentName).toBe('deployer');
+  });
+
+  test('no-route completion cancels a retained post-approval worker', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, {
+      postApprovalSessionId: 'retained-worker',
+      postApprovalStartedAt: 99,
+    });
+    const updated = taskRepo.getTask(task.id)!;
+    const cancelled: string[] = [];
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+      cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),
+    });
+
+    const result = await router.route(updated, stubWorkflow(), { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('no-route');
+    expect(cancelled).toEqual(['retained-worker']);
+    const final = taskRepo.getTask(task.id);
+    expect(final?.status).toBe('done');
+    expect(final?.postApprovalSessionId).toBeNull();
+  });
+});

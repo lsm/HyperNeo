@@ -5425,11 +5425,13 @@ export class TaskAgentManager {
     kickoffMessage: string;
     requireSucceededRun?: boolean;
     expectedApprovedAt?: number | null;
+    expectedWorkflowRunId?: string | null;
   }): Promise<{ sessionId: string }> {
     const { task, workflow, targetAgent, kickoffMessage } = args;
     const admission = {
       requireSucceededRun: args.requireSucceededRun,
       expectedApprovedAt: args.expectedApprovedAt,
+      expectedWorkflowRunId: args.expectedWorkflowRunId,
     };
     const taskId = task.id;
     const spaceId = task.spaceId;
@@ -5679,7 +5681,11 @@ export class TaskAgentManager {
   private async assertPostApprovalSpawnAdmissible(
     spaceId: string,
     taskId: string,
-    options: { requireSucceededRun?: boolean; expectedApprovedAt?: number | null } = {}
+    options: {
+      requireSucceededRun?: boolean;
+      expectedApprovedAt?: number | null;
+      expectedWorkflowRunId?: string | null;
+    } = {}
   ): Promise<void> {
     const freshSpace = await this.config.spaceManager.getSpace(spaceId);
     if (
@@ -5698,6 +5704,12 @@ export class TaskAgentManager {
         `spawnPostApprovalSubSession: task ${taskId} is ${freshTask?.status ?? 'missing'}; refusing to spawn a post-approval session`
       );
     }
+    if (options.expectedApprovedAt !== undefined && freshTask.status !== 'approved') {
+      throw new SpawnSupersededError(
+        `post-approval-retry-${taskId}`,
+        'task-not-approved-before-kickoff'
+      );
+    }
     if (
       options.expectedApprovedAt !== undefined &&
       (freshTask.approvedAt ?? null) !== options.expectedApprovedAt
@@ -5705,6 +5717,15 @@ export class TaskAgentManager {
       throw new SpawnSupersededError(
         `post-approval-retry-${taskId}`,
         'approval-generation-changed-before-kickoff'
+      );
+    }
+    if (
+      options.expectedWorkflowRunId !== undefined &&
+      (freshTask.workflowRunId ?? null) !== options.expectedWorkflowRunId
+    ) {
+      throw new SpawnSupersededError(
+        `post-approval-retry-${taskId}`,
+        'task-reparented-before-kickoff'
       );
     }
     if (options.requireSucceededRun && freshTask.workflowRunId) {

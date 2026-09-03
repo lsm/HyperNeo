@@ -837,3 +837,73 @@ describe('TaskAgentManager.spawnPostApprovalSubSession — approval-generation a
     );
   });
 });
+
+describe('TaskAgentManager.spawnPostApprovalSubSession — strict retry admission', () => {
+  const WORKFLOW = {
+    id: 'wf-1',
+    nodes: [
+      {
+        id: POST_APPROVAL_NODE,
+        agents: [{ name: 'merger', agentId: 'agent-merger' }],
+        postApproval: { targetAgent: 'merger' },
+      },
+    ],
+  };
+
+  function makeStrictSpawnManager(db: BunDatabase): TaskAgentManager {
+    return new TaskAgentManager({
+      db: { getDatabase: () => db },
+      taskRepo: new SpaceTaskRepository(db),
+      sessionManager: { registerSession: () => {} },
+      internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+      spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+      workflowRunRepo: { getRun: () => ({ id: RUN_ID, workflowId: 'wf-1', status: 'done' }) },
+      spaceWorkflowManager: { getWorkflow: () => WORKFLOW, getWorkflowForRun: () => WORKFLOW },
+      nodeExecutionRepo: { listByWorkflowRun: () => [], listByNode: () => [], update: () => null },
+    } as unknown as TaskAgentManagerConfig);
+  }
+
+  it('refuses the kickoff when a manually completed task is no longer approved', async () => {
+    const db = makeDb();
+    insertTask(db, { status: 'done', approvedAt: 500 });
+    const tam = makeStrictSpawnManager(db);
+    await expect(
+      tam.spawnPostApprovalSubSession({
+        task: {
+          id: TASK_ID,
+          spaceId: SPACE_ID,
+          workflowRunId: RUN_ID,
+        } as unknown as Parameters<TaskAgentManager['spawnPostApprovalSubSession']>[0]['task'],
+        workflow: WORKFLOW as unknown as Parameters<
+          TaskAgentManager['spawnPostApprovalSubSession']
+        >[0]['workflow'],
+        targetAgent: 'merger',
+        kickoffMessage: 'Merge it.',
+        expectedApprovedAt: 500,
+      })
+    ).rejects.toThrow('task-not-approved-before-kickoff');
+  });
+
+  it('refuses the kickoff when the task re-parented before delivery', async () => {
+    const db = makeDb();
+    insertTask(db, { status: 'approved', approvedAt: 500 });
+    db.prepare(`UPDATE space_tasks SET workflow_run_id = 'run-new' WHERE id = ?`).run(TASK_ID);
+    const tam = makeStrictSpawnManager(db);
+    await expect(
+      tam.spawnPostApprovalSubSession({
+        task: {
+          id: TASK_ID,
+          spaceId: SPACE_ID,
+          workflowRunId: RUN_ID,
+        } as unknown as Parameters<TaskAgentManager['spawnPostApprovalSubSession']>[0]['task'],
+        workflow: WORKFLOW as unknown as Parameters<
+          TaskAgentManager['spawnPostApprovalSubSession']
+        >[0]['workflow'],
+        targetAgent: 'merger',
+        kickoffMessage: 'Merge it.',
+        expectedApprovedAt: 500,
+        expectedWorkflowRunId: RUN_ID,
+      })
+    ).rejects.toThrow('task-reparented-before-kickoff');
+  });
+});
