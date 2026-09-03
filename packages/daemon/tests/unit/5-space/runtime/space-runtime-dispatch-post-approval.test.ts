@@ -454,6 +454,27 @@ describe('SpaceRuntime.retryPostApprovalDispatch — canonical serialized retry'
     expect(reactive.taskRepo.getTask(task.id)?.postApprovalSessionId).toBeNull();
   });
 
+  test('retry dispatch refuses when the space becomes inactive during the dispatch lookup', async () => {
+    let lookups = 0;
+    const reactive = buildRuntime({
+      onSpaceLookup: () => {
+        lookups += 1;
+        if (lookups > 1) {
+          reactive.db.prepare(`UPDATE spaces SET paused = 1 WHERE id = ?`).run(SPACE_ID);
+        }
+      },
+    });
+    const task = seedBlockedRoutedTask(reactive);
+
+    const result = await reactive.runtime.retryPostApprovalDispatch(task.id);
+
+    expect(result.mode).toBe('skipped');
+    if (result.mode === 'skipped') {
+      expect(result.reason).toContain('space became inactive');
+    }
+    expect(reactive.taskRepo.getTask(task.id)?.status).toBe('approved');
+  });
+
   test('retry dispatch refuses a re-activated run before no-route completion', async () => {
     let activeRunId = '';
     const reactive = buildRuntime({

@@ -907,3 +907,40 @@ describe('TaskAgentManager.spawnPostApprovalSubSession — strict retry admissio
     ).rejects.toThrow('task-reparented-before-kickoff');
   });
 });
+
+describe('TaskAgentManager post-approval identity — current-run binding', () => {
+  let db: BunDatabase;
+  let tam: TaskAgentManager;
+
+  beforeEach(() => {
+    db = makeDb();
+    tam = makeManager(db);
+  });
+
+  it('rejects a recorded pointer whose provenance belongs to another workflow run', () => {
+    insertTask(db, { status: 'approved', postApprovalSessionId: 'old-run-worker' });
+    insertWorkerSession(db, {
+      sessionId: 'old-run-worker',
+      workflowRunId: 'run-old',
+    });
+    expect(tam.getPostApprovalWorkerSession(TASK_ID, 'old-run-worker')).toBeNull();
+  });
+
+  it('rejects a recorded pointer whose execution belongs to another workflow run', () => {
+    insertTask(db, { status: 'approved', postApprovalSessionId: 'old-exec-worker' });
+    insertWorkerSession(db, { sessionId: 'old-exec-worker', workflowRunId: RUN_ID });
+    db.prepare(
+      `INSERT INTO node_executions (id, workflow_run_id, workflow_node_id, agent_name, agent_session_id, status, created_at, updated_at)
+       VALUES ('exec-old', 'run-old', ?, 'merger', 'old-exec-worker', 'in_progress', 0, 0)`
+    ).run(POST_APPROVAL_NODE);
+    expect(tam.getPostApprovalWorkerSession(TASK_ID, 'old-exec-worker')).toBeNull();
+  });
+
+  it('admits a recorded pointer bound to the current workflow run', () => {
+    insertTask(db, { status: 'approved', postApprovalSessionId: 'current-run-worker' });
+    insertWorkerSession(db, { sessionId: 'current-run-worker', workflowRunId: RUN_ID });
+    expect(tam.getPostApprovalWorkerSession(TASK_ID, 'current-run-worker')?.sessionId).toBe(
+      'current-run-worker'
+    );
+  });
+});

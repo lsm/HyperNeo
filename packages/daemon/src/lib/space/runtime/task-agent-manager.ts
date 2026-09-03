@@ -2090,6 +2090,32 @@ export class TaskAgentManager {
     return this.sessionIsWorkerForTask(sessionId, taskId, true);
   }
 
+  private sessionBelongsToTaskRun(sessionId: string, task: SpaceTask): boolean {
+    try {
+      const db = this.config.db.getDatabase();
+      const provenance = this.readProvenanceFromSessionRow(sessionId);
+      if (
+        provenance?.workflowRunId &&
+        task.workflowRunId &&
+        provenance.workflowRunId !== task.workflowRunId
+      ) {
+        return false;
+      }
+      if (task.workflowRunId) {
+        const foreignExec = db
+          .prepare(
+            `SELECT 1 AS foreign FROM node_executions
+              WHERE agent_session_id = ? AND workflow_run_id != ?`
+          )
+          .get(sessionId, task.workflowRunId);
+        if (foreignExec) return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   isSessionOnPostApprovalRoute(args: {
     sessionId: string;
     taskId: string;
@@ -2179,6 +2205,7 @@ export class TaskAgentManager {
         )
       )
         return null;
+      if (!this.sessionBelongsToTaskRun(hintSessionId, task)) return null;
       const provenance = this.readProvenanceFromSessionRow(hintSessionId);
       const agentName = provenance?.agentName ?? this.legacyWorkflowRouteAgentName(task);
       if (!agentName) return null;
@@ -2199,7 +2226,8 @@ export class TaskAgentManager {
         provenance = this.readProvenanceFromSessionRow(durableId);
       }
     }
-    if (!sessionId) return null;
+    if (!sessionId || !task) return null;
+    if (!this.sessionBelongsToTaskRun(sessionId, task)) return null;
     let agentName = provenance?.agentName;
     const agentId = provenance?.agentId;
     const nodeId = provenance?.nodeId ?? this.legacyWorkflowRouteNodeId(task);
@@ -2214,6 +2242,7 @@ export class TaskAgentManager {
     agentName?: string;
     nodeId?: string;
     agentId?: string;
+    workflowRunId?: string;
   } | null {
     try {
       const row = this.config.db
@@ -2222,7 +2251,9 @@ export class TaskAgentManager {
         .get(sessionId) as { metadata?: string | null } | undefined;
       if (!row?.metadata) return null;
       const provenance = (JSON.parse(row.metadata) as { promptProvenance?: unknown })
-        ?.promptProvenance as { agentName?: string; nodeId?: string; agentId?: string } | undefined;
+        ?.promptProvenance as
+        | { agentName?: string; nodeId?: string; agentId?: string; workflowRunId?: string }
+        | undefined;
       return provenance ?? null;
     } catch {
       return null;

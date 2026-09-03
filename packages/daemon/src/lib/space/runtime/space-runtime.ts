@@ -2837,9 +2837,11 @@ export class SpaceRuntime {
           (rechecked.approvedAt ?? null) !== options.expectedApprovedAt) ||
         (options.requireSucceededRun &&
           rechecked.workflowRunId &&
-          this.config.workflowRunRepo.getRun(rechecked.workflowRunId)?.status !== 'done')
+          this.config.workflowRunRepo.getRun(rechecked.workflowRunId)?.status !== 'done') ||
+        (options.requireSucceededRun &&
+          (!space || space.paused || space.stopped || space.status === 'archived'))
       ) {
-        const reason = `task ${taskId} changed approval generation or its workflow run left the succeeded state while the dispatch was awaiting lookups; refusing the stale dispatch`;
+        const reason = `task ${taskId} changed approval generation, its workflow run left the succeeded state, or its space became inactive while the dispatch was awaiting lookups; refusing the stale dispatch`;
         log.warn(`dispatchPostApproval: ${reason}`);
         return { mode: 'skipped', reason };
       }
