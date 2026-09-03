@@ -315,6 +315,7 @@ describe('long-horizon agent lifecycle integration', () => {
       db: db as never,
       goalRepo,
       taskRepo,
+      spaceRepo,
       evolutionRepo,
       cursorRepo,
       episodeService,

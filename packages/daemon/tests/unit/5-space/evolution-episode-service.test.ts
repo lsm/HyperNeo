@@ -1136,6 +1136,44 @@ describe('EvolutionEpisodeService', () => {
     });
   }
 
+  it('proposal-created tasks inherit the linked goal workspace pin', () => {
+    const goal = goalRepo.create({
+      spaceId,
+      title: 'Pinned forge goal',
+      type: 'recurring',
+      workspacePath: '/pinned-workspace',
+    });
+    const scope = evolutionRepo.createScope({
+      spaceId,
+      spaceGoalId: goal.id,
+      kind: 'mission',
+      name: 'Pinned scope',
+      objective: 'Track pinned work',
+    });
+    const proposal = evolutionRepo.createTaskProposal({
+      scopeId: scope.id,
+      title: 'Pinned proposal task',
+      description: 'Should inherit the pin',
+      reason: 'Goal pin routes the worktree',
+      priority: 'normal',
+      evidenceEpisodeIds: [],
+    });
+    const service = new EvolutionEpisodeService({
+      evolutionRepo,
+      spaceRepo,
+      taskRepo,
+      workflowRunRepo,
+      artifactRepo,
+      artifactProfile,
+      db,
+      goalService: createGoalService(),
+    });
+
+    const result = service.createTaskFromProposal(proposal.id);
+
+    expect(taskRepo.getTask(result.task.id)?.workspacePath).toBe('/pinned-workspace');
+  });
+
   it('applies accepted rollup fields to the linked recurring goal', () => {
     const goal = goalRepo.create({
       spaceId,

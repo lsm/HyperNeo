@@ -3,8 +3,14 @@ import type { EvidenceRef, GoalForgeAutomationTriggerKind, SpaceTask } from '@hy
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
 import type { GoalAutomationCursorRepository } from '../../storage/repositories/goal-automation-cursor-repository.ts';
+import { SpaceWorkspaceRepository } from '../../storage/repositories/space-workspace-repository.ts';
 import type { SpaceGoalRepository } from '../../storage/repositories/space-goal-repository.ts';
+import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
+import {
+  isExplicitWorkspaceSelection,
+  requireTaskWorkspaceSelectionSync,
+} from '../space/workspaces/task-workspace-requirement.ts';
 import type { EvolutionEpisodeService } from '../space/evolution-episode-service.ts';
 import {
   maxCompletedTaskTimestamp,
@@ -49,9 +55,10 @@ export interface GoalAutomationExecutePayload extends Record<string, unknown> {
 }
 
 export interface GoalAutomationExecuteDeps {
-  db?: BunDatabase;
+  db: BunDatabase;
   goalRepo: SpaceGoalRepository;
   taskRepo: SpaceTaskRepository;
+  spaceRepo: SpaceRepository;
   evolutionRepo: EvolutionRepository;
   cursorRepo: GoalAutomationCursorRepository;
   episodeService: Pick<EvolutionEpisodeService, 'createFromEvidence'>;
@@ -300,10 +307,18 @@ function createReviewTask(
 ): SpaceTask {
   const scope = deps.evolutionRepo.getScope(scopeId);
   if (!scope) throw new Error(`EvolutionScope not found: ${scopeId}`);
+  const goalWorkspacePath = deps.goalRepo.getById(goalId)?.workspacePath ?? null;
+  requireTaskWorkspaceSelectionSync({
+    spaces: deps.spaceRepo,
+    workspaces: new SpaceWorkspaceRepository(deps.db),
+    spaceId: scope.spaceId,
+    hasExplicitSelection: isExplicitWorkspaceSelection(goalWorkspacePath),
+  });
   return deps.taskRepo.createTask({
     spaceId: scope.spaceId,
     goalId,
     evolutionScopeId: scopeId,
+    workspacePath: goalWorkspacePath,
     title: `Review Evolution retrospective: ${scope.name}`,
     description: [
       'Evolve generated a draft retrospective episode from automation-selected evidence.',

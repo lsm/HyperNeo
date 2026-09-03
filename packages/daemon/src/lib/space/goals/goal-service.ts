@@ -17,6 +17,7 @@ import type {
 } from '@hyperneo/shared';
 import { isRateOrUsageLimited } from '@hyperneo/shared';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import { SpaceWorkspaceRepository } from '../../../storage/repositories/space-workspace-repository.ts';
 import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceGoalEventRepository } from '../../../storage/repositories/space-goal-event-repository.ts';
@@ -28,6 +29,10 @@ import { Logger } from '../../logger.ts';
 import type { GoalAutomationService } from './goal-automation-service.ts';
 import { pauseScheduleStrict } from './goal-automation-schedule-sync.ts';
 import { decideReportableTerminal } from './reportable-terminal-gates.ts';
+import {
+  isExplicitWorkspaceSelection,
+  requireTaskWorkspaceSelectionSync,
+} from '../workspaces/task-workspace-requirement.ts';
 import { decideClaimAdmission, type ClaimAdmissionDenyReason } from './claim-admission-gates.ts';
 
 const log = new Logger('space-goal-service');
@@ -333,6 +338,7 @@ export class SpaceGoalService {
       throw new Error(`Cannot trigger goal in '${goal.status}' status`);
     }
     this.requireActiveSpaceForTaskCreation(goal);
+    this.requireTaskWorkspaceForGoal(goal);
     if (goal.activeTaskId) {
       const active = this.deps.taskRepo.getTask(goal.activeTaskId);
       if (active && isActiveTaskStatus(active.status)) {
@@ -782,6 +788,17 @@ export class SpaceGoalService {
     if (space.status !== 'active' || space.paused || space.stopped) {
       throw new Error('Cannot create goal task in a non-active space');
     }
+  }
+
+  private requireTaskWorkspaceForGoal(goal: SpaceGoal): void {
+    const db = this.deps.db;
+    if (!db) return;
+    requireTaskWorkspaceSelectionSync({
+      spaces: this.deps.spaceRepo,
+      workspaces: new SpaceWorkspaceRepository(db),
+      spaceId: goal.spaceId,
+      hasExplicitSelection: isExplicitWorkspaceSelection(goal.workspacePath),
+    });
   }
 
   private runAtomic<T>(fn: () => T): T {

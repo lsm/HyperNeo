@@ -62,13 +62,17 @@ const runTaskWorkspaceRequirement = (
   .pipe(requirementLoadChoices, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
   .pipe(requirementDecide, 'ctx', 'ctx')
-  .endAsync('ctx') as (input: TaskWorkspaceRequirementCtx) => Promise<TaskWorkspaceRequirementCtx>;
+  .end('ctx') as (input: TaskWorkspaceRequirementCtx) => TaskWorkspaceRequirementCtx;
+
+export function requireTaskWorkspaceSelectionSync(input: TaskWorkspaceRequirementCtx): void {
+  const result = runTaskWorkspaceRequirement(input);
+  if (result.error) throw result.error;
+}
 
 export async function requireTaskWorkspaceSelection(
   input: TaskWorkspaceRequirementCtx
 ): Promise<void> {
-  const result = await runTaskWorkspaceRequirement(input);
-  if (result.error) throw result.error;
+  requireTaskWorkspaceSelectionSync(input);
 }
 
 export function isExplicitWorkspaceSelection(raw: string | null | undefined): boolean {
