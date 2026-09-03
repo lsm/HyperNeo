@@ -2714,8 +2714,17 @@ export class SpaceRuntime {
         taskRepo: this.config.taskRepo,
         workflowRunRepo: this.config.workflowRunRepo,
         spaceManager: this.config.spaceManager,
-        dispatch: (id, approvalSource) =>
-          this.dispatchPostApproval(id, approvalSource, {}, { requireAlreadyApproved: true }),
+        dispatch: (id, approvalSource, dispatchOptions) =>
+          this.dispatchPostApproval(
+            id,
+            approvalSource,
+            {},
+            {
+              requireAlreadyApproved: true,
+              expectedWorkflowRunId: dispatchOptions?.expectedWorkflowRunId,
+              expectedApprovedAt: dispatchOptions?.expectedApprovedAt,
+            }
+          ),
       })
     );
   }
@@ -2756,7 +2765,11 @@ export class SpaceRuntime {
     taskId: string,
     approvalSource: SpaceApprovalSource,
     contextExtras: Omit<PostApprovalRouteContext, 'approvalSource'> = {},
-    options: { requireAlreadyApproved?: boolean } = {}
+    options: {
+      requireAlreadyApproved?: boolean;
+      expectedWorkflowRunId?: string | null;
+      expectedApprovedAt?: number | null;
+    } = {}
   ): Promise<PostApprovalRouteResult> {
     const router = this.getPostApprovalRouter();
     if (!router) {
@@ -2774,6 +2787,24 @@ export class SpaceRuntime {
 
     if (options.requireAlreadyApproved && current.status !== 'approved') {
       const reason = `task ${taskId} is '${current.status}'; this dispatch path only serves already-approved tasks and will not approve a newer review generation`;
+      log.warn(`dispatchPostApproval: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
+
+    if (
+      options.expectedWorkflowRunId !== undefined &&
+      (current.workflowRunId ?? null) !== options.expectedWorkflowRunId
+    ) {
+      const reason = `task ${taskId} re-parented to workflow run ${current.workflowRunId ?? 'none'} since dispatch admission (expected ${options.expectedWorkflowRunId}); refusing the stale dispatch`;
+      log.warn(`dispatchPostApproval: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
+
+    if (
+      options.expectedApprovedAt !== undefined &&
+      (current.approvedAt ?? null) !== options.expectedApprovedAt
+    ) {
+      const reason = `task ${taskId} changed approval generation since dispatch admission; refusing the stale dispatch`;
       log.warn(`dispatchPostApproval: ${reason}`);
       return { mode: 'skipped', reason };
     }

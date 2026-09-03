@@ -347,4 +347,40 @@ describe('SpaceRuntime.retryPostApprovalDispatch — canonical serialized retry'
     expect(final?.pendingCompletionSubmittedByNodeId).toBe('node-review');
     expect(ctx.spawned).toHaveLength(0);
   });
+
+  test('expected generation guards refuse a dispatch after re-parenting or re-approval', async () => {
+    const task = seedBlockedRoutedTask();
+
+    const reparented = await ctx.runtime.dispatchPostApproval(
+      task.id,
+      'human',
+      {},
+      {
+        requireAlreadyApproved: true,
+        expectedWorkflowRunId: 'run-other',
+        expectedApprovedAt: task.approvedAt ?? null,
+      }
+    );
+    expect(reparented.mode).toBe('skipped');
+    if (reparented.mode === 'skipped') {
+      expect(reparented.reason).toContain('re-parented');
+    }
+
+    const reapproved = await ctx.runtime.dispatchPostApproval(
+      task.id,
+      'human',
+      {},
+      {
+        requireAlreadyApproved: true,
+        expectedWorkflowRunId: task.workflowRunId ?? null,
+        expectedApprovedAt: (task.approvedAt ?? 0) + 5,
+      }
+    );
+    expect(reapproved.mode).toBe('skipped');
+    if (reapproved.mode === 'skipped') {
+      expect(reapproved.reason).toContain('approval generation');
+    }
+
+    expect(ctx.spawned).toHaveLength(0);
+  });
 });

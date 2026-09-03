@@ -97,6 +97,10 @@ interface Harness {
   repo: SpaceTaskRepository;
   deps: PostApprovalRetryDeps;
   dispatchCalls: Array<{ taskId: string; approvalSource: string }>;
+  dispatchOptions: Array<{
+    expectedWorkflowRunId?: string | null;
+    expectedApprovedAt?: number | null;
+  }>;
 }
 
 function makeHarness(
@@ -108,6 +112,7 @@ function makeHarness(
 ): Harness {
   const repo = new SpaceTaskRepository(db);
   const dispatchCalls: Harness['dispatchCalls'] = [];
+  const dispatchOptions: Harness['dispatchOptions'] = [];
   const space: Space = {
     id: SPACE_ID,
     slug: SPACE_ID,
@@ -137,8 +142,9 @@ function makeHarness(
     spaceManager: { getSpace: async () => space },
     dispatch:
       options.dispatchImpl ??
-      (async (taskId, approvalSource) => {
+      (async (taskId, approvalSource, callOptions) => {
         dispatchCalls.push({ taskId, approvalSource });
+        dispatchOptions.push(callOptions ?? {});
         spawnCount += 1;
         return {
           mode: 'spawn',
@@ -148,7 +154,7 @@ function makeHarness(
         };
       }),
   };
-  return { repo, deps, dispatchCalls };
+  return { repo, deps, dispatchCalls, dispatchOptions };
 }
 
 function ctxFor(h: Harness, taskId: string, task: SpaceTask | null): PostApprovalRetryCtx {
@@ -205,11 +211,14 @@ describe('post-approval retry pipeline stages', () => {
     expect(ctx.halt).toContain('not a completed run');
   });
 
-  test('applyDispatch re-dispatches with the recorded approval source', async () => {
+  test('applyDispatch re-dispatches with the recorded approval source and generation', async () => {
     const task = seedBlockedTask(h.repo);
     const ctx = await applyDispatch(ctxFor(h, task.id, h.repo.getTask(task.id)));
     expect(ctx.halt).toBeNull();
     expect(h.dispatchCalls).toEqual([{ taskId: task.id, approvalSource: 'human' }]);
+    expect(h.dispatchOptions).toEqual([
+      { expectedWorkflowRunId: RUN_ID, expectedApprovedAt: task.approvedAt ?? null },
+    ]);
     expect(ctx.result?.mode).toBe('spawn');
   });
 

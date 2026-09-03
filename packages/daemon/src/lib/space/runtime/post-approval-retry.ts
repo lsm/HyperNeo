@@ -13,7 +13,8 @@ export interface PostApprovalRetryDeps {
   spaceManager: { getSpace(spaceId: string): Promise<Space | null> };
   dispatch: (
     taskId: string,
-    approvalSource: NonNullable<SpaceTask['approvalSource']>
+    approvalSource: NonNullable<SpaceTask['approvalSource']>,
+    options?: { expectedWorkflowRunId?: string | null; expectedApprovedAt?: number | null }
   ) => Promise<PostApprovalRouteResult>;
 }
 
@@ -84,7 +85,10 @@ export async function applyDispatch(ctx: PostApprovalRetryCtx): Promise<PostAppr
   const task = ctx.task;
   if (!task) return ctx;
   try {
-    const result = await ctx.dispatch(task.id, task.approvalSource ?? 'agent');
+    const result = await ctx.dispatch(task.id, task.approvalSource ?? 'agent', {
+      expectedWorkflowRunId: task.workflowRunId ?? null,
+      expectedApprovedAt: task.approvedAt ?? null,
+    });
     return { ...ctx, result };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
