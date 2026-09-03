@@ -189,7 +189,7 @@ export function createSpaceActionsMcpServer(config: SpaceActionsServerConfig) {
   const spaceEntries = spaceConfig ? createSpaceRegistryEntries(spaceConfig) : [];
   const nodeEntries = config.nodeConfig ? createNodeRegistryEntries(config.nodeConfig) : [];
   const isRoleAdmittedEntry = (entry: ActionDefinition) =>
-    config.role === 'coordinator' || !COORDINATOR_ONLY_ACTIONS.has(entry.name);
+    spaceConfig?.isDefaultAgent === true || !COORDINATOR_ONLY_ACTIONS.has(entry.name);
   const isNotDeniedEntry = (entry: ActionDefinition) => !config.deniedActionNames?.has(entry.name);
   const isUniversalReadFiltered = (entry: ActionDefinition) =>
     config.role !== 'universal_read' || entry.safetyClass === 'read';

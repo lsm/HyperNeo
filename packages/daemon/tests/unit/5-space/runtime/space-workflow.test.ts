@@ -12,7 +12,10 @@ import {
   type SpaceAgentLookup,
 } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
-import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import {
+  coordinatorLongHorizonAgentId,
+  SpaceLongHorizonAgentRepository,
+} from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import type { WorkflowNodeInput } from '@hyperneo/shared';
 
 function makeDb(): BunDatabase {
@@ -1347,6 +1350,18 @@ describe('createSpaceAgentLookup — runtime-shaped resolution', () => {
     expect(lookup.getAgentById('space-1', orphanedMirrorId)).toBeNull();
     const coordinator = longHorizonAgentRepo.ensureCoordinator('space-1');
     expect(lookup.getAgentById('space-1', coordinator.id)).toBeNull();
+    seedSpace(db, 'space-3');
+    const renamedDerivedId = coordinatorLongHorizonAgentId('space-3');
+    longHorizonAgentRepo.create({
+      id: renamedDerivedId,
+      spaceId: 'space-3',
+      handle: 'renamed',
+      displayName: 'Renamed Default',
+    });
+    expect(lookup.getAgentById('space-3', renamedDerivedId)).toEqual({
+      id: renamedDerivedId,
+      name: 'Renamed Default',
+    });
     longHorizonAgentRepo.create({
       id: 'agent-paused-native',
       spaceId: 'space-1',

@@ -1,11 +1,9 @@
-import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
-
 export type GoalOwnershipAdmissionDecision =
   | { action: 'allow' }
   | { action: 'deny'; reason: 'not_coordinator_or_human'; message: string };
 
 export interface GoalOwnershipAdmissionInput {
-  callerRole: SpaceMcpSessionRole | undefined;
+  isDefaultAgent: boolean;
   hasSession: boolean;
 }
 
@@ -13,7 +11,7 @@ export function decideGoalOwnershipMutationAdmission(
   input: GoalOwnershipAdmissionInput
 ): GoalOwnershipAdmissionDecision {
   if (!input.hasSession) return { action: 'allow' };
-  if (input.callerRole === 'coordinator') return { action: 'allow' };
+  if (input.isDefaultAgent) return { action: 'allow' };
   return {
     action: 'deny',
     reason: 'not_coordinator_or_human',

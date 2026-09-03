@@ -60,7 +60,6 @@ describe('Space long-horizon agent handlers', () => {
     hubData = createMockMessageHub();
     repo = {
       ensureCoordinator: mock(() => {}),
-      getCoordinator: mock(() => null),
       listBySpaceId: mock(() => []),
       create: mock((params) => ({
         id: params.id ?? 'agent-new',
@@ -69,6 +68,7 @@ describe('Space long-horizon agent handlers', () => {
       })),
       getById: mock(() => ({ id: 'agent-1', spaceId: 'space-1' })),
       getByHandle: mock(() => null),
+      getCoordinator: mock(() => null),
       update: mock((agentId, params) => ({ id: agentId, spaceId: 'space-1', ...params })),
       delete: mock(() => {}),
       listReminders: mock(() => []),
@@ -250,6 +250,84 @@ describe('Space long-horizon agent handlers', () => {
   });
 
   describe('spaceLongHorizonAgent.update', () => {
+    it('rejects handle changes on the default agent row (C-2 lock)', async () => {
+      const coordinatorRow = {
+        id: 'space-lh-agent:coordinator:space-1',
+        spaceId: 'space-1',
+        handle: 'coordinator',
+        displayName: 'Coordinator',
+        status: 'active',
+      };
+      repo.getById = mock(() => coordinatorRow) as SpaceLongHorizonAgentRepository['getById'];
+      repo.getCoordinator = mock(
+        () => coordinatorRow
+      ) as SpaceLongHorizonAgentRepository['getCoordinator'];
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+          agentId: coordinatorRow.id,
+          spaceId: 'space-1',
+          handle: 'renamed',
+        })
+      ).rejects.toThrow('handle is locked');
+
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects paused/archived/disabled status on the default agent row (C-2 lock)', async () => {
+      const coordinatorRow = {
+        id: 'space-lh-agent:coordinator:space-1',
+        spaceId: 'space-1',
+        handle: 'coordinator',
+        displayName: 'Coordinator',
+        status: 'active',
+      };
+      repo.getById = mock(() => coordinatorRow) as SpaceLongHorizonAgentRepository['getById'];
+      repo.getCoordinator = mock(
+        () => coordinatorRow
+      ) as SpaceLongHorizonAgentRepository['getCoordinator'];
+
+      for (const status of ['paused', 'archived', 'disabled']) {
+        await expect(
+          call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+            agentId: coordinatorRow.id,
+            spaceId: 'space-1',
+            status,
+          })
+        ).rejects.toThrow('cannot be paused, archived, or disabled');
+      }
+
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it('allows instructions/model/provider/display-name edits on the default agent row', async () => {
+      const coordinatorRow = {
+        id: 'space-lh-agent:coordinator:space-1',
+        spaceId: 'space-1',
+        handle: 'coordinator',
+        displayName: 'Coordinator',
+        status: 'active',
+      };
+      repo.getById = mock(() => coordinatorRow) as SpaceLongHorizonAgentRepository['getById'];
+      repo.getCoordinator = mock(
+        () => coordinatorRow
+      ) as SpaceLongHorizonAgentRepository['getCoordinator'];
+
+      await call(hubData.handlers, 'spaceLongHorizonAgent.update', {
+        agentId: coordinatorRow.id,
+        spaceId: 'space-1',
+        instructions: 'Coordinate everything.',
+        model: 'claude-opus-5',
+        provider: 'anthropic',
+        displayName: 'Renamed Coordinator',
+      });
+
+      expect(repo.update).toHaveBeenCalledWith(
+        coordinatorRow.id,
+        expect.objectContaining({ instructions: 'Coordinate everything.' })
+      );
+    });
+
     it('rejects invalid raw handle updates', async () => {
       await expect(
         call(hubData.handlers, 'spaceLongHorizonAgent.update', {
@@ -409,6 +487,29 @@ describe('Space long-horizon agent handlers', () => {
   });
 
   describe('spaceLongHorizonAgent.delete', () => {
+    it('rejects deleting the default agent row so sessions never hold stale coordinator authority', async () => {
+      const coordinatorRow = {
+        id: 'space-lh-agent:coordinator:space-1',
+        spaceId: 'space-1',
+        handle: 'coordinator',
+        displayName: 'Coordinator',
+        status: 'active',
+      };
+      repo.getById = mock(() => coordinatorRow) as SpaceLongHorizonAgentRepository['getById'];
+      repo.getCoordinator = mock(
+        () => coordinatorRow
+      ) as SpaceLongHorizonAgentRepository['getCoordinator'];
+
+      await expect(
+        call(hubData.handlers, 'spaceLongHorizonAgent.delete', {
+          agentId: coordinatorRow.id,
+          spaceId: 'space-1',
+        })
+      ).rejects.toThrow('cannot be deleted');
+
+      expect(repo.delete).not.toHaveBeenCalled();
+    });
+
     it('rejects deleting an agent referenced by workflow nodes', async () => {
       spaceAgentManager.isAgentReferenced = mock(() => ({
         referenced: true,

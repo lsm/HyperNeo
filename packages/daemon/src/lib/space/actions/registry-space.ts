@@ -1211,7 +1211,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
     : [...workflowEntries, ...taskEntries, ...partCEntries];
   if (config.goalService) entries.push(...goalEntries);
   if (config.evolutionScopeService && config.evolutionEpisodeService) entries.push(...forgeEntries);
-  if (config.callerRole === 'long_term_agent' || config.callerRole === 'coordinator')
+  if (config.callerRole === 'long_term_agent' || config.isDefaultAgent === true)
     entries.push(reviewGoalOutcomeEntry);
   return config.taskAgentManager
     ? entries

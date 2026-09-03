@@ -64,6 +64,7 @@ import {
   type SpaceActionsServerConfig,
 } from '../actions/space-actions-server.ts';
 import { SpaceActorRegistryAdapter } from '../actor-registry.ts';
+import { resolveIsDefaultAgent } from '../agents/default-agent-policy.ts';
 import { resolveCustomAgentPrompt } from '../agents/custom-agent.ts';
 import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../agents/long-horizon-agent-tools.ts';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent.ts';
@@ -373,10 +374,12 @@ export class SpaceRuntimeService {
         return 'pre_admission_failure';
       }
     }
-    const coordinator = this.config.longHorizonAgentRepo?.getCoordinator(args.spaceId);
-    const isCoordinator =
-      agent.id === coordinatorLongHorizonAgentId(args.spaceId) || coordinator?.id === agent.id;
-    const session = isCoordinator
+    const isDefaultAgent = resolveIsDefaultAgent(
+      args.spaceId,
+      agent.id,
+      this.config.longHorizonAgentRepo
+    );
+    const session = isDefaultAgent
       ? ((await this.resolveCoordinatorSession(args.spaceId)) ??
         (await this.ensureCoordinatorSession(args.spaceId)))
       : await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
@@ -512,12 +515,17 @@ export class SpaceRuntimeService {
     }
     const agent = this.config.longHorizonAgentRepo?.getById(targetAgentId);
     if (!agent) return false;
+    const wakeTargetIsDefaultAgent = resolveIsDefaultAgent(
+      goal.spaceId,
+      agent.id,
+      this.config.longHorizonAgentRepo
+    );
     const actor: ActorRef = {
       actorId: `agent:${encodeActorIdComponent(agent.id)}`,
       kind: 'agent',
       spaceId: goal.spaceId,
       handle: `@${agent.handle}`,
-      roles: ['space-agent', 'coordinator'],
+      roles: wakeTargetIsDefaultAgent ? ['space-agent', 'coordinator'] : ['space-agent'],
       status: 'inactive',
     };
     const { summary, taskStatus, taskTitle, goalTitle } = notification.payload;
@@ -1072,11 +1080,9 @@ export class SpaceRuntimeService {
   ): Array<{ id: string; name: string; description?: string }> {
     const unified = this.config.longHorizonAgentRepo?.listBySpaceId(spaceId);
     if (unified) {
+      const coordinatorAgentId = this.config.longHorizonAgentRepo?.getCoordinator(spaceId)?.id;
       return unified
-        .filter(
-          (agent) =>
-            agent.id !== coordinatorLongHorizonAgentId(spaceId) && agent.handle !== 'coordinator'
-        )
+        .filter((agent) => agent.id !== coordinatorAgentId)
         .map((agent) => ({
           id: agent.id,
           name: agent.displayName,
@@ -1283,6 +1289,7 @@ export class SpaceRuntimeService {
       myAgentName: agentName,
       myAgentNameAliases: aliases,
       myAgentId: agentId ?? undefined,
+      isDefaultAgent: resolveIsDefaultAgent(space.id, agentId, this.config.longHorizonAgentRepo),
       mySessionId: sessionId,
       callerRole: 'long_term_agent',
       auditLogRepo: this.auditLogRepo,
@@ -2090,6 +2097,7 @@ export class SpaceRuntimeService {
       myAgentName: 'space-agent',
       myAgentNameAliases: coordinator ? [coordinator.handle] : undefined,
       myAgentId: coordinator ? coordinator.id : undefined,
+      isDefaultAgent: coordinator != null,
       mySessionId: spaceChatSessionId,
       callerRole: 'coordinator',
       auditLogRepo: this.auditLogRepo,
