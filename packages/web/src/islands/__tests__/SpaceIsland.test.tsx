@@ -231,10 +231,6 @@ vi.mock('../../components/space/SpaceSessionsPage', () => ({
   ),
 }));
 
-vi.mock('../../components/space/SpaceWorkerAgentList', () => ({
-  SpaceWorkerAgentList: () => <div data-testid="space-worker-agent-list" />,
-}));
-
 vi.mock('../../components/space/SpaceLongHorizonAgents', () => ({
   SpaceLongHorizonAgents: (props: {
     spaceId: string;
