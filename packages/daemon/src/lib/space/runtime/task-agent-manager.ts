@@ -2108,6 +2108,7 @@ export class TaskAgentManager {
                    WHERE ne.agent_session_id = s.id
                      AND ne.agent_name = ?
                      AND (? IS NULL OR ne.workflow_node_id = ?)
+                     AND (? IS NULL OR ne.workflow_run_id = ?)
                 )
                 OR (
                   NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)
@@ -2131,6 +2132,8 @@ export class TaskAgentManager {
           args.routeAgentName,
           args.routeNodeId,
           args.routeNodeId,
+          args.workflowRunId,
+          args.workflowRunId,
           args.routeAgentName,
           args.routeNodeId,
           args.routeNodeId,

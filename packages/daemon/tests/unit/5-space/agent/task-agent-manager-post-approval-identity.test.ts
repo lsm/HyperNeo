@@ -452,14 +452,14 @@ describe('TaskAgentManager.isSessionOnPostApprovalRoute', () => {
 
   function insertExecution(
     sessionId: string,
-    opts: { nodeId?: string; agentName?: string } = {}
+    opts: { nodeId?: string; agentName?: string; workflowRunId?: string } = {}
   ): void {
     db.prepare(
       `INSERT INTO node_executions (id, workflow_run_id, workflow_node_id, agent_name, agent_session_id, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, 'in_progress', 0, 0)`
     ).run(
       `exec-${sessionId}`,
-      RUN_ID,
+      opts.workflowRunId ?? RUN_ID,
       opts.nodeId ?? POST_APPROVAL_NODE,
       opts.agentName ?? 'merger',
       sessionId
@@ -609,6 +609,85 @@ describe('TaskAgentManager.isSessionOnPostApprovalRoute — provenance binding',
         routeNodeId: POST_APPROVAL_NODE,
         routeAgentName: 'merger',
         workflowRunId: RUN_ID,
+      })
+    ).toBe(true);
+  });
+});
+
+describe('TaskAgentManager.isSessionOnPostApprovalRoute — execution run binding', () => {
+  let db: BunDatabase;
+  let tam: TaskAgentManager;
+
+  beforeEach(() => {
+    db = makeDb();
+    tam = makeManager(db);
+  });
+
+  it('rejects an execution-backed worker from another workflow run (re-parented task)', () => {
+    db.prepare(
+      `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, type, session_context)
+       VALUES ('old-run-exec', 'Worker', '/tmp/ws', 0, 1, 'active', '{}', ?, 0, 'worker', ?)`
+    ).run(
+      provenanceMetadata('merger', { workflowRunId: RUN_ID }),
+      JSON.stringify({ spaceId: SPACE_ID, taskId: TASK_ID })
+    );
+    db.prepare(
+      `INSERT INTO node_executions (id, workflow_run_id, workflow_node_id, agent_name, agent_session_id, status, created_at, updated_at)
+       VALUES ('exec-old-run', 'run-old', ?, 'merger', 'old-run-exec', 'in_progress', 0, 0)`
+    ).run(POST_APPROVAL_NODE);
+    expect(
+      tam.isSessionOnPostApprovalRoute({
+        sessionId: 'old-run-exec',
+        taskId: TASK_ID,
+        routeNodeId: POST_APPROVAL_NODE,
+        routeAgentName: 'merger',
+        workflowRunId: RUN_ID,
+      })
+    ).toBe(false);
+  });
+
+  it('accepts an execution-backed worker bound to the current workflow run', () => {
+    db.prepare(
+      `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, type, session_context)
+       VALUES ('current-run-exec', 'Worker', '/tmp/ws', 0, 1, 'active', '{}', ?, 0, 'worker', ?)`
+    ).run(
+      provenanceMetadata('merger', { workflowRunId: RUN_ID }),
+      JSON.stringify({ spaceId: SPACE_ID, taskId: TASK_ID })
+    );
+    db.prepare(
+      `INSERT INTO node_executions (id, workflow_run_id, workflow_node_id, agent_name, agent_session_id, status, created_at, updated_at)
+       VALUES ('exec-current-run', ?, ?, 'merger', 'current-run-exec', 'in_progress', 0, 0)`
+    ).run(RUN_ID, POST_APPROVAL_NODE);
+    expect(
+      tam.isSessionOnPostApprovalRoute({
+        sessionId: 'current-run-exec',
+        taskId: TASK_ID,
+        routeNodeId: POST_APPROVAL_NODE,
+        routeAgentName: 'merger',
+        workflowRunId: RUN_ID,
+      })
+    ).toBe(true);
+  });
+
+  it('skips the run check for a legacy route without a current run id', () => {
+    db.prepare(
+      `INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, type, session_context)
+       VALUES ('legacy-run-exec', 'Worker', '/tmp/ws', 0, 1, 'active', '{}', ?, 0, 'worker', ?)`
+    ).run(
+      provenanceMetadata('merger', { workflowRunId: RUN_ID }),
+      JSON.stringify({ spaceId: SPACE_ID, taskId: TASK_ID })
+    );
+    db.prepare(
+      `INSERT INTO node_executions (id, workflow_run_id, workflow_node_id, agent_name, agent_session_id, status, created_at, updated_at)
+       VALUES ('exec-legacy-run', 'run-old', ?, 'merger', 'legacy-run-exec', 'in_progress', 0, 0)`
+    ).run(POST_APPROVAL_NODE);
+    expect(
+      tam.isSessionOnPostApprovalRoute({
+        sessionId: 'legacy-run-exec',
+        taskId: TASK_ID,
+        routeNodeId: POST_APPROVAL_NODE,
+        routeAgentName: 'merger',
+        workflowRunId: null,
       })
     ).toBe(true);
   });

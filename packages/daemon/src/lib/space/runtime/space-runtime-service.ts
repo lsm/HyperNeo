@@ -37,6 +37,7 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository.ts';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
+import type { PostApprovalRouteResult } from './post-approval-router.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { AgentSession } from '../../agent/agent-session.ts';
@@ -2331,6 +2332,14 @@ export class SpaceRuntimeService {
   ): Promise<void> {
     log.info(`dispatchPostApproval: spaceId=${spaceId} taskId=${taskId} source=${approvalSource}`);
     await this.runtime.dispatchPostApproval(taskId, approvalSource, contextExtras ?? {});
+  }
+
+  async retryPostApprovalDispatch(
+    spaceId: string,
+    taskId: string
+  ): Promise<PostApprovalRouteResult> {
+    log.info(`retryPostApprovalDispatch: spaceId=${spaceId} taskId=${taskId}`);
+    return await this.runtime.retryPostApprovalDispatch(taskId);
   }
 
   async recoverWorkflowBackedTask(

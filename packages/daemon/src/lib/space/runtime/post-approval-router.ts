@@ -170,15 +170,25 @@ export function mapPostApprovalDispatchWarning(detail: string): string {
 export class PostApprovalRouter {
   constructor(private readonly deps: PostApprovalRouterDeps) {}
 
-  private recordBlockedReasonIfCurrent(task: SpaceTask, reason: string): void {
+  private approvalGenerationHolds(task: SpaceTask): boolean {
     const fresh = this.deps.taskRepo.getTask(task.id);
-    if (
+    return (
       fresh?.status === 'approved' &&
       fresh.workflowRunId === task.workflowRunId &&
-      fresh.approvedAt === task.approvedAt
-    ) {
-      this.deps.taskRepo.updateTask(task.id, { postApprovalBlockedReason: reason });
-    }
+      fresh.approvedAt === task.approvedAt &&
+      fresh.postApprovalSessionId === task.postApprovalSessionId
+    );
+  }
+
+  private recordBlockedReasonIfCurrent(task: SpaceTask, reason: string): void {
+    if (!this.approvalGenerationHolds(task)) return;
+    this.deps.taskRepo.updateTask(task.id, {
+      postApprovalBlockedReason: reason,
+      pendingCheckpointType: null,
+      pendingCompletionSubmittedByNodeId: null,
+      pendingCompletionSubmittedAt: null,
+      pendingCompletionReason: null,
+    });
   }
 
   async route(
@@ -283,6 +293,9 @@ export class PostApprovalRouter {
           log.info(
             `PostApprovalRouter.route: task ${task.id} already has live post-approval session ${task.postApprovalSessionId}; skipping re-dispatch`
           );
+          if (task.postApprovalBlockedReason && this.approvalGenerationHolds(task)) {
+            this.deps.taskRepo.updateTask(task.id, { postApprovalBlockedReason: null });
+          }
           return {
             mode: 'already-routed',
             postApprovalSessionId: task.postApprovalSessionId,
@@ -333,14 +346,12 @@ export class PostApprovalRouter {
       if (isSpawnSupersededError(err)) {
         const reason = `post-approval spawn for task ${task.id} superseded at ${err.stage ?? 'unknown'} — a concurrent writer moved the guarded row; the dispatch stays recorded as blocked for retry`;
         log.warn(`PostApprovalRouter.route: ${reason}`);
-        clearPendingCompletionState(this.deps.taskRepo, task.id);
         this.recordBlockedReasonIfCurrent(task, reason);
         return { mode: 'skipped', reason };
       }
       if (isTransientSpawnError(err)) {
         const reason = `post-approval spawn for task ${task.id} deferred: ${err.message}; the dispatch stays recorded as blocked for retry`;
         log.warn(`PostApprovalRouter.route: ${reason}`);
-        clearPendingCompletionState(this.deps.taskRepo, task.id);
         this.recordBlockedReasonIfCurrent(task, reason);
         return { mode: 'skipped', reason };
       }
@@ -358,13 +369,15 @@ export class PostApprovalRouter {
       { postApprovalSessionId: sessionId, postApprovalStartedAt: startedAt }
     );
     if (recorded !== 'won') {
-      this.deps.cancelSpawnedWorker?.(sessionId);
       const fresh = this.deps.taskRepo.getTask(task.id);
+      if (fresh?.postApprovalSessionId !== sessionId) {
+        this.deps.cancelSpawnedWorker?.(sessionId);
+      }
       const reason = `post-approval routing for task ${task.id} lost the conditional write (status=${fresh?.status ?? 'missing'}, workflowRunId=${fresh?.workflowRunId ?? 'none'}); spawned worker ${sessionId} cancelled`;
       log.warn(`PostApprovalRouter.route: ${reason}`);
       return { mode: 'skipped', reason };
     }
-    if (staleReplacedSessionId !== null) {
+    if (staleReplacedSessionId !== null && staleReplacedSessionId !== sessionId) {
       this.deps.cancelSpawnedWorker?.(staleReplacedSessionId);
     }
 

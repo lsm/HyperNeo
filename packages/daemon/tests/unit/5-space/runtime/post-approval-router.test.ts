@@ -800,3 +800,124 @@ describe('PostApprovalRouter.route — replacement and failure-write guards', ()
     expect(taskRepo.getTask(task.id)?.postApprovalBlockedReason).toContain('deferred');
   });
 });
+
+describe('PostApprovalRouter.route — cycle-3 race guards', () => {
+  let db: BunDatabase;
+  let taskRepo: SpaceTaskRepository;
+
+  beforeEach(() => {
+    db = makeDb();
+    taskRepo = new SpaceTaskRepository(db);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  function routedWorkflow(): SpaceWorkflow {
+    return stubWorkflow({
+      postApproval: { targetAgent: 'deployer', instructions: 'Deploy.' },
+    });
+  }
+
+  test('does not cancel a reused session the concurrent winner recorded', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const cancelled: string[] = [];
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: {
+        spawnPostApprovalSubSession: async (args) => {
+          const spawned = await delegates.spawner.spawnPostApprovalSubSession(args);
+          taskRepo.updateTask(args.task.id, { postApprovalSessionId: spawned.sessionId });
+          return spawned;
+        },
+      },
+      livenessProbe: delegates.liveness,
+      cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),
+    });
+
+    const result = await router.route(task, routedWorkflow(), { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('skipped');
+    expect(cancelled).toEqual([]);
+    expect(taskRepo.getTask(task.id)?.postApprovalSessionId).toBe('spawned-session-1');
+  });
+
+  test('an accepted live route clears a stale blocked marker', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, {
+      postApprovalSessionId: 'worker-on-slot',
+      postApprovalBlockedReason: 'previously blocked',
+    });
+    const updated = taskRepo.getTask(task.id)!;
+    const delegates = makeDelegates();
+    delegates.aliveSessions.add('worker-on-slot');
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+      validateRecordedPointer: ({ sessionId }) => sessionId === 'worker-on-slot',
+    });
+
+    const result = await router.route(updated, routedWorkflow(), { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('already-routed');
+    expect(taskRepo.getTask(task.id)?.postApprovalBlockedReason).toBeNull();
+  });
+
+  test('a losing transient failure does not stamp blocked after a concurrent routing won', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, { postApprovalBlockedReason: 'original-block' });
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: {
+        spawnPostApprovalSubSession: async (args) => {
+          taskRepo.casPostApprovalRouting(
+            args.task.id,
+            {
+              workflowRunId: args.task.workflowRunId ?? null,
+              approvedAt: args.task.approvedAt ?? null,
+              priorPostApprovalSessionId: null,
+            },
+            { postApprovalSessionId: 'winner-session', postApprovalStartedAt: Date.now() }
+          );
+          throw new TransientSpawnError('spawn deferred: model pool busy');
+        },
+      },
+      livenessProbe: delegates.liveness,
+    });
+
+    const result = await router.route(task, routedWorkflow(), { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('skipped');
+    expect(taskRepo.getTask(task.id)?.postApprovalBlockedReason).toBe('original-block');
+    expect(taskRepo.getTask(task.id)?.postApprovalSessionId).toBe('winner-session');
+  });
+
+  test('a stale superseded error does not erase a newer approval checkpoint', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: {
+        spawnPostApprovalSubSession: async (args) => {
+          taskRepo.updateTask(args.task.id, {
+            approvedAt: Date.now() + 5000,
+            pendingCheckpointType: 'task_completion',
+            pendingCompletionSubmittedByNodeId: 'new-review-node',
+          });
+          throw new SpawnSupersededError('exec-post-approval', 'fresh-create-bind');
+        },
+      },
+      livenessProbe: delegates.liveness,
+    });
+
+    const result = await router.route(task, routedWorkflow(), { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('skipped');
+    const final = taskRepo.getTask(task.id);
+    expect(final?.pendingCheckpointType).toBe('task_completion');
+    expect(final?.pendingCompletionSubmittedByNodeId).toBe('new-review-node');
+  });
+});
