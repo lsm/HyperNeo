@@ -867,7 +867,6 @@ describe('PostApprovalRouter.route — cycle-3 race guards', () => {
 
   test('a losing transient failure does not stamp blocked after a concurrent routing won', async () => {
     const task = makeApprovedTask(taskRepo);
-    taskRepo.updateTask(task.id, { postApprovalBlockedReason: 'original-block' });
     const delegates = makeDelegates();
     const router = new PostApprovalRouter({
       taskRepo,
@@ -891,7 +890,7 @@ describe('PostApprovalRouter.route — cycle-3 race guards', () => {
     const result = await router.route(task, routedWorkflow(), { approvalSource: 'agent' });
 
     expect(result.mode).toBe('skipped');
-    expect(taskRepo.getTask(task.id)?.postApprovalBlockedReason).toBe('original-block');
+    expect(taskRepo.getTask(task.id)?.postApprovalBlockedReason).toBeNull();
     expect(taskRepo.getTask(task.id)?.postApprovalSessionId).toBe('winner-session');
   });
 
