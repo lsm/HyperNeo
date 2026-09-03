@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent, SpaceWorkflow } from '@hyperneo/shared';
 import {
   filterAgents,
   buildTemplateNodes,
@@ -7,13 +7,22 @@ import {
   workflowToTemplate,
 } from '../workflow-templates';
 
-function makeAgent(id: string, name: string): SpaceWorkerAgent {
+function makeAgent(id: string, displayName: string): SpaceLongHorizonAgent {
   return {
     id,
     spaceId: 'space-1',
-    name,
     handle: id,
-    customPrompt: null,
+    displayName,
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: '',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -42,19 +51,32 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 }
 
 describe('filterAgents', () => {
-  it('removes agents named "leader" (case-insensitive)', () => {
+  it('removes the coordinator agent', () => {
     const agents = [
       makeAgent('a1', 'Coder'),
-      makeAgent('a2', 'leader'),
-      makeAgent('a3', 'Leader'),
-      makeAgent('a4', 'LEADER'),
+      { ...makeAgent('a2', 'Coordinator'), handle: 'coordinator' },
       makeAgent('a5', 'Reviewer'),
     ];
     const result = filterAgents(agents);
     expect(result.map((a) => a.id)).toEqual(['a1', 'a5']);
   });
 
-  it('returns all agents when none are named leader', () => {
+  it('keeps migrated worker mirrors and drops non-active native agents', () => {
+    const agents: SpaceLongHorizonAgent[] = [
+      makeAgent('a1', 'Coder'),
+      {
+        ...makeAgent('a2', 'Migrated Worker'),
+        templateKey: 'migration.legacy_space_agent',
+        status: 'paused',
+      },
+      { ...makeAgent('a3', 'Paused Native'), status: 'paused' },
+      { ...makeAgent('a4', 'Archived Native'), status: 'archived' },
+    ];
+    const result = filterAgents(agents);
+    expect(result.map((a) => a.id)).toEqual(['a1', 'a2']);
+  });
+
+  it('returns all agents when no coordinator is present', () => {
     const agents = [makeAgent('a1', 'Coder'), makeAgent('a2', 'Reviewer')];
     expect(filterAgents(agents)).toHaveLength(2);
   });

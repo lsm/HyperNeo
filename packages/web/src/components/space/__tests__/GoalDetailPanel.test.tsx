@@ -41,7 +41,7 @@ const mockGoals = signal<SpaceGoal[]>([]);
 const mockTasks = signal<SpaceTask[]>([]);
 const mockWorkflows = signal<unknown[]>([]);
 const mockGoalOwners = signal<Map<string, SpaceGoalOwnerResolution>>(new Map());
-const mockLongHorizonAgents = signal<SpaceLongHorizonAgent[]>([]);
+const mockAgents = signal<SpaceLongHorizonAgent[]>([]);
 const mockPauseGoal = vi.fn();
 const mockResumeGoal = vi.fn();
 const mockArchiveGoal = vi.fn();
@@ -51,7 +51,7 @@ const mockGetSchedule = vi.fn();
 const mockFetchGoalOwner = vi.fn();
 const mockAssignGoalOwner = vi.fn();
 const mockUnassignGoalOwner = vi.fn();
-const mockRefreshLongHorizonAgents = vi.fn(async () => {});
+const mockRefreshAgents = vi.fn(async () => {});
 const mockUpsertGoal = vi.fn((goal: SpaceGoal) => {
   mockGoals.value = [goal, ...mockGoals.value.filter((current) => current.id !== goal.id)];
 });
@@ -62,7 +62,7 @@ const mutableSpaceStore = spaceStore as unknown as {
   tasks: Signal<SpaceTask[]>;
   workflows: Signal<unknown[]>;
   goalOwners: Signal<Map<string, SpaceGoalOwnerResolution>>;
-  longHorizonAgents: Signal<SpaceLongHorizonAgent[]>;
+  agents: Signal<SpaceLongHorizonAgent[]>;
   workspaces: Signal<SpaceWorkspace[]>;
   space: Signal<Space | null>;
   pauseGoal: typeof mockPauseGoal;
@@ -74,7 +74,7 @@ const mutableSpaceStore = spaceStore as unknown as {
   fetchGoalOwner: typeof mockFetchGoalOwner;
   assignGoalOwner: typeof mockAssignGoalOwner;
   unassignGoalOwner: typeof mockUnassignGoalOwner;
-  refreshLongHorizonAgents: typeof mockRefreshLongHorizonAgents;
+  refreshAgents: typeof mockRefreshAgents;
   upsertGoal: typeof mockUpsertGoal;
 };
 
@@ -83,7 +83,7 @@ mutableSpaceStore.goals = mockGoals;
 mutableSpaceStore.tasks = mockTasks;
 mutableSpaceStore.workflows = mockWorkflows;
 mutableSpaceStore.goalOwners = mockGoalOwners;
-mutableSpaceStore.longHorizonAgents = mockLongHorizonAgents;
+mutableSpaceStore.agents = mockAgents;
 mutableSpaceStore.pauseGoal = mockPauseGoal;
 mutableSpaceStore.resumeGoal = mockResumeGoal;
 mutableSpaceStore.archiveGoal = mockArchiveGoal;
@@ -93,7 +93,7 @@ mutableSpaceStore.getSchedule = mockGetSchedule;
 mutableSpaceStore.fetchGoalOwner = mockFetchGoalOwner;
 mutableSpaceStore.assignGoalOwner = mockAssignGoalOwner;
 mutableSpaceStore.unassignGoalOwner = mockUnassignGoalOwner;
-mutableSpaceStore.refreshLongHorizonAgents = mockRefreshLongHorizonAgents;
+mutableSpaceStore.refreshAgents = mockRefreshAgents;
 mutableSpaceStore.upsertGoal = mockUpsertGoal;
 
 function makeGoal(overrides: Partial<SpaceGoal> = {}): SpaceGoal {
@@ -219,7 +219,7 @@ describe('GoalDetailPanel', () => {
     mockTasks.value = [makeTask()];
     mockWorkflows.value = [];
     mockGoalOwners.value = new Map();
-    mockLongHorizonAgents.value = [makeAgent()];
+    mockAgents.value = [makeAgent()];
     mutableSpaceStore.workspaces.value = [
       {
         id: 'ws-1',
@@ -439,7 +439,7 @@ describe('GoalDetailPanel', () => {
   });
 
   it('assigns a new owner from the picker and reports the fresh owner', async () => {
-    mockLongHorizonAgents.value = [
+    mockAgents.value = [
       makeAgent(),
       makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
     ];
@@ -455,7 +455,7 @@ describe('GoalDetailPanel', () => {
   });
 
   it('reports the replaced owner from the pre-assignment state on reassignment', async () => {
-    mockLongHorizonAgents.value = [
+    mockAgents.value = [
       makeAgent(),
       makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
     ];
@@ -471,7 +471,7 @@ describe('GoalDetailPanel', () => {
   });
 
   it('keeps the assign picker open across agent status changes', async () => {
-    mockLongHorizonAgents.value = [
+    mockAgents.value = [
       makeAgent(),
       makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
     ];
@@ -491,7 +491,7 @@ describe('GoalDetailPanel', () => {
       mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);
       return owner;
     });
-    mockLongHorizonAgents.value = [
+    mockAgents.value = [
       makeAgent({ status: 'paused' }),
       makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
     ];
@@ -504,7 +504,7 @@ describe('GoalDetailPanel', () => {
   });
 
   it('clears the owner error banner after a successful assignment', async () => {
-    mockLongHorizonAgents.value = [
+    mockAgents.value = [
       makeAgent(),
       makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
     ];
@@ -543,7 +543,7 @@ describe('GoalDetailPanel', () => {
   });
 
   it('ignores a late owner mutation completion after switching goals', async () => {
-    mockLongHorizonAgents.value = [
+    mockAgents.value = [
       makeAgent(),
       makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
     ];
@@ -579,7 +579,7 @@ describe('GoalDetailPanel', () => {
   });
 
   it('shows unavailable fallback when the coordinator is not active', async () => {
-    mockLongHorizonAgents.value = [makeAgent({ status: 'paused' })];
+    mockAgents.value = [makeAgent({ status: 'paused' })];
     mockFetchGoalOwner.mockImplementation(async (goalId: string) => {
       const owner: SpaceGoalOwnerResolution = {
         action: 'coordinator_fallback',
@@ -607,7 +607,7 @@ describe('GoalDetailPanel', () => {
   });
 
   it('re-enables owner controls immediately after switching goals mid-mutation', async () => {
-    mockLongHorizonAgents.value = [
+    mockAgents.value = [
       makeAgent(),
       makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
     ];
@@ -628,7 +628,7 @@ describe('GoalDetailPanel', () => {
   });
 
   it('keeps controls busy when an older mutation settles after a newer one starts', async () => {
-    mockLongHorizonAgents.value = [
+    mockAgents.value = [
       makeAgent(),
       makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
     ];
@@ -682,7 +682,7 @@ describe('GoalDetailPanel', () => {
   });
 
   it('keeps a reopened picker when a pre-navigation mutation settles after a round trip', async () => {
-    mockLongHorizonAgents.value = [
+    mockAgents.value = [
       makeAgent(),
       makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
     ];
@@ -715,7 +715,7 @@ describe('GoalDetailPanel', () => {
     render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
     await waitFor(() => expect(mockFetchGoalOwner).toHaveBeenCalledTimes(1));
 
-    mockLongHorizonAgents.value = [makeAgent({ handle: 'coordinator' })];
+    mockAgents.value = [makeAgent({ handle: 'coordinator' })];
 
     await waitFor(() => expect(mockFetchGoalOwner).toHaveBeenCalledTimes(2));
   });
@@ -755,7 +755,7 @@ describe('GoalDetailPanel', () => {
       mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);
       return owner;
     });
-    mockLongHorizonAgents.value = [makeAgent({ status: 'paused' })];
+    mockAgents.value = [makeAgent({ status: 'paused' })];
 
     await waitFor(() => expect(screen.getByText('Degraded')).toBeTruthy());
     expect(mockFetchGoalOwner).toHaveBeenCalledTimes(2);
@@ -776,7 +776,7 @@ describe('GoalDetailPanel', () => {
   });
 
   it('surfaces assignment errors as a toast', async () => {
-    mockLongHorizonAgents.value = [
+    mockAgents.value = [
       makeAgent(),
       makeAgent({ id: 'agent-2', handle: 'watchman', displayName: 'Watchman' }),
     ];
@@ -803,7 +803,7 @@ describe('GoalDetailPanel', () => {
   });
 
   it('falls back to the raw agent id when the owner agent is no longer listed', async () => {
-    mockLongHorizonAgents.value = [];
+    mockAgents.value = [];
     mockFetchGoalOwner.mockImplementation(async (goalId: string) => {
       const owner = resolvedOwner('agent-gone');
       mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);

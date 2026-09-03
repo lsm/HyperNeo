@@ -1,7 +1,6 @@
 import type {
   NodeExecution,
   Space,
-  SpaceWorkerAgent,
   SpaceGoal,
   SpaceGoalEvent,
   SpaceLongHorizonAgent,
@@ -139,18 +138,6 @@ function makeRun(id: string, status = 'pending'): SpaceWorkflowRun {
   };
 }
 
-function makeAgent(id: string): SpaceWorkerAgent {
-  return {
-    id,
-    spaceId: 'space-1',
-    name: `Agent ${id}`,
-    handle: id,
-    customPrompt: null,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  };
-}
-
 function makeLongHorizonAgent(id: string): SpaceLongHorizonAgent {
   return {
     id,
@@ -275,7 +262,6 @@ function makeMockHub() {
         );
       if (method === 'spaceTask.update') return makeTask('t1', 'in_progress');
       if (method === 'spaceTask.recoverWorkflow') return makeTask('t1', 'in_progress');
-      if (method === 'spaceAgent.create') return { agent: makeAgent('new-agent') };
       if (method === 'spaceAgent.getPromotionDraft') {
         return {
           draft: {
@@ -287,10 +273,11 @@ function makeMockHub() {
           },
         };
       }
-      if (method === 'spaceAgent.promoteSession') return { agent: makeAgent('promoted-agent') };
-      if (method === 'spaceAgent.update') return { agent: makeAgent('a1') };
+      if (method === 'spaceAgent.promoteSession')
+        return { agent: makeLongHorizonAgent('promoted-agent') };
+      if (method === 'spaceAgent.update') return { agent: makeLongHorizonAgent('a1') };
       if (method === 'spaceAgent.syncFromTemplate')
-        return { agent: makeAgent(params?.agentId as string) };
+        return { agent: makeLongHorizonAgent(params?.agentId as string) };
       if (method === 'spaceAgent.previewTemplateSync')
         return {
           preview: {
@@ -305,15 +292,13 @@ function makeMockHub() {
             diff: { customPrompt: { before: 'old prompt', after: 'new prompt' } },
           },
         };
-      if (method === 'spaceLongHorizonAgent.list') return { agents: [] };
-      if (method === 'spaceLongHorizonAgent.create') {
+      if (method === 'spaceAgent.create') {
         return {
-          agent: makeLongHorizonAgent((params?.id as string | undefined) ?? 'new-lh-agent'),
+          agent: makeLongHorizonAgent((params?.id as string | undefined) ?? 'new-agent'),
         };
       }
-      if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') return { templates: [] };
-      if (method === 'spaceLongHorizonAgent.listSubscriptions') return { subscriptions: [] };
-      if (method === 'spaceLongHorizonAgent.createSubscription') {
+      if (method === 'spaceAgent.listSubscriptions') return { subscriptions: [] };
+      if (method === 'spaceAgent.createSubscription') {
         return {
           subscription: {
             id: 'sub-1',
@@ -328,7 +313,7 @@ function makeMockHub() {
           },
         };
       }
-      if (method === 'spaceLongHorizonAgent.updateSubscription') {
+      if (method === 'spaceAgent.updateSubscription') {
         return {
           subscription: {
             id: params?.subscriptionId,
@@ -493,10 +478,10 @@ describe('SpaceStore — space selection', () => {
 
   it('discards stale agent list results after a space switch', async () => {
     await spaceStore.selectSpace('space-1');
-    let resolveList: (value: { agents: SpaceWorkerAgent[] }) => void = () => {};
+    let resolveList: (value: { agents: SpaceLongHorizonAgent[] }) => void = () => {};
     mockHub.request.mockImplementation((method: string, params?: Record<string, unknown>) => {
       if (method === 'spaceAgent.list' && params?.spaceId === 'space-1') {
-        return new Promise<{ agents: SpaceWorkerAgent[] }>((resolve) => {
+        return new Promise<{ agents: SpaceLongHorizonAgent[] }>((resolve) => {
           resolveList = resolve;
         });
       }
@@ -505,16 +490,12 @@ describe('SpaceStore — space selection', () => {
       if (method === 'spaceWorkflow.list') return Promise.resolve({ workflows: [] });
       if (method === 'spaceWorkflow.listBuiltInTemplates')
         return Promise.resolve({ workflows: [] });
-      if (method === 'spaceLongHorizonAgent.list') return Promise.resolve({ agents: [] });
-      if (method === 'spaceLongHorizonAgent.listBuiltInTemplates') {
-        return Promise.resolve({ templates: [] });
-      }
       return Promise.resolve({});
     });
 
     const request = spaceStore.ensureConfigData();
     await spaceStore.selectSpace('space-2');
-    resolveList({ agents: [makeAgent('stale-agent')] });
+    resolveList({ agents: [makeLongHorizonAgent('stale-agent')] });
     await request;
 
     expect(spaceStore.agents.value.some((agent) => agent.id === 'stale-agent')).toBe(false);
@@ -1091,9 +1072,7 @@ describe('SpaceStore — event subscriptions auto-cleanup', () => {
     expect(mockEventHandlers.has('spaceAgent.created')).toBe(true);
     expect(mockEventHandlers.has('spaceAgent.updated')).toBe(true);
     expect(mockEventHandlers.has('spaceAgent.deleted')).toBe(true);
-    expect(mockEventHandlers.has('spaceLongHorizonAgent.created')).toBe(true);
-    expect(mockEventHandlers.has('spaceLongHorizonAgent.updated')).toBe(true);
-    expect(mockEventHandlers.has('spaceLongHorizonAgent.deleted')).toBe(true);
+    expect(mockEventHandlers.has('spaceLongHorizonAgent.created')).toBe(false);
     expect(mockEventHandlers.has('spaceWorkflow.created')).toBe(true);
     expect(mockEventHandlers.has('spaceWorkflow.updated')).toBe(true);
     expect(mockEventHandlers.has('spaceWorkflow.deleted')).toBe(true);
@@ -1359,7 +1338,7 @@ describe('SpaceStore — spaceAgent events', () => {
 
   it('appends new agent on created event', async () => {
     await spaceStore.selectSpace('space-1');
-    const agent = makeAgent('a1');
+    const agent = makeLongHorizonAgent('a1');
 
     const handler = mockEventHandlers.get('spaceAgent.created');
     handler?.({ sessionId: 'global', spaceId: 'space-1', agent });
@@ -1369,18 +1348,18 @@ describe('SpaceStore — spaceAgent events', () => {
 
   it('replaces agent on updated event', async () => {
     await spaceStore.selectSpace('space-1');
-    spaceStore.agents.value = [{ ...makeAgent('a1'), name: 'Old Name' }];
+    spaceStore.agents.value = [{ ...makeLongHorizonAgent('a1'), displayName: 'Old Name' }];
 
-    const updated = { ...makeAgent('a1'), name: 'New Name' };
+    const updated = { ...makeLongHorizonAgent('a1'), displayName: 'New Name' };
     const handler = mockEventHandlers.get('spaceAgent.updated');
     handler?.({ sessionId: 'global', spaceId: 'space-1', agent: updated });
 
-    expect(spaceStore.agents.value[0].name).toBe('New Name');
+    expect(spaceStore.agents.value[0].displayName).toBe('New Name');
   });
 
   it('removes agent on deleted event', async () => {
     await spaceStore.selectSpace('space-1');
-    spaceStore.agents.value = [makeAgent('a1'), makeAgent('a2')];
+    spaceStore.agents.value = [makeLongHorizonAgent('a1'), makeLongHorizonAgent('a2')];
 
     const handler = mockEventHandlers.get('spaceAgent.deleted');
     handler?.({ sessionId: 'global', spaceId: 'space-1', agentId: 'a1' });
@@ -1388,79 +1367,33 @@ describe('SpaceStore — spaceAgent events', () => {
     expect(spaceStore.agents.value.map((a) => a.id)).toEqual(['a2']);
   });
 
+  it('does not append duplicate agents on created event', async () => {
+    await spaceStore.selectSpace('space-1');
+    const agent = makeLongHorizonAgent('a1');
+    spaceStore.agents.value = [agent];
+
+    const handler = mockEventHandlers.get('spaceAgent.created');
+    handler?.({ sessionId: 'global', spaceId: 'space-1', agent });
+
+    expect(spaceStore.agents.value).toHaveLength(1);
+  });
+
+  it('appends agent on updated event when not loaded yet', async () => {
+    await spaceStore.selectSpace('space-1');
+    const agent = makeLongHorizonAgent('a1');
+
+    const handler = mockEventHandlers.get('spaceAgent.updated');
+    handler?.({ sessionId: 'global', spaceId: 'space-1', agent });
+
+    expect(spaceStore.agents.value).toContainEqual(agent);
+  });
+
   it('ignores events for a different space', async () => {
     await spaceStore.selectSpace('space-1');
     const handler = mockEventHandlers.get('spaceAgent.created');
-    handler?.({ sessionId: 'global', spaceId: 'space-99', agent: makeAgent('a1') });
+    handler?.({ sessionId: 'global', spaceId: 'space-99', agent: makeLongHorizonAgent('a1') });
 
     expect(spaceStore.agents.value.length).toBe(0);
-  });
-});
-
-describe('SpaceStore — spaceLongHorizonAgent events', () => {
-  beforeEach(resetStore);
-  afterEach(() => vi.clearAllMocks());
-
-  it('appends new long-horizon agent on created event', async () => {
-    await spaceStore.selectSpace('space-1');
-    const agent = makeLongHorizonAgent('lh1');
-
-    const handler = mockEventHandlers.get('spaceLongHorizonAgent.created');
-    handler?.({ sessionId: 'global', spaceId: 'space-1', agent });
-
-    expect(spaceStore.longHorizonAgents.value).toContainEqual(agent);
-  });
-
-  it('does not append duplicate long-horizon agents on created event', async () => {
-    await spaceStore.selectSpace('space-1');
-    const agent = makeLongHorizonAgent('lh1');
-    spaceStore.longHorizonAgents.value = [agent];
-
-    const handler = mockEventHandlers.get('spaceLongHorizonAgent.created');
-    handler?.({ sessionId: 'global', spaceId: 'space-1', agent });
-
-    expect(spaceStore.longHorizonAgents.value).toHaveLength(1);
-  });
-
-  it('replaces long-horizon agent on updated event', async () => {
-    await spaceStore.selectSpace('space-1');
-    spaceStore.longHorizonAgents.value = [
-      { ...makeLongHorizonAgent('lh1'), displayName: 'Old Name' },
-    ];
-
-    const updated = { ...makeLongHorizonAgent('lh1'), displayName: 'New Name' };
-    const handler = mockEventHandlers.get('spaceLongHorizonAgent.updated');
-    handler?.({ sessionId: 'global', spaceId: 'space-1', agent: updated });
-
-    expect(spaceStore.longHorizonAgents.value[0].displayName).toBe('New Name');
-  });
-
-  it('appends long-horizon agent on updated event when not loaded yet', async () => {
-    await spaceStore.selectSpace('space-1');
-    const agent = makeLongHorizonAgent('lh1');
-
-    const handler = mockEventHandlers.get('spaceLongHorizonAgent.updated');
-    handler?.({ sessionId: 'global', spaceId: 'space-1', agent });
-
-    expect(spaceStore.longHorizonAgents.value).toContainEqual(agent);
-  });
-
-  it('removes long-horizon agent on deleted event', async () => {
-    await spaceStore.selectSpace('space-1');
-    spaceStore.longHorizonAgents.value = [makeLongHorizonAgent('lh1'), makeLongHorizonAgent('lh2')];
-
-    const handler = mockEventHandlers.get('spaceLongHorizonAgent.deleted');
-    handler?.({ sessionId: 'global', spaceId: 'space-1', agentId: 'lh1' });
-
-    expect(spaceStore.longHorizonAgents.value.map((a) => a.id)).toEqual(['lh2']);
-  });
-
-  it('ignores long-horizon agent events for a different space', async () => {
-    await spaceStore.selectSpace('space-1');
-    const handler = mockEventHandlers.get('spaceLongHorizonAgent.created');
-    handler?.({ sessionId: 'global', spaceId: 'space-99', agent: makeLongHorizonAgent('lh1') });
-
-    expect(spaceStore.longHorizonAgents.value.length).toBe(0);
   });
 });
 
@@ -1987,11 +1920,23 @@ describe('SpaceStore — CRUD methods', () => {
 
   it('createAgent calls spaceAgent.create RPC and upserts returned agent', async () => {
     await spaceStore.selectSpace('space-1');
-    await spaceStore.createAgent({ name: 'Coder' });
+    await spaceStore.createAgent({ displayName: 'Coder' });
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.create', {
+      spaceId: 'space-1',
+      displayName: 'Coder',
+    });
+    expect(spaceStore.agents.value.some((agent) => agent.id === 'new-agent')).toBe(true);
+  });
+
+  it('createAgent accepts worker-style params on the unified RPC', async () => {
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.createAgent({ name: 'Coder', customPrompt: 'Be helpful.' });
 
     expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.create', {
       spaceId: 'space-1',
       name: 'Coder',
+      customPrompt: 'Be helpful.',
     });
     expect(spaceStore.agents.value.some((agent) => agent.id === 'new-agent')).toBe(true);
   });
@@ -2034,7 +1979,7 @@ describe('SpaceStore — CRUD methods', () => {
     expect(spaceStore.agents.value.some((agent) => agent.id === 'a1')).toBe(true);
   });
 
-  it('syncAgentFromTemplate calls spaceAgent.syncFromTemplate RPC and upserts returned agent', async () => {
+  it('syncAgentFromTemplate calls spaceAgent.syncFromTemplate RPC and leaves the unified list to events', async () => {
     await spaceStore.selectSpace('space-1');
     await spaceStore.syncAgentFromTemplate('a1');
 
@@ -2042,7 +1987,6 @@ describe('SpaceStore — CRUD methods', () => {
       spaceId: 'space-1',
       agentId: 'a1',
     });
-    expect(spaceStore.agents.value.some((agent) => agent.id === 'a1')).toBe(true);
   });
 
   it('previewAgentTemplateSync calls spaceAgent.previewTemplateSync RPC and returns the preview', async () => {
@@ -2077,7 +2021,7 @@ describe('SpaceStore — CRUD methods', () => {
 
   it('ignores returned agent when the active space changes before the request resolves', async () => {
     await spaceStore.selectSpace('space-1');
-    let resolveRequest: (value: { agent: SpaceWorkerAgent }) => void = () => {};
+    let resolveRequest: (value: { agent: SpaceLongHorizonAgent }) => void = () => {};
     mockHub.request.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -2087,7 +2031,7 @@ describe('SpaceStore — CRUD methods', () => {
 
     const request = spaceStore.createAgent({ name: 'Coder' });
     await spaceStore.selectSpace('space-2');
-    resolveRequest({ agent: makeAgent('stale-agent') });
+    resolveRequest({ agent: makeLongHorizonAgent('stale-agent') });
     await request;
 
     expect(spaceStore.agents.value.some((agent) => agent.id === 'stale-agent')).toBe(false);
@@ -2095,7 +2039,7 @@ describe('SpaceStore — CRUD methods', () => {
 
   it('deleteAgent calls spaceAgent.delete RPC and removes the agent locally', async () => {
     await spaceStore.selectSpace('space-1');
-    spaceStore.agents.value = [makeAgent('a1')];
+    spaceStore.agents.value = [makeLongHorizonAgent('a1')];
     await spaceStore.deleteAgent('a1');
 
     expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.delete', {
@@ -2105,12 +2049,12 @@ describe('SpaceStore — CRUD methods', () => {
     expect(spaceStore.agents.value.some((agent) => agent.id === 'a1')).toBe(false);
   });
 
-  it('createLongHorizonAgent upserts RPC result already appended by created event', async () => {
+  it('createAgent upserts RPC result already appended by created event', async () => {
     await spaceStore.selectSpace('space-1');
 
     const created = makeLongHorizonAgent('new-lh-agent');
     mockHub.request.mockImplementationOnce(async () => {
-      mockEventHandlers.get('spaceLongHorizonAgent.created')?.({
+      mockEventHandlers.get('spaceAgent.created')?.({
         sessionId: 'space:space-1',
         spaceId: 'space-1',
         agent: created,
@@ -2118,46 +2062,46 @@ describe('SpaceStore — CRUD methods', () => {
       return { agent: created };
     });
 
-    await spaceStore.createLongHorizonAgent({ id: 'new-lh-agent', handle: 'new-lh-agent' });
+    await spaceStore.createAgent({ id: 'new-lh-agent', handle: 'new-lh-agent' });
 
-    expect(mockHub.request).toHaveBeenCalledWith('spaceLongHorizonAgent.create', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.create', {
       spaceId: 'space-1',
       id: 'new-lh-agent',
       handle: 'new-lh-agent',
     });
-    expect(spaceStore.longHorizonAgents.value.map((agent) => agent.id)).toEqual(['new-lh-agent']);
+    expect(spaceStore.agents.value.map((agent) => agent.id)).toEqual(['new-lh-agent']);
   });
 
-  it('long-horizon subscription methods call RPC with current space', async () => {
+  it('agent subscription methods call RPC with current space', async () => {
     await spaceStore.selectSpace('space-1');
 
-    await spaceStore.listLongHorizonAgentSubscriptions('lh-1');
-    await spaceStore.createLongHorizonAgentSubscription({
+    await spaceStore.listAgentSubscriptions('lh-1');
+    await spaceStore.createAgentSubscription({
       agentId: 'lh-1',
       source: 'github',
       topic: 'github/*/*/pull_request/*',
       filter: { label: 'PRs' },
     });
-    await spaceStore.updateLongHorizonAgentSubscription('sub-1', { status: 'paused' });
-    await spaceStore.deleteLongHorizonAgentSubscription('sub-1');
+    await spaceStore.updateAgentSubscription('sub-1', { status: 'paused' });
+    await spaceStore.deleteAgentSubscription('sub-1');
 
-    expect(mockHub.request).toHaveBeenCalledWith('spaceLongHorizonAgent.listSubscriptions', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listSubscriptions', {
       agentId: 'lh-1',
       spaceId: 'space-1',
     });
-    expect(mockHub.request).toHaveBeenCalledWith('spaceLongHorizonAgent.createSubscription', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.createSubscription', {
       agentId: 'lh-1',
       source: 'github',
       topic: 'github/*/*/pull_request/*',
       filter: { label: 'PRs' },
       spaceId: 'space-1',
     });
-    expect(mockHub.request).toHaveBeenCalledWith('spaceLongHorizonAgent.updateSubscription', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.updateSubscription', {
       subscriptionId: 'sub-1',
       spaceId: 'space-1',
       status: 'paused',
     });
-    expect(mockHub.request).toHaveBeenCalledWith('spaceLongHorizonAgent.deleteSubscription', {
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.deleteSubscription', {
       subscriptionId: 'sub-1',
       spaceId: 'space-1',
     });
@@ -3125,42 +3069,42 @@ describe('SpaceStore — node execution LiveQuery subscriptions', () => {
   });
 });
 
-describe('SpaceStore — refreshLongHorizonAgents preserves cache on failure', () => {
+describe('SpaceStore — refreshAgents preserves cache on failure', () => {
   beforeEach(resetStore);
   afterEach(() => vi.clearAllMocks());
 
   it('keeps the cached agent list when a force-refresh fails (review fix)', async () => {
     spaceStore.spaceId.value = 'space-1';
-    spaceStore.longHorizonAgents.value = [makeLongHorizonAgent('lh-1')];
+    spaceStore.agents.value = [makeLongHorizonAgent('lh-1')];
     mockHub.request.mockImplementation((method: string) => {
-      if (method === 'spaceLongHorizonAgent.list') return Promise.reject(new Error('timeout'));
+      if (method === 'spaceAgent.list') return Promise.reject(new Error('timeout'));
       return Promise.resolve({});
     });
-    await spaceStore.refreshLongHorizonAgents();
-    expect(spaceStore.longHorizonAgents.value).toHaveLength(1);
+    await spaceStore.refreshAgents();
+    expect(spaceStore.agents.value).toHaveLength(1);
   });
 
-  it('drops a longHorizonAgent.list result that arrived after a space switch', async () => {
+  it('drops a spaceAgent.list result that arrived after a space switch', async () => {
     spaceStore.spaceId.value = 'space-1';
-    spaceStore.longHorizonAgents.value = [makeLongHorizonAgent('seeded')];
+    spaceStore.agents.value = [makeLongHorizonAgent('seeded')];
     let resolveList: (value: { agents: SpaceLongHorizonAgent[] }) => void = () => {};
     mockHub.request.mockImplementation(((method: string) => {
-      if (method === 'spaceLongHorizonAgent.list') {
+      if (method === 'spaceAgent.list') {
         return new Promise<{ agents: SpaceLongHorizonAgent[] }>((r) => {
           resolveList = r;
         });
       }
       return Promise.resolve({});
     }) as never);
-    const pending = spaceStore.refreshLongHorizonAgents();
+    const pending = spaceStore.refreshAgents();
     await vi.waitFor(() =>
-      expect(mockHub.request).toHaveBeenCalledWith('spaceLongHorizonAgent.list', {
+      expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.list', {
         spaceId: 'space-1',
       })
     );
     spaceStore.spaceId.value = 'space-2';
     resolveList({ agents: [makeLongHorizonAgent('stale')] });
     await pending;
-    expect(spaceStore.longHorizonAgents.value.map((a) => a.id)).toEqual(['seeded']);
+    expect(spaceStore.agents.value.map((a) => a.id)).toEqual(['seeded']);
   });
 });

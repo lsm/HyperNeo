@@ -1,9 +1,9 @@
 import type {
-  SpaceWorkerAgent,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentTemplate,
   ThinkingLevel,
 } from '@hyperneo/shared';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { useEffect, useState } from 'preact/hooks';
 import { navigateToSpaceSession } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
@@ -29,8 +29,16 @@ const AUTONOMY_LABELS: Record<number, string> = {
   5: 'Unrestricted',
 };
 
+const MIGRATED_WORKER_TEMPLATE_KEY = 'migration.legacy_space_agent';
+
 function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
   return agent.handle === 'coordinator';
+}
+
+function agentToolsList(agent: SpaceLongHorizonAgent): string[] {
+  const tools = agent.toolPermissions?.tools;
+  if (!Array.isArray(tools)) return [];
+  return tools.filter((tool): tool is string => typeof tool === 'string');
 }
 
 function agentInitials(name: string): string {
@@ -43,34 +51,6 @@ function agentInitials(name: string): string {
     .toUpperCase();
 }
 
-type SelectedAgentDetail =
-  | { source: 'long-horizon'; agent: SpaceLongHorizonAgent }
-  | { source: 'space-agent'; agent: SpaceWorkerAgent };
-
-function selectedAgentName(detail: SelectedAgentDetail): string {
-  return detail.source === 'long-horizon' ? detail.agent.displayName : detail.agent.name;
-}
-
-function selectedAgentStatus(detail: SelectedAgentDetail): string {
-  return detail.agent.status ?? 'active';
-}
-
-function selectedAgentInstructions(detail: SelectedAgentDetail): string | null {
-  return detail.source === 'long-horizon' ? detail.agent.instructions : detail.agent.customPrompt;
-}
-
-function selectedAgentAutonomyLevel(detail: SelectedAgentDetail): number | null {
-  return detail.source === 'long-horizon' ? detail.agent.autonomyLevel : null;
-}
-
-function selectedAgentModel(detail: SelectedAgentDetail): string | null | undefined {
-  return detail.agent.model;
-}
-
-function selectedAgentThinkingLevel(detail: SelectedAgentDetail): ThinkingLevel | null | undefined {
-  return detail.agent.thinkingLevel;
-}
-
 function nextFreeHandle(base: string, existingHandles: Set<string>): string {
   if (!existingHandles.has(base)) return base;
   for (let i = 2; i < 100; i++) {
@@ -80,17 +60,134 @@ function nextFreeHandle(base: string, existingHandles: Set<string>): string {
   return `${base}-${Date.now()}`;
 }
 
+function isMigratedWorkerMirror(agent: SpaceLongHorizonAgent): boolean {
+  return agent.templateKey === MIGRATED_WORKER_TEMPLATE_KEY;
+}
+
+function parseToolsInput(value: string): string[] {
+  return value
+    .split(',')
+    .map((tool) => tool.trim())
+    .filter(Boolean);
+}
+
+function nextFreeDisplayName(base: string, existingNames: Set<string>): string {
+  const taken = new Set([...existingNames].map((name) => name.trim().toLowerCase()));
+  if (!taken.has(base.trim().toLowerCase())) return base;
+  for (let i = 2; i < 100; i++) {
+    const candidate = `${base} ${i}`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+  return `${base} ${Date.now()}`;
+}
+
+interface AgentSaveForm {
+  displayName: string;
+  handle: string;
+  instructions: string;
+  autonomyLevel: number | null;
+  model: string;
+  thinkingLevel: '' | ThinkingLevel;
+  tools: string;
+}
+
+interface AgentSaveCtx {
+  agent: SpaceLongHorizonAgent | null;
+  template: SpaceLongHorizonAgentTemplate | null;
+  form: AgentSaveForm;
+  displayName: string;
+  handle: string;
+  instructions: string;
+  parsedTools: string[];
+  toolsChanged: boolean;
+}
+
+function agentSaveValidateStage(ctx: AgentSaveCtx): AgentSaveCtx {
+  if (!ctx.form.displayName.trim()) throw new Error('Name is required');
+  if (!ctx.form.handle.trim()) throw new Error('Handle is required');
+  return ctx;
+}
+
+function agentSaveNormalizeStage(ctx: AgentSaveCtx): AgentSaveCtx {
+  return {
+    ...ctx,
+    displayName: ctx.form.displayName.trim(),
+    handle: ctx.form.handle.trim(),
+    instructions: ctx.form.instructions.trim(),
+  };
+}
+
+function agentSaveParseToolsStage(ctx: AgentSaveCtx): AgentSaveCtx {
+  const parsedTools = parseToolsInput(ctx.form.tools);
+  return {
+    ...ctx,
+    parsedTools,
+    toolsChanged:
+      parsedTools.join('\n') !== (ctx.agent ? agentToolsList(ctx.agent).join('\n') : ''),
+  };
+}
+
+async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
+  const { form, parsedTools, toolsChanged, displayName, handle, instructions } = ctx;
+  if (ctx.agent) {
+    await spaceStore.updateAgent(ctx.agent.id, {
+      displayName,
+      instructions,
+      ...(isMigratedWorkerMirror(ctx.agent)
+        ? {}
+        : { autonomyLevel: form.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null }),
+      model: form.model.trim() || null,
+      thinkingLevel: (form.thinkingLevel || null) as ThinkingLevel | null,
+      ...(toolsChanged
+        ? isMigratedWorkerMirror(ctx.agent)
+          ? { tools: parsedTools }
+          : { toolPermissions: { ...ctx.agent.toolPermissions, tools: parsedTools } }
+        : {}),
+    });
+    return ctx;
+  }
+  await spaceStore.createAgent({
+    handle,
+    displayName,
+    templateKey: ctx.template?.key ?? null,
+    instructions,
+    autonomyLevel: form.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null,
+    model: form.model.trim() || null,
+    thinkingLevel: (form.thinkingLevel || null) as ThinkingLevel | null,
+    ...(parsedTools.length > 0 ? { tools: parsedTools } : {}),
+  });
+  return ctx;
+}
+
+const runAgentSave = (superpipe({})('save-unified-agent') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(agentSaveValidateStage, 'ctx', 'ctx')
+  .pipe(agentSaveNormalizeStage, 'ctx', 'ctx')
+  .pipe(agentSaveParseToolsStage, 'ctx', 'ctx')
+  .pipe(agentSavePersistStage, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: AgentSaveCtx) => Promise<AgentSaveCtx>;
+
 interface AgentEditorProps {
   template?: SpaceLongHorizonAgentTemplate | null;
   agent?: SpaceLongHorizonAgent | null;
   existingHandles: Set<string>;
+  existingNames: Set<string>;
   onSave: () => void;
   onCancel: () => void;
 }
 
-function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: AgentEditorProps) {
+function AgentEditor({
+  template,
+  agent,
+  existingHandles,
+  existingNames,
+  onSave,
+  onCancel,
+}: AgentEditorProps) {
   const isEdit = !!agent;
-  const [displayName, setDisplayName] = useState(agent?.displayName ?? template?.displayName ?? '');
+  const [displayName, setDisplayName] = useState(
+    agent?.displayName ?? (template ? nextFreeDisplayName(template.displayName, existingNames) : '')
+  );
   const [handle, setHandle] = useState(
     agent?.handle ?? (template ? nextFreeHandle(template.handle, existingHandles) : '')
   );
@@ -105,40 +202,33 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
   const [thinkingLevel, setThinkingLevel] = useState<'' | ThinkingLevel>(
     agent?.thinkingLevel ?? ''
   );
+  const [tools, setTools] = useState(agent ? agentToolsList(agent).join(', ') : '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const migratedWorkerMirror = isEdit && agent ? isMigratedWorkerMirror(agent) : false;
 
   const handleSave = async () => {
-    if (!displayName.trim()) {
-      setError('Name is required');
-      return;
-    }
-    if (!handle.trim()) {
-      setError('Handle is required');
-      return;
-    }
     setSaving(true);
     setError(null);
     try {
-      if (isEdit && agent) {
-        await spaceStore.updateLongHorizonAgent(agent.id, {
-          displayName: displayName.trim(),
-          instructions: instructions.trim(),
-          autonomyLevel: autonomyLevel as 1 | 2 | 3 | 4 | 5 | null,
-          model: model.trim() || null,
-          thinkingLevel: (thinkingLevel || null) as ThinkingLevel | null,
-        });
-      } else {
-        await spaceStore.createLongHorizonAgent({
-          handle: handle.trim(),
-          displayName: displayName.trim(),
-          templateKey: template?.key ?? null,
-          instructions: instructions.trim(),
-          autonomyLevel: autonomyLevel as 1 | 2 | 3 | 4 | 5 | null,
-          model: model.trim() || null,
-          thinkingLevel: (thinkingLevel || null) as ThinkingLevel | null,
-        });
-      }
+      await runAgentSave({
+        agent: isEdit ? agent : null,
+        template: template ?? null,
+        form: {
+          displayName,
+          handle,
+          instructions,
+          autonomyLevel,
+          model,
+          thinkingLevel,
+          tools,
+        },
+        displayName: '',
+        handle: '',
+        instructions: '',
+        parsedTools: [],
+        toolsChanged: false,
+      });
       onSave();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save agent');
@@ -218,8 +308,9 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
                 <button
                   key={level}
                   type="button"
+                  disabled={migratedWorkerMirror}
                   onClick={() => setAutonomyLevel(autonomyLevel === level ? null : level)}
-                  class={`flex-1 rounded-xl border py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/60 ${
+                  class={`flex-1 rounded-xl border py-2.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/60 disabled:cursor-not-allowed disabled:opacity-50 ${
                     autonomyLevel === level
                       ? 'border-warning/40 bg-warning text-on-warning shadow-[0_8px_20px_rgba(251,191,36,0.14)]'
                       : 'border-line bg-surface-overlay/85 text-fg-muted hover:border-line hover:bg-surface-raised hover:text-fg-soft'
@@ -229,8 +320,14 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
                 </button>
               ))}
             </div>
-            {autonomyLevel && (
-              <p class="mt-1 text-xs text-fg-muted">{AUTONOMY_LABELS[autonomyLevel]}</p>
+            {migratedWorkerMirror ? (
+              <p class="mt-1 text-xs text-fg-muted">
+                Autonomy cannot be edited on a migrated worker agent.
+              </p>
+            ) : (
+              autonomyLevel && (
+                <p class="mt-1 text-xs text-fg-muted">{AUTONOMY_LABELS[autonomyLevel]}</p>
+              )
             )}
           </div>
           <div class="grid grid-cols-2 gap-3">
@@ -263,6 +360,20 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
                 ))}
               </select>
             </div>
+          </div>
+          <div>
+            <label class="mb-2 block text-sm font-medium text-fg-soft">Tools</label>
+            <input
+              type="text"
+              value={tools}
+              onInput={(e) => setTools((e.target as HTMLInputElement).value)}
+              class="w-full rounded-xl border border-line bg-surface-overlay/90 px-4 py-3 text-sm text-fg placeholder:text-fg-faint shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
+              placeholder="e.g. Read, Write, Edit, Bash"
+              data-testid="lh-agent-tools-input"
+            />
+            <p class="mt-1 text-xs text-fg-muted">
+              Comma-separated tool names. Leave empty to use the default tool set.
+            </p>
           </div>
           {error && <p class="text-xs text-danger">{error}</p>}
         </div>
@@ -593,9 +704,8 @@ export function SpaceLongHorizonAgents({
   selectedHandle?: string | null;
 }) {
   const routeSpaceId = navigationSpaceId ?? spaceId;
-  const agents = spaceStore.longHorizonAgents.value;
-  const spaceAgents = spaceStore.agents.value;
-  const templates = spaceStore.longHorizonAgentTemplates.value;
+  const agents = spaceStore.agents.value;
+  const templates = spaceStore.agentTemplates.value;
   const loading = !spaceStore.configDataLoaded.value;
 
   useEffect(() => {
@@ -617,7 +727,7 @@ export function SpaceLongHorizonAgents({
     if (agents.length === 0) return;
     let cancelled = false;
     spaceStore
-      .listLongHorizonAgentReminderCounts(agents.map((agent) => agent.id))
+      .listAgentReminderCounts(agents.map((agent) => agent.id))
       .then((counts) => {
         if (!cancelled) setReminderCounts(counts);
       })
@@ -644,7 +754,7 @@ export function SpaceLongHorizonAgents({
     setDeleting(true);
     setDeleteError(null);
     try {
-      await spaceStore.deleteLongHorizonAgent(deletingAgent.id);
+      await spaceStore.deleteAgent(deletingAgent.id);
       toast.success(`"${deletingAgent.displayName}" deleted`);
       setDeletingAgent(null);
     } catch (err) {
@@ -657,18 +767,11 @@ export function SpaceLongHorizonAgents({
   const coordinator = agents.find(isCoordinator);
   const others = agents.filter((a) => !isCoordinator(a) && a.status !== 'archived');
   const sortedAgents = coordinator ? [coordinator, ...others] : others;
-  const selectedLongHorizonAgent = selectedHandle
-    ? sortedAgents.find((agent) => agent.handle === selectedHandle)
+  const selectedAgent = selectedHandle
+    ? (agents.find((agent) => agent.handle === selectedHandle) ?? null)
     : null;
-  const selectedSpaceAgent = selectedHandle
-    ? spaceAgents.find((agent) => agent.handle === selectedHandle && agent.status !== 'archived')
-    : null;
-  const selectedAgent: SelectedAgentDetail | null = selectedSpaceAgent
-    ? { source: 'space-agent', agent: selectedSpaceAgent }
-    : selectedLongHorizonAgent
-      ? { source: 'long-horizon', agent: selectedLongHorizonAgent }
-      : null;
   const existingHandles = new Set(agents.map((a) => a.handle));
+  const existingNames = new Set(agents.map((a) => a.displayName));
 
   const templateInstanceCounts = new Map<string, number>();
   for (const agent of agents.filter((agent) => agent.status !== 'archived')) {
@@ -735,32 +838,32 @@ export function SpaceLongHorizonAgents({
                       Selected agent
                     </p>
                     <h2 class="mt-1 text-base font-semibold text-fg">
-                      {selectedAgentName(selectedAgent)}
+                      {selectedAgent.displayName}
                     </h2>
-                    <p class="mt-0.5 text-xs text-fg-muted">@{selectedAgent.agent.handle}</p>
+                    <p class="mt-0.5 text-xs text-fg-muted">@{selectedAgent.handle}</p>
                   </div>
                   <span class="flex-shrink-0 rounded-full bg-fill px-2 py-0.5 text-xs text-fg-soft">
-                    {selectedAgentStatus(selectedAgent)}
+                    {selectedAgent.status}
                   </span>
                 </div>
-                {selectedAgentInstructions(selectedAgent) && (
+                {selectedAgent.instructions && (
                   <p class="mt-3 text-sm text-fg-soft whitespace-pre-wrap">
-                    {selectedAgentInstructions(selectedAgent)}
+                    {selectedAgent.instructions}
                   </p>
                 )}
                 <div class="mt-3 flex flex-wrap gap-2 text-xs text-fg-muted">
-                  {selectedAgent.source === 'space-agent' && <span>Configured Worker Agent</span>}
-                  {selectedAgentAutonomyLevel(selectedAgent) && (
+                  {isCoordinator(selectedAgent) && <span>Coordinator</span>}
+                  {selectedAgent.autonomyLevel && (
                     <span>
-                      L{selectedAgentAutonomyLevel(selectedAgent)}{' '}
-                      {AUTONOMY_LABELS[selectedAgentAutonomyLevel(selectedAgent)!]}
+                      L{selectedAgent.autonomyLevel} {AUTONOMY_LABELS[selectedAgent.autonomyLevel]}
                     </span>
                   )}
-                  {selectedAgentModel(selectedAgent) && (
-                    <span>Model: {selectedAgentModel(selectedAgent)}</span>
+                  {selectedAgent.model && <span>Model: {selectedAgent.model}</span>}
+                  {selectedAgent.thinkingLevel && (
+                    <span>Thinking: {selectedAgent.thinkingLevel}</span>
                   )}
-                  {selectedAgentThinkingLevel(selectedAgent) && (
-                    <span>Thinking: {selectedAgentThinkingLevel(selectedAgent)}</span>
+                  {agentToolsList(selectedAgent).length > 0 && (
+                    <span>{agentToolsList(selectedAgent).length} tools</span>
                   )}
                 </div>
               </>
@@ -845,6 +948,7 @@ export function SpaceLongHorizonAgents({
           template={selectedTemplate}
           agent={editingAgent}
           existingHandles={existingHandles}
+          existingNames={existingNames}
           onSave={handleEditorSave}
           onCancel={handleEditorCancel}
         />

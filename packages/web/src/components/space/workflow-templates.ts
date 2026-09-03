@@ -1,7 +1,7 @@
 import type {
   DeclarativeToolGuard,
   HandoffTransition,
-  SpaceWorkerAgent,
+  SpaceLongHorizonAgent,
   SpaceWorkflow,
   WorkflowChannel,
   WorkflowNodeAgent,
@@ -79,16 +79,16 @@ const TEMPLATE_FALLBACK_USAGE_KEY = '__template-fallback__';
 
 function resolveTemplateAgent(
   roleOrName: string,
-  agents: SpaceWorkerAgent[],
+  agents: SpaceLongHorizonAgent[],
   usageByRole: Map<string, number>
-): SpaceWorkerAgent | undefined {
+): SpaceLongHorizonAgent | undefined {
   const key = normalizeAgentLookup(roleOrName);
   if (!key) return undefined;
 
   const aliases = TEMPLATE_ROLE_ALIASES[key] ?? [key];
   const aliasSet = new Set(aliases);
   const matches = agents.filter((a) => {
-    const normalizedName = normalizeAgentLookup(a.name);
+    const normalizedName = normalizeAgentLookup(a.displayName);
     if (!normalizedName) return false;
     if (normalizedName === key) return true;
     if (normalizedName.includes(key)) return true;
@@ -131,8 +131,12 @@ function extractInstructionText(
   return trimmed ? trimmed : undefined;
 }
 
-export function filterAgents(agents: SpaceWorkerAgent[]): SpaceWorkerAgent[] {
-  return agents.filter((a) => a.name.toLowerCase() !== 'leader');
+export function filterAgents(agents: SpaceLongHorizonAgent[]): SpaceLongHorizonAgent[] {
+  return agents.filter(
+    (a) =>
+      a.handle !== 'coordinator' &&
+      (a.templateKey === 'migration.legacy_space_agent' || a.status === 'active')
+  );
 }
 
 export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {
@@ -200,7 +204,7 @@ export function getAvailableTemplates(workflows: SpaceWorkflow[]): WorkflowTempl
 
 export function buildTemplateNodes(
   template: WorkflowTemplate,
-  agents: SpaceWorkerAgent[]
+  agents: SpaceLongHorizonAgent[]
 ): NodeDraft[] {
   const usageByRole = new Map<string, number>();
   const stepDefs = getTemplateStepDefs(template);
@@ -260,7 +264,7 @@ export function buildTemplateNodes(
       ? { value: step.systemPrompt.trim() }
       : undefined;
     const resolvedRoleName =
-      role || assigned?.name?.trim() || name.toLowerCase().replace(/\s+/g, '-') || 'agent';
+      role || assigned?.displayName.trim() || name.toLowerCase().replace(/\s+/g, '-') || 'agent';
     return {
       localId: makeLocalId(),
       name,

@@ -1,7 +1,7 @@
 import type {
   HandoffTransition,
   NodeExecutionStatus,
-  SpaceWorkerAgent,
+  SpaceLongHorizonAgent,
   ThinkingLevel,
   WorkflowChannel,
   WorkflowNodeAgent,
@@ -163,7 +163,7 @@ export function buildOverride(value: string): WorkflowNodeAgentOverride | undefi
 
 interface MultiAgentSectionProps {
   node: NodeDraft;
-  agents: SpaceWorkerAgent[];
+  agents: SpaceLongHorizonAgent[];
   onUpdate: (node: NodeDraft) => void;
 }
 
@@ -188,7 +188,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
   function addAgent(agentId: string) {
     if (!agentId) return;
     const agentInfo = agents.find((a) => a.id === agentId);
-    const baseRole = agentInfo?.name?.trim() || agentId;
+    const baseRole = agentInfo?.displayName.trim() || agentId;
     const usedRoles = new Set(nodeAgents.map((a) => a.name));
     let role = baseRole;
     for (let i = 2; usedRoles.has(role); i++) {
@@ -325,7 +325,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
                   </svg>
                 </button>
               </div>
-              <p class="text-xs text-fg-muted">{agentInfo?.name ?? sa.agentId ?? ''}</p>
+              <p class="text-xs text-fg-muted">{agentInfo?.displayName ?? sa.agentId ?? ''}</p>
               <div class="space-y-0.5">
                 <label class="text-xs text-fg-muted">Custom Prompt</label>
                 <input
@@ -374,7 +374,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
           <option value="">+ Add agent…</option>
           {availableAgents.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.name}
+              {a.displayName}
             </option>
           ))}
         </select>
@@ -387,7 +387,7 @@ function MultiAgentSection({ node, agents, onUpdate }: MultiAgentSectionProps) {
 
 interface ChannelsSectionProps {
   node: NodeDraft;
-  agents: SpaceWorkerAgent[];
+  agents: SpaceLongHorizonAgent[];
   onUpdate: (node: NodeDraft) => void;
 }
 
@@ -545,7 +545,7 @@ interface WorkflowNodeCardProps {
   isFirst: boolean;
   isLast: boolean;
   expanded: boolean;
-  agents: SpaceWorkerAgent[];
+  agents: SpaceLongHorizonAgent[];
   onToggleExpand: () => void;
   onUpdate: (node: NodeDraft) => void;
   onMoveUp: () => void;
@@ -571,7 +571,7 @@ export function WorkflowNodeCard({
   nodeTaskStates,
 }: WorkflowNodeCardProps) {
   const multi = isMultiAgentNode(node);
-  const agentName = agents.find((a) => a.id === node.agentId)?.name ?? node.agentId;
+  const agentName = agents.find((a) => a.id === node.agentId)?.displayName ?? node.agentId;
 
   const taskStateByAgent = new Map<string | null, AgentTaskState>(
     (nodeTaskStates ?? []).map((s) => [s.agentName, s])
@@ -610,7 +610,8 @@ export function WorkflowNodeCard({
             {multi ? (
               <span class="flex items-center gap-1 flex-wrap">
                 {node.agents!.map((a) => {
-                  const name = agents.find((ag) => ag.id === a.agentId)?.name ?? a.agentId ?? '';
+                  const name =
+                    agents.find((ag) => ag.id === a.agentId)?.displayName ?? a.agentId ?? '';
                   const hasOverrides = !!a.customPrompt;
                   const taskState = taskStateByAgent.get(a.name);
                   return (
@@ -717,7 +718,7 @@ export function WorkflowNodeCard({
                   onClick={() => {
                     const firstId = node.agentId;
                     const firstAgentRole = firstId
-                      ? (agents.find((a) => a.id === firstId)?.name ?? firstId)
+                      ? (agents.find((a) => a.id === firstId)?.displayName ?? firstId)
                       : '';
                     const existing: WorkflowNodeAgent[] = firstId
                       ? [{ agentId: firstId, name: firstAgentRole }]
@@ -739,7 +740,7 @@ export function WorkflowNodeCard({
                 <option value="">— Select agent —</option>
                 {agents.map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.name}
+                    {a.displayName}
                   </option>
                 ))}
               </select>

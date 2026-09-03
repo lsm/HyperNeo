@@ -3,7 +3,6 @@ import type {
   CreateSpaceLongHorizonAgentReminderParams,
   CreateSpaceLongHorizonAgentSubscriptionParams,
   CreateSpaceTaskParams,
-  CreateSpaceWorkerAgentParams,
   CreateSpaceWorkflowParams,
   LiveQueryDeltaEvent,
   LiveQuerySnapshotEvent,
@@ -38,11 +37,9 @@ import type {
   TaskScheduleStatus,
   TaskScheduleTriggerType,
   UpdateSpaceGoalParams,
-  UpdateSpaceLongHorizonAgentParams,
   UpdateSpaceLongHorizonAgentSubscriptionParams,
   UpdateSpaceParams,
   UpdateSpaceTaskParams,
-  UpdateSpaceWorkerAgentParams,
   UpdateSpaceWorkflowParams,
   WorkflowRunArtifact,
 } from '@hyperneo/shared';
@@ -167,6 +164,49 @@ export interface SpaceWorkerAgentTemplate {
   templateHash?: string | null;
 }
 
+export interface CreateSpaceAgentParams {
+  id?: string;
+  name?: string;
+  handle?: string;
+  displayName?: string;
+  templateKey?: string | null;
+  templateName?: string | null;
+  templateHash?: string | null;
+  instructions?: string;
+  customPrompt?: string | null;
+  autonomyLevel?: SpaceLongHorizonAgent['autonomyLevel'];
+  model?: string | null;
+  thinkingLevel?: SpaceLongHorizonAgent['thinkingLevel'];
+  provider?: string | null;
+  settingSources?: SpaceLongHorizonAgent['settingSources'];
+  toolPermissions?: Record<string, unknown>;
+  tools?: string[];
+  status?: string;
+  description?: string;
+  modelPool?: SpaceLongHorizonAgent['modelPool'];
+}
+
+export interface UpdateSpaceAgentParams {
+  name?: string;
+  handle?: string;
+  displayName?: string;
+  templateKey?: string | null;
+  templateName?: string | null;
+  templateHash?: string | null;
+  instructions?: string;
+  customPrompt?: string | null;
+  autonomyLevel?: SpaceLongHorizonAgent['autonomyLevel'];
+  model?: string | null;
+  thinkingLevel?: SpaceLongHorizonAgent['thinkingLevel'];
+  provider?: string | null;
+  settingSources?: SpaceLongHorizonAgent['settingSources'];
+  toolPermissions?: Record<string, unknown> | null;
+  tools?: string[] | null;
+  status?: string;
+  description?: string | null;
+  modelPool?: SpaceLongHorizonAgent['modelPool'] | null;
+}
+
 function workflowToSummary(wf: SpaceWorkflow): SpaceWorkflowSummary {
   return {
     id: wf.id,
@@ -199,13 +239,9 @@ class SpaceStore {
 
   readonly workflowRuns = signal<SpaceWorkflowRun[]>([]);
 
-  readonly agents = signal<SpaceWorkerAgent[]>([]);
+  readonly agents = signal<SpaceLongHorizonAgent[]>([]);
 
-  readonly agentTemplates = signal<SpaceWorkerAgentTemplate[]>([]);
-
-  readonly longHorizonAgents = signal<SpaceLongHorizonAgent[]>([]);
-
-  readonly longHorizonAgentTemplates = signal<SpaceLongHorizonAgentTemplate[]>([]);
+  readonly agentTemplates = signal<SpaceLongHorizonAgentTemplate[]>([]);
 
   readonly workflows = signal<SpaceWorkflowSummary[]>([]);
 
@@ -354,19 +390,6 @@ class SpaceStore {
   private workflowDetailsLoadGeneration = 0;
 
   readonly workflowVersions = signal<Map<string, number>>(new Map());
-
-  private upsertLongHorizonAgent(agent: SpaceLongHorizonAgent): void {
-    const idx = this.longHorizonAgents.value.findIndex((current) => current.id === agent.id);
-    if (idx >= 0) {
-      this.longHorizonAgents.value = [
-        ...this.longHorizonAgents.value.slice(0, idx),
-        agent,
-        ...this.longHorizonAgents.value.slice(idx + 1),
-      ];
-    } else {
-      this.longHorizonAgents.value = [...this.longHorizonAgents.value, agent];
-    }
-  }
 
   private upsertTaskOnePerRun(tasks: SpaceTask[], task: SpaceTask): SpaceTask[] {
     const withoutSameId = tasks.filter((current) => current.id !== task.id);
@@ -567,8 +590,6 @@ class SpaceStore {
     this.workflowRuns.value = [];
     this.agents.value = [];
     this.agentTemplates.value = [];
-    this.longHorizonAgents.value = [];
-    this.longHorizonAgentTemplates.value = [];
     this.workflows.value = [];
     this.workflowSummariesLoaded = false;
     this.workflowDetails.value = [];
@@ -761,13 +782,10 @@ class SpaceStore {
     const unsubAgentCreated = hub.onEvent<{
       sessionId: string;
       spaceId: string;
-      agent: SpaceWorkerAgent;
+      agent: SpaceLongHorizonAgent;
     }>('spaceAgent.created', (event) => {
       if (event.spaceId === spaceId) {
-        const exists = this.agents.value.some((a) => a.id === event.agent.id);
-        if (!exists) {
-          this.agents.value = [...this.agents.value, event.agent];
-        }
+        this.upsertAgent(event.agent);
       }
     });
     this.cleanupFunctions.push(unsubAgentCreated);
@@ -775,19 +793,10 @@ class SpaceStore {
     const unsubAgentUpdated = hub.onEvent<{
       sessionId: string;
       spaceId: string;
-      agent: SpaceWorkerAgent;
+      agent: SpaceLongHorizonAgent;
     }>('spaceAgent.updated', (event) => {
       if (event.spaceId === spaceId) {
-        const idx = this.agents.value.findIndex((a) => a.id === event.agent.id);
-        if (idx >= 0) {
-          this.agents.value = [
-            ...this.agents.value.slice(0, idx),
-            event.agent,
-            ...this.agents.value.slice(idx + 1),
-          ];
-        } else {
-          this.agents.value = [...this.agents.value, event.agent];
-        }
+        this.upsertAgent(event.agent);
       }
     });
     this.cleanupFunctions.push(unsubAgentUpdated);
@@ -802,41 +811,6 @@ class SpaceStore {
       }
     });
     this.cleanupFunctions.push(unsubAgentDeleted);
-
-    const unsubLongHorizonAgentCreated = hub.onEvent<{
-      sessionId: string;
-      spaceId: string;
-      agent: SpaceLongHorizonAgent;
-    }>('spaceLongHorizonAgent.created', (event) => {
-      if (event.spaceId === spaceId) {
-        this.upsertLongHorizonAgent(event.agent);
-      }
-    });
-    this.cleanupFunctions.push(unsubLongHorizonAgentCreated);
-
-    const unsubLongHorizonAgentUpdated = hub.onEvent<{
-      sessionId: string;
-      spaceId: string;
-      agent: SpaceLongHorizonAgent;
-    }>('spaceLongHorizonAgent.updated', (event) => {
-      if (event.spaceId === spaceId) {
-        this.upsertLongHorizonAgent(event.agent);
-      }
-    });
-    this.cleanupFunctions.push(unsubLongHorizonAgentUpdated);
-
-    const unsubLongHorizonAgentDeleted = hub.onEvent<{
-      sessionId: string;
-      spaceId: string;
-      agentId: string;
-    }>('spaceLongHorizonAgent.deleted', (event) => {
-      if (event.spaceId === spaceId) {
-        this.longHorizonAgents.value = this.longHorizonAgents.value.filter(
-          (agent) => agent.id !== event.agentId
-        );
-      }
-    });
-    this.cleanupFunctions.push(unsubLongHorizonAgentDeleted);
 
     const unsubGoalOwnerChanged = hub.onEvent<{
       sessionId: string;
@@ -960,59 +934,24 @@ class SpaceStore {
     spaceId: string
   ): Promise<void> {
     try {
-      const result = await hub.request<{ agents: SpaceWorkerAgent[] }>('spaceAgent.list', {
+      const result = await hub.request<{ agents: SpaceLongHorizonAgent[] }>('spaceAgent.list', {
         spaceId,
       });
       if (this.spaceId.value !== spaceId) return;
       this.agents.value = (result?.agents ?? []).filter((agent) => agent.spaceId === spaceId);
     } catch (err) {
-      logger.error('Failed to fetch agents:', err);
+      logger.error('Failed to fetch agents (keeping cached list):', err);
     }
   }
 
-  private async fetchLongHorizonAgents(
-    hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
-    spaceId: string
-  ): Promise<void> {
-    try {
-      const result = await hub.request<{ agents: SpaceLongHorizonAgent[] }>(
-        'spaceLongHorizonAgent.list',
-        { spaceId }
-      );
-      if (this.spaceId.value !== spaceId) return;
-      this.longHorizonAgents.value = (result?.agents ?? []).filter(
-        (agent) => agent.spaceId === spaceId
-      );
-    } catch (err) {
-      logger.error('Failed to fetch long-horizon agents (keeping cached list):', err);
-    }
-  }
-
-  async refreshLongHorizonAgents(): Promise<void> {
+  async refreshAgents(): Promise<void> {
     const spaceId = this.spaceId.value;
     if (!spaceId) return;
     try {
       const hub = await connectionManager.getHub();
-      await this.fetchLongHorizonAgents(hub, spaceId);
+      await this.fetchAgents(hub, spaceId);
     } catch (err) {
-      logger.error('Failed to refresh long-horizon agents:', err);
-    }
-  }
-
-  private async fetchLongHorizonAgentTemplates(
-    hub: Awaited<ReturnType<typeof connectionManager.getHub>>,
-    spaceId: string
-  ): Promise<void> {
-    try {
-      const result = await hub.request<{ templates: SpaceLongHorizonAgentTemplate[] }>(
-        'spaceLongHorizonAgent.listBuiltInTemplates',
-        { spaceId }
-      );
-      if (this.spaceId.value !== spaceId) return;
-      this.longHorizonAgentTemplates.value = result?.templates ?? [];
-    } catch (err) {
-      logger.error('Failed to fetch long-horizon agent templates:', err);
-      if (this.spaceId.value === spaceId) this.longHorizonAgentTemplates.value = [];
+      logger.error('Failed to refresh agents:', err);
     }
   }
 
@@ -1021,16 +960,17 @@ class SpaceStore {
     spaceId: string
   ): Promise<void> {
     try {
-      const result = await hub.request<{ templates: SpaceWorkerAgentTemplate[] }>(
+      const result = await hub.request<{ templates: SpaceLongHorizonAgentTemplate[] }>(
         'spaceAgent.listBuiltInTemplates',
         {
           spaceId,
         }
       );
+      if (this.spaceId.value !== spaceId) return;
       this.agentTemplates.value = result?.templates ?? [];
     } catch (err) {
       logger.error('Failed to fetch agent templates:', err);
-      this.agentTemplates.value = [];
+      if (this.spaceId.value === spaceId) this.agentTemplates.value = [];
     }
   }
 
@@ -1333,8 +1273,6 @@ class SpaceStore {
         this.fetchAgentTemplates(hub, spaceId),
         this.fetchWorkflows(hub, spaceId),
         this.fetchWorkflowTemplates(hub, spaceId),
-        this.fetchLongHorizonAgents(hub, spaceId),
-        this.fetchLongHorizonAgentTemplates(hub, spaceId),
       ]);
       if (this.spaceId.value === spaceId) {
         this.configDataLoaded.value = true;
@@ -2364,7 +2302,7 @@ class SpaceStore {
     );
   }
 
-  private upsertAgent(agent: SpaceWorkerAgent, expectedSpaceId?: string): void {
+  private upsertAgent(agent: SpaceLongHorizonAgent, expectedSpaceId?: string): void {
     const activeSpaceId = this.spaceId.value;
     const agentSpaceId = agent.spaceId;
     if (expectedSpaceId && activeSpaceId !== expectedSpaceId) return;
@@ -2376,16 +2314,14 @@ class SpaceStore {
       : [...this.agents.value, agent];
   }
 
-  async createAgent(
-    params: Omit<CreateSpaceWorkerAgentParams, 'spaceId'>
-  ): Promise<SpaceWorkerAgent> {
+  async createAgent(params: CreateSpaceAgentParams): Promise<SpaceLongHorizonAgent> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const { agent } = await hub.request<{ agent: SpaceWorkerAgent }>('spaceAgent.create', {
+    const { agent } = await hub.request<{ agent: SpaceLongHorizonAgent }>('spaceAgent.create', {
       ...params,
       spaceId,
     });
@@ -2409,34 +2345,37 @@ class SpaceStore {
 
   async promoteSessionToAgent(
     sessionId: string,
-    params: Omit<CreateSpaceWorkerAgentParams, 'spaceId'>
-  ): Promise<SpaceWorkerAgent> {
+    params: CreateSpaceAgentParams
+  ): Promise<SpaceLongHorizonAgent> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const { agent } = await hub.request<{ agent: SpaceWorkerAgent }>('spaceAgent.promoteSession', {
-      ...params,
-      spaceId,
-      sessionId,
-    });
+    const { agent } = await hub.request<{ agent: SpaceLongHorizonAgent }>(
+      'spaceAgent.promoteSession',
+      {
+        ...params,
+        spaceId,
+        sessionId,
+      }
+    );
     this.upsertAgent(agent, spaceId);
     return agent;
   }
 
   async updateAgent(
     agentId: string,
-    params: UpdateSpaceWorkerAgentParams
-  ): Promise<SpaceWorkerAgent> {
+    params: UpdateSpaceAgentParams
+  ): Promise<SpaceLongHorizonAgent> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const { agent } = await hub.request<{ agent: SpaceWorkerAgent }>('spaceAgent.update', {
+    const { agent } = await hub.request<{ agent: SpaceLongHorizonAgent }>('spaceAgent.update', {
       id: agentId,
       spaceId,
       ...params,
@@ -2463,7 +2402,6 @@ class SpaceStore {
         ...(expectedRowHash !== undefined ? { expectedRowHash } : {}),
       }
     );
-    this.upsertAgent(agent, spaceId);
     return agent;
   }
 
@@ -2495,70 +2433,17 @@ class SpaceStore {
     this.agents.value = this.agents.value.filter((agent) => agent.id !== agentId);
   }
 
-  async createLongHorizonAgent(params: {
-    id?: string;
-    handle: string;
-    displayName?: string;
-    templateKey?: string | null;
-    instructions?: string;
-    autonomyLevel?: number | null;
-    model?: string | null;
-    thinkingLevel?: string | null;
-    provider?: string | null;
-    settingSources?: SpaceLongHorizonAgent['settingSources'];
-    toolPermissions?: Record<string, unknown>;
-    status?: SpaceLongHorizonAgent['status'];
-  }): Promise<SpaceLongHorizonAgent> {
-    const spaceId = this.spaceId.value;
-    if (!spaceId) throw new Error('No space selected');
-    const hub = connectionManager.getHubIfConnected();
-    if (!hub) throw new Error('Not connected');
-    const { agent } = await hub.request<{ agent: SpaceLongHorizonAgent }>(
-      'spaceLongHorizonAgent.create',
-      { spaceId, ...params }
-    );
-    this.upsertLongHorizonAgent(agent);
-    return agent;
-  }
-
-  async updateLongHorizonAgent(
-    agentId: string,
-    params: UpdateSpaceLongHorizonAgentParams
-  ): Promise<SpaceLongHorizonAgent> {
-    const hub = connectionManager.getHubIfConnected();
-    if (!hub) throw new Error('Not connected');
-    const spaceId = this.spaceId.value;
-    if (!spaceId) throw new Error('No space selected');
-    const { agent } = await hub.request<{ agent: SpaceLongHorizonAgent }>(
-      'spaceLongHorizonAgent.update',
-      { agentId, spaceId, ...params }
-    );
-    this.longHorizonAgents.value = this.longHorizonAgents.value.map((a) =>
-      a.id === agentId ? agent : a
-    );
-    return agent;
-  }
-
-  async deleteLongHorizonAgent(agentId: string): Promise<void> {
-    const hub = connectionManager.getHubIfConnected();
-    if (!hub) throw new Error('Not connected');
-    const spaceId = this.spaceId.value;
-    if (!spaceId) throw new Error('No space selected');
-    await hub.request('spaceLongHorizonAgent.delete', { agentId, spaceId });
-    this.longHorizonAgents.value = this.longHorizonAgents.value.filter((a) => a.id !== agentId);
-  }
-
-  async listLongHorizonAgentReminderCounts(agentIds: string[]): Promise<Record<string, number>> {
+  async listAgentReminderCounts(agentIds: string[]): Promise<Record<string, number>> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
     const { counts } = await hub.request<{ counts: Record<string, number> }>(
-      'spaceLongHorizonAgent.listReminderCounts',
+      'spaceAgent.listReminderCounts',
       { agentIds }
     );
     return counts;
   }
 
-  async createLongHorizonAgentReminder(
+  async createAgentReminder(
     params: Omit<CreateSpaceLongHorizonAgentReminderParams, 'spaceId'>
   ): Promise<SpaceLongHorizonAgentReminder> {
     const spaceId = this.spaceId.value;
@@ -2566,32 +2451,30 @@ class SpaceStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
     const { reminder } = await hub.request<{ reminder: SpaceLongHorizonAgentReminder }>(
-      'spaceLongHorizonAgent.createReminder',
+      'spaceAgent.createReminder',
       { spaceId, ...params }
     );
     return reminder;
   }
 
-  async deleteLongHorizonAgentReminder(reminderId: string): Promise<void> {
+  async deleteAgentReminder(reminderId: string): Promise<void> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
-    await hub.request('spaceLongHorizonAgent.deleteReminder', { reminderId });
+    await hub.request('spaceAgent.deleteReminder', { reminderId });
   }
 
-  async listLongHorizonAgentSubscriptions(
-    agentId: string
-  ): Promise<SpaceLongHorizonAgentEventSubscription[]> {
+  async listAgentSubscriptions(agentId: string): Promise<SpaceLongHorizonAgentEventSubscription[]> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
     const { subscriptions } = await hub.request<{
       subscriptions: SpaceLongHorizonAgentEventSubscription[];
-    }>('spaceLongHorizonAgent.listSubscriptions', { agentId, spaceId });
+    }>('spaceAgent.listSubscriptions', { agentId, spaceId });
     return subscriptions ?? [];
   }
 
-  async createLongHorizonAgentSubscription(
+  async createAgentSubscription(
     params: Omit<CreateSpaceLongHorizonAgentSubscriptionParams, 'spaceId'>
   ): Promise<SpaceLongHorizonAgentEventSubscription> {
     const spaceId = this.spaceId.value;
@@ -2600,11 +2483,11 @@ class SpaceStore {
     if (!hub) throw new Error('Not connected');
     const { subscription } = await hub.request<{
       subscription: SpaceLongHorizonAgentEventSubscription;
-    }>('spaceLongHorizonAgent.createSubscription', { spaceId, ...params });
+    }>('spaceAgent.createSubscription', { spaceId, ...params });
     return subscription;
   }
 
-  async updateLongHorizonAgentSubscription(
+  async updateAgentSubscription(
     subscriptionId: string,
     params: UpdateSpaceLongHorizonAgentSubscriptionParams
   ): Promise<SpaceLongHorizonAgentEventSubscription> {
@@ -2614,16 +2497,16 @@ class SpaceStore {
     if (!hub) throw new Error('Not connected');
     const { subscription } = await hub.request<{
       subscription: SpaceLongHorizonAgentEventSubscription;
-    }>('spaceLongHorizonAgent.updateSubscription', { subscriptionId, spaceId, ...params });
+    }>('spaceAgent.updateSubscription', { subscriptionId, spaceId, ...params });
     return subscription;
   }
 
-  async deleteLongHorizonAgentSubscription(subscriptionId: string): Promise<void> {
+  async deleteAgentSubscription(subscriptionId: string): Promise<void> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
-    await hub.request('spaceLongHorizonAgent.deleteSubscription', { subscriptionId, spaceId });
+    await hub.request('spaceAgent.deleteSubscription', { subscriptionId, spaceId });
   }
 
   async createWorkflow(params: Omit<CreateSpaceWorkflowParams, 'spaceId'>): Promise<SpaceWorkflow> {

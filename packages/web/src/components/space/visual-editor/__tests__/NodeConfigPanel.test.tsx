@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act, waitFor } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
-import type { SpaceWorkerAgent, WorkflowHook } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent, WorkflowHook } from '@hyperneo/shared';
 
 const mockModels = [
   {
@@ -74,13 +74,22 @@ afterEach(() => {
   mockModelsResponse.models = mockModels.map((model) => ({ ...model }));
 });
 
-function makeAgent(id: string, name: string, _role = 'coder'): SpaceWorkerAgent {
+function makeAgent(id: string, name: string, _role = 'coder'): SpaceLongHorizonAgent {
   return {
     id,
     spaceId: 'space-1',
-    name,
     handle: id,
-    customPrompt: null,
+    displayName: name,
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: '',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -95,7 +104,7 @@ function makeStep(overrides: Partial<NodeDraft> = {}): NodeDraft {
   };
 }
 
-const defaultAgents: SpaceWorkerAgent[] = [
+const defaultAgents: SpaceLongHorizonAgent[] = [
   makeAgent('agent-1', 'Planner', 'planner'),
   makeAgent('agent-2', 'Coder', 'coder'),
 ];
@@ -648,7 +657,7 @@ describe('NodeConfigPanel', () => {
       const onUpdate = vi.fn();
       const agents = [
         makeAgent('coder-1', 'Coder'),
-        makeAgent('coordinator-1', 'Coordinator'),
+        { ...makeAgent('coordinator-1', 'Coordinator'), handle: 'coordinator' },
         makeAgent('general-1', 'General'),
       ];
       const { getByTestId } = render(

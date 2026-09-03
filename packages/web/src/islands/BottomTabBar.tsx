@@ -211,7 +211,7 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
         if (spaceId) navigateToSpaceAgent(spaceId);
         break;
       case 'space-settings':
-        if (spaceId) navigateToSpaceConfigure(spaceId);
+        if (spaceId) navigateToSpaceConfigure(spaceId, 'settings');
         break;
     }
   };
@@ -223,7 +223,7 @@ export function BottomTabBar({ inline }: { inline?: boolean } = {}) {
       const isLongHorizonAgentSession =
         spaceSessionId !== null &&
         (spaceSessionId.startsWith('space:agent:') ||
-          spaceStore.longHorizonAgents.value.some((agent) => agent.sessionId === spaceSessionId));
+          spaceStore.agents.value.some((agent) => agent.sessionId === spaceSessionId));
 
       if (id === 'space-settings') return spaceViewMode === 'configure';
       if (id === 'space-sessions')

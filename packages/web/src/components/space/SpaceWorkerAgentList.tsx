@@ -191,7 +191,7 @@ function AgentIcon() {
 }
 
 export function SpaceWorkerAgentList() {
-  const agents = spaceStore.agents.value;
+  const agents = spaceStore.agents.value as unknown as SpaceWorkerAgent[];
   const sortedAgents = useMemo(
     () =>
       [...agents].sort((a, b) =>

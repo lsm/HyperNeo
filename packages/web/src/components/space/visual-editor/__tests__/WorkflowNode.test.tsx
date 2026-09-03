@@ -3,7 +3,7 @@ import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import { WorkflowNode } from '../WorkflowNode';
 import type { WorkflowNodeProps } from '../WorkflowNode';
-import type { SpaceWorkerAgent } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { AgentTaskState } from '../../WorkflowNodeCard';
 import type { Point } from '../types';
 
@@ -35,22 +35,40 @@ function windowMouseUp() {
   window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
 }
 
-const AGENT_A: SpaceWorkerAgent = {
+const AGENT_A: SpaceLongHorizonAgent = {
   id: 'agent-1',
   spaceId: 'space-1',
-  name: 'Alpha Agent',
   handle: 'agent-1',
-  customPrompt: null,
+  displayName: 'Alpha Agent',
+  templateKey: null,
+  status: 'active',
+  sessionId: null,
+  instructions: '',
+  autonomyLevel: null,
+  model: null,
+  thinkingLevel: null,
+  provider: null,
+  settingSources: null,
+  toolPermissions: {},
   createdAt: 0,
   updatedAt: 0,
 };
 
-const AGENT_B: SpaceWorkerAgent = {
+const AGENT_B: SpaceLongHorizonAgent = {
   id: 'agent-2',
   spaceId: 'space-1',
-  name: 'Beta Agent',
   handle: 'agent-2',
-  customPrompt: null,
+  displayName: 'Beta Agent',
+  templateKey: null,
+  status: 'active',
+  sessionId: null,
+  instructions: '',
+  autonomyLevel: null,
+  model: null,
+  thinkingLevel: null,
+  provider: null,
+  settingSources: null,
+  toolPermissions: {},
   createdAt: 0,
   updatedAt: 0,
 };

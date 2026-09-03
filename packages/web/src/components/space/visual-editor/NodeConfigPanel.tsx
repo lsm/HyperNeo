@@ -1,5 +1,5 @@
 import type {
-  SpaceWorkerAgent,
+  SpaceLongHorizonAgent,
   ThinkingLevel,
   WorkflowChannel,
   WorkflowHook,
@@ -15,8 +15,8 @@ import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { HookEditorPanel } from './HookEditorPanel';
 import { WorkflowModelSelect } from './WorkflowModelSelect';
 
-function isCoordinatorAgent(agent: SpaceWorkerAgent): boolean {
-  return agent.name.toLowerCase() === 'coordinator' || agent.templateName === 'Coordinator';
+function isCoordinatorAgent(agent: SpaceLongHorizonAgent): boolean {
+  return agent.handle === 'coordinator';
 }
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
@@ -71,7 +71,7 @@ export interface NodeChannelLink {
 
 export interface NodeConfigPanelProps {
   step: NodeDraft;
-  agents: SpaceWorkerAgent[];
+  agents: SpaceLongHorizonAgent[];
   isStartNode: boolean;
   isEndNode: boolean;
   onUpdate: (step: NodeDraft) => void;
@@ -173,7 +173,7 @@ function SlotResetContextToggle({ checked, onChange }: SlotResetContextTogglePro
 
 interface AgentsSectionProps {
   step: NodeDraft;
-  agents: SpaceWorkerAgent[];
+  agents: SpaceLongHorizonAgent[];
   onUpdate: (step: NodeDraft) => void;
   onEditSlotPrompts?: (role: string) => void;
   onEditSinglePrompts?: () => void;
@@ -205,7 +205,7 @@ function AgentsSection({
   function addAgent(agentId: string) {
     if (!agentId) return;
     const agentInfo = agents.find((a) => a.id === agentId);
-    const baseRole = agentInfo?.name?.trim() || agentId;
+    const baseRole = agentInfo?.displayName.trim() || agentId;
     const usedRoles = new Set(nodeAgents.map((a) => a.name));
     let role = baseRole;
     for (let i = 2; usedRoles.has(role); i++) {
@@ -319,7 +319,7 @@ function AgentsSection({
               const primaryAgentId = selectedSingleAgentId || '';
               const primaryBaseRole =
                 singleSlot?.name ||
-                agents.find((a) => a.id === primaryAgentId)?.name ||
+                agents.find((a) => a.id === primaryAgentId)?.displayName ||
                 primaryAgentId ||
                 'agent';
               const primarySlot: WorkflowNodeAgent = {
@@ -339,7 +339,7 @@ function AgentsSection({
                 agents[0];
               const secondarySlot: WorkflowNodeAgent = {
                 agentId: secondaryAgent?.id ?? '',
-                name: buildUniqueRole(secondaryAgent?.name ?? 'agent'),
+                name: buildUniqueRole(secondaryAgent?.displayName ?? 'agent'),
               };
 
               onUpdate({
@@ -367,7 +367,7 @@ function AgentsSection({
           <option value="">— Select agent —</option>
           {agents.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.name}
+              {a.displayName}
             </option>
           ))}
         </select>
@@ -527,11 +527,11 @@ function AgentsSection({
                   <option value="">— Select agent —</option>
                   {agents.map((agent) => (
                     <option key={agent.id} value={agent.id}>
-                      {agent.name}
+                      {agent.displayName}
                     </option>
                   ))}
                 </select>
-                <p class="text-[11px] text-fg-muted">{agentInfo?.name ?? sa.agentId}</p>
+                <p class="text-[11px] text-fg-muted">{agentInfo?.displayName ?? sa.agentId}</p>
               </div>
               <div class="space-y-1">
                 <label class="text-[11px] font-medium uppercase tracking-[0.16em] text-fg-muted">
@@ -612,7 +612,7 @@ function AgentsSection({
           <option value="">+ Add agent…</option>
           {availableAgents.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.name}
+              {a.displayName}
             </option>
           ))}
         </select>
@@ -987,7 +987,7 @@ export function NodeConfigPanel({
           <div class="rounded border border-line bg-surface-overlay px-3 py-2 text-xs text-fg-muted space-y-1">
             <p>
               <span class="text-fg-muted">Agent:</span>{' '}
-              {(singleAgent?.name ?? singleAgentId) || '—'}
+              {(singleAgent?.displayName ?? singleAgentId) || '—'}
             </p>
           </div>
           <PromptModeToggle
@@ -1027,7 +1027,7 @@ export function NodeConfigPanel({
               <span class="text-fg-muted">Role:</span> {slot.name}
             </p>
             <p>
-              <span class="text-fg-muted">Agent:</span> {slotAgent?.name ?? slot.agentId}
+              <span class="text-fg-muted">Agent:</span> {slotAgent?.displayName ?? slot.agentId}
             </p>
           </div>
           <div class="space-y-1">

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
-import type { SpaceWorkerAgent } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { VisualTransition } from '../types';
 import { WorkflowCanvas } from '../WorkflowCanvas';
 import type { WorkflowNodeData, WorkflowCanvasProps } from '../WorkflowCanvas';
@@ -16,13 +16,22 @@ afterEach(() => cleanup());
 
 const VP: ViewportState = { offsetX: 0, offsetY: 0, scale: 1 };
 
-function makeAgent(id: string, name: string): SpaceWorkerAgent {
+function makeAgent(id: string, name: string): SpaceLongHorizonAgent {
   return {
     id,
     spaceId: 'space-1',
-    name,
     handle: id,
-    customPrompt: null,
+    displayName: name,
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: '',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
     createdAt: 0,
     updatedAt: 0,
   };
@@ -32,7 +41,7 @@ function makeStep(localId: string, name: string): NodeDraft {
   return { localId, name, agentId: 'agent-1' };
 }
 
-const AGENTS: SpaceWorkerAgent[] = [makeAgent('agent-1', 'Coder')];
+const AGENTS: SpaceLongHorizonAgent[] = [makeAgent('agent-1', 'Coder')];
 
 const NODES: WorkflowNodeData[] = [
   {
@@ -439,13 +448,22 @@ import { computeChannelEdges } from '../WorkflowCanvas';
 import type { WorkflowChannel } from '@hyperneo/shared';
 
 describe('computeChannelEdges', () => {
-  function makeAgentWithRole(id: string, role: string): SpaceWorkerAgent {
+  function makeAgentWithRole(id: string, role: string): SpaceLongHorizonAgent {
     return {
       id,
       spaceId: 'space-1',
-      name: role,
       handle: id,
-      customPrompt: null,
+      displayName: role,
+      templateKey: null,
+      status: 'active',
+      sessionId: null,
+      instructions: '',
+      autonomyLevel: null,
+      model: null,
+      thinkingLevel: null,
+      provider: null,
+      settingSources: null,
+      toolPermissions: {},
       createdAt: 0,
       updatedAt: 0,
     };
@@ -454,7 +472,7 @@ describe('computeChannelEdges', () => {
   function makeNodeWithAgentsAndChannels(
     localId: string,
     name: string,
-    agents: SpaceWorkerAgent[],
+    agents: SpaceLongHorizonAgent[],
     channels?: WorkflowChannel[]
   ) {
     return {

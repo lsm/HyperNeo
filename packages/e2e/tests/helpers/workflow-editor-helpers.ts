@@ -35,9 +35,10 @@ export async function getDefaultAgentId(page: Page, spaceId: string): Promise<st
     const hub = window.__messageHub || window.appState?.messageHub;
     if (!hub?.request) throw new Error('Hub not available');
     const res = (await hub.request('spaceAgent.list', { spaceId: sid })) as {
-      agents: Array<{ id: string; name: string }>;
+      agents: Array<{ id: string; handle: string; displayName: string }>;
     };
-    const agent = res.agents.find((a) => a.name === 'Planner') ?? res.agents[0];
+    const pickable = res.agents.filter((a) => a.handle !== 'coordinator');
+    const agent = pickable.find((a) => a.displayName === 'Planner') ?? pickable[0] ?? res.agents[0];
     if (!agent) throw new Error('No agents found in space');
     return agent.id;
   }, spaceId);
