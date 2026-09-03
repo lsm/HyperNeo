@@ -35,6 +35,10 @@ function makeDb(): BunDatabase {
     `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
      VALUES (?, ?, 'wf-retry', 'Retry run', 'done', ?, ?)`
   ).run(RUN_ID, SPACE_ID, Date.now(), Date.now());
+  db.prepare(
+    `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+     VALUES ('run-other', ?, 'wf-retry', 'Other run', 'done', ?, ?)`
+  ).run(SPACE_ID, Date.now(), Date.now());
   return db;
 }
 
@@ -193,6 +197,14 @@ describe('post-approval retry pipeline stages', () => {
     expect(ctx.halt).toContain('cancelled');
   });
 
+  test('applyRunEligibility halts on an uncompleted run (post-approval waits for run success)', () => {
+    db.prepare(`UPDATE space_workflow_runs SET status = 'in_progress' WHERE id = ?`).run(RUN_ID);
+    const task = seedBlockedTask(h.repo);
+    const ctx = applyRunEligibility(ctxFor(h, task.id, h.repo.getTask(task.id)));
+    expect(ctx.halt).toContain('in_progress');
+    expect(ctx.halt).toContain('not a completed run');
+  });
+
   test('applyDispatch re-dispatches with the recorded approval source', async () => {
     const task = seedBlockedTask(h.repo);
     const ctx = await applyDispatch(ctxFor(h, task.id, h.repo.getTask(task.id)));
@@ -211,6 +223,36 @@ describe('post-approval retry pipeline stages', () => {
     const ctx = await applyDispatch(ctxFor(throwing, task.id, throwing.repo.getTask(task.id)));
     expect(ctx.result?.mode).toBe('skipped');
     expect(throwing.repo.getTask(task.id)?.postApprovalBlockedReason).toContain(
+      'Approval recorded'
+    );
+  });
+
+  test('applyDispatch does not stamp a blocked reason after the task re-parented mid-dispatch', async () => {
+    const task = seedBlockedTask(h.repo);
+    const reparented = makeHarness(db, {
+      dispatchImpl: async (taskId) => {
+        reparented.repo.updateTask(taskId, { workflowRunId: 'run-other' });
+        throw new Error('spawn failed: ENOTFOUND');
+      },
+    });
+    const ctx = await applyDispatch(ctxFor(reparented, task.id, reparented.repo.getTask(task.id)));
+    expect(ctx.result?.mode).toBe('skipped');
+    expect(reparented.repo.getTask(task.id)?.postApprovalBlockedReason).not.toContain(
+      'Approval recorded'
+    );
+  });
+
+  test('applyDispatch does not stamp a blocked reason after a new approval generation', async () => {
+    const task = seedBlockedTask(h.repo);
+    const reapproved = makeHarness(db, {
+      dispatchImpl: async (taskId) => {
+        reapproved.repo.updateTask(taskId, { approvedAt: Date.now() + 1000 });
+        throw new Error('spawn failed: ENOTFOUND');
+      },
+    });
+    const ctx = await applyDispatch(ctxFor(reapproved, task.id, reapproved.repo.getTask(task.id)));
+    expect(ctx.result?.mode).toBe('skipped');
+    expect(reapproved.repo.getTask(task.id)?.postApprovalBlockedReason).not.toContain(
       'Approval recorded'
     );
   });

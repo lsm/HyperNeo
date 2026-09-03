@@ -236,6 +236,7 @@ describe('SpaceRuntime.retryPostApprovalDispatch — canonical serialized retry'
       title: 'Ship it',
       description: '',
     });
+    ctx.workflowRunRepo.updateStatusUnchecked(run.id, 'done');
     const task = ctx.taskRepo.createTask({
       spaceId: SPACE_ID,
       title: 'Ship it',

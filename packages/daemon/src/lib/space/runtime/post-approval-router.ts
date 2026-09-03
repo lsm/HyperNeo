@@ -6,6 +6,7 @@ import type {
   UpdateSpaceTaskParams,
   PostApprovalRoute,
 } from '@hyperneo/shared';
+import { resolveNodeAgents } from '@hyperneo/shared';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import {
   interpolatePostApprovalTemplate,
@@ -110,17 +111,36 @@ export function selectFirstDispatchablePostApprovalRoute(
   workflow: SpaceWorkflow | null
 ): { route: PostApprovalRoute; nodeId: string | null } | null {
   if (!workflow) return null;
+  let selected: PostApprovalRoute | null = null;
+  let declaredByNodeId: string | null = null;
   for (const node of workflow.nodes) {
     const route = node.postApproval;
     if (route?.targetAgent && route.targetAgent !== POST_APPROVAL_TASK_AGENT_TARGET) {
-      return { route, nodeId: node.id };
+      selected = route;
+      declaredByNodeId = node.id;
+      break;
     }
   }
-  const legacy = workflow.postApproval;
-  if (legacy?.targetAgent && legacy.targetAgent !== POST_APPROVAL_TASK_AGENT_TARGET) {
-    return { route: legacy, nodeId: null };
+  if (!selected) {
+    const legacy = workflow.postApproval;
+    if (legacy?.targetAgent && legacy.targetAgent !== POST_APPROVAL_TASK_AGENT_TARGET) {
+      selected = legacy;
+    }
   }
-  return null;
+  if (!selected) return null;
+  const targetAgent = selected.targetAgent;
+  for (const node of workflow.nodes) {
+    let ownsTarget = false;
+    try {
+      ownsTarget = resolveNodeAgents(node).some(
+        (agent) => agent.name === targetAgent || agent.agentId === targetAgent
+      );
+    } catch {
+      continue;
+    }
+    if (ownsTarget) return { route: selected, nodeId: node.id };
+  }
+  return { route: selected, nodeId: declaredByNodeId };
 }
 
 export function clearPendingCompletionState(

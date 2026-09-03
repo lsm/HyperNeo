@@ -1,4 +1,5 @@
 import type { Space, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
+import { isWorkflowRunSucceeded } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import {
@@ -55,10 +56,10 @@ export function applyRunEligibility(ctx: PostApprovalRetryCtx): PostApprovalRetr
   const task = ctx.task;
   if (!task?.workflowRunId) return ctx;
   const run = ctx.workflowRunRepo.getRun(task.workflowRunId);
-  if (!run || run.status === 'cancelled') {
+  if (!run || !isWorkflowRunSucceeded(run.status)) {
     return halted(
       ctx,
-      `post-approval retry: workflow run ${task.workflowRunId} for task ${task.id} is ${run?.status ?? 'missing'}`
+      `post-approval retry: workflow run ${task.workflowRunId} for task ${task.id} is ${run?.status ?? 'missing'}, not a completed run`
     );
   }
   return ctx;
@@ -88,7 +89,11 @@ export async function applyDispatch(ctx: PostApprovalRetryCtx): Promise<PostAppr
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     const fresh = ctx.taskRepo.getTask(task.id);
-    if (fresh?.status === 'approved') {
+    if (
+      fresh?.status === 'approved' &&
+      fresh.workflowRunId === task.workflowRunId &&
+      fresh.approvedAt === task.approvedAt
+    ) {
       ctx.taskRepo.updateTask(task.id, {
         postApprovalBlockedReason: mapPostApprovalDispatchWarning(detail),
       });

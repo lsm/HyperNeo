@@ -8,6 +8,7 @@ import {
   isPostApprovalRoutingEnabled,
   POST_APPROVAL_ROUTING_FLAG_ENV,
   mapPostApprovalDispatchWarning,
+  selectFirstDispatchablePostApprovalRoute,
 } from '../../../../src/lib/space/runtime/post-approval-router.ts';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 
@@ -636,5 +637,42 @@ describe('PostApprovalRouter.route — routing CAS', () => {
 
     expect(result.mode).toBe('already-routed');
     expect(delegates.spawned).toHaveLength(0);
+  });
+
+  test('selectFirstDispatchablePostApprovalRoute resolves the node owning the target agent', () => {
+    const workflow = stubWorkflow({
+      nodes: [
+        {
+          id: 'n-declare',
+          name: 'Reviewer',
+          agents: [{ agentId: 'reviewer-id', name: 'reviewer' }],
+          postApproval: { targetAgent: 'deployer', instructions: 'Deploy.' },
+        },
+        {
+          id: 'n-own',
+          name: 'Deploy',
+          agents: [{ agentId: 'deployer-id', name: 'deployer' }],
+        },
+      ],
+    });
+    const selected = selectFirstDispatchablePostApprovalRoute(workflow);
+    expect(selected?.route.targetAgent).toBe('deployer');
+    expect(selected?.nodeId).toBe('n-own');
+  });
+
+  test('selectFirstDispatchablePostApprovalRoute falls back to the declaring node when no node owns the agent', () => {
+    const workflow = stubWorkflow({
+      postApproval: { targetAgent: 'ghost', instructions: 'Nope.' },
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Build',
+          agents: [{ agentId: 'coder-id', name: 'coder' }],
+        },
+      ],
+    });
+    const selected = selectFirstDispatchablePostApprovalRoute(workflow);
+    expect(selected?.route.targetAgent).toBe('ghost');
+    expect(selected?.nodeId).toBeNull();
   });
 });
