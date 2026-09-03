@@ -132,6 +132,7 @@ import {
   type PostApprovalRouteResult,
   PostApprovalRouter,
 } from './post-approval-router.ts';
+import { runPostApprovalRetry, TaskScopedRetrySerializer } from './post-approval-retry.ts';
 import {
   buildPromptTooLongContinueNag,
   COMPACT_RESULT_TIMEOUT_MS,
@@ -2699,6 +2700,24 @@ export class SpaceRuntime {
   }
 
   private postApprovalRouter: PostApprovalRouter | null = null;
+  private readonly postApprovalRetryQueue = new TaskScopedRetrySerializer();
+
+  async retryPostApprovalDispatch(taskId: string): Promise<PostApprovalRouteResult> {
+    if (!this.getPostApprovalRouter()) {
+      const reason = `PostApprovalRouter not wired yet (taskAgentManager missing); task=${taskId}`;
+      log.warn(`retryPostApprovalDispatch: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
+    return this.postApprovalRetryQueue.run(taskId, () =>
+      runPostApprovalRetry({
+        taskId,
+        taskRepo: this.config.taskRepo,
+        workflowRunRepo: this.config.workflowRunRepo,
+        spaceManager: this.config.spaceManager,
+        dispatch: (id, approvalSource) => this.dispatchPostApproval(id, approvalSource),
+      })
+    );
+  }
 
   private getPostApprovalRouter(): PostApprovalRouter | null {
     if (this.postApprovalRouter) return this.postApprovalRouter;
@@ -2724,6 +2743,8 @@ export class SpaceRuntime {
       livenessProbe: {
         isSessionAlive: (sessionId) => manager.isSessionAlive(sessionId),
       },
+      validateRecordedPointer: (args) => manager.isSessionOnPostApprovalRoute(args),
+      cancelSpawnedWorker: (sessionId) => manager.cancelBySessionId(sessionId),
       goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
     });

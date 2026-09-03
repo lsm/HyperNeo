@@ -510,3 +510,119 @@ describe('mapPostApprovalDispatchWarning', () => {
     expect(generic).not.toContain('was interrupted');
   });
 });
+
+describe('PostApprovalRouter.route — routing CAS', () => {
+  let db: BunDatabase;
+  let taskRepo: SpaceTaskRepository;
+
+  beforeEach(() => {
+    db = makeDb();
+    taskRepo = new SpaceTaskRepository(db);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  function routedWorkflow(): SpaceWorkflow {
+    return stubWorkflow({
+      postApproval: { targetAgent: 'deployer', instructions: 'Deploy {{task_title}}.' },
+    });
+  }
+
+  test('cancels the spawned worker and skips when the task re-parented mid-spawn', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const cancelled: string[] = [];
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: {
+        spawnPostApprovalSubSession: async (args) => {
+          taskRepo.updateTask(args.task.id, { workflowRunId: 'run-other' });
+          return delegates.spawner.spawnPostApprovalSubSession(args);
+        },
+      },
+      livenessProbe: delegates.liveness,
+      cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),
+    });
+
+    const result = await router.route(task, routedWorkflow(), {
+      approvalSource: 'agent',
+      task_title: task.title,
+    });
+
+    expect(result.mode).toBe('skipped');
+    if (result.mode === 'skipped') {
+      expect(result.reason).toContain('lost the conditional write');
+    }
+    expect(cancelled).toEqual(['spawned-session-1']);
+    const final = taskRepo.getTask(task.id);
+    expect(final?.postApprovalSessionId).toBeNull();
+    expect(final?.postApprovalBlockedReason).toBeNull();
+  });
+
+  test('cancels the spawned worker when the task went terminal mid-spawn', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const cancelled: string[] = [];
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: {
+        spawnPostApprovalSubSession: async (args) => {
+          taskRepo.updateTask(args.task.id, { status: 'done' });
+          return delegates.spawner.spawnPostApprovalSubSession(args);
+        },
+      },
+      livenessProbe: delegates.liveness,
+      cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),
+    });
+
+    const result = await router.route(task, routedWorkflow(), {
+      approvalSource: 'agent',
+      task_title: task.title,
+    });
+
+    expect(result.mode).toBe('skipped');
+    expect(cancelled).toEqual(['spawned-session-1']);
+    expect(taskRepo.getTask(task.id)?.postApprovalSessionId).toBeNull();
+  });
+
+  test('a live recorded pointer off the route slot is treated as stale and re-dispatched', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, { postApprovalSessionId: 'coder-exec-session' });
+    const updated = taskRepo.getTask(task.id)!;
+    const delegates = makeDelegates();
+    delegates.aliveSessions.add('coder-exec-session');
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+      validateRecordedPointer: ({ sessionId, routeNodeId, routeAgentName }) =>
+        sessionId === 'worker-on-slot' && routeNodeId === null && routeAgentName === 'deployer',
+    });
+
+    const result = await router.route(updated, routedWorkflow(), { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('spawn');
+    expect(delegates.spawned).toHaveLength(1);
+    expect(taskRepo.getTask(task.id)?.postApprovalSessionId).toBe('spawned-session-1');
+  });
+
+  test('a live recorded pointer on the route slot stays already-routed', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, { postApprovalSessionId: 'worker-on-slot' });
+    const updated = taskRepo.getTask(task.id)!;
+    const delegates = makeDelegates();
+    delegates.aliveSessions.add('worker-on-slot');
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+      validateRecordedPointer: ({ sessionId }) => sessionId === 'worker-on-slot',
+    });
+
+    const result = await router.route(updated, routedWorkflow(), { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('already-routed');
+    expect(delegates.spawned).toHaveLength(0);
+  });
+});

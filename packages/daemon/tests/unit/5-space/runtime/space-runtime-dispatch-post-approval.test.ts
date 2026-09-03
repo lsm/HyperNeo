@@ -31,11 +31,14 @@ interface Ctx {
   db: BunDatabase;
   runtime: SpaceRuntime;
   taskRepo: SpaceTaskRepository;
+  workflowManager: SpaceWorkflowManager;
+  workflowRunRepo: SpaceWorkflowRunRepository;
   emitted: Array<{ spaceId: string; task: SpaceTask }>;
   injected: string[];
+  spawned: Array<{ targetAgent: string; kickoffMessage: string }>;
 }
 
-function buildRuntime(): Ctx {
+function buildRuntime(options: { prUrl?: string } = {}): Ctx {
   const db = makeDb();
   const workflowRunRepo = new SpaceWorkflowRunRepository(db);
   const taskRepo = new SpaceTaskRepository(db);
@@ -48,6 +51,7 @@ function buildRuntime(): Ctx {
 
   const emitted: Array<{ spaceId: string; task: SpaceTask }> = [];
   const injected: string[] = [];
+  const spawned: Ctx['spawned'] = [];
   const config: SpaceRuntimeConfig = {
     db,
     spaceManager,
@@ -59,18 +63,38 @@ function buildRuntime(): Ctx {
     onTaskUpdated: async ({ spaceId, task }) => {
       emitted.push({ spaceId, task });
     },
+    ...(options.prUrl
+      ? {
+          artifactProfile: {
+            resolvePrimaryLinkUrl: () => '',
+            resolveInitialPrimaryLinkUrl: () => options.prUrl!,
+            summarizeRunOutcome: () => null,
+          },
+        }
+      : {}),
     taskAgentManager: {
       injectIntoTaskAgent: async (_taskId, message) => {
         injected.push(message);
         return { injected: false };
       },
-      spawnPostApprovalSubSession: async () => ({ sessionId: 'stub-session' }),
+      spawnPostApprovalSubSession: async (args: {
+        targetAgent: string;
+        kickoffMessage: string;
+      }) => {
+        spawned.push({
+          targetAgent: args.targetAgent,
+          kickoffMessage: args.kickoffMessage,
+        });
+        return { sessionId: 'stub-session' };
+      },
       isSessionAlive: () => false,
+      isSessionOnPostApprovalRoute: () => true,
+      cancelBySessionId: () => {},
     } as unknown as NonNullable<SpaceRuntimeConfig['taskAgentManager']>,
   };
 
   const runtime = new SpaceRuntime(config);
-  return { db, runtime, taskRepo, emitted, injected };
+  return { db, runtime, taskRepo, workflowManager, workflowRunRepo, emitted, injected, spawned };
 }
 
 function seedReviewTask(taskRepo: SpaceTaskRepository): SpaceTask {
@@ -178,5 +202,121 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     expect(final?.pendingCompletionSubmittedByNodeId).toBeNull();
     expect(final?.pendingCompletionSubmittedAt).toBeNull();
     expect(final?.pendingCompletionReason).toBeNull();
+  });
+});
+
+describe('SpaceRuntime.retryPostApprovalDispatch — canonical serialized retry', () => {
+  let ctx: Ctx;
+
+  function seedBlockedRoutedTask(): SpaceTask {
+    const workflow = ctx.workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: 'Routed WF',
+      description: '',
+      nodes: [
+        { id: 'n1', name: 'Build', agents: [{ agentId: 'coder-id', name: 'coder' }] },
+        {
+          id: 'n2',
+          name: 'Reviewer',
+          agents: [{ agentId: 'reviewer-id', name: 'reviewer' }],
+          postApproval: {
+            targetAgent: 'reviewer',
+            instructions:
+              'Merge {{pr_url}} under authority {{approval_authority}} in {{workspace_path}} for {{task_id}}.',
+          },
+        },
+      ],
+      startNodeId: 'n1',
+      tags: [],
+      completionAutonomyLevel: 3,
+    });
+    const run = ctx.workflowRunRepo.createRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'Ship it',
+      description: '',
+    });
+    const task = ctx.taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Ship it',
+      description: '',
+      status: 'in_progress',
+      workflowRunId: run.id,
+    });
+    const approved = ctx.taskRepo.updateTask(task.id, {
+      status: 'approved',
+      approvalSource: 'human',
+      approvedAt: Date.now(),
+      postApprovalSourceNodeId: 'n2',
+      postApprovalBlockedReason: 'post-approval spawn deferred: transient',
+    });
+    if (!approved) throw new Error('failed to seed blocked task');
+    return approved;
+  }
+
+  beforeEach(() => {
+    ctx = buildRuntime({ prUrl: 'https://github.com/lsm/HyperNeo/pull/7' });
+  });
+  afterEach(() => {
+    try {
+      ctx.db.close();
+    } catch {}
+  });
+
+  test('re-dispatches through the normal full context and clears the blocked reason', async () => {
+    const task = seedBlockedRoutedTask();
+
+    const result = await ctx.runtime.retryPostApprovalDispatch(task.id);
+
+    expect(result.mode).toBe('spawn');
+    expect(ctx.spawned).toHaveLength(1);
+    expect(ctx.spawned[0].targetAgent).toBe('reviewer');
+    expect(ctx.spawned[0].kickoffMessage).toContain('https://github.com/lsm/HyperNeo/pull/7');
+    expect(ctx.spawned[0].kickoffMessage).toContain('Reviewer');
+    expect(ctx.spawned[0].kickoffMessage).toContain('/tmp/ws');
+    expect(ctx.spawned[0].kickoffMessage).toContain(task.id);
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.status).toBe('approved');
+    expect(final?.postApprovalSessionId).toBe('stub-session');
+    expect(final?.postApprovalBlockedReason).toBeNull();
+    expect(ctx.emitted.some((e) => e.task.id === task.id && e.task.status === 'approved')).toBe(
+      true
+    );
+  });
+
+  test('concurrent retries for one task produce one spawn and one skip', async () => {
+    const task = seedBlockedRoutedTask();
+
+    const results = await Promise.all([
+      ctx.runtime.retryPostApprovalDispatch(task.id),
+      ctx.runtime.retryPostApprovalDispatch(task.id),
+    ]);
+
+    const spawns = results.filter((r) => r.mode === 'spawn');
+    const skips = results.filter((r) => r.mode === 'skipped');
+    expect(spawns).toHaveLength(1);
+    expect(skips).toHaveLength(1);
+    expect(ctx.spawned).toHaveLength(1);
+    expect(ctx.taskRepo.getTask(task.id)?.postApprovalSessionId).toBe('stub-session');
+  });
+
+  test('an unblocked approved task does not re-dispatch through retry', async () => {
+    const task = seedBlockedRoutedTask();
+    ctx.taskRepo.updateTask(task.id, { postApprovalBlockedReason: null });
+
+    const result = await ctx.runtime.retryPostApprovalDispatch(task.id);
+
+    expect(result.mode).toBe('skipped');
+    expect(ctx.spawned).toHaveLength(0);
+  });
+
+  test('retry on a task without a recorded approval source dispatches without re-stamping', async () => {
+    const task = seedBlockedRoutedTask();
+    ctx.taskRepo.updateTask(task.id, { approvalSource: null });
+
+    const result = await ctx.runtime.retryPostApprovalDispatch(task.id);
+
+    expect(result.mode).toBe('spawn');
+    expect(ctx.taskRepo.getTask(task.id)?.approvalSource).toBeNull();
   });
 });

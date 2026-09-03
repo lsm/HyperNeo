@@ -114,6 +114,25 @@ describe('SpaceTaskManager', () => {
       expect(updated.status).toBe('in_progress');
     });
 
+    it('clears the post-approval routing pointer when a completed task is reopened', async () => {
+      const task = await manager.createTask({ title: 'T', description: '' });
+      await manager.setTaskStatus(task.id, 'in_progress');
+      await manager.setTaskStatus(task.id, 'approved');
+      await manager.updateTask(task.id, {
+        status: 'done',
+        postApprovalSessionId: 'worker-1',
+        postApprovalStartedAt: 1234,
+        postApprovalBlockedReason: 'deferred',
+      });
+
+      const reopened = await manager.setTaskStatus(task.id, 'in_progress');
+
+      expect(reopened.status).toBe('in_progress');
+      expect(reopened.postApprovalSessionId).toBeNull();
+      expect(reopened.postApprovalStartedAt).toBeNull();
+      expect(reopened.postApprovalBlockedReason).toBeNull();
+    });
+
     it('clears stale outcome fields when a stopped task is reopened', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
       await manager.setTaskStatus(task.id, 'in_progress');

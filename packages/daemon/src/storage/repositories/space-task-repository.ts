@@ -696,6 +696,50 @@ export class SpaceTaskRepository {
     return 'won';
   }
 
+  casPostApprovalRouting(
+    taskId: string,
+    expectedWorkflowRunId: string | null,
+    routing: { postApprovalSessionId: string; postApprovalStartedAt: number }
+  ): 'won' | 'superseded' {
+    const now = Date.now();
+    const stealDuplicatePointer = this.db.prepare(
+      `UPDATE space_tasks
+         SET post_approval_session_id = NULL, post_approval_started_at = NULL, updated_at = ?
+       WHERE post_approval_session_id = ? AND id != ?`
+    );
+    const recordRouting = this.db.prepare(
+      `UPDATE space_tasks
+         SET post_approval_session_id = ?,
+             post_approval_started_at = ?,
+             post_approval_blocked_reason = NULL,
+             pending_checkpoint_type = NULL,
+             pending_completion_submitted_by_node_id = NULL,
+             pending_completion_submitted_at = NULL,
+             pending_completion_reason = NULL,
+             updated_at = ?
+       WHERE id = ?
+         AND status = 'approved'
+         AND ((? IS NULL AND workflow_run_id IS NULL) OR workflow_run_id = ?)`
+    );
+    const tx = this.db.transaction(() => {
+      const result = recordRouting.run(
+        routing.postApprovalSessionId,
+        routing.postApprovalStartedAt,
+        now,
+        taskId,
+        expectedWorkflowRunId,
+        expectedWorkflowRunId
+      );
+      if (result.changes === 0) return false;
+      stealDuplicatePointer.run(now, routing.postApprovalSessionId, taskId);
+      return true;
+    });
+    if (!tx()) return 'superseded';
+    this.upsertTaskSearchRow(taskId);
+    this.reactiveDb?.notifyChange('space_tasks');
+    return 'won';
+  }
+
   reserveSpawnForTick(
     taskId: string,
     allowedStatuses: readonly SpaceTaskStatus[]

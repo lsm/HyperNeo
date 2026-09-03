@@ -2086,6 +2086,44 @@ export class TaskAgentManager {
     }
   }
 
+  isSessionOnPostApprovalRoute(args: {
+    sessionId: string;
+    taskId: string;
+    routeNodeId: string | null;
+    routeAgentName: string;
+  }): boolean {
+    try {
+      const row = this.config.db
+        .getDatabase()
+        .prepare(
+          `SELECT 1 AS ok
+             FROM sessions s
+            WHERE s.id = ?
+              AND s.type = 'worker'
+              AND s.task_id = ?
+              AND (
+                NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)
+                OR EXISTS (
+                  SELECT 1 FROM node_executions ne
+                   WHERE ne.agent_session_id = s.id
+                     AND ne.agent_name = ?
+                     AND (? IS NULL OR ne.workflow_node_id = ?)
+                )
+              )`
+        )
+        .get(
+          args.sessionId,
+          args.taskId,
+          args.routeAgentName,
+          args.routeNodeId,
+          args.routeNodeId
+        ) as { ok?: number } | undefined;
+      return Boolean(row);
+    } catch {
+      return false;
+    }
+  }
+
   private readPostApprovalWorkerIdentity(
     taskId: string,
     hintSessionId?: string
@@ -2099,12 +2137,20 @@ export class TaskAgentManager {
     if (task?.status === 'cancelled' || task?.status === 'archived') return null;
     if (hintSessionId) {
       if (!task?.workflowRunId) return null;
-      const recordedPointer = task.postApprovalSessionId === hintSessionId;
+      if (task.postApprovalSessionId) {
+        if (task.postApprovalSessionId !== hintSessionId) return null;
+      } else if (
+        (task.status !== 'approved' && task.status !== 'done') ||
+        this.findDurableWorkerSessionId(task) !== hintSessionId
+      ) {
+        return null;
+      }
       if (
-        (!task.postApprovalSessionId &&
-          (task.status === 'approved' || task.status === 'done') &&
-          this.findDurableWorkerSessionId(task) !== hintSessionId) ||
-        !this.sessionIsWorkerForTask(hintSessionId, taskId, recordedPointer)
+        !this.sessionIsWorkerForTask(
+          hintSessionId,
+          taskId,
+          task.postApprovalSessionId === hintSessionId
+        )
       )
         return null;
       const provenance = this.readProvenanceFromSessionRow(hintSessionId);

@@ -220,17 +220,41 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     });
   });
 
-  it('honors an explicit hint to select an OLDER worker (P1 misroute)', () => {
+  it('rejects an explicit hint that differs from the recorded pointer (authoritative record)', () => {
     insertTask(db, { postApprovalSessionId: 'worker-recent' });
     insertWorkerSession(db, { sessionId: 'worker-old', lastActiveAt: 1 });
     insertWorkerSession(db, { sessionId: 'worker-recent', lastActiveAt: 5 });
-    const res = tam.getPostApprovalWorkerSession(TASK_ID, 'worker-old');
-    expect(res).toEqual({
-      sessionId: 'worker-old',
+    expect(tam.getPostApprovalWorkerSession(TASK_ID, 'worker-old')).toBeNull();
+  });
+
+  it('rejects a stale canonical hint after the pointer moved to a replacement (two-live-workers hazard)', () => {
+    const staleId = postApprovalSessionId('stale');
+    const replacementId = postApprovalSessionId('replacement');
+    insertTask(db, { status: 'approved', postApprovalSessionId: replacementId });
+    insertWorkerSession(db, { sessionId: staleId, lastActiveAt: 1 });
+    insertWorkerSession(db, { sessionId: replacementId, lastActiveAt: 5 });
+    insertTaskInput(db, staleId);
+    expect(tam.getPostApprovalWorkerSession(TASK_ID, staleId)).toBeNull();
+    expect(tam.getPostApprovalWorkerSession(TASK_ID, replacementId)).toEqual({
+      sessionId: replacementId,
       agentName: 'merger',
       nodeId: POST_APPROVAL_NODE,
     });
   });
+
+  for (const status of ['approved', 'done'] as const) {
+    it(`admits a pointerless ${status} hint the durable fallback selects exactly`, () => {
+      const sessionId = postApprovalSessionId('durable');
+      insertTask(db, { status, postApprovalSessionId: null });
+      insertWorkerSession(db, { sessionId, createdAt: 9, lastActiveAt: 9 });
+      insertTaskInput(db, sessionId);
+      expect(tam.getPostApprovalWorkerSession(TASK_ID, sessionId)).toEqual({
+        sessionId,
+        agentName: 'merger',
+        nodeId: POST_APPROVAL_NODE,
+      });
+    });
+  }
 
   it('rejects a hint that points at an execution-backed (normal node-agent) session', () => {
     insertTask(db, { postApprovalSessionId: 'worker-1' });
@@ -414,5 +438,107 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
       .run('legacy-worker', JSON.stringify({ spaceId: SPACE_ID, taskId: TASK_ID }));
     const res = tam2.getPostApprovalWorkerSession(TASK_ID);
     expect(res).toEqual({ sessionId: 'legacy-worker', agentName: 'merger', nodeId: 'node-merger' });
+  });
+});
+
+describe('TaskAgentManager.isSessionOnPostApprovalRoute', () => {
+  let db: BunDatabase;
+  let tam: TaskAgentManager;
+
+  beforeEach(() => {
+    db = makeDb();
+    tam = makeManager(db);
+  });
+
+  function insertExecution(
+    sessionId: string,
+    opts: { nodeId?: string; agentName?: string } = {}
+  ): void {
+    db.prepare(
+      `INSERT INTO node_executions (id, workflow_run_id, workflow_node_id, agent_name, agent_session_id, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'in_progress', 0, 0)`
+    ).run(
+      `exec-${sessionId}`,
+      RUN_ID,
+      opts.nodeId ?? POST_APPROVAL_NODE,
+      opts.agentName ?? 'merger',
+      sessionId
+    );
+  }
+
+  it('accepts a worker of the task bound to the route node and agent', () => {
+    insertWorkerSession(db, { sessionId: 'route-worker' });
+    insertExecution('route-worker');
+    expect(
+      tam.isSessionOnPostApprovalRoute({
+        sessionId: 'route-worker',
+        taskId: TASK_ID,
+        routeNodeId: POST_APPROVAL_NODE,
+        routeAgentName: 'merger',
+      })
+    ).toBe(true);
+  });
+
+  it('rejects the task coder execution on a different node (recorded-pointer slot hazard)', () => {
+    insertWorkerSession(db, { sessionId: 'coder-exec', agentName: 'coder' });
+    insertExecution('coder-exec', { nodeId: 'node-build', agentName: 'coder' });
+    expect(
+      tam.isSessionOnPostApprovalRoute({
+        sessionId: 'coder-exec',
+        taskId: TASK_ID,
+        routeNodeId: POST_APPROVAL_NODE,
+        routeAgentName: 'merger',
+      })
+    ).toBe(false);
+  });
+
+  it('rejects an execution-bound worker on the route node but under another agent', () => {
+    insertWorkerSession(db, { sessionId: 'other-agent', agentName: 'observer' });
+    insertExecution('other-agent', { nodeId: POST_APPROVAL_NODE, agentName: 'observer' });
+    expect(
+      tam.isSessionOnPostApprovalRoute({
+        sessionId: 'other-agent',
+        taskId: TASK_ID,
+        routeNodeId: POST_APPROVAL_NODE,
+        routeAgentName: 'merger',
+      })
+    ).toBe(false);
+  });
+
+  it('accepts a plain (non-execution-bound) worker of the task', () => {
+    insertWorkerSession(db, { sessionId: 'plain-worker' });
+    expect(
+      tam.isSessionOnPostApprovalRoute({
+        sessionId: 'plain-worker',
+        taskId: TASK_ID,
+        routeNodeId: POST_APPROVAL_NODE,
+        routeAgentName: 'merger',
+      })
+    ).toBe(true);
+  });
+
+  it('rejects a worker session owned by another task', () => {
+    insertWorkerSession(db, { sessionId: 'sibling-worker', taskId: 'sibling-task' });
+    expect(
+      tam.isSessionOnPostApprovalRoute({
+        sessionId: 'sibling-worker',
+        taskId: TASK_ID,
+        routeNodeId: POST_APPROVAL_NODE,
+        routeAgentName: 'merger',
+      })
+    ).toBe(false);
+  });
+
+  it('accepts an execution-bound worker on any node for a legacy route without a node', () => {
+    insertWorkerSession(db, { sessionId: 'legacy-reuse' });
+    insertExecution('legacy-reuse', { nodeId: 'node-build' });
+    expect(
+      tam.isSessionOnPostApprovalRoute({
+        sessionId: 'legacy-reuse',
+        taskId: TASK_ID,
+        routeNodeId: null,
+        routeAgentName: 'merger',
+      })
+    ).toBe(true);
   });
 });

@@ -296,6 +296,11 @@ export class SpaceTaskManager {
     }
 
     const reopened = isTerminalTaskStatus(task.status) && !isTerminalTaskStatus(newStatus);
+    if (reopened) {
+      updates.postApprovalSessionId = null;
+      updates.postApprovalStartedAt = null;
+      updates.postApprovalBlockedReason = null;
+    }
     if (reopened && newStatus === 'open') {
       updates.startedAt = null;
     }

@@ -47,7 +47,7 @@ export interface SessionLivenessProbe {
 }
 
 export interface PostApprovalRouterDeps {
-  taskRepo: Pick<SpaceTaskRepository, 'updateTask' | 'getTask'>;
+  taskRepo: Pick<SpaceTaskRepository, 'updateTask' | 'getTask' | 'casPostApprovalRouting'>;
   spawner: PostApprovalSubSessionSpawner;
   livenessProbe?: SessionLivenessProbe;
   resolveCompletionOutcome?: (task: SpaceTask) => UpdateSpaceTaskParams | null;
@@ -56,6 +56,13 @@ export interface PostApprovalRouterDeps {
     import('../evolution-scope-service.ts').EvolutionScopeService,
     'captureCompletedTaskEvidence'
   >;
+  validateRecordedPointer?: (args: {
+    sessionId: string;
+    taskId: string;
+    routeNodeId: string | null;
+    routeAgentName: string;
+  }) => boolean;
+  cancelSpawnedWorker?: (sessionId: string) => void;
 }
 
 export interface PostApprovalRouteContext extends PostApprovalTemplateContext {
@@ -97,6 +104,23 @@ export function collectDispatchablePostApprovalRoutes(
   return collectPostApprovalRoutes(workflow).filter(
     (route) => route.targetAgent && route.targetAgent !== POST_APPROVAL_TASK_AGENT_TARGET
   );
+}
+
+export function selectFirstDispatchablePostApprovalRoute(
+  workflow: SpaceWorkflow | null
+): { route: PostApprovalRoute; nodeId: string | null } | null {
+  if (!workflow) return null;
+  for (const node of workflow.nodes) {
+    const route = node.postApproval;
+    if (route?.targetAgent && route.targetAgent !== POST_APPROVAL_TASK_AGENT_TARGET) {
+      return { route, nodeId: node.id };
+    }
+  }
+  const legacy = workflow.postApproval;
+  if (legacy?.targetAgent && legacy.targetAgent !== POST_APPROVAL_TASK_AGENT_TARGET) {
+    return { route: legacy, nodeId: null };
+  }
+  return null;
 }
 
 export function clearPendingCompletionState(
@@ -206,18 +230,33 @@ export class PostApprovalRouter {
       );
     }
 
+    const selected = selectFirstDispatchablePostApprovalRoute(workflow);
+
     if (task.postApprovalSessionId) {
       const alive = this.deps.livenessProbe
         ? this.deps.livenessProbe.isSessionAlive(task.postApprovalSessionId)
         : true;
       if (alive) {
-        log.info(
-          `PostApprovalRouter.route: task ${task.id} already has live post-approval session ${task.postApprovalSessionId}; skipping re-dispatch`
+        const onRouteSlot = this.deps.validateRecordedPointer
+          ? this.deps.validateRecordedPointer({
+              sessionId: task.postApprovalSessionId,
+              taskId: task.id,
+              routeNodeId: selected?.nodeId ?? null,
+              routeAgentName: selected?.route.targetAgent ?? '',
+            })
+          : true;
+        if (onRouteSlot) {
+          log.info(
+            `PostApprovalRouter.route: task ${task.id} already has live post-approval session ${task.postApprovalSessionId}; skipping re-dispatch`
+          );
+          return {
+            mode: 'already-routed',
+            postApprovalSessionId: task.postApprovalSessionId,
+          };
+        }
+        log.warn(
+          `PostApprovalRouter.route: task ${task.id} recorded pointer ${task.postApprovalSessionId} is not a worker on the post-approval route slot (targetAgent=${selected?.route.targetAgent ?? 'unknown'}); treating it as stale and re-dispatching`
         );
-        return {
-          mode: 'already-routed',
-          postApprovalSessionId: task.postApprovalSessionId,
-        };
       }
     }
 
@@ -228,7 +267,7 @@ export class PostApprovalRouter {
       return { mode: 'skipped', reason };
     }
 
-    const route = dispatchable[0]!;
+    const route = selected?.route ?? dispatchable[0]!;
     const { text: interpolatedInstructions, missingKeys } = interpolatePostApprovalTemplate(
       route.instructions ?? '',
       context
@@ -274,15 +313,18 @@ export class PostApprovalRouter {
     }
     const sessionId = spawnedSessionId;
 
-    this.deps.taskRepo.updateTask(task.id, {
-      pendingCheckpointType: null,
-      pendingCompletionSubmittedByNodeId: null,
-      pendingCompletionSubmittedAt: null,
-      pendingCompletionReason: null,
-      postApprovalSessionId: sessionId,
-      postApprovalStartedAt: startedAt,
-      postApprovalBlockedReason: null,
-    });
+    const recorded = this.deps.taskRepo.casPostApprovalRouting(
+      task.id,
+      task.workflowRunId ?? null,
+      { postApprovalSessionId: sessionId, postApprovalStartedAt: startedAt }
+    );
+    if (recorded !== 'won') {
+      this.deps.cancelSpawnedWorker?.(sessionId);
+      const fresh = this.deps.taskRepo.getTask(task.id);
+      const reason = `post-approval routing for task ${task.id} lost the conditional write (status=${fresh?.status ?? 'missing'}, workflowRunId=${fresh?.workflowRunId ?? 'none'}); spawned worker ${sessionId} cancelled`;
+      log.warn(`PostApprovalRouter.route: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
 
     log.info(
       `post-approval.route: spaceId=${task.spaceId} taskId=${task.id} sourceNodeId=${sourceNodeId ?? 'none'} routes=${dispatchable.length} dispatched=1 mode=spawn autonomyLevel=${context.autonomyLevel ?? 'unknown'} sessionId=${sessionId}`
