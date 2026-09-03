@@ -111,6 +111,9 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
     setSaving(true);
     setError(null);
     try {
+      const parsedTools = parseToolsInput(tools);
+      const toolsChanged =
+        parsedTools.join('\n') !== (agent ? agentToolsList(agent).join('\n') : '');
       if (isEdit && agent) {
         await spaceStore.updateAgent(agent.id, {
           displayName: displayName.trim(),
@@ -120,7 +123,7 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
             : { autonomyLevel: autonomyLevel as 1 | 2 | 3 | 4 | 5 | null }),
           model: model.trim() || null,
           thinkingLevel: (thinkingLevel || null) as ThinkingLevel | null,
-          tools: parseToolsInput(tools),
+          ...(toolsChanged ? { tools: parsedTools } : {}),
         });
       } else {
         await spaceStore.createAgent({
@@ -131,7 +134,7 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
           autonomyLevel: autonomyLevel as 1 | 2 | 3 | 4 | 5 | null,
           model: model.trim() || null,
           thinkingLevel: (thinkingLevel || null) as ThinkingLevel | null,
-          tools: parseToolsInput(tools),
+          ...(parsedTools.length > 0 ? { tools: parsedTools } : {}),
         });
       }
       onSave();

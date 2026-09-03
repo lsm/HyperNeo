@@ -182,8 +182,8 @@ describe('SpaceLongHorizonAgents', () => {
     expect(params.tools).toEqual(['Read', 'Write', 'Bash']);
   });
 
-  it('sends autonomyLevel and tools when saving a native agent', async () => {
-    mockAgents.value = [makeLongHorizonAgent()];
+  it('sends autonomyLevel and preserves toolPermissions when tools are unchanged', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ toolPermissions: { mode: 'restricted' } })];
     const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
@@ -192,7 +192,7 @@ describe('SpaceLongHorizonAgents', () => {
     await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
     const params = mockUpdateAgent.mock.calls[0][1];
     expect(params.autonomyLevel).toBe(2);
-    expect(params.tools).toEqual([]);
+    expect(params.tools).toBeUndefined();
   });
 
   it('renders a readable empty configured-agent state', () => {
