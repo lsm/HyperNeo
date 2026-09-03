@@ -132,7 +132,11 @@ function extractInstructionText(
 }
 
 export function filterAgents(agents: SpaceLongHorizonAgent[]): SpaceLongHorizonAgent[] {
-  return agents.filter((a) => a.handle !== 'coordinator');
+  return agents.filter(
+    (a) =>
+      a.handle !== 'coordinator' &&
+      (a.templateKey === 'migration.legacy_space_agent' || a.status === 'active')
+  );
 }
 
 export function workflowToTemplate(workflow: SpaceWorkflow): WorkflowTemplate {

@@ -61,6 +61,21 @@ describe('filterAgents', () => {
     expect(result.map((a) => a.id)).toEqual(['a1', 'a5']);
   });
 
+  it('keeps migrated worker mirrors and drops non-active native agents', () => {
+    const agents: SpaceLongHorizonAgent[] = [
+      makeAgent('a1', 'Coder'),
+      {
+        ...makeAgent('a2', 'Migrated Worker'),
+        templateKey: 'migration.legacy_space_agent',
+        status: 'paused',
+      },
+      { ...makeAgent('a3', 'Paused Native'), status: 'paused' },
+      { ...makeAgent('a4', 'Archived Native'), status: 'archived' },
+    ];
+    const result = filterAgents(agents);
+    expect(result.map((a) => a.id)).toEqual(['a1', 'a2']);
+  });
+
   it('returns all agents when no coordinator is present', () => {
     const agents = [makeAgent('a1', 'Coder'), makeAgent('a2', 'Reviewer')];
     expect(filterAgents(agents)).toHaveLength(2);

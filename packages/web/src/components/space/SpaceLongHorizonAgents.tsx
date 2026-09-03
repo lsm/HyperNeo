@@ -28,6 +28,8 @@ const AUTONOMY_LABELS: Record<number, string> = {
   5: 'Unrestricted',
 };
 
+const MIGRATED_WORKER_TEMPLATE_KEY = 'migration.legacy_space_agent';
+
 function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
   return agent.handle === 'coordinator';
 }
@@ -57,6 +59,17 @@ function nextFreeHandle(base: string, existingHandles: Set<string>): string {
   return `${base}-${Date.now()}`;
 }
 
+function isMigratedWorkerMirror(agent: SpaceLongHorizonAgent): boolean {
+  return agent.templateKey === MIGRATED_WORKER_TEMPLATE_KEY;
+}
+
+function parseToolsInput(value: string): string[] {
+  return value
+    .split(',')
+    .map((tool) => tool.trim())
+    .filter(Boolean);
+}
+
 interface AgentEditorProps {
   template?: SpaceLongHorizonAgentTemplate | null;
   agent?: SpaceLongHorizonAgent | null;
@@ -82,6 +95,7 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
   const [thinkingLevel, setThinkingLevel] = useState<'' | ThinkingLevel>(
     agent?.thinkingLevel ?? ''
   );
+  const [tools, setTools] = useState(agent ? agentToolsList(agent).join(', ') : '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -101,9 +115,12 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
         await spaceStore.updateAgent(agent.id, {
           displayName: displayName.trim(),
           instructions: instructions.trim(),
-          autonomyLevel: autonomyLevel as 1 | 2 | 3 | 4 | 5 | null,
+          ...(isMigratedWorkerMirror(agent)
+            ? {}
+            : { autonomyLevel: autonomyLevel as 1 | 2 | 3 | 4 | 5 | null }),
           model: model.trim() || null,
           thinkingLevel: (thinkingLevel || null) as ThinkingLevel | null,
+          tools: parseToolsInput(tools),
         });
       } else {
         await spaceStore.createAgent({
@@ -114,6 +131,7 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
           autonomyLevel: autonomyLevel as 1 | 2 | 3 | 4 | 5 | null,
           model: model.trim() || null,
           thinkingLevel: (thinkingLevel || null) as ThinkingLevel | null,
+          tools: parseToolsInput(tools),
         });
       }
       onSave();
@@ -240,6 +258,20 @@ function AgentEditor({ template, agent, existingHandles, onSave, onCancel }: Age
                 ))}
               </select>
             </div>
+          </div>
+          <div>
+            <label class="mb-2 block text-sm font-medium text-fg-soft">Tools</label>
+            <input
+              type="text"
+              value={tools}
+              onInput={(e) => setTools((e.target as HTMLInputElement).value)}
+              class="w-full rounded-xl border border-line bg-surface-overlay/90 px-4 py-3 text-sm text-fg placeholder-gray-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
+              placeholder="e.g. Read, Write, Edit, Bash"
+              data-testid="lh-agent-tools-input"
+            />
+            <p class="mt-1 text-xs text-fg-muted">
+              Comma-separated tool names. Leave empty to use the default tool set.
+            </p>
           </div>
           {error && <p class="text-xs text-danger">{error}</p>}
         </div>

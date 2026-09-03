@@ -73,15 +73,17 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
     });
   });
 
-  test('nav panel "Agents" link switches to agents tab', async ({ page }) => {
+  test('agents surface opens the unified Agents pane', async ({ page }) => {
     await navigateToSpace(page, spaceId);
 
-    await page.getByRole('button', { name: 'Configure space' }).click();
-    await expect(page.getByTestId('space-configure-view')).toBeVisible({ timeout: 5000 });
-    await page.getByTestId('space-configure-tab-agents').click();
+    await page.goto(`/space/${spaceId}/agents`);
+    await expect(page.getByTestId('space-agents-view')).toBeVisible({ timeout: 5000 });
 
     await expect(
-      page.locator('text=No custom agents yet').or(page.locator('text=Create Agent'))
+      page
+        .locator('text=No configured agents yet')
+        .or(page.locator('text=Configured agents'))
+        .or(page.getByRole('button', { name: '+ Custom agent' }))
     ).toBeVisible({ timeout: 5000 });
   });
 
@@ -191,23 +193,19 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
     await expect(page.locator('text=1 rule')).toBeVisible({ timeout: 2000 });
   });
 
-  test('can open agent creation form from Agents tab', async ({ page }) => {
+  test('can open agent creation form from the Agents pane', async ({ page }) => {
     await navigateToSpace(page, spaceId);
 
-    await page.getByRole('button', { name: 'Configure space' }).click();
-    await expect(page.getByTestId('space-configure-view')).toBeVisible({ timeout: 5000 });
-    await page.getByTestId('space-configure-tab-agents').click();
-    await expect(
-      page.locator('text=No custom agents yet').or(page.locator('text=Create Agent'))
-    ).toBeVisible({ timeout: 5000 });
+    await page.goto(`/space/${spaceId}/agents`);
+    await expect(page.getByTestId('space-agents-view')).toBeVisible({ timeout: 5000 });
 
-    const createBtn = page.getByRole('button', { name: 'Create Agent' }).first();
+    const createBtn = page.getByRole('button', { name: '+ Custom agent' }).first();
     await expect(createBtn).toBeVisible({ timeout: 5000 });
     await createBtn.click();
 
-    await expect(
-      page.locator('text=Create Agent').or(page.locator('input[placeholder*="My Coder"]'))
-    ).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('button', { name: 'Create agent' })).toBeVisible({
+      timeout: 5000,
+    });
   });
 
   test.describe('workflow deletion', () => {

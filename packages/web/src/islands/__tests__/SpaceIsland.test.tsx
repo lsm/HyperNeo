@@ -584,7 +584,10 @@ describe('SpaceIsland — configure workflow editor', () => {
     configureTabBridge.signal.value = 'agents';
     const { getByTestId } = await renderConfigure();
     expect(getByTestId('space-configure-tab-bar')).toBeTruthy();
-    expect(getByTestId('create-workflow-btn')).toBeTruthy();
+    fireEvent.click(getByTestId('create-workflow-btn'));
+    await waitFor(() => {
+      expect(getByTestId('visual-workflow-editor')).toBeTruthy();
+    });
   });
 
   it('opens the visual editor when creating a workflow', async () => {

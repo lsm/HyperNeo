@@ -10,6 +10,7 @@ const {
   mockConfigDataLoaded,
   mockEnsureConfigData,
   mockListAgentReminderCounts,
+  mockUpdateAgent,
   mockNavigateToSpaceSession,
 } = vi.hoisted(() => {
   function makeSignal<T>(initial: T) {
@@ -21,6 +22,7 @@ const {
     mockConfigDataLoaded: makeSignal(true),
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
     mockListAgentReminderCounts: vi.fn().mockResolvedValue({}),
+    mockUpdateAgent: vi.fn().mockResolvedValue(undefined),
     mockNavigateToSpaceSession: vi.fn(),
   };
 });
@@ -33,6 +35,7 @@ vi.mock('../../../lib/space-store', () => ({
       configDataLoaded: mockConfigDataLoaded,
       ensureConfigData: mockEnsureConfigData,
       listAgentReminderCounts: mockListAgentReminderCounts,
+      updateAgent: mockUpdateAgent,
     };
   },
 }));
@@ -93,6 +96,7 @@ describe('SpaceLongHorizonAgents', () => {
     mockConfigDataLoaded.value = true;
     mockEnsureConfigData.mockClear();
     mockListAgentReminderCounts.mockClear();
+    mockUpdateAgent.mockClear();
     mockNavigateToSpaceSession.mockClear();
   });
 
@@ -155,6 +159,40 @@ describe('SpaceLongHorizonAgents', () => {
     expect(getByRole('region', { name: 'Configured agents' })).toBeTruthy();
     expect(getByRole('button', { name: 'Create agent' })).toBeTruthy();
     expect(getByRole('button', { name: 'Close agent editor' })).toBeTruthy();
+  });
+
+  it('omits autonomyLevel when saving a migrated worker mirror', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({
+        templateKey: 'migration.legacy_space_agent',
+        toolPermissions: { tools: ['Read', 'Write'] },
+      }),
+    ];
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    const toolsInput = getByTestId('lh-agent-tools-input') as HTMLInputElement;
+    expect(toolsInput.value).toBe('Read, Write');
+    fireEvent.input(toolsInput, { target: { value: 'Read, Write, Bash' } });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    const params = mockUpdateAgent.mock.calls[0][1];
+    expect(params.autonomyLevel).toBeUndefined();
+    expect(params.tools).toEqual(['Read', 'Write', 'Bash']);
+  });
+
+  it('sends autonomyLevel and tools when saving a native agent', async () => {
+    mockAgents.value = [makeLongHorizonAgent()];
+    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    const params = mockUpdateAgent.mock.calls[0][1];
+    expect(params.autonomyLevel).toBe(2);
+    expect(params.tools).toEqual([]);
   });
 
   it('renders a readable empty configured-agent state', () => {

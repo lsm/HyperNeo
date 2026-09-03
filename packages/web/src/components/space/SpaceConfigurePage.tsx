@@ -45,6 +45,7 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
   const configLoaded = spaceStore.configDataLoaded.value;
 
   const activeTab = currentSpaceConfigureTabSignal.value;
+  const effectiveTab: ConfigureTab = activeTab === 'settings' ? 'settings' : 'workflows';
 
   useEffect(() => {
     spaceStore.ensureConfigData().catch(() => {});
@@ -86,13 +87,10 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
   }, [workflowEditId, workflowVersion]);
 
   const showWorkflowEditor =
-    activeTab === 'workflows' &&
+    effectiveTab === 'workflows' &&
     workflowEditId !== null &&
     (workflowEditId === 'new' || editingWorkflow !== undefined);
-  const selectedIndex = Math.max(
-    0,
-    CONFIGURE_TABS.findIndex((tab) => tab.id === activeTab)
-  );
+  const selectedIndex = CONFIGURE_TABS.findIndex((tab) => tab.id === effectiveTab);
 
   if (!configLoaded) {
     return (
@@ -123,7 +121,7 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
                   data-testid={`space-configure-tab-${tab.id}`}
                   class={cn(
                     'flex h-[52px] items-center gap-2 border-b-2 px-3 text-sm font-medium transition-colors',
-                    activeTab === tab.id
+                    effectiveTab === tab.id
                       ? 'border-blue-400 text-fg'
                       : 'border-transparent text-fg-muted hover:text-fg-soft'
                   )}
