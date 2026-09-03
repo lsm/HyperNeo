@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from 'preact/hooks';
-import type { SpaceWorkerAgent, WorkflowChannel } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent, WorkflowChannel } from '@hyperneo/shared';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import { isMultiAgentNode, AgentStatusIcon } from '../WorkflowNodeCard';
 import type { Point } from './types';
@@ -12,7 +12,7 @@ export interface WorkflowNodeProps {
   stepIndex: number;
   step: NodeDraft;
   position: Point;
-  agents: SpaceWorkerAgent[];
+  agents: SpaceLongHorizonAgent[];
   workflowChannels?: WorkflowChannel[];
   isSelected?: boolean;
   isStartNode?: boolean;
@@ -130,7 +130,7 @@ export function WorkflowNode({
   const resolvedSingleAgentId = singleSlot?.agentId ?? step.agentId;
   const agentName =
     singleSlot?.name ??
-    agents.find((a) => a.id === resolvedSingleAgentId)?.name ??
+    agents.find((a) => a.id === resolvedSingleAgentId)?.displayName ??
     resolvedSingleAgentId;
 
   const taskStateByAgent = new Map<string | null, AgentTaskState>(

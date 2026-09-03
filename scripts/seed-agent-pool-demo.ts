@@ -108,12 +108,13 @@ try {
 }
 
 const agentsResult = await rpcCall(ws, 'spaceAgent.list', { spaceId: space.id });
-const agents: Array<{ id: string; name: string }> = agentsResult?.agents ?? [];
-const byName = (name: string) => agents.find((a) => a.name.toLowerCase() === name.toLowerCase());
+const agents: Array<{ id: string; displayName: string }> = agentsResult?.agents ?? [];
+const byName = (name: string) =>
+  agents.find((a) => a.displayName.toLowerCase() === name.toLowerCase());
 const coder = byName('Coder');
 const reviewer = byName('Reviewer');
 if (!coder || !reviewer) {
-  throw new Error(`Preset agents missing (have: ${agents.map((a) => a.name).join(', ')})`);
+  throw new Error(`Preset agents missing (have: ${agents.map((a) => a.displayName).join(', ')})`);
 }
 
 const model = (index: number): { model: string; provider?: string } | undefined => {
@@ -156,7 +157,7 @@ console.log('');
 console.log('[seed] demo ready:');
 console.log(`  URL:      http://localhost:${port}`);
 console.log(`  Space:    ${space.name}`);
-console.log('  Pools live on the worker agents (edit under Space -> Configure -> Agents):');
+console.log('  Pools live on the agents (edit under Space -> Agents):');
 console.log(
   '    Coder    -> ' +
     coderPool.map((e) => `${e.model} max ${e.maxConcurrent} w${e.weight}`).join(' | ')

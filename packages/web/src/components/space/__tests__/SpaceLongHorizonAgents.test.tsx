@@ -1,28 +1,26 @@
 // @ts-nocheck
 
-import type { SpaceWorkerAgent, SpaceLongHorizonAgent } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
-  mockLongHorizonAgents,
-  mockSpaceAgents,
+  mockAgents,
   mockTemplates,
   mockConfigDataLoaded,
   mockEnsureConfigData,
-  mockListLongHorizonAgentReminderCounts,
+  mockListAgentReminderCounts,
   mockNavigateToSpaceSession,
 } = vi.hoisted(() => {
   function makeSignal<T>(initial: T) {
     return { value: initial };
   }
   return {
-    mockLongHorizonAgents: makeSignal<SpaceLongHorizonAgent[]>([]),
-    mockSpaceAgents: makeSignal<SpaceWorkerAgent[]>([]),
+    mockAgents: makeSignal<SpaceLongHorizonAgent[]>([]),
     mockTemplates: makeSignal([]),
     mockConfigDataLoaded: makeSignal(true),
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
-    mockListLongHorizonAgentReminderCounts: vi.fn().mockResolvedValue({}),
+    mockListAgentReminderCounts: vi.fn().mockResolvedValue({}),
     mockNavigateToSpaceSession: vi.fn(),
   };
 });
@@ -30,12 +28,11 @@ const {
 vi.mock('../../../lib/space-store', () => ({
   get spaceStore() {
     return {
-      longHorizonAgents: mockLongHorizonAgents,
-      agents: mockSpaceAgents,
-      longHorizonAgentTemplates: mockTemplates,
+      agents: mockAgents,
+      agentTemplates: mockTemplates,
       configDataLoaded: mockConfigDataLoaded,
       ensureConfigData: mockEnsureConfigData,
-      listLongHorizonAgentReminderCounts: mockListLongHorizonAgentReminderCounts,
+      listAgentReminderCounts: mockListAgentReminderCounts,
     };
   },
 }));
@@ -88,29 +85,14 @@ function makeLongHorizonAgent(
   };
 }
 
-function makeSpaceAgent(overrides: Partial<SpaceWorkerAgent> = {}): SpaceWorkerAgent {
-  return {
-    id: 'agent-1',
-    spaceId: 'space-1',
-    name: 'Configured Research',
-    handle: 'research',
-    status: 'active',
-    customPrompt: 'Configured agent instructions',
-    createdAt: 0,
-    updatedAt: 0,
-    ...overrides,
-  };
-}
-
 describe('SpaceLongHorizonAgents', () => {
   beforeEach(() => {
     cleanup();
-    mockLongHorizonAgents.value = [];
-    mockSpaceAgents.value = [];
+    mockAgents.value = [];
     mockTemplates.value = [];
     mockConfigDataLoaded.value = true;
     mockEnsureConfigData.mockClear();
-    mockListLongHorizonAgentReminderCounts.mockClear();
+    mockListAgentReminderCounts.mockClear();
     mockNavigateToSpaceSession.mockClear();
   });
 
@@ -119,7 +101,7 @@ describe('SpaceLongHorizonAgents', () => {
   });
 
   it('renders the Glass Workspace summary, configured cards, and template hierarchy', () => {
-    mockLongHorizonAgents.value = [makeLongHorizonAgent()];
+    mockAgents.value = [makeLongHorizonAgent()];
     mockTemplates.value = [
       {
         key: 'qa',
@@ -182,22 +164,21 @@ describe('SpaceLongHorizonAgents', () => {
     expect(getByText('Add a custom agent or choose a template below.')).toBeTruthy();
   });
 
-  it('prefers configured SpaceWorkerAgent details when handles overlap', () => {
-    mockLongHorizonAgents.value = [makeLongHorizonAgent()];
-    mockSpaceAgents.value = [makeSpaceAgent()];
+  it('shows the unified record for a shared handle (worker record no longer wins)', () => {
+    mockAgents.value = [makeLongHorizonAgent()];
 
     const { getByTestId } = render(
       <SpaceLongHorizonAgents spaceId="space-1" selectedHandle="research" />
     );
 
     const detail = getByTestId('space-agent-detail');
-    expect(detail.textContent).toContain('Configured Research');
-    expect(detail.textContent).toContain('Configured Worker Agent');
-    expect(detail.textContent).not.toContain('Research Long Horizon');
+    expect(detail.textContent).toContain('Research Long Horizon');
+    expect(detail.textContent).toContain('Long-horizon instructions');
+    expect(detail.textContent).not.toContain('Configured Worker Agent');
   });
 
   it('uses the route space id for agent session navigation', () => {
-    mockLongHorizonAgents.value = [makeLongHorizonAgent()];
+    mockAgents.value = [makeLongHorizonAgent()];
 
     const { getByText } = render(
       <SpaceLongHorizonAgents spaceId="space-1" navigationSpaceId="space-slug" />
@@ -209,19 +190,19 @@ describe('SpaceLongHorizonAgents', () => {
   });
 
   it('loads active-reminder counts via a single batched RPC', async () => {
-    mockLongHorizonAgents.value = [
+    mockAgents.value = [
       makeLongHorizonAgent({ id: 'lh-1' }),
       makeLongHorizonAgent({ id: 'lh-2', handle: 'qa', displayName: 'QA' }),
     ];
-    mockListLongHorizonAgentReminderCounts.mockResolvedValue({ 'lh-1': 3, 'lh-2': 0 });
+    mockListAgentReminderCounts.mockResolvedValue({ 'lh-1': 3, 'lh-2': 0 });
 
     const { findByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     expect(await findByText(/3 reminders/)).toBeTruthy();
 
     await waitFor(() => {
-      expect(mockListLongHorizonAgentReminderCounts).toHaveBeenCalledTimes(1);
+      expect(mockListAgentReminderCounts).toHaveBeenCalledTimes(1);
     });
-    expect(mockListLongHorizonAgentReminderCounts).toHaveBeenCalledWith(['lh-1', 'lh-2']);
+    expect(mockListAgentReminderCounts).toHaveBeenCalledWith(['lh-1', 'lh-2']);
   });
 });

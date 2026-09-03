@@ -7,9 +7,6 @@ import { currentSpaceConfigureTabSignal, currentSpaceIdSignal } from '../../lib/
 import { navigateToSpaceConfigure } from '../../lib/router';
 import { cn } from '../../lib/utils';
 
-const SpaceWorkerAgentList = lazy(() =>
-  import('./SpaceWorkerAgentList').then((m) => ({ default: m.SpaceWorkerAgentList }))
-);
 const SpaceSettings = lazy(() =>
   import('./SpaceSettings').then((m) => ({ default: m.SpaceSettings }))
 );
@@ -28,14 +25,13 @@ const lazyFallback = (
   </div>
 );
 
-type ConfigureTab = 'agents' | 'workflows' | 'settings';
+type ConfigureTab = 'workflows' | 'settings';
 
 const CONFIGURE_TABS: Array<{
   id: ConfigureTab;
   label: string;
-  count: (args: { agentCount: number; workflowCount: number }) => number;
+  count: (args: { workflowCount: number }) => number;
 }> = [
-  { id: 'agents', label: 'Worker Agents', count: ({ agentCount }) => agentCount },
   { id: 'workflows', label: 'Workflows', count: ({ workflowCount }) => workflowCount },
   { id: 'settings', label: 'General', count: () => 1 },
 ];
@@ -46,7 +42,6 @@ interface SpaceConfigurePageProps {
 
 export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
   const workflows = spaceStore.workflows.value;
-  const workerAgentCount = spaceStore.agents.value.length;
   const configLoaded = spaceStore.configDataLoaded.value;
 
   const activeTab = currentSpaceConfigureTabSignal.value;
@@ -115,7 +110,7 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
             class="flex min-h-0 flex-1 flex-col"
             selectedIndex={selectedIndex}
             onChange={(index: number) =>
-              navigateToSpaceConfigure(spaceId, CONFIGURE_TABS[index]?.id ?? 'agents')
+              navigateToSpaceConfigure(spaceId, CONFIGURE_TABS[index]?.id ?? 'workflows')
             }
           >
             <TabList
@@ -135,23 +130,13 @@ export function SpaceConfigurePage({ space }: SpaceConfigurePageProps) {
                 >
                   <span>{tab.label}</span>
                   <span class="rounded-full bg-fill-soft px-1.5 py-px text-xs text-fg-muted">
-                    {tab.count({
-                      agentCount: workerAgentCount,
-                      workflowCount: workflows.length,
-                    })}
+                    {tab.count({ workflowCount: workflows.length })}
                   </span>
                 </Tab>
               ))}
             </TabList>
 
             <TabPanels class="min-h-0 flex-1 overflow-hidden">
-              <TabPanel class="h-full min-h-0 overflow-hidden">
-                <Suspense fallback={lazyFallback}>
-                  <div class="h-full min-h-0 pt-4">
-                    <SpaceWorkerAgentList />
-                  </div>
-                </Suspense>
-              </TabPanel>
               <TabPanel class="h-full min-h-0 overflow-hidden">
                 <Suspense fallback={lazyFallback}>
                   <div class="h-full min-h-0 pt-4">

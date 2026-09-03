@@ -61,7 +61,7 @@ describe('BottomTabBar space active tab', () => {
     currentSpaceViewModeSignal.value = 'overview';
     currentSpaceTaskIdSignal.value = null;
     currentSpaceSessionIdSignal.value = null;
-    spaceStore.longHorizonAgents.value = [];
+    spaceStore.agents.value = [];
   });
 
   afterEach(() => {
@@ -70,7 +70,7 @@ describe('BottomTabBar space active tab', () => {
     currentSpaceCanonicalIdSignal.value = null;
     currentSpaceTaskIdSignal.value = null;
     currentSpaceSessionIdSignal.value = null;
-    spaceStore.longHorizonAgents.value = [];
+    spaceStore.agents.value = [];
   });
 
   it('selects Overview for space overview', () => {
@@ -115,7 +115,7 @@ describe('BottomTabBar space active tab', () => {
 
   it('selects Agents for long-horizon agent chat', () => {
     currentSpaceSessionIdSignal.value = 'session-agent-1';
-    spaceStore.longHorizonAgents.value = [makeLongHorizonAgent('session-agent-1')];
+    spaceStore.agents.value = [makeLongHorizonAgent('session-agent-1')];
 
     render(<BottomTabBar />);
 
@@ -124,7 +124,7 @@ describe('BottomTabBar space active tab', () => {
 
   it('selects Agents for direct long-horizon agent session routes before config loads', () => {
     currentSpaceSessionIdSignal.value = 'space:agent:space-1:agent-1';
-    spaceStore.longHorizonAgents.value = [];
+    spaceStore.agents.value = [];
 
     render(<BottomTabBar />);
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
-import type { SpaceWorkerAgent, WorkflowNodeAgentOverride } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent, WorkflowNodeAgentOverride } from '@hyperneo/shared';
 import { WorkflowNodeCard } from '../WorkflowNodeCard';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import { extractOverrideValue, buildOverride } from '../WorkflowNodeCard';
@@ -10,13 +10,22 @@ vi.mock('../../../lib/utils', () => ({
   cn: (...args: unknown[]) => args.filter(Boolean).join(' '),
 }));
 
-function makeAgent(id: string, name: string, _role = 'coder'): SpaceWorkerAgent {
+function makeAgent(id: string, displayName: string, _role = 'coder'): SpaceLongHorizonAgent {
   return {
     id,
     spaceId: 'space-1',
-    name,
     handle: id,
-    customPrompt: null,
+    displayName,
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: '',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -31,7 +40,7 @@ function makeStep(overrides: Partial<NodeDraft> = {}): NodeDraft {
   };
 }
 
-const defaultAgents: SpaceWorkerAgent[] = [
+const defaultAgents: SpaceLongHorizonAgent[] = [
   makeAgent('agent-1', 'planner', 'planner'),
   makeAgent('agent-2', 'coder', 'coder'),
   makeAgent('agent-3', 'general', 'general'),

@@ -107,12 +107,12 @@ export default function SpaceIsland({
   const handleRefreshAgentRecord = useCallback(async () => {
     const viewedId = sessionViewId;
     if (!viewedId) return;
-    await spaceStore.refreshLongHorizonAgents();
+    await spaceStore.refreshAgents();
     if (!stillOnThisRouteSpace()) return;
     if (currentSpaceSessionIdSignal.value !== viewedId) return;
     const parsed = parseLongHorizonAgentSessionId(viewedId);
     const nextId = parsed
-      ? (spaceStore.longHorizonAgents.value.find((a) => a.id === parsed.agentId)?.sessionId ?? null)
+      ? (spaceStore.agents.value.find((a) => a.id === parsed.agentId)?.sessionId ?? null)
       : viewedId;
     if (nextId && nextId !== viewedId) {
       navigateToSpaceSession(navigationSpaceId, nextId, true);

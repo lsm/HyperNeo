@@ -87,7 +87,7 @@ export function computeChannelEdges(nodes: WorkflowNodeData[]): ResolvedWorkflow
   for (const node of nodes) {
     if (node.agents) {
       for (const agent of node.agents) {
-        agentSlotNameToNodeId.set(agent.name, node.step.localId);
+        agentSlotNameToNodeId.set(agent.displayName, node.step.localId);
       }
     }
   }

@@ -221,8 +221,11 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
           if (!hub?.request) throw new Error('Hub not available');
 
           const agentsRes = await hub.request('spaceAgent.list', { spaceId: sid });
-          const agents = (agentsRes as { agents: Array<{ id: string; name: string }> }).agents;
-          const planner = agents.find((a) => a.name === 'Planner') ?? agents[0];
+          const agents = (
+            agentsRes as { agents: Array<{ id: string; handle: string; displayName: string }> }
+          ).agents;
+          const pickable = agents.filter((a) => a.handle !== 'coordinator');
+          const planner = pickable.find((a) => a.displayName === 'Planner') ?? pickable[0];
           if (!planner) throw new Error('No agents seeded in space');
 
           const node = {

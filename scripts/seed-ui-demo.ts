@@ -1188,12 +1188,15 @@ async function seedSpace(ws: WebSocket): Promise<{ spaceId: string; taskIds: str
   await rpcCall(ws, 'spaceTask.update', { spaceId, taskId: t9, dependsOn: [t6] });
 
   const agentsRes = await rpcCall(ws, 'spaceAgent.list', { spaceId });
-  const agents = (Array.isArray(agentsRes) ? agentsRes : (agentsRes?.agents ?? [])) as Array<{
-    id: string;
-    name: string;
-  }>;
+  const agents = (
+    (Array.isArray(agentsRes) ? agentsRes : (agentsRes?.agents ?? [])) as Array<{
+      id: string;
+      handle: string;
+      displayName: string;
+    }>
+  ).filter((a) => a.handle !== 'coordinator');
   const nodeAgent = (index: number) =>
-    agents[index % Math.max(agents.length, 1)] ?? { id: 'unknown', name: 'Coder' };
+    agents[index % Math.max(agents.length, 1)] ?? { id: 'unknown', displayName: 'Coder' };
   const first = nodeAgent(0);
   const second = nodeAgent(1 % Math.max(agents.length, 1));
   const third = nodeAgent(2 % Math.max(agents.length, 1));
@@ -1208,19 +1211,19 @@ async function seedSpace(ws: WebSocket): Promise<{ spaceId: string; taskIds: str
       {
         id: 'codemod',
         name: 'Codemod',
-        agents: [{ agentId: first.id, name: first.name }],
+        agents: [{ agentId: first.id, name: first.displayName }],
         transitions: [{ id: 't1', target: 'Verify', label: 'done' }],
       },
       {
         id: 'verify',
         name: 'Verify',
-        agents: [{ agentId: second.id, name: second.name }],
+        agents: [{ agentId: second.id, name: second.displayName }],
         transitions: [{ id: 't2', target: 'Tighten baseline', label: 'green' }],
       },
       {
         id: 'ratchet',
         name: 'Tighten baseline',
-        agents: [{ agentId: third.id, name: third.name }],
+        agents: [{ agentId: third.id, name: third.displayName }],
       },
     ],
     startNodeId: 'codemod',
@@ -1236,10 +1239,14 @@ async function seedSpace(ws: WebSocket): Promise<{ spaceId: string; taskIds: str
       {
         id: 'capture',
         name: 'Capture screenshots',
-        agents: [{ agentId: first.id, name: first.name }],
+        agents: [{ agentId: first.id, name: first.displayName }],
         transitions: [{ id: 't1', target: 'Triage drift', label: 'captured' }],
       },
-      { id: 'triage', name: 'Triage drift', agents: [{ agentId: second.id, name: second.name }] },
+      {
+        id: 'triage',
+        name: 'Triage drift',
+        agents: [{ agentId: second.id, name: second.displayName }],
+      },
     ],
     startNodeId: 'capture',
     endNodeId: 'triage',
@@ -1267,7 +1274,7 @@ async function seedSpace(ws: WebSocket): Promise<{ spaceId: string; taskIds: str
     checkInTimezone: 'America/New_York',
   });
 
-  await rpcCall(ws, 'spaceLongHorizonAgent.create', {
+  await rpcCall(ws, 'spaceAgent.create', {
     spaceId,
     handle: 'palette-warden',
     displayName: 'Palette Warden',

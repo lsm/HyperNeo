@@ -102,7 +102,7 @@ export function SpaceAgentEditor({
 }: SpaceAgentEditorProps) {
   const isEdit = agent !== null;
   const isPromotion = !isEdit && promotionDraft !== null && promotionDraft !== undefined;
-  const builtInTemplates = spaceStore.agentTemplates.value;
+  const builtInTemplates = spaceStore.agentTemplates.value as unknown as SpaceWorkerAgentTemplate[];
 
   const [name, setName] = useState(agent?.name ?? promotionDraft?.name ?? '');
   const [description, setDescription] = useState(

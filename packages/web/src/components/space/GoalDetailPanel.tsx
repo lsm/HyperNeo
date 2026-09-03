@@ -61,7 +61,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
   const tasks = spaceStore.spaceId.value === spaceId ? spaceStore.tasks.value : [];
   const owner =
     spaceStore.spaceId.value === spaceId ? (spaceStore.goalOwners.value.get(goalId) ?? null) : null;
-  const agents = spaceStore.spaceId.value === spaceId ? spaceStore.longHorizonAgents.value : [];
+  const agents = spaceStore.spaceId.value === spaceId ? spaceStore.agents.value : [];
   const agentsVersion = agents.map((item) => `${item.id}:${item.handle}:${item.status}`).join('|');
   const goalIdRef = useRef(goalId);
   const spaceIdRef = useRef(spaceId);
@@ -97,8 +97,8 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
           setOwnerLoadFailed(true);
         });
     }
-    if (spaceStore.longHorizonAgents.value.length === 0) {
-      spaceStore.refreshLongHorizonAgents().catch(() => {});
+    if (spaceStore.agents.value.length === 0) {
+      spaceStore.refreshAgents().catch(() => {});
     }
     return () => {
       cancelled = true;

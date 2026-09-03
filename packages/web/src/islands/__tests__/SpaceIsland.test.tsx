@@ -303,8 +303,7 @@ vi.mock('../../lib/space-store', () => ({
       configDataLoaded: mockConfigDataLoaded,
       ensureConfigData: mockEnsureConfigData,
       ensureWorkflowDetails: mockEnsureWorkflowDetails,
-      refreshLongHorizonAgents: vi.fn().mockResolvedValue(undefined),
-      longHorizonAgents: signal([]),
+      refreshAgents: vi.fn().mockResolvedValue(undefined),
       ensureNodeExecutions: vi.fn().mockResolvedValue(undefined),
       selectSpace: mockSelectSpace,
       workflowVersions: signal(new Map()),
@@ -526,7 +525,7 @@ describe('SpaceIsland — route-driven views', () => {
     const { getByTestId } = render(<SpaceIsland spaceId="space-1" viewMode="configure" />);
     await waitFor(
       () => {
-        expect(getByTestId('space-worker-agent-list')).toBeTruthy();
+        expect(getByTestId('space-configure-tab-bar')).toBeTruthy();
       },
       { timeout: LAZY_LOAD_TIMEOUT }
     );
@@ -577,16 +576,15 @@ describe('SpaceIsland — configure workflow editor', () => {
   it('renders configure sub-tabs', async () => {
     const { getByTestId } = await renderConfigure();
     expect(getByTestId('space-configure-tab-bar')).toBeTruthy();
-    expect(getByTestId('space-configure-tab-agents')).toBeTruthy();
     expect(getByTestId('space-configure-tab-workflows')).toBeTruthy();
     expect(getByTestId('space-configure-tab-settings')).toBeTruthy();
   });
 
-  it('does not load workflow details for the Worker Agents configure tab', async () => {
+  it('falls back to the workflows tab for a stale agents tab value', async () => {
     configureTabBridge.signal.value = 'agents';
-    await renderConfigure();
-
-    expect(mockEnsureWorkflowDetails).not.toHaveBeenCalled();
+    const { getByTestId } = await renderConfigure();
+    expect(getByTestId('space-configure-tab-bar')).toBeTruthy();
+    expect(getByTestId('create-workflow-btn')).toBeTruthy();
   });
 
   it('opens the visual editor when creating a workflow', async () => {

@@ -419,7 +419,7 @@ export function SpaceTaskPane({
           return {
             id: `node:${node.id}:${agent.name}`,
             kind: 'node_agent' as const,
-            label: member?.label ?? spaceAgent?.name ?? formatAgentSlotLabel(agent.name),
+            label: member?.label ?? spaceAgent?.displayName ?? formatAgentSlotLabel(agent.name),
             agentName: agent.name,
             nodeExecutionId: workerOwnsSlot ? undefined : nodeExecution?.id,
             nodeExecutionSessionId: workerOwnsSlot
@@ -754,7 +754,7 @@ export function SpaceTaskPane({
     const slotLabel = (agentName: string): string => {
       const slot = clickedNode?.agents.find((a) => a.name === agentName) ?? null;
       const spaceAgent = slot?.agentId ? spaceAgents.find((a) => a.id === slot.agentId) : undefined;
-      return spaceAgent?.name ?? formatAgentSlotLabel(agentName);
+      return spaceAgent?.displayName ?? formatAgentSlotLabel(agentName);
     };
     const currentWorkerMember = currentActivityMembers.find(
       (m) =>
