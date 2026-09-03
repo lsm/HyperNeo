@@ -25,7 +25,6 @@ import {
   RETIRED_PR_MERGER_PROMPT,
   RETIRED_PR_MERGER_TOOLS,
 } from '../space/agents/seed-agents.ts';
-import { coordinatorLongHorizonAgentId } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import { Logger } from '../logger.ts';
@@ -117,7 +116,6 @@ function buildTemplateUpdateParams(
   const unifiedIds = new Set(unifiedRows.map((a) => a.id));
   const spaceAgents = [
     ...unifiedRows
-      .filter((a) => a.id !== coordinatorLongHorizonAgentId(spaceId))
       .filter((a) => !coordinatorByHandle || a.id !== coordinatorByHandle.id)
       .filter((a) => a.status !== 'archived')
       .filter(
@@ -364,12 +362,11 @@ export async function restampBuiltInWorkflowsOnStartup(
     let totalRestamped = 0;
     for (const space of spaces) {
       try {
-        const restampCoordinatorByHandle = longHorizonAgentRepo.getCoordinator(space.id);
+        const restampCoordinatorByHandle = longHorizonAgentRepo.ensureCoordinator(space.id);
         const restampUnifiedRows = longHorizonAgentRepo.listBySpaceId(space.id);
         const restampUnifiedIds = new Set(restampUnifiedRows.map((a) => a.id));
         const agents = [
           ...restampUnifiedRows
-            .filter((a) => a.id !== coordinatorLongHorizonAgentId(space.id))
             .filter((a) => !restampCoordinatorByHandle || a.id !== restampCoordinatorByHandle.id)
             .filter((a) => a.status !== 'archived')
             .filter(

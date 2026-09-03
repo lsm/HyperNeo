@@ -14,7 +14,7 @@ import type { SpaceWorkflowRepository } from '../../../storage/repositories/spac
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
 import { Logger } from '../../logger.ts';
-import { coordinatorLongHorizonAgentId } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
 import {
   validatePostApproval,
@@ -24,7 +24,6 @@ import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url.ts';
 import '../runtime/connectors/production.ts';
 import { slugify, validateSlug } from '../slug.ts';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
@@ -50,10 +49,7 @@ export function createSpaceAgentLookup(
       const unified = longHorizonAgentRepo.getById(id);
       if (unified && unified.spaceId === spaceId) {
         const coordinator = longHorizonAgentRepo.getCoordinator(spaceId);
-        if (
-          unified.id === coordinatorLongHorizonAgentId(spaceId) ||
-          (coordinator && unified.id === coordinator.id)
-        ) {
+        if (coordinator && unified.id === coordinator.id) {
           return null;
         }
         if (unified.templateKey === 'migration.legacy_space_agent') {

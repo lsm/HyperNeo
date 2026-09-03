@@ -20,6 +20,10 @@ import {
 import { composeLongHorizonSubscriptionPattern } from '../external-events/long-horizon-subscription-pattern.ts';
 import { validateGlobPattern, validateSource } from '../external-events/topic-validator.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import {
+  decideDefaultAgentUpdateAdmission,
+  resolveIsDefaultAgent,
+} from '../space/agents/default-agent-policy.ts';
 import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates.ts';
 import {
   publishUnifiedAgentCreated,
@@ -709,6 +713,17 @@ function updateValidateRequestStage(ctx: UpdateUnifiedAgentCtx): UpdateUnifiedAg
   return ctx;
 }
 
+function updateAuthorizeStage(ctx: UpdateUnifiedAgentCtx): UpdateUnifiedAgentCtx {
+  if (!ctx.existing) return ctx;
+  const decision = decideDefaultAgentUpdateAdmission({
+    isDefaultAgent: resolveIsDefaultAgent(ctx.spaceId, ctx.agentId, ctx.repo),
+    handleChanged: ctx.params.handle !== undefined && ctx.params.handle !== ctx.existing.handle,
+    nextStatus: ctx.params.status,
+  });
+  if (decision.action === 'reject') throw new Error(decision.message);
+  return ctx;
+}
+
 async function updateApplyTwinStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
   if (!ctx.routeTwin) return ctx;
   const { params, agentId, spaceId } = ctx;
@@ -807,6 +822,7 @@ const runUpdateUnifiedSpaceAgent = (superpipe({})('update-unified-space-agent') 
   .input(['ctx'])
   .pipe(updateResolveTargetStage, 'ctx', 'ctx')
   .pipe(updateValidateRequestStage, 'ctx', 'ctx')
+  .pipe(updateAuthorizeStage, 'ctx', 'ctx')
   .pipe(updateApplyTwinStage, 'ctx', 'ctx')
   .pipe(updateApplyNativeStage, 'ctx', 'ctx')
   .pipe(updatePublishStage, 'ctx', 'ctx')

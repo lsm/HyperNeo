@@ -894,6 +894,37 @@ describe('Space Agent RPC Handlers', () => {
       ).rejects.toThrow('is reserved');
     });
 
+    it('rejects handle changes and deactivating statuses on the default agent row (C-2 lock)', async () => {
+      const coordinator = longHorizonRepo.ensureCoordinator('space-1');
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', {
+          id: coordinator.id,
+          spaceId: 'space-1',
+          handle: 'renamed',
+        })
+      ).rejects.toThrow('handle is locked');
+
+      for (const status of ['paused', 'archived', 'disabled']) {
+        await expect(
+          call(hubData.handlers, 'spaceAgent.update', {
+            id: coordinator.id,
+            spaceId: 'space-1',
+            status,
+          })
+        ).rejects.toThrow('cannot be paused, archived, or disabled');
+      }
+
+      expect(longHorizonRepo.getById(coordinator.id)?.status).toBe('active');
+
+      const edited = await call<{ agent: { instructions: string } }>(
+        hubData.handlers,
+        'spaceAgent.update',
+        { id: coordinator.id, spaceId: 'space-1', instructions: 'Coordinate everything.' }
+      );
+      expect(edited.agent.instructions).toBe('Coordinate everything.');
+    });
+
     it('clears the session provider when the override is explicitly cleared (P2)', async () => {
       const runtimeService = createRuntimeServiceMock();
       const freshHub = createMockMessageHub();

@@ -1385,6 +1385,7 @@ describe('createSpaceAgentToolHandlers — session management tools', () => {
     seedSession('other-member-coordinator', ctx.spaceId, { status: 'idle' });
     const handlers = makeHandlers(ctx, {
       myAgentName: 'space-agent',
+      isDefaultAgent: true,
       mySessionId: 'caller-session',
       getSpaceAutonomyLevel: async () => 3,
       getRuntimeSession: () => ({ startQueryAndEnqueue: async () => {} }) as never,
@@ -1660,6 +1661,42 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     await handlers.update_agent({ agent_id: created.agent.id, provider: 'kimi' });
     await handlers.update_agent({ agent_id: created.agent.id, description: 'untouched' });
     expect(clearLongTermAgentSessionProvider).not.toHaveBeenCalled();
+  });
+
+  test('update_agent rejects pausing or archiving the default agent (C-2 lock)', async () => {
+    const handlers = makeHandlers(ctx);
+    const coordinator = ctx.longHorizonAgentRepo.ensureCoordinator(ctx.spaceId);
+
+    const paused = JSON.parse(
+      (await handlers.pause_agent({ agent_id: coordinator.id })).content[0].text
+    );
+    expect(paused.success).toBe(false);
+    expect(paused.error).toContain('cannot be paused, archived, or disabled');
+
+    const archived = JSON.parse(
+      (await handlers.archive_agent({ agent_id: coordinator.id })).content[0].text
+    );
+    expect(archived.success).toBe(false);
+    expect(archived.error).toContain('cannot be paused, archived, or disabled');
+
+    expect(ctx.longHorizonAgentRepo.getById(coordinator.id)?.status).toBe('active');
+  });
+
+  test('update_agent keeps default-agent instructions and model editable (C-2 lock)', async () => {
+    const handlers = makeHandlers(ctx);
+    const coordinator = ctx.longHorizonAgentRepo.ensureCoordinator(ctx.spaceId);
+
+    const updated = JSON.parse(
+      (
+        await handlers.update_agent({
+          agent_id: coordinator.id,
+          custom_prompt: 'Coordinate long-horizon Space activity.',
+          model: null,
+        })
+      ).content[0].text
+    );
+    expect(updated.success).toBe(true);
+    expect(updated.agent.instructions).toBe('Coordinate long-horizon Space activity.');
   });
 
   test('rejects invalid model overrides for MCP-created long-horizon agents', async () => {
@@ -6411,7 +6448,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     );
 
     const result = await makeHandlers(ctx, {
-      callerRole: 'coordinator',
+      isDefaultAgent: true,
     }).approve_pending_completion({ task_id: taskId, approved: true, reason: 'ship it' });
     dispatchSpy.mockRestore();
 
@@ -6436,7 +6473,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     );
 
     const result = await makeHandlers(ctx, {
-      callerRole: 'coordinator',
+      isDefaultAgent: true,
     }).approve_pending_completion({ task_id: taskId, approved: true });
     dispatchSpy.mockRestore();
 
@@ -6456,7 +6493,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     });
 
     const result = await makeHandlers(ctx, {
-      callerRole: 'coordinator',
+      isDefaultAgent: true,
     }).approve_pending_completion({ task_id: taskId, approved: true });
     dispatchSpy.mockRestore();
 
@@ -6475,7 +6512,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     });
 
     const result = await makeHandlers(ctx, {
-      callerRole: 'coordinator',
+      isDefaultAgent: true,
     }).approve_pending_completion({ task_id: taskId, approved: false, reason: 'needs rework' });
     dispatchSpy.mockRestore();
 
@@ -6492,7 +6529,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
 
     const result = await makeHandlers(ctx, {
-      callerRole: 'coordinator',
+      isDefaultAgent: true,
     }).approve_pending_completion({ task_id: taskId, approved: false });
     dispatchSpy.mockRestore();
 
@@ -6512,7 +6549,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
 
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
     const result = await makeHandlers(ctx, {
-      callerRole: 'coordinator',
+      isDefaultAgent: true,
     }).approve_pending_completion({ task_id: task.id, approved: true });
     dispatchSpy.mockRestore();
 
@@ -6535,7 +6572,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
 
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
     const result = await makeHandlers(ctx, {
-      callerRole: 'coordinator',
+      isDefaultAgent: true,
     }).approve_pending_completion({ task_id: task.id, approved: true });
     dispatchSpy.mockRestore();
 
@@ -6599,7 +6636,7 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval');
 
     const result = await makeHandlers(ctx, {
-      callerRole: 'coordinator',
+      isDefaultAgent: true,
       spaceId: 'other-space',
     }).approve_pending_completion({ task_id: taskId, approved: true });
     dispatchSpy.mockRestore();
@@ -6911,6 +6948,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     const handlers = makeHandlersWith(tam, {
       activateNode: async () => {},
       myAgentName: 'space-agent',
+      isDefaultAgent: true,
     });
 
     await handlers.send_message_to_task({

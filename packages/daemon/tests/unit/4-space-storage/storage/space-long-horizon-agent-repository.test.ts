@@ -74,6 +74,60 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(repo.listBySpaceId('space-1')).toHaveLength(1);
   });
 
+  test('self-heals a pre-lock renamed handle on the deterministic Coordinator row', () => {
+    const created = repo.ensureCoordinator('space-1');
+    repo.update(created.id, { handle: 'renamed' });
+    expect(repo.getCoordinator('space-1')).toBeNull();
+
+    const coordinator = repo.ensureCoordinator('space-1');
+
+    expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
+    expect(coordinator.handle).toBe('coordinator');
+    expect(repo.getCoordinator('space-1')?.id).toBe(coordinator.id);
+    expect(repo.listBySpaceId('space-1')).toHaveLength(1);
+  });
+
+  test('self-heal normalizes handle and status together in one ensureCoordinator call', () => {
+    const created = repo.ensureCoordinator('space-1');
+    repo.update(created.id, { handle: 'renamed', status: 'archived' });
+
+    const coordinator = repo.ensureCoordinator('space-1');
+
+    expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
+    expect(coordinator.handle).toBe('coordinator');
+    expect(coordinator.status).toBe('active');
+    expect(repo.getCoordinator('space-1')?.id).toBe(coordinator.id);
+    expect(repo.listBySpaceId('space-1')).toHaveLength(1);
+
+    db.prepare(
+      `INSERT INTO spaces (
+				id, slug, workspace_path, name, description, background_context, instructions,
+				allowed_models, session_ids, status, paused, stopped, autonomy_level,
+				max_concurrent_tasks, created_at, updated_at
+			) VALUES (?, ?, ?, ?, '', '', '', '[]', '[]', 'active', 0, 0, 1, 1, ?, ?)`
+    ).run('space-2', 'space-2', '/tmp/space-2', 'Space 2', 1, 1);
+    const paused = repo.ensureCoordinator('space-2');
+    repo.update(paused.id, { handle: 'renamed-2', status: 'paused' });
+
+    const healedPaused = repo.ensureCoordinator('space-2');
+
+    expect(healedPaused.handle).toBe('coordinator');
+    expect(healedPaused.status).toBe('active');
+  });
+
+  test('self-heal reactivates an unchanged-handle coordinator row found by handle', () => {
+    const created = repo.ensureCoordinator('space-1');
+    repo.update(created.id, { status: 'paused' });
+    expect(repo.getCoordinator('space-1')?.status).toBe('paused');
+
+    const healed = repo.ensureCoordinator('space-1');
+
+    expect(healed.id).toBe(coordinatorLongHorizonAgentId('space-1'));
+    expect(healed.handle).toBe('coordinator');
+    expect(healed.status).toBe('active');
+    expect(repo.listBySpaceId('space-1')).toHaveLength(1);
+  });
+
   test('persists agent fields and updates nullable policy fields', () => {
     const agent = repo.create({
       spaceId: 'space-1',
@@ -768,7 +822,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(repo.getById('mirror-del-id')).not.toBeNull();
   });
 
-  test('coordinator row is mutable today — rename and archive succeed without guards', () => {
+  test('coordinator row stays repository-mutable — the C-2 lock guards update paths, not the repo (ensureCoordinator self-heal needs it)', () => {
     const coordinator = repo.ensureCoordinator('space-1');
 
     const renamed = repo.update(coordinator.id, { displayName: 'Renamed Coordinator' });

@@ -11,10 +11,7 @@ import type { NodeExecutionRepository } from '../../storage/repositories/node-ex
 import type { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository.ts';
 import type { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
-import {
-  coordinatorLongHorizonAgentId,
-  type SpaceLongHorizonAgentRepository,
-} from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from './agents/worker-long-horizon-mapper.ts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
@@ -111,12 +108,12 @@ export class SpaceActorRegistryAdapter {
     const workerActors = this.repos.spaceAgentRepo
       .getBySpaceId(spaceId)
       .map((agent) => agentActor(agent, this.findLongTermAgentSession(spaceId, agent.id)));
+    const coordinatorAgentId = this.repos.longHorizonAgentRepo?.getCoordinator(spaceId)?.id ?? null;
     const longHorizonActorById = new Map(
       (this.repos.longHorizonAgentRepo?.listBySpaceId(spaceId) ?? [])
         .filter(
           (agent) =>
-            !isCoordinatorLongHorizonAgent(spaceId, agent) &&
-            agent.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY
+            agent.id !== coordinatorAgentId && agent.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY
         )
         .map((agent) => [agent.id, longHorizonAgentActor(agent)])
     );
@@ -227,10 +224,6 @@ function longHorizonAgentActor(agent: SpaceLongHorizonAgent): ActorRef {
     roles: unique(['space-agent', routingRole(agent.handle)]),
     status: agent.status === 'active' ? 'active' : 'archived',
   };
-}
-
-function isCoordinatorLongHorizonAgent(spaceId: string, agent: SpaceLongHorizonAgent): boolean {
-  return agent.id === coordinatorLongHorizonAgentId(spaceId);
 }
 
 function decodeAgentActorId(actorId: string): string | null {

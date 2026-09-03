@@ -2028,6 +2028,35 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
     env.db.close();
   });
 
+  it('heals a renamed coordinator before restamping so it is never bound as a role target', async () => {
+    const env = makeRealEnv();
+    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    const coordinator = env.longHorizonAgentRepo.ensureCoordinator('space-retire');
+    env.db
+      .prepare(
+        `UPDATE space_long_horizon_agents SET handle = 'renamed', display_name = 'Coder' WHERE id = ?`
+      )
+      .run(coordinator.id);
+    expect(env.longHorizonAgentRepo.getCoordinator('space-retire')).toBeNull();
+
+    await restampBuiltInWorkflowsOnStartup(
+      env.workflowManager,
+      env.spaceManager,
+      env.spaceAgentManager,
+      env.longHorizonAgentRepo,
+      () => false
+    );
+
+    expect(env.longHorizonAgentRepo.getCoordinator('space-retire')?.id).toBe(coordinator.id);
+    expect(env.longHorizonAgentRepo.getById(coordinator.id)?.handle).toBe('coordinator');
+    const boundAgentIds = env.workflowRepo
+      .listWorkflows('space-retire')
+      .flatMap((w) => w.nodes.flatMap((n) => n.agents ?? []))
+      .map((a) => a.agentId);
+    expect(boundAgentIds).not.toContain(coordinator.id);
+    env.db.close();
+  });
+
   it('keeps a native twin and its worker row on retirement', async () => {
     const env = makeRealEnv();
     await seedPresetAgents('space-retire', env.spaceAgentManager);

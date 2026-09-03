@@ -106,6 +106,14 @@ describe('resolveAgentRecord', () => {
     ).toEqual({ kind: 'coordinator', agent: coordinator });
   });
 
+  test('coordinator-ness is data-derived — a derived-id row with a renamed handle is a regular long-horizon agent', () => {
+    const renamed = makeAgent('space-lh-agent:coordinator:space-1', { handle: 'renamed' });
+
+    expect(
+      resolveAgentRecord('space-1', renamed.id, makeDeps({ longHorizonAgents: [renamed] }))
+    ).toEqual({ kind: 'long_horizon', agent: renamed });
+  });
+
   test('inactive coordinator row found by id resolves missing, matching the routing branch', () => {
     const coordinator = makeAgent('space-lh-agent:coordinator:space-1', {
       handle: 'coordinator',

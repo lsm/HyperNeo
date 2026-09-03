@@ -3164,6 +3164,7 @@ describe('SpaceRuntimeService', () => {
           displayName: 'Release Manager',
           autonomyLevel: 2,
         })),
+        getCoordinator: mock(() => null),
         listBySpaceId: mock(() => []),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const actorRegistryRepos = {

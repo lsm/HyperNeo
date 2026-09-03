@@ -601,6 +601,33 @@ describe('SpaceActorRegistryAdapter', () => {
     expect(actors.filter((actor) => actor.handle === '@coordinator')).toHaveLength(1);
   });
 
+  it('exposes a pre-lock renamed derived-id row under its handle once it is not the coordinator row', () => {
+    const space = spaceRepo.createSpace({
+      workspacePath: '/workspace/project',
+      slug: 'project',
+      name: 'Project',
+    });
+    longHorizonAgentRepo.create({
+      id: coordinatorLongHorizonAgentId(space.id),
+      spaceId: space.id,
+      handle: 'renamed',
+      displayName: 'Renamed Row',
+      status: 'active',
+    });
+
+    const actors = registry.listActors(space.id);
+
+    const renamedActor = actors.find((actor) => actor.handle === '@renamed');
+    expect(renamedActor).toMatchObject({
+      actorId: `agent:${encodeURIComponent(coordinatorLongHorizonAgentId(space.id))}`,
+      kind: 'agent',
+      spaceId: space.id,
+      status: 'active',
+    });
+    expect(renamedActor?.roles).toContain('space-agent');
+    expect(actors.filter((actor) => actor.handle === '@coordinator')).toHaveLength(1);
+  });
+
   it('returns row-backed inactive coordinator when no space chat session exists', () => {
     const space = spaceRepo.createSpace({
       workspacePath: '/workspace/project',

@@ -29,9 +29,14 @@ describe('agentSessionIdOf', () => {
 
   test('coordinator long-horizon agentId reuses coordinatorSessionId', () => {
     const spaceId = 'space-1';
-    expect(agentSessionIdOf(spaceId, coordinatorLongHorizonAgentId(spaceId))).toBe(
-      coordinatorSessionId(spaceId)
-    );
+    const agentId = coordinatorLongHorizonAgentId(spaceId);
+    expect(agentSessionIdOf(spaceId, agentId, agentId)).toBe(coordinatorSessionId(spaceId));
+  });
+
+  test('a derived coordinator id without a coordinator row routes to its own long-horizon session', () => {
+    const spaceId = 'space-1';
+    const agentId = coordinatorLongHorizonAgentId(spaceId);
+    expect(agentSessionIdOf(spaceId, agentId)).toBe(longTermAgentSessionId(spaceId, agentId));
   });
 
   test('non-coordinator agentId reuses longTermAgentSessionId', () => {
