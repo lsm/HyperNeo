@@ -2848,7 +2848,14 @@ export class SpaceRuntime {
     try {
       routeResult = await router.route(approvedTask, workflow, routeContext);
     } finally {
-      clearPendingCompletionState(this.config.taskRepo, taskId);
+      const latest = this.config.taskRepo.getTask(taskId);
+      if (
+        latest?.status === 'approved' &&
+        latest.workflowRunId === approvedTask.workflowRunId &&
+        latest.approvedAt === approvedTask.approvedAt
+      ) {
+        clearPendingCompletionState(this.config.taskRepo, taskId);
+      }
     }
 
     if (routeResult.mode !== 'skipped') {
