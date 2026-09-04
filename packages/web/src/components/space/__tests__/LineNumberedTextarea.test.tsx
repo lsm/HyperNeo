@@ -69,6 +69,15 @@ describe('LineNumberedTextarea — textarea passthrough', () => {
     expect(gutter.getAttribute('aria-hidden')).toBe('true');
   });
 
+  it('bounds the editor height to the requested rows and scrolls as one unit', () => {
+    const value = Array.from({ length: 13 }, (_, i) => `l${i}`).join('\n');
+    const { container } = render(<LineNumberedTextarea value={value} onChange={noop} rows={5} />);
+    const wrapper = container.firstElementChild as HTMLElement;
+    expect(wrapper.style.maxHeight).toBe('calc(5 * 1.375rem + 1rem + 2px)');
+    expect(wrapper.className).toContain('overflow-y-auto');
+    expect(gutterNumbers(container)).toHaveLength(13);
+  });
+
   it('disables soft wrapping so gutter numbers stay aligned with long lines', () => {
     const value = 'a line long enough to wrap once rendered\nsecond logical line';
     const { container } = render(<LineNumberedTextarea value={value} onChange={noop} rows={2} />);
