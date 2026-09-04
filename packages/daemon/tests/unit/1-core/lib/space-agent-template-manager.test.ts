@@ -551,8 +551,10 @@ describe('SpaceAgentTemplateManager', () => {
       ]);
 
       expect(modelResult.ok).toBe(true);
-      expect(providerResult.ok).toBe(false);
-      if (!providerResult.ok) expect(providerResult.error).toMatch(/superseded/i);
+      expect(providerResult.ok).toBe(true);
+      if (providerResult.ok) {
+        expect(providerResult.value).toBeNull();
+      }
 
       const final = manager.getByKey('release-readiness.custom');
       expect(final?.model).toBe('glm-4-flash');
@@ -670,8 +672,8 @@ describe('SpaceAgentTemplateManager', () => {
       const loser = first.template ? second : first;
 
       expect(winner).toBeDefined();
-      expect(loser.error).toMatch(/superseded/i);
-      expect(loser.template).toBeUndefined();
+      expect(loser.error).toBeUndefined();
+      expect(loser.template).toBeNull();
     });
   });
 

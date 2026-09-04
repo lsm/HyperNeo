@@ -39,7 +39,7 @@ export interface UpdateTemplateCtx {
   existing?: SpaceAgentTemplateRecord;
   version?: number;
   error?: string;
-  template?: SpaceAgentTemplate;
+  template?: SpaceAgentTemplate | null;
 }
 
 export interface DeleteTemplateCtx {
@@ -246,7 +246,7 @@ function updatePersist(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
   if (ctx.version === undefined) return { ...ctx, error: `Template version missing: ${ctx.key}` };
   const template = ctx.repo.casUpdate(ctx.key, ctx.params, ctx.version);
   if (!template) {
-    return { ...ctx, error: 'Template update superseded by a concurrent update' };
+    return { ...ctx, template: null };
   }
   return { ...ctx, template };
 }
@@ -334,6 +334,7 @@ export class SpaceAgentTemplateManager {
   ): Promise<SpaceAgentResult<SpaceAgentTemplate | null>> {
     const ctx = await runUpdateTemplate({ repo: this.repo, key, params });
     if (ctx.error) return { ok: false, error: ctx.error };
+    if (ctx.template === null) return { ok: true, value: null };
     return { ok: true, value: ctx.template! };
   }
 
