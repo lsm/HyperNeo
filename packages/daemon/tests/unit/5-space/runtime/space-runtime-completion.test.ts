@@ -211,6 +211,15 @@ class MockTaskAgentManager {
     return this.isSessionAlive(sessionId);
   }
 
+  isSessionOnPostApprovalRoute(_args: {
+    sessionId: string;
+    taskId: string;
+    routeNodeId: string | null;
+    routeAgentName: string;
+  }): boolean {
+    return true;
+  }
+
   async spawnWorkflowNodeAgent(
     _task: SpaceTask,
     _space: Space,

@@ -132,6 +132,7 @@ import {
   type PostApprovalRouteResult,
   PostApprovalRouter,
 } from './post-approval-router.ts';
+import { runPostApprovalRetry, TaskScopedRetrySerializer } from './post-approval-retry.ts';
 import {
   buildPromptTooLongContinueNag,
   COMPACT_RESULT_TIMEOUT_MS,
@@ -2699,6 +2700,35 @@ export class SpaceRuntime {
   }
 
   private postApprovalRouter: PostApprovalRouter | null = null;
+  private readonly postApprovalRetryQueue = new TaskScopedRetrySerializer();
+
+  async retryPostApprovalDispatch(taskId: string): Promise<PostApprovalRouteResult> {
+    if (!this.getPostApprovalRouter()) {
+      const reason = `PostApprovalRouter not wired yet (taskAgentManager missing); task=${taskId}`;
+      log.warn(`retryPostApprovalDispatch: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
+    return this.postApprovalRetryQueue.run(taskId, () =>
+      runPostApprovalRetry({
+        taskId,
+        taskRepo: this.config.taskRepo,
+        workflowRunRepo: this.config.workflowRunRepo,
+        spaceManager: this.config.spaceManager,
+        dispatch: (id, approvalSource, dispatchOptions) =>
+          this.dispatchPostApproval(
+            id,
+            approvalSource,
+            {},
+            {
+              requireAlreadyApproved: true,
+              expectedWorkflowRunId: dispatchOptions?.expectedWorkflowRunId,
+              expectedApprovedAt: dispatchOptions?.expectedApprovedAt,
+              requireSucceededRun: true,
+            }
+          ),
+      })
+    );
+  }
 
   private getPostApprovalRouter(): PostApprovalRouter | null {
     if (this.postApprovalRouter) return this.postApprovalRouter;
@@ -2724,6 +2754,10 @@ export class SpaceRuntime {
       livenessProbe: {
         isSessionAlive: (sessionId) => manager.isSessionAlive(sessionId),
       },
+      validateRecordedPointer: (args) => manager.isSessionOnPostApprovalRoute(args),
+      cancelSpawnedWorker: (sessionId) => manager.cancelBySessionId(sessionId),
+      ownsRecordedPointer: ({ sessionId, taskId }) =>
+        manager.isSessionWorkerForTask(sessionId, taskId),
       goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
     });
@@ -2733,7 +2767,13 @@ export class SpaceRuntime {
   async dispatchPostApproval(
     taskId: string,
     approvalSource: SpaceApprovalSource,
-    contextExtras: Omit<PostApprovalRouteContext, 'approvalSource'> = {}
+    contextExtras: Omit<PostApprovalRouteContext, 'approvalSource'> = {},
+    options: {
+      requireAlreadyApproved?: boolean;
+      expectedWorkflowRunId?: string | null;
+      expectedApprovedAt?: number | null;
+      requireSucceededRun?: boolean;
+    } = {}
   ): Promise<PostApprovalRouteResult> {
     const router = this.getPostApprovalRouter();
     if (!router) {
@@ -2745,6 +2785,30 @@ export class SpaceRuntime {
     const current = this.config.taskRepo.getTask(taskId);
     if (!current) {
       const reason = `task ${taskId} not found`;
+      log.warn(`dispatchPostApproval: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
+
+    if (options.requireAlreadyApproved && current.status !== 'approved') {
+      const reason = `task ${taskId} is '${current.status}'; this dispatch path only serves already-approved tasks and will not approve a newer review generation`;
+      log.warn(`dispatchPostApproval: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
+
+    if (
+      options.expectedWorkflowRunId !== undefined &&
+      (current.workflowRunId ?? null) !== options.expectedWorkflowRunId
+    ) {
+      const reason = `task ${taskId} re-parented to workflow run ${current.workflowRunId ?? 'none'} since dispatch admission (expected ${options.expectedWorkflowRunId}); refusing the stale dispatch`;
+      log.warn(`dispatchPostApproval: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
+
+    if (
+      options.expectedApprovedAt !== undefined &&
+      (current.approvedAt ?? null) !== options.expectedApprovedAt
+    ) {
+      const reason = `task ${taskId} changed approval generation since dispatch admission; refusing the stale dispatch`;
       log.warn(`dispatchPostApproval: ${reason}`);
       return { mode: 'skipped', reason };
     }
@@ -2761,6 +2825,27 @@ export class SpaceRuntime {
       ? this.config.workflowRunRepo.getRun(current.workflowRunId)
       : null;
     const workflow = run ? (this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null) : null;
+
+    if (options.expectedApprovedAt !== undefined || options.expectedWorkflowRunId !== undefined) {
+      const rechecked = this.config.taskRepo.getTask(taskId);
+      if (
+        !rechecked ||
+        rechecked.status !== 'approved' ||
+        (options.expectedWorkflowRunId !== undefined &&
+          (rechecked.workflowRunId ?? null) !== options.expectedWorkflowRunId) ||
+        (options.expectedApprovedAt !== undefined &&
+          (rechecked.approvedAt ?? null) !== options.expectedApprovedAt) ||
+        (options.requireSucceededRun &&
+          rechecked.workflowRunId &&
+          this.config.workflowRunRepo.getRun(rechecked.workflowRunId)?.status !== 'done') ||
+        (options.requireSucceededRun &&
+          (!space || space.paused || space.stopped || space.status === 'archived'))
+      ) {
+        const reason = `task ${taskId} changed approval generation, its workflow run left the succeeded state, or its space became inactive while the dispatch was awaiting lookups; refusing the stale dispatch`;
+        log.warn(`dispatchPostApproval: ${reason}`);
+        return { mode: 'skipped', reason };
+      }
+    }
 
     const resolvedApprovalReason =
       typeof contextExtras.approvalReason === 'string'
@@ -2817,9 +2902,20 @@ export class SpaceRuntime {
     };
     let routeResult: PostApprovalRouteResult;
     try {
-      routeResult = await router.route(approvedTask, workflow, routeContext);
+      routeResult = await router.route(approvedTask, workflow, routeContext, {
+        requireSucceededRun: options.requireSucceededRun,
+        expectedApprovedAt: options.expectedApprovedAt,
+        expectedWorkflowRunId: options.expectedWorkflowRunId,
+      });
     } finally {
-      clearPendingCompletionState(this.config.taskRepo, taskId);
+      const latest = this.config.taskRepo.getTask(taskId);
+      if (
+        latest?.status === 'approved' &&
+        latest.workflowRunId === approvedTask.workflowRunId &&
+        latest.approvedAt === approvedTask.approvedAt
+      ) {
+        clearPendingCompletionState(this.config.taskRepo, taskId);
+      }
     }
 
     if (routeResult.mode !== 'skipped') {

@@ -2092,6 +2092,96 @@ export class TaskAgentManager {
     }
   }
 
+  isSessionWorkerForTask(sessionId: string, taskId: string): boolean {
+    return this.sessionIsWorkerForTask(sessionId, taskId, true);
+  }
+
+  private sessionBelongsToTaskRun(sessionId: string, task: SpaceTask): boolean {
+    try {
+      const db = this.config.db.getDatabase();
+      const provenance = this.readProvenanceFromSessionRow(sessionId);
+      if (
+        provenance?.workflowRunId &&
+        task.workflowRunId &&
+        provenance.workflowRunId !== task.workflowRunId
+      ) {
+        return false;
+      }
+      if (task.workflowRunId) {
+        const foreignExec = db
+          .prepare(
+            `SELECT 1 AS foreign_run FROM node_executions
+              WHERE agent_session_id = ? AND workflow_run_id != ?`
+          )
+          .get(sessionId, task.workflowRunId);
+        if (foreignExec) return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  isSessionOnPostApprovalRoute(args: {
+    sessionId: string;
+    taskId: string;
+    routeNodeId: string | null;
+    routeAgentName: string;
+    workflowRunId: string | null;
+  }): boolean {
+    try {
+      const row = this.config.db
+        .getDatabase()
+        .prepare(
+          `SELECT 1 AS ok
+             FROM sessions s
+            WHERE s.id = ?
+              AND s.type = 'worker'
+              AND s.task_id = ?
+              AND (
+                EXISTS (
+                  SELECT 1 FROM node_executions ne
+                   WHERE ne.agent_session_id = s.id
+                     AND ne.agent_name = ?
+                     AND (? IS NULL OR ne.workflow_node_id = ?)
+                     AND (? IS NULL OR ne.workflow_run_id = ?)
+                )
+                OR (
+                  NOT EXISTS (SELECT 1 FROM node_executions ne WHERE ne.agent_session_id = s.id)
+                  AND (
+                    json_extract(s.metadata, '$.promptProvenance') IS NULL
+                    OR (
+                      json_extract(s.metadata, '$.promptProvenance.agentName') = ?
+                      AND (? IS NULL OR json_extract(s.metadata, '$.promptProvenance.nodeId') = ?)
+                      AND (
+                        ? IS NULL
+                        OR json_extract(s.metadata, '$.promptProvenance.workflowRunId') = ?
+                      )
+                    )
+                  )
+                )
+              )`
+        )
+        .get(
+          args.sessionId,
+          args.taskId,
+          args.routeAgentName,
+          args.routeNodeId,
+          args.routeNodeId,
+          args.workflowRunId,
+          args.workflowRunId,
+          args.routeAgentName,
+          args.routeNodeId,
+          args.routeNodeId,
+          args.workflowRunId,
+          args.workflowRunId
+        ) as { ok?: number } | undefined;
+      return Boolean(row);
+    } catch {
+      return false;
+    }
+  }
+
   private readPostApprovalWorkerIdentity(
     taskId: string,
     hintSessionId?: string
@@ -2105,14 +2195,23 @@ export class TaskAgentManager {
     if (task?.status === 'cancelled' || task?.status === 'archived') return null;
     if (hintSessionId) {
       if (!task?.workflowRunId) return null;
-      const recordedPointer = task.postApprovalSessionId === hintSessionId;
+      if (task.postApprovalSessionId) {
+        if (task.postApprovalSessionId !== hintSessionId) return null;
+      } else if (
+        (task.status !== 'approved' && task.status !== 'done') ||
+        this.findDurableWorkerSessionId(task) !== hintSessionId
+      ) {
+        return null;
+      }
       if (
-        (!task.postApprovalSessionId &&
-          (task.status === 'approved' || task.status === 'done') &&
-          this.findDurableWorkerSessionId(task) !== hintSessionId) ||
-        !this.sessionIsWorkerForTask(hintSessionId, taskId, recordedPointer)
+        !this.sessionIsWorkerForTask(
+          hintSessionId,
+          taskId,
+          task.postApprovalSessionId === hintSessionId
+        )
       )
         return null;
+      if (!this.sessionBelongsToTaskRun(hintSessionId, task)) return null;
       const provenance = this.readProvenanceFromSessionRow(hintSessionId);
       const agentName = provenance?.agentName ?? this.legacyWorkflowRouteAgentName(task);
       if (!agentName) return null;
@@ -2133,7 +2232,8 @@ export class TaskAgentManager {
         provenance = this.readProvenanceFromSessionRow(durableId);
       }
     }
-    if (!sessionId) return null;
+    if (!sessionId || !task) return null;
+    if (!this.sessionBelongsToTaskRun(sessionId, task)) return null;
     let agentName = provenance?.agentName;
     const agentId = provenance?.agentId;
     const nodeId = provenance?.nodeId ?? this.legacyWorkflowRouteNodeId(task);
@@ -2148,6 +2248,7 @@ export class TaskAgentManager {
     agentName?: string;
     nodeId?: string;
     agentId?: string;
+    workflowRunId?: string;
   } | null {
     try {
       const row = this.config.db
@@ -2156,7 +2257,9 @@ export class TaskAgentManager {
         .get(sessionId) as { metadata?: string | null } | undefined;
       if (!row?.metadata) return null;
       const provenance = (JSON.parse(row.metadata) as { promptProvenance?: unknown })
-        ?.promptProvenance as { agentName?: string; nodeId?: string; agentId?: string } | undefined;
+        ?.promptProvenance as
+        | { agentName?: string; nodeId?: string; agentId?: string; workflowRunId?: string }
+        | undefined;
       return provenance ?? null;
     } catch {
       return null;
@@ -5376,8 +5479,16 @@ export class TaskAgentManager {
     workflow: SpaceWorkflow;
     targetAgent: string;
     kickoffMessage: string;
+    requireSucceededRun?: boolean;
+    expectedApprovedAt?: number | null;
+    expectedWorkflowRunId?: string | null;
   }): Promise<{ sessionId: string }> {
     const { task, workflow, targetAgent, kickoffMessage } = args;
+    const admission = {
+      requireSucceededRun: args.requireSucceededRun,
+      expectedApprovedAt: args.expectedApprovedAt,
+      expectedWorkflowRunId: args.expectedWorkflowRunId,
+    };
     const taskId = task.id;
     const spaceId = task.spaceId;
 
@@ -5415,7 +5526,7 @@ export class TaskAgentManager {
       matchedSlot.name,
       matchedNodeId
     );
-    await this.assertPostApprovalSpawnAdmissible(spaceId, taskId);
+    await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, admission);
     if (existingSessionId) {
       const existing = this.getSubSession(existingSessionId);
       if (!existing) {
@@ -5424,7 +5535,7 @@ export class TaskAgentManager {
         );
       }
       await this.withSessionInjectLock(existing.session.id, async () => {
-        await this.assertPostApprovalSpawnAdmissible(spaceId, taskId);
+        await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, admission);
         const terminalStatus = task.workflowRunId
           ? this.resolveTerminalInjectionStatus(task.workflowRunId, taskId)
           : null;
@@ -5604,7 +5715,7 @@ export class TaskAgentManager {
 
       try {
         await this.withSessionInjectLock(spawned.session.id, async () => {
-          await this.assertPostApprovalSpawnAdmissible(spaceId, taskId);
+          await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, admission);
           await this.injectMessageIntoSession(spawned, kickoffMessage);
         });
       } catch (err) {
@@ -5623,7 +5734,15 @@ export class TaskAgentManager {
     }
   }
 
-  private async assertPostApprovalSpawnAdmissible(spaceId: string, taskId: string): Promise<void> {
+  private async assertPostApprovalSpawnAdmissible(
+    spaceId: string,
+    taskId: string,
+    options: {
+      requireSucceededRun?: boolean;
+      expectedApprovedAt?: number | null;
+      expectedWorkflowRunId?: string | null;
+    } = {}
+  ): Promise<void> {
     const freshSpace = await this.config.spaceManager.getSpace(spaceId);
     if (
       !freshSpace ||
@@ -5640,6 +5759,39 @@ export class TaskAgentManager {
       throw new Error(
         `spawnPostApprovalSubSession: task ${taskId} is ${freshTask?.status ?? 'missing'}; refusing to spawn a post-approval session`
       );
+    }
+    if (options.expectedApprovedAt !== undefined && freshTask.status !== 'approved') {
+      throw new SpawnSupersededError(
+        `post-approval-retry-${taskId}`,
+        'task-not-approved-before-kickoff'
+      );
+    }
+    if (
+      options.expectedApprovedAt !== undefined &&
+      (freshTask.approvedAt ?? null) !== options.expectedApprovedAt
+    ) {
+      throw new SpawnSupersededError(
+        `post-approval-retry-${taskId}`,
+        'approval-generation-changed-before-kickoff'
+      );
+    }
+    if (
+      options.expectedWorkflowRunId !== undefined &&
+      (freshTask.workflowRunId ?? null) !== options.expectedWorkflowRunId
+    ) {
+      throw new SpawnSupersededError(
+        `post-approval-retry-${taskId}`,
+        'task-reparented-before-kickoff'
+      );
+    }
+    if (options.requireSucceededRun && freshTask.workflowRunId) {
+      const run = this.config.workflowRunRepo.getRun(freshTask.workflowRunId);
+      if (run?.status !== 'done') {
+        throw new SpawnSupersededError(
+          `post-approval-retry-${taskId}`,
+          'run-not-succeeded-before-kickoff'
+        );
+      }
     }
   }
 

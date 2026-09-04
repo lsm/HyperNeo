@@ -2,12 +2,16 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import { SpawnSupersededError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
+import {
+  SpawnSupersededError,
+  TransientSpawnError,
+} from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import {
   PostApprovalRouter,
   isPostApprovalRoutingEnabled,
   POST_APPROVAL_ROUTING_FLAG_ENV,
   mapPostApprovalDispatchWarning,
+  selectFirstDispatchablePostApprovalRoute,
 } from '../../../../src/lib/space/runtime/post-approval-router.ts';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 
@@ -508,5 +512,503 @@ describe('mapPostApprovalDispatchWarning', () => {
     expect(generic).toContain('hit an error');
     expect(generic).toContain('ENOTFOUND');
     expect(generic).not.toContain('was interrupted');
+  });
+});
+
+describe('PostApprovalRouter.route — routing CAS', () => {
+  let db: BunDatabase;
+  let taskRepo: SpaceTaskRepository;
+
+  beforeEach(() => {
+    db = makeDb();
+    taskRepo = new SpaceTaskRepository(db);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  function routedWorkflow(): SpaceWorkflow {
+    return stubWorkflow({
+      postApproval: { targetAgent: 'deployer', instructions: 'Deploy {{task_title}}.' },
+    });
+  }
+
+  function seedReparentTargetRun(): void {
+    db.prepare(
+      `INSERT INTO space_workflows (id, space_id, name, created_at, updated_at)
+       VALUES ('wf-cas', ?, 'CAS WF', ?, ?)`
+    ).run(SPACE_ID, Date.now(), Date.now());
+    db.prepare(
+      `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+       VALUES ('run-other', ?, 'wf-cas', 'Other run', 'done', ?, ?)`
+    ).run(SPACE_ID, Date.now(), Date.now());
+  }
+
+  test('cancels the spawned worker and skips when the task re-parented mid-spawn', async () => {
+    const task = makeApprovedTask(taskRepo);
+    seedReparentTargetRun();
+    const cancelled: string[] = [];
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: {
+        spawnPostApprovalSubSession: async (args) => {
+          taskRepo.updateTask(args.task.id, { workflowRunId: 'run-other' });
+          return delegates.spawner.spawnPostApprovalSubSession(args);
+        },
+      },
+      livenessProbe: delegates.liveness,
+      cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),
+    });
+
+    const result = await router.route(task, routedWorkflow(), {
+      approvalSource: 'agent',
+      task_title: task.title,
+    });
+
+    expect(result.mode).toBe('skipped');
+    if (result.mode === 'skipped') {
+      expect(result.reason).toContain('lost the conditional write');
+    }
+    expect(cancelled).toEqual(['spawned-session-1']);
+    const final = taskRepo.getTask(task.id);
+    expect(final?.postApprovalSessionId).toBeNull();
+    expect(final?.postApprovalBlockedReason).toBeNull();
+  });
+
+  test('cancels the spawned worker when the task went terminal mid-spawn', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const cancelled: string[] = [];
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: {
+        spawnPostApprovalSubSession: async (args) => {
+          taskRepo.updateTask(args.task.id, { status: 'done' });
+          return delegates.spawner.spawnPostApprovalSubSession(args);
+        },
+      },
+      livenessProbe: delegates.liveness,
+      cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),
+    });
+
+    const result = await router.route(task, routedWorkflow(), {
+      approvalSource: 'agent',
+      task_title: task.title,
+    });
+
+    expect(result.mode).toBe('skipped');
+    expect(cancelled).toEqual(['spawned-session-1']);
+    expect(taskRepo.getTask(task.id)?.postApprovalSessionId).toBeNull();
+  });
+
+  test('a live recorded pointer off the route slot is treated as stale and re-dispatched', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, { postApprovalSessionId: 'coder-exec-session' });
+    const updated = taskRepo.getTask(task.id)!;
+    const delegates = makeDelegates();
+    delegates.aliveSessions.add('coder-exec-session');
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+      validateRecordedPointer: ({ sessionId, routeNodeId, routeAgentName }) =>
+        sessionId === 'worker-on-slot' && routeNodeId === null && routeAgentName === 'deployer',
+    });
+
+    const result = await router.route(updated, routedWorkflow(), { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('spawn');
+    expect(delegates.spawned).toHaveLength(1);
+    expect(taskRepo.getTask(task.id)?.postApprovalSessionId).toBe('spawned-session-1');
+  });
+
+  test('a live recorded pointer on the route slot stays already-routed', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, { postApprovalSessionId: 'worker-on-slot' });
+    const updated = taskRepo.getTask(task.id)!;
+    const delegates = makeDelegates();
+    delegates.aliveSessions.add('worker-on-slot');
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+      validateRecordedPointer: ({ sessionId }) => sessionId === 'worker-on-slot',
+    });
+
+    const result = await router.route(updated, routedWorkflow(), { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('already-routed');
+    expect(delegates.spawned).toHaveLength(0);
+  });
+
+  test('selectFirstDispatchablePostApprovalRoute resolves the node owning the target agent', () => {
+    const workflow = stubWorkflow({
+      nodes: [
+        {
+          id: 'n-declare',
+          name: 'Reviewer',
+          agents: [{ agentId: 'reviewer-id', name: 'reviewer' }],
+          postApproval: { targetAgent: 'deployer', instructions: 'Deploy.' },
+        },
+        {
+          id: 'n-own',
+          name: 'Deploy',
+          agents: [{ agentId: 'deployer-id', name: 'deployer' }],
+        },
+      ],
+    });
+    const selected = selectFirstDispatchablePostApprovalRoute(workflow);
+    expect(selected?.route.targetAgent).toBe('deployer');
+    expect(selected?.nodeId).toBe('n-own');
+  });
+
+  test('selectFirstDispatchablePostApprovalRoute falls back to the declaring node when no node owns the agent', () => {
+    const workflow = stubWorkflow({
+      postApproval: { targetAgent: 'ghost', instructions: 'Nope.' },
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Build',
+          agents: [{ agentId: 'coder-id', name: 'coder' }],
+        },
+      ],
+    });
+    const selected = selectFirstDispatchablePostApprovalRoute(workflow);
+    expect(selected?.route.targetAgent).toBe('ghost');
+    expect(selected?.nodeId).toBeNull();
+  });
+});
+
+describe('PostApprovalRouter.route — replacement and failure-write guards', () => {
+  let db: BunDatabase;
+  let taskRepo: SpaceTaskRepository;
+
+  beforeEach(() => {
+    db = makeDb();
+    taskRepo = new SpaceTaskRepository(db);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  test('cancels the stale off-route worker after the replacement routing wins', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, { postApprovalSessionId: 'stale-off-route' });
+    const updated = taskRepo.getTask(task.id)!;
+    const cancelled: string[] = [];
+    const delegates = makeDelegates();
+    delegates.aliveSessions.add('stale-off-route');
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+      validateRecordedPointer: ({ sessionId }) => sessionId === 'worker-on-slot',
+      cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),
+    });
+    const workflow = stubWorkflow({
+      postApproval: { targetAgent: 'deployer', instructions: 'Deploy.' },
+    });
+
+    const result = await router.route(updated, workflow, { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('spawn');
+    expect(cancelled).toEqual(['stale-off-route']);
+    expect(taskRepo.getTask(task.id)?.postApprovalSessionId).toBe('spawned-session-1');
+  });
+
+  test('does not cancel the stale worker when the replacement CAS loses', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, { postApprovalSessionId: 'stale-off-route' });
+    const updated = taskRepo.getTask(task.id)!;
+    const cancelled: string[] = [];
+    const delegates = makeDelegates();
+    delegates.aliveSessions.add('stale-off-route');
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: {
+        spawnPostApprovalSubSession: async (args) => {
+          taskRepo.updateTask(args.task.id, { status: 'done' });
+          return delegates.spawner.spawnPostApprovalSubSession(args);
+        },
+      },
+      livenessProbe: delegates.liveness,
+      validateRecordedPointer: () => false,
+      cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),
+    });
+    const workflow = stubWorkflow({
+      postApproval: { targetAgent: 'deployer', instructions: 'Deploy.' },
+    });
+
+    const result = await router.route(updated, workflow, { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('skipped');
+    expect(cancelled).toEqual(['spawned-session-1']);
+  });
+
+  test('a transient spawn failure does not stamp the blocked reason after the task re-parented', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, { postApprovalBlockedReason: 'original-block' });
+    db.prepare(
+      `INSERT INTO space_workflows (id, space_id, name, created_at, updated_at)
+       VALUES ('wf-guard', ?, 'Guard WF', ?, ?)`
+    ).run(SPACE_ID, Date.now(), Date.now());
+    db.prepare(
+      `INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, status, created_at, updated_at)
+       VALUES ('run-moved', ?, 'wf-guard', 'Moved run', 'done', ?, ?)`
+    ).run(SPACE_ID, Date.now(), Date.now());
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: {
+        spawnPostApprovalSubSession: async (args) => {
+          taskRepo.updateTask(args.task.id, { workflowRunId: 'run-moved' });
+          throw new TransientSpawnError('spawn deferred: model pool busy');
+        },
+      },
+      livenessProbe: delegates.liveness,
+    });
+    const workflow = stubWorkflow({
+      postApproval: { targetAgent: 'deployer', instructions: 'Deploy.' },
+    });
+
+    const result = await router.route(task, workflow, { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('skipped');
+    expect(taskRepo.getTask(task.id)?.postApprovalBlockedReason).toBe('original-block');
+  });
+
+  test('a transient spawn failure stamps the blocked reason while the approval generation holds', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: {
+        spawnPostApprovalSubSession: async () => {
+          throw new TransientSpawnError('spawn deferred: model pool busy');
+        },
+      },
+      livenessProbe: delegates.liveness,
+    });
+    const workflow = stubWorkflow({
+      postApproval: { targetAgent: 'deployer', instructions: 'Deploy.' },
+    });
+
+    const result = await router.route(task, workflow, { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('skipped');
+    expect(taskRepo.getTask(task.id)?.postApprovalBlockedReason).toContain('deferred');
+  });
+});
+
+describe('PostApprovalRouter.route — cycle-3 race guards', () => {
+  let db: BunDatabase;
+  let taskRepo: SpaceTaskRepository;
+
+  beforeEach(() => {
+    db = makeDb();
+    taskRepo = new SpaceTaskRepository(db);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  function routedWorkflow(): SpaceWorkflow {
+    return stubWorkflow({
+      postApproval: { targetAgent: 'deployer', instructions: 'Deploy.' },
+    });
+  }
+
+  test('does not cancel a reused session the concurrent winner recorded', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const cancelled: string[] = [];
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: {
+        spawnPostApprovalSubSession: async (args) => {
+          const spawned = await delegates.spawner.spawnPostApprovalSubSession(args);
+          taskRepo.updateTask(args.task.id, { postApprovalSessionId: spawned.sessionId });
+          return spawned;
+        },
+      },
+      livenessProbe: delegates.liveness,
+      cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),
+    });
+
+    const result = await router.route(task, routedWorkflow(), { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('skipped');
+    expect(cancelled).toEqual([]);
+    expect(taskRepo.getTask(task.id)?.postApprovalSessionId).toBe('spawned-session-1');
+  });
+
+  test('an accepted live route clears a stale blocked marker', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, {
+      postApprovalSessionId: 'worker-on-slot',
+      postApprovalBlockedReason: 'previously blocked',
+    });
+    const updated = taskRepo.getTask(task.id)!;
+    const delegates = makeDelegates();
+    delegates.aliveSessions.add('worker-on-slot');
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+      validateRecordedPointer: ({ sessionId }) => sessionId === 'worker-on-slot',
+    });
+
+    const result = await router.route(updated, routedWorkflow(), { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('already-routed');
+    expect(taskRepo.getTask(task.id)?.postApprovalBlockedReason).toBeNull();
+  });
+
+  test('a losing transient failure does not stamp blocked after a concurrent routing won', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: {
+        spawnPostApprovalSubSession: async (args) => {
+          taskRepo.casPostApprovalRouting(
+            args.task.id,
+            {
+              workflowRunId: args.task.workflowRunId ?? null,
+              approvedAt: args.task.approvedAt ?? null,
+              priorPostApprovalSessionId: null,
+            },
+            { postApprovalSessionId: 'winner-session', postApprovalStartedAt: Date.now() }
+          );
+          throw new TransientSpawnError('spawn deferred: model pool busy');
+        },
+      },
+      livenessProbe: delegates.liveness,
+    });
+
+    const result = await router.route(task, routedWorkflow(), { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('skipped');
+    expect(taskRepo.getTask(task.id)?.postApprovalBlockedReason).toBeNull();
+    expect(taskRepo.getTask(task.id)?.postApprovalSessionId).toBe('winner-session');
+  });
+
+  test('a stale superseded error does not erase a newer approval checkpoint', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: {
+        spawnPostApprovalSubSession: async (args) => {
+          taskRepo.updateTask(args.task.id, {
+            approvedAt: Date.now() + 5000,
+            pendingCheckpointType: 'task_completion',
+            pendingCompletionSubmittedByNodeId: 'new-review-node',
+          });
+          throw new SpawnSupersededError('exec-post-approval', 'fresh-create-bind');
+        },
+      },
+      livenessProbe: delegates.liveness,
+    });
+
+    const result = await router.route(task, routedWorkflow(), { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('skipped');
+    const final = taskRepo.getTask(task.id);
+    expect(final?.pendingCheckpointType).toBe('task_completion');
+    expect(final?.pendingCompletionSubmittedByNodeId).toBe('new-review-node');
+  });
+});
+
+describe('PostApprovalRouter.route — cycle-13 guards', () => {
+  let db: BunDatabase;
+  let taskRepo: SpaceTaskRepository;
+
+  beforeEach(() => {
+    db = makeDb();
+    taskRepo = new SpaceTaskRepository(db);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  test('selectFirstDispatchablePostApprovalRoute resolves the slot name for agentId targets', () => {
+    const workflow = stubWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Deploy',
+          agents: [{ agentId: 'deployer-id', name: 'deployer' }],
+          postApproval: { targetAgent: 'deployer-id', instructions: 'Deploy.' },
+        },
+      ],
+    });
+    const selected = selectFirstDispatchablePostApprovalRoute(workflow);
+    expect(selected?.nodeId).toBe('n1');
+    expect(selected?.agentName).toBe('deployer');
+  });
+
+  test('no-route completion cancels a retained post-approval worker', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, {
+      postApprovalSessionId: 'retained-worker',
+      postApprovalStartedAt: 99,
+    });
+    const updated = taskRepo.getTask(task.id)!;
+    const cancelled: string[] = [];
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+      cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),
+      ownsRecordedPointer: () => true,
+    });
+
+    const result = await router.route(updated, stubWorkflow(), { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('no-route');
+    expect(cancelled).toEqual(['retained-worker']);
+    const final = taskRepo.getTask(task.id);
+    expect(final?.status).toBe('done');
+    expect(final?.postApprovalSessionId).toBeNull();
+  });
+});
+
+describe('PostApprovalRouter.route — pointer ownership before cancel', () => {
+  let db: BunDatabase;
+  let taskRepo: SpaceTaskRepository;
+
+  beforeEach(() => {
+    db = makeDb();
+    taskRepo = new SpaceTaskRepository(db);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  test('no-route completion spares a pointer owned by another task', async () => {
+    const task = makeApprovedTask(taskRepo);
+    taskRepo.updateTask(task.id, {
+      postApprovalSessionId: 'foreign-worker',
+      postApprovalStartedAt: 99,
+    });
+    const updated = taskRepo.getTask(task.id)!;
+    const cancelled: string[] = [];
+    const delegates = makeDelegates();
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: delegates.spawner,
+      livenessProbe: delegates.liveness,
+      cancelSpawnedWorker: (sessionId) => cancelled.push(sessionId),
+      ownsRecordedPointer: ({ taskId }) => taskId === 'some-other-task',
+    });
+
+    const result = await router.route(updated, stubWorkflow(), { approvalSource: 'agent' });
+
+    expect(result.mode).toBe('no-route');
+    expect(cancelled).toEqual([]);
+    expect(taskRepo.getTask(task.id)?.postApprovalSessionId).toBeNull();
   });
 });
