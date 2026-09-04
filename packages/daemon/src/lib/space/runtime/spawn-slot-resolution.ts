@@ -1,8 +1,12 @@
 import type {
   McpServerConfig,
+  SettingSource,
   Space,
+  SpaceLongHorizonAgentTemplate,
   SpaceTask,
+  SpaceWorkerAgent,
   SpaceWorkflow,
+  ThinkingLevel,
   WorkflowNode,
   WorkflowNodeAgent,
 } from '@hyperneo/shared';
@@ -84,6 +88,79 @@ export function buildSlotOverrides(
       nodeName: context?.node?.name,
     },
   };
+}
+
+export interface NodeAgentTemplateSource extends SpaceLongHorizonAgentTemplate {
+  model?: string;
+  provider?: string;
+  thinkingLevel?: ThinkingLevel;
+  settingSources?: SettingSource[];
+}
+
+export interface NodeAgentOverrides {
+  agentId?: string;
+  name?: string;
+  model?: string;
+  thinkingLevel?: ThinkingLevel;
+}
+
+export type NodeAgentSpawnSource = 'template' | 'agent';
+
+export interface NodeAgentSpawnConfig {
+  agent: SpaceWorkerAgent;
+  source: NodeAgentSpawnSource;
+  templateKey: string | null;
+}
+
+export function resolveNodeAgentConfig(
+  template: NodeAgentTemplateSource | null | undefined,
+  overrides: NodeAgentOverrides,
+  agents: readonly SpaceWorkerAgent[]
+): NodeAgentSpawnConfig | null {
+  if (template) {
+    return {
+      agent: {
+        id: `template:${template.key}`,
+        spaceId: '',
+        name: overrides.name ?? template.displayName,
+        handle: template.handle,
+        description: template.description,
+        model: overrides.model ?? template.model,
+        thinkingLevel: overrides.thinkingLevel ?? template.thinkingLevel,
+        provider: template.provider,
+        customPrompt: template.instructions,
+        tools: templateTools(template),
+        settingSources: template.settingSources,
+        templateName: template.key,
+        templateHash: null,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      source: 'template',
+      templateKey: template.key,
+    };
+  }
+
+  const agentId = overrides.agentId;
+  if (!agentId) return null;
+  const agent = agents.find((candidate) => candidate.id === agentId);
+  if (!agent) return null;
+  return {
+    agent: {
+      ...agent,
+      name: overrides.name ?? agent.name,
+      model: overrides.model ?? agent.model,
+      thinkingLevel: overrides.thinkingLevel ?? agent.thinkingLevel,
+    },
+    source: 'agent',
+    templateKey: agent.templateName ?? null,
+  };
+}
+
+function templateTools(template: NodeAgentTemplateSource): string[] | undefined {
+  const tools = template.toolPermissions.tools;
+  if (!Array.isArray(tools)) return undefined;
+  return tools.filter((tool): tool is string => typeof tool === 'string');
 }
 
 export function findAvailableSessionId(
