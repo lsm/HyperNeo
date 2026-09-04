@@ -1992,6 +1992,24 @@ describe('SpaceStore — CRUD methods', () => {
     expect(spaceStore.agents.value.some((a) => a.id === 'a1')).toBe(true);
   });
 
+  it('reapplyAgentTemplate ignores the returned agent when the active space changes before the request resolves', async () => {
+    await spaceStore.selectSpace('space-1');
+    let resolveRequest: (value: { agent: SpaceLongHorizonAgent }) => void = () => {};
+    mockHub.request.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRequest = resolve;
+        })
+    );
+
+    const request = spaceStore.reapplyAgentTemplate('a1');
+    await spaceStore.selectSpace('space-2');
+    resolveRequest({ agent: makeLongHorizonAgent('stale-agent') });
+    await request;
+
+    expect(spaceStore.agents.value.some((agent) => agent.id === 'stale-agent')).toBe(false);
+  });
+
   it('syncAgentFromTemplate calls spaceAgent.syncFromTemplate RPC and leaves the unified list to events', async () => {
     await spaceStore.selectSpace('space-1');
     await spaceStore.syncAgentFromTemplate('a1');

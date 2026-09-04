@@ -910,7 +910,7 @@ describe('SpaceLongHorizonAgents', () => {
     expect(getByTestId('confirm-modal')).toBeTruthy();
   });
 
-  it('disables re-apply template for migrated worker mirrors', () => {
+  it('disables re-apply template for migrated worker mirrors and explains why', () => {
     mockAgents.value = [makeLongHorizonAgent({ templateKey: 'migration.legacy_space_agent' })];
 
     const { getByTestId } = render(
@@ -919,6 +919,9 @@ describe('SpaceLongHorizonAgents', () => {
 
     const button = getByTestId('reapply-template-button') as HTMLButtonElement;
     expect(button.disabled).toBe(true);
+    expect(getByTestId('space-agent-detail').textContent).toContain(
+      'edit the worker agent instead'
+    );
   });
 
   it('omits re-apply template for agents without a template', () => {
@@ -929,6 +932,30 @@ describe('SpaceLongHorizonAgents', () => {
     );
 
     expect(queryByTestId('reapply-template-button')).toBeNull();
+  });
+
+  it('keeps the confirm dialog open when dismissed while re-apply is pending', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ templateKey: 'coder.v1' })];
+    let resolveReapply: (agent: unknown) => void = () => {};
+    mockReapplyAgentTemplate.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveReapply = resolve;
+        })
+    );
+
+    const { getByTestId, queryByTestId } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" selectedHandle="research" />
+    );
+
+    fireEvent.click(getByTestId('reapply-template-button'));
+    fireEvent.click(getByTestId('confirm-reapply-template'));
+    fireEvent.click(getByTestId('confirm-modal-close'));
+
+    expect(getByTestId('confirm-modal')).toBeTruthy();
+
+    resolveReapply(makeLongHorizonAgent({ templateKey: 'coder.v1' }));
+    await waitFor(() => expect(queryByTestId('confirm-modal')).toBeNull());
   });
 
   it('uses the route space id for agent session navigation', () => {

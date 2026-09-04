@@ -981,23 +981,25 @@ export function SpaceLongHorizonAgents({
                       {selectedAgent.status}
                     </span>
                     {selectedAgent.templateKey && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={isMigratedWorkerMirror(selectedAgent)}
-                        title={
-                          isMigratedWorkerMirror(selectedAgent)
-                            ? 'Migrated worker mirrors follow the worker agent — edit the worker agent instead'
-                            : undefined
-                        }
-                        data-testid="reapply-template-button"
-                        onClick={() => {
-                          setReapplyingAgent(selectedAgent);
-                          setReapplyError(null);
-                        }}
-                      >
-                        Re-apply template
-                      </Button>
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={isMigratedWorkerMirror(selectedAgent)}
+                          data-testid="reapply-template-button"
+                          onClick={() => {
+                            setReapplyingAgent(selectedAgent);
+                            setReapplyError(null);
+                          }}
+                        >
+                          Re-apply template
+                        </Button>
+                        {isMigratedWorkerMirror(selectedAgent) && (
+                          <span class="max-w-56 text-right text-[11px] leading-tight text-fg-faint">
+                            Migrated mirrors follow their worker — edit the worker agent instead.
+                          </span>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
@@ -1131,10 +1133,6 @@ export function SpaceLongHorizonAgents({
       {reapplyingAgent && (
         <ConfirmModal
           isOpen
-          onClose={() => {
-            setReapplyingAgent(null);
-            setReapplyError(null);
-          }}
           onConfirm={handleReapplyConfirm}
           title="Re-apply Template"
           message={`Re-apply "${reapplyingAgent.templateKey}" to "${reapplyingAgent.displayName}"? Local edits to instructions, model, thinking, setting sources, and tools are replaced with template values.`}
@@ -1143,6 +1141,11 @@ export function SpaceLongHorizonAgents({
           isLoading={reapplying}
           error={reapplyError}
           confirmTestId="confirm-reapply-template"
+          onClose={() => {
+            if (reapplying) return;
+            setReapplyingAgent(null);
+            setReapplyError(null);
+          }}
         />
       )}
     </div>
