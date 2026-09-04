@@ -1,5 +1,6 @@
 import type {
   SpaceLongHorizonAgent,
+  SpaceLongHorizonAgentTemplate,
   ThinkingLevel,
   WorkflowChannel,
   WorkflowHook,
@@ -15,8 +16,8 @@ import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { HookEditorPanel } from './HookEditorPanel';
 import { WorkflowModelSelect } from './WorkflowModelSelect';
 
-function isCoordinatorAgent(agent: SpaceLongHorizonAgent): boolean {
-  return agent.handle === 'coordinator';
+function isCoordinatorTemplate(template: SpaceLongHorizonAgentTemplate): boolean {
+  return template.handle === 'coordinator';
 }
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
@@ -72,6 +73,7 @@ export interface NodeChannelLink {
 export interface NodeConfigPanelProps {
   step: NodeDraft;
   agents: SpaceLongHorizonAgent[];
+  agentTemplates?: SpaceLongHorizonAgentTemplate[];
   isStartNode: boolean;
   isEndNode: boolean;
   onUpdate: (step: NodeDraft) => void;
@@ -174,6 +176,7 @@ function SlotResetContextToggle({ checked, onChange }: SlotResetContextTogglePro
 interface AgentsSectionProps {
   step: NodeDraft;
   agents: SpaceLongHorizonAgent[];
+  agentTemplates: SpaceLongHorizonAgentTemplate[];
   onUpdate: (step: NodeDraft) => void;
   onEditSlotPrompts?: (role: string) => void;
   onEditSinglePrompts?: () => void;
@@ -182,6 +185,7 @@ interface AgentsSectionProps {
 function AgentsSection({
   step,
   agents,
+  agentTemplates,
   onUpdate,
   onEditSlotPrompts,
   onEditSinglePrompts,
@@ -189,6 +193,7 @@ function AgentsSection({
   const multi = isMultiAgentNode(step);
   const nodeAgents = step.agents ?? [];
   const singleSlot = nodeAgents.length === 1 ? nodeAgents[0] : undefined;
+  const selectedSingleTemplateKey = singleSlot?.templateKey ?? step.templateKey;
   const selectedSingleAgentId = singleSlot?.agentId ?? step.agentId;
   const selectedSingleModel = singleSlot?.model ?? step.model;
   const selectedSingleThinkingLevel = safeNodeThinkingLevel(
@@ -199,20 +204,22 @@ function AgentsSection({
     singleSlot?.replaceAgentPrompt ?? step.replaceAgentPrompt;
 
   function updateAgents(next: WorkflowNodeAgent[]) {
-    onUpdate({ ...step, agents: next, agentId: '' });
+    const nextStep = { ...step, agents: next, agentId: '' };
+    if (!nextStep.templateKey) delete nextStep.templateKey;
+    onUpdate(nextStep);
   }
 
-  function addAgent(agentId: string) {
-    if (!agentId) return;
-    const agentInfo = agents.find((a) => a.id === agentId);
-    const baseRole = agentInfo?.displayName.trim() || agentId;
+  function addAgent(templateKey: string) {
+    if (!templateKey) return;
+    const templateInfo = agentTemplates.find((t) => t.key === templateKey);
+    const baseRole = templateInfo?.displayName.trim() || templateInfo?.handle || templateKey;
     const usedRoles = new Set(nodeAgents.map((a) => a.name));
     let role = baseRole;
     for (let i = 2; usedRoles.has(role); i++) {
       role = `${baseRole}-${i}`;
     }
-    const next = [...nodeAgents, { agentId, name: role }];
-    onUpdate({ ...step, agents: next, agentId: '' });
+    const next: WorkflowNodeAgent[] = [...nodeAgents, { agentId: '', templateKey, name: role }];
+    updateAgents(next);
   }
 
   function removeAgent(role: string) {
@@ -220,7 +227,7 @@ function AgentsSection({
     const next = nodeAgents.filter((a) => a.name !== role);
     if (next.length <= 1) {
       const survivor = next[0] ?? removed;
-      onUpdate({
+      const nextStep: NodeDraft = {
         ...step,
         agents: undefined,
         agentId: survivor?.agentId ?? '',
@@ -231,14 +238,29 @@ function AgentsSection({
         disabledSkillIds: survivor?.disabledSkillIds,
         resetContextPerTurn: survivor?.resetContextPerTurn,
         channels: undefined,
-      });
+      };
+      if (survivor?.templateKey) {
+        nextStep.templateKey = survivor.templateKey;
+      } else {
+        delete nextStep.templateKey;
+      }
+      onUpdate(nextStep);
     } else {
       updateAgents(next);
     }
   }
 
-  function updateAgentId(role: string, agentId: string) {
-    updateAgents(nodeAgents.map((a) => (a.name === role ? { ...a, agentId } : a)));
+  function updateAgentTemplateKey(role: string, templateKey: string) {
+    updateAgents(
+      nodeAgents.map((a) => {
+        if (a.name !== role) return a;
+        if (!templateKey) {
+          const { templateKey: _t, ...rest } = a;
+          return { ...rest, agentId: '' };
+        }
+        return { ...a, templateKey, agentId: '' };
+      })
+    );
   }
 
   function updateAgentModel(role: string, model: string | undefined) {
@@ -255,13 +277,23 @@ function AgentsSection({
     );
   }
 
-  const updateSingleAgentId = useCallback(
-    (newAgentId: string) => {
-      if (singleSlot) {
-        updateAgentId(singleSlot.name, newAgentId);
+  const updateSingleTemplateKey = useCallback(
+    (newTemplateKey: string) => {
+      if (!newTemplateKey) {
+        if (singleSlot) {
+          updateAgentTemplateKey(singleSlot.name, '');
+          return;
+        }
+        const nextStep = { ...step, agentId: '' };
+        delete nextStep.templateKey;
+        onUpdate(nextStep);
         return;
       }
-      onUpdate({ ...step, agentId: newAgentId });
+      if (singleSlot) {
+        updateAgentTemplateKey(singleSlot.name, newTemplateKey);
+        return;
+      }
+      onUpdate({ ...step, templateKey: newTemplateKey, agentId: '' });
     },
     [singleSlot, step, onUpdate]
   );
@@ -288,13 +320,15 @@ function AgentsSection({
     [singleSlot, step, onUpdate]
   );
 
-  const availableAgents = agents;
+  const availableTemplates = agentTemplates;
 
   const thinkingSelectOptions = THINKING_LEVEL_OPTIONS.map((option) => (
     <option key={option.value || 'inherit'} value={option.value}>
       {option.label}
     </option>
   ));
+
+  const selectedSingleRef = selectedSingleTemplateKey ?? selectedSingleAgentId;
 
   if (!multi) {
     return (
@@ -316,14 +350,21 @@ function AgentsSection({
                 return role;
               };
 
+              const primaryTemplateKey = selectedSingleTemplateKey;
               const primaryAgentId = selectedSingleAgentId || '';
+              const primaryTemplate = primaryTemplateKey
+                ? agentTemplates.find((t) => t.key === primaryTemplateKey)
+                : undefined;
+              const primaryAgentInfo = agents.find((a) => a.id === primaryAgentId);
               const primaryBaseRole =
                 singleSlot?.name ||
-                agents.find((a) => a.id === primaryAgentId)?.displayName ||
+                primaryTemplate?.displayName ||
+                primaryAgentInfo?.displayName ||
+                primaryTemplateKey ||
                 primaryAgentId ||
                 'agent';
               const primarySlot: WorkflowNodeAgent = {
-                agentId: primaryAgentId,
+                agentId: primaryTemplateKey ? '' : primaryAgentId,
                 name: buildUniqueRole(primaryBaseRole),
                 model: selectedSingleModel,
                 thinkingLevel: selectedSingleThinkingLevel,
@@ -331,18 +372,24 @@ function AgentsSection({
                 replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
                 disabledSkillIds: singleSlot?.disabledSkillIds ?? step.disabledSkillIds,
                 resetContextPerTurn: singleSlot?.resetContextPerTurn ?? step.resetContextPerTurn,
+                ...(primaryTemplateKey ? { templateKey: primaryTemplateKey } : {}),
               };
 
-              const secondaryAgent =
-                agents.find((a) => a.id !== primaryAgentId && !isCoordinatorAgent(a)) ??
-                agents.find((a) => a.id !== primaryAgentId) ??
-                agents[0];
+              const secondaryTemplate =
+                agentTemplates.find(
+                  (t) => t.key !== primaryTemplateKey && !isCoordinatorTemplate(t)
+                ) ??
+                agentTemplates.find((t) => t.key !== primaryTemplateKey) ??
+                agentTemplates[0];
               const secondarySlot: WorkflowNodeAgent = {
-                agentId: secondaryAgent?.id ?? '',
-                name: buildUniqueRole(secondaryAgent?.displayName ?? 'agent'),
+                agentId: '',
+                name: buildUniqueRole(
+                  secondaryTemplate?.displayName ?? secondaryTemplate?.handle ?? 'agent'
+                ),
+                ...(secondaryTemplate ? { templateKey: secondaryTemplate.key } : {}),
               };
 
-              onUpdate({
+              const nextStep: NodeDraft = {
                 ...step,
                 agents: [primarySlot, secondarySlot],
                 agentId: '',
@@ -351,7 +398,9 @@ function AgentsSection({
                 customPrompt: undefined,
                 replaceAgentPrompt: undefined,
                 channels: undefined,
-              });
+              };
+              delete nextStep.templateKey;
+              onUpdate(nextStep);
             }}
             class="text-xs text-accent hover:text-accent-soft transition-colors"
           >
@@ -360,16 +409,26 @@ function AgentsSection({
         </div>
         <select
           data-testid="agent-select"
-          value={selectedSingleAgentId}
-          onChange={(e) => updateSingleAgentId((e.currentTarget as HTMLSelectElement).value)}
+          value={selectedSingleRef}
+          onChange={(e) => updateSingleTemplateKey((e.currentTarget as HTMLSelectElement).value)}
           class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1.5 text-fg-soft focus:outline-none focus:border-accent"
         >
           <option value="">— Select agent —</option>
-          {agents.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.displayName}
+          {agentTemplates.map((t) => (
+            <option key={t.key} value={t.key}>
+              {t.displayName}
             </option>
           ))}
+          {(() => {
+            if (!selectedSingleRef || agentTemplates.some((t) => t.key === selectedSingleRef)) {
+              return null;
+            }
+            return (
+              <option value={selectedSingleRef} disabled>
+                {agents.find((a) => a.id === selectedSingleRef)?.displayName ?? selectedSingleRef}
+              </option>
+            );
+          })()}
         </select>
         <div class="space-y-1">
           <label class="text-xs font-medium text-fg-muted">
@@ -413,11 +472,12 @@ function AgentsSection({
                 )
               );
             } else {
-              onUpdate({
+              const nextStep: NodeDraft = {
                 ...step,
                 agents: [
                   {
                     agentId: selectedSingleAgentId || '',
+                    templateKey: selectedSingleTemplateKey,
                     name: step.name || 'agent',
                     model: selectedSingleModel,
                     thinkingLevel: selectedSingleThinkingLevel,
@@ -432,7 +492,9 @@ function AgentsSection({
                 thinkingLevel: undefined,
                 customPrompt: undefined,
                 replaceAgentPrompt: undefined,
-              });
+              };
+              delete nextStep.templateKey;
+              onUpdate(nextStep);
             }
           }}
         />
@@ -474,7 +536,11 @@ function AgentsSection({
 
       <div class="space-y-1.5" data-testid="agents-list">
         {nodeAgents.map((sa) => {
-          const agentInfo = agents.find((a) => a.id === sa.agentId);
+          const templateInfo = sa.templateKey
+            ? agentTemplates.find((t) => t.key === sa.templateKey)
+            : undefined;
+          const agentInfo = sa.agentId ? agents.find((a) => a.id === sa.agentId) : undefined;
+          const selectedSlotRef = sa.templateKey ?? sa.agentId;
           return (
             <div
               key={sa.name}
@@ -518,20 +584,33 @@ function AgentsSection({
                 </label>
                 <select
                   data-testid="agent-slot-select"
-                  value={sa.agentId}
+                  value={selectedSlotRef}
                   onChange={(e) =>
-                    updateAgentId(sa.name, (e.currentTarget as HTMLSelectElement).value)
+                    updateAgentTemplateKey(sa.name, (e.currentTarget as HTMLSelectElement).value)
                   }
                   class="w-full text-xs bg-surface border border-line rounded px-2 py-1 text-fg-soft focus:outline-none focus:border-accent"
                 >
                   <option value="">— Select agent —</option>
-                  {agents.map((agent) => (
-                    <option key={agent.id} value={agent.id}>
-                      {agent.displayName}
+                  {agentTemplates.map((template) => (
+                    <option key={template.key} value={template.key}>
+                      {template.displayName}
                     </option>
                   ))}
+                  {(() => {
+                    if (!selectedSlotRef || agentTemplates.some((t) => t.key === selectedSlotRef)) {
+                      return null;
+                    }
+                    return (
+                      <option value={selectedSlotRef} disabled>
+                        {agents.find((a) => a.id === selectedSlotRef)?.displayName ??
+                          selectedSlotRef}
+                      </option>
+                    );
+                  })()}
                 </select>
-                <p class="text-[11px] text-fg-muted">{agentInfo?.displayName ?? sa.agentId}</p>
+                <p class="text-[11px] text-fg-muted">
+                  {templateInfo?.displayName ?? agentInfo?.displayName ?? selectedSlotRef}
+                </p>
               </div>
               <div class="space-y-1">
                 <label class="text-[11px] font-medium uppercase tracking-[0.16em] text-fg-muted">
@@ -599,7 +678,7 @@ function AgentsSection({
         })}
       </div>
 
-      {availableAgents.length > 0 && (
+      {availableTemplates.length > 0 && (
         <select
           data-testid="add-agent-select"
           value=""
@@ -610,9 +689,9 @@ function AgentsSection({
           class="w-full text-xs bg-surface-raised border border-line-strong border-dashed rounded px-2 py-1.5 text-fg-muted focus:outline-none focus:border-accent"
         >
           <option value="">+ Add agent…</option>
-          {availableAgents.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.displayName}
+          {availableTemplates.map((template) => (
+            <option key={template.key} value={template.key}>
+              {template.displayName}
             </option>
           ))}
         </select>
@@ -723,6 +802,7 @@ type PanelView =
 export function NodeConfigPanel({
   step,
   agents,
+  agentTemplates,
   isStartNode,
   isEndNode,
   onUpdate,
@@ -1144,6 +1224,7 @@ export function NodeConfigPanel({
         <AgentsSection
           step={step}
           agents={agents}
+          agentTemplates={agentTemplates ?? []}
           onUpdate={onUpdate}
           onEditSinglePrompts={() => setPanelView({ kind: 'single-prompts' })}
           onEditSlotPrompts={(role) => setPanelView({ kind: 'slot-prompts', role })}

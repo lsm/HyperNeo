@@ -15,6 +15,7 @@ export interface NodeDraft {
   id?: string;
   name: string;
   agentId: string;
+  templateKey?: string | null;
   model?: string;
   thinkingLevel?: ThinkingLevel;
   customPrompt?: WorkflowNodeAgentOverride;

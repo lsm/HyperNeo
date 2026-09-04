@@ -1206,6 +1206,7 @@ export interface WorkerAgentModelPoolEntry {
 
 export interface WorkflowNodeAgent {
   agentId: string;
+  templateKey?: string | null;
   name: string;
   model?: string;
   thinkingLevel?: ThinkingLevel;

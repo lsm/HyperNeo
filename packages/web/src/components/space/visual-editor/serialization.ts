@@ -244,7 +244,7 @@ function buildWorkflowFields(state: VisualEditorState): {
             ? normalizeThinkingLevel(agent.thinkingLevel)
             : undefined,
         }))
-      : node.step.agentId
+      : node.step.agentId || node.step.templateKey
         ? [
             {
               agentId: node.step.agentId,
@@ -256,6 +256,7 @@ function buildWorkflowFields(state: VisualEditorState): {
               customPrompt: node.step.customPrompt,
               replaceAgentPrompt: node.step.replaceAgentPrompt,
               disabledSkillIds: node.step.disabledSkillIds,
+              ...(node.step.templateKey ? { templateKey: node.step.templateKey } : {}),
               ...(node.step.resetContextPerTurn ? { resetContextPerTurn: true } : {}),
             },
           ]

@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act, waitFor } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
-import type { SpaceLongHorizonAgent, WorkflowHook } from '@hyperneo/shared';
+import type {
+  SpaceLongHorizonAgent,
+  SpaceLongHorizonAgentTemplate,
+  WorkflowHook,
+} from '@hyperneo/shared';
 
 const mockModels = [
   {
@@ -95,6 +99,25 @@ function makeAgent(id: string, name: string, _role = 'coder'): SpaceLongHorizonA
   };
 }
 
+function makeTemplate(
+  key: string,
+  displayName: string,
+  handle: string
+): SpaceLongHorizonAgentTemplate {
+  return {
+    key,
+    handle,
+    displayName,
+    description: '',
+    instructions: '',
+    suggestedAutonomyLevel: 3,
+    suggestedEventSubscriptions: [],
+    reminderDefaults: [],
+    ownershipPatterns: [],
+    toolPermissions: {},
+  };
+}
+
 function makeStep(overrides: Partial<NodeDraft> = {}): NodeDraft {
   return {
     localId: 'step-local-1',
@@ -109,10 +132,17 @@ const defaultAgents: SpaceLongHorizonAgent[] = [
   makeAgent('agent-2', 'Coder', 'coder'),
 ];
 
+const defaultAgentTemplates: SpaceLongHorizonAgentTemplate[] = [
+  makeTemplate('planner-v1', 'Planner', 'planner'),
+  makeTemplate('coder-v1', 'Coder', 'coder'),
+  makeTemplate('coordinator-v1', 'Coordinator', 'coordinator'),
+];
+
 function makeProps(overrides: Partial<NodeConfigPanelProps> = {}): NodeConfigPanelProps {
   return {
     step: makeStep(),
     agents: defaultAgents,
+    agentTemplates: defaultAgentTemplates,
     isStartNode: false,
     isEndNode: false,
     onUpdate: vi.fn(),
@@ -458,11 +488,13 @@ describe('NodeConfigPanel', () => {
       expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ name: 'New Name' }));
     });
 
-    it('calls onUpdate with new agentId when agent selection changes', () => {
+    it('calls onUpdate with new templateKey when agent selection changes', () => {
       const onUpdate = vi.fn();
       const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
-      fireEvent.change(getByTestId('agent-select'), { target: { value: 'agent-2' } });
-      expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'agent-2' }));
+      fireEvent.change(getByTestId('agent-select'), { target: { value: 'coder-v1' } });
+      expect(onUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ templateKey: 'coder-v1', agentId: '' })
+      );
     });
 
     it('calls onUpdate with new system prompt as WorkflowNodeAgentOverride from single prompts view', () => {
@@ -613,12 +645,22 @@ describe('NodeConfigPanel', () => {
 
     it('clicking "Add agent" switches to multi-agent mode with existing agent', () => {
       const onUpdate = vi.fn();
-      const { getByTestId } = render(<NodeConfigPanel {...makeProps({ onUpdate })} />);
+      const { getByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            onUpdate,
+            step: makeStep({ agentId: '', templateKey: 'planner-v1' }),
+          })}
+        />
+      );
       fireEvent.click(getByTestId('add-agent-button'));
       expect(onUpdate).toHaveBeenCalledOnce();
       const updatedStep = onUpdate.mock.calls[0][0];
       expect(updatedStep.agents).toHaveLength(2);
-      expect(updatedStep.agents[0].agentId).toBe('agent-1');
+      expect(updatedStep.agents[0].templateKey).toBe('planner-v1');
+      expect(updatedStep.agents[0].agentId).toBe('');
+      expect(updatedStep.agents[1].templateKey).toBe('coder-v1');
+      expect(updatedStep.agents[1].agentId).toBe('');
       expect(updatedStep.agentId).toBe('');
     });
 
@@ -628,12 +670,18 @@ describe('NodeConfigPanel', () => {
         <NodeConfigPanel
           {...makeProps({
             onUpdate,
-            step: makeStep({ agentId: 'agent-1', replaceAgentPrompt: true }),
+            step: makeStep({
+              agentId: '',
+              templateKey: 'planner-v1',
+              replaceAgentPrompt: true,
+            }),
           })}
         />
       );
       fireEvent.click(getByTestId('add-agent-button'));
       const updatedStep = onUpdate.mock.calls[0][0];
+      expect(updatedStep.agents[0].templateKey).toBe('planner-v1');
+      expect(updatedStep.agents[0].agentId).toBe('');
       expect(updatedStep.agents[0].replaceAgentPrompt).toBe(true);
       expect(updatedStep.replaceAgentPrompt).toBeUndefined();
     });
@@ -643,42 +691,48 @@ describe('NodeConfigPanel', () => {
       const { getByTestId } = render(
         <NodeConfigPanel
           {...makeProps({
-            step: makeStep({ agentId: 'agent-1', resetContextPerTurn: true }),
+            step: makeStep({
+              agentId: '',
+              templateKey: 'planner-v1',
+              resetContextPerTurn: true,
+            }),
             onUpdate,
           })}
         />
       );
       fireEvent.click(getByTestId('add-agent-button'));
       const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+      expect(updatedStep.agents[0].templateKey).toBe('planner-v1');
+      expect(updatedStep.agents[0].agentId).toBe('');
       expect(updatedStep.agents[0].resetContextPerTurn).toBe(true);
     });
 
     it('does not auto-select Coordinator as the secondary agent', () => {
       const onUpdate = vi.fn();
-      const agents = [
-        makeAgent('coder-1', 'Coder'),
-        { ...makeAgent('coordinator-1', 'Coordinator'), handle: 'coordinator' },
-        makeAgent('general-1', 'General'),
-      ];
       const { getByTestId } = render(
         <NodeConfigPanel
-          {...makeProps({ agents, step: makeStep({ agentId: 'coder-1' }), onUpdate })}
+          {...makeProps({
+            step: makeStep({ agentId: '', templateKey: 'planner-v1' }),
+            onUpdate,
+          })}
         />
       );
 
       fireEvent.click(getByTestId('add-agent-button'));
 
       const updatedStep = onUpdate.mock.calls[0][0];
-      expect(updatedStep.agents[0].agentId).toBe('coder-1');
-      expect(updatedStep.agents[1].agentId).toBe('general-1');
+      expect(updatedStep.agents[0].templateKey).toBe('planner-v1');
+      expect(updatedStep.agents[0].agentId).toBe('');
+      expect(updatedStep.agents[1].templateKey).not.toBe('coordinator-v1');
+      expect(updatedStep.agents[1].agentId).toBe('');
     });
 
     it('shows agents list in multi-agent mode', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { getByTestId, queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
@@ -690,8 +744,8 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
@@ -702,8 +756,8 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { getByTestId, getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
@@ -719,15 +773,15 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
       const selects = getAllByTestId('agent-slot-select') as HTMLSelectElement[];
       expect(selects).toHaveLength(2);
-      expect(selects[0].value).toBe('agent-1');
-      expect(selects[1].value).toBe('agent-2');
+      expect(selects[0].value).toBe('planner-v1');
+      expect(selects[1].value).toBe('coder-v1');
     });
 
     it('remove agent button switches to single-agent mode when only one slot remains', () => {
@@ -735,15 +789,16 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
       fireEvent.click(getAllByTestId('remove-agent-button')[0]);
       const updatedStep = onUpdate.mock.calls[0][0];
       expect(updatedStep.agents).toBeUndefined();
-      expect(updatedStep.agentId).toBe('agent-2');
+      expect(updatedStep.templateKey).toBe('coder-v1');
+      expect(updatedStep.agentId).toBe('');
       expect(updatedStep.channels).toBeUndefined();
     });
 
@@ -752,14 +807,16 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner', replaceAgentPrompt: true },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner', replaceAgentPrompt: true },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
       fireEvent.click(getAllByTestId('remove-agent-button')[1]);
       const updatedStep = onUpdate.mock.calls[0][0];
       expect(updatedStep.agents).toBeUndefined();
+      expect(updatedStep.templateKey).toBe('planner-v1');
+      expect(updatedStep.agentId).toBe('');
       expect(updatedStep.replaceAgentPrompt).toBe(true);
     });
 
@@ -768,9 +825,9 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
-          { agentId: 'agent-1', name: 'planner-2' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner-2' },
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
@@ -778,15 +835,15 @@ describe('NodeConfigPanel', () => {
       const updatedStep = onUpdate.mock.calls[0][0];
       expect(updatedStep.agents).toHaveLength(2);
       expect(updatedStep.agentId).toBe('');
-      expect(updatedStep.channels).toEqual(step.channels);
+      expect(updatedStep.channels).toBeUndefined();
     });
 
     it('shows add-agent-select dropdown with all agents (same agent may be added multiple times)', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
@@ -799,14 +856,16 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-      fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
+      fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'coder-v1' } });
       const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
       expect(updatedStep.agents).toHaveLength(3);
+      expect(updatedStep.agents[2].templateKey).toBe('coder-v1');
+      expect(updatedStep.agents[2].agentId).toBe('');
       expect(updatedStep.channels).toBeUndefined();
     });
 
@@ -815,15 +874,19 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-2', name: 'Coder' },
-          { agentId: 'agent-1', name: 'Planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'Coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'Planner' },
         ],
       });
       const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-      fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
+      fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'coder-v1' } });
       const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
       expect(updatedStep.agents).toHaveLength(3);
+      expect(updatedStep.agents[0].templateKey).toBe('coder-v1');
+      expect(updatedStep.agents[0].agentId).toBe('');
       expect(updatedStep.agents[0].name).toBe('Coder');
+      expect(updatedStep.agents[2].templateKey).toBe('coder-v1');
+      expect(updatedStep.agents[2].agentId).toBe('');
       expect(updatedStep.agents[2].name).toBe('Coder-2');
     });
 
@@ -832,14 +895,16 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-2', name: 'Coder' },
-          { agentId: 'agent-2', name: 'Coder-2' },
+          { agentId: '', templateKey: 'coder-v1', name: 'Coder' },
+          { agentId: '', templateKey: 'coder-v1', name: 'Coder-2' },
         ],
       });
       const { getByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-      fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'agent-2' } });
+      fireEvent.change(getByTestId('add-agent-select'), { target: { value: 'coder-v1' } });
       const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
       expect(updatedStep.agents).toHaveLength(3);
+      expect(updatedStep.agents[2].templateKey).toBe('coder-v1');
+      expect(updatedStep.agents[2].agentId).toBe('');
       expect(updatedStep.agents[2].name).toBe('Coder-3');
     });
   });
@@ -849,8 +914,8 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
@@ -865,8 +930,8 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
@@ -880,11 +945,12 @@ describe('NodeConfigPanel', () => {
         agentId: '',
         agents: [
           {
-            agentId: 'agent-1',
+            agentId: '',
+            templateKey: 'planner-v1',
             name: 'planner',
             customPrompt: { value: 'Be strict.' },
           },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { queryByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
@@ -895,35 +961,36 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
       expect(getAllByTestId('agent-slot-model-input')).toHaveLength(2);
     });
 
-    it('editing agent selection calls onUpdate with updated agentId', () => {
+    it('editing agent selection calls onUpdate with updated templateKey', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const onUpdate = vi.fn();
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
-      fireEvent.change(getAllByTestId('agent-slot-select')[0], { target: { value: 'agent-2' } });
+      fireEvent.change(getAllByTestId('agent-slot-select')[0], { target: { value: 'coder-v1' } });
       const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
-      expect(updatedStep.agents[0].agentId).toBe('agent-2');
+      expect(updatedStep.agents[0].templateKey).toBe('coder-v1');
+      expect(updatedStep.agents[0].agentId).toBe('');
     });
 
     it('reflects existing per-slot thinking level overrides in the slot editors', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner', thinkingLevel: 'think16k' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner', thinkingLevel: 'think16k' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
@@ -940,8 +1007,8 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
@@ -959,8 +1026,8 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
@@ -976,8 +1043,8 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner', thinkingLevel: 'think16k' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner', thinkingLevel: 'think16k' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
@@ -991,8 +1058,8 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const onUpdate = vi.fn();
@@ -1010,8 +1077,8 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner', resetContextPerTurn: true },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner', resetContextPerTurn: true },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const onUpdate = vi.fn();
@@ -1040,8 +1107,8 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
       const { getAllByTestId, getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
@@ -1054,8 +1121,8 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-2', name: 'coder' },
-          { agentId: 'agent-2', name: 'coder-2' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder-2' },
         ],
       });
       const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
@@ -1071,11 +1138,12 @@ describe('NodeConfigPanel', () => {
         agentId: '',
         agents: [
           {
-            agentId: 'agent-2',
+            agentId: '',
+            templateKey: 'coder-v1',
             name: 'coder',
             customPrompt: { value: 'Code carefully.' },
           },
-          { agentId: 'agent-1', name: 'planner' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
         ],
       });
       const { getAllByTestId, getByTestId } = render(
@@ -1102,8 +1170,8 @@ describe('NodeConfigPanel', () => {
           makeStep({
             agentId: '',
             agents: [
-              { agentId: 'agent-1', name: 'planner' },
-              { agentId: 'agent-2', name: 'coder' },
+              { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+              { agentId: '', templateKey: 'coder-v1', name: 'coder' },
             ],
           })
         );
@@ -1133,8 +1201,8 @@ describe('NodeConfigPanel', () => {
           makeStep({
             agentId: '',
             agents: [
-              { agentId: 'agent-1', name: 'planner' },
-              { agentId: 'agent-2', name: 'coder' },
+              { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+              { agentId: '', templateKey: 'coder-v1', name: 'coder' },
             ],
           })
         );
@@ -1163,8 +1231,8 @@ describe('NodeConfigPanel', () => {
           makeStep({
             agentId: '',
             agents: [
-              { agentId: 'agent-1', name: 'planner' },
-              { agentId: 'agent-2', name: 'coder' },
+              { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+              { agentId: '', templateKey: 'coder-v1', name: 'coder' },
             ],
           })
         );
@@ -1185,8 +1253,8 @@ describe('NodeConfigPanel', () => {
           makeStep({
             agentId: '',
             agents: [
-              { agentId: 'agent-1', name: 'planner' },
-              { agentId: 'agent-2', name: 'coder' },
+              { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+              { agentId: '', templateKey: 'coder-v1', name: 'coder' },
             ],
           })
         );
@@ -1231,8 +1299,8 @@ describe('NodeConfigPanel', () => {
       makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'planner' },
-          { agentId: 'agent-2', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
         ],
       });
 
@@ -1464,8 +1532,8 @@ describe('NodeConfigPanel', () => {
       const step = makeStep({
         agentId: '',
         agents: [
-          { agentId: 'agent-1', name: 'coder' },
-          { agentId: 'agent-2', name: 'reviewer' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
+          { agentId: '', templateKey: 'planner-v1', name: 'reviewer' },
         ],
       });
       const { getAllByTestId, getByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
@@ -1479,11 +1547,12 @@ describe('NodeConfigPanel', () => {
         agentId: '',
         agents: [
           {
-            agentId: 'agent-1',
+            agentId: '',
+            templateKey: 'coder-v1',
             name: 'coder',
             customPrompt: { value: 'Seed prompt.' },
           },
-          { agentId: 'agent-2', name: 'reviewer' },
+          { agentId: '', templateKey: 'planner-v1', name: 'reviewer' },
         ],
       });
       const { getAllByTestId, getByTestId } = render(

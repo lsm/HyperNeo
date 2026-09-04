@@ -128,10 +128,11 @@ export function WorkflowNode({
   const singleSlot =
     !multi && Array.isArray(step.agents) && step.agents.length === 1 ? step.agents[0] : null;
   const resolvedSingleAgentId = singleSlot?.agentId ?? step.agentId;
+  const resolvedSingleTemplateKey = singleSlot?.templateKey ?? step.templateKey;
   const agentName =
     singleSlot?.name ??
     agents.find((a) => a.id === resolvedSingleAgentId)?.displayName ??
-    resolvedSingleAgentId;
+    (resolvedSingleAgentId || resolvedSingleTemplateKey);
 
   const taskStateByAgent = new Map<string | null, AgentTaskState>(
     (nodeTaskStates ?? []).map((s) => [s.agentName, s])
