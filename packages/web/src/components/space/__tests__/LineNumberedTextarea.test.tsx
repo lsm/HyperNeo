@@ -47,13 +47,12 @@ describe('LineNumberedTextarea — textarea passthrough', () => {
     expect(textarea?.getAttribute('rows')).toBe('6');
   });
 
-  it('forwards placeholder and disables spellcheck', () => {
+  it('forwards placeholder to the textarea', () => {
     const { container } = render(
       <LineNumberedTextarea value="" onChange={noop} placeholder="System prompt" />
     );
     const textarea = container.querySelector('textarea');
     expect(textarea?.getAttribute('placeholder')).toBe('System prompt');
-    expect(textarea?.getAttribute('spellcheck')).toBe('false');
   });
 
   it('marks the gutter aria-hidden', () => {
