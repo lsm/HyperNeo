@@ -1651,4 +1651,161 @@ describe('Space Agent RPC Handlers', () => {
       expect(counts[created.agent.id]).toBe(1);
     });
   });
+
+  describe('spaceAgent.reapplyTemplate', () => {
+    it('registers the handler', () => {
+      expect(hubData.handlers.has('spaceAgent.reapplyTemplate')).toBe(true);
+    });
+
+    it('reapplies a custom template onto an agent by agentId', async () => {
+      const templateRepo = new SpaceAgentTemplateRepository(db);
+      templateRepo.create({
+        key: 'release-readiness.custom',
+        handle: 'release-readiness',
+        displayName: 'Release Readiness',
+        description: 'Tracks release readiness signals.',
+        instructions: 'Coordinate release checks.',
+        suggestedAutonomyLevel: 3,
+        model: 'claude-opus-5',
+        provider: 'anthropic',
+        modelPool: [{ model: 'claude-opus-5', provider: 'anthropic', maxConcurrent: 2, weight: 3 }],
+        thinkingLevel: 'think16k',
+        settingSources: ['user', 'project'],
+        tools: ['Read', 'Grep', 'Glob'],
+      });
+
+      const created = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
+        spaceId: 'space-1',
+        name: 'Drifted Agent',
+        templateName: 'release-readiness.custom',
+      });
+
+      const before = longHorizonRepo.getById(created.agent.id)!;
+      expect(before.instructions).toBe('');
+      expect(before.templateKey).toBe('release-readiness.custom');
+
+      daemonData.publishMock.mockClear();
+
+      const result = await call<{ agent: { instructions: string; model: string | null } }>(
+        hubData.handlers,
+        'spaceAgent.reapplyTemplate',
+        { agentId: created.agent.id }
+      );
+
+      expect(result.agent.instructions).toBe('Coordinate release checks.');
+      expect(result.agent.model).toBe('claude-opus-5');
+      expect(longHorizonRepo.getById(created.agent.id)?.instructions).toBe(
+        'Coordinate release checks.'
+      );
+
+      const published = daemonData.publishMock.mock.calls as Array<
+        [string, { agent: { id: string } }]
+      >;
+      const update = published.find(
+        ([name, payload]) => name === 'spaceAgent.updated' && payload.agent.id === created.agent.id
+      );
+      expect(update).toBeTruthy();
+    });
+
+    it('accepts id as an alias for agentId', async () => {
+      const templateRepo = new SpaceAgentTemplateRepository(db);
+      templateRepo.create({
+        key: 'alias.custom',
+        handle: 'alias',
+        displayName: 'Alias',
+        instructions: 'Alias template.',
+        suggestedAutonomyLevel: 2,
+      });
+
+      const created = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
+        spaceId: 'space-1',
+        name: 'Alias Agent',
+        templateName: 'alias.custom',
+      });
+
+      const result = await call<{ agent: { id: string } }>(
+        hubData.handlers,
+        'spaceAgent.reapplyTemplate',
+        { id: created.agent.id }
+      );
+
+      expect(result.agent.id).toBe(created.agent.id);
+    });
+
+    it('clears the long-term session provider when the template removes the provider', async () => {
+      const templateRepo = new SpaceAgentTemplateRepository(db);
+      templateRepo.create({
+        key: 'clear-provider.custom',
+        handle: 'clear-provider',
+        displayName: 'Clear Provider',
+        instructions: 'Clears the provider.',
+        suggestedAutonomyLevel: 2,
+        model: null,
+        provider: null,
+      });
+
+      const runtimeService = createRuntimeServiceMock();
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        manager,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        runtimeService as any,
+        new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db as any))
+      );
+
+      const created = await call<{ agent: { id: string } }>(
+        freshHub.handlers,
+        'spaceAgent.create',
+        {
+          spaceId: 'space-1',
+          name: 'Provided Agent',
+          templateName: 'clear-provider.custom',
+          provider: 'anthropic',
+        }
+      );
+
+      const before = longHorizonRepo.getById(created.agent.id)!;
+      expect(before.provider).toBe('anthropic');
+
+      const result = await call<{ agent: { provider: string | null } }>(
+        freshHub.handlers,
+        'spaceAgent.reapplyTemplate',
+        { agentId: created.agent.id }
+      );
+
+      expect(result.agent.provider).toBeNull();
+      expect(longHorizonRepo.getById(created.agent.id)?.provider).toBeNull();
+      expect(runtimeService.clearLongTermAgentSessionProvider).toHaveBeenCalledWith(
+        'space-1',
+        created.agent.id
+      );
+    });
+
+    it('throws when agentId and id are missing', async () => {
+      await expect(call(hubData.handlers, 'spaceAgent.reapplyTemplate', {})).rejects.toThrow(
+        'agentId is required'
+      );
+    });
+
+    it('throws when the agent does not exist', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.reapplyTemplate', { agentId: 'ghost-id' })
+      ).rejects.toThrow('Agent not found: ghost-id');
+    });
+
+    it('throws when the agent has no template', async () => {
+      const created = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
+        spaceId: 'space-1',
+        name: 'No Template',
+      });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.reapplyTemplate', { agentId: created.agent.id })
+      ).rejects.toThrow(`Agent ${created.agent.id} has no template to re-apply`);
+    });
+  });
 });
