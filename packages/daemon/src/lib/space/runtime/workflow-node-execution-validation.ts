@@ -160,17 +160,19 @@ export function validateExecutionAgainstWorkflow(
   }
 
   const slot = nodeAgents.find((agentSlot) => agentSlot.name === execution.agentName);
-  if (!slot?.agentId) {
+  const resolvedAgentId =
+    slot?.agentId || (slot?.templateKey ? `template:${slot.templateKey}` : '');
+  if (!resolvedAgentId) {
     return {
       valid: false,
       reason: `Agent slot ${execution.agentName} no longer exists on workflow node ${execution.workflowNodeId}`,
       permanent: true,
     };
   }
-  if (execution.agentId && slot.agentId !== execution.agentId) {
+  if (execution.agentId && resolvedAgentId !== execution.agentId) {
     return {
       valid: false,
-      reason: `Agent slot ${execution.agentName} on workflow node ${execution.workflowNodeId} now references agent ${slot.agentId} instead of ${execution.agentId}`,
+      reason: `Agent slot ${execution.agentName} on workflow node ${execution.workflowNodeId} now references agent ${resolvedAgentId} instead of ${execution.agentId}`,
       permanent: true,
     };
   }

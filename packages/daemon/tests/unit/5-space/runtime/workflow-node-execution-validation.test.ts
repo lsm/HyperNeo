@@ -1,11 +1,13 @@
 import { describe, test, expect } from 'bun:test';
 import type { WorkflowNode } from '@hyperneo/shared';
+import type { NodeExecution, SpaceWorkflow } from '@hyperneo/shared';
 import {
   findMissingNodeAgentReferences,
   formatMissingAgentReference,
   isMissingWorkflowAgentError,
   MissingWorkflowAgentError,
   PermanentSpawnError,
+  validateExecutionAgainstWorkflow,
 } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 
 function makeNode(agents: Array<{ agentId?: string | null; name: string }>): WorkflowNode {
@@ -60,6 +62,51 @@ describe('MissingWorkflowAgentError', () => {
     expect(err.reference).toEqual({ agentName: 'reviewer', agentId: 'gone' });
     expect(isMissingWorkflowAgentError(err)).toBe(true);
     expect(isMissingWorkflowAgentError(new PermanentSpawnError('other'))).toBe(false);
+  });
+});
+
+describe('validateExecutionAgainstWorkflow', () => {
+  function makeExecution(overrides: Partial<NodeExecution> = {}): NodeExecution {
+    return {
+      id: 'exec-1',
+      taskId: 'task-1',
+      workflowRunId: 'run-1',
+      workflowNodeId: 'node-1',
+      agentName: 'coder',
+      agentId: '',
+      status: 'pending',
+      createdAt: 0,
+      updatedAt: 0,
+      ...overrides,
+    } as NodeExecution;
+  }
+
+  function makeWorkflow(agents: WorkflowNode['agents']): SpaceWorkflow {
+    return {
+      id: 'wf-1',
+      spaceId: 'space-1',
+      name: 'Test',
+      nodes: [{ id: 'node-1', name: 'Review', agents }],
+      tags: [],
+      createdAt: 0,
+      updatedAt: 0,
+    } as unknown as SpaceWorkflow;
+  }
+
+  test('is valid for a template-only slot', () => {
+    const workflow = makeWorkflow([{ agentId: '', templateKey: 'coder.default', name: 'coder' }]);
+    const result = validateExecutionAgainstWorkflow(makeExecution(), workflow);
+    expect(result).toEqual({ valid: true });
+  });
+
+  test('is invalid when the slot has neither agentId nor templateKey', () => {
+    const workflow = makeWorkflow([{ agentId: '', name: 'coder' }]);
+    const result = validateExecutionAgainstWorkflow(makeExecution(), workflow);
+    expect(result).toEqual({
+      valid: false,
+      reason: 'Agent slot coder no longer exists on workflow node node-1',
+      permanent: true,
+    });
   });
 });
 
