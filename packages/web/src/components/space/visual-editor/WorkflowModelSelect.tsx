@@ -12,6 +12,7 @@ import {
 export interface WorkflowModelSelection {
   modelId: string;
   provider: string;
+  thinkingModes?: 'off' | 'on' | 'granular';
 }
 
 interface WorkflowModelSelectProps {
@@ -19,6 +20,7 @@ interface WorkflowModelSelectProps {
   provider?: string;
   onChange: (value: string | undefined, selection?: WorkflowModelSelection) => void;
   testId: string;
+  id?: string;
   className?: string;
 }
 
@@ -42,7 +44,11 @@ function dedupeModelsByProviderAndId(models: ModelInfo[]): ModelInfo[] {
 
 function decodeModelValue(value: string, models: ModelInfo[]): WorkflowModelSelection {
   const match = models.find((model) => encodeModelValue(model) === value);
-  if (match) return { provider: match.provider, modelId: match.id };
+  if (match) {
+    return match.thinkingModes
+      ? { provider: match.provider, modelId: match.id, thinkingModes: match.thinkingModes }
+      : { provider: match.provider, modelId: match.id };
+  }
   try {
     const parsed = JSON.parse(decodeURIComponent(value)) as unknown;
     if (
@@ -62,6 +68,7 @@ export function WorkflowModelSelect({
   provider,
   onChange,
   testId,
+  id,
   className = 'w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1.5 text-fg-soft focus:outline-none focus:border-accent disabled:opacity-50 disabled:cursor-not-allowed',
 }: WorkflowModelSelectProps) {
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -130,7 +137,7 @@ export function WorkflowModelSelect({
 
   if (loadState === 'loading') {
     return (
-      <select data-testid={testId} disabled class={className}>
+      <select data-testid={testId} id={id} disabled class={className}>
         <option>Loading models…</option>
       </select>
     );
@@ -138,7 +145,7 @@ export function WorkflowModelSelect({
 
   if (loadState === 'no-providers') {
     return (
-      <select data-testid={testId} disabled class={className}>
+      <select data-testid={testId} id={id} disabled class={className}>
         <option>No providers available</option>
       </select>
     );
@@ -147,6 +154,7 @@ export function WorkflowModelSelect({
   return (
     <select
       data-testid={testId}
+      id={id}
       value={selectedValue}
       onChange={(e) => {
         const nextValue = (e.currentTarget as HTMLSelectElement).value;
