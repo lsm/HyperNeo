@@ -103,6 +103,12 @@ function makeTemplate(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function gutterNumbersFor(textarea: Element): string[] {
+  const gutter = (textarea.parentElement as Element).firstElementChild as Element;
+  expect(gutter.getAttribute('aria-hidden')).toBe('true');
+  return Array.from(gutter.querySelectorAll('span')).map((s) => s.textContent ?? '');
+}
+
 describe('SpaceLongHorizonAgents', () => {
   beforeEach(() => {
     cleanup();
@@ -175,6 +181,50 @@ describe('SpaceLongHorizonAgents', () => {
     expect(getByRole('region', { name: 'Configured agents' })).toBeTruthy();
     expect(getByRole('button', { name: 'Create agent' })).toBeTruthy();
     expect(getByRole('button', { name: 'Close agent editor' })).toBeTruthy();
+  });
+
+  it('edits agent instructions through the line-numbered textarea', async () => {
+    mockAgents.value = [makeLongHorizonAgent()];
+    const { getByRole, getByPlaceholderText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    const instructionsField = getByPlaceholderText('What should this agent do?');
+    expect(gutterNumbersFor(instructionsField)).toEqual(['1', '2', '3', '4', '5']);
+
+    const typed = ['one', 'two', 'three', 'four', 'five', 'six', 'seven'].join('\n');
+    fireEvent.input(instructionsField, { target: { value: typed } });
+    expect(gutterNumbersFor(instructionsField)).toHaveLength(7);
+
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    expect(mockUpdateAgent.mock.calls[0][1].instructions).toBe(typed);
+  });
+
+  it('edits template instructions through the line-numbered textarea', () => {
+    mockTemplates.value = [
+      {
+        key: 'qa',
+        handle: 'qa',
+        displayName: 'QA Engineer',
+        description: 'Validates product quality.',
+        instructions: 'Test the product.',
+        suggestedAutonomyLevel: 2,
+      },
+    ];
+    const { getByRole, getByPlaceholderText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    const instructionsField = getByPlaceholderText(
+      'What should agents created from this template do?'
+    );
+    expect(gutterNumbersFor(instructionsField)).toEqual(['1', '2', '3', '4', '5']);
+
+    fireEvent.input(instructionsField, { target: { value: 'a\nb\nc\nd\ne\nf' } });
+    expect(gutterNumbersFor(instructionsField)).toHaveLength(6);
   });
 
   it('omits autonomyLevel when saving a migrated worker mirror', async () => {
