@@ -10,7 +10,9 @@ import {
   validateExecutionAgainstWorkflow,
 } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 
-function makeNode(agents: Array<{ agentId?: string | null; name: string }>): WorkflowNode {
+function makeNode(
+  agents: Array<{ agentId?: string | null; templateKey?: string; name: string }>
+): WorkflowNode {
   return {
     id: 'node-1',
     name: 'Review',
@@ -107,6 +109,58 @@ describe('validateExecutionAgainstWorkflow', () => {
       reason: 'Agent slot coder no longer exists on workflow node node-1',
       permanent: true,
     });
+  });
+
+  test('whitespace templateKey falls back to agentId', () => {
+    const workflow = makeWorkflow([{ agentId: 'agent-1', templateKey: '   ', name: 'coder' }]);
+    const result = validateExecutionAgainstWorkflow(
+      makeExecution({ agentId: 'agent-1' }),
+      workflow
+    );
+    expect(result).toEqual({ valid: true });
+  });
+
+  test('templateKey takes precedence over stale agentId', () => {
+    const workflow = makeWorkflow([
+      { agentId: 'stale', templateKey: 'coder.default', name: 'coder' },
+    ]);
+    const result = validateExecutionAgainstWorkflow(
+      makeExecution({ agentId: 'template:coder.default' }),
+      workflow
+    );
+    expect(result).toEqual({ valid: true });
+  });
+
+  test('templateKey precedence fails when execution carries stale agentId', () => {
+    const workflow = makeWorkflow([
+      { agentId: 'stale', templateKey: 'coder.default', name: 'coder' },
+    ]);
+    const result = validateExecutionAgainstWorkflow(makeExecution({ agentId: 'stale' }), workflow);
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.permanent).toBe(true);
+    }
+  });
+});
+
+describe('findMissingNodeAgentReferences template precedence', () => {
+  test('skips agent-existence check when templateKey is present', () => {
+    const node = makeNode([{ agentId: 'missing', templateKey: 'coder.default', name: 'coder' }]);
+    expect(findMissingNodeAgentReferences(node, () => false)).toEqual([]);
+  });
+
+  test('still reports a missing agent when no templateKey is present', () => {
+    const node = makeNode([{ agentId: 'missing', name: 'coder' }]);
+    expect(findMissingNodeAgentReferences(node, () => false)).toEqual([
+      { agentName: 'coder', agentId: 'missing' },
+    ]);
+  });
+
+  test('skips check for whitespace-only templateKey', () => {
+    const node = makeNode([{ agentId: 'missing', templateKey: '   ', name: 'coder' }]);
+    expect(findMissingNodeAgentReferences(node, () => false)).toEqual([
+      { agentName: 'coder', agentId: 'missing' },
+    ]);
   });
 });
 

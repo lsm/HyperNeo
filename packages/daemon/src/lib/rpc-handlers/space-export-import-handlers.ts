@@ -33,6 +33,7 @@ import {
   publishUnifiedAgentUpdated,
 } from '../space/agents/unified-agent-events.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug.ts';
+import { getLongHorizonAgentTemplate } from '../space/agents/long-horizon-agent-templates.ts';
 import { Logger } from '../logger.ts';
 
 const log = new Logger('space-export-import-handlers');
@@ -324,15 +325,9 @@ export function buildWorkflowCreateParams(
 
   const nodes: WorkflowNodeInput[] = exported.nodes.map((exportedNode) => {
     const agents = exportedNode.agents.map((a) => {
-      const agentId =
-        normalizedImportedAgentNameToId.get(nameKey(a.agentRef)) ??
-        normalizedExistingAgentNameToId.get(nameKey(a.agentRef)) ??
-        null;
-      if (!agentId) {
-        warnings.push(`node "${exportedNode.name}" references unknown agent "${a.agentRef}"`);
-      }
       const entry: {
         agentId: string;
+        templateKey?: string;
         name: string;
         model?: string;
         thinkingLevel?: import('@hyperneo/shared').ThinkingLevel;
@@ -345,9 +340,23 @@ export function buildWorkflowCreateParams(
         eventInterests?: import('@hyperneo/shared').EventInterest[];
         resetContextPerTurn?: boolean;
       } = {
-        agentId: agentId ?? '',
+        agentId: '',
         name: a.name,
       };
+      const templateKey = a.templateKey?.trim();
+      if (templateKey) {
+        entry.templateKey = templateKey;
+      } else {
+        const agentRef = a.agentRef?.trim() ?? '';
+        const agentId =
+          normalizedImportedAgentNameToId.get(nameKey(agentRef)) ??
+          normalizedExistingAgentNameToId.get(nameKey(agentRef)) ??
+          null;
+        if (!agentId) {
+          warnings.push(`node "${exportedNode.name}" references unknown agent "${agentRef}"`);
+        }
+        entry.agentId = agentId ?? '';
+      }
       if (typeof a.model === 'string' && a.model.trim()) entry.model = a.model.trim();
       if (a.thinkingLevel !== undefined) entry.thinkingLevel = a.thinkingLevel;
       const normalizedSP = normalizeOverride(a.systemPrompt);
@@ -424,12 +433,21 @@ function validateWorkflowForPreview(
 
   for (const node of exported.nodes) {
     for (const a of node.agents) {
+      const templateKey = a.templateKey?.trim();
+      if (templateKey) {
+        if (!getLongHorizonAgentTemplate(templateKey)) {
+          errors.push(`node "${node.name}" references unknown template "${templateKey}"`);
+        }
+        continue;
+      }
+      const agentRef = a.agentRef?.trim() ?? '';
       if (
-        !importedAgentNames.has(nameKey(a.agentRef)) &&
-        !existingAgentNameToId.has(nameKey(a.agentRef))
+        agentRef &&
+        !importedAgentNames.has(nameKey(agentRef)) &&
+        !existingAgentNameToId.has(nameKey(agentRef))
       ) {
         errors.push(
-          `node "${node.name}" references unknown agent "${a.agentRef}" — not found in bundle or target space`
+          `node "${node.name}" references unknown agent "${agentRef}" — not found in bundle or target space`
         );
       }
     }
@@ -542,7 +560,9 @@ export function setupSpaceExportImportHandlers(
     const referencedAgentIds = new Set<string>();
     for (const wf of workflows) {
       for (const node of wf.nodes ?? []) {
-        for (const a of node.agents ?? []) referencedAgentIds.add(a.agentId);
+        for (const a of node.agents ?? []) {
+          if (a.agentId?.trim()) referencedAgentIds.add(a.agentId.trim());
+        }
       }
     }
     const liveById = new Map(allAgents.map((a) => [a.id, a]));
@@ -592,7 +612,9 @@ export function setupSpaceExportImportHandlers(
     const referencedNames = new Set<string>();
     for (const wf of full.workflows) {
       for (const node of wf.nodes) {
-        for (const a of node.agents) referencedNames.add(a.agentRef);
+        for (const a of node.agents) {
+          if (a.agentRef?.trim()) referencedNames.add(a.agentRef.trim());
+        }
       }
     }
 
@@ -624,7 +646,9 @@ export function setupSpaceExportImportHandlers(
     const referencedAgentIds = new Set<string>();
     for (const wf of workflows) {
       for (const node of wf.nodes ?? []) {
-        for (const a of node.agents ?? []) referencedAgentIds.add(a.agentId);
+        for (const a of node.agents ?? []) {
+          if (a.agentId?.trim()) referencedAgentIds.add(a.agentId.trim());
+        }
       }
     }
     const exportedIdSet = new Set(agents.map((a) => a.id));

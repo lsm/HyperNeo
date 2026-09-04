@@ -643,6 +643,7 @@ export class SpaceWorkflowManager {
             `node[${index}].agents[${j}]: templateKey "${entry.templateKey}" does not match any built-in agent template`
           );
         }
+        entry.agentId = '';
         continue;
       }
       if (this.agentLookup) {

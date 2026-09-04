@@ -1363,7 +1363,8 @@ export interface ExportedWorkflowChannel {
 }
 
 export interface ExportedWorkflowNodeAgent {
-  agentRef: string;
+  agentRef?: string;
+  templateKey?: string;
   name: string;
   model?: string;
   thinkingLevel?: ThinkingLevel;

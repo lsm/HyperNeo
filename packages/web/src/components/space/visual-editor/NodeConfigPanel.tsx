@@ -1019,6 +1019,12 @@ export function NodeConfigPanel({
       const singleSlot = nodeAgents.length === 1 ? nodeAgents[0] : undefined;
       const singleAgentId = singleSlot?.agentId ?? step.agentId;
       const singleAgent = agents.find((agent) => agent.id === singleAgentId);
+      const singleTemplateKey = singleSlot?.templateKey ?? step.templateKey;
+      const singleTemplate = singleTemplateKey
+        ? (agentTemplates ?? []).find((t) => t.key === singleTemplateKey)
+        : undefined;
+      const singleDisplayName =
+        singleTemplate?.displayName || singleAgent?.displayName || singleAgentId || '—';
       const singleCustomPrompt = singleSlot?.customPrompt ?? step.customPrompt;
       const singleReplaceAgentPrompt = singleSlot?.replaceAgentPrompt ?? step.replaceAgentPrompt;
 
@@ -1066,8 +1072,7 @@ export function NodeConfigPanel({
         <div class="scrollbar-dark flex-1 overflow-y-auto px-4 py-4 pr-5 space-y-4">
           <div class="rounded border border-line bg-surface-overlay px-3 py-2 text-xs text-fg-muted space-y-1">
             <p>
-              <span class="text-fg-muted">Agent:</span>{' '}
-              {(singleAgent?.displayName ?? singleAgentId) || '—'}
+              <span class="text-fg-muted">Agent:</span> {singleDisplayName}
             </p>
           </div>
           <PromptModeToggle
@@ -1089,6 +1094,12 @@ export function NodeConfigPanel({
       const slot = (step.agents ?? []).find((agent) => agent.name === panelView.role);
       if (!slot) return null;
       const slotAgent = agents.find((agent) => agent.id === slot.agentId);
+      const slotTemplateKey = slot.templateKey?.trim();
+      const slotTemplate = slotTemplateKey
+        ? (agentTemplates ?? []).find((t) => t.key === slotTemplateKey)
+        : undefined;
+      const slotDisplayName =
+        slotTemplate?.displayName || slotAgent?.displayName || slot.agentId || '—';
 
       const updateSlot = (nextSlot: WorkflowNodeAgent) => {
         onUpdate({
@@ -1107,7 +1118,7 @@ export function NodeConfigPanel({
               <span class="text-fg-muted">Role:</span> {slot.name}
             </p>
             <p>
-              <span class="text-fg-muted">Agent:</span> {slotAgent?.displayName ?? slot.agentId}
+              <span class="text-fg-muted">Agent:</span> {slotDisplayName}
             </p>
           </div>
           <div class="space-y-1">

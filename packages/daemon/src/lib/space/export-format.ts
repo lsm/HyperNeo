@@ -80,21 +80,27 @@ const thinkingLevelSchema = z.preprocess(
   z.enum(['off', 'think8k', 'think16k', 'think24k', 'think32k'])
 );
 
-const exportedWorkflowNodeAgentSchema = z.object({
-  agentRef: z.string().min(1),
-  name: z.string().min(1),
-  model: z.string().min(1).optional(),
-  thinkingLevel: thinkingLevelSchema.optional(),
-  systemPrompt: overrideOrStringSchema.optional(),
-  replaceAgentPrompt: z.boolean().optional(),
-  instructions: overrideOrStringSchema.optional(),
-  disabledSkillIds: z.array(z.string()).optional(),
-  extraMcpServers: z.record(z.string(), z.unknown()).optional(),
-  timeoutMs: z.number().int().positive().optional(),
-  toolGuards: z.array(declarativeToolGuardSchema).optional(),
-  eventInterests: z.array(eventInterestSchema).max(MAX_AGENT_SLOT_EVENT_INTERESTS).optional(),
-  resetContextPerTurn: z.boolean().optional(),
-});
+const exportedWorkflowNodeAgentSchema = z
+  .object({
+    agentRef: z.string().optional(),
+    templateKey: z.string().optional(),
+    name: z.string().min(1),
+    model: z.string().min(1).optional(),
+    thinkingLevel: thinkingLevelSchema.optional(),
+    systemPrompt: overrideOrStringSchema.optional(),
+    replaceAgentPrompt: z.boolean().optional(),
+    instructions: overrideOrStringSchema.optional(),
+    disabledSkillIds: z.array(z.string()).optional(),
+    extraMcpServers: z.record(z.string(), z.unknown()).optional(),
+    timeoutMs: z.number().int().positive().optional(),
+    toolGuards: z.array(declarativeToolGuardSchema).optional(),
+    eventInterests: z.array(eventInterestSchema).max(MAX_AGENT_SLOT_EVENT_INTERESTS).optional(),
+    resetContextPerTurn: z.boolean().optional(),
+  })
+  .refine((a) => a.agentRef?.trim() || a.templateKey?.trim(), {
+    message: 'agentRef or templateKey must be a non-empty string',
+    path: ['agentRef'],
+  });
 
 const exportedWorkflowChannelSchema = z.object({
   from: z.string().min(1),
@@ -328,9 +334,13 @@ export function exportWorkflow(
   const exportedNodes: ExportedWorkflowNode[] = nodes.map((node) => {
     const exportedAgents: ExportedWorkflowNodeAgent[] = node.agents.map((a) => {
       const entry: ExportedWorkflowNodeAgent = {
-        agentRef: agentIdToName.get(a.agentId) ?? a.agentId,
         name: a.name,
       };
+      if (a.templateKey?.trim()) {
+        entry.templateKey = a.templateKey.trim();
+      } else {
+        entry.agentRef = agentIdToName.get(a.agentId) ?? a.agentId;
+      }
       if (a.model !== undefined) entry.model = a.model;
       if (a.thinkingLevel !== undefined) entry.thinkingLevel = a.thinkingLevel;
       if (a.customPrompt !== undefined) entry.systemPrompt = a.customPrompt;

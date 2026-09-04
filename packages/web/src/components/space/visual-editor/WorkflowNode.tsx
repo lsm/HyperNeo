@@ -1,5 +1,9 @@
 import { useEffect, useCallback, useRef } from 'preact/hooks';
-import type { SpaceLongHorizonAgent, WorkflowChannel } from '@hyperneo/shared';
+import type {
+  SpaceLongHorizonAgent,
+  SpaceLongHorizonAgentTemplate,
+  WorkflowChannel,
+} from '@hyperneo/shared';
 import type { NodeDraft, AgentTaskState } from '../WorkflowNodeCard';
 import { isMultiAgentNode, AgentStatusIcon } from '../WorkflowNodeCard';
 import type { Point } from './types';
@@ -13,6 +17,7 @@ export interface WorkflowNodeProps {
   step: NodeDraft;
   position: Point;
   agents: SpaceLongHorizonAgent[];
+  agentTemplates?: SpaceLongHorizonAgentTemplate[];
   workflowChannels?: WorkflowChannel[];
   isSelected?: boolean;
   isStartNode?: boolean;
@@ -106,6 +111,7 @@ export function WorkflowNode({
   step,
   position,
   agents,
+  agentTemplates,
   workflowChannels: _workflowChannels = [],
   isSelected = false,
   isStartNode = false,
@@ -129,8 +135,12 @@ export function WorkflowNode({
     !multi && Array.isArray(step.agents) && step.agents.length === 1 ? step.agents[0] : null;
   const resolvedSingleAgentId = singleSlot?.agentId ?? step.agentId;
   const resolvedSingleTemplateKey = singleSlot?.templateKey ?? step.templateKey;
+  const resolvedSingleTemplate = resolvedSingleTemplateKey
+    ? (agentTemplates ?? []).find((t) => t.key === resolvedSingleTemplateKey)
+    : undefined;
   const agentName =
     singleSlot?.name ??
+    resolvedSingleTemplate?.displayName ??
     agents.find((a) => a.id === resolvedSingleAgentId)?.displayName ??
     (resolvedSingleAgentId || resolvedSingleTemplateKey);
 

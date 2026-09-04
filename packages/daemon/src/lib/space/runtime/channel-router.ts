@@ -224,7 +224,7 @@ export class ChannelRouter {
         workflowRunId: runId,
         workflowNodeId: nodeId,
         agentName,
-        agentId: agentEntry.agentId ?? null,
+        agentId: agentEntry.templateKey?.trim() ? null : (agentEntry.agentId ?? null),
         status: 'pending',
       });
     }

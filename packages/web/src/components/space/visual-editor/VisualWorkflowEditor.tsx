@@ -356,6 +356,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
         step: node.step,
         position: node.position,
         agents,
+        agentTemplates,
         workflowChannels: channels,
         isStartNode: nodeIsStart(node),
         isEndNode: nodeIsEnd(node),
@@ -366,6 +367,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   }, [
     regularNodes,
     agents,
+    agentTemplates,
     channels,
     nodeIsStart,
     nodeIsEnd,

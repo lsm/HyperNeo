@@ -203,6 +203,21 @@ describe('exportWorkflow', () => {
     expect(exported.nodes[2].agents[0].agentRef).toBe('agent-uuid-2');
   });
 
+  test('exports templateKey for template-backed slots', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Code step',
+          agents: [{ agentId: '', templateKey: 'coder.default', name: 'coder' }],
+        },
+      ],
+    });
+    const exported = exportWorkflow(workflow, []);
+    expect(exported.nodes[0].agents[0].agentRef).toBeUndefined();
+    expect(exported.nodes[0].agents[0].templateKey).toBe('coder.default');
+  });
+
   test('exports resetContextPerTurn on agent slots', () => {
     const workflow = makeWorkflow({
       nodes: [
@@ -467,6 +482,22 @@ describe('validateExportedWorkflow', () => {
     };
     const result = validateExportedWorkflow(data);
     expect(result.ok).toBe(false);
+  });
+
+  test('accepts templateKey in place of agentRef', () => {
+    const data = {
+      version: 1,
+      type: 'workflow',
+      name: 'Good',
+      nodes: [{ agents: [{ templateKey: 'coder.default', name: 'slot' }], name: 'Step' }],
+      startNode: 'Step',
+      tags: [],
+    };
+    const result = validateExportedWorkflow(data);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.nodes[0].agents[0].templateKey).toBe('coder.default');
+    }
   });
 
   test('rejects step missing agents array', () => {
