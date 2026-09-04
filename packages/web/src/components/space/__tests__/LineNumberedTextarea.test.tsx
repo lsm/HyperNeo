@@ -15,7 +15,7 @@ afterEach(() => {
 describe('LineNumberedTextarea — gutter sizing', () => {
   it('renders one gutter number per line of a multi-line value', () => {
     const { container } = render(
-      <LineNumberedTextarea value={'line one\nline two\nline three'} onChange={noop} />
+      <LineNumberedTextarea value={'line one\nline two\nline three'} onChange={noop} rows={3} />
     );
     expect(gutterNumbers(container)).toEqual(['1', '2', '3']);
   });
@@ -58,7 +58,7 @@ describe('LineNumberedTextarea — textarea passthrough', () => {
 
   it('marks the gutter aria-hidden', () => {
     const { container } = render(<LineNumberedTextarea value="one" onChange={noop} />);
-    const gutter = container.firstElementChild as Element;
+    const gutter = (container.firstElementChild as Element).firstElementChild as Element;
     expect(gutter.getAttribute('aria-hidden')).toBe('true');
   });
 
