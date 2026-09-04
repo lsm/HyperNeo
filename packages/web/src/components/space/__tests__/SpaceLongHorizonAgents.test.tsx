@@ -12,6 +12,7 @@ const {
   mockListAgentReminderCounts,
   mockCreateAgent,
   mockUpdateAgent,
+  mockReapplyAgentTemplate,
   mockNavigateToSpaceSession,
 } = vi.hoisted(() => {
   function makeSignal<T>(initial: T) {
@@ -25,6 +26,7 @@ const {
     mockListAgentReminderCounts: vi.fn().mockResolvedValue({}),
     mockCreateAgent: vi.fn().mockResolvedValue(undefined),
     mockUpdateAgent: vi.fn().mockResolvedValue(undefined),
+    mockReapplyAgentTemplate: vi.fn().mockResolvedValue({ displayName: 'Research Long Horizon' }),
     mockNavigateToSpaceSession: vi.fn(),
   };
 });
@@ -39,6 +41,7 @@ vi.mock('../../../lib/space-store', () => ({
       listAgentReminderCounts: mockListAgentReminderCounts,
       createAgent: mockCreateAgent,
       updateAgent: mockUpdateAgent,
+      reapplyAgentTemplate: mockReapplyAgentTemplate,
     };
   },
 }));
@@ -90,10 +93,26 @@ vi.mock('../../ui/Button', () => ({
 }));
 
 vi.mock('../../ui/ConfirmModal', () => ({
-  ConfirmModal: () => null,
+  ConfirmModal: (props: {
+    onConfirm: () => void;
+    onClose: () => void;
+    confirmTestId?: string;
+    error?: string | null;
+  }) => (
+    <div data-testid="confirm-modal">
+      {props.error && <p data-testid="confirm-modal-error">{props.error}</p>}
+      <button type="button" data-testid={props.confirmTestId} onClick={props.onConfirm}>
+        confirm
+      </button>
+      <button type="button" data-testid="confirm-modal-close" onClick={props.onClose}>
+        cancel
+      </button>
+    </div>
+  ),
 }));
 
 import { SpaceLongHorizonAgents } from '../SpaceLongHorizonAgents';
+import { toast } from '../../../lib/toast';
 
 function makeLongHorizonAgent(
   overrides: Partial<SpaceLongHorizonAgent> = {}
@@ -842,6 +861,62 @@ describe('SpaceLongHorizonAgents', () => {
     expect(detail.textContent).toContain('Research Long Horizon');
     expect(detail.textContent).toContain('Long-horizon instructions');
     expect(detail.textContent).not.toContain('Configured Worker Agent');
+  });
+
+  it('re-applies the template from agent detail after confirmation', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ templateKey: 'coder.v1' })];
+    mockReapplyAgentTemplate.mockResolvedValue(makeLongHorizonAgent({ templateKey: 'coder.v1' }));
+
+    const { getByTestId, queryByTestId } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" selectedHandle="research" />
+    );
+
+    fireEvent.click(getByTestId('reapply-template-button'));
+    fireEvent.click(getByTestId('confirm-reapply-template'));
+
+    await waitFor(() => expect(mockReapplyAgentTemplate).toHaveBeenCalledWith('lh-1'));
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+      'Re-applied template to "Research Long Horizon"'
+    );
+    await waitFor(() => expect(queryByTestId('confirm-modal')).toBeNull());
+  });
+
+  it('shows the RPC error and keeps the confirm dialog open when re-apply fails', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ templateKey: 'coder.v1' })];
+    mockReapplyAgentTemplate.mockRejectedValue(new Error('Template not found: coder.v1'));
+
+    const { getByTestId } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" selectedHandle="research" />
+    );
+
+    fireEvent.click(getByTestId('reapply-template-button'));
+    fireEvent.click(getByTestId('confirm-reapply-template'));
+
+    await waitFor(() =>
+      expect(getByTestId('confirm-modal-error').textContent).toBe('Template not found: coder.v1')
+    );
+    expect(getByTestId('confirm-modal')).toBeTruthy();
+  });
+
+  it('disables re-apply template for migrated worker mirrors', () => {
+    mockAgents.value = [makeLongHorizonAgent({ templateKey: 'migration.legacy_space_agent' })];
+
+    const { getByTestId } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" selectedHandle="research" />
+    );
+
+    const button = getByTestId('reapply-template-button') as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+  });
+
+  it('omits re-apply template for agents without a template', () => {
+    mockAgents.value = [makeLongHorizonAgent({ templateKey: null })];
+
+    const { queryByTestId } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" selectedHandle="research" />
+    );
+
+    expect(queryByTestId('reapply-template-button')).toBeNull();
   });
 
   it('uses the route space id for agent session navigation', () => {

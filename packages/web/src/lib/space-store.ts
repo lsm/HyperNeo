@@ -2384,6 +2384,18 @@ class SpaceStore {
     return agent;
   }
 
+  async reapplyAgentTemplate(agentId: string): Promise<SpaceLongHorizonAgent> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const { agent } = await hub.request<{ agent: SpaceLongHorizonAgent }>(
+      'spaceAgent.reapplyTemplate',
+      { agentId }
+    );
+    this.upsertAgent(agent);
+    return agent;
+  }
+
   async syncAgentFromTemplate(
     agentId: string,
     expectedRowHash?: string
