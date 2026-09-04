@@ -1,4 +1,5 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { Space } from '@hyperneo/shared';
 import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import type {
   SpaceWorkspaceRecord,
@@ -508,6 +509,70 @@ const runResolveWorkspaceSelection = (
   .pipe(selectionResolveAsPath, 'ctx', 'ctx')
   .endAsync('ctx') as (input: ResolveSelectionCtx) => Promise<ResolveSelectionCtx>;
 
+interface ValidateDefaultTaskWorkspaceCtx {
+  spaces: WorkspaceRegistryReader;
+  workspaces: WorkspaceStore;
+  io: WorkspaceValidationIo;
+  spaceId: string;
+  space?: Space | null;
+  rows?: SpaceWorkspaceRecord[];
+  distinctPaths?: Set<string>;
+  blockedMessage?: string;
+}
+
+function defaultTaskWorkspaceLoadSpace(
+  ctx: ValidateDefaultTaskWorkspaceCtx
+): ValidateDefaultTaskWorkspaceCtx {
+  return { ...ctx, space: ctx.spaces.getSpace(ctx.spaceId) };
+}
+
+function defaultTaskWorkspaceCountPaths(
+  ctx: ValidateDefaultTaskWorkspaceCtx
+): ValidateDefaultTaskWorkspaceCtx {
+  const space = ctx.space;
+  if (!space) return ctx;
+  const rows = ctx.workspaces.listBySpace(ctx.spaceId);
+  const distinctPaths = new Set(rows.map((row) => row.path));
+  if (!rows.some((row) => row.isPrimary) && space.workspacePath) {
+    distinctPaths.add(space.workspacePath);
+  }
+  return { ...ctx, rows, distinctPaths };
+}
+
+async function defaultTaskWorkspaceGuardPrimaryGitRoot(
+  ctx: ValidateDefaultTaskWorkspaceCtx
+): Promise<ValidateDefaultTaskWorkspaceCtx> {
+  const space = ctx.space;
+  if (!space || !ctx.distinctPaths || ctx.distinctPaths.size <= 1) return ctx;
+  if (await ctx.io.isGitRepositoryRoot(space.workspacePath)) return ctx;
+  const alternatives = (ctx.rows ?? [])
+    .filter((row) => row.path !== space.workspacePath)
+    .map((row) => (row.label ? `"${row.label}" (${row.path})` : row.path));
+  return {
+    ...ctx,
+    blockedMessage:
+      `Space ${ctx.spaceId} has ${ctx.distinctPaths.size} registered workspaces and its ` +
+      `primary workspace ${space.workspacePath} is not a git repository, so tasks created ` +
+      `without an explicit workspace cannot spawn (their task worktree would fail to be ` +
+      `created there). Create the task with an explicit "workspace" parameter` +
+      (alternatives.length > 0 ? ` (usable workspaces: ${alternatives.join(', ')})` : '') +
+      `.`,
+  };
+}
+
+const runValidateDefaultTaskWorkspace = (
+  superpipe({
+    hasBlockedMessage: (ctx: ValidateDefaultTaskWorkspaceCtx) => ctx.blockedMessage !== undefined,
+  })('default-task-workspace-validation') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(defaultTaskWorkspaceLoadSpace, 'ctx', 'ctx')
+  .pipe(defaultTaskWorkspaceCountPaths, 'ctx', 'ctx')
+  .pipe(defaultTaskWorkspaceGuardPrimaryGitRoot, 'ctx', 'ctx')
+  .endAsync('ctx') as (
+  input: ValidateDefaultTaskWorkspaceCtx
+) => Promise<ValidateDefaultTaskWorkspaceCtx>;
+
 export class SpaceWorkspaceManager {
   constructor(private readonly deps: SpaceWorkspaceManagerDeps) {}
 
@@ -593,5 +658,15 @@ export class SpaceWorkspaceManager {
       throw new Error(`Unknown workspace: ${selection}`);
     }
     return result.resolvedPath;
+  }
+
+  async validateDefaultTaskWorkspace(spaceId: string): Promise<string | null> {
+    const result = await runValidateDefaultTaskWorkspace({
+      spaces: this.deps.spaces,
+      workspaces: this.deps.workspaces,
+      io: this.deps.io ?? nodeWorkspaceValidationIo,
+      spaceId,
+    });
+    return result.blockedMessage ?? null;
   }
 }

@@ -5,6 +5,10 @@ import type { SpaceTask, Space } from '@hyperneo/shared';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { SpawnExecutionFlowDeps } from '../../../../src/lib/space/runtime/spawn-flow.ts';
 import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-worktree-manager.ts';
+import {
+  isPermanentSpawnError,
+  PermanentSpawnError,
+} from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 
 describe('TaskAgentManager resolveWorkspacePath — spawn callback decision table (WS02a)', () => {
   const SPACE_ID = 'space-ws02a';
@@ -174,7 +178,7 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
         expectedOutcome: {
           kind: 'error',
           message:
-            'Task worktree creation failed for workflow task task-ws02a; refusing to spawn a node agent in the shared space workspace: git worktree add failed',
+            'Task worktree creation failed for workflow task task-ws02a; refusing to spawn a node agent in the shared space workspace /space/ws02a: git worktree add failed',
         },
         expectedCreateCalled: true,
         expectedCachedPath: undefined,
@@ -290,6 +294,26 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
       },
     ] as Row[])('%s', async (row: Row) => {
       await runRow(row);
+    });
+  });
+
+  describe('worktree failure classification (#3589)', () => {
+    test('classifies a worktree-creation failure as permanent so the runtime blocks once instead of crash-looping', async () => {
+      const createTaskWorktree = mock(async () => {
+        throw new Error('Workspace is not a git repository: /space/non-git');
+      });
+      const manager = makeManager({ createTaskWorktree } as unknown as SpaceWorktreeManager, {});
+      const deps = (
+        manager as unknown as { buildSpawnExecutionFlowDeps: BuildDeps }
+      ).buildSpawnExecutionFlowDeps({ reservationHeld: false, reservedExecution: false });
+
+      const err = await deps
+        .resolveWorkspacePath(makeTask(undefined), makeSpace())
+        .catch((e: unknown) => e);
+      expect(isPermanentSpawnError(err)).toBe(true);
+      expect(err).toBeInstanceOf(PermanentSpawnError);
+      expect((err as Error).message).toContain('Workspace is not a git repository');
+      expect((err as Error).message).toContain(SPACE_WORKSPACE);
     });
   });
 

@@ -9,7 +9,10 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import { MAX_BLOCKED_RUN_RETRIES } from '../../../../src/lib/space/runtime/constants.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import { SpawnSupersededError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
+import {
+  PermanentSpawnError,
+  SpawnSupersededError,
+} from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
@@ -2748,6 +2751,38 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(task.blockReason).toBe('agent_crashed');
 
       expect(spawnAttempts).toBe(3);
+    });
+
+    test('permanent worktree failure (non-git workspace) cancels the execution and blocks the task on the first attempt (#3589)', async () => {
+      let spawnAttempts = 0;
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        spawnWorkflowNodeAgentForExecution: async () => {
+          spawnAttempts++;
+          throw new PermanentSpawnError(
+            'Task worktree creation failed for workflow task; refusing to spawn a node agent in the shared space workspace /space/non-git: Workspace is not a git repository: /space/non-git'
+          );
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const runId = tasks[0].workflowRunId!;
+
+      await rt.executeTick();
+
+      const execution = nodeExecutionRepo.listByWorkflowRun(runId)[0];
+      expect(execution.status).toBe('cancelled');
+      expect(execution.result).toContain('not a git repository');
+
+      const task = taskRepo.getTask(tasks[0].id)!;
+      expect(task.status).toBe('blocked');
+      expect(task.result).toContain('not a git repository');
+      expect(task.blockReason).toBe('workflow_invalid');
+
+      expect(spawnAttempts).toBe(1);
     });
   });
 

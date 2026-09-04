@@ -878,6 +878,7 @@ export class TaskAgentManager {
           spaceWorkspacePath: space.workspacePath,
         });
         if (workspace.createWorktree && this.config.worktreeManager) {
+          const repoRoot = ownsSpace ? resolveTaskWorkspace(space, task) : space.workspacePath;
           try {
             const result = await this.config.worktreeManager.createTaskWorktree(
               space.id,
@@ -885,7 +886,7 @@ export class TaskAgentManager {
               task.title,
               task.taskNumber,
               undefined,
-              ownsSpace ? resolveTaskWorkspace(space, task) : space.workspacePath
+              repoRoot
             );
             this.taskWorktreePaths.set(task.id, result.path);
             return result.path;
@@ -894,8 +895,8 @@ export class TaskAgentManager {
             log.warn(
               `TaskAgentManager: failed to create worktree for workflow task ${task.id}; failing the spawn instead of falling back to the space workspace: ${detail}`
             );
-            throw new Error(
-              `Task worktree creation failed for workflow task ${task.id}; refusing to spawn a node agent in the shared space workspace: ${detail}`
+            throw new PermanentSpawnError(
+              `Task worktree creation failed for workflow task ${task.id}; refusing to spawn a node agent in the shared space workspace ${repoRoot}: ${detail}`
             );
           }
         }

@@ -584,3 +584,64 @@ describe('updateWorkspaceLabel', () => {
     expect(workspaces.rows[0]!.label).toBe('');
   });
 });
+
+describe('validateDefaultTaskWorkspace', () => {
+  test('null for a single-workspace space even when the primary is not a git repo', async () => {
+    const { manager } = newManager({
+      workspaces: new FakeWorkspaces([row(SPACE_A, '/primary-a', 'w1', true)]),
+      io: fakeIo({ isGitRepositoryRoot: async () => false }),
+    });
+    await expect(manager.validateDefaultTaskWorkspace(SPACE_A)).resolves.toBeNull();
+  });
+
+  test('null when no workspace rows exist (no backfilled primary row)', async () => {
+    const { manager } = newManager({
+      workspaces: new FakeWorkspaces(),
+      io: fakeIo({ isGitRepositoryRoot: async () => false }),
+    });
+    await expect(manager.validateDefaultTaskWorkspace(SPACE_A)).resolves.toBeNull();
+  });
+
+  test('null for a multi-workspace space whose primary is a git repo root', async () => {
+    const { manager } = newManager({
+      workspaces: new FakeWorkspaces([
+        row(SPACE_A, '/primary-a', 'w1', true),
+        row(SPACE_A, '/repo-b', 'w2'),
+      ]),
+      io: fakeIo({ isGitRepositoryRoot: async () => true }),
+    });
+    await expect(manager.validateDefaultTaskWorkspace(SPACE_A)).resolves.toBeNull();
+  });
+
+  test('actionable message for a multi-workspace space with a non-git primary', async () => {
+    const { manager } = newManager({
+      workspaces: new FakeWorkspaces([
+        row(SPACE_A, '/primary-a', 'w1', true),
+        row(SPACE_A, '/repo-b', 'w2', false, 'dolmen'),
+        row(SPACE_A, '/repo-c', 'w3'),
+      ]),
+      io: fakeIo({ isGitRepositoryRoot: async (path) => path !== '/primary-a' }),
+    });
+    const message = await manager.validateDefaultTaskWorkspace(SPACE_A);
+    expect(message).toContain('/primary-a');
+    expect(message).toContain('is not a git repository');
+    expect(message).toContain('"dolmen" (/repo-b)');
+    expect(message).toContain('/repo-c');
+    expect(message).toContain('"workspace"');
+  });
+
+  test('counts the backfilled primary when no primary row exists', async () => {
+    const { manager } = newManager({
+      workspaces: new FakeWorkspaces([row(SPACE_A, '/repo-b', 'w2')]),
+      io: fakeIo({ isGitRepositoryRoot: async () => false }),
+    });
+    const message = await manager.validateDefaultTaskWorkspace(SPACE_A);
+    expect(message).toContain('/primary-a');
+    expect(message).toContain('/repo-b');
+  });
+
+  test('null for an unknown space', async () => {
+    const { manager } = newManager({ spaces: [] });
+    await expect(manager.validateDefaultTaskWorkspace('ghost')).resolves.toBeNull();
+  });
+});

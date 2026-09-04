@@ -170,8 +170,18 @@ path is collapsed back to `NULL` at write time, so the column only ever stores a
   `~/.hyperneo/projects/<repo>-<hash8>/worktrees/<slug>` with branch `space/<slug>`, and
   **fails closed**: a worktree-creation error aborts the spawn rather than falling back to
   the shared space workspace (`Task worktree creation failed ... refusing to spawn a node
-  agent in the shared space workspace`). Crashed creations are recovered idempotently via a
-  `hyperneo-claim` marker written into the worktree's private git dir.
+  agent in the shared space workspace`). The resolved repo root must itself be a git
+  repository root (checked before any worktree side effects — `Workspace is not a git
+  repository: ...`), and any worktree-creation failure is a `PermanentSpawnError`: the
+  runtime cancels the execution and blocks the task once with that reason instead of
+  crash-retrying it into `agent_crashed` (#3589). Crashed creations are recovered
+  idempotently via a `hyperneo-claim` marker written into the worktree's private git dir.
+- **Creation fail-fast (#3589)**: the `create_standalone_task` agent tool validates the
+  default before recording an unpinned task — in a space with more than one registered
+  workspace whose primary is not a git repository, omitting `workspace` is rejected with
+  the list of usable workspaces (`SpaceWorkspaceManager.validateDefaultTaskWorkspace`)
+  instead of silently defaulting to a primary that cannot host a worktree. Single-workspace
+  spaces and explicit `workspace` arguments are unaffected.
 
 ### Goal pinning and inheritance
 
