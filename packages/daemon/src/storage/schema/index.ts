@@ -1,6 +1,7 @@
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { createEvolutionTables } from './evolution.ts';
 import { createLongHorizonAgentTables } from './long-horizon-agents.ts';
+import { createSpaceAgentTemplatesTable } from './space-agent-templates.ts';
 import { createWorkflowEventSubscriptionTables } from './workflow-event-subscriptions.ts';
 import { backfillSessionCounters, createSessionCounters } from './session-counters.ts';
 import { DEFAULT_GLOBAL_TOOLS_CONFIG, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
@@ -861,6 +862,7 @@ export function createTables(db: BunDatabase): void {
   createAgentMemoryTables(db);
   createEvolutionTables(db);
   createLongHorizonAgentTables(db);
+  createSpaceAgentTemplatesTable(db);
   createWorkflowEventSubscriptionTables(db);
   createSessionCounters(db);
   backfillSessionCounters(db);

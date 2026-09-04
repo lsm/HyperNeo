@@ -91,7 +91,11 @@
     "packages/daemon/src/storage/repositories/goal-repository.ts": ["exports"],
     "packages/daemon/src/lib/space/workspaces/workspace-validation-pipeline.ts": ["exports"],
     "packages/daemon/src/storage/repositories/space-workspace-repository.ts": ["exports"],
-    "packages/daemon/src/storage/repositories/agent-memory-transformers.ts": ["exports"]
+    "packages/daemon/src/storage/repositories/agent-memory-transformers.ts": ["exports"],
+    "packages/daemon/src/storage/repositories/space-agent-template-repository.ts": [
+      "exports",
+      "files"
+    ]
   },
   "ignoreDependencies": [
     "@testing-library/preact",
