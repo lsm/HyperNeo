@@ -132,6 +132,7 @@ function fakeIo(overrides: Partial<WorkspaceValidationIo> = {}): WorkspaceValida
     realpath: async (path) => path,
     isDirectory: async () => true,
     isGitRepositoryRoot: async () => true,
+    canHostTaskWorktree: async () => true,
     ...overrides,
   };
 }
@@ -589,7 +590,7 @@ describe('validateDefaultTaskWorkspace', () => {
   test('null for a single-workspace space even when the primary is not a git repo', async () => {
     const { manager } = newManager({
       workspaces: new FakeWorkspaces([row(SPACE_A, '/primary-a', 'w1', true)]),
-      io: fakeIo({ isGitRepositoryRoot: async () => false }),
+      io: fakeIo({ canHostTaskWorktree: async () => false }),
     });
     await expect(manager.validateDefaultTaskWorkspace(SPACE_A)).resolves.toBeNull();
   });
@@ -597,7 +598,7 @@ describe('validateDefaultTaskWorkspace', () => {
   test('null when no workspace rows exist (no backfilled primary row)', async () => {
     const { manager } = newManager({
       workspaces: new FakeWorkspaces(),
-      io: fakeIo({ isGitRepositoryRoot: async () => false }),
+      io: fakeIo({ canHostTaskWorktree: async () => false }),
     });
     await expect(manager.validateDefaultTaskWorkspace(SPACE_A)).resolves.toBeNull();
   });
@@ -608,7 +609,7 @@ describe('validateDefaultTaskWorkspace', () => {
         row(SPACE_A, '/primary-a', 'w1', true),
         row(SPACE_A, '/repo-b', 'w2'),
       ]),
-      io: fakeIo({ isGitRepositoryRoot: async () => true }),
+      io: fakeIo({ canHostTaskWorktree: async () => true }),
     });
     await expect(manager.validateDefaultTaskWorkspace(SPACE_A)).resolves.toBeNull();
   });
@@ -620,7 +621,7 @@ describe('validateDefaultTaskWorkspace', () => {
         row(SPACE_A, '/repo-b', 'w2', false, 'dolmen'),
         row(SPACE_A, '/repo-c', 'w3'),
       ]),
-      io: fakeIo({ isGitRepositoryRoot: async (path) => path !== '/primary-a' }),
+      io: fakeIo({ canHostTaskWorktree: async (path) => path !== '/primary-a' }),
     });
     const message = await manager.validateDefaultTaskWorkspace(SPACE_A);
     expect(message).toContain('/primary-a');
@@ -633,7 +634,7 @@ describe('validateDefaultTaskWorkspace', () => {
   test('counts the backfilled primary when no primary row exists', async () => {
     const { manager } = newManager({
       workspaces: new FakeWorkspaces([row(SPACE_A, '/repo-b', 'w2')]),
-      io: fakeIo({ isGitRepositoryRoot: async () => false }),
+      io: fakeIo({ canHostTaskWorktree: async () => false }),
     });
     const message = await manager.validateDefaultTaskWorkspace(SPACE_A);
     expect(message).toContain('/primary-a');

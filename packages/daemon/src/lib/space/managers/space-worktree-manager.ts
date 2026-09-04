@@ -215,11 +215,18 @@ function createResolveRepo(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
   return { ...ctx, repo: resolveRepoRoot(ctx.repoRoot ?? ctx.workspacePath!) };
 }
 
+export class WorkspaceNotGitRepositoryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkspaceNotGitRepositoryError';
+  }
+}
+
 async function createAssertGitRepoRoot(ctx: CreateTaskWorktreeCtx): Promise<CreateTaskWorktreeCtx> {
   const repoRoot = ctx.repoRoot ?? ctx.workspacePath!;
   const commandCwd = ctx.repo!.commandCwd;
-  if (await nodeWorkspaceValidationIo.isGitRepositoryRoot(commandCwd)) return ctx;
-  throw new Error(
+  if (await nodeWorkspaceValidationIo.canHostTaskWorktree(commandCwd)) return ctx;
+  throw new WorkspaceNotGitRepositoryError(
     `Workspace is not a git repository: ${repoRoot} (resolved as ${commandCwd}); ` +
       `task worktrees can only be created inside a registered git repository`
   );

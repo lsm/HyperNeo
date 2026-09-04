@@ -242,6 +242,12 @@ export const CreateStandaloneTaskSchema = z.object({
       'When true, create the task in draft status. Draft tasks are never auto-started by the runtime, even with a workflow and priority assigned. Must be explicitly published (draft → open) before orchestration picks it up.'
     )
     .optional(),
+  workspace: z
+    .string()
+    .optional()
+    .describe(
+      'Optional workspace for this task, given as the label or absolute path of a workspace registered in this space. Omit to use the space primary workspace; in a multi-workspace space whose primary is not a git repository, omitting it is rejected and an explicit workspace is required. Unknown labels or paths are rejected with the list of registered workspaces.'
+    ),
 });
 
 export type CreateStandaloneTaskInput = z.infer<typeof CreateStandaloneTaskSchema>;

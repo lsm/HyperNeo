@@ -29,6 +29,7 @@ export interface WorkspaceValidationIo {
   realpath(path: string): Promise<string>;
   isDirectory(path: string): Promise<boolean>;
   isGitRepositoryRoot(path: string): Promise<boolean>;
+  canHostTaskWorktree(path: string): Promise<boolean>;
 }
 
 export type WorkspaceRejectionReason =
@@ -85,6 +86,19 @@ export const nodeWorkspaceValidationIo: WorkspaceValidationIo = {
       if (topLevel === path) return true;
       const [topStat, pathStat] = await Promise.all([fs.stat(topLevel), fs.stat(path)]);
       return topStat.dev === pathStat.dev && topStat.ino === pathStat.ino;
+    } catch {
+      return false;
+    }
+  },
+  async canHostTaskWorktree(path) {
+    try {
+      const env = { ...process.env };
+      const local = await execAsync('git rev-parse --local-env-vars');
+      for (const key of local.stdout.split(/\s+/)) {
+        if (key) delete env[key];
+      }
+      await execAsync('git rev-parse --git-common-dir', { cwd: path, env });
+      return true;
     } catch {
       return false;
     }

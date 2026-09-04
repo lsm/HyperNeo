@@ -539,12 +539,12 @@ function defaultTaskWorkspaceCountPaths(
   return { ...ctx, rows, distinctPaths };
 }
 
-async function defaultTaskWorkspaceGuardPrimaryGitRoot(
+async function defaultTaskWorkspaceGuardPrimaryUsable(
   ctx: ValidateDefaultTaskWorkspaceCtx
 ): Promise<ValidateDefaultTaskWorkspaceCtx> {
   const space = ctx.space;
   if (!space || !ctx.distinctPaths || ctx.distinctPaths.size <= 1) return ctx;
-  if (await ctx.io.isGitRepositoryRoot(space.workspacePath)) return ctx;
+  if (await ctx.io.canHostTaskWorktree(space.workspacePath)) return ctx;
   const alternatives = (ctx.rows ?? [])
     .filter((row) => row.path !== space.workspacePath)
     .map((row) => (row.label ? `"${row.label}" (${row.path})` : row.path));
@@ -568,7 +568,7 @@ const runValidateDefaultTaskWorkspace = (
   .input(['ctx'])
   .pipe(defaultTaskWorkspaceLoadSpace, 'ctx', 'ctx')
   .pipe(defaultTaskWorkspaceCountPaths, 'ctx', 'ctx')
-  .pipe(defaultTaskWorkspaceGuardPrimaryGitRoot, 'ctx', 'ctx')
+  .pipe(defaultTaskWorkspaceGuardPrimaryUsable, 'ctx', 'ctx')
   .endAsync('ctx') as (
   input: ValidateDefaultTaskWorkspaceCtx
 ) => Promise<ValidateDefaultTaskWorkspaceCtx>;

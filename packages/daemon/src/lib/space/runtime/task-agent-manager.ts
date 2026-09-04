@@ -56,7 +56,10 @@ import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
-import type { SpaceWorktreeManager } from '../managers/space-worktree-manager.ts';
+import {
+  WorkspaceNotGitRepositoryError,
+  type SpaceWorktreeManager,
+} from '../managers/space-worktree-manager.ts';
 import {
   activateModelPoolReservation,
   applyModelPoolToSlot,
@@ -895,9 +898,11 @@ export class TaskAgentManager {
             log.warn(
               `TaskAgentManager: failed to create worktree for workflow task ${task.id}; failing the spawn instead of falling back to the space workspace: ${detail}`
             );
-            throw new PermanentSpawnError(
-              `Task worktree creation failed for workflow task ${task.id}; refusing to spawn a node agent in the shared space workspace ${repoRoot}: ${detail}`
-            );
+            const message = `Task worktree creation failed for workflow task ${task.id}; refusing to spawn a node agent in the shared space workspace ${repoRoot}: ${detail}`;
+            if (err instanceof WorkspaceNotGitRepositoryError) {
+              throw new PermanentSpawnError(message);
+            }
+            throw new Error(message);
           }
         }
         return workspace.workspacePath;
@@ -5162,8 +5167,22 @@ export class TaskAgentManager {
       workflow_id?: string;
       depends_on?: string[];
       draft?: boolean;
+      workspace?: string;
     }) => {
       try {
+        let workspacePath: string | undefined;
+        if (args.workspace !== undefined) {
+          workspacePath = await this.config.spaceManager.resolveWorkspaceSelection(
+            spaceId,
+            args.workspace
+          );
+        } else {
+          const defaultWorkspaceError =
+            await this.config.spaceManager.validateDefaultTaskWorkspace(spaceId);
+          if (defaultWorkspaceError) {
+            return jsonResult({ success: false, error: defaultWorkspaceError });
+          }
+        }
         const task = await boundTaskManager.createTask({
           title: args.title,
           description: args.description,
@@ -5171,6 +5190,7 @@ export class TaskAgentManager {
           preferredWorkflowId: args.workflow_id ?? null,
           dependsOn: args.depends_on,
           status: args.draft ? 'draft' : undefined,
+          workspacePath,
           createdBy: agentName,
           createdBySession: subSessionId,
         });

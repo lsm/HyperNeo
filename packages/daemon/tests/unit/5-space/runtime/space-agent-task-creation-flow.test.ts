@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { execSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
@@ -427,6 +428,13 @@ describe('Agent-to-task creation flow — workspace selection', () => {
 
   test('omitting the workspace parameter keeps the task on the primary workspace', async () => {
     seedWorkspace('docs');
+    const gitPrimary = mkdtempSync(`${tmpdir()}/hyperneo-primary-git-`);
+    tempDirs.push(gitPrimary);
+    execSync('git -c init.defaultBranch=main init', { cwd: gitPrimary, stdio: 'pipe' });
+    ctx.db
+      .prepare('UPDATE spaces SET workspace_path = ? WHERE id = ?')
+      .run(realpathSync(gitPrimary), ctx.spaceId);
+
     const result = await makeHandlers(ctx).create_standalone_task({
       title: 'Primary task',
       description: 'No workspace given',
@@ -434,5 +442,18 @@ describe('Agent-to-task creation flow — workspace selection', () => {
     const parsed = parseResult(result);
     expect(parsed.success).toBe(true);
     expect(parsed.task.workspacePath ?? null).toBeNull();
+  });
+
+  test('omitting the workspace parameter is rejected when the primary is not a git repository', async () => {
+    seedWorkspace('docs');
+    const result = await makeHandlers(ctx).create_standalone_task({
+      title: 'Primary task',
+      description: 'No workspace given',
+    });
+    const parsed = parseResult(result);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('is not a git repository');
+    expect(parsed.error).toContain('"docs"');
+    expect(ctx.taskRepo.listBySpace(ctx.spaceId)).toHaveLength(0);
   });
 });

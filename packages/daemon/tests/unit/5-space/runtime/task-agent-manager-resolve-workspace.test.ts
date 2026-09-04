@@ -4,7 +4,10 @@ import { configureLogger, LogLevel, subscribeToStructuredLogs } from '../../../.
 import type { SpaceTask, Space } from '@hyperneo/shared';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import type { SpawnExecutionFlowDeps } from '../../../../src/lib/space/runtime/spawn-flow.ts';
-import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-worktree-manager.ts';
+import {
+  WorkspaceNotGitRepositoryError,
+  type SpaceWorktreeManager,
+} from '../../../../src/lib/space/managers/space-worktree-manager.ts';
 import {
   isPermanentSpawnError,
   PermanentSpawnError,
@@ -298,9 +301,11 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
   });
 
   describe('worktree failure classification (#3589)', () => {
-    test('classifies a worktree-creation failure as permanent so the runtime blocks once instead of crash-looping', async () => {
+    test('an unusable-workspace failure is permanent so the runtime blocks once instead of crash-looping', async () => {
       const createTaskWorktree = mock(async () => {
-        throw new Error('Workspace is not a git repository: /space/non-git');
+        throw new WorkspaceNotGitRepositoryError(
+          `Workspace is not a git repository: ${SPACE_WORKSPACE} (resolved as ${SPACE_WORKSPACE}); task worktrees can only be created inside a registered git repository`
+        );
       });
       const manager = makeManager({ createTaskWorktree } as unknown as SpaceWorktreeManager, {});
       const deps = (
@@ -313,6 +318,24 @@ describe('TaskAgentManager resolveWorkspacePath — spawn callback decision tabl
       expect(isPermanentSpawnError(err)).toBe(true);
       expect(err).toBeInstanceOf(PermanentSpawnError);
       expect((err as Error).message).toContain('Workspace is not a git repository');
+      expect((err as Error).message).toContain(SPACE_WORKSPACE);
+    });
+
+    test('other worktree-creation failures keep the transient retry classification', async () => {
+      const createTaskWorktree = mock(async () => {
+        throw new Error('Command failed: git worktree add');
+      });
+      const manager = makeManager({ createTaskWorktree } as unknown as SpaceWorktreeManager, {});
+      const deps = (
+        manager as unknown as { buildSpawnExecutionFlowDeps: BuildDeps }
+      ).buildSpawnExecutionFlowDeps({ reservationHeld: false, reservedExecution: false });
+
+      const err = await deps
+        .resolveWorkspacePath(makeTask(undefined), makeSpace())
+        .catch((e: unknown) => e);
+      expect(isPermanentSpawnError(err)).toBe(false);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain('git worktree add');
       expect((err as Error).message).toContain(SPACE_WORKSPACE);
     });
   });

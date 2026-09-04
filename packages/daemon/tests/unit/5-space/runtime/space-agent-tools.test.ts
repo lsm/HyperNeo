@@ -5540,7 +5540,7 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
       expect(parsed.error).toContain('is not a git repository');
       expect(parsed.error).toContain('"dolmen" (/repos/dolmen)');
       expect(parsed.error).toContain('"workspace"');
-      expect(taskManager.listTasks()).toHaveLength(0);
+      await expect(taskManager.listTasks()).resolves.toHaveLength(0);
     });
 
     test('multi-workspace space with a non-git primary still accepts an explicit workspace', async () => {
