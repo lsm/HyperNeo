@@ -2,6 +2,7 @@ import type {
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentTemplate,
   ThinkingLevel,
+  WorkerAgentModelPoolEntry,
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { useEffect, useState } from 'preact/hooks';
@@ -11,7 +12,7 @@ import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { LineNumberedTextarea } from './LineNumberedTextarea';
-import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect';
+import { ModelPoolEditor, type ModelPoolEditorMode } from './ModelPoolEditor';
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
   { value: '', label: 'Use app default' },
@@ -88,6 +89,9 @@ interface AgentSaveForm {
   instructions: string;
   autonomyLevel: number | null;
   model: string;
+  modelProvider: string;
+  modelMode: ModelPoolEditorMode;
+  modelPool: WorkerAgentModelPoolEntry[];
   thinkingLevel: '' | ThinkingLevel;
   tools: string;
 }
@@ -130,6 +134,13 @@ function agentSaveParseToolsStage(ctx: AgentSaveCtx): AgentSaveCtx {
 
 async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
   const { form, parsedTools, toolsChanged, displayName, handle, instructions } = ctx;
+  const effectiveModel = form.modelMode === 'single' ? form.model.trim() : '';
+  const effectiveProvider = effectiveModel ? form.modelProvider.trim() || null : null;
+  const cleanedModelPool = form.modelPool
+    .map((entry) => ({ ...entry, model: entry.model.trim() }))
+    .filter((entry) => entry.model.length > 0);
+  const activeModelPool =
+    form.modelMode === 'pool' && cleanedModelPool.length > 0 ? cleanedModelPool : null;
   if (ctx.agent) {
     await spaceStore.updateAgent(ctx.agent.id, {
       displayName,
@@ -137,13 +148,17 @@ async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
       ...(isMigratedWorkerMirror(ctx.agent)
         ? {}
         : { autonomyLevel: form.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null }),
-      model: form.model.trim() || null,
+      model: effectiveModel || null,
+      ...(effectiveProvider !== (ctx.agent.provider ?? null)
+        ? { provider: effectiveProvider }
+        : {}),
       thinkingLevel: (form.thinkingLevel || null) as ThinkingLevel | null,
       ...(toolsChanged
         ? isMigratedWorkerMirror(ctx.agent)
           ? { tools: parsedTools }
           : { toolPermissions: { ...ctx.agent.toolPermissions, tools: parsedTools } }
         : {}),
+      modelPool: activeModelPool,
     });
     return ctx;
   }
@@ -153,9 +168,11 @@ async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
     templateKey: ctx.template?.key ?? null,
     instructions,
     autonomyLevel: form.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null,
-    model: form.model.trim() || null,
+    model: effectiveModel || null,
+    ...(effectiveProvider ? { provider: effectiveProvider } : {}),
     thinkingLevel: (form.thinkingLevel || null) as ThinkingLevel | null,
     ...(parsedTools.length > 0 ? { tools: parsedTools } : {}),
+    modelPool: activeModelPool ?? undefined,
   });
   return ctx;
 }
@@ -199,7 +216,11 @@ function AgentEditor({
     agent?.autonomyLevel ?? template?.suggestedAutonomyLevel ?? null
   );
   const [model, setModel] = useState(agent?.model ?? '');
-  const [modelProvider, setModelProvider] = useState<string | undefined>(undefined);
+  const [modelProvider, setModelProvider] = useState<string>(agent?.provider ?? '');
+  const [modelPool, setModelPool] = useState<WorkerAgentModelPoolEntry[]>(agent?.modelPool ?? []);
+  const [modelMode, setModelMode] = useState<ModelPoolEditorMode>(
+    (agent?.modelPool?.length ?? 0) > 0 ? 'pool' : 'single'
+  );
   const [thinkingLevel, setThinkingLevel] = useState<'' | ThinkingLevel>(
     agent?.thinkingLevel ?? ''
   );
@@ -221,6 +242,9 @@ function AgentEditor({
           instructions,
           autonomyLevel,
           model,
+          modelProvider,
+          modelMode,
+          modelPool,
           thinkingLevel,
           tools,
         },
@@ -331,17 +355,19 @@ function AgentEditor({
             )}
           </div>
           <div class="grid grid-cols-2 gap-3">
-            <div>
+            <div class="col-span-2">
               <label class="mb-2 block text-sm font-medium text-fg-soft">Model</label>
-              <WorkflowModelSelect
-                value={model || undefined}
+              <ModelPoolEditor
+                mode={modelMode}
+                model={model}
                 provider={modelProvider}
-                onChange={(modelId, selection) => {
-                  setModel(modelId ?? '');
-                  setModelProvider(selection?.provider);
+                modelPool={modelPool}
+                onModeChange={setModelMode}
+                onModelChange={(nextModel, nextProvider) => {
+                  setModel(nextModel);
+                  setModelProvider(nextProvider);
                 }}
-                testId="lh-agent-model-select"
-                className="w-full rounded-xl border border-line bg-surface-overlay/90 px-3 py-2.5 text-sm text-fg focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
+                onModelPoolChange={setModelPool}
               />
             </div>
             <div>
