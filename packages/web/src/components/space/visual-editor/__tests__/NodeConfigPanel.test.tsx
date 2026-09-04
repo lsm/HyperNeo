@@ -387,6 +387,33 @@ describe('NodeConfigPanel', () => {
       const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
       expect(getByTestId('delete-step-button')).toBeTruthy();
     });
+
+    it('renders a disabled legacy agent fallback option in the single-agent select', () => {
+      const { getByTestId } = render(<NodeConfigPanel {...makeProps()} />);
+      const select = getByTestId('agent-select') as HTMLSelectElement;
+      const legacyOption = [...select.options].find((o) => o.value === 'agent-1');
+      expect(legacyOption).toBeTruthy();
+      expect(legacyOption?.disabled).toBe(true);
+      expect(legacyOption?.textContent).toBe('Planner');
+    });
+
+    it('renders a disabled legacy agent fallback option in the multi-agent slot select', () => {
+      const { getByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            step: makeStep({
+              agentId: '',
+              agents: [{ agentId: 'agent-1', name: 'coder' }],
+            }),
+          })}
+        />
+      );
+      const select = getByTestId('agent-slot-select') as HTMLSelectElement;
+      const legacyOption = [...select.options].find((o) => o.value === 'agent-1');
+      expect(legacyOption).toBeTruthy();
+      expect(legacyOption?.disabled).toBe(true);
+      expect(legacyOption?.textContent).toBe('Planner');
+    });
   });
 
   describe('start node badge', () => {
