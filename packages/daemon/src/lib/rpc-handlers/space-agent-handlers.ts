@@ -1,4 +1,5 @@
 import type {
+  CreateSpaceAgentTemplateParams,
   MessageHub,
   Session,
   SettingSource,
@@ -7,6 +8,7 @@ import type {
   SpaceWorkerAgent,
   SpaceWorkerAgentPromotionDraft,
   ThinkingLevel,
+  UpdateSpaceAgentTemplateParams,
   UpdateSpaceWorkerAgentParams,
   WorkerAgentModelPoolEntry,
 } from '@hyperneo/shared';
@@ -37,6 +39,7 @@ import {
   validateAgentModelPool,
   validateSpaceAgentTools,
 } from '../space/managers/space-agent-manager.ts';
+import { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import { getNextRunAt, isValidCronExpression } from '../space/schedule/cron-utils.ts';
@@ -57,6 +60,7 @@ type UnifiedSpaceAgentRuntimeService = Pick<
 interface UnifiedSpaceAgentMethodDeps {
   spaceManager: SpaceManager;
   repo: SpaceLongHorizonAgentRepository;
+  templateManager?: SpaceAgentTemplateManager;
   spaceAgentManager?: SpaceAgentManager;
   runtimeService?: UnifiedSpaceAgentRuntimeService;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
@@ -832,6 +836,7 @@ export function registerUnifiedSpaceAgentMethods(
 ): void {
   const method = (name: string): string => `spaceAgent.${name}`;
   const createUnifiedAgent = buildUnifiedAgentCreate(deps);
+  const templateManager = deps.templateManager;
 
   messageHub.onRequest(method('listBuiltInTemplates'), async (data) => {
     const params = data as { spaceId: string };
@@ -840,6 +845,38 @@ export function registerUnifiedSpaceAgentMethods(
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
     return { templates: getLongHorizonAgentTemplates() };
   });
+
+  if (templateManager) {
+    messageHub.onRequest(method('listTemplates'), async () => {
+      return { templates: templateManager.list() };
+    });
+
+    messageHub.onRequest(method('createTemplate'), async (data) => {
+      const params = data as CreateSpaceAgentTemplateParams;
+      if (!params.key) throw new Error('key is required');
+      if (!params.handle) throw new Error('handle is required');
+      const result = await templateManager.create(params);
+      if (!result.ok) throw new Error(result.error);
+      return { template: result.value };
+    });
+
+    messageHub.onRequest(method('updateTemplate'), async (data) => {
+      const params = data as { key: string } & UpdateSpaceAgentTemplateParams;
+      if (!params.key) throw new Error('key is required');
+      const { key, ...updates } = params;
+      const result = await templateManager.update(key, updates);
+      if (!result.ok) throw new Error(result.error);
+      return { template: result.value };
+    });
+
+    messageHub.onRequest(method('deleteTemplate'), async (data) => {
+      const params = data as { key: string };
+      if (!params.key) throw new Error('key is required');
+      const result = templateManager.delete(params.key);
+      if (!result.ok) throw new Error(result.error);
+      return { success: true };
+    });
+  }
 
   messageHub.onRequest(method('list'), async (data) => {
     const params = data as { spaceId: string };
@@ -1080,11 +1117,13 @@ export function setupSpaceAgentHandlers(
   spaceManager: SpaceManager,
   db: Database,
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
-  runtimeService?: UnifiedSpaceAgentRuntimeService
+  runtimeService?: UnifiedSpaceAgentRuntimeService,
+  templateManager?: SpaceAgentTemplateManager
 ): void {
   const deps: UnifiedSpaceAgentMethodDeps = {
     spaceManager,
     repo: longHorizonAgentRepo,
+    templateManager,
     spaceAgentManager,
     runtimeService,
     internalEventBus,

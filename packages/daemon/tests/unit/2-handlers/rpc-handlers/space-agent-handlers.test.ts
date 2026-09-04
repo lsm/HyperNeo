@@ -8,6 +8,8 @@ import {
   SpaceLongHorizonAgentRepository,
 } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
+import { SpaceAgentTemplateManager } from '../../../../src/lib/space/managers/space-agent-template-manager';
+import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import type {
@@ -22,6 +24,9 @@ import {
   insertWorkflow,
   insertWorkflowNode,
 } from '../../helpers/space-agent-schema';
+import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
+import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
+import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -184,6 +189,9 @@ describe('Space Agent RPC Handlers', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     createSpaceAgentSchema(db);
+    createSpaceAgentTemplatesTable(db);
+    runMigration226(db);
+    runMigration227(db);
     insertSpace(db, 'space-1');
 
     const repo = new SpaceAgentRepository(db as any);
@@ -201,7 +209,9 @@ describe('Space Agent RPC Handlers', () => {
       manager,
       spaceManagerData.spaceManager,
       createTestDatabaseFacade(db),
-      longHorizonRepo
+      longHorizonRepo,
+      undefined,
+      new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db as any))
     );
   });
 
@@ -242,6 +252,155 @@ describe('Space Agent RPC Handlers', () => {
       await expect(
         call(hubData.handlers, 'spaceAgent.listBuiltInTemplates', { spaceId: 'missing-space' })
       ).rejects.toThrow('Space not found: missing-space');
+    });
+  });
+
+  describe('spaceAgent.listTemplates', () => {
+    it('registers the handler', () => {
+      expect(hubData.handlers.has('spaceAgent.listTemplates')).toBe(true);
+    });
+
+    it('returns built-in templates in the unified template shape', async () => {
+      const result = await call<{
+        templates: Array<{
+          key: string;
+          displayName: string;
+          model: string | null;
+          createdAt: number;
+        }>;
+      }>(hubData.handlers, 'spaceAgent.listTemplates', {});
+
+      expect(Array.isArray(result.templates)).toBe(true);
+      expect(result.templates.map((template) => template.key)).toContain('coordinator.default');
+      for (const template of result.templates) {
+        expect(typeof template.createdAt).toBe('number');
+        expect(template.model).toBe(null);
+      }
+    });
+
+    it('merges custom templates with built-ins', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'review.custom',
+        handle: 'review',
+        displayName: 'Review',
+      });
+
+      const result = await call<{ templates: Array<{ key: string }> }>(
+        hubData.handlers,
+        'spaceAgent.listTemplates',
+        {}
+      );
+
+      const keys = result.templates.map((template) => template.key);
+      expect(keys).toContain('review.custom');
+      expect(keys).toContain('coordinator.default');
+    });
+  });
+
+  describe('spaceAgent.createTemplate', () => {
+    it('creates a custom template and returns it', async () => {
+      const result = await call<{
+        template: { key: string; handle: string; displayName: string };
+      }>(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'release.custom',
+        handle: 'release',
+        displayName: 'Release',
+      });
+
+      expect(result.template.key).toBe('release.custom');
+      expect(result.template.handle).toBe('release');
+      expect(result.template.displayName).toBe('Release');
+    });
+
+    it('throws when key is missing', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.createTemplate', { handle: 'release' })
+      ).rejects.toThrow('key is required');
+    });
+
+    it('throws when handle is missing', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.createTemplate', { key: 'release.custom' })
+      ).rejects.toThrow('handle is required');
+    });
+
+    it('surfaces manager validation errors for a duplicate key', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'dup.custom',
+        handle: 'dup',
+      });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.createTemplate', { key: 'dup.custom', handle: 'dup' })
+      ).rejects.toThrow('already exists');
+    });
+  });
+
+  describe('spaceAgent.updateTemplate', () => {
+    it('updates a custom template and returns it', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'update.custom',
+        handle: 'update',
+        displayName: 'Before',
+      });
+
+      const result = await call<{ template: { displayName: string } | null }>(
+        hubData.handlers,
+        'spaceAgent.updateTemplate',
+        { key: 'update.custom', displayName: 'After' }
+      );
+
+      expect(result.template?.displayName).toBe('After');
+    });
+
+    it('throws when key is missing', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.updateTemplate', { displayName: 'X' })
+      ).rejects.toThrow('key is required');
+    });
+
+    it('throws for an unknown key', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.updateTemplate', {
+          key: 'missing.custom',
+          displayName: 'X',
+        })
+      ).rejects.toThrow('Template not found: missing.custom');
+    });
+  });
+
+  describe('spaceAgent.deleteTemplate', () => {
+    it('deletes a custom template', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'delete.custom',
+        handle: 'delete',
+      });
+
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'delete.custom' }
+      );
+
+      expect(result.success).toBe(true);
+      const list = await call<{ templates: Array<{ key: string }> }>(
+        hubData.handlers,
+        'spaceAgent.listTemplates',
+        {}
+      );
+      expect(list.templates.map((template) => template.key)).not.toContain('delete.custom');
+    });
+
+    it('throws when key is missing', async () => {
+      await expect(call(hubData.handlers, 'spaceAgent.deleteTemplate', {})).rejects.toThrow(
+        'key is required'
+      );
+    });
+
+    it('throws for an unknown key', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'missing.custom' })
+      ).rejects.toThrow('Template not found: missing.custom');
     });
   });
 

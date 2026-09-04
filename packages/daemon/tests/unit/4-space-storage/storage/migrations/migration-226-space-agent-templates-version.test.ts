@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { runMigrations } from '../../../../../src/storage/schema/migrations.ts';
 import { runMigration225 } from '../../../../../src/storage/schema/m225-space-agent-templates.ts';
 import { runMigration226 } from '../../../../../src/storage/schema/m226-space-agent-templates-version.ts';
 import { runMigration227 } from '../../../../../src/storage/schema/m227-space-agent-template-version-seq.ts';
@@ -64,5 +65,18 @@ describe('migration 226: space_agent_templates version column', () => {
         handle: 'idempotent',
       })
     );
+  });
+
+  test('runs as part of the registered migration sequence', () => {
+    const db = new BunDatabase(':memory:');
+    runMigrations(db, () => {});
+
+    const repo = new SpaceAgentTemplateRepository(db);
+    const created = repo.create({ key: 'registered.custom', handle: 'registered' });
+
+    expect(created.key).toBe('registered.custom');
+    expect(repo.getByKeyWithVersion('registered.custom')?.version).toBe(1);
+    expect(repo.casUpdate('registered.custom', { displayName: 'Updated' }, 1)).not.toBeNull();
+    db.close();
   });
 });

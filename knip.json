@@ -92,11 +92,6 @@
     "packages/daemon/src/lib/space/workspaces/workspace-validation-pipeline.ts": ["exports"],
     "packages/daemon/src/storage/repositories/space-workspace-repository.ts": ["exports"],
     "packages/daemon/src/storage/repositories/agent-memory-transformers.ts": ["exports"],
-    "packages/daemon/src/storage/repositories/space-agent-template-repository.ts": [
-      "exports",
-      "files"
-    ],
-    "packages/daemon/src/lib/space/managers/space-agent-template-manager.ts": ["exports", "files"],
     "packages/daemon/src/lib/space/managers/space-agent-template-reapply-service.ts": [
       "exports",
       "files"
