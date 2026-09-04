@@ -8,6 +8,8 @@ import {
   SpaceLongHorizonAgentRepository,
 } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
+import { SpaceAgentTemplateManager } from '../../../../src/lib/space/managers/space-agent-template-manager';
+import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import type {
@@ -207,7 +209,9 @@ describe('Space Agent RPC Handlers', () => {
       manager,
       spaceManagerData.spaceManager,
       createTestDatabaseFacade(db),
-      longHorizonRepo
+      longHorizonRepo,
+      undefined,
+      new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db as any))
     );
   });
 

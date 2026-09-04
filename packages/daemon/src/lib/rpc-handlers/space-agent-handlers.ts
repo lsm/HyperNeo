@@ -19,7 +19,6 @@ import {
   coordinatorLongHorizonAgentId,
   type SpaceLongHorizonAgentRepository,
 } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
-import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { composeLongHorizonSubscriptionPattern } from '../external-events/long-horizon-subscription-pattern.ts';
 import { validateGlobPattern, validateSource } from '../external-events/topic-validator.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -61,7 +60,7 @@ type UnifiedSpaceAgentRuntimeService = Pick<
 interface UnifiedSpaceAgentMethodDeps {
   spaceManager: SpaceManager;
   repo: SpaceLongHorizonAgentRepository;
-  templateManager: SpaceAgentTemplateManager;
+  templateManager?: SpaceAgentTemplateManager;
   spaceAgentManager?: SpaceAgentManager;
   runtimeService?: UnifiedSpaceAgentRuntimeService;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
@@ -837,6 +836,7 @@ export function registerUnifiedSpaceAgentMethods(
 ): void {
   const method = (name: string): string => `spaceAgent.${name}`;
   const createUnifiedAgent = buildUnifiedAgentCreate(deps);
+  const templateManager = deps.templateManager;
 
   messageHub.onRequest(method('listBuiltInTemplates'), async (data) => {
     const params = data as { spaceId: string };
@@ -846,35 +846,37 @@ export function registerUnifiedSpaceAgentMethods(
     return { templates: getLongHorizonAgentTemplates() };
   });
 
-  messageHub.onRequest(method('listTemplates'), async () => {
-    return { templates: deps.templateManager.list() };
-  });
+  if (templateManager) {
+    messageHub.onRequest(method('listTemplates'), async () => {
+      return { templates: templateManager.list() };
+    });
 
-  messageHub.onRequest(method('createTemplate'), async (data) => {
-    const params = data as CreateSpaceAgentTemplateParams;
-    if (!params.key) throw new Error('key is required');
-    if (!params.handle) throw new Error('handle is required');
-    const result = await deps.templateManager.create(params);
-    if (!result.ok) throw new Error(result.error);
-    return { template: result.value };
-  });
+    messageHub.onRequest(method('createTemplate'), async (data) => {
+      const params = data as CreateSpaceAgentTemplateParams;
+      if (!params.key) throw new Error('key is required');
+      if (!params.handle) throw new Error('handle is required');
+      const result = await templateManager.create(params);
+      if (!result.ok) throw new Error(result.error);
+      return { template: result.value };
+    });
 
-  messageHub.onRequest(method('updateTemplate'), async (data) => {
-    const params = data as { key: string } & UpdateSpaceAgentTemplateParams;
-    if (!params.key) throw new Error('key is required');
-    const { key, ...updates } = params;
-    const result = await deps.templateManager.update(key, updates);
-    if (!result.ok) throw new Error(result.error);
-    return { template: result.value };
-  });
+    messageHub.onRequest(method('updateTemplate'), async (data) => {
+      const params = data as { key: string } & UpdateSpaceAgentTemplateParams;
+      if (!params.key) throw new Error('key is required');
+      const { key, ...updates } = params;
+      const result = await templateManager.update(key, updates);
+      if (!result.ok) throw new Error(result.error);
+      return { template: result.value };
+    });
 
-  messageHub.onRequest(method('deleteTemplate'), async (data) => {
-    const params = data as { key: string };
-    if (!params.key) throw new Error('key is required');
-    const result = deps.templateManager.delete(params.key);
-    if (!result.ok) throw new Error(result.error);
-    return { success: true };
-  });
+    messageHub.onRequest(method('deleteTemplate'), async (data) => {
+      const params = data as { key: string };
+      if (!params.key) throw new Error('key is required');
+      const result = templateManager.delete(params.key);
+      if (!result.ok) throw new Error(result.error);
+      return { success: true };
+    });
+  }
 
   messageHub.onRequest(method('list'), async (data) => {
     const params = data as { spaceId: string };
@@ -1115,14 +1117,13 @@ export function setupSpaceAgentHandlers(
   spaceManager: SpaceManager,
   db: Database,
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
-  runtimeService?: UnifiedSpaceAgentRuntimeService
+  runtimeService?: UnifiedSpaceAgentRuntimeService,
+  templateManager?: SpaceAgentTemplateManager
 ): void {
   const deps: UnifiedSpaceAgentMethodDeps = {
     spaceManager,
     repo: longHorizonAgentRepo,
-    templateManager: new SpaceAgentTemplateManager(
-      new SpaceAgentTemplateRepository(db.getDatabase())
-    ),
+    templateManager,
     spaceAgentManager,
     runtimeService,
     internalEventBus,
