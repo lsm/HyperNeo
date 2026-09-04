@@ -447,27 +447,62 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(result.ok).toBe(true);
     });
+
+    test('prevents concurrent model and provider updates from persisting an unvalidated pair', async () => {
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              makeModelInfo('shared-model', 'shared-model', 'anthropic'),
+              makeModelInfo('shared-model', 'shared-model', 'glm'),
+              makeModelInfo('glm-4-flash', 'glm-4-flash', 'glm'),
+            ],
+          ],
+        ])
+      );
+
+      await manager.create({
+        ...fullParams(),
+        model: 'shared-model',
+        provider: 'glm',
+        modelPool: undefined,
+      });
+
+      const [modelResult, providerResult] = await Promise.all([
+        manager.update('release-readiness.custom', { model: 'glm-4-flash' }),
+        manager.update('release-readiness.custom', { provider: 'anthropic' }),
+      ]);
+
+      expect(modelResult.ok).toBe(true);
+      expect(providerResult.ok).toBe(false);
+      if (!providerResult.ok) expect(providerResult.error).toMatch(/anthropic/);
+
+      const final = manager.getByKey('release-readiness.custom');
+      expect(final?.model).toBe('glm-4-flash');
+      expect(final?.provider).toBe('glm');
+    });
   });
 
   describe('delete', () => {
     test('deletes a custom template', async () => {
       await manager.create(fullParams());
 
-      const result = manager.delete('release-readiness.custom');
+      const result = await manager.delete('release-readiness.custom');
 
       expect(result.ok).toBe(true);
       expect(manager.getByKey('release-readiness.custom')).toBeNull();
     });
 
-    test('returns an error for an unknown key', () => {
-      const result = manager.delete('missing.custom');
+    test('returns an error for an unknown key', async () => {
+      const result = await manager.delete('missing.custom');
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('not found');
     });
 
-    test('cannot delete a built-in', () => {
-      const result = manager.delete('builtin.default');
+    test('cannot delete a built-in', async () => {
+      const result = await manager.delete('builtin.default');
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('not found');

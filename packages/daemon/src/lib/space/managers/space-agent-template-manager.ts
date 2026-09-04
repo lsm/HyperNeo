@@ -38,6 +38,14 @@ interface UpdateTemplateCtx {
   template?: SpaceAgentTemplate;
 }
 
+interface DeleteTemplateCtx {
+  repo: SpaceAgentTemplateRepository;
+  key: string;
+  existing?: SpaceAgentTemplate;
+  error?: string;
+  deleted?: boolean;
+}
+
 function getBuiltInSpaceAgentTemplates(): SpaceAgentTemplate[] {
   return getLongHorizonAgentTemplates().map((template) => ({
     key: template.key,
@@ -215,6 +223,18 @@ function updatePersist(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
   return { ...ctx, template };
 }
 
+function deleteLoadExisting(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
+  const existing = ctx.repo.getByKey(ctx.key);
+  if (!existing) return { ...ctx, error: `Template not found: ${ctx.key}` };
+  return { ...ctx, existing };
+}
+
+function deletePersist(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
+  const deleted = ctx.repo.delete(ctx.key);
+  if (!deleted) return { ...ctx, error: `Template not found after delete: ${ctx.key}` };
+  return { ...ctx, deleted: true };
+}
+
 const templatePipeline = superpipe({
   hasError: (ctx: { error?: string }) => ctx.error !== undefined,
 });
@@ -259,35 +279,68 @@ const runUpdateTemplate = (templatePipeline('update-space-agent-template') as Pi
   .pipe(updatePersist, 'ctx', 'ctx')
   .endAsync('ctx') as (input: UpdateTemplateCtx) => Promise<UpdateTemplateCtx>;
 
+const runDeleteTemplate = (templatePipeline('delete-space-agent-template') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(deleteLoadExisting, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(deletePersist, 'ctx', 'ctx')
+  .end('ctx') as (input: DeleteTemplateCtx) => DeleteTemplateCtx;
+
 export class SpaceAgentTemplateManager {
   constructor(
     private repo: SpaceAgentTemplateRepository,
     private builtIns: BuiltInTemplateSource = getBuiltInSpaceAgentTemplates
   ) {}
 
+  private readonly keyLocks = new Map<string, Promise<unknown>>();
+
+  private async withKeyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.keyLocks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = prev.then(
+      () => held,
+      () => held
+    );
+    this.keyLocks.set(key, tail);
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.keyLocks.get(key) === tail) this.keyLocks.delete(key);
+    }
+  }
+
   async create(
     params: CreateSpaceAgentTemplateParams
   ): Promise<SpaceAgentResult<SpaceAgentTemplate>> {
-    const ctx = await runCreateTemplate({ repo: this.repo, params });
-    if (ctx.error) return { ok: false, error: ctx.error };
-    return { ok: true, value: ctx.template! };
+    return this.withKeyLock(params.key, async () => {
+      const ctx = await runCreateTemplate({ repo: this.repo, params });
+      if (ctx.error) return { ok: false, error: ctx.error };
+      return { ok: true, value: ctx.template! };
+    });
   }
 
   async update(
     key: string,
     params: UpdateSpaceAgentTemplateParams
   ): Promise<SpaceAgentResult<SpaceAgentTemplate | null>> {
-    const ctx = await runUpdateTemplate({ repo: this.repo, key, params });
-    if (ctx.error) return { ok: false, error: ctx.error };
-    return { ok: true, value: ctx.template! };
+    return this.withKeyLock(key, async () => {
+      const ctx = await runUpdateTemplate({ repo: this.repo, key, params });
+      if (ctx.error) return { ok: false, error: ctx.error };
+      return { ok: true, value: ctx.template! };
+    });
   }
 
-  delete(key: string): SpaceAgentResult<void> {
-    if (!this.repo.getByKey(key)) {
-      return { ok: false, error: `Template not found: ${key}` };
-    }
-    this.repo.delete(key);
-    return { ok: true, value: undefined };
+  async delete(key: string): Promise<SpaceAgentResult<void>> {
+    return this.withKeyLock(key, async () => {
+      const ctx = runDeleteTemplate({ repo: this.repo, key });
+      if (ctx.error) return { ok: false, error: ctx.error };
+      return { ok: true, value: undefined };
+    });
   }
 
   list(): SpaceAgentTemplate[] {
