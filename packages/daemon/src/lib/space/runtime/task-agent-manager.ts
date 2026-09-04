@@ -163,6 +163,8 @@ import {
   buildSlotOverrides,
   explicitTaskWorkspace,
   findAvailableSessionId,
+  type NodeAgentSpawnConfig,
+  resolveNodeAgentConfig,
   resolveSpawnWorkspace,
   resolveTaskWorkspace,
   resolveWorkflowNodeSlot,
@@ -910,7 +912,8 @@ export class TaskAgentManager {
       resolveSlot: (_space, workflow, execution, _task) =>
         resolveWorkflowNodeSlot(workflow, execution.workflowNodeId, execution.agentName) ?? null,
       createSpawnedSession: async (request) => {
-        const customAgent = this.resolveUnifiedSlotAgent(request.space.id, request.slot.agentId);
+        const customAgent =
+          this.resolveSlotSpawnConfig(request.space.id, request.slot)?.agent ?? null;
         let slot = request.slot;
         let poolProvider: string | undefined;
         if (customAgent) {
@@ -3660,6 +3663,18 @@ export class TaskAgentManager {
     }
     const worker = this.config.spaceAgentManager.getById(agentId);
     return worker?.spaceId === spaceId ? worker : null;
+  }
+
+  private resolveSlotSpawnConfig(
+    spaceId: string,
+    slot: WorkflowNodeAgent
+  ): NodeAgentSpawnConfig | null {
+    const registryAgent = this.resolveUnifiedSlotAgent(spaceId, slot.agentId);
+    return resolveNodeAgentConfig(
+      null,
+      { agentId: slot.agentId },
+      registryAgent ? [registryAgent] : []
+    );
   }
 
   private slotAgentExists(spaceId: string, agentId: string): boolean {
