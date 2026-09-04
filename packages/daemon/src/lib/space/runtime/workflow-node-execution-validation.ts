@@ -90,7 +90,7 @@ export function findMissingNodeAgentReferences(
   const missing: MissingNodeAgentReference[] = [];
   for (const agent of agents) {
     if (slotFilter && !slotFilter.has(agent.name)) continue;
-    if (agent.agentId && !agentExists(agent.agentId)) {
+    if (agent.agentId && !agent.templateKey?.trim() && !agentExists(agent.agentId)) {
       missing.push({ agentName: agent.name, agentId: agent.agentId });
     }
   }
@@ -160,8 +160,9 @@ export function validateExecutionAgainstWorkflow(
   }
 
   const slot = nodeAgents.find((agentSlot) => agentSlot.name === execution.agentName);
-  const resolvedAgentId =
-    slot?.agentId || (slot?.templateKey ? `template:${slot.templateKey}` : '');
+  const resolvedAgentId = slot?.templateKey?.trim()
+    ? `template:${slot.templateKey.trim()}`
+    : slot?.agentId || '';
   if (!resolvedAgentId) {
     return {
       valid: false,

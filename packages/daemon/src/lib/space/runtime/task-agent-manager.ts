@@ -3682,8 +3682,8 @@ export class TaskAgentManager {
     spaceId: string,
     slot: WorkflowNodeAgent
   ): NodeAgentSpawnConfig | null {
-    if (slot.templateKey) {
-      const template = getLongHorizonAgentTemplate(slot.templateKey) as
+    if (slot.templateKey?.trim()) {
+      const template = getLongHorizonAgentTemplate(slot.templateKey.trim()) as
         | NodeAgentTemplateSource
         | undefined;
       if (!template) return null;

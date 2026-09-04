@@ -637,7 +637,7 @@ export class SpaceWorkflowManager {
     for (let j = 0; j < node.agents.length; j++) {
       const entry = node.agents[j];
       if (entry.templateKey?.trim()) {
-        const template = getLongHorizonAgentTemplate(entry.templateKey);
+        const template = getLongHorizonAgentTemplate(entry.templateKey.trim());
         if (!template) {
           throw new WorkflowValidationError(
             `node[${index}].agents[${j}]: templateKey "${entry.templateKey}" does not match any built-in agent template`

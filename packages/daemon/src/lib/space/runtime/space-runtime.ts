@@ -884,6 +884,10 @@ export class SpaceRuntime {
     );
   }
 
+  private slotAgentId(slot: { agentId: string; templateKey?: string | null }): string | null {
+    return slot.templateKey?.trim() ? null : slot.agentId || null;
+  }
+
   registerRunInterests(workflowRunId: string, taskId: string, nodes: WorkflowNode[]): void {
     this.topicTrie.remove(
       (target) =>
@@ -3909,7 +3913,7 @@ export class SpaceRuntime {
           workflowRunId: run.id,
           workflowNodeId: startNode.id,
           agentName: agentEntry.name,
-          agentId: agentEntry.agentId ?? null,
+          agentId: this.slotAgentId(agentEntry),
           status: 'pending',
         });
       }
@@ -4036,7 +4040,7 @@ export class SpaceRuntime {
             workflowRunId: run.id,
             workflowNodeId: startNode.id,
             agentName: agentEntry.name,
-            agentId: agentEntry.agentId ?? null,
+            agentId: this.slotAgentId(agentEntry),
             status: 'pending',
           });
         }
@@ -4072,7 +4076,7 @@ export class SpaceRuntime {
             workflowRunId: run.id,
             workflowNodeId: slotNode.id,
             agentName: options.agentName ?? slot?.name ?? '',
-            agentId: slot?.agentId ?? null,
+            agentId: slot ? this.slotAgentId(slot) : null,
             status: 'pending',
           });
           executions = this.config.nodeExecutionRepo.listByWorkflowRun(run.id);
@@ -5173,7 +5177,7 @@ export class SpaceRuntime {
             workflowRunId: run.id,
             workflowNodeId: targetNode.id,
             agentName: agentEntry.name,
-            agentId: agentEntry.agentId ?? null,
+            agentId: this.slotAgentId(agentEntry),
             status: 'pending',
           });
           activatedForTarget = true;
@@ -6853,7 +6857,7 @@ export class SpaceRuntime {
       for (const node of workflow.nodes) {
         const exact = resolveNodeAgents(node).find((slot) => slot.name === targetAgentName);
         if (exact)
-          return { nodeId: node.id, agentName: exact.name, agentId: exact.agentId ?? null };
+          return { nodeId: node.id, agentName: exact.name, agentId: this.slotAgentId(exact) };
       }
     }
     for (const node of workflow.nodes) {
@@ -6863,7 +6867,7 @@ export class SpaceRuntime {
       if (workflowNodeId != null) {
         const direct = slots.find((slot) => slot.name === targetAgentName);
         if (direct)
-          return { nodeId: node.id, agentName: direct.name, agentId: direct.agentId ?? null };
+          return { nodeId: node.id, agentName: direct.name, agentId: this.slotAgentId(direct) };
         continue;
       }
 
@@ -6874,7 +6878,7 @@ export class SpaceRuntime {
         nodeFormMatched = true;
         const direct = slots.find((slot) => slot.name === targetAgentName.slice(prefix.length));
         if (direct)
-          return { nodeId: node.id, agentName: direct.name, agentId: direct.agentId ?? null };
+          return { nodeId: node.id, agentName: direct.name, agentId: this.slotAgentId(direct) };
       }
       if (nodeFormMatched) continue;
 
@@ -6883,9 +6887,9 @@ export class SpaceRuntime {
         (slot) => slot.name === targetAgentName || (nodeNameMatch && slot.name === node.name)
       );
       if (direct)
-        return { nodeId: node.id, agentName: direct.name, agentId: direct.agentId ?? null };
+        return { nodeId: node.id, agentName: direct.name, agentId: this.slotAgentId(direct) };
       if (nodeNameMatch && slots[0]) {
-        return { nodeId: node.id, agentName: slots[0].name, agentId: slots[0].agentId ?? null };
+        return { nodeId: node.id, agentName: slots[0].name, agentId: this.slotAgentId(slots[0]) };
       }
       if (nodeNameMatch) {
         return { nodeId: node.id, agentName: targetAgentName, agentId: null };
