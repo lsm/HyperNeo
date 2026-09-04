@@ -1,14 +1,22 @@
 import { describe, expect, test } from 'bun:test';
-import type { McpServerConfig, SpaceTask, SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
+import type {
+  McpServerConfig,
+  SpaceTask,
+  SpaceWorkerAgent,
+  SpaceWorkflow,
+  WorkflowNode,
+} from '@hyperneo/shared';
+import type { AgentSessionInit } from '../../../../src/lib/agent/agent-session';
+import { buildExecutionBaseSessionId } from '../../../../src/lib/session/sub-session-identity';
+import type { NodeAgentTemplateSource } from '../../../../src/lib/space/runtime/spawn-slot-resolution';
 import {
   assembleNodeAgentSessionInit,
   findAvailableSessionId,
+  resolveNodeAgentConfig,
   resolveSpawnWorkspace,
   resolveTaskWorkspace,
   resolveWorkflowNodeSlot,
 } from '../../../../src/lib/space/runtime/spawn-slot-resolution';
-import { buildExecutionBaseSessionId } from '../../../../src/lib/session/sub-session-identity';
-import type { AgentSessionInit } from '../../../../src/lib/agent/agent-session';
 
 function makeNode(overrides: Partial<WorkflowNode> = {}): WorkflowNode {
   return {
@@ -241,5 +249,179 @@ describe('assembleNodeAgentSessionInit', () => {
       ...nodeAgentServers,
       'agent-memory': memoryServers['agent-memory'],
     });
+  });
+});
+
+function makeTemplate(overrides: Partial<NodeAgentTemplateSource> = {}): NodeAgentTemplateSource {
+  return {
+    key: 'coder.default',
+    handle: 'coder',
+    displayName: 'Coder',
+    description: 'Writes the assigned work.',
+    instructions: 'Template base contract',
+    suggestedAutonomyLevel: 2,
+    suggestedEventSubscriptions: [],
+    reminderDefaults: [],
+    ownershipPatterns: [],
+    toolPermissions: {},
+    ...overrides,
+  };
+}
+
+function makeAgent(overrides: Partial<SpaceWorkerAgent> = {}): SpaceWorkerAgent {
+  return {
+    id: 'agent-1',
+    spaceId: 'space-1',
+    name: 'Registry Agent',
+    handle: 'registry-agent',
+    customPrompt: 'Registry base contract',
+    createdAt: 100,
+    updatedAt: 200,
+    ...overrides,
+  };
+}
+
+describe('resolveNodeAgentConfig: template source', () => {
+  test('builds an ephemeral spawn config from template fields', () => {
+    const config = resolveNodeAgentConfig(
+      makeTemplate({ toolPermissions: { tools: ['Read', 'Bash'] } }),
+      { name: 'coder' },
+      []
+    );
+
+    expect(config?.source).toBe('template');
+    expect(config?.templateKey).toBe('coder.default');
+    expect(config?.agent.id).toBe('template:coder.default');
+    expect(config?.agent.spaceId).toBe('');
+    expect(config?.agent.name).toBe('coder');
+    expect(config?.agent.handle).toBe('coder');
+    expect(config?.agent.customPrompt).toBe('Template base contract');
+    expect(config?.agent.tools).toEqual(['Read', 'Bash']);
+    expect(config?.agent.templateName).toBe('coder.default');
+    expect(config?.agent.templateHash).toBeNull();
+  });
+
+  test('per-node role name, model, and thinking level override the template fields', () => {
+    const config = resolveNodeAgentConfig(
+      makeTemplate({ model: 'template-model', thinkingLevel: 'think8k' }),
+      { name: 'implementer', model: 'override-model', thinkingLevel: 'think32k' },
+      []
+    );
+
+    expect(config?.agent.name).toBe('implementer');
+    expect(config?.agent.model).toBe('override-model');
+    expect(config?.agent.thinkingLevel).toBe('think32k');
+  });
+
+  test('keeps template model, provider, thinking level, and setting sources when unoverridden', () => {
+    const config = resolveNodeAgentConfig(
+      makeTemplate({
+        model: 'template-model',
+        provider: 'anthropic',
+        thinkingLevel: 'think8k',
+        settingSources: ['project'],
+      }),
+      { name: 'coder' },
+      []
+    );
+
+    expect(config?.agent.model).toBe('template-model');
+    expect(config?.agent.provider).toBe('anthropic');
+    expect(config?.agent.thinkingLevel).toBe('think8k');
+    expect(config?.agent.settingSources).toEqual(['project']);
+  });
+
+  test('leaves model and thinking level undefined when neither template nor node sets them', () => {
+    const config = resolveNodeAgentConfig(makeTemplate(), { name: 'coder' }, []);
+
+    expect(config?.agent.model).toBeUndefined();
+    expect(config?.agent.thinkingLevel).toBeUndefined();
+    expect(config?.agent.provider).toBeUndefined();
+  });
+
+  test('falls back to the template display name when the node sets no role name', () => {
+    const config = resolveNodeAgentConfig(makeTemplate(), {}, []);
+
+    expect(config?.agent.name).toBe('Coder');
+  });
+
+  test('filters non-string tool permissions entries and leaves tools unset when absent', () => {
+    const noisy = resolveNodeAgentConfig(
+      makeTemplate({ toolPermissions: { tools: ['Read', 42, null] as unknown[] } }),
+      {},
+      []
+    );
+    expect(noisy?.agent.tools).toEqual(['Read']);
+
+    const bare = resolveNodeAgentConfig(makeTemplate(), {}, []);
+    expect(bare?.agent.tools).toBeUndefined();
+  });
+});
+
+describe('resolveNodeAgentConfig: legacy agentId fallback', () => {
+  test('resolves the registry agent by id when no template is set', () => {
+    const agent = makeAgent({ templateName: 'legacy.origin' });
+    const config = resolveNodeAgentConfig(null, { agentId: 'agent-1' }, [agent]);
+
+    expect(config?.source).toBe('agent');
+    expect(config?.templateKey).toBe('legacy.origin');
+    expect(config?.agent).toEqual(agent);
+  });
+
+  test('applies per-node role name, model, and thinking level over the registry agent', () => {
+    const config = resolveNodeAgentConfig(
+      undefined,
+      {
+        agentId: 'agent-1',
+        name: 'coder',
+        model: 'override-model',
+        thinkingLevel: 'think16k',
+      },
+      [makeAgent({ model: 'agent-model', thinkingLevel: 'think8k' })]
+    );
+
+    expect(config?.agent.name).toBe('coder');
+    expect(config?.agent.model).toBe('override-model');
+    expect(config?.agent.thinkingLevel).toBe('think16k');
+  });
+
+  test('keeps the registry agent own model and thinking level when the node sets none', () => {
+    const config = resolveNodeAgentConfig(null, { agentId: 'agent-1' }, [
+      makeAgent({ model: 'agent-model', thinkingLevel: 'think8k' }),
+    ]);
+
+    expect(config?.agent.model).toBe('agent-model');
+    expect(config?.agent.thinkingLevel).toBe('think8k');
+  });
+
+  test('reports a null template key for registry agents without a template', () => {
+    const config = resolveNodeAgentConfig(null, { agentId: 'agent-1' }, [makeAgent()]);
+
+    expect(config?.templateKey).toBeNull();
+  });
+
+  test('prefers the template when both a template and a legacy agentId are present', () => {
+    const config = resolveNodeAgentConfig(makeTemplate(), { agentId: 'agent-1' }, [makeAgent()]);
+
+    expect(config?.source).toBe('template');
+    expect(config?.templateKey).toBe('coder.default');
+    expect(config?.agent.id).toBe('template:coder.default');
+  });
+
+  test('returns null when the agentId matches no registered agent', () => {
+    expect(resolveNodeAgentConfig(null, { agentId: 'agent-gone' }, [makeAgent()])).toBeNull();
+  });
+
+  test('returns null when there is neither a template nor an agentId', () => {
+    expect(resolveNodeAgentConfig(null, {}, [makeAgent()])).toBeNull();
+    expect(resolveNodeAgentConfig(undefined, {}, [])).toBeNull();
+  });
+
+  test('does not mutate the registry agent record', () => {
+    const agent = makeAgent({ model: 'agent-model' });
+    resolveNodeAgentConfig(null, { agentId: 'agent-1', model: 'override-model' }, [agent]);
+
+    expect(agent.model).toBe('agent-model');
+    expect(agent.name).toBe('Registry Agent');
   });
 });
