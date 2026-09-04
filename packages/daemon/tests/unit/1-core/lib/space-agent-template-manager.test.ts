@@ -261,6 +261,18 @@ describe('SpaceAgentTemplateManager', () => {
       if (!result.ok) expect(result.error).toMatch(/provider/i);
     });
 
+    test('rejects a model-pool entry missing a model', async () => {
+      const result = await manager.create({
+        ...fullParams(),
+        model: undefined,
+        provider: undefined,
+        modelPool: [{ provider: 'anthropic', maxConcurrent: 1, weight: 1 } as any],
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/Model pool entries must specify a model/);
+    });
+
     test('rejects a model pool entry with an incompatible provider', async () => {
       setModelsCache(new Map([['global', [makeModelInfo('glm-4-flash', 'glm-4-flash', 'glm')]]]));
 

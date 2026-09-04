@@ -122,7 +122,7 @@ async function validateTemplateModelPool(
 ): Promise<string | null> {
   if (pool === undefined || pool === null || pool.length === 0) return null;
   for (const entry of pool) {
-    if (entry.model.trim() === '') return 'Model pool entries must specify a model';
+    if (!entry.model || entry.model.trim() === '') return 'Model pool entries must specify a model';
     if (entry.provider !== undefined && entry.provider.trim() === '') {
       return `Provider identifier cannot be blank for model pool entry "${entry.model}"`;
     }
