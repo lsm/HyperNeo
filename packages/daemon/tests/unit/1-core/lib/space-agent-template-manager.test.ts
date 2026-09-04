@@ -6,6 +6,7 @@ import type {
 } from '@hyperneo/shared';
 import { SpaceAgentTemplateManager } from '../../../../src/lib/space/managers/space-agent-template-manager';
 import { setModelsCache } from '../../../../src/lib/model-service';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
@@ -183,6 +184,65 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(result.ok).toBe(true);
     });
+
+    test('rejects a blank display name', async () => {
+      const result = await manager.create({ ...fullParams(), displayName: '' });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('display name');
+    });
+
+    test('rejects a display name with only whitespace', async () => {
+      const result = await manager.create({ ...fullParams(), displayName: '   ' });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('display name');
+    });
+
+    test('rejects the reserved migration template key', async () => {
+      const result = await manager.create({
+        ...fullParams(),
+        key: MIGRATED_WORKER_TEMPLATE_KEY,
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('reserved');
+    });
+
+    test('rejects a model pool entry with an incompatible provider', async () => {
+      setModelsCache(new Map([['global', [makeModelInfo('glm-4-flash', 'glm-4-flash', 'glm')]]]));
+
+      const result = await manager.create({
+        ...fullParams(),
+        model: undefined,
+        provider: undefined,
+        modelPool: [{ model: 'glm-4-flash', provider: 'anthropic', maxConcurrent: 1, weight: 1 }],
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/anthropic/);
+    });
+
+    test('accepts a model pool entry with a compatible provider', async () => {
+      setModelsCache(new Map([['global', [makeModelInfo('glm-4-flash', 'glm-4-flash', 'glm')]]]));
+
+      const result = await manager.create({
+        ...fullParams(),
+        model: undefined,
+        provider: undefined,
+        modelPool: [{ model: 'glm-4-flash', provider: 'glm', maxConcurrent: 1, weight: 1 }],
+      });
+
+      expect(result.ok).toBe(true);
+    });
+
+    test('allows an empty model pool', async () => {
+      const result = await manager.create({ ...fullParams(), modelPool: [] });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value.modelPool).toBeNull();
+    });
   });
 
   describe('update', () => {
@@ -223,6 +283,169 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('FakeTool');
+    });
+
+    test('rejects a blank display name on update', async () => {
+      await manager.create(fullParams());
+
+      const result = await manager.update('release-readiness.custom', { displayName: '   ' });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('display name');
+    });
+
+    test('rejects a model-only update that is incompatible with the existing provider', async () => {
+      setModelsCache(
+        new Map([['global', [makeModelInfo('claude-sonnet-4-6', 'sonnet', 'anthropic')]]])
+      );
+
+      await manager.create({
+        ...fullParams(),
+        model: 'sonnet',
+        provider: 'anthropic',
+        modelPool: undefined,
+      });
+
+      const result = await manager.update('release-readiness.custom', { model: 'unknown-model' });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/anthropic/);
+    });
+
+    test('validates a new model without a provider when provider is set to null', async () => {
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              makeModelInfo('claude-sonnet-4-6', 'sonnet', 'anthropic'),
+              makeModelInfo('glm-4-flash', 'glm-4-flash', 'glm'),
+            ],
+          ],
+        ])
+      );
+
+      await manager.create({
+        ...fullParams(),
+        model: 'sonnet',
+        provider: 'anthropic',
+        modelPool: undefined,
+      });
+
+      const result = await manager.update('release-readiness.custom', {
+        model: 'glm-4-flash',
+        provider: null,
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value?.model).toBe('glm-4-flash');
+    });
+
+    test('rejects a provider-only update that is incompatible with the existing model', async () => {
+      setModelsCache(new Map([['global', [makeModelInfo('glm-4-flash', 'glm-4-flash', 'glm')]]]));
+
+      await manager.create({
+        ...fullParams(),
+        model: 'glm-4-flash',
+        provider: 'glm',
+        modelPool: undefined,
+      });
+
+      const result = await manager.update('release-readiness.custom', { provider: 'anthropic' });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/anthropic/);
+    });
+
+    test('accepts a provider-only update that is compatible with the existing model', async () => {
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              makeModelInfo('shared-model', 'shared-model', 'anthropic'),
+              makeModelInfo('shared-model', 'shared-model', 'glm'),
+            ],
+          ],
+        ])
+      );
+
+      await manager.create({
+        ...fullParams(),
+        model: 'shared-model',
+        provider: 'glm',
+        modelPool: undefined,
+      });
+
+      const result = await manager.update('release-readiness.custom', { provider: 'anthropic' });
+
+      expect(result.ok).toBe(true);
+    });
+
+    test('allows an empty model pool to clear the stored pool', async () => {
+      await manager.create(fullParams());
+
+      const result = await manager.update('release-readiness.custom', { modelPool: [] });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value?.modelPool).toBeNull();
+    });
+
+    test('rejects a model pool with an incompatible provider on update', async () => {
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              makeModelInfo('claude-sonnet-4-6', 'sonnet', 'anthropic'),
+              makeModelInfo('glm-4-flash', 'glm-4-flash', 'glm'),
+            ],
+          ],
+        ])
+      );
+
+      await manager.create({
+        ...fullParams(),
+        model: 'sonnet',
+        provider: 'anthropic',
+        modelPool: undefined,
+      });
+
+      const result = await manager.update('release-readiness.custom', {
+        modelPool: [{ model: 'glm-4-flash', provider: 'anthropic', maxConcurrent: 1, weight: 1 }],
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/anthropic/);
+    });
+
+    test('accepts a model pool with a compatible provider on update', async () => {
+      setModelsCache(
+        new Map([
+          [
+            'global',
+            [
+              makeModelInfo('claude-sonnet-4-6', 'sonnet', 'anthropic'),
+              makeModelInfo('glm-4-flash', 'glm-4-flash', 'glm'),
+            ],
+          ],
+        ])
+      );
+
+      await manager.create({
+        ...fullParams(),
+        model: 'sonnet',
+        provider: 'anthropic',
+        modelPool: undefined,
+      });
+
+      const result = await manager.update('release-readiness.custom', {
+        modelPool: [{ model: 'glm-4-flash', provider: 'glm', maxConcurrent: 1, weight: 1 }],
+      });
+
+      expect(result.ok).toBe(true);
     });
   });
 
