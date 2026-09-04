@@ -114,3 +114,39 @@ describe('buildSlotOverrides', () => {
     expect(overrides.customPrompt).toBe('Explicit replacement');
   });
 });
+
+describe('buildSlotOverrides: spawn-time agent config resolution', () => {
+  it('threads per-slot model and thinking level overrides into SlotOverrides', () => {
+    const overrides = buildSlotOverrides(
+      makeSlot({ name: 'coder', model: 'gpt-5.4', thinkingLevel: 'think16k' })
+    );
+
+    expect(overrides.model).toBe('gpt-5.4');
+    expect(overrides.thinkingLevel).toBe('think16k');
+  });
+
+  it('leaves model and thinking level undefined when the slot carries no overrides', () => {
+    const overrides = buildSlotOverrides(makeSlot());
+
+    expect(overrides.model).toBeUndefined();
+    expect(overrides.thinkingLevel).toBeUndefined();
+  });
+
+  it('prefers the task workflow model override over the slot model', () => {
+    const overrides = buildSlotOverrides(makeSlot({ name: 'coder', model: 'slot-model' }), {
+      task: { workflowModelOverrides: { 'node-1:coder': 'task-model' } },
+      node: { id: 'node-1', name: 'build' },
+    });
+
+    expect(overrides.model).toBe('task-model');
+  });
+
+  it('keeps the slot model when the task override targets a different node-slot key', () => {
+    const overrides = buildSlotOverrides(makeSlot({ name: 'coder', model: 'slot-model' }), {
+      task: { workflowModelOverrides: { 'node-1:reviewer': 'task-model' } },
+      node: { id: 'node-1', name: 'build' },
+    });
+
+    expect(overrides.model).toBe('slot-model');
+  });
+});
