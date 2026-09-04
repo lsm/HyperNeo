@@ -1,3 +1,4 @@
+import type { ModelInfo } from '@hyperneo/shared';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 
@@ -31,6 +32,21 @@ const mockModels = [
     alias: 'glm-4.6',
     provider: 'glm',
     contextWindow: 200000,
+  },
+  {
+    id: 'glm-5.3[1m]',
+    display_name: 'GLM-5.3 duplicate',
+    description: '',
+    provider: 'glm',
+    contextWindow: 1000000,
+  },
+  {
+    id: 'glm-reasoning',
+    display_name: 'GLM Reasoning',
+    description: '',
+    provider: 'glm',
+    contextWindow: 1000000,
+    thinkingModes: 'granular' as const,
   },
 ];
 
@@ -154,6 +170,47 @@ describe('WorkflowModelSelect', () => {
       fireEvent.change(select);
 
       expect(onChange).toHaveBeenCalledWith(undefined);
+    });
+  });
+
+  describe('model metadata and load lifecycle', () => {
+    it('reports thinkingModes in the selection payload', async () => {
+      const onChange = vi.fn();
+      const { getByTestId } = render(
+        <WorkflowModelSelect value={undefined} onChange={onChange} testId="glm-model-select" />
+      );
+      const select = getByTestId('glm-model-select') as HTMLSelectElement;
+      await waitFor(() => expect(select.options.length).toBeGreaterThan(1));
+
+      select.value = encodeModelValue('glm', 'glm-reasoning');
+      fireEvent.change(select);
+
+      expect(onChange).toHaveBeenCalledWith('glm-reasoning', {
+        provider: 'glm',
+        modelId: 'glm-reasoning',
+        thinkingModes: 'granular',
+      });
+    });
+
+    it('calls onModelsLoad with the deduped loaded models', async () => {
+      const onModelsLoad = vi.fn();
+      render(
+        <WorkflowModelSelect
+          value={undefined}
+          onChange={vi.fn()}
+          onModelsLoad={onModelsLoad}
+          testId="glm-model-select"
+        />
+      );
+      await waitFor(() => expect(onModelsLoad).toHaveBeenCalled());
+
+      const loaded = onModelsLoad.mock.calls[0][0] as ModelInfo[];
+      expect(loaded.length).toBe(5);
+      const ids = loaded.map((m) => `${m.provider}:${m.id}`);
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(loaded.some((m) => m.id === 'glm-reasoning' && m.thinkingModes === 'granular')).toBe(
+        true
+      );
     });
   });
 });
