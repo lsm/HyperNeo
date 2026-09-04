@@ -40,6 +40,18 @@ const mockModels = [
     available: true,
   },
   {
+    id: 'kimi-k3-1m',
+    name: 'Kimi K3 1M',
+    alias: 'kimi-k3-1m',
+    family: 'kimi',
+    provider: 'kimi',
+    contextWindow: 1000000,
+    thinkingModes: 'granular' as const,
+    description: '',
+    releaseDate: '',
+    available: true,
+  },
+  {
     id: 'minimax-1',
     name: 'MiniMax 1',
     alias: 'minimax-1',
@@ -118,6 +130,9 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
         </option>
         <option value="kimi-k2" data-provider="kimi" data-thinking-modes="on">
           Kimi K2
+        </option>
+        <option value="kimi-k3-1m" data-provider="kimi" data-thinking-modes="granular">
+          Kimi K3 1M
         </option>
         <option value="minimax-1" data-provider="minimax" data-thinking-modes="off">
           MiniMax 1
@@ -270,7 +285,7 @@ describe('TemplateModelFields', () => {
     const onChange = vi.fn();
     const { getByTestId } = render(
       <TemplateModelFields
-        value={{ model: 'kimi-k3-1m', provider: 'kimi', thinkingLevel: 'think8k' }}
+        value={{ model: 'kimi-k3-2m', provider: 'kimi', thinkingLevel: 'think8k' }}
         onChange={onChange}
       />
     );
@@ -278,6 +293,22 @@ describe('TemplateModelFields', () => {
     await waitFor(() => {
       const values = Array.from(select.options).map((option) => option.value);
       expect(values).toEqual(['', 'off', 'think32k', 'think8k']);
+    });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('resolves a per-model thinking mode that differs from the provider default', async () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <TemplateModelFields
+        value={{ model: 'kimi-k3-1m', provider: 'kimi', thinkingLevel: 'think8k' }}
+        onChange={onChange}
+      />
+    );
+    const select = getByTestId('template-model-fields-thinking-level') as HTMLSelectElement;
+    await waitFor(() => {
+      const values = Array.from(select.options).map((option) => option.value);
+      expect(values).toEqual(['', 'off', 'think8k', 'think16k', 'think24k', 'think32k']);
     });
     expect(onChange).not.toHaveBeenCalled();
   });
