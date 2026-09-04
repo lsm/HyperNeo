@@ -119,7 +119,7 @@ export function ToolsEditor({ tools, toolsOverridden, onChange }: ToolsEditorPro
                   : checked
                     ? 'border-accent/60 bg-accent/15 text-accent-soft cursor-pointer'
                     : denied
-                      ? 'border-danger/60 bg-danger/15 text-danger-soft hover:border-red-600 cursor-pointer'
+                      ? 'border-danger/60 bg-danger/15 text-danger-soft hover:border-danger cursor-pointer'
                       : 'border-line text-fg-muted hover:border-line-strong hover:text-fg-soft cursor-pointer'
               }`}
             >
