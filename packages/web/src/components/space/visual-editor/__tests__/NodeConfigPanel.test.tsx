@@ -398,18 +398,25 @@ describe('NodeConfigPanel', () => {
     });
 
     it('renders a disabled legacy agent fallback option in the multi-agent slot select', () => {
-      const { getByTestId } = render(
+      const { getAllByTestId } = render(
         <NodeConfigPanel
           {...makeProps({
             step: makeStep({
               agentId: '',
-              agents: [{ agentId: 'agent-1', name: 'coder' }],
+              agents: [
+                { agentId: 'agent-1', name: 'coder' },
+                { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+              ],
             }),
           })}
         />
       );
-      const select = getByTestId('agent-slot-select') as HTMLSelectElement;
-      const legacyOption = [...select.options].find((o) => o.value === 'agent-1');
+      const selects = getAllByTestId('agent-slot-select') as HTMLSelectElement[];
+      const legacySelect = selects.find((s) => s.value === 'agent-1');
+      expect(legacySelect).toBeTruthy();
+      const legacyOption = legacySelect
+        ? [...legacySelect.options].find((o) => o.value === 'agent-1')
+        : undefined;
       expect(legacyOption).toBeTruthy();
       expect(legacyOption?.disabled).toBe(true);
       expect(legacyOption?.textContent).toBe('Planner');
