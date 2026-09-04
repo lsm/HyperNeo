@@ -78,7 +78,7 @@ describe('SpaceAgentTemplateRepository', () => {
     expect(created.tools).toBeNull();
   });
 
-  test('create normalizes empty arrays to null for JSON columns', () => {
+  test('create normalizes empty modelPool and tools to null but preserves empty settingSources', () => {
     const created = repo.create({
       key: 'empty.custom',
       handle: 'empty',
@@ -88,8 +88,8 @@ describe('SpaceAgentTemplateRepository', () => {
     });
 
     expect(created.modelPool).toBeNull();
-    expect(created.settingSources).toBeNull();
     expect(created.tools).toBeNull();
+    expect(created.settingSources).toEqual([]);
   });
 
   test('duplicate key violates the primary key constraint', () => {
@@ -177,6 +177,22 @@ describe('SpaceAgentTemplateRepository', () => {
     expect(cleared!.modelPool).toBeNull();
     expect(cleared!.settingSources).toBeNull();
     expect(cleared!.tools).toBeNull();
+  });
+
+  test('update keeps the null-versus-empty contract per JSON column', () => {
+    repo.create(fullParams());
+
+    const emptied = repo.update('release-readiness.custom', {
+      settingSources: [],
+      modelPool: [],
+      tools: [],
+    });
+    expect(emptied!.settingSources).toEqual([]);
+    expect(emptied!.modelPool).toBeNull();
+    expect(emptied!.tools).toBeNull();
+
+    const inherited = repo.update('release-readiness.custom', { settingSources: null });
+    expect(inherited!.settingSources).toBeNull();
   });
 
   test('update with no fields returns the current row unchanged', () => {

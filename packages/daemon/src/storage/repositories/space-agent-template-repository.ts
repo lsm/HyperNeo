@@ -34,7 +34,7 @@ export class SpaceAgentTemplateRepository {
         params.provider ?? null,
         encodeJsonArray(params.modelPool),
         params.thinkingLevel ?? null,
-        encodeJsonArray(params.settingSources),
+        params.settingSources === undefined ? null : JSON.stringify(params.settingSources),
         encodeJsonArray(params.tools),
         now,
         now
@@ -98,7 +98,7 @@ export class SpaceAgentTemplateRepository {
     }
     if (params.settingSources !== undefined) {
       fields.push('setting_sources = ?');
-      values.push(encodeJsonArray(params.settingSources));
+      values.push(params.settingSources === null ? null : JSON.stringify(params.settingSources));
     }
     if (params.tools !== undefined) {
       fields.push('tools = ?');
