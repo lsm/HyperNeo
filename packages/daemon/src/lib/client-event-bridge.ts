@@ -110,24 +110,6 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     channel: (p) => Channels.space((p as DaemonInternalEventMap['spaceAgent.deleted']).spaceId),
   },
   {
-    event: 'spaceLongHorizonAgent.created',
-    clientEvent: 'spaceLongHorizonAgent.created',
-    channel: (p) =>
-      Channels.space((p as DaemonInternalEventMap['spaceLongHorizonAgent.created']).spaceId),
-  },
-  {
-    event: 'spaceLongHorizonAgent.updated',
-    clientEvent: 'spaceLongHorizonAgent.updated',
-    channel: (p) =>
-      Channels.space((p as DaemonInternalEventMap['spaceLongHorizonAgent.updated']).spaceId),
-  },
-  {
-    event: 'spaceLongHorizonAgent.deleted',
-    clientEvent: 'spaceLongHorizonAgent.deleted',
-    channel: (p) =>
-      Channels.space((p as DaemonInternalEventMap['spaceLongHorizonAgent.deleted']).spaceId),
-  },
-  {
     event: 'spaceGoal.ownerChanged',
     clientEvent: 'spaceGoal.ownerChanged',
     channel: (p) => Channels.space((p as DaemonInternalEventMap['spaceGoal.ownerChanged']).spaceId),

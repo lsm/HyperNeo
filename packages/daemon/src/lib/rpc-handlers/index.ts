@@ -83,7 +83,6 @@ import { PendingAgentMessageRepository } from '../../storage/repositories/pendin
 import { SpaceAgentInboxRepository } from '../../storage/repositories/space-agent-inbox-repository.ts';
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import { setupSpaceAgentHandlers } from './space-agent-handlers.ts';
-import { setupSpaceLongHorizonAgentHandlers } from './space-long-horizon-agent-handlers.ts';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager.ts';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
@@ -947,15 +946,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     longHorizonAgentRepo,
     internalEventBus: deps.internalEventBus,
   });
-
-  setupSpaceLongHorizonAgentHandlers(
-    deps.messageHub,
-    deps.spaceManager,
-    longHorizonAgentRepo,
-    deps.spaceAgentManager,
-    spaceRuntimeService,
-    deps.internalEventBus
-  );
 
   setupSpaceHandlers(
     deps.messageHub,

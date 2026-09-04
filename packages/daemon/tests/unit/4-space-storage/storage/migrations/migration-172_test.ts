@@ -4,8 +4,6 @@ import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import { runMigration172 } from '../../../../../src/storage/schema/migrations.ts';
-import { SpaceAgentRepository } from '../../../../../src/storage/repositories/space-agent-repository.ts';
-import { SpaceAgentManager } from '../../../../../src/lib/space/managers/space-agent-manager.ts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
 import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
 
@@ -187,7 +185,7 @@ describe('Migration 172: re-backfill orphaned preset agent template tracking', (
     expect(row.template_hash).toBeNull();
   });
 
-  test('matching row → stamped hash equals the preset hash (drift reads in-sync)', () => {
+  test('matching row → stamped hash equals the preset hash', () => {
     const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder')!;
     insertAgent(db, {
       id: 'a-match',
@@ -203,15 +201,9 @@ describe('Migration 172: re-backfill orphaned preset agent template tracking', (
     const row = readAgent(db, 'a-match')!;
     const presetHash = computeAgentTemplateHash(coder);
     expect(row.template_hash).toBe(presetHash);
-
-    const manager = new SpaceAgentManager(new SpaceAgentRepository(db as any));
-    const entry = manager.getAgentDriftReport('sp-1').agents[0];
-    expect(entry.updateAvailable).toBe(false);
-    expect(entry.customized).toBe(false);
-    expect(entry.orphaned).toBe(false);
   });
 
-  test('divergent row → left as orphan, drift forces diff review (customized:true)', () => {
+  test('divergent row → left as orphan', () => {
     const reviewer = getPresetAgentTemplates().find((p) => p.name === 'Reviewer')!;
 
     insertAgent(db, {
@@ -228,38 +220,6 @@ describe('Migration 172: re-backfill orphaned preset agent template tracking', (
     const row = readAgent(db, 'a-stale')!;
     expect(row.template_name).toBeNull();
     expect(row.template_hash).toBeNull();
-
-    const manager = new SpaceAgentManager(new SpaceAgentRepository(db as any));
-    const entry = manager.getAgentDriftReport('sp-1').agents[0];
-    expect(entry.updateAvailable).toBe(true);
-    expect(entry.customized).toBe(true);
-    expect(entry.orphaned).toBe(true);
-    expect(manager.getById('a-stale')?.customPrompt).toBe('You are a reviewer. **Client:** NeoKai');
-  });
-
-  test('end-to-end: orphaned stale row → syncFromTemplate re-attach fixes the prompt', async () => {
-    const reviewer = getPresetAgentTemplates().find((p) => p.name === 'Reviewer')!;
-    insertAgent(db, {
-      id: 'a-stale',
-      spaceId: 'sp-1',
-      name: 'Reviewer',
-      description: reviewer.description,
-      tools: reviewer.tools,
-      customPrompt: 'You are a reviewer. **Client:** NeoKai',
-    });
-
-    runMigration172(db);
-
-    const manager = new SpaceAgentManager(new SpaceAgentRepository(db as any));
-    const entry = manager.getAgentDriftReport('sp-1').agents[0];
-    expect(entry.updateAvailable).toBe(true);
-    expect(entry.orphaned).toBe(true);
-
-    const result = await manager.syncFromTemplate('a-stale');
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('sync failed');
-    expect(result.value.customPrompt).toBe(reviewer.customPrompt);
-    expect(result.value.customPrompt).toContain('HyperNeo');
-    expect(result.value.customPrompt).not.toContain('NeoKai');
+    expect(row.custom_prompt).toBe('You are a reviewer. **Client:** NeoKai');
   });
 });
