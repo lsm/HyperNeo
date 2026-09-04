@@ -445,7 +445,8 @@ describe('Agent-to-task creation flow — workspace selection', () => {
   });
 
   test('omitting the workspace parameter is rejected when the primary is not a git repository', async () => {
-    seedWorkspace('docs');
+    const docsPath = seedWorkspace('docs');
+    execSync('git -c init.defaultBranch=main init', { cwd: docsPath, stdio: 'pipe' });
     const result = await makeHandlers(ctx).create_standalone_task({
       title: 'Primary task',
       description: 'No workspace given',
@@ -453,7 +454,7 @@ describe('Agent-to-task creation flow — workspace selection', () => {
     const parsed = parseResult(result);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('is not a git repository');
-    expect(parsed.error).toContain('"docs"');
+    expect(parsed.error).toContain(`"docs" (${docsPath})`);
     expect(ctx.taskRepo.listBySpace(ctx.spaceId)).toHaveLength(0);
   });
 });

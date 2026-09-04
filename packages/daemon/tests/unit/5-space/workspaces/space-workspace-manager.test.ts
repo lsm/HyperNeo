@@ -645,4 +645,28 @@ describe('validateDefaultTaskWorkspace', () => {
     const { manager } = newManager({ spaces: [] });
     await expect(manager.validateDefaultTaskWorkspace('ghost')).resolves.toBeNull();
   });
+
+  test('drops unusable secondaries from the alternatives and names the none-usable case', async () => {
+    const { manager } = newManager({
+      workspaces: new FakeWorkspaces([
+        row(SPACE_A, '/primary-a', 'w1', true),
+        row(SPACE_A, '/repo-b', 'w2', false, 'dolmen'),
+        row(SPACE_A, '/repo-c', 'w3'),
+      ]),
+      io: fakeIo({ canHostTaskWorktree: async (path) => path === '/repo-c' }),
+    });
+    const message = await manager.validateDefaultTaskWorkspace(SPACE_A);
+    expect(message).toContain('/repo-c');
+    expect(message).not.toContain('/repo-b');
+
+    const noneUsable = await newManager({
+      workspaces: new FakeWorkspaces([
+        row(SPACE_A, '/primary-a', 'w1', true),
+        row(SPACE_A, '/repo-b', 'w2'),
+      ]),
+      io: fakeIo({ canHostTaskWorktree: async () => false }),
+    }).manager.validateDefaultTaskWorkspace(SPACE_A);
+    expect(noneUsable).toContain('No registered workspace of this space can currently host');
+    expect(noneUsable).toContain('"workspace"');
+  });
 });

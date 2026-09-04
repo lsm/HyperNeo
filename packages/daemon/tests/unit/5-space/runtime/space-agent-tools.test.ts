@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { ModelInfo, SpaceTask, SpaceTaskStatus, SpaceWorkflow } from '@hyperneo/shared';
+import { execSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -5524,23 +5525,29 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
     }
 
     test('multi-workspace space with a non-git primary rejects creation without workspace', async () => {
-      seedMultiWorkspaceSpace(ctx.db, 'space-multi-nongit', [
-        { path: '/repos/dolmen', label: 'dolmen' },
-      ]);
-      const taskManager = new SpaceTaskManager(ctx.db, 'space-multi-nongit');
-      const handlers = makeHandlers(ctx, { spaceId: 'space-multi-nongit', taskManager });
+      const dolmenDir = realpathSync(mkdtempSync(join(tmpdir(), 'hyperneo-dolmen-3589-')));
+      execSync('git -c init.defaultBranch=main init', { cwd: dolmenDir, stdio: 'pipe' });
+      try {
+        seedMultiWorkspaceSpace(ctx.db, 'space-multi-nongit', [
+          { path: dolmenDir, label: 'dolmen' },
+        ]);
+        const taskManager = new SpaceTaskManager(ctx.db, 'space-multi-nongit');
+        const handlers = makeHandlers(ctx, { spaceId: 'space-multi-nongit', taskManager });
 
-      const result = await handlers.create_standalone_task({
-        title: 'Doomed without workspace',
-        description: 'Would default to the non-git primary',
-      });
-      const parsed = JSON.parse(result.content[0].text);
-      expect(parsed.success).toBe(false);
-      expect(parsed.error).toContain(NON_GIT_PRIMARY);
-      expect(parsed.error).toContain('is not a git repository');
-      expect(parsed.error).toContain('"dolmen" (/repos/dolmen)');
-      expect(parsed.error).toContain('"workspace"');
-      await expect(taskManager.listTasks()).resolves.toHaveLength(0);
+        const result = await handlers.create_standalone_task({
+          title: 'Doomed without workspace',
+          description: 'Would default to the non-git primary',
+        });
+        const parsed = JSON.parse(result.content[0].text);
+        expect(parsed.success).toBe(false);
+        expect(parsed.error).toContain(NON_GIT_PRIMARY);
+        expect(parsed.error).toContain('is not a git repository');
+        expect(parsed.error).toContain(`"dolmen" (${dolmenDir})`);
+        expect(parsed.error).toContain('"workspace"');
+        await expect(taskManager.listTasks()).resolves.toHaveLength(0);
+      } finally {
+        rmSync(dolmenDir, { recursive: true, force: true });
+      }
     });
 
     test('multi-workspace space with a non-git primary still accepts an explicit workspace', async () => {

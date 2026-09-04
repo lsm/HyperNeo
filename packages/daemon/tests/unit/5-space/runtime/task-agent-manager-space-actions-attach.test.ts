@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from 'bun:sqlite';
+import { execSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -270,13 +271,14 @@ describe('TaskAgentManager — node-agent create_standalone_task default-workspa
     db = new BunDatabase(':memory:');
     db.exec('PRAGMA foreign_keys = ON');
     runMigrations(db, () => {});
-    db.exec(
+    db.prepare(
       `INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions,
        allowed_models, session_ids, slug, status, created_at, updated_at)
        VALUES (?, ?, ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
     ).run(SPACE_ID, NON_GIT_PRIMARY, SPACE_ID, SPACE_ID, Date.now(), Date.now());
     secondaryDir = realpathSync(mkdtempSync(join(tmpdir(), 'hyperneo-node-ws-3589-')));
-    db.exec(
+    execSync('git -c init.defaultBranch=main init', { cwd: secondaryDir, stdio: 'pipe' });
+    db.prepare(
       `INSERT INTO space_workspaces (id, space_id, path, label, is_primary, created_at, updated_at)
        VALUES ('ws-node-sec', ?, ?, 'dolmen', 0, 0, 0)`
     ).run(SPACE_ID, secondaryDir);
