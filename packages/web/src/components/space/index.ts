@@ -4,6 +4,8 @@ export { FileDiffView, parseDiff } from './FileDiffView';
 export { ImportPreviewDialog } from './ImportPreviewDialog';
 export type { LineNumberedTextareaProps } from './LineNumberedTextarea';
 export { LineNumberedTextarea } from './LineNumberedTextarea';
+export { ModelPoolEditor } from './ModelPoolEditor';
+export type { ModelPoolEditorMode, ModelPoolEditorProps } from './ModelPoolEditor';
 export { SpaceCreateDialog } from './SpaceCreateDialog';
 export { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 export { SpaceMemories } from './SpaceMemories';
