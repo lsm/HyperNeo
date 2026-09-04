@@ -1,7 +1,7 @@
 // @ts-nocheck
 
-import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/preact';
+import type { SettingSource, SpaceLongHorizonAgent } from '@hyperneo/shared';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -109,10 +109,23 @@ function makeLongHorizonAgent(
     sessionId: 'session-research',
     model: null,
     thinkingLevel: null,
+    settingSources: null,
     createdAt: 0,
     updatedAt: 0,
     ...overrides,
   };
+}
+
+const SETTING_SOURCE_LABELS: Record<SettingSource, string> = {
+  user: 'User settings',
+  project: 'Project settings + CLAUDE.md',
+  local: 'Local settings',
+};
+
+function settingSourceCheckbox(source: SettingSource): HTMLInputElement {
+  const wrapper = screen.getByText(SETTING_SOURCE_LABELS[source]).closest('label');
+  if (!wrapper) throw new Error(`label not found for ${source}`);
+  return within(wrapper).getByRole('checkbox') as HTMLInputElement;
 }
 
 function makeTemplate(overrides: Record<string, unknown> = {}) {
@@ -335,7 +348,6 @@ describe('SpaceLongHorizonAgents', () => {
     fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
     fireEvent.input(textInputs[1], { target: { value: 'runner' } });
     fireEvent.click(getByRole('button', { name: 'Create agent' }));
-
     await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
     expect(mockCreateAgent.mock.calls[0][0].modelPool).toBeUndefined();
   });
@@ -493,6 +505,59 @@ describe('SpaceLongHorizonAgents', () => {
     ]);
   });
 
+  it('prefills setting sources from an explicit agent override and persists toggles', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ settingSources: ['user', 'local'] })];
+    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    expect(settingSourceCheckbox('user').checked).toBe(true);
+    expect(settingSourceCheckbox('project').checked).toBe(false);
+    expect(settingSourceCheckbox('local').checked).toBe(true);
+
+    fireEvent.click(settingSourceCheckbox('project'));
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    expect(mockUpdateAgent.mock.calls[0][1].settingSources).toEqual(['user', 'local', 'project']);
+  });
+
+  it('keeps settingSources null when an inheriting agent is saved untouched', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ settingSources: null })];
+    const { getByRole, getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    expect(getByText('Inherits the space setting sources.')).toBeTruthy();
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    expect(mockUpdateAgent.mock.calls[0][1].settingSources).toBeNull();
+  });
+
+  it('clears a setting sources override back to inherit on save', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ settingSources: ['user'] })];
+    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    fireEvent.click(getByRole('button', { name: 'Clear override — inherit from space' }));
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    expect(mockUpdateAgent.mock.calls[0][1].settingSources).toBeNull();
+  });
+
+  it('persists an explicit setting sources selection on agent create', async () => {
+    const { getByRole, container } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
+    fireEvent.click(settingSourceCheckbox('local'));
+    const textInputs = container.querySelectorAll('input[type="text"]');
+    fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
+    fireEvent.input(textInputs[1], { target: { value: 'runner' } });
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    expect(mockCreateAgent.mock.calls[0][0].settingSources).toEqual(['user', 'project']);
+  });
+
   it('disables autonomy editing for migrated worker mirrors', () => {
     mockAgents.value = [makeLongHorizonAgent({ templateKey: 'migration.legacy_space_agent' })];
     const { getByRole, getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
@@ -575,6 +640,7 @@ describe('SpaceLongHorizonAgents', () => {
         handle: 'runner',
         displayName: 'Runner',
         templateKey: null,
+        settingSources: null,
       })
     );
   });

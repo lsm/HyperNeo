@@ -1,4 +1,5 @@
 import type {
+  SettingSource,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentTemplate,
   ThinkingLevel,
@@ -13,6 +14,7 @@ import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { LineNumberedTextarea } from './LineNumberedTextarea';
 import { ModelPoolEditor, type ModelPoolEditorMode } from './ModelPoolEditor';
+import { SettingSourcesEditor } from './SettingSourcesEditor';
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
   { value: '', label: 'Use app default' },
@@ -94,6 +96,7 @@ interface AgentSaveForm {
   modelPool: WorkerAgentModelPoolEntry[];
   thinkingLevel: '' | ThinkingLevel;
   tools: string;
+  settingSources: SettingSource[] | null;
 }
 
 interface AgentSaveCtx {
@@ -153,6 +156,7 @@ async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
         ? { provider: effectiveProvider }
         : {}),
       thinkingLevel: (form.thinkingLevel || null) as ThinkingLevel | null,
+      settingSources: form.settingSources,
       ...(toolsChanged
         ? isMigratedWorkerMirror(ctx.agent)
           ? { tools: parsedTools }
@@ -171,6 +175,7 @@ async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
     model: effectiveModel || null,
     ...(effectiveProvider ? { provider: effectiveProvider } : {}),
     thinkingLevel: (form.thinkingLevel || null) as ThinkingLevel | null,
+    settingSources: form.settingSources,
     ...(parsedTools.length > 0 ? { tools: parsedTools } : {}),
     modelPool: activeModelPool ?? undefined,
   });
@@ -225,6 +230,9 @@ function AgentEditor({
     agent?.thinkingLevel ?? ''
   );
   const [tools, setTools] = useState(agent ? agentToolsList(agent).join(', ') : '');
+  const [settingSources, setSettingSources] = useState<SettingSource[] | null>(
+    agent?.settingSources ?? null
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const migratedWorkerMirror = isEdit && agent ? isMigratedWorkerMirror(agent) : false;
@@ -247,6 +255,7 @@ function AgentEditor({
           modelPool,
           thinkingLevel,
           tools,
+          settingSources,
         },
         displayName: '',
         handle: '',
@@ -400,6 +409,21 @@ function AgentEditor({
             <p class="mt-1 text-xs text-fg-muted">
               Comma-separated tool names. Leave empty to use the default tool set.
             </p>
+          </div>
+          <div>
+            <label class="mb-2 block text-sm font-medium text-fg-soft">Setting sources</label>
+            <SettingSourcesEditor value={settingSources} onChange={setSettingSources} />
+            {settingSources === null ? (
+              <p class="mt-1 text-xs text-fg-muted">Inherits the space setting sources.</p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setSettingSources(null)}
+                class="mt-1 text-xs font-medium text-accent-soft/85 underline-offset-4 transition-colors hover:text-accent-soft hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              >
+                Clear override — inherit from space
+              </button>
+            )}
           </div>
           {error && <p class="text-xs text-danger">{error}</p>}
         </div>
