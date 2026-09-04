@@ -4,7 +4,12 @@ import type {
   ModelInfo,
   SpaceAgentTemplate,
 } from '@hyperneo/shared';
-import { SpaceAgentTemplateManager } from '../../../../src/lib/space/managers/space-agent-template-manager';
+import {
+  SpaceAgentTemplateManager,
+  runCreateTemplate,
+  runUpdateTemplate,
+  runDeleteTemplate,
+} from '../../../../src/lib/space/managers/space-agent-template-manager';
 import { setModelsCache } from '../../../../src/lib/model-service';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
@@ -476,7 +481,7 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(modelResult.ok).toBe(true);
       expect(providerResult.ok).toBe(false);
-      if (!providerResult.ok) expect(providerResult.error).toMatch(/anthropic/);
+      if (!providerResult.ok) expect(providerResult.error).toMatch(/superseded/i);
 
       const final = manager.getByKey('release-readiness.custom');
       expect(final?.model).toBe('glm-4-flash');
@@ -488,24 +493,133 @@ describe('SpaceAgentTemplateManager', () => {
     test('deletes a custom template', async () => {
       await manager.create(fullParams());
 
-      const result = await manager.delete('release-readiness.custom');
+      const result = manager.delete('release-readiness.custom');
 
       expect(result.ok).toBe(true);
       expect(manager.getByKey('release-readiness.custom')).toBeNull();
     });
 
-    test('returns an error for an unknown key', async () => {
-      const result = await manager.delete('missing.custom');
+    test('returns an error for an unknown key', () => {
+      const result = manager.delete('missing.custom');
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('not found');
     });
 
-    test('cannot delete a built-in', async () => {
-      const result = await manager.delete('builtin.default');
+    test('cannot delete a built-in', () => {
+      const result = manager.delete('builtin.default');
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('not found');
+    });
+  });
+
+  describe('create pipeline', () => {
+    test('halts before persist on an invalid key', async () => {
+      const ctx = await runCreateTemplate({ repo, params: { ...fullParams(), key: '' } });
+
+      expect(ctx.error).toContain('key');
+      expect(ctx.template).toBeUndefined();
+      expect(repo.getByKey('')).toBeNull();
+    });
+
+    test('halts before persist on a duplicate key', async () => {
+      await runCreateTemplate({ repo, params: fullParams() });
+
+      const ctx = await runCreateTemplate({ repo, params: fullParams() });
+
+      expect(ctx.error).toContain('already exists');
+      expect(ctx.template).toBeUndefined();
+    });
+
+    test('halts before persist on a model pool with an incompatible provider', async () => {
+      setModelsCache(new Map([['global', [makeModelInfo('glm-4-flash', 'glm-4-flash', 'glm')]]]));
+
+      const ctx = await runCreateTemplate({
+        repo,
+        params: {
+          ...fullParams(),
+          model: undefined,
+          provider: undefined,
+          modelPool: [{ model: 'glm-4-flash', provider: 'anthropic', maxConcurrent: 1, weight: 1 }],
+        },
+      });
+
+      expect(ctx.error).toMatch(/anthropic/);
+      expect(ctx.template).toBeUndefined();
+      expect(repo.getByKey('release-readiness.custom')).toBeNull();
+    });
+  });
+
+  describe('update pipeline', () => {
+    test('halts before persist for an unknown key', async () => {
+      const ctx = await runUpdateTemplate({
+        repo,
+        key: 'missing.custom',
+        params: { displayName: 'X' },
+      });
+
+      expect(ctx.error).toContain('not found');
+      expect(ctx.template).toBeUndefined();
+    });
+
+    test('halts before persist on an invalid model', async () => {
+      setModelsCache(
+        new Map([['global', [makeModelInfo('claude-opus-5', 'claude-opus-5', 'anthropic')]]])
+      );
+      await manager.create(fullParams());
+
+      const ctx = await runUpdateTemplate({
+        repo,
+        key: 'release-readiness.custom',
+        params: { model: 'unknown-model' },
+      });
+
+      expect(ctx.error).toMatch(/Unrecognized model/);
+      expect(ctx.template).toBeUndefined();
+    });
+
+    test('detects a superseded write without persisting a stale combination', async () => {
+      await runCreateTemplate({ repo, params: fullParams() });
+
+      const [first, second] = await Promise.all([
+        runUpdateTemplate({
+          repo,
+          key: 'release-readiness.custom',
+          params: { displayName: 'First' },
+        }),
+        runUpdateTemplate({
+          repo,
+          key: 'release-readiness.custom',
+          params: { displayName: 'Second' },
+        }),
+      ]);
+
+      const winner = first.template ?? second.template;
+      const loser = first.template ? second : first;
+
+      expect(winner).toBeDefined();
+      expect(loser.error).toMatch(/superseded/i);
+      expect(loser.template).toBeUndefined();
+    });
+  });
+
+  describe('delete pipeline', () => {
+    test('halts before delete for an unknown key', () => {
+      const ctx = runDeleteTemplate({ repo, key: 'missing.custom' });
+
+      expect(ctx.error).toContain('not found');
+      expect(ctx.deleted).toBeUndefined();
+    });
+
+    test('deletes the existing template', async () => {
+      await manager.create(fullParams());
+
+      const ctx = runDeleteTemplate({ repo, key: 'release-readiness.custom' });
+
+      expect(ctx.error).toBeUndefined();
+      expect(ctx.deleted).toBe(true);
+      expect(repo.getByKey('release-readiness.custom')).toBeNull();
     });
   });
 

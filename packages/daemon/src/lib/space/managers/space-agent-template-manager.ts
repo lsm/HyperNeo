@@ -6,7 +6,10 @@ import type {
   WorkerAgentModelPoolEntry,
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
-import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
+import type {
+  SpaceAgentTemplateRecord,
+  SpaceAgentTemplateRepository,
+} from '../../../storage/repositories/space-agent-template-repository.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import { getLongHorizonAgentTemplates } from '../agents/long-horizon-agent-templates.ts';
 import { validateSlug } from '../slug.ts';
@@ -22,23 +25,24 @@ type BuiltInTemplateSource = () => SpaceAgentTemplate[];
 const MIN_AUTONOMY: SpaceAgentAutonomyLevel = 1;
 const MAX_AUTONOMY: SpaceAgentAutonomyLevel = 5;
 
-interface CreateTemplateCtx {
+export interface CreateTemplateCtx {
   repo: SpaceAgentTemplateRepository;
   params: CreateSpaceAgentTemplateParams;
   error?: string;
   template?: SpaceAgentTemplate;
 }
 
-interface UpdateTemplateCtx {
+export interface UpdateTemplateCtx {
   repo: SpaceAgentTemplateRepository;
   key: string;
   params: UpdateSpaceAgentTemplateParams;
-  existing?: SpaceAgentTemplate;
+  existing?: SpaceAgentTemplateRecord;
+  version?: number;
   error?: string;
   template?: SpaceAgentTemplate;
 }
 
-interface DeleteTemplateCtx {
+export interface DeleteTemplateCtx {
   repo: SpaceAgentTemplateRepository;
   key: string;
   existing?: SpaceAgentTemplate;
@@ -109,11 +113,17 @@ async function validateModelChoice(
   return validateAgentModel(model, provider);
 }
 
-async function validateModelPoolChoice(
+async function validateTemplateModelPool(
   pool: WorkerAgentModelPoolEntry[] | null | undefined
 ): Promise<string | null> {
   if (pool === undefined || pool === null || pool.length === 0) return null;
-  return validateAgentModelPool(pool);
+  const baseError = await validateAgentModelPool(pool);
+  if (baseError) return baseError;
+  for (const entry of pool) {
+    const error = await validateAgentModel(entry.model, entry.provider);
+    if (error) return error;
+  }
+  return null;
 }
 
 function createValidateKey(ctx: CreateTemplateCtx): CreateTemplateCtx {
@@ -153,7 +163,7 @@ async function createValidateModel(ctx: CreateTemplateCtx): Promise<CreateTempla
 }
 
 async function createValidateModelPool(ctx: CreateTemplateCtx): Promise<CreateTemplateCtx> {
-  const error = await validateModelPoolChoice(ctx.params.modelPool);
+  const error = await validateTemplateModelPool(ctx.params.modelPool);
   if (error) return { ...ctx, error };
   return ctx;
 }
@@ -166,13 +176,18 @@ function createCheckKeyAvailable(ctx: CreateTemplateCtx): CreateTemplateCtx {
 }
 
 function createPersist(ctx: CreateTemplateCtx): CreateTemplateCtx {
-  return { ...ctx, template: ctx.repo.create(ctx.params) };
+  try {
+    return { ...ctx, template: ctx.repo.create(ctx.params) };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { ...ctx, error: `Failed to create template: ${detail}` };
+  }
 }
 
 function updateLoadExisting(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
-  const existing = ctx.repo.getByKey(ctx.key);
+  const existing = ctx.repo.getByKeyWithVersion(ctx.key);
   if (!existing) return { ...ctx, error: `Template not found: ${ctx.key}` };
-  return { ...ctx, existing };
+  return { ...ctx, existing, version: existing.version };
 }
 
 function updateValidateHandle(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
@@ -212,14 +227,17 @@ async function updateValidateModel(ctx: UpdateTemplateCtx): Promise<UpdateTempla
 }
 
 async function updateValidateModelPool(ctx: UpdateTemplateCtx): Promise<UpdateTemplateCtx> {
-  const error = await validateModelPoolChoice(ctx.params.modelPool);
+  const error = await validateTemplateModelPool(ctx.params.modelPool);
   if (error) return { ...ctx, error };
   return ctx;
 }
 
 function updatePersist(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
-  const template = ctx.repo.update(ctx.key, ctx.params);
-  if (!template) return { ...ctx, error: `Template not found after update: ${ctx.key}` };
+  if (ctx.version === undefined) return { ...ctx, error: `Template version missing: ${ctx.key}` };
+  const template = ctx.repo.casUpdate(ctx.key, ctx.params, ctx.version);
+  if (!template) {
+    return { ...ctx, error: 'Template update superseded by a concurrent update' };
+  }
   return { ...ctx, template };
 }
 
@@ -239,7 +257,7 @@ const templatePipeline = superpipe({
   hasError: (ctx: { error?: string }) => ctx.error !== undefined,
 });
 
-const runCreateTemplate = (templatePipeline('create-space-agent-template') as PipelineAPI)
+export const runCreateTemplate = (templatePipeline('create-space-agent-template') as PipelineAPI)
   .input(['ctx'])
   .pipe(createValidateKey, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
@@ -260,7 +278,7 @@ const runCreateTemplate = (templatePipeline('create-space-agent-template') as Pi
   .pipe(createPersist, 'ctx', 'ctx')
   .endAsync('ctx') as (input: CreateTemplateCtx) => Promise<CreateTemplateCtx>;
 
-const runUpdateTemplate = (templatePipeline('update-space-agent-template') as PipelineAPI)
+export const runUpdateTemplate = (templatePipeline('update-space-agent-template') as PipelineAPI)
   .input(['ctx'])
   .pipe(updateLoadExisting, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
@@ -279,7 +297,7 @@ const runUpdateTemplate = (templatePipeline('update-space-agent-template') as Pi
   .pipe(updatePersist, 'ctx', 'ctx')
   .endAsync('ctx') as (input: UpdateTemplateCtx) => Promise<UpdateTemplateCtx>;
 
-const runDeleteTemplate = (templatePipeline('delete-space-agent-template') as PipelineAPI)
+export const runDeleteTemplate = (templatePipeline('delete-space-agent-template') as PipelineAPI)
   .input(['ctx'])
   .pipe(deleteLoadExisting, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
@@ -292,55 +310,27 @@ export class SpaceAgentTemplateManager {
     private builtIns: BuiltInTemplateSource = getBuiltInSpaceAgentTemplates
   ) {}
 
-  private readonly keyLocks = new Map<string, Promise<unknown>>();
-
-  private async withKeyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-    const prev = this.keyLocks.get(key) ?? Promise.resolve();
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const tail = prev.then(
-      () => held,
-      () => held
-    );
-    this.keyLocks.set(key, tail);
-    await prev;
-    try {
-      return await fn();
-    } finally {
-      release();
-      if (this.keyLocks.get(key) === tail) this.keyLocks.delete(key);
-    }
-  }
-
   async create(
     params: CreateSpaceAgentTemplateParams
   ): Promise<SpaceAgentResult<SpaceAgentTemplate>> {
-    return this.withKeyLock(params.key, async () => {
-      const ctx = await runCreateTemplate({ repo: this.repo, params });
-      if (ctx.error) return { ok: false, error: ctx.error };
-      return { ok: true, value: ctx.template! };
-    });
+    const ctx = await runCreateTemplate({ repo: this.repo, params });
+    if (ctx.error) return { ok: false, error: ctx.error };
+    return { ok: true, value: ctx.template! };
   }
 
   async update(
     key: string,
     params: UpdateSpaceAgentTemplateParams
   ): Promise<SpaceAgentResult<SpaceAgentTemplate | null>> {
-    return this.withKeyLock(key, async () => {
-      const ctx = await runUpdateTemplate({ repo: this.repo, key, params });
-      if (ctx.error) return { ok: false, error: ctx.error };
-      return { ok: true, value: ctx.template! };
-    });
+    const ctx = await runUpdateTemplate({ repo: this.repo, key, params });
+    if (ctx.error) return { ok: false, error: ctx.error };
+    return { ok: true, value: ctx.template! };
   }
 
-  async delete(key: string): Promise<SpaceAgentResult<void>> {
-    return this.withKeyLock(key, async () => {
-      const ctx = runDeleteTemplate({ repo: this.repo, key });
-      if (ctx.error) return { ok: false, error: ctx.error };
-      return { ok: true, value: undefined };
-    });
+  delete(key: string): SpaceAgentResult<void> {
+    const ctx = runDeleteTemplate({ repo: this.repo, key });
+    if (ctx.error) return { ok: false, error: ctx.error };
+    return { ok: true, value: undefined };
   }
 
   list(): SpaceAgentTemplate[] {

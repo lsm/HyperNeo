@@ -211,7 +211,7 @@ export async function validateAgentModelPool(
     if (!Number.isFinite(entry.weight) || entry.weight < 0) {
       return `Model pool entry for "${entry.model}" must have weight >= 0`;
     }
-    const modelError = await validateAgentModel(entry.model, entry.provider);
+    const modelError = await validateAgentModel(entry.model);
     if (modelError) return modelError;
   }
   if (!pool.some((entry) => entry.weight > 0)) {
