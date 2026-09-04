@@ -89,6 +89,7 @@ interface AgentSaveForm {
   instructions: string;
   autonomyLevel: number | null;
   model: string;
+  modelProvider: string;
   modelMode: ModelPoolEditorMode;
   modelPool: WorkerAgentModelPoolEntry[];
   thinkingLevel: '' | ThinkingLevel;
@@ -134,6 +135,7 @@ function agentSaveParseToolsStage(ctx: AgentSaveCtx): AgentSaveCtx {
 async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
   const { form, parsedTools, toolsChanged, displayName, handle, instructions } = ctx;
   const effectiveModel = form.modelMode === 'single' ? form.model.trim() : '';
+  const effectiveProvider = effectiveModel ? form.modelProvider.trim() || null : null;
   const cleanedModelPool = form.modelPool
     .map((entry) => ({ ...entry, model: entry.model.trim() }))
     .filter((entry) => entry.model.length > 0);
@@ -147,6 +149,7 @@ async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
         ? {}
         : { autonomyLevel: form.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null }),
       model: effectiveModel || null,
+      provider: effectiveProvider,
       thinkingLevel: (form.thinkingLevel || null) as ThinkingLevel | null,
       ...(toolsChanged
         ? isMigratedWorkerMirror(ctx.agent)
@@ -164,6 +167,7 @@ async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
     instructions,
     autonomyLevel: form.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null,
     model: effectiveModel || null,
+    provider: effectiveProvider,
     thinkingLevel: (form.thinkingLevel || null) as ThinkingLevel | null,
     ...(parsedTools.length > 0 ? { tools: parsedTools } : {}),
     modelPool: activeModelPool ?? undefined,
@@ -210,7 +214,7 @@ function AgentEditor({
     agent?.autonomyLevel ?? template?.suggestedAutonomyLevel ?? null
   );
   const [model, setModel] = useState(agent?.model ?? '');
-  const [modelProvider, setModelProvider] = useState<string | undefined>(undefined);
+  const [modelProvider, setModelProvider] = useState<string>(agent?.provider ?? '');
   const [modelPool, setModelPool] = useState<WorkerAgentModelPoolEntry[]>(agent?.modelPool ?? []);
   const [modelMode, setModelMode] = useState<ModelPoolEditorMode>(
     (agent?.modelPool?.length ?? 0) > 0 ? 'pool' : 'single'
@@ -236,6 +240,7 @@ function AgentEditor({
           instructions,
           autonomyLevel,
           model,
+          modelProvider,
           modelMode,
           modelPool,
           thinkingLevel,
@@ -353,12 +358,12 @@ function AgentEditor({
               <ModelPoolEditor
                 mode={modelMode}
                 model={model}
-                provider={modelProvider ?? ''}
+                provider={modelProvider}
                 modelPool={modelPool}
                 onModeChange={setModelMode}
                 onModelChange={(nextModel, nextProvider) => {
                   setModel(nextModel);
-                  setModelProvider(nextProvider || undefined);
+                  setModelProvider(nextProvider);
                 }}
                 onModelPoolChange={setModelPool}
               />

@@ -425,6 +425,54 @@ describe('SpaceLongHorizonAgents', () => {
     expect(params.modelPool).toEqual(pool);
   });
 
+  it('persists the selected provider when changing the single model', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({ model: 'claude-sonnet-4-6', provider: 'anthropic' }),
+    ];
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    fireEvent.change(getByTestId('space-agent-model-select'), {
+      target: { value: 'claude-haiku-4-5' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    const params = mockUpdateAgent.mock.calls[0][1];
+    expect(params.model).toBe('claude-haiku-4-5');
+    expect(params.provider).toBe('anthropic');
+  });
+
+  it('keeps the existing provider on an untouched save', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({ model: 'claude-sonnet-4-6', provider: 'anthropic' }),
+    ];
+    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    expect(mockUpdateAgent.mock.calls[0][1].provider).toBe('anthropic');
+  });
+
+  it('clears the provider when switching a provider-qualified model to pool mode', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({ model: 'claude-sonnet-4-6', provider: 'anthropic' }),
+    ];
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    fireEvent.click(getByTestId('agent-model-mode-pool'));
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    const params = mockUpdateAgent.mock.calls[0][1];
+    expect(params.model).toBeNull();
+    expect(params.provider).toBeNull();
+    expect(params.modelPool).toBeNull();
+  });
+
   it('disables autonomy editing for migrated worker mirrors', () => {
     mockAgents.value = [makeLongHorizonAgent({ templateKey: 'migration.legacy_space_agent' })];
     const { getByRole, getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
