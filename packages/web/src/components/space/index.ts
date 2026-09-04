@@ -2,6 +2,8 @@ export { downloadBundle, pickImportFile } from './export-import-utils';
 export type { FileDiffViewProps } from './FileDiffView';
 export { FileDiffView, parseDiff } from './FileDiffView';
 export { ImportPreviewDialog } from './ImportPreviewDialog';
+export type { LineNumberedTextareaProps } from './LineNumberedTextarea';
+export { LineNumberedTextarea } from './LineNumberedTextarea';
 export { SpaceCreateDialog } from './SpaceCreateDialog';
 export { SpaceCreateTaskDialog } from './SpaceCreateTaskDialog';
 export { SpaceMemories } from './SpaceMemories';
