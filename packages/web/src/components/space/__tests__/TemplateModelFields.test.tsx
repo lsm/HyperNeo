@@ -266,6 +266,22 @@ describe('TemplateModelFields', () => {
     );
   });
 
+  it('preserves a saved thinking level when the selected model is absent from the catalog', async () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <TemplateModelFields
+        value={{ model: 'kimi-k3-1m', provider: 'kimi', thinkingLevel: 'think8k' }}
+        onChange={onChange}
+      />
+    );
+    const select = getByTestId('template-model-fields-thinking-level') as HTMLSelectElement;
+    await waitFor(() => {
+      const values = Array.from(select.options).map((option) => option.value);
+      expect(values).toEqual(['', 'off', 'think32k', 'think8k']);
+    });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('pre-fills thinking level from value', () => {
     const { getByTestId } = render(
       <TemplateModelFields
