@@ -10,6 +10,7 @@ import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
+import { LineNumberedTextarea } from './LineNumberedTextarea';
 import { WorkflowModelSelect } from './visual-editor/WorkflowModelSelect';
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
@@ -293,11 +294,10 @@ function AgentEditor({
           </div>
           <div>
             <label class="mb-2 block text-sm font-medium text-fg-soft">Instructions</label>
-            <textarea
+            <LineNumberedTextarea
               value={instructions}
-              onInput={(e) => setInstructions((e.target as HTMLTextAreaElement).value)}
+              onChange={setInstructions}
               rows={5}
-              class="w-full resize-none rounded-2xl border border-line bg-surface-overlay/90 px-4 py-3 text-sm leading-relaxed text-fg placeholder-gray-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
               placeholder="What should this agent do?"
             />
           </div>
@@ -473,11 +473,10 @@ function TemplateEditor({ onCancel }: { onCancel: () => void }) {
           </div>
           <div>
             <label class="mb-2 block text-sm font-medium text-fg-soft">Instructions</label>
-            <textarea
+            <LineNumberedTextarea
               value={instructions}
-              onInput={(e) => setInstructions((e.target as HTMLTextAreaElement).value)}
+              onChange={setInstructions}
               rows={5}
-              class={`${fieldClass} resize-none leading-relaxed`}
               placeholder="What should agents created from this template do?"
             />
           </div>
