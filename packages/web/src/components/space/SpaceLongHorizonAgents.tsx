@@ -1,9 +1,10 @@
-import type {
-  SettingSource,
-  SpaceLongHorizonAgent,
-  SpaceLongHorizonAgentTemplate,
-  ThinkingLevel,
-  WorkerAgentModelPoolEntry,
+import {
+  KNOWN_TOOLS,
+  type SettingSource,
+  type SpaceLongHorizonAgent,
+  type SpaceLongHorizonAgentTemplate,
+  type ThinkingLevel,
+  type WorkerAgentModelPoolEntry,
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { useEffect, useState } from 'preact/hooks';
@@ -15,6 +16,7 @@ import { ConfirmModal } from '../ui/ConfirmModal';
 import { LineNumberedTextarea } from './LineNumberedTextarea';
 import { ModelPoolEditor, type ModelPoolEditorMode } from './ModelPoolEditor';
 import { SettingSourcesEditor } from './SettingSourcesEditor';
+import { ToolsEditor, type ToolsSelection } from './ToolsEditor';
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
   { value: '', label: 'Use app default' },
@@ -68,13 +70,6 @@ function isMigratedWorkerMirror(agent: SpaceLongHorizonAgent): boolean {
   return agent.templateKey === MIGRATED_WORKER_TEMPLATE_KEY;
 }
 
-function parseToolsInput(value: string): string[] {
-  return value
-    .split(',')
-    .map((tool) => tool.trim())
-    .filter(Boolean);
-}
-
 function nextFreeDisplayName(base: string, existingNames: Set<string>): string {
   const taken = new Set([...existingNames].map((name) => name.trim().toLowerCase()));
   if (!taken.has(base.trim().toLowerCase())) return base;
@@ -95,7 +90,8 @@ interface AgentSaveForm {
   modelMode: ModelPoolEditorMode;
   modelPool: WorkerAgentModelPoolEntry[];
   thinkingLevel: '' | ThinkingLevel;
-  tools: string;
+  tools: string[];
+  pendingTool: string;
   settingSources: SettingSource[] | null;
 }
 
@@ -126,7 +122,11 @@ function agentSaveNormalizeStage(ctx: AgentSaveCtx): AgentSaveCtx {
 }
 
 function agentSaveParseToolsStage(ctx: AgentSaveCtx): AgentSaveCtx {
-  const parsedTools = parseToolsInput(ctx.form.tools);
+  const pendingTool = ctx.form.pendingTool.trim();
+  const parsedTools =
+    pendingTool && !ctx.form.tools.includes(pendingTool)
+      ? [...ctx.form.tools, pendingTool]
+      : ctx.form.tools;
   return {
     ...ctx,
     parsedTools,
@@ -229,13 +229,39 @@ function AgentEditor({
   const [thinkingLevel, setThinkingLevel] = useState<'' | ThinkingLevel>(
     agent?.thinkingLevel ?? ''
   );
-  const [tools, setTools] = useState(agent ? agentToolsList(agent).join(', ') : '');
+  const [toolsSelection, setToolsSelection] = useState<ToolsSelection>(
+    agent
+      ? { tools: agentToolsList(agent), toolsOverridden: agentToolsList(agent).length > 0 }
+      : { tools: [], toolsOverridden: false }
+  );
   const [settingSources, setSettingSources] = useState<SettingSource[] | null>(
     agent?.settingSources ?? null
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const migratedWorkerMirror = isEdit && agent ? isMigratedWorkerMirror(agent) : false;
+  const [extraToolDraft, setExtraToolDraft] = useState('');
+  const extraTools = toolsSelection.tools.filter(
+    (tool) => !(KNOWN_TOOLS as readonly string[]).includes(tool)
+  );
+
+  const removeExtraTool = (tool: string) => {
+    setToolsSelection((selection) => {
+      const tools = selection.tools.filter((t) => t !== tool);
+      return { tools, toolsOverridden: tools.length > 0 };
+    });
+  };
+
+  const addExtraTool = () => {
+    const entry = extraToolDraft.trim();
+    if (!entry) return;
+    setToolsSelection((selection) =>
+      selection.tools.includes(entry)
+        ? selection
+        : { tools: [...selection.tools, entry], toolsOverridden: true }
+    );
+    setExtraToolDraft('');
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -254,7 +280,8 @@ function AgentEditor({
           modelMode,
           modelPool,
           thinkingLevel,
-          tools,
+          tools: toolsSelection.tools,
+          pendingTool: extraToolDraft,
           settingSources,
         },
         displayName: '',
@@ -397,18 +424,58 @@ function AgentEditor({
             </div>
           </div>
           <div>
-            <label class="mb-2 block text-sm font-medium text-fg-soft">Tools</label>
-            <input
-              type="text"
-              value={tools}
-              onInput={(e) => setTools((e.target as HTMLInputElement).value)}
-              class="w-full rounded-xl border border-line bg-surface-overlay/90 px-4 py-3 text-sm text-fg placeholder:text-fg-faint shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
-              placeholder="e.g. Read, Write, Edit, Bash"
-              data-testid="lh-agent-tools-input"
+            <ToolsEditor
+              tools={toolsSelection.tools}
+              toolsOverridden={toolsSelection.toolsOverridden}
+              onChange={(next) => {
+                setToolsSelection(next);
+                setExtraToolDraft('');
+              }}
             />
-            <p class="mt-1 text-xs text-fg-muted">
-              Comma-separated tool names. Leave empty to use the default tool set.
-            </p>
+            <div data-testid="lh-agent-extra-tools" class="mt-3">
+              {extraTools.length > 0 && (
+                <>
+                  <p class="mb-1.5 text-xs text-fg-muted">
+                    Scoped or custom tool entries on this profile:
+                  </p>
+                  <div class="mb-2 flex flex-wrap gap-1.5">
+                    {extraTools.map((tool) => (
+                      <span
+                        key={tool}
+                        class="flex items-center gap-1 rounded-lg border border-line bg-surface-overlay/90 px-2.5 py-1 text-xs text-fg-soft"
+                      >
+                        <span class="font-mono">{tool}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeExtraTool(tool)}
+                          aria-label={`Remove ${tool}`}
+                          class="rounded p-0.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </>
+              )}
+              <div class="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={extraToolDraft}
+                  onInput={(e) => setExtraToolDraft((e.target as HTMLInputElement).value)}
+                  class="w-full rounded-xl border border-line bg-surface-overlay/90 px-3 py-2 text-xs text-fg placeholder:text-fg-faint shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
+                  placeholder="Add scoped tool entry, e.g. Bash(gh pr view:*)"
+                  data-testid="lh-agent-extra-tool-input"
+                />
+                <button
+                  type="button"
+                  onClick={addExtraTool}
+                  class="flex-shrink-0 rounded-xl border border-line px-3 py-2 text-xs text-fg-soft transition-colors hover:border-line-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/60"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
           </div>
           <div>
             <label class="mb-2 block text-sm font-medium text-fg-soft">Setting sources</label>

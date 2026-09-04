@@ -146,6 +146,18 @@ function gutterNumbersFor(textarea: Element): string[] {
   return Array.from(gutter.querySelectorAll('span')).map((s) => s.textContent ?? '');
 }
 
+function chipLabel(container: Element, tool: string): HTMLElement {
+  const label = container.querySelector(`[data-testid="tools-editor-chip-${tool}"]`);
+  expect(label, `chip ${tool} rendered`).toBeTruthy();
+  return label as HTMLElement;
+}
+
+function chipInput(container: Element, tool: string): HTMLInputElement {
+  const input = chipLabel(container, tool).querySelector('input');
+  expect(input, `chip ${tool} input rendered`).toBeTruthy();
+  return input as HTMLInputElement;
+}
+
 describe('SpaceLongHorizonAgents', () => {
   beforeEach(() => {
     cleanup();
@@ -271,12 +283,12 @@ describe('SpaceLongHorizonAgents', () => {
         toolPermissions: { tools: ['Read', 'Write'] },
       }),
     ];
-    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+    const { getByRole, container } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
-    const toolsInput = getByTestId('lh-agent-tools-input') as HTMLInputElement;
-    expect(toolsInput.value).toBe('Read, Write');
-    fireEvent.input(toolsInput, { target: { value: 'Read, Write, Bash' } });
+    expect(chipInput(container, 'Read').checked).toBe(true);
+    expect(chipInput(container, 'Bash').checked).toBe(false);
+    fireEvent.click(chipLabel(container, 'Bash'));
     fireEvent.click(getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
@@ -303,18 +315,88 @@ describe('SpaceLongHorizonAgents', () => {
     mockAgents.value = [
       makeLongHorizonAgent({ toolPermissions: { mode: 'restricted', tools: ['Read'] } }),
     ];
-    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+    const { getByRole, container } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
-    fireEvent.input(getByTestId('lh-agent-tools-input'), {
-      target: { value: 'Read, Bash' },
-    });
+    fireEvent.click(chipLabel(container, 'Bash'));
     fireEvent.click(getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
     const params = mockUpdateAgent.mock.calls[0][1];
     expect(params.tools).toBeUndefined();
     expect(params.toolPermissions).toEqual({ mode: 'restricted', tools: ['Read', 'Bash'] });
+  });
+
+  it('clears tool overrides when Inherit defaults is applied before saving', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({ toolPermissions: { mode: 'restricted', tools: ['Read'] } }),
+    ];
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    fireEvent.click(getByTestId('tools-editor-preset-inherit-defaults'));
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    const params = mockUpdateAgent.mock.calls[0][1];
+    expect(params.toolPermissions).toEqual({ mode: 'restricted', tools: [] });
+  });
+
+  it('discards a pending scoped tool draft when Inherit defaults is applied', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({ toolPermissions: { mode: 'restricted', tools: ['Read'] } }),
+    ];
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    fireEvent.input(getByTestId('lh-agent-extra-tool-input'), {
+      target: { value: 'Bash(gh pr view:*)' },
+    });
+    fireEvent.click(getByTestId('tools-editor-preset-inherit-defaults'));
+    expect((getByTestId('lh-agent-extra-tool-input') as HTMLInputElement).value).toBe('');
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    const params = mockUpdateAgent.mock.calls[0][1];
+    expect(params.toolPermissions).toEqual({ mode: 'restricted', tools: [] });
+  });
+
+  it('discards a pending scoped tool draft when a replacing preset is applied', async () => {
+    const { getByRole, getByTestId, container } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
+    const textInputs = container.querySelectorAll('input[type="text"]');
+    fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
+    fireEvent.input(textInputs[1], { target: { value: 'runner' } });
+    fireEvent.input(getByTestId('lh-agent-extra-tool-input'), {
+      target: { value: 'Bash(gh pr view:*)' },
+    });
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    expect((getByTestId('lh-agent-extra-tool-input') as HTMLInputElement).value).toBe('');
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    expect(mockCreateAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        handle: 'runner',
+        displayName: 'Runner',
+        tools: ['Read', 'Grep', 'Glob'],
+      })
+    );
+  });
+
+  it('opens the tools editor in inherited mode for an agent without tool overrides', () => {
+    mockAgents.value = [makeLongHorizonAgent()];
+    const { getByRole, getByText, container } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+
+    expect(getByText('(inherited)')).toBeTruthy();
+    expect(chipInput(container, 'Bash').disabled).toBe(true);
   });
 
   it('creates an agent with a model pool and no pinned model', async () => {
@@ -641,6 +723,103 @@ describe('SpaceLongHorizonAgents', () => {
         displayName: 'Runner',
         templateKey: null,
         settingSources: null,
+      })
+    );
+  });
+
+  it('creates a custom agent carrying the tools selected in the editor', async () => {
+    const { getByRole, getByTestId, container } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
+    const textInputs = container.querySelectorAll('input[type="text"]');
+    fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
+    fireEvent.input(textInputs[1], { target: { value: 'runner' } });
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    expect(mockCreateAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        handle: 'runner',
+        displayName: 'Runner',
+        templateKey: null,
+        tools: ['Read', 'Grep', 'Glob'],
+      })
+    );
+  });
+
+  it('shows scoped tool entries outside the known grid and removes one individually', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({
+        toolPermissions: { tools: ['Read', 'Bash(gh pr view:*)', 'Bash(gh pr diff:*)'] },
+      }),
+    ];
+    const { getByRole, getByText, getByTestId } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+
+    expect(getByTestId('lh-agent-extra-tools')).toBeTruthy();
+    expect(getByText('Bash(gh pr view:*)')).toBeTruthy();
+    expect(getByText('Bash(gh pr diff:*)')).toBeTruthy();
+
+    fireEvent.click(getByRole('button', { name: 'Remove Bash(gh pr view:*)' }));
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    const params = mockUpdateAgent.mock.calls[0][1];
+    expect(params.toolPermissions).toEqual({ tools: ['Read', 'Bash(gh pr diff:*)'] });
+  });
+
+  it('adds a scoped tool entry from the additional-tools input', async () => {
+    const { getByRole, getByTestId, container } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
+    const textInputs = container.querySelectorAll('input[type="text"]');
+    fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
+    fireEvent.input(textInputs[1], { target: { value: 'runner' } });
+    fireEvent.input(getByTestId('lh-agent-extra-tool-input'), {
+      target: { value: 'Bash(gh pr view:*)' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Add', exact: true }));
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    expect(mockCreateAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        handle: 'runner',
+        displayName: 'Runner',
+        templateKey: null,
+        tools: ['Bash(gh pr view:*)'],
+      })
+    );
+  });
+
+  it('includes a pending scoped tool draft when saving without clicking Add', async () => {
+    const { getByRole, getByTestId, container } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
+    const textInputs = container.querySelectorAll('input[type="text"]');
+    fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
+    fireEvent.input(textInputs[1], { target: { value: 'runner' } });
+    fireEvent.input(getByTestId('lh-agent-extra-tool-input'), {
+      target: { value: 'Bash(gh pr diff:*)' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    expect(mockCreateAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        handle: 'runner',
+        displayName: 'Runner',
+        tools: ['Bash(gh pr diff:*)'],
       })
     );
   });
