@@ -45,6 +45,9 @@ export interface SpaceLongHorizonAgentTemplate {
   reminderDefaults: SpaceLongHorizonAgentTemplateReminderDefault[];
   ownershipPatterns: SpaceLongHorizonAgentTemplateOwnershipPattern[];
   toolPermissions: Record<string, unknown>;
+  model?: string | null;
+  provider?: string | null;
+  thinkingLevel?: ThinkingLevel | null;
 }
 
 export interface SpaceLongHorizonAgent {
