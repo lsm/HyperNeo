@@ -55,7 +55,7 @@ export class SpaceAgentTemplateRepository {
     const row = this.db.prepare(`SELECT * FROM space_agent_templates WHERE key = ?`).get(key) as
       | Record<string, unknown>
       | undefined;
-    return row ? rowToTemplate(row) : null;
+    return row ? rowToTemplateRecord(row) : null;
   }
 
   list(): SpaceAgentTemplate[] {
@@ -145,7 +145,7 @@ export class SpaceAgentTemplateRepository {
   }
 }
 
-function rowToTemplate(row: Record<string, unknown>): SpaceAgentTemplateRecord {
+function rowToTemplate(row: Record<string, unknown>): SpaceAgentTemplate {
   return {
     key: row.key as string,
     handle: row.handle as string,
@@ -161,6 +161,12 @@ function rowToTemplate(row: Record<string, unknown>): SpaceAgentTemplateRecord {
     tools: decodeJsonArray<string>(row.tools),
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number,
+  };
+}
+
+function rowToTemplateRecord(row: Record<string, unknown>): SpaceAgentTemplateRecord {
+  return {
+    ...rowToTemplate(row),
     version: (row.version as number | undefined) ?? 1,
   };
 }

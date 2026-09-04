@@ -14,6 +14,7 @@ import { setModelsCache } from '../../../../src/lib/model-service';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
+import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const BUILT_INS: SpaceAgentTemplate[] = [
@@ -74,6 +75,7 @@ describe('SpaceAgentTemplateManager', () => {
   beforeEach(() => {
     db = new BunDatabase(':memory:');
     createSpaceAgentTemplatesTable(db);
+    runMigration226(db);
     repo = new SpaceAgentTemplateRepository(db);
     manager = new SpaceAgentTemplateManager(repo, () => BUILT_INS);
     setModelsCache(new Map());
@@ -109,6 +111,11 @@ describe('SpaceAgentTemplateManager', () => {
     test('orders by createdAt then key', () => {
       repo.create({ key: 'b.custom', handle: 'b' });
       repo.create({ key: 'a.custom', handle: 'a' });
+      db.prepare(`UPDATE space_agent_templates SET created_at = ? WHERE key IN (?, ?)`).run(
+        1000,
+        'a.custom',
+        'b.custom'
+      );
 
       const keys = manager.list().map((template) => template.key);
       const aIndex = keys.indexOf('a.custom');

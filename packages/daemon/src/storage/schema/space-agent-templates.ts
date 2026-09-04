@@ -17,8 +17,7 @@ export function createSpaceAgentTemplatesTable(db: BunDatabase): void {
       setting_sources TEXT DEFAULT NULL,
       tools TEXT DEFAULT NULL,
       created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      version INTEGER NOT NULL DEFAULT 1
+      updated_at INTEGER NOT NULL
     )
   `);
 }

@@ -7,6 +7,7 @@ import type {
 } from '@hyperneo/shared';
 import { SpaceAgentTemplateRepository } from '../../../src/storage/repositories/space-agent-template-repository';
 import { createSpaceAgentTemplatesTable } from '../../../src/storage/schema/space-agent-templates';
+import { runMigration226 } from '../../../src/storage/schema/m226-space-agent-templates-version';
 import { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 
 const MODEL_POOL: WorkerAgentModelPoolEntry[] = [
@@ -38,6 +39,7 @@ describe('SpaceAgentTemplateRepository', () => {
   beforeEach(() => {
     db = new BunDatabase(':memory:');
     createSpaceAgentTemplatesTable(db);
+    runMigration226(db);
     repo = new SpaceAgentTemplateRepository(db);
   });
 
