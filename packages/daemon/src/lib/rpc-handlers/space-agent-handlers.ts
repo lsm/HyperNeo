@@ -1,4 +1,5 @@
 import type {
+  CreateSpaceAgentTemplateParams,
   MessageHub,
   Session,
   SettingSource,
@@ -7,6 +8,7 @@ import type {
   SpaceWorkerAgent,
   SpaceWorkerAgentPromotionDraft,
   ThinkingLevel,
+  UpdateSpaceAgentTemplateParams,
   UpdateSpaceWorkerAgentParams,
   WorkerAgentModelPoolEntry,
 } from '@hyperneo/shared';
@@ -17,6 +19,7 @@ import {
   coordinatorLongHorizonAgentId,
   type SpaceLongHorizonAgentRepository,
 } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { composeLongHorizonSubscriptionPattern } from '../external-events/long-horizon-subscription-pattern.ts';
 import { validateGlobPattern, validateSource } from '../external-events/topic-validator.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -37,6 +40,7 @@ import {
   validateAgentModelPool,
   validateSpaceAgentTools,
 } from '../space/managers/space-agent-manager.ts';
+import { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import { getNextRunAt, isValidCronExpression } from '../space/schedule/cron-utils.ts';
@@ -57,6 +61,7 @@ type UnifiedSpaceAgentRuntimeService = Pick<
 interface UnifiedSpaceAgentMethodDeps {
   spaceManager: SpaceManager;
   repo: SpaceLongHorizonAgentRepository;
+  templateManager: SpaceAgentTemplateManager;
   spaceAgentManager?: SpaceAgentManager;
   runtimeService?: UnifiedSpaceAgentRuntimeService;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
@@ -841,6 +846,36 @@ export function registerUnifiedSpaceAgentMethods(
     return { templates: getLongHorizonAgentTemplates() };
   });
 
+  messageHub.onRequest(method('listTemplates'), async () => {
+    return { templates: deps.templateManager.list() };
+  });
+
+  messageHub.onRequest(method('createTemplate'), async (data) => {
+    const params = data as CreateSpaceAgentTemplateParams;
+    if (!params.key) throw new Error('key is required');
+    if (!params.handle) throw new Error('handle is required');
+    const result = await deps.templateManager.create(params);
+    if (!result.ok) throw new Error(result.error);
+    return { template: result.value };
+  });
+
+  messageHub.onRequest(method('updateTemplate'), async (data) => {
+    const params = data as { key: string } & UpdateSpaceAgentTemplateParams;
+    if (!params.key) throw new Error('key is required');
+    const { key, ...updates } = params;
+    const result = await deps.templateManager.update(key, updates);
+    if (!result.ok) throw new Error(result.error);
+    return { template: result.value };
+  });
+
+  messageHub.onRequest(method('deleteTemplate'), async (data) => {
+    const params = data as { key: string };
+    if (!params.key) throw new Error('key is required');
+    const result = deps.templateManager.delete(params.key);
+    if (!result.ok) throw new Error(result.error);
+    return { success: true };
+  });
+
   messageHub.onRequest(method('list'), async (data) => {
     const params = data as { spaceId: string };
     if (!params.spaceId) throw new Error('spaceId is required');
@@ -1085,6 +1120,9 @@ export function setupSpaceAgentHandlers(
   const deps: UnifiedSpaceAgentMethodDeps = {
     spaceManager,
     repo: longHorizonAgentRepo,
+    templateManager: new SpaceAgentTemplateManager(
+      new SpaceAgentTemplateRepository(db.getDatabase())
+    ),
     spaceAgentManager,
     runtimeService,
     internalEventBus,
