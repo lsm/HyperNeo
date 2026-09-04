@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { runMigration225 } from '../../../../../src/storage/schema/m225-space-agent-templates.ts';
 import { runMigration226 } from '../../../../../src/storage/schema/m226-space-agent-templates-version.ts';
+import { runMigration227 } from '../../../../../src/storage/schema/m227-space-agent-template-version-seq.ts';
 import { SpaceAgentTemplateRepository } from '../../../../../src/storage/repositories/space-agent-template-repository';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 
@@ -29,6 +30,7 @@ describe('migration 226: space_agent_templates version column', () => {
     ).run('pre.custom', 'pre', 'Pre', 1000, 1000);
 
     runMigration226(db);
+    runMigration227(db);
 
     const after = columnNames(db, 'space_agent_templates');
     expect(after).toContain('version');
@@ -49,7 +51,9 @@ describe('migration 226: space_agent_templates version column', () => {
     const db = new BunDatabase(':memory:');
     runMigration225(db);
     runMigration226(db);
+    runMigration227(db);
     runMigration226(db);
+    runMigration227(db);
 
     const repo = new SpaceAgentTemplateRepository(db);
     repo.create({ key: 'idempotent.custom', handle: 'idempotent' });

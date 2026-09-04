@@ -109,7 +109,11 @@ async function validateModelChoice(
   model: string | null | undefined,
   provider: string | null | undefined
 ): Promise<string | null> {
-  if (model === undefined || model === null || model === '') return null;
+  if (provider !== undefined && provider !== null && provider.trim() === '') {
+    return 'Provider identifier cannot be blank';
+  }
+  if (model === undefined || model === null) return null;
+  if (model.trim() === '') return 'Model identifier cannot be blank';
   return validateAgentModel(model, provider);
 }
 
@@ -117,6 +121,12 @@ async function validateTemplateModelPool(
   pool: WorkerAgentModelPoolEntry[] | null | undefined
 ): Promise<string | null> {
   if (pool === undefined || pool === null || pool.length === 0) return null;
+  for (const entry of pool) {
+    if (entry.model.trim() === '') return 'Model pool entries must specify a model';
+    if (entry.provider !== undefined && entry.provider.trim() === '') {
+      return `Provider identifier cannot be blank for model pool entry "${entry.model}"`;
+    }
+  }
   const baseError = await validateAgentModelPool(pool);
   if (baseError) return baseError;
   for (const entry of pool) {

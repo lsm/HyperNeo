@@ -17,13 +17,14 @@ export class SpaceAgentTemplateRepository {
 
   create(params: CreateSpaceAgentTemplateParams): SpaceAgentTemplate {
     const now = Date.now();
+    const version = this.nextVersionFor(params.key);
     this.db
       .prepare(
         `INSERT INTO space_agent_templates (
-					key, handle, display_name, description, instructions, suggested_autonomy_level,
-					model, provider, model_pool, thinking_level, setting_sources, tools,
-					created_at, updated_at, version
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
+						key, handle, display_name, description, instructions, suggested_autonomy_level,
+						model, provider, model_pool, thinking_level, setting_sources, tools,
+						created_at, updated_at, version
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         params.key,
@@ -39,7 +40,8 @@ export class SpaceAgentTemplateRepository {
         params.settingSources === undefined ? null : JSON.stringify(params.settingSources),
         encodeJsonArray(params.tools),
         now,
-        now
+        now,
+        version
       );
     return this.getByKey(params.key) as SpaceAgentTemplate;
   }
@@ -124,9 +126,11 @@ export class SpaceAgentTemplateRepository {
 
     if (fields.length === 0) return this.getByKey(key);
 
+    const nextVersion = this.nextVersionFor(key);
     fields.push('updated_at = ?');
-    fields.push('version = version + 1');
+    fields.push('version = ?');
     values.push(Date.now());
+    values.push(nextVersion);
 
     const where = expectedVersion === undefined ? 'WHERE key = ?' : 'WHERE key = ? AND version = ?';
     values.push(key);
@@ -142,6 +146,17 @@ export class SpaceAgentTemplateRepository {
   delete(key: string): boolean {
     const result = this.db.prepare(`DELETE FROM space_agent_templates WHERE key = ?`).run(key);
     return result.changes > 0;
+  }
+
+  private nextVersionFor(key: string): number {
+    const row = this.db
+      .prepare(
+        `INSERT INTO space_agent_template_version_seq (key, next_version) VALUES (?, 1)
+					 ON CONFLICT(key) DO UPDATE SET next_version = next_version + 1
+					 RETURNING next_version`
+      )
+      .get(key) as { next_version: number } | undefined;
+    return row?.next_version ?? 1;
   }
 }
 

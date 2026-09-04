@@ -15,6 +15,7 @@ import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/space/agents/w
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
+import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const BUILT_INS: SpaceAgentTemplate[] = [
@@ -76,6 +77,7 @@ describe('SpaceAgentTemplateManager', () => {
     db = new BunDatabase(':memory:');
     createSpaceAgentTemplatesTable(db);
     runMigration226(db);
+    runMigration227(db);
     repo = new SpaceAgentTemplateRepository(db);
     manager = new SpaceAgentTemplateManager(repo, () => BUILT_INS);
     setModelsCache(new Map());
@@ -221,6 +223,44 @@ describe('SpaceAgentTemplateManager', () => {
       if (!result.ok) expect(result.error).toContain('reserved');
     });
 
+    test('rejects a blank model', async () => {
+      setModelsCache(
+        new Map([['global', [makeModelInfo('claude-opus-5', 'claude-opus-5', 'anthropic')]]])
+      );
+
+      const result = await manager.create({ ...fullParams(), model: '' });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/model/i);
+    });
+
+    test('rejects a blank provider', async () => {
+      setModelsCache(
+        new Map([['global', [makeModelInfo('claude-opus-5', 'claude-opus-5', 'anthropic')]]])
+      );
+
+      const result = await manager.create({ ...fullParams(), provider: '' });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/provider/i);
+    });
+
+    test('rejects a blank model-pool provider', async () => {
+      setModelsCache(
+        new Map([['global', [makeModelInfo('claude-opus-5', 'claude-opus-5', 'anthropic')]]])
+      );
+
+      const result = await manager.create({
+        ...fullParams(),
+        model: undefined,
+        provider: undefined,
+        modelPool: [{ model: 'claude-opus-5', provider: '', maxConcurrent: 1, weight: 1 }],
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/provider/i);
+    });
+
     test('rejects a model pool entry with an incompatible provider', async () => {
       setModelsCache(new Map([['global', [makeModelInfo('glm-4-flash', 'glm-4-flash', 'glm')]]]));
 
@@ -304,6 +344,30 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('display name');
+    });
+
+    test('rejects a blank model on update', async () => {
+      setModelsCache(
+        new Map([['global', [makeModelInfo('claude-opus-5', 'claude-opus-5', 'anthropic')]]])
+      );
+      await manager.create(fullParams());
+
+      const result = await manager.update('release-readiness.custom', { model: '' });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/model/i);
+    });
+
+    test('rejects a blank provider on update', async () => {
+      setModelsCache(
+        new Map([['global', [makeModelInfo('claude-opus-5', 'claude-opus-5', 'anthropic')]]])
+      );
+      await manager.create(fullParams());
+
+      const result = await manager.update('release-readiness.custom', { provider: '' });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toMatch(/provider/i);
     });
 
     test('rejects a model-only update that is incompatible with the existing provider', async () => {
