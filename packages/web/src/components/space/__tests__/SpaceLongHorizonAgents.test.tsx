@@ -10,6 +10,7 @@ const {
   mockConfigDataLoaded,
   mockEnsureConfigData,
   mockListAgentReminderCounts,
+  mockCreateAgent,
   mockUpdateAgent,
   mockNavigateToSpaceSession,
 } = vi.hoisted(() => {
@@ -22,6 +23,7 @@ const {
     mockConfigDataLoaded: makeSignal(true),
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
     mockListAgentReminderCounts: vi.fn().mockResolvedValue({}),
+    mockCreateAgent: vi.fn().mockResolvedValue(undefined),
     mockUpdateAgent: vi.fn().mockResolvedValue(undefined),
     mockNavigateToSpaceSession: vi.fn(),
   };
@@ -35,6 +37,7 @@ vi.mock('../../../lib/space-store', () => ({
       configDataLoaded: mockConfigDataLoaded,
       ensureConfigData: mockEnsureConfigData,
       listAgentReminderCounts: mockListAgentReminderCounts,
+      createAgent: mockCreateAgent,
       updateAgent: mockUpdateAgent,
     };
   },
@@ -88,6 +91,18 @@ function makeLongHorizonAgent(
   };
 }
 
+function makeTemplate(overrides: Record<string, unknown> = {}) {
+  return {
+    key: 'qa',
+    handle: 'qa',
+    displayName: 'QA Engineer',
+    description: 'Validates product quality.',
+    instructions: 'Test the product.',
+    suggestedAutonomyLevel: 2,
+    ...overrides,
+  };
+}
+
 describe('SpaceLongHorizonAgents', () => {
   beforeEach(() => {
     cleanup();
@@ -96,6 +111,7 @@ describe('SpaceLongHorizonAgents', () => {
     mockConfigDataLoaded.value = true;
     mockEnsureConfigData.mockClear();
     mockListAgentReminderCounts.mockClear();
+    mockCreateAgent.mockClear();
     mockUpdateAgent.mockClear();
     mockNavigateToSpaceSession.mockClear();
   });
@@ -230,21 +246,74 @@ describe('SpaceLongHorizonAgents', () => {
 
   it('derives a unique display name when a template name is already taken', () => {
     mockAgents.value = [makeLongHorizonAgent({ displayName: 'QA Engineer' })];
-    mockTemplates.value = [
-      {
-        key: 'qa',
-        handle: 'qa',
-        displayName: 'QA Engineer',
-        description: 'Validates product quality.',
-        instructions: 'Test the product.',
-        suggestedAutonomyLevel: 2,
-      },
-    ];
+    mockTemplates.value = [makeTemplate()];
     const { getByText, getByDisplayValue } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByText('Validates product quality.').closest('button')!);
 
     expect(getByDisplayValue('QA Engineer 2')).toBeTruthy();
+  });
+
+  it('prefills name, handle, and instructions from a template card click', () => {
+    mockTemplates.value = [makeTemplate()];
+    const { getByText, getByDisplayValue } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
+
+    expect(getByDisplayValue('QA Engineer')).toBeTruthy();
+    expect(getByDisplayValue('qa')).toBeTruthy();
+    expect(getByDisplayValue('Test the product.')).toBeTruthy();
+  });
+
+  it('derives a unique handle when the template handle is already taken', () => {
+    mockAgents.value = [makeLongHorizonAgent({ handle: 'qa' })];
+    mockTemplates.value = [makeTemplate()];
+    const { getByText, getByDisplayValue } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
+
+    expect(getByDisplayValue('qa-2')).toBeTruthy();
+  });
+
+  it('creates an agent carrying the template key and prefilled fields', async () => {
+    mockTemplates.value = [makeTemplate({ suggestedAutonomyLevel: 3 })];
+    const { getByText, getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    expect(mockCreateAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        handle: 'qa',
+        displayName: 'QA Engineer',
+        templateKey: 'qa',
+        instructions: 'Test the product.',
+        autonomyLevel: 3,
+        model: null,
+        thinkingLevel: null,
+      })
+    );
+    expect(mockUpdateAgent).not.toHaveBeenCalled();
+  });
+
+  it('creates a custom agent with a null template key', async () => {
+    const { getByRole, container } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
+    const textInputs = container.querySelectorAll('input[type="text"]');
+    fireEvent.input(textInputs[0], { target: { value: 'Runner' } });
+    fireEvent.input(textInputs[1], { target: { value: 'runner' } });
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    expect(mockCreateAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        handle: 'runner',
+        displayName: 'Runner',
+        templateKey: null,
+      })
+    );
   });
 
   it('renders a readable empty configured-agent state', () => {

@@ -918,6 +918,75 @@ describe('NodeConfigPanel', () => {
       expect(updatedStep.agents[0].agentId).toBe('agent-2');
     });
 
+    it('reflects existing per-slot thinking level overrides in the slot editors', () => {
+      const step = makeStep({
+        agentId: '',
+        agents: [
+          { agentId: 'agent-1', name: 'planner', thinkingLevel: 'think16k' },
+          { agentId: 'agent-2', name: 'coder' },
+        ],
+      });
+      const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+      const entries = getAllByTestId('agent-entry');
+      const thinkingSelects = entries.map(
+        (entry) => entry.querySelectorAll('select')[2] as HTMLSelectElement
+      );
+      expect(thinkingSelects[0].value).toBe('think16k');
+      expect(thinkingSelects[1].value).toBe('');
+    });
+
+    it('editing a per-slot model writes the override onto that slot only', async () => {
+      const onUpdate = vi.fn();
+      const step = makeStep({
+        agentId: '',
+        agents: [
+          { agentId: 'agent-1', name: 'planner' },
+          { agentId: 'agent-2', name: 'coder' },
+        ],
+      });
+      const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+      const modelInputs = getAllByTestId('agent-slot-model-input') as HTMLSelectElement[];
+      await waitFor(() => expect(modelInputs[0].options.length).toBeGreaterThan(1));
+      modelInputs[0].value = '%5B%22openai%22%2C%22gpt-5.4%22%5D';
+      fireEvent.change(modelInputs[0]);
+      const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+      expect(updatedStep.agents[0].model).toBe('gpt-5.4');
+      expect(updatedStep.agents[1].model).toBeUndefined();
+    });
+
+    it('editing a per-slot thinking level writes the override onto that slot only', () => {
+      const onUpdate = vi.fn();
+      const step = makeStep({
+        agentId: '',
+        agents: [
+          { agentId: 'agent-1', name: 'planner' },
+          { agentId: 'agent-2', name: 'coder' },
+        ],
+      });
+      const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+      const thinkingSelect = getAllByTestId('agent-entry')[0].querySelectorAll('select')[2];
+      fireEvent.change(thinkingSelect, { target: { value: 'think32k' } });
+      const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+      expect(updatedStep.agents[0].thinkingLevel).toBe('think32k');
+      expect(updatedStep.agents[1].thinkingLevel).toBeUndefined();
+    });
+
+    it('choosing Inherit clears the per-slot thinking level override', () => {
+      const onUpdate = vi.fn();
+      const step = makeStep({
+        agentId: '',
+        agents: [
+          { agentId: 'agent-1', name: 'planner', thinkingLevel: 'think16k' },
+          { agentId: 'agent-2', name: 'coder' },
+        ],
+      });
+      const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step, onUpdate })} />);
+      const thinkingSelect = getAllByTestId('agent-entry')[0].querySelectorAll('select')[2];
+      fireEvent.change(thinkingSelect, { target: { value: '' } });
+      const updatedStep = onUpdate.mock.calls[onUpdate.mock.calls.length - 1][0];
+      expect(updatedStep.agents[0].thinkingLevel).toBeUndefined();
+    });
+
     it('reset-context toggle writes resetContextPerTurn onto the targeted slot', () => {
       const step = makeStep({
         agentId: '',
