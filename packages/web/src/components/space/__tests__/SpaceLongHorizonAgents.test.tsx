@@ -85,8 +85,20 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
 }));
 
 vi.mock('../../ui/Button', () => ({
-  Button: (props: { children: unknown; onClick?: () => void; disabled?: boolean }) => (
-    <button type="button" onClick={props.onClick} disabled={props.disabled}>
+  Button: (props: {
+    children: unknown;
+    onClick?: () => void;
+    disabled?: boolean;
+    'data-testid'?: string;
+    title?: string;
+  }) => (
+    <button
+      type="button"
+      onClick={props.onClick}
+      disabled={props.disabled}
+      data-testid={props['data-testid']}
+      title={props.title}
+    >
       {props.children}
     </button>
   ),
