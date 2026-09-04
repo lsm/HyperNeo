@@ -471,10 +471,6 @@
       "maxLines": 598,
       "followUp": "M10 cleanup split when touched"
     },
-    "packages/web/src/components/space/SpaceAgentEditor.tsx": {
-      "maxLines": 594,
-      "followUp": "M8/UI focused view split"
-    },
     "packages/web/src/components/space/SpaceSettings.tsx": {
       "maxLines": 587,
       "followUp": "M8/UI focused view split"
