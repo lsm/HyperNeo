@@ -96,7 +96,11 @@
       "exports",
       "files"
     ],
-    "packages/daemon/src/lib/space/managers/space-agent-template-manager.ts": ["exports", "files"]
+    "packages/daemon/src/lib/space/managers/space-agent-template-manager.ts": ["exports", "files"],
+    "packages/daemon/src/lib/space/managers/space-agent-template-reapply-service.ts": [
+      "exports",
+      "files"
+    ]
   },
   "ignoreDependencies": [
     "@testing-library/preact",
