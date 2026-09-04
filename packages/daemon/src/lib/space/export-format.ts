@@ -203,9 +203,9 @@ const exportedWorkflowNodeSchema = z.object({
     .optional(),
 });
 
-export const CURRENT_EXPORT_VERSION = 4 as const;
-const SUPPORTED_EXPORT_VERSIONS: ReadonlySet<number> = new Set<number>([1, 2, 3, 4]);
-export type ExportVersion = 1 | 2 | 3 | 4;
+export const CURRENT_EXPORT_VERSION = 5 as const;
+const SUPPORTED_EXPORT_VERSIONS: ReadonlySet<number> = new Set<number>([1, 2, 3, 4, 5]);
+export type ExportVersion = 1 | 2 | 3 | 4 | 5;
 
 function asSupportedVersion(version: unknown): ExportVersion {
   return version as ExportVersion;
@@ -605,6 +605,22 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
                 'which requires version 2 (this workflow declares version 1)',
             };
           }
+        }
+      }
+    }
+  }
+
+  if (version < 5) {
+    for (let n = 0; n < result.data.nodes.length; n++) {
+      const agents = result.data.nodes[n].agents;
+      for (let a = 0; a < agents.length; a++) {
+        if (agents[a].templateKey?.trim()) {
+          return {
+            ok: false,
+            error:
+              `invalid: nodes[${n}].agents[${a}] uses templateKey, ` +
+              `which requires version 5 (this workflow declares version ${version})`,
+          };
         }
       }
     }

@@ -177,7 +177,7 @@ export function validateChannels(workflow: SpaceWorkflow, agents: SpaceWorkerAge
     }
 
     for (const na of nodeAgents) {
-      if (!agentIdSet.has(na.agentId)) {
+      if (!na.templateKey?.trim() && !agentIdSet.has(na.agentId)) {
         errors.push(
           `Agent with id "${na.agentId}" in node "${node.name}" not found in space agents.`
         );
