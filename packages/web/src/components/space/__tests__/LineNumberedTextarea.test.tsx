@@ -71,7 +71,7 @@ describe('LineNumberedTextarea — textarea passthrough', () => {
 
   it('disables soft wrapping so gutter numbers stay aligned with long lines', () => {
     const value = 'a line long enough to wrap once rendered\nsecond logical line';
-    const { container } = render(<LineNumberedTextarea value={value} onChange={noop} />);
+    const { container } = render(<LineNumberedTextarea value={value} onChange={noop} rows={2} />);
     const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
     expect(textarea.getAttribute('wrap')).toBe('off');
     expect(gutterNumbers(container)).toEqual(['1', '2']);
