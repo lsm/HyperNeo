@@ -157,6 +157,23 @@ function buildHookNodeNameMap(nodes: VisualNode[]): Map<string, string> {
   return nodeNames;
 }
 
+function remapChannelEndpoint(value: string, nodeNames: Map<string, string>): string {
+  return nodeNames.get(value) ?? value;
+}
+
+function remapChannelEndpoints(
+  channels: WorkflowChannel[],
+  nodeNames: Map<string, string>
+): WorkflowChannel[] {
+  return channels.map((channel) => ({
+    ...channel,
+    from: remapChannelEndpoint(channel.from, nodeNames),
+    to: Array.isArray(channel.to)
+      ? channel.to.map((target) => remapChannelEndpoint(target, nodeNames))
+      : remapChannelEndpoint(channel.to, nodeNames),
+  }));
+}
+
 function remapHookNodeReference(value: string | undefined, nodeNames: Map<string, string>) {
   if (!value) return value;
   return nodeNames.get(value) ?? value;
@@ -317,6 +334,7 @@ function buildWorkflowFields(state: VisualEditorState): {
   const hooks = state.hooks
     .map((hook) => serializeHook(hook, hookNodeNames))
     .filter((hook): hook is WorkflowHook => hook !== null);
+  const channels = remapChannelEndpoints(state.channels, hookNodeNames);
 
   return {
     fields: {
@@ -325,7 +343,7 @@ function buildWorkflowFields(state: VisualEditorState): {
       endNodeId,
       layout,
       tags: state.tags,
-      channels: state.channels,
+      channels,
       hooks,
     },
     keyToPersistedId,

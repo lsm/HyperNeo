@@ -33,6 +33,8 @@ function buildEndpointNodeLookup(nodes: VisualNode[]): Map<string, string> {
   const lookup = new Map<string, string>();
 
   for (const node of nodes) {
+    lookup.set(node.step.localId, node.step.localId);
+
     if (node.step.agentId) {
       lookup.set(node.step.agentId, node.step.localId);
     }

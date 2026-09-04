@@ -699,6 +699,45 @@ describe('visualStateToCreateParams', () => {
     const params = visualStateToCreateParams(state, 'space-1', 'WF');
     expect(params.endNodeId).toBeUndefined();
   });
+
+  it('remaps localId channel endpoints to final node names for unnamed template-only slots', () => {
+    const params = visualStateToCreateParams(
+      {
+        nodes: [
+          {
+            step: {
+              localId: 'local-a',
+              name: '',
+              agentId: '',
+              templateKey: 'coder.default',
+            },
+            position: { x: 0, y: 0 },
+          },
+          {
+            step: {
+              localId: 'local-b',
+              name: '',
+              agentId: '',
+              templateKey: 'reviewer.default',
+            },
+            position: { x: 300, y: 0 },
+          },
+        ],
+        edges: [],
+        startNodeId: 'local-a',
+        tags: [],
+        channels: [{ from: 'local-a', to: 'local-b' }],
+        hooks: [],
+      },
+      'space-1',
+      'WF'
+    );
+    expect(params.nodes![0].name).toBe('Step 1');
+    expect(params.nodes![1].name).toBe('Step 2');
+    expect(params.channels).toHaveLength(1);
+    expect(params.channels![0].from).toBe('Step 1');
+    expect(params.channels![0].to).toBe('Step 2');
+  });
 });
 
 describe('handoff transition preservation', () => {

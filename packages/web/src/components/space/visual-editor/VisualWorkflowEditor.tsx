@@ -276,13 +276,12 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   const endpointNodeIdLookup = useMemo(() => {
     const map = new Map<string, string>();
     for (const node of nodes) {
+      map.set(node.step.localId, node.step.localId);
       if (node.step.agentId) map.set(node.step.agentId, node.step.localId);
-      if (node.step.templateKey) map.set(node.step.templateKey, node.step.localId);
       if (node.step.name) map.set(node.step.name, node.step.localId);
       for (const agent of node.step.agents ?? []) {
         if (agent.name) map.set(agent.name, node.step.localId);
         if (agent.agentId) map.set(agent.agentId, node.step.localId);
-        if (agent.templateKey) map.set(agent.templateKey, node.step.localId);
       }
     }
     return map;
@@ -634,15 +633,13 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   const resolveSourceChannelName = useCallback((node: VisualNode): string | null => {
     if (node.step.name?.trim()) return node.step.name.trim();
     if (node.step.agentId?.trim()) return node.step.agentId.trim();
-    if (node.step.templateKey?.trim()) return node.step.templateKey.trim();
-    return null;
+    return node.step.localId;
   }, []);
 
   const resolveTargetChannelName = useCallback((node: VisualNode): string | null => {
     if (node.step.name?.trim()) return node.step.name.trim();
     if (node.step.agentId?.trim()) return node.step.agentId.trim();
-    if (node.step.templateKey?.trim()) return node.step.templateKey.trim();
-    return null;
+    return node.step.localId;
   }, []);
 
   const handleCreateTransition = useCallback(
