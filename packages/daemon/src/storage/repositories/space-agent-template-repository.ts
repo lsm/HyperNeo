@@ -10,18 +10,21 @@ import type {
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
 
+export type SpaceAgentTemplateRecord = SpaceAgentTemplate & { version: number };
+
 export class SpaceAgentTemplateRepository {
   constructor(private db: BunDatabase) {}
 
   create(params: CreateSpaceAgentTemplateParams): SpaceAgentTemplate {
     const now = Date.now();
+    const version = this.nextVersionFor(params.key);
     this.db
       .prepare(
         `INSERT INTO space_agent_templates (
-					key, handle, display_name, description, instructions, suggested_autonomy_level,
-					model, provider, model_pool, thinking_level, setting_sources, tools,
-					created_at, updated_at
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+						key, handle, display_name, description, instructions, suggested_autonomy_level,
+						model, provider, model_pool, thinking_level, setting_sources, tools,
+						created_at, updated_at, version
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         params.key,
@@ -37,7 +40,8 @@ export class SpaceAgentTemplateRepository {
         params.settingSources === undefined ? null : JSON.stringify(params.settingSources),
         encodeJsonArray(params.tools),
         now,
-        now
+        now,
+        version
       );
     return this.getByKey(params.key) as SpaceAgentTemplate;
   }
@@ -49,6 +53,13 @@ export class SpaceAgentTemplateRepository {
     return row ? rowToTemplate(row) : null;
   }
 
+  getByKeyWithVersion(key: string): SpaceAgentTemplateRecord | null {
+    const row = this.db.prepare(`SELECT * FROM space_agent_templates WHERE key = ?`).get(key) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? rowToTemplateRecord(row) : null;
+  }
+
   list(): SpaceAgentTemplate[] {
     const rows = this.db
       .prepare(`SELECT * FROM space_agent_templates ORDER BY created_at ASC, key ASC`)
@@ -57,6 +68,14 @@ export class SpaceAgentTemplateRepository {
   }
 
   update(key: string, params: UpdateSpaceAgentTemplateParams): SpaceAgentTemplate | null {
+    return this.casUpdate(key, params, undefined);
+  }
+
+  casUpdate(
+    key: string,
+    params: UpdateSpaceAgentTemplateParams,
+    expectedVersion?: number
+  ): SpaceAgentTemplate | null {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
 
@@ -107,17 +126,37 @@ export class SpaceAgentTemplateRepository {
 
     if (fields.length === 0) return this.getByKey(key);
 
+    const nextVersion = this.nextVersionFor(key);
     fields.push('updated_at = ?');
-    values.push(Date.now(), key);
-    this.db
-      .prepare(`UPDATE space_agent_templates SET ${fields.join(', ')} WHERE key = ?`)
+    fields.push('version = ?');
+    values.push(Date.now());
+    values.push(nextVersion);
+
+    const where = expectedVersion === undefined ? 'WHERE key = ?' : 'WHERE key = ? AND version = ?';
+    values.push(key);
+    if (expectedVersion !== undefined) values.push(expectedVersion);
+
+    const result = this.db
+      .prepare(`UPDATE space_agent_templates SET ${fields.join(', ')} ${where}`)
       .run(...values);
+    if (result.changes === 0) return null;
     return this.getByKey(key);
   }
 
   delete(key: string): boolean {
     const result = this.db.prepare(`DELETE FROM space_agent_templates WHERE key = ?`).run(key);
     return result.changes > 0;
+  }
+
+  private nextVersionFor(key: string): number {
+    const row = this.db
+      .prepare(
+        `INSERT INTO space_agent_template_version_seq (key, next_version) VALUES (?, 1)
+					 ON CONFLICT(key) DO UPDATE SET next_version = next_version + 1
+					 RETURNING next_version`
+      )
+      .get(key) as { next_version: number } | undefined;
+    return row?.next_version ?? 1;
   }
 }
 
@@ -137,6 +176,13 @@ function rowToTemplate(row: Record<string, unknown>): SpaceAgentTemplate {
     tools: decodeJsonArray<string>(row.tools),
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number,
+  };
+}
+
+function rowToTemplateRecord(row: Record<string, unknown>): SpaceAgentTemplateRecord {
+  return {
+    ...rowToTemplate(row),
+    version: (row.version as number | undefined) ?? 1,
   };
 }
 

@@ -95,7 +95,8 @@
     "packages/daemon/src/storage/repositories/space-agent-template-repository.ts": [
       "exports",
       "files"
-    ]
+    ],
+    "packages/daemon/src/lib/space/managers/space-agent-template-manager.ts": ["exports", "files"]
   },
   "ignoreDependencies": [
     "@testing-library/preact",

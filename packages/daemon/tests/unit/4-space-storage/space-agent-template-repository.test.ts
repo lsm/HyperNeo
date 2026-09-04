@@ -7,6 +7,8 @@ import type {
 } from '@hyperneo/shared';
 import { SpaceAgentTemplateRepository } from '../../../src/storage/repositories/space-agent-template-repository';
 import { createSpaceAgentTemplatesTable } from '../../../src/storage/schema/space-agent-templates';
+import { runMigration226 } from '../../../src/storage/schema/m226-space-agent-templates-version';
+import { runMigration227 } from '../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 
 const MODEL_POOL: WorkerAgentModelPoolEntry[] = [
@@ -38,6 +40,8 @@ describe('SpaceAgentTemplateRepository', () => {
   beforeEach(() => {
     db = new BunDatabase(':memory:');
     createSpaceAgentTemplatesTable(db);
+    runMigration226(db);
+    runMigration227(db);
     repo = new SpaceAgentTemplateRepository(db);
   });
 
@@ -215,5 +219,19 @@ describe('SpaceAgentTemplateRepository', () => {
     const recreated = repo.create({ key: 'gone.custom', handle: 'back' });
     expect(recreated.handle).toBe('back');
     expect(repo.list()).toHaveLength(1);
+  });
+
+  test('prevents a stale CAS update after delete and recreate', () => {
+    repo.create({ key: 'reuse.custom', handle: 'reuse' });
+    const before = repo.getByKeyWithVersion('reuse.custom')!;
+
+    repo.delete('reuse.custom');
+    repo.create({ key: 'reuse.custom', handle: 'reincarnated' });
+    const after = repo.getByKeyWithVersion('reuse.custom')!;
+
+    expect(after.version).not.toBe(before.version);
+    const result = repo.casUpdate('reuse.custom', { displayName: 'Stale' }, before.version);
+    expect(result).toBeNull();
+    expect(repo.getByKey('reuse.custom')?.displayName).not.toBe('Stale');
   });
 });
