@@ -40,6 +40,7 @@ import {
   validateSpaceAgentTools,
 } from '../space/managers/space-agent-manager.ts';
 import { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
+import { SpaceAgentTemplateReapplyService } from '../space/managers/space-agent-template-reapply-service.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import { getNextRunAt, isValidCronExpression } from '../space/schedule/cron-utils.ts';
@@ -1131,6 +1132,24 @@ export function setupSpaceAgentHandlers(
   const createUnifiedAgent = buildUnifiedAgentCreate(deps);
 
   registerUnifiedSpaceAgentMethods(messageHub, deps);
+
+  if (templateManager) {
+    const reapplyTemplateService = new SpaceAgentTemplateReapplyService(
+      longHorizonAgentRepo,
+      templateManager,
+      runtimeService,
+      internalEventBus
+    );
+
+    messageHub.onRequest('spaceAgent.reapplyTemplate', async (data) => {
+      const params = data as { agentId?: string; id?: string };
+      const agentId = params.agentId ?? params.id;
+      if (!agentId) throw new Error('agentId is required');
+      const result = await reapplyTemplateService.reapplyTemplate(agentId);
+      if (!result.ok) throw new Error(result.error);
+      return { agent: result.value };
+    });
+  }
 
   messageHub.onRequest('spaceAgent.get', async (data) => {
     const params = data as { id: string };

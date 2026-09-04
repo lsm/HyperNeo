@@ -4,16 +4,20 @@ import type {
   SpaceAgentTemplate,
   UpdateSpaceLongHorizonAgentParams,
 } from '@hyperneo/shared';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../../src/lib/internal-event-bus';
 import { setModelsCache } from '../../../../src/lib/model-service';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
+import { SpaceAgentTemplateManager } from '../../../../src/lib/space/managers/space-agent-template-manager';
 import {
-  ReapplyTemplateAgentSource,
+  type ReapplyTemplateAgentSource,
   SpaceAgentTemplateReapplyService,
   templateToAgentUpdateParams,
 } from '../../../../src/lib/space/managers/space-agent-template-reapply-service';
-import { SpaceAgentTemplateManager } from '../../../../src/lib/space/managers/space-agent-template-manager';
-import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
@@ -84,7 +88,7 @@ describe('SpaceAgentTemplateReapplyService', () => {
   });
 
   describe('reapplyTemplate', () => {
-    test('copies every template field onto the agent and preserves instance-layer fields', () => {
+    test('copies every template field onto the agent and preserves instance-layer fields', async () => {
       const template = templateRepo.create(fullTemplateParams());
       const agent = agentRepo.create({
         spaceId: 'space-1',
@@ -102,7 +106,7 @@ describe('SpaceAgentTemplateReapplyService', () => {
         modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 1, weight: 1 }],
       });
 
-      const result = service.reapplyTemplate(agent.id);
+      const result = await service.reapplyTemplate(agent.id);
 
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
@@ -123,7 +127,7 @@ describe('SpaceAgentTemplateReapplyService', () => {
       expect(agentRepo.getById(agent.id)).toEqual(result.value);
     });
 
-    test('clears agent fields the template leaves unset', () => {
+    test('clears agent fields the template leaves unset', async () => {
       const template = templateRepo.create({ key: 'blank.custom', handle: 'blank' });
       const agent = agentRepo.create({
         spaceId: 'space-1',
@@ -138,7 +142,7 @@ describe('SpaceAgentTemplateReapplyService', () => {
         modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 1, weight: 1 }],
       });
 
-      const result = service.reapplyTemplate(agent.id);
+      const result = await service.reapplyTemplate(agent.id);
 
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
@@ -151,7 +155,7 @@ describe('SpaceAgentTemplateReapplyService', () => {
       expect(result.value.toolPermissions).toEqual({});
     });
 
-    test('resolves built-in templates by key', () => {
+    test('resolves built-in templates by key', async () => {
       const agent = agentRepo.create({
         spaceId: 'space-1',
         handle: 'builtin-user',
@@ -159,22 +163,22 @@ describe('SpaceAgentTemplateReapplyService', () => {
         instructions: 'Drifted.',
       });
 
-      const result = service.reapplyTemplate(agent.id);
+      const result = await service.reapplyTemplate(agent.id);
 
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
       expect(result.value.instructions).toBe('Built-in instructions.');
     });
 
-    test('rejects an unknown agent id', () => {
-      const result = service.reapplyTemplate('missing-agent');
+    test('rejects an unknown agent id', async () => {
+      const result = await service.reapplyTemplate('missing-agent');
 
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error('expected error');
       expect(result.error).toBe('Agent not found: missing-agent');
     });
 
-    test('honors the migrated-worker mirror lock without touching the agent', () => {
+    test('honors the migrated-worker mirror lock without touching the agent', async () => {
       const agent = agentRepo.create({
         spaceId: 'space-1',
         handle: 'mirror',
@@ -195,7 +199,7 @@ describe('SpaceAgentTemplateReapplyService', () => {
       };
       const locked = new SpaceAgentTemplateReapplyService(recording, templateManager);
 
-      const result = locked.reapplyTemplate(agent.id);
+      const result = await locked.reapplyTemplate(agent.id);
 
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error('expected error');
@@ -205,21 +209,21 @@ describe('SpaceAgentTemplateReapplyService', () => {
       expect(agentRepo.getById(agent.id)?.instructions).toBe('Mirror instructions.');
     });
 
-    test('rejects an agent without a template', () => {
+    test('rejects an agent without a template', async () => {
       const agent = agentRepo.create({
         spaceId: 'space-1',
         handle: 'ad-hoc',
         instructions: 'Ad-hoc instructions.',
       });
 
-      const result = service.reapplyTemplate(agent.id);
+      const result = await service.reapplyTemplate(agent.id);
 
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error('expected error');
       expect(result.error).toBe(`Agent ${agent.id} has no template to re-apply`);
     });
 
-    test('rejects an agent whose template key resolves to nothing', () => {
+    test('rejects an agent whose template key resolves to nothing', async () => {
       templateRepo.create({ key: 'live.custom', handle: 'live' });
       const agent = agentRepo.create({
         spaceId: 'space-1',
@@ -227,14 +231,14 @@ describe('SpaceAgentTemplateReapplyService', () => {
         templateKey: 'ghost.custom',
       });
 
-      const result = service.reapplyTemplate(agent.id);
+      const result = await service.reapplyTemplate(agent.id);
 
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error('expected error');
       expect(result.error).toBe('Template not found: ghost.custom');
     });
 
-    test('surfaces a repository failure as an error result', () => {
+    test('surfaces a repository failure as an error result', async () => {
       const template = templateRepo.create({ key: 'throwing.custom', handle: 'throwing' });
       const agent = agentRepo.create({
         spaceId: 'space-1',
@@ -249,14 +253,14 @@ describe('SpaceAgentTemplateReapplyService', () => {
       };
       const racing = new SpaceAgentTemplateReapplyService(throwing, templateManager);
 
-      const result = racing.reapplyTemplate(agent.id);
+      const result = await racing.reapplyTemplate(agent.id);
 
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error('expected error');
       expect(result.error).toBe('Failed to re-apply template: lock exploded');
     });
 
-    test('reports an agent that vanishes during the update', () => {
+    test('reports an agent that vanishes during the update', async () => {
       const template = templateRepo.create({ key: 'vanish.custom', handle: 'vanish' });
       const agent = agentRepo.create({
         spaceId: 'space-1',
@@ -269,11 +273,138 @@ describe('SpaceAgentTemplateReapplyService', () => {
       };
       const vanishingService = new SpaceAgentTemplateReapplyService(vanishing, templateManager);
 
-      const result = vanishingService.reapplyTemplate(agent.id);
+      const result = await vanishingService.reapplyTemplate(agent.id);
 
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error('expected error');
       expect(result.error).toBe(`Agent not found after re-apply: ${agent.id}`);
+    });
+  });
+
+  describe('reapplyTemplate side effects', () => {
+    function createEventBusSpy(): {
+      bus: InternalEventBus<DaemonInternalEventMap>;
+      publishes: Array<[string, { spaceId: string; agent: { id: string } }]>;
+    } {
+      const publishes: Array<[string, { spaceId: string; agent: { id: string } }]> = [];
+      const bus = {
+        publish: async (name: string, payload: { spaceId: string; agent: { id: string } }) => {
+          publishes.push([name, payload]);
+          return { delivered: 0, failures: [] };
+        },
+        publishAsync: () => {},
+        subscribe: () => () => {},
+        off: () => {},
+        clear: () => {},
+      } as unknown as InternalEventBus<DaemonInternalEventMap>;
+      return { bus, publishes };
+    }
+
+    function createRuntimeSpy(clear: (spaceId: string, agentId: string) => Promise<void>) {
+      return { clearLongTermAgentSessionProvider: clear };
+    }
+
+    test('clears the long-term session provider when the template drops the provider', async () => {
+      const template = templateRepo.create({ key: 'providerless.custom', handle: 'providerless' });
+      const agent = agentRepo.create({
+        spaceId: 'space-1',
+        handle: 'provided',
+        templateKey: template.key,
+        provider: 'other-provider',
+      });
+      const cleared: Array<[string, string]> = [];
+      const service = new SpaceAgentTemplateReapplyService(
+        agentRepo,
+        templateManager,
+        createRuntimeSpy(async (spaceId, agentId) => {
+          cleared.push([spaceId, agentId]);
+        })
+      );
+
+      const result = await service.reapplyTemplate(agent.id);
+
+      expect(result.ok).toBe(true);
+      expect(cleared).toEqual([['space-1', agent.id]]);
+    });
+
+    test('keeps the session provider when the template pins one', async () => {
+      const template = templateRepo.create(fullTemplateParams());
+      const agent = agentRepo.create({
+        spaceId: 'space-1',
+        handle: 'pinned',
+        templateKey: template.key,
+        provider: 'other-provider',
+      });
+      const cleared: Array<[string, string]> = [];
+      const service = new SpaceAgentTemplateReapplyService(
+        agentRepo,
+        templateManager,
+        createRuntimeSpy(async (spaceId, agentId) => {
+          cleared.push([spaceId, agentId]);
+        })
+      );
+
+      const result = await service.reapplyTemplate(agent.id);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value.provider).toBe('anthropic');
+      expect(cleared).toEqual([]);
+    });
+
+    test('publishes a unified agent update after a successful reapply', async () => {
+      const template = templateRepo.create(fullTemplateParams());
+      const agent = agentRepo.create({
+        spaceId: 'space-1',
+        handle: 'published',
+        templateKey: template.key,
+      });
+      const { bus, publishes } = createEventBusSpy();
+      const service = new SpaceAgentTemplateReapplyService(
+        agentRepo,
+        templateManager,
+        undefined,
+        bus
+      );
+
+      const result = await service.reapplyTemplate(agent.id);
+
+      expect(result.ok).toBe(true);
+      const update = publishes.find(([name]) => name === 'spaceAgent.updated');
+      expect(update).toBeTruthy();
+      if (!update) throw new Error('expected spaceAgent.updated publish');
+      expect(update[1].agent.id).toBe(agent.id);
+      expect(update[1].spaceId).toBe('space-1');
+    });
+
+    test('fails without publishing when clearing the session provider errors', async () => {
+      const template = templateRepo.create({
+        key: 'failing-clear.custom',
+        handle: 'failing-clear',
+      });
+      const agent = agentRepo.create({
+        spaceId: 'space-1',
+        handle: 'stuck-provider',
+        templateKey: template.key,
+        provider: 'other-provider',
+      });
+      const { bus, publishes } = createEventBusSpy();
+      const service = new SpaceAgentTemplateReapplyService(
+        agentRepo,
+        templateManager,
+        createRuntimeSpy(async () => {
+          throw new Error('boom');
+        }),
+        bus
+      );
+
+      const result = await service.reapplyTemplate(agent.id);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected error');
+      expect(result.error).toBe('Failed to clear session provider: boom');
+      expect(publishes).toEqual([]);
+      expect(agentRepo.getById(agent.id)?.provider).toBeNull();
     });
   });
 

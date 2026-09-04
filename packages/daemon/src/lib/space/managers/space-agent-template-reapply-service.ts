@@ -4,7 +4,10 @@ import type {
   UpdateSpaceLongHorizonAgentParams,
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
+import { publishUnifiedAgentUpdated } from '../agents/unified-agent-events.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
+import type { SpaceRuntimeService } from '../runtime/space-runtime-service.ts';
 import type { SpaceAgentResult } from './space-agent-manager.ts';
 
 export interface ReapplyTemplateAgentSource {
@@ -16,9 +19,14 @@ export interface ReapplyTemplateTemplateSource {
   getByKey(key: string): SpaceAgentTemplate | null;
 }
 
+type ReapplyTemplateEventBus = InternalEventBus<DaemonInternalEventMap> | undefined;
+type ReapplyTemplateRuntimeService = Pick<SpaceRuntimeService, 'clearLongTermAgentSessionProvider'>;
+
 export interface ReapplyTemplateCtx {
   agents: ReapplyTemplateAgentSource;
   templates: ReapplyTemplateTemplateSource;
+  internalEventBus?: ReapplyTemplateEventBus;
+  runtimeService?: ReapplyTemplateRuntimeService;
   agentId: string;
   error?: string;
   agent?: SpaceLongHorizonAgent;
@@ -77,6 +85,28 @@ function reapplyPersist(ctx: ReapplyTemplateCtx): ReapplyTemplateCtx {
   }
 }
 
+async function reapplyClearProvider(ctx: ReapplyTemplateCtx): Promise<ReapplyTemplateCtx> {
+  if (!ctx.runtimeService || !ctx.updated) return ctx;
+  if (ctx.agent?.provider !== null && ctx.updated.provider === null) {
+    try {
+      await ctx.runtimeService.clearLongTermAgentSessionProvider(
+        ctx.updated.spaceId,
+        ctx.updated.id
+      );
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      return { ...ctx, error: `Failed to clear session provider: ${detail}` };
+    }
+  }
+  return ctx;
+}
+
+async function reapplyPublish(ctx: ReapplyTemplateCtx): Promise<ReapplyTemplateCtx> {
+  if (!ctx.internalEventBus || !ctx.updated) return ctx;
+  await publishUnifiedAgentUpdated(ctx.internalEventBus, ctx.updated);
+  return ctx;
+}
+
 const reapplyTemplatePipeline = superpipe({
   hasError: (ctx: { error?: string }) => ctx.error !== undefined,
 });
@@ -92,18 +122,26 @@ export const runReapplyTemplate = (
   .pipe(reapplyResolveTemplate, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
   .pipe(reapplyPersist, 'ctx', 'ctx')
-  .end('ctx') as (input: ReapplyTemplateCtx) => ReapplyTemplateCtx;
+  .pipe('!hasError', 'ctx')
+  .pipe(reapplyClearProvider, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(reapplyPublish, 'ctx', 'ctx')
+  .endAsync('ctx') as (input: ReapplyTemplateCtx) => Promise<ReapplyTemplateCtx>;
 
 export class SpaceAgentTemplateReapplyService {
   constructor(
     private agents: ReapplyTemplateAgentSource,
-    private templates: ReapplyTemplateTemplateSource
+    private templates: ReapplyTemplateTemplateSource,
+    private runtimeService?: ReapplyTemplateRuntimeService,
+    private internalEventBus?: ReapplyTemplateEventBus
   ) {}
 
-  reapplyTemplate(agentId: string): SpaceAgentResult<SpaceLongHorizonAgent> {
-    const ctx = runReapplyTemplate({
+  async reapplyTemplate(agentId: string): Promise<SpaceAgentResult<SpaceLongHorizonAgent>> {
+    const ctx = await runReapplyTemplate({
       agents: this.agents,
       templates: this.templates,
+      runtimeService: this.runtimeService,
+      internalEventBus: this.internalEventBus,
       agentId,
     });
     if (ctx.error) return { ok: false, error: ctx.error };
