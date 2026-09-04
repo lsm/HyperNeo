@@ -104,6 +104,52 @@ export interface UpdateSpaceLongHorizonAgentParams {
   modelPool?: WorkerAgentModelPoolEntry[] | null;
 }
 
+export interface SpaceAgentTemplate {
+  key: string;
+  handle: string;
+  displayName: string;
+  description: string;
+  instructions: string;
+  suggestedAutonomyLevel: SpaceAgentAutonomyLevel;
+  model: string | null;
+  provider: string | null;
+  modelPool: WorkerAgentModelPoolEntry[] | null;
+  thinkingLevel: ThinkingLevel | null;
+  settingSources: SettingSource[] | null;
+  tools: string[] | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreateSpaceAgentTemplateParams {
+  key: string;
+  handle: string;
+  displayName?: string;
+  description?: string;
+  instructions?: string;
+  suggestedAutonomyLevel?: SpaceAgentAutonomyLevel;
+  model?: string | null;
+  provider?: string | null;
+  modelPool?: WorkerAgentModelPoolEntry[] | null;
+  thinkingLevel?: ThinkingLevel | null;
+  settingSources?: SettingSource[] | null;
+  tools?: string[] | null;
+}
+
+export interface UpdateSpaceAgentTemplateParams {
+  handle?: string;
+  displayName?: string;
+  description?: string;
+  instructions?: string;
+  suggestedAutonomyLevel?: SpaceAgentAutonomyLevel;
+  model?: string | null;
+  provider?: string | null;
+  modelPool?: WorkerAgentModelPoolEntry[] | null;
+  thinkingLevel?: ThinkingLevel | null;
+  settingSources?: SettingSource[] | null;
+  tools?: string[] | null;
+}
+
 export interface SpaceLongHorizonAgentGoal {
   agentId: string;
   goalId: string;
