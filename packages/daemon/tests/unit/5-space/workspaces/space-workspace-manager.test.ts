@@ -634,7 +634,7 @@ describe('validateDefaultTaskWorkspace', () => {
   test('counts the backfilled primary when no primary row exists', async () => {
     const { manager } = newManager({
       workspaces: new FakeWorkspaces([row(SPACE_A, '/repo-b', 'w2')]),
-      io: fakeIo({ canHostTaskWorktree: async () => false }),
+      io: fakeIo({ canHostTaskWorktree: async (path) => path === '/repo-b' }),
     });
     const message = await manager.validateDefaultTaskWorkspace(SPACE_A);
     expect(message).toContain('/primary-a');
