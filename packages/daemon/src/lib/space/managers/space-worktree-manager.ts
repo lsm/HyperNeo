@@ -22,6 +22,7 @@ import {
 import { MAX_NETWORK_RETRIES, NETWORK_RETRY_DELAYS_MS } from '../runtime/constants.ts';
 import { retryWithBackoff } from '../runtime/retry-utils.ts';
 import { worktreeSlug } from '../worktree-slug.ts';
+import { nodeWorkspaceValidationIo } from '../workspaces/workspace-validation-pipeline.ts';
 
 export interface SpaceWorktreeInfo {
   slug: string;
@@ -212,6 +213,23 @@ function createLoadSpace(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
 
 function createResolveRepo(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
   return { ...ctx, repo: resolveRepoRoot(ctx.repoRoot ?? ctx.workspacePath!) };
+}
+
+export class WorkspaceNotGitRepositoryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkspaceNotGitRepositoryError';
+  }
+}
+
+async function createAssertGitRepoRoot(ctx: CreateTaskWorktreeCtx): Promise<CreateTaskWorktreeCtx> {
+  const repoRoot = ctx.repoRoot ?? ctx.workspacePath!;
+  const commandCwd = ctx.repo!.commandCwd;
+  if (await nodeWorkspaceValidationIo.canHostTaskWorktree(commandCwd)) return ctx;
+  throw new WorkspaceNotGitRepositoryError(
+    `Workspace is not a git repository: ${repoRoot} (resolved as ${commandCwd}); ` +
+      `task worktrees can only be created inside a registered git repository`
+  );
 }
 
 function createFindExistingRecord(ctx: CreateTaskWorktreeCtx): CreateTaskWorktreeCtx {
@@ -431,6 +449,7 @@ const runCreateTaskWorktree = (
   .pipe(createResolveRepo, 'ctx', 'ctx')
   .pipe(createFindExistingRecord, 'ctx', 'ctx')
   .pipe('!hasResult', 'ctx')
+  .pipe(createAssertGitRepoRoot, 'ctx', 'ctx')
   .pipe(createEnsureWorktreesDir, 'ctx', 'ctx')
   .pipe(createWriteRepoCwdSentinel, 'ctx', 'ctx')
   .pipe(createComputeSlug, 'ctx', 'ctx')

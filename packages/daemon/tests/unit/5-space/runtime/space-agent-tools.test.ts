@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { ModelInfo, SpaceTask, SpaceTaskStatus, SpaceWorkflow } from '@hyperneo/shared';
+import { execSync } from 'node:child_process';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
@@ -5501,6 +5505,95 @@ describe('createSpaceAgentToolHandlers — create_standalone_task', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('disabled');
+  });
+
+  describe('default workspace validation (#3589)', () => {
+    const NON_GIT_PRIMARY = '/nonexistent/hyperneo-test-non-git-primary';
+
+    function seedMultiWorkspaceSpace(
+      db: BunDatabase,
+      spaceId: string,
+      secondaryPaths: Array<{ path: string; label?: string }>
+    ): void {
+      seedSpaceRow(db, spaceId, NON_GIT_PRIMARY);
+      for (const [index, secondary] of secondaryPaths.entries()) {
+        db.prepare(
+          `INSERT INTO space_workspaces (id, space_id, path, label, is_primary, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 0, ?, ?)`
+        ).run(`ws-sec-${index}`, spaceId, secondary.path, secondary.label ?? '', 0, 0);
+      }
+    }
+
+    test('multi-workspace space with a non-git primary rejects creation without workspace', async () => {
+      const dolmenDir = realpathSync(mkdtempSync(join(tmpdir(), 'hyperneo-dolmen-3589-')));
+      execSync('git -c init.defaultBranch=main init', { cwd: dolmenDir, stdio: 'pipe' });
+      try {
+        seedMultiWorkspaceSpace(ctx.db, 'space-multi-nongit', [
+          { path: dolmenDir, label: 'dolmen' },
+        ]);
+        const taskManager = new SpaceTaskManager(ctx.db, 'space-multi-nongit');
+        const handlers = makeHandlers(ctx, { spaceId: 'space-multi-nongit', taskManager });
+
+        const result = await handlers.create_standalone_task({
+          title: 'Doomed without workspace',
+          description: 'Would default to the non-git primary',
+        });
+        const parsed = JSON.parse(result.content[0].text);
+        expect(parsed.success).toBe(false);
+        expect(parsed.error).toContain(NON_GIT_PRIMARY);
+        expect(parsed.error).toContain('is not a git repository');
+        expect(parsed.error).toContain(`"dolmen" (${dolmenDir})`);
+        expect(parsed.error).toContain('"workspace"');
+        await expect(taskManager.listTasks()).resolves.toHaveLength(0);
+      } finally {
+        rmSync(dolmenDir, { recursive: true, force: true });
+      }
+    });
+
+    test('multi-workspace space with a non-git primary still accepts an explicit workspace', async () => {
+      const secondaryDir = realpathSync(mkdtempSync(join(tmpdir(), 'hyperneo-ws-3589-')));
+      seedMultiWorkspaceSpace(ctx.db, 'space-multi-explicit', [
+        { path: secondaryDir, label: 'secondary' },
+      ]);
+      const taskManager = new SpaceTaskManager(
+        ctx.db,
+        'space-multi-explicit',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        async () => secondaryDir
+      );
+      const handlers = makeHandlers(ctx, { spaceId: 'space-multi-explicit', taskManager });
+
+      try {
+        const result = await handlers.create_standalone_task({
+          title: 'Explicit workspace task',
+          description: 'Resolves through the registered secondary workspace',
+          workspace: secondaryDir,
+        });
+        const parsed = JSON.parse(result.content[0].text);
+        expect(parsed.success).toBe(true);
+        expect(parsed.task.workspacePath).toBe(secondaryDir);
+      } finally {
+        rmSync(secondaryDir, { recursive: true, force: true });
+      }
+    });
+
+    test('single-workspace space with a non-git primary still creates tasks without workspace', async () => {
+      seedSpaceRow(ctx.db, 'space-single-nongit', NON_GIT_PRIMARY);
+      const taskManager = new SpaceTaskManager(ctx.db, 'space-single-nongit');
+      const handlers = makeHandlers(ctx, { spaceId: 'space-single-nongit', taskManager });
+
+      const result = await handlers.create_standalone_task({
+        title: 'Single workspace task',
+        description: 'No registered secondary workspaces',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+      expect(parsed.task.spaceId).toBe('space-single-nongit');
+      expect(parsed.task.workspacePath ?? null).toBeNull();
+    });
   });
 });
 

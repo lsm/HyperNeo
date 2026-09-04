@@ -349,6 +349,10 @@ export class SpaceManager {
     return this.workspaceManager.resolveWorkspaceSelection(spaceId, selection);
   }
 
+  async validateDefaultTaskWorkspace(spaceId: string): Promise<string | null> {
+    return this.workspaceManager.validateDefaultTaskWorkspace(spaceId);
+  }
+
   async getSpace(id: string): Promise<Space | null> {
     return this.spaceRepo.getSpace(id);
   }

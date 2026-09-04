@@ -99,6 +99,34 @@ describe('createTaskWorktree', () => {
     expect(existsSync(result.path)).toBe(true);
   });
 
+  test('rejects a non-git workspace with a clear reason before creating anything', async () => {
+    const nonGitDir = join(
+      TMP_ROOT,
+      `non-git-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    mkdirSync(nonGitDir, { recursive: true });
+    const taskId = seedTask(db, spaceId, 'task-non-git', 77);
+
+    await expect(
+      manager.createTaskWorktree(spaceId, taskId, 'Doomed task', 77, undefined, nonGitDir)
+    ).rejects.toThrow(`Workspace is not a git repository: ${nonGitDir}`);
+
+    expect(
+      db.prepare('SELECT COUNT(*) AS c FROM space_worktrees WHERE task_id = ?').get(taskId) as {
+        c: number;
+      }
+    ).toEqual({ c: 0 });
+  });
+
+  test('rejects a workspace path that does not exist on disk', async () => {
+    const taskId = seedTask(db, spaceId, 'task-missing-ws', 78);
+    const missingPath = join(TMP_ROOT, 'definitely-not-created');
+
+    await expect(
+      manager.createTaskWorktree(spaceId, taskId, 'Doomed task', 78, undefined, missingPath)
+    ).rejects.toThrow('Workspace is not a git repository');
+  });
+
   test('creates the correct branch name space/{slug}', async () => {
     const taskId = seedTask(db, spaceId, 'task-002', 2);
     const { slug } = await manager.createTaskWorktree(spaceId, taskId, 'Fix parser bug', 2);

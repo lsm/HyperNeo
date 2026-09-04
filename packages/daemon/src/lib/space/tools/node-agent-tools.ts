@@ -668,6 +668,7 @@ export function createNodeAgentToolHandlers(config: NodeAgentToolsConfig) {
             workflow_id: args.workflow_id,
             depends_on: args.depends_on,
             draft: args.draft,
+            workspace: args.workspace,
           },
           createdTask.id
         );

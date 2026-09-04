@@ -517,7 +517,10 @@ export interface SpaceAgentToolsConfig {
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   runtime: SpaceRuntime;
   workflowManager: SpaceWorkflowManager;
-  spaceManager?: Pick<SpaceManager, 'getSpace' | 'resolveWorkspaceSelection'>;
+  spaceManager?: Pick<
+    SpaceManager,
+    'getSpace' | 'resolveWorkspaceSelection' | 'validateDefaultTaskWorkspace'
+  >;
   taskRepo: SpaceTaskRepository;
   nodeExecutionRepo: NodeExecutionRepository;
   workflowRunRepo: SpaceWorkflowRunRepository;
@@ -2154,6 +2157,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           return jsonResult({ success: false, error: message });
+        }
+      } else if (config.spaceManager) {
+        const defaultWorkspaceError =
+          await config.spaceManager.validateDefaultTaskWorkspace(spaceId);
+        if (defaultWorkspaceError) {
+          return jsonResult({ success: false, error: defaultWorkspaceError });
         }
       }
       const workflowIdArg = args.workflow_id ?? null;
