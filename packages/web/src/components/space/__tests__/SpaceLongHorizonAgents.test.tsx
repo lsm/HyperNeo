@@ -426,9 +426,7 @@ describe('SpaceLongHorizonAgents', () => {
   });
 
   it('persists the selected provider when changing the single model', async () => {
-    mockAgents.value = [
-      makeLongHorizonAgent({ model: 'claude-sonnet-4-6', provider: 'anthropic' }),
-    ];
+    mockAgents.value = [makeLongHorizonAgent({ model: 'claude-sonnet-4-6', provider: null })];
     const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
@@ -443,7 +441,7 @@ describe('SpaceLongHorizonAgents', () => {
     expect(params.provider).toBe('anthropic');
   });
 
-  it('keeps the existing provider on an untouched save', async () => {
+  it('omits the provider key on an untouched save', async () => {
     mockAgents.value = [
       makeLongHorizonAgent({ model: 'claude-sonnet-4-6', provider: 'anthropic' }),
     ];
@@ -453,7 +451,7 @@ describe('SpaceLongHorizonAgents', () => {
     fireEvent.click(getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
-    expect(mockUpdateAgent.mock.calls[0][1].provider).toBe('anthropic');
+    expect(mockUpdateAgent.mock.calls[0][1].provider).toBeUndefined();
   });
 
   it('clears the provider when switching a provider-qualified model to pool mode', async () => {
@@ -471,6 +469,28 @@ describe('SpaceLongHorizonAgents', () => {
     expect(params.model).toBeNull();
     expect(params.provider).toBeNull();
     expect(params.modelPool).toBeNull();
+  });
+
+  it('omits the provider key on an untouched pool-mode save', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({
+        model: null,
+        modelPool: [
+          { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 2, weight: 40 },
+        ],
+      }),
+    ];
+    const { getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit Research Long Horizon' }));
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    const params = mockUpdateAgent.mock.calls[0][1];
+    expect(params.provider).toBeUndefined();
+    expect(params.modelPool).toEqual([
+      { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 2, weight: 40 },
+    ]);
   });
 
   it('disables autonomy editing for migrated worker mirrors', () => {

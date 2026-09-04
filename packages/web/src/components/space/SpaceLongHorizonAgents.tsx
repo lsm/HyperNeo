@@ -149,7 +149,9 @@ async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
         ? {}
         : { autonomyLevel: form.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null }),
       model: effectiveModel || null,
-      provider: effectiveProvider,
+      ...(effectiveProvider !== (ctx.agent.provider ?? null)
+        ? { provider: effectiveProvider }
+        : {}),
       thinkingLevel: (form.thinkingLevel || null) as ThinkingLevel | null,
       ...(toolsChanged
         ? isMigratedWorkerMirror(ctx.agent)
@@ -167,7 +169,7 @@ async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
     instructions,
     autonomyLevel: form.autonomyLevel as 1 | 2 | 3 | 4 | 5 | null,
     model: effectiveModel || null,
-    provider: effectiveProvider,
+    ...(effectiveProvider ? { provider: effectiveProvider } : {}),
     thinkingLevel: (form.thinkingLevel || null) as ThinkingLevel | null,
     ...(parsedTools.length > 0 ? { tools: parsedTools } : {}),
     modelPool: activeModelPool ?? undefined,
