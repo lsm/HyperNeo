@@ -553,39 +553,40 @@ export function setupSpaceTaskMessageHandlers(
 
       for (const mention of mentions) {
         if (postApproval && postApproval.agentName.toLowerCase() === mention.toLowerCase()) {
-          const outcome = await ensureWorker(
-            params.taskId,
-            postApproval.agentName,
-            postApproval.nodeId ?? undefined
-          );
-          if (outcome.kind === 'resolved') {
-            await injectResolvedSession(
+          let outcome = await resolveTargetSession({
+            kind: 'session',
+            sessionId: postApproval.sessionId,
+          });
+          if (outcome.kind === 'unresolved') {
+            outcome = await ensureWorker(
               params.taskId,
-              outcome.sessionId,
               postApproval.agentName,
-              params.message,
-              images,
-              params.deliveryMode
+              postApproval.nodeId ?? undefined
             );
-            routedTo.push(mention);
-            continue;
           }
-          throw new Error(
-            `Post-approval worker "${postApproval.agentName}" is not live and could not be restored (session ${postApproval.sessionId}). Retry once the worker is back online.`
+          if (outcome.kind !== 'resolved') {
+            throw new Error(
+              `Post-approval worker "${postApproval.agentName}" is not live and could not be restored (session ${postApproval.sessionId}). Retry once the worker is back online.`
+            );
+          }
+          await injectResolvedSession(
+            params.taskId,
+            outcome.sessionId,
+            postApproval.agentName,
+            params.message,
+            images,
+            params.deliveryMode
           );
+          routedTo.push(mention);
+          continue;
         }
         const matches = activeAgents.filter(
           (e) => e.agentName.toLowerCase() === mention.toLowerCase()
         );
         if (matches.length > 0) {
-          const workerTargets = matches.filter(
-            (match, index, all) =>
-              all.findIndex((candidate) => candidate.workflowNodeId === match.workflowNodeId) ===
-              index
-          );
           const outcomes = await Promise.all(
-            workerTargets.map((match) =>
-              ensureWorker(params.taskId, match.agentName, match.workflowNodeId)
+            matches.map((match) =>
+              resolveTargetSession({ kind: 'session', sessionId: match.agentSessionId! })
             )
           );
           const resolved = outcomes.filter(
