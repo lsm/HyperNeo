@@ -178,22 +178,19 @@ describe('createDefaultSessionResolutionDeps', () => {
       }
     });
 
-    test('indexed workflow sub-session without a runtime node-agent server resolves null', async () => {
+    test('indexed workflow sub-session gates on the runtime node-agent server', async () => {
       const bare = sessionOf('active', { mcpServers: {} });
-      const { deps } = makeHarness({ indexed: () => bare, cached: () => bare });
-      expect(await deps.getSession(WORKFLOW_ID)).toBeNull();
-    });
-
-    test('indexed workflow sub-session with a runtime node-agent server resolves', async () => {
+      const bareHarness = makeHarness({ indexed: () => bare, cached: () => bare });
+      expect(await bareHarness.deps.getSession(WORKFLOW_ID)).toBeNull();
       const attached = sessionOf('active', NODE_AGENT_CONFIG);
-      const { deps } = makeHarness({ indexed: () => attached, cached: () => attached });
-      expect(await deps.getSession(WORKFLOW_ID)).toBe(attached);
+      const attachedHarness = makeHarness({ indexed: () => attached, cached: () => attached });
+      expect(await attachedHarness.deps.getSession(WORKFLOW_ID)).toBe(attached);
     });
 
     test('non-indexed session falls through to exactly one async lookup', async () => {
-      const live = sessionOf('active');
-      const { deps, calls } = makeHarness({ asyncSession: () => live });
-      expect(await deps.getSession('sess-1')).toBe(live);
+      const bare = sessionOf('active', { mcpServers: {} });
+      const { deps, calls } = makeHarness({ asyncSession: () => bare });
+      expect(await deps.getSession('sess-1')).toBe(bare);
       expect(calls.getSessionAsync).toEqual(['sess-1']);
     });
 
@@ -209,38 +206,26 @@ describe('createDefaultSessionResolutionDeps', () => {
       const { deps } = makeHarness({ asyncSession: () => bare });
       expect(await deps.getSession(WORKFLOW_ID)).toBeNull();
     });
-
-    test('plain sessions never consult the node-agent server check', async () => {
-      const bare = sessionOf('active', { mcpServers: {} });
-      const { deps } = makeHarness({ asyncSession: () => bare });
-      expect(await deps.getSession('sess-1')).toBe(bare);
-    });
   });
 
   describe('rehydrateSubSession', () => {
-    test('delegates to rehydrateSubSessionById once with the exact id', async () => {
+    test('delegates to rehydrateSubSessionById once; a null restore resolves null', async () => {
       const restored = sessionOf('active');
       const { deps, calls } = makeHarness({ rehydrated: restored });
       expect(await deps.rehydrateSubSession(WORKFLOW_ID)).toBe(restored);
       expect(calls.rehydrateSubSessionById).toEqual([WORKFLOW_ID]);
-    });
-
-    test('a null restore resolves null', async () => {
-      const { deps } = makeHarness({ rehydrated: null });
-      expect(await deps.rehydrateSubSession(WORKFLOW_ID)).toBeNull();
+      const empty = makeHarness({ rehydrated: null });
+      expect(await empty.deps.rehydrateSubSession(WORKFLOW_ID)).toBeNull();
     });
   });
 
   describe('getCoordinator', () => {
-    test('returns the coordinator row keyed by space', async () => {
+    test('returns the coordinator row keyed by space, or null', async () => {
       const { deps, calls } = makeHarness({ coordinator: { id: 'coord-9' } });
       expect(await deps.getCoordinator('space-1')).toEqual({ id: 'coord-9' });
       expect(calls.getCoordinator).toEqual(['space-1']);
-    });
-
-    test('a missing coordinator resolves null', async () => {
-      const { deps } = makeHarness({ coordinator: null });
-      expect(await deps.getCoordinator('space-1')).toBeNull();
+      const missing = makeHarness({ coordinator: null });
+      expect(await missing.deps.getCoordinator('space-1')).toBeNull();
     });
   });
 
@@ -295,14 +280,13 @@ describe('createDefaultSessionResolutionDeps', () => {
           },
         ],
       });
-      expect(
-        deps.listWorkerExecutions({
-          kind: 'worker',
-          taskId: 'task-1',
-          agentName: 'coder',
-          workflowNodeId: 'n2',
-        })
-      ).toEqual([{ sessionId: 's-b', status: 'in_progress' }]);
+      const listed = deps.listWorkerExecutions({
+        kind: 'worker',
+        taskId: 'task-1',
+        agentName: 'coder',
+        workflowNodeId: 'n2',
+      });
+      expect(listed).toEqual([{ sessionId: 's-b', status: 'in_progress' }]);
     });
 
     test('missing task and task without a workflow run resolve an empty list', () => {
@@ -319,9 +303,11 @@ describe('createDefaultSessionResolutionDeps', () => {
   });
 
   describe('readWorkerTaskPhase', () => {
-    test('missing task reads as terminal', () => {
-      const { deps } = makeHarness({ task: () => null });
-      expect(deps.readWorkerTaskPhase('task-1')).toBe('terminal');
+    test('missing and cancelled tasks read as terminal', () => {
+      const missing = makeHarness({ task: () => null });
+      expect(missing.deps.readWorkerTaskPhase('task-1')).toBe('terminal');
+      const cancelled = makeHarness({ task: (id) => makeTask({ id, status: 'cancelled' }) });
+      expect(cancelled.deps.readWorkerTaskPhase('task-1')).toBe('terminal');
     });
 
     test('non-terminal statuses map without consulting the durable worker identity', () => {
@@ -358,11 +344,6 @@ describe('createDefaultSessionResolutionDeps', () => {
       const bare = makeHarness({ task: (id) => makeTask({ id, status: 'done' }) });
       expect(bare.deps.readWorkerTaskPhase('task-1')).toBe('done');
     });
-
-    test('cancelled reads as terminal', () => {
-      const { deps } = makeHarness({ task: (id) => makeTask({ id, status: 'cancelled' }) });
-      expect(deps.readWorkerTaskPhase('task-1')).toBe('terminal');
-    });
   });
 
   describe('getTaskSpaceId', () => {
@@ -398,7 +379,7 @@ describe('createDefaultSessionResolutionDeps', () => {
   });
 
   describe('spawnPostApprovalWorker', () => {
-    test('delegates to the canonical retry with the task space and returns the routed id', async () => {
+    test('delegates to the canonical retry and returns the routed id for a matching target', async () => {
       const { deps, calls } = makeHarness({
         retryResult: {
           mode: 'spawn',
@@ -406,6 +387,7 @@ describe('createDefaultSessionResolutionDeps', () => {
           postApprovalStartedAt: 1,
           missingKeys: [],
         },
+        workerSession: { sessionId: 'w-1', agentName: 'coder', nodeId: 'n1' },
       });
       expect(await deps.spawnPostApprovalWorker('task-1', 'coder', 'n1')).toBe('w-1');
       expect(calls.retry).toEqual([['space-1', 'task-1']]);
@@ -414,8 +396,34 @@ describe('createDefaultSessionResolutionDeps', () => {
     test('an already-routed retry still returns its recorded session id', async () => {
       const { deps } = makeHarness({
         retryResult: { mode: 'already-routed', postApprovalSessionId: 'w-1' },
+        workerSession: { sessionId: 'w-1', agentName: 'coder', nodeId: null },
       });
       expect(await deps.spawnPostApprovalWorker('task-1', 'coder')).toBe('w-1');
+    });
+
+    test('a retry result that does not match the requested target resolves null', async () => {
+      const retryResult = {
+        mode: 'spawn',
+        postApprovalSessionId: 'w-1',
+        postApprovalStartedAt: 1,
+        missingKeys: [],
+      };
+      const mismatches: Array<
+        [
+          string,
+          string | undefined,
+          { sessionId: string; agentName: string; nodeId?: string | null } | null,
+        ]
+      > = [
+        ['coder', undefined, { sessionId: 'w-1', agentName: 'reviewer', nodeId: null }],
+        ['coder', 'n1', { sessionId: 'w-1', agentName: 'coder', nodeId: 'n2' }],
+        ['coder', undefined, { sessionId: 'w-other', agentName: 'coder', nodeId: null }],
+        ['coder', undefined, null],
+      ];
+      for (const [agentName, nodeId, workerSession] of mismatches) {
+        const { deps } = makeHarness({ retryResult, workerSession });
+        expect(await deps.spawnPostApprovalWorker('task-1', agentName, nodeId)).toBeNull();
+      }
     });
 
     test('skipped, no-route, missing-task, and throwing retries resolve null', async () => {

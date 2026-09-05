@@ -114,15 +114,23 @@ export function createDefaultSessionResolutionDeps(
       );
     },
 
-    async spawnPostApprovalWorker(taskId) {
+    async spawnPostApprovalWorker(taskId, agentName, workflowNodeId) {
       const spaceId = taskRepo.getTask(taskId)?.spaceId;
       if (spaceId === undefined) return null;
       const result = await spaceRuntimeService
         .retryPostApprovalDispatch(spaceId, taskId)
         .catch(() => null);
-      return result !== null && 'postApprovalSessionId' in result
-        ? result.postApprovalSessionId
-        : null;
+      if (result === null || !('postApprovalSessionId' in result)) return null;
+      const recorded = taskAgentManager.getPostApprovalWorkerSession(taskId);
+      if (
+        recorded === null ||
+        recorded.sessionId !== result.postApprovalSessionId ||
+        recorded.agentName !== agentName ||
+        (workflowNodeId !== undefined && recorded.nodeId !== workflowNodeId)
+      ) {
+        return null;
+      }
+      return result.postApprovalSessionId;
     },
 
     getPostApprovalWorkerSession(taskId) {
