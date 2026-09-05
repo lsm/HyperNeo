@@ -87,27 +87,36 @@ jobs:
         run: |
           echo "Waiting for CI workflow to pass on commit $GITHUB_SHA..."
 
-          # Wait for the CI run to appear (may not have started yet if tag
-          # was pushed at the same time as the commit)
+          # Wait for the tag-triggered CI run to appear (may not have started
+          # yet if the tag was pushed right after the commit). Only the tag
+          # run is safe to wait on: dev-push runs share the ci-refs/heads/dev
+          # concurrency group and can be cancelled mid-run by newer dev
+          # pushes, which would abort this release. The tag run has its own
+          # group and is never cancelled by dev traffic. Filtering on the
+          # push event matters too: a workflow_dispatch on the same tag ref
+          # reports the same headBranch (e.g. a run_e2e_only=true dispatch)
+          # but is not the release evidence run.
           for attempt in $(seq 1 30); do
             RUN_ID=$(gh run list \
               --workflow=main.yml \
               --commit="$GITHUB_SHA" \
-              --json databaseId \
-              --jq '.[0].databaseId // empty')
+              --event push \
+              --json databaseId,headBranch \
+              --jq "[.[] | select(.headBranch == \"$GITHUB_REF_NAME\")][0].databaseId // empty")
 
             if [ -n "$RUN_ID" ]; then
-              echo "Found CI run: $RUN_ID"
+              echo "Found tag-triggered CI run: $RUN_ID"
               break
             fi
 
-            echo "No CI run found yet, waiting... (attempt $attempt/30)"
+            echo "No tag-triggered CI run found yet, waiting... (attempt $attempt/30)"
             sleep 10
           done
 
           if [ -z "$RUN_ID" ]; then
-            echo "ERROR: No CI workflow run found for commit $GITHUB_SHA"
-            echo "Ensure this commit was pushed to dev before tagging"
+            echo "ERROR: No tag-triggered CI workflow run found for commit $GITHUB_SHA"
+            echo "Ensure the commit was pushed to dev before tagging and that"
+            echo "main.yml at the tagged commit triggers on v* tags"
             exit 1
           fi
 
