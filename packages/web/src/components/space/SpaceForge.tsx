@@ -2115,7 +2115,7 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
                       'flat-surface',
                       selected
                         ? 'glass-surface-selected'
-                        : 'hover:-translate-y-0.5 hover:bg-surface-overlay/95'
+                        : 'hover:-translate-y-0.5 hover:bg-fill-soft'
                     )}
                   >
                     <div class="min-w-0">

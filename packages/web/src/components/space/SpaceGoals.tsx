@@ -105,7 +105,7 @@ function GoalCard({
       class={cn(
         'group relative flex min-h-[12rem] w-full flex-col overflow-hidden rounded-2xl border border-line p-5 text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/70',
         'flat-surface',
-        selected ? 'glass-surface-selected' : 'hover:-translate-y-0.5 hover:bg-surface-overlay/95'
+        selected ? 'glass-surface-selected' : 'hover:-translate-y-0.5 hover:bg-fill-soft'
       )}
     >
       <div class="min-w-0">
