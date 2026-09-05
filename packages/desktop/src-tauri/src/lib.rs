@@ -188,7 +188,7 @@ pub fn run() {
 					let mut ready = false;
 					for attempt in 1..=30 {
 						tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-						match reqwest::get(format!("{}/api/health", DAEMON_URL)).await {
+						match reqwest::get(format!("{}/", DAEMON_URL)).await {
 							Ok(response) if response.status().is_success() => {
 								log::info!("Daemon ready after {} attempts", attempt);
 								ready = true;
