@@ -7746,9 +7746,8 @@ export class SpaceRuntime {
     if (canonicalTask.status === 'stopped') return;
 
     const retryCount = this.blockedRetryCounts.get(runId) ?? 0;
-    const blockedExecutions = this.config.nodeExecutionRepo
-      .listByWorkflowRun(runId)
-      .filter((e) => e.status === 'blocked');
+    const allRunExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+    const blockedExecutions = allRunExecutions.filter((e) => e.status === 'blocked');
 
     if (blockedExecutions.length === 0) return;
 
@@ -7756,6 +7755,13 @@ export class SpaceRuntime {
     if (space?.paused || space?.stopped) return;
 
     const blockedReason = blockedExecutions[0].result ?? 'Unknown blocked reason';
+
+    const hasLiveExecutionBinding = allRunExecutions.some(
+      (execution) =>
+        !!execution.agentSessionId &&
+        (this.config.taskAgentManager?.isSessionInMemory(execution.agentSessionId) ?? false) &&
+        !this.isFailedSessionBinding(execution.agentSessionId)
+    );
 
     const taskReopenedOutsideRuntime =
       canonicalTask.status === 'in_progress' || canonicalTask.status === 'open';
@@ -7772,13 +7778,19 @@ export class SpaceRuntime {
     if (effectiveRetryCount < MAX_BLOCKED_RUN_RETRIES) {
       if (!taskReopenedOutsideRuntime && this.getAvailableTaskSlots(space) <= 0) return;
 
-      let hasLiveExecutionBinding = false;
+      if (this.config.workflowRunRepo.casRunStatus(runId, ['blocked'], 'in_progress') !== 'won') {
+        log.info(
+          `SpaceRuntime: skipping blocked-run retry for run ${runId}; ` +
+            `run status moved concurrently — keeping the concurrent status`
+        );
+        return;
+      }
+
       for (const execution of blockedExecutions) {
         const bindingAlive =
           !!execution.agentSessionId &&
           (this.config.taskAgentManager?.isSessionInMemory(execution.agentSessionId) ?? false) &&
           !this.isFailedSessionBinding(execution.agentSessionId);
-        hasLiveExecutionBinding ||= bindingAlive;
         this.config.nodeExecutionRepo.update(execution.id, {
           status: 'pending',
           result: null,
@@ -7788,8 +7800,8 @@ export class SpaceRuntime {
         });
       }
       this.blockedRetryCounts.set(runId, effectiveRetryCount + 1);
+      await this.safeOnWorkflowRunUpdated(meta.spaceId, this.config.workflowRunRepo.getRun(runId)!);
 
-      await this.transitionRunStatusAndEmit(runId, 'in_progress');
       if (canonicalTask.status === 'blocked') {
         await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
           status: 'in_progress',
@@ -7804,6 +7816,12 @@ export class SpaceRuntime {
           startedAt: canonicalTask.startedAt ?? Date.now(),
           completedAt: null,
         });
+      } else if (canonicalTask.status === 'open' && hasLiveExecutionBinding) {
+        log.info(
+          `SpaceRuntime: skipping task recovery promotion for task ${canonicalTask.id} in run ${runId}; ` +
+            `task status moved concurrently — keeping the concurrent status`
+        );
+        return;
       }
 
       this.notifiedTaskSet.delete(`${canonicalTask.id}:blocked`);
