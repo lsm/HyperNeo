@@ -399,15 +399,6 @@ describe('migration 223 — copy backfill', () => {
   test('unreferenced workers are copied too — the m155 delta', () => {
     const db = makeOverlayDb();
     insertSpace(db, 'space-a');
-    db.exec(`
-      CREATE TABLE space_agent_goal_assignments (
-        space_id TEXT NOT NULL,
-        agent_id TEXT NOT NULL,
-        goal_id TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        PRIMARY KEY (agent_id, goal_id)
-      )
-    `);
     seedWorker(db, { id: 'w-referenced', spaceId: 'space-a', name: 'Referenced', handle: 'ref' });
     seedWorker(db, { id: 'w-orphan', spaceId: 'space-a', name: 'Orphan', handle: 'orphan' });
     db.prepare(

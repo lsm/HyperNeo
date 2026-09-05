@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/migrations';
 import { reclaimPendingMigrationSpace } from '../../../../../src/storage/schema/migration-space-reclaim';
+import { createLongHorizonAgentTables } from '../../../../../src/storage/schema/long-horizon-agents';
 
 function tableHasColumn(db: BunDatabase, tableName: string, columnName: string): boolean {
   return !!db
@@ -16,7 +17,6 @@ function markerExists(db: BunDatabase, key: string): boolean {
 function createBaselineSchemaSentinels(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE spaces (id TEXT PRIMARY KEY);
-    CREATE TABLE space_long_horizon_agents (id TEXT PRIMARY KEY);
     CREATE TABLE space_tasks (
       id TEXT PRIMARY KEY,
       status TEXT NOT NULL DEFAULT 'open',
@@ -36,6 +36,7 @@ function createBaselineSchemaSentinels(db: BunDatabase): void {
       created_at INTEGER
     );
   `);
+  createLongHorizonAgentTables(db);
 }
 
 describe('migration runner markers', () => {

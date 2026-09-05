@@ -13,6 +13,16 @@ export function runMigration232(db: BunDatabase): void {
     )
     .get() as { count: number };
   if (uncopied.count > 0) {
+    const missing = db
+      .prepare(
+        `SELECT workers.id AS worker_id, workers.space_id AS space_id
+         FROM space_agents workers
+         LEFT JOIN space_long_horizon_agents copied
+           ON copied.id = workers.id AND copied.space_id = workers.space_id
+         WHERE copied.id IS NULL
+         LIMIT 5`
+      )
+      .all() as Array<{ worker_id: string; space_id: string }>;
     const collisions = db
       .prepare(
         `SELECT workers.id AS worker_id, workers.space_id AS space_id
@@ -30,7 +40,9 @@ export function runMigration232(db: BunDatabase): void {
         : '';
     throw new Error(
       `Migration 232 found ${uncopied.count} space_agents row(s) missing from ` +
-        `space_long_horizon_agents; refusing to drop the legacy table.${detail}`
+        `space_long_horizon_agents: ${missing
+          .map((row) => `${row.worker_id} in space ${row.space_id}`)
+          .join(', ')}. Refusing to drop the legacy table.${detail}`
     );
   }
 

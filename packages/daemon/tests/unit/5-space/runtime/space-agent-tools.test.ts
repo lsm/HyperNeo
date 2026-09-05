@@ -403,7 +403,7 @@ describe('schema evolution setup', () => {
     ]) {
       expect(
         db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(legacyTable)
-      ).toBeUndefined();
+      ).toBeNull();
     }
     expect(
       db
