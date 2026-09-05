@@ -2301,6 +2301,26 @@ describe('seedBuiltInWorkflows()', () => {
     expect(seededRenamedPatched.nodes[0]!.agents[0]!.agentId).toBe('agent-uuid-1');
     expect(seededRenamedPatched.nodes[0]!.agents[0]!.customPrompt?.value).toBe(CODER_ONLY_PROMPT);
 
+    const seededFullyRenamed = {
+      ...pinned,
+      nodes: pinned.nodes.map((node, index) =>
+        index === 0
+          ? {
+              ...node,
+              id: 'node-uuid-1',
+              name: 'My Coding Node',
+              agents: node.agents.map((agent, agentIndex) =>
+                agentIndex === 0 ? { ...agent, agentId: 'agent-uuid-1', name: 'My Coder' } : agent
+              ),
+            }
+          : node
+      ),
+    };
+    const fullyRenamedPatched = patchPinnedBuiltInPromptDrift(seededFullyRenamed);
+    expect(fullyRenamedPatched.nodes[0]!.name).toBe('My Coding Node');
+    expect(fullyRenamedPatched.nodes[0]!.agents[0]!.name).toBe('My Coder');
+    expect(fullyRenamedPatched.nodes[0]!.agents[0]!.customPrompt?.value).toBe(CODER_ONLY_PROMPT);
+
     const legacyNamed = {
       ...CODING_WORKFLOW,
       spaceId: SPACE_ID,

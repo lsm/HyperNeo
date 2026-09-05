@@ -4,6 +4,7 @@ import { MIGRATED_AGENT_TEMPLATE_KEY_PREFIX } from '../../lib/space/agents/agent
 import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import {
+  hasStockReviewerTools,
   isPristineReviewerRow,
   STALE_PRE_TYPENAME_REVIEWER_CONTRACT_SHA256,
 } from './m229-restamp-reviewer-typename-bot-filter.ts';
@@ -26,6 +27,13 @@ interface SynthesizedTemplateRow {
   instructions: string | null;
 }
 
+interface ClearedDescriptionRow {
+  id: string;
+  instructions: string | null;
+  tool_permissions_json: string | null;
+  updated_at: number;
+}
+
 function tableExists(db: BunDatabase, tableName: string): boolean {
   const result = db
     .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
@@ -39,6 +47,14 @@ function sha256(value: string): string {
 
 function migratedTemplateSourceAgentId(key: string): string {
   return key.slice(MIGRATED_AGENT_TEMPLATE_KEY_PREFIX.length + 1).replace(/\.m228(-\d+)?$/, '');
+}
+
+function migration229AppliedAt(db: BunDatabase): number | null {
+  if (!tableExists(db, 'migration_markers')) return null;
+  const row = db
+    .prepare(`SELECT applied_at FROM migration_markers WHERE key = 'migration_229'`)
+    .get() as { applied_at: number } | undefined;
+  return row?.applied_at ?? null;
 }
 
 export function runMigration230(db: BunDatabase): void {
@@ -73,6 +89,30 @@ export function runMigration230(db: BunDatabase): void {
       ) {
         update.run(reviewer.customPrompt, row.id);
         updated++;
+      }
+    }
+
+    const m229AppliedAt = migration229AppliedAt(db);
+    if (m229AppliedAt !== null) {
+      const clearedRows = db
+        .prepare(
+          `SELECT id, instructions, tool_permissions_json, updated_at
+           FROM space_long_horizon_agents
+           WHERE (handle = 'reviewer' OR display_name = 'Reviewer' OR template_key = 'Reviewer')
+             AND description IS NULL AND template_key IS NOT 'Reviewer'`
+        )
+        .all() as ClearedDescriptionRow[];
+      for (const row of clearedRows) {
+        if (
+          typeof row.instructions === 'string' &&
+          row.instructions.length > 0 &&
+          sha256(row.instructions) === PRE_CHECK_SEEDING_REVIEWER_CONTRACT_SHA256 &&
+          hasStockReviewerTools(row.tool_permissions_json) &&
+          row.updated_at < m229AppliedAt
+        ) {
+          update.run(reviewer.customPrompt, row.id);
+          updated++;
+        }
       }
     }
   }

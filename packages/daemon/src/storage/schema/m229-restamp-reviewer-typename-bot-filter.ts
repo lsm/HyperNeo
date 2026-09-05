@@ -56,25 +56,28 @@ function tableExists(db: BunDatabase, tableName: string): boolean {
   return !!result;
 }
 
-export function isPristineReviewerRow(row: ReviewerRow): boolean {
+export function hasStockReviewerTools(toolPermissionsJson: string | null): boolean {
   let storedTools: string[] = [];
   try {
-    const parsed = row.tool_permissions_json
-      ? (JSON.parse(row.tool_permissions_json) as { tools?: unknown })
+    const parsed = toolPermissionsJson
+      ? (JSON.parse(toolPermissionsJson) as { tools?: unknown })
       : {};
     storedTools = Array.isArray(parsed.tools) ? parsed.tools.map((t) => String(t)) : [];
   } catch {
     return false;
   }
+  return (
+    [...storedTools].sort().join('\u0000') ===
+    [...STALE_PRE_TYPENAME_REVIEWER_TOOLS].sort().join('\u0000')
+  );
+}
+
+export function isPristineReviewerRow(row: ReviewerRow): boolean {
   const descriptionPristine =
     row.template_key === 'Reviewer'
       ? row.description === null || row.description === STALE_PRE_TYPENAME_REVIEWER_DESCRIPTION
       : row.description === STALE_PRE_TYPENAME_REVIEWER_DESCRIPTION;
-  return (
-    descriptionPristine &&
-    [...storedTools].sort().join('\u0000') ===
-      [...STALE_PRE_TYPENAME_REVIEWER_TOOLS].sort().join('\u0000')
-  );
+  return descriptionPristine && hasStockReviewerTools(row.tool_permissions_json);
 }
 
 export function runMigration229(db: BunDatabase): void {

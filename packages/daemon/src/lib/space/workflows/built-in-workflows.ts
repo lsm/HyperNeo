@@ -2053,6 +2053,20 @@ function isExactRetiredBuiltInPrompt(existingValue: string, templateValue: strin
   return buildRetiredBuiltInPromptValues(templateValue).some((value) => existingValue === value);
 }
 
+function findTemplateNodeBySlotPromptFamily(
+  templateNodes: WorkflowNode[],
+  node: WorkflowNode
+): WorkflowNode | undefined {
+  if (node.agents.length !== 1) return undefined;
+  const slotPrompt = node.agents[0]?.customPrompt;
+  const matches = templateNodes.filter(
+    (candidate) =>
+      candidate.agents.length === 1 &&
+      patchKnownBuiltInPromptDrift(slotPrompt, candidate.agents[0]?.customPrompt) !== slotPrompt
+  );
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 export function patchPinnedBuiltInPromptDrift(workflow: SpaceWorkflow): SpaceWorkflow {
   const template = resolveBuiltInWorkflowTemplate(workflow.templateName ?? '');
   if (!template) return workflow;
@@ -2060,7 +2074,8 @@ export function patchPinnedBuiltInPromptDrift(workflow: SpaceWorkflow): SpaceWor
   const nodes = workflow.nodes.map((node) => {
     const templateNode =
       template.nodes.find((candidate) => candidate.id === node.id) ??
-      template.nodes.find((candidate) => candidate.name === node.name);
+      template.nodes.find((candidate) => candidate.name === node.name) ??
+      findTemplateNodeBySlotPromptFamily(template.nodes, node);
     if (!templateNode) return node;
     const agents = node.agents.map((agent) => {
       const templateAgent =

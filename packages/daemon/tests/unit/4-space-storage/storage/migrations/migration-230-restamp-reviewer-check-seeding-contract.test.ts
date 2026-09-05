@@ -51,6 +51,10 @@ function makeDb(): BunDatabase {
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`);
+  db.exec(`CREATE TABLE migration_markers (
+    key TEXT PRIMARY KEY,
+    applied_at INTEGER NOT NULL
+  )`);
   return db;
 }
 
@@ -64,9 +68,10 @@ function insertAgent(
     instructions: string;
     description?: string | null;
     tools?: string[];
+    updatedAt?: number;
   }
 ): void {
-  const now = Date.now();
+  const now = opts.updatedAt ?? Date.now();
   db.prepare(
     `INSERT INTO space_long_horizon_agents (
        id, space_id, handle, display_name, template_key,
@@ -274,5 +279,58 @@ describe('migration 230: re-stamp reviewer presets with the check-seeding contra
   test('is a no-op on databases without the agent tables', () => {
     const empty = new BunDatabase(':memory:');
     expect(() => runMigration230(empty)).not.toThrow();
+  });
+
+  test('repairs cleared-description rows the pre-fix migration 229 overwrote', () => {
+    const markerAt = Date.now();
+    db.prepare(`INSERT INTO migration_markers (key, applied_at) VALUES ('migration_229', ?)`).run(
+      markerAt
+    );
+    insertAgent(db, {
+      id: 'overwritten-cleared-description',
+      handle: 'reviewer-6',
+      displayName: 'Reviewer',
+      instructions: PRE_CHECK_SEEDING_CONTRACT,
+      description: null,
+      updatedAt: markerAt - 60_000,
+    });
+    insertAgent(db, {
+      id: 'cleared-after-migration',
+      handle: 'reviewer-7',
+      displayName: 'Reviewer',
+      instructions: PRE_CHECK_SEEDING_CONTRACT,
+      description: null,
+      updatedAt: markerAt + 60_000,
+    });
+    insertAgent(db, {
+      id: 'overwritten-custom-tools',
+      handle: 'reviewer-8',
+      displayName: 'Reviewer',
+      instructions: PRE_CHECK_SEEDING_CONTRACT,
+      description: null,
+      tools: ['Read'],
+      updatedAt: markerAt - 60_000,
+    });
+
+    runMigration230(db);
+
+    expect(getInstructions(db, 'overwritten-cleared-description')).toBe(REVIEWER_SYSTEM_CONTRACT);
+    expect(getInstructions(db, 'cleared-after-migration')).toBe(PRE_CHECK_SEEDING_CONTRACT);
+    expect(getInstructions(db, 'overwritten-custom-tools')).toBe(PRE_CHECK_SEEDING_CONTRACT);
+  });
+
+  test('leaves cleared-description rows alone when migration 229 has no marker', () => {
+    insertAgent(db, {
+      id: 'unmarked-cleared-description',
+      handle: 'reviewer-9',
+      displayName: 'Reviewer',
+      instructions: PRE_CHECK_SEEDING_CONTRACT,
+      description: null,
+      updatedAt: Date.now() - 60_000,
+    });
+
+    runMigration230(db);
+
+    expect(getInstructions(db, 'unmarked-cleared-description')).toBe(PRE_CHECK_SEEDING_CONTRACT);
   });
 });
