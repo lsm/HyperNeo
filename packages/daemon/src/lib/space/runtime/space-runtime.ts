@@ -7771,6 +7771,7 @@ export class SpaceRuntime {
     if (effectiveRetryCount < MAX_BLOCKED_RUN_RETRIES) {
       if (!taskReopenedOutsideRuntime && this.getAvailableTaskSlots(space) <= 0) return;
 
+      const runSnapshot = this.config.workflowRunRepo.getRun(runId)!;
       if (this.config.workflowRunRepo.casRunStatus(runId, ['blocked'], 'in_progress') !== 'won') {
         log.info(
           `SpaceRuntime: skipping blocked-run retry for run ${runId}; ` +
@@ -7807,11 +7808,13 @@ export class SpaceRuntime {
             !this.isFailedSessionBinding(execution.agentSessionId)
         );
 
+      let taskPromoted = false;
       if (canonicalTask.status === 'blocked') {
         await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
           status: 'in_progress',
           completedAt: null,
         });
+        taskPromoted = true;
       } else if (
         canonicalTask.status === 'open' &&
         hasLiveExecutionBinding &&
@@ -7821,22 +7824,26 @@ export class SpaceRuntime {
           startedAt: canonicalTask.startedAt ?? Date.now(),
           completedAt: null,
         });
+        taskPromoted = true;
       } else if (canonicalTask.status === 'open' && hasLiveExecutionBinding) {
         log.info(
           `SpaceRuntime: skipping task recovery promotion for task ${canonicalTask.id} in run ${runId}; ` +
             `task status moved concurrently — keeping the concurrent status`
         );
-        await this.revertRepairedRunToBlocked(runId, meta.spaceId, blockedExecutions);
+        await this.revertRepairedRunToBlocked(runId, meta.spaceId, blockedExecutions, runSnapshot);
         return;
       }
 
       const freshTaskStatus = this.config.taskRepo.getTask(canonicalTask.id)?.status;
-      if (freshTaskStatus !== 'open' && freshTaskStatus !== 'in_progress') {
+      const freshStatusValid = taskPromoted
+        ? freshTaskStatus === 'in_progress'
+        : freshTaskStatus === 'open' || freshTaskStatus === 'in_progress';
+      if (!freshStatusValid) {
         log.info(
           `SpaceRuntime: skipping task_retry notification for task ${canonicalTask.id} in run ${runId}; ` +
             `task status moved concurrently during recovery — keeping the concurrent status`
         );
-        await this.revertRepairedRunToBlocked(runId, meta.spaceId, blockedExecutions);
+        await this.revertRepairedRunToBlocked(runId, meta.spaceId, blockedExecutions, runSnapshot);
         return;
       }
 
@@ -7877,7 +7884,8 @@ export class SpaceRuntime {
   private async revertRepairedRunToBlocked(
     runId: string,
     spaceId: string,
-    repairedExecutions: readonly NodeExecution[]
+    repairedExecutions: readonly NodeExecution[],
+    runSnapshot: SpaceWorkflowRun
   ): Promise<void> {
     if (this.config.workflowRunRepo.casRunStatus(runId, ['in_progress'], 'blocked') !== 'won') {
       return;
@@ -7891,6 +7899,11 @@ export class SpaceRuntime {
         agentSessionId: execution.agentSessionId,
       });
     }
+    this.config.workflowRunRepo.updateRun(runId, {
+      startedAt: runSnapshot.startedAt,
+      completedAt: runSnapshot.completedAt,
+    });
+    this.blockedRetryCounts.set(runId, MAX_BLOCKED_RUN_RETRIES);
     await this.safeOnWorkflowRunUpdated(spaceId, this.config.workflowRunRepo.getRun(runId)!);
   }
 
