@@ -184,7 +184,7 @@ export class NodeExecutionRepository {
 
     if (fields.length > 0) {
       fields.push('updated_at = ?');
-      values.push(Date.now());
+      values.push(params.updatedAt ?? Date.now());
       values.push(id);
       this.db
         .prepare(`UPDATE node_executions SET ${fields.join(', ')} WHERE id = ?`)
