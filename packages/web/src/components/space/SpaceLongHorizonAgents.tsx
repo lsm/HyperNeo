@@ -198,6 +198,7 @@ interface TemplateSaveForm {
   description: string;
   instructions: string;
   suggestedAutonomyLevel: number;
+  tools: string[];
 }
 
 interface TemplateSaveCtx {
@@ -219,6 +220,7 @@ async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateS
     description: ctx.form.description.trim(),
     instructions: ctx.form.instructions.trim(),
     suggestedAutonomyLevel: ctx.form.suggestedAutonomyLevel as SpaceAgentAutonomyLevel,
+    tools: ctx.form.tools,
   });
   return ctx;
 }
@@ -558,6 +560,10 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
   const [description, setDescription] = useState('');
   const [instructions, setInstructions] = useState('');
   const [autonomyLevel, setAutonomyLevel] = useState(2);
+  const [toolsSelection, setToolsSelection] = useState<ToolsSelection>({
+    tools: [],
+    toolsOverridden: false,
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -573,6 +579,7 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
           description,
           instructions,
           suggestedAutonomyLevel: autonomyLevel,
+          tools: toolsSelection.tools,
         },
       });
       onCreated();
@@ -675,6 +682,13 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
               ))}
             </div>
             <p class="mt-1.5 text-xs text-fg-muted">{AUTONOMY_LABELS[autonomyLevel]}</p>
+          </div>
+          <div>
+            <ToolsEditor
+              tools={toolsSelection.tools}
+              toolsOverridden={toolsSelection.toolsOverridden}
+              onChange={setToolsSelection}
+            />
           </div>
           {error && <p class="text-xs text-danger">{error}</p>}
         </div>

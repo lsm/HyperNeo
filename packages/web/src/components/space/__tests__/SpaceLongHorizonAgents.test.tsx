@@ -289,8 +289,74 @@ describe('SpaceLongHorizonAgents', () => {
       description: 'Checks release readiness.',
       instructions: 'Verify the release.',
       suggestedAutonomyLevel: 4,
+      tools: [],
     });
     await waitFor(() => expect(queryByRole('button', { name: 'Create template' })).toBeNull());
+  });
+
+  it('mounts the tools editor in inherited mode inside the template editor', () => {
+    const { getByRole, getByText, container } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+
+    expect(container.querySelector('[data-testid="tools-editor"]')).toBeTruthy();
+    expect(getByText('(inherited)')).toBeTruthy();
+    expect(chipInput(container, 'Bash').disabled).toBe(true);
+  });
+
+  it('creates a template carrying the tools selected in the editor', async () => {
+    const { getByRole, getByTestId, getByPlaceholderText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
+      target: { value: 'Release Readiness' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness.custom'), {
+      target: { value: 'release-readiness.custom' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
+      target: { value: 'release-readiness' },
+    });
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockCreateTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: ['Read', 'Grep', 'Glob'],
+      })
+    );
+  });
+
+  it('persists an empty tools list when Inherit defaults is re-applied on a template', async () => {
+    const { getByRole, getByTestId, getByPlaceholderText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
+      target: { value: 'Release Readiness' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness.custom'), {
+      target: { value: 'release-readiness.custom' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
+      target: { value: 'release-readiness' },
+    });
+    fireEvent.click(getByTestId('tools-editor-preset-read-only'));
+    fireEvent.click(getByTestId('tools-editor-preset-inherit-defaults'));
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockCreateTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: [],
+      })
+    );
   });
 
   it('shows the store error and keeps the modal open when create fails', async () => {
