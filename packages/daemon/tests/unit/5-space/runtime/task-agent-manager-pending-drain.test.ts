@@ -350,6 +350,28 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
     expect(repo.markDelivered).toHaveBeenCalledWith('row-node', SESSION_ID);
   });
 
+  it('executionless drain uses a trusted legacy node hint when provenance lacks a node', async () => {
+    const nodeScoped = makeRecord({ id: 'row-node', workflowNodeId: NODE_ID });
+    const siblingNode = makeRecord({ id: 'row-sibling', workflowNodeId: 'node-review' });
+    const repo = {
+      enforceRetention: mock(() => 0),
+      expireStale: mock(() => 0),
+      listPendingForTarget: mock(() => [nodeScoped, siblingNode]),
+      markDelivered: mock(() => {}),
+      markAttemptFailed: mock(() => null),
+    };
+    const { manager, injectMock } = makeMockRepoManager(repo, {
+      executionPresent: false,
+      provenance: { workflowRunId: 'run-mock', agentName: AGENT_NAME },
+    });
+
+    await manager.flushPendingMessagesForTarget('run-mock', AGENT_NAME, SESSION_ID, NODE_ID);
+
+    expect(repo.listPendingForTarget).toHaveBeenCalledWith('run-mock', AGENT_NAME, NODE_ID);
+    expect(injectMock.mock.calls.map((call: unknown[]) => call[6])).toEqual(['row-node']);
+    expect(repo.markDelivered).toHaveBeenCalledWith('row-node', SESSION_ID);
+  });
+
   it('executionless drain ignores provenance from another run', async () => {
     const nodeScoped = makeRecord({ id: 'row-node', workflowNodeId: NODE_ID });
     const repo = {
