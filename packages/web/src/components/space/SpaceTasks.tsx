@@ -7,7 +7,7 @@ import { type SummarySpaceTask, spaceStore } from '../../lib/space-store';
 import { getTaskWorkspaceLabel } from '../../lib/space-task-helpers';
 import { isActionRequired, isActiveTask, isDraftTask } from '../../lib/task-filters';
 import { toast } from '../../lib/toast';
-import { getTaskStatusConfig } from '../../lib/task-status';
+import { getTaskStatusClasses, getTaskStatusConfig } from '../../lib/task-status';
 import { ActivitySpinner } from '../ui/ActivitySpinner';
 import { StatusBadge } from '../ui/StatusBadge';
 import { formatRelativeFuture, getRelativeTime } from '../../lib/utils';
@@ -574,6 +574,7 @@ function TaskItem({
 }) {
   const isClickable = !!onClick;
   const statusConfig = getTaskStatusConfig(task.status);
+  const statusClasses = getTaskStatusClasses(task.status);
   const showsActivity =
     task.status === 'in_progress' &&
     (!task.workflowRunId || spaceStore.activeRuns.value.some((r) => r.id === task.workflowRunId));
@@ -586,7 +587,8 @@ function TaskItem({
   const activate = () => onClick?.(task.id);
 
   return (
-    <div class="px-5 py-4">
+    <div class={`relative px-5 py-4 ${statusClasses.wash}`}>
+      <span class={`absolute inset-y-0 left-0 w-[3px] ${statusClasses.rail}`} aria-hidden="true" />
       <div
         data-testid="space-task-item"
         class={`group flex items-start justify-between gap-4 outline-none transition ${

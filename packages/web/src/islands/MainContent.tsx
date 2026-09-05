@@ -14,6 +14,8 @@ import {
 import { navigateToSpace, navigateToSpaceTask, navigateToSpaceSession } from '../lib/router.ts';
 import { spaceStore } from '../lib/space-store.ts';
 import { isActionRequired, isActiveTask } from '../lib/task-filters.ts';
+import { getTaskStatusClasses, getTaskStatusConfig } from '../lib/task-status.ts';
+import { StatusBadge } from '../components/ui/StatusBadge.tsx';
 import { SpaceCreateDialog } from '../components/space/SpaceCreateDialog.tsx';
 import { BottomTabBar } from './BottomTabBar.tsx';
 import { VoiceRecordingIndicator } from '../components/voice/VoiceRecordingIndicator.tsx';
@@ -77,14 +79,6 @@ const lazyFallback = (
     <div class="text-xs text-fg-faint">Loading...</div>
   </div>
 );
-
-const TASK_STATUS_LABEL: Record<string, string> = {
-  open: 'Open',
-  review: 'Review',
-  blocked: 'Blocked',
-  in_progress: 'In Progress',
-  approved: 'Approved',
-};
 
 function SpacesSection({
   dotClass,
@@ -278,27 +272,28 @@ function SpacesHome() {
                   count={actionItems.length}
                   countClass="text-warning-soft"
                 >
-                  {actionItems.map(({ task, space }) => (
-                    <button
-                      key={task.id}
-                      type="button"
-                      onClick={() => navigateToSpaceTask(space.slug, task.id)}
-                      class={rowClass}
-                    >
-                      <div
-                        class={`w-2 h-2 rounded-full flex-shrink-0 ${task.status === 'review' ? 'bg-cat-purple' : 'bg-warning'}`}
-                      />
-                      <div class="min-w-0 flex-1">
-                        <div class="text-sm text-fg-soft truncate">{task.title}</div>
-                        <div class="text-xs text-fg-faint truncate mt-0.5">{space.name}</div>
-                      </div>
-                      <span
-                        class={`flex-shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded ${task.status === 'review' ? 'bg-cat-purple/20 text-cat-purple' : 'bg-warning/20 text-warning-soft'}`}
+                  {actionItems.map(({ task, space }) => {
+                    const statusConfig = getTaskStatusConfig(task.status);
+                    const statusClasses = getTaskStatusClasses(task.status);
+                    return (
+                      <button
+                        key={task.id}
+                        type="button"
+                        onClick={() => navigateToSpaceTask(space.slug, task.id)}
+                        class={`relative ${rowClass} ${statusClasses.wash}`}
                       >
-                        {TASK_STATUS_LABEL[task.status] ?? task.status}
-                      </span>
-                    </button>
-                  ))}
+                        <span
+                          class={`absolute inset-y-0 left-0 w-[3px] ${statusClasses.rail}`}
+                          aria-hidden="true"
+                        />
+                        <div class="min-w-0 flex-1">
+                          <div class="text-sm text-fg-soft truncate">{task.title}</div>
+                          <div class="text-xs text-fg-faint truncate mt-0.5">{space.name}</div>
+                        </div>
+                        <StatusBadge tone={statusConfig.tone} label={statusConfig.label} />
+                      </button>
+                    );
+                  })}
                 </SpacesSection>
               )}
 
@@ -333,23 +328,28 @@ function SpacesHome() {
                   count={runningItems.length}
                   countClass="text-accent"
                 >
-                  {runningItems.map(({ task, space }) => (
-                    <button
-                      key={task.id}
-                      type="button"
-                      onClick={() => navigateToSpaceTask(space.slug, task.id)}
-                      class={rowClass}
-                    >
-                      <div class="w-2 h-2 rounded-full bg-accent flex-shrink-0" />
-                      <div class="min-w-0 flex-1">
-                        <div class="text-sm text-fg-soft truncate">{task.title}</div>
-                        <div class="text-xs text-fg-faint truncate mt-0.5">{space.name}</div>
-                      </div>
-                      <span class="flex-shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded bg-accent/20 text-accent-soft">
-                        {TASK_STATUS_LABEL[task.status] ?? task.status}
-                      </span>
-                    </button>
-                  ))}
+                  {runningItems.map(({ task, space }) => {
+                    const statusConfig = getTaskStatusConfig(task.status);
+                    const statusClasses = getTaskStatusClasses(task.status);
+                    return (
+                      <button
+                        key={task.id}
+                        type="button"
+                        onClick={() => navigateToSpaceTask(space.slug, task.id)}
+                        class={`relative ${rowClass} ${statusClasses.wash}`}
+                      >
+                        <span
+                          class={`absolute inset-y-0 left-0 w-[3px] ${statusClasses.rail}`}
+                          aria-hidden="true"
+                        />
+                        <div class="min-w-0 flex-1">
+                          <div class="text-sm text-fg-soft truncate">{task.title}</div>
+                          <div class="text-xs text-fg-faint truncate mt-0.5">{space.name}</div>
+                        </div>
+                        <StatusBadge tone={statusConfig.tone} label={statusConfig.label} />
+                      </button>
+                    );
+                  })}
                 </SpacesSection>
               )}
             </div>
