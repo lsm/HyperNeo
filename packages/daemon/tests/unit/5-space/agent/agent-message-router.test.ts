@@ -164,13 +164,13 @@ function makeRouter(
     nodeExecutionRepo: ctx.nodeExecutionRepo,
     workflowRunId,
     workflowChannels: channels,
-    deliverToTarget:
-      overrides.deliverToTarget ??
-      (overrides.messageInjector || overrides.spaceAgentInjector ? undefined : deliverToTarget),
     messageInjector: async (sessionId, message) => {
       injected.push({ sessionId, message });
     },
     ...overrides,
+    deliverToTarget:
+      overrides.deliverToTarget ??
+      (overrides.messageInjector || overrides.spaceAgentInjector ? undefined : deliverToTarget),
     taskId: overrides.taskId === null ? undefined : (overrides.taskId ?? 'task-test'),
   });
 }
@@ -322,7 +322,7 @@ describe('AgentMessageRouter: single-target delivery door', () => {
     await router.deliverMessage({
       fromAgentName: 'coder',
       fromSessionId: ctx.coderSessionId,
-      target: 'Review A',
+      target: '@worker:Review%20A/reviewer',
       message: 'review A',
     });
 
