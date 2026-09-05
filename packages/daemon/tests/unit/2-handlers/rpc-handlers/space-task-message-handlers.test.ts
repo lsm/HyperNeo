@@ -561,7 +561,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
           nodeExecutionRepo,
           undefined,
           undefined,
-          pendingMessageQueue
+          pendingMessageQueue,
+          async () => ({ kind: 'unresolved', reason: 'activation_timeout' })
         );
 
         await expect(
@@ -768,7 +769,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
               });
               return { record: { id: 'pending-1' }, deduped: false };
             }),
-          }
+          },
+          async () => ({ kind: 'unresolved', reason: 'activation_timeout' })
         );
 
         const result = (await call('space.task.sendMessage', {
@@ -879,19 +881,15 @@ describe('setupSpaceTaskMessageHandlers', () => {
           declared: ['coder', 'reviewer', 'merger'],
         });
 
-        const result = await call('space.task.sendMessage', {
-          spaceId: 'space-1',
-          taskId: 'task-1',
-          message: 'continue',
-          target: { kind: 'node_agent', agentName: 'coder' },
-        });
+        await expect(
+          call('space.task.sendMessage', {
+            spaceId: 'space-1',
+            taskId: 'task-1',
+            message: 'continue',
+            target: { kind: 'node_agent', agentName: 'coder' },
+          })
+        ).rejects.toThrow('activate_failed');
 
-        expect(result).toEqual({
-          ok: true,
-          routedTo: ['coder'],
-          activated: true,
-          delivered: false,
-        });
         expect(injectSubSession).not.toHaveBeenCalled();
       });
 

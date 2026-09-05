@@ -1466,7 +1466,7 @@ export class TaskAgentManager {
       provenance?.workflowRunId === workflowRunId && provenance.agentName === targetAgentName;
     const task =
       !execution && !provenanceMatches
-        ? (this.config.taskRepo.listByWorkflowRun(workflowRunId).at(-1) ?? null)
+        ? (this.config.taskRepo?.listByWorkflowRun(workflowRunId).at(-1) ?? null)
         : null;
     const postApproval = task ? this.readPostApprovalWorkerIdentity(task.id, sessionId) : null;
     const trustedWorkflowNodeId = provenanceMatches
