@@ -662,6 +662,30 @@ describe('createMailboxDeliveryHandler', () => {
       expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)).toHaveLength(1);
     });
 
+    test('an immediate retry reopens a failed prompt without minting another row', async () => {
+      const { handler } = makeHandler();
+      const messageUuid = '00000000-0000-4000-8000-000000000002';
+      const firstJob = claimMailboxJob(mailbox, makeEntry({ origin: 'recovery', messageUuid }));
+
+      await handler(firstJob);
+      const rowId = mailbox.sdkRows()[0].id;
+      mailbox.sdkMessageRepo.updateMessageStatus([rowId], 'failed');
+      for (const job of mailbox.jobsByQueue(MESSAGE_DELIVERY)) {
+        mailbox.jobQueue.markDeadIfActive(job.id, 'delivery failed');
+      }
+
+      const retryJob = claimMailboxJob(mailbox, makeEntry({ origin: 'recovery', messageUuid }));
+      const result = await handler(retryJob);
+
+      expect(result).toEqual({ kind: 'delivered', sessionId: SESSION_ID });
+      expect(mailbox.sdkRows()).toHaveLength(1);
+      expect(mailbox.sdkRows()[0].send_status).toBe('enqueued');
+      expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)).toHaveLength(1);
+      expect(
+        mailbox.jobsByQueue(MESSAGE_DELIVERY).filter((job) => job.status === 'pending')
+      ).toHaveLength(1);
+    });
+
     test('a reclaim re-run converges on the single content row instead of minting another', async () => {
       const { handler } = makeHandler();
       const entry = makeEntry({ origin: 'recovery' });

@@ -42,8 +42,8 @@ const runResolveAgentDeliverySession = (
   .input(['spaceId', 'agentId', 'deps', 'getSession'])
   .pipe(resolveAgentDeliveryTargetStage, ['spaceId', 'agentId'], 'target')
   .pipe(ensureAgentDeliverySessionStage, ['target', 'deps'], 'outcome')
-  .pipe(preserveAgentProvisioningStage, ['outcome', 'target', 'deps'], 'outcome')
-  .pipe(refetchAgentDeliverySessionStage, ['outcome', 'getSession'], 'session')
+  .pipe(preserveAgentProvisioningStage, ['outcome', 'target', 'deps'], 'provisionedOutcome')
+  .pipe(refetchAgentDeliverySessionStage, ['provisionedOutcome', 'getSession'], 'session')
   .endAsync('session') as (...args: unknown[]) => Promise<unknown | null>;
 
 export async function resolveAgentDeliverySession<Session>(

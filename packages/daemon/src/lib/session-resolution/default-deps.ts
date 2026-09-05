@@ -14,7 +14,7 @@ const sessionUnavailable = (status: string): boolean => status === 'ended' || st
 
 export interface DefaultSessionResolutionServices {
   sessionManager: SessionManager;
-  taskAgentManager: TaskAgentManager;
+  taskAgentManager?: TaskAgentManager;
   spaceRuntimeService: SpaceRuntimeService;
   nodeExecutionRepo: NodeExecutionRepository;
   taskRepo: SpaceTaskRepository;
@@ -27,8 +27,14 @@ export function createDefaultSessionResolutionDeps(
   const { sessionManager, taskAgentManager, spaceRuntimeService, nodeExecutionRepo, taskRepo } =
     services;
 
+  const requireTaskAgentManager = (): TaskAgentManager => {
+    if (!taskAgentManager)
+      throw new Error('TaskAgentManager unavailable for worker session resolution');
+    return taskAgentManager;
+  };
+
   const resolveLiveSession = async (sessionId: string): Promise<unknown | null> => {
-    const indexed = taskAgentManager.getSubSession(sessionId);
+    const indexed = taskAgentManager?.getSubSession(sessionId);
     if (indexed !== undefined && sessionManager.getCachedSession(sessionId) === indexed) {
       const data = indexed.getSessionData();
       if (sessionUnavailable(data.status)) return null;
@@ -52,7 +58,7 @@ export function createDefaultSessionResolutionDeps(
     getSession: (sessionId) => resolveLiveSession(sessionId),
 
     async rehydrateSubSession(sessionId) {
-      const restored = await taskAgentManager.rehydrateSubSessionById(sessionId);
+      const restored = await requireTaskAgentManager().rehydrateSubSessionById(sessionId);
       if (restored === null) return null;
       const data = restored.getSessionData();
       if (sessionUnavailable(data.status)) return null;
@@ -97,7 +103,7 @@ export function createDefaultSessionResolutionDeps(
       const postApprovalSessionId = task.postApprovalSessionId ?? null;
       const hasDurablePostApprovalWorker =
         task.status === 'done' && postApprovalSessionId === null
-          ? taskAgentManager.getPostApprovalWorkerSession(taskId) !== null
+          ? requireTaskAgentManager().getPostApprovalWorkerSession(taskId) !== null
           : false;
       return workerTaskPhaseOf(
         task.status,
@@ -112,7 +118,7 @@ export function createDefaultSessionResolutionDeps(
     },
 
     activateTaskAgent(target) {
-      return taskAgentManager.ensureWorkflowNodeActivationForAgent(
+      return requireTaskAgentManager().ensureWorkflowNodeActivationForAgent(
         target.taskId,
         target.agentName,
         {
@@ -128,7 +134,7 @@ export function createDefaultSessionResolutionDeps(
         .retryPostApprovalDispatch(spaceId, taskId)
         .catch(() => null);
       if (result === null || !('postApprovalSessionId' in result)) return null;
-      const recorded = taskAgentManager.getPostApprovalWorkerSession(taskId);
+      const recorded = requireTaskAgentManager().getPostApprovalWorkerSession(taskId);
       if (
         recorded === null ||
         recorded.sessionId !== result.postApprovalSessionId ||
@@ -141,7 +147,7 @@ export function createDefaultSessionResolutionDeps(
     },
 
     getPostApprovalWorkerSession(taskId) {
-      return taskAgentManager.getPostApprovalWorkerSession(taskId);
+      return requireTaskAgentManager().getPostApprovalWorkerSession(taskId);
     },
   };
 }

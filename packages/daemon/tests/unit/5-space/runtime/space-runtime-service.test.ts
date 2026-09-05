@@ -2421,10 +2421,11 @@ describe('SpaceRuntimeService', () => {
           armLongTermAgentInboxSettlement(
             row: SpaceAgentInboxMessageRecord,
             sessionId: string,
-            messageId: string
+            messageId: string,
+            mailboxEntryId: string
           ): void;
         }
-      ).armLongTermAgentInboxSettlement(row, inboxSessionId, row.idempotencyKey!);
+      ).armLongTermAgentInboxSettlement(row, inboxSessionId, row.idempotencyKey!, dbId);
 
       expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
       expect(inboxRepo.markAttemptFailed).toHaveBeenCalledWith(
@@ -2437,6 +2438,7 @@ describe('SpaceRuntimeService', () => {
       const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
       const row = makeInboxRow();
       seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
+      const mailboxEntryId = mailbox.jobQueue.enqueue({ queue: MAILBOX_LANE, payload: {} }).id;
       const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
 
       (
@@ -2444,13 +2446,49 @@ describe('SpaceRuntimeService', () => {
           settleLongTermAgentInboxRowFailure(
             row: SpaceAgentInboxMessageRecord,
             sessionId: string,
-            messageId: string
+            messageId: string,
+            mailboxEntryId: string
           ): void;
         }
-      ).settleLongTermAgentInboxRowFailure(row, inboxSessionId, row.idempotencyKey!);
+      ).settleLongTermAgentInboxRowFailure(
+        row,
+        inboxSessionId,
+        row.idempotencyKey!,
+        mailboxEntryId
+      );
 
       expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
       expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
+    });
+
+    test('a dead mailbox entry fails the inbox attempt before an SDK row exists', async () => {
+      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
+      const row = makeInboxRow();
+      const mailboxEntry = mailbox.jobQueue.enqueue({ queue: MAILBOX_LANE, payload: {} });
+      mailbox.jobQueue.markDeadIfActive(mailboxEntry.id, 'target archived');
+      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
+
+      (
+        svc as unknown as {
+          settleLongTermAgentInboxRowFailure(
+            row: SpaceAgentInboxMessageRecord,
+            sessionId: string,
+            messageId: string,
+            mailboxEntryId: string
+          ): void;
+        }
+      ).settleLongTermAgentInboxRowFailure(
+        row,
+        inboxSessionId,
+        row.idempotencyKey!,
+        mailboxEntry.id
+      );
+
+      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
+      expect(inboxRepo.markAttemptFailed).toHaveBeenCalledWith(
+        row.id,
+        'delivery dead-lettered without consumption evidence'
+      );
     });
 
     test('late consumption evidence outranks the armed failure signal', async () => {
@@ -2468,10 +2506,11 @@ describe('SpaceRuntimeService', () => {
           settleLongTermAgentInboxRowFailure(
             row: SpaceAgentInboxMessageRecord,
             sessionId: string,
-            messageId: string
+            messageId: string,
+            mailboxEntryId: string
           ): void;
         }
-      ).settleLongTermAgentInboxRowFailure(row, inboxSessionId, row.idempotencyKey!);
+      ).settleLongTermAgentInboxRowFailure(row, inboxSessionId, row.idempotencyKey!, dbId);
 
       expect(inboxRepo.markDelivered).toHaveBeenCalledWith(row.id, inboxSessionId);
       expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
@@ -2526,6 +2565,7 @@ describe('SpaceRuntimeService', () => {
       const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
       const row = makeInboxRow();
       seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
+      const mailboxEntryId = mailbox.jobQueue.enqueue({ queue: MAILBOX_LANE, payload: {} }).id;
       const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
 
       (
@@ -2533,10 +2573,16 @@ describe('SpaceRuntimeService', () => {
           settleLongTermAgentInboxRowFailure(
             row: SpaceAgentInboxMessageRecord,
             sessionId: string,
-            messageId: string
+            messageId: string,
+            mailboxEntryId: string
           ): void;
         }
-      ).settleLongTermAgentInboxRowFailure(row, inboxSessionId, row.idempotencyKey!);
+      ).settleLongTermAgentInboxRowFailure(
+        row,
+        inboxSessionId,
+        row.idempotencyKey!,
+        mailboxEntryId
+      );
       expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
       expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
 

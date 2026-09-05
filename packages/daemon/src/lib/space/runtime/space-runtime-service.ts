@@ -652,13 +652,14 @@ export class SpaceRuntimeService {
       inboxRepo.markAttemptFailed(row.id, 'delivery dead-lettered without consumption evidence');
       return;
     }
-    this.armLongTermAgentInboxSettlement(row, sessionId, messageId);
+    this.armLongTermAgentInboxSettlement(row, sessionId, messageId, outcome.mailboxEntryId);
   }
 
   private armLongTermAgentInboxSettlement(
     row: SpaceAgentInboxMessageRecord,
     sessionId: string,
-    messageId: string
+    messageId: string,
+    mailboxEntryId: string
   ): void {
     const inboxRepo = this.config.spaceAgentInboxRepo;
     if (!inboxRepo) return;
@@ -669,16 +670,18 @@ export class SpaceRuntimeService {
         inboxRepo.markDelivered(row.id, sessionId);
       },
       onFailed: () => {
-        this.settleLongTermAgentInboxRowFailure(row, sessionId, messageId);
+        this.settleLongTermAgentInboxRowFailure(row, sessionId, messageId, mailboxEntryId);
       },
-      getSendStatus: () => this.readLongTermAgentSendStatus(sessionId, messageId) ?? undefined,
+      getSendStatus: () =>
+        this.readLongTermAgentSettlementStatus(sessionId, messageId, mailboxEntryId),
     });
   }
 
   private settleLongTermAgentInboxRowFailure(
     row: SpaceAgentInboxMessageRecord,
     sessionId: string,
-    messageId: string
+    messageId: string,
+    mailboxEntryId: string
   ): void {
     const inboxRepo = this.config.spaceAgentInboxRepo;
     if (!inboxRepo) return;
@@ -686,13 +689,25 @@ export class SpaceRuntimeService {
       inboxRepo.markDelivered(row.id, sessionId);
       return;
     }
-    if (this.readLongTermAgentSendStatus(sessionId, messageId) === 'failed') {
+    if (this.readLongTermAgentSettlementStatus(sessionId, messageId, mailboxEntryId) === 'failed') {
       inboxRepo.markAttemptFailed(row.id, 'delivery dead-lettered without consumption evidence');
       return;
     }
     const inboxRow = inboxRepo.getById?.(row.id);
     if (inboxRow && inboxRow.status !== 'pending') return;
-    this.armLongTermAgentInboxSettlement(row, sessionId, messageId);
+    this.armLongTermAgentInboxSettlement(row, sessionId, messageId, mailboxEntryId);
+  }
+
+  private readLongTermAgentSettlementStatus(
+    sessionId: string,
+    messageId: string,
+    mailboxEntryId: string
+  ): string | undefined {
+    const sendStatus = this.readLongTermAgentSendStatus(sessionId, messageId);
+    if (sendStatus !== undefined && sendStatus !== null) return sendStatus;
+    return this.config.reactiveDb?.db.getJobQueueRepo().getJob(mailboxEntryId)?.status === 'dead'
+      ? 'failed'
+      : undefined;
   }
 
   private hasLongTermAgentConsumptionEvidence(sessionId: string, messageId: string): boolean {
@@ -752,9 +767,13 @@ export class SpaceRuntimeService {
       messageUuid: id,
       jobQueue,
     });
-    return outcome.kind === 'enqueued'
-      ? { state: 'accepted', mailboxEntryId: outcome.id }
-      : { state: 'rejected', reason: outcome.reason };
+    if (outcome.kind === 'enqueued') {
+      return { state: 'accepted', mailboxEntryId: outcome.id };
+    }
+    if (outcome.reason.startsWith('internal: ')) {
+      throw new Error(outcome.reason.slice('internal: '.length));
+    }
+    return { state: 'rejected', reason: outcome.reason };
   }
 
   private async refreshLongHorizonAgentSessionConfig(
@@ -883,11 +902,10 @@ export class SpaceRuntimeService {
   private createSessionResolutionDeps(): SessionResolutionDeps | null {
     const sessionManager = this.config.sessionManager;
     const longHorizonAgentRepo = this.config.longHorizonAgentRepo;
-    const taskAgentManager = this.taskAgentManager;
-    if (!sessionManager || !longHorizonAgentRepo || !taskAgentManager) return null;
+    if (!sessionManager || !longHorizonAgentRepo) return null;
     return createDefaultSessionResolutionDeps({
       sessionManager,
-      taskAgentManager,
+      taskAgentManager: this.taskAgentManager ?? undefined,
       spaceRuntimeService: this,
       nodeExecutionRepo: this.nodeExecutionRepo,
       taskRepo: this.config.taskRepo,
