@@ -7826,12 +7826,26 @@ export class SpaceRuntime {
         });
         taskPromoted = true;
       } else if (canonicalTask.status === 'open' && hasLiveExecutionBinding) {
-        log.info(
-          `SpaceRuntime: skipping task recovery promotion for task ${canonicalTask.id} in run ${runId}; ` +
-            `task status moved concurrently — keeping the concurrent status`
-        );
-        await this.revertRepairedRunToBlocked(runId, meta.spaceId, blockedExecutions, runSnapshot);
-        return;
+        const concurrentStatus = this.config.taskRepo.getTask(canonicalTask.id)?.status;
+        if (concurrentStatus === 'in_progress') {
+          taskPromoted = true;
+          log.info(
+            `SpaceRuntime: task ${canonicalTask.id} in run ${runId} was concurrently promoted ` +
+              `to in_progress during recovery; keeping the shared recovery result`
+          );
+        } else {
+          log.info(
+            `SpaceRuntime: skipping task recovery promotion for task ${canonicalTask.id} in run ${runId}; ` +
+              `task status moved concurrently — keeping the concurrent status`
+          );
+          await this.revertRepairedRunToBlocked(
+            runId,
+            meta.spaceId,
+            blockedExecutions,
+            runSnapshot
+          );
+          return;
+        }
       }
 
       const freshTaskStatus = this.config.taskRepo.getTask(canonicalTask.id)?.status;

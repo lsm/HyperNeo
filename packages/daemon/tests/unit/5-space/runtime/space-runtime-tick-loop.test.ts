@@ -2041,6 +2041,48 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(retries.filter((r) => r.runId === run.id)).toEqual([]);
     });
 
+    test('blocked-run recovery accepts a concurrent explicit promotion instead of rolling back', async () => {
+      const sessionId = 'session:explicit-recovery-race';
+      const retries: Array<{ runId?: string }> = [];
+      internalEventBus.subscribe(
+        'space.workflowRun.retry',
+        (payload) => {
+          retries.push({ runId: payload.runId });
+        },
+        { subscriberName: 'test-blocked-recovery:explicit-recovery-race' }
+      );
+      let taskId = '';
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionInMemory: (candidate) => candidate === sessionId,
+      });
+      const rt = new SpaceRuntime(
+        buildConfig(tam, {
+          onWorkflowRunUpdated: () => {
+            taskRepo.updateTask(taskId, { status: 'in_progress' });
+          },
+        })
+      );
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskId = tasks[0].id;
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: 'Agent session crashed',
+        agentSessionId: sessionId,
+      });
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+
+      await rt.executeTick();
+
+      expect(taskRepo.getTask(taskId)?.status).toBe('in_progress');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(retries.filter((r) => r.runId === run.id)).toHaveLength(1);
+    });
+
     test('blocked-run recovery keeps an open task without a live session capacity-gated', async () => {
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
       const rt = new SpaceRuntime(buildConfig(tam));
