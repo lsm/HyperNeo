@@ -56,7 +56,6 @@ describe('Migration 29: Space system tables', () => {
 
     const expectedTables = [
       'spaces',
-      'space_agents',
       'space_workflows',
       'space_workflow_nodes',
       'space_workflow_runs',
@@ -167,13 +166,6 @@ describe('Migration 29: Space system tables', () => {
     expect(columnExists(db, 'space_workflow_runs', 'current_step_index')).toBe(false);
   });
 
-  test('space_agents: role dropped by M74, provider retained', () => {
-    runMigrations(db, () => {});
-
-    expect(columnExists(db, 'space_agents', 'role')).toBe(false);
-    expect(columnExists(db, 'space_agents', 'provider')).toBe(true);
-  });
-
   test('space_workflows has start_node_id column', () => {
     runMigrations(db, () => {});
     expect(columnExists(db, 'space_workflows', 'start_node_id')).toBe(true);
@@ -219,7 +211,6 @@ describe('Migration 29: Space system tables', () => {
 
     const expectedIndexes = [
       'idx_spaces_status',
-      'idx_space_agents_space_id',
       'idx_space_workflows_space_id',
       'idx_space_workflow_nodes_workflow_id',
       'idx_space_workflow_runs_space_id',
@@ -248,8 +239,8 @@ describe('Migration 29: Space system tables', () => {
     );
 
     db.exec(
-      `INSERT INTO space_agents (id, space_id, name, created_at, updated_at)
-			 VALUES ('agent-1', 'sp-1', 'Agent 1', ${now}, ${now})`
+      `INSERT INTO space_long_horizon_agents (id, space_id, handle, display_name, template_key, status, instructions, tool_permissions_json, created_at, updated_at)
+			 VALUES ('agent-1', 'sp-1', 'agent-1', 'Agent 1', 'migration.legacy_space_agent', 'active', '', '{}', ${now}, ${now})`
     );
 
     db.exec(
@@ -274,7 +265,9 @@ describe('Migration 29: Space system tables', () => {
 
     db.exec(`DELETE FROM spaces WHERE id = 'sp-1'`);
 
-    expect(db.prepare(`SELECT * FROM space_agents WHERE space_id = 'sp-1'`).all()).toHaveLength(0);
+    expect(
+      db.prepare(`SELECT * FROM space_long_horizon_agents WHERE space_id = 'sp-1'`).all()
+    ).toHaveLength(0);
     expect(db.prepare(`SELECT * FROM space_workflows WHERE space_id = 'sp-1'`).all()).toHaveLength(
       0
     );

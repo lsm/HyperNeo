@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
+import { createLegacySpaceAgentTables } from '../../../helpers/space-agent-schema.ts';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import {
   OLD_REVIEWER_PROMPT_PRE_REVIEW_MODES,
@@ -75,6 +76,7 @@ beforeAll(() => {
   db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
+  createLegacySpaceAgentTables(db);
 });
 
 afterAll(() => {

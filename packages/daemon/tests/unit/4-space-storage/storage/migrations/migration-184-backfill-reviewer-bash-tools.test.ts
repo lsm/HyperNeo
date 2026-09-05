@@ -3,6 +3,7 @@ import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
+import { createLegacySpaceAgentTables } from '../../../helpers/space-agent-schema.ts';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import {
   OLD_REVIEWER_DESCRIPTION,
@@ -98,6 +99,7 @@ beforeAll(() => {
   db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
+  createLegacySpaceAgentTables(db);
 });
 
 afterAll(() => {

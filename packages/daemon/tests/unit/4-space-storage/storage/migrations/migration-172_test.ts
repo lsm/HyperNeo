@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } fr
 import { rmSync, mkdirSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
+import { createLegacySpaceAgentTables } from '../../../helpers/space-agent-schema.ts';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import { runMigration172 } from '../../../../../src/storage/schema/migrations.ts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
@@ -86,6 +87,7 @@ describe('Migration 172: re-backfill orphaned preset agent template tracking', (
     try {
       templateDb.exec('PRAGMA foreign_keys = ON');
       runMigrations(templateDb, () => {});
+      createLegacySpaceAgentTables(templateDb);
     } finally {
       templateDb.close();
     }

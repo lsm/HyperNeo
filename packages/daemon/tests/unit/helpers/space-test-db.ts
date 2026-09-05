@@ -38,39 +38,6 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_spaces_status ON spaces(status)`);
 
   db.exec(`
-		CREATE TABLE IF NOT EXISTS space_agents (
-			id TEXT PRIMARY KEY,
-			space_id TEXT NOT NULL,
-			name TEXT NOT NULL,
-			handle TEXT,
-			status TEXT NOT NULL DEFAULT 'active'
-				CHECK(status IN ('active', 'paused', 'archived')),
-			description TEXT NOT NULL DEFAULT '',
-			model TEXT,
-			tools TEXT NOT NULL DEFAULT '[]',
-			thinking_level TEXT DEFAULT NULL,
-			system_prompt TEXT NOT NULL DEFAULT '',
-			custom_prompt TEXT,
-			instructions TEXT,
-			provider TEXT,
-			template_name TEXT DEFAULT NULL,
-			template_hash TEXT DEFAULT NULL,
-			setting_sources TEXT DEFAULT NULL,
-			model_pool TEXT DEFAULT NULL,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
-		)
-	`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_space_agents_space_id ON space_agents(space_id)`);
-
-  db.exec(`
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_space_agents_handle
-		ON space_agents(space_id, handle)
-		WHERE handle IS NOT NULL
-	`);
-
-  db.exec(`
 		CREATE TABLE IF NOT EXISTS space_workflows (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,

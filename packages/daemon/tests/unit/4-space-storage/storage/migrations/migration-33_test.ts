@@ -2,7 +2,12 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
+import { createLegacySpaceAgentTables } from '../../../helpers/space-agent-schema.ts';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
+
+function tableExists(db: BunDatabase, table: string): boolean {
+  return !!db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(table);
+}
 
 function columnExists(db: BunDatabase, table: string, column: string): boolean {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
@@ -51,6 +56,7 @@ describe('Migration 33: Add inject_workflow_context to space_agents', () => {
 
   test('fresh DB: new agents can be inserted without role or inject_workflow_context', () => {
     runMigrations(db, () => {});
+    createLegacySpaceAgentTables(db);
 
     const now = Date.now();
     db.prepare(
@@ -153,16 +159,14 @@ describe('Migration 33: Add inject_workflow_context to space_agents', () => {
 
     runMigrations(db, () => {});
 
-    const rows = db.prepare(`SELECT id, name FROM space_agents`).all() as Array<{
-      id: string;
-      name: string;
-    }>;
-    const byId = new Map(rows.map((r) => [r.id, r.name]));
+    const rows = db
+      .prepare(`SELECT id, display_name FROM space_long_horizon_agents`)
+      .all() as Array<{ id: string; display_name: string }>;
+    const byId = new Map(rows.map((r) => [r.id, r.display_name]));
     expect(byId.get('agent-1')).toBe('Coder');
     expect(byId.get('agent-2')).toBe('Planner');
 
-    expect(columnExists(db, 'space_agents', 'role')).toBe(false);
-    expect(columnExists(db, 'space_agents', 'inject_workflow_context')).toBe(false);
+    expect(tableExists(db, 'space_agents')).toBe(false);
   });
 
   test('idempotency: running migration twice does not error', () => {
@@ -173,6 +177,7 @@ describe('Migration 33: Add inject_workflow_context to space_agents', () => {
 
   test('idempotency: data is not duplicated on second migration run', () => {
     runMigrations(db, () => {});
+    createLegacySpaceAgentTables(db);
 
     const now = Date.now();
     db.prepare(

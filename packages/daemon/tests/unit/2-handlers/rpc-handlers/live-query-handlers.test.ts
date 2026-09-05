@@ -261,11 +261,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					created_at INTEGER NOT NULL,
 					updated_at INTEGER NOT NULL
 				);
-				CREATE TABLE IF NOT EXISTS space_agents (
-					id TEXT PRIMARY KEY,
-					space_id TEXT NOT NULL,
-					name TEXT NOT NULL
-				);
 				CREATE TABLE IF NOT EXISTS space_workflow_runs (
 					id TEXT PRIMARY KEY,
 					space_id TEXT NOT NULL,
