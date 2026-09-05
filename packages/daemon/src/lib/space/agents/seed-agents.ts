@@ -223,6 +223,7 @@ export function seedUnifiedSpaceAgents(
           handle: preset.handle,
           displayName: preset.name,
           instructions: preset.customPrompt,
+          description: preset.description,
           toolPermissions: preset.tools.length > 0 ? { tools: [...preset.tools] } : {},
           thinkingLevel: preset.thinkingLevel ?? null,
         })

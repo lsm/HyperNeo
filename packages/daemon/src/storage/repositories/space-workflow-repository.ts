@@ -558,7 +558,7 @@ export class SpaceWorkflowRepository {
     const nodeRows = this.db
       .prepare(
         `SELECT DISTINCT workflow_id FROM space_workflow_nodes
-	         WHERE config LIKE '%' || ? || '%'`
+	         WHERE config LIKE '%"agentId":"' || ? || '"%'`
       )
       .all(agentId) as Array<{ workflow_id: string }>;
 

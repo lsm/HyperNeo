@@ -38,6 +38,7 @@ import { runMigration224 } from './m224-retarget-node-executions-agent-fk.ts';
 import { runMigration225 } from './m225-space-agent-templates.ts';
 import { runMigration226 } from './m226-space-agent-templates-version.ts';
 import { runMigration227 } from './m227-space-agent-template-version-seq.ts';
+import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration.ts';
 import {
   findPendingMigrationSpaceReclaims,
   type MigrationSpaceReclaimRequest,
@@ -8769,6 +8770,7 @@ export function runMigration155(db: BunDatabase): void {
   ) {
     return;
   }
+  migrateLegacyLongHorizonAgentData(db);
   db.prepare(`INSERT INTO migration_markers (key, applied_at) VALUES (?, ?)`).run(
     markerKey,
     Date.now()

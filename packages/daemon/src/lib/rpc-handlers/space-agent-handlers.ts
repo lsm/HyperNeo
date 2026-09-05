@@ -610,6 +610,9 @@ function updateAuthorizeStage(ctx: UpdateUnifiedAgentCtx): UpdateUnifiedAgentCtx
 async function updateApplyStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
   const { params, agentId, existing } = ctx;
   if (!existing) throw new Error(`Agent not found: ${agentId}`);
+  if (params.status === 'disabled' && existing.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
+    throw new Error('Agent status "disabled" cannot be set on a migrated worker agent');
+  }
   const displayName = params.displayName !== undefined ? params.displayName : params.name;
   const handle =
     params.handle === undefined

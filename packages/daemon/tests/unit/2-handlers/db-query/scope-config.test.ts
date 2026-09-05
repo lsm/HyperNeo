@@ -52,7 +52,7 @@ describe('scope-config', () => {
       const config = getScopeConfig('space');
       const names = tableNames(config);
       expect(names).toEqual([
-        'space_agents',
+        'space_long_horizon_agents',
         'space_workflows',
         'space_workflow_nodes',
         'space_workflow_runs',
@@ -147,7 +147,7 @@ describe('scope-config', () => {
     it('getBlacklistedColumns returns correct blacklist for known tables', () => {
       expect(getBlacklistedColumns('sessions')).toContain('config');
       expect(getBlacklistedColumns('app_mcp_servers')).toContain('env');
-      expect(getBlacklistedColumns('space_agents')).toContain('system_prompt');
+      expect(getBlacklistedColumns('space_long_horizon_agents')).toContain('session_id');
       expect(getBlacklistedColumns('job_queue')).toContain('payload');
       expect(getBlacklistedColumns('tasks')).toContain('restrictions');
     });
@@ -336,7 +336,9 @@ describe('scope-config', () => {
     });
 
     it('produces direct scope filter for space-scoped tables', () => {
-      const agents = getScopeConfig('space').find((t) => t.tableName === 'space_agents')!;
+      const agents = getScopeConfig('space').find(
+        (t) => t.tableName === 'space_long_horizon_agents'
+      )!;
       expect(agents.scopeColumn).toBe('space_id');
       const result = buildScopeFilter(agents, 'space-123');
       expect(result.whereClause).toBe('space_id = ?');

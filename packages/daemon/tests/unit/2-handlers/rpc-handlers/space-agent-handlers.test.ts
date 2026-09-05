@@ -1194,6 +1194,19 @@ describe('Space Agent RPC Handlers', () => {
       expect(longHorizonRepo.getById(workerId)?.status).toBe('active');
     });
 
+    it('rejects disabled status on mirror updates', async () => {
+      const workerId = 'twin-disabled';
+      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Disabled' });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', {
+          id: workerId,
+          status: 'disabled',
+        })
+      ).rejects.toThrow('Agent status "disabled" cannot be set on a migrated worker agent');
+      expect(longHorizonRepo.getById(workerId)?.status).toBe('active');
+    });
+
     it('refreshes runtime subscriptions after mirror updates', async () => {
       const runtimeService = createRuntimeServiceMock();
       const freshHub = createMockMessageHub();

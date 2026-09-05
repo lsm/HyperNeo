@@ -43,6 +43,16 @@ describe('seedUnifiedSpaceAgents', () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  it('persists each preset description', () => {
+    const { seeded } = seedUnifiedSpaceAgents('space-1', repo);
+    const descriptionByHandle = new Map(
+      getPresetAgentTemplates().map((preset) => [preset.handle, preset.description])
+    );
+    for (const agent of seeded) {
+      expect(agent.description).toBe(descriptionByHandle.get(agent.handle));
+    }
+  });
+
   it('creates agents with correct handles', () => {
     const { seeded } = seedUnifiedSpaceAgents('space-1', repo);
 
