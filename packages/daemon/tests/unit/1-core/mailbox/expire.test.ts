@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { enqueueMailboxEntry, MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
 import type {
   MailboxEntry,
@@ -223,11 +223,14 @@ describe('expireMailboxEntries', () => {
     const newest = makeEntry({ id: createUlid(NOW - TTL_MS - 1) });
     mailbox.jobQueue.enqueue({ queue: MAILBOX_LANE, payload: { ...newest } });
     expect(mailbox.rowCount()).toBe(MAILBOX_SCAN_PAGE_SIZE + 1);
+    const timeout = spyOn(globalThis, 'setTimeout');
 
     const count = await expireMailboxEntries({ jobQueue: mailbox.jobQueue, now: NOW });
 
     expect(count).toBe(1);
     expect(rowFor(mailbox, newest.id).status).toBe('dead');
+    expect(timeout).toHaveBeenCalledWith(expect.any(Function), 0);
+    timeout.mockRestore();
   });
 
   test('now defaults to the wall clock', async () => {
