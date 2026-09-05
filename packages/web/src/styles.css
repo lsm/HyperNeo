@@ -385,6 +385,20 @@ button:disabled,
   box-shadow: var(--glass-selected-shadow);
 }
 
+.glass-selected-cyan {
+  --glass-selected-line: rgb(103 232 249 / 0.6);
+  --glass-selected-gradient: linear-gradient(145deg, rgb(14 78 89 / 0.44), rgb(8 20 24 / 0.96) 62%);
+}
+
+[data-theme="light"] .glass-selected-cyan {
+  --glass-selected-line: rgb(8 145 178 / 0.5);
+  --glass-selected-gradient: linear-gradient(
+    145deg,
+    rgb(207 250 254 / 0.9),
+    rgb(255 255 255 / 0.4) 62%
+  );
+}
+
 .glass-modal-surface {
   position: relative;
   isolation: isolate;

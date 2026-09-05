@@ -2100,7 +2100,7 @@ export function SpaceForge({ spaceId }: SpaceForgeProps) {
             </div>
           )}
           {scopes.length > 0 && (
-            <div class="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(21rem,100%),1fr))]">
+            <div class="glass-selected-cyan grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(21rem,100%),1fr))]">
               {scopes.map((scope) => {
                 const goal = getGoal(scope, goals);
                 const selected = selectedScopeId === scope.id;
