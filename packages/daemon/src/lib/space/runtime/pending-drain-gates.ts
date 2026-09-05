@@ -10,6 +10,7 @@ export interface PendingQueueListing {
 
 export interface PendingDrainAdmission {
   executionPresent: boolean;
+  trustedWorkflowNodeId?: string | null;
   targetKind: PendingMessageTargetKind;
 }
 
@@ -28,7 +29,12 @@ export function selectDrainablePendingRows(
   return listings
     .flatMap((listing) => listing.rows)
     .filter((row) => row.targetKind === admission.targetKind)
-    .filter((row) => (admission.executionPresent ? true : row.workflowNodeId == null))
+    .filter(
+      (row) =>
+        admission.executionPresent ||
+        row.workflowNodeId == null ||
+        row.workflowNodeId === admission.trustedWorkflowNodeId
+    )
     .filter((row) => {
       if (seenIds.has(row.id)) return false;
       seenIds.add(row.id);

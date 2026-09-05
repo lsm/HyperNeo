@@ -1460,10 +1460,15 @@ export class TaskAgentManager {
     repo.expireStale(workflowRunId, activeDeliveryIds);
 
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
-    const workflowNodeName = execution
-      ? this.workflowNodeNameForRun(workflowRunId, execution.workflowNodeId)
+    const provenance = execution ? null : this.readProvenanceFromSessionRow(sessionId);
+    const trustedWorkflowNodeId =
+      provenance?.workflowRunId === workflowRunId && provenance.agentName === targetAgentName
+        ? (provenance.nodeId ?? null)
+        : null;
+    const drainWorkflowNodeId = execution?.workflowNodeId ?? trustedWorkflowNodeId;
+    const workflowNodeName = drainWorkflowNodeId
+      ? this.workflowNodeNameForRun(workflowRunId, drainWorkflowNodeId)
       : null;
-    const drainWorkflowNodeId = execution?.workflowNodeId ?? null;
     const drain = decidePendingDrainAdmission({
       listings: derivePendingQueueTargetNames(targetAgentName, workflowNodeName).map(
         (targetName) => ({
@@ -1474,7 +1479,11 @@ export class TaskAgentManager {
               : repo.listPendingForTarget(workflowRunId, targetName),
         })
       ),
-      admission: { executionPresent: !!execution, targetKind: 'node_agent' },
+      admission: {
+        executionPresent: !!execution,
+        trustedWorkflowNodeId,
+        targetKind: 'node_agent',
+      },
     });
     if (drain.action === 'skip') return;
 

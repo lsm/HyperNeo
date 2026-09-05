@@ -78,6 +78,23 @@ describe('selectDrainablePendingRows', () => {
     expect(drained).toEqual([runScoped]);
   });
 
+  test('executionless drain admits rows matching trusted provenance node scope', () => {
+    const runScoped = makeRow({ id: 'row-run', workflowNodeId: null });
+    const matchingNode = makeRow({ id: 'row-node', workflowNodeId: 'node-build' });
+    const siblingNode = makeRow({ id: 'row-sibling', workflowNodeId: 'node-review' });
+
+    const drained = selectDrainablePendingRows(
+      [{ targetName: AGENT_NAME, rows: [runScoped, matchingNode, siblingNode] }],
+      {
+        executionPresent: false,
+        trustedWorkflowNodeId: 'node-build',
+        targetKind: 'node_agent',
+      }
+    );
+
+    expect(drained).toEqual([runScoped, matchingNode]);
+  });
+
   test('execution-bound drain keeps node-scoped rows alongside run-scoped rows', () => {
     const runScoped = makeRow({ id: 'row-run', workflowNodeId: null });
     const nodeScoped = makeRow({ id: 'row-node', workflowNodeId: 'node-build' });
