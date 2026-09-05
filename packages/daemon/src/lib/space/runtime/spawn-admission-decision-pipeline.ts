@@ -1,69 +1,70 @@
 import { isRateOrUsageLimited } from '@hyperneo/shared';
-import { decisionRun } from './decision-pipeline.ts';
+import superpipe, { type PipelineAPI, type Result } from 'superpipe';
 import type {
   SpawnExecutionAdmissionDecision,
   SpawnExecutionAdmissionInput,
 } from './spawn-admission-gates.ts';
 
-export interface SpawnAdmissionCtx extends SpawnExecutionAdmissionInput {
-  decision: SpawnExecutionAdmissionDecision | null;
+export type SpawnAdmissionCtx = SpawnExecutionAdmissionInput;
+type SpawnAdmissionResult = Result<SpawnAdmissionCtx, SpawnExecutionAdmissionDecision>;
+
+function decided(decision: SpawnExecutionAdmissionDecision): SpawnAdmissionResult {
+  return { reason: decision };
 }
 
-function decided(
-  ctx: SpawnAdmissionCtx,
-  decision: SpawnExecutionAdmissionDecision
-): SpawnAdmissionCtx {
-  return { ...ctx, decision };
+function continued(ctx: SpawnAdmissionCtx): SpawnAdmissionResult {
+  return { value: ctx };
 }
 
-export function applyLiveSessionGate(ctx: SpawnAdmissionCtx): SpawnAdmissionCtx {
-  return ctx.hasLiveIndexedSession ? decided(ctx, { action: 'reuse_live' }) : ctx;
+export function applyLiveSessionGate(ctx: SpawnAdmissionCtx): SpawnAdmissionResult {
+  return ctx.hasLiveIndexedSession ? decided({ action: 'reuse_live' }) : continued(ctx);
 }
 
-export function applyConcurrentSpawnGate(ctx: SpawnAdmissionCtx): SpawnAdmissionCtx {
-  return ctx.isSpawningExecution ? decided(ctx, { action: 'wait_concurrent' }) : ctx;
+export function applyConcurrentSpawnGate(ctx: SpawnAdmissionCtx): SpawnAdmissionResult {
+  return ctx.isSpawningExecution ? decided({ action: 'wait_concurrent' }) : continued(ctx);
 }
 
-export function applyTaskStatusGate(ctx: SpawnAdmissionCtx): SpawnAdmissionCtx {
+export function applyTaskStatusGate(ctx: SpawnAdmissionCtx): SpawnAdmissionResult {
   if (ctx.taskStatus === 'archived') {
-    return decided(ctx, { action: 'reject_permanent', reason: 'task_archived' });
+    return decided({ action: 'reject_permanent', reason: 'task_archived' });
   }
   if (ctx.taskStatus === 'cancelled') {
-    return decided(ctx, { action: 'reject_permanent', reason: 'task_cancelled' });
+    return decided({ action: 'reject_permanent', reason: 'task_cancelled' });
   }
   if (isRateOrUsageLimited(ctx.taskStatus)) {
-    return decided(ctx, { action: 'reject_transient', reason: 'task_rate_or_usage_limited' });
+    return decided({ action: 'reject_transient', reason: 'task_rate_or_usage_limited' });
   }
-  return ctx;
+  return continued(ctx);
 }
 
-export function applyWorkflowValidityGate(ctx: SpawnAdmissionCtx): SpawnAdmissionCtx {
+export function applyWorkflowValidityGate(ctx: SpawnAdmissionCtx): SpawnAdmissionResult {
   return ctx.executionWorkflowValid
-    ? ctx
-    : decided(ctx, { action: 'reject_permanent', reason: 'workflow_invalid' });
+    ? continued(ctx)
+    : decided({ action: 'reject_permanent', reason: 'workflow_invalid' });
 }
 
-export function applySlotResolutionGate(ctx: SpawnAdmissionCtx): SpawnAdmissionCtx {
+export function applySlotResolutionGate(ctx: SpawnAdmissionCtx): SpawnAdmissionResult {
   return ctx.slotResolvable
-    ? ctx
-    : decided(ctx, { action: 'reject_permanent', reason: 'slot_unresolvable' });
+    ? continued(ctx)
+    : decided({ action: 'reject_permanent', reason: 'slot_unresolvable' });
 }
 
-export function applyProceedGate(ctx: SpawnAdmissionCtx): SpawnAdmissionCtx {
-  return decided(ctx, { action: 'proceed_fresh' });
+export function applyProceedGate(_ctx: SpawnAdmissionCtx): SpawnAdmissionResult {
+  return decided({ action: 'proceed_fresh' });
 }
 
-const spawnAdmissionDecisionRun = decisionRun('spawn-execution-admission', [
-  applyLiveSessionGate,
-  applyConcurrentSpawnGate,
-  applyTaskStatusGate,
-  applyWorkflowValidityGate,
-  applySlotResolutionGate,
-  applyProceedGate,
-]);
+const spawnAdmissionDecisionRun = (superpipe()('spawn-execution-admission') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(applyLiveSessionGate, 'ctx', 'result:decision')
+  .pipe(applyConcurrentSpawnGate, 'ctx', 'result:decision')
+  .pipe(applyTaskStatusGate, 'ctx', 'result:decision')
+  .pipe(applyWorkflowValidityGate, 'ctx', 'result:decision')
+  .pipe(applySlotResolutionGate, 'ctx', 'result:decision')
+  .pipe(applyProceedGate, 'ctx', 'result:decision')
+  .end('decision');
 
 export function decideSpawnExecutionAdmissionViaPipeline(
   input: SpawnExecutionAdmissionInput
 ): SpawnExecutionAdmissionDecision {
-  return spawnAdmissionDecisionRun(input).decision ?? { action: 'proceed_fresh' };
+  return spawnAdmissionDecisionRun(input) as SpawnExecutionAdmissionDecision;
 }

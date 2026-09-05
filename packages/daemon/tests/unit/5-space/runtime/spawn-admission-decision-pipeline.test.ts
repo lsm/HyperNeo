@@ -22,66 +22,61 @@ const BASE: SpawnExecutionAdmissionInput = {
 };
 
 function undecided(input: SpawnExecutionAdmissionInput): SpawnAdmissionCtx {
-  return { ...input, decision: null };
+  return input;
 }
 
 describe('spawn admission decisionRun gates', () => {
-  test('non-deciding gates pass the ctx through by reference', () => {
+  test('non-deciding gates return the ctx in a value arm', () => {
     const ctx = undecided(BASE);
-    expect(applyLiveSessionGate(ctx)).toBe(ctx);
-    expect(applyConcurrentSpawnGate(ctx)).toBe(ctx);
-    expect(applyTaskStatusGate(ctx)).toBe(ctx);
-    expect(applyWorkflowValidityGate(ctx)).toBe(ctx);
-    expect(applySlotResolutionGate(ctx)).toBe(ctx);
+    expect(applyLiveSessionGate(ctx)).toEqual({ value: ctx });
+    expect(applyConcurrentSpawnGate(ctx)).toEqual({ value: ctx });
+    expect(applyTaskStatusGate(ctx)).toEqual({ value: ctx });
+    expect(applyWorkflowValidityGate(ctx)).toEqual({ value: ctx });
+    expect(applySlotResolutionGate(ctx)).toEqual({ value: ctx });
   });
 
   test('applyProceedGate always decides proceed_fresh', () => {
     const ctx = undecided(BASE);
-    expect(applyProceedGate(ctx).decision).toEqual({ action: 'proceed_fresh' });
+    expect(applyProceedGate(ctx)).toEqual({ reason: { action: 'proceed_fresh' } });
   });
 
   test('applyLiveSessionGate decides reuse_live on a live indexed session', () => {
-    const decision = applyLiveSessionGate(
-      undecided({ ...BASE, hasLiveIndexedSession: true })
-    ).decision;
-    expect(decision).toEqual({ action: 'reuse_live' });
+    expect(applyLiveSessionGate(undecided({ ...BASE, hasLiveIndexedSession: true }))).toEqual({
+      reason: { action: 'reuse_live' },
+    });
   });
 
   test('applyConcurrentSpawnGate decides wait_concurrent on an in-flight spawn', () => {
-    const decision = applyConcurrentSpawnGate(
-      undecided({ ...BASE, isSpawningExecution: true })
-    ).decision;
-    expect(decision).toEqual({ action: 'wait_concurrent' });
+    expect(applyConcurrentSpawnGate(undecided({ ...BASE, isSpawningExecution: true }))).toEqual({
+      reason: { action: 'wait_concurrent' },
+    });
   });
 
   test('applyTaskStatusGate maps each terminal and rate/usage status to its member', () => {
-    expect(applyTaskStatusGate(undecided({ ...BASE, taskStatus: 'archived' })).decision).toEqual({
-      action: 'reject_permanent',
-      reason: 'task_archived',
+    expect(applyTaskStatusGate(undecided({ ...BASE, taskStatus: 'archived' }))).toEqual({
+      reason: { action: 'reject_permanent', reason: 'task_archived' },
     });
-    expect(applyTaskStatusGate(undecided({ ...BASE, taskStatus: 'cancelled' })).decision).toEqual({
-      action: 'reject_permanent',
-      reason: 'task_cancelled',
+    expect(applyTaskStatusGate(undecided({ ...BASE, taskStatus: 'cancelled' }))).toEqual({
+      reason: { action: 'reject_permanent', reason: 'task_cancelled' },
     });
-    expect(
-      applyTaskStatusGate(undecided({ ...BASE, taskStatus: 'rate_limited' })).decision
-    ).toEqual({ action: 'reject_transient', reason: 'task_rate_or_usage_limited' });
-    expect(
-      applyTaskStatusGate(undecided({ ...BASE, taskStatus: 'usage_limited' })).decision
-    ).toEqual({ action: 'reject_transient', reason: 'task_rate_or_usage_limited' });
-    expect(applyTaskStatusGate(undecided({ ...BASE, taskStatus: 'stopped' })).decision).toBeNull();
+    expect(applyTaskStatusGate(undecided({ ...BASE, taskStatus: 'rate_limited' }))).toEqual({
+      reason: { action: 'reject_transient', reason: 'task_rate_or_usage_limited' },
+    });
+    expect(applyTaskStatusGate(undecided({ ...BASE, taskStatus: 'usage_limited' }))).toEqual({
+      reason: { action: 'reject_transient', reason: 'task_rate_or_usage_limited' },
+    });
+    expect(applyTaskStatusGate(undecided({ ...BASE, taskStatus: 'stopped' }))).toEqual({
+      value: { ...BASE, taskStatus: 'stopped' },
+    });
   });
 
   test('applyWorkflowValidityGate and applySlotResolutionGate decide their permanent rejects', () => {
     expect(
-      applyWorkflowValidityGate(undecided({ ...BASE, executionWorkflowValid: false })).decision
-    ).toEqual({ action: 'reject_permanent', reason: 'workflow_invalid' });
-    expect(applySlotResolutionGate(undecided({ ...BASE, slotResolvable: false })).decision).toEqual(
-      {
-        action: 'reject_permanent',
-        reason: 'slot_unresolvable',
-      }
-    );
+      applyWorkflowValidityGate(undecided({ ...BASE, executionWorkflowValid: false }))
+    ).toEqual({ reason: { action: 'reject_permanent', reason: 'workflow_invalid' } });
+    expect(applySlotResolutionGate(undecided({ ...BASE, slotResolvable: false }))).toEqual({
+      reason: { action: 'reject_permanent', reason: 'slot_unresolvable' },
+    });
   });
 });
 

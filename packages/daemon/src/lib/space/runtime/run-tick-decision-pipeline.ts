@@ -3,117 +3,128 @@ import {
   isWorkflowRunSucceeded,
   isWorkflowRunWaiting,
 } from '@hyperneo/shared';
-import { decisionRun } from './decision-pipeline.ts';
+import superpipe, { type PipelineAPI, type Result } from 'superpipe';
 import type {
   RunTickAdmissionDecision,
   RunTickAdmissionInput,
 } from './run-tick-admission-gates.ts';
 
-export interface RunTickDecisionCtx extends RunTickAdmissionInput {
-  decision: RunTickAdmissionDecision | null;
+export type RunTickDecisionCtx = RunTickAdmissionInput;
+type RunTickDecisionResult = Result<RunTickDecisionCtx, RunTickAdmissionDecision>;
+
+function decided(decision: RunTickAdmissionDecision): RunTickDecisionResult {
+  return { reason: decision };
 }
 
-function decided(ctx: RunTickDecisionCtx, decision: RunTickAdmissionDecision): RunTickDecisionCtx {
-  return { ...ctx, decision };
+function continued(ctx: RunTickDecisionCtx): RunTickDecisionResult {
+  return { value: ctx };
 }
 
 function readLazyInput<T>(value: T | (() => T)): T {
   return typeof value === 'function' ? (value as () => T)() : value;
 }
 
-export function applyMissingRunGate(ctx: RunTickDecisionCtx): RunTickDecisionCtx {
-  return ctx.runStatus === null ? decided(ctx, { action: 'skip', reason: 'missing_run' }) : ctx;
+export function applyMissingRunGate(ctx: RunTickDecisionCtx): RunTickDecisionResult {
+  return ctx.runStatus === null
+    ? decided({ action: 'skip', reason: 'missing_run' })
+    : continued(ctx);
 }
 
-export function applyFinishedRunGate(ctx: RunTickDecisionCtx): RunTickDecisionCtx {
+export function applyFinishedRunGate(ctx: RunTickDecisionCtx): RunTickDecisionResult {
   const { runStatus } = ctx;
-  if (runStatus === null) return ctx;
+  if (runStatus === null) return continued(ctx);
   if (runStatus === 'cancelled' || isWorkflowRunSucceeded(runStatus)) {
-    return decided(ctx, { action: 'clearFinishedRun' });
+    return decided({ action: 'clearFinishedRun' });
   }
-  return ctx;
+  return continued(ctx);
 }
 
-export function applyWaitingRunGate(ctx: RunTickDecisionCtx): RunTickDecisionCtx {
+export function applyWaitingRunGate(ctx: RunTickDecisionCtx): RunTickDecisionResult {
   const { runStatus } = ctx;
   return runStatus !== null && isWorkflowRunWaiting(runStatus)
-    ? decided(ctx, { action: 'recoverWaitingRun' })
-    : ctx;
+    ? decided({ action: 'recoverWaitingRun' })
+    : continued(ctx);
 }
 
-export function applyExecutorMetaGate(ctx: RunTickDecisionCtx): RunTickDecisionCtx {
-  return ctx.hasExecutorMeta ? ctx : decided(ctx, { action: 'skip', reason: 'no_executor_meta' });
+export function applyExecutorMetaGate(ctx: RunTickDecisionCtx): RunTickDecisionResult {
+  return ctx.hasExecutorMeta
+    ? continued(ctx)
+    : decided({ action: 'skip', reason: 'no_executor_meta' });
 }
 
-export function applyRunTasksGate(ctx: RunTickDecisionCtx): RunTickDecisionCtx {
-  return ctx.runTaskCount > 0 ? ctx : decided(ctx, { action: 'skip', reason: 'no_run_tasks' });
+export function applyRunTasksGate(ctx: RunTickDecisionCtx): RunTickDecisionResult {
+  return ctx.runTaskCount > 0
+    ? continued(ctx)
+    : decided({ action: 'skip', reason: 'no_run_tasks' });
 }
 
-export function applyCanonicalTaskGate(ctx: RunTickDecisionCtx): RunTickDecisionCtx {
-  return ctx.hasCanonicalTask ? ctx : decided(ctx, { action: 'skip', reason: 'no_canonical_task' });
+export function applyCanonicalTaskGate(ctx: RunTickDecisionCtx): RunTickDecisionResult {
+  return ctx.hasCanonicalTask
+    ? continued(ctx)
+    : decided({ action: 'skip', reason: 'no_canonical_task' });
 }
 
-export function applyWorkflowValidityGate(ctx: RunTickDecisionCtx): RunTickDecisionCtx {
-  return ctx.hasEndNodeId ? ctx : decided(ctx, { action: 'blockInvalidWorkflow' });
+export function applyWorkflowValidityGate(ctx: RunTickDecisionCtx): RunTickDecisionResult {
+  return ctx.hasEndNodeId ? continued(ctx) : decided({ action: 'blockInvalidWorkflow' });
 }
 
-export function applyRateLimitGate(ctx: RunTickDecisionCtx): RunTickDecisionCtx {
+export function applyRateLimitGate(ctx: RunTickDecisionCtx): RunTickDecisionResult {
   return ctx.canonicalTaskStatus !== null && isRateOrUsageLimited(ctx.canonicalTaskStatus)
-    ? decided(ctx, { action: 'skip', reason: 'rate_or_usage_limited' })
-    : ctx;
+    ? decided({ action: 'skip', reason: 'rate_or_usage_limited' })
+    : continued(ctx);
 }
 
-export function applyTaskStoppedGate(ctx: RunTickDecisionCtx): RunTickDecisionCtx {
+export function applyTaskStoppedGate(ctx: RunTickDecisionCtx): RunTickDecisionResult {
   return ctx.canonicalTaskStatus === 'stopped'
-    ? decided(ctx, { action: 'skip', reason: 'task_stopped' })
-    : ctx;
+    ? decided({ action: 'skip', reason: 'task_stopped' })
+    : continued(ctx);
 }
 
-export function applyExecutionsPresentGate(ctx: RunTickDecisionCtx): RunTickDecisionCtx {
+export function applyExecutionsPresentGate(ctx: RunTickDecisionCtx): RunTickDecisionResult {
   return readLazyInput(ctx.executionCount) > 0
-    ? ctx
-    : decided(ctx, { action: 'skip', reason: 'no_executions' });
+    ? continued(ctx)
+    : decided({ action: 'skip', reason: 'no_executions' });
 }
 
-export function applyBlockedExecutionsGate(ctx: RunTickDecisionCtx): RunTickDecisionCtx {
-  if (readLazyInput(ctx.runIsComplete)) return ctx;
-  if (!readLazyInput(ctx.hasBlockedExecution)) return ctx;
-  return decided(ctx, {
+export function applyBlockedExecutionsGate(ctx: RunTickDecisionCtx): RunTickDecisionResult {
+  if (readLazyInput(ctx.runIsComplete)) return continued(ctx);
+  if (!readLazyInput(ctx.hasBlockedExecution)) return continued(ctx);
+  return decided({
     action: 'blockOnBlockedExecutions',
     blockedReason:
       readLazyInput(ctx.firstBlockedResult) ?? 'One or more workflow agents are blocked',
   });
 }
 
-export function applySlotAvailabilityGate(ctx: RunTickDecisionCtx): RunTickDecisionCtx {
+export function applySlotAvailabilityGate(ctx: RunTickDecisionCtx): RunTickDecisionResult {
   return ctx.canonicalTaskStatus === 'open' && ctx.availableTaskSlots <= 0
-    ? decided(ctx, { action: 'deferNoAvailableSlots' })
-    : ctx;
+    ? decided({ action: 'deferNoAvailableSlots' })
+    : continued(ctx);
 }
 
-export function applyProceedGate(ctx: RunTickDecisionCtx): RunTickDecisionCtx {
-  return decided(ctx, { action: 'proceed' });
+export function applyProceedGate(_ctx: RunTickDecisionCtx): RunTickDecisionResult {
+  return decided({ action: 'proceed' });
 }
 
-const runTickAdmissionDecisionRun = decisionRun('run-tick-admission', [
-  applyMissingRunGate,
-  applyFinishedRunGate,
-  applyWaitingRunGate,
-  applyExecutorMetaGate,
-  applyRunTasksGate,
-  applyCanonicalTaskGate,
-  applyWorkflowValidityGate,
-  applyRateLimitGate,
-  applyTaskStoppedGate,
-  applyExecutionsPresentGate,
-  applyBlockedExecutionsGate,
-  applySlotAvailabilityGate,
-  applyProceedGate,
-]);
+const runTickAdmissionDecisionRun = (superpipe()('run-tick-admission') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(applyMissingRunGate, 'ctx', 'result:decision')
+  .pipe(applyFinishedRunGate, 'ctx', 'result:decision')
+  .pipe(applyWaitingRunGate, 'ctx', 'result:decision')
+  .pipe(applyExecutorMetaGate, 'ctx', 'result:decision')
+  .pipe(applyRunTasksGate, 'ctx', 'result:decision')
+  .pipe(applyCanonicalTaskGate, 'ctx', 'result:decision')
+  .pipe(applyWorkflowValidityGate, 'ctx', 'result:decision')
+  .pipe(applyRateLimitGate, 'ctx', 'result:decision')
+  .pipe(applyTaskStoppedGate, 'ctx', 'result:decision')
+  .pipe(applyExecutionsPresentGate, 'ctx', 'result:decision')
+  .pipe(applyBlockedExecutionsGate, 'ctx', 'result:decision')
+  .pipe(applySlotAvailabilityGate, 'ctx', 'result:decision')
+  .pipe(applyProceedGate, 'ctx', 'result:decision')
+  .end('decision');
 
 export function decideRunTickAdmissionViaPipeline(
   input: RunTickAdmissionInput
 ): RunTickAdmissionDecision {
-  const ctx = runTickAdmissionDecisionRun(input);
-  return ctx.decision ?? { action: 'proceed' };
+  return runTickAdmissionDecisionRun(input) as RunTickAdmissionDecision;
 }
