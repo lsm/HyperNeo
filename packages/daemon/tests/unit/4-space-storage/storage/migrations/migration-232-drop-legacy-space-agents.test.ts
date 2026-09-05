@@ -100,11 +100,11 @@ describe('migration 232 — drop legacy space agent tables', () => {
     db.prepare(
       `INSERT INTO space_goals (id, space_id, title, description, created_at, updated_at)
        VALUES ('goal-1', 'space-a', 'Goal', '', 10, 10)`
-    );
+    ).run();
     db.prepare(
       `INSERT INTO space_agent_goal_assignments (space_id, agent_id, goal_id, created_at)
        VALUES ('space-a', 'worker-1', 'goal-1', 10)`
-    );
+    ).run();
 
     expect(() => runMigration232(db)).toThrow(/space_agent_goal_assignments worker-1 → goal-1/);
     expect(tableExists(db, 'space_agent_goal_assignments')).toBe(true);
@@ -120,7 +120,7 @@ describe('migration 232 — drop legacy space agent tables', () => {
     db.prepare(
       `INSERT INTO space_agent_goal_assignments (space_id, agent_id, goal_id, created_at)
        VALUES ('space-a', 'worker-1', 'deleted-goal', 10)`
-    );
+    ).run();
 
     runMigration232(db);
 
