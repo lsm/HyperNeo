@@ -293,6 +293,7 @@ describe('SpaceLongHorizonAgents', () => {
       model: null,
       provider: null,
       thinkingLevel: null,
+      settingSources: null,
     });
     await waitFor(() => expect(queryByRole('button', { name: 'Create template' })).toBeNull());
   });
@@ -393,6 +394,57 @@ describe('SpaceLongHorizonAgents', () => {
         thinkingLevel: 'think16k',
       })
     );
+  });
+
+  it('persists an explicit setting sources selection on template create', async () => {
+    const { getByRole, getByText, getByPlaceholderText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    expect(getByText('Inherits the space setting sources.')).toBeTruthy();
+
+    fireEvent.click(settingSourceCheckbox('local'));
+    expect(settingSourceCheckbox('local').checked).toBe(false);
+
+    fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
+      target: { value: 'Release Readiness' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness.custom'), {
+      target: { value: 'release-readiness.custom' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
+      target: { value: 'release-readiness' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockCreateTemplate.mock.calls[0][0].settingSources).toEqual(['user', 'project']);
+  });
+
+  it('clears a template setting sources override back to inherit', async () => {
+    const { getByRole, getByText, getByPlaceholderText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(settingSourceCheckbox('local'));
+    fireEvent.click(getByRole('button', { name: 'Clear override — inherit from space' }));
+    expect(getByText('Inherits the space setting sources.')).toBeTruthy();
+
+    fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
+      target: { value: 'Release Readiness' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness.custom'), {
+      target: { value: 'release-readiness.custom' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
+      target: { value: 'release-readiness' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockCreateTemplate.mock.calls[0][0].settingSources).toBeNull();
   });
 
   it('shows the store error and keeps the modal open when create fails', async () => {
@@ -895,6 +947,20 @@ describe('SpaceLongHorizonAgents', () => {
     expect(getByDisplayValue('QA Engineer')).toBeTruthy();
     expect(getByDisplayValue('qa')).toBeTruthy();
     expect(getByDisplayValue('Test the product.')).toBeTruthy();
+  });
+
+  it('prefills setting sources from a template card click', async () => {
+    mockTemplates.value = [makeTemplate({ settingSources: ['user'] })];
+    const { getByText, getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
+    expect(settingSourceCheckbox('user').checked).toBe(true);
+    expect(settingSourceCheckbox('project').checked).toBe(false);
+    expect(settingSourceCheckbox('local').checked).toBe(false);
+
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    expect(mockCreateAgent.mock.calls[0][0].settingSources).toEqual(['user']);
   });
 
   it('derives a unique handle when the template handle is already taken', () => {
