@@ -1,7 +1,10 @@
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { SpaceAgentTemplateRepository } from '../repositories/space-agent-template-repository.ts';
 import { SpaceWorkflowDefinitionVersionRepository } from '../repositories/space-workflow-definition-version-repository.ts';
-import { computeDefinitionVersion } from '../../lib/space/workflows/definition-version.ts';
+import {
+  computeDefinitionVersion,
+  verifyDefinitionVersion,
+} from '../../lib/space/workflows/definition-version.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import { getLongHorizonAgentTemplates } from '../../lib/space/agents/long-horizon-agent-templates.ts';
 import { ensureTemplateForAgentRef } from './m228-migrate-workflow-agent-template-refs.ts';
@@ -152,32 +155,27 @@ function clearLiveNodeAgentIds(
       }
     }
 
-    const firstAgentIndex = new Map<string, number>();
-    const firstNameIndex = new Map<string, number>();
-    const firstMatchIndex = new Map<string, number>();
-    for (const occ of occurrences) {
-      if (occ.agentId && !firstAgentIndex.has(occ.agentId)) {
-        firstAgentIndex.set(occ.agentId, occ.index);
-      }
-      if (occ.effectiveName && !firstNameIndex.has(occ.effectiveName)) {
-        firstNameIndex.set(occ.effectiveName, occ.index);
-      }
-      if (occ.agentId && !firstMatchIndex.has(occ.agentId)) {
-        firstMatchIndex.set(occ.agentId, occ.index);
-      }
-      if (occ.effectiveName && !firstMatchIndex.has(occ.effectiveName)) {
-        firstMatchIndex.set(occ.effectiveName, occ.index);
-      }
-    }
-
     const clearedNames = new Map<string, string>();
+    const occupied = new Set<string>();
     for (const occ of occurrences) {
-      if (!occ.agentId) continue;
+      const finalName = occ.effectiveName;
+      if (!occ.agentId) {
+        if (finalName) occupied.add(finalName);
+        continue;
+      }
       const key = typeof occ.slot.templateKey === 'string' ? occ.slot.templateKey.trim() : '';
-      if (!key || !resolvable(key)) continue;
-      const isRouteOwner = firstMatchIndex.get(occ.agentId) === occ.index;
-      const nameUnique = firstNameIndex.get(occ.effectiveName) === occ.index;
-      if (isRouteOwner && !nameUnique && targets.has(occ.agentId)) continue;
+      if (!key || !resolvable(key)) {
+        if (finalName) occupied.add(finalName);
+        occupied.add(occ.agentId);
+        continue;
+      }
+      const isRouteOwner = !occupied.has(occ.agentId);
+      const nameUnique = !occupied.has(finalName);
+      if (isRouteOwner && !nameUnique && targets.has(occ.agentId)) {
+        occupied.add(finalName);
+        occupied.add(occ.agentId);
+        continue;
+      }
       if (!occ.rawName.trim()) occ.slot.name = occ.agentId;
       if (isRouteOwner && nameUnique) {
         clearedNames.set(occ.agentId, occ.slot.name as string);
@@ -185,6 +183,7 @@ function clearLiveNodeAgentIds(
       occ.slot.agentId = '';
       dirtyNodeIds.add(occ.nodeId);
       dirtyWorkflowIds.add(workflowId);
+      occupied.add(finalName);
     }
     if (clearedNames.size > 0) clearedByWorkflow.set(workflowId, clearedNames);
   }
@@ -264,6 +263,7 @@ function migratePinnedRunDefinitions(
     if (!spaceId || !definitionVersion) continue;
     const version = versionRepo.getVersion(run.workflow_id, definitionVersion);
     if (!version) continue;
+    if (!verifyDefinitionVersion(version.payload, definitionVersion)) continue;
     const payload = parseJson(version.payload);
     const workflow = asRecord(payload);
     if (!workflow || !Array.isArray(workflow.nodes)) continue;
@@ -300,32 +300,23 @@ function migratePinnedRunDefinitions(
       }
     }
 
-    const firstAgentIndex = new Map<string, number>();
-    const firstNameIndex = new Map<string, number>();
-    const firstMatchIndex = new Map<string, number>();
-    for (const occ of occurrences) {
-      if (occ.agentId && !firstAgentIndex.has(occ.agentId)) {
-        firstAgentIndex.set(occ.agentId, occ.index);
-      }
-      if (occ.effectiveName && !firstNameIndex.has(occ.effectiveName)) {
-        firstNameIndex.set(occ.effectiveName, occ.index);
-      }
-      if (occ.agentId && !firstMatchIndex.has(occ.agentId)) {
-        firstMatchIndex.set(occ.agentId, occ.index);
-      }
-      if (occ.effectiveName && !firstMatchIndex.has(occ.effectiveName)) {
-        firstMatchIndex.set(occ.effectiveName, occ.index);
-      }
-    }
-
     const templateKeyByAgentId = new Map<string, string>();
     const namesByAgentId = new Map<string, string>();
+    const occupied = new Set<string>();
     let dirty = false;
     for (const occ of occurrences) {
-      if (!occ.agentId) continue;
-      const isRouteOwner = firstMatchIndex.get(occ.agentId) === occ.index;
-      const nameUnique = firstNameIndex.get(occ.effectiveName) === occ.index;
-      if (isRouteOwner && !nameUnique && targets.has(occ.agentId)) continue;
+      const finalName = occ.effectiveName;
+      if (!occ.agentId) {
+        if (finalName) occupied.add(finalName);
+        continue;
+      }
+      const isRouteOwner = !occupied.has(occ.agentId);
+      const nameUnique = !occupied.has(finalName);
+      if (isRouteOwner && !nameUnique && targets.has(occ.agentId)) {
+        occupied.add(finalName);
+        occupied.add(occ.agentId);
+        continue;
+      }
       const existingKey =
         typeof occ.slot.templateKey === 'string' ? occ.slot.templateKey.trim() : '';
       let key: string | null = null;
@@ -336,7 +327,11 @@ function migratePinnedRunDefinitions(
           templateKeyByAgentId.get(occ.agentId) ??
           ensureTemplateForAgentRef(db, templateRepo, spaceId, occ.agentId, occ.slot);
       }
-      if (!key) continue;
+      if (!key) {
+        if (finalName) occupied.add(finalName);
+        occupied.add(occ.agentId);
+        continue;
+      }
       if (!occ.rawName.trim()) occ.slot.name = occ.agentId;
       if (isRouteOwner && nameUnique) {
         namesByAgentId.set(occ.agentId, occ.slot.name as string);
@@ -344,6 +339,7 @@ function migratePinnedRunDefinitions(
       if (!existingKey) templateKeyByAgentId.set(occ.agentId, key);
       occ.slot.templateKey = key;
       occ.slot.agentId = '';
+      occupied.add(finalName);
       dirty = true;
     }
     if (!dirty) continue;
