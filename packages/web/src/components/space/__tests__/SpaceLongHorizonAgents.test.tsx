@@ -11,6 +11,7 @@ const {
   mockEnsureConfigData,
   mockListAgentReminderCounts,
   mockCreateAgent,
+  mockCreateTemplate,
   mockUpdateAgent,
   mockReapplyAgentTemplate,
   mockNavigateToSpaceSession,
@@ -25,6 +26,7 @@ const {
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
     mockListAgentReminderCounts: vi.fn().mockResolvedValue({}),
     mockCreateAgent: vi.fn().mockResolvedValue(undefined),
+    mockCreateTemplate: vi.fn().mockResolvedValue(undefined),
     mockUpdateAgent: vi.fn().mockResolvedValue(undefined),
     mockReapplyAgentTemplate: vi.fn().mockResolvedValue({ displayName: 'Research Long Horizon' }),
     mockNavigateToSpaceSession: vi.fn(),
@@ -40,6 +42,7 @@ vi.mock('../../../lib/space-store', () => ({
       ensureConfigData: mockEnsureConfigData,
       listAgentReminderCounts: mockListAgentReminderCounts,
       createAgent: mockCreateAgent,
+      createTemplate: mockCreateTemplate,
       updateAgent: mockUpdateAgent,
       reapplyAgentTemplate: mockReapplyAgentTemplate,
     };
@@ -123,8 +126,8 @@ vi.mock('../../ui/ConfirmModal', () => ({
   ),
 }));
 
-import { SpaceLongHorizonAgents } from '../SpaceLongHorizonAgents';
 import { toast } from '../../../lib/toast';
+import { SpaceLongHorizonAgents } from '../SpaceLongHorizonAgents';
 
 function makeLongHorizonAgent(
   overrides: Partial<SpaceLongHorizonAgent> = {}
@@ -198,6 +201,7 @@ describe('SpaceLongHorizonAgents', () => {
     mockEnsureConfigData.mockClear();
     mockListAgentReminderCounts.mockClear();
     mockCreateAgent.mockClear();
+    mockCreateTemplate.mockClear();
     mockUpdateAgent.mockClear();
     mockNavigateToSpaceSession.mockClear();
   });
@@ -251,6 +255,91 @@ describe('SpaceLongHorizonAgents', () => {
     expect(getByText('New template')).toBeTruthy();
     expect(getByRole('button', { name: 'Create template' })).toBeTruthy();
     expect(getByRole('button', { name: 'Close template editor' })).toBeTruthy();
+  });
+
+  it('creates a template from the modal and closes it on success', async () => {
+    const { getByRole, getByPlaceholderText, queryByRole } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
+      target: { value: '  Release Readiness  ' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness.custom'), {
+      target: { value: 'release-readiness.custom' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
+      target: { value: '  release-readiness  ' },
+    });
+    fireEvent.input(getByPlaceholderText('A concise summary shown on the template card'), {
+      target: { value: 'Checks release readiness.' },
+    });
+    fireEvent.input(getByPlaceholderText('What should agents created from this template do?'), {
+      target: { value: 'Verify the release.' },
+    });
+    fireEvent.click(getByRole('button', { name: '4', exact: true }));
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockCreateTemplate).toHaveBeenCalledWith({
+      key: 'release-readiness.custom',
+      handle: 'release-readiness',
+      displayName: 'Release Readiness',
+      description: 'Checks release readiness.',
+      instructions: 'Verify the release.',
+      suggestedAutonomyLevel: 4,
+    });
+    await waitFor(() => expect(queryByRole('button', { name: 'Create template' })).toBeNull());
+  });
+
+  it('shows the store error and keeps the modal open when create fails', async () => {
+    mockCreateTemplate.mockRejectedValueOnce(
+      new Error('Template key already exists: release-readiness.custom')
+    );
+    const { getByRole, getByText, getByPlaceholderText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
+      target: { value: 'Release Readiness' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness.custom'), {
+      target: { value: 'release-readiness.custom' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
+      target: { value: 'release-readiness' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() =>
+      expect(getByText('Template key already exists: release-readiness.custom')).toBeTruthy()
+    );
+    expect(getByRole('button', { name: 'Create template' })).toBeTruthy();
+    expect((getByPlaceholderText('e.g. Release Readiness') as HTMLInputElement).value).toBe(
+      'Release Readiness'
+    );
+  });
+
+  it('requires name, key, and handle before persisting a template', async () => {
+    const { getByRole, getByText, getByPlaceholderText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(getByText('Name is required')).toBeTruthy());
+    expect(mockCreateTemplate).not.toHaveBeenCalled();
+
+    fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
+      target: { value: 'Release Readiness' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(getByText('Template key is required')).toBeTruthy());
+    expect(mockCreateTemplate).not.toHaveBeenCalled();
   });
 
   it('opens the existing editor from the prominent custom agent action', () => {

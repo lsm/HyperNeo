@@ -1,13 +1,14 @@
 import {
   KNOWN_TOOLS,
   type SettingSource,
+  type SpaceAgentAutonomyLevel,
   type SpaceLongHorizonAgent,
   type SpaceLongHorizonAgentTemplate,
   type ThinkingLevel,
   type WorkerAgentModelPoolEntry,
 } from '@hyperneo/shared';
-import superpipe, { type PipelineAPI } from 'superpipe';
 import { useEffect, useState } from 'preact/hooks';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { navigateToSpaceSession } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
@@ -189,6 +190,44 @@ const runAgentSave = (superpipe({})('save-unified-agent') as PipelineAPI)
   .pipe(agentSaveParseToolsStage, 'ctx', 'ctx')
   .pipe(agentSavePersistStage, 'ctx', 'ctx')
   .endAsync('ctx') as (ctx: AgentSaveCtx) => Promise<AgentSaveCtx>;
+
+interface TemplateSaveForm {
+  displayName: string;
+  key: string;
+  handle: string;
+  description: string;
+  instructions: string;
+  suggestedAutonomyLevel: number;
+}
+
+interface TemplateSaveCtx {
+  form: TemplateSaveForm;
+}
+
+function templateSaveValidateStage(ctx: TemplateSaveCtx): TemplateSaveCtx {
+  if (!ctx.form.displayName.trim()) throw new Error('Name is required');
+  if (!ctx.form.key.trim()) throw new Error('Template key is required');
+  if (!ctx.form.handle.trim()) throw new Error('Handle is required');
+  return ctx;
+}
+
+async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateSaveCtx> {
+  await spaceStore.createTemplate({
+    key: ctx.form.key.trim(),
+    handle: ctx.form.handle.trim(),
+    displayName: ctx.form.displayName.trim(),
+    description: ctx.form.description.trim(),
+    instructions: ctx.form.instructions.trim(),
+    suggestedAutonomyLevel: ctx.form.suggestedAutonomyLevel as SpaceAgentAutonomyLevel,
+  });
+  return ctx;
+}
+
+const runTemplateSave = (superpipe({})('save-agent-template') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(templateSaveValidateStage, 'ctx', 'ctx')
+  .pipe(templateSavePersistStage, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: TemplateSaveCtx) => Promise<TemplateSaveCtx>;
 
 interface AgentEditorProps {
   template?: SpaceLongHorizonAgentTemplate | null;
@@ -512,13 +551,37 @@ function AgentEditor({
   );
 }
 
-function TemplateEditor({ onCancel }: { onCancel: () => void }) {
+function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
   const [displayName, setDisplayName] = useState('');
   const [key, setKey] = useState('');
   const [handle, setHandle] = useState('');
   const [description, setDescription] = useState('');
   const [instructions, setInstructions] = useState('');
   const [autonomyLevel, setAutonomyLevel] = useState(2);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleCreate = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await runTemplateSave({
+        form: {
+          displayName,
+          key,
+          handle,
+          description,
+          instructions,
+          suggestedAutonomyLevel: autonomyLevel,
+        },
+      });
+      onCreated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create template');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const fieldClass =
     'w-full rounded-xl border border-line bg-surface-overlay/90 px-4 py-3 text-sm text-fg placeholder-gray-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10';
@@ -613,22 +676,19 @@ function TemplateEditor({ onCancel }: { onCancel: () => void }) {
             </div>
             <p class="mt-1.5 text-xs text-fg-muted">{AUTONOMY_LABELS[autonomyLevel]}</p>
           </div>
-          <div class="rounded-xl border border-warning-soft/20 bg-warning/[0.07] px-4 py-3 text-sm text-warning-soft/80">
-            Custom template persistence is coming soon. These fields are available for preview, but
-            cannot be saved yet.
-          </div>
+          {error && <p class="text-xs text-danger">{error}</p>}
         </div>
         <div class="flex justify-end gap-3 border-t border-line bg-scrim-soft px-5 py-4 sm:px-7">
           <Button variant="ghost" size="md" onClick={onCancel} class="rounded-xl px-5">
-            Close
+            Cancel
           </Button>
           <Button
             size="md"
-            disabled
-            title="Custom template persistence is not available yet"
+            onClick={handleCreate}
+            disabled={saving}
             class="rounded-xl bg-warning px-6 font-semibold text-on-warning"
           >
-            Create template
+            {saving ? 'Creating…' : 'Create template'}
           </Button>
         </div>
       </div>
@@ -1111,7 +1171,12 @@ export function SpaceLongHorizonAgents({
         />
       )}
 
-      {showTemplateEditor && <TemplateEditor onCancel={() => setShowTemplateEditor(false)} />}
+      {showTemplateEditor && (
+        <TemplateEditor
+          onCreated={() => setShowTemplateEditor(false)}
+          onCancel={() => setShowTemplateEditor(false)}
+        />
+      )}
 
       {deletingAgent && (
         <ConfirmModal
