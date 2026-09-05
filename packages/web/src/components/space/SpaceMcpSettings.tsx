@@ -255,7 +255,7 @@ function SpaceMcpEntryRow({ entry, disabled, onToggle, onClearOverride }: SpaceM
           ))}
         </div>
         {entry.description && (
-          <p class="text-xs text-fg-muted mt-0.5 truncate">{entry.description}</p>
+          <p class="text-xs text-fg-muted mt-0.5 line-clamp-2">{entry.description}</p>
         )}
         <p class="text-xs text-fg-muted mt-0.5 font-mono">
           {sourceTypeLabel(entry.sourceType)}
