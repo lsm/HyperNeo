@@ -568,6 +568,35 @@ describe('SpaceLongHorizonAgents', () => {
     ]);
   });
 
+  it('discards the single-model selection when switching to pool mode', async () => {
+    const { getByRole, getByTestId, getByPlaceholderText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
+      target: { value: 'Release Readiness' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness.custom'), {
+      target: { value: 'release-readiness.custom' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
+      target: { value: 'release-readiness' },
+    });
+    const modelSelect = getByTestId('space-agent-model-select') as HTMLSelectElement;
+    modelSelect.value = 'claude-sonnet-4-6';
+    fireEvent.change(modelSelect);
+    fireEvent.click(getByTestId('agent-model-mode-pool'));
+    fireEvent.click(getByTestId('agent-model-mode-single'));
+    expect((getByTestId('space-agent-model-select') as HTMLSelectElement).value).toBe('');
+    const thinkingSelect = getByTestId('template-model-fields-thinking-level') as HTMLSelectElement;
+    expect(thinkingSelect.value).toBe('');
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockCreateTemplate.mock.calls[0][0].model).toBeNull();
+  });
+
   it('shows the store error and keeps the modal open when create fails', async () => {
     mockCreateTemplate.mockRejectedValueOnce(
       new Error('Template key already exists: release-readiness.custom')

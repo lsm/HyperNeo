@@ -727,7 +727,12 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
               model={modelFields.model ?? ''}
               provider={modelFields.provider ?? ''}
               modelPool={modelPool}
-              onModeChange={setModelMode}
+              onModeChange={(nextMode) => {
+                setModelMode(nextMode);
+                if (nextMode === 'pool') {
+                  setModelFields((fields) => ({ ...fields, model: null, provider: null }));
+                }
+              }}
               onModelChange={(nextModel, nextProvider) =>
                 setModelFields((fields) => ({
                   ...fields,
