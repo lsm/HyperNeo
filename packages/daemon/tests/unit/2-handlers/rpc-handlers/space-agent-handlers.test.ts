@@ -1691,6 +1691,26 @@ describe('Space Agent RPC Handlers', () => {
       });
       expect(result.success).toBe(true);
     });
+
+    it('allows deletion when the agent is only the fallback of a template-bound slot', async () => {
+      insertWorkflow(db, 'wf-4', 'space-1', 'Migrated Workflow');
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at)
+         VALUES ('node-4', 'wf-4', 'Node node-4', ?, ?, ?)`
+      ).run(
+        JSON.stringify({
+          agents: [{ agentId, templateKey: 'migrated.worker', name: 'worker' }],
+        }),
+        now,
+        now
+      );
+
+      const result = await call<{ success: boolean }>(hubData.handlers, 'spaceAgent.delete', {
+        id: agentId,
+      });
+      expect(result.success).toBe(true);
+    });
   });
 
   describe('spaceAgent reminders and subscriptions', () => {

@@ -239,14 +239,18 @@ export class SpaceAgentRepository {
   isAgentReferenced(agentId: string): { referenced: boolean; workflowNames: string[] } {
     const rows = this.db
       .prepare(
-        `SELECT DISTINCT sw.name
+        `SELECT DISTINCT sw.name, sws.config
 				FROM space_workflow_nodes sws
 				JOIN space_workflows sw ON sw.id = sws.workflow_id
 				WHERE sws.config LIKE ?`
       )
-      .all(`%"agentId":"${agentId}"%`) as Array<{ name: string }>;
+      .all(`%"agentId":"${agentId}"%`) as Array<{ name: string; config: string | null }>;
 
-    const workflowNames = rows.map((r) => r.name);
+    const workflowNames: string[] = [];
+    for (const row of rows) {
+      if (!nodeConfigOwnsAgent(row.config, agentId)) continue;
+      if (!workflowNames.includes(row.name)) workflowNames.push(row.name);
+    }
     return { referenced: workflowNames.length > 0, workflowNames };
   }
 
@@ -516,4 +520,23 @@ export class SpaceAgentRepository {
       updatedAt: row.updated_at as number,
     };
   }
+}
+
+function nodeConfigOwnsAgent(rawConfig: string | null, agentId: string): boolean {
+  if (!rawConfig) return false;
+  let agents: unknown = null;
+  try {
+    agents = (JSON.parse(rawConfig) as { agents?: unknown }).agents;
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(agents)) return false;
+  for (const slot of agents) {
+    if (!slot || typeof slot !== 'object') continue;
+    const entry = slot as { agentId?: unknown; templateKey?: unknown };
+    if (entry.agentId !== agentId) continue;
+    if (typeof entry.templateKey === 'string' && entry.templateKey.trim()) continue;
+    return true;
+  }
+  return false;
 }
