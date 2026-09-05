@@ -1,7 +1,3 @@
-import { generateUUID } from '@hyperneo/shared';
-import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
-import { workerAgentToLongHorizonParams } from './worker-long-horizon-mapper.ts';
 import {
   QA_SYSTEM_CONTRACT,
   REVIEWER_SYSTEM_CONTRACT,
@@ -152,57 +148,4 @@ export function getPresetAgentTemplates(): PresetAgentTemplate[] {
     ...preset,
     tools: [...preset.tools],
   }));
-}
-
-export interface SeedUnifiedSpaceAgentsResult {
-  seeded: SpaceLongHorizonAgent[];
-  errors: Array<{ name: string; error: string }>;
-}
-
-export function seedUnifiedSpaceAgents(
-  spaceId: string,
-  longHorizonAgentRepo: SpaceLongHorizonAgentRepository
-): SeedUnifiedSpaceAgentsResult {
-  const seeded: SpaceLongHorizonAgent[] = [];
-  const errors: Array<{ name: string; error: string }> = [];
-  const occupiedHandles = new Set<string>();
-  const now = Date.now();
-
-  for (const preset of PRESET_AGENTS) {
-    try {
-      const params = workerAgentToLongHorizonParams(
-        {
-          id: generateUUID(),
-          spaceId,
-          name: preset.name,
-          handle: preset.handle,
-          status: 'active',
-          description: preset.description,
-          thinkingLevel: preset.thinkingLevel ?? null,
-          customPrompt: preset.customPrompt,
-          tools: preset.tools,
-        },
-        { occupiedHandles, now }
-      );
-      const agent = longHorizonAgentRepo.create(
-        {
-          id: params.id,
-          spaceId: params.spaceId,
-          handle: params.handle,
-          displayName: params.displayName,
-          templateKey: params.templateKey,
-          instructions: params.instructions,
-          description: params.description,
-          toolPermissions: params.toolPermissions,
-          thinkingLevel: params.thinkingLevel,
-        },
-        { allowReservedTemplateKey: true }
-      );
-      seeded.push(agent);
-    } catch (err) {
-      errors.push({ name: preset.name, error: err instanceof Error ? err.message : String(err) });
-    }
-  }
-
-  return { seeded, errors };
 }
