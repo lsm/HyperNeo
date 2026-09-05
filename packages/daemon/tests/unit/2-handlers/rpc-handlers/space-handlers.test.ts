@@ -190,14 +190,6 @@ function createAgentDb(): Database {
   return db;
 }
 
-function createAgentRepo(occupiedHandles: string[] = []): SpaceLongHorizonAgentRepository {
-  const repo = new SpaceLongHorizonAgentRepository(createAgentDb());
-  for (const handle of occupiedHandles) {
-    repo.create({ spaceId: 'space-1', handle, displayName: `Occupied ${handle}` });
-  }
-  return repo;
-}
-
 function createMockSpaceWorkflowManager(): SpaceWorkflowManager {
   return {
     createWorkflow: mock(() => ({})),
@@ -229,18 +221,12 @@ describe('space-handlers', () => {
 
   let agentRepoDb: Database | null = null;
 
-  function defaultAgentRepo(): SpaceLongHorizonAgentRepository {
-    agentRepoDb = createAgentDb();
-    return new SpaceLongHorizonAgentRepository(agentRepoDb);
-  }
-
   async function setup(
     space: Space | null = mockSpace,
     sessionManager?: SessionManager,
     spaceRuntimeService?: SpaceRuntimeService,
     longHorizonAgentRepo?: SpaceLongHorizonAgentRepository,
-    workflowManager?: SpaceWorkflowManager,
-    presetHandleConflicts?: string[]
+    workflowManager?: SpaceWorkflowManager
   ) {
     const mh = createMockMessageHub();
     hub = mh.hub;
@@ -254,13 +240,6 @@ describe('space-handlers', () => {
     const sharedDb = createAgentDb();
     agentRepoDb = sharedDb;
     const sharedLhaRepo = longHorizonAgentRepo ?? new SpaceLongHorizonAgentRepository(sharedDb);
-    for (const name of presetHandleConflicts ?? []) {
-      sharedLhaRepo.create({
-        spaceId: 'space-1',
-        handle: name.toLowerCase(),
-        displayName: `Conflict ${name}`,
-      });
-    }
     setupSpaceHandlers(
       hub,
       spaceManager,
@@ -476,21 +455,6 @@ describe('space-handlers', () => {
       expect(runtimeService.setupSpaceAgentSession).toHaveBeenCalledWith(mockSpace);
     });
 
-    it('returns seedWarnings when some agents fail to seed', async () => {
-      await setup(mockSpace, undefined, undefined, undefined, undefined, ['Coder', 'QA']);
-
-      const result = (await call('space.create', {
-        workspacePath: '/tmp/x',
-        name: 'X',
-      })) as SpaceCreateResult;
-
-      expect(result.id).toBe(mockSpace.id);
-      expect(result.seedWarnings).toBeDefined();
-      expect(result.seedWarnings!.length).toBeGreaterThan(0);
-      expect(result.seedWarnings!.some((w) => w.includes('Coder'))).toBe(true);
-      expect(result.seedWarnings!.some((w) => w.includes('QA'))).toBe(true);
-    });
-
     it('does not include seedWarnings when all agents seed successfully', async () => {
       await setup(mockSpace);
 
@@ -500,26 +464,6 @@ describe('space-handlers', () => {
       });
 
       expect((result as Record<string, unknown>).seedWarnings).toBeUndefined();
-    });
-
-    it('returns seedWarnings when preset agent rows cannot be created', async () => {
-      await setup(mockSpace, undefined, undefined, undefined, undefined, [
-        'Coder',
-        'General',
-        'Planner',
-        'Research',
-        'Reviewer',
-        'QA',
-      ]);
-
-      const result = (await call('space.create', {
-        workspacePath: '/tmp/x',
-        name: 'X',
-      })) as SpaceCreateResult;
-
-      expect(result.id).toBe(mockSpace.id);
-      expect(result.seedWarnings).toBeDefined();
-      expect(result.seedWarnings!.some((w) => w.includes('Failed to seed agents'))).toBe(true);
     });
 
     it('returns seedWarnings when workflow seeding fails', async () => {
@@ -549,7 +493,7 @@ describe('space-handlers', () => {
       expect(result.seedWarnings!.some((w) => w.includes('workflows'))).toBe(true);
     });
 
-    it('space creation succeeds even when both agents and workflows fail', async () => {
+    it('space creation succeeds even when workflow seeding fails', async () => {
       const emptyRepo = {
         ensureCoordinator: mock(() => null),
         create: mock(() => {
@@ -573,7 +517,7 @@ describe('space-handlers', () => {
 
       expect(result.id).toBe(mockSpace.id);
       expect(result.seedWarnings).toBeDefined();
-      expect(result.seedWarnings!.length).toBe(2);
+      expect(result.seedWarnings!.length).toBe(1);
       expect(internalEventBus.publish).toHaveBeenCalledWith(
         'space.created',
         expect.objectContaining({ spaceId: mockSpace.id })

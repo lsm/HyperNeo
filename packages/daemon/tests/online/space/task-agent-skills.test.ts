@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import type { NodeExecution, Space, SpaceLongHorizonAgent, SpaceWorkflow } from '@hyperneo/shared';
+import type { NodeExecution, Space, SpaceWorkflow } from '@hyperneo/shared';
 
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const SETUP_TIMEOUT = IS_MOCK ? 20_000 : 60_000;
@@ -10,7 +10,6 @@ const TASK_AGENT_SPAWN_TIMEOUT = IS_MOCK ? 15_000 : 45_000;
 
 type TestFixtures = {
   space: Space;
-  coderAgent: SpaceLongHorizonAgent;
   workflow: SpaceWorkflow;
 };
 
@@ -22,24 +21,23 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
     autonomyLevel: 1,
   })) as Space;
 
-  const { agents } = (await daemon.messageHub.request('spaceAgent.list', {
-    spaceId: space.id,
-  })) as { agents: SpaceLongHorizonAgent[] };
-
-  const coderAgent = agents.find((a) => a.displayName === 'Coder');
-  if (!coderAgent) throw new Error('Pre-seeded Coder agent not found');
-
   const workflowResult = (await daemon.messageHub.request('spaceWorkflow.create', {
     spaceId: space.id,
     name: 'Single-step Workflow',
     description: 'Single-step workflow for skills test',
-    nodes: [{ id: 'step-skills-001', name: 'Code Implementation', agentId: coderAgent.id }],
+    nodes: [
+      {
+        id: 'step-skills-001',
+        name: 'Code Implementation',
+        agents: [{ agentId: '', name: 'Code Implementation', templateKey: 'worker.coder' }],
+      },
+    ],
     transitions: [],
     startNodeId: 'step-skills-001',
     completionAutonomyLevel: 3,
   })) as { workflow: SpaceWorkflow };
 
-  return { space, coderAgent, workflow: workflowResult.workflow };
+  return { space, workflow: workflowResult.workflow };
 }
 
 async function startWorkflowRun(

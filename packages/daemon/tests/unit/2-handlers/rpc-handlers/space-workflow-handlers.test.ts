@@ -17,7 +17,7 @@ import { SpaceWorkflowManager as RealSpaceWorkflowManager } from '../../../../sr
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
-import { seedUnifiedSpaceAgents } from '../../../../src/lib/space/agents/seed-agents';
+import { getPresetAgentTemplates } from '../../../../src/lib/space/agents/seed-agents';
 import { restampBuiltInWorkflowsOnStartup } from '../../../../src/lib/rpc-handlers/space-workflow-handlers';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import type {
@@ -1727,9 +1727,15 @@ describe('restampBuiltInWorkflowsOnStartup — worker templateKey binding', () =
     };
   }
 
+  function seedPresetAgentRows(spaceId: string, repo: SpaceLongHorizonAgentRepository) {
+    for (const preset of getPresetAgentTemplates()) {
+      repo.create({ spaceId, handle: preset.handle, displayName: preset.name });
+    }
+  }
+
   it('binds slots by worker templateKey and binds no agent rows even when presets exist', async () => {
     const env = makeRealEnv();
-    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
+    seedPresetAgentRows('space-retire', env.longHorizonAgentRepo);
     const rowIds = new Set(env.longHorizonAgentRepo.listBySpaceId('space-retire').map((a) => a.id));
 
     await restampBuiltInWorkflowsOnStartup(
@@ -1753,7 +1759,7 @@ describe('restampBuiltInWorkflowsOnStartup — worker templateKey binding', () =
 
   it('heals a renamed coordinator before restamping', async () => {
     const env = makeRealEnv();
-    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
+    seedPresetAgentRows('space-retire', env.longHorizonAgentRepo);
     const coordinator = env.longHorizonAgentRepo.ensureCoordinator('space-retire');
     env.db
       .prepare(
