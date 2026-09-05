@@ -1491,6 +1491,33 @@ describe('setupSpaceTaskMessageHandlers', () => {
       );
     });
 
+    it('rejects a session attached only to a pending execution', async () => {
+      const { targets, injectSubSessionMessage } = setupWithResolver({
+        executions: [
+          {
+            id: 'exec-coder',
+            workflowNodeId: 'node-coder',
+            agentName: 'Coder',
+            agentSessionId: 'session-coder',
+            status: 'pending',
+          },
+        ],
+        outcomes: [{ kind: 'resolved', sessionId: 'session-coder', created: false }],
+      });
+
+      await expect(
+        call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: 'stale session',
+          target: { kind: 'node_agent', sessionId: 'session-coder', agentName: 'Coder' },
+        })
+      ).rejects.toThrow('no longer attached');
+
+      expect(targets).toEqual([{ kind: 'session', sessionId: 'session-coder' }]);
+      expect(injectSubSessionMessage).not.toHaveBeenCalled();
+    });
+
     it('pre-translates nodeExecutionId to an exact worker target with zero wait', async () => {
       const { targets } = setupWithResolver({
         executions: [

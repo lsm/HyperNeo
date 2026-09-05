@@ -390,6 +390,7 @@ export function setupSpaceTaskMessageHandlers(
       if (target.sessionId) {
         const attachedExecution = executions.find(
           (execution) =>
+            execution.status !== 'pending' &&
             execution.agentSessionId === target.sessionId &&
             (!target.workflowNodeId || execution.workflowNodeId === target.workflowNodeId)
         );
