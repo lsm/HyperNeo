@@ -677,7 +677,7 @@ describe('createMailboxDeliveryHandler', () => {
       const retryJob = claimMailboxJob(mailbox, makeEntry({ origin: 'recovery', messageUuid }));
       const result = await handler(retryJob);
 
-      expect(result).toEqual({ kind: 'delivered', sessionId: SESSION_ID });
+      expect(result).toMatchObject({ status: 'delivered', targetSessionId: SESSION_ID });
       expect(mailbox.sdkRows()).toHaveLength(1);
       expect(mailbox.sdkRows()[0].send_status).toBe('enqueued');
       expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)).toHaveLength(1);

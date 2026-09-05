@@ -2482,7 +2482,11 @@ describe('SpaceRuntimeService', () => {
     test('a dead mailbox entry fails the inbox attempt before an SDK row exists', async () => {
       const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
       const row = makeInboxRow();
-      const mailboxEntry = mailbox.jobQueue.enqueue({ queue: MAILBOX_LANE, payload: {} });
+      const mailboxEntryId = 'mailbox-entry-1';
+      const mailboxEntry = mailbox.jobQueue.enqueue({
+        queue: MAILBOX_LANE,
+        payload: { id: mailboxEntryId },
+      });
       mailbox.jobQueue.markDeadIfActive(mailboxEntry.id, 'target archived');
       const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
 
@@ -2499,7 +2503,7 @@ describe('SpaceRuntimeService', () => {
         row,
         inboxSessionId,
         row.idempotencyKey!,
-        mailboxEntry.id
+        mailboxEntryId
       );
 
       expect(inboxRepo.markDelivered).not.toHaveBeenCalled();

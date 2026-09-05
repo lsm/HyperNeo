@@ -17,22 +17,19 @@ export function ensureAgentDeliverySessionStage(
   return ensureSession(target, deps);
 }
 
-export async function preserveAgentProvisioningStage(
+export async function provisionAndRefetchAgentDeliverySessionStage<Session>(
   outcome: EnsureSessionOutcome,
   target: SessionTargetAgent,
-  deps: SessionResolutionDeps
-): Promise<EnsureSessionOutcome> {
-  if (outcome.kind === 'unresolved' || outcome.created) return outcome;
-  return (await deps.ensureLongTermAgent(target.spaceId, target.agentId)) === null
-    ? { kind: 'unresolved', reason: 'ensure_failed' }
-    : outcome;
-}
-
-export async function refetchAgentDeliverySessionStage<Session>(
-  outcome: EnsureSessionOutcome,
+  deps: SessionResolutionDeps,
   getSession: (sessionId: string) => Promise<Session | null>
 ): Promise<Session | null> {
   if (outcome.kind === 'unresolved') return null;
+  if (
+    !outcome.created &&
+    (await deps.ensureLongTermAgent(target.spaceId, target.agentId)) === null
+  ) {
+    return null;
+  }
   return getSession(outcome.sessionId);
 }
 
@@ -42,8 +39,11 @@ const runResolveAgentDeliverySession = (
   .input(['spaceId', 'agentId', 'deps', 'getSession'])
   .pipe(resolveAgentDeliveryTargetStage, ['spaceId', 'agentId'], 'target')
   .pipe(ensureAgentDeliverySessionStage, ['target', 'deps'], 'outcome')
-  .pipe(preserveAgentProvisioningStage, ['outcome', 'target', 'deps'], 'provisionedOutcome')
-  .pipe(refetchAgentDeliverySessionStage, ['provisionedOutcome', 'getSession'], 'session')
+  .pipe(
+    provisionAndRefetchAgentDeliverySessionStage,
+    ['outcome', 'target', 'deps', 'getSession'],
+    'session'
+  )
   .endAsync('session') as (...args: unknown[]) => Promise<unknown | null>;
 
 export async function resolveAgentDeliverySession<Session>(
