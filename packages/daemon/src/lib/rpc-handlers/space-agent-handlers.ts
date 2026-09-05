@@ -610,13 +610,17 @@ function updateAuthorizeStage(ctx: UpdateUnifiedAgentCtx): UpdateUnifiedAgentCtx
 async function updateApplyStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
   const { params, agentId, existing } = ctx;
   if (!existing) throw new Error(`Agent not found: ${agentId}`);
+  const resolvedTemplateKey = resolveUnifiedTemplateKey(params);
   if (params.status === 'disabled' && existing.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
     throw new Error('Agent status "disabled" cannot be set on a migrated worker agent');
   }
+  if (params.autonomyLevel !== undefined && existing.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
+    throw new Error('autonomyLevel cannot be set on a migrated worker agent');
+  }
   if (
     existing.templateKey === MIGRATED_WORKER_TEMPLATE_KEY &&
-    params.templateKey !== undefined &&
-    params.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY
+    resolvedTemplateKey !== undefined &&
+    resolvedTemplateKey !== MIGRATED_WORKER_TEMPLATE_KEY
   ) {
     throw new Error('Template key cannot be changed on a migrated worker agent');
   }

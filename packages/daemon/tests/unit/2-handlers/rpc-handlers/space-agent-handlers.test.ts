@@ -1194,6 +1194,29 @@ describe('Space Agent RPC Handlers', () => {
       expect(longHorizonRepo.getById(workerId)?.status).toBe('active');
     });
 
+    it('rejects autonomyLevel ceilings on mirror updates', async () => {
+      const workerId = 'twin-autonomy';
+      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Autonomy' });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', { id: workerId, autonomyLevel: 3 })
+      ).rejects.toThrow('autonomyLevel cannot be set on a migrated worker agent');
+      expect(longHorizonRepo.getById(workerId)?.autonomyLevel).toBeNull();
+    });
+
+    it('rejects mirror rekeys through the templateName alias', async () => {
+      const workerId = 'twin-alias-rekey';
+      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Alias Rekey' });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', {
+          id: workerId,
+          templateName: 'coordinator.default',
+        })
+      ).rejects.toThrow('Template key cannot be changed on a migrated worker agent');
+      expect(longHorizonRepo.getById(workerId)?.templateKey).toBe('migration.legacy_space_agent');
+    });
+
     it('rejects templateKey rewrites on mirror updates', async () => {
       const workerId = 'twin-rekey';
       seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Rekey' });
