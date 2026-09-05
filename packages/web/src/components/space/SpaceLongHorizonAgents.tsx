@@ -199,6 +199,7 @@ interface TemplateSaveForm {
   description: string;
   instructions: string;
   suggestedAutonomyLevel: number;
+  tools: string[];
   model: string | null;
   provider: string | null;
   thinkingLevel: ThinkingLevel | null;
@@ -223,6 +224,7 @@ async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateS
     description: ctx.form.description.trim(),
     instructions: ctx.form.instructions.trim(),
     suggestedAutonomyLevel: ctx.form.suggestedAutonomyLevel as SpaceAgentAutonomyLevel,
+    tools: ctx.form.tools,
     model: ctx.form.model,
     provider: ctx.form.provider,
     thinkingLevel: ctx.form.thinkingLevel,
@@ -567,6 +569,10 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
   const [description, setDescription] = useState('');
   const [instructions, setInstructions] = useState('');
   const [autonomyLevel, setAutonomyLevel] = useState(2);
+  const [toolsSelection, setToolsSelection] = useState<ToolsSelection>({
+    tools: [],
+    toolsOverridden: false,
+  });
   const [modelFields, setModelFields] = useState<TemplateModelFieldsValue>({
     model: null,
     provider: null,
@@ -587,6 +593,7 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
           description,
           instructions,
           suggestedAutonomyLevel: autonomyLevel,
+          tools: toolsSelection.tools,
           model: modelFields.model,
           provider: modelFields.provider,
           thinkingLevel: modelFields.thinkingLevel,
@@ -694,6 +701,13 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
             <p class="mt-1.5 text-xs text-fg-muted">{AUTONOMY_LABELS[autonomyLevel]}</p>
           </div>
           <TemplateModelFields value={modelFields} onChange={setModelFields} />
+          <div>
+            <ToolsEditor
+              tools={toolsSelection.tools}
+              toolsOverridden={toolsSelection.toolsOverridden}
+              onChange={setToolsSelection}
+            />
+          </div>
           {error && <p class="text-xs text-danger">{error}</p>}
         </div>
         <div class="flex justify-end gap-3 border-t border-line bg-scrim-soft px-5 py-4 sm:px-7">
