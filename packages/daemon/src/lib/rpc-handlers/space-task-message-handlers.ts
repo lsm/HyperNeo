@@ -1,4 +1,5 @@
 import type { MessageHub, MessageImage } from '@hyperneo/shared';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { parseAddress } from '../../../../messaging/src/address.ts';
 import type { Database } from '../../storage/database.ts';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
@@ -42,6 +43,50 @@ type ResolvedTaskMessageTarget = {
   nodeExecutionId?: string;
   sessionId?: string;
   workflowNodeId?: string;
+};
+
+type NodeAgentRouteResult = {
+  ok: true;
+  routedTo: string[];
+  delivered?: false;
+  activated?: true;
+  queued?: true;
+};
+
+type NodeAgentWorkerTarget = {
+  agentName: string;
+  workflowNodeId?: string;
+};
+
+type NodeAgentRouteOutcome = {
+  worker: NodeAgentWorkerTarget;
+  outcome: EnsureSessionOutcome;
+};
+
+type NodeAgentRouteContext = {
+  task: ReturnType<SpaceTaskRepository['getTask']>;
+  taskId: string;
+  message: string;
+  target: ResolvedTaskMessageTarget;
+  images?: MessageImage[];
+  deliveryMode?: 'immediate' | 'defer';
+  workflowRunId?: string;
+  executions?: ReturnType<NodeExecutionLookup['listByWorkflowRun']>;
+  declared?: string[];
+  postApproval?: ReturnType<NonNullable<TaskAgentManagerInterface['getPostApprovalWorkerSession']>>;
+  workerTargets?: NodeAgentWorkerTarget[];
+  outcomes?: NodeAgentRouteOutcome[];
+  resolved?: Array<
+    NodeAgentRouteOutcome & {
+      outcome: Extract<EnsureSessionOutcome, { kind: 'resolved' }>;
+    }
+  >;
+  unresolved?: Array<
+    NodeAgentRouteOutcome & {
+      outcome: Extract<EnsureSessionOutcome, { kind: 'unresolved' }>;
+    }
+  >;
+  result?: NodeAgentRouteResult;
 };
 
 export interface TaskAgentManagerInterface {
@@ -315,6 +360,225 @@ export function setupSpaceTaskMessageHandlers(
     });
   }
 
+  function classifyNodeAgentRoute(ctx: NodeAgentRouteContext): NodeAgentRouteContext {
+    if (!ctx.task?.workflowRunId) {
+      throw new Error(`Task ${ctx.taskId} has no workflow run — cannot target workflow agents.`);
+    }
+    if (!nodeExecutionRepo || !taskAgentManager.injectSubSessionMessage) {
+      throw new Error('Workflow agent targeting is unavailable on this daemon.');
+    }
+    return {
+      ...ctx,
+      workflowRunId: ctx.task.workflowRunId,
+      executions: nodeExecutionRepo
+        .listByWorkflowRun(ctx.task.workflowRunId)
+        .filter((execution) => execution.status !== 'cancelled' && execution.status !== 'pending'),
+      declared: taskAgentManager.getWorkflowDeclaredAgentNamesForTask?.(ctx.taskId) ?? [],
+      postApproval:
+        taskAgentManager.getPostApprovalWorkerSession?.(ctx.taskId, ctx.target.sessionId) ?? null,
+    };
+  }
+
+  async function executeNodeAgentRoute(ctx: NodeAgentRouteContext): Promise<NodeAgentRouteContext> {
+    const { task, taskId, message, target, images, deliveryMode } = ctx;
+    const executions = ctx.executions!;
+    const declared = ctx.declared!;
+    const postApproval = ctx.postApproval ?? null;
+    const result = await (async (): Promise<NodeAgentRouteResult> => {
+      if (target.sessionId) {
+        const attachedExecution = executions.find(
+          (execution) =>
+            execution.agentSessionId === target.sessionId &&
+            (!target.workflowNodeId || execution.workflowNodeId === target.workflowNodeId)
+        );
+        let outcome = await resolveTargetSession({ kind: 'session', sessionId: target.sessionId });
+        let agentName =
+          attachedExecution?.agentName ??
+          (!target.workflowNodeId || postApproval?.nodeId === target.workflowNodeId
+            ? postApproval?.agentName
+            : undefined);
+        if (
+          outcome.kind === 'unresolved' &&
+          postApproval?.sessionId === target.sessionId &&
+          (!target.workflowNodeId || postApproval.nodeId === target.workflowNodeId)
+        ) {
+          agentName = postApproval.agentName;
+          outcome = await ensureWorker(
+            taskId,
+            postApproval.agentName,
+            postApproval.nodeId ?? undefined
+          );
+        }
+        if (outcome.kind === 'unresolved' || !agentName) {
+          throw new Error(
+            `Session ${target.sessionId} is no longer attached to a workflow node execution for this task. ` +
+              'Close and reopen the agent overlay to refresh it.'
+          );
+        }
+        await injectResolvedSession(
+          taskId,
+          outcome.sessionId,
+          agentName,
+          message,
+          images,
+          deliveryMode
+        );
+        return { ok: true, routedTo: [agentName] };
+      }
+
+      const exactExecution = target.nodeExecutionId
+        ? executions.find((execution) => execution.id === target.nodeExecutionId)
+        : undefined;
+      if (target.nodeExecutionId && !exactExecution) {
+        const available = [...new Set([...executions.map((e) => e.agentName), ...declared])].sort();
+        throw new Error(
+          `Workflow agent not found: ${target.nodeExecutionId}. Available agents: ${available.length > 0 ? available.join(', ') : 'none'}`
+        );
+      }
+
+      const normalizedName = target.agentName?.toLowerCase();
+      const matchingExecutions = exactExecution
+        ? [exactExecution]
+        : executions.filter(
+            (execution) =>
+              normalizedName !== undefined &&
+              execution.agentName.toLowerCase() === normalizedName &&
+              (!target.workflowNodeId || execution.workflowNodeId === target.workflowNodeId)
+          );
+      const matchesPostApproval =
+        !target.nodeExecutionId &&
+        normalizedName !== undefined &&
+        postApproval?.agentName.toLowerCase() === normalizedName &&
+        (!target.workflowNodeId || postApproval.nodeId === target.workflowNodeId);
+      const workerTargets = (
+        matchesPostApproval
+          ? [
+              {
+                agentName: postApproval.agentName,
+                workflowNodeId: postApproval.nodeId ?? undefined,
+              },
+            ]
+          : matchingExecutions.map((execution) => ({
+              agentName: execution.agentName,
+              workflowNodeId: execution.workflowNodeId,
+            }))
+      ).filter(
+        (worker, index, all) =>
+          all.findIndex(
+            (candidate) =>
+              candidate.agentName === worker.agentName &&
+              candidate.workflowNodeId === worker.workflowNodeId
+          ) === index
+      );
+
+      if (workerTargets.length === 0 && target.agentName) {
+        const declaredName = declared.find((name) => name.toLowerCase() === normalizedName);
+        if (declaredName) {
+          workerTargets.push({ agentName: declaredName, workflowNodeId: target.workflowNodeId });
+        } else {
+          const available = [
+            ...new Set([...executions.map((e) => e.agentName), ...declared]),
+          ].sort();
+          throw new Error(
+            `Workflow agent not found: ${target.agentName}. Available agents: ${available.length > 0 ? available.join(', ') : 'none'}`
+          );
+        }
+      }
+
+      const outcomes = await Promise.all(
+        workerTargets.map(async (worker) => ({
+          worker,
+          outcome: await ensureWorker(taskId, worker.agentName, worker.workflowNodeId),
+        }))
+      );
+      const resolved = outcomes.filter(
+        (
+          item
+        ): item is typeof item & { outcome: Extract<EnsureSessionOutcome, { kind: 'resolved' }> } =>
+          item.outcome.kind === 'resolved'
+      );
+      const unresolved = outcomes.filter(
+        (
+          item
+        ): item is typeof item & {
+          outcome: Extract<EnsureSessionOutcome, { kind: 'unresolved' }>;
+        } => item.outcome.kind === 'unresolved'
+      );
+      const rejected = unresolved.find(
+        (item) =>
+          item.outcome.reason !== 'activation_timeout' &&
+          item.outcome.reason !== 'post_approval_pending' &&
+          item.outcome.reason !== 'restore_timeout' &&
+          item.outcome.reason !== 'activate_failed'
+      );
+      if (rejected) {
+        throw new Error(
+          `Could not resolve workflow agent "${rejected.worker.agentName}": ${rejected.outcome.reason}`
+        );
+      }
+      if (unresolved.length > 0 && images && images.length > 0) {
+        throw new Error(
+          'Cannot send images to an agent that is still starting. Wait for the agent to come online and try again.'
+        );
+      }
+      await Promise.all(
+        resolved.map(({ worker, outcome }) =>
+          injectResolvedSession(
+            taskId,
+            outcome.sessionId,
+            worker.agentName,
+            message,
+            images,
+            deliveryMode
+          )
+        )
+      );
+
+      const activated = outcomes.some((item) =>
+        item.outcome.kind === 'resolved'
+          ? item.outcome.created
+          : item.outcome.reason === 'activation_timeout'
+      );
+      if (unresolved.length === 0) {
+        return {
+          ok: true,
+          routedTo: [...new Set(resolved.map(({ worker }) => worker.agentName))],
+          ...(activated ? { activated: true as const } : {}),
+        };
+      }
+
+      if (pendingMessageQueue) {
+        for (const { worker } of unresolved) {
+          pendingMessageQueue.enqueue({
+            workflowRunId: ctx.workflowRunId!,
+            spaceId: task!.spaceId,
+            taskId,
+            sourceAgentName: 'human',
+            targetKind: 'node_agent',
+            targetAgentName: worker.agentName,
+            message,
+            workflowNodeId: worker.workflowNodeId,
+            ...(deliveryMode ? { deliveryMode } : {}),
+          });
+        }
+      }
+      return {
+        ok: true,
+        routedTo: [...new Set(outcomes.map(({ worker }) => worker.agentName))],
+        ...(activated ? { activated: true as const } : {}),
+        delivered: false,
+        ...(pendingMessageQueue ? { queued: true as const } : {}),
+      };
+    })();
+    return { ...ctx, result };
+  }
+
+  const runRouteToNodeAgents = (superpipe({})('route-to-node-agents') as PipelineAPI)
+    .input(['ctx'])
+    .pipe(classifyNodeAgentRoute, 'ctx', 'ctx')
+    .pipe(executeNodeAgentRoute, 'ctx', 'ctx')
+    .endAsync('ctx') as (ctx: NodeAgentRouteContext) => Promise<NodeAgentRouteContext>;
+
   async function routeToNodeAgents(
     task: ReturnType<SpaceTaskRepository['getTask']>,
     taskId: string,
@@ -322,203 +586,9 @@ export function setupSpaceTaskMessageHandlers(
     target: ResolvedTaskMessageTarget,
     images?: MessageImage[],
     deliveryMode?: 'immediate' | 'defer'
-  ): Promise<{
-    ok: true;
-    routedTo: string[];
-    delivered?: false;
-    activated?: true;
-    queued?: true;
-  }> {
-    if (!task?.workflowRunId) {
-      throw new Error(`Task ${taskId} has no workflow run — cannot target workflow agents.`);
-    }
-    if (!nodeExecutionRepo || !taskAgentManager.injectSubSessionMessage) {
-      throw new Error('Workflow agent targeting is unavailable on this daemon.');
-    }
-
-    const executions = nodeExecutionRepo
-      .listByWorkflowRun(task.workflowRunId)
-      .filter((execution) => execution.status !== 'cancelled' && execution.status !== 'pending');
-    const declared = taskAgentManager.getWorkflowDeclaredAgentNamesForTask?.(taskId) ?? [];
-    const postApproval =
-      taskAgentManager.getPostApprovalWorkerSession?.(taskId, target.sessionId) ?? null;
-
-    if (target.sessionId) {
-      const attachedExecution = executions.find(
-        (execution) =>
-          execution.agentSessionId === target.sessionId &&
-          (!target.workflowNodeId || execution.workflowNodeId === target.workflowNodeId)
-      );
-      let outcome = await resolveTargetSession({ kind: 'session', sessionId: target.sessionId });
-      let agentName =
-        attachedExecution?.agentName ??
-        (!target.workflowNodeId || postApproval?.nodeId === target.workflowNodeId
-          ? postApproval?.agentName
-          : undefined);
-      if (
-        outcome.kind === 'unresolved' &&
-        postApproval?.sessionId === target.sessionId &&
-        (!target.workflowNodeId || postApproval.nodeId === target.workflowNodeId)
-      ) {
-        agentName = postApproval.agentName;
-        outcome = await ensureWorker(
-          taskId,
-          postApproval.agentName,
-          postApproval.nodeId ?? undefined
-        );
-      }
-      if (outcome.kind === 'unresolved' || !agentName) {
-        throw new Error(
-          `Session ${target.sessionId} is no longer attached to a workflow node execution for this task. ` +
-            'Close and reopen the agent overlay to refresh it.'
-        );
-      }
-      await injectResolvedSession(
-        taskId,
-        outcome.sessionId,
-        agentName,
-        message,
-        images,
-        deliveryMode
-      );
-      return { ok: true, routedTo: [agentName] };
-    }
-
-    const exactExecution = target.nodeExecutionId
-      ? executions.find((execution) => execution.id === target.nodeExecutionId)
-      : undefined;
-    if (target.nodeExecutionId && !exactExecution) {
-      const available = [...new Set([...executions.map((e) => e.agentName), ...declared])].sort();
-      throw new Error(
-        `Workflow agent not found: ${target.nodeExecutionId}. Available agents: ${available.length > 0 ? available.join(', ') : 'none'}`
-      );
-    }
-
-    const normalizedName = target.agentName?.toLowerCase();
-    const matchingExecutions = exactExecution
-      ? [exactExecution]
-      : executions.filter(
-          (execution) =>
-            normalizedName !== undefined &&
-            execution.agentName.toLowerCase() === normalizedName &&
-            (!target.workflowNodeId || execution.workflowNodeId === target.workflowNodeId)
-        );
-    const matchesPostApproval =
-      !target.nodeExecutionId &&
-      normalizedName !== undefined &&
-      postApproval?.agentName.toLowerCase() === normalizedName &&
-      (!target.workflowNodeId || postApproval.nodeId === target.workflowNodeId);
-    const workerTargets = (
-      matchesPostApproval
-        ? [{ agentName: postApproval.agentName, workflowNodeId: postApproval.nodeId ?? undefined }]
-        : matchingExecutions.map((execution) => ({
-            agentName: execution.agentName,
-            workflowNodeId: execution.workflowNodeId,
-          }))
-    ).filter(
-      (worker, index, all) =>
-        all.findIndex(
-          (candidate) =>
-            candidate.agentName === worker.agentName &&
-            candidate.workflowNodeId === worker.workflowNodeId
-        ) === index
-    );
-
-    if (workerTargets.length === 0 && target.agentName) {
-      const declaredName = declared.find((name) => name.toLowerCase() === normalizedName);
-      if (declaredName) {
-        workerTargets.push({ agentName: declaredName, workflowNodeId: target.workflowNodeId });
-      } else {
-        const available = [...new Set([...executions.map((e) => e.agentName), ...declared])].sort();
-        throw new Error(
-          `Workflow agent not found: ${target.agentName}. Available agents: ${available.length > 0 ? available.join(', ') : 'none'}`
-        );
-      }
-    }
-
-    const outcomes = await Promise.all(
-      workerTargets.map(async (worker) => ({
-        worker,
-        outcome: await ensureWorker(taskId, worker.agentName, worker.workflowNodeId),
-      }))
-    );
-    const resolved = outcomes.filter(
-      (
-        item
-      ): item is typeof item & { outcome: Extract<EnsureSessionOutcome, { kind: 'resolved' }> } =>
-        item.outcome.kind === 'resolved'
-    );
-    const unresolved = outcomes.filter(
-      (
-        item
-      ): item is typeof item & { outcome: Extract<EnsureSessionOutcome, { kind: 'unresolved' }> } =>
-        item.outcome.kind === 'unresolved'
-    );
-    const rejected = unresolved.find(
-      (item) =>
-        item.outcome.reason !== 'activation_timeout' &&
-        item.outcome.reason !== 'post_approval_pending' &&
-        item.outcome.reason !== 'restore_timeout' &&
-        item.outcome.reason !== 'activate_failed'
-    );
-    if (rejected) {
-      throw new Error(
-        `Could not resolve workflow agent "${rejected.worker.agentName}": ${rejected.outcome.reason}`
-      );
-    }
-    if (unresolved.length > 0 && images && images.length > 0) {
-      throw new Error(
-        'Cannot send images to an agent that is still starting. Wait for the agent to come online and try again.'
-      );
-    }
-    await Promise.all(
-      resolved.map(({ worker, outcome }) =>
-        injectResolvedSession(
-          taskId,
-          outcome.sessionId,
-          worker.agentName,
-          message,
-          images,
-          deliveryMode
-        )
-      )
-    );
-
-    const activated = outcomes.some((item) =>
-      item.outcome.kind === 'resolved'
-        ? item.outcome.created
-        : item.outcome.reason === 'activation_timeout'
-    );
-    if (unresolved.length === 0) {
-      return {
-        ok: true,
-        routedTo: [...new Set(resolved.map(({ worker }) => worker.agentName))],
-        ...(activated ? { activated: true as const } : {}),
-      };
-    }
-
-    if (pendingMessageQueue) {
-      for (const { worker } of unresolved) {
-        pendingMessageQueue.enqueue({
-          workflowRunId: task.workflowRunId,
-          spaceId: task.spaceId,
-          taskId,
-          sourceAgentName: 'human',
-          targetKind: 'node_agent',
-          targetAgentName: worker.agentName,
-          message,
-          workflowNodeId: worker.workflowNodeId,
-          ...(deliveryMode ? { deliveryMode } : {}),
-        });
-      }
-    }
-    return {
-      ok: true,
-      routedTo: [...new Set(outcomes.map(({ worker }) => worker.agentName))],
-      ...(activated ? { activated: true as const } : {}),
-      delivered: false,
-      ...(pendingMessageQueue ? { queued: true as const } : {}),
-    };
+  ): Promise<NodeAgentRouteResult> {
+    const ctx = await runRouteToNodeAgents({ task, taskId, message, target, images, deliveryMode });
+    return ctx.result!;
   }
 
   messageHub.onRequest('space.task.sendMessage', async (data) => {
