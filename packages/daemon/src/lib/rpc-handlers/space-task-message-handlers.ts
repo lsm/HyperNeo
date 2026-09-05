@@ -519,8 +519,7 @@ export function setupSpaceTaskMessageHandlers(
           item.outcome.reason !== 'activation_timeout' &&
           item.outcome.reason !== 'post_approval_pending' &&
           item.outcome.reason !== 'restore_timeout' &&
-          item.outcome.reason !== 'spawn_timeout' &&
-          item.outcome.reason !== 'activate_failed'
+          item.outcome.reason !== 'spawn_timeout'
       );
       if (rejected) {
         throw new Error(

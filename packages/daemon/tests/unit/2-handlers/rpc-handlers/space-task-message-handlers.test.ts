@@ -9,6 +9,7 @@ import type {
 import {
   type ChannelCycleResetter,
   type NodeExecutionLookup,
+  type PendingAgentMessageQueue,
   parseMentions,
   type SessionEnsurer,
   setupSpaceTaskMessageHandlers,
@@ -1424,6 +1425,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
       }>;
       declared?: string[];
       postApproval?: { sessionId: string; agentName: string; nodeId?: string | null } | null;
+      pendingMessageQueue?: PendingAgentMessageQueue;
       outcomes: Array<Awaited<ReturnType<SessionEnsurer>>>;
     }) {
       const mh = createMockMessageHub();
@@ -1459,7 +1461,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         makeNodeExecutionRepo(opts.executions),
         undefined,
         undefined,
-        undefined,
+        opts.pendingMessageQueue,
         ensureTargetSession
       );
       return { targets, injectSubSessionMessage };
@@ -1614,6 +1616,41 @@ describe('setupSpaceTaskMessageHandlers', () => {
         undefined,
         undefined
       );
+    });
+
+    it('rejects permanent activation failures instead of queueing explicit sends', async () => {
+      const enqueue = mock(() => ({ record: { id: 'pending-1' }, deduped: false }));
+      const { targets, injectSubSessionMessage } = setupWithResolver({
+        executions: [],
+        declared: ['Reviewer'],
+        outcomes: [{ kind: 'unresolved', reason: 'activate_failed' }],
+        pendingMessageQueue: { enqueue },
+      });
+
+      await expect(
+        call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: 'wrong node',
+          target: {
+            kind: 'node_agent',
+            agentName: 'Reviewer',
+            workflowNodeId: 'node-that-does-not-declare-reviewer',
+          },
+        })
+      ).rejects.toThrow('activate_failed');
+
+      expect(targets).toEqual([
+        {
+          kind: 'worker',
+          taskId: 'task-1',
+          agentName: 'Reviewer',
+          workflowNodeId: 'node-that-does-not-declare-reviewer',
+          waitCapMs: 0,
+        },
+      ]);
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(injectSubSessionMessage).not.toHaveBeenCalled();
     });
 
     it('loops over same-name worker targets without extending SessionTargetWorker', async () => {
