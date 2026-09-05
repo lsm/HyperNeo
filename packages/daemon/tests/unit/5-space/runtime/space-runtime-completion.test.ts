@@ -3,7 +3,6 @@ import type { Space, SpaceTask, SpaceWorkflow, SpaceWorkflowRun } from '@hyperne
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
@@ -12,7 +11,7 @@ import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-ag
 import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -110,10 +109,6 @@ function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/wo
 }
 
 function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
-  ).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
   seedUnifiedAgentMirror(db, { id: agentId, spaceId, name: `Agent ${agentId}` });
 }
 
@@ -321,7 +316,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
   let workflowRunRepo: SpaceWorkflowRunRepository;
   let artifactRepo: WorkflowRunArtifactRepository;
   let taskRepo: SpaceTaskRepository;
-  let agentManager: SpaceAgentManager;
+  let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   let workflowManager: SpaceWorkflowManager;
   let spaceManager: SpaceManager;
   let bus: InternalEventBus<DaemonInternalEventMap>;
@@ -340,7 +335,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
     const config: SpaceRuntimeConfig = {
       db,
       spaceManager,
-      spaceAgentManager: agentManager,
+      longHorizonAgentRepo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
       taskRepo,
@@ -366,8 +361,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
     artifactRepo = new WorkflowRunArtifactRepository(db);
     taskRepo = new SpaceTaskRepository(db);
 
-    const agentRepo = new SpaceAgentRepository(db);
-    agentManager = new SpaceAgentManager(agentRepo);
+    longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
 
     const workflowRepo = new SpaceWorkflowRepository(db);
     workflowManager = new SpaceWorkflowManager(workflowRepo);

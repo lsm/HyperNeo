@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from 'bun:test';
 import type {
   NodeExecution,
   Space,
+  SpaceLongHorizonAgent,
   SpaceTask,
   SpaceWorkflow,
   SpaceWorkflowRun,
@@ -84,11 +85,21 @@ function fakeCustomAgent() {
   return {
     id: AGENT_ID,
     spaceId: SPACE_ID,
-    name: AGENT_NAME,
-    customPrompt: 'do the composed work',
+    handle: AGENT_NAME,
+    displayName: AGENT_NAME,
+    templateKey: 'migration.legacy_space_agent',
+    status: 'active',
+    sessionId: null,
+    instructions: 'do the composed work',
+    autonomyLevel: null,
     model: 'm',
-    tools: [],
-  };
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
+    createdAt: 1,
+    updatedAt: 1,
+  } as SpaceLongHorizonAgent;
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -215,8 +226,8 @@ function makeSpawnFlowHarness(options: SpawnFlowHarnessOptions = {}): SpawnFlowH
       },
     },
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
-    spaceAgentManager: {
-      getById: (id: string) => (id !== AGENT_ID ? undefined : fakeCustomAgent()),
+    longHorizonAgentRepo: {
+      getById: (id: string) => (id !== AGENT_ID ? null : fakeCustomAgent()),
     },
     ...(options.worktreeGate
       ? {

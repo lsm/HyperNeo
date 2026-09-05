@@ -11,7 +11,6 @@ import {
   type SpaceActionsMcpServer,
   type SpaceActionsServerConfig,
 } from '../../../../src/lib/space/actions/space-actions-server.ts';
-import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
@@ -19,6 +18,7 @@ import type { NodeAgentToolsConfig } from '../../../../src/lib/space/tools/node-
 import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import type { CreateMcpAuditLogParams } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import type { Database as BunDatabase } from '../../../../src/storage/sqlite-compat.ts';
@@ -1240,7 +1240,7 @@ function buildRuntimeService(): SpaceRuntimeService {
   return new SpaceRuntimeService({
     db: {} as BunDatabase,
     spaceManager,
-    spaceAgentManager: {} as SpaceAgentManager,
+    longHorizonAgentRepo: {} as SpaceLongHorizonAgentRepository,
     spaceWorkflowManager: {} as SpaceWorkflowManager,
     workflowRunRepo: {} as SpaceWorkflowRunRepository,
     taskRepo: {} as SpaceTaskRepository,

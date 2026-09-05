@@ -12,7 +12,6 @@ import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
-import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
@@ -2450,7 +2449,6 @@ describe('Session RPC Handlers — session.create universal-read dispatcher inje
         getSpace: () => Promise.resolve(null),
         listSpaces: () => Promise.resolve([]),
       } as unknown as SpaceManager,
-      spaceAgentManager: {} as SpaceAgentManager,
       spaceWorkflowManager: {} as SpaceWorkflowManager,
       workflowRunRepo: {} as SpaceWorkflowRunRepository,
       taskRepo: {} as SpaceTaskRepository,

@@ -21,7 +21,6 @@ import type {
   AgentMemoryCoreEntry,
   AgentMemorySearchResult,
 } from '../../../storage/repositories/agent-memory-repository.ts';
-import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
 import { inferProviderForModel } from '../../providers/registry.ts';
 import { Logger } from '../../logger.ts';
 import { SUB_SESSION_FEATURES } from './seed-agents.ts';
@@ -511,8 +510,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 export interface ResolveAgentInitConfig {
   task: SpaceTask;
   space: Space;
-  agentManager: SpaceAgentManager;
-  agent?: SpaceWorkerAgent | null;
+  agent: SpaceWorkerAgent | null;
   sessionId: string;
   workspacePath: string;
   workflowRun?: SpaceWorkflowRun | null;
@@ -526,20 +524,17 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
   const {
     task,
     space,
-    agentManager,
-    agent: resolvedAgent,
+    agent,
     sessionId,
     workspacePath,
     workflowRun,
     workflow,
     previousTaskSummaries,
     slotOverrides,
-    agentId,
   } = config;
 
-  const agent = resolvedAgent !== undefined ? resolvedAgent : agentManager.getById(agentId);
   if (!agent) {
-    throw new Error(`Agent not found: ${agentId} (task: ${task.id})`);
+    throw new Error(`Agent not found: ${config.agentId} (task: ${task.id})`);
   }
 
   return createCustomAgentInit({

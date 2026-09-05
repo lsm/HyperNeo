@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceWorkflow, SpaceWorkflowRun } from '@hyperneo/shared';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -10,7 +9,7 @@ import { TransientSpawnError } from '../../../../src/lib/space/runtime/workflow-
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -74,10 +73,6 @@ function seedSpaceRow(
 }
 
 function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
-  ).run(agentId, spaceId, name, Date.now(), Date.now());
   seedUnifiedAgentMirror(db, { id: agentId, spaceId, name });
 }
 
@@ -133,7 +128,7 @@ describe('SpaceRuntime', () => {
   let workflowRunRepo: SpaceWorkflowRunRepository;
   let taskRepo: SpaceTaskRepository;
   let nodeExecutionRepo: NodeExecutionRepository;
-  let agentManager: SpaceAgentManager;
+  let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   let workflowManager: SpaceWorkflowManager;
   let spaceManager: SpaceManager;
   let runtime: SpaceRuntime;
@@ -164,8 +159,7 @@ describe('SpaceRuntime', () => {
     taskRepo = new SpaceTaskRepository(db);
     nodeExecutionRepo = new NodeExecutionRepository(db);
 
-    const agentRepo = new SpaceAgentRepository(db);
-    agentManager = new SpaceAgentManager(agentRepo);
+    longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
 
     const workflowRepo = new SpaceWorkflowRepository(db);
     workflowManager = new SpaceWorkflowManager(workflowRepo);
@@ -175,7 +169,7 @@ describe('SpaceRuntime', () => {
     const config: SpaceRuntimeConfig = {
       db,
       spaceManager,
-      spaceAgentManager: agentManager,
+      longHorizonAgentRepo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
       taskRepo,
@@ -215,7 +209,7 @@ describe('SpaceRuntime', () => {
       const rt = new SpaceRuntime({
         db,
         spaceManager,
-        spaceAgentManager: agentManager,
+        longHorizonAgentRepo,
         spaceWorkflowManager: workflowManager,
         workflowRunRepo,
         taskRepo,
@@ -494,7 +488,7 @@ describe('SpaceRuntime', () => {
       runtime = new SpaceRuntime({
         db,
         spaceManager,
-        spaceAgentManager: agentManager,
+        longHorizonAgentRepo,
         spaceWorkflowManager: workflowManager,
         workflowRunRepo,
         taskRepo,
@@ -572,7 +566,7 @@ describe('SpaceRuntime', () => {
         runtime = new SpaceRuntime({
           db,
           spaceManager,
-          spaceAgentManager: agentManager,
+          longHorizonAgentRepo,
           spaceWorkflowManager: workflowManager,
           workflowRunRepo,
           taskRepo,
@@ -686,7 +680,7 @@ describe('SpaceRuntime', () => {
         runtime = new SpaceRuntime({
           db,
           spaceManager,
-          spaceAgentManager: agentManager,
+          longHorizonAgentRepo,
           spaceWorkflowManager: workflowManager,
           workflowRunRepo,
           taskRepo,
@@ -1257,7 +1251,7 @@ describe('SpaceRuntime', () => {
       const freshRuntime = new SpaceRuntime({
         db,
         spaceManager,
-        spaceAgentManager: agentManager,
+        longHorizonAgentRepo,
         spaceWorkflowManager: workflowManager,
         workflowRunRepo,
         taskRepo,
@@ -1426,7 +1420,7 @@ describe('SpaceRuntime', () => {
       return new SpaceRuntime({
         db,
         spaceManager,
-        spaceAgentManager: agentManager,
+        longHorizonAgentRepo,
         spaceWorkflowManager: workflowManager,
         workflowRunRepo,
         taskRepo,
@@ -2920,7 +2914,7 @@ describe('SpaceRuntime', () => {
       return new SpaceRuntime({
         db,
         spaceManager: (overrideSpaceManager ?? spaceManager) as never,
-        spaceAgentManager: agentManager,
+        longHorizonAgentRepo,
         spaceWorkflowManager: workflowManager,
         workflowRunRepo,
         taskRepo,
@@ -3303,26 +3297,28 @@ describe('SpaceRuntime', () => {
   });
 
   describe('space.create seeding (unit-level check)', () => {
-    test('seedBuiltInWorkflows can be called after seedPresetAgents successfully', async () => {
+    test('seedBuiltInWorkflows can be called after seedUnifiedSpaceAgents successfully', async () => {
       const newSpaceId = 'space-seed-test';
       const newWorkspacePath = '/tmp/seed-test';
       seedSpaceRow(db, newSpaceId, newWorkspacePath);
 
-      const { seedPresetAgents } = await import('../../../../src/lib/space/agents/seed-agents.ts');
+      const { seedUnifiedSpaceAgents } = await import(
+        '../../../../src/lib/space/agents/seed-agents.ts'
+      );
       const { seedBuiltInWorkflows } = await import(
         '../../../../src/lib/space/workflows/built-in-workflows.ts'
       );
 
-      const result = await seedPresetAgents(newSpaceId, agentManager);
+      const result = seedUnifiedSpaceAgents(newSpaceId, longHorizonAgentRepo);
       expect(result.errors).toHaveLength(0);
       expect(result.seeded.length).toBeGreaterThan(0);
 
-      const agents = agentManager.listBySpaceId(newSpaceId);
+      const agents = longHorizonAgentRepo.listBySpaceId(newSpaceId);
       expect(() =>
         seedBuiltInWorkflows(
           newSpaceId,
           workflowManager,
-          (name) => agents.find((a) => a.name === name)?.id
+          (name) => agents.find((a) => a.displayName === name)?.id
         )
       ).not.toThrow();
 
@@ -3335,14 +3331,16 @@ describe('SpaceRuntime', () => {
       const newWorkspacePath = '/tmp/seed-idempotent';
       seedSpaceRow(db, newSpaceId, newWorkspacePath);
 
-      const { seedPresetAgents } = await import('../../../../src/lib/space/agents/seed-agents.ts');
+      const { seedUnifiedSpaceAgents } = await import(
+        '../../../../src/lib/space/agents/seed-agents.ts'
+      );
       const { seedBuiltInWorkflows } = await import(
         '../../../../src/lib/space/workflows/built-in-workflows.ts'
       );
 
-      await seedPresetAgents(newSpaceId, agentManager);
-      const agents = agentManager.listBySpaceId(newSpaceId);
-      const resolver = (name: string) => agents.find((a) => a.name === name)?.id;
+      seedUnifiedSpaceAgents(newSpaceId, longHorizonAgentRepo);
+      const agents = longHorizonAgentRepo.listBySpaceId(newSpaceId);
+      const resolver = (name: string) => agents.find((a) => a.displayName === name)?.id;
 
       seedBuiltInWorkflows(newSpaceId, workflowManager, resolver);
       seedBuiltInWorkflows(newSpaceId, workflowManager, resolver);

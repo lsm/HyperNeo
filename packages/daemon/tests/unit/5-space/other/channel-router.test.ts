@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceWorkflow, WorkflowChannel } from '@hyperneo/shared';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
   ActivationError,
@@ -14,7 +13,7 @@ import {
 } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -38,10 +37,6 @@ function seedSpace(db: BunDatabase, spaceId: string): void {
 }
 
 function seedAgent(db: BunDatabase, agentId: string, spaceId: string): void {
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
-  ).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
   seedUnifiedAgentMirror(db, { id: agentId, spaceId, name: `Agent ${agentId}` });
 }
 
@@ -107,7 +102,7 @@ describe('ChannelRouter', () => {
   let taskRepo: SpaceTaskRepository;
   let workflowRunRepo: SpaceWorkflowRunRepository;
   let workflowManager: SpaceWorkflowManager;
-  let agentManager: SpaceAgentManager;
+  let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   let channelCycleRepo: ChannelCycleRepository;
   let router: ChannelRouter;
 
@@ -148,8 +143,7 @@ describe('ChannelRouter', () => {
       return run;
     }) as typeof workflowRunRepo.createRun;
 
-    const agentRepo = new SpaceAgentRepository(db);
-    agentManager = new SpaceAgentManager(agentRepo);
+    longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
 
     const workflowRepo = new SpaceWorkflowRepository(db);
     workflowManager = new SpaceWorkflowManager(workflowRepo);
@@ -158,7 +152,7 @@ describe('ChannelRouter', () => {
       taskRepo,
       workflowRunRepo,
       workflowManager,
-      agentExists: (id) => agentManager.getById(id) !== null,
+      agentExists: (id) => longHorizonAgentRepo.getById(id) !== null,
       channelCycleRepo,
       nodeExecutionRepo: new NodeExecutionRepository(db),
     });
@@ -200,7 +194,7 @@ describe('ChannelRouter', () => {
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(AGENT_CUSTOM);
+      db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(AGENT_CUSTOM);
 
       let caught: unknown;
       try {
@@ -237,7 +231,7 @@ describe('ChannelRouter', () => {
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(AGENT_CUSTOM);
+      db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(AGENT_CUSTOM);
 
       await router.activateNode(run.id, NODE_A, { targetAgentName: 'coder-slot' });
 
@@ -560,7 +554,7 @@ describe('ChannelRouter', () => {
         taskRepo,
         workflowRunRepo,
         workflowManager,
-        agentExists: (id) => agentManager.getById(id) !== null,
+        agentExists: (id) => longHorizonAgentRepo.getById(id) !== null,
         channelCycleRepo,
         nodeExecutionRepo,
         cancelSessionById: (sessionId) => cancelledSessions.push(sessionId),
@@ -988,7 +982,7 @@ describe('ChannelRouter', () => {
         taskRepo,
         workflowRunRepo,
         workflowManager,
-        agentExists: (id) => agentManager.getById(id) !== null,
+        agentExists: (id) => longHorizonAgentRepo.getById(id) !== null,
         channelCycleRepo,
         nodeExecutionRepo: new NodeExecutionRepository(db),
         internalEventBus: bus,
@@ -1048,7 +1042,7 @@ describe('ChannelRouter', () => {
         taskRepo,
         workflowRunRepo,
         workflowManager,
-        agentExists: (id) => agentManager.getById(id) !== null,
+        agentExists: (id) => longHorizonAgentRepo.getById(id) !== null,
         channelCycleRepo,
         nodeExecutionRepo: new NodeExecutionRepository(db),
         internalEventBus: bus,
@@ -1103,7 +1097,7 @@ describe('ChannelRouter', () => {
         taskRepo,
         workflowRunRepo,
         workflowManager,
-        agentExists: (id) => agentManager.getById(id) !== null,
+        agentExists: (id) => longHorizonAgentRepo.getById(id) !== null,
         channelCycleRepo,
         nodeExecutionRepo: new NodeExecutionRepository(db),
         internalEventBus: bus,
@@ -1239,7 +1233,7 @@ describe('ChannelRouter', () => {
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
 
-      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(AGENT_CODER);
+      db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(AGENT_CODER);
 
       expect(channelCycleRepo.countRecentCycleEvents(run.id, 1)).toBe(0);
       await expect(router.deliverMessage(run.id, 'planner', 'coder', 'orphan')).rejects.toThrow();

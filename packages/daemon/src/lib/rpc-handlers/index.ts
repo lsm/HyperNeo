@@ -83,9 +83,7 @@ import { PendingAgentMessageRepository } from '../../storage/repositories/pendin
 import { SpaceAgentInboxRepository } from '../../storage/repositories/space-agent-inbox-repository.ts';
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import { setupSpaceAgentHandlers } from './space-agent-handlers.ts';
-import type { SpaceAgentManager } from '../space/managers/space-agent-manager.ts';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
-import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
@@ -197,7 +195,6 @@ export interface RPCHandlerDependencies {
   db: Database;
   gitHubService?: GitHubService;
   spaceManager: SpaceManager;
-  spaceAgentManager: SpaceAgentManager;
   jobQueue: JobQueueRepository;
   jobProcessor: JobQueueProcessor;
   messageDeliveryProcessor: JobQueueProcessor;
@@ -535,11 +532,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
   spaceWorkflowRepo.backfillExistingDefinitionVersions();
   spaceWorkflowRunRepo.backfillDefinitionPins((id) => spaceWorkflowRepo.getWorkflow(id));
-  const spaceAgentRepo = new SpaceAgentRepository(deps.db.getDatabase());
-  const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(
-    spaceAgentRepo,
-    longHorizonAgentRepo
-  );
+  const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(longHorizonAgentRepo);
   const spaceWorkflowManager = new SpaceWorkflowManager(spaceWorkflowRepo, agentLookup);
 
   const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
@@ -561,14 +554,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceWorkflowManager,
     deps.internalEventBus,
     longHorizonAgentRepo,
-    spaceWorkflowRunRepo,
-    deps.spaceAgentManager
+    spaceWorkflowRunRepo
   );
 
   void restampBuiltInWorkflowsOnStartup(
     spaceWorkflowManager,
     deps.spaceManager,
-    deps.spaceAgentManager,
     longHorizonAgentRepo,
     (workflowId) =>
       spaceWorkflowRunRepo
@@ -669,7 +660,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     db: deps.db.getDatabase(),
     dbPath: deps.db.getDatabasePath(),
     spaceManager: deps.spaceManager,
-    spaceAgentManager: deps.spaceAgentManager,
     longHorizonAgentRepo,
     spaceWorkflowManager,
     workflowRunRepo: spaceWorkflowRunRepo,
@@ -685,7 +675,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     actorRegistryRepos: {
       spaceRepo,
       sessionRepo,
-      spaceAgentRepo,
       longHorizonAgentRepo,
       workflowRepo: spaceWorkflowRepo,
       workflowRunRepo: spaceWorkflowRunRepo,
@@ -913,10 +902,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   setupSpaceAgentHandlers(
     deps.messageHub,
     deps.internalEventBus,
-    deps.spaceAgentManager,
     deps.spaceManager,
     deps.db,
     longHorizonAgentRepo,
+    spaceWorkflowRepo,
     spaceRuntimeService,
     new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(deps.db.getDatabase()))
   );
@@ -956,7 +945,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceTaskRepo,
     spaceWorkflowRunRepo,
     deps.internalEventBus,
-    deps.spaceAgentManager,
     spaceWorkflowManager,
     deps.sessionManager,
     spaceRuntimeService,
@@ -1060,7 +1048,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     sessionManager: deps.sessionManager,
     reactiveDb: deps.reactiveDb,
     spaceManager: deps.spaceManager,
-    spaceAgentManager: deps.spaceAgentManager,
     longHorizonAgentRepo,
     spaceWorkflowManager,
     spaceRuntimeService,
@@ -1130,7 +1117,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   setupSpaceExportImportHandlers(
     deps.messageHub,
     deps.spaceManager,
-    spaceAgentRepo,
     longHorizonAgentRepo,
     spaceWorkflowRepo,
     spaceWorkflowManager,

@@ -10,13 +10,13 @@ import { coordinatorLongHorizonAgentId } from '../../../src/storage/repositories
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository';
 import { PendingAgentMessageRepository } from '../../../src/storage/repositories/pending-agent-message-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
-import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
 import type { Session } from '@hyperneo/shared';
 import { createSpaceTables } from '../helpers/space-test-db';
+import { seedWorkerMirror } from '../helpers/seed-worker-mirror';
 
 function makeSession(id: string, overrides: Partial<Session> = {}): Session {
   return {
@@ -45,7 +45,6 @@ describe('SpaceActorRegistryAdapter', () => {
   let db: Database;
   let spaceRepo: SpaceRepository;
   let sessionRepo: SessionRepository;
-  let spaceAgentRepo: SpaceAgentRepository;
   let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   let workflowRepo: SpaceWorkflowRepository;
   let workflowRunRepo: SpaceWorkflowRunRepository;
@@ -59,7 +58,6 @@ describe('SpaceActorRegistryAdapter', () => {
 
     spaceRepo = new SpaceRepository(db);
     sessionRepo = new SessionRepository(db);
-    spaceAgentRepo = new SpaceAgentRepository(db);
     longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
     workflowRepo = new SpaceWorkflowRepository(db);
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
@@ -68,7 +66,6 @@ describe('SpaceActorRegistryAdapter', () => {
     registry = new SpaceActorRegistryAdapter({
       spaceRepo,
       sessionRepo,
-      spaceAgentRepo,
       longHorizonAgentRepo,
       workflowRepo,
       workflowRunRepo,
@@ -125,9 +122,12 @@ describe('SpaceActorRegistryAdapter', () => {
     spaceRepo.addSessionToSpace(space.id, workerSubSession.id);
     spaceRepo.addSessionToSpace(space.id, namedAgentSubSession.id);
 
-    const agent = spaceAgentRepo.create({
+    const agent = { id: 'long-term-agent', name: 'Long Term Agent', handle: 'long-term-agent' };
+    seedWorkerMirror(db, {
+      id: agent.id,
       spaceId: space.id,
-      name: 'Long Term Agent',
+      name: agent.name,
+      handle: 'long-term-agent',
     });
     const longHorizonAgent = longHorizonAgentRepo.create({
       spaceId: space.id,
@@ -153,9 +153,16 @@ describe('SpaceActorRegistryAdapter', () => {
         },
       })
     );
-    const reservedNameAgent = spaceAgentRepo.create({
-      spaceId: space.id,
+    const reservedNameAgent = {
+      id: 'coordinator-2',
       name: 'Coordinator',
+      handle: 'coordinator-2',
+    };
+    seedWorkerMirror(db, {
+      id: reservedNameAgent.id,
+      spaceId: space.id,
+      name: reservedNameAgent.name,
+      handle: 'coordinator-2',
     });
     sessionRepo.createSession(
       makeSession(longTermAgentSessionId(space.id, reservedNameAgent.id), {
@@ -405,62 +412,46 @@ describe('SpaceActorRegistryAdapter', () => {
     expect(handles).not.toContain(`@worker:${encodeURIComponent(run.id)}/rev-a/reviewer`);
   });
 
-  it('uses fallback and collision-safe handles for slug-derived agent handles', () => {
+  it('exposes row-backed agent handles and keeps every actor address parseable', () => {
     const space = spaceRepo.createSpace({
       workspacePath: '/workspace/project',
       slug: 'project',
       name: 'Project',
     });
-    const first = spaceAgentRepo.create({ spaceId: space.id, name: 'A-B' });
-    const second = spaceAgentRepo.create({ spaceId: space.id, name: 'A B' });
-    const prefixed = spaceAgentRepo.create({ spaceId: space.id, name: 'custom-coordinator' });
-    const cjk = spaceAgentRepo.create({ spaceId: space.id, name: '助手' });
+    const first = 'agent-a-b';
+    seedWorkerMirror(db, { id: first, spaceId: space.id, name: 'A-B', handle: 'a-b' });
+    const second = 'agent-a-b-2';
+    seedWorkerMirror(db, { id: second, spaceId: space.id, name: 'A B', handle: 'a-b-2' });
+    const prefixed = 'agent-custom-coordinator';
+    seedWorkerMirror(db, {
+      id: prefixed,
+      spaceId: space.id,
+      name: 'custom-coordinator',
+      handle: 'custom-coordinator',
+    });
+    const cjk = 'agent-cjk';
+    seedWorkerMirror(db, { id: cjk, spaceId: space.id, name: '助手', handle: 'unnamed-space' });
 
     const actors = registry.listActors(space.id);
 
-    expect(registry.getActor(space.id, `agent:${first.id}`)?.handle).toBe('@a-b');
-    expect(registry.getActor(space.id, `agent:${second.id}`)?.handle).toBe('@a-b-2');
-    expect(registry.getActor(space.id, `agent:${first.id}`)?.roles).toEqual([
+    expect(registry.getActor(space.id, `agent:${first}`)?.handle).toBe('@a-b');
+    expect(registry.getActor(space.id, `agent:${second}`)?.handle).toBe('@a-b-2');
+    expect(registry.getActor(space.id, `agent:${first}`)?.roles).toEqual([
       'actor-role:a-b',
       'space-agent',
     ]);
-    expect(registry.getActor(space.id, `agent:${second.id}`)?.roles).toEqual([
+    expect(registry.getActor(space.id, `agent:${second}`)?.roles).toEqual([
       'actor-role:a-b-2',
       'space-agent',
     ]);
-    expect(registry.getActor(space.id, `agent:${prefixed.id}`)?.roles).toEqual([
+    expect(registry.getActor(space.id, `agent:${prefixed}`)?.roles).toEqual([
       'actor-role:custom-coordinator',
       'space-agent',
     ]);
-    expect(registry.getActor(space.id, `agent:${cjk.id}`)?.handle).toBe('@unnamed-space');
+    expect(registry.getActor(space.id, `agent:${cjk}`)?.handle).toBe('@unnamed-space');
     for (const actor of actors) {
       if (actor.handle) expect(() => parseAddress(actor.handle!)).not.toThrow();
     }
-  });
-
-  it('preserves long-horizon handle when shared-ID handles diverge', () => {
-    const space = spaceRepo.createSpace({
-      workspacePath: '/workspace/project',
-      slug: 'project',
-      name: 'Project',
-    });
-    const worker = spaceAgentRepo.create({ spaceId: space.id, name: 'Legacy Worker' });
-    db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(worker.id);
-    longHorizonAgentRepo.create({
-      id: worker.id,
-      spaceId: space.id,
-      handle: 'long-horizon-handle',
-      displayName: 'Long Horizon Agent',
-    });
-
-    const actor = registry.getActor(space.id, `agent:${worker.id}`);
-
-    expect(actor?.handle).toBe('@long-horizon-handle');
-    expect(actor?.roles).toEqual([
-      'actor-role:legacy-worker',
-      'actor-role:long-horizon-handle',
-      'space-agent',
-    ]);
   });
 
   it('marks non-active long-horizon agents unroutable even with stale sessions', () => {
@@ -498,26 +489,25 @@ describe('SpaceActorRegistryAdapter', () => {
     expect(registry.getActor(space.id, `agent:${archived.id}`)?.status).toBe('archived');
   });
 
-  it('keeps shared-ID non-active long-horizon agents unroutable despite worker sessions', () => {
+  it('keeps non-active long-horizon agents unroutable despite agent sessions', () => {
     const space = spaceRepo.createSpace({
       workspacePath: '/workspace/project',
       slug: 'project',
       name: 'Project',
     });
-    const worker = spaceAgentRepo.create({ spaceId: space.id, name: 'Legacy Worker' });
-    db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(worker.id);
+    const workerId = 'legacy-worker';
     longHorizonAgentRepo.create({
-      id: worker.id,
+      id: workerId,
       spaceId: space.id,
       handle: 'legacy-worker',
       displayName: 'Legacy Worker',
       status: 'paused',
     });
     sessionRepo.createSession(
-      makeSession(longTermAgentSessionId(space.id, worker.id), { context: { spaceId: space.id } })
+      makeSession(longTermAgentSessionId(space.id, workerId), { context: { spaceId: space.id } })
     );
 
-    const actor = registry.getActor(space.id, `agent:${worker.id}`);
+    const actor = registry.getActor(space.id, `agent:${workerId}`);
 
     expect(actor?.handle).toBe('@legacy-worker');
     expect(actor?.status).toBe('archived');
@@ -529,51 +519,50 @@ describe('SpaceActorRegistryAdapter', () => {
       slug: 'project',
       name: 'Project',
     });
-    const worker = spaceAgentRepo.create({ spaceId: space.id, name: 'Legacy Worker' });
-    spaceAgentRepo.update(worker.id, { status: 'paused' });
+    const workerId = 'legacy-worker';
+    seedWorkerMirror(db, {
+      id: workerId,
+      spaceId: space.id,
+      name: 'Legacy Worker',
+      status: 'paused',
+    });
     sessionRepo.createSession(
-      makeSession(longTermAgentSessionId(space.id, worker.id), { context: { spaceId: space.id } })
+      makeSession(longTermAgentSessionId(space.id, workerId), { context: { spaceId: space.id } })
     );
 
-    const actor = registry.getActor(space.id, `agent:${worker.id}`);
+    const actor = registry.getActor(space.id, `agent:${workerId}`);
 
     expect(actor?.handle).toBe('@legacy-worker');
     expect(actor?.status).not.toBe('archived');
   });
 
-  it('lists both families side by side and scopes the shared-id overlay to one space', () => {
+  it('lists both families side by side', () => {
     const space = spaceRepo.createSpace({
       workspacePath: '/workspace/project',
       slug: 'project',
       name: 'Project',
     });
-    const other = spaceRepo.createSpace({ workspacePath: '/w2', slug: 'p2', name: 'P2' });
-    const workerOnly = spaceAgentRepo.create({ spaceId: space.id, name: 'Worker Only' });
+    const workerOnly = 'worker-only';
+    seedWorkerMirror(db, { id: workerOnly, spaceId: space.id, name: 'Worker Only' });
     const longHorizonOnly = longHorizonAgentRepo.create({
       spaceId: space.id,
       handle: 'lh-only',
       displayName: 'LH Only',
     });
-    const bridged = spaceAgentRepo.create({ spaceId: space.id, name: 'Bridged' });
-    db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(bridged.id);
-    longHorizonAgentRepo.create({
-      id: bridged.id,
-      spaceId: other.id,
-      handle: 'bridged-elsewhere',
-      displayName: 'Bridged Elsewhere',
-    });
+    const bridged = 'bridged';
+    seedWorkerMirror(db, { id: bridged, spaceId: space.id, name: 'Bridged' });
 
     const actors = registry.listActors(space.id);
 
-    const workerActor = actors.find((a) => a.actorId === `agent:${workerOnly.id}`);
+    const workerActor = actors.find((a) => a.actorId === `agent:${workerOnly}`);
     expect(workerActor?.handle).toBe('@worker-only');
     const longHorizonActor = actors.find((a) => a.actorId === `agent:${longHorizonOnly.id}`);
     expect(longHorizonActor?.handle).toBe('@lh-only');
-    const bridgedActor = actors.find((a) => a.actorId === `agent:${bridged.id}`);
+    const bridgedActor = actors.find((a) => a.actorId === `agent:${bridged}`);
     expect(bridgedActor?.handle).toBe('@bridged');
     expect(bridgedActor?.status).toBe('inactive');
     expect(
-      actors.filter((a) => a.actorId === `agent:${bridged.id}` || a.handle === '@bridged')
+      actors.filter((a) => a.actorId === `agent:${bridged}` || a.handle === '@bridged')
     ).toHaveLength(1);
   });
 
@@ -654,7 +643,6 @@ describe('SpaceActorRegistryAdapter', () => {
     const fallbackRegistry = new SpaceActorRegistryAdapter({
       spaceRepo,
       sessionRepo,
-      spaceAgentRepo,
       longHorizonAgentRepo,
       workflowRepo,
       workflowRunRepo,

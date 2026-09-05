@@ -4,9 +4,8 @@ import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
@@ -46,8 +45,7 @@ function buildRuntime(
   const workflowRunRepo = new SpaceWorkflowRunRepository(db);
   const taskRepo = new SpaceTaskRepository(db);
   const nodeExecutionRepo = new NodeExecutionRepository(db);
-  const agentRepo = new SpaceAgentRepository(db);
-  const agentManager = new SpaceAgentManager(agentRepo);
+  const agentRepo = new SpaceLongHorizonAgentRepository(db);
   const workflowRepo = new SpaceWorkflowRepository(db);
   const workflowManager = new SpaceWorkflowManager(workflowRepo);
   const realSpaceManager = new SpaceManager(db);
@@ -67,7 +65,7 @@ function buildRuntime(
   const config: SpaceRuntimeConfig = {
     db,
     spaceManager,
-    spaceAgentManager: agentManager,
+    longHorizonAgentRepo: agentRepo,
     spaceWorkflowManager: workflowManager,
     workflowRunRepo,
     taskRepo,

@@ -6,7 +6,6 @@ import {
   createActionRegistry,
 } from '../../../../src/lib/space/actions/registry.ts';
 import { createSpaceRegistryEntries } from '../../../../src/lib/space/actions/registry-space.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -28,7 +27,6 @@ import {
   SpaceAgentInactivityClaimRepository,
   SpaceAgentInactivityConfigRepository,
 } from '../../../../src/storage/repositories/space-agent-inactivity-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -84,7 +82,6 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): PartCCtx {
      VALUES (?, ?, 'sentinel', 'Sentinel', ?, ?)`
   ).run(LHA_ID, SPACE_ID, Date.now(), Date.now());
 
-  const spaceAgentManager = new SpaceAgentManager(new SpaceAgentRepository(db));
   const workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
   const workflowRunRepo = new SpaceWorkflowRunRepository(db);
   const nodeExecutionRepo = new NodeExecutionRepository(db);
@@ -94,7 +91,6 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): PartCCtx {
   const runtime = new SpaceRuntime({
     db,
     spaceManager,
-    spaceAgentManager,
     spaceWorkflowManager: workflowManager,
     workflowRunRepo,
     taskRepo,
@@ -110,7 +106,6 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): PartCCtx {
     nodeExecutionRepo,
     workflowRunRepo,
     taskManager: new SpaceTaskManager(db, SPACE_ID),
-    spaceAgentManager,
     taskAgentManager: stubTaskAgentManager,
     scheduleService: new ScheduleService({
       db,

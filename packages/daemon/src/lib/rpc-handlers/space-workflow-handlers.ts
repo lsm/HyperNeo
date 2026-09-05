@@ -10,7 +10,6 @@ import type {
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
-import type { SpaceAgentManager } from '../space/managers/space-agent-manager.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import {
   getBuiltInWorkflows,
@@ -52,34 +51,6 @@ const PRESET_AGENT_NAMES_LOWER = new Set(
   getPresetAgentTemplates().map((p) => p.name.toLowerCase())
 );
 
-function isOrphanedMigrationMirror(
-  workerSource: { listBySpaceId(spaceId: string): SpaceWorkerAgentLike[] } | undefined,
-  spaceId: string,
-  id: string,
-  templateKey: string | null | undefined
-): boolean {
-  if (templateKey !== 'migration.legacy_space_agent') return false;
-  if (!workerSource) return false;
-  return !workerSource.listBySpaceId(spaceId).some((w) => w.id === id);
-}
-
-function workerOnlyRoleCandidates(
-  workerSource: { listBySpaceId(spaceId: string): SpaceWorkerAgentLike[] } | undefined,
-  spaceId: string,
-  unifiedIds: Set<string>
-): Array<{ id: string; displayName: string }> {
-  const workers = workerSource?.listBySpaceId(spaceId) ?? [];
-  return workers
-    .filter((w) => !unifiedIds.has(w.id) && w.status !== 'archived')
-    .map((w) => ({ id: w.id, displayName: w.name }));
-}
-
-interface SpaceWorkerAgentLike {
-  id: string;
-  name: string;
-  status?: string;
-}
-
 function isPristineUnifiedRetiredPresetTwin(twin: SpaceLongHorizonAgent | null): boolean {
   if (!twin) return false;
   const tools = Array.isArray(twin.toolPermissions.tools)
@@ -106,14 +77,12 @@ function isPristineUnifiedRetiredPresetTwin(twin: SpaceLongHorizonAgent | null):
 function buildTemplateUpdateParams(
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
   spaceId: string,
-  workerAgentSource: { listBySpaceId(spaceId: string): SpaceWorkerAgentLike[] } | undefined,
   template: SpaceWorkflow,
   errorVerb: 'sync' | 'resync',
   existingWorkflow?: SpaceWorkflow
 ): UpdateSpaceWorkflowParams {
   const coordinatorByHandle = longHorizonAgentRepo.getCoordinator(spaceId);
   const unifiedRows = longHorizonAgentRepo.listBySpaceId(spaceId);
-  const unifiedIds = new Set(unifiedRows.map((a) => a.id));
   const spaceAgents = [
     ...unifiedRows
       .filter((a) => !coordinatorByHandle || a.id !== coordinatorByHandle.id)
@@ -122,9 +91,7 @@ function buildTemplateUpdateParams(
         (a) =>
           a.templateKey === 'migration.legacy_space_agent' || (a.status ?? 'active') === 'active'
       )
-      .filter((a) => !isOrphanedMigrationMirror(workerAgentSource, spaceId, a.id, a.templateKey))
       .map((a) => ({ id: a.id, displayName: a.displayName ?? a.handle })),
-    ...workerOnlyRoleCandidates(workerAgentSource, spaceId, unifiedIds),
   ];
   function resolveAgentId(roleName: string): string | undefined {
     const role = roleName.toLowerCase();
@@ -351,7 +318,6 @@ export async function checkBuiltInWorkflowDriftOnStartup(
 export async function restampBuiltInWorkflowsOnStartup(
   workflowManager: SpaceWorkflowManager,
   spaceManager: SpaceManager,
-  spaceAgentManager: SpaceAgentManager,
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
   hasActiveRuns?: (workflowId: string) => boolean
 ): Promise<void> {
@@ -364,7 +330,6 @@ export async function restampBuiltInWorkflowsOnStartup(
       try {
         const restampCoordinatorByHandle = longHorizonAgentRepo.ensureCoordinator(space.id);
         const restampUnifiedRows = longHorizonAgentRepo.listBySpaceId(space.id);
-        const restampUnifiedIds = new Set(restampUnifiedRows.map((a) => a.id));
         const agents = [
           ...restampUnifiedRows
             .filter((a) => !restampCoordinatorByHandle || a.id !== restampCoordinatorByHandle.id)
@@ -374,11 +339,7 @@ export async function restampBuiltInWorkflowsOnStartup(
                 a.templateKey === 'migration.legacy_space_agent' ||
                 (a.status ?? 'active') === 'active'
             )
-            .filter(
-              (a) => !isOrphanedMigrationMirror(spaceAgentManager, space.id, a.id, a.templateKey)
-            )
             .map((a) => ({ id: a.id, displayName: a.displayName ?? a.handle })),
-          ...workerOnlyRoleCandidates(spaceAgentManager, space.id, restampUnifiedIds),
         ];
         const result = seedBuiltInWorkflows(
           space.id,
@@ -417,22 +378,9 @@ export async function restampBuiltInWorkflowsOnStartup(
           }
         }
         const retiredAgents = retireRemovedPresetAgents(space.id, {
-          agentManager: spaceAgentManager,
+          agentRepo: longHorizonAgentRepo,
           referencedAgentIds,
-          shouldRetireUnifiedTwin: (agentId) => {
-            const twin = longHorizonAgentRepo.getById(agentId);
-            if (twin && !isPristineUnifiedRetiredPresetTwin(twin)) return false;
-            if (
-              twin &&
-              (longHorizonAgentRepo.listGoals(agentId).length > 0 ||
-                longHorizonAgentRepo.listForgeScopes(agentId).length > 0 ||
-                longHorizonAgentRepo.listReminders(agentId).length > 0 ||
-                longHorizonAgentRepo.listSubscriptions(agentId).length > 0)
-            ) {
-              return false;
-            }
-            return true;
-          },
+          isPristineRetiredRow: isPristineUnifiedRetiredPresetTwin,
         });
         if (retiredAgents.length > 0) {
           log.info(
@@ -464,8 +412,7 @@ export function setupSpaceWorkflowHandlers(
   workflowManager: SpaceWorkflowManager,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
-  workflowRunRepo: SpaceWorkflowRunRepository,
-  spaceAgentManager?: { listBySpaceId(spaceId: string): SpaceWorkerAgentLike[] }
+  workflowRunRepo: SpaceWorkflowRunRepository
 ): void {
   messageHub.onRequest('spaceWorkflow.create', async (data) => {
     const params = data as CreateSpaceWorkflowParams;
@@ -802,7 +749,6 @@ export function setupSpaceWorkflowHandlers(
     const updateParams = buildTemplateUpdateParams(
       longHorizonAgentRepo,
       params.spaceId,
-      spaceAgentManager,
       template,
       'sync',
       workflow
@@ -908,7 +854,6 @@ export function setupSpaceWorkflowHandlers(
     const updateParams = buildTemplateUpdateParams(
       longHorizonAgentRepo,
       params.spaceId,
-      spaceAgentManager,
       template,
       'resync',
       kept

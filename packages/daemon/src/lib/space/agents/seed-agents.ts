@@ -1,6 +1,5 @@
-import type { SpaceAgentManager, SpaceAgentResult } from '../managers/space-agent-manager.ts';
-import { computeAgentTemplateHash } from './agent-template-hash.ts';
-import type { SpaceLongHorizonAgent, SpaceWorkerAgent } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import {
   QA_SYSTEM_CONTRACT,
   REVIEWER_SYSTEM_CONTRACT,
@@ -166,30 +165,18 @@ export const RETIRED_PR_MERGER_PROMPT =
   'or submit_for_approval — the task is already approved. When the merge and sync are complete, ' +
   'call mark_complete to close the task.';
 
-function arraysEqual(a: string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((v, i) => v === b[i]);
-}
-
-export function isPristineRetiredPrMergerRow(agent: SpaceWorkerAgent): boolean {
-  return (
-    agent.name === 'PR Merger' &&
-    agent.handle === 'merger' &&
-    agent.templateName === 'PR Merger' &&
-    agent.description === RETIRED_PR_MERGER_DESCRIPTION &&
-    agent.customPrompt === RETIRED_PR_MERGER_PROMPT &&
-    arraysEqual(agent.tools ?? [], RETIRED_PR_MERGER_TOOLS) &&
-    agent.model === undefined &&
-    agent.thinkingLevel === undefined &&
-    agent.provider === undefined &&
-    agent.settingSources === undefined &&
-    (agent.status === undefined || agent.status === 'active')
-  );
-}
-
 export interface RetireRemovedPresetAgentsDeps {
-  agentManager: Pick<SpaceAgentManager, 'listBySpaceId' | 'delete'>;
+  agentRepo: Pick<
+    SpaceLongHorizonAgentRepository,
+    | 'listBySpaceId'
+    | 'delete'
+    | 'listGoals'
+    | 'listForgeScopes'
+    | 'listReminders'
+    | 'listSubscriptions'
+  >;
   referencedAgentIds: ReadonlySet<string>;
-  shouldRetireUnifiedTwin?: (agentId: string) => boolean;
+  isPristineRetiredRow: (agent: SpaceLongHorizonAgent) => boolean;
 }
 
 export function retireRemovedPresetAgents(
@@ -197,55 +184,53 @@ export function retireRemovedPresetAgents(
   deps: RetireRemovedPresetAgentsDeps
 ): string[] {
   const retired: string[] = [];
-  for (const agent of deps.agentManager.listBySpaceId(spaceId)) {
-    if (!isPristineRetiredPrMergerRow(agent)) continue;
+  for (const agent of deps.agentRepo.listBySpaceId(spaceId)) {
+    if (!deps.isPristineRetiredRow(agent)) continue;
     if (deps.referencedAgentIds.has(agent.id)) continue;
-    if (deps.shouldRetireUnifiedTwin && !deps.shouldRetireUnifiedTwin(agent.id)) continue;
+    if (
+      deps.agentRepo.listGoals(agent.id).length > 0 ||
+      deps.agentRepo.listForgeScopes(agent.id).length > 0 ||
+      deps.agentRepo.listReminders(agent.id).length > 0 ||
+      deps.agentRepo.listSubscriptions(agent.id).length > 0
+    ) {
+      continue;
+    }
     try {
-      deps.agentManager.delete(agent.id);
-      retired.push(agent.name);
+      deps.agentRepo.delete(agent.id);
+      retired.push(agent.displayName);
     } catch {}
   }
   return retired;
 }
 
-export interface SeedPresetAgentsResult {
-  seeded: SpaceWorkerAgent[];
+export interface SeedUnifiedSpaceAgentsResult {
+  seeded: SpaceLongHorizonAgent[];
   errors: Array<{ name: string; error: string }>;
 }
 
-export async function seedPresetAgents(
+export function seedUnifiedSpaceAgents(
   spaceId: string,
-  agentManager: SpaceAgentManager
-): Promise<SeedPresetAgentsResult> {
-  const seeded: SpaceWorkerAgent[] = [];
+  longHorizonAgentRepo: SpaceLongHorizonAgentRepository
+): SeedUnifiedSpaceAgentsResult {
+  const seeded: SpaceLongHorizonAgent[] = [];
   const errors: Array<{ name: string; error: string }> = [];
 
   for (const preset of PRESET_AGENTS) {
-    const templateHash = computeAgentTemplateHash(preset);
-    const result: SpaceAgentResult<SpaceWorkerAgent> = await agentManager.create({
-      spaceId,
-      name: preset.name,
-      handle: preset.handle,
-      description: preset.description,
-      tools: preset.tools,
-      thinkingLevel: preset.thinkingLevel,
-      customPrompt: preset.customPrompt,
-      templateName: preset.name,
-      templateHash,
-    });
-
-    if (result.ok) {
-      seeded.push(result.value);
-    } else {
-      errors.push({ name: preset.name, error: result.error });
+    try {
+      seeded.push(
+        longHorizonAgentRepo.create({
+          spaceId,
+          handle: preset.handle,
+          displayName: preset.name,
+          instructions: preset.customPrompt,
+          toolPermissions: preset.tools.length > 0 ? { tools: [...preset.tools] } : {},
+          thinkingLevel: preset.thinkingLevel ?? null,
+        })
+      );
+    } catch (err) {
+      errors.push({ name: preset.name, error: err instanceof Error ? err.message : String(err) });
     }
   }
 
   return { seeded, errors };
-}
-
-export interface SeedUnifiedSpaceAgentsResult {
-  seeded: SpaceLongHorizonAgent[];
-  errors: Array<{ name: string; error: string }>;
 }

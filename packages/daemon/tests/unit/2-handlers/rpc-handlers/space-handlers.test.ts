@@ -14,8 +14,6 @@ import {
 } from '../../../../src/lib/space/managers/space-workspace-manager';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
@@ -242,8 +240,7 @@ describe('space-handlers', () => {
     spaceRuntimeService?: SpaceRuntimeService,
     longHorizonAgentRepo?: SpaceLongHorizonAgentRepository,
     workflowManager?: SpaceWorkflowManager,
-    agentManager?: SpaceAgentManager,
-    workerNameConflicts?: string[]
+    presetHandleConflicts?: string[]
   ) {
     const mh = createMockMessageHub();
     hub = mh.hub;
@@ -256,14 +253,12 @@ describe('space-handlers', () => {
     agentRepoDb = null;
     const sharedDb = createAgentDb();
     agentRepoDb = sharedDb;
-    const sharedAgentManager =
-      agentManager ?? new SpaceAgentManager(new SpaceAgentRepository(sharedDb as never));
     const sharedLhaRepo = longHorizonAgentRepo ?? new SpaceLongHorizonAgentRepository(sharedDb);
-    for (const name of workerNameConflicts ?? []) {
-      await sharedAgentManager.create({
+    for (const name of presetHandleConflicts ?? []) {
+      sharedLhaRepo.create({
         spaceId: 'space-1',
-        name,
-        handle: `conflict-${name.toLowerCase()}`,
+        handle: name.toLowerCase(),
+        displayName: `Conflict ${name}`,
       });
     }
     setupSpaceHandlers(
@@ -272,7 +267,6 @@ describe('space-handlers', () => {
       taskRepo,
       runRepo,
       internalEventBus,
-      sharedAgentManager,
       workflowManager ?? createMockSpaceWorkflowManager(),
       sessionManager,
       spaceRuntimeService,
@@ -483,10 +477,7 @@ describe('space-handlers', () => {
     });
 
     it('returns seedWarnings when some agents fail to seed', async () => {
-      await setup(mockSpace, undefined, undefined, undefined, undefined, undefined, [
-        'Coder',
-        'QA',
-      ]);
+      await setup(mockSpace, undefined, undefined, undefined, undefined, ['Coder', 'QA']);
 
       const result = (await call('space.create', {
         workspacePath: '/tmp/x',
@@ -512,7 +503,7 @@ describe('space-handlers', () => {
     });
 
     it('returns seedWarnings when preset agent rows cannot be created', async () => {
-      await setup(mockSpace, undefined, undefined, undefined, undefined, undefined, [
+      await setup(mockSpace, undefined, undefined, undefined, undefined, [
         'Coder',
         'General',
         'Planner',
@@ -559,14 +550,7 @@ describe('space-handlers', () => {
         }),
         listBySpaceId: mock(() => []),
       } as unknown as SpaceLongHorizonAgentRepository;
-      await setup(mockSpace, undefined, undefined, emptyRepo, undefined, undefined, [
-        'Coder',
-        'General',
-        'Planner',
-        'Research',
-        'Reviewer',
-        'QA',
-      ]);
+      await setup(mockSpace, undefined, undefined, emptyRepo);
 
       const result = (await call('space.create', {
         workspacePath: '/tmp/x',

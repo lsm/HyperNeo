@@ -52,9 +52,7 @@ import type { NodeAgentTemplateSource } from './spawn-slot-resolution.ts';
 import {
   isRunnableUnifiedAgent,
   longHorizonAgentToWorkerView,
-  MIGRATED_WORKER_TEMPLATE_KEY,
 } from '../agents/worker-long-horizon-mapper.ts';
-import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
@@ -245,7 +243,6 @@ export interface TaskAgentManagerConfig {
   sessionManager: SessionManager;
   reactiveDb?: ReactiveDatabase;
   spaceManager: SpaceManager;
-  spaceAgentManager: SpaceAgentManager;
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   spaceWorkflowManager: SpaceWorkflowManager;
   spaceRuntimeService: SpaceRuntimeService;
@@ -969,7 +966,6 @@ export class TaskAgentManager {
           let init = resolveAgentInit({
             task: request.task,
             space: request.space,
-            agentManager: this.config.spaceAgentManager,
             agent: customAgent,
             sessionId: request.sessionId,
             workspacePath: request.workspacePath,
@@ -2548,7 +2544,6 @@ export class TaskAgentManager {
         slotInit = resolveAgentInit({
           task,
           space,
-          agentManager: this.config.spaceAgentManager,
           agent: spawnConfig.agent,
           sessionId,
           workspacePath,
@@ -3667,15 +3662,9 @@ export class TaskAgentManager {
     const unified = this.config.longHorizonAgentRepo?.getById(agentId) ?? null;
     if (unified && unified.spaceId === spaceId) {
       if (!isRunnableUnifiedAgent(unified)) return null;
-      if (unified.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
-        return this.config.spaceAgentManager.getById(agentId)?.spaceId === spaceId
-          ? longHorizonAgentToWorkerView(unified)
-          : null;
-      }
       return longHorizonAgentToWorkerView(unified);
     }
-    const worker = this.config.spaceAgentManager.getById(agentId);
-    return worker?.spaceId === spaceId ? worker : null;
+    return null;
   }
 
   private resolveSlotSpawnConfig(
@@ -4385,7 +4374,6 @@ export class TaskAgentManager {
     return resolveAgentInit({
       task,
       space,
-      agentManager: this.config.spaceAgentManager,
       agent: spawnConfig.agent,
       sessionId,
       workspacePath,
@@ -5717,8 +5705,7 @@ export class TaskAgentManager {
       let init = resolveAgentInit({
         task,
         space,
-        agentManager: this.config.spaceAgentManager,
-        agent: poolAgent,
+        agent: poolAgent ?? this.resolveUnifiedSlotAgent(spaceId, slot.agentId),
         sessionId,
         workspacePath,
         workflowRun: workflowRun ?? undefined,

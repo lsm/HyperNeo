@@ -70,7 +70,6 @@ import { Logger } from '../../logger.ts';
 import type { SpaceActorRegistryAdapter } from '../actor-registry.ts';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
 import { unifiedAgentRecordExists } from '../agents/worker-long-horizon-mapper.ts';
-import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import {
   assertValidSpaceTaskTransition,
@@ -187,7 +186,6 @@ export interface SpaceRuntimeConfig {
   dbPath?: string;
   channelCycleRepo?: ChannelCycleRepository;
   spaceManager: SpaceManager;
-  spaceAgentManager: SpaceAgentManager;
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   workflowEventSubscriptionRepo?: SpaceWorkflowEventSubscriptionRepository;
   spaceWorkflowManager: SpaceWorkflowManager;
@@ -856,16 +854,8 @@ export class SpaceRuntime {
 
   private agentRecordExists(agentId: string, expectedSpaceId?: string): boolean {
     const unified = this.config.longHorizonAgentRepo?.getById(agentId);
-    if (unified) {
-      return unifiedAgentRecordExists(unified, expectedSpaceId, (id) =>
-        this.config.spaceAgentManager.getById(id)
-      );
-    }
-    if (expectedSpaceId) {
-      const worker = this.config.spaceAgentManager.getById(agentId);
-      return worker != null && worker.spaceId === expectedSpaceId;
-    }
-    return this.config.spaceAgentManager.getById(agentId) !== null;
+    if (!unified) return false;
+    return unifiedAgentRecordExists(unified, expectedSpaceId);
   }
 
   private assertAgentReferenceExists(params: CreateNodeExecutionParams): void {

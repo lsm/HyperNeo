@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import { runMigration170 } from '../../../../../src/storage/schema/index.ts';
-import { SpaceAgentRepository } from '../../../../../src/storage/repositories/space-agent-repository.ts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
 import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
 
@@ -177,24 +176,6 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
       expect(row.id).toBe(`existing-${preset.handle}`);
       expect(row.template_hash).toBe(computeAgentTemplateHash(preset));
     }
-  });
-
-  test('inserted row is readable by the production repository and matches seedPresetAgents output', () => {
-    insertSpace(db, 'sp-1');
-
-    runMigration170(db);
-
-    const repo = new SpaceAgentRepository(db as unknown as InstanceType<typeof BunDatabase>);
-    const agents = repo.getBySpaceId('sp-1');
-    const backfilled = agents.find((a) => a.name === CANONICAL_PRESET.name)!;
-    expect(backfilled).toBeDefined();
-    expect(backfilled.templateName).toBe(CANONICAL_PRESET.name);
-    expect(backfilled.templateHash).toBe(computeAgentTemplateHash(CANONICAL_PRESET));
-    expect(backfilled.handle).toBe(CANONICAL_PRESET.handle);
-    expect(backfilled.description).toBe(CANONICAL_PRESET.description);
-    expect(backfilled.customPrompt).toBe(CANONICAL_PRESET.customPrompt);
-    expect(backfilled.tools ?? []).toEqual(CANONICAL_PRESET.tools);
-    expect(backfilled.status).toBe('active');
   });
 
   test('idempotent — re-running inserts nothing', () => {

@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { MessageHub, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { createLongHorizonAgentTables } from '../../../../src/storage/schema/long-horizon-agents';
-import { workerAgentToLongHorizonParams } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
+import { longHorizonAgentToWorkerView } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
 import {
   SpaceWorkflowManager,
   createSpaceAgentLookup,
@@ -22,16 +21,49 @@ import {
   type ImportExecuteResult,
 } from '../../../../src/lib/rpc-handlers/space-export-import-handlers';
 import { exportBundle, validateExportBundle } from '../../../../src/lib/space/export-format';
+import { slugifyWithinLimit } from '../../../../src/lib/space/slug';
+import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
+
+interface SeedAgentParams {
+  spaceId: string;
+  name: string;
+  handle?: string;
+  description?: string;
+  model?: string;
+  provider?: string;
+  thinkingLevel?: 'off' | 'think8k' | 'think16k' | 'think24k' | 'think32k';
+  customPrompt?: string | null;
+  tools?: string[] | null;
+  settingSources?: Array<'user' | 'project' | 'local'> | null;
+}
 
 function makeSeedAgent(
-  agentRepo: SpaceAgentRepository,
-  _longHorizonAgentRepo: SpaceLongHorizonAgentRepository
-): (params: Parameters<SpaceAgentRepository['create']>[0]) => SpaceWorkerAgent {
-  return (params) => agentRepo.create(params);
+  longHorizonAgentRepo: SpaceLongHorizonAgentRepository
+): (params: SeedAgentParams) => SpaceWorkerAgent {
+  return (params) => {
+    const occupied = longHorizonAgentRepo.listBySpaceId(params.spaceId).map((a) => a.handle);
+    const row = longHorizonAgentRepo.create({
+      spaceId: params.spaceId,
+      handle: slugifyWithinLimit(params.handle ?? params.name, occupied),
+      displayName: params.name,
+      ...(params.description !== undefined ? { description: params.description } : {}),
+      ...(params.model !== undefined ? { model: params.model } : {}),
+      ...(params.thinkingLevel !== undefined ? { thinkingLevel: params.thinkingLevel } : {}),
+      ...(params.provider !== undefined ? { provider: params.provider } : {}),
+      ...(params.customPrompt ? { instructions: params.customPrompt } : {}),
+      ...(params.tools && params.tools.length > 0
+        ? { toolPermissions: { tools: params.tools } }
+        : {}),
+      ...(params.settingSources ? { settingSources: params.settingSources } : {}),
+    });
+    return longHorizonAgentToWorkerView(row);
+  };
 }
 
 function createSchema(db: Database): void {
   db.exec('PRAGMA foreign_keys = ON');
+  db.exec(`CREATE TABLE IF NOT EXISTS space_goals (id TEXT PRIMARY KEY)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS evolution_scopes (id TEXT PRIMARY KEY)`);
   createLongHorizonAgentTables(db);
 
   db.exec(`
@@ -54,30 +86,6 @@ function createSchema(db: Database): void {
 		)
 	`);
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
-
-  db.exec(`
-		CREATE TABLE space_agents (
-			id TEXT PRIMARY KEY,
-			space_id TEXT NOT NULL,
-			name TEXT NOT NULL,
-			handle TEXT DEFAULT NULL,
-			status TEXT NOT NULL DEFAULT 'active'
-				CHECK(status IN ('active', 'paused', 'archived')),
-			description TEXT NOT NULL DEFAULT '',
-			model TEXT,
-			provider TEXT,
-			thinking_level TEXT DEFAULT NULL,
-			tools TEXT NOT NULL DEFAULT '[]',
-			custom_prompt TEXT,
-			template_name TEXT DEFAULT NULL,
-			template_hash TEXT DEFAULT NULL,
-			setting_sources TEXT DEFAULT NULL,
-			model_pool TEXT DEFAULT NULL,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
-		)
-	`);
 
   db.exec(`
 		CREATE TABLE space_workflows (
@@ -237,9 +245,8 @@ const OTHER_SPACE_ID = 'space-2';
 
 describe('Space Export/Import RPC Handlers', () => {
   let db: Database;
-  let agentRepo: SpaceAgentRepository;
   let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
-  let seedAgent: (params: Parameters<SpaceAgentRepository['create']>[0]) => SpaceWorkerAgent;
+  let seedAgent: (params: SeedAgentParams) => SpaceWorkerAgent;
   let workflowRepo: SpaceWorkflowRepository;
   let workflowManager: SpaceWorkflowManager;
   let spaceManager: SpaceManager;
@@ -253,12 +260,11 @@ describe('Space Export/Import RPC Handlers', () => {
     insertSpace(db, SPACE_ID, 'My Space');
     insertSpace(db, OTHER_SPACE_ID, 'Other Space');
 
-    agentRepo = new SpaceAgentRepository(db as any);
     workflowRepo = new SpaceWorkflowRepository(db as any);
     longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db as any);
-    seedAgent = makeSeedAgent(agentRepo, longHorizonAgentRepo);
+    seedAgent = makeSeedAgent(longHorizonAgentRepo);
 
-    const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(agentRepo, longHorizonAgentRepo);
+    const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(longHorizonAgentRepo);
     workflowManager = new SpaceWorkflowManager(workflowRepo, agentLookup);
     spaceManager = createMockSpaceManager(SPACE_ID);
 
@@ -272,7 +278,6 @@ describe('Space Export/Import RPC Handlers', () => {
     setupSpaceExportImportHandlers(
       mockHub.hub,
       spaceManager,
-      agentRepo,
       longHorizonAgentRepo,
       workflowRepo,
       workflowManager,
@@ -539,13 +544,7 @@ describe('Space Export/Import RPC Handlers', () => {
       );
     });
 
-    it('reserves shadowed worker handles for new imports and the coordinator name', async () => {
-      const worker = seedAgent({ spaceId: SPACE_ID, name: 'Alpha', handle: 'alpha' });
-      db.prepare(
-        `UPDATE space_long_horizon_agents SET template_key = 'custom.overlay', handle = 'overlay-handle' WHERE id = ?`
-      ).run(worker.id);
-
-      const reservedHandleBundle = makeBundle([{ name: 'New Agent', handle: 'alpha' }], []);
+    it('reserves the coordinator name for new imports', async () => {
       const coordinator = longHorizonAgentRepo.ensureCoordinator(SPACE_ID);
       const coordinatorName = longHorizonAgentRepo.getById(coordinator.id)!.displayName;
       const coordinatorBundle = makeBundle([{ name: coordinatorName }], []);
@@ -557,14 +556,6 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(
         preview.validationErrors.some((e) => e.includes('reserved by the space coordinator'))
       ).toBe(true);
-
-      const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
-        spaceId: SPACE_ID,
-        bundle: reservedHandleBundle,
-      });
-      expect(result.agents[0].action).toBe('created');
-      const created = agentRepo.getById(result.agents[0].id)!;
-      expect(created.handle).not.toBe('alpha');
     });
 
     it('flags skipped non-runnable conflicts as unresolved references', async () => {
@@ -621,43 +612,21 @@ describe('Space Export/Import RPC Handlers', () => {
       ).rejects.toThrow('unresolved agent reference');
     });
 
-    it('treats orphaned migration mirrors as missing in imports', async () => {
-      const worker = seedAgent({ spaceId: SPACE_ID, name: 'Ghost Twin', handle: 'ghost' });
-      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(worker.id);
-
-      const bundle = makeBundle(
-        [],
-        [{ name: 'Pipe', nodes: [{ agentRef: 'Ghost Twin', name: 'S' }] }]
-      );
-      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+    it('includes active mirror agents and excludes paused ones', async () => {
+      seedWorkerMirror(db, {
+        id: 'worker-only-1',
         spaceId: SPACE_ID,
-        bundle,
+        name: 'Legacy Worker',
+        handle: 'legacy-worker',
+        status: 'active',
       });
-      expect(preview.validationErrors.some((e) => e.includes('unknown agent "Ghost Twin"'))).toBe(
-        true
-      );
-    });
-
-    it('excludes orphaned migration mirrors from exports', async () => {
-      const worker = seedAgent({ spaceId: SPACE_ID, name: 'Ghost Twin', handle: 'ghost' });
-      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(worker.id);
-
-      const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
+      seedWorkerMirror(db, {
+        id: 'worker-only-2',
         spaceId: SPACE_ID,
+        name: 'Paused Worker',
+        handle: 'paused-worker',
+        status: 'paused',
       });
-
-      expect(bundle.agents.map((a: any) => a.name)).not.toContain('Ghost Twin');
-    });
-
-    it('includes active worker-only agents and excludes paused ones', async () => {
-      db.prepare(
-        `INSERT INTO space_agents (id, space_id, name, handle, status, description, tools, custom_prompt, created_at, updated_at)
-           VALUES ('worker-only-1', ?, 'Legacy Worker', 'legacy-worker', 'active', '', '[]', NULL, 1, 1)`
-      ).run(SPACE_ID);
-      db.prepare(
-        `INSERT INTO space_agents (id, space_id, name, handle, status, description, tools, custom_prompt, created_at, updated_at)
-           VALUES ('worker-only-2', ?, 'Paused Worker', 'paused-worker', 'paused', '', '[]', NULL, 1, 1)`
-      ).run(SPACE_ID);
 
       const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
         spaceId: SPACE_ID,
@@ -848,7 +817,7 @@ describe('Space Export/Import RPC Handlers', () => {
         transitions: [],
         completionAutonomyLevel: 3,
       });
-      agentRepo.update(agent.id, { status: 'archived' });
+      longHorizonAgentRepo.update(agent.id, { status: 'archived' });
 
       await expect(call(handlers, 'spaceExport.bundle', { spaceId: SPACE_ID })).rejects.toThrow(
         'not included in this export'
@@ -1133,9 +1102,9 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(result.workflows).toHaveLength(1);
       expect(result.workflows[0]).toMatchObject({ name: 'Pipeline', action: 'created' });
 
-      const agents = agentRepo.getBySpaceId(SPACE_ID);
-      const importedAgent = agents.find((a) => a.name === 'Coder');
-      expect(importedAgent?.customPrompt).toBe('You code.');
+      const agents = longHorizonAgentRepo.listBySpaceId(SPACE_ID);
+      const importedAgent = agents.find((a) => a.displayName === 'Coder');
+      expect(importedAgent?.instructions).toBe('You code.');
       expect(importedAgent?.handle).toBe('feature-coder');
       const workflows = workflowRepo.listWorkflows(SPACE_ID);
       expect(workflows.find((w) => w.name === 'Pipeline')).toBeTruthy();
@@ -1162,7 +1131,7 @@ describe('Space Export/Import RPC Handlers', () => {
           id: existing.id,
         });
 
-        agentRepo.getById(existing.id)!;
+        longHorizonAgentRepo.getById(existing.id)!;
 
         expect(result.workflows[0].action).toBe('created');
         const wf = workflowRepo.getWorkflow(result.workflows[0].id)!;
@@ -1200,7 +1169,7 @@ describe('Space Export/Import RPC Handlers', () => {
         expect(all).toHaveLength(1);
       });
 
-      it('leaves a worker-backed conflict and its unified mirror untouched on skip', async () => {
+      it('leaves a conflicting unified agent untouched on skip', async () => {
         const existing = seedAgent({
           spaceId: SPACE_ID,
           name: 'Coder',
@@ -1221,13 +1190,9 @@ describe('Space Export/Import RPC Handlers', () => {
 
         expect(result.agents[0]).toMatchObject({ name: 'Coder', action: 'skipped' });
 
-        const worker = agentRepo.getById(existing.id)!;
-        expect(worker.model).toBe('glm-4.7');
-        expect(worker.customPrompt).toBeNull();
-
-        const twin = longHorizonAgentRepo.getById(existing.id)!;
-        expect(twin.model).toBe('glm-4.7');
-        expect(twin.instructions).toBe('');
+        const row = longHorizonAgentRepo.getById(existing.id)!;
+        expect(row.model).toBe('glm-4.7');
+        expect(row.instructions).toBe('');
       });
 
       it('matches conflicts case-insensitively instead of creating a case-variant duplicate', async () => {
@@ -1246,7 +1211,7 @@ describe('Space Export/Import RPC Handlers', () => {
           action: 'skipped',
           id: existing.id,
         });
-        expect(agentRepo.getBySpaceId(SPACE_ID)).toHaveLength(1);
+        expect(longHorizonAgentRepo.listBySpaceId(SPACE_ID)).toHaveLength(1);
       });
     });
 
@@ -1265,9 +1230,9 @@ describe('Space Export/Import RPC Handlers', () => {
 
         expect(result.agents[0]).toMatchObject({ name: 'Coder (2)', action: 'renamed' });
 
-        const agents = agentRepo.getBySpaceId(SPACE_ID);
-        expect(agents.map((a) => a.name)).toContain('Coder');
-        const renamedAgent = agents.find((a) => a.name === 'Coder (2)');
+        const agents = longHorizonAgentRepo.listBySpaceId(SPACE_ID);
+        expect(agents.map((a) => a.displayName)).toContain('Coder');
+        const renamedAgent = agents.find((a) => a.displayName === 'Coder (2)');
         expect(renamedAgent?.handle).toBe('reviewer');
       });
 
@@ -1286,7 +1251,7 @@ describe('Space Export/Import RPC Handlers', () => {
           'Agent "Reviewer": exported handle "reviewer" already exists in the target space; a new handle was auto-generated'
         );
 
-        const importedAgent = agentRepo.getById(result.agents[0].id)!;
+        const importedAgent = longHorizonAgentRepo.getById(result.agents[0].id)!;
         expect(importedAgent.handle).toBe('reviewer-2');
       });
 
@@ -1306,7 +1271,7 @@ describe('Space Export/Import RPC Handlers', () => {
           'Agent "Coordinator": exported handle "coordinator" is reserved; a new handle was auto-generated'
         );
 
-        const importedAgent = agentRepo.getById(result.agents[0].id)!;
+        const importedAgent = longHorizonAgentRepo.getById(result.agents[0].id)!;
         expect(importedAgent.handle).toBe('coordinator-2');
       });
 
@@ -1360,7 +1325,7 @@ describe('Space Export/Import RPC Handlers', () => {
           id: existing.id,
         });
 
-        const agent = agentRepo.getById(existing.id)!;
+        const agent = longHorizonAgentRepo.getById(existing.id)!;
         expect(agent.model).toBe('claude-new');
         expect(agent.handle).toBe('reviewer');
       });
@@ -1373,7 +1338,6 @@ describe('Space Export/Import RPC Handlers', () => {
         setupSpaceExportImportHandlers(
           freshHub.hub,
           spaceManager,
-          agentRepo,
           longHorizonAgentRepo,
           workflowRepo,
           workflowManager,
@@ -1426,8 +1390,8 @@ describe('Space Export/Import RPC Handlers', () => {
           { name: 'B', id: existingB.id, action: 'replaced' },
         ]);
 
-        expect(agentRepo.getById(existingA.id)?.handle).toBe('b');
-        expect(agentRepo.getById(existingB.id)?.handle).toBe('a');
+        expect(longHorizonAgentRepo.getById(existingA.id)?.handle).toBe('b');
+        expect(longHorizonAgentRepo.getById(existingB.id)?.handle).toBe('a');
       });
 
       it('replaces unified-only conflicts with the imported handle and tools', async () => {
@@ -1465,21 +1429,6 @@ describe('Space Export/Import RPC Handlers', () => {
         expect((unifiedEvent!.data as { agent: { id: string } }).agent.id).toBe(unifiedId);
       });
 
-      it('suppresses worker names shadowed by a native overlay', async () => {
-        const worker = seedAgent({ spaceId: SPACE_ID, name: 'Alpha', handle: 'alpha' });
-        db.prepare(
-          `UPDATE space_long_horizon_agents SET template_key = 'custom.overlay', display_name = 'Overlay Name' WHERE id = ?`
-        ).run(worker.id);
-
-        const bundle = makeBundle([{ name: 'Alpha' }], []);
-        const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
-          spaceId: SPACE_ID,
-          bundle,
-        });
-
-        expect(preview.agents[0]).toEqual({ name: 'Alpha', action: 'create' });
-      });
-
       it('rejects bundles whose agent names normalize to the same value', async () => {
         const bundle = makeBundle([{ name: 'Coder' }, { name: ' coder ' }], []);
 
@@ -1496,11 +1445,12 @@ describe('Space Export/Import RPC Handlers', () => {
         ).rejects.toThrow('normalize to the same value');
       });
 
-      it('resolves native overlays by their display name in imports', async () => {
-        const worker = seedAgent({ spaceId: SPACE_ID, name: 'Alpha', handle: 'alpha' });
-        db.prepare(
-          `UPDATE space_long_horizon_agents SET template_key = 'custom.overlay', display_name = 'Overlay Name' WHERE id = ?`
-        ).run(worker.id);
+      it('resolves unified rows by their display name in imports', async () => {
+        const overlay = longHorizonAgentRepo.create({
+          spaceId: SPACE_ID,
+          handle: 'overlay-handle',
+          displayName: 'Overlay Name',
+        });
 
         const agentBundle = makeBundle([{ name: 'Overlay Name' }], []);
         const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
@@ -1510,7 +1460,7 @@ describe('Space Export/Import RPC Handlers', () => {
         expect(preview.agents[0]).toEqual({
           name: 'Overlay Name',
           action: 'conflict',
-          existingId: worker.id,
+          existingId: overlay.id,
         });
 
         const wfBundle = makeBundle(
@@ -1523,48 +1473,8 @@ describe('Space Export/Import RPC Handlers', () => {
         });
         expect(result.workflows[0].action).toBe('created');
         expect(workflowRepo.getWorkflow(result.workflows[0].id)!.nodes[0].agents![0].agentId).toBe(
-          worker.id
+          overlay.id
         );
-      });
-
-      it('replaces the authoritative native overlay alongside its worker sibling', async () => {
-        const worker = seedAgent({ spaceId: SPACE_ID, name: 'Alpha', handle: 'alpha' });
-        db.prepare(
-          `UPDATE space_long_horizon_agents SET template_key = 'custom.overlay', display_name = 'Alpha', instructions = 'old overlay prompt' WHERE id = ?`
-        ).run(worker.id);
-
-        const bundle = makeBundle([{ name: 'Alpha', customPrompt: 'New overlay prompt.' }], []);
-
-        const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
-          spaceId: SPACE_ID,
-          bundle,
-          conflictResolution: { agents: { Alpha: 'replace' } },
-        });
-
-        expect(result.agents[0].action).toBe('replaced');
-        const overlay = longHorizonAgentRepo.getById(worker.id)!;
-        expect(overlay.templateKey).toBe('custom.overlay');
-        expect(overlay.instructions).toBe('New overlay prompt.');
-      });
-
-      it('preserves genuine native overlay handles during replacement', async () => {
-        const worker = seedAgent({ spaceId: SPACE_ID, name: 'Alpha', handle: 'alpha' });
-        db.prepare(
-          `UPDATE space_long_horizon_agents SET template_key = 'custom.overlay', handle = 'overlay-handle' WHERE id = ?`
-        ).run(worker.id);
-
-        const bundle = makeBundle([{ name: 'Alpha', handle: 'alpha', customPrompt: 'New.' }], []);
-
-        const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
-          spaceId: SPACE_ID,
-          bundle,
-          conflictResolution: { agents: { Alpha: 'replace' } },
-        });
-
-        expect(result.agents[0].action).toBe('replaced');
-        const overlay = longHorizonAgentRepo.getById(worker.id)!;
-        expect(overlay.handle).toBe('alpha');
-        expect(overlay.templateKey).toBe('custom.overlay');
       });
 
       it('swaps handles between two unified-only replacements', async () => {
@@ -1650,8 +1560,10 @@ describe('Space Export/Import RPC Handlers', () => {
           'Agent "New Agent": exported handle "a" already exists in the target space; a new handle was auto-generated'
         );
 
-        expect(agentRepo.getById(existingA.id)?.handle).toBe('a');
-        const newAgent = agentRepo.getById(result.agents.find((a) => a.name === 'New Agent')!.id)!;
+        expect(longHorizonAgentRepo.getById(existingA.id)?.handle).toBe('a');
+        const newAgent = longHorizonAgentRepo.getById(
+          result.agents.find((a) => a.name === 'New Agent')!.id
+        )!;
         expect(newAgent.handle).toBe('new-agent');
       });
 
@@ -1680,8 +1592,8 @@ describe('Space Export/Import RPC Handlers', () => {
         expect(result.warnings).toContain(
           'Agent "B": exported handle "coordinator" is reserved; a new handle was auto-generated'
         );
-        expect(agentRepo.getById(existingA.id)?.handle).toBe('b');
-        expect(agentRepo.getById(existingB.id)?.handle).toBe('b-2');
+        expect(longHorizonAgentRepo.getById(existingA.id)?.handle).toBe('b');
+        expect(longHorizonAgentRepo.getById(existingB.id)?.handle).toBe('b-2');
       });
 
       it('generates legacy create handles from batch reservations', async () => {
@@ -1701,9 +1613,11 @@ describe('Space Export/Import RPC Handlers', () => {
           conflictResolution: { agents: { A: 'replace' } },
         });
 
-        const newAgent = agentRepo.getById(result.agents.find((a) => a.name === 'New Agent')!.id)!;
+        const newAgent = longHorizonAgentRepo.getById(
+          result.agents.find((a) => a.name === 'New Agent')!.id
+        )!;
         expect(newAgent.handle).toBe('new-agent-2');
-        expect(agentRepo.getById(existingA.id)?.handle).toBe('new-agent');
+        expect(longHorizonAgentRepo.getById(existingA.id)?.handle).toBe('new-agent');
       });
 
       it('replaces conflicting workflow (delete + create)', async () => {
@@ -1923,8 +1837,8 @@ describe('Space Export/Import RPC Handlers', () => {
           call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
         ).rejects.toThrow('unresolved agent reference');
 
-        const agents = agentRepo.getBySpaceId(SPACE_ID);
-        expect(agents.find((a) => a.name === 'NewAgent')).toBeUndefined();
+        const agents = longHorizonAgentRepo.listBySpaceId(SPACE_ID);
+        expect(agents.find((a) => a.displayName === 'NewAgent')).toBeUndefined();
       });
 
       it('rolls back workflow deletion when replacement creation fails', async () => {
@@ -1974,7 +1888,6 @@ describe('Space Export/Import RPC Handlers', () => {
         const existing = seedAgent({
           spaceId: SPACE_ID,
           name: 'Coder',
-          role: 'coder',
           model: 'old-model',
         });
 
@@ -1986,8 +1899,8 @@ describe('Space Export/Import RPC Handlers', () => {
           conflictResolution: { agents: { Coder: 'replace' } },
         });
 
-        const agent = agentRepo.getById(existing.id)!;
-        expect(agent.model).toBeUndefined();
+        const agent = longHorizonAgentRepo.getById(existing.id)!;
+        expect(agent.model).toBeNull();
       });
 
       it('clears customPrompt when not present in exported agent', async () => {
@@ -2005,8 +1918,8 @@ describe('Space Export/Import RPC Handlers', () => {
           conflictResolution: { agents: { Coder: 'replace' } },
         });
 
-        const agent = agentRepo.getById(existing.id)!;
-        expect(agent.customPrompt).toBeNull();
+        const agent = longHorizonAgentRepo.getById(existing.id)!;
+        expect(agent.instructions).toBe('');
       });
 
       it('replaces thinkingLevel when present in exported agent', async () => {
@@ -2024,7 +1937,7 @@ describe('Space Export/Import RPC Handlers', () => {
           conflictResolution: { agents: { Coder: 'replace' } },
         });
 
-        const agent = agentRepo.getById(existing.id)!;
+        const agent = longHorizonAgentRepo.getById(existing.id)!;
         expect(agent.thinkingLevel).toBe('think16k');
       });
 
@@ -2043,8 +1956,8 @@ describe('Space Export/Import RPC Handlers', () => {
           conflictResolution: { agents: { Coder: 'replace' } },
         });
 
-        const agent = agentRepo.getById(existing.id)!;
-        expect(agent.thinkingLevel).toBeUndefined();
+        const agent = longHorizonAgentRepo.getById(existing.id)!;
+        expect(agent.thinkingLevel).toBeNull();
       });
 
       it('normalizes legacy auto thinkingLevel to off during import', async () => {
@@ -2055,7 +1968,7 @@ describe('Space Export/Import RPC Handlers', () => {
           bundle,
         });
 
-        const agent = agentRepo.getById(result.agents[0].id)!;
+        const agent = longHorizonAgentRepo.getById(result.agents[0].id)!;
         expect(agent.thinkingLevel).toBe('off');
       });
     });
@@ -2078,19 +1991,6 @@ describe('Space Export/Import RPC Handlers', () => {
       expect((agentCreated[0].data as { agent: { displayName: string } }).agent.displayName).toBe(
         'NewAgent'
       );
-    });
-
-    it('emits unified mirror events for worker-backed import creates', async () => {
-      const bundle = makeBundle([{ name: 'NewAgent', role: 'coder' }], []);
-
-      await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
-        spaceId: SPACE_ID,
-        bundle,
-      });
-
-      await Promise.resolve();
-      const unifiedCreated = emittedEvents.filter((e) => e.name === 'spaceAgent.created');
-      expect(unifiedCreated).toHaveLength(1);
     });
 
     it('emits spaceAgent.updated for replaced agent', async () => {
@@ -2202,9 +2102,8 @@ describe('Space Export/Import RPC Handlers', () => {
 
 describe('multi-agent step import', () => {
   let db: Database;
-  let agentRepo: SpaceAgentRepository;
   let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
-  let seedAgent: (params: Parameters<SpaceAgentRepository['create']>[0]) => SpaceWorkerAgent;
+  let seedAgent: (params: SeedAgentParams) => SpaceWorkerAgent;
   let workflowRepo: SpaceWorkflowRepository;
   let workflowManager: SpaceWorkflowManager;
   let spaceManager: SpaceManager;
@@ -2216,12 +2115,11 @@ describe('multi-agent step import', () => {
     createSchema(db);
     insertSpace(db, SPACE_ID, 'My Space');
 
-    agentRepo = new SpaceAgentRepository(db as any);
     workflowRepo = new SpaceWorkflowRepository(db as any);
     longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db as any);
-    seedAgent = makeSeedAgent(agentRepo, longHorizonAgentRepo);
+    seedAgent = makeSeedAgent(longHorizonAgentRepo);
 
-    const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(agentRepo, longHorizonAgentRepo);
+    const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(longHorizonAgentRepo);
     workflowManager = new SpaceWorkflowManager(workflowRepo, agentLookup);
     spaceManager = createMockSpaceManager(SPACE_ID);
     const mockHub = createMockHub();
@@ -2232,7 +2130,6 @@ describe('multi-agent step import', () => {
     setupSpaceExportImportHandlers(
       mockHub.hub,
       spaceManager,
-      agentRepo,
       longHorizonAgentRepo,
       workflowRepo,
       workflowManager,
@@ -2277,8 +2174,12 @@ describe('multi-agent step import', () => {
     expect(step.agents).toHaveLength(2);
     expect(step.agentId).toBeUndefined();
 
-    const coderAgent = agentRepo.getById(result.agents.find((a) => a.name === 'Coder')!.id)!;
-    const reviewerAgent = agentRepo.getById(result.agents.find((a) => a.name === 'Reviewer')!.id)!;
+    const coderAgent = longHorizonAgentRepo.getById(
+      result.agents.find((a) => a.name === 'Coder')!.id
+    )!;
+    const reviewerAgent = longHorizonAgentRepo.getById(
+      result.agents.find((a) => a.name === 'Reviewer')!.id
+    )!;
     const agentIds = step.agents!.map((a) => a.agentId);
     expect(agentIds).toContain(coderAgent.id);
     expect(agentIds).toContain(reviewerAgent.id);
@@ -2746,9 +2647,8 @@ function makeSingleAgentBundle(agentName: string, _agentRole: string, stepName: 
 
 describe('full export→import round-trip', () => {
   let db: Database;
-  let agentRepo: SpaceAgentRepository;
   let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
-  let seedAgent: (params: Parameters<SpaceAgentRepository['create']>[0]) => SpaceWorkerAgent;
+  let seedAgent: (params: SeedAgentParams) => SpaceWorkerAgent;
   let workflowRepo: SpaceWorkflowRepository;
   let workflowManager: SpaceWorkflowManager;
   let spaceManager: SpaceManager;
@@ -2761,12 +2661,11 @@ describe('full export→import round-trip', () => {
     createSchema(db);
     insertSpace(db, SPACE_ID, 'Round Trip Space');
 
-    agentRepo = new SpaceAgentRepository(db as any);
     workflowRepo = new SpaceWorkflowRepository(db as any);
     longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db as any);
-    seedAgent = makeSeedAgent(agentRepo, longHorizonAgentRepo);
+    seedAgent = makeSeedAgent(longHorizonAgentRepo);
 
-    const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(agentRepo, longHorizonAgentRepo);
+    const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(longHorizonAgentRepo);
     workflowManager = new SpaceWorkflowManager(workflowRepo, agentLookup);
     spaceManager = createMockSpaceManager(SPACE_ID);
 
@@ -2779,7 +2678,6 @@ describe('full export→import round-trip', () => {
     setupSpaceExportImportHandlers(
       mockHub.hub,
       spaceManager,
-      agentRepo,
       longHorizonAgentRepo,
       workflowRepo,
       workflowManager,
@@ -2865,10 +2763,10 @@ describe('full export→import round-trip', () => {
     expect(importedWf.description).toBe('A simple coder workflow');
     expect(importedWf.tags).toEqual(['coding']);
 
-    const importedAgent = agentRepo.getById(result.agents[0].id)!;
-    expect(importedAgent.name).toBe('My Coder');
-    expect(importedAgent.customPrompt).toBe('You write code.');
-    expect(importedAgent.tools).toEqual(['bash', 'read_file']);
+    const importedAgent = longHorizonAgentRepo.getById(result.agents[0].id)!;
+    expect(importedAgent.displayName).toBe('My Coder');
+    expect(importedAgent.instructions).toBe('You write code.');
+    expect(importedAgent.toolPermissions.tools).toEqual(['bash', 'read_file']);
 
     const step = importedWf.nodes[0];
     expect(step.name).toBe('Code');
@@ -2941,16 +2839,16 @@ describe('full export→import round-trip', () => {
     });
 
     expect(result.agents[0].action).toBe('created');
-    const imported = agentRepo.getById(result.agents[0].id)!;
+    const imported = longHorizonAgentRepo.getById(result.agents[0].id)!;
     expect(imported).toMatchObject({
-      name: 'V4 Worker',
+      displayName: 'V4 Worker',
       handle: 'legacy-handle',
       description: 'Described worker',
       model: 'kimi-for-coding',
       provider: 'openrouter',
       thinkingLevel: 'think16k',
-      customPrompt: 'You write careful code.',
-      tools: ['bash', 'read_file'],
+      instructions: 'You write careful code.',
+      toolPermissions: { tools: ['bash', 'read_file'] },
       settingSources: ['project'],
       modelPool: [{ model: 'kimi-for-coding', maxConcurrent: 2, weight: 1 }],
     });
@@ -2958,7 +2856,7 @@ describe('full export→import round-trip', () => {
     expect(importedWf.nodes[0].agents![0].agentId).toBe(imported.id);
   });
 
-  it('import mirrors created and replaced agents into the unified table (production path)', async () => {
+  it('import creates and replaces agents in the unified table (production path)', async () => {
     const existing = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
     const bundle = makeBundle(
       [{ name: 'Fresh Agent', handle: 'fresh', customPrompt: 'Be fresh.' }],
@@ -2995,7 +2893,7 @@ describe('full export→import round-trip', () => {
     expect(replacedTwin.instructions).toBe('Replaced prompt.');
   });
 
-  it('import replace with a unified-only handle collision keeps both tables consistent', async () => {
+  it('import replace with a unified-only handle collision keeps the row consistent', async () => {
     seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
     longHorizonAgentRepo.create({
       spaceId: SPACE_ID,
@@ -3011,10 +2909,8 @@ describe('full export→import round-trip', () => {
     });
 
     expect(result.agents[0].action).toBe('replaced');
-    const replacedWorker = agentRepo.getById(result.agents[0].id)!;
-    const replacedTwin = longHorizonAgentRepo.getById(result.agents[0].id)!;
-    expect(replacedWorker.handle).not.toBe('foo');
-    expect(replacedTwin.handle).toBe(replacedWorker.handle);
+    const replaced = longHorizonAgentRepo.getById(result.agents[0].id)!;
+    expect(replaced.handle).not.toBe('foo');
   });
 
   it('multi-agent step round-trip: export → import preserves agents array, channels, and hooks', async () => {
@@ -3094,10 +2990,10 @@ describe('full export→import round-trip', () => {
 
     expect(importedStep.agents).toHaveLength(2);
 
-    const coderImported = agentRepo.getById(
+    const coderImported = longHorizonAgentRepo.getById(
       result.agents.find((a) => a.name === 'Senior Coder')!.id
     )!;
-    const reviewerImported = agentRepo.getById(
+    const reviewerImported = longHorizonAgentRepo.getById(
       result.agents.find((a) => a.name === 'Code Reviewer')!.id
     )!;
     const importedAgentIds = importedStep.agents!.map((a) => a.agentId);
@@ -3520,7 +3416,7 @@ describe('full export→import round-trip', () => {
       call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
     ).rejects.toThrow('unresolved agent reference');
 
-    expect(agentRepo.getBySpaceId(SPACE_ID)).toHaveLength(0);
+    expect(longHorizonAgentRepo.listBySpaceId(SPACE_ID)).toHaveLength(0);
     expect(workflowRepo.listWorkflows(SPACE_ID)).toHaveLength(0);
   });
 

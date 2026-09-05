@@ -12,19 +12,18 @@ import { SpaceActorRegistryAdapter } from '../../../src/lib/space/actor-registry
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository';
 import { PendingAgentMessageRepository } from '../../../src/storage/repositories/pending-agent-message-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
-import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository';
 import type { MessageRecord } from '../../../../messaging/src/types';
 import { createSpaceTables } from '../helpers/space-test-db';
+import { seedWorkerMirror } from '../helpers/seed-worker-mirror';
 
 describe('Space messaging adapter', () => {
   let db: Database;
   let spaceRepo: SpaceRepository;
   let sessionRepo: SessionRepository;
-  let spaceAgentRepo: SpaceAgentRepository;
   let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   let workflowRepo: SpaceWorkflowRepository;
   let workflowRunRepo: SpaceWorkflowRunRepository;
@@ -41,7 +40,6 @@ describe('Space messaging adapter', () => {
 
     spaceRepo = new SpaceRepository(db);
     sessionRepo = new SessionRepository(db);
-    spaceAgentRepo = new SpaceAgentRepository(db);
     longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
     workflowRepo = new SpaceWorkflowRepository(db);
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
@@ -50,7 +48,6 @@ describe('Space messaging adapter', () => {
     registry = new SpaceActorRegistryAdapter({
       spaceRepo,
       sessionRepo,
-      spaceAgentRepo,
       longHorizonAgentRepo,
       workflowRepo,
       workflowRunRepo,
@@ -64,7 +61,8 @@ describe('Space messaging adapter', () => {
       name: 'Project',
     });
     spaceId = space.id;
-    const agent = spaceAgentRepo.create({ spaceId, name: 'Worker Agent' });
+    const agent = { id: 'worker-agent' };
+    seedWorkerMirror(db, { id: agent.id, spaceId, name: 'Worker Agent' });
     const workflow = workflowRepo.createWorkflow({
       spaceId,
       name: 'Coding Workflow',
@@ -604,7 +602,7 @@ describe('Space messaging adapter', () => {
       workflowRunId: runId,
       workflowNodeId: 'node-deploy',
       agentName: 'deployer',
-      agentId: spaceAgentRepo.getBySpaceId(spaceId)[0].id,
+      agentId: longHorizonAgentRepo.listBySpaceId(spaceId)[0].id,
       agentSessionId: 'deploy-session',
       status: 'in_progress',
     });

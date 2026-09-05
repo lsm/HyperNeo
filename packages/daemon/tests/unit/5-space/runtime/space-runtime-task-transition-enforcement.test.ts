@@ -10,14 +10,14 @@ import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { VALID_SPACE_TASK_TRANSITIONS } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
 
 const SPACE_ID = 'space-transition-enforcement';
 
@@ -40,10 +40,7 @@ function makeDb(): BunDatabase {
      allowed_models, session_ids, slug, status, max_concurrent_tasks, created_at, updated_at)
      VALUES (?, '/tmp/ws', ?, '', '', '', '[]', '[]', ?, 'active', 1, ?, ?)`
   ).run(SPACE_ID, `Space ${SPACE_ID}`, SPACE_ID, Date.now(), Date.now());
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES ('agent-enf-1', ?, 'Enforcer', '', null, '[]', '', ?, ?)`
-  ).run(SPACE_ID, Date.now(), Date.now());
+  seedUnifiedAgentMirror(db, { id: 'agent-enf-1', spaceId: SPACE_ID, name: 'Enforcer' });
   return db;
 }
 
@@ -59,11 +56,11 @@ describe('SpaceRuntime.updateTaskAndEmit — transition table enforcement (task 
     taskRepo = new SpaceTaskRepository(db);
     workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
-    const agentManager = new SpaceAgentManager(new SpaceAgentRepository(db));
+    const agentRepo = new SpaceLongHorizonAgentRepository(db);
     const config: SpaceRuntimeConfig = {
       db,
       spaceManager: new SpaceManager(db),
-      spaceAgentManager: agentManager,
+      longHorizonAgentRepo: agentRepo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
       taskRepo,

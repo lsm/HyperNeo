@@ -4,7 +4,6 @@ import { createSpaceRegistryEntries } from '../../../../src/lib/space/actions/re
 import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution-episode-service.ts';
 import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
 import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -17,7 +16,6 @@ import { SESSION_WRITE_AUTONOMY_LEVEL } from '../../../../src/lib/space/tools/to
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
@@ -57,7 +55,6 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): ForgeCtx {
   ).run(SPACE_ID, SPACE_ID, SPACE_ID, Date.now(), Date.now());
 
   const spaceRepo = new SpaceRepository(db);
-  const spaceAgentManager = new SpaceAgentManager(new SpaceAgentRepository(db));
   const workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
   const workflowRunRepo = new SpaceWorkflowRunRepository(db);
   const nodeExecutionRepo = new NodeExecutionRepository(db);
@@ -67,7 +64,6 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): ForgeCtx {
   const runtime = new SpaceRuntime({
     db,
     spaceManager,
-    spaceAgentManager,
     spaceWorkflowManager: workflowManager,
     workflowRunRepo,
     taskRepo,
@@ -142,7 +138,6 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): ForgeCtx {
     nodeExecutionRepo,
     workflowRunRepo,
     taskManager: new SpaceTaskManager(db, SPACE_ID),
-    spaceAgentManager,
     taskAgentManager: stubTaskAgentManager,
     goalService,
     goalRepo,

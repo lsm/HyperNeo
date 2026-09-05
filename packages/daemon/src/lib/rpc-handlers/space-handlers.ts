@@ -17,14 +17,13 @@ import type {
   SpaceWorkspaceUpdateLabelParams,
 } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import type { SpaceAgentManager } from '../space/managers/space-agent-manager.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
 import type { SpaceTaskRepository } from '../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import type { SessionManager } from '../session-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
-import { seedPresetAgents } from '../space/agents/seed-agents.ts';
+import { seedUnifiedSpaceAgents } from '../space/agents/seed-agents.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows.ts';
 import { Logger } from '../logger.ts';
@@ -154,7 +153,6 @@ export function setupSpaceHandlers(
   taskRepo: SpaceTaskRepository,
   workflowRunRepo: SpaceWorkflowRunRepository,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
-  spaceAgentManager: SpaceAgentManager,
   spaceWorkflowManager: SpaceWorkflowManager,
   sessionManager?: SessionManager,
   spaceRuntimeService?: SpaceRuntimeService,
@@ -201,7 +199,7 @@ export function setupSpaceHandlers(
     longHorizonAgentRepo.ensureCoordinator(space.id);
 
     try {
-      const agentSeedResult = await seedPresetAgents(space.id, spaceAgentManager);
+      const agentSeedResult = seedUnifiedSpaceAgents(space.id, longHorizonAgentRepo);
       if (agentSeedResult.errors.length > 0) {
         const failedNames = agentSeedResult.errors.map((e) => e.name).join(', ');
         log.warn(

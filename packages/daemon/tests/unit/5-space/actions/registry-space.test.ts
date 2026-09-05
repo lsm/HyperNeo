@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createActionRegistry } from '../../../../src/lib/space/actions/registry.ts';
 import { createSpaceRegistryEntries } from '../../../../src/lib/space/actions/registry-space.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -18,13 +17,13 @@ import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/spac
 import { SESSION_WRITE_AUTONOMY_LEVEL } from '../../../../src/lib/space/tools/tool-admission-gates.ts';
 import type { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 
 const SPACE_ID = 'space-registry-test';
 
@@ -76,12 +75,8 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): RegistryCtx {
      allowed_models, session_ids, slug, status, created_at, updated_at)
      VALUES (?, '/tmp/workspace', ?, '', '', '', '[]', '[]', ?, 'active', ?, ?)`
   ).run(SPACE_ID, SPACE_ID, SPACE_ID, Date.now(), Date.now());
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES ('agent-coder-1', ?, 'Coder', '', null, '[]', '', ?, ?)`
-  ).run(SPACE_ID, Date.now(), Date.now());
+  seedWorkerMirror(db, { id: 'agent-coder-1', spaceId: SPACE_ID, name: 'Coder' });
 
-  const spaceAgentManager = new SpaceAgentManager(new SpaceAgentRepository(db));
   const workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
   const workflowRunRepo = new SpaceWorkflowRunRepository(db);
   const nodeExecutionRepo = new NodeExecutionRepository(db);
@@ -91,7 +86,6 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): RegistryCtx {
   const runtime = new SpaceRuntime({
     db,
     spaceManager,
-    spaceAgentManager,
     spaceWorkflowManager: workflowManager,
     workflowRunRepo,
     taskRepo,
@@ -107,7 +101,6 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): RegistryCtx {
     nodeExecutionRepo,
     workflowRunRepo,
     taskManager: new SpaceTaskManager(db, SPACE_ID),
-    spaceAgentManager,
     taskAgentManager: stubTaskAgentManager,
     longHorizonAgentRepo,
     ...overrides,

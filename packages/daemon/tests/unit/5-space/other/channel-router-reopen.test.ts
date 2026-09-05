@@ -5,7 +5,6 @@ import type {
   SpaceWorkflowRunReopenedEvent,
 } from '../../../../src/lib/internal-event-bus.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
   ActivationError,
@@ -14,7 +13,7 @@ import {
 } from '../../../../src/lib/space/runtime/channel-router.ts';
 import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -38,10 +37,6 @@ function seedSpace(db: BunDatabase, spaceId: string): void {
 }
 
 function seedAgent(db: BunDatabase, agentId: string, spaceId: string): void {
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
-  ).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
   seedUnifiedAgentMirror(db, { id: agentId, spaceId, name: `Agent ${agentId}` });
 }
 
@@ -95,7 +90,7 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
   let taskRepo: SpaceTaskRepository;
   let workflowRunRepo: SpaceWorkflowRunRepository;
   let workflowManager: SpaceWorkflowManager;
-  let agentManager: SpaceAgentManager;
+  let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   let channelCycleRepo: ChannelCycleRepository;
   let bus: InternalEventBus<DaemonInternalEventMap>;
   let collector: RecordingCollector;
@@ -132,7 +127,7 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
       return run;
     }) as typeof workflowRunRepo.createRun;
 
-    agentManager = new SpaceAgentManager(new SpaceAgentRepository(db));
+    longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
     workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
     bus = new InternalEventBus<DaemonInternalEventMap>();
     collector = new RecordingCollector(bus);
@@ -141,7 +136,7 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
       taskRepo,
       workflowRunRepo,
       workflowManager,
-      agentExists: (id) => agentManager.getById(id) !== null,
+      agentExists: (id) => longHorizonAgentRepo.getById(id) !== null,
       channelCycleRepo,
       db,
       nodeExecutionRepo: new NodeExecutionRepository(db),
@@ -291,7 +286,7 @@ describe('ChannelRouter — reopen on inbound activity (archive tombstone)', () 
         taskRepo,
         workflowRunRepo,
         workflowManager,
-        agentExists: (id) => agentManager.getById(id) !== null,
+        agentExists: (id) => longHorizonAgentRepo.getById(id) !== null,
         channelCycleRepo,
         db,
         nodeExecutionRepo: new NodeExecutionRepository(db),

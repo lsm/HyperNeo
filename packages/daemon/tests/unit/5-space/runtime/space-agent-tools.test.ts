@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
-import type { ModelInfo, SpaceTask, SpaceTaskStatus, SpaceWorkflow } from '@hyperneo/shared';
 import { execSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ModelInfo, SpaceTask, SpaceTaskStatus, SpaceWorkflow } from '@hyperneo/shared';
 import { z } from 'zod';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
@@ -13,7 +13,6 @@ import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/lo
 import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution-episode-service.ts';
 import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
 import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -40,7 +39,6 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentInactivityConfigRepository } from '../../../../src/storage/repositories/space-agent-inactivity-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
@@ -54,6 +52,7 @@ import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositor
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
+import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -144,10 +143,6 @@ function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/wo
 }
 
 function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
-  ).run(agentId, spaceId, name, Date.now(), Date.now());
   seedUnifiedAgentMirror(db, { id: agentId, spaceId, name });
 }
 
@@ -184,7 +179,6 @@ interface TestCtx {
   workflowRunRepo: SpaceWorkflowRunRepository;
   taskRepo: SpaceTaskRepository;
   taskManager: SpaceTaskManager;
-  agentManager: SpaceAgentManager;
   runtime: SpaceRuntime;
   nodeExecutionRepo: NodeExecutionRepository;
   spaceManager: SpaceManager;
@@ -207,9 +201,6 @@ function makeCtx(): TestCtx {
   const agentId = 'agent-coder-1';
   seedAgentRow(db, agentId, spaceId, 'Coder');
 
-  const agentRepo = new SpaceAgentRepository(db);
-  const agentManager = new SpaceAgentManager(agentRepo);
-
   const workflowRepo = new SpaceWorkflowRepository(db);
   const workflowManager = new SpaceWorkflowManager(workflowRepo);
 
@@ -222,7 +213,6 @@ function makeCtx(): TestCtx {
   const runtime = new SpaceRuntime({
     db,
     spaceManager,
-    spaceAgentManager: agentManager,
     spaceWorkflowManager: workflowManager,
     workflowRunRepo,
     taskRepo,
@@ -307,7 +297,6 @@ function makeCtx(): TestCtx {
     workflowRunRepo,
     taskRepo,
     taskManager,
-    agentManager,
     runtime,
     nodeExecutionRepo,
     spaceManager,
@@ -333,7 +322,6 @@ function makeHandlers(
     taskRepo: ctx.taskRepo,
     workflowRunRepo: ctx.workflowRunRepo,
     taskManager: ctx.taskManager,
-    spaceAgentManager: ctx.agentManager,
     nodeExecutionRepo: ctx.nodeExecutionRepo,
     spaceManager: ctx.spaceManager,
     longHorizonAgentRepo: ctx.longHorizonAgentRepo,
@@ -429,7 +417,6 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
     });
 
     const names = getRegisteredToolNames(server);
@@ -457,7 +444,6 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
       inactivityConfigRepo: new SpaceAgentInactivityConfigRepository(ctx.db),
       myAgentId: 'lh-agent-1',
       inactivityRunNow: mock(async () => {}),
@@ -479,7 +465,6 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
     });
 
     const names = getRegisteredToolNames(server);
@@ -498,7 +483,6 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
     });
 
     const names = getRegisteredToolNames(server);
@@ -525,7 +509,6 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
       goalService: ctx.goalService,
     });
 
@@ -546,7 +529,6 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
       goalService: ctx.goalService,
       evolutionScopeService: ctx.evolutionScopeService,
       evolutionEpisodeService: ctx.evolutionEpisodeService,
@@ -582,7 +564,6 @@ describe('createSpaceAgentMcpServer — base tool schema extraction equivalence'
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
     });
   }
 
@@ -686,7 +667,6 @@ describe('createSpaceAgentMcpServer — agent/goal/Forge tool schema extraction 
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
       ...extra,
     });
   }
@@ -1583,12 +1563,12 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(archived.agent.status).toBe('archived');
 
-    ctx.db
-      .prepare(
-        `INSERT INTO space_agents (id, space_id, name, handle, status, description, tools, custom_prompt, created_at, updated_at)
-         VALUES ('worker-only-reviewer', ?, 'Reviewer', 'worker-reviewer', 'active', '', '[]', NULL, 1, 1)`
-      )
-      .run(ctx.spaceId);
+    seedWorkerMirror(ctx.db, {
+      id: 'worker-only-reviewer',
+      spaceId: ctx.spaceId,
+      name: 'Reviewer',
+      handle: 'worker-reviewer',
+    });
     const workerNameTemplate = JSON.parse(
       (
         await handlers.create_agent_from_template({
@@ -1963,48 +1943,9 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(afterUnsubscribe.subscriptions).toEqual([]);
 
-    const workerOnlyAgent = await ctx.agentManager.create({
-      spaceId: ctx.spaceId,
-      name: 'Worker Only',
-    });
-    expect(workerOnlyAgent.ok).toBe(true);
-    if (!workerOnlyAgent.ok) throw new Error(workerOnlyAgent.error);
-    ctx.db
-      .prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`)
-      .run(workerOnlyAgent.value.id);
-
-    const listedWorkerOnly = JSON.parse(
-      (await handlers.list_agent_event_subscriptions({ agent_id: workerOnlyAgent.value.id }))
-        .content[0].text
-    );
-    expect(listedWorkerOnly).toEqual({ success: true, subscriptions: [] });
-    expect(ctx.longHorizonAgentRepo.getById(workerOnlyAgent.value.id)).toBeNull();
-    const unsubscribedWorkerOnly = JSON.parse(
-      (
-        await handlers.unsubscribe_agent_event({
-          agent_id: workerOnlyAgent.value.id,
-          topic_pattern: 'github/*/*/pull_request/*',
-        })
-      ).content[0].text
-    );
-    expect(unsubscribedWorkerOnly.success).toBe(true);
-    expect(ctx.longHorizonAgentRepo.getById(workerOnlyAgent.value.id)).toBeNull();
-    const subscribedWorkerOnly = JSON.parse(
-      (
-        await handlers.subscribe_agent_event({
-          agent_id: workerOnlyAgent.value.id,
-          topic_pattern: 'github/*/*/pull_request/*',
-        })
-      ).content[0].text
-    );
-    expect(subscribedWorkerOnly.success).toBe(false);
-    expect(subscribedWorkerOnly.error).toBe('Expected long-horizon agent id, got worker agent id.');
-    expect(ctx.longHorizonAgentRepo.getById(workerOnlyAgent.value.id)).toBeNull();
-
     const sharedLongHorizonAgent = ctx.longHorizonAgentRepo.create({
-      id: workerOnlyAgent.value.id,
       spaceId: ctx.spaceId,
-      handle: `${workerOnlyAgent.value.handle}-lh`,
+      handle: 'shared-legacy-agent-lh',
       displayName: 'Shared Legacy Agent',
       instructions: 'Independent prompt',
       toolPermissions: { tools: ['Read'] },
@@ -2012,25 +1953,12 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     const subscribedShared = JSON.parse(
       (
         await handlers.subscribe_agent_event({
-          agent_id: workerOnlyAgent.value.id,
+          agent_id: sharedLongHorizonAgent.id,
           topic_pattern: 'github/*/*/pull_request/*',
         })
       ).content[0].text
     );
     expect(subscribedShared.success).toBe(true);
-    const updatedWorker = await ctx.agentManager.update(workerOnlyAgent.value.id, {
-      status: 'paused',
-      customPrompt: 'Worker-only prompt update',
-      tools: ['Read', 'Edit'],
-    });
-    expect(updatedWorker.ok).toBe(true);
-    expect(ctx.longHorizonAgentRepo.getById(sharedLongHorizonAgent.id)).toEqual(
-      expect.objectContaining({
-        status: 'active',
-        instructions: 'Independent prompt',
-        toolPermissions: { tools: ['Read'] },
-      })
-    );
     expect(
       JSON.parse(
         (await handlers.unassign_agent_from_goal({ agent_id: agent.id, goal_id: goal.id }))
@@ -2145,69 +2073,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(missingReminder.error).toBe(`Long-horizon agent not found: ${missingId}`);
   });
 
-  test('rejects worker-only ids on long-horizon goal, scope, reminder, and get tools', async () => {
-    const handlers = makeHandlers(ctx);
-    const workerOnly = await ctx.agentManager.create({
-      spaceId: ctx.spaceId,
-      name: 'Worker Only',
-    });
-    expect(workerOnly.ok).toBe(true);
-    if (!workerOnly.ok) throw new Error(workerOnly.error);
-    const workerId = workerOnly.value.id;
-    ctx.db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(workerId);
-
-    const goal = ctx.goalService.createGoal({
-      spaceId: ctx.spaceId,
-      title: 'Test Goal',
-    });
-    const scope = ctx.evolutionScopeService.createScope({
-      spaceId: ctx.spaceId,
-      kind: 'custom',
-      name: 'Test Scope',
-      objective: 'Track evidence',
-    });
-
-    const expectedError = 'Expected long-horizon agent id, got worker agent id.';
-
-    const getResult = JSON.parse(
-      (await handlers.get_agent({ agent_id: workerId })).content[0].text
-    );
-    expect(getResult.success).toBe(false);
-    expect(getResult.error).toBe(expectedError);
-
-    const assignGoal = JSON.parse(
-      (await handlers.assign_agent_to_goal({ agent_id: workerId, goal_id: goal.id })).content[0]
-        .text
-    );
-    expect(assignGoal.success).toBe(false);
-    expect(assignGoal.error).toBe(expectedError);
-
-    const assignScope = JSON.parse(
-      (await handlers.assign_agent_to_forge_scope({ agent_id: workerId, scope_id: scope.id }))
-        .content[0].text
-    );
-    expect(assignScope.success).toBe(false);
-    expect(assignScope.error).toBe(expectedError);
-
-    const reminder = JSON.parse(
-      (
-        await handlers.create_agent_reminder({
-          agent_id: workerId,
-          message: 'No target',
-          remind_at: Date.now(),
-        })
-      ).content[0].text
-    );
-    expect(reminder.success).toBe(false);
-    expect(reminder.error).toBe(expectedError);
-
-    const listReminders = JSON.parse(
-      (await handlers.list_agent_reminders({ agent_id: workerId })).content[0].text
-    );
-    expect(listReminders.success).toBe(false);
-    expect(listReminders.error).toBe(expectedError);
-  });
-
   test('returns errors from database-backed tools when database is not configured', async () => {
     const handlers = createSpaceAgentToolHandlers({
       spaceId: ctx.spaceId,
@@ -2216,7 +2081,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       taskRepo: ctx.taskRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       spaceManager: ctx.spaceManager,
       goalService: ctx.goalService,
@@ -6473,7 +6337,6 @@ describe('createSpaceAgentToolHandlers — approve_task plain path', () => {
       taskManager: {
         setTaskStatus,
       } as unknown as SpaceTaskManager,
-      spaceAgentManager: ctx.agentManager,
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       spaceManager: ctx.spaceManager,
       internalEventBus:
@@ -6844,7 +6707,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       taskRepo: ctx.taskRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       longHorizonAgentRepo: ctx.longHorizonAgentRepo,
       taskAgentManager: tam.manager,
@@ -6880,7 +6742,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       taskRepo: ctx.taskRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
       nodeExecutionRepo: ctx.nodeExecutionRepo,
     });
     const task = await createTask();
@@ -7647,7 +7508,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       taskRepo: ctx.taskRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       taskAgentManager: tam.manager,
       myAgentName: 'task-agent',
@@ -8545,7 +8405,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       taskRepo: ctx.taskRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       taskAgentManager: tam.manager,
       messageResolver: {
@@ -9234,7 +9093,6 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
       taskRepo: ctx.taskRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       internalEventBus:
         mockBus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
@@ -9285,7 +9143,6 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
       taskManager: {
         updateTask,
       } as unknown as SpaceTaskManager,
-      spaceAgentManager: ctx.agentManager,
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       internalEventBus:
         mockBus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
@@ -9340,7 +9197,6 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
     });
 
     const names = getRegisteredToolNames(server);
@@ -9822,7 +9678,6 @@ describe('createSpaceAgentToolHandlers — update_task status parameter (task #1
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
     });
 
     expectToolInputParses(server, 'update_task', { task_id: 't1', status: 'cancelled' });
@@ -9929,7 +9784,6 @@ describe('createSpaceAgentToolHandlers — publish_task', () => {
       taskRepo: ctx.taskRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: otherTaskManager,
-      spaceAgentManager: ctx.agentManager,
       nodeExecutionRepo: ctx.nodeExecutionRepo,
     });
 
@@ -10047,7 +9901,6 @@ describe('createSpaceAgentToolHandlers — archive_task', () => {
       taskRepo: ctx.taskRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: otherTaskManager,
-      spaceAgentManager: ctx.agentManager,
       nodeExecutionRepo: ctx.nodeExecutionRepo,
     });
 
@@ -10228,7 +10081,6 @@ describe('space-agent-tools: get_external_event', () => {
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
     });
     expect(getRegisteredToolNames(withoutStore)).not.toContain('get_external_event');
 
@@ -10240,7 +10092,6 @@ describe('space-agent-tools: get_external_event', () => {
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
       externalEventStore: store,
     });
     expect(getRegisteredToolNames(withStore)).toContain('get_external_event');
@@ -10985,7 +10836,6 @@ describe('createSpaceAgentMcpServer — scheduled/external/inactivity schema ext
       nodeExecutionRepo: ctx.nodeExecutionRepo,
       workflowRunRepo: ctx.workflowRunRepo,
       taskManager: ctx.taskManager,
-      spaceAgentManager: ctx.agentManager,
       scheduleService: ctx.scheduleService,
       externalEventStore: new ExternalEventStore(ctx.db),
       inactivityConfigRepo: new SpaceAgentInactivityConfigRepository(ctx.db),

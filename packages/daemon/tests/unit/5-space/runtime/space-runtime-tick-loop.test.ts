@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -15,7 +14,7 @@ import {
 } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -81,10 +80,6 @@ function seedSpaceRow(
 }
 
 function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
-  ).run(agentId, spaceId, name, Date.now(), Date.now());
   seedUnifiedAgentMirror(db, { id: agentId, spaceId, name });
 }
 
@@ -225,7 +220,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
   let workflowRunRepo: SpaceWorkflowRunRepository;
   let taskRepo: SpaceTaskRepository;
-  let agentManager: SpaceAgentManager;
+  let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   let workflowManager: SpaceWorkflowManager;
   let spaceManager: SpaceManager;
   let nodeExecutionRepo: NodeExecutionRepository;
@@ -309,8 +304,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
     nodeExecutionRepo = new NodeExecutionRepository(db);
     sdkMessageRepo = new SDKMessageRepository(db);
 
-    const agentRepo = new SpaceAgentRepository(db);
-    agentManager = new SpaceAgentManager(agentRepo);
+    longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
 
     const workflowRepo = new SpaceWorkflowRepository(db);
     workflowManager = new SpaceWorkflowManager(workflowRepo);
@@ -334,7 +328,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
     return {
       db,
       spaceManager,
-      spaceAgentManager: agentManager,
+      longHorizonAgentRepo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
       taskRepo,

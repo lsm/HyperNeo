@@ -547,14 +547,24 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
   function stubFreshCreateSpawnPath(tam: TaskAgentManager): void {
     (tam.config as unknown as { db: Record<string, unknown> }).db.getSession = () => null;
     (tam.config as unknown as Record<string, unknown>).workflowRunRepo = { getRun: () => null };
-    (tam.config as unknown as Record<string, unknown>).spaceAgentManager = {
+    (tam.config as unknown as Record<string, unknown>).longHorizonAgentRepo = {
       getById: () => ({
         id: 'agent-reviewer',
         spaceId: SPACE_ID,
-        name: REVIEWER_AGENT,
-        customPrompt: 'merge the approved PR',
+        handle: REVIEWER_AGENT,
+        displayName: REVIEWER_AGENT,
+        templateKey: 'migration.legacy_space_agent',
+        status: 'active',
+        sessionId: null,
+        instructions: 'merge the approved PR',
+        autonomyLevel: null,
         model: 'm',
-        tools: [],
+        thinkingLevel: null,
+        provider: null,
+        settingSources: null,
+        toolPermissions: {},
+        createdAt: 1,
+        updatedAt: 1,
       }),
     };
     (tam.config as unknown as Record<string, unknown>).spaceRuntimeService = {
@@ -711,14 +721,24 @@ describe('spawnPostApprovalSubSession — reuse-if-exists else create', () => {
     const tam = makeManager([]);
     (tam.config as unknown as { db: Record<string, unknown> }).db.getSession = () => null;
     (tam.config as unknown as Record<string, unknown>).workflowRunRepo = { getRun: () => null };
-    (tam.config as unknown as Record<string, unknown>).spaceAgentManager = {
+    (tam.config as unknown as Record<string, unknown>).longHorizonAgentRepo = {
       getById: () => ({
         id: 'agent-reviewer',
         spaceId: SPACE_ID,
-        name: REVIEWER_AGENT,
-        customPrompt: 'merge the approved PR',
+        handle: REVIEWER_AGENT,
+        displayName: REVIEWER_AGENT,
+        templateKey: 'migration.legacy_space_agent',
+        status: 'active',
+        sessionId: null,
+        instructions: 'merge the approved PR',
+        autonomyLevel: null,
         model: 'm',
-        tools: [],
+        thinkingLevel: null,
+        provider: null,
+        settingSources: null,
+        toolPermissions: {},
+        createdAt: 1,
+        updatedAt: 1,
       }),
     };
 

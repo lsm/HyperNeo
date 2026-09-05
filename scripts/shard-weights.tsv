@@ -65,7 +65,6 @@
 6	packages/daemon/tests/unit/5-space/goals/reportable-terminal-gates.test.ts
 205	packages/daemon/tests/unit/5-space/messaging-adapter.test.ts
 680	packages/daemon/tests/unit/5-space/other/agent-capability-contract.test.ts
-245	packages/daemon/tests/unit/5-space/other/agent-family-resolver.test.ts
 54	packages/daemon/tests/unit/5-space/other/artifact-git-ops.test.ts
 4	packages/daemon/tests/unit/5-space/other/channel-resolution.test.ts
 6	packages/daemon/tests/unit/5-space/other/channel-resolver.test.ts
@@ -74,7 +73,6 @@
 2904	packages/daemon/tests/unit/5-space/other/cross-agent-messaging-integration.test.ts
 34	packages/daemon/tests/unit/5-space/other/export-format.test.ts
 423	packages/daemon/tests/unit/5-space/other/export-import-round-trip.test.ts
-246	packages/daemon/tests/unit/5-space/other/legacy-long-horizon-migration.test.ts
 51	packages/daemon/tests/unit/5-space/other/long-horizon-agent-lifecycle-integration.test.ts
 9	packages/daemon/tests/unit/5-space/other/long-horizon-agent-templates.test.ts
 27	packages/daemon/tests/unit/5-space/other/retry-utils.test.ts

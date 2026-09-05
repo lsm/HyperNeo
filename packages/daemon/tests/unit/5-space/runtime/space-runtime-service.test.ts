@@ -37,8 +37,6 @@ import {
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
 } from '../../../../src/lib/space/agents/long-horizon-agent-tools.ts';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session.ts';
-import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
-import { SpaceAgentManager as AgentMgr } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -52,7 +50,6 @@ import type { NodeExecutionRepository } from '../../../../src/storage/repositori
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
 import type { SpaceAgentInboxMessageRecord } from '../../../../src/storage/repositories/space-agent-inbox-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
 import {
   coordinatorLongHorizonAgentId,
@@ -98,7 +95,6 @@ function buildConfig(
   return {
     db: {} as BunDatabase,
     spaceManager,
-    spaceAgentManager: {} as SpaceAgentManager,
     spaceWorkflowManager: {} as SpaceWorkflowManager,
     workflowRunRepo: {} as SpaceWorkflowRunRepository,
     taskRepo: {} as SpaceTaskRepository,
@@ -820,12 +816,6 @@ describe('SpaceRuntimeService', () => {
       } as unknown as SpaceWorkflowManager;
     }
 
-    function makeAgentManager(): SpaceAgentManager {
-      return {
-        listBySpaceId: mock(() => []),
-      } as unknown as SpaceAgentManager;
-    }
-
     function buildConfigWithSession(
       sessionManager: SessionManager,
       spaceManager: SpaceManager = createMockSpaceManager(),
@@ -834,7 +824,6 @@ describe('SpaceRuntimeService', () => {
       return {
         db: {} as BunDatabase,
         spaceManager,
-        spaceAgentManager: makeAgentManager(),
         spaceWorkflowManager: makeWorkflowManager(),
         workflowRunRepo: {} as SpaceWorkflowRunRepository,
         taskRepo: {} as SpaceTaskRepository,
@@ -1180,22 +1169,20 @@ describe('SpaceRuntimeService', () => {
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(createdSession);
       const spaceManager = createMockSpaceManager(mockSpace);
-      const spaceAgentManager = {
+      const longHorizonAgentRepo = {
         getCoordinator: mock(() => null),
-        getById: mock(() => ({
-          id: 'agent-1',
-          spaceId: mockSpace.id,
-          name: 'Researcher',
-          customPrompt: null,
-        })),
+        getById: mock(() =>
+          buildLongHorizonAgent({ id: 'agent-1', spaceId: mockSpace.id, displayName: 'Researcher' })
+        ),
         listBySpaceId: mock(() => []),
-      } as unknown as SpaceAgentManager;
+        update: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const mailbox = buildMailboxDeliveryDb([longTermAgentSessionId(mockSpace.id, 'agent-1')]);
       const svc = new SpaceRuntimeService({
         ...buildConfigWithSession(sessionManager, spaceManager),
         db: mailbox.db,
         reactiveDb: mailbox.reactiveDb,
-        spaceAgentManager,
+        longHorizonAgentRepo,
         spaceAgentInboxRepo: {} as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
       });
 
@@ -2191,7 +2178,6 @@ describe('SpaceRuntimeService', () => {
       const svc = new SpaceRuntimeService({
         ...buildConfig(createMockSpaceManager(mockSpace)),
         sessionManager,
-        spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
         spaceWorkflowManager: {
           listWorkflows: mock(() => []),
         } as unknown as SpaceWorkflowManager,
@@ -2253,7 +2239,6 @@ describe('SpaceRuntimeService', () => {
       const svc = new SpaceRuntimeService({
         ...buildConfig(createMockSpaceManager(mockSpace)),
         sessionManager,
-        spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
         spaceWorkflowManager: {
           listWorkflows: mock(() => []),
         } as unknown as SpaceWorkflowManager,
@@ -2639,9 +2624,6 @@ describe('SpaceRuntimeService', () => {
         db: {} as BunDatabase,
         dbPath: opts.dbPath,
         spaceManager: createMockSpaceManager(mockSpace),
-        spaceAgentManager: {
-          listBySpaceId: mock(() => []),
-        } as unknown as SpaceAgentManager,
         spaceWorkflowManager: {
           listWorkflows: mock(() => []),
         } as unknown as SpaceWorkflowManager,
@@ -3037,18 +3019,17 @@ describe('SpaceRuntimeService', () => {
         buildMemberConfig({
           sessionManager,
           listSessionsResult: [longTermSession],
-          actorRegistryRepos: {
-            spaceRepo: {} as SpaceRuntimeServiceConfig['actorRegistryRepos']['spaceRepo'],
-            sessionRepo: {} as SpaceRuntimeServiceConfig['actorRegistryRepos']['sessionRepo'],
-            spaceAgentRepo: {
-              getCoordinator: mock(() => null),
-              getById: mock(() => ({ id: 'agent-1', spaceId: mockSpace.id, name: 'Repo Agent' })),
-            } as unknown as SpaceRuntimeServiceConfig['actorRegistryRepos']['spaceAgentRepo'],
-            workflowRepo: {} as SpaceRuntimeServiceConfig['actorRegistryRepos']['workflowRepo'],
-            workflowRunRepo:
-              {} as SpaceRuntimeServiceConfig['actorRegistryRepos']['workflowRunRepo'],
-            nodeExecutionRepo: makeNoopNodeExecutionRepo(),
-          },
+          longHorizonAgentRepo: {
+            getCoordinator: mock(() => null),
+            getById: mock(() =>
+              buildLongHorizonAgent({
+                id: 'agent-1',
+                spaceId: mockSpace.id,
+                displayName: 'Repo Agent',
+              })
+            ),
+            listBySpaceId: mock(() => []),
+          } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'],
         })
       );
 
@@ -3169,7 +3150,6 @@ describe('SpaceRuntimeService', () => {
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const actorRegistryRepos = {
         sessionRepo: { updateSession: mock(() => {}) },
-        spaceAgentRepo: { getById: mock(() => null) },
       } as unknown as SpaceRuntimeServiceConfig['actorRegistryRepos'];
       const svc = new SpaceRuntimeService(
         buildMemberConfig({ sessionManager, longHorizonAgentRepo, actorRegistryRepos })
@@ -3275,7 +3255,6 @@ describe('SpaceRuntimeService', () => {
       const svc = new SpaceRuntimeService({
         db: {} as BunDatabase,
         spaceManager: createMockSpaceManager(mockSpace),
-        spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
         spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
         workflowRunRepo: {} as SpaceWorkflowRunRepository,
         taskRepo: {} as SpaceTaskRepository,
@@ -3376,7 +3355,6 @@ describe('SpaceRuntimeService', () => {
       const svc = new SpaceRuntimeService({
         db: {} as BunDatabase,
         spaceManager: createMockSpaceManager(mockSpace),
-        spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
         spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
         workflowRunRepo: {} as SpaceWorkflowRunRepository,
         taskRepo: {} as SpaceTaskRepository,
@@ -3410,7 +3388,6 @@ describe('SpaceRuntimeService', () => {
       const svc = new SpaceRuntimeService({
         db: {} as BunDatabase,
         spaceManager: createMockSpaceManager(mockSpace),
-        spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
         spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
         workflowRunRepo: {} as SpaceWorkflowRunRepository,
         taskRepo: {} as SpaceTaskRepository,
@@ -3454,7 +3431,6 @@ describe('SpaceRuntimeService', () => {
       const svc = new SpaceRuntimeService({
         db: {} as BunDatabase,
         spaceManager: createMockSpaceManager(mockSpace),
-        spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
         spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
         workflowRunRepo: {} as SpaceWorkflowRunRepository,
         taskRepo: {} as SpaceTaskRepository,
@@ -3488,7 +3464,6 @@ describe('SpaceRuntimeService', () => {
       const svc = new SpaceRuntimeService({
         db: {} as BunDatabase,
         spaceManager: createMockSpaceManager(mockSpace),
-        spaceAgentManager: { listBySpaceId: mock(() => []) } as unknown as SpaceAgentManager,
         spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
         workflowRunRepo: {} as SpaceWorkflowRunRepository,
         taskRepo: {} as SpaceTaskRepository,
@@ -3583,9 +3558,6 @@ describe('SpaceRuntimeService', () => {
       const svc = new SpaceRuntimeService({
         db: {} as BunDatabase,
         spaceManager: spaceMgr,
-        spaceAgentManager: {
-          listBySpaceId: mock(() => []),
-        } as unknown as SpaceAgentManager,
         spaceWorkflowManager: {
           listWorkflows: mock(() => []),
         } as unknown as SpaceWorkflowManager,
@@ -3645,9 +3617,6 @@ describe('SpaceRuntimeService', () => {
       const svc = new SpaceRuntimeService({
         db: {} as BunDatabase,
         spaceManager: spaceMgr,
-        spaceAgentManager: {
-          listBySpaceId: mock(() => []),
-        } as unknown as SpaceAgentManager,
         spaceWorkflowManager: {
           listWorkflows: mock(() => []),
         } as unknown as SpaceWorkflowManager,
@@ -3687,10 +3656,6 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
 				 allowed_models, session_ids, slug, status, created_at, updated_at)
 				 VALUES (?, '/tmp/ws', 'Test', '', '', '', '[]', '[]', ?, 'active', ?, ?)`
       ).run(SPACE_ID, SPACE_ID, Date.now(), Date.now());
-      db.prepare(
-        `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-				 VALUES (?, ?, 'A', '', null, '[]', '', ?, ?)`
-      ).run(AGENT_ID, SPACE_ID, Date.now(), Date.now());
       seedUnifiedAgentMirror(db, { id: AGENT_ID, spaceId: SPACE_ID, name: 'A' });
 
       const taskRepo = new SpaceTaskRepo(db);
@@ -3699,8 +3664,7 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
         '../../../../src/storage/repositories/channel-cycle-repository.ts'
       );
       const channelCycleRepo = new ChannelCycleRepository(db);
-      const agentRepo = new SpaceAgentRepository(db);
-      const agentManager = new AgentMgr(agentRepo);
+      const agentRepo = new SpaceLongHorizonAgentRepository(db);
       const workflowRepo = new SpaceWorkflowRepository(db);
       const workflowManager = new WorkflowMgr(workflowRepo);
       const spaceManager = new SpaceMgr(db);
@@ -3753,7 +3717,7 @@ describe('activateWorkflowNode() — InternalEventBus forwarding', () => {
       const service = new SpaceRuntimeService({
         db,
         spaceManager: spaceManager as unknown as SpaceManager,
-        spaceAgentManager: agentManager as unknown as SpaceAgentManager,
+        longHorizonAgentRepo: agentRepo,
         spaceWorkflowManager: workflowManager as unknown as SpaceWorkflowManager,
         workflowRunRepo,
         taskRepo,
@@ -4118,14 +4082,28 @@ describe('ensureLongTermAgentSession — regular worker agent provider inference
         createdConfigs.push(opts.config);
       }),
     } as unknown as SessionManager;
-    const spaceAgentManager = {
-      getById: mock(() => agent),
-    } as unknown as SpaceAgentManager;
+    const longHorizonAgentRepo = {
+      getById: mock(() =>
+        buildLongHorizonAgent({
+          id: agent.id,
+          spaceId: agent.spaceId,
+          displayName: agent.name,
+          templateKey: 'migration.legacy_space_agent',
+          instructions: agent.customPrompt ?? '',
+          model: agent.model ?? null,
+          provider: agent.provider ?? null,
+          thinkingLevel: agent.thinkingLevel ?? null,
+          toolPermissions: { tools: agent.tools ?? [] },
+        })
+      ),
+      getCoordinator: mock(() => null),
+      update: mock(() => ({})),
+    } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
 
     const svc = new SpaceRuntimeService({
       ...buildConfig(createMockSpaceManager(mockSpace)),
       sessionManager,
-      spaceAgentManager,
+      longHorizonAgentRepo,
     });
     (
       svc as unknown as { attachLongTermAgentMcpServers: () => void }
@@ -4291,11 +4269,20 @@ describe('ensureLongTermAgentSession — id→session routing table (dual-family
         createCalls.push(opts);
       }),
     } as unknown as SessionManager;
-    const spaceAgentManager = {
-      getById: mock(() => options.worker ?? null),
-    } as unknown as SpaceAgentManager;
+    const workerMirror = options.worker
+      ? buildLongHorizonAgent({
+          id: options.worker.id,
+          spaceId: options.worker.spaceId,
+          displayName: options.worker.name,
+          templateKey: 'migration.legacy_space_agent',
+        })
+      : null;
     const longHorizonAgentRepo = {
-      getById: mock((id: string) => options.longHorizonAgents.find((a) => a.id === id) ?? null),
+      getById: mock((id: string) => {
+        const unified = options.longHorizonAgents.find((a) => a.id === id);
+        if (unified) return unified;
+        return workerMirror && workerMirror.id === id ? workerMirror : null;
+      }),
       getCoordinator: mock(
         () => options.longHorizonAgents.find((a) => a.id === options.coordinatorId) ?? null
       ),
@@ -4304,7 +4291,6 @@ describe('ensureLongTermAgentSession — id→session routing table (dual-family
     const svc = new SpaceRuntimeService({
       ...buildConfig(createMockSpaceManager(mockSpace)),
       sessionManager,
-      spaceAgentManager,
       longHorizonAgentRepo,
     });
     (
@@ -4403,79 +4389,6 @@ describe('ensureLongTermAgentSession — id→session routing table (dual-family
     );
   });
 
-  test('long-horizon row wins over a same-id worker row, and cross-space rows do not', async () => {
-    const overlay = buildLongHorizonAgent({
-      id: 'shared-1',
-      handle: 'overlay',
-      displayName: 'Overlay LHA',
-    });
-    const worker = {
-      id: 'shared-1',
-      spaceId: 'space-1',
-      name: 'Worker Name',
-      model: null,
-      provider: null,
-      thinkingLevel: null,
-      customPrompt: '',
-      tools: [],
-      settingSources: null,
-    } as unknown as SpaceWorkerAgent;
-
-    const overlayRun = buildRoutingService({ longHorizonAgents: [overlay], worker });
-    await route(overlayRun.svc, 'shared-1');
-    expect(overlayRun.createCalls[0]).toEqual(expect.objectContaining({ title: 'Overlay LHA' }));
-
-    const crossSpace = buildLongHorizonAgent({
-      id: 'shared-2',
-      spaceId: 'space-2',
-      handle: 'elsewhere',
-    });
-    const crossRun = buildRoutingService({
-      longHorizonAgents: [crossSpace],
-      worker: { ...worker, id: 'shared-2' },
-    });
-    await route(crossRun.svc, 'shared-2');
-    expect(crossRun.createCalls[0]).toEqual(
-      expect.objectContaining({ sessionId: 'space:agent:space-1:shared-2', title: 'Worker Name' })
-    );
-  });
-
-  test('an orphan migration mirror (no sibling worker) is not dispatched as a worker', async () => {
-    const mirror = buildLongHorizonAgent({
-      id: 'orphan-mirror',
-      handle: 'orphan',
-      displayName: 'Orphan',
-      templateKey: 'migration.legacy_space_agent',
-    });
-    const createdConfigs: Array<{ sessionId?: string }> = [];
-    const sessionManager = {
-      getSessionAsync: mock(async () => null),
-      createSession: mock(async (opts: { sessionId?: string }) => {
-        createdConfigs.push(opts);
-      }),
-    } as unknown as SessionManager;
-    const svc = new SpaceRuntimeService({
-      ...buildConfig(createMockSpaceManager(mockSpace)),
-      sessionManager,
-      spaceAgentManager: { getById: mock(() => null) } as unknown as SpaceAgentManager,
-      longHorizonAgentRepo: {
-        getById: mock((id: string) => (id === mirror.id ? mirror : null)),
-        getCoordinator: mock(() => null),
-        update: mock(() => ({})),
-      } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'],
-    });
-    (
-      svc as unknown as { attachLongTermAgentMcpServers: () => void }
-    ).attachLongTermAgentMcpServers = () => {};
-    (
-      svc as unknown as { missingLongTermAgentMcpServers: () => boolean }
-    ).missingLongTermAgentMcpServers = () => false;
-
-    await route(svc, mirror.id);
-
-    expect(createdConfigs).toHaveLength(0);
-  });
-
   test('a migrated worker mirror keeps worker session semantics, not long-horizon ones', async () => {
     const mirror = buildLongHorizonAgent({
       id: 'worker-migrated',
@@ -4500,11 +4413,6 @@ describe('ensureLongTermAgentSession — id→session routing table (dual-family
       const svc = new SpaceRuntimeService({
         ...buildConfig(createMockSpaceManager(mockSpace)),
         sessionManager,
-        spaceAgentManager: {
-          getById: mock((id: string) =>
-            id === agent.id ? { id: agent.id, spaceId: 'space-1', name: agent.displayName } : null
-          ),
-        } as unknown as SpaceAgentManager,
         longHorizonAgentRepo: {
           getById: mock((id: string) => (id === agent.id ? agent : null)),
           getCoordinator: mock(() => null),
@@ -4648,10 +4556,6 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
     return {
       db,
       spaceManager,
-      spaceAgentManager: {
-        getById: mock(() => null),
-        listBySpaceId: mock(() => []),
-      } as unknown as SpaceAgentManager,
       spaceWorkflowManager: { listWorkflows: mock(() => []) } as unknown as SpaceWorkflowManager,
       workflowRunRepo: {} as SpaceWorkflowRunRepository,
       taskRepo: {} as SpaceTaskRepository,

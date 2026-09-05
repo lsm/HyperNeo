@@ -151,15 +151,6 @@ export class SpaceLongHorizonAgentRepository {
   }
 
   update(id: string, params: UpdateSpaceLongHorizonAgentParams): SpaceLongHorizonAgent | null {
-    const existing = this.getById(id);
-    const sessionBindingOnly =
-      Object.keys(params).length > 0 && Object.keys(params).every((key) => key === 'sessionId');
-    if (existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY && !sessionBindingOnly) {
-      throw new Error(
-        `Agent ${id} is a migrated worker mirror — edit the worker agent instead; ` +
-          `worker edits propagate to the mirror.`
-      );
-    }
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
 
@@ -237,42 +228,14 @@ export class SpaceLongHorizonAgentRepository {
   delete(id: string): void {
     this.db.transaction(() => {
       const row = this.db
-        .prepare(`SELECT space_id, template_key FROM space_long_horizon_agents WHERE id = ?`)
-        .get(id) as { space_id: string; template_key: string | null } | null;
-      if (row?.template_key === MIGRATED_WORKER_TEMPLATE_KEY) {
-        throw new Error(
-          `Agent ${id} is a migrated worker mirror — delete the worker agent instead; ` +
-            `deleting only the mirror would strip its execution history.`
-        );
-      }
-      const hasSiblingWorkerLha =
-        !!this.db
-          .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agents'`)
-          .get() &&
-        !!this.db
-          .prepare(`SELECT 1 FROM space_agents WHERE id = ? AND space_id = ?`)
-          .get(id, row?.space_id ?? '');
-      if (hasSiblingWorkerLha) {
-        throw new Error(
-          `Agent ${id} is a same-id worker overlay — delete the worker agent instead; ` +
-            `the unified table's ON DELETE SET NULL would strip every associated node_executions.agent_id.`
-        );
-      }
+        .prepare(`SELECT space_id FROM space_long_horizon_agents WHERE id = ?`)
+        .get(id) as { space_id: string } | null;
       const hasInbox = !!this.db
         .prepare(
           `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_inbox_messages'`
         )
         .get();
-      const hasSiblingWorkerForInbox =
-        row != null &&
-        this.db
-          .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agents'`)
-          .get()
-          ? !!this.db
-              .prepare(`SELECT 1 FROM space_agents WHERE id = ? AND space_id = ?`)
-              .get(id, row.space_id)
-          : false;
-      if (hasInbox && !hasSiblingWorkerForInbox && row != null) {
+      if (hasInbox && row != null) {
         this.db
           .prepare(
             `DELETE FROM space_agent_inbox_messages WHERE target_agent_id = ? AND space_id = ?`

@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
 import type {
   EvolutionLesson,
   Space,
@@ -19,7 +19,6 @@ import {
   type SlotOverrides,
 } from '../../../../src/lib/space/agents/custom-agent';
 import { REVIEWER_SYSTEM_CONTRACT } from '../../../../src/lib/space/agents/system-contracts';
-import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import {
   CODING_WORKFLOW,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
@@ -1077,13 +1076,11 @@ describe('createCustomAgentInit', () => {
 
 describe('resolveAgentInit', () => {
   it('throws when assigned agent cannot be found', () => {
-    const agentManager = { getById: mock(() => null) } as unknown as SpaceAgentManager;
-
     expect(() =>
       resolveAgentInit({
         task: makeTask(),
         space: makeSpace(),
-        agentManager,
+        agent: null,
         agentId: 'missing-agent',
         sessionId: 'session-1',
         workspacePath: '/workspace/project',
@@ -1091,15 +1088,11 @@ describe('resolveAgentInit', () => {
     ).toThrow('Agent not found: missing-agent');
   });
 
-  it('resolves the assigned agent and builds the session init', () => {
-    const agentManager = {
-      getById: mock(() => makeAgent({ id: 'agent-2', customPrompt: 'Visible prompt' })),
-    } as unknown as SpaceAgentManager;
-
+  it('builds the session init from the resolved agent', () => {
     const init = resolveAgentInit({
       task: makeTask(),
       space: makeSpace(),
-      agentManager,
+      agent: makeAgent({ id: 'agent-2', customPrompt: 'Visible prompt' }),
       agentId: 'agent-2',
       sessionId: 'session-1',
       workspacePath: '/workspace/project',

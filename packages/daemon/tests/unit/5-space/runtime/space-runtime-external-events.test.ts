@@ -17,7 +17,6 @@ import type {
 } from '../../../../src/lib/external-events/types';
 import { createInternalCommandBus } from '../../../../src/lib/internal-command-bus';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { WorkflowArtifactProfile } from '../../../../src/lib/space/runtime/artifact-profile';
@@ -28,7 +27,6 @@ import {
 import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
@@ -74,10 +72,6 @@ function makeDb(): Database {
     `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`
   ).run(SPACE_ID, SPACE_ID, '/tmp/runtime-events', 'Runtime Events', now, now);
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, tools, system_prompt, created_at, updated_at)
-		 VALUES (?, ?, ?, '', '[]', '', ?, ?)`
-  ).run(AGENT_ID, SPACE_ID, 'Coder', now, now);
   seedUnifiedAgentMirror(db, { id: AGENT_ID, spaceId: SPACE_ID, name: 'Coder' });
   return db;
 }
@@ -308,7 +302,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime = new SpaceRuntime({
       db,
       spaceManager,
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
       taskRepo,
@@ -343,7 +337,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
       longHorizonAgentRepo: repo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
@@ -414,7 +407,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
       longHorizonAgentRepo: repo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
@@ -456,7 +448,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
       longHorizonAgentRepo: repo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
@@ -498,7 +489,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
       longHorizonAgentRepo: repo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
@@ -538,7 +528,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
       longHorizonAgentRepo: repo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
@@ -583,7 +572,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
       longHorizonAgentRepo: repo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
@@ -623,7 +611,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
       longHorizonAgentRepo: repo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
@@ -674,7 +661,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
       longHorizonAgentRepo: repo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
@@ -725,7 +711,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
       longHorizonAgentRepo: repo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
@@ -779,7 +764,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
       longHorizonAgentRepo: repo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
@@ -837,7 +821,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
       longHorizonAgentRepo: repo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
@@ -890,7 +873,6 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
       longHorizonAgentRepo: repo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
@@ -929,7 +911,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
       taskRepo,
@@ -962,7 +944,7 @@ describe('SpaceRuntime external event subscriptions', () => {
     runtime = new SpaceRuntime({
       db,
       spaceManager: new SpaceManager(db),
-      spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+      longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
       taskRepo,
@@ -3360,7 +3342,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       return new SpaceRuntime({
         db,
         spaceManager,
-        spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+        longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
         spaceWorkflowManager: workflowManager,
         workflowRunRepo,
         taskRepo,
@@ -3806,7 +3788,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       const runtime2 = new SpaceRuntime({
         db,
         spaceManager,
-        spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+        longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
         spaceWorkflowManager: workflowManager,
         workflowRunRepo,
         taskRepo,
@@ -3913,7 +3895,7 @@ describe('SpaceRuntime external event subscriptions', () => {
       const runtime2 = new SpaceRuntime({
         db,
         spaceManager,
-        spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
+        longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
         spaceWorkflowManager: workflowManager,
         workflowRunRepo,
         taskRepo,
@@ -4149,10 +4131,6 @@ describe('SpaceRuntime external event subscriptions', () => {
          VALUES (?, ?, ?, ?, ?, ?)`
       ).run(OTHER_SPACE_ID, OTHER_SPACE_ID, '/tmp/runtime-events-other', 'Other', now, now);
       const OTHER_AGENT_ID = `${AGENT_ID}-other`;
-      db.prepare(
-        `INSERT INTO space_agents (id, space_id, name, description, tools, system_prompt, created_at, updated_at)
-         VALUES (?, ?, 'Coder', '', '[]', '', ?, ?)`
-      ).run(OTHER_AGENT_ID, OTHER_SPACE_ID, now, now);
       seedUnifiedAgentMirror(db, { id: OTHER_AGENT_ID, spaceId: OTHER_SPACE_ID, name: 'Coder' });
       const otherWorkflow = createWorkflow('code-other', {
         spaceId: OTHER_SPACE_ID,
@@ -4195,11 +4173,10 @@ describe('SpaceRuntime external event subscriptions', () => {
     });
 
     test('a workflow referencing an orphan migration mirror reports the agent as missing', async () => {
-      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(AGENT_ID);
+      db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(AGENT_ID);
       runtime = new SpaceRuntime({
         db,
         spaceManager: new SpaceManager(db),
-        spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
         longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
         spaceWorkflowManager: workflowManager,
         workflowRunRepo,
@@ -4383,7 +4360,6 @@ describe('SpaceRuntime external event subscriptions', () => {
       const runtime2 = new SpaceRuntime({
         db,
         spaceManager,
-        spaceAgentManager: new SpaceAgentManager(new SpaceAgentRepository(db)),
         spaceWorkflowManager: workflowManager,
         workflowRunRepo,
         taskRepo,

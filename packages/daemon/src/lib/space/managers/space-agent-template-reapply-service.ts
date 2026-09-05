@@ -8,7 +8,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-ev
 import { publishUnifiedAgentUpdated } from '../agents/unified-agent-events.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import type { SpaceRuntimeService } from '../runtime/space-runtime-service.ts';
-import type { SpaceAgentResult } from './space-agent-manager.ts';
+import type { SpaceAgentResult } from '../agents/agent-validation.ts';
 
 export interface ReapplyTemplateAgentSource {
   getById(id: string): SpaceLongHorizonAgent | null;
