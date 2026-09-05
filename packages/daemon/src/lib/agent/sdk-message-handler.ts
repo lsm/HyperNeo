@@ -190,9 +190,12 @@ export class SDKMessageHandler {
 
   private repeatedToolErrorGuardrail: RepeatedToolErrorGuardrail;
 
-  constructor(private ctx: SDKMessageHandlerContext) {
+  constructor(
+    private ctx: SDKMessageHandlerContext,
+    logger?: Logger
+  ) {
     const { session } = ctx;
-    this.logger = new Logger(`SDKMessageHandler ${session.id}`);
+    this.logger = logger ?? new Logger(`SDKMessageHandler ${session.id}`);
     this.contextFetcher = new ContextFetcher(session.id);
     this.circuitBreaker = new ApiErrorCircuitBreaker(session.id);
 
@@ -871,6 +874,7 @@ export class SDKMessageHandler {
     }
 
     if (isSDKCommandLifecycleMessage(message)) {
+      this.logger.debug('Filtered SDK command_lifecycle message:', message);
       return;
     }
 
@@ -880,17 +884,22 @@ export class SDKMessageHandler {
         session.metadata = metadata;
         db.updateSession(session.id, { metadata, title: 'New Session' });
       }
+      this.logger.debug('Filtered SDK conversation_reset message:', message);
       return;
     }
 
     if (isSDKActiveGoalMessage(message)) {
+      this.logger.debug('Filtered SDK active_goal message:', message);
       return;
     }
 
-    if (
-      isSDKBackgroundTasksChangedMessage(message) ||
-      isSDKControlRequestProgressMessage(message)
-    ) {
+    if (isSDKBackgroundTasksChangedMessage(message)) {
+      this.logger.debug('Filtered SDK background_tasks_changed message:', message);
+      return;
+    }
+
+    if (isSDKControlRequestProgressMessage(message)) {
+      this.logger.debug('Filtered SDK control_request_progress message:', message);
       return;
     }
 
@@ -1276,7 +1285,16 @@ export class SDKMessageHandler {
 
     if (isSDKSystemInit(message)) {
       this.resetThinkingTokenTracking();
-      this.sdkCapabilities = new Set(message.capabilities ?? []);
+      const sdkCapabilities = [...(message.capabilities ?? [])];
+      this.sdkCapabilities = new Set(sdkCapabilities);
+      session.metadata = { ...session.metadata, sdkCapabilities };
+      db.updateSession(session.id, { metadata: session.metadata });
+      await internalEventBus.publish('session.updated', {
+        sessionId: session.id,
+        source: 'metadata',
+        session: { metadata: session.metadata },
+      });
+      this.logger.debug('SDK system/init capabilities:', message);
     }
 
     if (
