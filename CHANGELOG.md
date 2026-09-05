@@ -4,10 +4,6 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
-### Removed
-
-- Removed unused CodeGraph MCP integration artifacts (orphaned DB already deleted and `.mcp.json` entry already absent); benchmark scripts and reports retained for historical reference.
-
 ## [0.40.0] - 2026-09-05
 
 904 commits since v0.39.5. Headline families: mailbox ingestion redesign, session resolution and Space agent unification, agent templates, workflow/Space runtime hardening, and provider/model updates.
@@ -28,6 +24,7 @@ All notable changes to HyperNeo will be documented in this file.
 
 ### Removed
 
+- **CodeGraph MCP integration**: Removed unused artifacts (orphaned DB already deleted and `.mcp.json` entry already absent); benchmark scripts and reports retained for historical reference.
 - Legacy Space agent manager and repository, template sync/drift plumbing, message-delivery V2/defer machinery, turn/steer roles, and the Plan & Decompose workflow.
 
 ## [0.39.5] - 2026-07-04
