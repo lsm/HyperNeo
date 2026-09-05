@@ -7758,7 +7758,9 @@ export class SpaceRuntime {
 
     const hasLiveExecutionBinding = allRunExecutions.some(
       (execution) =>
-        (execution.status === 'in_progress' || execution.status === 'pending') &&
+        (execution.status === 'blocked' ||
+          execution.status === 'in_progress' ||
+          execution.status === 'pending') &&
         !!execution.agentSessionId &&
         (this.config.taskAgentManager?.isSessionInMemory(execution.agentSessionId) ?? false) &&
         !this.isFailedSessionBinding(execution.agentSessionId)
@@ -7821,6 +7823,15 @@ export class SpaceRuntime {
         log.info(
           `SpaceRuntime: skipping task recovery promotion for task ${canonicalTask.id} in run ${runId}; ` +
             `task status moved concurrently — keeping the concurrent status`
+        );
+        return;
+      }
+
+      const freshTaskStatus = this.config.taskRepo.getTask(canonicalTask.id)?.status;
+      if (freshTaskStatus !== 'open' && freshTaskStatus !== 'in_progress') {
+        log.info(
+          `SpaceRuntime: skipping task_retry notification for task ${canonicalTask.id} in run ${runId}; ` +
+            `task status moved concurrently during recovery — keeping the concurrent status`
         );
         return;
       }

@@ -1787,6 +1787,43 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(retries.filter((r) => r.runId === run.id)).toEqual([]);
     });
 
+    test('blocked-run recovery skips the retry notification for a bindingless task cancelled during the run update', async () => {
+      const retries: Array<{ runId?: string }> = [];
+      internalEventBus.subscribe(
+        'space.workflowRun.retry',
+        (payload) => {
+          retries.push({ runId: payload.runId });
+        },
+        { subscriberName: 'test-blocked-recovery:no-binding-cancel-race' }
+      );
+      let taskId = '';
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(
+        buildConfig(tam, {
+          onWorkflowRunUpdated: () => {
+            taskRepo.updateTask(taskId, { status: 'cancelled' });
+          },
+        })
+      );
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskId = tasks[0].id;
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: 'Agent session crashed',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+
+      await rt.executeTick();
+
+      expect(taskRepo.getTask(taskId)?.status).toBe('cancelled');
+      expect(retries.filter((r) => r.runId === run.id)).toEqual([]);
+    });
+
     test('blocked-run recovery keeps an open task without a live session capacity-gated', async () => {
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
       const rt = new SpaceRuntime(buildConfig(tam));
