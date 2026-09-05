@@ -1838,6 +1838,70 @@ describe('SpaceStore — agent template CRUD', () => {
     expect(templates[0].displayName).toBe('Recreated');
   });
 
+  it('ignores a mutation response superseded by a later delete', async () => {
+    await spaceStore.selectSpace('space-1');
+    const stalledCreate: {
+      resolve: ((template: SpaceAgentTemplate) => void) | null;
+    } = { resolve: null };
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') return { templates: [] };
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
+      if (method === 'spaceAgent.createTemplate') {
+        return new Promise((resolve) => {
+          stalledCreate.resolve = (template) => resolve({ template });
+        });
+      }
+      return {};
+    });
+
+    const pendingCreate = spaceStore.createTemplate({
+      key: 'doomed',
+      handle: 'doomed',
+      displayName: 'Doomed',
+    });
+    await vi.waitFor(() => {
+      if (!stalledCreate.resolve) throw new Error('createTemplate not yet requested');
+    });
+    await spaceStore.deleteTemplate('doomed');
+    stalledCreate.resolve?.(makeAgentTemplate({ key: 'doomed', handle: 'doomed' }));
+    const created = await pendingCreate;
+
+    expect(created.key).toBe('doomed');
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual([]);
+  });
+
+  it('refresh reloads the merged template list after it has been merged', async () => {
+    await spaceStore.selectSpace('space-1');
+    const customA = makeAgentTemplate({ key: 'custom.a', createdAt: 5, updatedAt: 5 });
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') return { templates: [customA] };
+      return {};
+    });
+    await spaceStore.fetchTemplates();
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['custom.a']);
+
+    const external = makeAgentTemplate({ key: 'custom.external', createdAt: 7, updatedAt: 7 });
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') return { templates: [customA, external] };
+      return {};
+    });
+    await spaceStore.refresh();
+    await spaceStore.ensureConfigData();
+
+    await vi.waitFor(() => {
+      if (spaceStore.agentTemplates.value.length < 2) {
+        throw new Error('merged template list not refreshed yet');
+      }
+    });
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual([
+      'custom.a',
+      'custom.external',
+    ]);
+  });
+
   it('createTemplate calls spaceAgent.createTemplate and merges into agentTemplates', async () => {
     spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'existing.default' })];
     const modelPool = [
