@@ -70,6 +70,7 @@ function seedBlockedTask(
     status?: string;
     workflowRunId?: string | null;
     blockedReason?: string | null;
+    sessionId?: string | null;
   } = {}
 ): SpaceTask {
   const task = repo.createTask({
@@ -87,6 +88,7 @@ function seedBlockedTask(
       overrides.blockedReason === undefined
         ? 'post-approval spawn deferred: transient'
         : overrides.blockedReason,
+    ...(overrides.sessionId !== undefined ? { postApprovalSessionId: overrides.sessionId } : {}),
     ...(overrides.status ? { status: overrides.status as 'done' } : {}),
   });
   if (!updated) throw new Error('failed to seed task');
@@ -184,8 +186,50 @@ describe('post-approval retry pipeline stages', () => {
     expect(ctx.halt).toContain('not approved');
   });
 
-  test('applyRetryEligibility halts without a blocked dispatch reason', () => {
+  test('applyRetryEligibility halts without a blocked reason or routed pointer', () => {
     const task = seedBlockedTask(h.repo, { blockedReason: null });
+    const ctx = applyRetryEligibility(ctxFor(h, task.id, h.repo.getTask(task.id)));
+    expect(ctx.halt).toContain('no blocked dispatch');
+  });
+
+  test('applyRetryEligibility halts for a live routed pointer without a blocked reason', () => {
+    const task = seedBlockedTask(h.repo, {
+      blockedReason: null,
+      sessionId: 'worker-live',
+    });
+    const ctx = applyRetryEligibility({
+      ...ctxFor(h, task.id, h.repo.getTask(task.id)),
+      isSessionAlive: () => true,
+    });
+    expect(ctx.halt).toContain('no blocked dispatch');
+  });
+
+  test('applyRetryEligibility admits a dead routed pointer without a blocked reason', () => {
+    const task = seedBlockedTask(h.repo, {
+      blockedReason: null,
+      sessionId: 'worker-dead',
+    });
+    const ctx = applyRetryEligibility({
+      ...ctxFor(h, task.id, h.repo.getTask(task.id)),
+      isSessionAlive: () => false,
+    });
+    expect(ctx.halt).toBeNull();
+  });
+
+  test('applyRetryEligibility preserves blocked-reason admission', () => {
+    const task = seedBlockedTask(h.repo, { sessionId: 'worker-live' });
+    const ctx = applyRetryEligibility({
+      ...ctxFor(h, task.id, h.repo.getTask(task.id)),
+      isSessionAlive: () => true,
+    });
+    expect(ctx.halt).toBeNull();
+  });
+
+  test('applyRetryEligibility preserves admission without a liveness dependency', () => {
+    const task = seedBlockedTask(h.repo, {
+      blockedReason: null,
+      sessionId: 'worker-dead',
+    });
     const ctx = applyRetryEligibility(ctxFor(h, task.id, h.repo.getTask(task.id)));
     expect(ctx.halt).toContain('no blocked dispatch');
   });
@@ -305,6 +349,47 @@ describe('runPostApprovalRetry — concurrency against the real CAS', () => {
   });
   afterEach(() => {
     db.close();
+  });
+
+  test('a dead routed pointer composes with router replacement and serialized retry', async () => {
+    const repo = new SpaceTaskRepository(db);
+    const workflow = stubWorkflow();
+    const alive = new Set<string>();
+    let spawnCount = 0;
+    const router = new PostApprovalRouter({
+      taskRepo: repo,
+      spawner: {
+        spawnPostApprovalSubSession: async () => {
+          spawnCount += 1;
+          alive.add('worker-replacement');
+          return { sessionId: 'worker-replacement' };
+        },
+      },
+      livenessProbe: { isSessionAlive: (sessionId) => alive.has(sessionId) },
+    });
+    const h = makeHarness(db, {
+      dispatchImpl: async (taskId) =>
+        router.route(repo.getTask(taskId)!, workflow, {
+          approvalSource: 'human',
+          task_title: 'Ship it',
+        }),
+    });
+    h.deps.isSessionAlive = (sessionId) => alive.has(sessionId);
+    const task = seedBlockedTask(h.repo, {
+      blockedReason: null,
+      sessionId: 'worker-dead',
+    });
+    const queue = new TaskScopedRetrySerializer();
+    const results = await Promise.all(
+      [1, 2].map(() =>
+        queue.run(task.id, () => runPostApprovalRetry({ ...h.deps, taskId: task.id }))
+      )
+    );
+
+    expect(results.filter((result) => result.mode === 'spawn')).toHaveLength(1);
+    expect(results.filter((result) => result.mode === 'skipped')).toHaveLength(1);
+    expect(spawnCount).toBe(1);
+    expect(h.repo.getTask(task.id)?.postApprovalSessionId).toBe('worker-replacement');
   });
 
   test('concurrent retries for one task produce one routed result and no duplicate kickoff', async () => {
