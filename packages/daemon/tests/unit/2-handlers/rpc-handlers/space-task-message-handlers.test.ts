@@ -2775,11 +2775,10 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(result).toMatchObject({
         sessionId: 'sess-live-reviewer',
         activated: false,
-        queued: false,
+        queued: true,
+        queuedMessageId: 'pending-1',
       });
-      expect(injectCalls).toEqual([
-        { sessionId: 'sess-live-reviewer', message: '[Message from human]: hi reviewer' },
-      ]);
+      expect(injectCalls).toHaveLength(0);
       expect(enqueueCalls).toEqual([
         {
           targetAgentName: 'reviewer',

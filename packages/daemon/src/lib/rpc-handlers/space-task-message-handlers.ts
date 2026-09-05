@@ -114,7 +114,8 @@ export interface TaskAgentManagerInterface {
   flushPendingMessagesForTarget?(
     workflowRunId: string,
     targetAgentName: string,
-    sessionId: string
+    sessionId: string,
+    workflowNodeId?: string
   ): Promise<void>;
   getPostApprovalWorkerSession?(
     taskId: string,
@@ -951,7 +952,8 @@ export function setupSpaceTaskMessageHandlers(
         await taskAgentManager.flushPendingMessagesForTarget!(
           workflowRunId,
           params.agentName,
-          outcome.sessionId
+          outcome.sessionId,
+          params.workflowNodeId
         );
         const queuedRecord = pendingMessageQueue!.getById!(queuedMessageId);
         if (queuedRecord?.status !== 'delivered') {
@@ -963,16 +965,13 @@ export function setupSpaceTaskMessageHandlers(
           `space.task.activateNodeAgent: delivered queued message to session ${outcome.sessionId} ` +
             `(agent=${params.agentName}, task=${params.taskId})`
         );
-      } else if (params.message) {
+      } else if (params.message && queuedMessageId === null) {
         await injectResolvedSession(
           params.taskId,
           outcome.sessionId,
           params.agentName,
           `[Message from human]: ${params.message}`
         );
-        if (queuedMessageId !== null) {
-          pendingMessageQueue?.markFailed?.(queuedMessageId, 'delivered directly');
-        }
         log.info(
           `space.task.activateNodeAgent: delivered message to session ${outcome.sessionId} ` +
             `(agent=${params.agentName}, task=${params.taskId})`
@@ -986,7 +985,8 @@ export function setupSpaceTaskMessageHandlers(
         agentName: params.agentName,
         sessionId: outcome.sessionId,
         activated: outcome.created,
-        queued: false,
+        queued: queuedMessageId !== null && !canDrainQueuedMessage,
+        ...(queuedMessageId !== null && !canDrainQueuedMessage ? { queuedMessageId } : {}),
       };
     }
 
