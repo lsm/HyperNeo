@@ -162,6 +162,30 @@ describe('TemplateModelFields', () => {
     expect(getByTestId('template-model-fields-thinking-level')).toBeTruthy();
   });
 
+  it('hides the model select but keeps the thinking level select when hidden', () => {
+    const { getByTestId } = render(
+      <TemplateModelFields value={EMPTY_VALUE} onChange={vi.fn()} hideModelSelect />
+    );
+    expect(getByTestId('template-model-fields')).toBeTruthy();
+    const modelBlock = getByTestId('template-model-fields-model-select').closest('div');
+    expect(modelBlock?.hasAttribute('hidden')).toBe(true);
+    expect(getByTestId('template-model-fields-thinking-level')).toBeTruthy();
+  });
+
+  it('still resolves thinking options from model metadata while the model select is hidden', () => {
+    const { getByTestId } = render(
+      <TemplateModelFields
+        value={{ model: 'kimi-k3-1m', provider: 'kimi', thinkingLevel: null }}
+        onChange={vi.fn()}
+        hideModelSelect
+      />
+    );
+    const thinkingSelect = getByTestId('template-model-fields-thinking-level') as HTMLSelectElement;
+    const options = Array.from(thinkingSelect.options).map((option) => option.value);
+    expect(options).toContain('think8k');
+    expect(options).toEqual(['', 'off', 'think8k', 'think16k', 'think24k', 'think32k']);
+  });
+
   it('associates labels with their selects via htmlFor/id', () => {
     const { getByTestId } = render(<TemplateModelFields value={EMPTY_VALUE} onChange={vi.fn()} />);
     const modelLabel = getByTestId('template-model-fields').querySelector(

@@ -202,6 +202,8 @@ interface TemplateSaveForm {
   tools: string[];
   model: string | null;
   provider: string | null;
+  modelMode: ModelPoolEditorMode;
+  modelPool: AgentModelPoolEntry[];
   thinkingLevel: ThinkingLevel | null;
   settingSources: SettingSource[] | null;
 }
@@ -218,6 +220,13 @@ function templateSaveValidateStage(ctx: TemplateSaveCtx): TemplateSaveCtx {
 }
 
 async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateSaveCtx> {
+  const effectiveModel = ctx.form.modelMode === 'single' ? ctx.form.model : '';
+  const effectiveProvider = effectiveModel ? ctx.form.provider : null;
+  const cleanedModelPool = ctx.form.modelPool
+    .map((entry) => ({ ...entry, model: entry.model.trim() }))
+    .filter((entry) => entry.model.length > 0);
+  const activeModelPool =
+    ctx.form.modelMode === 'pool' && cleanedModelPool.length > 0 ? cleanedModelPool : null;
   await spaceStore.createTemplate({
     key: ctx.form.key.trim(),
     handle: ctx.form.handle.trim(),
@@ -226,8 +235,9 @@ async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateS
     instructions: ctx.form.instructions.trim(),
     suggestedAutonomyLevel: ctx.form.suggestedAutonomyLevel as SpaceAgentAutonomyLevel,
     tools: ctx.form.tools,
-    model: ctx.form.model,
-    provider: ctx.form.provider,
+    model: effectiveModel || null,
+    provider: effectiveProvider,
+    modelPool: activeModelPool,
     thinkingLevel: ctx.form.thinkingLevel,
     settingSources: ctx.form.settingSources,
   });
@@ -274,9 +284,11 @@ function AgentEditor({
   const [modelProvider, setModelProvider] = useState<string>(
     agent?.provider ?? template?.provider ?? ''
   );
-  const [modelPool, setModelPool] = useState<AgentModelPoolEntry[]>(agent?.modelPool ?? []);
+  const [modelPool, setModelPool] = useState<AgentModelPoolEntry[]>(
+    agent?.modelPool ?? template?.modelPool ?? []
+  );
   const [modelMode, setModelMode] = useState<ModelPoolEditorMode>(
-    (agent?.modelPool?.length ?? 0) > 0 ? 'pool' : 'single'
+    (agent?.modelPool ?? template?.modelPool ?? []).length > 0 ? 'pool' : 'single'
   );
   const [thinkingLevel, setThinkingLevel] = useState<'' | ThinkingLevel>(
     agent?.thinkingLevel ?? template?.thinkingLevel ?? ''
@@ -581,6 +593,8 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
     thinkingLevel: null,
   });
   const [settingSources, setSettingSources] = useState<SettingSource[] | null>(null);
+  const [modelPool, setModelPool] = useState<AgentModelPoolEntry[]>([]);
+  const [modelMode, setModelMode] = useState<ModelPoolEditorMode>('single');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -599,6 +613,8 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
           tools: toolsSelection.tools,
           model: modelFields.model,
           provider: modelFields.provider,
+          modelMode,
+          modelPool,
           thinkingLevel: modelFields.thinkingLevel,
           settingSources,
         },
@@ -704,7 +720,30 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
             </div>
             <p class="mt-1.5 text-xs text-fg-muted">{AUTONOMY_LABELS[autonomyLevel]}</p>
           </div>
-          <TemplateModelFields value={modelFields} onChange={setModelFields} />
+          <div>
+            <label class="mb-2 block text-sm font-medium text-fg-soft">Model</label>
+            <ModelPoolEditor
+              mode={modelMode}
+              model={modelFields.model ?? ''}
+              provider={modelFields.provider ?? ''}
+              modelPool={modelPool}
+              onModeChange={(nextMode) => {
+                setModelMode(nextMode);
+                if (nextMode === 'pool') {
+                  setModelFields((fields) => ({ ...fields, model: null, provider: null }));
+                }
+              }}
+              onModelChange={(nextModel, nextProvider) =>
+                setModelFields((fields) => ({
+                  ...fields,
+                  model: nextModel || null,
+                  provider: nextProvider || null,
+                }))
+              }
+              onModelPoolChange={setModelPool}
+            />
+          </div>
+          <TemplateModelFields value={modelFields} onChange={setModelFields} hideModelSelect />
           <ToolsEditor
             tools={toolsSelection.tools}
             toolsOverridden={toolsSelection.toolsOverridden}

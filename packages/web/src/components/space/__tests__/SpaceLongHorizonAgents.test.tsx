@@ -297,6 +297,7 @@ describe('SpaceLongHorizonAgents', () => {
       tools: [],
       model: null,
       provider: null,
+      modelPool: null,
       thinkingLevel: null,
       settingSources: null,
     });
@@ -383,7 +384,7 @@ describe('SpaceLongHorizonAgents', () => {
     fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
       target: { value: 'release-readiness' },
     });
-    const modelSelect = getByTestId('template-model-fields-model-select') as HTMLSelectElement;
+    const modelSelect = getByTestId('space-agent-model-select') as HTMLSelectElement;
     modelSelect.value = 'claude-sonnet-4-6';
     fireEvent.change(modelSelect);
     const thinkingSelect = getByTestId('template-model-fields-thinking-level') as HTMLSelectElement;
@@ -396,6 +397,7 @@ describe('SpaceLongHorizonAgents', () => {
       expect.objectContaining({
         model: 'claude-sonnet-4-6',
         provider: 'anthropic',
+        modelPool: null,
         thinkingLevel: 'think16k',
       })
     );
@@ -450,6 +452,149 @@ describe('SpaceLongHorizonAgents', () => {
 
     await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
     expect(mockCreateTemplate.mock.calls[0][0].settingSources).toBeNull();
+  });
+
+  it('creates a template with a model pool and no pinned model', async () => {
+    const { getByRole, getByTestId, getByPlaceholderText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
+      target: { value: 'Release Readiness' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness.custom'), {
+      target: { value: 'release-readiness.custom' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
+      target: { value: 'release-readiness' },
+    });
+    fireEvent.click(getByTestId('agent-model-mode-pool'));
+    fireEvent.change(getByTestId('pool-entry-model-select'), {
+      target: { value: 'claude-sonnet-4-6' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
+    const params = mockCreateTemplate.mock.calls[0][0];
+    expect(params.modelPool).toEqual([
+      { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+    ]);
+    expect(params.model).toBeNull();
+    expect(params.provider).toBeNull();
+  });
+
+  it('omits modelPool when creating a template in single mode', async () => {
+    const { getByRole, getByTestId, getByPlaceholderText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
+      target: { value: 'Release Readiness' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness.custom'), {
+      target: { value: 'release-readiness.custom' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
+      target: { value: 'release-readiness' },
+    });
+    fireEvent.click(getByTestId('agent-model-mode-pool'));
+    fireEvent.click(getByTestId('agent-model-mode-single'));
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockCreateTemplate.mock.calls[0][0].modelPool).toBeNull();
+  });
+
+  it('drops unnamed pool entries when creating a template', async () => {
+    const { getByRole, getByTestId, getAllByTestId, getByPlaceholderText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
+      target: { value: 'Release Readiness' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness.custom'), {
+      target: { value: 'release-readiness.custom' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
+      target: { value: 'release-readiness' },
+    });
+    fireEvent.click(getByTestId('agent-model-mode-pool'));
+    fireEvent.click(getByTestId('pool-add-model-button'));
+    fireEvent.change(getAllByTestId('pool-entry-model-select')[1], {
+      target: { value: 'claude-haiku-4-5' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockCreateTemplate.mock.calls[0][0].modelPool).toEqual([
+      { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+    ]);
+  });
+
+  it('clears the pinned model when creating a template in pool mode', async () => {
+    const { getByRole, getByTestId, getByPlaceholderText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
+      target: { value: 'Release Readiness' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness.custom'), {
+      target: { value: 'release-readiness.custom' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
+      target: { value: 'release-readiness' },
+    });
+    const modelSelect = getByTestId('space-agent-model-select') as HTMLSelectElement;
+    modelSelect.value = 'claude-sonnet-4-6';
+    fireEvent.change(modelSelect);
+    fireEvent.click(getByTestId('agent-model-mode-pool'));
+    fireEvent.change(getByTestId('pool-entry-model-select'), {
+      target: { value: 'claude-haiku-4-5' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
+    const params = mockCreateTemplate.mock.calls[0][0];
+    expect(params.model).toBeNull();
+    expect(params.provider).toBeNull();
+    expect(params.modelPool).toEqual([
+      { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+    ]);
+  });
+
+  it('discards the single-model selection when switching to pool mode', async () => {
+    const { getByRole, getByTestId, getByPlaceholderText } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
+      target: { value: 'Release Readiness' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness.custom'), {
+      target: { value: 'release-readiness.custom' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
+      target: { value: 'release-readiness' },
+    });
+    const modelSelect = getByTestId('space-agent-model-select') as HTMLSelectElement;
+    modelSelect.value = 'claude-sonnet-4-6';
+    fireEvent.change(modelSelect);
+    fireEvent.click(getByTestId('agent-model-mode-pool'));
+    fireEvent.click(getByTestId('agent-model-mode-single'));
+    expect((getByTestId('space-agent-model-select') as HTMLSelectElement).value).toBe('');
+    const thinkingSelect = getByTestId('template-model-fields-thinking-level') as HTMLSelectElement;
+    expect(thinkingSelect.value).toBe('');
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockCreateTemplate.mock.calls[0][0].model).toBeNull();
   });
 
   it('shows the store error and keeps the modal open when create fails', async () => {
@@ -1020,6 +1165,33 @@ describe('SpaceLongHorizonAgents', () => {
         model: 'claude-sonnet-4-6',
         provider: 'anthropic',
         thinkingLevel: 'think16k',
+      })
+    );
+  });
+
+  it('seeds the model pool from the template when creating an agent', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        modelPool: [
+          { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 2, weight: 40 },
+        ],
+      }),
+    ];
+    const { getByText, getByTestId, getByRole } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
+    expect(getByTestId('agent-model-pool')).toBeTruthy();
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    expect(mockCreateAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateKey: 'qa',
+        modelPool: [
+          { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 2, weight: 40 },
+        ],
       })
     );
   });

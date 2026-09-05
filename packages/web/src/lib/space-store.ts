@@ -230,6 +230,7 @@ function toPaneAgentTemplate(template: SpaceAgentTemplate): SpaceLongHorizonAgen
     toolPermissions: {},
     model: template.model,
     provider: template.provider,
+    modelPool: template.modelPool,
     thinkingLevel: template.thinkingLevel,
     settingSources: template.settingSources,
   };

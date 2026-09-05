@@ -20,12 +20,14 @@ interface TemplateModelFieldsProps {
   value: TemplateModelFieldsValue;
   onChange: (value: TemplateModelFieldsValue) => void;
   testId?: string;
+  hideModelSelect?: boolean;
 }
 
 export function TemplateModelFields({
   value,
   onChange,
   testId = 'template-model-fields',
+  hideModelSelect = false,
 }: TemplateModelFieldsProps) {
   const modelSelectId = `${testId}-model-select`;
   const thinkingSelectId = `${testId}-thinking-level`;
@@ -117,7 +119,7 @@ export function TemplateModelFields({
 
   return (
     <div class="space-y-4" data-testid={testId}>
-      <div>
+      <div hidden={hideModelSelect}>
         <label htmlFor={modelSelectId} class="block text-sm font-medium text-fg-soft mb-1.5">
           Model
           <span class="text-fg-muted text-xs ml-2">(optional)</span>
