@@ -327,6 +327,18 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(repo.casRunStatus(target.id, 'pending', 'blocked')).toBe('won');
       expect(repo.getRun(other.id)).toEqual(otherBefore);
     });
+
+    it('applies in_progress transition side effects when the CAS wins', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'R' });
+      repo.transitionStatus(run.id, 'in_progress');
+      repo.transitionStatus(run.id, 'blocked');
+      repo.updateRun(run.id, { startedAt: 1234, completedAt: 1234 });
+      expect(repo.casRunStatus(run.id, ['blocked'], 'in_progress')).toBe('won');
+      const updated = repo.getRun(run.id)!;
+      expect(updated.status).toBe('in_progress');
+      expect(updated.startedAt).not.toBe(1234);
+      expect(updated.completedAt).toBeNull();
+    });
   });
 
   describe('deleteRun', () => {

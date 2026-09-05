@@ -263,11 +263,24 @@ export class SpaceWorkflowRunRepository {
     const expectedStatuses = Array.isArray(expected) ? [...expected] : [expected];
     if (expectedStatuses.length === 0) return 'superseded';
     const placeholders = expectedStatuses.map(() => '?').join(', ');
+    const sets = ['status = ?'];
+    const values: SQLiteValue[] = [next];
+    if (next === 'done' || next === 'cancelled') {
+      sets.push('completed_at = ?');
+      values.push(Date.now());
+    } else if (next === 'in_progress') {
+      sets.push('started_at = ?');
+      values.push(Date.now());
+      sets.push('completed_at = ?');
+      values.push(null);
+    }
+    sets.push('updated_at = ?');
+    values.push(Date.now());
     const result = this.db
       .prepare(
-        `UPDATE space_workflow_runs SET status = ? WHERE id = ? AND status IN (${placeholders})`
+        `UPDATE space_workflow_runs SET ${sets.join(', ')} WHERE id = ? AND status IN (${placeholders})`
       )
-      .run(next, id, ...expectedStatuses);
+      .run(...values, id, ...expectedStatuses);
     return result.changes > 0 ? 'won' : 'superseded';
   }
 
