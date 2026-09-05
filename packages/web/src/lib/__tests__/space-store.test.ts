@@ -1902,6 +1902,86 @@ describe('SpaceStore — agent template CRUD', () => {
     ]);
   });
 
+  it('retains the tombstone when a reload exposes a shadowed built-in', async () => {
+    await spaceStore.selectSpace('space-1');
+    const richBuiltIn = makeLongHorizonAgentTemplate({ key: 'builtin.default' });
+    const flattened = makeAgentTemplate({
+      key: 'builtin.default',
+      displayName: 'Custom Template',
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    spaceStore.agentTemplates.value = [
+      makeLongHorizonAgentTemplate({ key: 'builtin.default', displayName: 'Shadow' }),
+    ];
+    const stalledCreate: {
+      resolve: ((template: SpaceAgentTemplate) => void) | null;
+    } = { resolve: null };
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      if (method === 'spaceAgent.listTemplates') return { templates: [flattened] };
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
+      if (method === 'spaceAgent.createTemplate') {
+        return new Promise((resolve) => {
+          stalledCreate.resolve = (template) => resolve({ template });
+        });
+      }
+      return {};
+    });
+
+    const pendingCreate = spaceStore.createTemplate({
+      key: 'builtin.default',
+      handle: 'shadow',
+      displayName: 'Shadow',
+    });
+    await vi.waitFor(() => {
+      if (!stalledCreate.resolve) throw new Error('createTemplate not yet requested');
+    });
+    await spaceStore.deleteTemplate('builtin.default');
+    stalledCreate.resolve?.(
+      makeAgentTemplate({
+        key: 'builtin.default',
+        displayName: 'Shadow',
+        createdAt: 5,
+        updatedAt: 5,
+      })
+    );
+    await pendingCreate;
+
+    const templates = spaceStore.agentTemplates.value;
+    expect(templates).toHaveLength(1);
+    expect(templates[0].displayName).toBe('Custom Template');
+  });
+
+  it('deleteTemplate fallback removes mutations that completed before the delete RPC', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'k' })];
+    const stalledDelete: { resolve: () => void } = { resolve: () => {} };
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') throw new Error('transient outage');
+      if (method === 'spaceAgent.deleteTemplate') {
+        return new Promise((resolve) => {
+          stalledDelete.resolve = () => resolve({ success: true });
+        });
+      }
+      if (method === 'spaceAgent.createTemplate') {
+        return { template: makeAgentTemplate({ key: 'k', handle: 'k' }) };
+      }
+      return {};
+    });
+
+    const pendingDelete = spaceStore.deleteTemplate('k');
+    await vi.waitFor(() => {
+      if (!stalledDelete.resolve) throw new Error('deleteTemplate not yet requested');
+    });
+    await spaceStore.createTemplate({ key: 'k', handle: 'k', displayName: 'Updated' });
+    stalledDelete.resolve();
+    await pendingDelete;
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual([]);
+  });
+
   it('createTemplate calls spaceAgent.createTemplate and merges into agentTemplates', async () => {
     spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'existing.default' })];
     const modelPool = [

@@ -237,6 +237,7 @@ interface SpaceTemplateListDeps {
 type SpaceTemplateListCtx = {
   spaceId: string | null;
   builtIns?: Map<string, SpaceLongHorizonAgentTemplate>;
+  fetched?: SpaceAgentTemplate[];
   templates?: SpaceLongHorizonAgentTemplate[];
   deps: SpaceTemplateListDeps;
 };
@@ -321,25 +322,30 @@ interface SpaceTemplateDeleteDeps {
   fetchTemplates(): Promise<{ applied: boolean }>;
   builtInForKey(key: string): SpaceLongHorizonAgentTemplate | undefined;
   mutationGenerationFor(key: string): number | undefined;
+  currentGeneration(): number;
   currentTemplates(): SpaceLongHorizonAgentTemplate[];
   applyTemplates(templates: SpaceLongHorizonAgentTemplate[]): void;
 }
 
 type SpaceTemplateDeleteCtx = {
   key: string;
-  deleteStartGeneration: number;
+  deletedAtGeneration?: number;
   reloadApplied?: boolean;
   deps: SpaceTemplateDeleteDeps;
 };
 
+type SpaceTemplateDeletedCtx = SpaceTemplateDeleteCtx & { deletedAtGeneration: number };
+
 async function requestSpaceTemplateDeletion(
   ctx: SpaceTemplateDeleteCtx
-): Promise<SpaceTemplateDeleteCtx> {
+): Promise<SpaceTemplateDeletedCtx> {
   await ctx.deps.deleteTemplate(ctx.key);
-  return ctx;
+  return { ...ctx, deletedAtGeneration: ctx.deps.currentGeneration() };
 }
 
-async function reloadSpaceTemplates(ctx: SpaceTemplateDeleteCtx): Promise<SpaceTemplateDeleteCtx> {
+async function reloadSpaceTemplates(
+  ctx: SpaceTemplateDeletedCtx
+): Promise<SpaceTemplateDeletedCtx> {
   try {
     const { applied } = await ctx.deps.fetchTemplates();
     return { ...ctx, reloadApplied: applied };
@@ -349,9 +355,9 @@ async function reloadSpaceTemplates(ctx: SpaceTemplateDeleteCtx): Promise<SpaceT
   }
 }
 
-function applySpaceTemplateDeleteFallback(ctx: SpaceTemplateDeleteCtx): SpaceTemplateDeleteCtx {
+function applySpaceTemplateDeleteFallback(ctx: SpaceTemplateDeletedCtx): SpaceTemplateDeletedCtx {
   const mutationGeneration = ctx.deps.mutationGenerationFor(ctx.key);
-  if (mutationGeneration !== undefined && mutationGeneration > ctx.deleteStartGeneration) {
+  if (mutationGeneration !== undefined && mutationGeneration > ctx.deletedAtGeneration) {
     return ctx;
   }
   const builtIn = ctx.deps.builtInForKey(ctx.key);
@@ -374,7 +380,7 @@ const runSpaceTemplateDeletion = (
   .pipe(reloadSpaceTemplates, 'ctx', 'ctx')
   .pipe('!reloaded', 'ctx')
   .pipe(applySpaceTemplateDeleteFallback, 'ctx', 'ctx')
-  .endAsync('ctx') as (ctx: SpaceTemplateDeleteCtx) => Promise<SpaceTemplateDeleteCtx>;
+  .endAsync('ctx') as (ctx: SpaceTemplateDeleteCtx) => Promise<SpaceTemplateDeletedCtx>;
 
 interface SpaceTemplateCreationDeps {
   requestCreate(params: CreateSpaceAgentTemplateParams): Promise<SpaceAgentTemplate>;
@@ -2772,7 +2778,11 @@ class SpaceStore {
     if (generation !== this.templateFetchGeneration)
       return { templates: ctx.templates, applied: false };
     this.templateListMerged = true;
-    for (const template of ctx.templates) this.deletedTemplateGenerations.delete(template.key);
+    for (const template of ctx.fetched ?? []) {
+      if (template.createdAt !== 0 || template.updatedAt !== 0) {
+        this.deletedTemplateGenerations.delete(template.key);
+      }
+    }
     this.agentTemplates.value = ctx.templates;
     return { templates: ctx.templates, applied: true };
   }
@@ -2831,7 +2841,6 @@ class SpaceStore {
   async deleteTemplate(key: string): Promise<void> {
     await runSpaceTemplateDeletion({
       key,
-      deleteStartGeneration: this.templateFetchGeneration,
       deps: {
         deleteTemplate: async (templateKey) => {
           const hub = await connectionManager.getHub();
@@ -2842,12 +2851,14 @@ class SpaceStore {
         fetchTemplates: () => this.runTemplateListFetch(),
         builtInForKey: (templateKey) => this.builtInTemplatesByKey.get(templateKey),
         mutationGenerationFor: (templateKey) => this.mutatedTemplateKeys.get(templateKey),
+        currentGeneration: () => this.templateFetchGeneration,
         currentTemplates: () => this.agentTemplates.value,
         applyTemplates: (templates) => {
           this.agentTemplates.value = templates;
         },
       },
     });
+    this.templateFetchGeneration += 1;
     this.deletedTemplateGenerations.set(key, this.templateFetchGeneration);
   }
 
