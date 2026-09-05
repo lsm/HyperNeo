@@ -322,7 +322,7 @@ interface SpaceTemplateDeleteDeps {
   fetchTemplates(): Promise<{ applied: boolean }>;
   builtInForKey(key: string): SpaceLongHorizonAgentTemplate | undefined;
   mutationGenerationFor(key: string): number | undefined;
-  currentGeneration(): number;
+  confirmDeletion(key: string): number;
   currentTemplates(): SpaceLongHorizonAgentTemplate[];
   applyTemplates(templates: SpaceLongHorizonAgentTemplate[]): void;
 }
@@ -340,7 +340,7 @@ async function requestSpaceTemplateDeletion(
   ctx: SpaceTemplateDeleteCtx
 ): Promise<SpaceTemplateDeletedCtx> {
   await ctx.deps.deleteTemplate(ctx.key);
-  return { ...ctx, deletedAtGeneration: ctx.deps.currentGeneration() };
+  return { ...ctx, deletedAtGeneration: ctx.deps.confirmDeletion(ctx.key) };
 }
 
 async function reloadSpaceTemplates(
@@ -2851,15 +2851,17 @@ class SpaceStore {
         fetchTemplates: () => this.runTemplateListFetch(),
         builtInForKey: (templateKey) => this.builtInTemplatesByKey.get(templateKey),
         mutationGenerationFor: (templateKey) => this.mutatedTemplateKeys.get(templateKey),
-        currentGeneration: () => this.templateFetchGeneration,
+        confirmDeletion: (templateKey) => {
+          this.templateFetchGeneration += 1;
+          this.deletedTemplateGenerations.set(templateKey, this.templateFetchGeneration);
+          return this.templateFetchGeneration;
+        },
         currentTemplates: () => this.agentTemplates.value,
         applyTemplates: (templates) => {
           this.agentTemplates.value = templates;
         },
       },
     });
-    this.templateFetchGeneration += 1;
-    this.deletedTemplateGenerations.set(key, this.templateFetchGeneration);
   }
 
   async listAgentReminderCounts(agentIds: string[]): Promise<Record<string, number>> {

@@ -1982,6 +1982,39 @@ describe('SpaceStore — agent template CRUD', () => {
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual([]);
   });
 
+  it('a mutation starting after the delete RPC survives the tombstone', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'k' })];
+    const stalledList: {
+      resolve: ((templates: SpaceAgentTemplate[]) => void) | null;
+    } = { resolve: null };
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') {
+        return new Promise((resolve) => {
+          stalledList.resolve = (templates) => resolve({ templates });
+        });
+      }
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
+      if (method === 'spaceAgent.createTemplate') {
+        return { template: makeAgentTemplate({ key: 'k', handle: 'k', displayName: 'Recreated' }) };
+      }
+      return {};
+    });
+
+    const pendingDelete = spaceStore.deleteTemplate('k');
+    await vi.waitFor(() => {
+      if (!stalledList.resolve) throw new Error('reload not yet requested');
+    });
+    await spaceStore.createTemplate({ key: 'k', handle: 'k', displayName: 'Recreated' });
+    stalledList.resolve?.([]);
+    await pendingDelete;
+
+    const templates = spaceStore.agentTemplates.value;
+    expect(templates.map((t) => t.key)).toEqual(['k']);
+    expect(templates[0].displayName).toBe('Recreated');
+  });
+
   it('createTemplate calls spaceAgent.createTemplate and merges into agentTemplates', async () => {
     spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'existing.default' })];
     const modelPool = [
