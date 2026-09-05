@@ -1687,6 +1687,30 @@ describe('SpaceStore — agent template CRUD', () => {
     expect(templates[0].toolPermissions).toEqual({});
   });
 
+  it('createTemplate invalidates a pending fetch snapshot', async () => {
+    await spaceStore.selectSpace('space-1');
+    let resolveList: (templates: SpaceAgentTemplate[]) => void = () => {};
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') {
+        return new Promise((resolve) => {
+          resolveList = (templates) => resolve({ templates });
+        });
+      }
+      if (method === 'spaceAgent.createTemplate') {
+        return { template: makeAgentTemplate({ key: 'new.custom', handle: 'new' }) };
+      }
+      return {};
+    });
+
+    const pending = spaceStore.fetchTemplates();
+    await spaceStore.createTemplate({ key: 'new.custom', handle: 'new', displayName: 'New' });
+    resolveList([makeAgentTemplate({ key: 'stale' })]);
+    await pending;
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['new.custom']);
+  });
+
   it('createTemplate calls spaceAgent.createTemplate and merges into agentTemplates', async () => {
     spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'existing.default' })];
     const modelPool = [

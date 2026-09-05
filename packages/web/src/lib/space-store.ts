@@ -370,6 +370,97 @@ const runSpaceTemplateDeletion = (
   .pipe(applySpaceTemplateDeleteFallback, 'ctx', 'ctx')
   .endAsync('ctx') as (ctx: SpaceTemplateDeleteCtx) => Promise<SpaceTemplateDeleteCtx>;
 
+interface SpaceTemplateCreationDeps {
+  requestCreate(params: CreateSpaceAgentTemplateParams): Promise<SpaceAgentTemplate>;
+  applyTemplate(template: SpaceLongHorizonAgentTemplate): void;
+}
+
+type SpaceTemplateCreationCtx = {
+  params: CreateSpaceAgentTemplateParams;
+  created?: SpaceAgentTemplate;
+  template?: SpaceLongHorizonAgentTemplate;
+  deps: SpaceTemplateCreationDeps;
+};
+
+type SpaceTemplateCreatedCtx = SpaceTemplateCreationCtx & { created: SpaceAgentTemplate };
+
+async function requestSpaceTemplateCreation(
+  ctx: SpaceTemplateCreationCtx
+): Promise<SpaceTemplateCreatedCtx> {
+  return { ...ctx, created: await ctx.deps.requestCreate(ctx.params) };
+}
+
+function convertSpaceTemplateCreation(ctx: SpaceTemplateCreatedCtx): SpaceTemplateCreationCtx & {
+  template: SpaceLongHorizonAgentTemplate;
+} {
+  return { ...ctx, template: toLongHorizonTemplate(ctx.created) };
+}
+
+function applySpaceTemplateCreation(
+  ctx: SpaceTemplateCreationCtx & { template: SpaceLongHorizonAgentTemplate }
+): SpaceTemplateCreationCtx & { template: SpaceLongHorizonAgentTemplate } {
+  ctx.deps.applyTemplate(ctx.template);
+  return ctx;
+}
+
+const runSpaceTemplateCreation = (superpipe({})('space-template-creation') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(requestSpaceTemplateCreation, 'ctx', 'ctx')
+  .pipe(convertSpaceTemplateCreation, 'ctx', 'ctx')
+  .pipe(applySpaceTemplateCreation, 'ctx', 'ctx')
+  .endAsync('ctx') as (
+  ctx: SpaceTemplateCreationCtx
+) => Promise<SpaceTemplateCreationCtx & { template: SpaceLongHorizonAgentTemplate }>;
+
+interface SpaceTemplateUpdateDeps {
+  requestUpdate(
+    key: string,
+    params: UpdateSpaceAgentTemplateParams
+  ): Promise<SpaceAgentTemplate | null>;
+  applyTemplate(template: SpaceLongHorizonAgentTemplate): void;
+}
+
+type SpaceTemplateUpdateCtx = {
+  key: string;
+  params: UpdateSpaceAgentTemplateParams;
+  updated?: SpaceAgentTemplate | null;
+  template?: SpaceLongHorizonAgentTemplate;
+  deps: SpaceTemplateUpdateDeps;
+};
+
+type SpaceTemplateUpdatedCtx = SpaceTemplateUpdateCtx & { updated: SpaceAgentTemplate | null };
+
+async function requestSpaceTemplateUpdate(
+  ctx: SpaceTemplateUpdateCtx
+): Promise<SpaceTemplateUpdatedCtx> {
+  return { ...ctx, updated: await ctx.deps.requestUpdate(ctx.key, ctx.params) };
+}
+
+function convertSpaceTemplateUpdate(
+  ctx: SpaceTemplateUpdatedCtx & { updated: SpaceAgentTemplate }
+): SpaceTemplateUpdateCtx & { template: SpaceLongHorizonAgentTemplate } {
+  return { ...ctx, template: toLongHorizonTemplate(ctx.updated) };
+}
+
+function applySpaceTemplateUpdate(
+  ctx: SpaceTemplateUpdateCtx & { template: SpaceLongHorizonAgentTemplate }
+): SpaceTemplateUpdateCtx & { template: SpaceLongHorizonAgentTemplate } {
+  ctx.deps.applyTemplate(ctx.template);
+  return ctx;
+}
+
+const runSpaceTemplateUpdate = (
+  superpipe<{ missingResult: (ctx: SpaceTemplateUpdatedCtx) => boolean }>({
+    missingResult: (ctx) => ctx.updated == null,
+  })('space-template-update') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(requestSpaceTemplateUpdate, 'ctx', 'ctx')
+  .pipe('!missingResult', 'ctx')
+  .pipe(convertSpaceTemplateUpdate, 'ctx', 'ctx')
+  .pipe(applySpaceTemplateUpdate, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: SpaceTemplateUpdateCtx) => Promise<SpaceTemplateUpdateCtx>;
+
 class SpaceStore {
   readonly spaces = signal<Space[]>([]);
 
@@ -2608,6 +2699,7 @@ class SpaceStore {
   }
 
   private mergeAgentTemplate(template: SpaceLongHorizonAgentTemplate): void {
+    this.templateFetchGeneration += 1;
     const exists = this.agentTemplates.value.some((t) => t.key === template.key);
     this.agentTemplates.value = exists
       ? this.agentTemplates.value.map((t) => (t.key === template.key ? template : t))
@@ -2650,29 +2742,43 @@ class SpaceStore {
   async createTemplate(
     params: CreateSpaceAgentTemplateParams
   ): Promise<SpaceLongHorizonAgentTemplate> {
-    const hub = await connectionManager.getHub();
-    const result = await hub.request<{ template: SpaceAgentTemplate }>(
-      'spaceAgent.createTemplate',
-      params
-    );
-    const template = toLongHorizonTemplate(result?.template);
-    this.mergeAgentTemplate(template);
-    return template;
+    const ctx = await runSpaceTemplateCreation({
+      params,
+      deps: {
+        requestCreate: async (templateParams) => {
+          const hub = await connectionManager.getHub();
+          const result = await hub.request<{ template: SpaceAgentTemplate }>(
+            'spaceAgent.createTemplate',
+            templateParams
+          );
+          return result?.template;
+        },
+        applyTemplate: (template) => this.mergeAgentTemplate(template),
+      },
+    });
+    return ctx.template;
   }
 
   async updateTemplate(
     key: string,
     params: UpdateSpaceAgentTemplateParams
   ): Promise<SpaceLongHorizonAgentTemplate | null> {
-    const hub = await connectionManager.getHub();
-    const result = await hub.request<{ template: SpaceAgentTemplate | null }>(
-      'spaceAgent.updateTemplate',
-      { key, ...params }
-    );
-    if (!result?.template) return null;
-    const template = toLongHorizonTemplate(result.template);
-    this.mergeAgentTemplate(template);
-    return template;
+    const ctx = await runSpaceTemplateUpdate({
+      key,
+      params,
+      deps: {
+        requestUpdate: async (templateKey, templateParams) => {
+          const hub = await connectionManager.getHub();
+          const result = await hub.request<{ template: SpaceAgentTemplate | null }>(
+            'spaceAgent.updateTemplate',
+            { key: templateKey, ...templateParams }
+          );
+          return result?.template ?? null;
+        },
+        applyTemplate: (template) => this.mergeAgentTemplate(template),
+      },
+    });
+    return ctx.template ?? null;
   }
 
   async deleteTemplate(key: string): Promise<void> {
