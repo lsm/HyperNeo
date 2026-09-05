@@ -302,13 +302,15 @@ export function setupSpaceTaskMessageHandlers(
   async function ensureWorker(
     taskId: string,
     agentName: string,
-    workflowNodeId?: string
+    workflowNodeId?: string,
+    reopen?: { reopenReason: string; reopenBy: string }
   ): Promise<EnsureSessionOutcome> {
     return resolveTargetSession({
       kind: 'worker',
       taskId,
       agentName,
       ...(workflowNodeId ? { workflowNodeId } : {}),
+      ...(reopen ?? {}),
       waitCapMs: 0,
     });
   }
@@ -802,7 +804,10 @@ export function setupSpaceTaskMessageHandlers(
       queuedMessageId = record.id;
     }
 
-    const outcome = await ensureWorker(params.taskId, params.agentName, params.workflowNodeId);
+    const outcome = await ensureWorker(params.taskId, params.agentName, params.workflowNodeId, {
+      reopenReason: `web client lazy activation of "${params.agentName}"`,
+      reopenBy: 'web-client',
+    });
     const queueableReasons = new Set([
       'activation_timeout',
       'post_approval_pending',

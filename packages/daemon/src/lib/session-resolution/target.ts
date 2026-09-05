@@ -18,6 +18,8 @@ export interface SessionTargetWorker {
   agentName: string;
   workflowNodeId?: string;
   waitCapMs?: number;
+  reopenReason?: string;
+  reopenBy?: string;
 }
 
 export type SessionTarget = SessionTargetSession | SessionTargetAgent | SessionTargetWorker;
