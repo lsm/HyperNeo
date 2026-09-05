@@ -7,7 +7,10 @@ import type { EnsureSessionOutcome, SessionTarget, SessionTargetAgent } from './
 export function selectSpaceAgentTargetStage(
   spaceId: string,
   replyToSessionId: string | null | undefined
-): { target: SessionTarget; coordinatorTarget: SessionTargetAgent } {
+): {
+  target: Exclude<SessionTarget, { kind: 'worker' }>;
+  coordinatorTarget: SessionTargetAgent;
+} {
   const coordinatorTarget = { kind: 'agent' as const, spaceId, agentId: 'coordinator' };
   return {
     target:
@@ -25,24 +28,34 @@ export function resolveSpaceAgentTargetStage(
   return ensureSession(target, deps);
 }
 
-export function fallbackToCoordinatorStage(
+export async function fallbackToCoordinatorStage(
   outcome: EnsureSessionOutcome,
+  target: Exclude<SessionTarget, { kind: 'worker' }>,
   coordinatorTarget: SessionTargetAgent,
   deps: SessionResolutionDeps
-): Promise<EnsureSessionOutcome> {
-  return outcome.kind === 'unresolved' && outcome.reason === 'not_found'
-    ? ensureSession(coordinatorTarget, deps)
-    : Promise.resolve(outcome);
+): Promise<{
+  outcome: EnsureSessionOutcome;
+  activeTarget: Exclude<SessionTarget, { kind: 'worker' }>;
+}> {
+  if (outcome.kind === 'unresolved' && outcome.reason === 'not_found') {
+    return {
+      outcome: await ensureSession(coordinatorTarget, deps),
+      activeTarget: coordinatorTarget,
+    };
+  }
+  return { outcome, activeTarget: target };
 }
 
 export async function refetchSpaceAgentSessionStage<Session>(
   outcome: EnsureSessionOutcome,
-  spaceId: string,
-  replyToSessionId: string | null | undefined,
+  activeTarget: Exclude<SessionTarget, { kind: 'worker' }>,
   getSession: (sessionId: string) => Promise<Session | null>
 ): Promise<{ resolvedSessionId: string; resolvedSession: Session }> {
   if (outcome.kind === 'unresolved') {
-    const sessionId = replyToSessionId ?? coordinatorSessionId(spaceId);
+    const sessionId =
+      activeTarget.kind === 'session'
+        ? activeTarget.sessionId
+        : coordinatorSessionId(activeTarget.spaceId);
     throw new Error(
       `Session not found for Space Agent reply routing: ${sessionId}; ${outcome.reason}`
     );
@@ -62,10 +75,14 @@ const runResolveSpaceAgentSession = (superpipe()('resolve-space-agent-session') 
     ['target', 'coordinatorTarget']
   )
   .pipe(resolveSpaceAgentTargetStage, ['target', 'deps'], 'outcome')
-  .pipe(fallbackToCoordinatorStage, ['outcome', 'coordinatorTarget', 'deps'], 'outcome')
+  .pipe(
+    fallbackToCoordinatorStage,
+    ['outcome', 'target', 'coordinatorTarget', 'deps'],
+    ['outcome', 'activeTarget']
+  )
   .pipe(
     refetchSpaceAgentSessionStage,
-    ['outcome', 'spaceId', 'replyToSessionId', 'getSession'],
+    ['outcome', 'activeTarget', 'getSession'],
     ['resolvedSessionId', 'resolvedSession']
   )
   .endAsync(['resolvedSessionId', 'resolvedSession']) as (...args: unknown[]) => Promise<{

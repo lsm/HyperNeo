@@ -103,6 +103,19 @@ describe('resolveSpaceAgentSession', () => {
     expect(refetchCalls).toEqual([sessionId]);
   });
 
+  test('reports the coordinator when fallback provisioning fails', async () => {
+    const spaceId = 'space-1';
+    const { deps, refetchCalls, ensureCalls, getSession } = makeDeps({ ensureOutcome: 'fail' });
+
+    expect(
+      resolveSpaceAgentSession<TestSession>(spaceId, 'missing-session', deps, getSession)
+    ).rejects.toThrow(
+      `Session not found for Space Agent reply routing: ${coordinatorSessionId(spaceId)}; ensure_failed`
+    );
+    expect(ensureCalls).toEqual([[spaceId, 'coordinator']]);
+    expect(refetchCalls).toHaveLength(0);
+  });
+
   test('does not fall back when explicit reply resolution fails internally', async () => {
     const { deps, refetchCalls, ensureCalls, getSession } = makeDeps({
       getSessionError: new Error('database unavailable'),
