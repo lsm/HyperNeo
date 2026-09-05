@@ -10,6 +10,8 @@ import { resetSdkStartupGateForTests } from '../../../../src/lib/agent/sdk-start
 import type { LimitRetryHint } from '../../../../src/lib/agent/limit-error-classifier';
 import { longTermAgentSessionId } from '../../../../src/lib/space/long-term-agent-session';
 import type { Session, MessageHub } from '@hyperneo/shared';
+import type { Provider } from '@hyperneo/shared/provider';
+import { initializeProviders } from '../../../../src/lib/providers/factory';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   query,
@@ -67,6 +69,7 @@ describe('QueryRunner', () => {
   let updateMessageStatusSpy: ReturnType<typeof mock>;
   let buildSpy: ReturnType<typeof mock>;
   let addSessionStateOptionsSpy: ReturnType<typeof mock>;
+  let getEffectiveThinkingLevelSpy: ReturnType<typeof mock>;
   let setCanUseToolSpy: ReturnType<typeof mock>;
   let setAskUserQuestionHookSpy: ReturnType<typeof mock>;
   let getDeferredPermissionModeSpy: ReturnType<typeof mock>;
@@ -212,6 +215,7 @@ describe('QueryRunner', () => {
       canUseTool: overrides?.canUseTool,
     }));
     addSessionStateOptionsSpy = mock((options: unknown) => options);
+    getEffectiveThinkingLevelSpy = mock(() => 'off');
     setCanUseToolSpy = mock(() => {});
     setAskUserQuestionHookSpy = mock(() => {});
     getDeferredPermissionModeSpy = mock(() => undefined);
@@ -224,6 +228,7 @@ describe('QueryRunner', () => {
       getDeferredPermissionMode: getDeferredPermissionModeSpy,
       getCurrentPermissionMode: getCurrentPermissionModeSpy,
       getEffectiveMcpServers: mock(() => ({})),
+      getEffectiveThinkingLevel: getEffectiveThinkingLevelSpy,
     } as unknown as QueryOptionsBuilder;
 
     createCanUseToolCallbackSpy = mock(() => async () => true);
@@ -1028,6 +1033,61 @@ describe('QueryRunner', () => {
         expect(buildSpy).toHaveBeenCalledTimes(1);
         expect(addSessionStateOptionsSpy).toHaveBeenCalledTimes(1);
       });
+    });
+  });
+
+  describe('session thinking sync', () => {
+    it('propagates the effective thinking level to the provider on every query', async () => {
+      const setSessionThinkingConfigSpy = mock(() => {});
+      const registry = initializeProviders();
+      registry.register({
+        id: 'custom:thinking-sync-test',
+        displayName: 'Thinking Sync Test Provider',
+        isAvailable: mock(async () => true),
+        getAuthStatus: mock(async () => ({ isAuthenticated: true, method: 'api_key' })),
+        setSessionThinkingConfig: setSessionThinkingConfigSpy,
+      } as unknown as Provider);
+      try {
+        mockSession.workspacePath = tmpdir();
+        mockSession.config.provider = 'custom:thinking-sync-test' as Session['config']['provider'];
+        getEffectiveThinkingLevelSpy.mockReturnValue('think8k');
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(setSessionThinkingConfigSpy).toHaveBeenCalledTimes(1);
+        expect(setSessionThinkingConfigSpy).toHaveBeenCalledWith(mockSession.id, 'think8k');
+      } finally {
+        registry.unregister('custom:thinking-sync-test');
+      }
+    });
+
+    it('propagates an off level so bridges can clear per-session thinking state', async () => {
+      const setSessionThinkingConfigSpy = mock(() => {});
+      const registry = initializeProviders();
+      registry.register({
+        id: 'custom:thinking-sync-test',
+        displayName: 'Thinking Sync Test Provider',
+        isAvailable: mock(async () => true),
+        getAuthStatus: mock(async () => ({ isAuthenticated: true, method: 'api_key' })),
+        setSessionThinkingConfig: setSessionThinkingConfigSpy,
+      } as unknown as Provider);
+      try {
+        mockSession.workspacePath = tmpdir();
+        mockSession.config.provider = 'custom:thinking-sync-test' as Session['config']['provider'];
+        getEffectiveThinkingLevelSpy.mockReturnValue('off');
+
+        const ctx = createContext();
+        runner = new QueryRunner(ctx);
+        runner.start();
+        await ctx.queryPromise?.catch(() => {});
+
+        expect(setSessionThinkingConfigSpy).toHaveBeenCalledWith(mockSession.id, 'off');
+      } finally {
+        registry.unregister('custom:thinking-sync-test');
+      }
     });
   });
 

@@ -71,6 +71,7 @@ describe('QueryOptionsBuilder', () => {
 
     updateSessionSpy = mock(() => {});
     getSDKMessagesSpy = mock(() => ({ messages: [], hasMore: false }));
+    const getSessionSpy = mock(() => null);
 
     mockContext = {
       session: mockSession,
@@ -78,6 +79,7 @@ describe('QueryOptionsBuilder', () => {
       db: {
         updateSession: updateSessionSpy,
         getSDKMessages: getSDKMessagesSpy,
+        getSession: getSessionSpy,
       } as QueryOptionsBuilderContext['db'],
     };
 
@@ -1375,6 +1377,25 @@ describe('QueryOptionsBuilder', () => {
       const result = builder.addSessionStateOptions(options);
 
       expect(result.thinking).toEqual({ type: 'disabled' });
+    });
+
+    it('prefers the persisted thinkingLevel over a stale in-memory config', async () => {
+      mockSession.config.thinkingLevel = 'think8k';
+      mockContext.db!.getSession = mock(
+        () => ({ ...mockSession, config: { ...mockSession.config, thinkingLevel: 'off' } }) as never
+      );
+
+      expect(builder.getEffectiveThinkingLevel()).toBe('off');
+      const options = await builder.build();
+      const result = builder.addSessionStateOptions(options);
+      expect(result.thinking).toEqual({ type: 'disabled' });
+    });
+
+    it('falls back to the in-memory config when the persisted row is missing', () => {
+      mockSession.config.thinkingLevel = 'think8k';
+      mockContext.db!.getSession = mock(() => null) as never;
+
+      expect(builder.getEffectiveThinkingLevel()).toBe('think8k');
     });
 
     it('should omit thinking config for providers with thinkingModes=off', async () => {

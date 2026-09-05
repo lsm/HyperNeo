@@ -1239,6 +1239,46 @@ describe('OpenAI Chat Completions bridge server', () => {
         expect(capturedRequest.reasoning_effort).toBe('medium');
       }
     );
+
+    it.skipIf(!isBun)(
+      'drops the side-channel thinking config when cleared so later requests carry no reasoning_effort',
+      async () => {
+        let capturedRequest: Record<string, unknown> = {};
+        const fetchMock = mock(async (_url: string, init?: RequestInit) => {
+          capturedRequest = JSON.parse(String(init?.body));
+          return new Response(
+            sseBody([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }]),
+            { status: 200 }
+          );
+        });
+        const server = await createOpenAIChatBridgeServer({
+          baseUrl: 'http://upstream.test',
+          fetchImpl: fetchMock as typeof fetch,
+          thinkingSupported: true,
+        });
+        servers.push(server);
+        server.setSessionThinkingConfig?.('sess-42', {
+          type: 'enabled',
+          budget_tokens: 8000,
+        });
+        server.setSessionThinkingConfig?.('sess-42', undefined);
+
+        const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer custom-endpoint:sess-42',
+          },
+          body: JSON.stringify({
+            model: 'm',
+            messages: [{ role: 'user', content: 'hi' }],
+            stream: true,
+          }),
+        });
+        expect(response.status).toBe(200);
+        expect(capturedRequest.reasoning_effort).toBeUndefined();
+      }
+    );
   });
 
   describe('chat_template_kwargs injection', () => {
