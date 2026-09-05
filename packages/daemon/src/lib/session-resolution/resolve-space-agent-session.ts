@@ -85,7 +85,7 @@ const runResolveSpaceAgentSession = (superpipe()('resolve-space-agent-session') 
     ['outcome', 'activeTarget', 'getSession'],
     ['resolvedSessionId', 'resolvedSession']
   )
-  .endAsync(['resolvedSessionId', 'resolvedSession']) as (...args: unknown[]) => Promise<{
+  .endAsync('{resolvedSessionId, resolvedSession}') as (...args: unknown[]) => Promise<{
   resolvedSessionId: string;
   resolvedSession: unknown;
 }>;
