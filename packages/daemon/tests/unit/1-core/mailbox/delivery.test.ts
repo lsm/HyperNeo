@@ -33,12 +33,14 @@ function makeEntry(overrides?: {
   policy?: Partial<MailboxEntryPolicy>;
   message?: MailboxMessage;
   deliveryMode?: MailboxDeliveryMode;
+  messageUuid?: string;
 }): MailboxEntry {
   return {
     id: overrides?.id ?? createUlid(),
     to: overrides?.to ?? { kind: 'session', sessionId: SESSION_ID },
     origin: overrides?.origin ?? 'test',
     message: overrides?.message ?? message,
+    ...(overrides?.messageUuid !== undefined ? { messageUuid: overrides.messageUuid } : {}),
     status: 'enqueued',
     policy: { ...DEFAULT_MAILBOX_ENTRY_POLICY, ...overrides?.policy },
     deliveryMode: overrides?.deliveryMode ?? 'immediate',
@@ -288,6 +290,21 @@ describe('createMailboxDeliveryHandler', () => {
       expect(completed?.status).toBe('completed');
     });
 
+    test('uses an explicit messageUuid for the content row and delivery pointer', async () => {
+      const { handler } = makeHandler();
+      const messageUuid = '00000000-0000-4000-8000-000000000001';
+      const entry = makeEntry({ origin: 'chat', messageUuid });
+      const job = claimMailboxJob(mailbox, entry);
+
+      await handler(job);
+
+      const rows = mailbox.sdkRows();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].sdk_uuid).toBe(messageUuid);
+      expect(JSON.parse(rows[0].sdk_message).uuid).toBe(messageUuid);
+      expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)).toHaveLength(1);
+    });
+
     test('projects text-block content verbatim into the content row', async () => {
       const { handler } = makeHandler();
       const blocksMessage: MailboxMessage = {
@@ -484,6 +501,28 @@ describe('createMailboxDeliveryHandler', () => {
   });
 
   describe('retry-convergence law', () => {
+    test('a seeded reclaim re-run converges on one content row and delivery pointer', async () => {
+      const { handler } = makeHandler();
+      const messageUuid = '00000000-0000-4000-8000-000000000001';
+      const entry = makeEntry({ origin: 'recovery', messageUuid });
+      const firstJob = claimMailboxJob(mailbox, entry);
+
+      await handler(firstJob);
+
+      mailbox.jobQueue.reclaimStale(Date.now() + 60_000, [MAILBOX_LANE]);
+      const reclaims = mailbox.jobQueue.dequeue(MAILBOX_LANE, 1);
+      expect(reclaims).toHaveLength(1);
+
+      const secondResult = await handler(reclaims[0]);
+
+      expect(secondResult).toEqual({ kind: 'delivered', sessionId: SESSION_ID });
+      const rows = mailbox.sdkRows();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].sdk_uuid).toBe(messageUuid);
+      expect(JSON.parse(rows[0].sdk_message).uuid).toBe(messageUuid);
+      expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)).toHaveLength(1);
+    });
+
     test('a reclaim re-run converges on the single content row instead of minting another', async () => {
       const { handler } = makeHandler();
       const entry = makeEntry({ origin: 'recovery' });

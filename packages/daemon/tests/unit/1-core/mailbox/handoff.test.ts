@@ -269,6 +269,20 @@ describe('createEntryStage', () => {
     expect(result.entry?.deliveryMode).toBe('immediate');
   });
 
+  test('an explicit messageUuid threads onto the entry', () => {
+    const result = createEntryStage(
+      sessionAddress,
+      textMessage,
+      'test-origin',
+      undefined,
+      undefined,
+      'seed-message-1'
+    );
+
+    expect(result.outcome).toBeUndefined();
+    expect(result.entry?.messageUuid).toBe('seed-message-1');
+  });
+
   test('an unknown deliveryMode rejects with the factory reason verbatim', () => {
     const result = createEntryStage(
       sessionAddress,
@@ -546,6 +560,31 @@ describe('handoffPromptToMailbox', () => {
 
       expect(outcome.kind).toBe('enqueued');
       expect(JSON.parse(mailbox.rows()[0].payload).deliveryMode).toBe('immediate');
+    });
+
+    test('an explicit messageUuid threads onto the enqueued entry payload', async () => {
+      const outcome = await handoffPromptToMailbox({
+        to: 'session:sess-1',
+        message: textMessage,
+        origin: 'test',
+        messageUuid: 'seed-message-1',
+        jobQueue: mailbox.jobQueue,
+      });
+
+      expect(outcome.kind).toBe('enqueued');
+      expect(JSON.parse(mailbox.rows()[0].payload).messageUuid).toBe('seed-message-1');
+    });
+
+    test('an absent messageUuid leaves the enqueued entry payload unchanged', async () => {
+      const outcome = await handoffPromptToMailbox({
+        to: 'session:sess-1',
+        message: textMessage,
+        origin: 'test',
+        jobQueue: mailbox.jobQueue,
+      });
+
+      expect(outcome.kind).toBe('enqueued');
+      expect(Object.hasOwn(JSON.parse(mailbox.rows()[0].payload), 'messageUuid')).toBe(false);
     });
   });
 

@@ -29,6 +29,7 @@ export type MailboxEntry = {
   to: MailboxAddress;
   origin: string;
   message: MailboxMessage;
+  messageUuid?: string;
   status: 'enqueued';
   policy: MailboxEntryPolicy;
   deliveryMode: MailboxDeliveryMode;
@@ -171,6 +172,7 @@ export function createMailboxEntry(args: {
   origin: string;
   policy?: Partial<MailboxEntryPolicy>;
   deliveryMode?: MailboxDeliveryMode;
+  messageUuid?: string;
 }): MailboxEntry {
   const projectedTo = toMailboxAddress(args.to);
   if ('reason' in projectedTo) throw new TypeError(projectedTo.reason);
@@ -182,6 +184,9 @@ export function createMailboxEntry(args: {
   if (args.deliveryMode !== undefined && !isMailboxDeliveryMode(args.deliveryMode)) {
     throw new TypeError('deliveryMode must be "immediate" or "defer"');
   }
+  if (args.messageUuid !== undefined && !isNonEmptyString(args.messageUuid)) {
+    throw new TypeError('messageUuid must be a non-empty string');
+  }
   const projectedPolicy = toMailboxPolicy(args.policy);
   if ('reason' in projectedPolicy) throw new TypeError(projectedPolicy.reason);
   return {
@@ -189,6 +194,7 @@ export function createMailboxEntry(args: {
     to: projectedTo.value,
     origin: args.origin,
     message: projectedMessage.message,
+    ...(args.messageUuid !== undefined ? { messageUuid: args.messageUuid } : {}),
     status: 'enqueued',
     policy: projectedPolicy.value,
     deliveryMode: args.deliveryMode ?? 'immediate',
@@ -268,11 +274,16 @@ export function parseMailboxEntry(
   if (deliveryMode !== undefined && !isMailboxDeliveryMode(deliveryMode)) {
     return null;
   }
+  const messageUuid = raw.messageUuid;
+  if (messageUuid !== undefined && !isNonEmptyString(messageUuid)) {
+    return null;
+  }
   return {
     id,
     to,
     origin,
     message: message.message,
+    ...(messageUuid !== undefined ? { messageUuid } : {}),
     status: 'enqueued',
     policy: policy.value,
     deliveryMode: deliveryMode ?? 'immediate',
