@@ -92,11 +92,15 @@ jobs:
           # run is safe to wait on: dev-push runs share the ci-refs/heads/dev
           # concurrency group and can be cancelled mid-run by newer dev
           # pushes, which would abort this release. The tag run has its own
-          # group and is never cancelled by dev traffic.
+          # group and is never cancelled by dev traffic. Filtering on the
+          # push event matters too: a workflow_dispatch on the same tag ref
+          # reports the same headBranch (e.g. a run_e2e_only=true dispatch)
+          # but is not the release evidence run.
           for attempt in $(seq 1 30); do
             RUN_ID=$(gh run list \
               --workflow=main.yml \
               --commit="$GITHUB_SHA" \
+              --event push \
               --json databaseId,headBranch \
               --jq "[.[] | select(.headBranch == \"$GITHUB_REF_NAME\")][0].databaseId // empty")
 
