@@ -373,7 +373,7 @@ export function setupSpaceTaskMessageHandlers(
       workflowRunId: ctx.task.workflowRunId,
       executions: nodeExecutionRepo
         .listByWorkflowRun(ctx.task.workflowRunId)
-        .filter((execution) => execution.status !== 'cancelled' && execution.status !== 'pending'),
+        .filter((execution) => execution.status !== 'cancelled'),
       declared: taskAgentManager.getWorkflowDeclaredAgentNamesForTask?.(ctx.taskId) ?? [],
       postApproval:
         taskAgentManager.getPostApprovalWorkerSession?.(ctx.taskId, ctx.target.sessionId) ?? null,
@@ -892,13 +892,17 @@ export function setupSpaceTaskMessageHandlers(
       pendingMessageQueue?.markFailed?.(queuedMessageId, outcome.reason);
     }
     if (outcome.kind === 'resolved') {
-      if (params.message && queuedMessageId !== null) {
-        await taskAgentManager.flushPendingMessagesForTarget?.(
+      const canDrainQueuedMessage =
+        queuedMessageId !== null &&
+        taskAgentManager.flushPendingMessagesForTarget !== undefined &&
+        pendingMessageQueue?.getById !== undefined;
+      if (params.message && canDrainQueuedMessage && queuedMessageId !== null) {
+        await taskAgentManager.flushPendingMessagesForTarget!(
           workflowRunId,
           params.agentName,
           outcome.sessionId
         );
-        const queuedRecord = pendingMessageQueue?.getById?.(queuedMessageId);
+        const queuedRecord = pendingMessageQueue!.getById!(queuedMessageId);
         if (queuedRecord?.status !== 'delivered') {
           throw new Error(
             `Queued message ${queuedMessageId} was not delivered to "${params.agentName}": ${queuedRecord?.lastError ?? queuedRecord?.status ?? 'delivery status unavailable'}`
@@ -915,6 +919,9 @@ export function setupSpaceTaskMessageHandlers(
           params.agentName,
           `[Message from human]: ${params.message}`
         );
+        if (queuedMessageId !== null) {
+          pendingMessageQueue?.markFailed?.(queuedMessageId, 'delivered directly');
+        }
         log.info(
           `space.task.activateNodeAgent: delivered message to session ${outcome.sessionId} ` +
             `(agent=${params.agentName}, task=${params.taskId})`
