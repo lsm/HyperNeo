@@ -1680,6 +1680,38 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(recoveredTask?.startedAt).not.toBeNull();
     });
 
+    test('blocked-run recovery does not reopen an open task cancelled during run transition', async () => {
+      const sessionId = 'session:cancelled-during-recovery';
+      let taskId = '';
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionInMemory: (candidate) => candidate === sessionId,
+      });
+      const rt = new SpaceRuntime(
+        buildConfig(tam, {
+          onWorkflowRunUpdated: () => {
+            taskRepo.updateTask(taskId, { status: 'cancelled' });
+          },
+        })
+      );
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskId = tasks[0].id;
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: 'Agent session crashed',
+        agentSessionId: sessionId,
+      });
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+
+      await rt.executeTick();
+
+      expect(taskRepo.getTask(taskId)?.status).toBe('cancelled');
+    });
+
     test('blocked-run recovery keeps an open task without a live session capacity-gated', async () => {
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
       const rt = new SpaceRuntime(buildConfig(tam));

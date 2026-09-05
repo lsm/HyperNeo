@@ -7790,12 +7790,18 @@ export class SpaceRuntime {
       this.blockedRetryCounts.set(runId, effectiveRetryCount + 1);
 
       await this.transitionRunStatusAndEmit(runId, 'in_progress');
-      if (
-        canonicalTask.status === 'blocked' ||
-        (canonicalTask.status === 'open' && hasLiveExecutionBinding)
-      ) {
+      if (canonicalTask.status === 'blocked') {
         await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
           status: 'in_progress',
+          completedAt: null,
+        });
+      } else if (
+        canonicalTask.status === 'open' &&
+        hasLiveExecutionBinding &&
+        this.config.taskRepo.casStatus(canonicalTask.id, ['open'], 'in_progress') === 'won'
+      ) {
+        await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
+          startedAt: canonicalTask.startedAt ?? Date.now(),
           completedAt: null,
         });
       }
