@@ -44,11 +44,6 @@ describe('NodeExecutionRepository', () => {
 
     (db as any)
       .prepare(
-        `INSERT INTO space_agents (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-      )
-      .run(agentId, spaceId, 'Coder', now, now);
-    (db as any)
-      .prepare(
         `INSERT INTO space_long_horizon_agents (
          id, space_id, handle, display_name, template_key, status, instructions,
          tool_permissions_json, created_at, updated_at

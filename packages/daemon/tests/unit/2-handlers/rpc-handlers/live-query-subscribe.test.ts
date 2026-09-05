@@ -194,10 +194,6 @@ function createDb() {
 			completed_at INTEGER,
 			updated_at INTEGER NOT NULL
 		);
-		CREATE TABLE IF NOT EXISTS space_agents (
-			id TEXT PRIMARY KEY,
-			name TEXT
-		);
 		CREATE TABLE IF NOT EXISTS space_github_events (
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,

@@ -5,7 +5,11 @@ import { SpaceLongHorizonAgentRepository } from '../../../../../src/storage/repo
 import { runMigration223 } from '../../../../../src/storage/schema/m223-unify-space-agents-copy.ts';
 import { createTables, runMigrations } from '../../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat.ts';
-import { createSpaceAgentSchema, insertSpace } from '../../../helpers/space-agent-schema.ts';
+import {
+  createLegacySpaceAgentTables,
+  createSpaceAgentSchema,
+  insertSpace,
+} from '../../../helpers/space-agent-schema.ts';
 
 interface WorkerSeed {
   id: string;
@@ -395,15 +399,6 @@ describe('migration 223 — copy backfill', () => {
   test('unreferenced workers are copied too — the m155 delta', () => {
     const db = makeOverlayDb();
     insertSpace(db, 'space-a');
-    db.exec(`
-      CREATE TABLE space_agent_goal_assignments (
-        space_id TEXT NOT NULL,
-        agent_id TEXT NOT NULL,
-        goal_id TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        PRIMARY KEY (agent_id, goal_id)
-      )
-    `);
     seedWorker(db, { id: 'w-referenced', spaceId: 'space-a', name: 'Referenced', handle: 'ref' });
     seedWorker(db, { id: 'w-orphan', spaceId: 'space-a', name: 'Orphan', handle: 'orphan' });
     db.prepare(
@@ -756,6 +751,8 @@ describe('migration 223 — reference resolution pins', () => {
     db.exec('PRAGMA foreign_keys = ON');
     runMigrations(db, () => {});
     db.prepare(`DELETE FROM migration_markers WHERE key = 'migration_223'`).run();
+    db.prepare(`DELETE FROM migration_markers WHERE key = 'migration_232'`).run();
+    createLegacySpaceAgentTables(db);
     db.exec(
       `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
        VALUES ('sp-1', 'sp-1', '/tmp/sp-1', 'S', 1, 1)`

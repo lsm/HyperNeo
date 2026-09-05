@@ -1,5 +1,69 @@
 import type { Database } from '../../../src/storage/sqlite-compat';
 
+export function createLegacySpaceAgentTables(db: Database): void {
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agents (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			handle TEXT,
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'paused', 'archived')),
+			description TEXT NOT NULL DEFAULT '',
+			model TEXT,
+			tools TEXT NOT NULL DEFAULT '[]',
+			thinking_level TEXT DEFAULT NULL,
+			custom_prompt TEXT,
+			system_prompt TEXT NOT NULL DEFAULT '',
+			instructions TEXT,
+			provider TEXT,
+			template_name TEXT DEFAULT NULL,
+			template_hash TEXT DEFAULT NULL,
+			setting_sources TEXT DEFAULT NULL,
+			model_pool TEXT DEFAULT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_space_agents_space_id ON space_agents(space_id)`);
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_space_agents_handle
+    ON space_agents(space_id, handle)
+    WHERE handle IS NOT NULL
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS space_agent_goal_assignments (
+      space_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      goal_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (agent_id, goal_id)
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS space_agent_forge_scope_assignments (
+      space_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      scope_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (agent_id, scope_id)
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS space_agent_reminders (
+      id TEXT PRIMARY KEY,
+      space_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      message TEXT NOT NULL,
+      remind_at INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+}
+
 export function createSpaceAgentSchema(db: Database): void {
   db.exec(`PRAGMA foreign_keys = ON`);
   db.exec(`
@@ -25,37 +89,7 @@ export function createSpaceAgentSchema(db: Database): void {
 	`);
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_slug ON spaces(slug)`);
 
-  db.exec(`
-		CREATE TABLE space_agents (
-			id TEXT PRIMARY KEY,
-			space_id TEXT NOT NULL,
-			name TEXT NOT NULL,
-				handle TEXT,
-			status TEXT NOT NULL DEFAULT 'active'
-				CHECK(status IN ('active', 'paused', 'archived')),
-			description TEXT NOT NULL DEFAULT '',
-			model TEXT,
-			tools TEXT NOT NULL DEFAULT '[]',
-			thinking_level TEXT DEFAULT NULL,
-			custom_prompt TEXT,
-			system_prompt TEXT NOT NULL DEFAULT '',
-			instructions TEXT,
-			provider TEXT,
-			template_name TEXT DEFAULT NULL,
-			template_hash TEXT DEFAULT NULL,
-			setting_sources TEXT DEFAULT NULL,
-			model_pool TEXT DEFAULT NULL,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
-		)
-	`);
-  db.exec(`CREATE INDEX idx_space_agents_space_id ON space_agents(space_id)`);
-  db.exec(`
-    CREATE UNIQUE INDEX idx_space_agents_handle
-    ON space_agents(space_id, handle)
-    WHERE handle IS NOT NULL
-  `);
+  createLegacySpaceAgentTables(db);
 
   db.exec(`
 		CREATE TABLE space_long_horizon_agents (

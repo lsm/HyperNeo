@@ -89,13 +89,6 @@ function seedSpace(db: BunDatabase, spaceId: string): void {
   ).run(spaceId, `/tmp/ws-${spaceId}`, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
-function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, custom_prompt, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', null, ?, ?)`
-  ).run(agentId, spaceId, name, Date.now(), Date.now());
-}
-
 function hasLeaderAgentId(wf: SpaceWorkflow): boolean {
   return wf.nodes.some((s) =>
     (s.agents ?? []).some(
@@ -1174,12 +1167,6 @@ describe('seedBuiltInWorkflows()', () => {
   beforeEach(() => {
     db = makeDb();
     seedSpace(db, SPACE_ID);
-    seedAgent(db, PLANNER_ID, SPACE_ID, 'Planner');
-    seedAgent(db, CODER_ID, SPACE_ID, 'Coder');
-    seedAgent(db, GENERAL_ID, SPACE_ID, 'General');
-    seedAgent(db, RESEARCH_ID, SPACE_ID, 'Research');
-    seedAgent(db, REVIEWER_ID, SPACE_ID, 'Reviewer');
-    seedAgent(db, QA_ID, SPACE_ID, 'QA');
 
     repo = new SpaceWorkflowRepository(db);
     manager = new SpaceWorkflowManager(repo);
@@ -3778,10 +3765,6 @@ describe('Coding Workflow export/import round-trip', () => {
   beforeEach(() => {
     db = makeDb();
     seedSpace(db, SPACE_ID);
-    seedAgent(db, PLANNER_ID, SPACE_ID, 'Planner');
-    seedAgent(db, CODER_ID, SPACE_ID, 'Coder');
-    seedAgent(db, GENERAL_ID, SPACE_ID, 'General');
-    seedAgent(db, QA_ID, SPACE_ID, 'QA');
 
     const repo = new SpaceWorkflowRepository(db);
     manager = new SpaceWorkflowManager(repo);

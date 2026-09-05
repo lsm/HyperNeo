@@ -658,9 +658,7 @@ describe('Migration 74: Remaining schema cleanup', () => {
     expect(columnExists(db, 'space_workflow_nodes', 'agent_id')).toBe(false);
     expect(columnExists(db, 'space_workflow_nodes', 'config')).toBe(true);
 
-    expect(columnExists(db, 'space_agents', 'role')).toBe(false);
-    expect(columnExists(db, 'space_agents', 'config')).toBe(false);
-    expect(columnExists(db, 'space_agents', 'inject_workflow_context')).toBe(false);
-    expect(columnExists(db, 'space_agents', 'instructions')).toBe(true);
+    expect(tableExists(db, 'space_agents')).toBe(false);
+    expect(columnExists(db, 'space_long_horizon_agents', 'instructions')).toBe(true);
   });
 });
