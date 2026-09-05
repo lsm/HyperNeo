@@ -686,7 +686,7 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
             size="md"
             onClick={handleCreate}
             disabled={saving}
-            class="rounded-xl bg-warning px-6 font-semibold text-on-warning shadow-[0_10px_28px_rgba(251,191,36,0.16)] hover:bg-amber-200"
+            class="rounded-xl bg-warning px-6 font-semibold text-on-warning"
           >
             {saving ? 'Creating…' : 'Create template'}
           </Button>
