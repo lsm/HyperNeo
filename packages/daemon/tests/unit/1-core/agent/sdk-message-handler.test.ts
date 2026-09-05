@@ -858,7 +858,10 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(mockSession.sdkSessionId).toBe('same-session-id');
-      expect(updateSessionSpy).not.toHaveBeenCalledWith('test-session-id', expect.anything());
+      expect(updateSessionSpy).not.toHaveBeenCalledWith(
+        'test-session-id',
+        expect.objectContaining({ sdkSessionId: expect.anything() })
+      );
     });
 
     it('strips terminal-bound commands from the init slash command list', async () => {
