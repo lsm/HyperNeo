@@ -5,7 +5,7 @@ import { expireMailboxEntries } from '../mailbox/expire.ts';
 
 const NEXT_RUN_DELAY_MS = 60 * 1000;
 
-export function mailboxExpireNextRunStage(): number {
+export function mailboxExpireNextRunStage(_jobQueue: JobQueueRepository): number {
   return Date.now() + NEXT_RUN_DELAY_MS;
 }
 
@@ -26,7 +26,7 @@ export function mailboxExpireResultStage(
 
 const runMailboxExpire = (superpipe()('mailbox-expire') as PipelineAPI)
   .input(['jobQueue'])
-  .pipe(mailboxExpireNextRunStage, [], 'nextRunAt')
+  .pipe(mailboxExpireNextRunStage, 'jobQueue', 'nextRunAt')
   .pipe(mailboxExpireScheduleStage, ['jobQueue', 'nextRunAt'])
   .pipe(mailboxExpireSweepStage, 'jobQueue', 'expired')
   .pipe(mailboxExpireResultStage, ['expired', 'nextRunAt'], 'result')
