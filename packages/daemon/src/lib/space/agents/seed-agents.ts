@@ -147,6 +147,44 @@ const PRESET_AGENTS: PresetDefinition[] = [
 
 export type PresetAgentTemplate = PresetDefinition;
 
+export interface RetireRemovedPresetAgentsDeps {
+  agentRepo: Pick<
+    SpaceLongHorizonAgentRepository,
+    | 'listBySpaceId'
+    | 'delete'
+    | 'listGoals'
+    | 'listForgeScopes'
+    | 'listReminders'
+    | 'listSubscriptions'
+  >;
+  referencedAgentIds: ReadonlySet<string>;
+  isPristineRetiredRow: (agent: SpaceLongHorizonAgent) => boolean;
+}
+
+export function retireRemovedPresetAgents(
+  spaceId: string,
+  deps: RetireRemovedPresetAgentsDeps
+): string[] {
+  const retired: string[] = [];
+  for (const agent of deps.agentRepo.listBySpaceId(spaceId)) {
+    if (!deps.isPristineRetiredRow(agent)) continue;
+    if (deps.referencedAgentIds.has(agent.id)) continue;
+    if (
+      deps.agentRepo.listGoals(agent.id).length > 0 ||
+      deps.agentRepo.listForgeScopes(agent.id).length > 0 ||
+      deps.agentRepo.listReminders(agent.id).length > 0 ||
+      deps.agentRepo.listSubscriptions(agent.id).length > 0
+    ) {
+      continue;
+    }
+    try {
+      deps.agentRepo.delete(agent.id);
+      retired.push(agent.displayName);
+    } catch {}
+  }
+  return retired;
+}
+
 export function getPresetAgentTemplates(): PresetAgentTemplate[] {
   return PRESET_AGENTS.map((preset) => ({
     ...preset,
