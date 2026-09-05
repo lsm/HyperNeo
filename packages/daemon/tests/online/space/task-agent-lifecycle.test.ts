@@ -2,13 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
-import type {
-  NodeExecution,
-  Space,
-  SpaceLongHorizonAgent,
-  SpaceWorkflow,
-  SpaceWorkflowRun,
-} from '@hyperneo/shared';
+import type { NodeExecution, Space, SpaceWorkflow } from '@hyperneo/shared';
 
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const IDLE_TIMEOUT = IS_MOCK ? 10_000 : 60_000;
@@ -23,7 +17,6 @@ const STEP_CODE_ID = 'step-code-lifecycle-001';
 
 type TestFixtures = {
   space: Space;
-  coderAgent: SpaceLongHorizonAgent;
   workflow: SpaceWorkflow;
 };
 
@@ -35,18 +28,17 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
     autonomyLevel: 1,
   })) as Space;
 
-  const { agents } = (await daemon.messageHub.request('spaceAgent.list', {
-    spaceId: space.id,
-  })) as { agents: SpaceLongHorizonAgent[] };
-
-  const coderAgent = agents.find((a) => a.displayName === 'Coder');
-  if (!coderAgent) throw new Error('Pre-seeded Coder agent not found');
-
   const workflowResult = (await daemon.messageHub.request('spaceWorkflow.create', {
     spaceId: space.id,
     name: 'Single-step Workflow',
     description: 'Single-step workflow for lifecycle testing',
-    nodes: [{ id: STEP_CODE_ID, name: 'Code Implementation', agentId: coderAgent.id }],
+    nodes: [
+      {
+        id: STEP_CODE_ID,
+        name: 'Code Implementation',
+        agents: [{ agentId: '', name: 'Code Implementation', templateKey: 'worker.coder' }],
+      },
+    ],
     transitions: [],
     startNodeId: STEP_CODE_ID,
     completionAutonomyLevel: 3,
@@ -54,7 +46,6 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
 
   return {
     space,
-    coderAgent,
     workflow: workflowResult.workflow,
   };
 }
@@ -155,25 +146,6 @@ async function waitForExecutionStatus(
   }
   throw new Error(
     `Node execution status did not reach one of [${expectedStatuses.join(', ')}] within ${timeout}ms`
-  );
-}
-
-async function waitForRunStatus(
-  daemon: DaemonServerContext,
-  runId: string,
-  expectedStatuses: string[],
-  timeout: number
-): Promise<SpaceWorkflowRun> {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    const { run } = (await daemon.messageHub.request('spaceWorkflowRun.get', {
-      id: runId,
-    })) as { run: SpaceWorkflowRun };
-    if (expectedStatuses.includes(run.status)) return run;
-    await new Promise((resolve) => setTimeout(resolve, 400));
-  }
-  throw new Error(
-    `Run ${runId} did not reach one of [${expectedStatuses.join(', ')}] within ${timeout}ms`
   );
 }
 
