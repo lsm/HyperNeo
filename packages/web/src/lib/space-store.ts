@@ -1,4 +1,5 @@
 import type {
+  CreateSpaceAgentTemplateParams,
   CreateSpaceGoalParams,
   CreateSpaceLongHorizonAgentReminderParams,
   CreateSpaceLongHorizonAgentSubscriptionParams,
@@ -12,6 +13,7 @@ import type {
   PaginatedSpaceTaskResult,
   RuntimeState,
   Space,
+  SpaceAgentTemplate,
   SpaceBlockReason,
   SpaceGoal,
   SpaceGoalEvent,
@@ -36,6 +38,7 @@ import type {
   TaskSchedule,
   TaskScheduleStatus,
   TaskScheduleTriggerType,
+  UpdateSpaceAgentTemplateParams,
   UpdateSpaceGoalParams,
   UpdateSpaceLongHorizonAgentSubscriptionParams,
   UpdateSpaceParams,
@@ -2444,6 +2447,88 @@ class SpaceStore {
 
     await hub.request('spaceAgent.delete', { id: agentId, spaceId });
     this.agents.value = this.agents.value.filter((agent) => agent.id !== agentId);
+  }
+
+  private toLongHorizonTemplate(
+    template: SpaceAgentTemplate | SpaceLongHorizonAgentTemplate,
+    existing?: SpaceLongHorizonAgentTemplate
+  ): SpaceLongHorizonAgentTemplate {
+    if ('suggestedEventSubscriptions' in template) {
+      return template as SpaceLongHorizonAgentTemplate;
+    }
+    const t = template as SpaceAgentTemplate;
+    const tools = t.tools;
+    return {
+      key: t.key,
+      handle: t.handle,
+      displayName: t.displayName,
+      description: t.description,
+      instructions: t.instructions,
+      suggestedAutonomyLevel: t.suggestedAutonomyLevel,
+      suggestedEventSubscriptions: existing?.suggestedEventSubscriptions ?? [],
+      reminderDefaults: existing?.reminderDefaults ?? [],
+      ownershipPatterns: existing?.ownershipPatterns ?? [],
+      toolPermissions: tools && tools.length > 0 ? { tools } : (existing?.toolPermissions ?? {}),
+      model: t.model,
+      provider: t.provider,
+      thinkingLevel: t.thinkingLevel,
+    };
+  }
+
+  private mergeAgentTemplate(template: SpaceLongHorizonAgentTemplate): void {
+    const exists = this.agentTemplates.value.some((t) => t.key === template.key);
+    this.agentTemplates.value = exists
+      ? this.agentTemplates.value.map((t) => (t.key === template.key ? template : t))
+      : [...this.agentTemplates.value, template];
+  }
+
+  async fetchTemplates(): Promise<SpaceLongHorizonAgentTemplate[]> {
+    const hub = await connectionManager.getHub();
+    const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
+      'spaceAgent.listTemplates',
+      {}
+    );
+    const templates = (result?.templates ?? []).map((t) => {
+      const existing = this.agentTemplates.value.find((current) => current.key === t.key);
+      return this.toLongHorizonTemplate(t, existing);
+    });
+    this.agentTemplates.value = templates;
+    return templates;
+  }
+
+  async createTemplate(
+    params: CreateSpaceAgentTemplateParams
+  ): Promise<SpaceLongHorizonAgentTemplate> {
+    const hub = await connectionManager.getHub();
+    const result = await hub.request<{ template: SpaceAgentTemplate }>(
+      'spaceAgent.createTemplate',
+      params
+    );
+    const template = this.toLongHorizonTemplate(result?.template);
+    this.mergeAgentTemplate(template);
+    return template;
+  }
+
+  async updateTemplate(
+    key: string,
+    params: UpdateSpaceAgentTemplateParams
+  ): Promise<SpaceLongHorizonAgentTemplate | null> {
+    const hub = await connectionManager.getHub();
+    const result = await hub.request<{ template: SpaceAgentTemplate | null }>(
+      'spaceAgent.updateTemplate',
+      { key, ...params }
+    );
+    if (!result?.template) return null;
+    const existing = this.agentTemplates.value.find((t) => t.key === key);
+    const template = this.toLongHorizonTemplate(result.template, existing);
+    this.mergeAgentTemplate(template);
+    return template;
+  }
+
+  async deleteTemplate(key: string): Promise<void> {
+    const hub = await connectionManager.getHub();
+    await hub.request<{ success: boolean }>('spaceAgent.deleteTemplate', { key });
+    this.agentTemplates.value = this.agentTemplates.value.filter((t) => t.key !== key);
   }
 
   async listAgentReminderCounts(agentIds: string[]): Promise<Record<string, number>> {
