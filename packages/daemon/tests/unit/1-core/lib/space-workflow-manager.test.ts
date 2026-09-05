@@ -3,7 +3,12 @@ import type { EventInterest } from '@hyperneo/shared';
 import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
+import { runMigration225 } from '../../../../src/storage/schema/m225-space-agent-templates';
+import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
+import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
+import type { SpaceAgentLookup } from '../../../../src/lib/space/managers/space-workflow-manager';
 import { createSpaceAgentSchema, insertSpace } from '../../helpers/space-agent-schema';
 import { SpaceWorkflowDefinitionVersionRepository } from '../../../../src/storage/repositories/space-workflow-definition-version-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
@@ -166,7 +171,142 @@ describe('SpaceWorkflowManager', () => {
           ],
           completionAutonomyLevel: 3,
         })
-      ).toThrow('does not match any built-in agent template');
+      ).toThrow('does not match any agent template');
+    });
+
+    it('clears a stale agentId on built-in template slots', () => {
+      const result = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Template Workflow',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Step One',
+            agents: [
+              { agentId: 'agent-stale', templateKey: 'coordinator.default', name: 'coordinator' },
+            ],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      });
+
+      expect(result.nodes[0].agents[0].agentId).toBe('');
+      expect(result.nodes[0].agents[0].templateKey).toBe('coordinator.default');
+    });
+
+    it('accepts a templateKey stored in the agent template library and keeps the agentId fallback', () => {
+      runMigration225(db);
+      runMigration226(db);
+      runMigration227(db);
+      const templateRepo = new SpaceAgentTemplateRepository(db);
+      templateRepo.create({
+        key: 'migrated.agent.agent-1',
+        handle: 'coder',
+        displayName: 'Coder',
+      });
+      const managerWithTemplates = new SpaceWorkflowManager(repo, null, templateRepo);
+
+      const result = managerWithTemplates.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Migrated Workflow',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Step One',
+            agents: [{ agentId: 'agent-1', templateKey: 'migrated.agent.agent-1', name: 'coder' }],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      });
+
+      expect(result.nodes[0].agents[0].agentId).toBe('agent-1');
+      expect(result.nodes[0].agents[0].templateKey).toBe('migrated.agent.agent-1');
+    });
+
+    it('rejects a templateKey absent from both built-ins and the template library', () => {
+      runMigration225(db);
+      runMigration226(db);
+      runMigration227(db);
+      const managerWithTemplates = new SpaceWorkflowManager(
+        repo,
+        null,
+        new SpaceAgentTemplateRepository(db)
+      );
+
+      expect(() =>
+        managerWithTemplates.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Migrated Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [{ agentId: 'agent-1', templateKey: 'missing', name: 'coder' }],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('does not match any agent template');
+    });
+
+    it('keeps a migrated slot valid through its agentId when the stored template is deleted', () => {
+      runMigration225(db);
+      runMigration226(db);
+      runMigration227(db);
+      const lookup: SpaceAgentLookup = {
+        getAgentById: (_spaceId, id) =>
+          id === 'agent-1' ? { id: 'agent-1', name: 'Agent One' } : null,
+      };
+      const managerWithFallback = new SpaceWorkflowManager(
+        repo,
+        lookup,
+        new SpaceAgentTemplateRepository(db)
+      );
+
+      const result = managerWithFallback.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Fallback Workflow',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Step One',
+            agents: [{ agentId: 'agent-1', templateKey: 'migrated.agent.agent-1', name: 'coder' }],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      });
+
+      expect(result.nodes[0].agents[0].agentId).toBe('agent-1');
+      expect(result.nodes[0].agents[0].templateKey).toBe('migrated.agent.agent-1');
+    });
+
+    it('still rejects a templateKey with no resolvable template or agent fallback', () => {
+      runMigration225(db);
+      runMigration226(db);
+      runMigration227(db);
+      const lookup: SpaceAgentLookup = {
+        getAgentById: () => null,
+      };
+      const managerWithFallback = new SpaceWorkflowManager(
+        repo,
+        lookup,
+        new SpaceAgentTemplateRepository(db)
+      );
+
+      expect(() =>
+        managerWithFallback.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Fallback Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [{ agentId: 'agent-gone', templateKey: 'missing', name: 'coder' }],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('does not match any agent template');
     });
   });
 

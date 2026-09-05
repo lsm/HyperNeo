@@ -39,6 +39,7 @@ import type {
 } from '../../../storage/repositories/pending-agent-message-repository.ts';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
+import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
@@ -168,6 +169,7 @@ import {
   resolveSpawnWorkspace,
   resolveTaskWorkspace,
   resolveWorkflowNodeSlot,
+  spaceAgentTemplateToNodeSource,
 } from './spawn-slot-resolution.ts';
 import { stagedRun } from './staged-run.ts';
 import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
@@ -244,6 +246,7 @@ export interface TaskAgentManagerConfig {
   reactiveDb?: ReactiveDatabase;
   spaceManager: SpaceManager;
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
+  templateRepo?: SpaceAgentTemplateRepository;
   spaceWorkflowManager: SpaceWorkflowManager;
   spaceRuntimeService: SpaceRuntimeService;
   taskRepo: SpaceTaskRepository;
@@ -3672,19 +3675,18 @@ export class TaskAgentManager {
     slot: WorkflowNodeAgent
   ): NodeAgentSpawnConfig | null {
     if (slot.templateKey?.trim()) {
-      const template = getLongHorizonAgentTemplate(slot.templateKey.trim()) as
-        | NodeAgentTemplateSource
-        | undefined;
-      if (!template) return null;
-      return resolveNodeAgentConfig(
-        template,
-        {
-          name: slot.name,
-          model: slot.model,
-          thinkingLevel: slot.thinkingLevel,
-        },
-        []
-      );
+      const template = this.resolveNodeTemplateSource(slot.templateKey.trim());
+      if (template) {
+        return resolveNodeAgentConfig(
+          template,
+          {
+            name: slot.name,
+            model: slot.model,
+            thinkingLevel: slot.thinkingLevel,
+          },
+          []
+        );
+      }
     }
     if (!slot.agentId) return null;
     const registryAgent = this.resolveUnifiedSlotAgent(spaceId, slot.agentId);
@@ -3702,6 +3704,13 @@ export class TaskAgentManager {
 
   private slotAgentExists(spaceId: string, agentId: string): boolean {
     return this.resolveUnifiedSlotAgent(spaceId, agentId) !== null;
+  }
+
+  private resolveNodeTemplateSource(key: string): NodeAgentTemplateSource | null {
+    const builtIn = getLongHorizonAgentTemplate(key) as NodeAgentTemplateSource | undefined;
+    if (builtIn) return builtIn;
+    const stored = this.config.templateRepo?.getByKey(key);
+    return stored ? spaceAgentTemplateToNodeSource(stored) : null;
   }
 
   private buildAgentNameAliasesForExecution(

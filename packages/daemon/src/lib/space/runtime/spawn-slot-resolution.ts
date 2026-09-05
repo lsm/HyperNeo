@@ -7,10 +7,12 @@ import type {
   SpaceWorkerAgent,
   SpaceWorkflow,
   ThinkingLevel,
+  WorkerAgentModelPoolEntry,
   WorkflowNode,
   WorkflowNodeAgent,
 } from '@hyperneo/shared';
 import { resolveNodeAgents } from '@hyperneo/shared';
+import type { SpaceAgentTemplate } from '@hyperneo/shared';
 import type { AgentSessionInit } from '../../agent/agent-session.ts';
 import type { SlotOverrides } from '../agents/custom-agent.ts';
 
@@ -41,6 +43,20 @@ export function resolveWorkflowNodeSlot(
   return slot?.agentId || slot?.templateKey ? { node, slot } : null;
 }
 
+export function resolveSlotCustomPrompt(slot: WorkflowNodeAgent): string | undefined {
+  const directPrompt = slot.customPrompt?.value;
+  if (directPrompt) return directPrompt;
+  if (slot.replaceAgentPrompt === true) return undefined;
+  const legacySlot = slot as {
+    systemPrompt?: { value: string };
+    instructions?: { value: string };
+  };
+  const legacySp = legacySlot.systemPrompt?.value?.trim() ?? '';
+  const legacyInstr = legacySlot.instructions?.value?.trim() ?? '';
+  if (legacySp && legacyInstr) return `${legacySp}\n\n${legacyInstr}`;
+  return legacySp || legacyInstr || undefined;
+}
+
 export interface BuildSlotOverridesContext {
   task?: Pick<SpaceTask, 'workflowModelOverrides'>;
   node?: { id: string; name: string };
@@ -52,20 +68,7 @@ export function buildSlotOverrides(
   slot: WorkflowNodeAgent,
   context?: BuildSlotOverridesContext
 ): SlotOverrides {
-  let slotCustomPrompt: string | undefined = slot.customPrompt?.value;
-  if (!slotCustomPrompt && slot.replaceAgentPrompt !== true) {
-    const legacySlot = slot as {
-      systemPrompt?: { value: string };
-      instructions?: { value: string };
-    };
-    const legacySp = legacySlot.systemPrompt?.value?.trim() ?? '';
-    const legacyInstr = legacySlot.instructions?.value?.trim() ?? '';
-    if (legacySp && legacyInstr) {
-      slotCustomPrompt = `${legacySp}\n\n${legacyInstr}`;
-    } else {
-      slotCustomPrompt = legacySp || legacyInstr || undefined;
-    }
-  }
+  const slotCustomPrompt = resolveSlotCustomPrompt(slot);
   const modelOverrideKey = context?.node ? `${context.node.id}:${slot.name}` : null;
   const taskModelOverride = modelOverrideKey
     ? context?.task?.workflowModelOverrides?.[modelOverrideKey]
@@ -95,6 +98,29 @@ export interface NodeAgentTemplateSource extends SpaceLongHorizonAgentTemplate {
   provider?: string;
   thinkingLevel?: ThinkingLevel;
   settingSources?: SettingSource[];
+  modelPool?: WorkerAgentModelPoolEntry[];
+}
+
+export function spaceAgentTemplateToNodeSource(
+  template: SpaceAgentTemplate
+): NodeAgentTemplateSource {
+  return {
+    key: template.key,
+    handle: template.handle,
+    displayName: template.displayName,
+    description: template.description,
+    instructions: template.instructions,
+    suggestedAutonomyLevel: template.suggestedAutonomyLevel,
+    suggestedEventSubscriptions: [],
+    reminderDefaults: [],
+    ownershipPatterns: [],
+    toolPermissions: template.tools ? { tools: template.tools } : {},
+    model: template.model ?? undefined,
+    provider: template.provider ?? undefined,
+    thinkingLevel: template.thinkingLevel ?? undefined,
+    settingSources: template.settingSources ?? undefined,
+    modelPool: template.modelPool ?? undefined,
+  };
 }
 
 export interface NodeAgentOverrides {
@@ -131,6 +157,7 @@ export function resolveNodeAgentConfig(
         customPrompt: template.instructions,
         tools: templateTools(template),
         settingSources: template.settingSources,
+        modelPool: template.modelPool,
         templateName: template.key,
         templateHash: null,
         createdAt: 0,
