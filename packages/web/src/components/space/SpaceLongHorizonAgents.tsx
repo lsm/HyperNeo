@@ -203,6 +203,7 @@ interface TemplateSaveForm {
   model: string | null;
   provider: string | null;
   thinkingLevel: ThinkingLevel | null;
+  settingSources: SettingSource[] | null;
 }
 
 interface TemplateSaveCtx {
@@ -228,6 +229,7 @@ async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateS
     model: ctx.form.model,
     provider: ctx.form.provider,
     thinkingLevel: ctx.form.thinkingLevel,
+    settingSources: ctx.form.settingSources,
   });
   return ctx;
 }
@@ -285,7 +287,7 @@ function AgentEditor({
       : { tools: [], toolsOverridden: false }
   );
   const [settingSources, setSettingSources] = useState<SettingSource[] | null>(
-    agent?.settingSources ?? null
+    agent?.settingSources ?? template?.settingSources ?? null
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -578,6 +580,7 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
     provider: null,
     thinkingLevel: null,
   });
+  const [settingSources, setSettingSources] = useState<SettingSource[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -597,6 +600,7 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
           model: modelFields.model,
           provider: modelFields.provider,
           thinkingLevel: modelFields.thinkingLevel,
+          settingSources,
         },
       });
       onCreated();
@@ -701,12 +705,25 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
             <p class="mt-1.5 text-xs text-fg-muted">{AUTONOMY_LABELS[autonomyLevel]}</p>
           </div>
           <TemplateModelFields value={modelFields} onChange={setModelFields} />
+          <ToolsEditor
+            tools={toolsSelection.tools}
+            toolsOverridden={toolsSelection.toolsOverridden}
+            onChange={setToolsSelection}
+          />
           <div>
-            <ToolsEditor
-              tools={toolsSelection.tools}
-              toolsOverridden={toolsSelection.toolsOverridden}
-              onChange={setToolsSelection}
-            />
+            <label class="mb-2 block text-sm font-medium text-fg-soft">Setting sources</label>
+            <SettingSourcesEditor value={settingSources} onChange={setSettingSources} />
+            {settingSources === null ? (
+              <p class="mt-1 text-xs text-fg-muted">Inherits the space setting sources.</p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setSettingSources(null)}
+                class="mt-1 text-xs font-medium text-accent-soft/85 underline-offset-4 transition-colors hover:text-accent-soft hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              >
+                Clear override — inherit from space
+              </button>
+            )}
           </div>
           {error && <p class="text-xs text-danger">{error}</p>}
         </div>
@@ -791,6 +808,8 @@ function AgentCard({
                 class={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${statusColors[agent.status] ?? 'bg-fg-faint'}`}
               />
               <span>{agent.status}</span>
+              <span>·</span>
+              <span>{sessionId ? 'Session' : 'No session'}</span>
               {agent.autonomyLevel && (
                 <>
                   <span>·</span>
@@ -1125,38 +1144,6 @@ export function SpaceLongHorizonAgents({
           </section>
         )}
 
-        <section aria-label="Configured agents">
-          {sortedAgents.length === 0 ? (
-            <div class={`rounded-2xl border px-5 py-8 text-center flat-surface`}>
-              <p class="text-sm font-medium text-fg-soft">No configured agents yet</p>
-              <p class="mt-1 text-xs text-fg-muted">
-                Add a custom agent or choose a template below.
-              </p>
-            </div>
-          ) : (
-            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {sortedAgents.map((agent) => (
-                <AgentCard
-                  key={agent.id}
-                  agent={agent}
-                  spaceId={spaceId}
-                  navigationSpaceId={routeSpaceId}
-                  reminderCount={reminderCounts[agent.id] ?? 0}
-                  onEdit={() => {
-                    setEditingAgent(agent);
-                    setSelectedTemplate(null);
-                    setShowEditor(true);
-                  }}
-                  onDelete={() => {
-                    setDeletingAgent(agent);
-                    setDeleteError(null);
-                  }}
-                />
-              ))}
-            </div>
-          )}
-        </section>
-
         <section>
           <div class="mb-3 flex items-end justify-between gap-3">
             <div>
@@ -1189,6 +1176,46 @@ export function SpaceLongHorizonAgents({
               />
             ))}
           </div>
+        </section>
+
+        <section aria-label="Agents">
+          <div class="mb-3">
+            <h3 class="text-lg font-semibold tracking-tight text-fg">
+              Agents · <span data-testid="agent-instance-count">{sortedAgents.length}</span>
+            </h3>
+            <p class="mt-0.5 text-xs text-fg-faint">
+              Template instances and custom agents running in this space.
+            </p>
+          </div>
+          {sortedAgents.length === 0 ? (
+            <div class={`rounded-2xl border px-5 py-8 text-center flat-surface`}>
+              <p class="text-sm font-medium text-fg-soft">No agents yet</p>
+              <p class="mt-1 text-xs text-fg-muted">
+                Add a custom agent or choose a template above.
+              </p>
+            </div>
+          ) : (
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {sortedAgents.map((agent) => (
+                <AgentCard
+                  key={agent.id}
+                  agent={agent}
+                  spaceId={spaceId}
+                  navigationSpaceId={routeSpaceId}
+                  reminderCount={reminderCounts[agent.id] ?? 0}
+                  onEdit={() => {
+                    setEditingAgent(agent);
+                    setSelectedTemplate(null);
+                    setShowEditor(true);
+                  }}
+                  onDelete={() => {
+                    setDeletingAgent(agent);
+                    setDeleteError(null);
+                  }}
+                />
+              ))}
+            </div>
+          )}
         </section>
       </div>
 

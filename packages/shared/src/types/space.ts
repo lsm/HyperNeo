@@ -48,6 +48,7 @@ export interface SpaceLongHorizonAgentTemplate {
   model?: string | null;
   provider?: string | null;
   thinkingLevel?: ThinkingLevel | null;
+  settingSources?: SettingSource[] | null;
 }
 
 export interface SpaceLongHorizonAgent {
