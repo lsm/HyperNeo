@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import {
   createMailboxExpireHandler,
   enqueueMailboxExpireIfMissing,
@@ -53,6 +53,25 @@ describe('createMailboxExpireHandler', () => {
 
   afterEach(() => {
     mailbox.close();
+  });
+
+  test('preserves the next sweep when expiration fails', async () => {
+    const listJobs = spyOn(mailbox.jobQueue, 'listJobs');
+    listJobs
+      .mockImplementationOnce(() => [])
+      .mockImplementationOnce(() => {
+        throw new Error('sqlite busy');
+      });
+
+    await expect(createMailboxExpireHandler(mailbox.jobQueue)(fakeJob)).rejects.toThrow(
+      'sqlite busy'
+    );
+    const pending = mailbox.jobQueue.listJobs({
+      queue: MAILBOX_EXPIRE_FIRE,
+      status: 'pending',
+      limit: 10,
+    });
+    expect(pending).toHaveLength(1);
   });
 
   test('expires mailbox entries and self-schedules the next sweep', async () => {

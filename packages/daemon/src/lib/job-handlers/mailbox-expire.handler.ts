@@ -6,9 +6,9 @@ const NEXT_RUN_DELAY_MS = 60 * 1000;
 
 export function createMailboxExpireHandler(jobQueue: JobQueueRepository) {
   return async (_job: Job): Promise<{ expired: number; nextRunAt: number }> => {
-    const expired = await expireMailboxEntries({ jobQueue });
     const nextRunAt = Date.now() + NEXT_RUN_DELAY_MS;
     enqueueMailboxExpireIfMissing(jobQueue, nextRunAt);
+    const expired = await expireMailboxEntries({ jobQueue });
     return { expired, nextRunAt };
   };
 }
