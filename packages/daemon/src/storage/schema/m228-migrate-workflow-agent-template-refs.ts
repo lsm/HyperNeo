@@ -210,7 +210,7 @@ export function runMigration228(db: BunDatabase): void {
 
 const MAX_TEMPLATE_KEY_ATTEMPTS = 100;
 
-function ensureTemplateForAgentRef(
+export function ensureTemplateForAgentRef(
   db: BunDatabase,
   repo: SpaceAgentTemplateRepository,
   spaceId: string,

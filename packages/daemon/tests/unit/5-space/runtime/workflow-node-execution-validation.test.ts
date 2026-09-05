@@ -131,15 +131,48 @@ describe('validateExecutionAgainstWorkflow', () => {
     expect(result).toEqual({ valid: true });
   });
 
-  test('templateKey precedence fails when execution carries stale agentId', () => {
+  test('accepts a legacy execution identity migrated to a collision-suffixed template', () => {
     const workflow = makeWorkflow([
-      { agentId: 'stale', templateKey: 'coder.default', name: 'coder' },
+      { agentId: '', templateKey: 'migrated.agent.agent-1.m228', name: 'coder' },
     ]);
-    const result = validateExecutionAgainstWorkflow(makeExecution({ agentId: 'stale' }), workflow);
+    const result = validateExecutionAgainstWorkflow(
+      makeExecution({ agentId: 'agent-1' }),
+      workflow
+    );
+    expect(result).toEqual({ valid: true });
+  });
+
+  test('accepts a legacy execution identity migrated to its matching template', () => {
+    const workflow = makeWorkflow([
+      { agentId: '', templateKey: 'migrated.agent.agent-1', name: 'coder' },
+    ]);
+    const result = validateExecutionAgainstWorkflow(
+      makeExecution({ agentId: 'agent-1' }),
+      workflow
+    );
+    expect(result).toEqual({ valid: true });
+  });
+
+  test('rejects a legacy execution identity migrated to another agent template', () => {
+    const workflow = makeWorkflow([
+      { agentId: '', templateKey: 'migrated.agent.agent-2', name: 'coder' },
+    ]);
+    const result = validateExecutionAgainstWorkflow(
+      makeExecution({ agentId: 'agent-1' }),
+      workflow
+    );
     expect(result.valid).toBe(false);
-    if (!result.valid) {
-      expect(result.permanent).toBe(true);
-    }
+    if (!result.valid) expect(result.permanent).toBe(true);
+  });
+
+  test('rejects an unrelated template when execution carries a legacy identity', () => {
+    const workflow = makeWorkflow([{ agentId: '', templateKey: 'coder.default', name: 'coder' }]);
+    const result = validateExecutionAgainstWorkflow(
+      makeExecution({ agentId: 'agent-1' }),
+      workflow
+    );
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.permanent).toBe(true);
   });
 });
 
