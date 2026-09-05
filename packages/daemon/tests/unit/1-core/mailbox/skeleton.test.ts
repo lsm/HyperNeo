@@ -2,18 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import type { MailboxDeliveryOutcome } from '../../../../src/lib/mailbox/delivery';
 import { MAILBOX_LANE, type MailboxEnqueueOutcome } from '../../../../src/lib/mailbox/enqueue';
 import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff';
-import {
-  expireMailboxEntries,
-  type MailboxSettleOutcome,
-} from '../../../../src/lib/mailbox/settlement';
+import type { MailboxSettleOutcome } from '../../../../src/lib/mailbox/settlement';
 
 describe('mailbox skeleton stubs', () => {
   test('MAILBOX_LANE equals "mailbox"', () => {
     expect(MAILBOX_LANE).toBe('mailbox');
-  });
-
-  test('expireMailboxEntries throws its not implemented message', () => {
-    expect(() => expireMailboxEntries()).toThrow('mailbox: expireMailboxEntries not implemented');
   });
 });
 
@@ -23,7 +16,13 @@ describe('mailbox type assignment tests', () => {
     const enqueueRejected: MailboxEnqueueOutcome = { kind: 'rejected', reason: 'x' };
     const handoffOk: MailboxHandoffOutcome = { kind: 'enqueued', id: '1' };
     const handoffRejected: MailboxHandoffOutcome = { kind: 'rejected', reason: 'x' };
-    const delivered: MailboxDeliveryOutcome = { kind: 'delivered', sessionId: 's' };
+    const delivered: MailboxDeliveryOutcome = {
+      entryId: '1',
+      sessionId: 's',
+      terminal: 'delivered',
+      reason: null,
+      settledAt: 1,
+    };
     const failed: MailboxDeliveryOutcome = { kind: 'failed', reason: 'x' };
     const consumed: MailboxSettleOutcome = { kind: 'consumed' };
     const requeued: MailboxSettleOutcome = { kind: 'requeued', attempt: 1 };

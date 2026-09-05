@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
-import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery';
+import {
+  createMailboxDeadHandler,
+  createMailboxDeliveryHandler,
+} from '../../../../src/lib/mailbox/delivery';
 import { enqueueMailboxEntry, MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
 import {
   DEFAULT_MAILBOX_ENTRY_POLICY,
@@ -79,6 +82,60 @@ function humanPredicate(mailbox: MailboxTestDb, sessionId: string, messageUuid: 
   return row?.isHuman === 1;
 }
 
+describe('createMailboxDeadHandler', () => {
+  test('logs a valid entry id and job error without writing a settlement', () => {
+    const messages: string[] = [];
+    const handler = createMailboxDeadHandler((message) => messages.push(message));
+    const job = {
+      id: 'job-1',
+      queue: MAILBOX_LANE,
+      status: 'dead',
+      payload: { id: 'entry-1' },
+      result: null,
+      error: 'delivery failed',
+      priority: 0,
+      maxRetries: 3,
+      retryCount: 3,
+      runAt: 1,
+      createdAt: 1,
+      startedAt: 1,
+      heartbeatAt: 1,
+      completedAt: 1,
+      claimToken: null,
+    } as Job;
+
+    expect(handler(job)).toBeUndefined();
+    expect(messages).toEqual(['mailbox: entry entry-1 dead-lettered: delivery failed']);
+    expect(job.result).toBeNull();
+  });
+
+  test('logs a corrupt payload without throwing or writing a settlement', () => {
+    const messages: string[] = [];
+    const handler = createMailboxDeadHandler((message) => messages.push(message));
+    const job = {
+      id: 'job-1',
+      queue: MAILBOX_LANE,
+      status: 'dead',
+      payload: { garbage: true },
+      result: null,
+      error: null,
+      priority: 0,
+      maxRetries: 3,
+      retryCount: 3,
+      runAt: 1,
+      createdAt: 1,
+      startedAt: 1,
+      heartbeatAt: 1,
+      completedAt: 1,
+      claimToken: null,
+    } as Job;
+
+    expect(handler(job)).toBeUndefined();
+    expect(messages).toEqual(['mailbox: entry unknown dead-lettered: unknown error']);
+    expect(job.result).toBeNull();
+  });
+});
+
 describe('createMailboxDeliveryHandler', () => {
   let mailbox: MailboxTestDb;
 
@@ -155,6 +212,40 @@ describe('createMailboxDeliveryHandler', () => {
       expect(mailbox.sdkRows()).toHaveLength(0);
       expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(0);
       expect(mailbox.rows()[0].retry_count).toBe(0);
+    });
+  });
+
+  describe('expired entry', () => {
+    test('dead-letters an already-expired entry before resolving its session', async () => {
+      const { handler, sessionCalls } = makeHandler();
+      const entry = makeEntry({ id: createUlid(Date.now() - 60_000), policy: { ttlMs: 1 } });
+      const job = claimMailboxJob(mailbox, entry);
+
+      await expect(handler(job)).rejects.toBeInstanceOf(DeadLetterImmediatelyError);
+      await expect(handler(job)).rejects.toThrow('mailbox: entry expired (ttl)');
+      expect(sessionCalls()).toBe(0);
+      expect(mailbox.sdkRows()).toHaveLength(0);
+      expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(0);
+    });
+
+    test('dead-letters an entry that expires while its session resolves', async () => {
+      let releaseSession: ((session: object | null) => void) | undefined;
+      const gatedGetSession = (_sessionId: string): Promise<object | null> =>
+        new Promise((resolve) => {
+          releaseSession = resolve;
+        });
+      const { handler } = makeHandler(gatedGetSession);
+      const entry = makeEntry({ policy: { ttlMs: 1 } });
+      const job = claimMailboxJob(mailbox, entry);
+
+      const delivery = handler(job);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      releaseSession?.({ ok: true });
+
+      await expect(delivery).rejects.toBeInstanceOf(DeadLetterImmediatelyError);
+      await expect(delivery).rejects.toThrow('mailbox: entry expired (ttl)');
+      expect(mailbox.sdkRows()).toHaveLength(0);
+      expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(0);
     });
   });
 
@@ -260,7 +351,13 @@ describe('createMailboxDeliveryHandler', () => {
 
       const result = await handler(job);
 
-      expect(result).toEqual({ kind: 'delivered', sessionId: SESSION_ID });
+      expect(result).toEqual({
+        entryId: entry.id,
+        sessionId: SESSION_ID,
+        terminal: 'delivered',
+        reason: null,
+        settledAt: expect.any(Number),
+      });
 
       const rows = mailbox.sdkRows();
       expect(rows).toHaveLength(1);
@@ -288,6 +385,7 @@ describe('createMailboxDeliveryHandler', () => {
         job.claimToken
       );
       expect(completed?.status).toBe('completed');
+      expect(completed?.result).toEqual(result);
     });
 
     test('uses an explicit messageUuid for the content row and delivery pointer', async () => {
@@ -400,7 +498,13 @@ describe('createMailboxDeliveryHandler', () => {
 
       const result = await handler(job);
 
-      expect(result).toEqual({ kind: 'delivered', sessionId: SESSION_ID });
+      expect(result).toEqual({
+        entryId: entry.id,
+        sessionId: SESSION_ID,
+        terminal: 'delivered',
+        reason: null,
+        settledAt: expect.any(Number),
+      });
 
       const rows = mailbox.sdkRows();
       expect(rows).toHaveLength(1);
@@ -418,6 +522,7 @@ describe('createMailboxDeliveryHandler', () => {
         job.claimToken
       );
       expect(completed?.status).toBe('completed');
+      expect(completed?.result).toEqual(result);
     });
 
     test('defer preserves the provenance law — system origin and synthetic stamp', async () => {
@@ -446,7 +551,13 @@ describe('createMailboxDeliveryHandler', () => {
 
       const result = await handler(job);
 
-      expect(result).toEqual({ kind: 'delivered', sessionId: SESSION_ID });
+      expect(result).toEqual({
+        entryId: entry.id,
+        sessionId: SESSION_ID,
+        terminal: 'delivered',
+        reason: null,
+        settledAt: expect.any(Number),
+      });
       const rows = mailbox.sdkRows();
       expect(rows).toHaveLength(1);
       const messageUuid = expectedMessageUuid(entry.id);
@@ -462,7 +573,13 @@ describe('createMailboxDeliveryHandler', () => {
 
       const result = await handler(job);
 
-      expect(result).toEqual({ kind: 'delivered', sessionId: SESSION_ID });
+      expect(result).toEqual({
+        entryId: entry.id,
+        sessionId: SESSION_ID,
+        terminal: 'delivered',
+        reason: null,
+        settledAt: expect.any(Number),
+      });
       expect(mailbox.sdkRows()[0].send_status).toBe('enqueued');
     });
 
@@ -487,7 +604,13 @@ describe('createMailboxDeliveryHandler', () => {
 
         const secondResult = await handler(secondJob);
 
-        expect(secondResult).toEqual({ kind: 'delivered', sessionId: SESSION_ID });
+        expect(secondResult).toEqual({
+          entryId: entry.id,
+          sessionId: SESSION_ID,
+          terminal: 'delivered',
+          reason: null,
+          settledAt: expect.any(Number),
+        });
         const rows = mailbox.sdkRows();
         expect(rows).toHaveLength(1);
         expect(rows[0].sdk_uuid).toBe(expectedMessageUuid(entry.id));
@@ -515,7 +638,13 @@ describe('createMailboxDeliveryHandler', () => {
 
       const secondResult = await handler(reclaims[0]);
 
-      expect(secondResult).toEqual({ kind: 'delivered', sessionId: SESSION_ID });
+      expect(secondResult).toEqual({
+        entryId: entry.id,
+        sessionId: SESSION_ID,
+        terminal: 'delivered',
+        reason: null,
+        settledAt: expect.any(Number),
+      });
       const rows = mailbox.sdkRows();
       expect(rows).toHaveLength(1);
       expect(rows[0].sdk_uuid).toBe(messageUuid);
@@ -542,7 +671,13 @@ describe('createMailboxDeliveryHandler', () => {
 
       const secondResult = await handler(secondJob);
 
-      expect(secondResult).toEqual({ kind: 'delivered', sessionId: SESSION_ID });
+      expect(secondResult).toEqual({
+        entryId: entry.id,
+        sessionId: SESSION_ID,
+        terminal: 'delivered',
+        reason: null,
+        settledAt: expect.any(Number),
+      });
       const rows = mailbox.sdkRows();
       expect(rows).toHaveLength(1);
       expect(rows[0].sdk_uuid).toBe(expectedMessageUuid(entry.id));

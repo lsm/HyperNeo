@@ -4,17 +4,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDaemonApp, releaseStartupFileLogCapture } from '../../../../src/app';
 import type { Config } from '../../../../src/config';
-import {
-  clearProviderFailure,
-  recordClassifiedProviderFailure,
-  resetProviderFailureStore,
-} from '../../../../src/lib/providers/provider-failure-store';
+import { MAILBOX_EXPIRE_FIRE } from '../../../../src/lib/job-queue-constants';
 import {
   clearStructuredLogSubscribers,
   emitStructuredLogEvent,
   installConsoleLogCapture,
   subscribeToStructuredLogs,
 } from '../../../../src/lib/logger';
+import {
+  clearProviderFailure,
+  recordClassifiedProviderFailure,
+  resetProviderFailureStore,
+} from '../../../../src/lib/providers/provider-failure-store';
 
 if (typeof (globalThis as { Bun?: unknown }).Bun === 'undefined') {
   (globalThis as { Bun?: unknown }).Bun = {
@@ -121,6 +122,23 @@ describe('Daemon App Cleanup', () => {
     }
     clearStructuredLogSubscribers();
     logs.length = 0;
+  });
+
+  test('re-seeds a missing mailbox expiration job during startup', async () => {
+    const daemonContext = await createDaemonApp({
+      config,
+      verbose: true,
+      standalone: false,
+    });
+
+    const pending = daemonContext.jobQueue.listJobs({
+      queue: MAILBOX_EXPIRE_FIRE,
+      status: 'pending',
+      limit: 10,
+    });
+    expect(pending).toHaveLength(1);
+
+    await daemonContext.cleanup();
   });
 
   describe('pending RPC calls timeout', () => {
