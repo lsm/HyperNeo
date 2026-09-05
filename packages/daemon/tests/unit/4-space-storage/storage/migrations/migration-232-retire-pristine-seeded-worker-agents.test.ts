@@ -102,7 +102,10 @@ function insertPinnedRun(db: Database, runId: string, status: string, agents: un
 }
 
 function remaining(repo: SpaceLongHorizonAgentRepository): string[] {
-  return repo.listBySpaceId('space-1').map((agent) => agent.displayName);
+  return repo
+    .listBySpaceId('space-1')
+    .map((agent) => agent.displayName)
+    .sort();
 }
 
 describe('migration 232: retire pristine seeded worker agents', () => {
@@ -185,7 +188,7 @@ describe('migration 232: retire pristine seeded worker agents', () => {
 
     runMigration232(db);
 
-    expect(remaining(repo)).toEqual(['Coder', 'General', 'Planner', 'Research', 'Reviewer', 'QA']);
+    expect(remaining(repo)).toEqual(['Coder', 'General', 'Planner', 'QA', 'Research', 'Reviewer']);
     db.close();
   });
 
