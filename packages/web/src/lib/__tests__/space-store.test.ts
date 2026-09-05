@@ -1711,6 +1711,51 @@ describe('SpaceStore — agent template CRUD', () => {
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['new.custom']);
   });
 
+  it('deleteTemplate reconciles a reload invalidated by an overlapping mutation', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'gone' })];
+    const stalledList: {
+      resolve: ((templates: SpaceAgentTemplate[]) => void) | null;
+    } = { resolve: null };
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') {
+        return new Promise((resolve) => {
+          stalledList.resolve = (templates) => resolve({ templates });
+        });
+      }
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
+      if (method === 'spaceAgent.createTemplate') {
+        return { template: makeAgentTemplate({ key: 'new.custom', handle: 'new' }) };
+      }
+      return {};
+    });
+
+    const pendingDelete = spaceStore.deleteTemplate('gone');
+    await vi.waitFor(() => {
+      if (!stalledList.resolve) throw new Error('listTemplates not yet requested');
+    });
+    await spaceStore.createTemplate({ key: 'new.custom', handle: 'new', displayName: 'New' });
+    stalledList.resolve?.([]);
+    await pendingDelete;
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['new.custom']);
+  });
+
+  it('createTemplate before any fetch keeps the mutation across a refresh', async () => {
+    await spaceStore.selectSpace('space-1');
+    const created = await spaceStore.createTemplate({
+      key: 'new.custom',
+      handle: 'new',
+      displayName: 'New Template',
+    });
+    expect(created.key).toBe('new.custom');
+
+    await spaceStore.refresh();
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toContain('new.custom');
+  });
+
   it('createTemplate calls spaceAgent.createTemplate and merges into agentTemplates', async () => {
     spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'existing.default' })];
     const modelPool = [

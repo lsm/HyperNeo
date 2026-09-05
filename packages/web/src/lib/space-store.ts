@@ -318,7 +318,7 @@ const runSpaceTemplateList = (
 
 interface SpaceTemplateDeleteDeps {
   deleteTemplate(key: string): Promise<void>;
-  fetchTemplates(): Promise<SpaceLongHorizonAgentTemplate[]>;
+  fetchTemplates(): Promise<{ applied: boolean }>;
   builtInForKey(key: string): SpaceLongHorizonAgentTemplate | undefined;
   currentTemplates(): SpaceLongHorizonAgentTemplate[];
   applyTemplates(templates: SpaceLongHorizonAgentTemplate[]): void;
@@ -326,7 +326,7 @@ interface SpaceTemplateDeleteDeps {
 
 type SpaceTemplateDeleteCtx = {
   key: string;
-  reloadError?: unknown;
+  reloadApplied?: boolean;
   deps: SpaceTemplateDeleteDeps;
 };
 
@@ -339,11 +339,11 @@ async function requestSpaceTemplateDeletion(
 
 async function reloadSpaceTemplates(ctx: SpaceTemplateDeleteCtx): Promise<SpaceTemplateDeleteCtx> {
   try {
-    await ctx.deps.fetchTemplates();
-    return ctx;
+    const { applied } = await ctx.deps.fetchTemplates();
+    return { ...ctx, reloadApplied: applied };
   } catch (error) {
     logger.error('Failed to refetch agent templates:', error);
-    return { ...ctx, reloadError: error };
+    return { ...ctx, reloadApplied: false };
   }
 }
 
@@ -360,7 +360,7 @@ function applySpaceTemplateDeleteFallback(ctx: SpaceTemplateDeleteCtx): SpaceTem
 
 const runSpaceTemplateDeletion = (
   superpipe<{ reloaded: (ctx: SpaceTemplateDeleteCtx) => boolean }>({
-    reloaded: (ctx) => ctx.reloadError === undefined,
+    reloaded: (ctx) => ctx.reloadApplied === true,
   })('space-template-deletion') as PipelineAPI
 )
   .input(['ctx'])
@@ -2700,13 +2700,17 @@ class SpaceStore {
 
   private mergeAgentTemplate(template: SpaceLongHorizonAgentTemplate): void {
     this.templateFetchGeneration += 1;
+    this.templateListMerged = true;
     const exists = this.agentTemplates.value.some((t) => t.key === template.key);
     this.agentTemplates.value = exists
       ? this.agentTemplates.value.map((t) => (t.key === template.key ? template : t))
       : [...this.agentTemplates.value, template];
   }
 
-  async fetchTemplates(): Promise<SpaceLongHorizonAgentTemplate[]> {
+  private async runTemplateListFetch(): Promise<{
+    templates: SpaceLongHorizonAgentTemplate[];
+    applied: boolean;
+  }> {
     const generation = ++this.templateFetchGeneration;
     const ctx = await runSpaceTemplateList({
       spaceId: this.spaceId.value,
@@ -2733,10 +2737,16 @@ class SpaceStore {
       },
     });
     if (!ctx.templates) throw new Error('No space selected');
-    if (generation !== this.templateFetchGeneration) return ctx.templates;
+    if (generation !== this.templateFetchGeneration)
+      return { templates: ctx.templates, applied: false };
     this.templateListMerged = true;
     this.agentTemplates.value = ctx.templates;
-    return ctx.templates;
+    return { templates: ctx.templates, applied: true };
+  }
+
+  async fetchTemplates(): Promise<SpaceLongHorizonAgentTemplate[]> {
+    const { templates } = await this.runTemplateListFetch();
+    return templates;
   }
 
   async createTemplate(
@@ -2791,7 +2801,7 @@ class SpaceStore {
             key: templateKey,
           });
         },
-        fetchTemplates: () => this.fetchTemplates(),
+        fetchTemplates: () => this.runTemplateListFetch(),
         builtInForKey: (templateKey) => this.builtInTemplatesByKey.get(templateKey),
         currentTemplates: () => this.agentTemplates.value,
         applyTemplates: (templates) => {
