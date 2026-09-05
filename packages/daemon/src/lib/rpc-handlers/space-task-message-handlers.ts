@@ -124,6 +124,14 @@ export function setupSpaceTaskMessageHandlers(
         return { kind: 'resolved', sessionId: target.sessionId, created: false };
       }
       if (target.kind !== 'worker') return { kind: 'unresolved', reason: 'not_found' };
+      const postApproval = taskAgentManager.getPostApprovalWorkerSession?.(target.taskId) ?? null;
+      if (
+        postApproval &&
+        postApproval.agentName === target.agentName &&
+        (!target.workflowNodeId || postApproval.nodeId === target.workflowNodeId)
+      ) {
+        return { kind: 'resolved', sessionId: postApproval.sessionId, created: false };
+      }
       const task = taskRepo.getTask(target.taskId);
       const matches = task?.workflowRunId
         ? (nodeExecutionRepo?.listByWorkflowRun(task.workflowRunId) ?? []).filter(
@@ -316,10 +324,17 @@ export function setupSpaceTaskMessageHandlers(
       taskAgentManager.getPostApprovalWorkerSession?.(taskId, target.sessionId) ?? null;
 
     if (target.sessionId) {
+      const attachedExecution = executions.find(
+        (execution) =>
+          execution.agentSessionId === target.sessionId &&
+          (!target.workflowNodeId || execution.workflowNodeId === target.workflowNodeId)
+      );
       let outcome = await resolveTargetSession({ kind: 'session', sessionId: target.sessionId });
       let agentName =
-        executions.find((execution) => execution.agentSessionId === target.sessionId)?.agentName ??
-        postApproval?.agentName;
+        attachedExecution?.agentName ??
+        (!target.workflowNodeId || postApproval?.nodeId === target.workflowNodeId
+          ? postApproval?.agentName
+          : undefined);
       if (
         outcome.kind === 'unresolved' &&
         postApproval?.sessionId === target.sessionId &&
@@ -414,6 +429,28 @@ export function setupSpaceTaskMessageHandlers(
       ): item is typeof item & { outcome: Extract<EnsureSessionOutcome, { kind: 'resolved' }> } =>
         item.outcome.kind === 'resolved'
     );
+    const unresolved = outcomes.filter(
+      (
+        item
+      ): item is typeof item & { outcome: Extract<EnsureSessionOutcome, { kind: 'unresolved' }> } =>
+        item.outcome.kind === 'unresolved'
+    );
+    const rejected = unresolved.find(
+      (item) =>
+        item.outcome.reason !== 'activation_timeout' &&
+        item.outcome.reason !== 'post_approval_pending' &&
+        item.outcome.reason !== 'restore_timeout'
+    );
+    if (rejected) {
+      throw new Error(
+        `Could not resolve workflow agent "${rejected.worker.agentName}": ${rejected.outcome.reason}`
+      );
+    }
+    if (unresolved.length > 0 && images && images.length > 0) {
+      throw new Error(
+        'Cannot send images to an agent that is still starting. Wait for the agent to come online and try again.'
+      );
+    }
     await Promise.all(
       resolved.map(({ worker, outcome }) =>
         injectResolvedSession(
@@ -427,7 +464,6 @@ export function setupSpaceTaskMessageHandlers(
       )
     );
 
-    const unresolved = outcomes.filter((item) => item.outcome.kind === 'unresolved');
     const activated = outcomes.some((item) =>
       item.outcome.kind === 'resolved'
         ? item.outcome.created
@@ -441,11 +477,6 @@ export function setupSpaceTaskMessageHandlers(
       };
     }
 
-    if (images && images.length > 0) {
-      throw new Error(
-        'Cannot send images to an agent that is still starting. Wait for the agent to come online and try again.'
-      );
-    }
     if (pendingMessageQueue) {
       for (const { worker } of unresolved) {
         pendingMessageQueue.enqueue({
@@ -584,15 +615,17 @@ export function setupSpaceTaskMessageHandlers(
           (e) => e.agentName.toLowerCase() === mention.toLowerCase()
         );
         if (matches.length > 0) {
+          const sessionIds = matches.flatMap((match) => match.agentSessionId ?? []);
           const outcomes = await Promise.all(
-            matches.map((match) =>
-              resolveTargetSession({ kind: 'session', sessionId: match.agentSessionId! })
-            )
+            sessionIds.map((sessionId) => resolveTargetSession({ kind: 'session', sessionId }))
           );
           const resolved = outcomes.filter(
             (outcome): outcome is Extract<EnsureSessionOutcome, { kind: 'resolved' }> =>
               outcome.kind === 'resolved'
           );
+          if (resolved.length !== outcomes.length) {
+            throw new Error(`@mention target is no longer live: ${mention}`);
+          }
           if (resolved.length > 0) {
             await Promise.all(
               resolved.map((outcome) =>
@@ -720,40 +753,15 @@ export function setupSpaceTaskMessageHandlers(
       }
     }
 
-    const outcome = await ensureWorker(params.taskId, params.agentName, params.workflowNodeId);
-    if (outcome.kind === 'resolved') {
-      if (params.message) {
-        await injectResolvedSession(
+    const liveSession = taskAgentManager.getSubSessionByAgentName
+      ? await taskAgentManager.getSubSessionByAgentName(
           params.taskId,
-          outcome.sessionId,
           params.agentName,
-          `[Message from human]: ${params.message}`
-        );
-        log.info(
-          `space.task.activateNodeAgent: delivered message to session ${outcome.sessionId} ` +
-            `(agent=${params.agentName}, task=${params.taskId})`
-        );
-        await resetChannelCyclesOnHumanTouch(workflowRunId, params.taskId);
-      }
-      return {
-        ok: true,
-        agentName: params.agentName,
-        sessionId: outcome.sessionId,
-        activated: outcome.created,
-        queued: false,
-      };
-    }
-
-    if (outcome.reason !== 'activation_timeout') {
-      throw new Error(
-        `Could not activate "${params.agentName}"` +
-          (params.workflowNodeId ? ` on node ${params.workflowNodeId}` : '') +
-          '. The node may not declare this agent, or activation is temporarily unavailable.'
-      );
-    }
-
+          params.workflowNodeId
+        )
+      : null;
     let queuedMessageId: string | null = null;
-    if (params.message && pendingMessageQueue) {
+    if (!liveSession && params.message && pendingMessageQueue) {
       const { record } = pendingMessageQueue.enqueue({
         workflowRunId,
         spaceId: params.spaceId,
@@ -768,6 +776,41 @@ export function setupSpaceTaskMessageHandlers(
           : `human:${params.taskId}:${params.agentName}:${params.workflowNodeId ?? ''}:${params.message}`,
       });
       queuedMessageId = record.id;
+    }
+
+    const outcome = await ensureWorker(params.taskId, params.agentName, params.workflowNodeId);
+    if (outcome.kind === 'resolved') {
+      if (params.message && queuedMessageId === null) {
+        await injectResolvedSession(
+          params.taskId,
+          outcome.sessionId,
+          params.agentName,
+          `[Message from human]: ${params.message}`
+        );
+        log.info(
+          `space.task.activateNodeAgent: delivered message to session ${outcome.sessionId} ` +
+            `(agent=${params.agentName}, task=${params.taskId})`
+        );
+      }
+      if (outcome.created || params.message) {
+        await resetChannelCyclesOnHumanTouch(workflowRunId, params.taskId);
+      }
+      return {
+        ok: true,
+        agentName: params.agentName,
+        sessionId: outcome.sessionId,
+        activated: outcome.created,
+        queued: queuedMessageId !== null,
+        ...(queuedMessageId !== null ? { queuedMessageId } : {}),
+      };
+    }
+
+    if (outcome.reason !== 'activation_timeout') {
+      throw new Error(
+        `Could not activate "${params.agentName}"` +
+          (params.workflowNodeId ? ` on node ${params.workflowNodeId}` : '') +
+          '. The node may not declare this agent, or activation is temporarily unavailable.'
+      );
     }
 
     log.info(
