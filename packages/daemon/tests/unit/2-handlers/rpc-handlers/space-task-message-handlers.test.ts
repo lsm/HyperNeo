@@ -1,22 +1,22 @@
-import { describe, expect, it, mock, beforeEach } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { MessageHub } from '@hyperneo/shared';
-import type { SpaceTask } from '@hyperneo/shared';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { MessageHub, SpaceTask } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import {
-  setupSpaceTaskMessageHandlers,
-  parseMentions,
-  type TaskAgentManagerInterface,
-  type NodeExecutionLookup,
-  type ChannelCycleResetter,
-} from '../../../../src/lib/rpc-handlers/space-task-message-handlers';
-import type { Database } from '../../../../src/storage/database';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
+import {
+  type ChannelCycleResetter,
+  type NodeExecutionLookup,
+  parseMentions,
+  type SessionEnsurer,
+  setupSpaceTaskMessageHandlers,
+  type TaskAgentManagerInterface,
+} from '../../../../src/lib/rpc-handlers/space-task-message-handlers';
+import type { Database } from '../../../../src/storage/database';
 import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
@@ -1403,6 +1403,203 @@ describe('setupSpaceTaskMessageHandlers', () => {
     });
   });
 
+  describe('session resolution routing', () => {
+    const mockTaskWithRun: SpaceTask = {
+      ...mockTaskWithSession,
+      workflowRunId: 'run-resolution-1',
+    };
+
+    function setupWithResolver(opts: {
+      executions: Array<{
+        id?: string;
+        workflowNodeId?: string;
+        agentName: string;
+        agentSessionId: string | null;
+        status?: string;
+      }>;
+      declared?: string[];
+      outcomes: Array<Awaited<ReturnType<SessionEnsurer>>>;
+    }) {
+      const mh = createMockMessageHub();
+      hub = mh.hub;
+      handlers = mh.handlers;
+      const injectSubSessionMessage = mock(async () => {});
+      taskAgentManager = {
+        injectSubSessionMessage,
+        getWorkflowDeclaredAgentNamesForTask: mock(() => opts.declared ?? []),
+      };
+      db = createMockDatabase(mockTaskWithRun);
+      internalEventBus = {
+        publish: mock(async () => ({ delivered: 0, failures: [] })),
+        publishAsync: mock(() => {}),
+      } as unknown as InternalEventBus<DaemonInternalEventMap>;
+      const targets: Parameters<SessionEnsurer>[0][] = [];
+      const ensureTargetSession: SessionEnsurer = mock(
+        async (target: Parameters<SessionEnsurer>[0]) => {
+          targets.push(target);
+          const outcome = opts.outcomes[targets.length - 1];
+          if (!outcome) throw new Error('Unexpected resolution call');
+          return outcome;
+        }
+      );
+      setupSpaceTaskMessageHandlers(
+        hub,
+        taskAgentManager,
+        db,
+        internalEventBus,
+        makeNodeExecutionRepo(opts.executions),
+        undefined,
+        undefined,
+        undefined,
+        ensureTargetSession
+      );
+      return { targets, injectSubSessionMessage };
+    }
+
+    it('pre-translates a session target through session-kind resolution', async () => {
+      const { targets, injectSubSessionMessage } = setupWithResolver({
+        executions: [
+          {
+            id: 'exec-coder',
+            workflowNodeId: 'node-coder',
+            agentName: 'Coder',
+            agentSessionId: 'session-coder',
+          },
+        ],
+        outcomes: [{ kind: 'resolved', sessionId: 'session-coder', created: false }],
+      });
+
+      await call('space.task.sendMessage', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        message: 'exact session',
+        target: { kind: 'node_agent', sessionId: 'session-coder', agentName: 'Wrong' },
+      });
+
+      expect(targets).toEqual([{ kind: 'session', sessionId: 'session-coder' }]);
+      expect(injectSubSessionMessage).toHaveBeenCalledWith(
+        'session-coder',
+        'exact session',
+        false,
+        undefined,
+        undefined
+      );
+    });
+
+    it('pre-translates nodeExecutionId to an exact worker target with zero wait', async () => {
+      const { targets } = setupWithResolver({
+        executions: [
+          {
+            id: 'exec-reviewer',
+            workflowNodeId: 'node-review',
+            agentName: 'Reviewer',
+            agentSessionId: null,
+          },
+        ],
+        outcomes: [{ kind: 'unresolved', reason: 'activation_timeout' }],
+      });
+
+      await call('space.task.sendMessage', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        message: 'exact execution',
+        target: {
+          kind: 'node_agent',
+          nodeExecutionId: 'exec-reviewer',
+          agentName: 'Wrong',
+        },
+      });
+
+      expect(targets).toEqual([
+        {
+          kind: 'worker',
+          taskId: 'task-1',
+          agentName: 'Reviewer',
+          workflowNodeId: 'node-review',
+          waitCapMs: 0,
+        },
+      ]);
+    });
+
+    it('loops over same-name worker targets without extending SessionTargetWorker', async () => {
+      const { targets, injectSubSessionMessage } = setupWithResolver({
+        executions: [
+          {
+            id: 'exec-a',
+            workflowNodeId: 'node-a',
+            agentName: 'Coder',
+            agentSessionId: 'old-a',
+          },
+          {
+            id: 'exec-b',
+            workflowNodeId: 'node-b',
+            agentName: 'Coder',
+            agentSessionId: 'old-b',
+          },
+        ],
+        outcomes: [
+          { kind: 'resolved', sessionId: 'new-a', created: false },
+          { kind: 'resolved', sessionId: 'new-b', created: false },
+        ],
+      });
+
+      await call('space.task.sendMessage', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        message: 'fan out',
+        target: { kind: 'node_agent', agentName: 'Coder' },
+      });
+
+      expect(targets).toEqual([
+        {
+          kind: 'worker',
+          taskId: 'task-1',
+          agentName: 'Coder',
+          workflowNodeId: 'node-a',
+          waitCapMs: 0,
+        },
+        {
+          kind: 'worker',
+          taskId: 'task-1',
+          agentName: 'Coder',
+          workflowNodeId: 'node-b',
+          waitCapMs: 0,
+        },
+      ]);
+      expect(injectSubSessionMessage).toHaveBeenCalledWith(
+        'new-a',
+        'fan out',
+        false,
+        undefined,
+        undefined
+      );
+      expect(injectSubSessionMessage).toHaveBeenCalledWith(
+        'new-b',
+        'fan out',
+        false,
+        undefined,
+        undefined
+      );
+    });
+
+    it('does not resolve an unmatched mention through worker-kind activation', async () => {
+      const { targets } = setupWithResolver({
+        executions: [],
+        declared: ['Reviewer'],
+        outcomes: [],
+      });
+
+      await expect(
+        call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: '@Reviewer please review',
+        })
+      ).rejects.toThrow('@mention not found');
+      expect(targets).toEqual([]);
+    });
+  });
+
   describe('explicit target: matcher correctness (PR #1660 review)', () => {
     const mockTaskWithRun: SpaceTask = {
       ...mockTaskWithSession,
@@ -2403,30 +2600,25 @@ describe('setupSpaceTaskMessageHandlers', () => {
       opts: {
         task?: SpaceTask | null;
         declared?: string[];
-        liveSession?: { session: { id: string } } | null;
-        ensureReturns?: boolean;
+        resolutionOutcome?: Awaited<ReturnType<SessionEnsurer>>;
         includeQueue?: boolean;
       } = {}
     ) {
       const mh = createMockMessageHub();
       const declared = opts.declared ?? ['reviewer', 'coder'];
-      const liveSession = opts.liveSession ?? null;
+      const resolutionCalls: Parameters<SessionEnsurer>[0][] = [];
+      const ensureTargetSession: SessionEnsurer = mock(
+        async (target: Parameters<SessionEnsurer>[0]) => {
+          resolutionCalls.push(target);
+          return opts.resolutionOutcome ?? { kind: 'unresolved', reason: 'activation_timeout' };
+        }
+      );
 
-      const ensureCalls: Array<{
-        taskId: string;
-        agentName: string;
-        workflowNodeId?: string;
-      }> = [];
       const injectCalls: Array<{ sessionId: string; message: string }> = [];
       const enqueueCalls: Array<{
         targetAgentName: string;
         message: string;
         sourceAgentName?: string | null;
-      }> = [];
-      const getSubSessionCalls: Array<{
-        taskId: string;
-        agentName: string;
-        workflowNodeId?: string;
       }> = [];
 
       const localTaskAgentManager: TaskAgentManagerInterface = {
@@ -2434,24 +2626,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         injectSubSessionMessage: mock(async (sid: string, msg: string) => {
           injectCalls.push({ sessionId: sid, message: msg });
         }),
-        getSubSessionByAgentName: mock(
-          async (_taskId: string, agentName: string, workflowNodeId?: string) => {
-            getSubSessionCalls.push({ taskId: _taskId, agentName, workflowNodeId });
-            if (liveSession && declared.includes(agentName)) return liveSession;
-            return null;
-          }
-        ),
         getWorkflowDeclaredAgentNamesForTask: mock(() => declared),
-        ensureWorkflowNodeActivationForAgent: mock(
-          async (taskId: string, agentName: string, options?: { workflowNodeId?: string }) => {
-            ensureCalls.push({
-              taskId,
-              agentName,
-              ...(options?.workflowNodeId ? { workflowNodeId: options.workflowNodeId } : {}),
-            });
-            return opts.ensureReturns ?? true;
-          }
-        ),
       };
 
       const localDb = createMockDatabase(
@@ -2490,16 +2665,16 @@ describe('setupSpaceTaskMessageHandlers', () => {
         undefined,
         undefined,
         undefined,
-        pendingMessageQueue as Parameters<typeof setupSpaceTaskMessageHandlers>[7]
+        pendingMessageQueue as Parameters<typeof setupSpaceTaskMessageHandlers>[7],
+        ensureTargetSession
       );
 
       return {
         handlers: mh.handlers,
         taskAgentManager: localTaskAgentManager,
-        ensureCalls,
+        resolutionCalls,
         injectCalls,
         enqueueCalls,
-        getSubSessionCalls,
         internalEventBus: localInternalEventBus,
       };
     }
@@ -2563,14 +2738,14 @@ describe('setupSpaceTaskMessageHandlers', () => {
       ).rejects.toThrow(/too long/);
     });
 
-    it('short-circuits to live session when target is already spawned (returns sessionId)', async () => {
+    it('resolves a live worker through ensureSession with zero wait', async () => {
       const {
         handlers: h,
-        ensureCalls,
+        resolutionCalls,
         injectCalls,
         enqueueCalls,
       } = setupActivate({
-        liveSession: { session: { id: 'sess-live-reviewer' } },
+        resolutionOutcome: { kind: 'resolved', sessionId: 'sess-live-reviewer', created: false },
       });
       const result = (await (h.get('space.task.activateNodeAgent') as RequestHandler)({
         spaceId: 'space-1',
@@ -2579,18 +2754,28 @@ describe('setupSpaceTaskMessageHandlers', () => {
         message: 'hi reviewer',
       })) as Record<string, unknown>;
 
-      expect(result.sessionId).toBe('sess-live-reviewer');
-      expect(result.activated).toBe(false);
-      expect(result.queued).toBe(false);
-      expect(injectCalls).toHaveLength(1);
-      expect(injectCalls[0].sessionId).toBe('sess-live-reviewer');
-      expect(injectCalls[0].message).toBe('[Message from human]: hi reviewer');
+      expect(resolutionCalls).toEqual([
+        { kind: 'worker', taskId: 'task-1', agentName: 'reviewer', waitCapMs: 0 },
+      ]);
+      expect(result).toMatchObject({
+        sessionId: 'sess-live-reviewer',
+        activated: false,
+        queued: false,
+      });
+      expect(injectCalls).toEqual([
+        { sessionId: 'sess-live-reviewer', message: '[Message from human]: hi reviewer' },
+      ]);
       expect(enqueueCalls).toHaveLength(0);
-      expect(ensureCalls).toHaveLength(0);
     });
 
-    it('throws and does not report success when activation is rejected (stale node id)', async () => {
-      const { handlers: h, ensureCalls } = setupActivate({ ensureReturns: false });
+    it('throws when ensureSession reports activation failure', async () => {
+      const {
+        handlers: h,
+        resolutionCalls,
+        enqueueCalls,
+      } = setupActivate({
+        resolutionOutcome: { kind: 'unresolved', reason: 'activate_failed' },
+      });
       await expect(
         (h.get('space.task.activateNodeAgent') as RequestHandler)({
           spaceId: 'space-1',
@@ -2600,12 +2785,18 @@ describe('setupSpaceTaskMessageHandlers', () => {
           workflowNodeId: 'node-that-does-not-declare-reviewer',
         })
       ).rejects.toThrow(/activate/);
-      expect(ensureCalls).toHaveLength(1);
-      expect(ensureCalls[0].workflowNodeId).toBe('node-that-does-not-declare-reviewer');
+      expect(resolutionCalls[0]).toEqual({
+        kind: 'worker',
+        taskId: 'task-1',
+        agentName: 'reviewer',
+        workflowNodeId: 'node-that-does-not-declare-reviewer',
+        waitCapMs: 0,
+      });
+      expect(enqueueCalls).toHaveLength(0);
     });
 
-    it('queues the message and triggers ensureWorkflowNodeActivationForAgent when no live session exists', async () => {
-      const { handlers: h, ensureCalls, injectCalls, enqueueCalls } = setupActivate();
+    it('queues after zero-wait activation when the worker session is unresolved', async () => {
+      const { handlers: h, resolutionCalls, injectCalls, enqueueCalls } = setupActivate();
       const result = (await (h.get('space.task.activateNodeAgent') as RequestHandler)({
         spaceId: 'space-1',
         taskId: 'task-1',
@@ -2613,40 +2804,41 @@ describe('setupSpaceTaskMessageHandlers', () => {
         message: 'wake up reviewer',
       })) as Record<string, unknown>;
 
-      expect(result.sessionId).toBeNull();
-      expect(result.activated).toBe(true);
-      expect(result.queued).toBe(true);
-      expect(result.queuedMessageId).toBe('pending-1');
-
+      expect(result).toMatchObject({
+        sessionId: null,
+        activated: true,
+        queued: true,
+        queuedMessageId: 'pending-1',
+      });
+      expect(resolutionCalls).toEqual([
+        { kind: 'worker', taskId: 'task-1', agentName: 'reviewer', waitCapMs: 0 },
+      ]);
       expect(injectCalls).toHaveLength(0);
-
-      expect(enqueueCalls).toHaveLength(1);
-      expect(enqueueCalls[0].targetAgentName).toBe('reviewer');
-      expect(enqueueCalls[0].message).toBe('wake up reviewer');
-      expect(enqueueCalls[0].sourceAgentName).toBe('human');
-
-      expect(ensureCalls).toHaveLength(1);
-      expect(ensureCalls[0].taskId).toBe('task-1');
-      expect(ensureCalls[0].agentName).toBe('reviewer');
+      expect(enqueueCalls).toEqual([
+        {
+          targetAgentName: 'reviewer',
+          message: 'wake up reviewer',
+          sourceAgentName: 'human',
+        },
+      ]);
     });
 
-    it('skips queueing when no message is provided but still triggers activation', async () => {
-      const { handlers: h, ensureCalls, enqueueCalls } = setupActivate();
+    it('skips queueing when zero-wait activation has no message', async () => {
+      const { handlers: h, resolutionCalls, enqueueCalls } = setupActivate();
       const result = (await (h.get('space.task.activateNodeAgent') as RequestHandler)({
         spaceId: 'space-1',
         taskId: 'task-1',
         agentName: 'reviewer',
       })) as Record<string, unknown>;
 
-      expect(result.sessionId).toBeNull();
-      expect(result.queued).toBe(false);
+      expect(result).toMatchObject({ sessionId: null, activated: true, queued: false });
       expect(result.queuedMessageId).toBeUndefined();
       expect(enqueueCalls).toHaveLength(0);
-      expect(ensureCalls).toHaveLength(1);
+      expect(resolutionCalls).toHaveLength(1);
     });
 
-    it('forwards workflowNodeId to the live-session lookup and the activation kick', async () => {
-      const { handlers: h, ensureCalls, getSubSessionCalls } = setupActivate();
+    it('forwards workflowNodeId to worker resolution', async () => {
+      const { handlers: h, resolutionCalls } = setupActivate();
       await (h.get('space.task.activateNodeAgent') as RequestHandler)({
         spaceId: 'space-1',
         taskId: 'task-1',
@@ -2654,19 +2846,28 @@ describe('setupSpaceTaskMessageHandlers', () => {
         workflowNodeId: 'node-2',
       });
 
-      expect(getSubSessionCalls[0].workflowNodeId).toBe('node-2');
-      expect(ensureCalls).toHaveLength(1);
-      expect(ensureCalls[0].workflowNodeId).toBe('node-2');
+      expect(resolutionCalls[0]).toEqual({
+        kind: 'worker',
+        taskId: 'task-1',
+        agentName: 'reviewer',
+        workflowNodeId: 'node-2',
+        waitCapMs: 0,
+      });
     });
 
-    it('omits workflowNodeId from the activation options when the caller does not supply it', async () => {
-      const { handlers: h, ensureCalls } = setupActivate();
+    it('omits workflowNodeId from worker resolution when absent', async () => {
+      const { handlers: h, resolutionCalls } = setupActivate();
       await (h.get('space.task.activateNodeAgent') as RequestHandler)({
         spaceId: 'space-1',
         taskId: 'task-1',
         agentName: 'reviewer',
       });
-      expect(ensureCalls[0].workflowNodeId).toBeUndefined();
+      expect(resolutionCalls[0]).toEqual({
+        kind: 'worker',
+        taskId: 'task-1',
+        agentName: 'reviewer',
+        waitCapMs: 0,
+      });
     });
 
     it('cross-space access throws Task not found', async () => {
