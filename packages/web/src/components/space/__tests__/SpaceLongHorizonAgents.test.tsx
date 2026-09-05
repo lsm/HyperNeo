@@ -1097,14 +1097,14 @@ describe('SpaceLongHorizonAgents', () => {
     mockAgents.value = [
       makeLongHorizonAgent({
         handle: 'coordinator',
-        displayName: 'Coordinator',
+        displayName: 'Lead Coordinator',
         sessionId: null,
       }),
     ];
 
     const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
-    const card = getByText('Coordinator').closest('[role="button"]')!;
+    const card = getByText('Lead Coordinator').closest('[role="button"]')!;
     expect(card.textContent).toContain('Session');
     fireEvent.click(card);
 
