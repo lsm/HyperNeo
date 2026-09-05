@@ -1140,6 +1140,33 @@ describe('SpaceLongHorizonAgents', () => {
     );
   });
 
+  it('seeds the model pool from the template when creating an agent', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        modelPool: [
+          { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 2, weight: 40 },
+        ],
+      }),
+    ];
+    const { getByText, getByTestId, getByRole } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
+    expect(getByTestId('agent-model-pool')).toBeTruthy();
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    expect(mockCreateAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateKey: 'qa',
+        modelPool: [
+          { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 2, weight: 40 },
+        ],
+      })
+    );
+  });
+
   it('creates a custom agent with a null template key', async () => {
     const { getByRole, container } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 

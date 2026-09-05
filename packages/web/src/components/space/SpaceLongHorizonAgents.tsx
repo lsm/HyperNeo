@@ -203,7 +203,7 @@ interface TemplateSaveForm {
   model: string | null;
   provider: string | null;
   modelMode: ModelPoolEditorMode;
-  modelPool: WorkerAgentModelPoolEntry[];
+  modelPool: AgentModelPoolEntry[];
   thinkingLevel: ThinkingLevel | null;
   settingSources: SettingSource[] | null;
 }
@@ -284,9 +284,11 @@ function AgentEditor({
   const [modelProvider, setModelProvider] = useState<string>(
     agent?.provider ?? template?.provider ?? ''
   );
-  const [modelPool, setModelPool] = useState<AgentModelPoolEntry[]>(agent?.modelPool ?? []);
+  const [modelPool, setModelPool] = useState<AgentModelPoolEntry[]>(
+    agent?.modelPool ?? template?.modelPool ?? []
+  );
   const [modelMode, setModelMode] = useState<ModelPoolEditorMode>(
-    (agent?.modelPool?.length ?? 0) > 0 ? 'pool' : 'single'
+    (agent?.modelPool ?? template?.modelPool ?? []).length > 0 ? 'pool' : 'single'
   );
   const [thinkingLevel, setThinkingLevel] = useState<'' | ThinkingLevel>(
     agent?.thinkingLevel ?? template?.thinkingLevel ?? ''
@@ -591,7 +593,7 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
     thinkingLevel: null,
   });
   const [settingSources, setSettingSources] = useState<SettingSource[] | null>(null);
-  const [modelPool, setModelPool] = useState<WorkerAgentModelPoolEntry[]>([]);
+  const [modelPool, setModelPool] = useState<AgentModelPoolEntry[]>([]);
   const [modelMode, setModelMode] = useState<ModelPoolEditorMode>('single');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
