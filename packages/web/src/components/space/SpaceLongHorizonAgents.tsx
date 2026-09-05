@@ -203,6 +203,7 @@ interface TemplateSaveForm {
   model: string | null;
   provider: string | null;
   thinkingLevel: ThinkingLevel | null;
+  settingSources: SettingSource[] | null;
 }
 
 interface TemplateSaveCtx {
@@ -228,6 +229,7 @@ async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateS
     model: ctx.form.model,
     provider: ctx.form.provider,
     thinkingLevel: ctx.form.thinkingLevel,
+    settingSources: ctx.form.settingSources,
   });
   return ctx;
 }
@@ -578,6 +580,7 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
     provider: null,
     thinkingLevel: null,
   });
+  const [settingSources, setSettingSources] = useState<SettingSource[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -597,6 +600,7 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
           model: modelFields.model,
           provider: modelFields.provider,
           thinkingLevel: modelFields.thinkingLevel,
+          settingSources,
         },
       });
       onCreated();
@@ -701,12 +705,25 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
             <p class="mt-1.5 text-xs text-fg-muted">{AUTONOMY_LABELS[autonomyLevel]}</p>
           </div>
           <TemplateModelFields value={modelFields} onChange={setModelFields} />
+          <ToolsEditor
+            tools={toolsSelection.tools}
+            toolsOverridden={toolsSelection.toolsOverridden}
+            onChange={setToolsSelection}
+          />
           <div>
-            <ToolsEditor
-              tools={toolsSelection.tools}
-              toolsOverridden={toolsSelection.toolsOverridden}
-              onChange={setToolsSelection}
-            />
+            <label class="mb-2 block text-sm font-medium text-fg-soft">Setting sources</label>
+            <SettingSourcesEditor value={settingSources} onChange={setSettingSources} />
+            {settingSources === null ? (
+              <p class="mt-1 text-xs text-fg-muted">Inherits the space setting sources.</p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setSettingSources(null)}
+                class="mt-1 text-xs font-medium text-accent-soft/85 underline-offset-4 transition-colors hover:text-accent-soft hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              >
+                Clear override — inherit from space
+              </button>
+            )}
           </div>
           {error && <p class="text-xs text-danger">{error}</p>}
         </div>
