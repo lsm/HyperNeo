@@ -5139,6 +5139,14 @@ export class TaskAgentManager {
           if (task?.workflowRunId !== workflowRunId) {
             return { state: 'not_found', messageId, error: 'workflow run changed' } as const;
           }
+          const terminalStatus = this.resolveTerminalInjectionStatus(workflowRunId, target.taskId);
+          if (terminalStatus) {
+            return {
+              state: 'failed',
+              messageId,
+              error: `task/run is terminal (${terminalStatus})`,
+            } as const;
+          }
         }
         const resolution = await ensureSession(
           target,
@@ -5191,6 +5199,33 @@ export class TaskAgentManager {
           },
         };
         return this.withSessionInjectLock(resolution.sessionId, async () => {
+          if (target.kind === 'worker') {
+            const task = this.config.taskRepo.getTask(target.taskId);
+            const execution = this.config.nodeExecutionRepo
+              .listByWorkflowRun(workflowRunId)
+              .find(
+                (candidate) =>
+                  candidate.agentSessionId === resolution.sessionId &&
+                  candidate.agentName === target.agentName &&
+                  (target.workflowNodeId === undefined ||
+                    candidate.workflowNodeId === target.workflowNodeId)
+              );
+            if (task?.workflowRunId !== workflowRunId || !execution) {
+              return { state: 'not_found', messageId, error: 'workflow run changed' } as const;
+            }
+            const terminalStatus = this.resolveTerminalInjectionStatus(
+              workflowRunId,
+              target.taskId
+            );
+            if (terminalStatus) {
+              return {
+                state: 'failed',
+                sessionId: resolution.sessionId,
+                messageId,
+                error: `task/run is terminal (${terminalStatus})`,
+              } as const;
+            }
+          }
           const state = session.getProcessingState();
           const isBusy =
             state.status === 'processing' ||
