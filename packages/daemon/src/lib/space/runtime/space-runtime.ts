@@ -7911,6 +7911,7 @@ export class SpaceRuntime {
         startedAt: execution.startedAt,
         completedAt: execution.completedAt,
         agentSessionId: execution.agentSessionId,
+        updatedAt: execution.updatedAt,
       });
     }
     this.config.workflowRunRepo.updateRun(runId, {

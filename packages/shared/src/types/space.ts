@@ -821,6 +821,7 @@ export interface UpdateNodeExecutionParams {
   startedAt?: number | null;
   completedAt?: number | null;
   lastActivityAt?: number | null;
+  updatedAt?: number;
 }
 
 export type WorkflowRunStatus = 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled';

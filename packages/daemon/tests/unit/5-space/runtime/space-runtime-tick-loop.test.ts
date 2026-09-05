@@ -1971,6 +1971,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
         status: 'blocked',
         result: 'Planner node failed',
         startedAt: 222,
+        updatedAt: 2222,
       });
       const coder = nodeExecutionRepo.createOrIgnore({
         workflowRunId: run.id,
@@ -1983,6 +1984,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
         status: 'blocked',
         result: 'Coder node failed',
         startedAt: 111,
+        updatedAt: 1111,
       });
       workflowRunRepo.transitionStatus(run.id, 'blocked');
       workflowRunRepo.updateRun(run.id, { startedAt: 555, completedAt: 777 });
@@ -1998,10 +2000,12 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(rolledBackPlanner?.status).toBe('blocked');
       expect(rolledBackPlanner?.result).toBe('Planner node failed');
       expect(rolledBackPlanner?.startedAt).toBe(222);
+      expect(rolledBackPlanner?.updatedAt).toBe(2222);
       const rolledBackCoder = nodeExecutionRepo.getById(coder.id);
       expect(rolledBackCoder?.status).toBe('blocked');
       expect(rolledBackCoder?.result).toBe('Coder node failed');
       expect(rolledBackCoder?.startedAt).toBe(111);
+      expect(rolledBackCoder?.updatedAt).toBe(1111);
     });
 
     test('blocked-run recovery skips the retry notification for a bindingless task cancelled during the run update', async () => {
