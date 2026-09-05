@@ -79,7 +79,7 @@ describe('SDKMessageHandler', () => {
   let updateMessageStatusSpy: ReturnType<typeof mock>;
   let publishSpy: ReturnType<typeof mock>;
   let emitSpy: ReturnType<typeof mock>;
-  let loggerDebugSpy: ReturnType<typeof mock>;
+  let loggerDebugWithMetadataSpy: ReturnType<typeof mock>;
   let detectPhaseFromMessageSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
   let beginTerminalIdleSpy: ReturnType<typeof mock>;
@@ -283,7 +283,7 @@ describe('SDKMessageHandler', () => {
     mockLifecycleManager = {
       stop: lifecycleStopSpy,
     } as unknown as QueryLifecycleManager;
-    loggerDebugSpy = mock(() => {});
+    loggerDebugWithMetadataSpy = mock(() => {});
 
     mockContext = {
       session: mockSession,
@@ -303,7 +303,8 @@ describe('SDKMessageHandler', () => {
     };
 
     handler = new SDKMessageHandler(mockContext, {
-      debug: loggerDebugSpy,
+      debug: mock(() => {}),
+      debugWithMetadata: loggerDebugWithMetadataSpy,
       error: mock(() => {}),
       info: mock(() => {}),
       warn: mock(() => {}),
@@ -418,7 +419,7 @@ describe('SDKMessageHandler', () => {
             uuid: 'm-1',
             session_id: 'test-session-id',
           },
-          'Filtered SDK command_lifecycle message:',
+          'Filtered SDK command_lifecycle message',
         ],
         [
           'conversation_reset',
@@ -428,7 +429,7 @@ describe('SDKMessageHandler', () => {
             uuid: 'm-2',
             session_id: 'test-session-id',
           },
-          'Filtered SDK conversation_reset message:',
+          'Filtered SDK conversation_reset message',
         ],
         [
           'active_goal',
@@ -438,7 +439,7 @@ describe('SDKMessageHandler', () => {
             uuid: 'm-3',
             session_id: 'test-session-id',
           },
-          'Filtered SDK active_goal message:',
+          'Filtered SDK active_goal message',
         ],
         [
           'background_tasks_changed',
@@ -449,7 +450,7 @@ describe('SDKMessageHandler', () => {
             uuid: 'm-4',
             session_id: 'test-session-id',
           },
-          'Filtered SDK background_tasks_changed message:',
+          'Filtered SDK background_tasks_changed message',
         ],
         [
           'control_request_progress',
@@ -461,7 +462,7 @@ describe('SDKMessageHandler', () => {
             uuid: 'm-5',
             session_id: 'test-session-id',
           },
-          'Filtered SDK control_request_progress message:',
+          'Filtered SDK control_request_progress message',
         ],
       ].map(
         ([label, message, logLabel]) => [label, message as unknown as SDKMessage, logLabel] as const
@@ -472,8 +473,11 @@ describe('SDKMessageHandler', () => {
       expect(saveSDKMessageSpy).not.toHaveBeenCalled();
       expect(publishSpy).not.toHaveBeenCalled();
       expect(emitSpy).not.toHaveBeenCalledWith('sdk.message', expect.anything());
-      expect(loggerDebugSpy).toHaveBeenCalledTimes(1);
-      expect(loggerDebugSpy).toHaveBeenCalledWith(logLabel, message);
+      expect(loggerDebugWithMetadataSpy).toHaveBeenCalledTimes(1);
+      expect(loggerDebugWithMetadataSpy).toHaveBeenCalledWith(
+        { sdkMessagePayload: message },
+        logLabel
+      );
     });
 
     it('preserves the conversation reset title update before filtering', async () => {
@@ -492,9 +496,9 @@ describe('SDKMessageHandler', () => {
       });
       expect(saveSDKMessageSpy).not.toHaveBeenCalled();
       expect(publishSpy).not.toHaveBeenCalled();
-      expect(loggerDebugSpy).toHaveBeenCalledWith(
-        'Filtered SDK conversation_reset message:',
-        message
+      expect(loggerDebugWithMetadataSpy).toHaveBeenCalledWith(
+        { sdkMessagePayload: message },
+        'Filtered SDK conversation_reset message'
       );
     });
 
@@ -3405,7 +3409,10 @@ describe('SDKMessageHandler', () => {
           source: 'metadata',
           session: { metadata: mockSession.metadata },
         });
-        expect(loggerDebugSpy).toHaveBeenCalledWith('SDK system/init capabilities:', message);
+        expect(loggerDebugWithMetadataSpy).toHaveBeenCalledWith(
+          { sdkMessagePayload: message },
+          'SDK system/init capabilities'
+        );
       });
 
       it('persists and publishes an empty capability list from a fresh init', async () => {
@@ -3416,7 +3423,7 @@ describe('SDKMessageHandler', () => {
         } as unknown as SDKMessage);
         updateSessionSpy.mockClear();
         emitSpy.mockClear();
-        loggerDebugSpy.mockClear();
+        loggerDebugWithMetadataSpy.mockClear();
         const message = {
           type: 'system',
           subtype: 'init',
@@ -3434,7 +3441,10 @@ describe('SDKMessageHandler', () => {
           source: 'metadata',
           session: { metadata: mockSession.metadata },
         });
-        expect(loggerDebugSpy).toHaveBeenCalledWith('SDK system/init capabilities:', message);
+        expect(loggerDebugWithMetadataSpy).toHaveBeenCalledWith(
+          { sdkMessagePayload: message },
+          'SDK system/init capabilities'
+        );
       });
     });
 

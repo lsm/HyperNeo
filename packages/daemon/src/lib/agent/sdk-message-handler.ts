@@ -864,6 +864,13 @@ export class SDKMessageHandler {
     } as unknown as SDKMessage).catch(() => {});
   }
 
+  private logFilteredSDKMessage(messageType: string, message: SDKMessage): void {
+    this.logger.debugWithMetadata(
+      { sdkMessagePayload: message },
+      `Filtered SDK ${messageType} message`
+    );
+  }
+
   async handleMessage(message: SDKMessage, runnerGeneration?: number): Promise<void> {
     const { session, db, messageHub, stateManager } = this.ctx;
     const invocationGeneration = runnerGeneration ?? this.ctx.getQueryGeneration?.() ?? null;
@@ -874,7 +881,7 @@ export class SDKMessageHandler {
     }
 
     if (isSDKCommandLifecycleMessage(message)) {
-      this.logger.debug('Filtered SDK command_lifecycle message:', message);
+      this.logFilteredSDKMessage('command_lifecycle', message);
       return;
     }
 
@@ -884,22 +891,22 @@ export class SDKMessageHandler {
         session.metadata = metadata;
         db.updateSession(session.id, { metadata, title: 'New Session' });
       }
-      this.logger.debug('Filtered SDK conversation_reset message:', message);
+      this.logFilteredSDKMessage('conversation_reset', message);
       return;
     }
 
     if (isSDKActiveGoalMessage(message)) {
-      this.logger.debug('Filtered SDK active_goal message:', message);
+      this.logFilteredSDKMessage('active_goal', message);
       return;
     }
 
     if (isSDKBackgroundTasksChangedMessage(message)) {
-      this.logger.debug('Filtered SDK background_tasks_changed message:', message);
+      this.logFilteredSDKMessage('background_tasks_changed', message);
       return;
     }
 
     if (isSDKControlRequestProgressMessage(message)) {
-      this.logger.debug('Filtered SDK control_request_progress message:', message);
+      this.logFilteredSDKMessage('control_request_progress', message);
       return;
     }
 
@@ -1294,7 +1301,7 @@ export class SDKMessageHandler {
         source: 'metadata',
         session: { metadata: session.metadata },
       });
-      this.logger.debug('SDK system/init capabilities:', message);
+      this.logger.debugWithMetadata({ sdkMessagePayload: message }, 'SDK system/init capabilities');
     }
 
     if (

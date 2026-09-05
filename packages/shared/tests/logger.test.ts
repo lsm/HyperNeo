@@ -72,6 +72,22 @@ describe('Logger', () => {
       });
     });
 
+    test('preserves debug metadata beyond the formatted message limit', () => {
+      configureLogger({ level: LogLevel.DEBUG });
+      const events: unknown[] = [];
+      subscribeToStructuredLogs((event) => events.push(event));
+      const payload = { content: 'x'.repeat(1500) };
+
+      createLogger('test:structured').debugWithMetadata({ payload }, 'full payload');
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        level: 'debug',
+        message: 'full payload',
+        metadata: { loggerLevel: 'DEBUG', payload },
+      });
+    });
+
     test('does not emit for filtered logger output', () => {
       configureLogger({ level: LogLevel.ERROR });
       const events: unknown[] = [];
