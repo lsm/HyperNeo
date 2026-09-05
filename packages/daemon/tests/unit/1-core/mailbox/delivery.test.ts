@@ -626,7 +626,13 @@ describe('createMailboxDeliveryHandler', () => {
 
       const secondResult = await handler(reclaims[0]);
 
-      expect(secondResult).toEqual({ kind: 'delivered', sessionId: SESSION_ID });
+      expect(secondResult).toEqual({
+        entryId: entry.id,
+        sessionId: SESSION_ID,
+        terminal: 'delivered',
+        reason: null,
+        settledAt: expect.any(Number),
+      });
       const rows = mailbox.sdkRows();
       expect(rows).toHaveLength(1);
       expect(rows[0].sdk_uuid).toBe(messageUuid);
