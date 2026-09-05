@@ -1,4 +1,5 @@
 import type { MessageContent, ReferenceMetadata, ReferenceType } from '@hyperneo/shared';
+import { MAX_IMAGE_BASE64_SIZE } from '../session/message-persistence.ts';
 import type { MailboxAddress } from './address.ts';
 import { createUlid, isUlid } from './ulid.ts';
 
@@ -60,7 +61,8 @@ function projectContentBlock(block: MessageContent | null | undefined): MessageC
     source?.type !== 'base64' ||
     !MAILBOX_IMAGE_MEDIA_TYPES.includes(source.media_type) ||
     typeof source.data !== 'string' ||
-    source.data.length === 0
+    source.data.length === 0 ||
+    source.data.length > MAX_IMAGE_BASE64_SIZE
   ) {
     return null;
   }

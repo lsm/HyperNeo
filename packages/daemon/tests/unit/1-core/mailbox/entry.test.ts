@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { type MailboxAddress, renderAddress } from '../../../../src/lib/mailbox/address';
+import { MAX_IMAGE_BASE64_SIZE } from '../../../../src/lib/session/message-persistence';
 import {
   createMailboxEntry,
   DEFAULT_MAILBOX_ENTRY_POLICY,
@@ -240,6 +241,25 @@ describe('toMailboxMessage', () => {
         {
           type: 'user',
           message: { content: [{ type: 'image', text: 'x' }] },
+          parent_tool_use_id: null,
+        },
+      ],
+      [
+        'an oversized image block',
+        {
+          type: 'user',
+          message: {
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: 'image/png',
+                  data: 'a'.repeat(MAX_IMAGE_BASE64_SIZE + 1),
+                },
+              },
+            ],
+          },
           parent_tool_use_id: null,
         },
       ],
