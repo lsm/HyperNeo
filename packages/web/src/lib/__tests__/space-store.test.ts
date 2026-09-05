@@ -1714,6 +1714,46 @@ describe('SpaceStore — agent template CRUD', () => {
     expect(templates[0].displayName).toBe('Custom Template');
     expect(templates[0].toolPermissions).toEqual({ tools: ['Read'] });
   });
+
+  it('deleteTemplate restores the built-in from the map when the refetch fails', async () => {
+    await spaceStore.selectSpace('space-1');
+    const richBuiltIn = makeLongHorizonAgentTemplate({
+      key: 'builtin.default',
+      displayName: 'Built-in Template',
+      toolPermissions: { tools: ['Read'] },
+    });
+    const shadow = makeLongHorizonAgentTemplate({ key: 'builtin.default', displayName: 'Shadow' });
+    spaceStore.agentTemplates.value = [shadow];
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
+      if (method === 'spaceAgent.listTemplates') throw new Error('connection dropped');
+      return {};
+    });
+
+    await spaceStore.deleteTemplate('builtin.default');
+
+    const templates = spaceStore.agentTemplates.value;
+    expect(templates).toHaveLength(1);
+    expect(templates[0].displayName).toBe('Built-in Template');
+    expect(templates[0].toolPermissions).toEqual({ tools: ['Read'] });
+  });
+
+  it('deleteTemplate removes a non-shadowing custom when the refetch fails', async () => {
+    spaceStore.agentTemplates.value = [
+      makeLongHorizonAgentTemplate({ key: 'keep' }),
+      makeLongHorizonAgentTemplate({ key: 'delete-me' }),
+    ];
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
+      if (method === 'spaceAgent.listTemplates') throw new Error('connection dropped');
+      return {};
+    });
+
+    await spaceStore.deleteTemplate('delete-me');
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['keep']);
+  });
 });
 
 describe('SpaceStore — spaceWorkflow events', () => {

@@ -2558,7 +2558,10 @@ class SpaceStore {
       await this.fetchTemplates();
     } catch (err) {
       logger.error('Failed to refetch agent templates:', err);
-      this.agentTemplates.value = this.agentTemplates.value.filter((t) => t.key !== key);
+      const builtIn = this.builtInTemplatesByKey.get(key);
+      this.agentTemplates.value = builtIn
+        ? this.agentTemplates.value.map((t) => (t.key === key ? builtIn : t))
+        : this.agentTemplates.value.filter((t) => t.key !== key);
     }
   }
 
