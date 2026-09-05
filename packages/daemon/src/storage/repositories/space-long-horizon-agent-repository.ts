@@ -154,6 +154,18 @@ export class SpaceLongHorizonAgentRepository {
   }
 
   update(id: string, params: UpdateSpaceLongHorizonAgentParams): SpaceLongHorizonAgent | null {
+    const existing = this.getById(id);
+    if (existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
+      if (params.status === 'disabled') {
+        throw new Error('Agent status "disabled" cannot be set on a migrated worker agent');
+      }
+      if (params.autonomyLevel !== undefined) {
+        throw new Error('autonomyLevel cannot be set on a migrated worker agent');
+      }
+      if (params.templateKey !== undefined && params.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY) {
+        throw new Error('Template key cannot be changed on a migrated worker agent');
+      }
+    }
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
 
