@@ -12,15 +12,14 @@ import {
   WorkflowDeletionBlockedError,
 } from '../../../../src/lib/space/managers/space-workflow-manager';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
-import { SpaceAgentManager as RealSpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SpaceWorkflowRepository as RealSpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowManager as RealSpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
+import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 import {
-  seedPresetAgents,
+  seedUnifiedSpaceAgents,
   RETIRED_PR_MERGER_DESCRIPTION,
   RETIRED_PR_MERGER_PROMPT,
   RETIRED_PR_MERGER_TOOLS,
@@ -1819,22 +1818,18 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
       `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
        VALUES ('space-retire', 'space-retire', '/tmp/retire', 'Retire', 1, 1)`
     ).run();
-    const spaceAgentRepo = new SpaceAgentRepository(db);
     const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
     const spaceWorkflowRepo = new RealSpaceWorkflowRepository(db);
     const workflowManager = new RealSpaceWorkflowManager(spaceWorkflowRepo);
     const spaceManager = {
       listSpaces: async () => [{ id: 'space-retire', name: 'Retire' }],
     } as unknown as SpaceManager;
-    const spaceAgentManager = new RealSpaceAgentManager(spaceAgentRepo);
     return {
       db,
-      spaceAgentRepo,
       longHorizonAgentRepo,
       workflowRepo: spaceWorkflowRepo,
       workflowManager,
       spaceManager,
-      spaceAgentManager,
     };
   }
 
@@ -1842,58 +1837,54 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
     env: ReturnType<typeof makeRealEnv>,
     twinOverrides: { instructions?: string } = {}
   ): string {
-    const worker = env.spaceAgentRepo.create({
+    seedWorkerMirror(env.db, {
+      id: 'pr-merger',
       spaceId: 'space-retire',
       name: 'PR Merger',
       handle: 'merger',
-      description: RETIRED_PR_MERGER_DESCRIPTION,
-      customPrompt: RETIRED_PR_MERGER_PROMPT,
-      templateName: 'PR Merger',
+      instructions: RETIRED_PR_MERGER_PROMPT,
       tools: [...RETIRED_PR_MERGER_TOOLS],
+      description: RETIRED_PR_MERGER_DESCRIPTION,
     });
     if (twinOverrides.instructions !== undefined) {
       env.db
         .prepare(`UPDATE space_long_horizon_agents SET instructions = ? WHERE id = ?`)
-        .run(twinOverrides.instructions, worker.id);
+        .run(twinOverrides.instructions, 'pr-merger');
     }
-    return worker.id;
+    return 'pr-merger';
   }
 
   it('retires the unified twin of a pristine removed preset', async () => {
     const env = makeRealEnv();
-    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
     const id = seedRetiree(env);
     await restampBuiltInWorkflowsOnStartup(
       env.workflowManager,
       env.spaceManager,
-      env.spaceAgentManager,
       env.longHorizonAgentRepo,
       () => false
     );
-    expect(env.spaceAgentRepo.getById(id)).toBeNull();
     expect(env.longHorizonAgentRepo.getById(id)).toBeNull();
     env.db.close();
   });
 
-  it('keeps a diverged unified twin and its worker row on retirement', async () => {
+  it('keeps a diverged unified twin on retirement', async () => {
     const env = makeRealEnv();
-    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
     const id = seedRetiree(env, { instructions: 'Customized by the owner.' });
     await restampBuiltInWorkflowsOnStartup(
       env.workflowManager,
       env.spaceManager,
-      env.spaceAgentManager,
       env.longHorizonAgentRepo,
       () => false
     );
-    expect(env.spaceAgentRepo.getById(id)).not.toBeNull();
     expect(env.longHorizonAgentRepo.getById(id)).not.toBeNull();
     env.db.close();
   });
 
-  it('keeps a goal-owning unified twin and its worker row on retirement', async () => {
+  it('keeps a goal-owning unified twin on retirement', async () => {
     const env = makeRealEnv();
-    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
     const id = seedRetiree(env);
     env.db
       .prepare(
@@ -1905,18 +1896,16 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
     await restampBuiltInWorkflowsOnStartup(
       env.workflowManager,
       env.spaceManager,
-      env.spaceAgentManager,
       env.longHorizonAgentRepo,
       () => false
     );
-    expect(env.spaceAgentRepo.getById(id)).not.toBeNull();
     expect(env.longHorizonAgentRepo.getById(id)).not.toBeNull();
     env.db.close();
   });
 
-  it('keeps a reminder-owning unified twin and its worker row on retirement', async () => {
+  it('keeps a reminder-owning unified twin on retirement', async () => {
     const env = makeRealEnv();
-    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
     const id = seedRetiree(env);
     env.longHorizonAgentRepo.createReminder({
       spaceId: 'space-retire',
@@ -1927,19 +1916,17 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
     await restampBuiltInWorkflowsOnStartup(
       env.workflowManager,
       env.spaceManager,
-      env.spaceAgentManager,
       env.longHorizonAgentRepo,
       () => false
     );
-    expect(env.spaceAgentRepo.getById(id)).not.toBeNull();
     expect(env.longHorizonAgentRepo.getById(id)).not.toBeNull();
     expect(env.longHorizonAgentRepo.listReminders(id)).toHaveLength(1);
     env.db.close();
   });
 
-  it('keeps a subscription-owning unified twin and its worker row on retirement', async () => {
+  it('keeps a subscription-owning unified twin on retirement', async () => {
     const env = makeRealEnv();
-    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
     const id = seedRetiree(env);
     env.longHorizonAgentRepo.createSubscription({
       spaceId: 'space-retire',
@@ -1950,63 +1937,17 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
     await restampBuiltInWorkflowsOnStartup(
       env.workflowManager,
       env.spaceManager,
-      env.spaceAgentManager,
       env.longHorizonAgentRepo,
       () => false
     );
-    expect(env.spaceAgentRepo.getById(id)).not.toBeNull();
     expect(env.longHorizonAgentRepo.getById(id)).not.toBeNull();
     expect(env.longHorizonAgentRepo.listSubscriptions(id)).toHaveLength(1);
     env.db.close();
   });
 
-  it('does not resolve orphaned migration mirrors as role targets', async () => {
-    const env = makeRealEnv();
-    await seedPresetAgents('space-retire', env.spaceAgentManager);
-    const coder = env.spaceAgentRepo.getBySpaceId('space-retire').find((w) => w.name === 'Coder')!;
-    env.db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(coder.id);
-
-    await restampBuiltInWorkflowsOnStartup(
-      env.workflowManager,
-      env.spaceManager,
-      env.spaceAgentManager,
-      env.longHorizonAgentRepo,
-      () => false
-    );
-
-    const boundAgentIds = env.workflowRepo
-      .listWorkflows('space-retire')
-      .flatMap((w) => w.nodes.flatMap((n) => n.agents ?? []))
-      .map((a) => a.agentId);
-    expect(boundAgentIds).not.toContain(coder.id);
-    env.db.close();
-  });
-
-  it('resolves worker-only preset rows during built-in sync', async () => {
-    const env = makeRealEnv();
-    await seedPresetAgents('space-retire', env.spaceAgentManager);
-    const worker = env.spaceAgentRepo.getBySpaceId('space-retire').find((w) => w.name === 'Coder')!;
-    env.db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(worker.id);
-
-    await restampBuiltInWorkflowsOnStartup(
-      env.workflowManager,
-      env.spaceManager,
-      env.spaceAgentManager,
-      env.longHorizonAgentRepo,
-      () => false
-    );
-
-    const boundAgentIds = env.workflowRepo
-      .listWorkflows('space-retire')
-      .flatMap((w) => w.nodes.flatMap((n) => n.agents ?? []))
-      .map((a) => a.agentId);
-    expect(boundAgentIds).toContain(worker.id);
-    env.db.close();
-  });
-
   it('does not bind handle-discovered coordinators as role targets', async () => {
     const env = makeRealEnv();
-    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
     const coordinator = env.longHorizonAgentRepo.ensureCoordinator('space-retire');
     env.db
       .prepare(`UPDATE space_long_horizon_agents SET display_name = 'Coder' WHERE id = ?`)
@@ -2015,7 +1956,6 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
     await restampBuiltInWorkflowsOnStartup(
       env.workflowManager,
       env.spaceManager,
-      env.spaceAgentManager,
       env.longHorizonAgentRepo,
       () => false
     );
@@ -2030,7 +1970,7 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
 
   it('heals a renamed coordinator before restamping so it is never bound as a role target', async () => {
     const env = makeRealEnv();
-    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
     const coordinator = env.longHorizonAgentRepo.ensureCoordinator('space-retire');
     env.db
       .prepare(
@@ -2042,7 +1982,6 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
     await restampBuiltInWorkflowsOnStartup(
       env.workflowManager,
       env.spaceManager,
-      env.spaceAgentManager,
       env.longHorizonAgentRepo,
       () => false
     );
@@ -2057,28 +1996,26 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
     env.db.close();
   });
 
-  it('keeps a native twin and its worker row on retirement', async () => {
+  it('keeps a non-mirror twin on retirement', async () => {
     const env = makeRealEnv();
-    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
     const id = seedRetiree(env);
     env.db.prepare(`UPDATE space_long_horizon_agents SET template_key = NULL WHERE id = ?`).run(id);
 
     await restampBuiltInWorkflowsOnStartup(
       env.workflowManager,
       env.spaceManager,
-      env.spaceAgentManager,
       env.longHorizonAgentRepo,
       () => false
     );
 
-    expect(env.spaceAgentRepo.getById(id)).not.toBeNull();
     expect(env.longHorizonAgentRepo.getById(id)).not.toBeNull();
     env.db.close();
   });
 
   it('resolves whitespace-padded preset display names during restamp', async () => {
     const env = makeRealEnv();
-    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
     const coderTwin = env.longHorizonAgentRepo
       .listBySpaceId('space-retire')
       .find((a) => (a.displayName ?? '').trim() === 'Coder')!;
@@ -2089,7 +2026,6 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
     await restampBuiltInWorkflowsOnStartup(
       env.workflowManager,
       env.spaceManager,
-      env.spaceAgentManager,
       env.longHorizonAgentRepo,
       () => false
     );
@@ -2104,16 +2040,15 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
 
   it('does not resolve archived preset twins as built-in role targets', async () => {
     const env = makeRealEnv();
-    await seedPresetAgents('space-retire', env.spaceAgentManager);
+    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
     const coderTwin = env.longHorizonAgentRepo
       .listBySpaceId('space-retire')
       .find((a) => a.displayName === 'Coder')!;
-    env.spaceAgentRepo.update(coderTwin.id, { status: 'archived' });
+    env.longHorizonAgentRepo.update(coderTwin.id, { status: 'archived' });
 
     await restampBuiltInWorkflowsOnStartup(
       env.workflowManager,
       env.spaceManager,
-      env.spaceAgentManager,
       env.longHorizonAgentRepo,
       () => false
     );

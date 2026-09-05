@@ -137,13 +137,8 @@ export function isRunnableUnifiedAgent(agent: SpaceLongHorizonAgent): boolean {
 
 export function unifiedAgentRecordExists(
   unified: SpaceLongHorizonAgent,
-  expectedSpaceId: string | undefined,
-  getWorkerAgent: (agentId: string) => SpaceWorkerAgent | null | undefined
+  expectedSpaceId: string | undefined
 ): boolean {
   if (expectedSpaceId && unified.spaceId !== expectedSpaceId) return false;
-  if (unified.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
-    const worker = getWorkerAgent(unified.id);
-    return worker != null && worker.spaceId === unified.spaceId;
-  }
   return isRunnableUnifiedAgent(unified);
 }

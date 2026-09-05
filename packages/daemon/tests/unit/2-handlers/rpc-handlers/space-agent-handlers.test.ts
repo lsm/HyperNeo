@@ -2,12 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import type { MessageHub, SDKMessage, Session } from '@hyperneo/shared';
 import { setupSpaceAgentHandlers } from '../../../../src/lib/rpc-handlers/space-agent-handlers';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import {
   coordinatorLongHorizonAgentId,
   SpaceLongHorizonAgentRepository,
 } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceAgentTemplateManager } from '../../../../src/lib/space/managers/space-agent-template-manager';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
@@ -24,6 +23,7 @@ import {
   insertWorkflow,
   insertWorkflowNode,
 } from '../../helpers/space-agent-schema';
+import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
@@ -153,15 +153,6 @@ async function call<T>(
   return (await handler(params, {})) as T;
 }
 
-async function createWorkerAgent(
-  manager: SpaceAgentManager,
-  params: Parameters<SpaceAgentManager['create']>[0]
-): Promise<string> {
-  const result = await manager.create(params);
-  if (!result.ok) throw new Error(result.error);
-  return result.value.id;
-}
-
 function createRuntimeServiceMock(): {
   refreshLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
   refreshLongHorizonSubscription: ReturnType<typeof mock>;
@@ -180,11 +171,11 @@ function createRuntimeServiceMock(): {
 
 describe('Space Agent RPC Handlers', () => {
   let db: Database;
-  let manager: SpaceAgentManager;
   let hubData: ReturnType<typeof createMockMessageHub>;
   let daemonData: ReturnType<typeof createMockInternalEventBus>;
   let spaceManagerData: ReturnType<typeof createMockSpaceManager>;
   let longHorizonRepo: SpaceLongHorizonAgentRepository;
+  let workflowRepo: SpaceWorkflowRepository;
 
   beforeEach(() => {
     db = new Database(':memory:');
@@ -194,9 +185,8 @@ describe('Space Agent RPC Handlers', () => {
     runMigration227(db);
     insertSpace(db, 'space-1');
 
-    const repo = new SpaceAgentRepository(db as any);
-    manager = new SpaceAgentManager(repo);
     longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
+    workflowRepo = new SpaceWorkflowRepository(db as any);
     hubData = createMockMessageHub();
     daemonData = createMockInternalEventBus();
     spaceManagerData = createMockSpaceManager();
@@ -206,10 +196,10 @@ describe('Space Agent RPC Handlers', () => {
     setupSpaceAgentHandlers(
       hubData.hub,
       daemonData.internalEventBus,
-      manager,
       spaceManagerData.spaceManager,
       createTestDatabaseFacade(db),
       longHorizonRepo,
+      workflowRepo,
       undefined,
       new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db as any))
     );
@@ -628,7 +618,6 @@ describe('Space Agent RPC Handlers', () => {
       expect(longHorizonRepo.listBySpaceId('space-1').some((a) => a.id === result.agent.id)).toBe(
         true
       );
-      expect(manager.listBySpaceId('space-1').some((a) => a.id === result.agent.id)).toBe(false);
       expect(daemonData.publishMock).toHaveBeenCalledWith(
         'spaceAgent.created',
         expect.objectContaining({ spaceId: 'space-1' })
@@ -859,8 +848,8 @@ describe('Space Agent RPC Handlers', () => {
       ).rejects.toThrow(/already used by/);
     });
 
-    it('throws on names colliding with a worker agent display name', async () => {
-      await createWorkerAgent(manager, { spaceId: 'space-1', name: 'Worker Named' });
+    it('throws on names colliding with a worker mirror display name', async () => {
+      seedWorkerMirror(db, { id: 'worker-named', spaceId: 'space-1', name: 'Worker Named' });
 
       await expect(
         call(hubData.handlers, 'spaceAgent.create', {
@@ -910,7 +899,7 @@ describe('Space Agent RPC Handlers', () => {
     });
 
     it('includes worker mirrors in the unified list', async () => {
-      await createWorkerAgent(manager, { spaceId: 'space-1', name: 'Worker Listed' });
+      seedWorkerMirror(db, { id: 'worker-listed', spaceId: 'space-1', name: 'Worker Listed' });
 
       const result = await call<{ agents: { displayName: string }[] }>(
         hubData.handlers,
@@ -1089,10 +1078,10 @@ describe('Space Agent RPC Handlers', () => {
       setupSpaceAgentHandlers(
         freshHub.hub,
         daemonData.internalEventBus,
-        manager,
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
         longHorizonRepo,
+        workflowRepo,
         runtimeService
       );
 
@@ -1113,10 +1102,10 @@ describe('Space Agent RPC Handlers', () => {
       setupSpaceAgentHandlers(
         freshHub.hub,
         daemonData.internalEventBus,
-        manager,
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
         longHorizonRepo,
+        workflowRepo,
         runtimeService
       );
 
@@ -1135,11 +1124,13 @@ describe('Space Agent RPC Handlers', () => {
       ).rejects.toThrow('Unknown tool: "NotARealTool"');
     });
 
-    it('routes worker-twin updates through the worker path and propagates the mirror', async () => {
-      const workerId = await createWorkerAgent(manager, {
+    it('routes mirror-row updates through the unified table', async () => {
+      const workerId = 'worker-original';
+      seedWorkerMirror(db, {
+        id: workerId,
         spaceId: 'space-1',
         name: 'Worker Original',
-        customPrompt: 'Worker prompt',
+        instructions: 'Worker prompt',
         tools: ['Read'],
       });
 
@@ -1149,109 +1140,27 @@ describe('Space Agent RPC Handlers', () => {
         { id: workerId, name: 'Worker Renamed', customPrompt: 'Renamed prompt' }
       );
 
-      expect(manager.getById(workerId)?.name).toBe('Worker Renamed');
-      expect(manager.getById(workerId)?.customPrompt).toBe('Renamed prompt');
       expect(result.agent.displayName).toBe('Worker Renamed');
       expect(longHorizonRepo.getById(workerId)?.displayName).toBe('Worker Renamed');
       expect(longHorizonRepo.getById(workerId)?.instructions).toBe('Renamed prompt');
     });
 
-    it('does not sync standalone long-horizon rows matched only by handle', async () => {
-      const workerId = await createWorkerAgent(manager, {
-        spaceId: 'space-1',
-        name: 'Worker Handle',
-      });
-      const worker = manager.getById(workerId);
-      db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(workerId);
-      const standaloneAgent = longHorizonRepo.create({
-        id: 'standalone-lh-agent',
-        spaceId: 'space-1',
-        handle: worker?.handle ?? 'worker-handle',
-        displayName: 'Standalone Agent',
-        instructions: 'Standalone prompt',
-      });
-
-      await call(hubData.handlers, 'spaceAgent.update', {
+    it('clears tools when long-horizon vocabulary sends empty toolPermissions', async () => {
+      const workerId = 'twin-tool-clear';
+      seedWorkerMirror(db, {
         id: workerId,
-        handle: 'renamed-visible',
-        customPrompt: 'Updated visible prompt',
-      });
-
-      expect(longHorizonRepo.getById(standaloneAgent.id)).toEqual(
-        expect.objectContaining({
-          handle: worker?.handle,
-          instructions: 'Standalone prompt',
-        })
-      );
-    });
-
-    it('routes native-overlay updates to the unified table, not the worker twin', async () => {
-      const workerId = await createWorkerAgent(manager, {
-        spaceId: 'space-1',
-        name: 'Overlay Sibling',
-        customPrompt: 'Worker prompt',
-      });
-      db.prepare(
-        `UPDATE space_long_horizon_agents SET template_key = 'custom.overlay' WHERE id = ?`
-      ).run(workerId);
-
-      const result = await call<{ agent: { displayName: string; instructions: string } }>(
-        hubData.handlers,
-        'spaceAgent.update',
-        { id: workerId, displayName: 'Overlay Renamed', instructions: 'Overlay prompt' }
-      );
-
-      expect(result.agent.displayName).toBe('Overlay Renamed');
-      expect(longHorizonRepo.getById(workerId)?.instructions).toBe('Overlay prompt');
-      expect(manager.getById(workerId)?.name).toBe('Overlay Sibling');
-      expect(manager.getById(workerId)?.customPrompt).toBe('Worker prompt');
-    });
-
-    it('does not delete the worker sibling of a native overlay', async () => {
-      const workerId = await createWorkerAgent(manager, {
-        spaceId: 'space-1',
-        name: 'Overlay Delete Sibling',
-      });
-      db.prepare(
-        `UPDATE space_long_horizon_agents SET template_key = 'custom.overlay' WHERE id = ?`
-      ).run(workerId);
-
-      await expect(call(hubData.handlers, 'spaceAgent.delete', { id: workerId })).rejects.toThrow(
-        'same-id worker overlay'
-      );
-      expect(manager.getById(workerId)).not.toBeNull();
-      expect(longHorizonRepo.getById(workerId)).not.toBeNull();
-    });
-
-    it('clears twin tools when long-horizon vocabulary sends empty toolPermissions', async () => {
-      const workerId = await createWorkerAgent(manager, {
         spaceId: 'space-1',
         name: 'Twin Tool Clear',
         tools: ['Read'],
       });
-      expect(manager.getById(workerId)?.tools ?? []).toHaveLength(1);
+      expect(longHorizonRepo.getById(workerId)?.toolPermissions).toEqual({ tools: ['Read'] });
 
       await call(hubData.handlers, 'spaceAgent.update', {
         id: workerId,
         toolPermissions: null,
       });
 
-      expect(manager.getById(workerId)?.tools ?? []).toEqual([]);
       expect(longHorizonRepo.getById(workerId)?.toolPermissions).toEqual({});
-    });
-
-    it('rejects autonomy changes on migrated worker twins', async () => {
-      const workerId = await createWorkerAgent(manager, {
-        spaceId: 'space-1',
-        name: 'Twin Autonomy',
-      });
-
-      await expect(
-        call(hubData.handlers, 'spaceAgent.update', {
-          id: workerId,
-          autonomyLevel: 3,
-        })
-      ).rejects.toThrow('autonomyLevel cannot be set on a migrated worker agent');
     });
 
     it('rejects deleting the coordinator through the unified namespace', async () => {
@@ -1272,11 +1181,9 @@ describe('Space Agent RPC Handlers', () => {
       ).rejects.toThrow('is reserved for migrated worker mirrors');
     });
 
-    it('rejects unknown statuses on twin updates instead of reactivating', async () => {
-      const workerId = await createWorkerAgent(manager, {
-        spaceId: 'space-1',
-        name: 'Twin Bad Status',
-      });
+    it('rejects unknown statuses on mirror updates instead of reactivating', async () => {
+      const workerId = 'twin-bad-status';
+      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Bad Status' });
 
       await expect(
         call(hubData.handlers, 'spaceAgent.update', {
@@ -1284,25 +1191,72 @@ describe('Space Agent RPC Handlers', () => {
           status: 'archive',
         })
       ).rejects.toThrow('Invalid agent status: archive');
-      expect(manager.getById(workerId)?.status ?? 'active').toBe('active');
+      expect(longHorizonRepo.getById(workerId)?.status).toBe('active');
     });
 
-    it('refreshes runtime subscriptions after twin updates', async () => {
+    it('rejects autonomyLevel ceilings on mirror updates', async () => {
+      const workerId = 'twin-autonomy';
+      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Autonomy' });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', { id: workerId, autonomyLevel: 3 })
+      ).rejects.toThrow('autonomyLevel cannot be set on a migrated worker agent');
+      expect(longHorizonRepo.getById(workerId)?.autonomyLevel).toBeNull();
+    });
+
+    it('rejects mirror rekeys through the templateName alias', async () => {
+      const workerId = 'twin-alias-rekey';
+      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Alias Rekey' });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', {
+          id: workerId,
+          templateName: 'coordinator.default',
+        })
+      ).rejects.toThrow('Template key cannot be changed on a migrated worker agent');
+      expect(longHorizonRepo.getById(workerId)?.templateKey).toBe('migration.legacy_space_agent');
+    });
+
+    it('rejects templateKey rewrites on mirror updates', async () => {
+      const workerId = 'twin-rekey';
+      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Rekey' });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', {
+          id: workerId,
+          templateKey: 'coordinator.default',
+        })
+      ).rejects.toThrow('Template key cannot be changed on a migrated worker agent');
+      expect(longHorizonRepo.getById(workerId)?.templateKey).toBe('migration.legacy_space_agent');
+    });
+
+    it('rejects disabled status on mirror updates', async () => {
+      const workerId = 'twin-disabled';
+      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Disabled' });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', {
+          id: workerId,
+          status: 'disabled',
+        })
+      ).rejects.toThrow('Agent status "disabled" cannot be set on a migrated worker agent');
+      expect(longHorizonRepo.getById(workerId)?.status).toBe('active');
+    });
+
+    it('refreshes runtime subscriptions after mirror updates', async () => {
       const runtimeService = createRuntimeServiceMock();
       const freshHub = createMockMessageHub();
       setupSpaceAgentHandlers(
         freshHub.hub,
         daemonData.internalEventBus,
-        manager,
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
         longHorizonRepo,
+        workflowRepo,
         runtimeService
       );
-      const workerId = await createWorkerAgent(manager, {
-        spaceId: 'space-1',
-        name: 'Twin Refresh',
-      });
+      const workerId = 'twin-refresh';
+      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Refresh' });
 
       await call(freshHub.handlers, 'spaceAgent.update', {
         id: workerId,
@@ -1315,25 +1269,9 @@ describe('Space Agent RPC Handlers', () => {
       );
     });
 
-    it('rejects disabled status on worker twins', async () => {
-      const workerId = await createWorkerAgent(manager, {
-        spaceId: 'space-1',
-        name: 'Twin Disabled',
-      });
-
-      await expect(
-        call(hubData.handlers, 'spaceAgent.update', {
-          id: workerId,
-          status: 'disabled',
-        })
-      ).rejects.toThrow('disabled" cannot be set on a migrated worker agent');
-    });
-
-    it('rejects blank display names before twin routing', async () => {
-      const workerId = await createWorkerAgent(manager, {
-        spaceId: 'space-1',
-        name: 'Twin Blank Name',
-      });
+    it('rejects blank display names before mirror updates persist', async () => {
+      const workerId = 'twin-blank-name';
+      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Blank Name' });
 
       await expect(
         call(hubData.handlers, 'spaceAgent.update', {
@@ -1341,24 +1279,7 @@ describe('Space Agent RPC Handlers', () => {
           displayName: '   ',
         })
       ).rejects.toThrow('displayName cannot be blank');
-      expect(manager.getById(workerId)?.name).toBe('Twin Blank Name');
-    });
-
-    it('forwards template tracking hashes on twin updates', async () => {
-      const workerId = await createWorkerAgent(manager, {
-        spaceId: 'space-1',
-        name: 'Twin Template Hash',
-        templateName: 'Coder',
-        templateHash: 'stale-hash',
-      });
-
-      await call(hubData.handlers, 'spaceAgent.update', {
-        id: workerId,
-        templateName: 'Coder',
-        templateHash: 'fresh-hash',
-      });
-
-      expect(manager.getById(workerId)?.templateHash).toBe('fresh-hash');
+      expect(longHorizonRepo.getById(workerId)?.displayName).toBe('Twin Blank Name');
     });
 
     it('treats an empty model pool as a clear on unified updates', async () => {
@@ -1391,23 +1312,6 @@ describe('Space Agent RPC Handlers', () => {
       await expect(
         call(hubData.handlers, 'spaceAgent.update', { id: 'bad-id', name: 'X' })
       ).rejects.toThrow('Agent not found');
-    });
-
-    it('rejects worker names that collide with a native overlay display name', async () => {
-      const workerId = await createWorkerAgent(manager, {
-        spaceId: 'space-1',
-        name: 'Worker One',
-      });
-      db.prepare(
-        `UPDATE space_long_horizon_agents SET template_key = 'custom.overlay', display_name = 'Overlay Name' WHERE id = ?`
-      ).run(workerId);
-
-      await expect(
-        call(hubData.handlers, 'spaceAgent.create', {
-          spaceId: 'space-1',
-          name: 'overlay name',
-        })
-      ).rejects.toThrow('already used by');
     });
 
     it('throws on duplicate name conflict', async () => {
@@ -1454,62 +1358,30 @@ describe('Space Agent RPC Handlers', () => {
       expect(result.success).toBe(true);
     });
 
-    it('routes worker-twin deletes through the worker path and cascades the mirror', async () => {
+    it('deletes mirror rows and removes their subscriptions', async () => {
       const runtimeService = createRuntimeServiceMock();
       const freshHub = createMockMessageHub();
       setupSpaceAgentHandlers(
         freshHub.hub,
         daemonData.internalEventBus,
-        manager,
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
         longHorizonRepo,
+        workflowRepo,
         runtimeService
       );
 
-      const workerId = await createWorkerAgent(manager, {
-        spaceId: 'space-1',
-        name: 'Worker ToDelete',
-      });
+      const workerId = 'worker-to-delete';
+      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Worker ToDelete' });
       expect(longHorizonRepo.getById(workerId)).not.toBeNull();
 
       await call(freshHub.handlers, 'spaceAgent.delete', { id: workerId });
 
-      expect(manager.getById(workerId)).toBeNull();
       expect(longHorizonRepo.getById(workerId)).toBeNull();
       expect(runtimeService.removeLongHorizonAgentSubscriptions).toHaveBeenCalledWith(
         'space-1',
         workerId
       );
-    });
-
-    it('does not archive standalone long-horizon rows matched only by handle', async () => {
-      const freshHub = createMockMessageHub();
-      setupSpaceAgentHandlers(
-        freshHub.hub,
-        daemonData.internalEventBus,
-        manager,
-        spaceManagerData.spaceManager,
-        createTestDatabaseFacade(db),
-        longHorizonRepo,
-        createRuntimeServiceMock()
-      );
-      const workerId = await createWorkerAgent(manager, {
-        spaceId: 'space-1',
-        name: 'Worker Delete Standalone',
-      });
-      const worker = manager.getById(workerId);
-      db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(workerId);
-      const standaloneAgent = longHorizonRepo.create({
-        id: 'standalone-lh-agent-delete',
-        spaceId: 'space-1',
-        handle: worker?.handle ?? 'todelete',
-        displayName: 'Standalone To Keep',
-      });
-
-      await call(freshHub.handlers, 'spaceAgent.delete', { id: workerId });
-
-      expect(longHorizonRepo.getById(standaloneAgent.id)?.status).toBe('active');
     });
 
     it('does not archive seeded coordinator long-horizon rows when deleting agents', async () => {
@@ -1518,10 +1390,10 @@ describe('Space Agent RPC Handlers', () => {
       setupSpaceAgentHandlers(
         freshHub.hub,
         daemonData.internalEventBus,
-        manager,
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
         longHorizonRepo,
+        workflowRepo,
         runtimeService
       );
       const created = await call<{ agent: { id: string } }>(
@@ -1749,10 +1621,10 @@ describe('Space Agent RPC Handlers', () => {
       setupSpaceAgentHandlers(
         freshHub.hub,
         daemonData.internalEventBus,
-        manager,
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
         longHorizonRepo,
+        workflowRepo,
         runtimeService as any,
         new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db as any))
       );

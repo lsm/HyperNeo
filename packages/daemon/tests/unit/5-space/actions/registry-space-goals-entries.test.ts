@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import { createActionRegistry } from '../../../../src/lib/space/actions/registry.ts';
 import { createSpaceRegistryEntries } from '../../../../src/lib/space/actions/registry-space.ts';
 import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -16,7 +15,6 @@ import {
 import type { SpaceAgentToolsConfig } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
@@ -50,7 +48,6 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): GoalsCtx {
   ).run(SPACE_ID, SPACE_ID, SPACE_ID, Date.now(), Date.now());
 
   const spaceRepo = new SpaceRepository(db);
-  const spaceAgentManager = new SpaceAgentManager(new SpaceAgentRepository(db));
   const workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
   const workflowRunRepo = new SpaceWorkflowRunRepository(db);
   const nodeExecutionRepo = new NodeExecutionRepository(db);
@@ -60,7 +57,6 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): GoalsCtx {
   const runtime = new SpaceRuntime({
     db,
     spaceManager,
-    spaceAgentManager,
     spaceWorkflowManager: workflowManager,
     workflowRunRepo,
     taskRepo,
@@ -89,7 +85,6 @@ function makeCtx(overrides: Partial<SpaceAgentToolsConfig> = {}): GoalsCtx {
     nodeExecutionRepo,
     workflowRunRepo,
     taskManager: new SpaceTaskManager(db, SPACE_ID),
-    spaceAgentManager,
     taskAgentManager: stubTaskAgentManager,
     goalService,
     callerRole: 'coordinator',

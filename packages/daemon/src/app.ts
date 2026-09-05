@@ -72,12 +72,10 @@ import {
 } from './lib/credential-discovery.ts';
 import { createReactiveDatabase } from './storage/reactive-database.ts';
 import { LiveQueryEngine } from './storage/live-query.ts';
-import { SpaceAgentRepository } from './storage/repositories/space-agent-repository.ts';
 import { installProcessFatalLogging } from './lib/process-fatal-logger.ts';
 import { WorkflowHookRuntimeService } from './lib/space/workflow-hook-runtime-service.ts';
 import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository.ts';
 import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository.ts';
-import { SpaceAgentManager } from './lib/space/managers/space-agent-manager.ts';
 import { SpaceManager } from './lib/space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from './lib/space/runtime/space-runtime-service.ts';
 import type { TaskAgentManager } from './lib/space/runtime/task-agent-manager.ts';
@@ -297,7 +295,6 @@ export interface DaemonAppContext {
   extensionManager: ExternalEventExtensionManager;
   reactiveDb: ReturnType<typeof createReactiveDatabase>;
   liveQueries: LiveQueryEngine;
-  spaceAgentManager: SpaceAgentManager;
   spaceManager: SpaceManager;
   spaceRuntimeService: SpaceRuntimeService;
   taskAgentManager: TaskAgentManager;
@@ -447,11 +444,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           return { live, exited };
         },
       })
-    );
-
-    const spaceAgentManager = new SpaceAgentManager(
-      new SpaceAgentRepository(db.getDatabase()),
-      new SpaceLongHorizonAgentRepository(db.getDatabase())
     );
 
     const spaceRepo = earlySpaceRepo;
@@ -815,7 +807,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       externalEventExtensionConfigStore: extensionConfigStore,
       externalEventExtensionContext: extensionContext,
       spaceManager,
-      spaceAgentManager,
       jobQueue,
       jobProcessor,
       messageDeliveryProcessor,
@@ -1416,7 +1407,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       extensionManager,
       reactiveDb,
       liveQueries,
-      spaceAgentManager,
       spaceManager,
       spaceRuntimeService,
       taskAgentManager,

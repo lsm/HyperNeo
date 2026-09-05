@@ -1,22 +1,20 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
-import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
-import {
-  SpaceWorkflowManager,
-  WorkflowValidationError,
-  WorkflowDeletionBlockedError,
-} from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { WorkflowNodeInput } from '@hyperneo/shared';
 import {
   createSpaceAgentLookup,
   type SpaceAgentLookup,
+  SpaceWorkflowManager,
+  WorkflowDeletionBlockedError,
+  WorkflowValidationError,
 } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
 import {
   coordinatorLongHorizonAgentId,
   SpaceLongHorizonAgentRepository,
 } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
-import type { WorkflowNodeInput } from '@hyperneo/shared';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -34,10 +32,7 @@ function seedSpace(db: BunDatabase, spaceId = 'space-1'): void {
 }
 
 function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
-  ).run(agentId, spaceId, name, Date.now(), Date.now());
+  seedWorkerMirror(db, { id: agentId, spaceId, name });
 }
 
 const coderNode: WorkflowNodeInput = { id: 'node-coder', name: 'Code', agentId: 'agent-coder' };
@@ -1297,15 +1292,13 @@ describe('SpaceWorkflowManager', () => {
 });
 
 describe('createSpaceAgentLookup — runtime-shaped resolution', () => {
-  test('resolves unified-native rows alone, migrated mirrors with twins, and worker-only rows', () => {
+  test('resolves unified-native rows and worker mirror rows through the unified repo', () => {
     const db = makeDb();
     seedSpace(db, 'space-1');
     seedSpace(db, 'space-2');
-    const spaceAgentRepo = new SpaceAgentRepository(db);
     const longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
 
     const dualId = 'agent-dual';
-    seedAgent(db, dualId, 'space-1', 'Dual');
     longHorizonAgentRepo.create({
       id: dualId,
       spaceId: 'space-1',
@@ -1335,7 +1328,7 @@ describe('createSpaceAgentLookup — runtime-shaped resolution', () => {
        VALUES (?, 'space-1', 'orphaned-mirror', 'Orphaned Mirror', 'migration.legacy_space_agent', 'active', '', '{}', 1, 1)`
     ).run(orphanedMirrorId);
 
-    const lookup = createSpaceAgentLookup(spaceAgentRepo, longHorizonAgentRepo);
+    const lookup = createSpaceAgentLookup(longHorizonAgentRepo);
 
     expect(lookup.getAgentById('space-1', dualId)).toEqual({ id: dualId, name: 'Dual' });
     expect(lookup.getAgentById('space-1', unifiedOnlyId)).toEqual({
@@ -1347,7 +1340,10 @@ describe('createSpaceAgentLookup — runtime-shaped resolution', () => {
       name: 'Worker Only',
     });
     expect(lookup.getAgentById('space-1', crossSpaceId)).toBeNull();
-    expect(lookup.getAgentById('space-1', orphanedMirrorId)).toBeNull();
+    expect(lookup.getAgentById('space-1', orphanedMirrorId)).toEqual({
+      id: orphanedMirrorId,
+      name: 'Orphaned Mirror',
+    });
     const coordinator = longHorizonAgentRepo.ensureCoordinator('space-1');
     expect(lookup.getAgentById('space-1', coordinator.id)).toBeNull();
     seedSpace(db, 'space-3');

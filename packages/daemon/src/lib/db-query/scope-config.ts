@@ -43,7 +43,7 @@ const COLUMN_BLACKLISTS: Record<string, string[]> = {
   app_mcp_servers: ['env'],
   inbox_items: ['raw_event', 'security_check'],
   job_queue: ['payload'],
-  space_agents: ['system_prompt'],
+  space_long_horizon_agents: ['session_id'],
   space_workflows: ['config', 'gates', 'channels', 'hooks'],
   tasks: ['restrictions'],
   space_workflow_nodes: ['config'],
@@ -158,9 +158,9 @@ const ROOM_SCOPE_TABLES: ScopeTableConfig[] = [
 
 const SPACE_SCOPE_TABLES: ScopeTableConfig[] = [
   {
-    tableName: 'space_agents',
+    tableName: 'space_long_horizon_agents',
     scopeColumn: 'space_id',
-    blacklistedColumns: COLUMN_BLACKLISTS.space_agents,
+    blacklistedColumns: COLUMN_BLACKLISTS.space_long_horizon_agents,
     description: 'Space agent definitions with name, model, tools, provider, and instructions.',
   },
   {
@@ -465,6 +465,7 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'pending_agent_messages',
   'sdk_message_replacements',
   'space_agent_inbox_messages',
+  'space_agents',
   'github_filter_configs',
   'workspace_history',
   'mcp_enablement',
@@ -497,7 +498,6 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'space_workflow_definition_versions',
   'messages',
   'tool_calls',
-  'space_long_horizon_agents',
   'space_long_horizon_agent_goals',
   'space_long_horizon_agent_forge_scopes',
   'space_long_horizon_agent_reminders',

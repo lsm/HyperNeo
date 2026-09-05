@@ -4,6 +4,7 @@ import type { MessageHub } from '@hyperneo/shared';
 import { setupSpaceAgentHandlers } from '../../../../src/lib/rpc-handlers/space-agent-handlers';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -48,12 +49,7 @@ describe('Space long-horizon agent handlers', () => {
     removeLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
     clearLongTermAgentSessionProvider: ReturnType<typeof mock>;
   };
-  let spaceAgentManager: {
-    listBySpaceId: ReturnType<typeof mock>;
-    isAgentReferenced: ReturnType<typeof mock>;
-    getById: ReturnType<typeof mock>;
-    delete: ReturnType<typeof mock>;
-  };
+  let workflowRepo: { getWorkflowsReferencingAgent: ReturnType<typeof mock> };
   let internalEventBus: { publish: ReturnType<typeof mock> };
 
   beforeEach(() => {
@@ -111,23 +107,18 @@ describe('Space long-horizon agent handlers', () => {
       removeLongHorizonAgentSubscriptions: mock(() => {}),
       clearLongTermAgentSessionProvider: mock(async () => {}),
     };
-    spaceAgentManager = {
-      listBySpaceId: mock(() => []),
-      isAgentReferenced: mock(() => ({ referenced: false, workflowNames: [] as string[] })),
-      getById: mock(() => null),
-      delete: mock(() => ({ ok: true })),
-    };
+    workflowRepo = { getWorkflowsReferencingAgent: mock(() => []) };
     internalEventBus = { publish: mock(async () => {}) };
     setupSpaceAgentHandlers(
       hubData.hub,
       internalEventBus as never,
-      spaceAgentManager as never,
       createMockSpaceManager(),
       {
         getSession: () => null,
         getRenderableTextMessages: () => [],
       } as never,
       repo,
+      workflowRepo,
       runtimeService
     );
   });
@@ -151,20 +142,6 @@ describe('Space long-horizon agent handlers', () => {
           displayName: 'existing agent',
         })
       ).rejects.toThrow('already used by another unified agent');
-    });
-
-    it('rejects a display name already used by a worker agent', async () => {
-      spaceAgentManager.listBySpaceId = mock(() => [
-        { id: 'worker-1', spaceId: 'space-1', name: 'Worker Name' },
-      ]);
-
-      await expect(
-        call(hubData.handlers, 'spaceAgent.create', {
-          spaceId: 'space-1',
-          handle: 'fresh',
-          displayName: 'Worker Name',
-        })
-      ).rejects.toThrow('already used by a worker agent');
     });
 
     it('uses a non-conflicting mirror handle when requested handle belongs to another row', async () => {
@@ -213,10 +190,10 @@ describe('Space long-horizon agent handlers', () => {
       expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ handle: 'qa-review' }));
     });
 
-    it('reserves worker handles for RPC-created long-horizon agents', async () => {
-      spaceAgentManager.listBySpaceId = mock(() => [
-        { id: 'worker-agent', spaceId: 'space-1', handle: 'coder' },
-      ]);
+    it('reserves occupied handles for RPC-created long-horizon agents', async () => {
+      repo.listBySpaceId = mock(() => [
+        { id: 'existing-agent', spaceId: 'space-1', handle: 'coder' },
+      ]) as SpaceLongHorizonAgentRepository['listBySpaceId'];
 
       const result = await call<{ agent: { id: string; handle: string } }>(
         hubData.handlers,
@@ -344,10 +321,12 @@ describe('Space long-horizon agent handlers', () => {
       expect(repo.update).not.toHaveBeenCalled();
     });
 
-    it('rejects handle updates that collide with worker agents', async () => {
-      spaceAgentManager.listBySpaceId = mock(() => [
-        { id: 'worker-agent', spaceId: 'space-1', handle: 'coder' },
-      ]);
+    it('rejects handle updates that collide with another agent', async () => {
+      repo.getByHandle = mock(() => ({
+        id: 'other-agent',
+        spaceId: 'space-1',
+        handle: 'coder',
+      })) as SpaceLongHorizonAgentRepository['getByHandle'];
 
       await expect(
         call(hubData.handlers, 'spaceAgent.update', {
@@ -402,10 +381,17 @@ describe('Space long-horizon agent handlers', () => {
       expect(repo.update).toHaveBeenCalled();
     });
 
-    it('allows shared-ID long-horizon agents to keep their worker handle', async () => {
-      spaceAgentManager.listBySpaceId = mock(() => [
-        { id: 'agent-1', spaceId: 'space-1', handle: 'coder' },
-      ]);
+    it('allows agents to keep their own handle on update', async () => {
+      repo.getById = mock(() => ({
+        id: 'agent-1',
+        spaceId: 'space-1',
+        handle: 'coder',
+      })) as SpaceLongHorizonAgentRepository['getById'];
+      repo.getByHandle = mock(() => ({
+        id: 'agent-1',
+        spaceId: 'space-1',
+        handle: 'coder',
+      })) as SpaceLongHorizonAgentRepository['getByHandle'];
 
       const result = await call<{ agent: { id: string; handle: string } }>(
         hubData.handlers,
@@ -515,10 +501,7 @@ describe('Space long-horizon agent handlers', () => {
     });
 
     it('rejects deleting an agent referenced by workflow nodes', async () => {
-      spaceAgentManager.isAgentReferenced = mock(() => ({
-        referenced: true,
-        workflowNames: ['Pipe'],
-      }));
+      workflowRepo.getWorkflowsReferencingAgent = mock(() => [{ id: 'wf-1', name: 'Pipe' }]);
 
       await expect(
         call(hubData.handlers, 'spaceAgent.delete', {
@@ -1441,13 +1424,13 @@ describe('spaceAgent.createReminder — nextRunAt seeding', () => {
     setupSpaceAgentHandlers(
       hubData.hub,
       { publish: mock(async () => {}) } as never,
-      {} as never,
       createMockSpaceManager(),
       {
         getSession: () => null,
         getRenderableTextMessages: () => [],
       } as never,
-      repo
+      repo,
+      new SpaceWorkflowRepository(db)
     );
   });
 

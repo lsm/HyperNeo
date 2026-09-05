@@ -4,11 +4,10 @@ import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
 import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
@@ -26,6 +25,7 @@ import {
 } from '../../../../src/lib/space/runtime/post-approval-router.ts';
 import { createMarkCompleteHandler } from '../../../../src/lib/space/tools/end-node-handlers.ts';
 import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 
 const SPACE_ID = 'space-par-int';
 
@@ -51,10 +51,7 @@ function seedAgents(db: BunDatabase): Map<string, string> {
   const roleToId = new Map<string, string>();
   for (const name of names) {
     const id = `agent-${name.toLowerCase().replace(/\s+/g, '-')}`;
-    db.prepare(
-      `INSERT INTO space_agents (id, space_id, name, description, model, tools, custom_prompt, created_at, updated_at)
-       VALUES (?, ?, ?, '', null, '[]', null, ?, ?)`
-    ).run(id, SPACE_ID, name, Date.now(), Date.now());
+    seedWorkerMirror(db, { id, spaceId: SPACE_ID, name });
     roleToId.set(name.toLowerCase(), id);
   }
   return roleToId;
@@ -89,8 +86,7 @@ function buildHarness(opts: { spawnerThrows?: boolean } = {}): Harness {
   const workflowRunRepo = new SpaceWorkflowRunRepository(db);
   const taskRepo = new SpaceTaskRepository(db);
   const nodeExecutionRepo = new NodeExecutionRepository(db);
-  const agentRepo = new SpaceAgentRepository(db);
-  const agentManager = new SpaceAgentManager(agentRepo);
+  const agentRepo = new SpaceLongHorizonAgentRepository(db);
   const workflowRepo = new SpaceWorkflowRepository(db);
   const workflowManager = new SpaceWorkflowManager(workflowRepo);
   const spaceManager = new SpaceManager(db);
@@ -112,7 +108,7 @@ function buildHarness(opts: { spawnerThrows?: boolean } = {}): Harness {
   const config: SpaceRuntimeConfig = {
     db,
     spaceManager,
-    spaceAgentManager: agentManager,
+    longHorizonAgentRepo: agentRepo,
     spaceWorkflowManager: workflowManager,
     workflowRunRepo,
     taskRepo,

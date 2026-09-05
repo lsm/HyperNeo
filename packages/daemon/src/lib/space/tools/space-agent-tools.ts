@@ -46,7 +46,6 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-ev
 import { Logger } from '../../logger.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
 import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers.ts';
-import { requireAgentFamily } from '../agents/agent-family-resolver.ts';
 import {
   publishUnifiedAgentCreated,
   publishUnifiedAgentUpdated,
@@ -60,7 +59,6 @@ import { mergeEvolutionPolicy } from '../evolution-scope-service.ts';
 import { validateGoalAutomationSelfNagPolicy } from '../goals/evolution-policy-validation.ts';
 import { syncGoalAutomationSelfNagScheduleForScope } from '../goals/goal-automation-schedule-sync.ts';
 import { SpaceDeliveryFacade, translateTaskMessageTarget } from '../messaging-adapter.ts';
-import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import {
   assertValidSpaceTaskTransition,
@@ -526,7 +524,6 @@ export interface SpaceAgentToolsConfig {
   workflowRunRepo: SpaceWorkflowRunRepository;
   isWorkflowRunActive?: (runId: string) => boolean;
   taskManager: SpaceTaskManager;
-  spaceAgentManager: SpaceAgentManager;
   sessionManager?: Pick<SessionManager, 'getCachedSession' | 'getSessionAsync' | 'sendUserMessage'>;
   clearLongTermAgentSessionProvider?: (spaceId: string, agentId: string) => Promise<void>;
   getRuntimeSession?: (sessionId: string) => AgentSession | undefined;
@@ -584,9 +581,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       ) {
         return true;
       }
-      return config.spaceAgentManager
-        ?.listBySpaceId(spaceId)
-        .some((worker) => worker.name.trim().toLowerCase() === normalized);
+      return false;
     };
     while (taken(candidate)) {
       counter += 1;
@@ -609,14 +604,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     if (unifiedConflict) {
       throw new Error(`Agent name "${name}" is already used by another agent in this space`);
     }
-    const workerConflict = config.spaceAgentManager
-      ?.listBySpaceId(spaceId)
-      .find(
-        (candidate) => candidate.id !== excludeId && candidate.name.trim().toLowerCase() === target
-      );
-    if (workerConflict) {
-      throw new Error(`Agent name "${name}" is already used by a worker agent in this space`);
-    }
   };
 
   const {
@@ -627,7 +614,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     nodeExecutionRepo,
     workflowRunRepo,
     taskManager,
-    spaceAgentManager,
     taskAgentManager,
     internalEventBus,
     activateNode,
@@ -828,8 +814,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       if (agent.spaceId !== spaceId) return null;
       return agent.autonomyLevel ?? null;
     }
-    const workerAgent = spaceAgentManager.getById(myAgentId);
-    if (workerAgent && workerAgent.spaceId === spaceId) return null;
     return 1;
   }
 
@@ -988,13 +972,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   }
 
   function requireLongHorizonAgentInSpace(agentId: string) {
-    return requireAgentFamily({
-      spaceId,
-      agentId,
-      expected: 'long_horizon',
-      spaceAgentManager,
-      longHorizonAgentRepo: requireLongHorizonAgentRepo(),
-    }).longHorizonAgent;
+    const agent = getLongHorizonAgentInSpace(agentId);
+    if (!agent) throw new Error(`Long-horizon agent not found: ${agentId}`);
+    return agent;
   }
 
   function uniqueLongHorizonAgentHandle(name: string): string {
@@ -1002,7 +982,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       ...requireLongHorizonAgentRepo()
         .listBySpaceId(spaceId)
         .map((agent) => agent.handle),
-      ...spaceAgentManager.listBySpaceId(spaceId).map((agent) => agent.handle),
       ...RESERVED_SPACE_AGENT_HANDLES,
     ]);
   }
@@ -2506,7 +2485,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           customAgentId: args.custom_agent_id,
           workerAgentExists:
             args.custom_agent_id != null
-              ? spaceAgentManager.getById(args.custom_agent_id) !== null
+              ? requireLongHorizonAgentRepo().getById(args.custom_agent_id) !== null
               : false,
         });
         if (plan.action === 'reject') {

@@ -9,14 +9,14 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkspaceRepository } from '../../../../src/storage/repositories/space-workspace-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { createSpaceAgentToolHandlers } from '../../../../src/lib/space/tools/space-agent-tools.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
+import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -34,10 +34,7 @@ function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/wo
 }
 
 function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
-  ).run(agentId, spaceId, name, Date.now(), Date.now());
+  seedWorkerMirror(db, { id: agentId, spaceId, name });
 }
 
 function buildSingleStepWorkflow(
@@ -71,7 +68,6 @@ interface TestCtx {
   taskRepo: SpaceTaskRepository;
   taskManager: SpaceTaskManager;
   spaceManager: SpaceManager;
-  agentManager: SpaceAgentManager;
   runtime: SpaceRuntime;
   nodeExecutionRepo: NodeExecutionRepository;
 }
@@ -86,8 +82,7 @@ function makeCtx(): TestCtx {
   const agentId = 'agent-coder-1';
   seedAgentRow(db, agentId, spaceId, 'Coder');
 
-  const agentRepo = new SpaceAgentRepository(db);
-  const agentManager = new SpaceAgentManager(agentRepo);
+  const agentRepo = new SpaceLongHorizonAgentRepository(db);
 
   const workflowRepo = new SpaceWorkflowRepository(db);
   const workflowManager = new SpaceWorkflowManager(workflowRepo);
@@ -100,7 +95,7 @@ function makeCtx(): TestCtx {
   const runtime = new SpaceRuntime({
     db,
     spaceManager,
-    spaceAgentManager: agentManager,
+    longHorizonAgentRepo: agentRepo,
     spaceWorkflowManager: workflowManager,
     workflowRunRepo,
     taskRepo,
@@ -126,7 +121,6 @@ function makeCtx(): TestCtx {
     taskRepo,
     taskManager,
     spaceManager,
-    agentManager,
     runtime,
     nodeExecutionRepo,
   };

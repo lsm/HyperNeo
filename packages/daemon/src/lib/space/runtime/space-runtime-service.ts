@@ -24,7 +24,6 @@ import type {
   SpaceAgentInboxMessageRecord,
   SpaceAgentInboxRepository,
 } from '../../../storage/repositories/space-agent-inbox-repository.ts';
-import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import {
@@ -75,7 +74,6 @@ import {
   unifiedAgentRecordExists,
 } from '../agents/worker-long-horizon-mapper.ts';
 import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session.ts';
-import type { SpaceAgentManager } from '../managers/space-agent-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
@@ -128,7 +126,6 @@ export interface SpaceRuntimeServiceConfig {
   db: BunDatabase;
   dbPath?: string;
   spaceManager: SpaceManager;
-  spaceAgentManager: SpaceAgentManager;
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   spaceWorkflowManager: SpaceWorkflowManager;
   workflowRunRepo: SpaceWorkflowRunRepository;
@@ -155,7 +152,6 @@ export interface SpaceRuntimeServiceConfig {
   actorRegistryRepos?: {
     spaceRepo: SpaceRepository;
     sessionRepo: SessionRepository;
-    spaceAgentRepo: SpaceAgentRepository;
     longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
     workflowRepo: SpaceWorkflowRepository;
     workflowRunRepo: SpaceWorkflowRunRepository;
@@ -980,11 +976,7 @@ export class SpaceRuntimeService {
 
   private findMigratedWorkerMirror(spaceId: string, agentId: string): SpaceLongHorizonAgent | null {
     const unified = this.config.longHorizonAgentRepo?.getById(agentId) ?? null;
-    if (
-      unified?.spaceId === spaceId &&
-      unified.templateKey === MIGRATED_WORKER_TEMPLATE_KEY &&
-      this.config.spaceAgentManager.getById(agentId)?.spaceId === spaceId
-    ) {
+    if (unified?.spaceId === spaceId && unified.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
       return unified;
     }
     return null;
@@ -1057,44 +1049,31 @@ export class SpaceRuntimeService {
         repo?.getById(coordinatorLongHorizonAgentId(spaceId)) ??
         repo?.getCoordinatorRecord(spaceId) ??
         null,
-      getWorkerAgent: (agentId) => this.config.spaceAgentManager.getById(agentId),
+      getWorkerAgent: (agentId) => {
+        const unified = this.config.longHorizonAgentRepo?.getById(agentId) ?? null;
+        return unified ? longHorizonAgentToWorkerView(unified) : null;
+      },
     };
   }
 
   private agentRecordExists(agentId: string, expectedSpaceId?: string): boolean {
     const unified = this.config.longHorizonAgentRepo?.getById(agentId);
-    if (unified) {
-      return unifiedAgentRecordExists(unified, expectedSpaceId, (id) =>
-        this.config.spaceAgentManager.getById(id)
-      );
-    }
-    if (expectedSpaceId) {
-      const worker = this.config.spaceAgentManager.getById(agentId);
-      return worker != null && worker.spaceId === expectedSpaceId;
-    }
-    return this.config.spaceAgentManager.getById(agentId) !== null;
+    if (!unified) return false;
+    return unifiedAgentRecordExists(unified, expectedSpaceId);
   }
 
   private listPromptRestampAgents(
-    spaceId: string,
-    spaceAgentManager: SpaceAgentManager
+    spaceId: string
   ): Array<{ id: string; name: string; description?: string }> {
-    const unified = this.config.longHorizonAgentRepo?.listBySpaceId(spaceId);
-    if (unified) {
-      const coordinatorAgentId = this.config.longHorizonAgentRepo?.getCoordinator(spaceId)?.id;
-      return unified
-        .filter((agent) => agent.id !== coordinatorAgentId)
-        .map((agent) => ({
-          id: agent.id,
-          name: agent.displayName,
-          description: agent.description,
-        }));
-    }
-    return spaceAgentManager.listBySpaceId(spaceId).map((agent) => ({
-      id: agent.id,
-      name: agent.name,
-      description: agent.description,
-    }));
+    const unified = this.config.longHorizonAgentRepo?.listBySpaceId(spaceId) ?? [];
+    const coordinatorAgentId = this.config.longHorizonAgentRepo?.getCoordinator(spaceId)?.id;
+    return unified
+      .filter((agent) => agent.id !== coordinatorAgentId)
+      .map((agent) => ({
+        id: agent.id,
+        name: agent.displayName,
+        description: agent.description,
+      }));
   }
 
   private async attachLongTermAgentMcpServersForSession(
@@ -1107,10 +1086,9 @@ export class SpaceRuntimeService {
     if (!policy.attachLongTermAgentTools || !policy.spaceId) return;
     const agentId = session.metadata.promptProvenance?.agentId;
     if (!agentId) return;
-    const [space, agentSession, persistedAgent, longHorizonAgent] = await Promise.all([
+    const [space, agentSession, longHorizonAgent] = await Promise.all([
       this.config.spaceManager.getSpace(policy.spaceId),
       sessionManager.getSessionAsync(session.id),
-      this.config.actorRegistryRepos?.spaceAgentRepo.getById(agentId) ?? null,
       this.config.longHorizonAgentRepo?.getById(agentId) ?? null,
     ]);
     if (!space) {
@@ -1128,7 +1106,6 @@ export class SpaceRuntimeService {
     const agentName =
       session.metadata.promptProvenance?.agentName ??
       longHorizonAgent?.displayName ??
-      persistedAgent?.name ??
       'Space Agent';
     const agentHandleAliases = longHorizonAgent ? [`@${longHorizonAgent.handle}`] : undefined;
     this.attachLongTermAgentMcpServers(
@@ -1136,7 +1113,7 @@ export class SpaceRuntimeService {
       space,
       agentName,
       session.id,
-      longHorizonAgent ?? persistedAgent,
+      longHorizonAgent,
       agentId,
       agentHandleAliases
     );
@@ -1274,7 +1251,6 @@ export class SpaceRuntimeService {
           }),
         (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(space.id, rawPath)
       ),
-      spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
       clearLongTermAgentSessionProvider: (sid, aid) =>
         this.clearLongTermAgentSessionProvider(sid, aid),
@@ -1883,7 +1859,6 @@ export class SpaceRuntimeService {
           }),
         (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(space.id, rawPath)
       ),
-      spaceAgentManager: this.config.spaceAgentManager,
       sessionManager: this.config.sessionManager,
       clearLongTermAgentSessionProvider: (sid, aid) =>
         this.clearLongTermAgentSessionProvider(sid, aid),
@@ -2033,14 +2008,7 @@ export class SpaceRuntimeService {
     space: Space,
     options: { replayPendingMessages?: boolean } = {}
   ): Promise<void> {
-    const {
-      sessionManager,
-      db,
-      spaceWorkflowManager,
-      spaceAgentManager,
-      taskRepo,
-      workflowRunRepo,
-    } = this.config;
+    const { sessionManager, db, spaceWorkflowManager, taskRepo, workflowRunRepo } = this.config;
     if (!sessionManager) return;
 
     const spaceChatSessionId = `space:chat:${space.id}`;
@@ -2051,7 +2019,7 @@ export class SpaceRuntimeService {
     }
 
     const coordinator = this.config.longHorizonAgentRepo?.ensureCoordinator(space.id) ?? null;
-    const agents = this.listPromptRestampAgents(space.id, spaceAgentManager);
+    const agents = this.listPromptRestampAgents(space.id);
     const workflows = spaceWorkflowManager.listWorkflows(space.id);
 
     const spaceManagerForApproval = this.config.spaceManager;
@@ -2079,7 +2047,6 @@ export class SpaceRuntimeService {
           }),
         (rawPath) => this.config.spaceManager.resolveRegisteredWorkspacePath(space.id, rawPath)
       ),
-      spaceAgentManager,
       sessionManager: this.config.sessionManager,
       clearLongTermAgentSessionProvider: (sid, aid) =>
         this.clearLongTermAgentSessionProvider(sid, aid),

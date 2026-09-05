@@ -12,7 +12,7 @@ import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
-import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
@@ -58,17 +58,6 @@ function fakeSession(id: string): AgentSession {
   } as unknown as AgentSession;
 }
 
-function fakeCustomAgent() {
-  return {
-    id: AGENT_ID,
-    spaceId: SPACE_ID,
-    name: AGENT_NAME,
-    customPrompt: 'work',
-    model: 'm',
-    tools: [],
-  };
-}
-
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((res) => {
@@ -92,13 +81,11 @@ interface RealRepoHarness {
 function makeRealRepoHarness(options: { taskStatus?: string } = {}): RealRepoHarness {
   const db = new BunDatabase(':memory:');
   createSpaceTables(db);
-  const spaceRow = new SpaceRepository(db).createSpace({
-    workspacePath: '/tmp/ws-1241',
-    slug: 'spawn-cas',
-    name: 'Spawn CAS',
-  } as never);
-  const spaceId = spaceRow.id;
+  const spaceId = SPACE_ID;
   const now = Date.now();
+  db.prepare(
+    `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(spaceId, 'spawn-cas', '/tmp/ws-1241', 'Spawn CAS', now, now);
   db.prepare(
     `INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
   ).run('wf-1241', spaceId, 'Coding', now, now);
@@ -107,9 +94,6 @@ function makeRealRepoHarness(options: { taskStatus?: string } = {}): RealRepoHar
     workflowId: 'wf-1241',
     title: 'Run #1',
   });
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
-  ).run(AGENT_ID, spaceId, 'Coder', now, now);
   seedUnifiedAgentMirror(db, { id: AGENT_ID, spaceId, name: 'Coder' });
   const execRepo = new NodeExecutionRepository(db);
   const taskRepo = new SpaceTaskRepository(db);
@@ -132,9 +116,7 @@ function makeRealRepoHarness(options: { taskStatus?: string } = {}): RealRepoHar
     taskRepo,
     nodeExecutionRepo: execRepo,
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
-    spaceAgentManager: {
-      getById: (id: string) => (id !== AGENT_ID ? undefined : fakeCustomAgent()),
-    },
+    longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
     worktreeManager: {
       createTaskWorktree: () => workspaceGate.promise,
       getTaskWorktreePathSync: () => null,

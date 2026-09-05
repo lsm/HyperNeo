@@ -3,14 +3,12 @@ import type {
   NodeExecution,
   Session,
   Space,
-  SpaceWorkerAgent,
   SpaceLongHorizonAgent,
   SpaceWorkflow,
 } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
 import type { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository.ts';
 import type { SessionRepository } from '../../storage/repositories/session-repository.ts';
-import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from './agents/worker-long-horizon-mapper.ts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
@@ -27,7 +25,6 @@ export const SPACE_SYSTEM_ACTORS = [
 export interface SpaceActorRegistryRepositories {
   spaceRepo: SpaceRepository;
   sessionRepo: SessionRepository;
-  spaceAgentRepo: SpaceAgentRepository;
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
   workflowRepo: SpaceWorkflowRepository;
   workflowRunRepo: SpaceWorkflowRunRepository;
@@ -105,24 +102,14 @@ export class SpaceActorRegistryAdapter {
   }
 
   private agentActors(spaceId: string): ActorRef[] {
-    const workerActors = this.repos.spaceAgentRepo
-      .getBySpaceId(spaceId)
-      .map((agent) => agentActor(agent, this.findLongTermAgentSession(spaceId, agent.id)));
     const coordinatorAgentId = this.repos.longHorizonAgentRepo?.getCoordinator(spaceId)?.id ?? null;
-    const longHorizonActorById = new Map(
-      (this.repos.longHorizonAgentRepo?.listBySpaceId(spaceId) ?? [])
-        .filter(
-          (agent) =>
-            agent.id !== coordinatorAgentId && agent.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY
-        )
-        .map((agent) => [agent.id, longHorizonAgentActor(agent)])
-    );
-    const workerActorRefs = workerActors.filter((actor) => {
-      const agentId = decodeAgentActorId(actor.actorId);
-      const longHorizonActor = agentId ? longHorizonActorById.get(agentId) : undefined;
-      return !longHorizonActor || longHorizonActor.status === 'active';
-    });
-    return [...longHorizonActorById.values(), ...workerActorRefs];
+    return (this.repos.longHorizonAgentRepo?.listBySpaceId(spaceId) ?? [])
+      .filter((agent) => agent.id !== coordinatorAgentId)
+      .map((agent) =>
+        agent.templateKey === MIGRATED_WORKER_TEMPLATE_KEY
+          ? agentActor(agent, this.findLongTermAgentSession(spaceId, agent.id))
+          : longHorizonAgentActor(agent)
+      );
   }
 
   private findLongTermAgentSession(spaceId: string, agentId: string): Session | null {
@@ -196,14 +183,14 @@ function sessionActorForSession(session: Session, spaceId: string): ActorRef | n
 }
 
 export function canonicalAgentHandle(
-  _agents: SpaceWorkerAgent[],
-  agent: SpaceWorkerAgent,
+  _agents: Array<{ handle: string }>,
+  agent: { handle: string },
   _reserved: string[] = reservedHandles()
 ): string {
   return `@${agent.handle}`;
 }
 
-function agentActor(agent: SpaceWorkerAgent, session: Session | null): ActorRef {
+function agentActor(agent: SpaceLongHorizonAgent, session: Session | null): ActorRef {
   const handle = canonicalAgentHandle([], agent);
   return {
     actorId: `agent:${encodeActorIdComponent(agent.id)}`,
@@ -224,15 +211,6 @@ function longHorizonAgentActor(agent: SpaceLongHorizonAgent): ActorRef {
     roles: unique(['space-agent', routingRole(agent.handle)]),
     status: agent.status === 'active' ? 'active' : 'archived',
   };
-}
-
-function decodeAgentActorId(actorId: string): string | null {
-  if (!actorId.startsWith('agent:')) return null;
-  try {
-    return decodeURIComponent(actorId.slice('agent:'.length));
-  } catch {
-    return null;
-  }
 }
 
 function workerActorFromExecution(spaceId: string, execution: NodeExecution): ActorRef {

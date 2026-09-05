@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceWorkerAgent, WorkflowNode } from '@hyperneo/shared';
 import { resolveNodeAgents } from '@hyperneo/shared';
 import { NodeExecutionManager } from '../../../../src/lib/space/managers/node-execution-manager.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import type { SpaceAgentLookup } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
@@ -12,7 +11,7 @@ import {
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -36,10 +35,6 @@ function seedSpace(db: BunDatabase, spaceId: string, workspacePath = '/tmp/ws'):
 }
 
 function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
-  ).run(agentId, spaceId, name, Date.now(), Date.now());
   seedUnifiedAgentMirror(db, { id: agentId, spaceId, name });
 }
 
@@ -98,9 +93,6 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
     taskRepo = new SpaceTaskRepository(db);
     nodeExecutionRepo = new NodeExecutionRepository(db);
 
-    const agentRepo = new SpaceAgentRepository(db);
-    const agentManager = new SpaceAgentManager(agentRepo);
-
     const workflowRepo = new SpaceWorkflowRepository(db);
     workflowManager = new SpaceWorkflowManager(workflowRepo);
     const spaceManager = new SpaceManager(db);
@@ -108,7 +100,7 @@ describe('SpaceRuntime — startWorkflowRun() multi-agent start step', () => {
     const config: SpaceRuntimeConfig = {
       db,
       spaceManager,
-      spaceAgentManager: agentManager,
+      longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
       taskRepo,
@@ -511,8 +503,6 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     taskRepo = new SpaceTaskRepository(db);
 
-    const agentRepo = new SpaceAgentRepository(db);
-    const agentManager = new SpaceAgentManager(agentRepo);
     const workflowRepo = new SpaceWorkflowRepository(db);
     workflowManager = new SpaceWorkflowManager(workflowRepo);
     const spaceManager = new SpaceManager(db);
@@ -520,7 +510,7 @@ describe('Mixed workflows — single-agent, multi-agent, and channels', () => {
     const config: SpaceRuntimeConfig = {
       db,
       spaceManager,
-      spaceAgentManager: agentManager,
+      longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
       taskRepo,

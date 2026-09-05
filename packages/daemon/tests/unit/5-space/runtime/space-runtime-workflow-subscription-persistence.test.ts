@@ -1,19 +1,19 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { SpaceWorkflow } from '@hyperneo/shared';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../../src/storage/repositories/space-workflow-event-subscription-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 
 const SPACE_ID = 'space-persist-1';
 const AGENT_ID = 'agent-persist-1';
@@ -34,10 +34,7 @@ function seedSpaceRow(db: BunDatabase, spaceId: string): void {
 }
 
 function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
-  ).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
+  seedWorkerMirror(db, { id: agentId, spaceId, name: `Agent ${agentId}` });
 }
 
 interface TrieInspector {
@@ -69,7 +66,7 @@ describe('SpaceRuntime workflow subscription persistence', () => {
   let taskRepo: SpaceTaskRepository;
   let workflowManager: SpaceWorkflowManager;
   let spaceManager: SpaceManager;
-  let agentManager: SpaceAgentManager;
+  let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   let subscriptionRepo: SpaceWorkflowEventSubscriptionRepository;
 
   function makeRuntime(overrides?: Partial<SpaceRuntimeConfig>): SpaceRuntime {
@@ -77,7 +74,7 @@ describe('SpaceRuntime workflow subscription persistence', () => {
     return new SpaceRuntime({
       db,
       spaceManager,
-      spaceAgentManager: agentManager,
+      longHorizonAgentRepo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
       taskRepo,
@@ -140,7 +137,7 @@ describe('SpaceRuntime workflow subscription persistence', () => {
     taskRepo = new SpaceTaskRepository(db);
     workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
     spaceManager = new SpaceManager(db);
-    agentManager = new SpaceAgentManager(new SpaceAgentRepository(db));
+    longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
     subscriptionRepo = new SpaceWorkflowEventSubscriptionRepository(db);
   });
 

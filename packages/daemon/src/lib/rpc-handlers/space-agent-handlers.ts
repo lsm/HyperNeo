@@ -5,16 +5,15 @@ import type {
   SettingSource,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentEventSubscriptionStatus,
-  SpaceWorkerAgent,
   SpaceWorkerAgentPromotionDraft,
   ThinkingLevel,
   UpdateSpaceAgentTemplateParams,
-  UpdateSpaceWorkerAgentParams,
   WorkerAgentModelPoolEntry,
 } from '@hyperneo/shared';
 import { isKnownToolEntry, isScopedBashToolEntry } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/index.ts';
+import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import {
   coordinatorLongHorizonAgentId,
   type SpaceLongHorizonAgentRepository,
@@ -33,12 +32,11 @@ import {
   publishUnifiedAgentUpdated,
 } from '../space/agents/unified-agent-events.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../space/agents/worker-long-horizon-mapper.ts';
-import type { SpaceAgentManager } from '../space/managers/space-agent-manager.ts';
 import {
   validateAgentModel,
   validateAgentModelPool,
   validateSpaceAgentTools,
-} from '../space/managers/space-agent-manager.ts';
+} from '../space/agents/agent-validation.ts';
 import { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
 import { SpaceAgentTemplateReapplyService } from '../space/managers/space-agent-template-reapply-service.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
@@ -62,7 +60,7 @@ interface UnifiedSpaceAgentMethodDeps {
   spaceManager: SpaceManager;
   repo: SpaceLongHorizonAgentRepository;
   templateManager?: SpaceAgentTemplateManager;
-  spaceAgentManager?: SpaceAgentManager;
+  workflowRepo: Pick<SpaceWorkflowRepository, 'getWorkflowsReferencingAgent'>;
   runtimeService?: UnifiedSpaceAgentRuntimeService;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 }
@@ -264,42 +262,6 @@ function ensureUnifiedDisplayNameAvailable(
       `Agent name "${displayName}" is already used by another unified agent in this space`
     );
   }
-  const workerConflict = deps.spaceAgentManager
-    ?.listBySpaceId(spaceId)
-    .find((a) => a.id !== excludeId && (a.name ?? '').trim().toLowerCase() === target);
-  if (workerConflict) {
-    throw new Error(`Agent name "${displayName}" is already used by a worker agent in this space`);
-  }
-}
-
-function ensureWorkerDisplayNameAvailable(
-  deps: UnifiedSpaceAgentMethodDeps,
-  spaceId: string,
-  name: string,
-  excludeId?: string
-): void {
-  const target = name.trim().toLowerCase();
-  if (!target) return;
-  const conflict = deps.repo.listBySpaceId(spaceId).find((a) => {
-    if (
-      a.status === 'archived' ||
-      a.id === excludeId ||
-      (a.displayName ?? '').trim().toLowerCase() !== target
-    ) {
-      return false;
-    }
-    const worker = deps.spaceAgentManager?.getById(a.id);
-    return !worker || a.templateKey !== 'migration.legacy_space_agent';
-  });
-  if (conflict) {
-    throw new Error(`Agent name "${name}" is already used by a unified agent in this space`);
-  }
-  const workerConflict = deps.spaceAgentManager
-    ?.listBySpaceId(spaceId)
-    .find((a) => a.id !== excludeId && a.name.trim().toLowerCase() === target);
-  if (workerConflict) {
-    throw new Error(`Agent name "${name}" is already used by a worker agent in this space`);
-  }
 }
 
 function validateLongHorizonAgentHandle(
@@ -321,10 +283,6 @@ function validateLongHorizonAgentHandle(
   if (longHorizonOwner && longHorizonOwner.id !== excludeId) {
     return `An agent with handle "${handle}" already exists in this Space`;
   }
-  const workerOwner = deps.spaceAgentManager
-    ?.listBySpaceId(spaceId)
-    .find((agent) => agent.handle === handle && agent.id !== excludeId);
-  if (workerOwner) return `An agent with handle "${handle}" already exists in this Space`;
   return null;
 }
 
@@ -338,10 +296,6 @@ function reservedLongHorizonHandles(
       .listBySpaceId(spaceId)
       .filter((agent) => agent.id !== excludeId)
       .map((agent) => agent.handle),
-    ...(deps.spaceAgentManager
-      ?.listBySpaceId(spaceId)
-      .filter((agent) => agent.id !== excludeId)
-      .map((agent) => agent.handle) ?? []),
     ...RESERVED_SPACE_AGENT_HANDLES,
   ];
 }
@@ -429,12 +383,6 @@ function assertUnifiedAgentStatus(status: string | undefined): void {
       `Invalid agent status: ${status}. Valid statuses: ${UNIFIED_AGENT_STATUSES.join(', ')}`
     );
   }
-}
-
-function mapUnifiedStatusToWorkerStatus(status: string): UpdateSpaceWorkerAgentParams['status'] {
-  if (status === 'paused' || status === 'disabled') return 'paused';
-  if (status === 'archived') return 'archived';
-  return 'active';
 }
 
 function resolveUnifiedTemplateKey(
@@ -558,82 +506,34 @@ function buildUnifiedAgentCreate(
   };
 }
 
-async function updateUnifiedAgentTwin(
-  deps: UnifiedSpaceAgentMethodDeps,
-  agentId: string,
-  spaceId: string,
-  params: UnifiedAgentUpdateInput
-): Promise<SpaceWorkerAgent> {
-  const displayName = params.displayName !== undefined ? params.displayName : params.name;
-  if (displayName !== undefined) {
-    ensureWorkerDisplayNameAvailable(deps, spaceId, displayName, agentId);
-  }
-  if (params.autonomyLevel !== undefined) {
-    throw new Error('autonomyLevel cannot be set on a migrated worker agent');
-  }
-  const customPrompt =
-    params.customPrompt !== undefined
-      ? params.customPrompt
-      : params.instructions !== undefined
-        ? params.instructions || null
-        : undefined;
-  const result = await deps.spaceAgentManager!.update(agentId, {
-    name: displayName,
-    handle: params.handle,
-    status: params.status === undefined ? undefined : mapUnifiedStatusToWorkerStatus(params.status),
-    description: params.description,
-    model: params.model,
-    thinkingLevel: params.thinkingLevel as UpdateSpaceWorkerAgentParams['thinkingLevel'],
-    provider: params.provider,
-    customPrompt,
-    tools:
-      params.tools !== undefined
-        ? params.tools
-        : params.toolPermissions !== undefined
-          ? (toolPermissionsToolsList(params.toolPermissions) ?? [])
-          : undefined,
-    settingSources: params.settingSources,
-    templateName: resolveUnifiedTemplateKey(params) as UpdateSpaceWorkerAgentParams['templateName'],
-    templateHash: params.templateHash,
-    modelPool: params.modelPool,
-  });
-  if (!result.ok) throw new Error(result.error);
-  return result.value;
-}
-
 interface DeleteUnifiedAgentCtx extends UnifiedSpaceAgentMethodDeps {
   params: { id?: string; agentId?: string; spaceId?: string };
   agentId: string;
   existing: SpaceLongHorizonAgent | null;
-  workerTwin: SpaceWorkerAgent | null;
   spaceId: string;
-  routeTwin: boolean;
 }
 
 function deleteResolveTargetStage(ctx: DeleteUnifiedAgentCtx): DeleteUnifiedAgentCtx {
   const agentId = ctx.params.id ?? ctx.params.agentId;
   if (!agentId) throw new Error('id is required');
   const existing = ctx.repo.getById(agentId);
-  const workerTwin = ctx.spaceAgentManager?.getById(agentId) ?? null;
-  if (!existing && !workerTwin) throw new Error(`Agent not found: ${agentId}`);
-  const spaceId = existing?.spaceId ?? workerTwin!.spaceId;
+  if (!existing) throw new Error(`Agent not found: ${agentId}`);
+  const { spaceId } = existing;
   if (ctx.params.spaceId && spaceId !== ctx.params.spaceId) {
     throw new Error(`Agent ${agentId} does not belong to space ${ctx.params.spaceId}`);
   }
-  const isMigratedMirror = existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY;
-  const routeTwin =
-    !!workerTwin && workerTwin.spaceId === spaceId && (!existing || isMigratedMirror);
-  return { ...ctx, agentId, existing, workerTwin, spaceId, routeTwin };
+  return { ...ctx, agentId, existing, spaceId };
 }
 
 function deleteAuthorizeStage(ctx: DeleteUnifiedAgentCtx): DeleteUnifiedAgentCtx {
-  const { agentId, existing, workerTwin, spaceId } = ctx;
-  const referenceCheck = ctx.spaceAgentManager?.isAgentReferenced(agentId);
-  if (referenceCheck?.referenced) {
-    const displayName = existing?.displayName ?? workerTwin?.name ?? agentId;
+  const { agentId, existing, spaceId } = ctx;
+  const referencingWorkflows = ctx.workflowRepo.getWorkflowsReferencingAgent(agentId);
+  if (referencingWorkflows.length > 0) {
+    const displayName = existing?.displayName ?? agentId;
+    const workflowNames = referencingWorkflows.map((wf) => wf.name);
     throw new Error(
       `Cannot delete agent "${displayName}" - it is referenced by workflow nodes` +
-        referenceCheck.workflowNames.map((n) => ` (Workflow: ${n})`).join('')
+        workflowNames.map((n) => ` (Workflow: ${n})`).join('')
     );
   }
   const coordinatorId =
@@ -647,20 +547,7 @@ function deleteAuthorizeStage(ctx: DeleteUnifiedAgentCtx): DeleteUnifiedAgentCtx
 }
 
 function deleteApplyStage(ctx: DeleteUnifiedAgentCtx): DeleteUnifiedAgentCtx {
-  const { agentId, existing, spaceId, routeTwin } = ctx;
-  if (routeTwin) {
-    const mirrorBefore = existing != null;
-    const result = ctx.spaceAgentManager!.delete(agentId);
-    if (!result.ok) {
-      const detailsMsg = result.details?.length ? `\n${result.details.join('\n')}` : '';
-      throw new Error(`${result.error}${detailsMsg}`);
-    }
-    const mirrorStillExists = ctx.repo.getById(agentId) != null;
-    if (mirrorBefore && !mirrorStillExists) {
-      ctx.runtimeService?.removeLongHorizonAgentSubscriptions(spaceId, agentId);
-    }
-    return ctx;
-  }
+  const { agentId, spaceId } = ctx;
   ctx.repo.delete(agentId);
   ctx.runtimeService?.removeLongHorizonAgentSubscriptions(spaceId, agentId);
   return ctx;
@@ -683,11 +570,9 @@ interface UpdateUnifiedAgentCtx extends UnifiedSpaceAgentMethodDeps {
   params: UnifiedAgentUpdateInput;
   agentId: string;
   existing: SpaceLongHorizonAgent | null;
-  workerTwin: SpaceWorkerAgent | null;
   spaceId: string;
-  routeTwin: boolean;
   unifiedAfter: SpaceLongHorizonAgent | null;
-  agent: SpaceLongHorizonAgent | SpaceWorkerAgent | null;
+  agent: SpaceLongHorizonAgent | null;
 }
 
 function updateResolveTargetStage(ctx: UpdateUnifiedAgentCtx): UpdateUnifiedAgentCtx {
@@ -695,15 +580,10 @@ function updateResolveTargetStage(ctx: UpdateUnifiedAgentCtx): UpdateUnifiedAgen
   const agentId = params.id ?? params.agentId;
   if (!agentId) throw new Error('id is required');
   const existing = ctx.repo.getById(agentId);
-  const workerTwin = ctx.spaceAgentManager?.getById(agentId) ?? null;
-  if (!existing && !workerTwin) throw new Error(`Agent not found: ${agentId}`);
-  const spaceId = existing?.spaceId ?? workerTwin!.spaceId;
-  if (params.spaceId && spaceId !== params.spaceId)
+  if (!existing) throw new Error(`Agent not found: ${agentId}`);
+  if (params.spaceId && existing.spaceId !== params.spaceId)
     throw new Error(`Agent ${agentId} does not belong to space ${params.spaceId}`);
-  const isMigratedMirror = existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY;
-  const routeTwin =
-    !!workerTwin && workerTwin.spaceId === spaceId && (!existing || isMigratedMirror);
-  return { ...ctx, agentId, existing, workerTwin, spaceId, routeTwin };
+  return { ...ctx, agentId, existing, spaceId: existing.spaceId };
 }
 
 function updateValidateRequestStage(ctx: UpdateUnifiedAgentCtx): UpdateUnifiedAgentCtx {
@@ -727,28 +607,23 @@ function updateAuthorizeStage(ctx: UpdateUnifiedAgentCtx): UpdateUnifiedAgentCtx
   return ctx;
 }
 
-async function updateApplyTwinStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
-  if (!ctx.routeTwin) return ctx;
-  const { params, agentId, spaceId } = ctx;
-  if (params.status === 'disabled') {
-    throw new Error('Agent status "disabled" cannot be set on a migrated worker agent');
-  }
-  const updated = await updateUnifiedAgentTwin(ctx, agentId, spaceId, params);
-  if (params.provider === null) {
-    await ctx.runtimeService?.clearLongTermAgentSessionProvider(spaceId, agentId);
-  }
-  if (ctx.runtimeService) {
-    const refresh = ctx.runtimeService.refreshLongHorizonAgentSubscriptions(spaceId, agentId);
-    if (!refresh.success) throw new Error(refresh.error ?? 'Failed to refresh subscriptions');
-  }
-  const unifiedAfter = ctx.repo.getById(agentId);
-  return { ...ctx, unifiedAfter, agent: unifiedAfter ?? updated };
-}
-
-async function updateApplyNativeStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
-  if (ctx.routeTwin) return ctx;
+async function updateApplyStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
   const { params, agentId, existing } = ctx;
   if (!existing) throw new Error(`Agent not found: ${agentId}`);
+  const resolvedTemplateKey = resolveUnifiedTemplateKey(params);
+  if (params.status === 'disabled' && existing.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
+    throw new Error('Agent status "disabled" cannot be set on a migrated worker agent');
+  }
+  if (params.autonomyLevel !== undefined && existing.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
+    throw new Error('autonomyLevel cannot be set on a migrated worker agent');
+  }
+  if (
+    existing.templateKey === MIGRATED_WORKER_TEMPLATE_KEY &&
+    resolvedTemplateKey !== undefined &&
+    resolvedTemplateKey !== MIGRATED_WORKER_TEMPLATE_KEY
+  ) {
+    throw new Error('Template key cannot be changed on a migrated worker agent');
+  }
   const displayName = params.displayName !== undefined ? params.displayName : params.name;
   const handle =
     params.handle === undefined
@@ -826,8 +701,7 @@ const runUpdateUnifiedSpaceAgent = (superpipe({})('update-unified-space-agent') 
   .pipe(updateResolveTargetStage, 'ctx', 'ctx')
   .pipe(updateValidateRequestStage, 'ctx', 'ctx')
   .pipe(updateAuthorizeStage, 'ctx', 'ctx')
-  .pipe(updateApplyTwinStage, 'ctx', 'ctx')
-  .pipe(updateApplyNativeStage, 'ctx', 'ctx')
+  .pipe(updateApplyStage, 'ctx', 'ctx')
   .pipe(updatePublishStage, 'ctx', 'ctx')
   .endAsync('ctx') as (ctx: UpdateUnifiedAgentCtx) => Promise<UpdateUnifiedAgentCtx>;
 
@@ -900,9 +774,7 @@ export function registerUnifiedSpaceAgentMethods(
       params: data as UnifiedAgentUpdateInput,
       agentId: '',
       existing: null,
-      workerTwin: null,
       spaceId: '',
-      routeTwin: false,
       unifiedAfter: null,
       agent: null,
     });
@@ -915,9 +787,7 @@ export function registerUnifiedSpaceAgentMethods(
       params: data as { id?: string; agentId?: string; spaceId?: string },
       agentId: '',
       existing: null,
-      workerTwin: null,
       spaceId: '',
-      routeTwin: false,
     });
     return { success: true };
   });
@@ -1114,10 +984,10 @@ export function registerUnifiedSpaceAgentMethods(
 export function setupSpaceAgentHandlers(
   messageHub: MessageHub,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
-  spaceAgentManager: SpaceAgentManager,
   spaceManager: SpaceManager,
   db: Database,
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
+  workflowRepo: Pick<SpaceWorkflowRepository, 'getWorkflowsReferencingAgent'>,
   runtimeService?: UnifiedSpaceAgentRuntimeService,
   templateManager?: SpaceAgentTemplateManager
 ): void {
@@ -1125,7 +995,7 @@ export function setupSpaceAgentHandlers(
     spaceManager,
     repo: longHorizonAgentRepo,
     templateManager,
-    spaceAgentManager,
+    workflowRepo,
     runtimeService,
     internalEventBus,
   };

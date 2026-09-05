@@ -24,7 +24,6 @@ import {
 import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url.ts';
 import '../runtime/connectors/production.ts';
 import { slugify, validateSlug } from '../slug.ts';
-import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
 
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
@@ -42,7 +41,6 @@ export interface SpaceAgentLookup {
 }
 
 export function createSpaceAgentLookup(
-  spaceAgentRepo: Pick<SpaceAgentRepository, 'getById'>,
   longHorizonAgentRepo: Pick<SpaceLongHorizonAgentRepository, 'getById' | 'getCoordinator'>
 ): SpaceAgentLookup {
   return {
@@ -53,16 +51,10 @@ export function createSpaceAgentLookup(
         if (coordinator && unified.id === coordinator.id) {
           return null;
         }
-        if (unified.templateKey === 'migration.legacy_space_agent') {
-          const legacyTwin = spaceAgentRepo.getById(id);
-          if (!legacyTwin || legacyTwin.spaceId !== spaceId) return null;
-        }
         if (!isRunnableUnifiedAgent(unified)) return null;
         return { id: unified.id, name: unified.displayName };
       }
-      const worker = spaceAgentRepo.getById(id);
-      if (!worker || worker.spaceId !== spaceId) return null;
-      return { id: worker.id, name: worker.name };
+      return null;
     },
   };
 }

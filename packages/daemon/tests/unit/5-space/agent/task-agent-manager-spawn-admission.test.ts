@@ -87,11 +87,21 @@ function fakeCustomAgent() {
   return {
     id: AGENT_ID,
     spaceId: SPACE_ID,
-    name: AGENT_NAME,
-    customPrompt: 'do the pinned work',
+    handle: AGENT_NAME,
+    displayName: AGENT_NAME,
+    templateKey: 'migration.legacy_space_agent',
+    status: 'active',
+    sessionId: null,
+    instructions: 'do the pinned work',
+    autonomyLevel: null,
     model: 'm',
-    tools: [],
-  };
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
+    createdAt: 1,
+    updatedAt: 1,
+  } as SpaceLongHorizonAgent;
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -111,7 +121,6 @@ interface SpawnHarnessOptions {
   kickoff?: boolean;
   worktreeGate?: Promise<{ path: string }>;
   missingAgent?: boolean;
-  orphanMirrorAgent?: boolean;
   failEnsure?: boolean;
   bindCasOutcome?: 'won' | 'superseded';
   rebindCasOutcome?: 'won' | 'superseded';
@@ -212,37 +221,9 @@ function makeSpawnHarness(options: SpawnHarnessOptions = {}): SpawnHarness {
       },
     },
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
-    spaceAgentManager: {
-      getById: (id: string) =>
-        options.missingAgent || id !== AGENT_ID ? undefined : fakeCustomAgent(),
+    longHorizonAgentRepo: {
+      getById: (id: string) => (options.missingAgent || id !== AGENT_ID ? null : fakeCustomAgent()),
     },
-    ...(options.orphanMirrorAgent
-      ? {
-          longHorizonAgentRepo: {
-            getById: (id: string) =>
-              id === AGENT_ID
-                ? ({
-                    id: AGENT_ID,
-                    spaceId: SPACE_ID,
-                    handle: AGENT_NAME,
-                    displayName: AGENT_NAME,
-                    templateKey: 'migration.legacy_space_agent',
-                    status: 'active',
-                    sessionId: null,
-                    instructions: 'work',
-                    autonomyLevel: null,
-                    model: null,
-                    thinkingLevel: null,
-                    provider: null,
-                    settingSources: null,
-                    toolPermissions: {},
-                    createdAt: 1,
-                    updatedAt: 1,
-                  } as SpaceLongHorizonAgent)
-                : null,
-          },
-        }
-      : {}),
     ...(options.worktreeGate
       ? {
           worktreeManager: {
@@ -600,13 +581,6 @@ describe('spawnWorkflowNodeAgentForExecution — concurrent-spawn waiter', () =>
       'Concurrent spawn for execution exec-1 failed before session was created'
     );
     expect(h.cancels).toEqual([]);
-    expect(h.order.filter((step) => step === 'createSubSession')).toHaveLength(0);
-  });
-
-  test('an orphan migration mirror without a sibling worker is not a runnable slot', async () => {
-    const h = makeSpawnHarness({ kickoff: false, orphanMirrorAgent: true, missingAgent: true });
-
-    await expect(h.spawn()).rejects.toThrow('Agent not found: agent-coder (task: task-1237)');
     expect(h.order.filter((step) => step === 'createSubSession')).toHaveLength(0);
   });
 

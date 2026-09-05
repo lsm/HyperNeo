@@ -3,7 +3,7 @@ import type { Session, Space, SpaceLongHorizonAgent, SpaceWorkerAgent } from '@h
 import type { ActorRef } from '../../../../../messaging/src/types.ts';
 import type { SessionManager } from '../../../../src/lib/session-manager.ts';
 import { buildAgentSessionConfig } from '../../../../src/lib/session-resolution/agent-session-config';
-import type { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/space/agents/worker-long-horizon-mapper.ts';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
@@ -81,7 +81,6 @@ function makeWorker(id: string, overrides: Partial<SpaceWorkerAgent> = {}): Spac
 
 function buildService(overrides: {
   sessionManager: SessionManager;
-  spaceAgentManager?: SpaceAgentManager;
   longHorizonAgentRepo?: SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
   space?: Space;
 }): SpaceRuntimeService {
@@ -92,7 +91,6 @@ function buildService(overrides: {
       getSpace: mock(async () => space),
       listSpaces: mock(async () => []),
     } as unknown as SpaceManager,
-    spaceAgentManager: {} as SpaceAgentManager,
     spaceWorkflowManager: {} as SpaceWorkflowManager,
     workflowRunRepo: {} as SpaceWorkflowRunRepository,
     taskRepo: {} as SpaceTaskRepository,
@@ -102,7 +100,6 @@ function buildService(overrides: {
     } as unknown as NodeExecutionRepository,
     tickIntervalMs: 60_000,
     sessionManager: overrides.sessionManager,
-    ...(overrides.spaceAgentManager ? { spaceAgentManager: overrides.spaceAgentManager } : {}),
     ...(overrides.longHorizonAgentRepo
       ? { longHorizonAgentRepo: overrides.longHorizonAgentRepo }
       : {}),
@@ -181,12 +178,23 @@ describe('buildAgentSessionConfig — worker arm equivalence', () => {
         createdConfigs.push(opts.config);
       }),
     } as unknown as SessionManager;
+    const mirror = makeAgent(worker.id, {
+      handle: worker.handle,
+      displayName: worker.name,
+      templateKey: MIGRATED_WORKER_TEMPLATE_KEY,
+      instructions: worker.customPrompt ?? '',
+      model: worker.model ?? null,
+      thinkingLevel: worker.thinkingLevel ?? null,
+      provider: worker.provider ?? null,
+      description: worker.description ?? null,
+      settingSources: worker.settingSources ?? null,
+      toolPermissions: worker.tools && worker.tools.length > 0 ? { tools: [...worker.tools] } : {},
+    });
     const svc = buildService({
       sessionManager,
       space: options.space,
-      spaceAgentManager: { getById: mock(() => worker) } as unknown as SpaceAgentManager,
       longHorizonAgentRepo: {
-        getById: mock(() => null),
+        getById: mock(() => mirror),
         getCoordinator: mock(() => null),
         update: mock(() => ({})),
       } as unknown as SpaceLongHorizonAgentRepository,

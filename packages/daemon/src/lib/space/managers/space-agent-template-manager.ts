@@ -13,12 +13,12 @@ import type {
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import { getLongHorizonAgentTemplates } from '../agents/long-horizon-agent-templates.ts';
 import { validateSlug } from '../slug.ts';
+import type { SpaceAgentResult } from '../agents/agent-validation.ts';
 import {
-  SpaceAgentResult,
   validateAgentModel,
   validateAgentModelPool,
   validateSpaceAgentTools,
-} from './space-agent-manager.ts';
+} from '../agents/agent-validation.ts';
 
 type BuiltInTemplateSource = () => SpaceAgentTemplate[];
 

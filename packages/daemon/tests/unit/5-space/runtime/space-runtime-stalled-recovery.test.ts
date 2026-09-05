@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeExecutionStatus, SpaceWorkflow } from '@hyperneo/shared';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
-import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
@@ -19,7 +18,7 @@ import {
   PendingAgentMessageRepository,
 } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository.ts';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -70,10 +69,6 @@ function seedSpaceRow(db: BunDatabase, spaceId: string, workspacePath = '/tmp/ws
 }
 
 function seedAgentRow(db: BunDatabase, agentId: string, spaceId: string): void {
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
-  ).run(agentId, spaceId, `Agent ${agentId}`, Date.now(), Date.now());
   seedUnifiedAgentMirror(db, { id: agentId, spaceId, name: `Agent ${agentId}` });
 }
 
@@ -118,7 +113,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 
   let workflowRunRepo: SpaceWorkflowRunRepository;
   let taskRepo: SpaceTaskRepository;
-  let agentManager: SpaceAgentManager;
+  let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   let workflowManager: SpaceWorkflowManager;
   let spaceManager: SpaceManager;
   let nodeExecutionRepo: NodeExecutionRepository;
@@ -149,7 +144,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
     return new SpaceRuntime({
       db,
       spaceManager,
-      spaceAgentManager: agentManager,
+      longHorizonAgentRepo,
       spaceWorkflowManager: workflowManager,
       workflowRunRepo,
       taskRepo,
@@ -202,8 +197,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
 
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     taskRepo = new SpaceTaskRepository(db);
-    const agentRepo = new SpaceAgentRepository(db);
-    agentManager = new SpaceAgentManager(agentRepo);
+    longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
     const workflowRepo = new SpaceWorkflowRepository(db);
     workflowManager = new SpaceWorkflowManager(workflowRepo);
     spaceManager = new SpaceManager(db);
@@ -2318,7 +2312,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Coding', agentId: AGENT },
         { id: STEP_B, name: 'Review', agentId: STALE_AGENT },
       ]);
-      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(STALE_AGENT);
+      db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(STALE_AGENT);
       const { run, task } = seedStaleRun(STEP_A, STEP_B, workflow.id);
 
       await makeRuntime({
@@ -2350,7 +2344,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: 'stale-a', name: 'Coding', agentId: GOOD_AGENT },
         { id: 'stale-b', name: 'Review', agentId: STALE_AGENT },
       ]);
-      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(STALE_AGENT);
+      db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(STALE_AGENT);
       const staleCtx = seedStaleRun('stale-a', 'stale-b', staleWf.id);
 
       const goodWf = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -2389,7 +2383,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         { id: STEP_A, name: 'Coding', agentId: AGENT },
         { id: STEP_B, name: 'Review', agentId: STALE_AGENT },
       ]);
-      db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(STALE_AGENT);
+      db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(STALE_AGENT);
       const { run } = seedStaleRun(STEP_A, STEP_B, workflow.id);
 
       const rt = makeRuntime({ pendingMessageRepo: new PendingAgentMessageRepository(db) });
