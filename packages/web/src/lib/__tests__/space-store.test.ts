@@ -1,9 +1,11 @@
 import type {
   NodeExecution,
   Space,
+  SpaceAgentTemplate,
   SpaceGoal,
   SpaceGoalEvent,
   SpaceLongHorizonAgent,
+  SpaceLongHorizonAgentTemplate,
   SpaceTask,
   SpaceTaskActivityMember,
   SpaceWorkflow,
@@ -11,6 +13,7 @@ import type {
 } from '@hyperneo/shared';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { connectionManager } from '../connection-manager.ts';
 
 const currentSpaceIdSignal = signal<string | null>(null);
 const currentSpaceCanonicalIdSignal = signal<string | null>(null);
@@ -138,6 +141,47 @@ function makeRun(id: string, status = 'pending'): SpaceWorkflowRun {
   };
 }
 
+function makeAgentTemplate(overrides: Partial<SpaceAgentTemplate> = {}): SpaceAgentTemplate {
+  return {
+    key: 'custom.template',
+    handle: 'custom',
+    displayName: 'Custom Template',
+    description: 'A custom template',
+    instructions: 'Do custom things',
+    suggestedAutonomyLevel: 2,
+    model: null,
+    provider: null,
+    modelPool: null,
+    thinkingLevel: null,
+    settingSources: null,
+    tools: null,
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  };
+}
+
+function makeLongHorizonAgentTemplate(
+  overrides: Partial<SpaceLongHorizonAgentTemplate> = {}
+): SpaceLongHorizonAgentTemplate {
+  return {
+    key: 'builtin.default',
+    handle: 'builtin',
+    displayName: 'Built-in Template',
+    description: 'A built-in template',
+    instructions: 'Do built-in things',
+    suggestedAutonomyLevel: 2,
+    suggestedEventSubscriptions: [],
+    reminderDefaults: [],
+    ownershipPatterns: [],
+    toolPermissions: {},
+    model: null,
+    provider: null,
+    thinkingLevel: null,
+    ...overrides,
+  };
+}
+
 function makeLongHorizonAgent(id: string): SpaceLongHorizonAgent {
   return {
     id,
@@ -236,6 +280,24 @@ function makeMockHub() {
       }
       if (method === 'spaceAgent.list') return { agents: [] };
       if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') return { templates: [] };
+      if (method === 'spaceAgent.createTemplate') {
+        return {
+          template: makeAgentTemplate({
+            key: params?.key as string,
+            handle: params?.handle as string,
+          }),
+        };
+      }
+      if (method === 'spaceAgent.updateTemplate') {
+        return {
+          template: makeAgentTemplate({
+            key: params?.key as string,
+            displayName: params?.displayName as string | undefined,
+          }),
+        };
+      }
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
       if (method === 'spaceWorkflow.list') return { workflows: [] };
       if (method === 'space.pause') return { ...makeSpace(), paused: true };
       if (method === 'space.resume') return { ...makeSpace(), paused: false };
@@ -1396,6 +1458,743 @@ describe('SpaceStore — spaceAgent events', () => {
     handler?.({ sessionId: 'global', spaceId: 'space-99', agent: makeLongHorizonAgent('a1') });
 
     expect(spaceStore.agents.value.length).toBe(0);
+  });
+});
+
+describe('SpaceStore — agent template CRUD', () => {
+  beforeEach(resetStore);
+  afterEach(() => vi.clearAllMocks());
+
+  it('fetchTemplates populates agentTemplates from spaceAgent.listTemplates', async () => {
+    await spaceStore.selectSpace('space-1');
+    const fetched = makeAgentTemplate({ key: 'custom.test', handle: 'custom' });
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listTemplates') return { templates: [fetched] };
+      return {};
+    });
+
+    const templates = await spaceStore.fetchTemplates();
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listTemplates', {});
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['custom.test']);
+    expect(templates[0].key).toBe('custom.test');
+    expect(templates[0].handle).toBe('custom');
+    expect(templates[0].toolPermissions).toEqual({});
+  });
+
+  it('fetchTemplates converts tools to toolPermissions on the signal', async () => {
+    await spaceStore.selectSpace('space-1');
+    const fetched = makeAgentTemplate({ key: 'with-tools', tools: ['Read', 'Write'] });
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listTemplates') return { templates: [fetched] };
+      return {};
+    });
+
+    await spaceStore.fetchTemplates();
+
+    expect(spaceStore.agentTemplates.value[0].toolPermissions).toEqual({
+      tools: ['Read', 'Write'],
+    });
+  });
+
+  it('fetchTemplates throws when no space is selected', async () => {
+    await expect(spaceStore.fetchTemplates()).rejects.toThrow('No space selected');
+    expect(mockHub.request).not.toHaveBeenCalledWith(
+      'spaceAgent.listBuiltInTemplates',
+      expect.anything()
+    );
+    expect(mockHub.request).not.toHaveBeenCalledWith('spaceAgent.listTemplates', {});
+  });
+
+  it('fetchTemplates rejects when built-in metadata loading fails on a cold map', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'keep' })];
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') throw new Error('metadata unavailable');
+      if (method === 'spaceAgent.listTemplates') {
+        return { templates: [makeAgentTemplate({ key: 'fetched' })] };
+      }
+      return {};
+    });
+
+    await expect(spaceStore.fetchTemplates()).rejects.toThrow('metadata unavailable');
+
+    expect(mockHub.request).not.toHaveBeenCalledWith('spaceAgent.listTemplates', {});
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['keep']);
+  });
+
+  it('fetchTemplates gates on space before acquiring the hub', async () => {
+    const getHubMock = vi.mocked(connectionManager.getHub);
+    getHubMock.mockClear();
+
+    await expect(spaceStore.fetchTemplates()).rejects.toThrow('No space selected');
+
+    expect(getHubMock).not.toHaveBeenCalled();
+  });
+
+  it('refresh failure keeps the built-in map usable by the delete fallback', async () => {
+    await spaceStore.selectSpace('space-1');
+    const richBuiltIn = makeLongHorizonAgentTemplate({
+      key: 'builtin.default',
+      displayName: 'Built-in Template',
+      toolPermissions: { tools: ['Read'] },
+    });
+    const shadow = makeAgentTemplate({
+      key: 'builtin.default',
+      displayName: 'Shadow',
+      createdAt: 5,
+      updatedAt: 5,
+    });
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      if (method === 'spaceAgent.listTemplates') return { templates: [shadow] };
+      return {};
+    });
+    await spaceStore.fetchTemplates();
+    expect(spaceStore.agentTemplates.value.map((t) => t.displayName)).toEqual(['Shadow']);
+
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
+      if (method === 'spaceAgent.listBuiltInTemplates') throw new Error('transient outage');
+      if (method === 'spaceAgent.listTemplates') throw new Error('transient outage');
+      return {};
+    });
+    await spaceStore.refresh();
+
+    await spaceStore.deleteTemplate('builtin.default');
+
+    const templates = spaceStore.agentTemplates.value;
+    expect(templates).toHaveLength(1);
+    expect(templates[0].displayName).toBe('Built-in Template');
+    expect(templates[0].toolPermissions).toEqual({ tools: ['Read'] });
+  });
+
+  it('fetchTemplates discards results after the selected space changes', async () => {
+    await spaceStore.selectSpace('space-1');
+    let resolveList: (templates: SpaceAgentTemplate[]) => void = () => {};
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') {
+        return new Promise((resolve) => {
+          resolveList = (templates) => resolve({ templates });
+        });
+      }
+      if (method === 'space.overview') {
+        return {
+          space: makeSpace('space-2'),
+          tasks: [],
+          workflowRuns: [],
+          sessions: [],
+        };
+      }
+      return {};
+    });
+
+    const pending = spaceStore.fetchTemplates();
+    await spaceStore.selectSpace('space-2');
+    resolveList([makeAgentTemplate({ key: 'stale' })]);
+    await pending;
+
+    expect(spaceStore.agentTemplates.value).toEqual([]);
+  });
+
+  it('refresh keeps loaded custom templates in agentTemplates', async () => {
+    await spaceStore.selectSpace('space-1');
+    const richBuiltIn = makeLongHorizonAgentTemplate({ key: 'builtin.default' });
+    const custom = makeAgentTemplate({ key: 'custom.test', createdAt: 5, updatedAt: 5 });
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      if (method === 'spaceAgent.listTemplates') return { templates: [custom] };
+      return {};
+    });
+
+    await spaceStore.fetchTemplates();
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['custom.test']);
+
+    await spaceStore.refresh();
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['custom.test']);
+  });
+
+  it('fetchTemplates resolves flattened built-in metadata via listBuiltInTemplates', async () => {
+    await spaceStore.selectSpace('space-1');
+    const richBuiltIn = makeLongHorizonAgentTemplate({
+      key: 'builtin.default',
+      suggestedEventSubscriptions: [{ source: 'space', topic: 'task.*', filter: {} }],
+      reminderDefaults: [
+        {
+          title: 'r',
+          body: 'b',
+          triggerType: 'cron',
+          cronExpression: '0 * * * *',
+          timezone: 'UTC',
+        },
+      ],
+      ownershipPatterns: [
+        { target: 'goal', relationship: 'manager', description: 'manages goals' },
+      ],
+      toolPermissions: { tools: ['Read'] },
+    });
+    const flattened = makeAgentTemplate({
+      key: 'builtin.default',
+      displayName: 'Renamed',
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      if (method === 'spaceAgent.listTemplates') return { templates: [flattened] };
+      return {};
+    });
+
+    const templates = await spaceStore.fetchTemplates();
+
+    expect(templates).toHaveLength(1);
+    expect(templates[0].displayName).toBe('Renamed');
+    expect(templates[0].suggestedEventSubscriptions).toEqual([
+      { source: 'space', topic: 'task.*', filter: {} },
+    ]);
+    expect(templates[0].reminderDefaults).toEqual(richBuiltIn.reminderDefaults);
+    expect(templates[0].ownershipPatterns).toEqual(richBuiltIn.ownershipPatterns);
+    expect(templates[0].toolPermissions).toEqual({ tools: ['Read'] });
+  });
+
+  it('fetchTemplates gives custom overrides empty extras even when shadowing a built-in key', async () => {
+    await spaceStore.selectSpace('space-1');
+    const richBuiltIn = makeLongHorizonAgentTemplate({
+      key: 'builtin.default',
+      suggestedEventSubscriptions: [{ source: 'space', topic: 'task.*', filter: {} }],
+      toolPermissions: { tools: ['Read'] },
+    });
+    const shadow = makeAgentTemplate({
+      key: 'builtin.default',
+      displayName: 'Shadow',
+      createdAt: 5,
+      updatedAt: 5,
+      tools: null,
+    });
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      if (method === 'spaceAgent.listTemplates') return { templates: [shadow] };
+      return {};
+    });
+
+    const templates = await spaceStore.fetchTemplates();
+
+    expect(templates).toHaveLength(1);
+    expect(templates[0].displayName).toBe('Shadow');
+    expect(templates[0].suggestedEventSubscriptions).toEqual([]);
+    expect(templates[0].toolPermissions).toEqual({});
+  });
+
+  it('createTemplate invalidates a pending fetch snapshot', async () => {
+    await spaceStore.selectSpace('space-1');
+    let resolveList: (templates: SpaceAgentTemplate[]) => void = () => {};
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') {
+        return new Promise((resolve) => {
+          resolveList = (templates) => resolve({ templates });
+        });
+      }
+      if (method === 'spaceAgent.createTemplate') {
+        return { template: makeAgentTemplate({ key: 'new.custom', handle: 'new' }) };
+      }
+      return {};
+    });
+
+    const pending = spaceStore.fetchTemplates();
+    await spaceStore.createTemplate({ key: 'new.custom', handle: 'new', displayName: 'New' });
+    resolveList([makeAgentTemplate({ key: 'stale' })]);
+    await pending;
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['new.custom']);
+  });
+
+  it('deleteTemplate reconciles a reload invalidated by an overlapping mutation', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'gone' })];
+    const stalledList: {
+      resolve: ((templates: SpaceAgentTemplate[]) => void) | null;
+    } = { resolve: null };
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') {
+        return new Promise((resolve) => {
+          stalledList.resolve = (templates) => resolve({ templates });
+        });
+      }
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
+      if (method === 'spaceAgent.createTemplate') {
+        return { template: makeAgentTemplate({ key: 'new.custom', handle: 'new' }) };
+      }
+      return {};
+    });
+
+    const pendingDelete = spaceStore.deleteTemplate('gone');
+    await vi.waitFor(() => {
+      if (!stalledList.resolve) throw new Error('listTemplates not yet requested');
+    });
+    await spaceStore.createTemplate({ key: 'new.custom', handle: 'new', displayName: 'New' });
+    stalledList.resolve?.([]);
+    await pendingDelete;
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['new.custom']);
+  });
+
+  it('refresh failure keeps cached built-ins alongside session mutations', async () => {
+    await spaceStore.selectSpace('space-1');
+    const richBuiltIn = makeLongHorizonAgentTemplate({ key: 'builtin.default' });
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      if (method === 'spaceAgent.createTemplate') {
+        return { template: makeAgentTemplate({ key: 'new.custom', handle: 'new' }) };
+      }
+      return {};
+    });
+    await spaceStore.refresh();
+    await spaceStore.ensureConfigData();
+    await spaceStore.createTemplate({ key: 'new.custom', handle: 'new', displayName: 'New' });
+
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') throw new Error('transient outage');
+      return {};
+    });
+    await spaceStore.refresh();
+    await spaceStore.ensureConfigData();
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual([
+      'builtin.default',
+      'new.custom',
+    ]);
+  });
+
+  it('createTemplate before any fetch keeps built-ins and the mutation across a refresh', async () => {
+    await spaceStore.selectSpace('space-1');
+    const created = await spaceStore.createTemplate({
+      key: 'new.custom',
+      handle: 'new',
+      displayName: 'New Template',
+    });
+    expect(created.key).toBe('new.custom');
+
+    const richBuiltIn = makeLongHorizonAgentTemplate({ key: 'builtin.default' });
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      return {};
+    });
+    await spaceStore.refresh();
+    await spaceStore.ensureConfigData();
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual([
+      'builtin.default',
+      'new.custom',
+    ]);
+  });
+
+  it('deleteTemplate fallback preserves a newer same-key mutation', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.agentTemplates.value = [
+      makeLongHorizonAgentTemplate({ key: 'recreated', displayName: 'Old' }),
+    ];
+    const stalledList: {
+      resolve: ((templates: SpaceAgentTemplate[]) => void) | null;
+    } = { resolve: null };
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') {
+        return new Promise((resolve) => {
+          stalledList.resolve = (templates) => resolve({ templates });
+        });
+      }
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
+      if (method === 'spaceAgent.createTemplate') {
+        return {
+          template: makeAgentTemplate({
+            key: 'recreated',
+            displayName: 'Recreated',
+            createdAt: 9,
+            updatedAt: 9,
+          }),
+        };
+      }
+      return {};
+    });
+
+    const pendingDelete = spaceStore.deleteTemplate('recreated');
+    await vi.waitFor(() => {
+      if (!stalledList.resolve) throw new Error('listTemplates not yet requested');
+    });
+    await spaceStore.createTemplate({
+      key: 'recreated',
+      handle: 'recreated',
+      displayName: 'Recreated',
+    });
+    stalledList.resolve?.([]);
+    await pendingDelete;
+
+    const templates = spaceStore.agentTemplates.value;
+    expect(templates.map((t) => t.key)).toEqual(['recreated']);
+    expect(templates[0].displayName).toBe('Recreated');
+  });
+
+  it('ignores a mutation response superseded by a later delete', async () => {
+    await spaceStore.selectSpace('space-1');
+    const stalledCreate: {
+      resolve: ((template: SpaceAgentTemplate) => void) | null;
+    } = { resolve: null };
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') return { templates: [] };
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
+      if (method === 'spaceAgent.createTemplate') {
+        return new Promise((resolve) => {
+          stalledCreate.resolve = (template) => resolve({ template });
+        });
+      }
+      return {};
+    });
+
+    const pendingCreate = spaceStore.createTemplate({
+      key: 'doomed',
+      handle: 'doomed',
+      displayName: 'Doomed',
+    });
+    await vi.waitFor(() => {
+      if (!stalledCreate.resolve) throw new Error('createTemplate not yet requested');
+    });
+    await spaceStore.deleteTemplate('doomed');
+    stalledCreate.resolve?.(makeAgentTemplate({ key: 'doomed', handle: 'doomed' }));
+    const created = await pendingCreate;
+
+    expect(created.key).toBe('doomed');
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual([]);
+  });
+
+  it('refresh reloads the merged template list after it has been merged', async () => {
+    await spaceStore.selectSpace('space-1');
+    const customA = makeAgentTemplate({ key: 'custom.a', createdAt: 5, updatedAt: 5 });
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') return { templates: [customA] };
+      return {};
+    });
+    await spaceStore.fetchTemplates();
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['custom.a']);
+
+    const external = makeAgentTemplate({ key: 'custom.external', createdAt: 7, updatedAt: 7 });
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') return { templates: [customA, external] };
+      return {};
+    });
+    await spaceStore.refresh();
+    await spaceStore.ensureConfigData();
+
+    await vi.waitFor(() => {
+      if (spaceStore.agentTemplates.value.length < 2) {
+        throw new Error('merged template list not refreshed yet');
+      }
+    });
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual([
+      'custom.a',
+      'custom.external',
+    ]);
+  });
+
+  it('retains the tombstone when a reload exposes a shadowed built-in', async () => {
+    await spaceStore.selectSpace('space-1');
+    const richBuiltIn = makeLongHorizonAgentTemplate({ key: 'builtin.default' });
+    const flattened = makeAgentTemplate({
+      key: 'builtin.default',
+      displayName: 'Custom Template',
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    spaceStore.agentTemplates.value = [
+      makeLongHorizonAgentTemplate({ key: 'builtin.default', displayName: 'Shadow' }),
+    ];
+    const stalledCreate: {
+      resolve: ((template: SpaceAgentTemplate) => void) | null;
+    } = { resolve: null };
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      if (method === 'spaceAgent.listTemplates') return { templates: [flattened] };
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
+      if (method === 'spaceAgent.createTemplate') {
+        return new Promise((resolve) => {
+          stalledCreate.resolve = (template) => resolve({ template });
+        });
+      }
+      return {};
+    });
+
+    const pendingCreate = spaceStore.createTemplate({
+      key: 'builtin.default',
+      handle: 'shadow',
+      displayName: 'Shadow',
+    });
+    await vi.waitFor(() => {
+      if (!stalledCreate.resolve) throw new Error('createTemplate not yet requested');
+    });
+    await spaceStore.deleteTemplate('builtin.default');
+    stalledCreate.resolve?.(
+      makeAgentTemplate({
+        key: 'builtin.default',
+        displayName: 'Shadow',
+        createdAt: 5,
+        updatedAt: 5,
+      })
+    );
+    await pendingCreate;
+
+    const templates = spaceStore.agentTemplates.value;
+    expect(templates).toHaveLength(1);
+    expect(templates[0].displayName).toBe('Custom Template');
+  });
+
+  it('deleteTemplate fallback removes mutations that completed before the delete RPC', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'k' })];
+    const stalledDelete: { resolve: () => void } = { resolve: () => {} };
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') throw new Error('transient outage');
+      if (method === 'spaceAgent.deleteTemplate') {
+        return new Promise((resolve) => {
+          stalledDelete.resolve = () => resolve({ success: true });
+        });
+      }
+      if (method === 'spaceAgent.createTemplate') {
+        return { template: makeAgentTemplate({ key: 'k', handle: 'k' }) };
+      }
+      return {};
+    });
+
+    const pendingDelete = spaceStore.deleteTemplate('k');
+    await vi.waitFor(() => {
+      if (!stalledDelete.resolve) throw new Error('deleteTemplate not yet requested');
+    });
+    await spaceStore.createTemplate({ key: 'k', handle: 'k', displayName: 'Updated' });
+    stalledDelete.resolve();
+    await pendingDelete;
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual([]);
+  });
+
+  it('a mutation starting after the delete RPC survives the tombstone', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'k' })];
+    const stalledList: {
+      resolve: ((templates: SpaceAgentTemplate[]) => void) | null;
+    } = { resolve: null };
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') {
+        return new Promise((resolve) => {
+          stalledList.resolve = (templates) => resolve({ templates });
+        });
+      }
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
+      if (method === 'spaceAgent.createTemplate') {
+        return { template: makeAgentTemplate({ key: 'k', handle: 'k', displayName: 'Recreated' }) };
+      }
+      return {};
+    });
+
+    const pendingDelete = spaceStore.deleteTemplate('k');
+    await vi.waitFor(() => {
+      if (!stalledList.resolve) throw new Error('reload not yet requested');
+    });
+    await spaceStore.createTemplate({ key: 'k', handle: 'k', displayName: 'Recreated' });
+    stalledList.resolve?.([]);
+    await pendingDelete;
+
+    const templates = spaceStore.agentTemplates.value;
+    expect(templates.map((t) => t.key)).toEqual(['k']);
+    expect(templates[0].displayName).toBe('Recreated');
+  });
+
+  it('createTemplate calls spaceAgent.createTemplate and merges into agentTemplates', async () => {
+    spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'existing.default' })];
+    const modelPool = [
+      { model: 'claude-sonnet-5', provider: 'anthropic', maxConcurrent: 1, weight: 1 },
+    ];
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.createTemplate') {
+        return {
+          template: makeAgentTemplate({
+            key: 'new.custom',
+            handle: 'new',
+            modelPool,
+            settingSources: ['user'],
+          }),
+        };
+      }
+      return {};
+    });
+
+    const created = await spaceStore.createTemplate({
+      key: 'new.custom',
+      handle: 'new',
+      displayName: 'New Template',
+    });
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.createTemplate', {
+      key: 'new.custom',
+      handle: 'new',
+      displayName: 'New Template',
+    });
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toContain('new.custom');
+    expect(created.key).toBe('new.custom');
+    expect(created.modelPool).toEqual(modelPool);
+    expect(created.settingSources).toEqual(['user']);
+    expect(spaceStore.agentTemplates.value.find((t) => t.key === 'new.custom')?.modelPool).toEqual(
+      modelPool
+    );
+  });
+
+  it('updateTemplate calls spaceAgent.updateTemplate and merges into agentTemplates', async () => {
+    spaceStore.agentTemplates.value = [
+      makeLongHorizonAgentTemplate({ key: 'custom.test', displayName: 'Old' }),
+    ];
+
+    const updated = await spaceStore.updateTemplate('custom.test', { displayName: 'Updated' });
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.updateTemplate', {
+      key: 'custom.test',
+      displayName: 'Updated',
+    });
+    expect(spaceStore.agentTemplates.value.find((t) => t.key === 'custom.test')?.displayName).toBe(
+      'Updated'
+    );
+    expect(updated?.key).toBe('custom.test');
+  });
+
+  it('updateTemplate honors an explicit empty tools value', async () => {
+    spaceStore.agentTemplates.value = [
+      makeLongHorizonAgentTemplate({ key: 'custom.test', toolPermissions: { tools: ['Read'] } }),
+    ];
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.updateTemplate') {
+        return { template: makeAgentTemplate({ key: 'custom.test', tools: null }) };
+      }
+      return {};
+    });
+
+    const updated = await spaceStore.updateTemplate('custom.test', { displayName: 'X' });
+
+    expect(updated?.toolPermissions).toEqual({});
+    expect(
+      spaceStore.agentTemplates.value.find((t) => t.key === 'custom.test')?.toolPermissions
+    ).toEqual({});
+  });
+
+  it('updateTemplate returns null when the RPC returns no template', async () => {
+    spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'keep' })];
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.updateTemplate') return { template: null };
+      return {};
+    });
+
+    const updated = await spaceStore.updateTemplate('missing', { displayName: 'X' });
+
+    expect(updated).toBeNull();
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['keep']);
+  });
+
+  it('deleteTemplate calls spaceAgent.deleteTemplate and refetches the list', async () => {
+    await spaceStore.selectSpace('space-1');
+    let list = [makeAgentTemplate({ key: 'keep' }), makeAgentTemplate({ key: 'delete-me' })];
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.deleteTemplate') {
+        list = list.filter((t) => t.key !== 'delete-me');
+        return { success: true };
+      }
+      if (method === 'spaceAgent.listTemplates') return { templates: list };
+      return {};
+    });
+
+    await spaceStore.deleteTemplate('delete-me');
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.deleteTemplate', {
+      key: 'delete-me',
+    });
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['keep']);
+  });
+
+  it('deleteTemplate restores a shadowed built-in via refetch', async () => {
+    await spaceStore.selectSpace('space-1');
+    const richBuiltIn = makeLongHorizonAgentTemplate({
+      key: 'builtin.default',
+      toolPermissions: { tools: ['Read'] },
+    });
+    const flattened = makeAgentTemplate({ key: 'builtin.default', createdAt: 0, updatedAt: 0 });
+    const shadow = makeAgentTemplate({
+      key: 'builtin.default',
+      displayName: 'Shadow',
+      createdAt: 5,
+      updatedAt: 5,
+    });
+    let list = [shadow];
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      if (method === 'spaceAgent.deleteTemplate') {
+        list = [flattened];
+        return { success: true };
+      }
+      if (method === 'spaceAgent.listTemplates') return { templates: list };
+      return {};
+    });
+
+    await spaceStore.deleteTemplate('builtin.default');
+
+    const templates = spaceStore.agentTemplates.value;
+    expect(templates).toHaveLength(1);
+    expect(templates[0].key).toBe('builtin.default');
+    expect(templates[0].displayName).toBe('Custom Template');
+    expect(templates[0].toolPermissions).toEqual({ tools: ['Read'] });
+  });
+
+  it('deleteTemplate restores the built-in from the map when the refetch fails', async () => {
+    await spaceStore.selectSpace('space-1');
+    const richBuiltIn = makeLongHorizonAgentTemplate({
+      key: 'builtin.default',
+      displayName: 'Built-in Template',
+      toolPermissions: { tools: ['Read'] },
+    });
+    const shadow = makeLongHorizonAgentTemplate({ key: 'builtin.default', displayName: 'Shadow' });
+    spaceStore.agentTemplates.value = [shadow];
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
+      if (method === 'spaceAgent.listTemplates') throw new Error('connection dropped');
+      return {};
+    });
+
+    await spaceStore.deleteTemplate('builtin.default');
+
+    const templates = spaceStore.agentTemplates.value;
+    expect(templates).toHaveLength(1);
+    expect(templates[0].displayName).toBe('Built-in Template');
+    expect(templates[0].toolPermissions).toEqual({ tools: ['Read'] });
+  });
+
+  it('deleteTemplate removes a non-shadowing custom when the refetch fails', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.agentTemplates.value = [
+      makeLongHorizonAgentTemplate({ key: 'keep' }),
+      makeLongHorizonAgentTemplate({ key: 'delete-me' }),
+    ];
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
+      if (method === 'spaceAgent.listTemplates') throw new Error('connection dropped');
+      return {};
+    });
+
+    await spaceStore.deleteTemplate('delete-me');
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['keep']);
   });
 });
 

@@ -47,7 +47,9 @@ export interface SpaceLongHorizonAgentTemplate {
   toolPermissions: Record<string, unknown>;
   model?: string | null;
   provider?: string | null;
+  modelPool?: WorkerAgentModelPoolEntry[] | null;
   thinkingLevel?: ThinkingLevel | null;
+  settingSources?: SettingSource[] | null;
 }
 
 export interface SpaceLongHorizonAgent {
