@@ -8,6 +8,28 @@ All notable changes to HyperNeo will be documented in this file.
 
 - Removed unused CodeGraph MCP integration artifacts (orphaned DB already deleted and `.mcp.json` entry already absent); benchmark scripts and reports retained for historical reference.
 
+## [0.40.0] - 2026-09-05
+
+904 commits since v0.39.5. Headline families: mailbox ingestion redesign, session resolution and Space agent unification, agent templates, workflow/Space runtime hardening, and provider/model updates.
+
+### Added
+
+- **Mailbox ingestion redesign**: Typed mailbox addresses and durable mailbox entries with validation, parsing, handoff, settlement, and TTL expiry; hold/defer delivery modes; long-horizon inbox delivery unified on mailbox-backed session discovery, rehydration, and creation.
+- **Session resolution and Space agent unification**: Lifecycle-aware agent/session target resolution and provisioning; Space agents unified under the long-horizon agent model with the `spaceAgent.*` RPC/event namespace and the web Agents pane; non-Space sessions resolve as read-only Space viewers.
+- **Agent templates**: Persistent Space agent templates with schema migration, repository, CRUD RPCs, and web store; workflow nodes select `templateKey` resolved by the daemon; model, model-pool, tools, and settings-source editors plus a reapply-template action.
+- **Workflow runtime hardening**: Durable workflow definition versions and external-event subscriptions; runtime-agnostic spawn seam and universal-read dispatcher; Coder-Only default workflow for unpinned tasks; workflow dead-loop detection.
+- **Session delivery hardening**: Session FIFO delivery, ensure-session/worker admission pipelines, stuck-initialization delivery refusal, per-call wait caps, stale queue recovery, model-switch duplicate-delivery prevention, and recoverable provider auto-reset/retry.
+- **Provider and model updates**: Model discovery for DeepSeek, GLM/Z.ai, Kimi, MiniMax, Ollama, OpenRouter, and ACP with persisted cache and reconciliation, force refresh, curated-first last-good fallback, and failure diagnostics; GPT-5.6 Codex, Kimi K3 256K with vision and granular thinking levels, and GLM-5.3 Flash catalog routing; restored Copilot SDK embedded startup and dynamic model listing.
+- **Dual runtime**: Bun and Deno support seams and documentation for the daemon.
+
+### Changed
+
+- **Model curation**: Curation gates enforced at session/model-service boundaries; provider-settings refresh and error handling improved.
+
+### Removed
+
+- Legacy Space agent manager and repository, template sync/drift plumbing, message-delivery V2/defer machinery, turn/steer roles, and the Plan & Decompose workflow.
+
 ## [0.39.5] - 2026-07-04
 
 ### Changed
