@@ -1692,20 +1692,19 @@ describe('SpaceRuntime — tick loop correctness', () => {
       ]);
       const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
       (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
-      for (const execution of nodeExecutionRepo.listByWorkflowRun(run.id)) {
-        if (execution.agentName === 'Planner') {
-          nodeExecutionRepo.update(execution.id, {
-            status: 'blocked',
-            result: 'Agent session crashed',
-          });
-        } else {
-          nodeExecutionRepo.update(execution.id, {
-            status: 'in_progress',
-            agentSessionId: siblingSessionId,
-            startedAt: Date.now(),
-          });
-        }
-      }
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: 'Agent session crashed',
+      });
+      nodeExecutionRepo.createOrIgnore({
+        workflowRunId: run.id,
+        workflowNodeId: STEP_B,
+        agentName: 'Coder',
+        agentId: AGENT_CODER,
+        agentSessionId: siblingSessionId,
+        status: 'in_progress',
+      });
       workflowRunRepo.transitionStatus(run.id, 'blocked');
 
       await rt.executeTick();
@@ -1713,6 +1712,38 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const recoveredTask = taskRepo.getTask(tasks[0].id);
       expect(recoveredTask?.status).toBe('in_progress');
       expect(recoveredTask?.startedAt).not.toBeNull();
+    });
+
+    test('blocked-run recovery ignores a quiesced idle sibling session retained for messaging', async () => {
+      const siblingSessionId = 'session:quiesced-sibling';
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionInMemory: (candidate) => candidate === siblingSessionId,
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+        { id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      (rt as unknown as { recoveryDone: boolean }).recoveryDone = true;
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: 'Agent session crashed',
+      });
+      nodeExecutionRepo.createOrIgnore({
+        workflowRunId: run.id,
+        workflowNodeId: STEP_B,
+        agentName: 'Coder',
+        agentId: AGENT_CODER,
+        agentSessionId: siblingSessionId,
+        status: 'idle',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'blocked');
+
+      await rt.executeTick();
+
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('open');
     });
 
     test('blocked-run recovery does not reopen an open task cancelled during run transition', async () => {

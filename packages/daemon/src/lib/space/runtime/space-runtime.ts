@@ -7758,6 +7758,7 @@ export class SpaceRuntime {
 
     const hasLiveExecutionBinding = allRunExecutions.some(
       (execution) =>
+        (execution.status === 'in_progress' || execution.status === 'pending') &&
         !!execution.agentSessionId &&
         (this.config.taskAgentManager?.isSessionInMemory(execution.agentSessionId) ?? false) &&
         !this.isFailedSessionBinding(execution.agentSessionId)
