@@ -188,7 +188,7 @@ describe('migration 232: retire pristine seeded worker agents', () => {
 
     runMigration232(db);
 
-    expect(remaining(repo)).toEqual(['Coder', 'General', 'Planner', 'QA', 'Research', 'Reviewer']);
+    expect(remaining(repo)).toEqual(['Coder', 'General', 'Planner', 'QA', 'REVIEWER', 'Research']);
     db.close();
   });
 
