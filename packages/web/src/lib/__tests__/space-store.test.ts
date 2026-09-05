@@ -1505,6 +1505,41 @@ describe('SpaceStore — agent template CRUD', () => {
     expect(mockHub.request).not.toHaveBeenCalledWith('spaceAgent.listTemplates', {});
   });
 
+  it('fetchTemplates rejects when built-in metadata loading fails on a cold map', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'keep' })];
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') throw new Error('metadata unavailable');
+      if (method === 'spaceAgent.listTemplates') {
+        return { templates: [makeAgentTemplate({ key: 'fetched' })] };
+      }
+      return {};
+    });
+
+    await expect(spaceStore.fetchTemplates()).rejects.toThrow('metadata unavailable');
+
+    expect(mockHub.request).not.toHaveBeenCalledWith('spaceAgent.listTemplates', {});
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['keep']);
+  });
+
+  it('refresh keeps loaded custom templates in agentTemplates', async () => {
+    await spaceStore.selectSpace('space-1');
+    const richBuiltIn = makeLongHorizonAgentTemplate({ key: 'builtin.default' });
+    const custom = makeAgentTemplate({ key: 'custom.test', createdAt: 5, updatedAt: 5 });
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      if (method === 'spaceAgent.listTemplates') return { templates: [custom] };
+      return {};
+    });
+
+    await spaceStore.fetchTemplates();
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['custom.test']);
+
+    await spaceStore.refresh();
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['custom.test']);
+  });
+
   it('fetchTemplates resolves flattened built-in metadata via listBuiltInTemplates', async () => {
     await spaceStore.selectSpace('space-1');
     const richBuiltIn = makeLongHorizonAgentTemplate({

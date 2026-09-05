@@ -48,6 +48,7 @@ import type {
 } from '@hyperneo/shared';
 import { isUUID, Logger } from '@hyperneo/shared';
 import { computed, signal } from '@preact/signals';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { connectionManager } from './connection-manager';
 import { currentSpaceCanonicalIdSignal, currentSpaceIdSignal } from './signals';
 
@@ -227,6 +228,94 @@ function workflowToSummary(wf: SpaceWorkflow): SpaceWorkflowSummary {
     updatedAt: wf.updatedAt,
   };
 }
+
+interface SpaceTemplateListDeps {
+  requestBuiltIns(spaceId: string): Promise<SpaceLongHorizonAgentTemplate[]>;
+  requestTemplates(): Promise<SpaceAgentTemplate[]>;
+}
+
+type SpaceTemplateListCtx = {
+  spaceId: string | null;
+  builtIns?: Map<string, SpaceLongHorizonAgentTemplate>;
+  templates?: SpaceLongHorizonAgentTemplate[];
+  deps: SpaceTemplateListDeps;
+};
+
+type SpaceTemplateListLoadedCtx = SpaceTemplateListCtx & {
+  builtIns: Map<string, SpaceLongHorizonAgentTemplate>;
+};
+
+type SpaceTemplateListFetchedCtx = SpaceTemplateListLoadedCtx & {
+  fetched: SpaceAgentTemplate[];
+};
+
+type SpaceTemplateListConvertedCtx = SpaceTemplateListFetchedCtx & {
+  templates: SpaceLongHorizonAgentTemplate[];
+};
+
+function toLongHorizonTemplate(
+  template: SpaceAgentTemplate | SpaceLongHorizonAgentTemplate,
+  builtIn?: SpaceLongHorizonAgentTemplate
+): SpaceLongHorizonAgentTemplate {
+  if ('suggestedEventSubscriptions' in template) {
+    return template as SpaceLongHorizonAgentTemplate;
+  }
+  const t = template as SpaceAgentTemplate;
+  const isFlattenedBuiltIn = t.createdAt === 0 && t.updatedAt === 0;
+  const extras = isFlattenedBuiltIn ? builtIn : undefined;
+  return {
+    key: t.key,
+    handle: t.handle,
+    displayName: t.displayName,
+    description: t.description,
+    instructions: t.instructions,
+    suggestedAutonomyLevel: t.suggestedAutonomyLevel,
+    suggestedEventSubscriptions: extras?.suggestedEventSubscriptions ?? [],
+    reminderDefaults: extras?.reminderDefaults ?? [],
+    ownershipPatterns: extras?.ownershipPatterns ?? [],
+    toolPermissions:
+      t.tools && t.tools.length > 0 ? { tools: t.tools } : (extras?.toolPermissions ?? {}),
+    model: t.model,
+    provider: t.provider,
+    modelPool: t.modelPool,
+    thinkingLevel: t.thinkingLevel,
+    settingSources: t.settingSources,
+  };
+}
+
+async function loadBuiltInTemplateMetadata(
+  ctx: SpaceTemplateListCtx
+): Promise<SpaceTemplateListLoadedCtx> {
+  if (ctx.builtIns && ctx.builtIns.size > 0) return ctx as SpaceTemplateListLoadedCtx;
+  const templates = await ctx.deps.requestBuiltIns(ctx.spaceId as string);
+  return { ...ctx, builtIns: new Map(templates.map((t) => [t.key, t])) };
+}
+
+async function requestSpaceTemplateList(
+  ctx: SpaceTemplateListLoadedCtx
+): Promise<SpaceTemplateListFetchedCtx> {
+  return { ...ctx, fetched: await ctx.deps.requestTemplates() };
+}
+
+function convertSpaceTemplateList(ctx: SpaceTemplateListFetchedCtx): SpaceTemplateListConvertedCtx {
+  return {
+    ...ctx,
+    templates: ctx.fetched.map((t) => toLongHorizonTemplate(t, ctx.builtIns.get(t.key))),
+  };
+}
+
+const runSpaceTemplateList = (
+  superpipe<{ missingSpace: (ctx: SpaceTemplateListCtx) => boolean }>({
+    missingSpace: (ctx) => ctx.spaceId === null,
+  })('space-template-list') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe('!missingSpace', 'ctx')
+  .pipe(loadBuiltInTemplateMetadata, 'ctx', 'ctx')
+  .pipe(requestSpaceTemplateList, 'ctx', 'ctx')
+  .pipe(convertSpaceTemplateList, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: SpaceTemplateListCtx) => Promise<SpaceTemplateListCtx>;
+
 class SpaceStore {
   readonly spaces = signal<Space[]>([]);
 
@@ -247,6 +336,8 @@ class SpaceStore {
   readonly agentTemplates = signal<SpaceLongHorizonAgentTemplate[]>([]);
 
   private builtInTemplatesByKey = new Map<string, SpaceLongHorizonAgentTemplate>();
+
+  private templateListMerged = false;
 
   readonly workflows = signal<SpaceWorkflowSummary[]>([]);
 
@@ -595,6 +686,8 @@ class SpaceStore {
     this.workflowRuns.value = [];
     this.agents.value = [];
     this.agentTemplates.value = [];
+    this.builtInTemplatesByKey = new Map();
+    this.templateListMerged = false;
     this.workflows.value = [];
     this.workflowSummariesLoaded = false;
     this.workflowDetails.value = [];
@@ -972,13 +1065,18 @@ class SpaceStore {
         }
       );
       if (this.spaceId.value !== spaceId) return;
-      this.builtInTemplatesByKey = new Map((result?.templates ?? []).map((t) => [t.key, t]));
-      this.agentTemplates.value = result?.templates ?? [];
+      const templates = result?.templates ?? [];
+      this.builtInTemplatesByKey = new Map(templates.map((t) => [t.key, t]));
+      if (!this.templateListMerged) {
+        this.agentTemplates.value = templates;
+      }
     } catch (err) {
       logger.error('Failed to fetch agent templates:', err);
       if (this.spaceId.value === spaceId) {
         this.builtInTemplatesByKey = new Map();
-        this.agentTemplates.value = [];
+        if (!this.templateListMerged) {
+          this.agentTemplates.value = [];
+        }
       }
     }
   }
@@ -2455,36 +2553,6 @@ class SpaceStore {
     this.agents.value = this.agents.value.filter((agent) => agent.id !== agentId);
   }
 
-  private toLongHorizonTemplate(
-    template: SpaceAgentTemplate | SpaceLongHorizonAgentTemplate,
-    builtIn?: SpaceLongHorizonAgentTemplate
-  ): SpaceLongHorizonAgentTemplate {
-    if ('suggestedEventSubscriptions' in template) {
-      return template as SpaceLongHorizonAgentTemplate;
-    }
-    const t = template as SpaceAgentTemplate;
-    const isFlattenedBuiltIn = t.createdAt === 0 && t.updatedAt === 0;
-    const extras = isFlattenedBuiltIn ? builtIn : undefined;
-    return {
-      key: t.key,
-      handle: t.handle,
-      displayName: t.displayName,
-      description: t.description,
-      instructions: t.instructions,
-      suggestedAutonomyLevel: t.suggestedAutonomyLevel,
-      suggestedEventSubscriptions: extras?.suggestedEventSubscriptions ?? [],
-      reminderDefaults: extras?.reminderDefaults ?? [],
-      ownershipPatterns: extras?.ownershipPatterns ?? [],
-      toolPermissions:
-        t.tools && t.tools.length > 0 ? { tools: t.tools } : (extras?.toolPermissions ?? {}),
-      model: t.model,
-      provider: t.provider,
-      modelPool: t.modelPool,
-      thinkingLevel: t.thinkingLevel,
-      settingSources: t.settingSources,
-    };
-  }
-
   private mergeAgentTemplate(template: SpaceLongHorizonAgentTemplate): void {
     const exists = this.agentTemplates.value.some((t) => t.key === template.key);
     this.agentTemplates.value = exists
@@ -2493,31 +2561,33 @@ class SpaceStore {
   }
 
   async fetchTemplates(): Promise<SpaceLongHorizonAgentTemplate[]> {
-    const spaceId = this.spaceId.value;
-    if (!spaceId) throw new Error('No space selected');
     const hub = await connectionManager.getHub();
-    if (this.builtInTemplatesByKey.size === 0) {
-      try {
-        const builtInResult = await hub.request<{ templates: SpaceLongHorizonAgentTemplate[] }>(
-          'spaceAgent.listBuiltInTemplates',
-          { spaceId }
-        );
-        this.builtInTemplatesByKey = new Map(
-          (builtInResult?.templates ?? []).map((t) => [t.key, t])
-        );
-      } catch (err) {
-        logger.error('Failed to fetch built-in agent templates:', err);
-      }
-    }
-    const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
-      'spaceAgent.listTemplates',
-      {}
-    );
-    const templates = (result?.templates ?? []).map((t) =>
-      this.toLongHorizonTemplate(t, this.builtInTemplatesByKey.get(t.key))
-    );
-    this.agentTemplates.value = templates;
-    return templates;
+    const ctx = await runSpaceTemplateList({
+      spaceId: this.spaceId.value,
+      builtIns: this.builtInTemplatesByKey,
+      deps: {
+        requestBuiltIns: async (spaceId) => {
+          const result = await hub.request<{ templates: SpaceLongHorizonAgentTemplate[] }>(
+            'spaceAgent.listBuiltInTemplates',
+            { spaceId }
+          );
+          const templates = result?.templates ?? [];
+          this.builtInTemplatesByKey = new Map(templates.map((t) => [t.key, t]));
+          return templates;
+        },
+        requestTemplates: async () => {
+          const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
+            'spaceAgent.listTemplates',
+            {}
+          );
+          return result?.templates ?? [];
+        },
+      },
+    });
+    if (!ctx.templates) throw new Error('No space selected');
+    this.templateListMerged = true;
+    this.agentTemplates.value = ctx.templates;
+    return ctx.templates;
   }
 
   async createTemplate(
@@ -2528,7 +2598,7 @@ class SpaceStore {
       'spaceAgent.createTemplate',
       params
     );
-    const template = this.toLongHorizonTemplate(result?.template);
+    const template = toLongHorizonTemplate(result?.template);
     this.mergeAgentTemplate(template);
     return template;
   }
@@ -2543,7 +2613,7 @@ class SpaceStore {
       { key, ...params }
     );
     if (!result?.template) return null;
-    const template = this.toLongHorizonTemplate(result.template);
+    const template = toLongHorizonTemplate(result.template);
     this.mergeAgentTemplate(template);
     return template;
   }
