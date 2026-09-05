@@ -92,7 +92,7 @@ describe('migration 232 — drop legacy space agent tables', () => {
     db.close();
   });
 
-  test('aborts when an assignment for a live agent was never copied off the legacy table', () => {
+  test('recopies a live assignment m155 skipped before dropping the legacy table', () => {
     const db = makeRecreatedLegacyDb();
     insertSpace(db, 'space-a');
     insertWorker(db, 'worker-1', 'space-a');
@@ -106,9 +106,40 @@ describe('migration 232 — drop legacy space agent tables', () => {
        VALUES ('space-a', 'worker-1', 'goal-1', 10)`
     ).run();
 
-    expect(() => runMigration232(db)).toThrow(/space_agent_goal_assignments worker-1 → goal-1/);
-    expect(tableExists(db, 'space_agent_goal_assignments')).toBe(true);
-    expect(tableExists(db, 'space_agents')).toBe(true);
+    runMigration232(db);
+
+    for (const table of LEGACY_TABLES) {
+      expect(tableExists(db, table)).toBe(false);
+    }
+    expect(
+      db.prepare(`SELECT agent_id, goal_id, relationship FROM space_long_horizon_agent_goals`).all()
+    ).toEqual([{ agent_id: 'worker-1', goal_id: 'goal-1', relationship: 'owner' }]);
+    db.close();
+  });
+
+  test('does not duplicate an assignment whose unified row already exists', () => {
+    const db = makeRecreatedLegacyDb();
+    insertSpace(db, 'space-a');
+    insertWorker(db, 'worker-1', 'space-a');
+    insertLongHorizonAgent(db, 'worker-1', 'space-a');
+    db.prepare(
+      `INSERT INTO space_goals (id, space_id, title, description, created_at, updated_at)
+       VALUES ('goal-1', 'space-a', 'Goal', '', 10, 10)`
+    ).run();
+    db.prepare(
+      `INSERT INTO space_agent_goal_assignments (space_id, agent_id, goal_id, created_at)
+       VALUES ('space-a', 'worker-1', 'goal-1', 10)`
+    ).run();
+    db.prepare(
+      `INSERT INTO space_long_horizon_agent_goals (agent_id, goal_id, relationship, created_at, updated_at)
+       VALUES ('worker-1', 'goal-1', 'owner', 10, 10)`
+    ).run();
+
+    runMigration232(db);
+
+    expect(
+      db.prepare(`SELECT COUNT(*) AS count FROM space_long_horizon_agent_goals`).get()
+    ).toEqual({ count: 1 });
     db.close();
   });
 
@@ -127,6 +158,9 @@ describe('migration 232 — drop legacy space agent tables', () => {
     for (const table of LEGACY_TABLES) {
       expect(tableExists(db, table)).toBe(false);
     }
+    expect(
+      db.prepare(`SELECT COUNT(*) AS count FROM space_long_horizon_agent_goals`).get()
+    ).toEqual({ count: 0 });
     db.close();
   });
 

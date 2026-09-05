@@ -46,74 +46,11 @@ export function runMigration232(db: BunDatabase): void {
     );
   }
 
-  const undrainedChecks: Array<{ tableName: string; sql: string }> = [
-    {
-      tableName: 'space_agent_goal_assignments',
-      sql: `
-        SELECT legacy.agent_id AS agent_id, legacy.goal_id AS target_id
-        FROM space_agent_goal_assignments legacy
-        JOIN space_long_horizon_agents live
-          ON live.id = legacy.agent_id AND live.space_id = legacy.space_id
-        WHERE NOT EXISTS (
-          SELECT 1 FROM space_long_horizon_agent_goals copied
-          WHERE copied.agent_id = legacy.agent_id AND copied.goal_id = legacy.goal_id
-        )
-        AND EXISTS (
-          SELECT 1 FROM space_goals goal
-          WHERE goal.id = legacy.goal_id AND goal.space_id = legacy.space_id
-        )`,
-    },
-    {
-      tableName: 'space_agent_forge_scope_assignments',
-      sql: `
-        SELECT legacy.agent_id AS agent_id, legacy.scope_id AS target_id
-        FROM space_agent_forge_scope_assignments legacy
-        JOIN space_long_horizon_agents live
-          ON live.id = legacy.agent_id AND live.space_id = legacy.space_id
-        WHERE NOT EXISTS (
-          SELECT 1 FROM space_long_horizon_agent_forge_scopes copied
-          WHERE copied.agent_id = legacy.agent_id AND copied.scope_id = legacy.scope_id
-        )
-        AND EXISTS (
-          SELECT 1 FROM evolution_scopes scope
-          WHERE scope.id = legacy.scope_id AND scope.space_id = legacy.space_id
-        )`,
-    },
-    {
-      tableName: 'space_agent_reminders',
-      sql: `
-        SELECT legacy.agent_id AS agent_id, legacy.id AS target_id
-        FROM space_agent_reminders legacy
-        JOIN space_long_horizon_agents live
-          ON live.id = legacy.agent_id AND live.space_id = legacy.space_id
-        WHERE legacy.status = 'active'
-          AND NOT EXISTS (
-            SELECT 1 FROM space_long_horizon_agent_reminders copied
-            WHERE copied.id = legacy.id
-          )`,
-    },
-  ];
-  const undrained = undrainedChecks
-    .filter((check) => tableExists(db, check.tableName))
-    .flatMap((check) =>
-      (
-        db.prepare(`${check.sql} LIMIT 5`).all() as Array<{
-          agent_id: string;
-          target_id: string;
-        }>
-      ).map((row) => ({ tableName: check.tableName, ...row }))
-    );
-  if (undrained.length > 0) {
-    throw new Error(
-      `Migration 232 found undrained legacy assignment rows whose only copy would be ` +
-        `destroyed by the drop: ${undrained
-          .map((row) => `${row.tableName} ${row.agent_id} → ${row.target_id}`)
-          .join(', ')}. Refusing to drop; the pre-migration backup retains them.`
-    );
-  }
-
   db.exec('BEGIN');
   try {
+    recopyLiveGoalAssignments(db);
+    recopyLiveForgeScopeAssignments(db);
+    recopyLiveReminders(db);
     db.exec('DROP TABLE IF EXISTS space_agent_goal_assignments');
     db.exec('DROP TABLE IF EXISTS space_agent_forge_scope_assignments');
     db.exec('DROP TABLE IF EXISTS space_agent_reminders');
@@ -123,6 +60,69 @@ export function runMigration232(db: BunDatabase): void {
     db.exec('ROLLBACK');
     throw err;
   }
+}
+
+function recopyLiveGoalAssignments(db: BunDatabase): void {
+  if (!tableExists(db, 'space_agent_goal_assignments')) return;
+  db.prepare(
+    `INSERT OR IGNORE INTO space_long_horizon_agent_goals (
+       agent_id, goal_id, relationship, created_at, updated_at
+     )
+     SELECT legacy.agent_id, legacy.goal_id, 'owner', legacy.created_at, legacy.created_at
+     FROM space_agent_goal_assignments legacy
+     JOIN space_long_horizon_agents live
+       ON live.id = legacy.agent_id AND live.space_id = legacy.space_id
+     JOIN space_goals goal
+       ON goal.id = legacy.goal_id AND goal.space_id = legacy.space_id`
+  ).run();
+}
+
+function recopyLiveForgeScopeAssignments(db: BunDatabase): void {
+  if (!tableExists(db, 'space_agent_forge_scope_assignments')) return;
+  db.prepare(
+    `INSERT OR IGNORE INTO space_long_horizon_agent_forge_scopes (
+       agent_id, scope_id, relationship, created_at, updated_at
+     )
+     SELECT legacy.agent_id, legacy.scope_id, 'owner', legacy.created_at, legacy.created_at
+     FROM space_agent_forge_scope_assignments legacy
+     JOIN space_long_horizon_agents live
+       ON live.id = legacy.agent_id AND live.space_id = legacy.space_id
+     JOIN evolution_scopes scope
+       ON scope.id = legacy.scope_id AND scope.space_id = legacy.space_id`
+  ).run();
+}
+
+function recopyLiveReminders(db: BunDatabase): void {
+  if (!tableExists(db, 'space_agent_reminders')) return;
+  db.prepare(
+    `INSERT OR IGNORE INTO space_long_horizon_agent_reminders (
+       id, space_id, agent_id, title, body, status, trigger_type, run_at, cron_expression,
+       timezone, next_run_at, last_fired_at, created_by_session, created_at, updated_at
+     )
+     SELECT
+       legacy.id,
+       legacy.space_id,
+       legacy.agent_id,
+       legacy.message,
+       '',
+       CASE legacy.status
+         WHEN 'done' THEN 'fired'
+         WHEN 'cancelled' THEN 'cancelled'
+         ELSE 'active'
+       END,
+       'at',
+       legacy.remind_at,
+       NULL,
+       'UTC',
+       CASE legacy.status WHEN 'active' THEN legacy.remind_at ELSE NULL END,
+       CASE legacy.status WHEN 'done' THEN legacy.remind_at ELSE NULL END,
+       NULL,
+       legacy.created_at,
+       legacy.updated_at
+     FROM space_agent_reminders legacy
+     JOIN space_long_horizon_agents live
+       ON live.id = legacy.agent_id AND live.space_id = legacy.space_id`
+  ).run();
 }
 
 function tableExists(db: BunDatabase, tableName: string): boolean {
