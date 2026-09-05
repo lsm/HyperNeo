@@ -10,6 +10,8 @@ interface FakeSession {
   getSessionData: () => { status: string; config?: { mcpServers?: Record<string, unknown> } };
 }
 
+type WorkerRef = { sessionId: string; agentName: string; nodeId?: string | null };
+
 const sessionOf = (
   status: string,
   config?: { mcpServers?: Record<string, unknown> }
@@ -206,12 +208,18 @@ describe('createDefaultSessionResolutionDeps', () => {
   });
 
   describe('rehydrateSubSession', () => {
-    test('delegates once; null, ended, and archived restores resolve null', async () => {
-      const restored = sessionOf('active');
+    test('delegates once; unavailable restores resolve null', async () => {
+      const restored = sessionOf('active', NODE_AGENT_CONFIG);
       const { deps, calls } = makeHarness({ rehydrated: restored });
       expect(await deps.rehydrateSubSession(WORKFLOW_ID)).toBe(restored);
       expect(calls.rehydrateSubSessionById).toEqual([WORKFLOW_ID]);
-      for (const rehydrated of [null, sessionOf('ended'), sessionOf('archived')]) {
+      const unavailable = [
+        null,
+        sessionOf('ended'),
+        sessionOf('archived'),
+        sessionOf('active', { mcpServers: {} }),
+      ];
+      for (const rehydrated of unavailable) {
         const dead = makeHarness({ rehydrated });
         expect(await dead.deps.rehydrateSubSession(WORKFLOW_ID)).toBeNull();
       }
@@ -379,7 +387,7 @@ describe('createDefaultSessionResolutionDeps', () => {
   });
 
   describe('spawnPostApprovalWorker', () => {
-    test('delegates to the canonical retry and returns the routed id for a matching target', async () => {
+    test('returns the routed id for matching targets across spawn and already-routed', async () => {
       const { deps, calls } = makeHarness({
         retryResult: {
           mode: 'spawn',
@@ -391,14 +399,11 @@ describe('createDefaultSessionResolutionDeps', () => {
       });
       expect(await deps.spawnPostApprovalWorker('task-1', 'coder', 'n1')).toBe('w-1');
       expect(calls.retry).toEqual([['space-1', 'task-1']]);
-    });
-
-    test('an already-routed retry still returns its recorded session id', async () => {
-      const { deps } = makeHarness({
+      const routed = makeHarness({
         retryResult: { mode: 'already-routed', postApprovalSessionId: 'w-1' },
         workerSession: { sessionId: 'w-1', agentName: 'coder', nodeId: null },
       });
-      expect(await deps.spawnPostApprovalWorker('task-1', 'coder')).toBe('w-1');
+      expect(await routed.deps.spawnPostApprovalWorker('task-1', 'coder')).toBe('w-1');
     });
 
     test('a retry result that does not match the requested target resolves null', async () => {
@@ -408,13 +413,7 @@ describe('createDefaultSessionResolutionDeps', () => {
         postApprovalStartedAt: 1,
         missingKeys: [],
       };
-      const mismatches: Array<
-        [
-          string,
-          string | undefined,
-          { sessionId: string; agentName: string; nodeId?: string | null } | null,
-        ]
-      > = [
+      const mismatches: Array<[string, string | undefined, WorkerRef | null]> = [
         ['coder', undefined, { sessionId: 'w-1', agentName: 'reviewer', nodeId: null }],
         ['coder', 'n1', { sessionId: 'w-1', agentName: 'coder', nodeId: 'n2' }],
         ['coder', undefined, { sessionId: 'w-other', agentName: 'coder', nodeId: null }],

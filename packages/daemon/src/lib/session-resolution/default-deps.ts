@@ -53,9 +53,13 @@ export function createDefaultSessionResolutionDeps(
 
     async rehydrateSubSession(sessionId) {
       const restored = await taskAgentManager.rehydrateSubSessionById(sessionId);
-      return restored !== null && sessionUnavailable(restored.getSessionData().status)
-        ? null
-        : restored;
+      if (restored === null) return null;
+      const data = restored.getSessionData();
+      if (sessionUnavailable(data.status)) return null;
+      if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeNodeAgentServer(data.config)) {
+        return null;
+      }
+      return restored;
     },
 
     async getCoordinator(spaceId) {
