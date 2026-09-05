@@ -59,16 +59,15 @@ function undecided(input: Partial<RestoredWorkerAdmissionInput> = {}): RestoredW
     execution: makeExecution(),
     hasQueuedRetryableHookAction: false,
     ...input,
-    decision: null,
   };
 }
 
 describe('restored worker admission decisionRun gates', () => {
-  test('non-deciding sync gates pass the ctx through by reference', () => {
+  test('non-deciding sync gates return the ctx in a value arm', () => {
     const ctx = undecided();
-    expect(applyManualQueryModeGate(ctx)).toBe(ctx);
-    expect(applyDaemonCleanupGate(ctx)).toBe(ctx);
-    expect(applyTaskGate(ctx)).toBe(ctx);
+    expect(applyManualQueryModeGate(ctx)).toEqual({ value: ctx });
+    expect(applyDaemonCleanupGate(ctx)).toEqual({ value: ctx });
+    expect(applyTaskGate(ctx)).toEqual({ value: ctx });
   });
 
   test('manual query mode denies unless replay provisioning is settling', async () => {
