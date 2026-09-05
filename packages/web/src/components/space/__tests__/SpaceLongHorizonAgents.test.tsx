@@ -863,6 +863,30 @@ describe('SpaceLongHorizonAgents', () => {
     expect(mockUpdateAgent).not.toHaveBeenCalled();
   });
 
+  it('seeds model override and thinking level from the template when creating an agent', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        thinkingLevel: 'think16k',
+      }),
+    ];
+    const { getByText, getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    expect(mockCreateAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateKey: 'qa',
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        thinkingLevel: 'think16k',
+      })
+    );
+  });
+
   it('creates a custom agent with a null template key', async () => {
     const { getByRole, container } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 

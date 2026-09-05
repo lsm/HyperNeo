@@ -266,14 +266,16 @@ function AgentEditor({
   const [autonomyLevel, setAutonomyLevel] = useState<number | null>(
     agent?.autonomyLevel ?? template?.suggestedAutonomyLevel ?? null
   );
-  const [model, setModel] = useState(agent?.model ?? '');
-  const [modelProvider, setModelProvider] = useState<string>(agent?.provider ?? '');
+  const [model, setModel] = useState(agent?.model ?? template?.model ?? '');
+  const [modelProvider, setModelProvider] = useState<string>(
+    agent?.provider ?? template?.provider ?? ''
+  );
   const [modelPool, setModelPool] = useState<WorkerAgentModelPoolEntry[]>(agent?.modelPool ?? []);
   const [modelMode, setModelMode] = useState<ModelPoolEditorMode>(
     (agent?.modelPool?.length ?? 0) > 0 ? 'pool' : 'single'
   );
   const [thinkingLevel, setThinkingLevel] = useState<'' | ThinkingLevel>(
-    agent?.thinkingLevel ?? ''
+    agent?.thinkingLevel ?? template?.thinkingLevel ?? ''
   );
   const [toolsSelection, setToolsSelection] = useState<ToolsSelection>(
     agent
