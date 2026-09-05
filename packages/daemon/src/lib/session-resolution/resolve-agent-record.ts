@@ -1,17 +1,14 @@
-import type { SpaceLongHorizonAgent, SpaceWorkerAgent } from '@hyperneo/shared';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from '../space/agents/worker-long-horizon-mapper.ts';
+import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 
 export type AgentRecordResolution =
   | { kind: 'coordinator'; agent: SpaceLongHorizonAgent | null }
   | { kind: 'long_horizon'; agent: SpaceLongHorizonAgent }
-  | { kind: 'worker'; agent: SpaceWorkerAgent }
   | { kind: 'missing' };
 
 export interface ResolveAgentRecordDeps {
   getLongHorizonAgent(agentId: string): SpaceLongHorizonAgent | null;
   getCoordinator(spaceId: string): SpaceLongHorizonAgent | null;
   getCoordinatorRecord(spaceId: string): SpaceLongHorizonAgent | null;
-  getWorkerAgent(agentId: string): SpaceWorkerAgent | null;
 }
 
 export function resolveAgentRecord(
@@ -25,17 +22,12 @@ export function resolveAgentRecord(
     return { kind: 'coordinator', agent: record };
   }
   const longHorizonAgent = deps.getLongHorizonAgent(agentId);
-  if (
-    longHorizonAgent?.spaceId === spaceId &&
-    longHorizonAgent.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY
-  ) {
-    if (longHorizonAgent.status !== 'active') return { kind: 'missing' };
-    if (deps.getCoordinator(spaceId)?.id === longHorizonAgent.id) {
-      return { kind: 'coordinator', agent: longHorizonAgent };
-    }
-    return { kind: 'long_horizon', agent: longHorizonAgent };
+  if (!longHorizonAgent || longHorizonAgent.spaceId !== spaceId) {
+    return { kind: 'missing' };
   }
-  const worker = deps.getWorkerAgent(agentId);
-  if (!worker || worker.spaceId !== spaceId) return { kind: 'missing' };
-  return { kind: 'worker', agent: worker };
+  if (longHorizonAgent.status !== 'active') return { kind: 'missing' };
+  if (deps.getCoordinator(spaceId)?.id === longHorizonAgent.id) {
+    return { kind: 'coordinator', agent: longHorizonAgent };
+  }
+  return { kind: 'long_horizon', agent: longHorizonAgent };
 }

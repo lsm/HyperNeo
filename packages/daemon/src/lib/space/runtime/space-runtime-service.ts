@@ -5,7 +5,6 @@ import type {
   SpaceGoalOutcomeNotification,
   SpaceLongHorizonAgent,
   SpaceTask,
-  SpaceWorkerAgent,
   SpaceWorkflowRun,
   UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
@@ -27,7 +26,6 @@ import type {
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import {
-  coordinatorLongHorizonAgentId,
   coordinatorSessionId,
   type SpaceLongHorizonAgentRepository,
 } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
@@ -65,14 +63,9 @@ import {
 } from '../actions/space-actions-server.ts';
 import { SpaceActorRegistryAdapter } from '../actor-registry.ts';
 import { resolveIsDefaultAgent } from '../agents/default-agent-policy.ts';
-import { resolveCustomAgentPrompt } from '../agents/custom-agent.ts';
 import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../agents/long-horizon-agent-tools.ts';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent.ts';
-import {
-  longHorizonAgentToWorkerView,
-  MIGRATED_WORKER_TEMPLATE_KEY,
-  unifiedAgentRecordExists,
-} from '../agents/worker-long-horizon-mapper.ts';
+import { unifiedAgentRecordExists } from '../agents/worker-long-horizon-mapper.ts';
 import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
@@ -886,11 +879,7 @@ export class SpaceRuntimeService {
     let session = await sessionManager.getSessionAsync(sessionId);
     if (['ended', 'archived'].includes(session?.getSessionData().status ?? '')) return null;
     const currentConfig = session?.getSessionData().config;
-    const config = await buildAgentSessionConfig(
-      { kind: 'long_horizon', agent },
-      space,
-      currentConfig
-    );
+    const config = await buildAgentSessionConfig({ agent }, space, currentConfig);
     if (!session) {
       try {
         await sessionManager.createSession({
@@ -943,17 +932,10 @@ export class SpaceRuntimeService {
     if (!sessionManager) return null;
     const agentId = agentIdFromActorId(actor.actorId);
     if (!agentId) return null;
-    const mirror = this.findMigratedWorkerMirror(actor.spaceId, agentId);
-    if (mirror) {
-      return this.ensureWorkerAgentSession(actor.spaceId, longHorizonAgentToWorkerView(mirror));
-    }
     const resolution = resolveAgentRecord(actor.spaceId, agentId, this.agentRecordDeps());
     if (resolution.kind === 'missing') return null;
     if (resolution.kind === 'coordinator') return this.resolveCoordinatorSession(actor.spaceId);
-    if (resolution.kind === 'long_horizon') {
-      return this.ensureLongHorizonAgentSession(actor.spaceId, agentId);
-    }
-    return this.ensureWorkerAgentSession(actor.spaceId, resolution.agent);
+    return this.ensureLongHorizonAgentSession(actor.spaceId, agentId);
   }
 
   async ensureAgentSession(spaceId: string, agentId: string): Promise<EnsuredSession | null> {
@@ -970,73 +952,7 @@ export class SpaceRuntimeService {
       recordDeps: this.agentRecordDeps(),
       ensureCoordinatorSession: (spaceId) => this.ensureCoordinatorSession(spaceId),
       ensureLongHorizon: this.ensureLongHorizonAgentSession.bind(this),
-      ensureWorkerAgentSession: (spaceId, agent) => this.ensureWorkerAgentSession(spaceId, agent),
     };
-  }
-
-  private findMigratedWorkerMirror(spaceId: string, agentId: string): SpaceLongHorizonAgent | null {
-    const unified = this.config.longHorizonAgentRepo?.getById(agentId) ?? null;
-    if (unified?.spaceId === spaceId && unified.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
-      return unified;
-    }
-    return null;
-  }
-
-  private async ensureWorkerAgentSession(spaceId: string, agent: SpaceWorkerAgent) {
-    const sessionManager = this.config.sessionManager;
-    if (!sessionManager) return null;
-    const space = await this.config.spaceManager.getSpace(spaceId);
-    if (!space) return null;
-    const sessionId = longTermAgentSessionId(spaceId, agent.id);
-    let session = await sessionManager.getSessionAsync(sessionId);
-    const created = !session;
-    if (['ended', 'archived'].includes(session?.getSessionData().status ?? '')) return null;
-    const resolvedPrompt = resolveCustomAgentPrompt(agent, {
-      resolutionContext: { agentId: agent.id, agentName: agent.name },
-    });
-    const currentConfig = session?.getSessionData().config;
-    const regularAgentConfig = await buildAgentSessionConfig(
-      { kind: 'worker', agent },
-      space,
-      currentConfig
-    );
-    if (!session) {
-      try {
-        await sessionManager.createSession({
-          sessionId,
-          workspacePath: space.workspacePath,
-          title: agent.name,
-          spaceId: space.id,
-          worktreeMode: 'direct',
-          config: regularAgentConfig,
-        });
-      } catch (err) {
-        session = await sessionManager.getSessionAsync(sessionId);
-        if (!session) throw err;
-      }
-      session = session ?? (await sessionManager.getSessionAsync(sessionId));
-      if (!session) return null;
-      if (['ended', 'archived'].includes(session.getSessionData().status)) return null;
-      const currentMetadata = session.getSessionData().metadata;
-      this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
-        metadata: {
-          ...currentMetadata,
-          promptProvenance: {
-            source: resolvedPrompt.source,
-            hash: resolvedPrompt.hash,
-            agentId: agent.id,
-            agentName: agent.name,
-          },
-        },
-      });
-    } else {
-      await session.updateConfig(regularAgentConfig);
-      await session.resetQuery({ restartQuery: true });
-    }
-    if (created || this.missingLongTermAgentMcpServers(session)) {
-      this.attachLongTermAgentMcpServers(session, space, agent.name, sessionId, agent, agent.id);
-    }
-    return session;
   }
 
   private agentRecordDeps(): ResolveAgentRecordDeps {
@@ -1044,15 +960,7 @@ export class SpaceRuntimeService {
     return {
       getLongHorizonAgent: (agentId) => repo?.getById(agentId) ?? null,
       getCoordinator: (spaceId) => repo?.getCoordinator(spaceId) ?? null,
-      getCoordinatorRecord: (spaceId) =>
-        repo?.getCoordinator(spaceId) ??
-        repo?.getById(coordinatorLongHorizonAgentId(spaceId)) ??
-        repo?.getCoordinatorRecord(spaceId) ??
-        null,
-      getWorkerAgent: (agentId) => {
-        const unified = this.config.longHorizonAgentRepo?.getById(agentId) ?? null;
-        return unified ? longHorizonAgentToWorkerView(unified) : null;
-      },
+      getCoordinatorRecord: (spaceId) => repo?.getCoordinatorRecord(spaceId) ?? null,
     };
   }
 
@@ -1137,7 +1045,7 @@ export class SpaceRuntimeService {
     space: Space,
     agentName: string,
     sessionId: string,
-    agent: SpaceLongHorizonAgent | SpaceWorkerAgent | null,
+    agent: SpaceLongHorizonAgent | null,
     agentId: string | null,
     agentHandleAliases?: string[]
   ): void {
@@ -1202,11 +1110,6 @@ export class SpaceRuntimeService {
     });
   }
 
-  private missingLongTermAgentMcpServers(session: { getSessionData(): Session }): boolean {
-    const current = session.getSessionData().config?.mcpServers;
-    return !current?.['space-agent-tools'];
-  }
-
   private releaseLongTermAgentDbQuery(sessionId: string): void {
     const server = this.longTermAgentDbQueryServers.get(sessionId);
     if (!server) return;
@@ -1222,7 +1125,7 @@ export class SpaceRuntimeService {
     space: Space,
     agentName: string,
     sessionId: string,
-    agent: SpaceLongHorizonAgent | SpaceWorkerAgent | null,
+    agent: SpaceLongHorizonAgent | null,
     agentId: string | null,
     agentHandleAliases?: string[]
   ): SpaceAgentToolsConfig {
@@ -1437,10 +1340,7 @@ export class SpaceRuntimeService {
       inboxRepo.expireStale(spaceId);
       for (const row of inboxRepo.listPendingForSpace(spaceId)) {
         const resolution = resolveAgentRecord(spaceId, row.targetAgentId, this.agentRecordDeps());
-        if (
-          resolution.kind === 'missing' &&
-          !this.findMigratedWorkerMirror(spaceId, row.targetAgentId)
-        ) {
+        if (resolution.kind === 'missing') {
           continue;
         }
         void this.activateLongTermAgentAndFlush(

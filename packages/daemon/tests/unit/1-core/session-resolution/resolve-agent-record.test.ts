@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { SpaceLongHorizonAgent, SpaceWorkerAgent } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { agentSessionIdOf } from '../../../../src/lib/session-resolution/target';
 import {
   resolveAgentRecord,
@@ -32,23 +32,9 @@ function makeAgent(
   };
 }
 
-function makeWorker(id: string, overrides: Partial<SpaceWorkerAgent> = {}): SpaceWorkerAgent {
-  return {
-    id,
-    spaceId: 'space-1',
-    name: `Worker ${id}`,
-    handle: id,
-    customPrompt: null,
-    createdAt: 1,
-    updatedAt: 1,
-    ...overrides,
-  } as SpaceWorkerAgent;
-}
-
 function makeDeps(config?: {
   longHorizonAgents?: SpaceLongHorizonAgent[];
   coordinatorId?: string;
-  workers?: SpaceWorkerAgent[];
 }): ResolveAgentRecordDeps {
   const longHorizonAgents = config?.longHorizonAgents ?? [];
   const coordinatorRecord = (spaceId: string) =>
@@ -63,8 +49,6 @@ function makeDeps(config?: {
       return record != null && record.status !== 'archived' ? record : null;
     },
     getCoordinatorRecord: coordinatorRecord,
-    getWorkerAgent: (agentId) =>
-      (config?.workers ?? []).find((agent) => agent.id === agentId) ?? null,
   };
 }
 
@@ -191,79 +175,33 @@ describe('resolveAgentRecord', () => {
     }
   });
 
-  test('long-horizon row wins over a same-id worker row', () => {
-    const overlay = makeAgent('shared-1', { handle: 'overlay' });
-    const worker = makeWorker('shared-1');
-    const deps = makeDeps({ longHorizonAgents: [overlay], workers: [worker] });
-
-    expect(resolveAgentRecord('space-1', 'shared-1', deps)).toEqual({
-      kind: 'long_horizon',
-      agent: overlay,
-    });
-  });
-
-  test('cross-space long-horizon row falls through to the worker family', () => {
+  test('cross-space long-horizon row resolves missing', () => {
     const elsewhere = makeAgent('shared-2', { spaceId: 'space-2', handle: 'elsewhere' });
-    const worker = makeWorker('shared-2');
-    const deps = makeDeps({ longHorizonAgents: [elsewhere], workers: [worker] });
 
-    expect(resolveAgentRecord('space-1', 'shared-2', deps)).toEqual({
-      kind: 'worker',
-      agent: worker,
-    });
-  });
-
-  test('worker-only id resolves worker', () => {
-    const worker = makeWorker('worker-1', { name: 'Worker Name' });
-
-    expect(resolveAgentRecord('space-1', 'worker-1', makeDeps({ workers: [worker] }))).toEqual({
-      kind: 'worker',
-      agent: worker,
-    });
+    expect(
+      resolveAgentRecord('space-1', 'shared-2', makeDeps({ longHorizonAgents: [elsewhere] }))
+    ).toEqual({ kind: 'missing' });
   });
 
   test('unknown id resolves missing', () => {
     expect(resolveAgentRecord('space-1', 'ghost', makeDeps())).toEqual({ kind: 'missing' });
   });
 
-  test('cross-space worker resolves missing', () => {
-    const worker = makeWorker('worker-1', { spaceId: 'space-2' });
-
-    expect(resolveAgentRecord('space-1', 'worker-1', makeDeps({ workers: [worker] }))).toEqual({
-      kind: 'missing',
-    });
-  });
-
-  test('an orphan migration mirror resolves missing, not long_horizon', () => {
+  test('a migrated worker mirror resolves as a long-horizon agent', () => {
     const mirror = makeAgent('mirror-1', { templateKey: 'migration.legacy_space_agent' });
 
     expect(
       resolveAgentRecord('space-1', 'mirror-1', makeDeps({ longHorizonAgents: [mirror] }))
-    ).toEqual({ kind: 'missing' });
-  });
-
-  test('a migration mirror with a sibling worker resolves worker', () => {
-    const mirror = makeAgent('mirror-1', { templateKey: 'migration.legacy_space_agent' });
-    const worker = makeWorker('mirror-1');
-
-    expect(
-      resolveAgentRecord(
-        'space-1',
-        'mirror-1',
-        makeDeps({ longHorizonAgents: [mirror], workers: [worker] })
-      )
-    ).toEqual({ kind: 'worker', agent: worker });
+    ).toEqual({ kind: 'long_horizon', agent: mirror });
   });
 
   test('resolution kinds compose with agentSessionIdOf routing', () => {
     const spaceId = 'space-1';
     const coordinator = makeAgent('space-lh-agent:coordinator:space-1', { handle: 'coordinator' });
     const agent = makeAgent('lh-1');
-    const worker = makeWorker('worker-1');
     const deps = makeDeps({
       longHorizonAgents: [coordinator, agent],
       coordinatorId: coordinator.id,
-      workers: [worker],
     });
 
     expect(resolveAgentRecord(spaceId, 'coordinator', deps)).toEqual({
@@ -271,18 +209,11 @@ describe('resolveAgentRecord', () => {
       agent: coordinator,
     });
     expect(resolveAgentRecord(spaceId, 'lh-1', deps)).toEqual({ kind: 'long_horizon', agent });
-    expect(resolveAgentRecord(spaceId, 'worker-1', deps)).toEqual({
-      kind: 'worker',
-      agent: worker,
-    });
     expect(resolveAgentRecord(spaceId, 'ghost', deps)).toEqual({ kind: 'missing' });
 
     expect(agentSessionIdOf(spaceId, 'coordinator', coordinator.id)).toBe(
       coordinatorSessionId(spaceId)
     );
     expect(agentSessionIdOf(spaceId, agent.id, coordinator.id)).toBe('space:agent:space-1:lh-1');
-    expect(agentSessionIdOf(spaceId, worker.id, coordinator.id)).toBe(
-      'space:agent:space-1:worker-1'
-    );
   });
 });

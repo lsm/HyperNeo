@@ -259,7 +259,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       family: 'agents',
       safetyClass: 'mutate',
       description:
-        'Create a long-horizon agent from a worker preset name (Coder, Reviewer, QA, ...) or long-horizon template key, seeding suggested subscriptions and reminders; returns the created agent.',
+        'Create a long-horizon agent from a long-horizon template key, seeding suggested subscriptions and reminders; returns the created agent.',
       paramsDoc: 'template_name, name?, model?, provider?, thinking_level?',
       paramsSchema: CreateAgentFromTemplateSchema,
       handler: (args) => handlers.create_agent_from_template(args),
@@ -269,7 +269,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       family: 'agents',
       safetyClass: 'read',
       description:
-        'List built-in agent templates available to create_agent_from_template — worker presets and long-horizon templates; returns template descriptors.',
+        'List built-in long-horizon agent templates available to create_agent_from_template; returns template descriptors.',
       paramsDoc: 'none',
       paramsSchema: ListAgentTemplatesSchema,
       handler: () => handlers.list_agent_templates(),

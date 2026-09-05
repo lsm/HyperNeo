@@ -52,7 +52,6 @@ import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositor
 import { createTables, runMigrations } from '../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedUnifiedAgentMirror } from '../../helpers/seed-unified-agent';
-import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -1563,48 +1562,46 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(archived.agent.status).toBe('archived');
 
-    seedWorkerMirror(ctx.db, {
-      id: 'worker-only-reviewer',
-      spaceId: ctx.spaceId,
-      name: 'Reviewer',
-      handle: 'worker-reviewer',
-    });
-    const workerNameTemplate = JSON.parse(
+    const existingResearch = JSON.parse(
+      (await handlers.create_agent({ name: 'Research' })).content[0].text
+    );
+    expect(existingResearch.success).toBe(true);
+    const lhNameTemplate = JSON.parse(
       (
         await handlers.create_agent_from_template({
-          template_name: 'Reviewer',
+          template_name: 'research.default',
         })
       ).content[0].text
     );
-    expect(workerNameTemplate.success).toBe(true);
-    expect(workerNameTemplate.agent.displayName).toBe('Reviewer (2)');
+    expect(lhNameTemplate.success).toBe(true);
+    expect(lhNameTemplate.agent.displayName).toBe('Research (2)');
 
     const templated = JSON.parse(
       (
         await handlers.create_agent_from_template({
-          template_name: 'Reviewer',
-          name: 'Reviewer Copy',
+          template_name: 'research.default',
+          name: 'Research Copy',
         })
       ).content[0].text
     );
     expect(templated.success).toBe(true);
-    expect(templated.agent.templateKey).toBe('Reviewer');
-    expect(templated.agent.handle).toBe('reviewer-copy');
-    const templatedWorkerHandleCollision = JSON.parse(
+    expect(templated.agent.templateKey).toBe('research.default');
+    expect(templated.agent.handle).toBe('research-copy');
+    const templatedNameCollision = JSON.parse(
       (
         await handlers.create_agent_from_template({
-          template_name: 'Coder',
+          template_name: 'research.default',
           name: 'Coder',
         })
       ).content[0].text
     );
-    expect(templatedWorkerHandleCollision.success).toBe(false);
-    expect(templatedWorkerHandleCollision.error).toContain('already used');
+    expect(templatedNameCollision.success).toBe(false);
+    expect(templatedNameCollision.error).toContain('already used');
     const duplicateTemplate = JSON.parse(
       (
         await handlers.create_agent_from_template({
-          template_name: 'Reviewer',
-          name: 'Reviewer Copy',
+          template_name: 'research.default',
+          name: 'Research Copy',
         })
       ).content[0].text
     );
@@ -1614,7 +1611,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     const blankTemplateName = JSON.parse(
       (
         await handlers.create_agent_from_template({
-          template_name: 'Reviewer',
+          template_name: 'research.default',
           name: '  ',
         })
       ).content[0].text
@@ -1723,7 +1720,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     const invalidTemplate = JSON.parse(
       (
         await handlers.create_agent_from_template({
-          template_name: 'Reviewer',
+          template_name: 'research.default',
           model: 'not-a-model',
         })
       ).content[0].text
@@ -2318,13 +2315,11 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(stored.subscriptions).toEqual([]);
   });
 
-  test('list_agent_templates exposes worker presets and long-horizon templates', async () => {
+  test('list_agent_templates exposes long-horizon templates only', async () => {
     const handlers = makeHandlers(ctx);
     const listed = JSON.parse((await handlers.list_agent_templates()).content[0].text);
     expect(listed.success).toBe(true);
-    const presetNames = listed.presets.map((p: { template_name: string }) => p.template_name);
-    expect(presetNames).toContain('Coder');
-    expect(presetNames).toContain('Reviewer');
+    expect(listed.presets).toBeUndefined();
     const lhKeys = listed.long_horizon_templates.map(
       (t: { template_name: string }) => t.template_name
     );
@@ -2338,15 +2333,8 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(marketing.suggested_autonomy_level).toBe(2);
   });
 
-  test('create_agent_from_template still routes worker presets by name and LH templates by key', async () => {
+  test('create_agent_from_template resolves LH templates by key and rejects missing templates', async () => {
     const handlers = makeHandlers(ctx);
-    const preset = JSON.parse(
-      (await handlers.create_agent_from_template({ template_name: 'Reviewer' })).content[0].text
-    );
-    expect(preset.success).toBe(true);
-    expect(preset.agent.templateKey).toBe('Reviewer');
-    expect(preset.seeded_subscriptions).toBeUndefined();
-    expect(preset.seeded_reminders).toBeUndefined();
 
     const lh = JSON.parse(
       (await handlers.create_agent_from_template({ template_name: 'RESEARCH.DEFAULT' })).content[0]
