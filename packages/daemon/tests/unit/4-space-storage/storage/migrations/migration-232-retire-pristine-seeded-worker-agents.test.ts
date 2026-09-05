@@ -5,6 +5,7 @@ import {
   seedUnifiedSpaceAgents,
 } from '../../../../../src/lib/space/agents/seed-agents.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import { runMigration213 } from '../../../../../src/storage/schema/m213-inactivity-watchdog.ts';
 import { runMigration232 } from '../../../../../src/storage/schema/m232-retire-pristine-seeded-worker-agents.ts';
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 import { insertSpace } from '../../../helpers/space-agent-schema.ts';
@@ -21,7 +22,7 @@ function createDb(): {
   const repo = new SpaceLongHorizonAgentRepository(db);
   const { seeded } = seedUnifiedSpaceAgents('space-1', repo);
   const presets = new Map(getPresetAgentTemplates().map((preset) => [preset.name, preset]));
-  const insertFingerprint = db.prepare(
+  const insertWorker = db.prepare(
     `INSERT INTO space_agents (
        id, space_id, name, handle, description, tools, custom_prompt,
        template_name, template_hash, created_at, updated_at
@@ -30,7 +31,7 @@ function createDb(): {
   for (const agent of seeded) {
     const preset = presets.get(agent.displayName);
     if (!preset) throw new Error(`Missing preset ${agent.displayName}`);
-    insertFingerprint.run(
+    insertWorker.run(
       agent.id,
       preset.name,
       preset.handle,
@@ -42,6 +43,45 @@ function createDb(): {
     );
   }
   return { db, repo, idsByName: new Map(seeded.map((agent) => [agent.displayName, agent.id])) };
+}
+
+function insertCustomNamedCoder(db: Database): void {
+  db.prepare(
+    `INSERT INTO space_long_horizon_agents (
+       id, space_id, handle, display_name, template_key, instructions,
+       tool_permissions_json, description, created_at, updated_at
+     ) VALUES ('agent-custom-coder', 'space-1', 'coder-agent-custom-coder', 'Coder',
+       'migration.legacy_space_agent', 'My own coder prompt', '{}', 'My own coder', 1, 1)`
+  ).run();
+  db.prepare(
+    `INSERT INTO space_agents (
+       id, space_id, name, handle, description, tools, custom_prompt,
+       template_name, template_hash, created_at, updated_at
+     ) VALUES ('agent-custom-coder', 'space-1', 'Coder', 'coder-agent-custom-coder', 'My own coder', '[]',
+       'My own coder prompt', 'Coder', ?, 1, 1)`
+  ).run(
+    computeAgentTemplateHash({
+      name: 'Coder',
+      description: 'My own coder',
+      tools: [],
+      customPrompt: 'My own coder prompt',
+    })
+  );
+}
+
+function createInboxTable(db: Database): void {
+  db.exec(`
+    CREATE TABLE space_agent_inbox_messages (
+      id TEXT PRIMARY KEY,
+      space_id TEXT NOT NULL,
+      target_agent_id TEXT NOT NULL,
+      source_actor_id TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `);
 }
 
 function remaining(repo: SpaceLongHorizonAgentRepository): string[] {
@@ -58,7 +98,7 @@ describe('migration 232: retire pristine seeded worker agents', () => {
     db.close();
   });
 
-  test('keeps customized, non-preset, and mismatched-fingerprint agents', () => {
+  test('keeps customized and non-preset long-horizon agents', () => {
     const { db, repo, idsByName } = createDb();
     repo.update(idsByName.get('Coder')!, { instructions: 'My customized coder' });
     db.prepare(`UPDATE space_agents SET description = 'edited legacy row' WHERE id = ?`).run(
@@ -74,6 +114,29 @@ describe('migration 232: retire pristine seeded worker agents', () => {
     runMigration232(db);
 
     expect(remaining(repo)).toEqual(['Coder', 'General', 'Personal']);
+    db.close();
+  });
+
+  test('keeps mirrors customized outside the fingerprint', () => {
+    const { db, repo, idsByName } = createDb();
+    repo.update(idsByName.get('Coder')!, { model: 'claude-sonnet-5' });
+    repo.update(idsByName.get('General')!, { handle: 'my-renamed-general' });
+    repo.update(idsByName.get('Planner')!, { sessionId: 'session-1' });
+    repo.update(idsByName.get('Research')!, { thinkingLevel: 'think16k' });
+
+    runMigration232(db);
+
+    expect(remaining(repo)).toEqual(['Coder', 'General', 'Planner', 'Research']);
+    db.close();
+  });
+
+  test('keeps a user-created agent that merely shares a preset name', () => {
+    const { db, repo } = createDb();
+    insertCustomNamedCoder(db);
+
+    runMigration232(db);
+
+    expect(remaining(repo)).toEqual(['Coder']);
     db.close();
   });
 
@@ -134,6 +197,27 @@ describe('migration 232: retire pristine seeded worker agents', () => {
     runMigration232(db);
 
     expect(remaining(repo)).toEqual(['Coder', 'General', 'Planner', 'Research']);
+    db.close();
+  });
+
+  test('keeps pristine workers with pending inbox messages or watchdog state', () => {
+    const { db, repo, idsByName } = createDb();
+    runMigration213(db);
+    createInboxTable(db);
+    db.prepare(
+      `INSERT INTO space_agent_inbox_messages (
+         id, space_id, target_agent_id, source_actor_id, message, status, expires_at, created_at
+       ) VALUES ('inbox-1', 'space-1', ?, 'coordinator', 'Hello', 'pending', 2, 1)`
+    ).run(idsByName.get('Coder')!);
+    db.prepare(
+      `INSERT INTO space_agent_inactivity_config (
+         id, space_id, agent_id, enabled, config_revision, created_at, updated_at
+       ) VALUES ('watchdog-1', 'space-1', ?, 1, 1, 1, 1)`
+    ).run(idsByName.get('General')!);
+
+    runMigration232(db);
+
+    expect(remaining(repo)).toEqual(['Coder', 'General']);
     db.close();
   });
 });
