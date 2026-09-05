@@ -17,6 +17,7 @@ import { ConfirmModal } from '../ui/ConfirmModal';
 import { LineNumberedTextarea } from './LineNumberedTextarea';
 import { ModelPoolEditor, type ModelPoolEditorMode } from './ModelPoolEditor';
 import { SettingSourcesEditor } from './SettingSourcesEditor';
+import { TemplateModelFields, type TemplateModelFieldsValue } from './TemplateModelFields';
 import { ToolsEditor, type ToolsSelection } from './ToolsEditor';
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
@@ -198,6 +199,9 @@ interface TemplateSaveForm {
   description: string;
   instructions: string;
   suggestedAutonomyLevel: number;
+  model: string | null;
+  provider: string | null;
+  thinkingLevel: ThinkingLevel | null;
 }
 
 interface TemplateSaveCtx {
@@ -219,6 +223,9 @@ async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateS
     description: ctx.form.description.trim(),
     instructions: ctx.form.instructions.trim(),
     suggestedAutonomyLevel: ctx.form.suggestedAutonomyLevel as SpaceAgentAutonomyLevel,
+    model: ctx.form.model,
+    provider: ctx.form.provider,
+    thinkingLevel: ctx.form.thinkingLevel,
   });
   return ctx;
 }
@@ -558,6 +565,11 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
   const [description, setDescription] = useState('');
   const [instructions, setInstructions] = useState('');
   const [autonomyLevel, setAutonomyLevel] = useState(2);
+  const [modelFields, setModelFields] = useState<TemplateModelFieldsValue>({
+    model: null,
+    provider: null,
+    thinkingLevel: null,
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -573,6 +585,9 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
           description,
           instructions,
           suggestedAutonomyLevel: autonomyLevel,
+          model: modelFields.model,
+          provider: modelFields.provider,
+          thinkingLevel: modelFields.thinkingLevel,
         },
       });
       onCreated();
@@ -676,6 +691,7 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
             </div>
             <p class="mt-1.5 text-xs text-fg-muted">{AUTONOMY_LABELS[autonomyLevel]}</p>
           </div>
+          <TemplateModelFields value={modelFields} onChange={setModelFields} />
           {error && <p class="text-xs text-danger">{error}</p>}
         </div>
         <div class="flex justify-end gap-3 border-t border-line bg-scrim-soft px-5 py-4 sm:px-7">
