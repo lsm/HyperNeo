@@ -377,6 +377,7 @@ describe('space-handlers', () => {
           additionalWorkspaces: [{ label: 'Alpha' }],
         })
       ).rejects.toThrow('additionalWorkspaces[0].path is required');
+      expect(spaceManager.createSpace).not.toHaveBeenCalled();
     });
 
     it('throws when an additional workspace path is not a string, before createSpace runs', async () => {
@@ -538,6 +539,23 @@ describe('space-handlers', () => {
         spaceId: mockSpace.id,
         space: mockSpace,
       });
+    });
+
+    it('still creates space when space chat runtime provisioning fails', async () => {
+      const sessionManager = createMockSessionManager();
+      const runtimeService = createMockSpaceRuntimeService();
+      (runtimeService.setupSpaceAgentSession as ReturnType<typeof mock>).mockRejectedValue(
+        new Error('Runtime provisioning failed')
+      );
+      await setup(mockSpace, sessionManager, runtimeService);
+
+      const result = await call('space.create', { workspacePath: '/tmp/x', name: 'X' });
+
+      expect(result).toEqual(mockSpace);
+      expect(spaceManager.addSession).toHaveBeenCalledWith(
+        mockSpace.id,
+        `space:chat:${mockSpace.id}`
+      );
     });
   });
 
