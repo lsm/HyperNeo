@@ -140,15 +140,6 @@ function createMockWorkflowManager(
   } as unknown as SpaceWorkflowManager;
 }
 
-function createMockLongHorizonAgentRepo(
-  agents: Array<{ id: string; displayName: string }> = []
-): SpaceLongHorizonAgentRepository {
-  return {
-    listBySpaceId: mock(() => agents),
-    getCoordinator: mock(() => null),
-  } as unknown as SpaceLongHorizonAgentRepository;
-}
-
 function createMockWorkflowRunRepo(): SpaceWorkflowRunRepository {
   return {
     deleteByWorkflowId: mock(() => 0),
@@ -161,28 +152,21 @@ describe('space-workflow-handlers', () => {
   let internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   let spaceManager: SpaceManager;
   let workflowManager: SpaceWorkflowManager;
-  let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
   let workflowRunRepo: SpaceWorkflowRunRepository;
 
-  function setup(
-    space: Space | null = mockSpace,
-    workflow: SpaceWorkflow | null = mockWorkflow,
-    agents: Array<{ id: string; displayName: string }> = []
-  ) {
+  function setup(space: Space | null = mockSpace, workflow: SpaceWorkflow | null = mockWorkflow) {
     const mh = createMockMessageHub();
     hub = mh.hub;
     handlers = mh.handlers;
     internalEventBus = createMockInternalEventBus<DaemonInternalEventMap>();
     spaceManager = createMockSpaceManager(space);
     workflowManager = createMockWorkflowManager(workflow);
-    longHorizonAgentRepo = createMockLongHorizonAgentRepo(agents);
     workflowRunRepo = createMockWorkflowRunRepo();
     setupSpaceWorkflowHandlers(
       hub,
       spaceManager,
       workflowManager,
       internalEventBus,
-      longHorizonAgentRepo,
       workflowRunRepo
     );
   }
@@ -809,28 +793,15 @@ describe('space-workflow-handlers', () => {
   });
 
   describe('spaceWorkflow.syncFromTemplate', () => {
-    function agentsForTemplate(
-      template: SpaceWorkflow
-    ): Array<{ id: string; displayName: string }> {
-      const names = new Set<string>();
-      for (const node of template.nodes) {
-        for (const a of node.agents) {
-          names.add(a.agentId);
-        }
-      }
-      return Array.from(names).map((name, i) => ({ id: `agent-uuid-${i}`, displayName: name }));
-    }
-
     it('syncs a workflow from its template and emits spaceWorkflow.updated', async () => {
       const [template] = getBuiltInWorkflows();
-      const agents = agentsForTemplate(template);
       const templateHash = computeWorkflowHash(template);
       const wfLinked: SpaceWorkflow = {
         ...mockWorkflow,
         templateName: template.name,
         templateHash: 'old-hash',
       };
-      setup(mockSpace, wfLinked, agents);
+      setup(mockSpace, wfLinked);
       const updatedWf: SpaceWorkflow = { ...wfLinked, templateHash };
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(updatedWf);
 
@@ -862,7 +833,6 @@ describe('space-workflow-handlers', () => {
 
     it('reuses existing node IDs one-by-one when node names are duplicated', async () => {
       const [template] = getBuiltInWorkflows();
-      const agents = agentsForTemplate(template);
       const wfLinked: SpaceWorkflow = {
         ...mockWorkflow,
         nodes: [
@@ -873,7 +843,7 @@ describe('space-workflow-handlers', () => {
         templateName: template.name,
         templateHash: 'old-hash',
       };
-      setup(mockSpace, wfLinked, agents);
+      setup(mockSpace, wfLinked);
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(wfLinked);
 
       await call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' });
@@ -888,7 +858,6 @@ describe('space-workflow-handlers', () => {
 
     it('preserves existing exact-name node IDs and assigns fresh IDs to inserted template nodes', async () => {
       const [template] = getBuiltInWorkflows();
-      const agents = agentsForTemplate(template);
       const wfLinked: SpaceWorkflow = {
         ...mockWorkflow,
         nodes: [{ id: 'existing-review', name: 'Review', agents: [] }],
@@ -897,7 +866,7 @@ describe('space-workflow-handlers', () => {
         templateName: template.name,
         templateHash: 'old-hash',
       };
-      setup(mockSpace, wfLinked, agents);
+      setup(mockSpace, wfLinked);
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(wfLinked);
 
       await call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' });
@@ -967,33 +936,14 @@ describe('space-workflow-handlers', () => {
       ).rejects.toThrow('Built-in template "Unknown Template" not found');
     });
 
-    it('throws when a required agent role cannot be resolved to a SpaceLongHorizonAgent', async () => {
-      const [template] = getBuiltInWorkflows();
-      const wfLinked: SpaceWorkflow = { ...mockWorkflow, templateName: template.name };
-      setup(mockSpace, wfLinked, []);
-      await expect(
-        call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' })
-      ).rejects.toThrow(/preset agent "Coder" is missing from space "space-1"/);
-    });
-
-    it('throws a preset-specific message with a repair hint when a preset is missing', async () => {
-      const template = getBuiltInWorkflows().find((t) => t.name === 'Coding')!;
-      const wfLinked: SpaceWorkflow = { ...mockWorkflow, templateName: template.name };
-      setup(mockSpace, wfLinked, [{ id: 'coder-id', displayName: 'Coder' }]);
-      await expect(
-        call('spaceWorkflow.syncFromTemplate', { id: 'wf-1', spaceId: 'space-1' })
-      ).rejects.toThrow(/preset agent "Reviewer" is missing[\s\S]*backfill migration/i);
-    });
-
     it('rejects apply when expectedRowHash no longer matches (concurrent edit)', async () => {
       const [template] = getBuiltInWorkflows();
-      const agents = agentsForTemplate(template);
       const wfLinked: SpaceWorkflow = {
         ...mockWorkflow,
         templateName: template.name,
         templateHash: 'old-hash',
       };
-      setup(mockSpace, wfLinked, agents);
+      setup(mockSpace, wfLinked);
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(wfLinked);
 
       await expect(
@@ -1008,13 +958,12 @@ describe('space-workflow-handlers', () => {
 
     it('applies when expectedRowHash matches the current row', async () => {
       const [template] = getBuiltInWorkflows();
-      const agents = agentsForTemplate(template);
       const wfLinked: SpaceWorkflow = {
         ...mockWorkflow,
         templateName: template.name,
         templateHash: 'old-hash',
       };
-      setup(mockSpace, wfLinked, agents);
+      setup(mockSpace, wfLinked);
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(wfLinked);
 
       await call('spaceWorkflow.syncFromTemplate', {
@@ -1231,23 +1180,8 @@ describe('space-workflow-handlers', () => {
   });
 
   describe('spaceWorkflow.resyncDuplicates', () => {
-    function agentsForTemplate(
-      template: SpaceWorkflow
-    ): Array<{ id: string; displayName: string }> {
-      const names = new Set<string>();
-      for (const node of template.nodes) {
-        for (const a of node.agents) {
-          names.add(a.agentId);
-        }
-      }
-      return Array.from(names).map((name, i) => ({ id: `agent-uuid-${i}`, displayName: name }));
-    }
-
-    function setupWithGroup(
-      group: SpaceWorkflow[],
-      agents: Array<{ id: string; displayName: string }> = []
-    ) {
-      setup(mockSpace, group[0] ?? null, agents);
+    function setupWithGroup(group: SpaceWorkflow[]) {
+      setup(mockSpace, group[0] ?? null);
       (workflowManager.listWorkflows as ReturnType<typeof mock>).mockReturnValue(group);
     }
 
@@ -1287,7 +1221,7 @@ describe('space-workflow-handlers', () => {
 
     it('throws when no rows exist for the given templateName', async () => {
       const [template] = getBuiltInWorkflows();
-      setupWithGroup([], agentsForTemplate(template));
+      setupWithGroup([]);
       await expect(
         call('spaceWorkflow.resyncDuplicates', {
           spaceId: 'space-1',
@@ -1298,7 +1232,6 @@ describe('space-workflow-handlers', () => {
 
     it('keeps the newest row, deletes older rows, and overwrites kept row from the template', async () => {
       const [template] = getBuiltInWorkflows();
-      const agents = agentsForTemplate(template);
       const older: SpaceWorkflow = {
         ...mockWorkflow,
         id: 'wf-older',
@@ -1313,7 +1246,7 @@ describe('space-workflow-handlers', () => {
         templateHash: 'new',
         createdAt: 200,
       };
-      setupWithGroup([older, newer], agents);
+      setupWithGroup([older, newer]);
 
       const templateHash = computeWorkflowHash(template);
       const updatedWf: SpaceWorkflow = { ...newer, templateHash };
@@ -1358,7 +1291,6 @@ describe('space-workflow-handlers', () => {
 
     it('KEEPS a duplicate whose deletion is blocked by a non-archived run (RFC §4 #3)', async () => {
       const [template] = getBuiltInWorkflows();
-      const agents = agentsForTemplate(template);
       const older: SpaceWorkflow = {
         ...mockWorkflow,
         id: 'wf-older',
@@ -1375,7 +1307,7 @@ describe('space-workflow-handlers', () => {
         templateHash: 'new',
         createdAt: 200,
       };
-      setupWithGroup([older, newer], agents);
+      setupWithGroup([older, newer]);
 
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(newer);
       (workflowManager.hasExecutableRuns as ReturnType<typeof mock>).mockImplementation(
@@ -1399,7 +1331,6 @@ describe('space-workflow-handlers', () => {
 
     it('handles a group of one — no deletions, just overwrite the single row', async () => {
       const [template] = getBuiltInWorkflows();
-      const agents = agentsForTemplate(template);
       const only: SpaceWorkflow = {
         ...mockWorkflow,
         id: 'wf-only',
@@ -1407,7 +1338,7 @@ describe('space-workflow-handlers', () => {
         templateHash: 'whatever',
         createdAt: 100,
       };
-      setupWithGroup([only], agents);
+      setupWithGroup([only]);
 
       const templateHash = computeWorkflowHash(template);
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue({
@@ -1426,39 +1357,8 @@ describe('space-workflow-handlers', () => {
       expect(workflowManager.updateWorkflow).toHaveBeenCalledTimes(1);
     });
 
-    it('throws when no SpaceLongHorizonAgent resolves a required role — and does NOT delete any duplicates or mutate the kept row', async () => {
-      const [template] = getBuiltInWorkflows();
-      const older: SpaceWorkflow = {
-        ...mockWorkflow,
-        id: 'wf-older',
-        templateName: template.name,
-        templateHash: 'old',
-        createdAt: 100,
-      };
-      const newer: SpaceWorkflow = {
-        ...mockWorkflow,
-        id: 'wf-newer',
-        templateName: template.name,
-        templateHash: 'new',
-        createdAt: 200,
-      };
-      setupWithGroup([older, newer], []);
-
-      await expect(
-        call('spaceWorkflow.resyncDuplicates', {
-          spaceId: 'space-1',
-          templateName: template.name,
-        })
-      ).rejects.toThrow(/Cannot resync: preset agent "Coder" is missing/);
-
-      expect(workflowManager.deleteWorkflow).not.toHaveBeenCalled();
-      expect(workflowManager.updateWorkflow).not.toHaveBeenCalled();
-      expect(workflowRunRepo.deleteByWorkflowId).not.toHaveBeenCalled();
-    });
-
     it('explicitly deletes runs for each removed duplicate workflow', async () => {
       const [template] = getBuiltInWorkflows();
-      const agents = agentsForTemplate(template);
       const older1: SpaceWorkflow = {
         ...mockWorkflow,
         id: 'wf-older-1',
@@ -1480,7 +1380,7 @@ describe('space-workflow-handlers', () => {
         templateHash: 'new',
         createdAt: 200,
       };
-      setupWithGroup([older1, older2, newer], agents);
+      setupWithGroup([older1, older2, newer]);
 
       (workflowManager.updateWorkflow as ReturnType<typeof mock>).mockReturnValue(newer);
       (workflowManager.deleteWorkflow as ReturnType<typeof mock>).mockReturnValue(true);
@@ -1804,7 +1704,7 @@ describe('checkBuiltInWorkflowDriftOnStartup', () => {
   });
 });
 
-describe('restampBuiltInWorkflowsOnStartup — built-in role target resolution', () => {
+describe('restampBuiltInWorkflowsOnStartup — worker templateKey binding', () => {
   function makeRealEnv() {
     const db = new Database(':memory:');
     createSpaceTables(db);
@@ -1827,13 +1727,10 @@ describe('restampBuiltInWorkflowsOnStartup — built-in role target resolution',
     };
   }
 
-  it('does not bind handle-discovered coordinators as role targets', async () => {
+  it('binds slots by worker templateKey and binds no agent rows even when presets exist', async () => {
     const env = makeRealEnv();
     seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
-    const coordinator = env.longHorizonAgentRepo.ensureCoordinator('space-retire');
-    env.db
-      .prepare(`UPDATE space_long_horizon_agents SET display_name = 'Coder' WHERE id = ?`)
-      .run(coordinator.id);
+    const rowIds = new Set(env.longHorizonAgentRepo.listBySpaceId('space-retire').map((a) => a.id));
 
     await restampBuiltInWorkflowsOnStartup(
       env.workflowManager,
@@ -1842,15 +1739,19 @@ describe('restampBuiltInWorkflowsOnStartup — built-in role target resolution',
       () => false
     );
 
-    const boundAgentIds = env.workflowRepo
+    const slots = env.workflowRepo
       .listWorkflows('space-retire')
-      .flatMap((w) => w.nodes.flatMap((n) => n.agents ?? []))
-      .map((a) => a.agentId);
-    expect(boundAgentIds).not.toContain(coordinator.id);
+      .flatMap((w) => w.nodes.flatMap((n) => n.agents ?? []));
+    expect(slots.length).toBeGreaterThan(0);
+    for (const slot of slots) {
+      expect(slot.agentId).toBe('');
+      expect(slot.templateKey ?? '').toMatch(/^worker\./);
+      expect(rowIds.has(slot.agentId)).toBe(false);
+    }
     env.db.close();
   });
 
-  it('heals a renamed coordinator before restamping so it is never bound as a role target', async () => {
+  it('heals a renamed coordinator before restamping', async () => {
     const env = makeRealEnv();
     seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
     const coordinator = env.longHorizonAgentRepo.ensureCoordinator('space-retire');
@@ -1870,59 +1771,6 @@ describe('restampBuiltInWorkflowsOnStartup — built-in role target resolution',
 
     expect(env.longHorizonAgentRepo.getCoordinator('space-retire')?.id).toBe(coordinator.id);
     expect(env.longHorizonAgentRepo.getById(coordinator.id)?.handle).toBe('coordinator');
-    const boundAgentIds = env.workflowRepo
-      .listWorkflows('space-retire')
-      .flatMap((w) => w.nodes.flatMap((n) => n.agents ?? []))
-      .map((a) => a.agentId);
-    expect(boundAgentIds).not.toContain(coordinator.id);
-    env.db.close();
-  });
-
-  it('resolves whitespace-padded preset display names during restamp', async () => {
-    const env = makeRealEnv();
-    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
-    const coderTwin = env.longHorizonAgentRepo
-      .listBySpaceId('space-retire')
-      .find((a) => (a.displayName ?? '').trim() === 'Coder')!;
-    env.db
-      .prepare(`UPDATE space_long_horizon_agents SET display_name = ' Coder ' WHERE id = ?`)
-      .run(coderTwin.id);
-
-    await restampBuiltInWorkflowsOnStartup(
-      env.workflowManager,
-      env.spaceManager,
-      env.longHorizonAgentRepo,
-      () => false
-    );
-
-    const boundAgentIds = env.workflowRepo
-      .listWorkflows('space-retire')
-      .flatMap((w) => w.nodes.flatMap((n) => n.agents ?? []))
-      .map((a) => a.agentId);
-    expect(boundAgentIds).toContain(coderTwin.id);
-    env.db.close();
-  });
-
-  it('does not resolve archived preset twins as built-in role targets', async () => {
-    const env = makeRealEnv();
-    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
-    const coderTwin = env.longHorizonAgentRepo
-      .listBySpaceId('space-retire')
-      .find((a) => a.displayName === 'Coder')!;
-    env.longHorizonAgentRepo.update(coderTwin.id, { status: 'archived' });
-
-    await restampBuiltInWorkflowsOnStartup(
-      env.workflowManager,
-      env.spaceManager,
-      env.longHorizonAgentRepo,
-      () => false
-    );
-
-    const boundAgentIds = env.workflowRepo
-      .listWorkflows('space-retire')
-      .flatMap((w) => w.nodes.flatMap((n) => n.agents ?? []))
-      .map((a) => a.agentId);
-    expect(boundAgentIds).not.toContain(coderTwin.id);
     env.db.close();
   });
 });

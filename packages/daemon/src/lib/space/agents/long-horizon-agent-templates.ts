@@ -9,6 +9,7 @@ import {
   LH_SECURITY_AUDITOR_INSTRUCTIONS,
 } from '@hyperneo/prompts';
 import type { SpaceLongHorizonAgentTemplate } from '@hyperneo/shared';
+import { getPresetAgentTemplates } from './seed-agents.ts';
 
 const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
   {
@@ -352,8 +353,29 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
   },
 ];
 
+export const WORKER_TEMPLATE_KEY_PREFIX = 'worker.';
+
+export function workerTemplateKey(handle: string): string {
+  return `${WORKER_TEMPLATE_KEY_PREFIX}${handle}`;
+}
+
+function workerPresetTemplates(): SpaceLongHorizonAgentTemplate[] {
+  return getPresetAgentTemplates().map((preset) => ({
+    key: workerTemplateKey(preset.handle),
+    handle: preset.handle,
+    displayName: preset.name,
+    description: preset.description,
+    instructions: preset.customPrompt,
+    suggestedAutonomyLevel: 1,
+    suggestedEventSubscriptions: [],
+    reminderDefaults: [],
+    ownershipPatterns: [],
+    toolPermissions: preset.tools.length > 0 ? { tools: [...preset.tools] } : {},
+  }));
+}
+
 export function getLongHorizonAgentTemplates(): SpaceLongHorizonAgentTemplate[] {
-  return structuredClone(LONG_HORIZON_AGENT_TEMPLATES);
+  return structuredClone([...LONG_HORIZON_AGENT_TEMPLATES, ...workerPresetTemplates()]);
 }
 
 export function getLongHorizonAgentTemplate(

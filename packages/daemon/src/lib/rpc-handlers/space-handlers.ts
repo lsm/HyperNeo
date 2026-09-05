@@ -214,12 +214,7 @@ export function setupSpaceHandlers(
     }
 
     try {
-      const agents = longHorizonAgentRepo.listBySpaceId(space.id);
-      const workflowSeedResult = seedBuiltInWorkflows(
-        space.id,
-        spaceWorkflowManager,
-        (name) => agents.find((a) => a.displayName.toLowerCase() === name.toLowerCase())?.id
-      );
+      const workflowSeedResult = seedBuiltInWorkflows(space.id, spaceWorkflowManager);
       if (workflowSeedResult.errors.length > 0) {
         const failedNames = workflowSeedResult.errors.map((e) => e.name).join(', ');
         log.warn(

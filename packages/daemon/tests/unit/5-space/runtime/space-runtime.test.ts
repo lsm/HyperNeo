@@ -3297,33 +3297,27 @@ describe('SpaceRuntime', () => {
   });
 
   describe('space.create seeding (unit-level check)', () => {
-    test('seedBuiltInWorkflows can be called after seedUnifiedSpaceAgents successfully', async () => {
+    test('seedBuiltInWorkflows seeds templateKey-bound workflows without agent rows', async () => {
       const newSpaceId = 'space-seed-test';
       const newWorkspacePath = '/tmp/seed-test';
       seedSpaceRow(db, newSpaceId, newWorkspacePath);
 
-      const { seedUnifiedSpaceAgents } = await import(
-        '../../../../src/lib/space/agents/seed-agents.ts'
-      );
       const { seedBuiltInWorkflows } = await import(
         '../../../../src/lib/space/workflows/built-in-workflows.ts'
       );
 
-      const result = seedUnifiedSpaceAgents(newSpaceId, longHorizonAgentRepo);
-      expect(result.errors).toHaveLength(0);
-      expect(result.seeded.length).toBeGreaterThan(0);
-
-      const agents = longHorizonAgentRepo.listBySpaceId(newSpaceId);
-      expect(() =>
-        seedBuiltInWorkflows(
-          newSpaceId,
-          workflowManager,
-          (name) => agents.find((a) => a.displayName === name)?.id
-        )
-      ).not.toThrow();
+      expect(() => seedBuiltInWorkflows(newSpaceId, workflowManager)).not.toThrow();
 
       const workflows = workflowManager.listWorkflows(newSpaceId);
       expect(workflows).toHaveLength(5);
+      for (const wf of workflows) {
+        for (const node of wf.nodes) {
+          for (const agent of node.agents) {
+            expect(agent.agentId).toBe('');
+            expect(agent.templateKey).toMatch(/^worker\./);
+          }
+        }
+      }
     });
 
     test('seedBuiltInWorkflows is idempotent (calling twice is a no-op)', async () => {
@@ -3331,19 +3325,12 @@ describe('SpaceRuntime', () => {
       const newWorkspacePath = '/tmp/seed-idempotent';
       seedSpaceRow(db, newSpaceId, newWorkspacePath);
 
-      const { seedUnifiedSpaceAgents } = await import(
-        '../../../../src/lib/space/agents/seed-agents.ts'
-      );
       const { seedBuiltInWorkflows } = await import(
         '../../../../src/lib/space/workflows/built-in-workflows.ts'
       );
 
-      seedUnifiedSpaceAgents(newSpaceId, longHorizonAgentRepo);
-      const agents = longHorizonAgentRepo.listBySpaceId(newSpaceId);
-      const resolver = (name: string) => agents.find((a) => a.displayName === name)?.id;
-
-      seedBuiltInWorkflows(newSpaceId, workflowManager, resolver);
-      seedBuiltInWorkflows(newSpaceId, workflowManager, resolver);
+      seedBuiltInWorkflows(newSpaceId, workflowManager);
+      seedBuiltInWorkflows(newSpaceId, workflowManager);
 
       const workflows = workflowManager.listWorkflows(newSpaceId);
       expect(workflows).toHaveLength(5);

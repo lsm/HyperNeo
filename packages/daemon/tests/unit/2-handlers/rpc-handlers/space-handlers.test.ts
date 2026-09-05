@@ -530,7 +530,14 @@ describe('space-handlers', () => {
         }),
         listBySpaceId: mock(() => []),
       } as unknown as SpaceLongHorizonAgentRepository;
-      await setup(mockSpace, undefined, undefined, emptyRepo);
+      const failingWorkflowManager = {
+        createWorkflow: mock(() => {
+          throw new Error('workflow insert failed');
+        }),
+        listWorkflows: mock(() => []),
+        getWorkflow: mock(() => null),
+      } as unknown as SpaceWorkflowManager;
+      await setup(mockSpace, undefined, undefined, emptyRepo, failingWorkflowManager);
 
       const result = (await call('space.create', {
         workspacePath: '/tmp/x',
@@ -550,7 +557,14 @@ describe('space-handlers', () => {
         }),
         listBySpaceId: mock(() => []),
       } as unknown as SpaceLongHorizonAgentRepository;
-      await setup(mockSpace, undefined, undefined, emptyRepo);
+      const failingWorkflowManager = {
+        createWorkflow: mock(() => {
+          throw new Error('workflow insert failed');
+        }),
+        listWorkflows: mock(() => []),
+        getWorkflow: mock(() => null),
+      } as unknown as SpaceWorkflowManager;
+      await setup(mockSpace, undefined, undefined, emptyRepo, failingWorkflowManager);
 
       const result = (await call('space.create', {
         workspacePath: '/tmp/x',

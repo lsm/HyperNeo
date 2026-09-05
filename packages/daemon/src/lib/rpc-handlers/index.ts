@@ -558,7 +558,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.spaceManager,
     spaceWorkflowManager,
     deps.internalEventBus,
-    longHorizonAgentRepo,
     spaceWorkflowRunRepo
   );
 

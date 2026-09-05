@@ -1,30 +1,30 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { runMigrations } from '../../../../src/storage/schema/index.ts';
-import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
-import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
-import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
-import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
-import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
-import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
+import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import { getPresetAgentTemplates } from '../../../../src/lib/space/agents/seed-agents.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
-import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
-import {
-  seedBuiltInWorkflows,
-  CODING_WORKFLOW,
-  REVIEW_ONLY_WORKFLOW,
-  getBuiltInWorkflows,
-} from '../../../../src/lib/space/workflows/built-in-workflows.ts';
+import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
   isPostApprovalRoutingEnabled,
   POST_APPROVAL_ROUTING_FLAG_ENV,
 } from '../../../../src/lib/space/runtime/post-approval-router.ts';
+import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
+import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { createMarkCompleteHandler } from '../../../../src/lib/space/tools/end-node-handlers.ts';
-import type { SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import {
+  CODING_WORKFLOW,
+  REVIEW_ONLY_WORKFLOW,
+  seedBuiltInWorkflows,
+} from '../../../../src/lib/space/workflows/built-in-workflows.ts';
+import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
+import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
+import { WorkflowRunArtifactRepository } from '../../../../src/storage/repositories/workflow-run-artifact-repository.ts';
+import { runMigrations } from '../../../../src/storage/schema/index.ts';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 
 const SPACE_ID = 'space-par-int';
@@ -41,20 +41,10 @@ function makeDb(): BunDatabase {
   return db;
 }
 
-function seedAgents(db: BunDatabase): Map<string, string> {
-  const names = new Set<string>();
-  for (const template of getBuiltInWorkflows()) {
-    for (const node of template.nodes) {
-      for (const a of node.agents) names.add(a.agentId);
-    }
+function seedAgents(db: BunDatabase): void {
+  for (const preset of getPresetAgentTemplates()) {
+    seedWorkerMirror(db, { id: `agent-${preset.handle}`, spaceId: SPACE_ID, name: preset.name });
   }
-  const roleToId = new Map<string, string>();
-  for (const name of names) {
-    const id = `agent-${name.toLowerCase().replace(/\s+/g, '-')}`;
-    seedWorkerMirror(db, { id, spaceId: SPACE_ID, name });
-    roleToId.set(name.toLowerCase(), id);
-  }
-  return roleToId;
 }
 
 interface RecordedSpawn {
@@ -81,7 +71,7 @@ interface Harness {
 
 function buildHarness(opts: { spawnerThrows?: boolean } = {}): Harness {
   const db = makeDb();
-  const agentRoles = seedAgents(db);
+  seedAgents(db);
 
   const workflowRunRepo = new SpaceWorkflowRunRepository(db);
   const taskRepo = new SpaceTaskRepository(db);
@@ -93,9 +83,7 @@ function buildHarness(opts: { spawnerThrows?: boolean } = {}): Harness {
   const taskManager = new SpaceTaskManager(db, SPACE_ID);
   const artifactRepo = new WorkflowRunArtifactRepository(db);
 
-  const result = seedBuiltInWorkflows(SPACE_ID, workflowManager, (name) =>
-    agentRoles.get(name.toLowerCase())
-  );
+  const result = seedBuiltInWorkflows(SPACE_ID, workflowManager);
   if (result.errors.length > 0) {
     throw new Error(`seedBuiltInWorkflows failed: ${JSON.stringify(result.errors)}`);
   }

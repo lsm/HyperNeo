@@ -17,7 +17,6 @@ import {
   seedBuiltInWorkflows,
 } from '../space/workflows/built-in-workflows.ts';
 import { computeWorkflowHash } from '../space/workflows/template-hash.ts';
-import { getPresetAgentTemplates } from '../space/agents/seed-agents.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import { Logger } from '../logger.ts';
 
@@ -40,38 +39,10 @@ function squeezeDriftName(value: string, max: number): string {
   return `${value.slice(0, max - 6)}...${value.slice(-3)}`;
 }
 
-const PRESET_AGENT_NAMES_LOWER = new Set(
-  getPresetAgentTemplates().map((p) => p.name.toLowerCase())
-);
-
 function buildTemplateUpdateParams(
-  longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
-  spaceId: string,
   template: SpaceWorkflow,
-  errorVerb: 'sync' | 'resync',
   existingWorkflow?: SpaceWorkflow
 ): UpdateSpaceWorkflowParams {
-  const coordinatorByHandle = longHorizonAgentRepo.getCoordinator(spaceId);
-  const unifiedRows = longHorizonAgentRepo.listBySpaceId(spaceId);
-  const spaceAgents = unifiedRows
-    .filter((a) => !coordinatorByHandle || a.id !== coordinatorByHandle.id)
-    .filter((a) => a.status !== 'archived')
-    .filter(
-      (a) => a.templateKey === 'migration.legacy_space_agent' || (a.status ?? 'active') === 'active'
-    )
-    .map((a) => ({ id: a.id, displayName: a.displayName ?? a.handle }));
-  function resolveAgentId(roleName: string): string | undefined {
-    const role = roleName.toLowerCase();
-    const matches = spaceAgents.filter((a) => (a.displayName ?? '').trim().toLowerCase() === role);
-    if (matches.length > 1) {
-      throw new Error(
-        `Cannot ${errorVerb}: agent name "${roleName}" is ambiguous in space "${spaceId}" ` +
-          `(matched ${matches.length} agents). Rename one of them and try again.`
-      );
-    }
-    return matches[0]?.id;
-  }
-
   const existingNodeIdQueuesByName = new Map<string, string[]>();
   for (const existingNode of existingWorkflow?.nodes ?? []) {
     const queue = existingNodeIdQueuesByName.get(existingNode.name) ?? [];
@@ -106,22 +77,7 @@ function buildTemplateUpdateParams(
   }
 
   const newNodes = template.nodes.map((node) => {
-    const resolvedAgents = node.agents.map((a) => {
-      const resolvedId = resolveAgentId(a.agentId);
-      if (!resolvedId) {
-        if (PRESET_AGENT_NAMES_LOWER.has(a.agentId.toLowerCase())) {
-          throw new Error(
-            `Cannot ${errorVerb}: preset agent "${a.agentId}" is missing from space "${spaceId}" ` +
-              `(this Space was likely created before the "${a.agentId}" preset was added). ` +
-              `Run the backfill migration or re-trigger preset seeding to restore it.`
-          );
-        }
-        throw new Error(
-          `Cannot ${errorVerb}: no SpaceLongHorizonAgent found with name "${a.agentId}" in space "${spaceId}".`
-        );
-      }
-      return { ...a, agentId: resolvedId };
-    });
+    const resolvedAgents = node.agents.map((a) => ({ ...a }));
     return {
       id: nodeIdMap.get(node.id)!,
       name: node.name,
@@ -295,29 +251,8 @@ export async function restampBuiltInWorkflowsOnStartup(
     let totalRestamped = 0;
     for (const space of spaces) {
       try {
-        const restampCoordinatorByHandle = longHorizonAgentRepo.ensureCoordinator(space.id);
-        const restampUnifiedRows = longHorizonAgentRepo.listBySpaceId(space.id);
-        const agents = restampUnifiedRows
-          .filter((a) => !restampCoordinatorByHandle || a.id !== restampCoordinatorByHandle.id)
-          .filter((a) => a.status !== 'archived')
-          .filter(
-            (a) =>
-              a.templateKey === 'migration.legacy_space_agent' ||
-              (a.status ?? 'active') === 'active'
-          )
-          .map((a) => ({ id: a.id, displayName: a.displayName ?? a.handle }));
-        const result = seedBuiltInWorkflows(
-          space.id,
-          workflowManager,
-          (name) => {
-            const role = name.toLowerCase();
-            const matches = agents.filter(
-              (a) => (a.displayName ?? '').trim().toLowerCase() === role
-            );
-            return matches.length === 1 ? matches[0].id : undefined;
-          },
-          hasActiveRuns
-        );
+        longHorizonAgentRepo.ensureCoordinator(space.id);
+        const result = seedBuiltInWorkflows(space.id, workflowManager, hasActiveRuns);
         if (result.restamped.length > 0) {
           totalRestamped += result.restamped.length;
           log.info(
@@ -356,7 +291,6 @@ export function setupSpaceWorkflowHandlers(
   spaceManager: SpaceManager,
   workflowManager: SpaceWorkflowManager,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
-  longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
   workflowRunRepo: SpaceWorkflowRunRepository
 ): void {
   messageHub.onRequest('spaceWorkflow.create', async (data) => {
@@ -691,13 +625,7 @@ export function setupSpaceWorkflowHandlers(
       );
     }
 
-    const updateParams = buildTemplateUpdateParams(
-      longHorizonAgentRepo,
-      params.spaceId,
-      template,
-      'sync',
-      workflow
-    );
+    const updateParams = buildTemplateUpdateParams(template, workflow);
 
     updateParams.templateName = workflow.templateName;
 
@@ -796,13 +724,7 @@ export function setupSpaceWorkflowHandlers(
     const kept = group[0];
     const toDelete = group.slice(1);
 
-    const updateParams = buildTemplateUpdateParams(
-      longHorizonAgentRepo,
-      params.spaceId,
-      template,
-      'resync',
-      kept
-    );
+    const updateParams = buildTemplateUpdateParams(template, kept);
 
     const updated = workflowManager.updateWorkflow(kept.id, updateParams);
     if (!updated) {
