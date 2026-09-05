@@ -199,23 +199,22 @@ describe('createDefaultSessionResolutionDeps', () => {
         const { deps } = makeHarness({ asyncSession: () => session });
         expect(await deps.getSession('sess-1')).toBeNull();
       }
-    });
-
-    test('non-indexed workflow sub-session without a runtime node-agent server resolves null', async () => {
       const bare = sessionOf('active', { mcpServers: {} });
-      const { deps } = makeHarness({ asyncSession: () => bare });
-      expect(await deps.getSession(WORKFLOW_ID)).toBeNull();
+      const workflow = makeHarness({ asyncSession: () => bare });
+      expect(await workflow.deps.getSession(WORKFLOW_ID)).toBeNull();
     });
   });
 
   describe('rehydrateSubSession', () => {
-    test('delegates to rehydrateSubSessionById once; a null restore resolves null', async () => {
+    test('delegates once; null, ended, and archived restores resolve null', async () => {
       const restored = sessionOf('active');
       const { deps, calls } = makeHarness({ rehydrated: restored });
       expect(await deps.rehydrateSubSession(WORKFLOW_ID)).toBe(restored);
       expect(calls.rehydrateSubSessionById).toEqual([WORKFLOW_ID]);
-      const empty = makeHarness({ rehydrated: null });
-      expect(await empty.deps.rehydrateSubSession(WORKFLOW_ID)).toBeNull();
+      for (const rehydrated of [null, sessionOf('ended'), sessionOf('archived')]) {
+        const dead = makeHarness({ rehydrated });
+        expect(await dead.deps.rehydrateSubSession(WORKFLOW_ID)).toBeNull();
+      }
     });
   });
 
@@ -356,7 +355,7 @@ describe('createDefaultSessionResolutionDeps', () => {
   });
 
   describe('activateTaskAgent', () => {
-    test('delegates with node-constrained options', async () => {
+    test('delegates with node-constrained options, or an undefined node option', async () => {
       const { deps, calls } = makeHarness({ activated: true });
       expect(
         await deps.activateTaskAgent({
@@ -367,14 +366,15 @@ describe('createDefaultSessionResolutionDeps', () => {
         })
       ).toBe(true);
       expect(calls.activate).toEqual([['task-1', 'coder', { workflowNodeId: 'n1' }]]);
-    });
-
-    test('omitted workflow node maps to an undefined node option', async () => {
-      const { deps, calls } = makeHarness({ activated: false });
+      const unscoped = makeHarness({ activated: false });
       expect(
-        await deps.activateTaskAgent({ kind: 'worker', taskId: 'task-1', agentName: 'coder' })
+        await unscoped.deps.activateTaskAgent({
+          kind: 'worker',
+          taskId: 'task-1',
+          agentName: 'coder',
+        })
       ).toBe(false);
-      expect(calls.activate).toEqual([['task-1', 'coder', { workflowNodeId: undefined }]]);
+      expect(unscoped.calls.activate).toEqual([['task-1', 'coder', { workflowNodeId: undefined }]]);
     });
   });
 

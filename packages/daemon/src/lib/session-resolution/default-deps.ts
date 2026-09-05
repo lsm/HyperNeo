@@ -52,7 +52,10 @@ export function createDefaultSessionResolutionDeps(
     getSession: (sessionId) => resolveLiveSession(sessionId),
 
     async rehydrateSubSession(sessionId) {
-      return taskAgentManager.rehydrateSubSessionById(sessionId);
+      const restored = await taskAgentManager.rehydrateSubSessionById(sessionId);
+      return restored !== null && sessionUnavailable(restored.getSessionData().status)
+        ? null
+        : restored;
     },
 
     async getCoordinator(spaceId) {
