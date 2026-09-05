@@ -20,7 +20,7 @@ const THRESHOLD_MS = 3_600_000;
 
 function makeAgent(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'agent-1',
+    id: 'former-worker-agent',
     spaceId: 'space-1',
     status: 'active',
     createdAt: NOW - THRESHOLD_MS - 10_000,
@@ -73,7 +73,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     db.prepare(
       `INSERT INTO space_long_horizon_agents
        (id, space_id, handle, display_name, instructions, tool_permissions_json, created_at, updated_at)
-       VALUES ('agent-1', ?, 'agent-1', 'agent-1', '', '{}', ?, 1)`
+       VALUES ('former-worker-agent', ?, 'former-worker-agent', 'former-worker-agent', '', '{}', ?, 1)`
     ).run(spaceId, NOW - THRESHOLD_MS - 10_000);
     agentRepo = { getById: mock(() => makeAgent({ spaceId })) };
     spaceManager = {
@@ -122,23 +122,38 @@ describe('SpaceAgentInactivityWatchdogService', () => {
   }
 
   it('nags a due idle agent, marks the claim, and releases it on consumption', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     await makeService().scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
-    expect(outcomes[0].idempotencyKey).toContain('inactivity-nag:agent-1:');
+    expect(outcomes[0].idempotencyKey).toContain('inactivity-nag:former-worker-agent:');
     expect(outcomes[0].prompt).toBe(DEFAULT_INACTIVITY_NAG_PROMPT);
-    expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
+    expect(claimRepo.getByAgent(spaceId, 'former-worker-agent')).toBeNull();
   });
 
   it('does not nag before the threshold elapses', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     sessionSnapshot.latestConsumedMessageAt = NOW - 1000;
     await makeService().scanSpace(spaceId);
     expect(outcomes).toHaveLength(0);
   });
 
   it('rearms without delivering when the admission recheck rejects a moved window', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     let calls = 0;
     const service = new SpaceAgentInactivityWatchdogService({
       configRepo,
@@ -163,14 +178,19 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     });
     await service.scanSpace(spaceId);
     expect(outcomes).toHaveLength(0);
-    expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
+    expect(claimRepo.getByAgent(spaceId, 'former-worker-agent')).toBeNull();
   });
 
   it('marks the claim degraded on terminal failure and blocks the next scan', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     nextOutcome = 'terminal_failure';
     await makeService().scanSpace(spaceId);
-    const degraded = claimRepo.getByAgent(spaceId, 'agent-1');
+    const degraded = claimRepo.getByAgent(spaceId, 'former-worker-agent');
     expect(degraded?.degraded).toBe(true);
     nextOutcome = 'consumed';
     await makeService().scanSpace(spaceId);
@@ -178,16 +198,26 @@ describe('SpaceAgentInactivityWatchdogService', () => {
   });
 
   it('advances no generation after a post-consumption terminal failure', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     nextOutcome = 'terminal_failure_after_consumption';
     await makeService().scanSpace(spaceId);
-    const claim = claimRepo.getByAgent(spaceId, 'agent-1');
+    const claim = claimRepo.getByAgent(spaceId, 'former-worker-agent');
     expect(claim?.degraded).toBe(true);
     expect(claim?.attemptGeneration).toBe(0);
   });
 
   it('skips agents with competing session work or pending deliveries', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     sessionSnapshot.busyWithOtherWork = true;
     await makeService().scanSpace(spaceId);
     expect(outcomes).toHaveLength(0);
@@ -198,7 +228,12 @@ describe('SpaceAgentInactivityWatchdogService', () => {
   });
 
   it('skips when the agent is paused or the space is not wakeable', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     agentRepo.getById.mockImplementationOnce(() => makeAgent({ spaceId, status: 'paused' }));
     await makeService().scanSpace(spaceId);
     expect(outcomes).toHaveLength(0);
@@ -212,14 +247,24 @@ describe('SpaceAgentInactivityWatchdogService', () => {
   });
 
   it('falls back to the session-creation baseline when no message was consumed', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     sessionSnapshot.latestConsumedMessageAt = null;
     await makeService().scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
   });
 
   it('uses the configured prompt when present and truncates oversized prompts', () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     expect(boundInactivityNagPrompt(null)).toBe(DEFAULT_INACTIVITY_NAG_PROMPT);
     expect(boundInactivityNagPrompt('  Check your queue.  ')).toBe('Check your queue.');
     const oversized = 'x'.repeat(INACTIVITY_NAG_PROMPT_MAX_CHARS + 500);
@@ -238,7 +283,12 @@ describe('SpaceAgentInactivityWatchdogService', () => {
   });
 
   it('holds the claim when a delivery times out and applies the late outcome', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     let resolveDelivery: (outcome: InactivityNagDeliveryOutcome) => void = () => {};
     const service = new SpaceAgentInactivityWatchdogService({
       configRepo,
@@ -260,26 +310,36 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     });
     await service.scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
-    const held = claimRepo.getByAgent(spaceId, 'agent-1');
+    const held = claimRepo.getByAgent(spaceId, 'former-worker-agent');
     expect(held?.degraded).toBe(false);
     expect(held?.state).toBe('in_flight');
     resolveDelivery('consumed');
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
+    expect(claimRepo.getByAgent(spaceId, 'former-worker-agent')).toBeNull();
   });
 
   it('does not redeliver a claim already held by this scanner', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     nextOutcome = 'accepted';
     await makeService().scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
-    expect(claimRepo.getByAgent(spaceId, 'agent-1')?.state).toBe('accepted');
+    expect(claimRepo.getByAgent(spaceId, 'former-worker-agent')?.state).toBe('accepted');
     await makeService().scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
   });
 
   it('releases an accepted claim whose delivery is no longer pending and re-nags', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     nextOutcome = 'accepted';
     await makeService().scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
@@ -303,7 +363,12 @@ describe('SpaceAgentInactivityWatchdogService', () => {
   });
 
   it('degrades an accepted claim whose delivery failed', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     nextOutcome = 'accepted';
     await makeService().scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
@@ -323,28 +388,38 @@ describe('SpaceAgentInactivityWatchdogService', () => {
       },
     });
     await service.scanSpace(spaceId);
-    const claim = claimRepo.getByAgent(spaceId, 'agent-1');
+    const claim = claimRepo.getByAgent(spaceId, 'former-worker-agent');
     expect(claim?.degraded).toBe(true);
     expect(outcomes).toHaveLength(1);
   });
 
   it('does not reclaim an accepted delivery that outlives the scanner lease', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     nextOutcome = 'accepted';
     await makeService().scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
     db.prepare(
       `UPDATE space_agent_inactivity_claims SET updated_at = 1 WHERE space_id = ? AND agent_id = ?`
-    ).run(spaceId, 'agent-1');
+    ).run(spaceId, 'former-worker-agent');
     await makeService().scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
-    const claim = claimRepo.getByAgent(spaceId, 'agent-1');
+    const claim = claimRepo.getByAgent(spaceId, 'former-worker-agent');
     expect(claim?.state).toBe('accepted');
     expect(claim?.degraded).toBe(false);
   });
 
   it('does not deliver when the config is disabled during the admission recheck', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     let getSpaceCalls = 0;
     const service = new SpaceAgentInactivityWatchdogService({
       configRepo,
@@ -354,7 +429,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
         getSpace: mock(async () => {
           getSpaceCalls += 1;
           if (getSpaceCalls === 3) {
-            configRepo.setEnabled(spaceId, 'agent-1', false);
+            configRepo.setEnabled(spaceId, 'former-worker-agent', false);
           }
           return { status: 'active', paused: false, stopped: false };
         }),
@@ -371,11 +446,16 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     });
     await service.scanSpace(spaceId);
     expect(outcomes).toHaveLength(0);
-    expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
+    expect(claimRepo.getByAgent(spaceId, 'former-worker-agent')).toBeNull();
   });
 
   it('releases the claim without delivering when the config revision changes mid-delivery', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     let getSpaceCalls = 0;
     const service = new SpaceAgentInactivityWatchdogService({
       configRepo,
@@ -387,7 +467,7 @@ describe('SpaceAgentInactivityWatchdogService', () => {
           if (getSpaceCalls === 3) {
             configRepo.upsert({
               spaceId,
-              agentId: 'agent-1',
+              agentId: 'former-worker-agent',
               enabled: true,
               thresholdMs: THRESHOLD_MS,
               prompt: 'bump',
@@ -408,24 +488,29 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     });
     await service.scanSpace(spaceId);
     expect(outcomes).toHaveLength(0);
-    expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
+    expect(claimRepo.getByAgent(spaceId, 'former-worker-agent')).toBeNull();
   });
 
   it('reclaims a stale claim left behind by a crashed scanner process', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     const seeded = claimRepo.acquire({
       spaceId,
-      agentId: 'agent-1',
-      claimKey: 'inactivity-nag:agent-1:stale:0',
+      agentId: 'former-worker-agent',
+      claimKey: 'inactivity-nag:former-worker-agent:stale:0',
       windowAnchoredAt: NOW - THRESHOLD_MS - 5000,
       attemptGeneration: 0,
       ownerToken: 'scanner-old',
       configRevision: 1,
     });
-    claimRepo.markInFlight(spaceId, 'agent-1', seeded.claim.claimKey);
+    claimRepo.markInFlight(spaceId, 'former-worker-agent', seeded.claim.claimKey);
     db.prepare(
       `UPDATE space_agent_inactivity_claims SET updated_at = 1 WHERE space_id = ? AND agent_id = ?`
-    ).run(spaceId, 'agent-1');
+    ).run(spaceId, 'former-worker-agent');
     const service = new SpaceAgentInactivityWatchdogService({
       configRepo,
       claimRepo,
@@ -443,26 +528,48 @@ describe('SpaceAgentInactivityWatchdogService', () => {
     });
     await service.scanSpace(spaceId);
     expect(outcomes).toHaveLength(1);
-    expect(claimRepo.getByAgent(spaceId, 'agent-1')).toBeNull();
+    expect(claimRepo.getByAgent(spaceId, 'former-worker-agent')).toBeNull();
   });
 
   it('keeps the run-now baseline when only the invoking turn advanced activity', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     const baseline = NOW - THRESHOLD_MS - 5000;
     const invokingUserMsgAt = NOW - THRESHOLD_MS - 1000;
     sessionSnapshot.latestConsumedUserMessageAt = invokingUserMsgAt;
     sessionSnapshot.latestConsumedMessageAt = NOW - 10;
-    await makeService().scanAgent(spaceId, 'agent-1', baseline, NOW - 100, invokingUserMsgAt);
+    await makeService().scanAgent(
+      spaceId,
+      'former-worker-agent',
+      baseline,
+      NOW - 100,
+      invokingUserMsgAt
+    );
     expect(outcomes).toHaveLength(1);
   });
 
   it('cancels run-now admission when a newer turn started after invocation', async () => {
-    configRepo.upsert({ spaceId, agentId: 'agent-1', enabled: true, thresholdMs: THRESHOLD_MS });
+    configRepo.upsert({
+      spaceId,
+      agentId: 'former-worker-agent',
+      enabled: true,
+      thresholdMs: THRESHOLD_MS,
+    });
     const baseline = NOW - THRESHOLD_MS - 5000;
     const invokingUserMsgAt = NOW - THRESHOLD_MS - 1000;
     sessionSnapshot.latestConsumedUserMessageAt = NOW - 50;
     sessionSnapshot.latestConsumedMessageAt = NOW - 10;
-    await makeService().scanAgent(spaceId, 'agent-1', baseline, NOW - 100, invokingUserMsgAt);
+    await makeService().scanAgent(
+      spaceId,
+      'former-worker-agent',
+      baseline,
+      NOW - 100,
+      invokingUserMsgAt
+    );
     expect(outcomes).toHaveLength(0);
   });
 });

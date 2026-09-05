@@ -16,7 +16,7 @@ function markerExists(db: BunDatabase, key: string): boolean {
 function createBaselineSchemaSentinels(db: BunDatabase): void {
   db.exec(`
     CREATE TABLE spaces (id TEXT PRIMARY KEY);
-    CREATE TABLE space_agents (id TEXT PRIMARY KEY);
+    CREATE TABLE space_long_horizon_agents (id TEXT PRIMARY KEY);
     CREATE TABLE space_tasks (
       id TEXT PRIMARY KEY,
       status TEXT NOT NULL DEFAULT 'open',

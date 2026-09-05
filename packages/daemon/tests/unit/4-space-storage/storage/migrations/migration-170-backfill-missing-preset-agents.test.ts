@@ -2,6 +2,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } fr
 import { rmSync, mkdirSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
+import { createLegacySpaceAgentTables } from '../../../helpers/space-agent-schema.ts';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import { runMigration170 } from '../../../../../src/storage/schema/index.ts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
@@ -120,6 +121,7 @@ describe('Migration 170: backfill missing preset agents into existing Spaces', (
     copyFileSync(templateDbPath, dbPath);
     db = new BunDatabase(dbPath);
     db.exec('PRAGMA foreign_keys = ON');
+    createLegacySpaceAgentTables(db);
   });
 
   afterEach(() => {

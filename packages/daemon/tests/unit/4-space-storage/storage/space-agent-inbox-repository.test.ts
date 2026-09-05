@@ -7,7 +7,7 @@ let db: Database;
 let repo: SpaceAgentInboxRepository;
 
 const SPACE_ID = 'space-1';
-const AGENT_ID = 'agent-1';
+const AGENT_ID = 'former-worker-agent';
 
 function freshDb(): Database {
   const d = new Database(':memory:');
@@ -17,7 +17,7 @@ function freshDb(): Database {
     `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at) VALUES ('${SPACE_ID}', '${SPACE_ID}', '/tmp/test-space-agent-inbox', 'Test Space', ${now}, ${now})`
   );
   d.exec(
-    `INSERT INTO space_agents (id, space_id, name, created_at, updated_at) VALUES ('${AGENT_ID}', '${SPACE_ID}', 'Task Manager', ${now}, ${now})`
+    `INSERT INTO space_long_horizon_agents (id, space_id, handle, display_name, template_key, status, instructions, tool_permissions_json, created_at, updated_at) VALUES ('${AGENT_ID}', '${SPACE_ID}', '${AGENT_ID}', 'Task Manager', 'migration.legacy_space_agent', 'active', '', '{}', ${now}, ${now})`
   );
   return d;
 }

@@ -26,13 +26,6 @@ function seedSpace(db: BunDatabase, spaceId: string): void {
   ).run(spaceId, `/tmp/ws-${spaceId}`, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
-function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
-  ).run(agentId, spaceId, name, Date.now(), Date.now());
-}
-
 function makeTestAgent(
   id: string,
   name: string,
@@ -514,8 +507,6 @@ describe('full round-trip: export → import → DB read-back', () => {
   beforeEach(() => {
     db = makeDb();
     seedSpace(db, SPACE_ID);
-    seedAgent(db, 'agent-1', SPACE_ID, 'Coder Agent');
-    seedAgent(db, 'agent-2', SPACE_ID, 'Reviewer Agent');
     repo = new SpaceWorkflowRepository(db);
     manager = new SpaceWorkflowManager(repo);
   });

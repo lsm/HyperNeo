@@ -44,7 +44,7 @@ describe('SpaceAgentInactivity repositories', () => {
       slug: 'w',
       name: 'W',
     }).id;
-    for (const agentId of ['agent-1', 'agent-2']) {
+    for (const agentId of ['agent-1', 'agent-2', 'former-worker-agent']) {
       db.prepare(
         `INSERT INTO space_long_horizon_agents
          (id, space_id, handle, display_name, instructions, tool_permissions_json, created_at, updated_at)
@@ -64,6 +64,17 @@ describe('SpaceAgentInactivity repositories', () => {
       expect(config.thresholdMs).toBeNull();
       expect(config.prompt).toBeNull();
       expect(config.configRevision).toBe(1);
+    });
+
+    it('accepts a former worker id that exists only in space_long_horizon_agents', () => {
+      const config = configRepo.upsert({
+        spaceId,
+        agentId: 'former-worker-agent',
+        enabled: true,
+        thresholdMs: 5000,
+      });
+      expect(config.enabled).toBe(true);
+      expect(configRepo.getByAgent(spaceId, 'former-worker-agent')).toBeDefined();
     });
 
     it('bumps the revision only when config content changes', () => {

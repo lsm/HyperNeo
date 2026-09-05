@@ -25,13 +25,6 @@ function seedSpace(db: BunDatabase, spaceId = 'space-1', workspacePath = '/tmp/w
   ).run(spaceId, workspacePath, `Space ${spaceId}`, spaceId, Date.now(), Date.now());
 }
 
-function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
-  db.prepare(
-    `INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt, created_at, updated_at)
-     VALUES (?, ?, ?, '', null, '[]', '', ?, ?)`
-  ).run(agentId, spaceId, name, Date.now(), Date.now());
-}
-
 function makeOkRunner(): CommandRunner {
   return async () => ({ exitCode: 0 });
 }
@@ -60,8 +53,6 @@ describe('WorkflowExecutor', () => {
   beforeEach(() => {
     db = makeDb();
     seedSpace(db, SPACE_ID, WORKSPACE);
-    seedAgent(db, AGENT_A, SPACE_ID, 'Agent A');
-    seedAgent(db, AGENT_B, SPACE_ID, 'Agent B');
 
     workflowRepo = new SpaceWorkflowRepository(db);
     runRepo = new SpaceWorkflowRunRepository(db);
