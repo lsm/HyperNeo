@@ -1230,7 +1230,7 @@ class SpaceStore {
     } catch (err) {
       logger.error('Failed to fetch agent templates:', err);
       if (this.spaceId.value === spaceId && !this.templateListMerged) {
-        this.applyBuiltInTemplates([]);
+        this.applyBuiltInTemplates([...this.builtInTemplatesByKey.values()]);
       }
     }
   }

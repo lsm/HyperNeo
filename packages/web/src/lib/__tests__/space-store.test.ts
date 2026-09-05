@@ -1742,6 +1742,33 @@ describe('SpaceStore — agent template CRUD', () => {
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['new.custom']);
   });
 
+  it('refresh failure keeps cached built-ins alongside session mutations', async () => {
+    await spaceStore.selectSpace('space-1');
+    const richBuiltIn = makeLongHorizonAgentTemplate({ key: 'builtin.default' });
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      if (method === 'spaceAgent.createTemplate') {
+        return { template: makeAgentTemplate({ key: 'new.custom', handle: 'new' }) };
+      }
+      return {};
+    });
+    await spaceStore.refresh();
+    await spaceStore.ensureConfigData();
+    await spaceStore.createTemplate({ key: 'new.custom', handle: 'new', displayName: 'New' });
+
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') throw new Error('transient outage');
+      return {};
+    });
+    await spaceStore.refresh();
+    await spaceStore.ensureConfigData();
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual([
+      'builtin.default',
+      'new.custom',
+    ]);
+  });
+
   it('createTemplate before any fetch keeps built-ins and the mutation across a refresh', async () => {
     await spaceStore.selectSpace('space-1');
     const created = await spaceStore.createTemplate({
