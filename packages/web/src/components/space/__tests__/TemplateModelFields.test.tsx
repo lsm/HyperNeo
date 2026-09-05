@@ -162,6 +162,15 @@ describe('TemplateModelFields', () => {
     expect(getByTestId('template-model-fields-thinking-level')).toBeTruthy();
   });
 
+  it('hides the model select but keeps the thinking level select when hidden', () => {
+    const { getByTestId, queryByTestId } = render(
+      <TemplateModelFields value={EMPTY_VALUE} onChange={vi.fn()} hideModelSelect />
+    );
+    expect(getByTestId('template-model-fields')).toBeTruthy();
+    expect(queryByTestId('template-model-fields-model-select')).toBeNull();
+    expect(getByTestId('template-model-fields-thinking-level')).toBeTruthy();
+  });
+
   it('associates labels with their selects via htmlFor/id', () => {
     const { getByTestId } = render(<TemplateModelFields value={EMPTY_VALUE} onChange={vi.fn()} />);
     const modelLabel = getByTestId('template-model-fields').querySelector(

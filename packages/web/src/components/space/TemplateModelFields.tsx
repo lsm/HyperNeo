@@ -20,12 +20,14 @@ interface TemplateModelFieldsProps {
   value: TemplateModelFieldsValue;
   onChange: (value: TemplateModelFieldsValue) => void;
   testId?: string;
+  hideModelSelect?: boolean;
 }
 
 export function TemplateModelFields({
   value,
   onChange,
   testId = 'template-model-fields',
+  hideModelSelect = false,
 }: TemplateModelFieldsProps) {
   const modelSelectId = `${testId}-model-select`;
   const thinkingSelectId = `${testId}-thinking-level`;
@@ -117,23 +119,25 @@ export function TemplateModelFields({
 
   return (
     <div class="space-y-4" data-testid={testId}>
-      <div>
-        <label htmlFor={modelSelectId} class="block text-sm font-medium text-fg-soft mb-1.5">
-          Model
-          <span class="text-fg-muted text-xs ml-2">(optional)</span>
-        </label>
-        <WorkflowModelSelect
-          id={modelSelectId}
-          value={value.model || undefined}
-          provider={value.provider || undefined}
-          onChange={handleModelChange}
-          onModelsLoad={handleModelsLoad}
-          testId={modelSelectId}
-        />
-        <p class="mt-1.5 text-xs text-fg-faint leading-snug">
-          Leave empty to use the space default model.
-        </p>
-      </div>
+      {!hideModelSelect && (
+        <div>
+          <label htmlFor={modelSelectId} class="block text-sm font-medium text-fg-soft mb-1.5">
+            Model
+            <span class="text-fg-muted text-xs ml-2">(optional)</span>
+          </label>
+          <WorkflowModelSelect
+            id={modelSelectId}
+            value={value.model || undefined}
+            provider={value.provider || undefined}
+            onChange={handleModelChange}
+            onModelsLoad={handleModelsLoad}
+            testId={modelSelectId}
+          />
+          <p class="mt-1.5 text-xs text-fg-faint leading-snug">
+            Leave empty to use the space default model.
+          </p>
+        </div>
+      )}
 
       <div>
         <label htmlFor={thinkingSelectId} class="block text-sm font-medium text-fg-soft mb-1.5">
