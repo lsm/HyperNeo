@@ -338,9 +338,8 @@ export function exportWorkflow(
       };
       if (a.templateKey?.trim()) {
         entry.templateKey = a.templateKey.trim();
-        if (a.agentId?.trim()) {
-          entry.agentRef = agentIdToName.get(a.agentId) ?? a.agentId;
-        }
+        const fallbackName = a.agentId?.trim() ? agentIdToName.get(a.agentId.trim()) : undefined;
+        if (fallbackName !== undefined) entry.agentRef = fallbackName;
       } else {
         entry.agentRef = agentIdToName.get(a.agentId) ?? a.agentId;
       }

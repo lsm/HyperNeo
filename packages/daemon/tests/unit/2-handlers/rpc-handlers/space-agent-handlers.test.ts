@@ -433,6 +433,60 @@ describe('Space Agent RPC Handlers', () => {
       );
       expect(result.success).toBe(true);
     });
+
+    it('refuses to delete a template referenced by an executable run definition', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'pinned.custom',
+        handle: 'pinned',
+      });
+      db.exec(`CREATE TABLE IF NOT EXISTS space_workflow_runs (
+        id TEXT PRIMARY KEY, space_id TEXT NOT NULL, workflow_id TEXT NOT NULL,
+        definition_version TEXT, title TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      )`);
+      db.exec(`CREATE TABLE IF NOT EXISTS space_tasks (
+        id TEXT PRIMARY KEY, workflow_run_id TEXT, archived_at INTEGER
+      )`);
+      db.exec(`CREATE TABLE IF NOT EXISTS space_workflow_definition_versions (
+        workflow_id TEXT NOT NULL, version_hash TEXT NOT NULL, space_id TEXT NOT NULL,
+        payload TEXT NOT NULL, source TEXT NOT NULL, created_at INTEGER NOT NULL,
+        PRIMARY KEY (workflow_id, version_hash)
+      )`);
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflow_definition_versions
+           (workflow_id, version_hash, space_id, payload, source, created_at)
+         VALUES ('wf-pinned', 'hash-1', 'space-1', ?, 'run_create', ?)`
+      ).run(
+        JSON.stringify({
+          nodes: [{ agents: [{ agentId: '', templateKey: 'pinned.custom', name: 'coder' }] }],
+        }),
+        now
+      );
+      db.prepare(
+        `INSERT INTO space_workflow_runs (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
+         VALUES ('run-pinned', 'space-1', 'wf-pinned', 'hash-1', 'Run', 'in_progress', ?, ?)`
+      ).run(now, now);
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'pinned.custom' })
+      ).rejects.toThrow('referenced by 1 workflow node slot(s)');
+
+      db.prepare(
+        `INSERT INTO space_tasks (id, workflow_run_id, archived_at) VALUES ('task-1', 'run-pinned', NULL)`
+      ).run();
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'pinned.custom' })
+      ).rejects.toThrow('referenced by 1 workflow node slot(s)');
+
+      db.prepare(`UPDATE space_tasks SET archived_at = ? WHERE id = 'task-1'`).run(now);
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'pinned.custom' }
+      );
+      expect(result.success).toBe(true);
+    });
   });
 
   describe('spaceAgent.promotion', () => {

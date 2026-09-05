@@ -460,6 +460,46 @@ describe('Space Export/Import RPC Handlers', () => {
       );
     });
 
+    it('exports a template-bound slot whose kept agentId fallback is unexportable', async () => {
+      new SpaceAgentTemplateRepository(db as any).create({
+        key: 'migrated.sleeper',
+        handle: 'sleeper',
+        displayName: 'Sleeper',
+      });
+      longHorizonAgentRepo.create({
+        spaceId: SPACE_ID,
+        handle: 'sleeper',
+        displayName: 'Sleeper',
+        status: 'paused',
+      });
+      const sleeperId = longHorizonAgentRepo.listBySpaceId(SPACE_ID)[0].id;
+      workflowRepo.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Pipe',
+        nodes: [
+          {
+            name: 'S',
+            agents: [{ agentId: sleeperId, templateKey: 'migrated.sleeper', name: 'sleeper' }],
+          },
+        ],
+        startNodeId: 'S',
+        tags: [],
+        completionAutonomyLevel: 3,
+        createdAt: 1,
+        updatedAt: 1,
+      } as never);
+
+      const result = await call<{
+        bundle: { workflows: Array<{ nodes: Array<{ agents: unknown[] }> }> };
+      }>(handlers, 'spaceExport.workflows', { spaceId: SPACE_ID });
+      const slot = result.bundle.workflows[0].nodes[0].agents[0] as {
+        templateKey?: string;
+        agentRef?: string;
+      };
+      expect(slot.templateKey).toBe('migrated.sleeper');
+      expect(slot.agentRef).toBeUndefined();
+    });
+
     it('rejects when a workflow references the space coordinator', async () => {
       const coordinator = longHorizonAgentRepo.ensureCoordinator(SPACE_ID);
       workflowRepo.createWorkflow({
@@ -636,7 +676,7 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       const templateBundle = {
-        version: 1,
+        version: 5,
         type: 'bundle',
         name: 'Templates',
         agents: [],
@@ -684,7 +724,7 @@ describe('Space Export/Import RPC Handlers', () => {
       seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
 
       const fallbackBundle = {
-        version: 1,
+        version: 5,
         type: 'bundle',
         name: 'Templates',
         agents: [],
@@ -723,7 +763,7 @@ describe('Space Export/Import RPC Handlers', () => {
       const coder = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
 
       const bundle = {
-        version: 1,
+        version: 5,
         type: 'bundle',
         name: 'Templates',
         agents: [],
@@ -757,16 +797,17 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(created?.nodes[0].agents[0].templateKey).toBeUndefined();
     });
 
-    it('keeps the template binding plus agent fallback when importing a known template key', async () => {
+    it('binds the exported agent in preference to a colliding stored template key', async () => {
       new SpaceAgentTemplateRepository(db as any).create({
         key: 'migrated.coder',
         handle: 'coder',
-        displayName: 'Coder',
+        displayName: 'Foreign Coder',
+        instructions: 'Unrelated stored template',
       });
       const coder = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
 
       const bundle = {
-        version: 1,
+        version: 5,
         type: 'bundle',
         name: 'Templates',
         agents: [],
@@ -794,8 +835,8 @@ describe('Space Export/Import RPC Handlers', () => {
       });
 
       const created = workflowRepo.listWorkflows(SPACE_ID).find((w) => w.name === 'Pipe');
-      expect(created?.nodes[0].agents[0].templateKey).toBe('migrated.coder');
       expect(created?.nodes[0].agents[0].agentId).toBe(coder.id);
+      expect(created?.nodes[0].agents[0].templateKey).toBeUndefined();
     });
 
     it('treats orphaned migration mirrors as missing in imports', async () => {

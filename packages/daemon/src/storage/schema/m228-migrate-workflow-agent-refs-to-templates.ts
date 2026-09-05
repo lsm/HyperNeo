@@ -76,52 +76,59 @@ export function runMigration228(db: BunDatabase): void {
     .prepare(`SELECT id, config FROM space_workflow_nodes ORDER BY rowid ASC`)
     .all() as NodeRow[];
 
-  for (const nodeRow of nodeRows) {
-    const config = parseRecord(nodeRow.config);
-    const slots = Array.isArray(config?.agents) ? (config.agents as SlotShape[]) : null;
-    if (!slots || slots.length === 0) continue;
+  db.exec('BEGIN');
+  try {
+    for (const nodeRow of nodeRows) {
+      const config = parseRecord(nodeRow.config);
+      const slots = Array.isArray(config?.agents) ? (config.agents as SlotShape[]) : null;
+      if (!slots || slots.length === 0) continue;
 
-    let changed = false;
-    for (const slot of slots) {
-      const agentId = typeof slot.agentId === 'string' ? slot.agentId : '';
-      if (!agentId.trim()) continue;
-      if (typeof slot.templateKey === 'string' && slot.templateKey.trim()) continue;
+      let changed = false;
+      for (const slot of slots) {
+        const agentId = typeof slot.agentId === 'string' ? slot.agentId : '';
+        if (!agentId.trim()) continue;
+        if (typeof slot.templateKey === 'string' && slot.templateKey.trim()) continue;
 
-      const agentRow = agentsById.get(agentId);
-      if (agentRow && !isRunnableAgentRow(agentRow)) continue;
-      const seed = agentRow
-        ? agentRow.handle || agentRow.display_name || agentRow.id
-        : slot.name || agentId;
-      let key = templateKeysByAgentId.get(agentId);
-      if (!key) {
-        key = allocateMigratedTemplateKey(seed, agentId, claimed);
-        claimed.add(key);
-        templateKeysByAgentId.set(agentId, key);
-        templateRepo.create(
-          agentRow
-            ? synthesizeWorkflowAgentTemplate(rowToSynthesisSource(agentRow), key)
-            : synthesizeOrphanWorkflowAgentTemplate(
-                { agentId, slotName: typeof slot.name === 'string' ? slot.name : '' },
-                key
-              )
-        );
+        const agentRow = agentsById.get(agentId);
+        if (agentRow && !isRunnableAgentRow(agentRow)) continue;
+        const seed = agentRow
+          ? agentRow.handle || agentRow.display_name || agentRow.id
+          : slot.name || agentId;
+        let key = templateKeysByAgentId.get(agentId);
+        if (!key) {
+          key = allocateMigratedTemplateKey(seed, agentId, claimed);
+          claimed.add(key);
+          templateKeysByAgentId.set(agentId, key);
+          templateRepo.create(
+            agentRow
+              ? synthesizeWorkflowAgentTemplate(rowToSynthesisSource(agentRow), key)
+              : synthesizeOrphanWorkflowAgentTemplate(
+                  { agentId, slotName: typeof slot.name === 'string' ? slot.name : '' },
+                  key
+                )
+          );
+        }
+
+        slot.templateKey = key;
+        changed = true;
+
+        if (clearExecutionAgentId) {
+          clearExecutionAgentId.run(
+            nodeRow.id,
+            typeof slot.name === 'string' ? slot.name : '',
+            agentId
+          );
+        }
       }
 
-      slot.templateKey = key;
-      changed = true;
-
-      if (clearExecutionAgentId) {
-        clearExecutionAgentId.run(
-          nodeRow.id,
-          typeof slot.name === 'string' ? slot.name : '',
-          agentId
-        );
+      if (changed) {
+        updateNode.run(JSON.stringify(config), Date.now(), nodeRow.id);
       }
     }
-
-    if (changed) {
-      updateNode.run(JSON.stringify(config), Date.now(), nodeRow.id);
-    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
   }
 }
 

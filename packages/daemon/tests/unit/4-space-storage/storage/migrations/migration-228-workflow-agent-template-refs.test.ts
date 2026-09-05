@@ -350,6 +350,31 @@ describe('migration 228: workflow agent refs to template keys', () => {
     db.close();
   });
 
+  test('rolls back template creations and node rewrites when the migration fails mid-run', () => {
+    const db = makeDb();
+    insertSpace(db, 'space-1');
+    insertAgent(db, {
+      id: 'agent-coder',
+      spaceId: 'space-1',
+      handle: 'coder',
+      displayName: 'Coder',
+      instructions: 'Write the code',
+    });
+    insertWorkflowWithNode(db, 'space-1', 'node-1', {
+      agents: [{ agentId: 'agent-coder', name: 'coder' }],
+    });
+    db.exec('DROP TABLE space_agent_template_version_seq');
+
+    expect(() => runMigration228(db)).toThrow();
+
+    const repo = new SpaceAgentTemplateRepository(db);
+    expect(repo.list().filter((t) => t.key.startsWith('migrated.'))).toEqual([]);
+    const slots = nodeConfig(db, 'node-1').agents as Array<Record<string, unknown>>;
+    expect(slots[0].templateKey).toBeUndefined();
+    expect(slots[0].agentId).toBe('agent-coder');
+    db.close();
+  });
+
   test('is idempotent when run twice', () => {
     const db = makeDb();
     insertSpace(db, 'space-1');

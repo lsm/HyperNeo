@@ -218,7 +218,7 @@ describe('SpaceWorkflowManager', () => {
         name: 'Stale Fallback Workflow',
         nodes: [
           {
-            id: 'node-1',
+            id: 'node-stale-1',
             name: 'Step One',
             agents: [{ agentId: 'agent-gone', templateKey: 'migrated.coder', name: 'coder' }],
           },
