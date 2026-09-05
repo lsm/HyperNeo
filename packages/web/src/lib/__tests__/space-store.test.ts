@@ -3304,4 +3304,18 @@ describe('SpaceStore — template CRUD methods', () => {
 
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['scribe']);
   });
+
+  it('deleteTemplate() rejects when the post-delete refresh fails', async () => {
+    templateListResult = [makeAgentTemplate({ key: 'scribe' })];
+    await spaceStore.fetchTemplates();
+    mockHub.request
+      .mockImplementationOnce(async () => ({ success: true }))
+      .mockImplementationOnce(async () => {
+        throw new Error('connection dropped');
+      });
+
+    await expect(spaceStore.deleteTemplate('scribe')).rejects.toThrow('connection dropped');
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['scribe']);
+  });
 });

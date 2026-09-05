@@ -2424,13 +2424,19 @@ class SpaceStore {
     if (!hub) throw new Error('Not connected');
 
     try {
-      const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
-        'spaceAgent.listTemplates'
-      );
-      this.agentTemplates.value = (result?.templates ?? []).map(toPaneAgentTemplate);
+      await this.refreshTemplateLibrary(hub);
     } catch (err) {
       logger.error('Failed to fetch templates:', err);
     }
+  }
+
+  private async refreshTemplateLibrary(
+    hub: Awaited<ReturnType<typeof connectionManager.getHub>>
+  ): Promise<void> {
+    const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
+      'spaceAgent.listTemplates'
+    );
+    this.agentTemplates.value = (result?.templates ?? []).map(toPaneAgentTemplate);
   }
 
   async createTemplate(params: CreateSpaceAgentTemplateParams): Promise<SpaceAgentTemplate> {
@@ -2466,7 +2472,7 @@ class SpaceStore {
     if (!hub) throw new Error('Not connected');
 
     await hub.request('spaceAgent.deleteTemplate', { key });
-    await this.fetchTemplates();
+    await this.refreshTemplateLibrary(hub);
   }
 
   private upsertAgentTemplate(template: SpaceAgentTemplate): void {
