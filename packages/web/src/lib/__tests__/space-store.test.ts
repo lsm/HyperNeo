@@ -1494,9 +1494,20 @@ describe('SpaceStore — agent template CRUD', () => {
     });
   });
 
-  it('fetchTemplates preserves existing built-in extras by key', async () => {
-    const existing = makeLongHorizonAgentTemplate({
-      key: 'existing.default',
+  it('fetchTemplates skips the built-in fetch when no space is selected', async () => {
+    await spaceStore.fetchTemplates();
+
+    expect(mockHub.request).not.toHaveBeenCalledWith(
+      'spaceAgent.listBuiltInTemplates',
+      expect.anything()
+    );
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listTemplates', {});
+  });
+
+  it('fetchTemplates resolves flattened built-in metadata via listBuiltInTemplates', async () => {
+    await spaceStore.selectSpace('space-1');
+    const richBuiltIn = makeLongHorizonAgentTemplate({
+      key: 'builtin.default',
       suggestedEventSubscriptions: [{ source: 'space', topic: 'task.*', filter: {} }],
       reminderDefaults: [
         {
@@ -1512,11 +1523,15 @@ describe('SpaceStore — agent template CRUD', () => {
       ],
       toolPermissions: { tools: ['Read'] },
     });
-    spaceStore.agentTemplates.value = [existing];
-
-    const fetched = makeAgentTemplate({ key: 'existing.default', displayName: 'Renamed' });
+    const flattened = makeAgentTemplate({
+      key: 'builtin.default',
+      displayName: 'Renamed',
+      createdAt: 0,
+      updatedAt: 0,
+    });
     mockHub.request.mockImplementation(async (method: string): Promise<any> => {
-      if (method === 'spaceAgent.listTemplates') return { templates: [fetched] };
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      if (method === 'spaceAgent.listTemplates') return { templates: [flattened] };
       return {};
     });
 
@@ -1527,11 +1542,57 @@ describe('SpaceStore — agent template CRUD', () => {
     expect(templates[0].suggestedEventSubscriptions).toEqual([
       { source: 'space', topic: 'task.*', filter: {} },
     ]);
+    expect(templates[0].reminderDefaults).toEqual(richBuiltIn.reminderDefaults);
+    expect(templates[0].ownershipPatterns).toEqual(richBuiltIn.ownershipPatterns);
     expect(templates[0].toolPermissions).toEqual({ tools: ['Read'] });
+  });
+
+  it('fetchTemplates gives custom overrides empty extras even when shadowing a built-in key', async () => {
+    await spaceStore.selectSpace('space-1');
+    const richBuiltIn = makeLongHorizonAgentTemplate({
+      key: 'builtin.default',
+      suggestedEventSubscriptions: [{ source: 'space', topic: 'task.*', filter: {} }],
+      toolPermissions: { tools: ['Read'] },
+    });
+    const shadow = makeAgentTemplate({
+      key: 'builtin.default',
+      displayName: 'Shadow',
+      createdAt: 5,
+      updatedAt: 5,
+      tools: null,
+    });
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      if (method === 'spaceAgent.listTemplates') return { templates: [shadow] };
+      return {};
+    });
+
+    const templates = await spaceStore.fetchTemplates();
+
+    expect(templates).toHaveLength(1);
+    expect(templates[0].displayName).toBe('Shadow');
+    expect(templates[0].suggestedEventSubscriptions).toEqual([]);
+    expect(templates[0].toolPermissions).toEqual({});
   });
 
   it('createTemplate calls spaceAgent.createTemplate and merges into agentTemplates', async () => {
     spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'existing.default' })];
+    const modelPool = [
+      { model: 'claude-sonnet-5', provider: 'anthropic', maxConcurrent: 1, weight: 1 },
+    ];
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.createTemplate') {
+        return {
+          template: makeAgentTemplate({
+            key: 'new.custom',
+            handle: 'new',
+            modelPool,
+            settingSources: ['user'],
+          }),
+        };
+      }
+      return {};
+    });
 
     const created = await spaceStore.createTemplate({
       key: 'new.custom',
@@ -1546,6 +1607,11 @@ describe('SpaceStore — agent template CRUD', () => {
     });
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toContain('new.custom');
     expect(created.key).toBe('new.custom');
+    expect(created.modelPool).toEqual(modelPool);
+    expect(created.settingSources).toEqual(['user']);
+    expect(spaceStore.agentTemplates.value.find((t) => t.key === 'new.custom')?.modelPool).toEqual(
+      modelPool
+    );
   });
 
   it('updateTemplate calls spaceAgent.updateTemplate and merges into agentTemplates', async () => {
@@ -1565,6 +1631,25 @@ describe('SpaceStore — agent template CRUD', () => {
     expect(updated?.key).toBe('custom.test');
   });
 
+  it('updateTemplate honors an explicit empty tools value', async () => {
+    spaceStore.agentTemplates.value = [
+      makeLongHorizonAgentTemplate({ key: 'custom.test', toolPermissions: { tools: ['Read'] } }),
+    ];
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.updateTemplate') {
+        return { template: makeAgentTemplate({ key: 'custom.test', tools: null }) };
+      }
+      return {};
+    });
+
+    const updated = await spaceStore.updateTemplate('custom.test', { displayName: 'X' });
+
+    expect(updated?.toolPermissions).toEqual({});
+    expect(
+      spaceStore.agentTemplates.value.find((t) => t.key === 'custom.test')?.toolPermissions
+    ).toEqual({});
+  });
+
   it('updateTemplate returns null when the RPC returns no template', async () => {
     spaceStore.agentTemplates.value = [makeLongHorizonAgentTemplate({ key: 'keep' })];
     mockHub.request.mockImplementation(async (method: string): Promise<any> => {
@@ -1578,11 +1663,16 @@ describe('SpaceStore — agent template CRUD', () => {
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['keep']);
   });
 
-  it('deleteTemplate calls spaceAgent.deleteTemplate and removes the template', async () => {
-    spaceStore.agentTemplates.value = [
-      makeLongHorizonAgentTemplate({ key: 'keep' }),
-      makeLongHorizonAgentTemplate({ key: 'delete-me' }),
-    ];
+  it('deleteTemplate calls spaceAgent.deleteTemplate and refetches the list', async () => {
+    let list = [makeAgentTemplate({ key: 'keep' }), makeAgentTemplate({ key: 'delete-me' })];
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.deleteTemplate') {
+        list = list.filter((t) => t.key !== 'delete-me');
+        return { success: true };
+      }
+      if (method === 'spaceAgent.listTemplates') return { templates: list };
+      return {};
+    });
 
     await spaceStore.deleteTemplate('delete-me');
 
@@ -1590,6 +1680,39 @@ describe('SpaceStore — agent template CRUD', () => {
       key: 'delete-me',
     });
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['keep']);
+  });
+
+  it('deleteTemplate restores a shadowed built-in via refetch', async () => {
+    await spaceStore.selectSpace('space-1');
+    const richBuiltIn = makeLongHorizonAgentTemplate({
+      key: 'builtin.default',
+      toolPermissions: { tools: ['Read'] },
+    });
+    const flattened = makeAgentTemplate({ key: 'builtin.default', createdAt: 0, updatedAt: 0 });
+    const shadow = makeAgentTemplate({
+      key: 'builtin.default',
+      displayName: 'Shadow',
+      createdAt: 5,
+      updatedAt: 5,
+    });
+    let list = [shadow];
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      if (method === 'spaceAgent.deleteTemplate') {
+        list = [flattened];
+        return { success: true };
+      }
+      if (method === 'spaceAgent.listTemplates') return { templates: list };
+      return {};
+    });
+
+    await spaceStore.deleteTemplate('builtin.default');
+
+    const templates = spaceStore.agentTemplates.value;
+    expect(templates).toHaveLength(1);
+    expect(templates[0].key).toBe('builtin.default');
+    expect(templates[0].displayName).toBe('Custom Template');
+    expect(templates[0].toolPermissions).toEqual({ tools: ['Read'] });
   });
 });
 

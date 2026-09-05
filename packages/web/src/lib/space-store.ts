@@ -246,6 +246,8 @@ class SpaceStore {
 
   readonly agentTemplates = signal<SpaceLongHorizonAgentTemplate[]>([]);
 
+  private builtInTemplatesByKey = new Map<string, SpaceLongHorizonAgentTemplate>();
+
   readonly workflows = signal<SpaceWorkflowSummary[]>([]);
 
   readonly workflowDetails = signal<SpaceWorkflow[]>([]);
@@ -970,10 +972,14 @@ class SpaceStore {
         }
       );
       if (this.spaceId.value !== spaceId) return;
+      this.builtInTemplatesByKey = new Map((result?.templates ?? []).map((t) => [t.key, t]));
       this.agentTemplates.value = result?.templates ?? [];
     } catch (err) {
       logger.error('Failed to fetch agent templates:', err);
-      if (this.spaceId.value === spaceId) this.agentTemplates.value = [];
+      if (this.spaceId.value === spaceId) {
+        this.builtInTemplatesByKey = new Map();
+        this.agentTemplates.value = [];
+      }
     }
   }
 
@@ -2451,13 +2457,14 @@ class SpaceStore {
 
   private toLongHorizonTemplate(
     template: SpaceAgentTemplate | SpaceLongHorizonAgentTemplate,
-    existing?: SpaceLongHorizonAgentTemplate
+    builtIn?: SpaceLongHorizonAgentTemplate
   ): SpaceLongHorizonAgentTemplate {
     if ('suggestedEventSubscriptions' in template) {
       return template as SpaceLongHorizonAgentTemplate;
     }
     const t = template as SpaceAgentTemplate;
-    const tools = t.tools;
+    const isFlattenedBuiltIn = t.createdAt === 0 && t.updatedAt === 0;
+    const extras = isFlattenedBuiltIn ? builtIn : undefined;
     return {
       key: t.key,
       handle: t.handle,
@@ -2465,13 +2472,16 @@ class SpaceStore {
       description: t.description,
       instructions: t.instructions,
       suggestedAutonomyLevel: t.suggestedAutonomyLevel,
-      suggestedEventSubscriptions: existing?.suggestedEventSubscriptions ?? [],
-      reminderDefaults: existing?.reminderDefaults ?? [],
-      ownershipPatterns: existing?.ownershipPatterns ?? [],
-      toolPermissions: tools && tools.length > 0 ? { tools } : (existing?.toolPermissions ?? {}),
+      suggestedEventSubscriptions: extras?.suggestedEventSubscriptions ?? [],
+      reminderDefaults: extras?.reminderDefaults ?? [],
+      ownershipPatterns: extras?.ownershipPatterns ?? [],
+      toolPermissions:
+        t.tools && t.tools.length > 0 ? { tools: t.tools } : (extras?.toolPermissions ?? {}),
       model: t.model,
       provider: t.provider,
+      modelPool: t.modelPool,
       thinkingLevel: t.thinkingLevel,
+      settingSources: t.settingSources,
     };
   }
 
@@ -2482,16 +2492,33 @@ class SpaceStore {
       : [...this.agentTemplates.value, template];
   }
 
+  private async ensureBuiltInTemplateMap(
+    hub: Awaited<ReturnType<typeof connectionManager.getHub>>
+  ): Promise<void> {
+    if (this.builtInTemplatesByKey.size > 0) return;
+    const spaceId = this.spaceId.value;
+    if (!spaceId) return;
+    const result = await hub.request<{ templates: SpaceLongHorizonAgentTemplate[] }>(
+      'spaceAgent.listBuiltInTemplates',
+      { spaceId }
+    );
+    this.builtInTemplatesByKey = new Map((result?.templates ?? []).map((t) => [t.key, t]));
+  }
+
   async fetchTemplates(): Promise<SpaceLongHorizonAgentTemplate[]> {
     const hub = await connectionManager.getHub();
+    try {
+      await this.ensureBuiltInTemplateMap(hub);
+    } catch (err) {
+      logger.error('Failed to fetch built-in agent templates:', err);
+    }
     const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
       'spaceAgent.listTemplates',
       {}
     );
-    const templates = (result?.templates ?? []).map((t) => {
-      const existing = this.agentTemplates.value.find((current) => current.key === t.key);
-      return this.toLongHorizonTemplate(t, existing);
-    });
+    const templates = (result?.templates ?? []).map((t) =>
+      this.toLongHorizonTemplate(t, this.builtInTemplatesByKey.get(t.key))
+    );
     this.agentTemplates.value = templates;
     return templates;
   }
@@ -2519,8 +2546,7 @@ class SpaceStore {
       { key, ...params }
     );
     if (!result?.template) return null;
-    const existing = this.agentTemplates.value.find((t) => t.key === key);
-    const template = this.toLongHorizonTemplate(result.template, existing);
+    const template = this.toLongHorizonTemplate(result.template);
     this.mergeAgentTemplate(template);
     return template;
   }
@@ -2528,7 +2554,12 @@ class SpaceStore {
   async deleteTemplate(key: string): Promise<void> {
     const hub = await connectionManager.getHub();
     await hub.request<{ success: boolean }>('spaceAgent.deleteTemplate', { key });
-    this.agentTemplates.value = this.agentTemplates.value.filter((t) => t.key !== key);
+    try {
+      await this.fetchTemplates();
+    } catch (err) {
+      logger.error('Failed to refetch agent templates:', err);
+      this.agentTemplates.value = this.agentTemplates.value.filter((t) => t.key !== key);
+    }
   }
 
   async listAgentReminderCounts(agentIds: string[]): Promise<Record<string, number>> {
