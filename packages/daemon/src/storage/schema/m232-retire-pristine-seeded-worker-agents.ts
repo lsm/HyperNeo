@@ -96,14 +96,18 @@ function isPristineWorker(
   }
   const permissions = (agent.toolPermissions ?? {}) as Record<string, unknown>;
   if (Object.keys(permissions).some((key) => key !== 'tools')) return false;
-  const tools = Array.isArray(permissions.tools)
-    ? permissions.tools.filter((tool): tool is string => typeof tool === 'string')
-    : [];
+  const rawTools: unknown = permissions.tools;
+  const presetTools = preset.tools;
+  const toolsUntouched =
+    Array.isArray(rawTools) && rawTools.length === presetTools.length
+      ? rawTools.every((tool, index) => tool === presetTools[index])
+      : rawTools === undefined && presetTools.length === 0;
+  if (!toolsUntouched) return false;
   return (
     computeAgentTemplateHash({
       name: preset.name,
       description: agent.description ?? '',
-      tools,
+      tools: presetTools,
       customPrompt: agent.instructions,
     }) === PRESET_HASHES.get(preset.name)
   );
@@ -149,8 +153,7 @@ function referencedAgentIds(db: BunDatabase): Set<string> {
               END,
               '$.agents'
             ) slot
-      WHERE runs.status IN ('pending', 'in_progress', 'blocked')
-        AND slot.type = 'object'
+      WHERE slot.type = 'object'
         AND json_type(slot.value, '$.agentId') = 'text'
         AND json_extract(slot.value, '$.agentId') != ''`,
     'agent_id',

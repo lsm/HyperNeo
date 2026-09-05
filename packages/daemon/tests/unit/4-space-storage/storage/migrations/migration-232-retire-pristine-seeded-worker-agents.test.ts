@@ -213,10 +213,21 @@ describe('migration 232: retire pristine seeded worker agents', () => {
     db.close();
   });
 
-  test('keeps a pristine worker referenced only by a pinned nonterminal run', () => {
+  test('keeps a pristine worker referenced by any pinned run, terminal or not', () => {
     const { db, repo, idsByName } = createDb();
     insertPinnedRun(db, 'run-live', 'in_progress', [{ agentId: idsByName.get('Coder') }]);
     insertPinnedRun(db, 'run-done', 'done', [{ agentId: idsByName.get('General') }]);
+    insertPinnedRun(db, 'run-cancelled', 'cancelled', [{ agentId: idsByName.get('Planner') }]);
+
+    runMigration232(db);
+
+    expect(remaining(repo)).toEqual(['Coder', 'General', 'Planner']);
+    db.close();
+  });
+
+  test('keeps a mirror whose raw tools array was extended', () => {
+    const { db, repo, idsByName } = createDb();
+    repo.update(idsByName.get('Coder')!, { toolPermissions: { tools: [42] } });
 
     runMigration232(db);
 
