@@ -56,6 +56,13 @@ function tableExists(db: BunDatabase, tableName: string): boolean {
   return !!result;
 }
 
+export function hasStockReviewerToolList(storedTools: string[]): boolean {
+  return (
+    [...storedTools].sort().join('\u0000') ===
+    [...STALE_PRE_TYPENAME_REVIEWER_TOOLS].sort().join('\u0000')
+  );
+}
+
 export function hasStockReviewerTools(toolPermissionsJson: string | null): boolean {
   let storedTools: string[] = [];
   try {
@@ -66,10 +73,7 @@ export function hasStockReviewerTools(toolPermissionsJson: string | null): boole
   } catch {
     return false;
   }
-  return (
-    [...storedTools].sort().join('\u0000') ===
-    [...STALE_PRE_TYPENAME_REVIEWER_TOOLS].sort().join('\u0000')
-  );
+  return hasStockReviewerToolList(storedTools);
 }
 
 export function isPristineReviewerRow(row: ReviewerRow): boolean {

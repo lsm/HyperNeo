@@ -48,6 +48,7 @@ function makeDb(): BunDatabase {
     instructions TEXT NOT NULL DEFAULT '',
     suggested_autonomy_level INTEGER NOT NULL DEFAULT 2,
     tools TEXT DEFAULT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`);
@@ -94,7 +95,13 @@ function insertAgent(
 
 function insertTemplate(
   db: BunDatabase,
-  opts: { key: string; instructions: string; description?: string; tools?: string[] | null }
+  opts: {
+    key: string;
+    instructions: string;
+    description?: string;
+    tools?: string[] | null;
+    version?: number;
+  }
 ): void {
   const now = Date.now();
   const toolsJson =
@@ -106,13 +113,14 @@ function insertTemplate(
   db.prepare(
     `INSERT INTO space_agent_templates (
        key, handle, display_name, description, instructions,
-       suggested_autonomy_level, tools, created_at, updated_at
-     ) VALUES (?, 'reviewer', 'Reviewer', ?, ?, 2, ?, ?, ?)`
+       suggested_autonomy_level, tools, version, created_at, updated_at
+     ) VALUES (?, 'reviewer', 'Reviewer', ?, ?, 2, ?, ?, ?, ?)`
   ).run(
     opts.key,
     opts.description ?? STALE_PRE_TYPENAME_REVIEWER_DESCRIPTION,
     opts.instructions,
     toolsJson,
+    opts.version ?? 1,
     now,
     now
   );
@@ -254,6 +262,17 @@ describe('migration 230: re-stamp reviewer presets with the check-seeding contra
     insertTemplate(db, {
       key: 'migrated.agent.agent-wrong-tools',
       instructions: STALE_CONTRACT,
+      tools: ['Read'],
+    });
+    insertTemplate(db, {
+      key: 'migrated.agent.agent-seeded.m228-2',
+      instructions: STALE_CONTRACT,
+      description: 'my own reviewer template',
+    });
+    insertTemplate(db, {
+      key: 'migrated.agent.agent-seeded.m228-3',
+      instructions: STALE_CONTRACT,
+      version: 2,
     });
 
     runMigration230(db);
@@ -274,6 +293,8 @@ describe('migration 230: re-stamp reviewer presets with the check-seeding contra
     expect(getTemplateInstructions(db, 'migrated.agent.agent-missing')).toBe(STALE_CONTRACT);
     expect(getTemplateInstructions(db, 'user.template.reviewer')).toBe(STALE_CONTRACT);
     expect(getTemplateInstructions(db, 'migrated.agent.agent-wrong-tools')).toBe(STALE_CONTRACT);
+    expect(getTemplateInstructions(db, 'migrated.agent.agent-seeded.m228-2')).toBe(STALE_CONTRACT);
+    expect(getTemplateInstructions(db, 'migrated.agent.agent-seeded.m228-3')).toBe(STALE_CONTRACT);
   });
 
   test('is a no-op on databases without the agent tables', () => {

@@ -4,9 +4,11 @@ import { MIGRATED_AGENT_TEMPLATE_KEY_PREFIX } from '../../lib/space/agents/agent
 import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import {
+  hasStockReviewerToolList,
   hasStockReviewerTools,
   isPristineReviewerRow,
   STALE_PRE_TYPENAME_REVIEWER_CONTRACT_SHA256,
+  STALE_PRE_TYPENAME_REVIEWER_DESCRIPTION,
 } from './m229-restamp-reviewer-typename-bot-filter.ts';
 
 const log = new Logger('migration-230');
@@ -25,6 +27,9 @@ interface ReviewerAgentRow {
 interface SynthesizedTemplateRow {
   key: string;
   instructions: string | null;
+  description: string | null;
+  tools: string | null;
+  version: number | null;
 }
 
 interface ClearedDescriptionRow {
@@ -47,6 +52,21 @@ function sha256(value: string): string {
 
 function migratedTemplateSourceAgentId(key: string): string {
   return key.slice(MIGRATED_AGENT_TEMPLATE_KEY_PREFIX.length + 1).replace(/\.m228(-\d+)?$/, '');
+}
+
+function isUneditedSynthesizedReviewerTemplate(row: SynthesizedTemplateRow): boolean {
+  if ((row.version ?? 1) > 1) return false;
+  if (row.description !== '' && row.description !== STALE_PRE_TYPENAME_REVIEWER_DESCRIPTION) {
+    return false;
+  }
+  let storedTools: string[] = [];
+  try {
+    const parsed = row.tools ? (JSON.parse(row.tools) as unknown) : null;
+    storedTools = Array.isArray(parsed) ? parsed.map((t) => String(t)) : [];
+  } catch {
+    return false;
+  }
+  return hasStockReviewerToolList(storedTools);
 }
 
 function migration229AppliedAt(db: BunDatabase): number | null {
@@ -119,7 +139,9 @@ export function runMigration230(db: BunDatabase): void {
 
   if (tableExists(db, 'space_agent_templates')) {
     const templates = db
-      .prepare(`SELECT key, instructions FROM space_agent_templates WHERE key LIKE ?`)
+      .prepare(
+        `SELECT key, instructions, description, tools, version FROM space_agent_templates WHERE key LIKE ?`
+      )
       .all(`${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.%`) as SynthesizedTemplateRow[];
     const updateTemplate = db.prepare(
       `UPDATE space_agent_templates SET instructions = ? WHERE key = ?`
@@ -128,6 +150,7 @@ export function runMigration230(db: BunDatabase): void {
       if (!row.instructions) continue;
       if (sha256(row.instructions) !== STALE_PRE_TYPENAME_REVIEWER_CONTRACT_SHA256) continue;
       if (!pristineSourceIds.has(migratedTemplateSourceAgentId(row.key))) continue;
+      if (!isUneditedSynthesizedReviewerTemplate(row)) continue;
       updateTemplate.run(reviewer.customPrompt, row.key);
       updated++;
     }
