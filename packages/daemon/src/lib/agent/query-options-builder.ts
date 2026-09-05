@@ -630,10 +630,7 @@ export class QueryOptionsBuilder {
         if (perModelMode) thinkingModes = perModelMode;
       }
     } catch {}
-    const globalSettings = this.ctx.settingsManager.getGlobalSettings();
-    const thinkingLevel = normalizeThinkingLevel(
-      this.ctx.session.config.thinkingLevel ?? globalSettings.thinkingLevel
-    );
+    const thinkingLevel = this.getEffectiveThinkingLevel();
     let thinkingConfig = this.thinkingLevelToThinkingConfig(thinkingLevel, thinkingModes);
 
     const selectedModel = this.ctx.session.config.model;
@@ -679,9 +676,10 @@ export class QueryOptionsBuilder {
   }
 
   getEffectiveThinkingLevel(): ThinkingLevel {
+    const persisted = this.ctx.db?.getSession(this.ctx.session.id)?.config?.thinkingLevel;
     const globalSettings = this.ctx.settingsManager.getGlobalSettings();
     return normalizeThinkingLevel(
-      this.ctx.session.config.thinkingLevel ?? globalSettings.thinkingLevel
+      persisted ?? this.ctx.session.config.thinkingLevel ?? globalSettings.thinkingLevel
     );
   }
 

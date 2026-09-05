@@ -835,6 +835,10 @@ export async function createOpenAIChatBridgeServer(
   return {
     port,
     setSessionThinkingConfig: (sessionId: string, thinking: AnthropicRequest['thinking']) => {
+      if (!thinking) {
+        sessionThinkingConfigs.delete(sessionId);
+        return;
+      }
       sessionThinkingConfigs.set(sessionId, { thinking });
     },
     stop: () => {
