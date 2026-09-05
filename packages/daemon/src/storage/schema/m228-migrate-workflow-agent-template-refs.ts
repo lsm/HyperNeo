@@ -2,7 +2,7 @@ import type {
   CreateSpaceAgentTemplateParams,
   SettingSource,
   SpaceAgentTemplate,
-  WorkerAgentModelPoolEntry,
+  AgentModelPoolEntry,
 } from '@hyperneo/shared';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { SpaceAgentTemplateRepository } from '../repositories/space-agent-template-repository.ts';
@@ -93,7 +93,7 @@ function agentRowToSynthesisInput(row: AgentRow): AgentTemplateSynthesisInput {
     thinkingLevel: row.thinking_level,
     settingSources: parseJsonArray<SettingSource>(row.setting_sources),
     tools: parseToolsFromPermissions(row.tool_permissions_json),
-    modelPool: parseJsonArray<WorkerAgentModelPoolEntry>(row.model_pool),
+    modelPool: parseJsonArray<AgentModelPoolEntry>(row.model_pool),
     autonomyLevel: row.autonomy_level,
   };
 }

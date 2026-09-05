@@ -1,4 +1,4 @@
-import type { WorkerAgentModelPoolEntry } from '@hyperneo/shared';
+import type { AgentModelPoolEntry } from '@hyperneo/shared';
 import { useState } from 'preact/hooks';
 import {
   WorkflowModelSelect,
@@ -19,14 +19,14 @@ export interface ModelPoolEditorProps {
   mode: ModelPoolEditorMode;
   model: string;
   provider: string;
-  modelPool: WorkerAgentModelPoolEntry[];
+  modelPool: AgentModelPoolEntry[];
   error?: string;
   onModeChange: (mode: ModelPoolEditorMode) => void;
   onModelChange: (model: string, provider: string) => void;
-  onModelPoolChange: (modelPool: WorkerAgentModelPoolEntry[]) => void;
+  onModelPoolChange: (modelPool: AgentModelPoolEntry[]) => void;
 }
 
-function newPoolEntry(): WorkerAgentModelPoolEntry {
+function newPoolEntry(): AgentModelPoolEntry {
   return { model: '', maxConcurrent: 1, weight: 100 };
 }
 
@@ -42,7 +42,7 @@ export function ModelPoolEditor({
 }: ModelPoolEditorProps) {
   const [draft, setDraft] = useState<NumericDraft | null>(null);
 
-  const updateEntry = (index: number, patch: Partial<WorkerAgentModelPoolEntry>) => {
+  const updateEntry = (index: number, patch: Partial<AgentModelPoolEntry>) => {
     onModelPoolChange(
       modelPool.map((candidate, i) => (i === index ? { ...candidate, ...patch } : candidate))
     );

@@ -3,12 +3,12 @@ import { render, fireEvent, cleanup, waitFor, act } from '@testing-library/preac
 import { signal, type Signal } from '@preact/signals';
 import type {
   SpaceLongHorizonAgentTemplate,
-  SpaceWorkerAgent,
+  SpaceLongHorizonAgent,
   SpaceWorkflow,
 } from '@hyperneo/shared';
 import { makeBuiltInTemplateWorkflows } from '../../__tests__/fixtures/builtInTemplateWorkflows';
 
-const mockAgents: Signal<SpaceWorkerAgent[]> = signal([]);
+const mockAgents: Signal<SpaceLongHorizonAgent[]> = signal([]);
 const mockAgentTemplates: Signal<SpaceLongHorizonAgentTemplate[]> = signal([]);
 const mockWorkflows: Signal<SpaceWorkflow[]> = signal([]);
 const mockWorkflowTemplates: Signal<SpaceWorkflow[]> = signal([]);
@@ -70,13 +70,22 @@ vi.mock('../../../../lib/utils', () => ({
 import { VisualWorkflowEditor } from '../VisualWorkflowEditor';
 import type { VisualWorkflowEditorProps } from '../VisualWorkflowEditor';
 
-function makeAgent(id: string, name: string, _role = 'coder'): SpaceWorkerAgent {
+function makeAgent(id: string, name: string, _role = 'coder'): SpaceLongHorizonAgent {
   return {
     id,
     spaceId: 'space-1',
-    name,
     handle: id,
-    customPrompt: null,
+    displayName: name,
+    templateKey: null,
+    status: 'paused',
+    sessionId: null,
+    instructions: '',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
     createdAt: 0,
     updatedAt: 0,
   };

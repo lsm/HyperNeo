@@ -1,7 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import type {
   SpaceTaskStatus,
-  SpaceWorkerAgent,
   SpaceWorkflow,
   WorkflowChannel,
   WorkflowNode,
@@ -20,16 +19,8 @@ import {
   isWorkflowRecoveryTransition,
 } from '../src/types/space-utils.ts';
 
-function makeAgent(id: string, name: string): SpaceWorkerAgent {
-  return {
-    id,
-    spaceId: 'space-1',
-    name,
-    handle: id,
-    customPrompt: null,
-    createdAt: 0,
-    updatedAt: 0,
-  };
+function makeAgent(id: string): { id: string } {
+  return { id };
 }
 
 function makeNode(overrides: Partial<WorkflowNode> = {}): WorkflowNode {
@@ -65,10 +56,10 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
   };
 }
 
-const agentCoder = makeAgent('agent-coder-id', 'coder agent');
-const agentReviewer = makeAgent('agent-reviewer-id', 'reviewer agent');
-const agentSecurity = makeAgent('agent-security-id', 'security agent');
-const allAgents: SpaceWorkerAgent[] = [agentCoder, agentReviewer, agentSecurity];
+const agentCoder = makeAgent('agent-coder-id');
+const agentReviewer = makeAgent('agent-reviewer-id');
+const agentSecurity = makeAgent('agent-security-id');
+const allAgents = [agentCoder, agentReviewer, agentSecurity];
 
 describe('workflow-run execution status helpers', () => {
   test('labels persisted workflow-run statuses as execution attempts', () => {

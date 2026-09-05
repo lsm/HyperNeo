@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import type {
+  AgentModelPoolEntry,
   NodeExecution,
   SpaceTask,
-  SpaceWorkerAgent,
   WorkflowNodeAgent,
 } from '@hyperneo/shared';
 import {
@@ -28,16 +28,12 @@ function makeAssignment(overrides: Partial<ModelPoolAssignment> = {}): ModelPool
   };
 }
 
-function makeAgent(pool?: SpaceWorkerAgent['modelPool']): SpaceWorkerAgent {
+function makeAgent(
+  pool?: AgentModelPoolEntry[]
+): Parameters<typeof applyModelPoolToSlot>[0]['agent'] {
   return {
-    id: 'agent-1',
-    spaceId: 'space-1',
-    name: 'Coder',
-    handle: 'coder',
-    customPrompt: null,
+    model: null,
     modelPool: pool,
-    createdAt: NOW,
-    updatedAt: NOW,
   };
 }
 

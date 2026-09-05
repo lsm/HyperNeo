@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import type {
   McpServerConfig,
   SpaceAgentTemplate,
+  SpaceLongHorizonAgent,
   SpaceTask,
-  SpaceWorkerAgent,
   SpaceWorkflow,
   WorkflowNode,
 } from '@hyperneo/shared';
@@ -283,13 +283,22 @@ function makeTemplate(overrides: Partial<NodeAgentTemplateSource> = {}): NodeAge
   };
 }
 
-function makeAgent(overrides: Partial<SpaceWorkerAgent> = {}): SpaceWorkerAgent {
+function makeAgent(overrides: Partial<SpaceLongHorizonAgent> = {}): SpaceLongHorizonAgent {
   return {
     id: 'agent-1',
     spaceId: 'space-1',
-    name: 'Registry Agent',
     handle: 'registry-agent',
-    customPrompt: 'Registry base contract',
+    displayName: 'Registry Agent',
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: 'Registry base contract',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
     createdAt: 100,
     updatedAt: 200,
     ...overrides,
@@ -308,12 +317,12 @@ describe('resolveNodeAgentConfig: template source', () => {
     expect(config?.templateKey).toBe('coder.default');
     expect(config?.agent.id).toBe('template:coder.default');
     expect(config?.agent.spaceId).toBe('');
-    expect(config?.agent.name).toBe('coder');
+    expect(config?.agent.displayName).toBe('coder');
     expect(config?.agent.handle).toBe('coder');
-    expect(config?.agent.customPrompt).toBe('Template base contract');
-    expect(config?.agent.tools).toEqual(['Read', 'Bash']);
-    expect(config?.agent.templateName).toBe('coder.default');
-    expect(config?.agent.templateHash).toBeNull();
+    expect(config?.agent.instructions).toBe('Template base contract');
+    expect(config?.agent.toolPermissions).toEqual({ tools: ['Read', 'Bash'] });
+    expect(config?.agent.templateKey).toBe('coder.default');
+    expect(config?.agent.status).toBe('active');
   });
 
   test('per-node role name, model, and thinking level override the template fields', () => {
@@ -323,7 +332,7 @@ describe('resolveNodeAgentConfig: template source', () => {
       []
     );
 
-    expect(config?.agent.name).toBe('implementer');
+    expect(config?.agent.displayName).toBe('implementer');
     expect(config?.agent.model).toBe('override-model');
     expect(config?.agent.thinkingLevel).toBe('think32k');
   });
@@ -346,36 +355,36 @@ describe('resolveNodeAgentConfig: template source', () => {
     expect(config?.agent.settingSources).toEqual(['project']);
   });
 
-  test('leaves model and thinking level undefined when neither template nor node sets them', () => {
+  test('leaves model and thinking level null when neither template nor node sets them', () => {
     const config = resolveNodeAgentConfig(makeTemplate(), { name: 'coder' }, []);
 
-    expect(config?.agent.model).toBeUndefined();
-    expect(config?.agent.thinkingLevel).toBeUndefined();
-    expect(config?.agent.provider).toBeUndefined();
+    expect(config?.agent.model).toBeNull();
+    expect(config?.agent.thinkingLevel).toBeNull();
+    expect(config?.agent.provider).toBeNull();
   });
 
   test('falls back to the template display name when the node sets no role name', () => {
     const config = resolveNodeAgentConfig(makeTemplate(), {}, []);
 
-    expect(config?.agent.name).toBe('Coder');
+    expect(config?.agent.displayName).toBe('Coder');
   });
 
-  test('filters non-string tool permissions entries and leaves tools unset when absent', () => {
+  test('carries tool permissions verbatim and defaults to empty permissions when absent', () => {
     const noisy = resolveNodeAgentConfig(
       makeTemplate({ toolPermissions: { tools: ['Read', 42, null] as unknown[] } }),
       {},
       []
     );
-    expect(noisy?.agent.tools).toEqual(['Read']);
+    expect(noisy?.agent.toolPermissions).toEqual({ tools: ['Read', 42, null] });
 
     const bare = resolveNodeAgentConfig(makeTemplate(), {}, []);
-    expect(bare?.agent.tools).toBeUndefined();
+    expect(bare?.agent.toolPermissions).toEqual({});
   });
 });
 
 describe('resolveNodeAgentConfig: legacy agentId fallback', () => {
   test('resolves the registry agent by id when no template is set', () => {
-    const agent = makeAgent({ templateName: 'legacy.origin' });
+    const agent = makeAgent({ templateKey: 'legacy.origin' });
     const config = resolveNodeAgentConfig(null, { agentId: 'agent-1' }, [agent]);
 
     expect(config?.source).toBe('agent');
@@ -395,7 +404,7 @@ describe('resolveNodeAgentConfig: legacy agentId fallback', () => {
       [makeAgent({ model: 'agent-model', thinkingLevel: 'think8k' })]
     );
 
-    expect(config?.agent.name).toBe('coder');
+    expect(config?.agent.displayName).toBe('coder');
     expect(config?.agent.model).toBe('override-model');
     expect(config?.agent.thinkingLevel).toBe('think16k');
   });
@@ -437,7 +446,7 @@ describe('resolveNodeAgentConfig: legacy agentId fallback', () => {
     resolveNodeAgentConfig(null, { agentId: 'agent-1', model: 'override-model' }, [agent]);
 
     expect(agent.model).toBe('agent-model');
-    expect(agent.name).toBe('Registry Agent');
+    expect(agent.displayName).toBe('Registry Agent');
   });
 });
 
@@ -509,9 +518,9 @@ describe('spaceAgentTemplateToNodeSource', () => {
     expect(config?.source).toBe('template');
     expect(config?.templateKey).toBe('migrated.agent.agent-1');
     expect(config?.agent.id).toBe('template:migrated.agent.agent-1');
-    expect(config?.agent.customPrompt).toBe('Stored template contract');
+    expect(config?.agent.instructions).toBe('Stored template contract');
     expect(config?.agent.model).toBe('stored-model');
-    expect(config?.agent.tools).toEqual(['Read', 'Grep']);
+    expect(config?.agent.toolPermissions).toEqual({ tools: ['Read', 'Grep'] });
   });
 
   test('carries a stored model pool onto the ephemeral spawn agent', () => {

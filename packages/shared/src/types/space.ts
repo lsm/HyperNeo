@@ -67,7 +67,7 @@ export interface SpaceLongHorizonAgent {
   settingSources: SettingSource[] | null;
   toolPermissions: Record<string, unknown>;
   description?: string;
-  modelPool?: WorkerAgentModelPoolEntry[];
+  modelPool?: AgentModelPoolEntry[];
   createdAt: number;
   updatedAt: number;
 }
@@ -88,7 +88,7 @@ export interface CreateSpaceLongHorizonAgentParams {
   settingSources?: SettingSource[] | null;
   toolPermissions?: Record<string, unknown>;
   description?: string;
-  modelPool?: WorkerAgentModelPoolEntry[];
+  modelPool?: AgentModelPoolEntry[];
 }
 
 export interface UpdateSpaceLongHorizonAgentParams {
@@ -105,7 +105,7 @@ export interface UpdateSpaceLongHorizonAgentParams {
   settingSources?: SettingSource[] | null;
   toolPermissions?: Record<string, unknown> | null;
   description?: string | null;
-  modelPool?: WorkerAgentModelPoolEntry[] | null;
+  modelPool?: AgentModelPoolEntry[] | null;
 }
 
 export interface SpaceAgentTemplate {
@@ -117,7 +117,7 @@ export interface SpaceAgentTemplate {
   suggestedAutonomyLevel: SpaceAgentAutonomyLevel;
   model: string | null;
   provider: string | null;
-  modelPool: WorkerAgentModelPoolEntry[] | null;
+  modelPool: AgentModelPoolEntry[] | null;
   thinkingLevel: ThinkingLevel | null;
   settingSources: SettingSource[] | null;
   tools: string[] | null;
@@ -134,7 +134,7 @@ export interface CreateSpaceAgentTemplateParams {
   suggestedAutonomyLevel?: SpaceAgentAutonomyLevel;
   model?: string | null;
   provider?: string | null;
-  modelPool?: WorkerAgentModelPoolEntry[] | null;
+  modelPool?: AgentModelPoolEntry[] | null;
   thinkingLevel?: ThinkingLevel | null;
   settingSources?: SettingSource[] | null;
   tools?: string[] | null;
@@ -148,7 +148,7 @@ export interface UpdateSpaceAgentTemplateParams {
   suggestedAutonomyLevel?: SpaceAgentAutonomyLevel;
   model?: string | null;
   provider?: string | null;
-  modelPool?: WorkerAgentModelPoolEntry[] | null;
+  modelPool?: AgentModelPoolEntry[] | null;
   thinkingLevel?: ThinkingLevel | null;
   settingSources?: SettingSource[] | null;
   tools?: string[] | null;
@@ -847,29 +847,7 @@ export interface CreateWorkflowRunParams {
   description?: string;
 }
 
-export type SpaceWorkerAgentStatus = 'active' | 'paused' | 'archived';
-
-export interface SpaceWorkerAgent {
-  id: string;
-  spaceId: string;
-  name: string;
-  handle: string;
-  status?: SpaceWorkerAgentStatus;
-  description?: string;
-  model?: string;
-  thinkingLevel?: ThinkingLevel;
-  provider?: string;
-  customPrompt: string | null;
-  tools?: string[];
-  settingSources?: SettingSource[];
-  templateName?: string | null;
-  templateHash?: string | null;
-  modelPool?: WorkerAgentModelPoolEntry[];
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface SpaceWorkerAgentPromotionProfile {
+export interface SpaceAgentPromotionProfile {
   responsibility: string;
   standingInstructions: string;
   autonomy: string;
@@ -880,7 +858,7 @@ export interface SpaceWorkerAgentPromotionProfile {
   standingContext: string;
 }
 
-export interface SpaceWorkerAgentPromotionDraft {
+export interface SpaceAgentPromotionDraft {
   sourceSessionId: string;
   sourceSessionTitle: string;
   name: string;
@@ -891,87 +869,7 @@ export interface SpaceWorkerAgentPromotionDraft {
   customPrompt: string;
   tools?: string[];
   settingSources?: SettingSource[];
-  profile: SpaceWorkerAgentPromotionProfile;
-}
-
-export interface CreateSpaceWorkerAgentParams {
-  spaceId: string;
-  name: string;
-  handle?: string;
-  status?: SpaceWorkerAgentStatus;
-  description?: string;
-  model?: string;
-  thinkingLevel?: ThinkingLevel;
-  provider?: string;
-  customPrompt?: string | null;
-  tools?: string[];
-  settingSources?: SettingSource[] | null;
-  templateName?: string | null;
-  templateHash?: string | null;
-  modelPool?: WorkerAgentModelPoolEntry[];
-}
-
-export interface UpdateSpaceWorkerAgentParams {
-  name?: string;
-  handle?: string;
-  status?: SpaceWorkerAgentStatus;
-  description?: string | null;
-  model?: string | null;
-  thinkingLevel?: ThinkingLevel | null;
-  provider?: string | null;
-  customPrompt?: string | null;
-  tools?: string[] | null;
-  settingSources?: SettingSource[] | null;
-  templateName?: string | null;
-  templateHash?: string | null;
-  modelPool?: WorkerAgentModelPoolEntry[] | null;
-}
-
-export interface SpaceWorkerAgentDriftEntry {
-  agentId: string;
-  agentName: string;
-  templateName: string;
-  storedHash: string | null;
-  currentHash: string;
-  rowHash: string;
-  updateAvailable: boolean;
-  customized: boolean;
-  orphaned: boolean;
-}
-
-export interface SpaceWorkerAgentDriftReport {
-  spaceId: string;
-  agents: SpaceWorkerAgentDriftEntry[];
-}
-
-export interface SpaceWorkerAgentSyncFieldDiff {
-  before: string;
-  after: string;
-}
-
-export interface SpaceWorkerAgentSyncToolsDiff {
-  before: string[];
-  after: string[];
-  added: string[];
-  removed: string[];
-}
-
-export interface SpaceWorkerAgentSyncDiff {
-  customPrompt?: SpaceWorkerAgentSyncFieldDiff;
-  description?: SpaceWorkerAgentSyncFieldDiff;
-  tools?: SpaceWorkerAgentSyncToolsDiff;
-}
-
-export interface SpaceWorkerAgentSyncPreview {
-  agentId: string;
-  agentName: string;
-  templateName: string;
-  storedHash: string | null;
-  liveHash: string;
-  rowHash: string;
-  updateAvailable: boolean;
-  customized: boolean;
-  diff: SpaceWorkerAgentSyncDiff;
+  profile: SpaceAgentPromotionProfile;
 }
 
 export interface SpaceWorkflowSyncFieldDiff {
@@ -1198,7 +1096,7 @@ export interface EventInterest {
   label?: string;
 }
 
-export interface WorkerAgentModelPoolEntry {
+export interface AgentModelPoolEntry {
   model: string;
   provider?: string;
   maxConcurrent: number;
@@ -1395,7 +1293,7 @@ export interface ExportedWorkflowNode {
   transitions?: ExportedHandoffTransition[];
 }
 
-export interface ExportedSpaceWorkerAgent {
+export interface ExportedSpaceAgent {
   version: 1 | 2 | 3 | 4 | 5;
   type: 'agent';
   name: string;
@@ -1408,7 +1306,7 @@ export interface ExportedSpaceWorkerAgent {
   instructions?: string;
   tools?: string[];
   settingSources?: import('./settings.ts').SettingSource[];
-  modelPool?: WorkerAgentModelPoolEntry[];
+  modelPool?: AgentModelPoolEntry[];
 }
 
 export interface ExportedSpaceWorkflow {
@@ -1433,7 +1331,7 @@ export interface SpaceExportBundle {
   type: 'bundle';
   name: string;
   description?: string;
-  agents: ExportedSpaceWorkerAgent[];
+  agents: ExportedSpaceAgent[];
   workflows: ExportedSpaceWorkflow[];
   exportedAt: number;
   exportedFrom?: string;

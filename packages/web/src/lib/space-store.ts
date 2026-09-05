@@ -27,7 +27,7 @@ import type {
   SpaceTaskActivityMember,
   SpaceTaskPriority,
   SpaceTaskStatus,
-  SpaceWorkerAgentPromotionDraft,
+  SpaceAgentPromotionDraft,
   SpaceWorkflow,
   SpaceWorkflowRun,
   SpaceWorkflowSummary,
@@ -2340,14 +2340,14 @@ class SpaceStore {
     return agent;
   }
 
-  async getAgentPromotionDraft(sessionId: string): Promise<SpaceWorkerAgentPromotionDraft> {
+  async getAgentPromotionDraft(sessionId: string): Promise<SpaceAgentPromotionDraft> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
 
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    const { draft } = await hub.request<{ draft: SpaceWorkerAgentPromotionDraft }>(
+    const { draft } = await hub.request<{ draft: SpaceAgentPromotionDraft }>(
       'spaceAgent.getPromotionDraft',
       { spaceId, sessionId }
     );

@@ -3,7 +3,7 @@ import type {
   SettingSource,
   SpaceAgentAutonomyLevel,
   ThinkingLevel,
-  WorkerAgentModelPoolEntry,
+  AgentModelPoolEntry,
 } from '@hyperneo/shared';
 import { slugifyWithinLimit } from '../slug.ts';
 
@@ -20,7 +20,7 @@ export interface AgentTemplateSynthesisInput {
   thinkingLevel: string | null;
   settingSources: SettingSource[] | null;
   tools: string[] | null;
-  modelPool: WorkerAgentModelPoolEntry[] | null;
+  modelPool: AgentModelPoolEntry[] | null;
   autonomyLevel: number | null;
 }
 

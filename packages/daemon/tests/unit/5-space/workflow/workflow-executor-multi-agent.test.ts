@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { SpaceWorkerAgent, WorkflowNode } from '@hyperneo/shared';
+import type { WorkflowNode } from '@hyperneo/shared';
 import { resolveNodeAgents } from '@hyperneo/shared';
 import { NodeExecutionManager } from '../../../../src/lib/space/managers/node-execution-manager.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -36,17 +36,6 @@ function seedSpace(db: BunDatabase, spaceId: string, workspacePath = '/tmp/ws'):
 
 function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: string): void {
   seedUnifiedAgentMirror(db, { id: agentId, spaceId, name });
-}
-
-function makeSpaceAgent(id: string, name: string): SpaceWorkerAgent {
-  return {
-    id,
-    spaceId: 'space-1',
-    name: `${name} agent`,
-    instructions: null,
-    createdAt: 0,
-    updatedAt: 0,
-  };
 }
 
 const SYNTHETIC_END_NODE_ID = '__test_end__';

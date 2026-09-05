@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { CALL_ACTION_PREFERENCE_GUIDANCE } from '@hyperneo/prompts';
 import type {
   HandoffTransition,
-  SpaceWorkerAgent,
+  SpaceLongHorizonAgent,
   SpaceWorkflow,
   WorkflowHook,
   WorkflowNode,
@@ -3678,36 +3678,76 @@ describe('Coding Workflow export/import round-trip', () => {
   };
   const resolveAgentId = (role: string): string | undefined => roleMap[role.toLowerCase()];
 
-  const mockAgents: SpaceWorkerAgent[] = [
+  const mockAgents: SpaceLongHorizonAgent[] = [
     {
       id: CODER_ID,
       spaceId: SPACE_ID,
-      name: 'Coder',
-      customPrompt: null,
+      handle: 'coder',
+      displayName: 'Coder',
+      templateKey: null,
+      status: 'active',
+      sessionId: null,
+      instructions: '',
+      autonomyLevel: null,
+      model: null,
+      thinkingLevel: null,
+      provider: null,
+      settingSources: null,
+      toolPermissions: {},
       createdAt: 0,
       updatedAt: 0,
     },
     {
       id: RESEARCH_ID,
       spaceId: SPACE_ID,
-      name: 'Research',
-      customPrompt: null,
+      handle: 'research',
+      displayName: 'Research',
+      templateKey: null,
+      status: 'active',
+      sessionId: null,
+      instructions: '',
+      autonomyLevel: null,
+      model: null,
+      thinkingLevel: null,
+      provider: null,
+      settingSources: null,
+      toolPermissions: {},
       createdAt: 0,
       updatedAt: 0,
     },
     {
       id: REVIEWER_ID,
       spaceId: SPACE_ID,
-      name: 'Reviewer',
-      customPrompt: null,
+      handle: 'reviewer',
+      displayName: 'Reviewer',
+      templateKey: null,
+      status: 'active',
+      sessionId: null,
+      instructions: '',
+      autonomyLevel: null,
+      model: null,
+      thinkingLevel: null,
+      provider: null,
+      settingSources: null,
+      toolPermissions: {},
       createdAt: 0,
       updatedAt: 0,
     },
     {
       id: MERGER_ID,
       spaceId: SPACE_ID,
-      name: 'PR Merger',
-      customPrompt: null,
+      handle: 'pr-merger',
+      displayName: 'PR Merger',
+      templateKey: null,
+      status: 'active',
+      sessionId: null,
+      instructions: '',
+      autonomyLevel: null,
+      model: null,
+      thinkingLevel: null,
+      provider: null,
+      settingSources: null,
+      toolPermissions: {},
       createdAt: 0,
       updatedAt: 0,
     },
@@ -3774,7 +3814,7 @@ describe('Coding Workflow export/import round-trip', () => {
     }
     expect(manager.listWorkflows(SPACE_ID)).toHaveLength(0);
 
-    const agentNameToId = new Map<string, string>(mockAgents.map((a) => [a.name, a.id]));
+    const agentNameToId = new Map<string, string>(mockAgents.map((a) => [a.displayName, a.id]));
 
     manager.createWorkflow({
       spaceId: SPACE_ID,
@@ -3827,7 +3867,7 @@ describe('Coding Workflow export/import round-trip', () => {
     for (const w of manager.listWorkflows(SPACE_ID)) {
       manager.deleteWorkflow(w.id);
     }
-    const agentNameToId = new Map<string, string>(mockAgents.map((a) => [a.name, a.id]));
+    const agentNameToId = new Map<string, string>(mockAgents.map((a) => [a.displayName, a.id]));
     manager.createWorkflow({
       spaceId: SPACE_ID,
       name: exported.name,

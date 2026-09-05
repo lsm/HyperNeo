@@ -3,10 +3,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, cleanup, waitFor } from '@testing-library/preact';
 import { signal, computed } from '@preact/signals';
-import type { SpaceWorkerAgent, SpaceWorkflow, NodeExecution } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent, SpaceWorkflow, NodeExecution } from '@hyperneo/shared';
 
 let mockWorkflows = signal<SpaceWorkflow[]>([]);
-let mockAgents = signal<SpaceWorkerAgent[]>([]);
+let mockAgents = signal<SpaceLongHorizonAgent[]>([]);
 let mockNodeExecutions = signal<NodeExecution[]>([]);
 let mockNodeExecutionsByNodeId = computed(() => {
   const map = new Map<string, NodeExecution[]>();
@@ -57,7 +57,7 @@ vi.mock('../../../lib/connection-manager', () => ({
 }));
 
 mockWorkflows = signal<SpaceWorkflow[]>([]);
-mockAgents = signal<SpaceWorkerAgent[]>([]);
+mockAgents = signal<SpaceLongHorizonAgent[]>([]);
 mockNodeExecutions = signal<NodeExecution[]>([]);
 mockNodeExecutionsByNodeId = computed(() => {
   const map = new Map<string, NodeExecution[]>();

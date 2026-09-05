@@ -1,11 +1,9 @@
 import type {
+  AgentModelPoolEntry,
   SettingSource,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentStatus,
-  SpaceWorkerAgent,
-  SpaceWorkerAgentStatus,
   ThinkingLevel,
-  WorkerAgentModelPoolEntry,
 } from '@hyperneo/shared';
 
 export interface WorkerAgentRowSource {
@@ -23,7 +21,7 @@ export interface WorkerAgentRowSource {
   systemPrompt?: string | null;
   tools?: readonly string[] | null;
   settingSources?: readonly SettingSource[] | null;
-  modelPool?: readonly WorkerAgentModelPoolEntry[] | null;
+  modelPool?: readonly AgentModelPoolEntry[] | null;
   createdAt?: number | null;
 }
 
@@ -43,7 +41,7 @@ export interface WorkerAgentToLongHorizonParams {
   settingSources: SettingSource[] | null;
   toolPermissions: Record<string, unknown>;
   description: string | undefined;
-  modelPool: readonly WorkerAgentModelPoolEntry[] | undefined;
+  modelPool: readonly AgentModelPoolEntry[] | undefined;
   createdAt: number;
   updatedAt: number;
 }
@@ -95,37 +93,6 @@ export function workerAgentToLongHorizonParams(
 
 function mapWorkerStatus(status: string | null | undefined): SpaceLongHorizonAgentStatus {
   if (status === 'paused') return 'paused';
-  if (status === 'archived') return 'archived';
-  return 'active';
-}
-
-export function longHorizonAgentToWorkerView(agent: SpaceLongHorizonAgent): SpaceWorkerAgent {
-  const tools = Array.isArray(agent.toolPermissions.tools)
-    ? agent.toolPermissions.tools.filter((tool): tool is string => typeof tool === 'string')
-    : undefined;
-  return {
-    id: agent.id,
-    spaceId: agent.spaceId,
-    name: agent.displayName,
-    handle: agent.handle,
-    status: mapLongHorizonStatus(agent.status),
-    description: agent.description,
-    model: agent.model ?? undefined,
-    thinkingLevel: agent.thinkingLevel ?? undefined,
-    provider: agent.provider ?? undefined,
-    customPrompt: agent.instructions,
-    tools,
-    settingSources: agent.settingSources ?? undefined,
-    templateName: agent.templateKey,
-    templateHash: null,
-    modelPool: agent.modelPool,
-    createdAt: agent.createdAt,
-    updatedAt: agent.updatedAt,
-  };
-}
-
-function mapLongHorizonStatus(status: SpaceLongHorizonAgentStatus): SpaceWorkerAgentStatus {
-  if (status === 'paused' || status === 'disabled') return 'paused';
   if (status === 'archived') return 'archived';
   return 'active';
 }

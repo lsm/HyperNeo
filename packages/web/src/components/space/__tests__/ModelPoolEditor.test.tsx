@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
-import type { WorkerAgentModelPoolEntry } from '@hyperneo/shared';
+import type { AgentModelPoolEntry } from '@hyperneo/shared';
 
 vi.mock('../visual-editor/WorkflowModelSelect', () => ({
   WorkflowModelSelect: ({
@@ -43,7 +43,7 @@ interface HostState {
   mode: 'single' | 'pool';
   model: string;
   provider: string;
-  modelPool: WorkerAgentModelPoolEntry[];
+  modelPool: AgentModelPoolEntry[];
 }
 
 let hostState: HostState;
@@ -108,7 +108,7 @@ describe('ModelPoolEditor', () => {
   });
 
   it('does not reseed existing entries when switching to pool mode', () => {
-    const existing: WorkerAgentModelPoolEntry[] = [
+    const existing: AgentModelPoolEntry[] = [
       { model: 'claude-haiku-4-5', maxConcurrent: 2, weight: 40 },
     ];
     const { getByTestId, getAllByTestId } = renderEditor({ mode: 'single', modelPool: existing });

@@ -8,43 +8,70 @@ import {
   validateExportBundle,
   normalizeOverride,
 } from '../../../../src/lib/space/export-format.ts';
-import type { SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 
-function makeAgent(overrides: Partial<SpaceWorkerAgent> = {}): SpaceWorkerAgent {
+function makeAgent(overrides: Partial<SpaceLongHorizonAgent> = {}): SpaceLongHorizonAgent {
   return {
     id: 'agent-uuid-1',
     spaceId: 'space-uuid-1',
-    name: 'My Coder',
-    description: 'Writes code',
+    handle: 'my-coder',
+    displayName: 'My Coder',
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: 'You are an expert coder.',
+    autonomyLevel: null,
     model: 'claude-sonnet-4-6',
+    thinkingLevel: null,
     provider: 'anthropic',
-    customPrompt: 'You are an expert coder.',
-    tools: ['bash', 'read_file'],
+    settingSources: null,
+    toolPermissions: { tools: ['bash', 'read_file'] },
+    description: 'Writes code',
     createdAt: 1000,
     updatedAt: 2000,
     ...overrides,
   };
 }
 
-function makeMinimalAgent(overrides: Partial<SpaceWorkerAgent> = {}): SpaceWorkerAgent {
+function makeMinimalAgent(overrides: Partial<SpaceLongHorizonAgent> = {}): SpaceLongHorizonAgent {
   return {
     id: 'agent-uuid-2',
     spaceId: 'space-uuid-1',
-    name: 'Simple Agent',
-    customPrompt: null,
+    handle: 'simple-agent',
+    displayName: 'Simple Agent',
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: '',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
     createdAt: 1000,
     updatedAt: 2000,
     ...overrides,
   };
 }
 
-function makeReviewerAgent(overrides: Partial<SpaceWorkerAgent> = {}): SpaceWorkerAgent {
+function makeReviewerAgent(overrides: Partial<SpaceLongHorizonAgent> = {}): SpaceLongHorizonAgent {
   return {
     id: 'agent-uuid-3',
     spaceId: 'space-uuid-1',
-    name: 'Reviewer',
-    customPrompt: null,
+    handle: 'reviewer',
+    displayName: 'Reviewer',
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: '',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
     createdAt: 1000,
     updatedAt: 2000,
     ...overrides,
@@ -121,9 +148,17 @@ describe('exportAgent', () => {
   });
 
   test('exports tools as string array', () => {
-    const agent = makeAgent({ tools: ['edit_file', 'bash'] });
+    const agent = makeAgent({ toolPermissions: { tools: ['edit_file', 'bash'] } });
     const exported = exportAgent(agent);
     expect(exported.tools).toEqual(['edit_file', 'bash']);
+  });
+
+  test('filters non-string tool permission entries out of the exported tools', () => {
+    const agent = makeAgent({
+      toolPermissions: { tools: ['bash', 'read_file', 42, null] as unknown[] },
+    });
+    const exported = exportAgent(agent);
+    expect(exported.tools).toEqual(['bash', 'read_file']);
   });
 
   test('exports reviewer agent', () => {
@@ -848,7 +883,7 @@ describe('round-trip: export → JSON → validate', () => {
     const result = validateExportedAgent(parsed);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.name).toBe(agent.name);
+      expect(result.value.name).toBe(agent.displayName);
       expect((result.value as Record<string, unknown>).role).toBeUndefined();
       expect(result.value.model).toBe(agent.model);
       expect(result.value.tools).toEqual(['bash', 'read_file']);

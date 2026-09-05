@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import type { SettingSource, SpaceLongHorizonAgent, ThinkingLevel } from '@hyperneo/shared';
 import {
   isRunnableUnifiedAgent,
-  longHorizonAgentToWorkerView,
   type WorkerAgentRowSource,
   workerAgentToLongHorizonParams,
 } from '../../../../src/lib/space/agents/worker-long-horizon-mapper.ts';
@@ -237,52 +236,6 @@ function longHorizonAgent(overrides: Partial<SpaceLongHorizonAgent> = {}): Space
     ...overrides,
   };
 }
-
-describe('longHorizonAgentToWorkerView — unified row to worker view (U3a)', () => {
-  test('maps unified fields onto the SpaceWorkerAgent shape', () => {
-    const view = longHorizonAgentToWorkerView(longHorizonAgent());
-
-    expect(view.id).toBe('lh-1');
-    expect(view.spaceId).toBe('space-a');
-    expect(view.name).toBe('Researcher');
-    expect(view.handle).toBe('researcher');
-    expect(view.status).toBe('active');
-    expect(view.description).toBe('Does research');
-    expect(view.model).toBe('kimi-for-coding');
-    expect(view.provider).toBe('kimi');
-    expect(view.customPrompt).toBe('Investigate thoroughly');
-    expect(view.tools).toEqual(['Bash', 'Read']);
-    expect(view.templateName).toBe('migration.legacy_space_agent');
-    expect(view.templateHash).toBeNull();
-    expect(view.modelPool).toEqual([{ model: 'kimi-for-coding', maxConcurrent: 2, weight: 1 }]);
-    expect(view.createdAt).toBe(10);
-    expect(view.updatedAt).toBe(20);
-  });
-
-  test('empty tool permissions read as the inherit-all undefined tools profile', () => {
-    const view = longHorizonAgentToWorkerView(longHorizonAgent({ toolPermissions: {} }));
-    expect(view.tools).toBeUndefined();
-  });
-
-  test('non-string tool entries are filtered out of the view', () => {
-    const view = longHorizonAgentToWorkerView(
-      longHorizonAgent({ toolPermissions: { tools: ['Bash', 7, null] } })
-    );
-    expect(view.tools).toEqual(['Bash']);
-  });
-
-  test('non-worker statuses collapse onto the worker status set', () => {
-    expect(longHorizonAgentToWorkerView(longHorizonAgent({ status: 'paused' })).status).toBe(
-      'paused'
-    );
-    expect(longHorizonAgentToWorkerView(longHorizonAgent({ status: 'disabled' })).status).toBe(
-      'paused'
-    );
-    expect(longHorizonAgentToWorkerView(longHorizonAgent({ status: 'archived' })).status).toBe(
-      'archived'
-    );
-  });
-});
 
 describe('isRunnableUnifiedAgent — activity contract (U3a)', () => {
   test('migrated worker mirrors stay runnable in every status', () => {

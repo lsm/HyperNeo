@@ -5,7 +5,7 @@ import {
   type SpaceLongHorizonAgent,
   type SpaceLongHorizonAgentTemplate,
   type ThinkingLevel,
-  type WorkerAgentModelPoolEntry,
+  type AgentModelPoolEntry,
 } from '@hyperneo/shared';
 import { useEffect, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -90,7 +90,7 @@ interface AgentSaveForm {
   model: string;
   modelProvider: string;
   modelMode: ModelPoolEditorMode;
-  modelPool: WorkerAgentModelPoolEntry[];
+  modelPool: AgentModelPoolEntry[];
   thinkingLevel: '' | ThinkingLevel;
   tools: string[];
   pendingTool: string;
@@ -274,7 +274,7 @@ function AgentEditor({
   const [modelProvider, setModelProvider] = useState<string>(
     agent?.provider ?? template?.provider ?? ''
   );
-  const [modelPool, setModelPool] = useState<WorkerAgentModelPoolEntry[]>(agent?.modelPool ?? []);
+  const [modelPool, setModelPool] = useState<AgentModelPoolEntry[]>(agent?.modelPool ?? []);
   const [modelMode, setModelMode] = useState<ModelPoolEditorMode>(
     (agent?.modelPool?.length ?? 0) > 0 ? 'pool' : 'single'
   );
