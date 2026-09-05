@@ -2697,7 +2697,8 @@ export class SpaceRuntime {
   private readonly postApprovalRetryQueue = new TaskScopedRetrySerializer();
 
   async retryPostApprovalDispatch(taskId: string): Promise<PostApprovalRouteResult> {
-    if (!this.getPostApprovalRouter()) {
+    const manager = this.config.taskAgentManager;
+    if (!manager || !this.getPostApprovalRouter()) {
       const reason = `PostApprovalRouter not wired yet (taskAgentManager missing); task=${taskId}`;
       log.warn(`retryPostApprovalDispatch: ${reason}`);
       return { mode: 'skipped', reason };
@@ -2708,6 +2709,7 @@ export class SpaceRuntime {
         taskRepo: this.config.taskRepo,
         workflowRunRepo: this.config.workflowRunRepo,
         spaceManager: this.config.spaceManager,
+        isSessionAlive: (sessionId) => manager.isSessionAlive(sessionId),
         dispatch: (id, approvalSource, dispatchOptions) =>
           this.dispatchPostApproval(
             id,
@@ -7746,9 +7748,8 @@ export class SpaceRuntime {
     if (canonicalTask.status === 'stopped') return;
 
     const retryCount = this.blockedRetryCounts.get(runId) ?? 0;
-    const blockedExecutions = this.config.nodeExecutionRepo
-      .listByWorkflowRun(runId)
-      .filter((e) => e.status === 'blocked');
+    const allRunExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+    const blockedExecutions = allRunExecutions.filter((e) => e.status === 'blocked');
 
     if (blockedExecutions.length === 0) return;
 
@@ -7772,6 +7773,15 @@ export class SpaceRuntime {
     if (effectiveRetryCount < MAX_BLOCKED_RUN_RETRIES) {
       if (!taskReopenedOutsideRuntime && this.getAvailableTaskSlots(space) <= 0) return;
 
+      const runSnapshot = this.config.workflowRunRepo.getRun(runId)!;
+      if (this.config.workflowRunRepo.casRunStatus(runId, ['blocked'], 'in_progress') !== 'won') {
+        log.info(
+          `SpaceRuntime: skipping blocked-run retry for run ${runId}; ` +
+            `run status moved concurrently — keeping the concurrent status`
+        );
+        return;
+      }
+
       for (const execution of blockedExecutions) {
         const bindingAlive =
           !!execution.agentSessionId &&
@@ -7785,16 +7795,75 @@ export class SpaceRuntime {
           ...(bindingAlive ? {} : { agentSessionId: null }),
         });
       }
-      this.blockedRetryCounts.set(runId, effectiveRetryCount + 1);
+      await this.safeOnWorkflowRunUpdated(meta.spaceId, this.config.workflowRunRepo.getRun(runId)!);
 
-      await this.transitionRunStatusAndEmit(runId, 'in_progress');
+      const hasLiveExecutionBinding = this.config.nodeExecutionRepo
+        .listByWorkflowRun(runId)
+        .some(
+          (execution) =>
+            (execution.status === 'blocked' ||
+              execution.status === 'in_progress' ||
+              execution.status === 'pending' ||
+              execution.status === 'waiting_rebind') &&
+            !!execution.agentSessionId &&
+            (this.config.taskAgentManager?.isSessionInMemory(execution.agentSessionId) ?? false) &&
+            !this.isFailedSessionBinding(execution.agentSessionId)
+        );
+
+      let taskPromoted = false;
       if (canonicalTask.status === 'blocked') {
         await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
           status: 'in_progress',
           completedAt: null,
         });
+        taskPromoted = true;
+      } else if (
+        canonicalTask.status === 'open' &&
+        hasLiveExecutionBinding &&
+        this.config.taskRepo.casStatus(canonicalTask.id, ['open'], 'in_progress') === 'won'
+      ) {
+        await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
+          startedAt: canonicalTask.startedAt ?? Date.now(),
+          completedAt: null,
+        });
+        taskPromoted = true;
+      } else if (canonicalTask.status === 'open' && hasLiveExecutionBinding) {
+        const concurrentStatus = this.config.taskRepo.getTask(canonicalTask.id)?.status;
+        if (concurrentStatus === 'in_progress') {
+          taskPromoted = true;
+          log.info(
+            `SpaceRuntime: task ${canonicalTask.id} in run ${runId} was concurrently promoted ` +
+              `to in_progress during recovery; keeping the shared recovery result`
+          );
+        } else {
+          log.info(
+            `SpaceRuntime: skipping task recovery promotion for task ${canonicalTask.id} in run ${runId}; ` +
+              `task status moved concurrently — keeping the concurrent status`
+          );
+          await this.revertRepairedRunToBlocked(
+            runId,
+            meta.spaceId,
+            blockedExecutions,
+            runSnapshot
+          );
+          return;
+        }
       }
 
+      const freshTaskStatus = this.config.taskRepo.getTask(canonicalTask.id)?.status;
+      const freshStatusValid = taskPromoted
+        ? freshTaskStatus === 'in_progress'
+        : freshTaskStatus === 'open' || freshTaskStatus === 'in_progress';
+      if (!freshStatusValid) {
+        log.info(
+          `SpaceRuntime: skipping task_retry notification for task ${canonicalTask.id} in run ${runId}; ` +
+            `task status moved concurrently during recovery — keeping the concurrent status`
+        );
+        await this.revertRepairedRunToBlocked(runId, meta.spaceId, blockedExecutions, runSnapshot);
+        return;
+      }
+
+      this.blockedRetryCounts.set(runId, effectiveRetryCount + 1);
       this.notifiedTaskSet.delete(`${canonicalTask.id}:blocked`);
 
       await this.safeNotify({
@@ -7826,6 +7895,33 @@ export class SpaceRuntime {
           `emitted workflow_run_needs_attention`
       );
     }
+  }
+
+  private async revertRepairedRunToBlocked(
+    runId: string,
+    spaceId: string,
+    repairedExecutions: readonly NodeExecution[],
+    runSnapshot: SpaceWorkflowRun
+  ): Promise<void> {
+    if (this.config.workflowRunRepo.casRunStatus(runId, ['in_progress'], 'blocked') !== 'won') {
+      return;
+    }
+    for (const execution of repairedExecutions) {
+      this.config.nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: execution.result,
+        startedAt: execution.startedAt,
+        completedAt: execution.completedAt,
+        agentSessionId: execution.agentSessionId,
+        updatedAt: execution.updatedAt,
+      });
+    }
+    this.config.workflowRunRepo.updateRun(runId, {
+      startedAt: runSnapshot.startedAt,
+      completedAt: runSnapshot.completedAt,
+    });
+    this.blockedRetryCounts.set(runId, MAX_BLOCKED_RUN_RETRIES);
+    await this.safeOnWorkflowRunUpdated(spaceId, this.config.workflowRunRepo.getRun(runId)!);
   }
 
   private isFailedSessionBinding(sessionId: string): boolean {

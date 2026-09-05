@@ -43,6 +43,8 @@ import { runMigration228 } from './m228-migrate-workflow-agent-template-refs.ts'
 import { runMigration229 } from './m229-restamp-reviewer-typename-bot-filter.ts';
 import { runMigration230 } from './m230-restamp-reviewer-check-seeding-contract.ts';
 import { runMigration231 } from './m231-clear-resolved-workflow-slot-agent-ids.ts';
+import { runMigration232 } from './m232-drop-legacy-space-agents.ts';
+import { runMigration233 } from './m233-retire-pristine-seeded-worker-agents.ts';
 import {
   findPendingMigrationSpaceReclaims,
   type MigrationSpaceReclaimRequest,
@@ -536,6 +538,10 @@ export function runMigrations(
 
   run(migrationMarkerKey(231), () => runMigration231(db));
 
+  run(migrationMarkerKey(232), () => runMigration232(db));
+
+  run(migrationMarkerKey(233), () => runMigration233(db));
+
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
 
@@ -606,7 +612,7 @@ function hasCurrentBaselineSchema(db: BunDatabase): boolean {
     tableHasColumn(db, 'sessions', 'session_context') &&
     tableHasColumn(db, 'sessions', 'archived_at') &&
     tableExists(db, 'spaces') &&
-    tableExists(db, 'space_agents') &&
+    tableExists(db, 'space_long_horizon_agents') &&
     tableExists(db, 'space_tasks') &&
     tableHasColumn(db, 'space_tasks', 'status') &&
     tableHasColumn(db, 'space_tasks', 'task_agent_session_id') &&

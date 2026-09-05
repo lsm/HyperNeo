@@ -1,7 +1,4 @@
-import { generateUUID } from '@hyperneo/shared';
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
-import { workerAgentToLongHorizonParams } from './worker-long-horizon-mapper.ts';
 import {
   QA_SYSTEM_CONTRACT,
   REVIEWER_SYSTEM_CONTRACT,
@@ -10,6 +7,7 @@ import {
   PRESET_PLANNER_PROMPT,
   PRESET_RESEARCH_PROMPT,
 } from '@hyperneo/prompts';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 
 export { LEGACY_REVIEWER_PROMPT } from '@hyperneo/prompts';
 
@@ -147,62 +145,47 @@ const PRESET_AGENTS: PresetDefinition[] = [
 
 export type PresetAgentTemplate = PresetDefinition;
 
+export interface RetireRemovedPresetAgentsDeps {
+  agentRepo: Pick<
+    SpaceLongHorizonAgentRepository,
+    | 'listBySpaceId'
+    | 'delete'
+    | 'listGoals'
+    | 'listForgeScopes'
+    | 'listReminders'
+    | 'listSubscriptions'
+  >;
+  referencedAgentIds: ReadonlySet<string>;
+  isPristineRetiredRow: (agent: SpaceLongHorizonAgent) => boolean;
+}
+
+export function retireRemovedPresetAgents(
+  spaceId: string,
+  deps: RetireRemovedPresetAgentsDeps
+): string[] {
+  const retired: string[] = [];
+  for (const agent of deps.agentRepo.listBySpaceId(spaceId)) {
+    if (!deps.isPristineRetiredRow(agent)) continue;
+    if (deps.referencedAgentIds.has(agent.id)) continue;
+    if (
+      deps.agentRepo.listGoals(agent.id).length > 0 ||
+      deps.agentRepo.listForgeScopes(agent.id).length > 0 ||
+      deps.agentRepo.listReminders(agent.id).length > 0 ||
+      deps.agentRepo.listSubscriptions(agent.id).length > 0
+    ) {
+      continue;
+    }
+    try {
+      deps.agentRepo.delete(agent.id);
+      retired.push(agent.displayName);
+    } catch {}
+  }
+  return retired;
+}
+
 export function getPresetAgentTemplates(): PresetAgentTemplate[] {
   return PRESET_AGENTS.map((preset) => ({
     ...preset,
     tools: [...preset.tools],
   }));
-}
-
-export interface SeedUnifiedSpaceAgentsResult {
-  seeded: SpaceLongHorizonAgent[];
-  errors: Array<{ name: string; error: string }>;
-}
-
-export function seedUnifiedSpaceAgents(
-  spaceId: string,
-  longHorizonAgentRepo: SpaceLongHorizonAgentRepository
-): SeedUnifiedSpaceAgentsResult {
-  const seeded: SpaceLongHorizonAgent[] = [];
-  const errors: Array<{ name: string; error: string }> = [];
-  const occupiedHandles = new Set<string>();
-  const now = Date.now();
-
-  for (const preset of PRESET_AGENTS) {
-    try {
-      const params = workerAgentToLongHorizonParams(
-        {
-          id: generateUUID(),
-          spaceId,
-          name: preset.name,
-          handle: preset.handle,
-          status: 'active',
-          description: preset.description,
-          thinkingLevel: preset.thinkingLevel ?? null,
-          customPrompt: preset.customPrompt,
-          tools: preset.tools,
-        },
-        { occupiedHandles, now }
-      );
-      const agent = longHorizonAgentRepo.create(
-        {
-          id: params.id,
-          spaceId: params.spaceId,
-          handle: params.handle,
-          displayName: params.displayName,
-          templateKey: params.templateKey,
-          instructions: params.instructions,
-          description: params.description,
-          toolPermissions: params.toolPermissions,
-          thinkingLevel: params.thinkingLevel,
-        },
-        { allowReservedTemplateKey: true }
-      );
-      seeded.push(agent);
-    } catch (err) {
-      errors.push({ name: preset.name, error: err instanceof Error ? err.message : String(err) });
-    }
-  }
-
-  return { seeded, errors };
 }

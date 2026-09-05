@@ -165,7 +165,8 @@ describe('projectMessageStage', () => {
 
     expect(result.outcome).toEqual({
       kind: 'rejected',
-      reason: 'message.content must be a non-empty string or a non-empty array of text blocks',
+      reason:
+        'message.content must be a non-empty string or a non-empty array of text or image blocks',
     });
   });
 
@@ -178,7 +179,8 @@ describe('projectMessageStage', () => {
 
     expect(result.outcome).toEqual({
       kind: 'rejected',
-      reason: 'message.content must be a non-empty string or a non-empty array of text blocks',
+      reason:
+        'message.content must be a non-empty string or a non-empty array of text or image blocks',
     });
   });
 
@@ -191,7 +193,8 @@ describe('projectMessageStage', () => {
 
     expect(result.outcome).toEqual({
       kind: 'rejected',
-      reason: 'message.content must be a non-empty string or a non-empty array of text blocks',
+      reason:
+        'message.content must be a non-empty string or a non-empty array of text or image blocks',
     });
   });
 });
@@ -267,6 +270,20 @@ describe('createEntryStage', () => {
 
     expect(result.outcome).toBeUndefined();
     expect(result.entry?.deliveryMode).toBe('immediate');
+  });
+
+  test('an explicit messageUuid threads onto the entry', () => {
+    const result = createEntryStage(
+      sessionAddress,
+      textMessage,
+      'test-origin',
+      undefined,
+      undefined,
+      'seed-message-1'
+    );
+
+    expect(result.outcome).toBeUndefined();
+    expect(result.entry?.messageUuid).toBe('seed-message-1');
   });
 
   test('an unknown deliveryMode rejects with the factory reason verbatim', () => {
@@ -353,7 +370,8 @@ describe('createEntryStage', () => {
 
     expect(result.outcome).toEqual({
       kind: 'rejected',
-      reason: 'message.content must be a non-empty string or a non-empty array of text blocks',
+      reason:
+        'message.content must be a non-empty string or a non-empty array of text or image blocks',
     });
   });
 
@@ -547,6 +565,31 @@ describe('handoffPromptToMailbox', () => {
       expect(outcome.kind).toBe('enqueued');
       expect(JSON.parse(mailbox.rows()[0].payload).deliveryMode).toBe('immediate');
     });
+
+    test('an explicit messageUuid threads onto the enqueued entry payload', async () => {
+      const outcome = await handoffPromptToMailbox({
+        to: 'session:sess-1',
+        message: textMessage,
+        origin: 'test',
+        messageUuid: 'seed-message-1',
+        jobQueue: mailbox.jobQueue,
+      });
+
+      expect(outcome.kind).toBe('enqueued');
+      expect(JSON.parse(mailbox.rows()[0].payload).messageUuid).toBe('seed-message-1');
+    });
+
+    test('an absent messageUuid leaves the enqueued entry payload unchanged', async () => {
+      const outcome = await handoffPromptToMailbox({
+        to: 'session:sess-1',
+        message: textMessage,
+        origin: 'test',
+        jobQueue: mailbox.jobQueue,
+      });
+
+      expect(outcome.kind).toBe('enqueued');
+      expect(Object.hasOwn(JSON.parse(mailbox.rows()[0].payload), 'messageUuid')).toBe(false);
+    });
   });
 
   describe('rejections', () => {
@@ -606,7 +649,8 @@ describe('handoffPromptToMailbox', () => {
 
       expect(outcome).toEqual({
         kind: 'rejected',
-        reason: 'message.content must be a non-empty string or a non-empty array of text blocks',
+        reason:
+          'message.content must be a non-empty string or a non-empty array of text or image blocks',
       });
       expect(mailbox.rowCount()).toBe(0);
     });

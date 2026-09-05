@@ -5,13 +5,18 @@ import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/reposit
 import { runMigration155 } from '../../../../src/storage/schema/migrations.ts';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { createLongHorizonAgentTables } from '../../../../src/storage/schema/long-horizon-agents.ts';
-import { createSpaceAgentSchema, insertSpace } from '../../helpers/space-agent-schema.ts';
+import {
+  createLegacySpaceAgentTables,
+  createSpaceAgentSchema,
+  insertSpace,
+} from '../../helpers/space-agent-schema.ts';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
   db.exec(`DROP INDEX IF EXISTS idx_space_lh_agent_goals_one_owner`);
+  createLegacySpaceAgentTables(db);
   return db;
 }
 
@@ -205,36 +210,6 @@ describe('legacy long-horizon migration — same-id overlay mapping', () => {
     const db = new BunDatabase(':memory:');
     createSpaceAgentSchema(db);
     createLongHorizonAgentTables(db);
-    db.exec(`
-      CREATE TABLE space_agent_goal_assignments (
-        space_id TEXT NOT NULL,
-        agent_id TEXT NOT NULL,
-        goal_id TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        PRIMARY KEY (agent_id, goal_id)
-      )
-    `);
-    db.exec(`
-      CREATE TABLE space_agent_forge_scope_assignments (
-        space_id TEXT NOT NULL,
-        agent_id TEXT NOT NULL,
-        scope_id TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        PRIMARY KEY (agent_id, scope_id)
-      )
-    `);
-    db.exec(`
-      CREATE TABLE space_agent_reminders (
-        id TEXT PRIMARY KEY,
-        space_id TEXT NOT NULL,
-        agent_id TEXT NOT NULL,
-        message TEXT NOT NULL,
-        remind_at INTEGER NOT NULL,
-        status TEXT NOT NULL DEFAULT 'active',
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    `);
     db.exec(`
       CREATE TABLE space_goals (
         id TEXT PRIMARY KEY,

@@ -1,17 +1,17 @@
-import type { MessageOrigin } from '@hyperneo/shared';
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { createHash } from 'node:crypto';
-import { ensurePrompt, type PromptHold } from '../agent/message-delivery-outbox.ts';
-import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
+import type { MessageOrigin, ReferenceMetadata } from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor.ts';
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
+import { ensurePrompt, type PromptHold } from '../agent/message-delivery-outbox.ts';
 import { parseMailboxEntry } from './entry.ts';
+import { type MailboxSettlement, settleMailboxEntry } from './settlement.ts';
+import { decodeUlidTimestamp } from './ulid.ts';
 
-export type MailboxDeliveryOutcome =
-  | { kind: 'delivered'; sessionId: string }
-  | { kind: 'failed'; reason: string };
+export type MailboxDeliveryOutcome = MailboxSettlement | { kind: 'failed'; reason: string };
 
 export interface MailboxDeliveryDeps {
   jobQueue: JobQueueRepository;
@@ -19,6 +19,13 @@ export interface MailboxDeliveryDeps {
   sdkMessageRepo: SDKMessageRepository;
   getSession(sessionId: string): Promise<object | null>;
   isSessionArchived(sessionId: string): boolean;
+}
+
+export function createMailboxDeadHandler(logError: (message: string) => void) {
+  return (job: Job): void => {
+    const entryId = typeof job.payload.id === 'string' ? job.payload.id : 'unknown';
+    logError(`mailbox: entry ${entryId} dead-lettered: ${job.error ?? 'unknown error'}`);
+  };
 }
 
 const MAILBOX_MESSAGE_UUID_PREFIX = 'mbox-';
@@ -45,7 +52,7 @@ function mapOrigin(origin: string): MessageDeliveryOrigin {
 }
 
 export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHandler {
-  return async (job): Promise<MailboxDeliveryOutcome | { outcome: 'stale_attempt' }> => {
+  return async (job) => {
     const entry = parseMailboxEntry(job.payload);
     if (entry === null) {
       throw new DeadLetterImmediatelyError('mailbox: corrupt entry payload');
@@ -56,6 +63,9 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       );
     }
     const target = entry.to.sessionId;
+    if (Date.now() - decodeUlidTimestamp(entry.id) > entry.policy.ttlMs) {
+      throw new DeadLetterImmediatelyError('mailbox: entry expired (ttl)');
+    }
     if (deps.isSessionArchived(target)) {
       throw new DeadLetterImmediatelyError('mailbox: target session archived');
     }
@@ -68,10 +78,15 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
     if (deps.isSessionArchived(target)) {
       throw new DeadLetterImmediatelyError('mailbox: target session archived');
     }
+    if (Date.now() - decodeUlidTimestamp(entry.id) > entry.policy.ttlMs) {
+      throw new DeadLetterImmediatelyError('mailbox: entry expired (ttl)');
+    }
     const synthetic = entry.origin !== 'chat';
-    const message: SDKUserMessage = {
+    const message: SDKUserMessage & { referenceMetadata?: ReferenceMetadata } = {
       ...entry.message,
-      uuid: deterministicUuid(entry.id),
+      uuid: (entry.messageUuid ?? deterministicUuid(entry.id)) as NonNullable<
+        SDKUserMessage['uuid']
+      >,
       session_id: target,
       ...(synthetic ? { isSynthetic: true } : {}),
     };
@@ -85,6 +100,6 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       sdkMessageRepo: deps.sdkMessageRepo,
       jobQueue: deps.jobQueue,
     });
-    return { kind: 'delivered', sessionId: target };
+    return { ...settleMailboxEntry(entry, 'delivered', Date.now()) };
   };
 }

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { type MailboxAddress, renderAddress } from '../../../../src/lib/mailbox/address';
+import { MAX_IMAGE_BASE64_SIZE } from '../../../../src/lib/session/message-persistence';
 import {
   createMailboxEntry,
   DEFAULT_MAILBOX_ENTRY_POLICY,
@@ -52,11 +53,23 @@ describe('MailboxMessage', () => {
     message: {
       content: [
         { type: 'text', text: 'first' },
+        {
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/png', data: 'aW1hZ2U=' },
+        },
         { type: 'text', text: 'second' },
       ],
     },
     parent_tool_use_id: null,
     priority: 'later',
+    referenceMetadata: {
+      '@ref{file:logo.png}': {
+        type: 'file',
+        id: 'logo.png',
+        displayText: 'logo.png',
+        status: 'resolved',
+      },
+    },
   };
 
   test('every valid content shape round-trips through JSON', () => {
@@ -132,6 +145,24 @@ describe('toMailboxMessage', () => {
           },
         },
       ],
+      [
+        'text and image blocks with reference metadata',
+        {
+          ...validMessage,
+          message: {
+            content: [
+              { type: 'text', text: 'first' },
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: 'image/jpeg', data: 'aW1hZ2U=' },
+              },
+            ],
+          },
+          referenceMetadata: {
+            '@ref{task:42}': { type: 'task', id: '42', displayText: 'Task 42' },
+          },
+        },
+      ],
       ['priority now', { ...validMessage, priority: 'now' }],
       ['priority next', { ...validMessage, priority: 'next' }],
       ['priority later', { ...validMessage, priority: 'later' }],
@@ -146,13 +177,18 @@ describe('toMailboxMessage', () => {
         'parent_tool_use_id',
         'type',
       ]);
-      const withPriority = toMailboxMessage({ ...validMessage, priority: 'next' }) as {
-        message: MailboxMessage;
-      };
-      expect(Object.keys(withPriority.message).sort()).toEqual([
+      const withOptionalFields = toMailboxMessage({
+        ...validMessage,
+        priority: 'next',
+        referenceMetadata: {
+          '@ref{goal:1}': { type: 'goal', id: '1', displayText: 'Goal 1' },
+        },
+      }) as { message: MailboxMessage };
+      expect(Object.keys(withOptionalFields.message).sort()).toEqual([
         'message',
         'parent_tool_use_id',
         'priority',
+        'referenceMetadata',
         'type',
       ]);
     });
@@ -201,11 +237,47 @@ describe('toMailboxMessage', () => {
         { type: 'user', message: { content: [] }, parent_tool_use_id: null },
       ],
       [
-        'a non-text block',
+        'a malformed image block',
         {
           type: 'user',
           message: { content: [{ type: 'image', text: 'x' }] },
           parent_tool_use_id: null,
+        },
+      ],
+      [
+        'an oversized image block',
+        {
+          type: 'user',
+          message: {
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: 'image/png',
+                  data: 'a'.repeat(MAX_IMAGE_BASE64_SIZE + 1),
+                },
+              },
+            ],
+          },
+          parent_tool_use_id: null,
+        },
+      ],
+      [
+        'a tool result block',
+        {
+          type: 'user',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'x' }] },
+          parent_tool_use_id: null,
+        },
+      ],
+      [
+        'malformed reference metadata',
+        {
+          ...validMessage,
+          referenceMetadata: {
+            '@ref{task:42}': { type: 'task', id: '', displayText: 'Task 42' },
+          },
         },
       ],
       [
@@ -348,6 +420,19 @@ describe('createMailboxEntry', () => {
       });
       expect(entry.deliveryMode).toBe(deliveryMode);
     }
+  });
+
+  test('stamps an explicit messageUuid and otherwise leaves it absent', () => {
+    const seeded = createMailboxEntry({
+      to: sessionTo,
+      message: validMessage,
+      origin: 'test',
+      messageUuid: 'seed-message-1',
+    });
+    const unseeded = createMailboxEntry({ to: sessionTo, message: validMessage, origin: 'test' });
+
+    expect(seeded.messageUuid).toBe('seed-message-1');
+    expect(Object.hasOwn(unseeded, 'messageUuid')).toBe(false);
   });
 
   test.each<[string, MailboxAddress]>([
@@ -560,6 +645,22 @@ describe('createMailboxEntry', () => {
     );
   });
 
+  test.each([
+    ['an empty string', ''],
+    ['a non-string', 42],
+  ])('throws TypeError with the verbatim messageUuid reason for %s', (_label, messageUuid) => {
+    const args = {
+      to: sessionTo,
+      message: validMessage,
+      origin: 'test',
+      messageUuid: messageUuid as string,
+    };
+    expect(() => createMailboxEntry(args)).toThrow(TypeError);
+    expect(() => createMailboxEntry(args)).toThrow(
+      new TypeError('messageUuid must be a non-empty string')
+    );
+  });
+
   describe('first violation wins', () => {
     const invalidTo = { kind: 'session', sessionId: '' } as MailboxAddress;
     const invalidMessage = { ...validMessage, type: 'assistant' } as MailboxMessage;
@@ -695,11 +796,34 @@ describe('parseMailboxEntry', () => {
     });
   });
 
+  describe('messageUuid', () => {
+    test('reads a stored messageUuid back verbatim', () => {
+      expect(
+        parseMailboxEntry({ ...sessionPayload, messageUuid: 'seed-message-1' })?.messageUuid
+      ).toBe('seed-message-1');
+    });
+
+    test.each([
+      ['an empty string', ''],
+      ['a non-string', 42],
+      ['null', null],
+      ['true', true],
+    ])('returns null for %s', (_label, messageUuid) => {
+      expect(parseMailboxEntry({ ...sessionPayload, messageUuid })).toBeNull();
+    });
+  });
+
   describe('legacy payload back-compat', () => {
     test('a payload created before deliveryMode existed parses with immediate', () => {
       expect(Object.hasOwn(sessionPayload, 'deliveryMode')).toBe(false);
       expect(parseMailboxEntry(sessionPayload)?.deliveryMode).toBe('immediate');
       expect(parseMailboxEntry(agentPayload)?.deliveryMode).toBe('immediate');
+    });
+
+    test('a payload created before messageUuid existed keeps the field absent', () => {
+      expect(Object.hasOwn(sessionPayload, 'messageUuid')).toBe(false);
+      expect(Object.hasOwn(parseMailboxEntry(sessionPayload) ?? {}, 'messageUuid')).toBe(false);
+      expect(Object.hasOwn(parseMailboxEntry(agentPayload) ?? {}, 'messageUuid')).toBe(false);
     });
   });
 
@@ -886,7 +1010,7 @@ describe('parseMailboxEntry', () => {
   });
 });
 
-describe('mailbox entry deliveryMode round-trip law', () => {
+describe('mailbox entry optional field round-trip law', () => {
   const to: MailboxAddress = { kind: 'session', sessionId: 'sess-1' };
   const message: MailboxMessage = {
     type: 'user',
@@ -894,18 +1018,50 @@ describe('mailbox entry deliveryMode round-trip law', () => {
     parent_tool_use_id: null,
   };
 
-  test.each<[string, MailboxDeliveryMode | undefined]>([
-    ['immediate', 'immediate'],
-    ['defer', 'defer'],
-    ['defaulted', undefined],
-  ])('a %s entry survives JSON serialization into parseMailboxEntry unchanged', (_label, mode) => {
+  test('image content and reference metadata survive creation, JSON, and parsing', () => {
+    const richMessage: MailboxMessage = {
+      type: 'user',
+      message: {
+        content: [
+          { type: 'text', text: 'see @ref{file:diagram.png}' },
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/webp', data: 'aW1hZ2U=' },
+          },
+        ],
+      },
+      parent_tool_use_id: null,
+      referenceMetadata: {
+        '@ref{file:diagram.png}': {
+          type: 'file',
+          id: 'diagram.png',
+          displayText: 'diagram.png',
+          status: 'resolved',
+        },
+      },
+    };
+    const entry = createMailboxEntry({ to, message: richMessage, origin: 'test' });
+
+    expect(parseMailboxEntry(JSON.parse(JSON.stringify(entry)))).toEqual(entry);
+  });
+
+  test.each<[string, MailboxDeliveryMode | undefined, string | undefined]>([
+    ['immediate without seed', 'immediate', undefined],
+    ['defer without seed', 'defer', undefined],
+    ['defaulted without seed', undefined, undefined],
+    ['immediate with seed', 'immediate', 'seed-message-1'],
+    ['defer with seed', 'defer', 'seed-message-2'],
+    ['defaulted with seed', undefined, 'seed-message-3'],
+  ])('an %s entry survives JSON serialization into parseMailboxEntry unchanged', (_label, mode, messageUuid) => {
     const entry = createMailboxEntry({
       to,
       message,
       origin: 'test',
       ...(mode !== undefined ? { deliveryMode: mode } : {}),
+      ...(messageUuid !== undefined ? { messageUuid } : {}),
     });
     expect(entry.deliveryMode).toBe(mode ?? 'immediate');
+    expect(entry.messageUuid).toBe(messageUuid);
     expect(parseMailboxEntry(JSON.parse(JSON.stringify(entry)))).toEqual(entry);
   });
 });

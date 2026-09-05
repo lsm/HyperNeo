@@ -391,9 +391,27 @@ function hasParser(value: unknown): value is { parse: (input: unknown) => unknow
 }
 
 describe('schema evolution setup', () => {
-  test('createTables works before space_agents exists', () => {
+  test('createTables does not recreate the dropped legacy space agent tables', () => {
     const db = new BunDatabase(':memory:');
     expect(() => createTables(db)).not.toThrow();
+    createTables(db);
+    for (const legacyTable of [
+      'space_agents',
+      'space_agent_goal_assignments',
+      'space_agent_forge_scope_assignments',
+      'space_agent_reminders',
+    ]) {
+      expect(
+        db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(legacyTable)
+      ).toBeNull();
+    }
+    expect(
+      db
+        .prepare(
+          `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_long_horizon_agents'`
+        )
+        .get()
+    ).toBeDefined();
     db.close();
   });
 });

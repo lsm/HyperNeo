@@ -40,7 +40,7 @@ function makeInput(overrides: Partial<RunTickAdmissionInput> = {}): RunTickAdmis
 }
 
 function makeCtx(overrides: Partial<RunTickAdmissionInput> = {}): RunTickDecisionCtx {
-  return { ...makeInput(overrides), decision: null };
+  return makeInput(overrides);
 }
 
 describe('run-tick admission decision pipeline', () => {
@@ -265,7 +265,10 @@ describe('run-tick admission decision pipeline', () => {
   describe('gate pass-through contract', () => {
     test('gates with a no-op branch leave ctx untouched when not firing', () => {
       const noOpCases: Array<
-        [(ctx: RunTickDecisionCtx) => RunTickDecisionCtx, Partial<RunTickAdmissionInput>]
+        [
+          (ctx: RunTickDecisionCtx) => { value: RunTickDecisionCtx } | { reason: unknown },
+          Partial<RunTickAdmissionInput>,
+        ]
       > = [
         [applyMissingRunGate, { runStatus: 'in_progress' }],
         [applyFinishedRunGate, { runStatus: 'in_progress' }],
@@ -285,16 +288,15 @@ describe('run-tick admission decision pipeline', () => {
       ];
       for (const [gate, overrides] of noOpCases) {
         const ctx = makeCtx(overrides);
-        expect(gate(ctx)).toBe(ctx);
+        expect(gate(ctx)).toEqual({ value: ctx });
       }
     });
 
     test('proceed gate is the final arbiter and always decides', () => {
-      expect(applyProceedGate(makeCtx({})).decision).not.toBeNull();
-      expect(applyProceedGate(makeCtx({})).decision).toEqual({ action: 'proceed' });
-      expect(
-        applyProceedGate(makeCtx({ executionCount: 0, hasBlockedExecution: true })).decision
-      ).toEqual({ action: 'proceed' });
+      expect(applyProceedGate(makeCtx({}))).toEqual({ reason: { action: 'proceed' } });
+      expect(applyProceedGate(makeCtx({ executionCount: 0, hasBlockedExecution: true }))).toEqual({
+        reason: { action: 'proceed' },
+      });
     });
   });
 

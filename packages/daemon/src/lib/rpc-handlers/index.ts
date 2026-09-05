@@ -8,6 +8,7 @@ import type { DaemonCommandMap, InternalCommandBus } from '../internal-command-b
 import type { ExternalEventStore } from '../external-events/external-event-store.ts';
 import type { ExternalEventService } from '../external-events/external-event-service.ts';
 import type { SessionManager } from '../session-manager.ts';
+import type { AgentSession } from '../agent/agent-session.ts';
 import type { AuthManager } from '../auth-manager.ts';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { Config } from '../../config.ts';
@@ -93,6 +94,8 @@ import {
   deliverSpaceAgentMessage,
   type SpaceAgentInjectionOutcome,
 } from '../space/runtime/space-agent-message-delivery.ts';
+import { createDefaultSessionResolutionDeps } from '../session-resolution/default-deps.ts';
+import { resolveSpaceAgentSession } from '../session-resolution/resolve-space-agent-session.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
 import type { EvolutionRepository } from '../../storage/repositories/evolution-repository.ts';
@@ -986,7 +989,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
 
   const spaceWorktreeManager = new SpaceWorktreeManager(deps.db.getDatabase());
 
-  const sessionManagerRef = deps.sessionManager;
+  let taskAgentManager: TaskAgentManager;
   const spaceAgentInjector = async (
     spaceId: string,
     message: string,
@@ -999,15 +1002,19 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       disposeSignal?: AbortSignal;
     }
   ): Promise<SpaceAgentInjectionOutcome> => {
-    let sessionId = replyToSessionId || `space:chat:${spaceId}`;
-    let session = await sessionManagerRef.getSessionAsync(sessionId);
-    if (!session && replyToSessionId) {
-      sessionId = `space:chat:${spaceId}`;
-      session = await sessionManagerRef.getSessionAsync(sessionId);
-    }
-    if (!session) {
-      throw new Error(`Session not found for Space Agent reply routing: ${sessionId}`);
-    }
+    const { sessionId, session } = await resolveSpaceAgentSession<AgentSession>(
+      spaceId,
+      replyToSessionId,
+      createDefaultSessionResolutionDeps({
+        sessionManager: deps.sessionManager,
+        taskAgentManager,
+        spaceRuntimeService,
+        nodeExecutionRepo,
+        taskRepo: spaceTaskRepo,
+        longHorizonAgentRepo,
+      }),
+      (sessionId) => deps.sessionManager.getSessionAsync(sessionId)
+    );
     const messageId = explicitMessageId ?? generateUUID();
     const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
       type: 'user' as const,
@@ -1049,7 +1056,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     );
   };
 
-  const taskAgentManager = new TaskAgentManager({
+  taskAgentManager = new TaskAgentManager({
     db: deps.reactiveDb.db,
     sessionManager: deps.sessionManager,
     reactiveDb: deps.reactiveDb,

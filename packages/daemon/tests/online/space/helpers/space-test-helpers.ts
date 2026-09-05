@@ -3,7 +3,6 @@ import type {
   NodeExecution,
   NodeExecutionStatus,
   Space,
-  SpaceLongHorizonAgent,
   SpaceWorkflow,
   SpaceWorkflowRun,
   SpaceTask,
@@ -12,7 +11,6 @@ import type {
 
 export interface TestSpaceFixture {
   space: Space;
-  agents: SpaceLongHorizonAgent[];
   workflow: SpaceWorkflow;
 }
 
@@ -213,22 +211,6 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
     autonomyLevel: 1,
   })) as Space;
 
-  const { agents } = (await daemon.messageHub.request('spaceAgent.list', {
-    spaceId: space.id,
-  })) as { agents: SpaceLongHorizonAgent[] };
-
-  const agentByName = new Map(agents.map((agent) => [agent.displayName, agent.id]));
-  const requireAgentId = (name: string): string => {
-    const id = agentByName.get(name);
-    if (!id) throw new Error(`Pre-seeded agent not found: ${name}`);
-    return id;
-  };
-
-  const plannerAgentId = requireAgentId('Planner');
-  const reviewerAgentId = requireAgentId('Reviewer');
-  const coderAgentId = requireAgentId('Coder');
-  const qaAgentId = requireAgentId('QA');
-
   const { workflow } = (await daemon.messageHub.request('spaceWorkflow.create', {
     spaceId: space.id,
     name: 'TEST_FULL_CYCLE_WORKFLOW',
@@ -237,36 +219,36 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
       {
         id: 'planning-node',
         name: 'Planning',
-        agents: [{ agentId: plannerAgentId, name: 'planner' }],
+        agents: [{ agentId: '', name: 'planner', templateKey: 'worker.planner' }],
       },
       {
         id: 'plan-review-node',
         name: 'Plan Review',
-        agents: [{ agentId: reviewerAgentId, name: 'reviewer' }],
+        agents: [{ agentId: '', name: 'reviewer', templateKey: 'worker.reviewer' }],
       },
       {
         id: 'coding-node',
         name: 'Coding',
-        agents: [{ agentId: coderAgentId, name: 'coder' }],
+        agents: [{ agentId: '', name: 'coder', templateKey: 'worker.coder' }],
       },
       {
         id: 'code-review-node',
         name: 'Code Review',
         agents: [
-          { agentId: reviewerAgentId, name: 'Reviewer 1' },
-          { agentId: reviewerAgentId, name: 'Reviewer 2' },
-          { agentId: reviewerAgentId, name: 'Reviewer 3' },
+          { agentId: '', name: 'Reviewer 1', templateKey: 'worker.reviewer' },
+          { agentId: '', name: 'Reviewer 2', templateKey: 'worker.reviewer' },
+          { agentId: '', name: 'Reviewer 3', templateKey: 'worker.reviewer' },
         ],
       },
       {
         id: 'qa-node',
         name: 'QA',
-        agents: [{ agentId: qaAgentId, name: 'qa' }],
+        agents: [{ agentId: '', name: 'qa', templateKey: 'worker.qa' }],
       },
       {
         id: 'done-node',
         name: 'Done',
-        agents: [{ agentId: qaAgentId, name: 'done' }],
+        agents: [{ agentId: '', name: 'done', templateKey: 'worker.qa' }],
       },
     ],
     startNodeId: 'planning-node',
@@ -400,7 +382,7 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
     tags: ['v2', 'test'],
   })) as { workflow: SpaceWorkflow };
 
-  return { space, agents, workflow };
+  return { space, workflow };
 }
 
 export async function startWorkflowRun(

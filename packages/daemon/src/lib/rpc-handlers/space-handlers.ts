@@ -23,7 +23,6 @@ import type { SpaceTaskRepository } from '../../storage/repositories/space-task-
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import type { SessionManager } from '../session-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
-import { seedUnifiedSpaceAgents } from '../space/agents/seed-agents.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows.ts';
 import { Logger } from '../logger.ts';
@@ -197,21 +196,6 @@ export function setupSpaceHandlers(
     const space = await spaceManager.createSpace(params);
     const seedWarnings: string[] = [];
     longHorizonAgentRepo.ensureCoordinator(space.id);
-
-    try {
-      const agentSeedResult = seedUnifiedSpaceAgents(space.id, longHorizonAgentRepo);
-      if (agentSeedResult.errors.length > 0) {
-        const failedNames = agentSeedResult.errors.map((e) => e.name).join(', ');
-        log.warn(
-          `Partial agent seed failure for space ${space.id}: ${failedNames}`,
-          agentSeedResult.errors
-        );
-        seedWarnings.push(`Failed to seed agents: ${failedNames}`);
-      }
-    } catch (err) {
-      log.warn('Failed to seed preset agents for space', space.id, err);
-      seedWarnings.push('Failed to seed preset agents');
-    }
 
     try {
       const workflowSeedResult = seedBuiltInWorkflows(space.id, spaceWorkflowManager);
