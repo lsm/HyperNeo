@@ -18,6 +18,8 @@ import type {
 import { generateUUID, isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
+import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
+import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
@@ -141,6 +143,7 @@ import {
   isHumanPendingSource,
 } from './pending-envelope.ts';
 import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
+import { handoffPromptToMailbox } from './prompt-mailbox-handoff.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import { decideRestoredWorkerAdmission } from './restored-worker-admission-decision-pipeline.ts';
 import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
@@ -5126,9 +5129,65 @@ export class TaskAgentManager {
       nodeExecutionRepo: this.config.nodeExecutionRepo,
       workflowRunId,
       workflowChannels: channels,
-      messageInjector: async (targetSessionId, message) => {
-        await this.injectSubSessionMessage(targetSessionId, message, true);
-        this.recordActivityForSession(targetSessionId);
+      deliverToTarget: async (target, message, messageId) => {
+        const longHorizonAgentRepo = this.config.longHorizonAgentRepo;
+        if (!longHorizonAgentRepo) {
+          throw new Error('Long-horizon agent repository unavailable');
+        }
+        const resolution = await ensureSession(
+          target,
+          createDefaultSessionResolutionDeps({
+            sessionManager: this.config.sessionManager,
+            taskAgentManager: this,
+            spaceRuntimeService: this.config.spaceRuntimeService,
+            nodeExecutionRepo: this.config.nodeExecutionRepo,
+            taskRepo: this.config.taskRepo,
+            longHorizonAgentRepo,
+          })
+        );
+        if (resolution.kind === 'unresolved') {
+          return { state: 'not_found', messageId, error: resolution.reason } as const;
+        }
+        const session = await this.config.sessionManager.getSessionAsync(resolution.sessionId);
+        if (!session) {
+          return { state: 'not_found', messageId, error: 'resolved session unavailable' } as const;
+        }
+        const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
+          type: 'user' as const,
+          uuid: messageId as UUID,
+          session_id: resolution.sessionId,
+          parent_tool_use_id: null,
+          isSynthetic: true,
+          message: {
+            role: 'user' as const,
+            content: [{ type: 'text' as const, text: message }],
+          },
+        };
+        const outcome = await handoffPromptToMailbox({
+          deps: {
+            db: this.config.db.getDatabase(),
+            sdkMessageRepo: this.config.db.getSDKMessageRepo(),
+            jobQueue: this.config.db.getJobQueueRepo(),
+          },
+          target: {
+            sessionId: resolution.sessionId,
+            messageId,
+            message: sdkUserMessage,
+            origin: 'space_agent',
+          },
+          stateManager: session.stateManager,
+          publishStatusChanged: (sessionId, dbId, status) =>
+            this.publishMessageStatusChanged(sessionId, dbId, status),
+        });
+        if (outcome.state === 'stale') {
+          throw new Error('Mailbox handoff became stale');
+        }
+        this.recordActivityForSession(resolution.sessionId);
+        return {
+          state: outcome.state === 'settled' ? ('delivered' as const) : ('queued' as const),
+          sessionId: resolution.sessionId,
+          messageId,
+        };
       },
       activateTargetSession: (targetAgentName) =>
         this.activateTargetSessionsForMessage(taskId, workflowRunId, targetAgentName, {
