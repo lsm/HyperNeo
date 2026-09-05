@@ -27,9 +27,7 @@ import type {
   SpaceTaskActivityMember,
   SpaceTaskPriority,
   SpaceTaskStatus,
-  SpaceWorkerAgent,
   SpaceWorkerAgentPromotionDraft,
-  SpaceWorkerAgentSyncPreview,
   SpaceWorkflow,
   SpaceWorkflowRun,
   SpaceWorkflowSummary,
@@ -159,14 +157,6 @@ export interface SpaceExternalEventDeliveryLogRecord {
   eventUpdatedAt: number;
 }
 
-export interface SpaceWorkerAgentTemplate {
-  name: string;
-  description: string;
-  tools: string[];
-  customPrompt: string;
-  templateHash?: string | null;
-}
-
 export interface CreateSpaceAgentParams {
   id?: string;
   name?: string;
@@ -174,7 +164,6 @@ export interface CreateSpaceAgentParams {
   displayName?: string;
   templateKey?: string | null;
   templateName?: string | null;
-  templateHash?: string | null;
   instructions?: string;
   customPrompt?: string | null;
   autonomyLevel?: SpaceLongHorizonAgent['autonomyLevel'];
@@ -195,7 +184,6 @@ export interface UpdateSpaceAgentParams {
   displayName?: string;
   templateKey?: string | null;
   templateName?: string | null;
-  templateHash?: string | null;
   instructions?: string;
   customPrompt?: string | null;
   autonomyLevel?: SpaceLongHorizonAgent['autonomyLevel'];
@@ -2486,44 +2474,6 @@ class SpaceStore {
     const next = [...current];
     next[index] = mapped;
     this.agentTemplates.value = next;
-  }
-
-  async syncAgentFromTemplate(
-    agentId: string,
-    expectedRowHash?: string
-  ): Promise<SpaceWorkerAgent> {
-    const spaceId = this.spaceId.value;
-    if (!spaceId) throw new Error('No space selected');
-
-    const hub = connectionManager.getHubIfConnected();
-    if (!hub) throw new Error('Not connected');
-
-    const { agent } = await hub.request<{ agent: SpaceWorkerAgent }>(
-      'spaceAgent.syncFromTemplate',
-      {
-        spaceId,
-        agentId,
-        ...(expectedRowHash !== undefined ? { expectedRowHash } : {}),
-      }
-    );
-    return agent;
-  }
-
-  async previewAgentTemplateSync(agentId: string): Promise<SpaceWorkerAgentSyncPreview> {
-    const spaceId = this.spaceId.value;
-    if (!spaceId) throw new Error('No space selected');
-
-    const hub = connectionManager.getHubIfConnected();
-    if (!hub) throw new Error('Not connected');
-
-    const { preview } = await hub.request<{ preview: SpaceWorkerAgentSyncPreview }>(
-      'spaceAgent.previewTemplateSync',
-      {
-        spaceId,
-        agentId,
-      }
-    );
-    return preview;
   }
 
   async deleteAgent(agentId: string): Promise<void> {

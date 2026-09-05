@@ -639,7 +639,6 @@ describe('Space Agent RPC Handlers', () => {
           sessionId: 'session-template-promotion',
           name: 'Template Promotion',
           templateName: 'Coder',
-          templateHash: 'coder-hash',
         }
       );
 
@@ -723,7 +722,6 @@ describe('Space Agent RPC Handlers', () => {
           spaceId: 'space-1',
           name: 'TemplateAgent',
           templateName: 'Coder',
-          templateHash: 'coder-hash',
         }
       );
 
@@ -1016,7 +1014,6 @@ describe('Space Agent RPC Handlers', () => {
         spaceId: 'space-1',
         name: 'TemplateTracked',
         templateName: 'Coder',
-        templateHash: 'coder-hash',
       });
 
       const result = await call<{ agent: { templateKey: string | null } }>(
@@ -1025,7 +1022,6 @@ describe('Space Agent RPC Handlers', () => {
         {
           id: created.agent.id,
           templateName: null,
-          templateHash: null,
         }
       );
 
