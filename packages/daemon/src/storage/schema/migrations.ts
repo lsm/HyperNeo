@@ -1,4 +1,16 @@
+import {
+  type ArtifactShape,
+  deriveArtifactKey,
+  isArtifactShape,
+  normalizeLinkData,
+  resolveLegacyShape,
+} from '@hyperneo/shared';
+import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
+import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import { createEvolutionTables } from './evolution.ts';
+import { createLongHorizonAgentTables } from './long-horizon-agents.ts';
 import { runMigration94 as runMigration94External } from './m94-backfill-workflow-templates.ts';
 import { runMigration106 as runMigration106External } from './m106-backfill-agent-templates.ts';
 import { runMigration170 as runMigration170External } from './m170-backfill-missing-preset-agents.ts';
@@ -8,17 +20,6 @@ import { runMigration184 as runMigration184External } from './m184-backfill-revi
 import { runMigration185 as runMigration185External } from './m185-workflow-event-subscriptions.ts';
 import { runMigration196 as runMigration196External } from './m196-scope-reviewer-bash-patterns.ts';
 import { runMigration198 } from './m198-session-counters.ts';
-import { RESERVED_SPACE_AGENT_HANDLES, slugify, validateSlug } from '../../lib/space/slug.ts';
-import {
-  deriveArtifactKey,
-  isArtifactShape,
-  normalizeLinkData,
-  resolveLegacyShape,
-  type ArtifactShape,
-} from '@hyperneo/shared';
-import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
-import { createEvolutionTables } from './evolution.ts';
-import { createLongHorizonAgentTables } from './long-horizon-agents.ts';
 import { runMigration206 } from './m206-restamp-reviewer-depth-tiers.ts';
 import { runMigration207 } from './m207-restamp-reviewer-review-modes.ts';
 import { runMigration208 } from './m208-restamp-reviewer-gate-artifact-fields.ts';
@@ -39,7 +40,7 @@ import { runMigration225 } from './m225-space-agent-templates.ts';
 import { runMigration226 } from './m226-space-agent-templates-version.ts';
 import { runMigration227 } from './m227-space-agent-template-version-seq.ts';
 import { runMigration228 } from './m228-migrate-workflow-agent-template-refs.ts';
-import { migrateLegacyLongHorizonAgentData } from '../../lib/space/agents/legacy-long-horizon-migration.ts';
+import { runMigration229 } from './m229-restamp-reviewer-typename-bot-filter.ts';
 import {
   findPendingMigrationSpaceReclaims,
   type MigrationSpaceReclaimRequest,
@@ -526,6 +527,8 @@ export function runMigrations(
   run(migrationMarkerKey(227), () => runMigration227(db));
 
   run(migrationMarkerKey(228), () => runMigration228(db));
+
+  run(migrationMarkerKey(229), () => runMigration229(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
@@ -6125,9 +6128,7 @@ export function runMigration108(db: BunDatabase): void {
           }
         }
         if (mutated) update.run(JSON.stringify(config), row.id);
-      } catch {
-        continue;
-      }
+      } catch {}
     }
   }
 }
@@ -8019,7 +8020,7 @@ export function runMigration212(
 ): void {
   if (!tableExists(db, 'sdk_messages')) return;
   const storedSql = tableCreateSql(db, 'sdk_messages');
-  if (!!storedSql && /\bseq\s+INTEGER\s+PRIMARY KEY\b/i.test(storedSql)) return;
+  if (storedSql && /\bseq\s+INTEGER\s+PRIMARY KEY\b/i.test(storedSql)) return;
 
   const columns = (
     db.prepare(`PRAGMA table_xinfo('sdk_messages')`).all() as Array<{
@@ -8541,7 +8542,7 @@ function migrateNeoMessageOrigins(db: BunDatabase): void {
 
 function generateValidHandle(name: string, existingHandles: string[]): string {
   const maxLen = 60;
-  let base = slugify(name, existingHandles);
+  const base = slugify(name, existingHandles);
   if (validateSlug(base) === null) return base;
 
   for (let len = maxLen; len > 0; len--) {

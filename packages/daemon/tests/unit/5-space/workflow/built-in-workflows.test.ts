@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { CALL_ACTION_PREFERENCE_GUIDANCE } from '@hyperneo/prompts';
 import type {
   HandoffTransition,
   SpaceWorkerAgent,
@@ -10,7 +11,6 @@ import type {
   WorkflowHook,
   WorkflowNode,
 } from '@hyperneo/shared';
-import { CALL_ACTION_PREFERENCE_GUIDANCE } from '@hyperneo/prompts';
 import {
   exportWorkflow,
   validateExportedWorkflow,
@@ -28,29 +28,34 @@ import {
   CODER_OWNED_QA_PROMPT,
   CODER_OWNED_QA_REVIEW_PROMPT,
   CODER_OWNED_REVIEW_PROMPT,
-  EXTERNAL_REVIEW_BOTS_GUIDANCE,
+  CODEX_REACTION_APPROVAL_GUIDANCE,
   CODING_WITH_QA_WORKFLOW,
   CODING_WORKFLOW,
+  EXTERNAL_REVIEW_BOTS_GUIDANCE,
+  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME,
   getBuiltInWorkflows,
   LEGACY_CODING_TEMPLATE_IDENTITIES,
+  LEGACY_FULLSTACK_REVIEWER_SLOT_PROMPT,
   mergeChannelsFromTemplate,
   mergeNodeStructuralFieldsFromTemplate,
+  patchPinnedBuiltInPromptDrift,
+  RESEARCH_PROMPT,
+  RESEARCH_REVIEW_PROMPT,
   RESEARCH_WORKFLOW,
   RETIRED_MERGER_RAW_MERGE_GUARD,
-  RETIRED_PRE_REVIEW_MODES_CODER_ONLY_PROMPT,
-  RETIRED_PRE_REVIEW_MODES_CODER_OWNED_MERGE_PROMPT,
+  RETIRED_PR_MERGER_SLOT_PROMPT,
   RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_ONLY_PROMPT,
   RETIRED_PRE_BASE_ADVANCE_POLICY_CODER_OWNED_MERGE_PROMPT,
   RETIRED_PRE_BASE_ADVANCE_POLICY_RESEARCH_PROMPT,
   RETIRED_PRE_EVENT_DRIVEN_CODER_ONLY_PROMPT,
   RETIRED_PRE_EVENT_DRIVEN_CODER_OWNED_MERGE_PROMPT,
   RETIRED_PRE_EVENT_DRIVEN_RESEARCH_PROMPT,
-  RETIRED_PR_MERGER_SLOT_PROMPT,
+  RETIRED_PRE_REVIEW_MODES_CODER_ONLY_PROMPT,
+  RETIRED_PRE_REVIEW_MODES_CODER_OWNED_MERGE_PROMPT,
+  RETIRED_PRE_TYPENAME_CODEX_REACTION_APPROVAL_GUIDANCE,
+  REVIEW_ONLY_REVIEW_PROMPT,
   REVIEW_ONLY_WORKFLOW,
   REVIEW_POLICY_GUIDANCE,
-  RESEARCH_PROMPT,
-  RESEARCH_REVIEW_PROMPT,
-  REVIEW_ONLY_REVIEW_PROMPT,
   REVIEWER_ZERO_FINDINGS_GATE,
   CODING_WORKFLOW as STABLE_CODING_WORKFLOW,
   seedBuiltInWorkflows,
@@ -324,17 +329,17 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('Verdicts are language, so read them');
     expect(CODER_ONLY_PROMPT).toContain('Silence is NOT a pass');
     expect(CODER_ONLY_PROMPT).toContain('drop it from the gate set');
-    expect(CODER_ONLY_PROMPT).toContain('chatgpt-codex-connector[bot]');
-    expect(CODER_ONLY_PROMPT).toContain('copilot-pull-request-reviewer[bot]');
-    expect(CODER_ONLY_PROMPT).toContain('devin-ai-integration[bot]');
-    expect(CODER_ONLY_PROMPT).toContain('coderabbitai[bot]');
+    expect(CODER_ONLY_PROMPT).toContain('`chatgpt-codex-connector`');
+    expect(CODER_ONLY_PROMPT).toContain('`copilot-pull-request-reviewer`');
+    expect(CODER_ONLY_PROMPT).toContain('`devin-ai-integration`');
+    expect(CODER_ONLY_PROMPT).toContain('`coderabbitai`');
     expect(CODER_ONLY_PROMPT).toContain('@coderabbitai review');
     expect(CODER_ONLY_PROMPT).toContain('Cursor Bugbot');
-    expect(CODER_ONLY_PROMPT).toContain('greptile-app[bot]');
+    expect(CODER_ONLY_PROMPT).toContain('`greptile-app`');
     expect(CODER_ONLY_PROMPT).toContain('Qodo PR-Agent');
   });
 
-  test('gate evidence uses GraphQL enum names, cycle binding, and paginated reviews', () => {
+  test('gate evidence uses GraphQL enum names, actor type, cycle binding, and paginated reviews', () => {
     expect(CODER_ONLY_PROMPT).toContain('THUMBS_UP');
     expect(CODER_ONLY_PROMPT).toContain('EYES');
     expect(CODER_ONLY_PROMPT).toContain('createdAt');
@@ -343,6 +348,20 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_PROMPT).toContain('commit{oid} url body');
     expect(CODER_ONLY_PROMPT).toContain('pageInfo.hasNextPage');
     expect(CODER_ONLY_PROMPT).toContain('`[bot]`');
+    expect(CODER_ONLY_PROMPT).toContain('filter GraphQL results on `__typename == "Bot"`');
+    expect(CODER_ONLY_PROMPT).toContain('`user.type == "Bot"`');
+    expect(CODER_ONLY_PROMPT).toContain('never on a login ending in `[bot]`');
+    expect(CODER_ONLY_PROMPT).toContain('the type check is required for EVERY author');
+    expect(CODER_ONLY_PROMPT).toContain('AFTER the type check, never in place of it');
+    expect(CODER_ONLY_PROMPT).toContain('must still pass the `Bot` type check');
+    expect(CODER_ONLY_PROMPT).toContain('the `[bot]` suffix never appears there');
+    expect(CODER_ONLY_PROMPT).toContain(
+      'accept EITHER a `Bot` typename with a bare slug OR a `[bot]`-suffixed login'
+    );
+    expect(CODER_ONLY_PROMPT).toContain('user{__typename login}');
+    expect(CODER_ONLY_PROMPT).toContain(
+      'author{__typename ... on Bot { login } ... on User { login }}'
+    );
     expect(CODER_ONLY_PROMPT).toContain('ONLY when its `commit.oid` equals');
     expect(CODER_ONLY_PROMPT).toContain('is NOT a pass');
     expect(CODER_ONLY_PROMPT).toContain('Reject `DISMISSED` and `PENDING`');
@@ -625,8 +644,8 @@ describe('coder-only workflow template', () => {
     expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain(
       'a base TIP advance under the same name does not'
     );
-    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('--hostname \"$HOST\"');
-    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('--hostname \"$HOST\"');
+    expect(CODER_ONLY_MERGE_INSTRUCTIONS).toContain('--hostname "$HOST"');
+    expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('--hostname "$HOST"');
     expect(CODER_ONLY_PROMPT).toContain('depth: "<light|standard|deep|auto>", reason:');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain('note artifact (key "base") in EVERY mode');
     expect(CODER_OWNED_MERGE_INSTRUCTIONS).toContain(
@@ -2078,6 +2097,207 @@ describe('seedBuiltInWorkflows()', () => {
     expect(afterResearchNode.agents[0]!.customPrompt?.value).toBe(RESEARCH_PROMPT);
     expect(afterResearchNode.agents[0]!.customPrompt?.value).not.toBe(
       RETIRED_PRE_EVENT_DRIVEN_RESEARCH_PROMPT
+    );
+  });
+
+  test('re-stamp upgrades [bot]-suffix bot-filter prompts to the __typename template', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const cases = [
+      { workflowName: CODING_WORKFLOW.name, current: CODER_OWNED_MERGE_PROMPT },
+      { workflowName: CODER_ONLY_WORKFLOW.name, current: CODER_ONLY_PROMPT },
+      { workflowName: RESEARCH_WORKFLOW.name, current: RESEARCH_PROMPT },
+    ];
+    const staleNodes: Array<{ workflowId: string; nodeId: string; current: string }> = [];
+    for (const { workflowName, current } of cases) {
+      const workflow = manager.listWorkflows(SPACE_ID).find((w) => w.name === workflowName)!;
+      const node = workflow.nodes.find((n) =>
+        n.agents.some((a) => a.customPrompt?.value === current)
+      )!;
+      const stale = current.replace(
+        EXTERNAL_REVIEW_BOTS_GUIDANCE,
+        EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME
+      );
+      expect(stale).not.toBe(current);
+      expect(stale).toContain('a login ending in `[bot]`');
+      const updated = manager.updateWorkflow(workflow.id, {
+        nodes: workflow.nodes.map((n) =>
+          n.id !== node.id
+            ? n
+            : {
+                ...n,
+                agents: n.agents.map((a) =>
+                  a.customPrompt?.value === current ? { ...a, customPrompt: { value: stale } } : a
+                ),
+              }
+        ),
+      })!;
+      expect(updated).toBeTruthy();
+      staleNodes.push({ workflowId: workflow.id, nodeId: node.id, current });
+      db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+        'stale-bot-suffix-filter',
+        workflow.id
+      );
+    }
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    for (const { workflowName } of cases) {
+      expect(result.restamped).toContain(workflowName);
+    }
+    for (const { workflowId, nodeId, current } of staleNodes) {
+      const after = manager.getWorkflow(workflowId)!;
+      const afterNode = after.nodes.find((n) => n.id === nodeId)!;
+      const prompt = afterNode.agents[0]!.customPrompt?.value;
+      expect(prompt).toBe(current);
+      expect(prompt).toContain('filter GraphQL results on `__typename == "Bot"`');
+      expect(prompt).not.toContain('a login ending in `[bot]` or one of the known bot logins');
+    }
+  });
+
+  test('active-run re-stamp upgrades [bot]-suffix bot-filter prompts via the drift variants', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const coderOnly = manager
+      .listWorkflows(SPACE_ID)
+      .find((w) => w.name === CODER_ONLY_WORKFLOW.name)!;
+    const coderOnlyNode = coderOnly.nodes[0]!;
+    const stale = CODER_ONLY_PROMPT.replace(
+      EXTERNAL_REVIEW_BOTS_GUIDANCE,
+      EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME
+    );
+    const updated = manager.updateWorkflow(coderOnly.id, {
+      nodes: coderOnly.nodes.map((n) =>
+        n.id !== coderOnlyNode.id
+          ? n
+          : {
+              ...n,
+              agents: n.agents.map((a, i) =>
+                i === 0 ? { ...a, customPrompt: { value: stale } } : a
+              ),
+            }
+      ),
+    })!;
+    expect(updated).toBeTruthy();
+    db.prepare(`UPDATE space_workflows SET template_hash = ? WHERE id = ?`).run(
+      'stale-bot-suffix-filter',
+      coderOnly.id
+    );
+
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId, () => true);
+    expect(result.restamped).not.toContain(CODER_ONLY_WORKFLOW.name);
+
+    const afterCoderOnly = manager.getWorkflow(coderOnly.id)!;
+    const prompt = afterCoderOnly.nodes[0]!.agents[0]!.customPrompt?.value;
+    expect(prompt).toBe(CODER_ONLY_PROMPT);
+    expect(prompt).toContain('filter GraphQL results on `__typename == "Bot"`');
+  });
+
+  test('pinned definition payloads overlay the drift variants on run reads', () => {
+    const stale = CODER_ONLY_PROMPT.replace(
+      EXTERNAL_REVIEW_BOTS_GUIDANCE,
+      EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME
+    );
+    const pinned = {
+      ...CODER_ONLY_WORKFLOW,
+      spaceId: SPACE_ID,
+      templateName: CODER_ONLY_WORKFLOW.name,
+      nodes: CODER_ONLY_WORKFLOW.nodes.map((node, index) =>
+        index === 0
+          ? {
+              ...node,
+              agents: node.agents.map((agent, agentIndex) =>
+                agentIndex === 0 ? { ...agent, customPrompt: { value: stale } } : agent
+              ),
+            }
+          : node
+      ),
+    };
+    const patched = patchPinnedBuiltInPromptDrift(pinned);
+    expect(patched.nodes[0]!.agents[0]!.customPrompt?.value).toBe(CODER_ONLY_PROMPT);
+    expect(patched).not.toBe(pinned);
+
+    const customized = {
+      ...pinned,
+      nodes: pinned.nodes.map((node, index) =>
+        index === 0
+          ? {
+              ...node,
+              agents: node.agents.map((agent, agentIndex) =>
+                agentIndex === 0
+                  ? { ...agent, customPrompt: { value: `${stale}\nextra instruction` } }
+                  : agent
+              ),
+            }
+          : node
+      ),
+    };
+    expect(patchPinnedBuiltInPromptDrift(customized)).toBe(customized);
+
+    const unrelated = { ...pinned, templateName: 'Not A Built In' };
+    expect(patchPinnedBuiltInPromptDrift(unrelated)).toBe(unrelated);
+
+    const renamedNode = {
+      ...pinned,
+      nodes: pinned.nodes.map((node, index) =>
+        index === 0 ? { ...node, name: 'My Coding Node' } : node
+      ),
+    };
+    const renamedPatched = patchPinnedBuiltInPromptDrift(renamedNode);
+    expect(renamedPatched.nodes[0]!.name).toBe('My Coding Node');
+    expect(renamedPatched.nodes[0]!.agents[0]!.customPrompt?.value).toBe(CODER_ONLY_PROMPT);
+
+    const legacyNamed = {
+      ...CODING_WORKFLOW,
+      spaceId: SPACE_ID,
+      templateName: 'Coding Workflow',
+      nodes: CODING_WORKFLOW.nodes.map((node, index) =>
+        index === 0
+          ? {
+              ...node,
+              agents: node.agents.map((agent, agentIndex) =>
+                agentIndex === 0
+                  ? {
+                      ...agent,
+                      customPrompt: {
+                        value: CODER_OWNED_MERGE_PROMPT.replace(
+                          EXTERNAL_REVIEW_BOTS_GUIDANCE,
+                          EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME
+                        ),
+                      },
+                    }
+                  : agent
+              ),
+            }
+          : node
+      ),
+    };
+    const legacyPatched = patchPinnedBuiltInPromptDrift(legacyNamed);
+    expect(legacyPatched.nodes[0]!.agents[0]!.customPrompt?.value).toBe(CODER_OWNED_MERGE_PROMPT);
+
+    const legacyReviewerSeed = LEGACY_FULLSTACK_REVIEWER_SLOT_PROMPT.replace(
+      CODEX_REACTION_APPROVAL_GUIDANCE,
+      RETIRED_PRE_TYPENAME_CODEX_REACTION_APPROVAL_GUIDANCE
+    );
+    const qaPayload = {
+      ...CODING_WITH_QA_WORKFLOW,
+      spaceId: SPACE_ID,
+      templateName: 'Coding with QA Workflow',
+      nodes: CODING_WITH_QA_WORKFLOW.nodes.map((node) =>
+        node.name === 'Review'
+          ? {
+              ...node,
+              agents: node.agents.map((agent) => ({
+                ...agent,
+                customPrompt: { value: legacyReviewerSeed },
+              })),
+            }
+          : node
+      ),
+    };
+    const qaPatched = patchPinnedBuiltInPromptDrift(qaPayload);
+    expect(
+      qaPatched.nodes.find((node) => node.name === 'Review')!.agents[0]!.customPrompt?.value
+    ).toBe(
+      CODING_WITH_QA_WORKFLOW.nodes.find((node) => node.name === 'Review')!.agents[0]!.customPrompt!
+        .value
     );
   });
 
@@ -4032,15 +4252,15 @@ test('patchKnownBuiltInPromptDrift rewrites a persisted legacy Coding-with-QA co
 
 test('persisted pre-call-action prompts migrate to the dispatcher preference templates', () => {
   const preDispatcherHashes = new Map<string, string>([
-    [CODER_ONLY_PROMPT, '59e2f3db6223d9137e5f7ede73587e9b08f62bc10523253ae642df583fe7f14f'],
-    [CODER_OWNED_MERGE_PROMPT, '812a27c573b15db775f9ccdd4625f21b7cb8aa21e73b2b1b374df310ab55b025'],
+    [CODER_ONLY_PROMPT, '3219c219b3a7b847e64e244e2681e6844695808a58e3b16f15d30ef13da7dcda'],
+    [CODER_OWNED_MERGE_PROMPT, '93c5ce0073f937288bdd6b038cdf38839b9a8be3c56760c2626b3defebeea1b9'],
     [CODER_OWNED_REVIEW_PROMPT, 'da51558acb0459acf61beda09a4390557966320dd0ab95d74b115dfd5e940740'],
     [CODER_OWNED_QA_PROMPT, '662b1e20d219237c8d4dfa4add74d10f54bc9bc1888dc0e7ab267f2ece7f7eb8'],
     [
       CODER_OWNED_QA_REVIEW_PROMPT,
       'f915282840b18893b1200da0d648e2e37032b9488492674ac5d4ed1fefe80f20',
     ],
-    [RESEARCH_PROMPT, '0f136370ebc4cb6e4016c0d01ff5ed2c7db60ca40bf0f0863b1534f7ff3cb602'],
+    [RESEARCH_PROMPT, '763a6c51432b8c8848e0a9f0dce59be28d83007b1a3e4b1cf6d8e25c7af70d58'],
     [RESEARCH_REVIEW_PROMPT, '199f7ad7c972d1495f978924a26cff953680c8fddf73f33e25de3b0bb4621c56'],
     [REVIEW_ONLY_REVIEW_PROMPT, '9e223b7e6c1c306e66288916cc42e2f5f7211b997cfaf3db06f9ecb7033317ee'],
   ]);

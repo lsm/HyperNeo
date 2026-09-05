@@ -1,11 +1,36 @@
 import { describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import {
   CALL_ACTION_PREFERENCE_GUIDANCE,
   POST_APPROVAL_COMPLETION_INSTRUCTIONS,
 } from '@hyperneo/prompts';
-import { createHash } from 'node:crypto';
+import { coderAgent } from '../../../../src/lib/agent/coordinator/coder.ts';
+import { COORDINATOR_AGENT } from '../../../../src/lib/agent/coordinator/coordinator.ts';
+import { debuggerAgent } from '../../../../src/lib/agent/coordinator/debugger.ts';
+import { reviewerAgent } from '../../../../src/lib/agent/coordinator/reviewer.ts';
+import { testerAgent } from '../../../../src/lib/agent/coordinator/tester.ts';
+import { vcsAgent } from '../../../../src/lib/agent/coordinator/vcs.ts';
+import { verifierAgent } from '../../../../src/lib/agent/coordinator/verifier.ts';
+import { ROUTER_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/router-prompt.ts';
+import { SECURITY_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/security-prompt.ts';
+import { buildTitleGenerationPrompt } from '../../../../src/lib/session/session-lifecycle.ts';
+import { NON_DELEGATING_GENERAL_AGENT } from '../../../../src/lib/space/agents/custom-agent.ts';
+import { getLongHorizonAgentTemplates } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
+import { LONG_HORIZON_SCHEDULING_GUARDRAIL } from '../../../../src/lib/space/agents/long-horizon-agent-tools.ts';
 import {
-  CODEX_REACTION_APPROVAL_GUIDANCE,
+  getPresetAgentTemplates,
+  LEGACY_REVIEWER_PROMPT,
+} from '../../../../src/lib/space/agents/seed-agents.ts';
+import { buildSpaceChatSystemPrompt } from '../../../../src/lib/space/agents/space-chat-agent.ts';
+import {
+  QA_SYSTEM_CONTRACT,
+  REVIEWER_SYSTEM_CONTRACT,
+} from '../../../../src/lib/space/agents/system-contracts.ts';
+import { buildSelectionPrompt } from '../../../../src/lib/space/runtime/llm-workflow-selector.ts';
+import { appendPostApprovalCompletionInstructions } from '../../../../src/lib/space/runtime/post-approval-router.ts';
+import { buildPromptTooLongContinueNag } from '../../../../src/lib/space/runtime/prompt-too-long-recovery.ts';
+import {
+  CODER_EXTERNAL_GATE_BLOCK,
   CODER_ONLY_MERGE_INSTRUCTIONS,
   CODER_ONLY_PROMPT,
   CODER_OWNED_MERGE_PROMPT,
@@ -13,66 +38,41 @@ import {
   CODER_OWNED_QA_PROMPT,
   CODER_OWNED_QA_REVIEW_PROMPT,
   CODER_OWNED_REVIEW_PROMPT,
+  CODEX_REACTION_APPROVAL_GUIDANCE,
+  EXTERNAL_REVIEW_BOTS_GUIDANCE,
   FULLSTACK_CODING_NOCHANGE_GUIDANCE,
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
   RESEARCH_PROMPT,
   RESEARCH_REVIEW_PROMPT,
   REVIEW_ONLY_REVIEW_PROMPT,
-  REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
-  REVIEWER_ZERO_FINDINGS_GATE,
+  REVIEW_POLICY_GUIDANCE,
   REVIEW_THREAD_APPROVAL_CHECK_GUIDANCE,
   REVIEW_THREAD_RESOLUTION_GUIDANCE,
-  CODER_EXTERNAL_GATE_BLOCK,
-  EXTERNAL_REVIEW_BOTS_GUIDANCE,
-  REVIEW_POLICY_GUIDANCE,
+  REVIEWER_POST_APPROVAL_BLOCKER_PARAGRAPH,
+  REVIEWER_ZERO_FINDINGS_GATE,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 import { CODER_OWNED_MERGE_INSTRUCTIONS } from '../../../../src/lib/space/workflows/post-approval-merge-template.ts';
-import {
-  QA_SYSTEM_CONTRACT,
-  REVIEWER_SYSTEM_CONTRACT,
-} from '../../../../src/lib/space/agents/system-contracts.ts';
-import {
-  LEGACY_REVIEWER_PROMPT,
-  getPresetAgentTemplates,
-} from '../../../../src/lib/space/agents/seed-agents.ts';
-import { getLongHorizonAgentTemplates } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
-import { LONG_HORIZON_SCHEDULING_GUARDRAIL } from '../../../../src/lib/space/agents/long-horizon-agent-tools.ts';
-import { NON_DELEGATING_GENERAL_AGENT } from '../../../../src/lib/space/agents/custom-agent.ts';
-import { COORDINATOR_AGENT } from '../../../../src/lib/agent/coordinator/coordinator.ts';
-import { coderAgent } from '../../../../src/lib/agent/coordinator/coder.ts';
-import { reviewerAgent } from '../../../../src/lib/agent/coordinator/reviewer.ts';
-import { debuggerAgent } from '../../../../src/lib/agent/coordinator/debugger.ts';
-import { testerAgent } from '../../../../src/lib/agent/coordinator/tester.ts';
-import { vcsAgent } from '../../../../src/lib/agent/coordinator/vcs.ts';
-import { verifierAgent } from '../../../../src/lib/agent/coordinator/verifier.ts';
-import { ROUTER_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/router-prompt.ts';
-import { SECURITY_AGENT_SYSTEM_PROMPT } from '../../../../src/lib/github/prompts/security-prompt.ts';
-import { buildSpaceChatSystemPrompt } from '../../../../src/lib/space/agents/space-chat-agent.ts';
-import { buildTitleGenerationPrompt } from '../../../../src/lib/session/session-lifecycle.ts';
-import { appendPostApprovalCompletionInstructions } from '../../../../src/lib/space/runtime/post-approval-router.ts';
-import { buildPromptTooLongContinueNag } from '../../../../src/lib/space/runtime/prompt-too-long-recovery.ts';
-import { buildSelectionPrompt } from '../../../../src/lib/space/runtime/llm-workflow-selector.ts';
 
 const GOLDEN: Record<string, string> = {
   CODEX_REACTION_APPROVAL_GUIDANCE:
-    'b52db95c407c8c7d8f18d46d745bebaa5d449b8cbbd592627f87c67104aecf22',
-  CODER_EXTERNAL_GATE_BLOCK: '404720aba30ff94f9cbe83849ecd737f0e2cd7b9bd75d7083b18c72d40ab0002',
+    '2e1dbf1a39b2c9b47dc930c2614e3d85c93d0ea2175d3149162262725a4966be',
+  CODER_EXTERNAL_GATE_BLOCK: '090c3fcabe7b017c175967861d115ebe33fa1f23a97e75f4395bdec420d441c6',
   CODER_ONLY_MERGE_INSTRUCTIONS: '70021ee7239f20c53eb174242761ac88356897fb0a79eed659bb2bb328500ab0',
-  CODER_ONLY_PROMPT: '1cdadc61876e45bb97e0b29949b9ddd78a85715d63f0f2db0a0ced5a0ab072a8',
+  CODER_ONLY_PROMPT: 'a05bfac3fef5177f4f1b134e0af6d9a9e0b70779722335fda1c808fc680de1ff',
   CODER_OWNED_MERGE_INSTRUCTIONS:
     '89548177194eef9ae5c5d8c30dca09afea7e9bdf05a7715fee5385d17372d5c8',
-  CODER_OWNED_MERGE_PROMPT: '6e979240135471a0bb46fb41a350df837fa8856964d461bb00d8f29a049f4f0f',
+  CODER_OWNED_MERGE_PROMPT: '618a290639f32b0bd2c6e9205755c0e303d5ec4274c8b0d7b58cb6620f550be7',
   CODER_OWNED_PR_SUBSCRIBE_GUIDANCE:
     '849ec685a272e0a751689014bd717b5e2103ccfb02d6b5b18e90eaad86bbb6e1',
   CODER_OWNED_QA_PROMPT: 'c6f0237c984fa5b24d4232a4b0e7c3a1ba1aeff41ec0072aa58c6145beb3ed9a',
   CODER_OWNED_QA_REVIEW_PROMPT: '8f5a5d06d2dbd5f5e8e13dcfe7d7372f544346db93b58c7abb79a74c031c972b',
   CODER_OWNED_REVIEW_PROMPT: '605a927dfd09266988f778f779a5a719b2e707ea0d5182c29fe1a8f74e12cd03',
-  EXTERNAL_REVIEW_BOTS_GUIDANCE: '7835f588e44a250e35c0869ef1cacb409fb363c37bd2144c526a8788dd875499',
+  EXTERNAL_REVIEW_BOTS_GUIDANCE: 'b9854ed52a4a8625465f5fa6bea65d55f414540110ed3a868c5465d0da2e166b',
   FULLSTACK_CODING_NOCHANGE_GUIDANCE:
     '86a3ade926943f86121cf6f3779b5fe405f0a9a4793415e608e8902e20250823',
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH:
     '11a9d349054ebcd44dbbb4a5d3918a175446763b108d34c2db0a174fdfdc6e23',
-  RESEARCH_PROMPT: 'c21fbfd926ca0aa98cbb2d0a0e55ec5f7e9d8c49572fee91aaaf686b79beb4f5',
+  RESEARCH_PROMPT: '62eee54e6002ebb6570edfc920c81687fb219a1478ecbfc26c978d5c3da0fdaa',
   RESEARCH_REVIEW_PROMPT: '7c745458641b56475a18e3c4d2f38c3ffb0b2cbd9b8863bb4e2bb8776443e4dd',
   REVIEW_ONLY_REVIEW_PROMPT: 'db2f4cc6c11cd60310209d3d6a7d183a935b7556112e546d2fb17fc7cc3ccfe0',
   CALL_ACTION_PREFERENCE_GUIDANCE:
@@ -106,7 +106,7 @@ const GOLDEN: Record<string, string> = {
   PRESET_PLANNER_PROMPT: '73b46e357edffdbf9e6068ffda8d81e5701eccb81777714459860502c6e6e9ee',
   PRESET_RESEARCH_PROMPT: 'acc05ba0296ae52784b5477f97bd7246446644510c8e8228540f6387bcd8495e',
   QA_SYSTEM_CONTRACT: '60ea7a78cff979f2bcd8269108da1c47e67d411d170ca071407c81b270f41d51',
-  REVIEWER_SYSTEM_CONTRACT: '889cd3f14d9f5b161e7e972ec9348337c4e02cae8a3ed8e4cdb999b3aeb381b8',
+  REVIEWER_SYSTEM_CONTRACT: '9693ef07bdb425e70b63f095c20b19e687ff27a3b0efe7904d76cfb79972456e',
   COORDINATOR_PROMPT: '28f30cf29ed5764a703a90029dc468c5e905dc8eb057abf1779e3e5ce9e25487',
   GITHUB_ROUTER_SYSTEM_PROMPT: '39f3b5c43689366029c130b0aa0d1a83c185ef527671cae1d858ed6213e322a6',
   GITHUB_SECURITY_SYSTEM_PROMPT: '486aff88bf9a9c66ac69abe074270c5c538a1433c81dc126228f97de5f65c9bd',

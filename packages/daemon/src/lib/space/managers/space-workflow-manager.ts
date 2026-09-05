@@ -1,27 +1,31 @@
 import type {
+  CreateSpaceWorkflowParams,
   SpaceWorkflow,
   SpaceWorkflowSummary,
-  WorkflowNodeInput,
-  CreateSpaceWorkflowParams,
   UpdateSpaceWorkflowParams,
   WorkflowChannel,
   WorkflowHook,
+  WorkflowNodeInput,
 } from '@hyperneo/shared';
-import { HANDOFF_TARGET_WILDCARD, MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
-import { validateWorkflowHooks } from '../workflow-hook-validation.ts';
-import { generateUUID } from '@hyperneo/shared';
+import {
+  generateUUID,
+  HANDOFF_TARGET_WILDCARD,
+  MAX_NODE_HANDOFF_TRANSITIONS,
+} from '@hyperneo/shared';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
-import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
 import { Logger } from '../../logger.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
-import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
 import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
+import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
+import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
+import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url.ts';
+import { validateWorkflowHooks } from '../workflow-hook-validation.ts';
+import { patchPinnedBuiltInPromptDrift } from '../workflows/built-in-workflows.ts';
 import {
   validatePostApproval,
   validatePostApprovalRoutes,
 } from '../workflows/post-approval-validator.ts';
-import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url.ts';
 import '../runtime/connectors/production.ts';
 import { slugify, validateSlug } from '../slug.ts';
 import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
@@ -163,7 +167,9 @@ export class SpaceWorkflowManager {
     definitionVersion: string | null;
   }): SpaceWorkflow | null {
     const raw = this.repo.getWorkflowForRun(run);
-    return raw ? this.sanitizePostApprovalForLoad(raw) : null;
+    if (!raw) return null;
+    const drifted = run.definitionVersion ? patchPinnedBuiltInPromptDrift(raw) : raw;
+    return this.sanitizePostApprovalForLoad(drifted);
   }
 
   getWorkflowByHandle(spaceId: string, handle: string): SpaceWorkflow | null {
