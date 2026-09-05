@@ -7788,7 +7788,7 @@ export class SpaceRuntime {
       this.blockedRetryCounts.set(runId, effectiveRetryCount + 1);
 
       await this.transitionRunStatusAndEmit(runId, 'in_progress');
-      if (canonicalTask.status === 'blocked') {
+      if (canonicalTask.status === 'blocked' || canonicalTask.status === 'open') {
         await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
           status: 'in_progress',
           completedAt: null,
