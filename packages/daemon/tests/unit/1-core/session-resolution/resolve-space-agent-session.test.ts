@@ -99,7 +99,7 @@ describe('resolveSpaceAgentSession', () => {
 
     expect(outcome).toEqual({ sessionId, session: { id: sessionId } });
     expect(ensureCalls).toEqual([[spaceId, 'coordinator']]);
-    expect(getSessionCalls).toEqual(['missing-session', sessionId]);
+    expect(getSessionCalls).toEqual(['missing-session', sessionId, sessionId]);
     expect(refetchCalls).toEqual([sessionId]);
   });
 
@@ -107,7 +107,7 @@ describe('resolveSpaceAgentSession', () => {
     const spaceId = 'space-1';
     const { deps, refetchCalls, ensureCalls, getSession } = makeDeps({ ensureOutcome: 'fail' });
 
-    expect(
+    await expect(
       resolveSpaceAgentSession<TestSession>(spaceId, 'missing-session', deps, getSession)
     ).rejects.toThrow(
       `Session not found for Space Agent reply routing: ${coordinatorSessionId(spaceId)}; ensure_failed`
@@ -121,7 +121,7 @@ describe('resolveSpaceAgentSession', () => {
       getSessionError: new Error('database unavailable'),
     });
 
-    expect(
+    await expect(
       resolveSpaceAgentSession<TestSession>('space-1', 'reply-session', deps, getSession)
     ).rejects.toThrow(
       'Session not found for Space Agent reply routing: reply-session; internal: database unavailable'
@@ -154,7 +154,9 @@ describe('resolveSpaceAgentSession', () => {
     const spaceId = 'space-1';
     const { deps, ensureCalls, getSession } = makeDeps({ ensureOutcome: 'fail' });
 
-    expect(resolveSpaceAgentSession<TestSession>(spaceId, null, deps, getSession)).rejects.toThrow(
+    await expect(
+      resolveSpaceAgentSession<TestSession>(spaceId, null, deps, getSession)
+    ).rejects.toThrow(
       `Session not found for Space Agent reply routing: ${coordinatorSessionId(spaceId)}; ensure_failed`
     );
     expect(ensureCalls).toEqual([[spaceId, 'coordinator']]);
