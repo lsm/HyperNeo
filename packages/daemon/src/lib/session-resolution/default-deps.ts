@@ -117,6 +117,8 @@ export function createDefaultSessionResolutionDeps(
         target.agentName,
         {
           workflowNodeId: target.workflowNodeId,
+          reopenReason: target.reopenReason,
+          reopenBy: target.reopenBy,
         }
       );
     },

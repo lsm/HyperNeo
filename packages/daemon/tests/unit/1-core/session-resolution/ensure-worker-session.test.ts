@@ -257,6 +257,50 @@ describe('findStage', () => {
     expect(seen).toEqual([target]);
   });
 
+  test('waitCapMs 0 does not block on initial worker rehydration', async () => {
+    const deps = buildDeps({
+      listWorkerExecutions: () => [row('s-persisted', 'in_progress')],
+      rehydrateSubSession: () => new Promise<never>(() => {}),
+    });
+
+    await expect(findStage(workerTarget({ waitCapMs: 0 }), deps)).resolves.toEqual({
+      foundSessionId: undefined,
+      outcome: { kind: 'unresolved', reason: 'activation_timeout' },
+    });
+  });
+
+  test('waitCapMs 0 stops terminal rehydration instead of re-entering resolution', async () => {
+    const deps = buildDeps({
+      readWorkerTaskPhase: () => 'done',
+      listWorkerExecutions: () => [row('s-persisted', 'done')],
+      rehydrateSubSession: () => new Promise<never>(() => {}),
+    });
+
+    await expect(findStage(workerTarget({ waitCapMs: 0 }), deps)).resolves.toEqual({
+      foundSessionId: undefined,
+      outcome: { kind: 'unresolved', reason: 'task_terminal' },
+    });
+  });
+
+  test('cancels the initial wait cap when rehydration rejects', async () => {
+    jest.useFakeTimers();
+    try {
+      const deps = buildDeps({
+        listWorkerExecutions: () => [row('s-persisted', 'in_progress')],
+        rehydrateSubSession: async () => {
+          throw new Error('restore failed');
+        },
+      });
+
+      await expect(findStage(workerTarget({ waitCapMs: 30_000 }), deps)).rejects.toThrow(
+        'restore failed'
+      );
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test('verifies the binding through rehydrateSubSession before resolving', async () => {
     const rehydrated: string[] = [];
     const deps = buildDeps({

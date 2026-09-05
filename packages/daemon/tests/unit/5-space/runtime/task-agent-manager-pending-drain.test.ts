@@ -204,13 +204,19 @@ function makeRecord(overrides: Partial<PendingAgentMessageRecord> = {}): Pending
   };
 }
 
-function makeMockRepoManager(repo: {
-  enforceRetention: ReturnType<typeof mock>;
-  expireStale: ReturnType<typeof mock>;
-  listPendingForTarget: ReturnType<typeof mock>;
-  markDelivered: ReturnType<typeof mock>;
-  markAttemptFailed: ReturnType<typeof mock>;
-}): { manager: TaskAgentManager; injectMock: ReturnType<typeof mock> } {
+function makeMockRepoManager(
+  repo: {
+    enforceRetention: ReturnType<typeof mock>;
+    expireStale: ReturnType<typeof mock>;
+    listPendingForTarget: ReturnType<typeof mock>;
+    markDelivered: ReturnType<typeof mock>;
+    markAttemptFailed: ReturnType<typeof mock>;
+  },
+  options: {
+    executionPresent?: boolean;
+    provenance?: { workflowRunId: string; agentName: string; nodeId?: string };
+  } = {}
+): { manager: TaskAgentManager; injectMock: ReturnType<typeof mock> } {
   const injectMock = mock(async (...args: unknown[]) => (args[6] as string) ?? 'injected');
   const execution = {
     id: 'exec-mock',
@@ -223,10 +229,19 @@ function makeMockRepoManager(repo: {
     updatedAt: 1,
   };
   const workflow = { nodes: [{ id: NODE_ID, name: NODE_NAME }] };
+  const db = {
+    prepare: mock(() => ({
+      get: mock(() =>
+        options.provenance
+          ? { metadata: JSON.stringify({ promptProvenance: options.provenance }) }
+          : undefined
+      ),
+    })),
+  };
   const manager = new TaskAgentManager({
-    db: { getDatabase: () => ({}) },
+    db: { getDatabase: () => db },
     nodeExecutionRepo: {
-      getByAgentSessionId: mock(() => execution),
+      getByAgentSessionId: mock(() => (options.executionPresent === false ? null : execution)),
       listByAgentSessionId: mock(() => [execution]),
       getById: mock(() => null),
       touchLastActivity: mock(() => {}),
@@ -311,6 +326,71 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
     expect(h.spyRepo.repo.getById(nodeScoped.id)?.status).toBe('pending');
     expect(h.spyRepo.repo.getById(aliasRow.id)?.status).toBe('pending');
     expect(h.injectMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('executionless drain uses matching session provenance to admit node-scoped rows', async () => {
+    const matchingNode = makeRecord({ id: 'row-node', workflowNodeId: NODE_ID });
+    const siblingNode = makeRecord({ id: 'row-sibling', workflowNodeId: 'node-review' });
+    const repo = {
+      enforceRetention: mock(() => 0),
+      expireStale: mock(() => 0),
+      listPendingForTarget: mock(() => [matchingNode, siblingNode]),
+      markDelivered: mock(() => {}),
+      markAttemptFailed: mock(() => null),
+    };
+    const { manager, injectMock } = makeMockRepoManager(repo, {
+      executionPresent: false,
+      provenance: { workflowRunId: 'run-mock', agentName: AGENT_NAME, nodeId: NODE_ID },
+    });
+
+    await manager.flushPendingMessagesForTarget('run-mock', AGENT_NAME, SESSION_ID);
+
+    expect(repo.listPendingForTarget).toHaveBeenCalledWith('run-mock', AGENT_NAME, NODE_ID);
+    expect(injectMock.mock.calls.map((call: unknown[]) => call[6])).toEqual(['row-node']);
+    expect(repo.markDelivered).toHaveBeenCalledWith('row-node', SESSION_ID);
+  });
+
+  it('executionless drain uses a trusted legacy node hint when provenance lacks a node', async () => {
+    const nodeScoped = makeRecord({ id: 'row-node', workflowNodeId: NODE_ID });
+    const siblingNode = makeRecord({ id: 'row-sibling', workflowNodeId: 'node-review' });
+    const repo = {
+      enforceRetention: mock(() => 0),
+      expireStale: mock(() => 0),
+      listPendingForTarget: mock(() => [nodeScoped, siblingNode]),
+      markDelivered: mock(() => {}),
+      markAttemptFailed: mock(() => null),
+    };
+    const { manager, injectMock } = makeMockRepoManager(repo, {
+      executionPresent: false,
+      provenance: { workflowRunId: 'run-mock', agentName: AGENT_NAME },
+    });
+
+    await manager.flushPendingMessagesForTarget('run-mock', AGENT_NAME, SESSION_ID, NODE_ID);
+
+    expect(repo.listPendingForTarget).toHaveBeenCalledWith('run-mock', AGENT_NAME, NODE_ID);
+    expect(injectMock.mock.calls.map((call: unknown[]) => call[6])).toEqual(['row-node']);
+    expect(repo.markDelivered).toHaveBeenCalledWith('row-node', SESSION_ID);
+  });
+
+  it('executionless drain ignores provenance from another run', async () => {
+    const nodeScoped = makeRecord({ id: 'row-node', workflowNodeId: NODE_ID });
+    const repo = {
+      enforceRetention: mock(() => 0),
+      expireStale: mock(() => 0),
+      listPendingForTarget: mock(() => [nodeScoped]),
+      markDelivered: mock(() => {}),
+      markAttemptFailed: mock(() => null),
+    };
+    const { manager, injectMock } = makeMockRepoManager(repo, {
+      executionPresent: false,
+      provenance: { workflowRunId: 'run-other', agentName: AGENT_NAME, nodeId: NODE_ID },
+    });
+
+    await manager.flushPendingMessagesForTarget('run-mock', AGENT_NAME, SESSION_ID);
+
+    expect(repo.listPendingForTarget).toHaveBeenCalledWith('run-mock', AGENT_NAME);
+    expect(injectMock).not.toHaveBeenCalled();
+    expect(repo.markDelivered).not.toHaveBeenCalled();
   });
 
   it('dedups rows returned by both the bare-name and alias listings', async () => {

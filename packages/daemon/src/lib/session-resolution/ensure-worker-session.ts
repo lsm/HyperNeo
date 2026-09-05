@@ -5,6 +5,12 @@ import type { EnsureSessionOutcome, SessionTargetWorker } from './target.ts';
 export const WORKER_SESSION_POLL_INTERVAL_MS = 1_000;
 export const WORKER_SESSION_WAIT_CAP_MS = 30_000;
 
+const workerWaitCapMs = (target: SessionTargetWorker): number => {
+  const requested = target.waitCapMs;
+  if (requested === undefined || Number.isNaN(requested)) return WORKER_SESSION_WAIT_CAP_MS;
+  return Math.max(0, Math.min(requested, WORKER_SESSION_WAIT_CAP_MS));
+};
+
 export function newestWorkerSessionId(rows: WorkerExecutionSession[]): string | null {
   const live = rows.filter(
     (row) => row.sessionId !== null && row.status !== 'cancelled' && row.status !== 'pending'
@@ -20,14 +26,34 @@ export async function findStage(
   if (sessionId === null) {
     return { foundSessionId: undefined, outcome: undefined };
   }
-  if ((await deps.rehydrateSubSession(sessionId)) === null) {
-    return { foundSessionId: undefined, outcome: undefined };
+  const cap = delay(workerWaitCapMs(target));
+  try {
+    const live = await Promise.race([
+      deps.rehydrateSubSession(sessionId),
+      cap.promise.then(() => null),
+    ]);
+    const phase = deps.readWorkerTaskPhase(target.taskId);
+    if (cap.fired) {
+      return {
+        foundSessionId: undefined,
+        outcome:
+          phase === 'run_active'
+            ? { kind: 'unresolved', reason: 'activation_timeout' }
+            : phase === 'done'
+              ? { kind: 'unresolved', reason: 'task_terminal' }
+              : await ensureWorkerSession(target, deps),
+      };
+    }
+    if (live === null || (phase !== 'run_active' && phase !== 'done')) {
+      return { foundSessionId: undefined, outcome: undefined };
+    }
+    return {
+      foundSessionId: sessionId,
+      outcome: { kind: 'resolved', sessionId, created: false },
+    };
+  } finally {
+    cap.cancel();
   }
-  const phase = deps.readWorkerTaskPhase(target.taskId);
-  if (phase !== 'run_active' && phase !== 'done') {
-    return { foundSessionId: undefined, outcome: undefined };
-  }
-  return { foundSessionId: sessionId, outcome: { kind: 'resolved', sessionId, created: false } };
 }
 
 export async function findTerminalStage(
@@ -130,7 +156,7 @@ export async function postApprovalStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
-  const cap = delay(WORKER_SESSION_WAIT_CAP_MS);
+  const cap = delay(workerWaitCapMs(target));
   try {
     const worker = deps.getPostApprovalWorkerSession(target.taskId);
     if (worker !== null) {
@@ -159,11 +185,19 @@ export async function postApprovalStage(
     if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval') {
       return ensureWorkerSession(target, deps);
     }
-    const spawnedSessionId = await deps.spawnPostApprovalWorker(
-      target.taskId,
-      target.agentName,
-      target.workflowNodeId ?? worker?.nodeId ?? undefined
-    );
+    const spawnedSessionId = await Promise.race([
+      deps.spawnPostApprovalWorker(
+        target.taskId,
+        target.agentName,
+        target.workflowNodeId ?? worker?.nodeId ?? undefined
+      ),
+      cap.promise.then(() => null),
+    ]);
+    if (cap.fired) {
+      return deps.readWorkerTaskPhase(target.taskId) === 'post_approval'
+        ? { kind: 'unresolved', reason: 'spawn_timeout' }
+        : ensureWorkerSession(target, deps);
+    }
     if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval') {
       return ensureWorkerSession(target, deps);
     }
@@ -189,7 +223,7 @@ export async function postApprovalDoneStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
-  const cap = delay(WORKER_SESSION_WAIT_CAP_MS);
+  const cap = delay(workerWaitCapMs(target));
   try {
     const worker = deps.getPostApprovalWorkerSession(target.taskId);
     if (worker !== null) {
@@ -224,7 +258,7 @@ export async function awaitRoutingStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
-  const cap = delay(WORKER_SESSION_WAIT_CAP_MS);
+  const cap = delay(workerWaitCapMs(target));
   try {
     for (;;) {
       if (deps.readWorkerTaskPhase(target.taskId) !== 'routing') {
@@ -292,12 +326,7 @@ export async function awaitSessionStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
-  const requestedWaitCapMs = target.waitCapMs;
-  const waitCapMs =
-    requestedWaitCapMs === undefined || Number.isNaN(requestedWaitCapMs)
-      ? WORKER_SESSION_WAIT_CAP_MS
-      : Math.max(0, Math.min(requestedWaitCapMs, WORKER_SESSION_WAIT_CAP_MS));
-  const cap = delay(waitCapMs);
+  const cap = delay(workerWaitCapMs(target));
   try {
     for (;;) {
       if (deps.readWorkerTaskPhase(target.taskId) !== 'run_active') {

@@ -1450,7 +1450,8 @@ export class TaskAgentManager {
   async flushPendingMessagesForTarget(
     workflowRunId: string,
     targetAgentName: string,
-    sessionId: string
+    sessionId: string,
+    workflowNodeId?: string
   ): Promise<void> {
     const repo = this.config.pendingMessageRepo;
     if (!repo) return;
@@ -1460,10 +1461,23 @@ export class TaskAgentManager {
     repo.expireStale(workflowRunId, activeDeliveryIds);
 
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
-    const workflowNodeName = execution
-      ? this.workflowNodeNameForRun(workflowRunId, execution.workflowNodeId)
+    const provenance = execution ? null : this.readProvenanceFromSessionRow(sessionId);
+    const provenanceMatches =
+      provenance?.workflowRunId === workflowRunId && provenance.agentName === targetAgentName;
+    const task =
+      !execution && !provenanceMatches
+        ? (this.config.taskRepo?.listByWorkflowRun(workflowRunId).at(-1) ?? null)
+        : null;
+    const postApproval = task ? this.readPostApprovalWorkerIdentity(task.id, sessionId) : null;
+    const trustedWorkflowNodeId = provenanceMatches
+      ? (provenance.nodeId ?? workflowNodeId ?? null)
+      : postApproval?.agentName === targetAgentName
+        ? (postApproval.nodeId ?? workflowNodeId ?? null)
+        : null;
+    const drainWorkflowNodeId = execution?.workflowNodeId ?? trustedWorkflowNodeId;
+    const workflowNodeName = drainWorkflowNodeId
+      ? this.workflowNodeNameForRun(workflowRunId, drainWorkflowNodeId)
       : null;
-    const drainWorkflowNodeId = execution?.workflowNodeId ?? null;
     const drain = decidePendingDrainAdmission({
       listings: derivePendingQueueTargetNames(targetAgentName, workflowNodeName).map(
         (targetName) => ({
@@ -1474,7 +1488,11 @@ export class TaskAgentManager {
               : repo.listPendingForTarget(workflowRunId, targetName),
         })
       ),
-      admission: { executionPresent: !!execution, targetKind: 'node_agent' },
+      admission: {
+        executionPresent: !!execution,
+        trustedWorkflowNodeId,
+        targetKind: 'node_agent',
+      },
     });
     if (drain.action === 'skip') return;
 
@@ -2643,13 +2661,16 @@ export class TaskAgentManager {
       options.replayPendingMessages !== false &&
       (await this.restoredWorkerStartAdmitted(agentSession, taskId))
     ) {
-      void this.flushPendingMessagesForTarget(task.workflowRunId, agentName, sessionId).catch(
-        (err) => {
-          log.warn(
-            `restorePostApprovalWorkerSession: flushPendingMessagesForTarget failed for ${agentName} (session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
-          );
-        }
-      );
+      void this.flushPendingMessagesForTarget(
+        task.workflowRunId,
+        agentName,
+        sessionId,
+        nodeId
+      ).catch((err) => {
+        log.warn(
+          `restorePostApprovalWorkerSession: flushPendingMessagesForTarget failed for ${agentName} (session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
     }
 
     log.info(
