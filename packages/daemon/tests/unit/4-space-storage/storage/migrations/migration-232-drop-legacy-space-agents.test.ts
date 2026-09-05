@@ -65,34 +65,34 @@ describe('migration 232 — drop legacy space agent tables', () => {
     db.close();
   });
 
-  test('aborts loudly and keeps the legacy tables when a worker row is uncopied', () => {
+  test('drops the legacy tables even when a worker row has no unified counterpart', () => {
     const db = makeRecreatedLegacyDb();
     insertSpace(db, 'space-a');
     insertWorker(db, 'uncopied-worker', 'space-a');
 
-    expect(() => runMigration232(db)).toThrow(/uncopied-worker/);
-    expect(() => runMigration232(db)).toThrow(/1 space_agents row/);
+    expect(() => runMigration232(db)).not.toThrow();
     for (const table of LEGACY_TABLES) {
-      expect(tableExists(db, table)).toBe(true);
+      expect(tableExists(db, table)).toBe(false);
     }
-    expect(db.prepare(`SELECT COUNT(*) AS count FROM space_agents`).get()).toEqual({ count: 1 });
     db.close();
   });
 
-  test('aborts when a same-id long-horizon row lives in another space', () => {
+  test('drops when a same-id row lives in another space, leaving the unified row untouched', () => {
     const db = makeRecreatedLegacyDb();
     insertSpace(db, 'space-a');
     insertSpace(db, 'space-b');
     insertWorker(db, 'shared-id', 'space-a');
     insertLongHorizonAgent(db, 'shared-id', 'space-b');
 
-    expect(() => runMigration232(db)).toThrow(/cross-space/i);
-    expect(() => runMigration232(db)).toThrow(/shared-id/);
-    expect(tableExists(db, 'space_agents')).toBe(true);
+    expect(() => runMigration232(db)).not.toThrow();
+    expect(tableExists(db, 'space_agents')).toBe(false);
+    expect(db.prepare(`SELECT COUNT(*) AS count FROM space_long_horizon_agents`).get()).toEqual({
+      count: 1,
+    });
     db.close();
   });
 
-  test('recopies a live assignment m155 skipped before dropping the legacy table', () => {
+  test('drops a live-agent ghost assignment without mutating the unified side', () => {
     const db = makeRecreatedLegacyDb();
     insertSpace(db, 'space-a');
     insertWorker(db, 'worker-1', 'space-a');
@@ -112,12 +112,12 @@ describe('migration 232 — drop legacy space agent tables', () => {
       expect(tableExists(db, table)).toBe(false);
     }
     expect(
-      db.prepare(`SELECT agent_id, goal_id, relationship FROM space_long_horizon_agent_goals`).all()
-    ).toEqual([{ agent_id: 'worker-1', goal_id: 'goal-1', relationship: 'owner' }]);
+      db.prepare(`SELECT COUNT(*) AS count FROM space_long_horizon_agent_goals`).get()
+    ).toEqual({ count: 0 });
     db.close();
   });
 
-  test('does not duplicate an assignment whose unified row already exists', () => {
+  test('leaves unified assignment rows untouched by the drop', () => {
     const db = makeRecreatedLegacyDb();
     insertSpace(db, 'space-a');
     insertWorker(db, 'worker-1', 'space-a');
