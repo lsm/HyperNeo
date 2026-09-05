@@ -415,6 +415,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       maxConcurrent,
       staleThresholdMs: 5 * 60 * 1000,
     });
+    const mailboxExpireProcessor = new JobQueueProcessor(jobQueue, {
+      pollIntervalMs: 1000,
+      maxConcurrent: 1,
+      staleThresholdMs: 5 * 60 * 1000,
+    });
     const messageDeliveryMaxConcurrent = parsePositiveInt(
       process.env.HYPERNEO_MESSAGE_DELIVERY_MAX_CONCURRENT,
       64
@@ -426,6 +431,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       settlementGraceMs: 35_000,
     });
     jobProcessor.setChangeNotifier(() => {});
+    mailboxExpireProcessor.setChangeNotifier(() => {});
     messageDeliveryProcessor.setChangeNotifier((table, scope) => {
       reactiveDb.notifyChange(table, scope);
     });
@@ -944,7 +950,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       MEMORY_CONSOLIDATION,
       createMemoryConsolidationHandler(db.agentMemory, jobQueue)
     );
-    jobProcessor.register(MAILBOX_EXPIRE_FIRE, createMailboxExpireHandler(jobQueue));
+    mailboxExpireProcessor.register(MAILBOX_EXPIRE_FIRE, createMailboxExpireHandler(jobQueue));
     jobProcessor.register(
       MAILBOX_LANE,
       createMailboxDeliveryHandler({
@@ -1180,6 +1186,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 
     jobProcessor.start();
     logInfo('[Daemon] Job queue processor started');
+    mailboxExpireProcessor.start();
+    logInfo('[Daemon] Mailbox expiration job processor started');
     messageDeliveryProcessor.start();
     logInfo('[Daemon] Message-delivery job processor started');
     if (process.env.NODE_ENV !== 'test') {
@@ -1325,6 +1333,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         logInfo('[Daemon] OAuth refresh scheduler stopped');
         messageDeliveryProcessor.stopPolling();
         logInfo('[Daemon] Message-delivery job polling stopped');
+        mailboxExpireProcessor.stopPolling();
+        logInfo('[Daemon] Mailbox expiration job polling stopped');
         jobProcessor.stopPolling();
         logInfo('[Daemon] Job queue polling stopped');
         try {
@@ -1340,6 +1350,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         } catch {}
         await jobProcessor.stop();
         logInfo('[Daemon] Job queue processor stopped');
+        await mailboxExpireProcessor.stop();
+        logInfo('[Daemon] Mailbox expiration job processor stopped');
         await taskAgentManager.cleanupAll();
         await sessionManager.cleanup();
         logInfo('[Daemon] Active agent sessions stopped');

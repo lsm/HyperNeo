@@ -33,5 +33,6 @@ export async function expireMailboxEntries(deps: {
       }
     }
     if (page.length < MAILBOX_SCAN_PAGE_SIZE) return expired;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
 }

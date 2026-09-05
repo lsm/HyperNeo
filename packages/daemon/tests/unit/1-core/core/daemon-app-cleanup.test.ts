@@ -131,12 +131,12 @@ describe('Daemon App Cleanup', () => {
       standalone: false,
     });
 
-    const active = daemonContext.jobQueue.listJobs({
+    const pending = daemonContext.jobQueue.listJobs({
       queue: MAILBOX_EXPIRE_FIRE,
-      status: ['pending', 'processing'],
+      status: 'pending',
       limit: 10,
     });
-    expect(active).toHaveLength(1);
+    expect(pending).toHaveLength(1);
 
     await daemonContext.cleanup();
   });
