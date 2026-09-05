@@ -165,7 +165,8 @@ describe('projectMessageStage', () => {
 
     expect(result.outcome).toEqual({
       kind: 'rejected',
-      reason: 'message.content must be a non-empty string or a non-empty array of text blocks',
+      reason:
+        'message.content must be a non-empty string or a non-empty array of text or image blocks',
     });
   });
 
@@ -178,7 +179,8 @@ describe('projectMessageStage', () => {
 
     expect(result.outcome).toEqual({
       kind: 'rejected',
-      reason: 'message.content must be a non-empty string or a non-empty array of text blocks',
+      reason:
+        'message.content must be a non-empty string or a non-empty array of text or image blocks',
     });
   });
 
@@ -191,7 +193,8 @@ describe('projectMessageStage', () => {
 
     expect(result.outcome).toEqual({
       kind: 'rejected',
-      reason: 'message.content must be a non-empty string or a non-empty array of text blocks',
+      reason:
+        'message.content must be a non-empty string or a non-empty array of text or image blocks',
     });
   });
 });
@@ -367,7 +370,8 @@ describe('createEntryStage', () => {
 
     expect(result.outcome).toEqual({
       kind: 'rejected',
-      reason: 'message.content must be a non-empty string or a non-empty array of text blocks',
+      reason:
+        'message.content must be a non-empty string or a non-empty array of text or image blocks',
     });
   });
 
@@ -645,7 +649,8 @@ describe('handoffPromptToMailbox', () => {
 
       expect(outcome).toEqual({
         kind: 'rejected',
-        reason: 'message.content must be a non-empty string or a non-empty array of text blocks',
+        reason:
+          'message.content must be a non-empty string or a non-empty array of text or image blocks',
       });
       expect(mailbox.rowCount()).toBe(0);
     });

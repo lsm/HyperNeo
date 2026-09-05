@@ -305,18 +305,28 @@ describe('createMailboxDeliveryHandler', () => {
       expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)).toHaveLength(1);
     });
 
-    test('projects text-block content verbatim into the content row', async () => {
+    test('projects rich content and reference metadata verbatim into the content row', async () => {
       const { handler } = makeHandler();
       const blocksMessage: MailboxMessage = {
         type: 'user',
         message: {
           content: [
-            { type: 'text', text: 'first' },
-            { type: 'text', text: 'second' },
+            { type: 'text', text: 'see @ref{file:diagram.png}' },
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: 'image/png', data: 'aW1hZ2U=' },
+            },
           ],
         },
         parent_tool_use_id: null,
         priority: 'next',
+        referenceMetadata: {
+          '@ref{file:diagram.png}': {
+            type: 'file',
+            id: 'diagram.png',
+            displayText: 'diagram.png',
+          },
+        },
       };
       const entry = makeEntry({ message: blocksMessage, origin: 'space_agent' });
       const job = claimMailboxJob(mailbox, entry);

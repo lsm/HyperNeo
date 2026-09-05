@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { MessageOrigin } from '@hyperneo/shared';
+import type { MessageOrigin, ReferenceMetadata } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
@@ -69,7 +69,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       throw new DeadLetterImmediatelyError('mailbox: target session archived');
     }
     const synthetic = entry.origin !== 'chat';
-    const message: SDKUserMessage = {
+    const message: SDKUserMessage & { referenceMetadata?: ReferenceMetadata } = {
       ...entry.message,
       uuid: (entry.messageUuid ?? deterministicUuid(entry.id)) as NonNullable<
         SDKUserMessage['uuid']

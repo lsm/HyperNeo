@@ -52,11 +52,23 @@ describe('MailboxMessage', () => {
     message: {
       content: [
         { type: 'text', text: 'first' },
+        {
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/png', data: 'aW1hZ2U=' },
+        },
         { type: 'text', text: 'second' },
       ],
     },
     parent_tool_use_id: null,
     priority: 'later',
+    referenceMetadata: {
+      '@ref{file:logo.png}': {
+        type: 'file',
+        id: 'logo.png',
+        displayText: 'logo.png',
+        status: 'resolved',
+      },
+    },
   };
 
   test('every valid content shape round-trips through JSON', () => {
@@ -132,6 +144,24 @@ describe('toMailboxMessage', () => {
           },
         },
       ],
+      [
+        'text and image blocks with reference metadata',
+        {
+          ...validMessage,
+          message: {
+            content: [
+              { type: 'text', text: 'first' },
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: 'image/jpeg', data: 'aW1hZ2U=' },
+              },
+            ],
+          },
+          referenceMetadata: {
+            '@ref{task:42}': { type: 'task', id: '42', displayText: 'Task 42' },
+          },
+        },
+      ],
       ['priority now', { ...validMessage, priority: 'now' }],
       ['priority next', { ...validMessage, priority: 'next' }],
       ['priority later', { ...validMessage, priority: 'later' }],
@@ -146,13 +176,18 @@ describe('toMailboxMessage', () => {
         'parent_tool_use_id',
         'type',
       ]);
-      const withPriority = toMailboxMessage({ ...validMessage, priority: 'next' }) as {
-        message: MailboxMessage;
-      };
-      expect(Object.keys(withPriority.message).sort()).toEqual([
+      const withOptionalFields = toMailboxMessage({
+        ...validMessage,
+        priority: 'next',
+        referenceMetadata: {
+          '@ref{goal:1}': { type: 'goal', id: '1', displayText: 'Goal 1' },
+        },
+      }) as { message: MailboxMessage };
+      expect(Object.keys(withOptionalFields.message).sort()).toEqual([
         'message',
         'parent_tool_use_id',
         'priority',
+        'referenceMetadata',
         'type',
       ]);
     });
@@ -201,11 +236,28 @@ describe('toMailboxMessage', () => {
         { type: 'user', message: { content: [] }, parent_tool_use_id: null },
       ],
       [
-        'a non-text block',
+        'a malformed image block',
         {
           type: 'user',
           message: { content: [{ type: 'image', text: 'x' }] },
           parent_tool_use_id: null,
+        },
+      ],
+      [
+        'a tool result block',
+        {
+          type: 'user',
+          message: { content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'x' }] },
+          parent_tool_use_id: null,
+        },
+      ],
+      [
+        'malformed reference metadata',
+        {
+          ...validMessage,
+          referenceMetadata: {
+            '@ref{task:42}': { type: 'task', id: '', displayText: 'Task 42' },
+          },
         },
       ],
       [
@@ -945,6 +997,33 @@ describe('mailbox entry optional field round-trip law', () => {
     message: { content: 'hello' },
     parent_tool_use_id: null,
   };
+
+  test('image content and reference metadata survive creation, JSON, and parsing', () => {
+    const richMessage: MailboxMessage = {
+      type: 'user',
+      message: {
+        content: [
+          { type: 'text', text: 'see @ref{file:diagram.png}' },
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/webp', data: 'aW1hZ2U=' },
+          },
+        ],
+      },
+      parent_tool_use_id: null,
+      referenceMetadata: {
+        '@ref{file:diagram.png}': {
+          type: 'file',
+          id: 'diagram.png',
+          displayText: 'diagram.png',
+          status: 'resolved',
+        },
+      },
+    };
+    const entry = createMailboxEntry({ to, message: richMessage, origin: 'test' });
+
+    expect(parseMailboxEntry(JSON.parse(JSON.stringify(entry)))).toEqual(entry);
+  });
 
   test.each<[string, MailboxDeliveryMode | undefined, string | undefined]>([
     ['immediate without seed', 'immediate', undefined],

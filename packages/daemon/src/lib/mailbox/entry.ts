@@ -1,3 +1,4 @@
+import type { MessageContent, ReferenceMetadata, ReferenceType } from '@hyperneo/shared';
 import type { MailboxAddress } from './address.ts';
 import { createUlid, isUlid } from './ulid.ts';
 
@@ -13,13 +14,14 @@ export const DEFAULT_MAILBOX_ENTRY_POLICY: MailboxEntryPolicy = {
   priority: 0,
 };
 
-export type MailboxMessageContent = string | { type: 'text'; text: string }[];
+export type MailboxMessageContent = string | MessageContent[];
 
 export type MailboxMessage = {
   type: 'user';
   message: { content: MailboxMessageContent };
   parent_tool_use_id: null;
   priority?: 'now' | 'next' | 'later';
+  referenceMetadata?: ReferenceMetadata;
 };
 
 export type MailboxDeliveryMode = 'immediate' | 'defer';
@@ -37,20 +39,62 @@ export type MailboxEntry = {
 
 const MAILBOX_MESSAGE_PRIORITIES: readonly MailboxMessage['priority'][] = ['now', 'next', 'later'];
 const MAILBOX_CONTENT_REASON =
-  'message.content must be a non-empty string or a non-empty array of text blocks';
+  'message.content must be a non-empty string or a non-empty array of text or image blocks';
+const MAILBOX_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
+const MAILBOX_REFERENCE_TYPES: readonly ReferenceType[] = ['task', 'goal', 'file', 'folder'];
 
 function isMailboxDeliveryMode(value: unknown): value is MailboxDeliveryMode {
   return value === 'immediate' || value === 'defer';
 }
 
-function projectTextBlock(
-  block: { type: 'text'; text: string } | null | undefined
-): { type: 'text'; text: string } | null {
+function projectContentBlock(block: MessageContent | null | undefined): MessageContent | null {
   if (block === null || block === undefined) return null;
-  if (block.type !== 'text' || typeof block.text !== 'string' || block.text.length === 0) {
+  if (block.type === 'text') {
+    return typeof block.text === 'string' && block.text.length > 0
+      ? { type: 'text', text: block.text }
+      : null;
+  }
+  if (block.type !== 'image') return null;
+  const source = block.source;
+  if (
+    source?.type !== 'base64' ||
+    !MAILBOX_IMAGE_MEDIA_TYPES.includes(source.media_type) ||
+    typeof source.data !== 'string' ||
+    source.data.length === 0
+  ) {
     return null;
   }
-  return { type: 'text', text: block.text };
+  return {
+    type: 'image',
+    source: { type: 'base64', media_type: source.media_type, data: source.data },
+  };
+}
+
+function projectReferenceMetadata(value: ReferenceMetadata): ReferenceMetadata | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const projected: ReferenceMetadata = {};
+  for (const [token, metadata] of Object.entries(value)) {
+    if (
+      typeof metadata !== 'object' ||
+      metadata === null ||
+      Array.isArray(metadata) ||
+      !MAILBOX_REFERENCE_TYPES.includes(metadata.type) ||
+      typeof metadata.id !== 'string' ||
+      metadata.id.length === 0 ||
+      typeof metadata.displayText !== 'string' ||
+      metadata.displayText.length === 0 ||
+      (metadata.status !== undefined && typeof metadata.status !== 'string')
+    ) {
+      return null;
+    }
+    projected[token] = {
+      type: metadata.type,
+      id: metadata.id,
+      displayText: metadata.displayText,
+      ...(metadata.status !== undefined ? { status: metadata.status } : {}),
+    };
+  }
+  return projected;
 }
 
 export type MailboxMessageProjection = { message: MailboxMessage } | { reason: string };
@@ -68,21 +112,29 @@ export function toMailboxMessage(message: MailboxMessage): MailboxMessageProject
   if (typeof content === 'string') {
     projected = content.length > 0 ? { content } : null;
   } else if (Array.isArray(content)) {
-    const blocks: { type: 'text'; text: string }[] = [];
+    const blocks: MessageContent[] = [];
     for (let index = 0; index < content.length; index += 1) {
-      const block = projectTextBlock(content[index]);
+      const block = projectContentBlock(content[index]);
       if (block === null) return { reason: MAILBOX_CONTENT_REASON };
       blocks.push(block);
     }
     projected = blocks.length > 0 ? { content: blocks } : null;
   }
   if (projected === null) return { reason: MAILBOX_CONTENT_REASON };
+  const referenceMetadata =
+    message.referenceMetadata === undefined
+      ? undefined
+      : projectReferenceMetadata(message.referenceMetadata);
+  if (referenceMetadata === null) {
+    return { reason: 'message.referenceMetadata must contain valid reference metadata' };
+  }
   return {
     message: {
       type: 'user',
       message: projected,
       parent_tool_use_id: null,
       ...(message.priority !== undefined ? { priority: message.priority } : {}),
+      ...(referenceMetadata !== undefined ? { referenceMetadata } : {}),
     },
   };
 }
