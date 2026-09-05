@@ -63,6 +63,7 @@ function insertAgent(
     templateKey?: string | null;
     instructions: string;
     description?: string | null;
+    tools?: string[];
   }
 ): void {
   const now = Date.now();
@@ -77,7 +78,7 @@ function insertAgent(
     opts.displayName ?? opts.handle,
     opts.templateKey ?? null,
     opts.instructions,
-    JSON.stringify({ tools: [...STALE_PRE_TYPENAME_REVIEWER_TOOLS] }),
+    JSON.stringify({ tools: opts.tools ?? [...STALE_PRE_TYPENAME_REVIEWER_TOOLS] }),
     opts.description === undefined
       ? (STALE_PRE_TYPENAME_REVIEWER_DESCRIPTION ?? null)
       : opts.description,
@@ -190,10 +191,51 @@ describe('migration 230: re-stamp reviewer presets with the check-seeding contra
     expect(getInstructions(db, 'pre-typename-stale')).toBe(STALE_CONTRACT);
   });
 
-  test('re-stamps pristine synthesized reviewer templates, leaves the rest untouched', () => {
+  test('re-stamps synthesized templates only when their source agent row is pristine', () => {
+    insertAgent(db, {
+      id: 'agent-seeded',
+      handle: 'reviewer',
+      displayName: 'Reviewer',
+      instructions: PRE_CHECK_SEEDING_CONTRACT,
+    });
+    insertAgent(db, {
+      id: 'agent-template-created',
+      handle: 'my-reviewer-2',
+      displayName: 'My Reviewer',
+      templateKey: 'Reviewer',
+      instructions: PRE_CHECK_SEEDING_CONTRACT,
+      description: null,
+    });
+    insertAgent(db, {
+      id: 'agent-cleared-description',
+      handle: 'reviewer-3',
+      displayName: 'Reviewer',
+      instructions: STALE_CONTRACT,
+      description: null,
+    });
+    insertAgent(db, {
+      id: 'agent-customized',
+      handle: 'reviewer-4',
+      displayName: 'Reviewer',
+      instructions: STALE_CONTRACT,
+      description: 'my own reviewer',
+    });
+    insertAgent(db, {
+      id: 'agent-wrong-tools',
+      handle: 'reviewer-5',
+      displayName: 'Reviewer',
+      instructions: STALE_CONTRACT,
+      tools: ['Read'],
+    });
     insertTemplate(db, { key: 'migrated.agent.agent-seeded', instructions: STALE_CONTRACT });
+    insertTemplate(db, { key: 'migrated.agent.agent-seeded.m228', instructions: STALE_CONTRACT });
     insertTemplate(db, {
       key: 'migrated.agent.agent-template-created',
+      instructions: STALE_CONTRACT,
+      description: '',
+    });
+    insertTemplate(db, {
+      key: 'migrated.agent.agent-cleared-description',
       instructions: STALE_CONTRACT,
       description: '',
     });
@@ -202,11 +244,11 @@ describe('migration 230: re-stamp reviewer presets with the check-seeding contra
       instructions: STALE_CONTRACT,
       description: 'my own reviewer',
     });
+    insertTemplate(db, { key: 'migrated.agent.agent-missing', instructions: STALE_CONTRACT });
     insertTemplate(db, { key: 'user.template.reviewer', instructions: STALE_CONTRACT });
     insertTemplate(db, {
       key: 'migrated.agent.agent-wrong-tools',
       instructions: STALE_CONTRACT,
-      tools: ['Read'],
     });
 
     runMigration230(db);
@@ -214,10 +256,17 @@ describe('migration 230: re-stamp reviewer presets with the check-seeding contra
     expect(getTemplateInstructions(db, 'migrated.agent.agent-seeded')).toBe(
       REVIEWER_SYSTEM_CONTRACT
     );
+    expect(getTemplateInstructions(db, 'migrated.agent.agent-seeded.m228')).toBe(
+      REVIEWER_SYSTEM_CONTRACT
+    );
     expect(getTemplateInstructions(db, 'migrated.agent.agent-template-created')).toBe(
       REVIEWER_SYSTEM_CONTRACT
     );
+    expect(getTemplateInstructions(db, 'migrated.agent.agent-cleared-description')).toBe(
+      STALE_CONTRACT
+    );
     expect(getTemplateInstructions(db, 'migrated.agent.agent-customized')).toBe(STALE_CONTRACT);
+    expect(getTemplateInstructions(db, 'migrated.agent.agent-missing')).toBe(STALE_CONTRACT);
     expect(getTemplateInstructions(db, 'user.template.reviewer')).toBe(STALE_CONTRACT);
     expect(getTemplateInstructions(db, 'migrated.agent.agent-wrong-tools')).toBe(STALE_CONTRACT);
   });

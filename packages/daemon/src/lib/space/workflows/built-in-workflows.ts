@@ -2066,7 +2066,11 @@ export function patchPinnedBuiltInPromptDrift(workflow: SpaceWorkflow): SpaceWor
       const templateAgent =
         (agent.agentId
           ? templateNode.agents.find((candidate) => candidate.agentId === agent.agentId)
-          : undefined) ?? templateNode.agents.find((candidate) => candidate.name === agent.name);
+          : undefined) ??
+        templateNode.agents.find((candidate) => candidate.name === agent.name) ??
+        (templateNode.agents.length === 1 && node.agents.length === 1
+          ? templateNode.agents[0]
+          : undefined);
       if (!templateAgent) return agent;
       const drifted = patchKnownBuiltInPromptDrift(agent.customPrompt, templateAgent.customPrompt);
       const nodeKeyed = patchLegacyStableSlotPrompt(

@@ -6,8 +6,6 @@ import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import {
   isPristineReviewerRow,
   STALE_PRE_TYPENAME_REVIEWER_CONTRACT_SHA256,
-  STALE_PRE_TYPENAME_REVIEWER_DESCRIPTION,
-  STALE_PRE_TYPENAME_REVIEWER_TOOLS,
 } from './m229-restamp-reviewer-typename-bot-filter.ts';
 
 const log = new Logger('migration-230');
@@ -26,8 +24,6 @@ interface ReviewerAgentRow {
 interface SynthesizedTemplateRow {
   key: string;
   instructions: string | null;
-  description: string | null;
-  tools: string | null;
 }
 
 function tableExists(db: BunDatabase, tableName: string): boolean {
@@ -37,25 +33,12 @@ function tableExists(db: BunDatabase, tableName: string): boolean {
   return !!result;
 }
 
-function isPristineSynthesizedReviewerTemplate(row: SynthesizedTemplateRow): boolean {
-  let storedTools: string[] = [];
-  try {
-    const parsed = row.tools ? (JSON.parse(row.tools) as unknown) : [];
-    storedTools = Array.isArray(parsed) ? parsed.map((t) => String(t)) : [];
-  } catch {
-    return false;
-  }
-  const descriptionPristine =
-    row.description === '' || row.description === STALE_PRE_TYPENAME_REVIEWER_DESCRIPTION;
-  return (
-    descriptionPristine &&
-    [...storedTools].sort().join('\u0000') ===
-      [...STALE_PRE_TYPENAME_REVIEWER_TOOLS].sort().join('\u0000')
-  );
-}
-
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function migratedTemplateSourceAgentId(key: string): string {
+  return key.slice(MIGRATED_AGENT_TEMPLATE_KEY_PREFIX.length + 1).replace(/\.m228(-\d+)?$/, '');
 }
 
 export function runMigration230(db: BunDatabase): void {
@@ -63,23 +46,30 @@ export function runMigration230(db: BunDatabase): void {
   const reviewer = presets.find((preset) => preset.name === 'Reviewer');
   if (!reviewer) return;
 
+  const hasAgentsTable = tableExists(db, 'space_long_horizon_agents');
+  const reviewerRows = hasAgentsTable
+    ? (db
+        .prepare(
+          `SELECT id, template_key, instructions, description, tool_permissions_json
+           FROM space_long_horizon_agents
+           WHERE handle = 'reviewer' OR display_name = 'Reviewer' OR template_key = 'Reviewer'`
+        )
+        .all() as ReviewerAgentRow[])
+    : [];
+  const pristineSourceIds = new Set(
+    reviewerRows.filter((row) => isPristineReviewerRow(row)).map((row) => row.id)
+  );
+
   let updated = 0;
 
-  if (tableExists(db, 'space_long_horizon_agents')) {
-    const rows = db
-      .prepare(
-        `SELECT id, template_key, instructions, description, tool_permissions_json
-         FROM space_long_horizon_agents
-         WHERE handle = 'reviewer' OR display_name = 'Reviewer' OR template_key = 'Reviewer'`
-      )
-      .all();
+  if (hasAgentsTable) {
     const update = db.prepare(`UPDATE space_long_horizon_agents SET instructions = ? WHERE id = ?`);
-    for (const row of rows as ReviewerAgentRow[]) {
+    for (const row of reviewerRows) {
       if (
         typeof row.instructions === 'string' &&
         row.instructions.length > 0 &&
         sha256(row.instructions) === PRE_CHECK_SEEDING_REVIEWER_CONTRACT_SHA256 &&
-        isPristineReviewerRow(row)
+        pristineSourceIds.has(row.id)
       ) {
         update.run(reviewer.customPrompt, row.id);
         updated++;
@@ -89,22 +79,17 @@ export function runMigration230(db: BunDatabase): void {
 
   if (tableExists(db, 'space_agent_templates')) {
     const templates = db
-      .prepare(
-        `SELECT key, instructions, description, tools FROM space_agent_templates WHERE key LIKE ?`
-      )
+      .prepare(`SELECT key, instructions FROM space_agent_templates WHERE key LIKE ?`)
       .all(`${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.%`) as SynthesizedTemplateRow[];
     const updateTemplate = db.prepare(
       `UPDATE space_agent_templates SET instructions = ? WHERE key = ?`
     );
     for (const row of templates) {
-      if (
-        row.instructions &&
-        sha256(row.instructions) === STALE_PRE_TYPENAME_REVIEWER_CONTRACT_SHA256 &&
-        isPristineSynthesizedReviewerTemplate(row)
-      ) {
-        updateTemplate.run(reviewer.customPrompt, row.key);
-        updated++;
-      }
+      if (!row.instructions) continue;
+      if (sha256(row.instructions) !== STALE_PRE_TYPENAME_REVIEWER_CONTRACT_SHA256) continue;
+      if (!pristineSourceIds.has(migratedTemplateSourceAgentId(row.key))) continue;
+      updateTemplate.run(reviewer.customPrompt, row.key);
+      updated++;
     }
   }
 
