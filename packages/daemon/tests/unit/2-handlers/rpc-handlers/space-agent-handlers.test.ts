@@ -1194,6 +1194,19 @@ describe('Space Agent RPC Handlers', () => {
       expect(longHorizonRepo.getById(workerId)?.status).toBe('active');
     });
 
+    it('rejects templateKey rewrites on mirror updates', async () => {
+      const workerId = 'twin-rekey';
+      seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Rekey' });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.update', {
+          id: workerId,
+          templateKey: 'coordinator.default',
+        })
+      ).rejects.toThrow('Template key cannot be changed on a migrated worker agent');
+      expect(longHorizonRepo.getById(workerId)?.templateKey).toBe('migration.legacy_space_agent');
+    });
+
     it('rejects disabled status on mirror updates', async () => {
       const workerId = 'twin-disabled';
       seedWorkerMirror(db, { id: workerId, spaceId: 'space-1', name: 'Twin Disabled' });

@@ -43,6 +43,14 @@ describe('seedUnifiedSpaceAgents', () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  it('seeds presets with migrated worker mirror semantics', () => {
+    const { seeded } = seedUnifiedSpaceAgents('space-1', repo);
+    for (const agent of seeded) {
+      expect(agent.templateKey).toBe('migration.legacy_space_agent');
+      expect(agent.status).toBe('active');
+    }
+  });
+
   it('persists each preset description', () => {
     const { seeded } = seedUnifiedSpaceAgents('space-1', repo);
     const descriptionByHandle = new Map(

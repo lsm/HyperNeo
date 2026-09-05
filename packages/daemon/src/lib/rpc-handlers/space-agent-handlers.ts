@@ -613,6 +613,13 @@ async function updateApplyStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifi
   if (params.status === 'disabled' && existing.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
     throw new Error('Agent status "disabled" cannot be set on a migrated worker agent');
   }
+  if (
+    existing.templateKey === MIGRATED_WORKER_TEMPLATE_KEY &&
+    params.templateKey !== undefined &&
+    params.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY
+  ) {
+    throw new Error('Template key cannot be changed on a migrated worker agent');
+  }
   const displayName = params.displayName !== undefined ? params.displayName : params.name;
   const handle =
     params.handle === undefined
