@@ -316,6 +316,60 @@ const runSpaceTemplateList = (
   .pipe(convertSpaceTemplateList, 'ctx', 'ctx')
   .endAsync('ctx') as (ctx: SpaceTemplateListCtx) => Promise<SpaceTemplateListCtx>;
 
+interface SpaceTemplateDeleteDeps {
+  deleteTemplate(key: string): Promise<void>;
+  fetchTemplates(): Promise<SpaceLongHorizonAgentTemplate[]>;
+  builtInForKey(key: string): SpaceLongHorizonAgentTemplate | undefined;
+  currentTemplates(): SpaceLongHorizonAgentTemplate[];
+  applyTemplates(templates: SpaceLongHorizonAgentTemplate[]): void;
+}
+
+type SpaceTemplateDeleteCtx = {
+  key: string;
+  reloadError?: unknown;
+  deps: SpaceTemplateDeleteDeps;
+};
+
+async function requestSpaceTemplateDeletion(
+  ctx: SpaceTemplateDeleteCtx
+): Promise<SpaceTemplateDeleteCtx> {
+  await ctx.deps.deleteTemplate(ctx.key);
+  return ctx;
+}
+
+async function reloadSpaceTemplates(ctx: SpaceTemplateDeleteCtx): Promise<SpaceTemplateDeleteCtx> {
+  try {
+    await ctx.deps.fetchTemplates();
+    return ctx;
+  } catch (error) {
+    logger.error('Failed to refetch agent templates:', error);
+    return { ...ctx, reloadError: error };
+  }
+}
+
+function applySpaceTemplateDeleteFallback(ctx: SpaceTemplateDeleteCtx): SpaceTemplateDeleteCtx {
+  const builtIn = ctx.deps.builtInForKey(ctx.key);
+  const current = ctx.deps.currentTemplates();
+  ctx.deps.applyTemplates(
+    builtIn
+      ? current.map((t) => (t.key === ctx.key ? builtIn : t))
+      : current.filter((t) => t.key !== ctx.key)
+  );
+  return ctx;
+}
+
+const runSpaceTemplateDeletion = (
+  superpipe<{ reloaded: (ctx: SpaceTemplateDeleteCtx) => boolean }>({
+    reloaded: (ctx) => ctx.reloadError === undefined,
+  })('space-template-deletion') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(requestSpaceTemplateDeletion, 'ctx', 'ctx')
+  .pipe(reloadSpaceTemplates, 'ctx', 'ctx')
+  .pipe('!reloaded', 'ctx')
+  .pipe(applySpaceTemplateDeleteFallback, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: SpaceTemplateDeleteCtx) => Promise<SpaceTemplateDeleteCtx>;
+
 class SpaceStore {
   readonly spaces = signal<Space[]>([]);
 
@@ -338,6 +392,8 @@ class SpaceStore {
   private builtInTemplatesByKey = new Map<string, SpaceLongHorizonAgentTemplate>();
 
   private templateListMerged = false;
+
+  private templateFetchGeneration = 0;
 
   readonly workflows = signal<SpaceWorkflowSummary[]>([]);
 
@@ -688,6 +744,7 @@ class SpaceStore {
     this.agentTemplates.value = [];
     this.builtInTemplatesByKey = new Map();
     this.templateListMerged = false;
+    this.templateFetchGeneration += 1;
     this.workflows.value = [];
     this.workflowSummariesLoaded = false;
     this.workflowDetails.value = [];
@@ -1072,11 +1129,8 @@ class SpaceStore {
       }
     } catch (err) {
       logger.error('Failed to fetch agent templates:', err);
-      if (this.spaceId.value === spaceId) {
-        this.builtInTemplatesByKey = new Map();
-        if (!this.templateListMerged) {
-          this.agentTemplates.value = [];
-        }
+      if (this.spaceId.value === spaceId && !this.templateListMerged) {
+        this.agentTemplates.value = [];
       }
     }
   }
@@ -2561,12 +2615,13 @@ class SpaceStore {
   }
 
   async fetchTemplates(): Promise<SpaceLongHorizonAgentTemplate[]> {
-    const hub = await connectionManager.getHub();
+    const generation = ++this.templateFetchGeneration;
     const ctx = await runSpaceTemplateList({
       spaceId: this.spaceId.value,
       builtIns: this.builtInTemplatesByKey,
       deps: {
         requestBuiltIns: async (spaceId) => {
+          const hub = await connectionManager.getHub();
           const result = await hub.request<{ templates: SpaceLongHorizonAgentTemplate[] }>(
             'spaceAgent.listBuiltInTemplates',
             { spaceId }
@@ -2576,6 +2631,7 @@ class SpaceStore {
           return templates;
         },
         requestTemplates: async () => {
+          const hub = await connectionManager.getHub();
           const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
             'spaceAgent.listTemplates',
             {}
@@ -2585,6 +2641,7 @@ class SpaceStore {
       },
     });
     if (!ctx.templates) throw new Error('No space selected');
+    if (generation !== this.templateFetchGeneration) return ctx.templates;
     this.templateListMerged = true;
     this.agentTemplates.value = ctx.templates;
     return ctx.templates;
@@ -2619,17 +2676,23 @@ class SpaceStore {
   }
 
   async deleteTemplate(key: string): Promise<void> {
-    const hub = await connectionManager.getHub();
-    await hub.request<{ success: boolean }>('spaceAgent.deleteTemplate', { key });
-    try {
-      await this.fetchTemplates();
-    } catch (err) {
-      logger.error('Failed to refetch agent templates:', err);
-      const builtIn = this.builtInTemplatesByKey.get(key);
-      this.agentTemplates.value = builtIn
-        ? this.agentTemplates.value.map((t) => (t.key === key ? builtIn : t))
-        : this.agentTemplates.value.filter((t) => t.key !== key);
-    }
+    await runSpaceTemplateDeletion({
+      key,
+      deps: {
+        deleteTemplate: async (templateKey) => {
+          const hub = await connectionManager.getHub();
+          await hub.request<{ success: boolean }>('spaceAgent.deleteTemplate', {
+            key: templateKey,
+          });
+        },
+        fetchTemplates: () => this.fetchTemplates(),
+        builtInForKey: (templateKey) => this.builtInTemplatesByKey.get(templateKey),
+        currentTemplates: () => this.agentTemplates.value,
+        applyTemplates: (templates) => {
+          this.agentTemplates.value = templates;
+        },
+      },
+    });
   }
 
   async listAgentReminderCounts(agentIds: string[]): Promise<Record<string, number>> {
