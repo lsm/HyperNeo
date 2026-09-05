@@ -1458,6 +1458,24 @@ describe('SpaceRuntimeService', () => {
       expect(result).toBe('consumed');
     });
 
+    test('deliverLongHorizonAgentNag rejects conflicting idempotent content before admission', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const mailbox = buildMailboxDeliveryDb([sessionId]);
+      const nagKey = 'inactivity-nag:lh-agent-1:100:0';
+      seedMailboxRow(mailbox, sessionId, nagKey, 'Different nag content.');
+      const svc = buildLhDeliveryService(sessionId, mailbox);
+
+      const result = await svc.deliverLongHorizonAgentNag({
+        spaceId: mockSpace.id,
+        agentId: 'lh-agent-1',
+        message: 'You have been idle.',
+        idempotencyKey: nagKey,
+      });
+
+      expect(result).toBe('pre_admission_failure');
+      expect(pendingMailboxEntries(mailbox, nagKey)).toHaveLength(0);
+    });
+
     test('deliverLongHorizonAgentNag reports terminal_failure when admission rejects', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
       const svc = buildDeliveryService({

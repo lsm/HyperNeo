@@ -9,6 +9,7 @@ import type {
   UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
 import { generateUUID, isRateOrUsageLimited } from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
@@ -35,6 +36,10 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { AgentSession } from '../../agent/agent-session.ts';
+import {
+  PromptContentConflictError,
+  verifyPromptContent,
+} from '../../agent/message-delivery-outbox.ts';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
 import type { ExternalEventService } from '../../external-events/external-event-service.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
@@ -402,11 +407,13 @@ export class SpaceRuntimeService {
       return 'pre_admission_failure';
     }
     const sessionId = session.getSessionData().id;
-    const outcome = await this.injectLongTermAgentMessage(
-      session,
-      args.message,
-      args.idempotencyKey
-    );
+    let outcome: LongTermAgentAdmission;
+    try {
+      outcome = await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey);
+    } catch (error) {
+      if (error instanceof PromptContentConflictError) return 'pre_admission_failure';
+      throw error;
+    }
     const consumed = this.hasLongTermAgentConsumptionEvidence(sessionId, args.idempotencyKey);
     if (outcome.state === 'accepted') return consumed ? 'consumed' : 'accepted';
     return consumed ? 'terminal_failure_after_consumption' : 'terminal_failure';
@@ -705,7 +712,9 @@ export class SpaceRuntimeService {
   ): string | undefined {
     const sendStatus = this.readLongTermAgentSendStatus(sessionId, messageId);
     if (sendStatus !== undefined && sendStatus !== null) return sendStatus;
-    return this.config.reactiveDb?.db.getJobQueueRepo().getJob(mailboxEntryId)?.status === 'dead'
+    return this.config.reactiveDb?.db
+      .getJobQueueRepo()
+      .getLatestByPayload('mailbox', { id: mailboxEntryId })?.status === 'dead'
       ? 'failed'
       : undefined;
   }
@@ -749,19 +758,34 @@ export class SpaceRuntimeService {
   ): Promise<LongTermAgentAdmission> {
     const id = messageId ?? generateRuntimeMessageId();
     const sessionId = session.getSessionData().id;
-    const jobQueue = this.config.reactiveDb?.db.getJobQueueRepo();
-    if (!jobQueue) {
+    const reactiveDb = this.config.reactiveDb?.db;
+    if (!reactiveDb) {
       return {
         state: 'rejected',
         reason: `injectLongTermAgentMessage: reactiveDb unavailable; cannot deliver to ${sessionId}`,
       };
     }
+    const jobQueue = reactiveDb.getJobQueueRepo();
+    const mailboxMessage: SDKUserMessage = {
+      type: 'user',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'text', text: message }] },
+      uuid: id as NonNullable<SDKUserMessage['uuid']>,
+      session_id: sessionId,
+      isSynthetic: true,
+    };
+    verifyPromptContent({
+      db: this.config.db,
+      sessionId,
+      messageUuid: id,
+      message: mailboxMessage,
+    });
     const outcome = await handoffPromptToMailbox({
       to: renderAddress({ kind: 'session', sessionId }),
       message: {
-        type: 'user',
+        type: mailboxMessage.type,
         parent_tool_use_id: null,
-        message: { content: [{ type: 'text', text: message }] },
+        message: mailboxMessage.message,
       },
       origin: 'long_term_agent',
       messageUuid: id,

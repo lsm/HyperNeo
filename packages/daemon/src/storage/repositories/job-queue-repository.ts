@@ -745,6 +745,26 @@ export class JobQueueRepository {
     return this.rowToJob(row);
   }
 
+  getLatestByPayload(queue: string, matchPayload: Record<string, unknown>): Job | null {
+    if (Object.keys(matchPayload).length === 0) return null;
+    const payloadPredicates = Object.values(matchPayload).map((value) =>
+      value === null ? `json_type(payload, ?) = 'null'` : `json_extract(payload, ?) = ?`
+    );
+    const params: (string | number | null)[] = [queue];
+    for (const [key, value] of Object.entries(matchPayload)) {
+      params.push(`$.${key}`);
+      if (value !== null) params.push(sqliteJsonScalar(value));
+    }
+    const row = this.db
+      .prepare(
+        `SELECT * FROM job_queue
+          WHERE queue = ? AND ${payloadPredicates.join(' AND ')}
+          ORDER BY created_at DESC, rowid DESC LIMIT 1`
+      )
+      .get(...params) as Record<string, unknown> | undefined;
+    return row ? this.rowToJob(row) : null;
+  }
+
   listJobs(filter: {
     queue?: string;
     status?: JobStatus | JobStatus[];
