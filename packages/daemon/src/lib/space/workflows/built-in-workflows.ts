@@ -11,6 +11,7 @@ import {
   CODER_OWNED_REVIEW_PROMPT,
   CODEX_REACTION_APPROVAL_GUIDANCE,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
+  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING,
   EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME,
   FULLSTACK_CODING_NOCHANGE_GUIDANCE,
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
@@ -46,6 +47,7 @@ export {
   CODER_OWNED_REVIEW_PROMPT,
   CODEX_REACTION_APPROVAL_GUIDANCE,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
+  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING,
   EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME,
   FULLSTACK_CODING_NOCHANGE_GUIDANCE,
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
@@ -2032,7 +2034,8 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   [[CODER_OWNED_MERGE_PROMPT, RETIRED_PRE_EVENT_DRIVEN_CODER_OWNED_MERGE_PROMPT]],
   [[CODER_ONLY_PROMPT, RETIRED_PRE_EVENT_DRIVEN_CODER_ONLY_PROMPT]],
   [[RESEARCH_PROMPT, RETIRED_PRE_EVENT_DRIVEN_RESEARCH_PROMPT]],
-  [[EXTERNAL_REVIEW_BOTS_GUIDANCE, EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME]],
+  [[EXTERNAL_REVIEW_BOTS_GUIDANCE, EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING]],
+  [[EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING, EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME]],
 ] as const;
 
 function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | undefined>(
@@ -2060,7 +2063,10 @@ export function patchPinnedBuiltInPromptDrift(workflow: SpaceWorkflow): SpaceWor
       template.nodes.find((candidate) => candidate.name === node.name);
     if (!templateNode) return node;
     const agents = node.agents.map((agent) => {
-      const templateAgent = templateNode.agents.find((candidate) => candidate.name === agent.name);
+      const templateAgent =
+        (agent.agentId
+          ? templateNode.agents.find((candidate) => candidate.agentId === agent.agentId)
+          : undefined) ?? templateNode.agents.find((candidate) => candidate.name === agent.name);
       if (!templateAgent) return agent;
       const drifted = patchKnownBuiltInPromptDrift(agent.customPrompt, templateAgent.customPrompt);
       const nodeKeyed = patchLegacyStableSlotPrompt(

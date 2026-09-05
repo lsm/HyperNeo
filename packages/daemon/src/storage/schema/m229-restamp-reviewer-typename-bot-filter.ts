@@ -43,6 +43,7 @@ export const STALE_PRE_TYPENAME_REVIEWER_TOOLS: readonly string[] = [
 
 interface ReviewerRow {
   id: string;
+  template_key: string | null;
   instructions: string | null;
   description: string | null;
   tool_permissions_json: string | null;
@@ -55,7 +56,7 @@ function tableExists(db: BunDatabase, tableName: string): boolean {
   return !!result;
 }
 
-function isPristineReviewerRow(row: ReviewerRow): boolean {
+export function isPristineReviewerRow(row: ReviewerRow): boolean {
   let storedTools: string[] = [];
   try {
     const parsed = row.tool_permissions_json
@@ -66,7 +67,9 @@ function isPristineReviewerRow(row: ReviewerRow): boolean {
     return false;
   }
   const descriptionPristine =
-    row.description === null || row.description === STALE_PRE_TYPENAME_REVIEWER_DESCRIPTION;
+    row.template_key === 'Reviewer'
+      ? row.description === null || row.description === STALE_PRE_TYPENAME_REVIEWER_DESCRIPTION
+      : row.description === STALE_PRE_TYPENAME_REVIEWER_DESCRIPTION;
   return (
     descriptionPristine &&
     [...storedTools].sort().join('\u0000') ===
@@ -83,7 +86,7 @@ export function runMigration229(db: BunDatabase): void {
 
   const rows = db
     .prepare(
-      `SELECT id, instructions, description, tool_permissions_json
+      `SELECT id, template_key, instructions, description, tool_permissions_json
        FROM space_long_horizon_agents
        WHERE handle = 'reviewer' OR display_name = 'Reviewer' OR template_key = 'Reviewer'`
     )

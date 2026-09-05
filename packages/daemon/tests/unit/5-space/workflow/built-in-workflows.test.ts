@@ -32,6 +32,7 @@ import {
   CODING_WITH_QA_WORKFLOW,
   CODING_WORKFLOW,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
+  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING,
   EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME,
   getBuiltInWorkflows,
   LEGACY_CODING_TEMPLATE_IDENTITIES,
@@ -2244,6 +2245,43 @@ describe('seedBuiltInWorkflows()', () => {
     expect(renamedPatched.nodes[0]!.name).toBe('My Coding Node');
     expect(renamedPatched.nodes[0]!.agents[0]!.customPrompt?.value).toBe(CODER_ONLY_PROMPT);
 
+    const preCheckSeeding = CODER_ONLY_PROMPT.replace(
+      EXTERNAL_REVIEW_BOTS_GUIDANCE,
+      EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_CHECK_SEEDING
+    );
+    const checkSeedingPinned = {
+      ...pinned,
+      nodes: pinned.nodes.map((node, index) =>
+        index === 0
+          ? {
+              ...node,
+              agents: node.agents.map((agent, agentIndex) =>
+                agentIndex === 0 ? { ...agent, customPrompt: { value: preCheckSeeding } } : agent
+              ),
+            }
+          : node
+      ),
+    };
+    const checkSeedingPatched = patchPinnedBuiltInPromptDrift(checkSeedingPinned);
+    expect(checkSeedingPatched.nodes[0]!.agents[0]!.customPrompt?.value).toBe(CODER_ONLY_PROMPT);
+
+    const renamedSlot = {
+      ...pinned,
+      nodes: pinned.nodes.map((node, index) =>
+        index === 0
+          ? {
+              ...node,
+              agents: node.agents.map((agent, agentIndex) =>
+                agentIndex === 0 ? { ...agent, name: 'My Coder' } : agent
+              ),
+            }
+          : node
+      ),
+    };
+    const renamedSlotPatched = patchPinnedBuiltInPromptDrift(renamedSlot);
+    expect(renamedSlotPatched.nodes[0]!.agents[0]!.name).toBe('My Coder');
+    expect(renamedSlotPatched.nodes[0]!.agents[0]!.customPrompt?.value).toBe(CODER_ONLY_PROMPT);
+
     const legacyNamed = {
       ...CODING_WORKFLOW,
       spaceId: SPACE_ID,
@@ -4252,15 +4290,15 @@ test('patchKnownBuiltInPromptDrift rewrites a persisted legacy Coding-with-QA co
 
 test('persisted pre-call-action prompts migrate to the dispatcher preference templates', () => {
   const preDispatcherHashes = new Map<string, string>([
-    [CODER_ONLY_PROMPT, '3219c219b3a7b847e64e244e2681e6844695808a58e3b16f15d30ef13da7dcda'],
-    [CODER_OWNED_MERGE_PROMPT, '93c5ce0073f937288bdd6b038cdf38839b9a8be3c56760c2626b3defebeea1b9'],
+    [CODER_ONLY_PROMPT, 'b3b6c7720e7b650d3155e8109b07458f315b1120a2503a7ea583946d509f2649'],
+    [CODER_OWNED_MERGE_PROMPT, '20bbaa921ea9d3a89d1fc4d6106b191a24b8c3de3d9acfe8361ff12c32fd641e'],
     [CODER_OWNED_REVIEW_PROMPT, 'da51558acb0459acf61beda09a4390557966320dd0ab95d74b115dfd5e940740'],
     [CODER_OWNED_QA_PROMPT, '662b1e20d219237c8d4dfa4add74d10f54bc9bc1888dc0e7ab267f2ece7f7eb8'],
     [
       CODER_OWNED_QA_REVIEW_PROMPT,
       'f915282840b18893b1200da0d648e2e37032b9488492674ac5d4ed1fefe80f20',
     ],
-    [RESEARCH_PROMPT, '763a6c51432b8c8848e0a9f0dce59be28d83007b1a3e4b1cf6d8e25c7af70d58'],
+    [RESEARCH_PROMPT, 'dec331f45759fa496387fe41ae6d62627a361ee3dc2c24d4c004e6b35bcfea6a'],
     [RESEARCH_REVIEW_PROMPT, '199f7ad7c972d1495f978924a26cff953680c8fddf73f33e25de3b0bb4621c56'],
     [REVIEW_ONLY_REVIEW_PROMPT, '9e223b7e6c1c306e66288916cc42e2f5f7211b997cfaf3db06f9ecb7033317ee'],
   ]);
