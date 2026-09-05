@@ -589,7 +589,13 @@ export function setupSpaceExportImportHandlers(
         for (const a of node.agents ?? []) {
           const agentId = a.agentId?.trim();
           if (!agentId) continue;
-          if (a.templateKey?.trim() && !liveById.has(agentId)) continue;
+          if (
+            a.templateKey?.trim() &&
+            (getLongHorizonAgentTemplate(a.templateKey.trim()) !== undefined ||
+              !liveById.has(agentId))
+          ) {
+            continue;
+          }
           referencedAgentIds.add(agentId);
         }
       }
@@ -679,7 +685,13 @@ export function setupSpaceExportImportHandlers(
         for (const a of node.agents ?? []) {
           const agentId = a.agentId?.trim();
           if (!agentId) continue;
-          if (a.templateKey?.trim() && !exportableIds.has(agentId)) continue;
+          if (
+            a.templateKey?.trim() &&
+            (getLongHorizonAgentTemplate(a.templateKey.trim()) !== undefined ||
+              !exportableIds.has(agentId))
+          ) {
+            continue;
+          }
           referencedAgentIds.add(agentId);
         }
       }

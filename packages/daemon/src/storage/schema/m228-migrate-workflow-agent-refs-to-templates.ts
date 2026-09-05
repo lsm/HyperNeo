@@ -30,6 +30,7 @@ interface AgentRow {
 
 interface NodeRow {
   id: string;
+  space_id: string;
   config: string | null;
 }
 
@@ -84,7 +85,12 @@ export function runMigration228(db: BunDatabase): void {
     : null;
 
   const nodeRows = db
-    .prepare(`SELECT id, config FROM space_workflow_nodes ORDER BY rowid ASC`)
+    .prepare(
+      `SELECT n.id, w.space_id AS space_id, n.config
+         FROM space_workflow_nodes n
+         JOIN space_workflows w ON w.id = n.workflow_id
+        ORDER BY n.rowid ASC`
+    )
     .all() as NodeRow[];
 
   db.exec('BEGIN');
@@ -101,6 +107,7 @@ export function runMigration228(db: BunDatabase): void {
         if (typeof slot.templateKey === 'string' && slot.templateKey.trim()) continue;
 
         const agentRow = agentsById.get(agentId);
+        if (agentRow && agentRow.space_id !== nodeRow.space_id) continue;
         if (agentRow && !isRunnableAgentRow(agentRow, workerSpaceById)) continue;
         const slotName = typeof slot.name === 'string' && slot.name.trim() ? slot.name : agentId;
         const seed = agentRow ? agentRow.handle || agentRow.display_name || agentRow.id : slotName;

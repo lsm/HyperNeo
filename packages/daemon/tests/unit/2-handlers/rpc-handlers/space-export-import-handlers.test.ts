@@ -1,31 +1,31 @@
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
-import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
-import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
-import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
-import { createLongHorizonAgentTables } from '../../../../src/storage/schema/long-horizon-agents';
-import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
-import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
-import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
-import { workerAgentToLongHorizonParams } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
-import {
-  SpaceWorkflowManager,
-  createSpaceAgentLookup,
-  type SpaceAgentLookup,
-} from '../../../../src/lib/space/managers/space-workflow-manager';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
 import {
-  setupSpaceExportImportHandlers,
-  type ImportPreviewResult,
   type ImportExecuteResult,
+  type ImportPreviewResult,
+  setupSpaceExportImportHandlers,
 } from '../../../../src/lib/rpc-handlers/space-export-import-handlers';
+import { workerAgentToLongHorizonParams } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
 import { exportBundle, validateExportBundle } from '../../../../src/lib/space/export-format';
+import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import {
+  createSpaceAgentLookup,
+  type SpaceAgentLookup,
+  SpaceWorkflowManager,
+} from '../../../../src/lib/space/managers/space-workflow-manager';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { createLongHorizonAgentTables } from '../../../../src/storage/schema/long-horizon-agents';
+import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
+import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
+import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 function makeSeedAgent(
   agentRepo: SpaceAgentRepository,
@@ -1120,6 +1120,33 @@ describe('Space Export/Import RPC Handlers', () => {
         { spaceId: SPACE_ID, agentIds: [coder.id] }
       );
       expect(result.bundle.agents.map((a) => a.name)).toContain('Coder');
+    });
+
+    it('exempts portable built-in template keys from the fallback requirement', async () => {
+      const coder = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+      const other = seedAgent({ spaceId: SPACE_ID, name: 'Other', handle: 'other' });
+      workflowRepo.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Pipe',
+        nodes: [
+          {
+            name: 'S',
+            agents: [{ agentId: coder.id, templateKey: 'research.default', name: 'coder' }],
+          },
+        ],
+        startNodeId: 'S',
+        tags: [],
+        completionAutonomyLevel: 3,
+        createdAt: 1,
+        updatedAt: 1,
+      } as never);
+
+      const result = await call<{ bundle: { agents: Array<{ name: string }> } }>(
+        handlers,
+        'spaceExport.bundle',
+        { spaceId: SPACE_ID, agentIds: [other.id] }
+      );
+      expect(result.bundle.agents.map((a) => a.name)).toEqual(['Other']);
     });
 
     it('exports all agents and workflows', async () => {

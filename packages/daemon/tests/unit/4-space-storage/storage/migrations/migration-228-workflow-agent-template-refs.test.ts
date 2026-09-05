@@ -433,6 +433,31 @@ describe('migration 228: workflow agent refs to template keys', () => {
     db.close();
   });
 
+  test('leaves cross-space agent references on the agentId binding', () => {
+    const db = makeDb();
+    insertSpace(db, 'space-1');
+    insertSpace(db, 'space-2');
+    insertAgent(db, {
+      id: 'agent-foreign',
+      spaceId: 'space-2',
+      handle: 'foreign-coder',
+      displayName: 'Foreign Coder',
+      instructions: 'Elsewhere',
+    });
+    insertWorkflowWithNode(db, 'space-1', 'node-1', {
+      agents: [{ agentId: 'agent-foreign', name: 'coder' }],
+    });
+
+    runMigration228(db);
+
+    const repo = new SpaceAgentTemplateRepository(db);
+    expect(repo.list().filter((t) => t.key.startsWith('migrated.'))).toEqual([]);
+    const slots = nodeConfig(db, 'node-1').agents as Array<Record<string, unknown>>;
+    expect(slots[0].templateKey).toBeUndefined();
+    expect(slots[0].agentId).toBe('agent-foreign');
+    db.close();
+  });
+
   test('is idempotent when run twice', () => {
     const db = makeDb();
     insertSpace(db, 'space-1');
