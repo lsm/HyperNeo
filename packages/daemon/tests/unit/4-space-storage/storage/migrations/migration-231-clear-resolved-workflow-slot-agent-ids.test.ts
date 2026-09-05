@@ -243,6 +243,73 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
     db.close();
   });
 
+  test('materializes a missing slot name from agentId before clearing', () => {
+    const db = createMigrationDb();
+    new SpaceAgentTemplateRepository(db).create({
+      key: 'migrated.agent.agent-1',
+      handle: 'coder',
+      displayName: 'Coder',
+    });
+    insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
+    db.prepare(`UPDATE space_workflows SET post_approval = ? WHERE id = 'wf-1'`).run(
+      JSON.stringify({ targetAgent: 'agent-1', instructions: 'merge the PR' })
+    );
+    insertNodeWithSlots(db, 'node-1', 'wf-1', [
+      { agentId: 'agent-1', templateKey: 'migrated.agent.agent-1' },
+    ]);
+
+    runMigration231(db);
+
+    const config = readNodeConfig(db, 'node-1');
+    expect(config.agents[0]).toEqual({
+      agentId: '',
+      templateKey: 'migrated.agent.agent-1',
+      name: 'agent-1',
+    });
+    const workflowRoute = db
+      .prepare(`SELECT post_approval FROM space_workflows WHERE id = 'wf-1'`)
+      .get() as { post_approval: string };
+    expect((JSON.parse(workflowRoute.post_approval) as { targetAgent: string }).targetAgent).toBe(
+      'agent-1'
+    );
+    db.close();
+  });
+
+  test('does not redirect a post-approval target when an earlier slot keeps its agentId', () => {
+    const db = createMigrationDb();
+    new SpaceAgentTemplateRepository(db).create({
+      key: 'migrated.agent.agent-1',
+      handle: 'coder',
+      displayName: 'Coder',
+    });
+    insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
+    db.prepare(`UPDATE space_workflows SET post_approval = ? WHERE id = 'wf-1'`).run(
+      JSON.stringify({ targetAgent: 'agent-1', instructions: 'merge the PR' })
+    );
+    insertNodeWithSlots(db, 'node-1', 'wf-1', [
+      { agentId: 'agent-1', templateKey: 'unresolved-template', name: 'first' },
+    ]);
+    insertNodeWithSlots(db, 'node-2', 'wf-1', [
+      { agentId: 'agent-1', templateKey: 'migrated.agent.agent-1', name: 'second' },
+    ]);
+
+    runMigration231(db);
+
+    expect(readSlots(db, 'node-1')).toEqual([
+      { agentId: 'agent-1', templateKey: 'unresolved-template', name: 'first' },
+    ]);
+    expect(readSlots(db, 'node-2')).toEqual([
+      { agentId: '', templateKey: 'migrated.agent.agent-1', name: 'second' },
+    ]);
+    const workflowRoute = db
+      .prepare(`SELECT post_approval FROM space_workflows WHERE id = 'wf-1'`)
+      .get() as { post_approval: string };
+    expect((JSON.parse(workflowRoute.post_approval) as { targetAgent: string }).targetAgent).toBe(
+      'agent-1'
+    );
+    db.close();
+  });
+
   test('leaves a UUID targetAgent alone when it matches no cleared slot', () => {
     const db = createMigrationDb();
     new SpaceAgentTemplateRepository(db).create({
@@ -401,6 +468,68 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
       name: 'writer',
     });
     expect(new SpaceAgentTemplateRepository(db).getByKey('migrated.agent.agent-x')).not.toBeNull();
+    db.close();
+  });
+
+  test('keeps a pinned post-approval UUID when an earlier slot retains the agentId', () => {
+    const db = createMigrationDb();
+    createRunTables(db);
+    insertWorkflow(db, 'wf-pin', 'space-1', 'Pinned Flow');
+    const pinnedPayload = JSON.stringify({
+      id: 'wf-pin',
+      spaceId: 'space-1',
+      name: 'Pinned Flow',
+      nodes: [
+        {
+          id: 'node-a',
+          name: 'First',
+          agents: [{ agentId: 'agent-p', templateKey: 'unresolved-template', name: 'first' }],
+        },
+        {
+          id: 'node-b',
+          name: 'Second',
+          agents: [{ agentId: 'agent-p', templateKey: 'coordinator.default' }],
+        },
+      ],
+      channels: [],
+      startNodeId: 'node-a',
+      endNodeId: 'node-b',
+      postApproval: { targetAgent: 'agent-p', instructions: 'merge the PR' },
+    });
+    db.prepare(
+      `INSERT INTO space_workflow_definition_versions (workflow_id, version_hash, space_id, payload, source, created_at)
+       VALUES ('wf-pin', 'hash-old', 'space-1', ?, 'backfill', 1)`
+    ).run(pinnedPayload);
+    db.prepare(
+      `INSERT INTO space_workflow_runs (id, space_id, workflow_id, definition_version, title, description, status, created_at, updated_at)
+       VALUES ('run-1', 'space-1', 'wf-pin', 'hash-old', 'Run 1', '', 'in_progress', 1, 1)`
+    ).run();
+
+    runMigration231(db);
+
+    const run = db
+      .prepare(`SELECT definition_version FROM space_workflow_runs WHERE id = 'run-1'`)
+      .get() as { definition_version: string };
+    const version = db
+      .prepare(
+        `SELECT payload FROM space_workflow_definition_versions WHERE workflow_id = 'wf-pin' AND version_hash = ?`
+      )
+      .get(run.definition_version) as { payload: string };
+    const payload = JSON.parse(version.payload) as {
+      nodes: Array<{ agents: Array<Record<string, unknown>> }>;
+      postApproval: { targetAgent: string };
+    };
+    expect(payload.nodes[0].agents[0]).toEqual({
+      agentId: 'agent-p',
+      templateKey: 'unresolved-template',
+      name: 'first',
+    });
+    expect(payload.nodes[1].agents[0]).toEqual({
+      agentId: '',
+      templateKey: 'coordinator.default',
+      name: 'agent-p',
+    });
+    expect(payload.postApproval.targetAgent).toBe('agent-p');
     db.close();
   });
 

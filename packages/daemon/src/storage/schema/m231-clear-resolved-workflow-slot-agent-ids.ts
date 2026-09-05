@@ -93,6 +93,7 @@ function clearLiveNodeAgentIds(
   const dirtyNodeIds = new Set<string>();
   const dirtyWorkflowIds = new Set<string>();
   const clearedByWorkflow = new Map<string, Map<string, string>>();
+  const seenAgentIdByWorkflow = new Map<string, Set<string>>();
 
   for (const node of nodes) {
     const parsed = parseJsonObject(node.config);
@@ -102,17 +103,26 @@ function clearLiveNodeAgentIds(
     for (const raw of parsed.agents) {
       const slot = asRecord(raw);
       if (!slot) continue;
+      const agentId = typeof slot.agentId === 'string' ? slot.agentId.trim() : '';
+      if (!agentId) continue;
       const key = typeof slot.templateKey === 'string' ? slot.templateKey.trim() : '';
-      if (!key || !resolvable(key)) continue;
-      if (typeof slot.agentId !== 'string' || !slot.agentId.trim()) continue;
-      const clearedNamesByAgentId =
-        clearedByWorkflow.get(node.workflow_id) ?? new Map<string, string>();
-      if (!clearedNamesByAgentId.has(slot.agentId) && typeof slot.name === 'string') {
-        clearedNamesByAgentId.set(slot.agentId, slot.name);
+      const willClear = !!key && resolvable(key);
+      const seen = seenAgentIdByWorkflow.get(node.workflow_id) ?? new Set<string>();
+      if (willClear) {
+        if (typeof slot.name !== 'string' || !slot.name.trim()) {
+          slot.name = agentId;
+        }
+        const clearedNamesByAgentId =
+          clearedByWorkflow.get(node.workflow_id) ?? new Map<string, string>();
+        if (!seen.has(agentId) && typeof slot.name === 'string') {
+          clearedNamesByAgentId.set(agentId, slot.name);
+        }
+        clearedByWorkflow.set(node.workflow_id, clearedNamesByAgentId);
+        slot.agentId = '';
+        dirty = true;
       }
-      clearedByWorkflow.set(node.workflow_id, clearedNamesByAgentId);
-      slot.agentId = '';
-      dirty = true;
+      seen.add(agentId);
+      seenAgentIdByWorkflow.set(node.workflow_id, seen);
     }
     if (!dirty) continue;
     dirtyNodeIds.add(node.id);
@@ -198,6 +208,7 @@ function migratePinnedRunDefinitions(
     const workflow = asRecord(payload);
     if (!workflow || !Array.isArray(workflow.nodes)) continue;
 
+    const seenAgentIds = new Set<string>();
     const templateKeyByAgentId = new Map<string, string>();
     const namesByAgentId = new Map<string, string>();
     let dirty = false;
@@ -216,12 +227,19 @@ function migratePinnedRunDefinitions(
             : null
           : (templateKeyByAgentId.get(agentId) ??
             ensureTemplateForAgentRef(db, templateRepo, spaceId, agentId, slot));
-        if (!key) continue;
-        if (!existingKey) templateKeyByAgentId.set(agentId, key);
-        if (typeof slot.name === 'string') namesByAgentId.set(agentId, slot.name);
-        slot.templateKey = key;
-        slot.agentId = '';
-        dirty = true;
+        if (key) {
+          if (typeof slot.name !== 'string' || !slot.name.trim()) {
+            slot.name = agentId;
+          }
+          if (!seenAgentIds.has(agentId) && typeof slot.name === 'string') {
+            namesByAgentId.set(agentId, slot.name);
+          }
+          if (!existingKey) templateKeyByAgentId.set(agentId, key);
+          slot.templateKey = key;
+          slot.agentId = '';
+          dirty = true;
+        }
+        seenAgentIds.add(agentId);
       }
     }
     if (!dirty) continue;
