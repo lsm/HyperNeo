@@ -213,6 +213,28 @@ describe('createMailboxDeliveryHandler', () => {
     });
   });
 
+  describe('expired entry', () => {
+    test('dead-letters an entry that expires while its session resolves', async () => {
+      let releaseSession: ((session: object | null) => void) | undefined;
+      const gatedGetSession = (_sessionId: string): Promise<object | null> =>
+        new Promise((resolve) => {
+          releaseSession = resolve;
+        });
+      const { handler } = makeHandler(gatedGetSession);
+      const entry = makeEntry({ policy: { ttlMs: 1 } });
+      const job = claimMailboxJob(mailbox, entry);
+
+      const delivery = handler(job);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      releaseSession?.({ ok: true });
+
+      await expect(delivery).rejects.toBeInstanceOf(DeadLetterImmediatelyError);
+      await expect(delivery).rejects.toThrow('mailbox: entry expired (ttl)');
+      expect(mailbox.sdkRows()).toHaveLength(0);
+      expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(0);
+    });
+  });
+
   describe('archived target', () => {
     test('dead-letters before any content row or session load', async () => {
       const { handler, sessionCalls } = makeHandler(undefined, () => true);
