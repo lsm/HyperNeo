@@ -164,16 +164,27 @@ export function setupSpaceTaskMessageHandlers(
         return { kind: 'unresolved', reason: 'activation_timeout' };
       }
       if (!taskAgentManager.ensureWorkflowNodeActivationForAgent) {
-        return { kind: 'unresolved', reason: 'activation_timeout' };
+        return { kind: 'unresolved', reason: 'activate_failed' };
       }
       const activated = await taskAgentManager.ensureWorkflowNodeActivationForAgent(
         target.taskId,
         target.agentName,
         target.workflowNodeId ? { workflowNodeId: target.workflowNodeId } : undefined
       );
-      return activated
-        ? { kind: 'unresolved', reason: 'activation_timeout' }
-        : { kind: 'unresolved', reason: 'activate_failed' };
+      if (!activated) return { kind: 'unresolved', reason: 'activate_failed' };
+      const refreshed = task?.workflowRunId
+        ? (nodeExecutionRepo?.listByWorkflowRun(task.workflowRunId) ?? [])
+            .filter(
+              (execution) =>
+                execution.agentName === target.agentName &&
+                (!target.workflowNodeId || execution.workflowNodeId === target.workflowNodeId)
+            )
+            .filter((execution) => execution.agentSessionId)
+            .at(-1)
+        : undefined;
+      return refreshed?.agentSessionId
+        ? { kind: 'resolved', sessionId: refreshed.agentSessionId, created: true }
+        : { kind: 'unresolved', reason: 'activation_timeout' };
     });
 
   async function resetChannelCyclesOnHumanTouch(
@@ -592,6 +603,7 @@ export function setupSpaceTaskMessageHandlers(
 
       const postApproval = taskAgentManager.getPostApprovalWorkerSession?.(params.taskId) ?? null;
 
+      const deliveries: Array<{ mention: string; agentName: string; sessionId: string }> = [];
       for (const mention of mentions) {
         if (postApproval && postApproval.agentName.toLowerCase() === mention.toLowerCase()) {
           let outcome = await resolveTargetSession({
@@ -610,14 +622,11 @@ export function setupSpaceTaskMessageHandlers(
               `Post-approval worker "${postApproval.agentName}" is not live and could not be restored (session ${postApproval.sessionId}). Retry once the worker is back online.`
             );
           }
-          await injectResolvedSession(
-            params.taskId,
-            outcome.sessionId,
-            postApproval.agentName,
-            params.message,
-            images,
-            params.deliveryMode
-          );
+          deliveries.push({
+            mention,
+            agentName: postApproval.agentName,
+            sessionId: outcome.sessionId,
+          });
           routedTo.push(mention);
           continue;
         }
@@ -637,17 +646,12 @@ export function setupSpaceTaskMessageHandlers(
             throw new Error(`@mention target is no longer live: ${mention}`);
           }
           if (resolved.length > 0) {
-            await Promise.all(
-              resolved.map((outcome) =>
-                injectResolvedSession(
-                  params.taskId,
-                  outcome.sessionId,
-                  mention,
-                  params.message,
-                  images,
-                  params.deliveryMode
-                )
-              )
+            deliveries.push(
+              ...resolved.map((outcome) => ({
+                mention,
+                agentName: mention,
+                sessionId: outcome.sessionId,
+              }))
             );
             routedTo.push(mention);
             continue;
@@ -655,6 +659,18 @@ export function setupSpaceTaskMessageHandlers(
         }
         notFound.push(mention);
       }
+      await Promise.all(
+        deliveries.map((delivery) =>
+          injectResolvedSession(
+            params.taskId,
+            delivery.sessionId,
+            delivery.agentName,
+            params.message,
+            images,
+            params.deliveryMode
+          )
+        )
+      );
 
       if (routedTo.length === 0) {
         const execNames = activeAgents.map((e) => e.agentName);
@@ -795,13 +811,16 @@ export function setupSpaceTaskMessageHandlers(
       pendingMessageQueue?.markFailed?.(queuedMessageId, outcome.reason);
     }
     if (outcome.kind === 'resolved') {
-      if (params.message && queuedMessageId === null) {
+      if (params.message) {
         await injectResolvedSession(
           params.taskId,
           outcome.sessionId,
           params.agentName,
           `[Message from human]: ${params.message}`
         );
+        if (queuedMessageId !== null) {
+          pendingMessageQueue?.markFailed?.(queuedMessageId, 'delivered directly');
+        }
         log.info(
           `space.task.activateNodeAgent: delivered message to session ${outcome.sessionId} ` +
             `(agent=${params.agentName}, task=${params.taskId})`
