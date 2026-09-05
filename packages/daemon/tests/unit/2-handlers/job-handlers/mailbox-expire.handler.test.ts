@@ -76,6 +76,18 @@ describe('createMailboxExpireHandler', () => {
     expect(pending[0].runAt).toBeLessThanOrEqual(after + 60_000);
     expect(result.nextRunAt).toBe(pending[0].runAt);
   });
+});
+
+describe('enqueueMailboxExpireIfMissing', () => {
+  let mailbox: MailboxTestDb;
+
+  beforeEach(() => {
+    mailbox = createMailboxTestDb();
+  });
+
+  afterEach(() => {
+    mailbox.close();
+  });
 
   test('re-seeds a missing sweep without duplicating a pending one', () => {
     enqueueMailboxExpireIfMissing(mailbox.jobQueue, 100);
