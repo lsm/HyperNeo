@@ -2697,7 +2697,8 @@ export class SpaceRuntime {
   private readonly postApprovalRetryQueue = new TaskScopedRetrySerializer();
 
   async retryPostApprovalDispatch(taskId: string): Promise<PostApprovalRouteResult> {
-    if (!this.getPostApprovalRouter()) {
+    const manager = this.config.taskAgentManager;
+    if (!manager || !this.getPostApprovalRouter()) {
       const reason = `PostApprovalRouter not wired yet (taskAgentManager missing); task=${taskId}`;
       log.warn(`retryPostApprovalDispatch: ${reason}`);
       return { mode: 'skipped', reason };
@@ -2708,6 +2709,7 @@ export class SpaceRuntime {
         taskRepo: this.config.taskRepo,
         workflowRunRepo: this.config.workflowRunRepo,
         spaceManager: this.config.spaceManager,
+        isSessionAlive: (sessionId) => manager.isSessionAlive(sessionId),
         dispatch: (id, approvalSource, dispatchOptions) =>
           this.dispatchPostApproval(
             id,
