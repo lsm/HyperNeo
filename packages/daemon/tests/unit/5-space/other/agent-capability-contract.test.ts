@@ -127,15 +127,24 @@ describe('effective runtime capability vs declared profile (worker presets)', ()
   });
 });
 
-describe('shared resolver across worker and long-horizon families', () => {
+describe('shared resolver via createCustomAgentInit', () => {
   function workerInit(tools: string[]) {
     return createCustomAgentInit({
       customAgent: {
         id: 'a1',
         spaceId: 's1',
-        name: 'A',
-        customPrompt: null,
-        tools,
+        handle: 'a1',
+        displayName: 'A',
+        templateKey: null,
+        status: 'active',
+        sessionId: null,
+        instructions: '',
+        autonomyLevel: null,
+        model: null,
+        thinkingLevel: null,
+        provider: null,
+        settingSources: null,
+        toolPermissions: tools.length > 0 ? { tools } : {},
         createdAt: 1,
         updatedAt: 1,
       },
@@ -170,7 +179,7 @@ describe('shared resolver across worker and long-horizon families', () => {
     });
   }
 
-  test('the worker production path (createCustomAgentInit) delegates to the shared resolver', () => {
+  test('the unified production path (createCustomAgentInit) delegates to the shared resolver', () => {
     const permissive = workerInit([]);
     expect(permissive.disallowedTools).toBeUndefined();
     expect(permissive.disallowedTools ?? []).toEqual(deriveWorkerDisallowedTools([]));
