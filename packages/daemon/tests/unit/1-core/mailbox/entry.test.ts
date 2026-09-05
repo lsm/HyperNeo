@@ -350,6 +350,19 @@ describe('createMailboxEntry', () => {
     }
   });
 
+  test('stamps an explicit messageUuid and otherwise leaves it absent', () => {
+    const seeded = createMailboxEntry({
+      to: sessionTo,
+      message: validMessage,
+      origin: 'test',
+      messageUuid: 'seed-message-1',
+    });
+    const unseeded = createMailboxEntry({ to: sessionTo, message: validMessage, origin: 'test' });
+
+    expect(seeded.messageUuid).toBe('seed-message-1');
+    expect(Object.hasOwn(unseeded, 'messageUuid')).toBe(false);
+  });
+
   test.each<[string, MailboxAddress]>([
     ['an agent address without extras', { kind: 'agent', spaceId: 'sp-1', handle: 'coder' }],
     [
@@ -560,6 +573,22 @@ describe('createMailboxEntry', () => {
     );
   });
 
+  test.each([
+    ['an empty string', ''],
+    ['a non-string', 42],
+  ])('throws TypeError with the verbatim messageUuid reason for %s', (_label, messageUuid) => {
+    const args = {
+      to: sessionTo,
+      message: validMessage,
+      origin: 'test',
+      messageUuid: messageUuid as string,
+    };
+    expect(() => createMailboxEntry(args)).toThrow(TypeError);
+    expect(() => createMailboxEntry(args)).toThrow(
+      new TypeError('messageUuid must be a non-empty string')
+    );
+  });
+
   describe('first violation wins', () => {
     const invalidTo = { kind: 'session', sessionId: '' } as MailboxAddress;
     const invalidMessage = { ...validMessage, type: 'assistant' } as MailboxMessage;
@@ -695,11 +724,34 @@ describe('parseMailboxEntry', () => {
     });
   });
 
+  describe('messageUuid', () => {
+    test('reads a stored messageUuid back verbatim', () => {
+      expect(
+        parseMailboxEntry({ ...sessionPayload, messageUuid: 'seed-message-1' })?.messageUuid
+      ).toBe('seed-message-1');
+    });
+
+    test.each([
+      ['an empty string', ''],
+      ['a non-string', 42],
+      ['null', null],
+      ['true', true],
+    ])('returns null for %s', (_label, messageUuid) => {
+      expect(parseMailboxEntry({ ...sessionPayload, messageUuid })).toBeNull();
+    });
+  });
+
   describe('legacy payload back-compat', () => {
     test('a payload created before deliveryMode existed parses with immediate', () => {
       expect(Object.hasOwn(sessionPayload, 'deliveryMode')).toBe(false);
       expect(parseMailboxEntry(sessionPayload)?.deliveryMode).toBe('immediate');
       expect(parseMailboxEntry(agentPayload)?.deliveryMode).toBe('immediate');
+    });
+
+    test('a payload created before messageUuid existed keeps the field absent', () => {
+      expect(Object.hasOwn(sessionPayload, 'messageUuid')).toBe(false);
+      expect(Object.hasOwn(parseMailboxEntry(sessionPayload) ?? {}, 'messageUuid')).toBe(false);
+      expect(Object.hasOwn(parseMailboxEntry(agentPayload) ?? {}, 'messageUuid')).toBe(false);
     });
   });
 
@@ -886,7 +938,7 @@ describe('parseMailboxEntry', () => {
   });
 });
 
-describe('mailbox entry deliveryMode round-trip law', () => {
+describe('mailbox entry optional field round-trip law', () => {
   const to: MailboxAddress = { kind: 'session', sessionId: 'sess-1' };
   const message: MailboxMessage = {
     type: 'user',
@@ -894,18 +946,23 @@ describe('mailbox entry deliveryMode round-trip law', () => {
     parent_tool_use_id: null,
   };
 
-  test.each<[string, MailboxDeliveryMode | undefined]>([
-    ['immediate', 'immediate'],
-    ['defer', 'defer'],
-    ['defaulted', undefined],
-  ])('a %s entry survives JSON serialization into parseMailboxEntry unchanged', (_label, mode) => {
+  test.each<[string, MailboxDeliveryMode | undefined, string | undefined]>([
+    ['immediate without seed', 'immediate', undefined],
+    ['defer without seed', 'defer', undefined],
+    ['defaulted without seed', undefined, undefined],
+    ['immediate with seed', 'immediate', 'seed-message-1'],
+    ['defer with seed', 'defer', 'seed-message-2'],
+    ['defaulted with seed', undefined, 'seed-message-3'],
+  ])('an %s entry survives JSON serialization into parseMailboxEntry unchanged', (_label, mode, messageUuid) => {
     const entry = createMailboxEntry({
       to,
       message,
       origin: 'test',
       ...(mode !== undefined ? { deliveryMode: mode } : {}),
+      ...(messageUuid !== undefined ? { messageUuid } : {}),
     });
     expect(entry.deliveryMode).toBe(mode ?? 'immediate');
+    expect(entry.messageUuid).toBe(messageUuid);
     expect(parseMailboxEntry(JSON.parse(JSON.stringify(entry)))).toEqual(entry);
   });
 });

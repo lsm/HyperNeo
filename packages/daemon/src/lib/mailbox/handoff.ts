@@ -47,7 +47,8 @@ export function createEntryStage(
   projectedMessage: MailboxMessage,
   origin: string,
   policy: Partial<MailboxEntryPolicy> | undefined,
-  deliveryMode: MailboxDeliveryMode | undefined
+  deliveryMode: MailboxDeliveryMode | undefined,
+  messageUuid?: string
 ): { entry: MailboxEntry | undefined; outcome: MailboxHandoffOutcome | undefined } {
   try {
     return {
@@ -57,6 +58,7 @@ export function createEntryStage(
         origin,
         policy,
         deliveryMode,
+        messageUuid,
       }),
       outcome: undefined,
     };
@@ -85,14 +87,14 @@ const runMailboxHandoff = (
     rejected,
   })('mailbox-handoff') as PipelineAPI
 )
-  .input(['to', 'message', 'origin', 'policy', 'deliveryMode', 'jobQueue'])
+  .input(['to', 'message', 'origin', 'policy', 'deliveryMode', 'messageUuid', 'jobQueue'])
   .pipe(parseAddressStage, 'to', ['address', 'outcome'])
   .pipe('!rejected', 'outcome')
   .pipe(projectMessageStage, 'message', ['projectedMessage', 'outcome'])
   .pipe('!rejected', 'outcome')
   .pipe(
     createEntryStage,
-    ['address', 'projectedMessage', 'origin', 'policy', 'deliveryMode'],
+    ['address', 'projectedMessage', 'origin', 'policy', 'deliveryMode', 'messageUuid'],
     ['entry', 'outcome']
   )
   .pipe('!rejected', 'outcome')
@@ -106,6 +108,7 @@ export function handoffPromptToMailbox(args: {
   origin: string;
   policy?: Partial<MailboxEntryPolicy>;
   deliveryMode?: MailboxDeliveryMode;
+  messageUuid?: string;
   jobQueue: JobQueueRepository;
 }): Promise<MailboxHandoffOutcome> {
   return runMailboxHandoff(
@@ -114,6 +117,7 @@ export function handoffPromptToMailbox(args: {
     args.origin,
     args.policy,
     args.deliveryMode,
+    args.messageUuid,
     args.jobQueue
   ).catch(crashHandler);
 }

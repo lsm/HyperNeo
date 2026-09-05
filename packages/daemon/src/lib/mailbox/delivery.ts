@@ -1,12 +1,12 @@
+import { createHash } from 'node:crypto';
 import type { MessageOrigin } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import { createHash } from 'node:crypto';
-import { ensurePrompt, type PromptHold } from '../agent/message-delivery-outbox.ts';
-import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
 import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
+import { ensurePrompt, type PromptHold } from '../agent/message-delivery-outbox.ts';
 import { parseMailboxEntry } from './entry.ts';
 
 export type MailboxDeliveryOutcome =
@@ -71,7 +71,9 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
     const synthetic = entry.origin !== 'chat';
     const message: SDKUserMessage = {
       ...entry.message,
-      uuid: deterministicUuid(entry.id),
+      uuid: (entry.messageUuid ?? deterministicUuid(entry.id)) as NonNullable<
+        SDKUserMessage['uuid']
+      >,
       session_id: target,
       ...(synthetic ? { isSynthetic: true } : {}),
     };
