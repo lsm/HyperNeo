@@ -7,6 +7,7 @@ import type {
   WorkflowNode,
 } from '@hyperneo/shared';
 import { isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
+import { migratedAgentTemplateKey } from '../agents/agent-template-synthesis.ts';
 
 export type ExecutionWorkflowValidationResult =
   | { valid: true }
@@ -171,11 +172,22 @@ export function validateExecutionAgainstWorkflow(
     };
   }
   if (execution.agentId && resolvedAgentId !== execution.agentId) {
-    return {
-      valid: false,
-      reason: `Agent slot ${execution.agentName} on workflow node ${execution.workflowNodeId} now references agent ${resolvedAgentId} instead of ${execution.agentId}`,
-      permanent: true,
-    };
+    const slotTemplateKey = slot?.templateKey?.trim() ?? '';
+    const legacyKey = migratedAgentTemplateKey(execution.agentId);
+    const legacySuffix = slotTemplateKey.startsWith(`${legacyKey}.`)
+      ? slotTemplateKey.slice(legacyKey.length + 1)
+      : null;
+    const legacyIdentityMatches =
+      slotTemplateKey === legacyKey ||
+      legacySuffix === 'm228' ||
+      (legacySuffix !== null && /^m228-\d+$/.test(legacySuffix));
+    if (!legacyIdentityMatches) {
+      return {
+        valid: false,
+        reason: `Agent slot ${execution.agentName} on workflow node ${execution.workflowNodeId} now references agent ${resolvedAgentId} instead of ${execution.agentId}`,
+        permanent: true,
+      };
+    }
   }
 
   return { valid: true };
