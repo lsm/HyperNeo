@@ -1,17 +1,17 @@
-import { z } from 'zod';
-import { validateGlobPattern } from '../external-events/topic-validator.ts';
-import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 import type {
-  SpaceWorkerAgent,
-  SpaceWorkflow,
+  ExportedHandoffTransition,
   ExportedSpaceWorkerAgent,
   ExportedSpaceWorkflow,
   ExportedWorkflowChannel,
   ExportedWorkflowNode,
   ExportedWorkflowNodeAgent,
-  ExportedHandoffTransition,
   SpaceExportBundle,
+  SpaceWorkerAgent,
+  SpaceWorkflow,
 } from '@hyperneo/shared';
+import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
+import { z } from 'zod';
+import { validateGlobPattern } from '../external-events/topic-validator.ts';
 import { validateSlug } from './slug.ts';
 
 const _workflowConditionSchema = z
@@ -338,6 +338,9 @@ export function exportWorkflow(
       };
       if (a.templateKey?.trim()) {
         entry.templateKey = a.templateKey.trim();
+        if (a.agentId?.trim()) {
+          entry.agentRef = agentIdToName.get(a.agentId) ?? a.agentId;
+        }
       } else {
         entry.agentRef = agentIdToName.get(a.agentId) ?? a.agentId;
       }

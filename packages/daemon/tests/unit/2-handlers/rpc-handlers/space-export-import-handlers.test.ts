@@ -640,6 +640,7 @@ describe('Space Export/Import RPC Handlers', () => {
         type: 'bundle',
         name: 'Templates',
         agents: [],
+        exportedAt: 1000,
         workflows: [
           {
             version: 5,
@@ -677,6 +678,124 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(
         rejected.validationErrors.some((e) => e.includes('unknown template "nope.template"'))
       ).toBe(true);
+    });
+
+    it('accepts an unknown template key when the exported agentRef resolves', async () => {
+      seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+
+      const fallbackBundle = {
+        version: 1,
+        type: 'bundle',
+        name: 'Templates',
+        agents: [],
+        exportedAt: 1000,
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Pipe',
+            nodes: [
+              {
+                name: 'N',
+                agents: [
+                  { name: 'c', templateKey: 'migrated.coder', agentRef: 'Coder' },
+                  { name: 'd', templateKey: 'nope.template', agentRef: 'Nobody' },
+                ],
+              },
+            ],
+            startNode: 'N',
+            tags: [],
+          },
+        ],
+      };
+      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle: fallbackBundle,
+      });
+
+      const errors = preview.validationErrors.filter((e) => e.includes('unknown template'));
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('nope.template');
+      expect(errors[0]).not.toContain('migrated.coder');
+    });
+
+    it('binds the agent fallback when importing a workflow with an unknown migrated template key', async () => {
+      const coder = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+
+      const bundle = {
+        version: 1,
+        type: 'bundle',
+        name: 'Templates',
+        agents: [],
+        exportedAt: 1000,
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Pipe',
+            nodes: [
+              {
+                name: 'N',
+                agents: [{ name: 'c', templateKey: 'migrated.coder', agentRef: 'Coder' }],
+              },
+            ],
+            startNode: 'N',
+            tags: [],
+          },
+        ],
+      };
+
+      const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+      expect(result.workflows[0].action).toBe('created');
+
+      const created = workflowRepo.listWorkflows(SPACE_ID).find((w) => w.name === 'Pipe');
+      expect(created).toBeDefined();
+      expect(created?.nodes[0].agents[0].agentId).toBe(coder.id);
+      expect(created?.nodes[0].agents[0].templateKey).toBeUndefined();
+    });
+
+    it('keeps the template binding plus agent fallback when importing a known template key', async () => {
+      new SpaceAgentTemplateRepository(db as any).create({
+        key: 'migrated.coder',
+        handle: 'coder',
+        displayName: 'Coder',
+      });
+      const coder = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+
+      const bundle = {
+        version: 1,
+        type: 'bundle',
+        name: 'Templates',
+        agents: [],
+        exportedAt: 1000,
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Pipe',
+            nodes: [
+              {
+                name: 'N',
+                agents: [{ name: 'c', templateKey: 'migrated.coder', agentRef: 'Coder' }],
+              },
+            ],
+            startNode: 'N',
+            tags: [],
+          },
+        ],
+      };
+
+      await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+
+      const created = workflowRepo.listWorkflows(SPACE_ID).find((w) => w.name === 'Pipe');
+      expect(created?.nodes[0].agents[0].templateKey).toBe('migrated.coder');
+      expect(created?.nodes[0].agents[0].agentId).toBe(coder.id);
     });
 
     it('treats orphaned migration mirrors as missing in imports', async () => {

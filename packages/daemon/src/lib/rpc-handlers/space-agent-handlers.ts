@@ -39,7 +39,7 @@ import {
   validateAgentModelPool,
   validateSpaceAgentTools,
 } from '../space/managers/space-agent-manager.ts';
-import { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
+import type { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
 import { SpaceAgentTemplateReapplyService } from '../space/managers/space-agent-template-reapply-service.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
@@ -65,6 +65,7 @@ interface UnifiedSpaceAgentMethodDeps {
   spaceAgentManager?: SpaceAgentManager;
   runtimeService?: UnifiedSpaceAgentRuntimeService;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
+  db?: Database;
 }
 
 interface UnifiedAgentCreateInput {
@@ -831,6 +832,33 @@ const runUpdateUnifiedSpaceAgent = (superpipe({})('update-unified-space-agent') 
   .pipe(updatePublishStage, 'ctx', 'ctx')
   .endAsync('ctx') as (ctx: UpdateUnifiedAgentCtx) => Promise<UpdateUnifiedAgentCtx>;
 
+function countWorkflowNodesReferencingTemplate(
+  db: ReturnType<Database['getDatabase']>,
+  key: string
+): number {
+  const rows = db.prepare(`SELECT config FROM space_workflow_nodes`).all() as Array<{
+    config: string | null;
+  }>;
+  let count = 0;
+  for (const row of rows) {
+    let slots: unknown = null;
+    try {
+      slots = row.config ? (JSON.parse(row.config) as { agents?: unknown }).agents : null;
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(slots)) continue;
+    for (const slot of slots) {
+      const templateKey =
+        slot && typeof slot === 'object'
+          ? (slot as { templateKey?: unknown }).templateKey
+          : undefined;
+      if (typeof templateKey === 'string' && templateKey.trim() === key) count += 1;
+    }
+  }
+  return count;
+}
+
 export function registerUnifiedSpaceAgentMethods(
   messageHub: MessageHub,
   deps: UnifiedSpaceAgentMethodDeps
@@ -873,6 +901,15 @@ export function registerUnifiedSpaceAgentMethods(
     messageHub.onRequest(method('deleteTemplate'), async (data) => {
       const params = data as { key: string };
       if (!params.key) throw new Error('key is required');
+      const referencingNodes = deps.db
+        ? countWorkflowNodesReferencingTemplate(deps.db.getDatabase(), params.key)
+        : 0;
+      if (referencingNodes > 0) {
+        throw new Error(
+          `Template "${params.key}" is referenced by ${referencingNodes} workflow node slot(s); ` +
+            'remove those references before deleting the template'
+        );
+      }
       const result = templateManager.delete(params.key);
       if (!result.ok) throw new Error(result.error);
       return { success: true };
@@ -1128,6 +1165,7 @@ export function setupSpaceAgentHandlers(
     spaceAgentManager,
     runtimeService,
     internalEventBus,
+    db,
   };
   const createUnifiedAgent = buildUnifiedAgentCreate(deps);
 

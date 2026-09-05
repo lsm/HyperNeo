@@ -43,6 +43,8 @@ function insertAgent(
     modelPool?: string | null;
     description?: string | null;
     autonomyLevel?: number | null;
+    status?: string;
+    templateKey?: string | null;
   }
 ): void {
   db.prepare(
@@ -50,12 +52,14 @@ function insertAgent(
        id, space_id, handle, display_name, template_key, status, session_id,
        instructions, autonomy_level, model, thinking_level, provider, setting_sources,
        tool_permissions_json, description, model_pool, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, NULL, 'active', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1000, 1000)`
+     ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1000, 1000)`
   ).run(
     row.id,
     row.spaceId,
     row.handle,
     row.displayName,
+    row.templateKey ?? null,
+    row.status ?? 'active',
     row.instructions ?? '',
     row.autonomyLevel ?? null,
     row.model ?? null,
@@ -197,6 +201,59 @@ describe('migration 228: workflow agent refs to template keys', () => {
     db.close();
   });
 
+  test('leaves slots bound to non-runnable agents on the agentId binding', () => {
+    const db = makeDb();
+    insertSpace(db, 'space-1');
+    insertAgent(db, {
+      id: 'agent-paused',
+      spaceId: 'space-1',
+      handle: 'sleeper',
+      displayName: 'Sleeper',
+      instructions: 'Rest',
+      status: 'paused',
+    });
+    insertWorkflowWithNode(db, 'space-1', 'node-1', {
+      agents: [{ agentId: 'agent-paused', name: 'sleeper' }],
+    });
+    insertWorkflowRun(db, 'run-1', 'space-1', 'wf-node-1');
+    insertNodeExecution(db, 'node-1', 'sleeper', 'agent-paused');
+
+    runMigration228(db);
+
+    const repo = new SpaceAgentTemplateRepository(db);
+    expect(repo.list().filter((t) => t.key.startsWith('migrated.'))).toEqual([]);
+    const slots = nodeConfig(db, 'node-1').agents as Array<Record<string, unknown>>;
+    expect(slots[0].templateKey).toBeUndefined();
+    expect(slots[0].agentId).toBe('agent-paused');
+    expect(nodeExecutionAgentId(db, 'node-1', 'sleeper')).toBe('agent-paused');
+    db.close();
+  });
+
+  test('still migrates paused migrated-worker mirrors', () => {
+    const db = makeDb();
+    insertSpace(db, 'space-1');
+    insertAgent(db, {
+      id: 'agent-worker',
+      spaceId: 'space-1',
+      handle: 'worker',
+      displayName: 'Worker',
+      instructions: 'Labor',
+      status: 'paused',
+      templateKey: 'migration.legacy_space_agent',
+    });
+    insertWorkflowWithNode(db, 'space-1', 'node-1', {
+      agents: [{ agentId: 'agent-worker', name: 'worker' }],
+    });
+
+    runMigration228(db);
+
+    const repo = new SpaceAgentTemplateRepository(db);
+    expect(repo.getByKey('migrated.worker')).not.toBeNull();
+    const slots = nodeConfig(db, 'node-1').agents as Array<Record<string, unknown>>;
+    expect(slots[0].templateKey).toBe('migrated.worker');
+    db.close();
+  });
+
   test('reuses one template per agent across nodes and disambiguates handle collisions', () => {
     const db = makeDb();
     insertSpace(db, 'space-1');
@@ -282,7 +339,7 @@ describe('migration 228: workflow agent refs to template keys', () => {
     });
     insertWorkflowRun(db, 'run-1', 'space-1', 'wf-node-1');
     insertNodeExecution(db, 'node-1', 'coder', 'agent-coder');
-    insertNodeExecution(db, 'node-1', 'ghost', 'agent-gone');
+    insertNodeExecution(db, 'node-1', 'ghost', null);
     insertNodeExecution(db, 'node-1', 'stranger', 'agent-other');
 
     runMigration228(db);

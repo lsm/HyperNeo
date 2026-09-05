@@ -33,12 +33,12 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
-import { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type {
   PendingAgentMessageRecord,
   PendingAgentMessageRepository,
 } from '../../../storage/repositories/pending-agent-message-repository.ts';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
+import { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
@@ -49,7 +49,6 @@ import { validateImageSizes } from '../../session/message-persistence.ts';
 import { CleanupState, type SessionManager } from '../../session-manager.ts';
 import type { SkillsManager } from '../../skills-manager.ts';
 import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
-import type { NodeAgentTemplateSource } from './spawn-slot-resolution.ts';
 import {
   isRunnableUnifiedAgent,
   longHorizonAgentToWorkerView,
@@ -60,8 +59,8 @@ import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
 import {
-  WorkspaceNotGitRepositoryError,
   type SpaceWorktreeManager,
+  WorkspaceNotGitRepositoryError,
 } from '../managers/space-worktree-manager.ts';
 import {
   activateModelPoolReservation,
@@ -72,6 +71,7 @@ import {
   reserveModelPoolSlot,
 } from './model-pool-scheduler.ts';
 import type { SpaceRuntimeService } from './space-runtime-service.ts';
+import type { NodeAgentTemplateSource } from './spawn-slot-resolution.ts';
 export interface SubSessionMemberInfo {
   agentId?: string;
   agentName?: string;
@@ -3715,10 +3715,9 @@ export class TaskAgentManager {
   }
 
   private lookupSlotTemplateSource(key: string): NodeAgentTemplateSource | null {
-    const builtIn = getLongHorizonAgentTemplate(key) as NodeAgentTemplateSource | undefined;
-    if (builtIn) return builtIn;
     const stored = this.agentTemplateRepo.getByKey(key);
-    return stored ? storedTemplateToNodeAgentSource(stored) : null;
+    if (stored) return storedTemplateToNodeAgentSource(stored);
+    return (getLongHorizonAgentTemplate(key) as NodeAgentTemplateSource | undefined) ?? null;
   }
 
   private slotAgentExists(spaceId: string, agentId: string): boolean {

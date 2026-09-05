@@ -5,7 +5,7 @@ import {
   MIGRATED_WORKFLOW_TEMPLATE_PREFIX,
   synthesizeOrphanWorkflowAgentTemplate,
   synthesizeWorkflowAgentTemplate,
-} from '../../../../../src/lib/space/agents/workflow-agent-template-synthesis.ts';
+} from '../../../../src/lib/space/agents/workflow-agent-template-synthesis.ts';
 
 describe('allocateMigratedTemplateKey', () => {
   test('derives the key from the slugified seed under the migrated prefix', () => {

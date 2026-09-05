@@ -1,5 +1,6 @@
 import type { SettingSource, ThinkingLevel, WorkerAgentModelPoolEntry } from '@hyperneo/shared';
 import { getLongHorizonAgentTemplates } from '../../lib/space/agents/long-horizon-agent-templates.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
 import {
   allocateMigratedTemplateKey,
   synthesizeOrphanWorkflowAgentTemplate,
@@ -13,6 +14,8 @@ interface AgentRow {
   id: string;
   handle: string | null;
   display_name: string | null;
+  template_key: string | null;
+  status: string | null;
   instructions: string | null;
   autonomy_level: number | null;
   model: string | null;
@@ -49,9 +52,9 @@ export function runMigration228(db: BunDatabase): void {
     (
       db
         .prepare(
-          `SELECT id, handle, display_name, instructions, autonomy_level, model,
-                thinking_level, provider, setting_sources, tool_permissions_json,
-                model_pool, description
+          `SELECT id, handle, display_name, template_key, status, instructions,
+                autonomy_level, model, thinking_level, provider, setting_sources,
+                tool_permissions_json, model_pool, description
            FROM space_long_horizon_agents`
         )
         .all() as AgentRow[]
@@ -85,6 +88,7 @@ export function runMigration228(db: BunDatabase): void {
       if (typeof slot.templateKey === 'string' && slot.templateKey.trim()) continue;
 
       const agentRow = agentsById.get(agentId);
+      if (agentRow && !isRunnableAgentRow(agentRow)) continue;
       const seed = agentRow
         ? agentRow.handle || agentRow.display_name || agentRow.id
         : slot.name || agentId;
@@ -119,6 +123,11 @@ export function runMigration228(db: BunDatabase): void {
       updateNode.run(JSON.stringify(config), Date.now(), nodeRow.id);
     }
   }
+}
+
+function isRunnableAgentRow(row: AgentRow): boolean {
+  if (row.template_key === MIGRATED_WORKER_TEMPLATE_KEY) return true;
+  return row.status === 'active';
 }
 
 function rowToSynthesisSource(row: AgentRow): WorkflowAgentTemplateSynthesisSource {

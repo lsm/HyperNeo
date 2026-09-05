@@ -402,6 +402,37 @@ describe('Space Agent RPC Handlers', () => {
         call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'missing.custom' })
       ).rejects.toThrow('Template not found: missing.custom');
     });
+
+    it('refuses to delete a template referenced by a workflow node slot', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'referenced.custom',
+        handle: 'referenced',
+      });
+      insertWorkflow(db, 'wf-tpl', 'space-1', 'Template Workflow');
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at)
+         VALUES ('node-tpl', 'wf-tpl', 'Node node-tpl', ?, ?, ?)`
+      ).run(
+        JSON.stringify({
+          agents: [{ agentId: '', templateKey: 'referenced.custom', name: 'coder' }],
+        }),
+        now,
+        now
+      );
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'referenced.custom' })
+      ).rejects.toThrow('referenced by 1 workflow node slot(s)');
+
+      db.prepare(`DELETE FROM space_workflow_nodes WHERE id = 'node-tpl'`).run();
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'referenced.custom' }
+      );
+      expect(result.success).toBe(true);
+    });
   });
 
   describe('spaceAgent.promotion', () => {

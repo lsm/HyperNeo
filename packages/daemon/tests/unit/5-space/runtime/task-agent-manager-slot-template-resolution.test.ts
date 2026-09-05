@@ -89,7 +89,7 @@ describe('TaskAgentManager slot spawn resolution (stored templates + agentId fal
     db.close();
   });
 
-  test('resolves a built-in template key and prefers it over a stored key of the same name', () => {
+  test('lets a stored template shadow a built-in key of the same name', () => {
     const db = makeTemplateDb();
     new SpaceAgentTemplateRepository(db).create({
       key: 'research.default',
@@ -107,7 +107,8 @@ describe('TaskAgentManager slot spawn resolution (stored templates + agentId fal
 
     expect(config?.source).toBe('template');
     expect(config?.agent.id).toBe('template:research.default');
-    expect(config?.agent.handle).not.toBe('research-shadow');
+    expect(config?.agent.handle).toBe('research-shadow');
+    expect(config?.agent.customPrompt).toBe('Stored shadow');
     db.close();
   });
 

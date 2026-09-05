@@ -188,6 +188,45 @@ describe('SpaceWorkflowManager', () => {
 
       expect(result.nodes[0].agents[0].templateKey).toBe('migrated.coder');
     });
+
+    it('keeps a resolvable agentId fallback on a template slot and drops a stale one', () => {
+      const agentLookup = {
+        getAgentById: (_spaceId: string, id: string) =>
+          id === 'agent-1' ? { id: 'agent-1', name: 'Coder' } : null,
+      };
+      const manager = new SpaceWorkflowManager(repo, agentLookup, {
+        hasTemplate: (key: string) => key === 'migrated.coder',
+      });
+
+      const kept = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Kept Fallback Workflow',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Step One',
+            agents: [{ agentId: 'agent-1', templateKey: 'migrated.coder', name: 'coder' }],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      });
+      expect(kept.nodes[0].agents[0].agentId).toBe('agent-1');
+      expect(kept.nodes[0].agents[0].templateKey).toBe('migrated.coder');
+
+      const dropped = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Stale Fallback Workflow',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Step One',
+            agents: [{ agentId: 'agent-gone', templateKey: 'migrated.coder', name: 'coder' }],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      });
+      expect(dropped.nodes[0].agents[0].agentId).toBe('');
+    });
   });
 
   describe('static external event interest validation', () => {
