@@ -390,15 +390,14 @@ export function setupSpaceTaskMessageHandlers(
       normalizedName !== undefined &&
       postApproval?.agentName.toLowerCase() === normalizedName &&
       (!target.workflowNodeId || postApproval.nodeId === target.workflowNodeId);
-    const workerTargets = [
-      ...matchingExecutions.map((execution) => ({
-        agentName: execution.agentName,
-        workflowNodeId: execution.workflowNodeId,
-      })),
-      ...(matchesPostApproval
+    const workerTargets = (
+      matchesPostApproval
         ? [{ agentName: postApproval.agentName, workflowNodeId: postApproval.nodeId ?? undefined }]
-        : []),
-    ].filter(
+        : matchingExecutions.map((execution) => ({
+            agentName: execution.agentName,
+            workflowNodeId: execution.workflowNodeId,
+          }))
+    ).filter(
       (worker, index, all) =>
         all.findIndex(
           (candidate) =>
@@ -764,15 +763,8 @@ export function setupSpaceTaskMessageHandlers(
       }
     }
 
-    const liveSession = taskAgentManager.getSubSessionByAgentName
-      ? await taskAgentManager.getSubSessionByAgentName(
-          params.taskId,
-          params.agentName,
-          params.workflowNodeId
-        )
-      : null;
     let queuedMessageId: string | null = null;
-    if (!liveSession && params.message && pendingMessageQueue) {
+    if (params.message && pendingMessageQueue) {
       const { record } = pendingMessageQueue.enqueue({
         workflowRunId,
         spaceId: params.spaceId,
@@ -790,9 +782,14 @@ export function setupSpaceTaskMessageHandlers(
     }
 
     const outcome = await ensureWorker(params.taskId, params.agentName, params.workflowNodeId);
+    const queueableReasons = new Set([
+      'activation_timeout',
+      'post_approval_pending',
+      'restore_timeout',
+    ]);
     if (
       outcome.kind === 'unresolved' &&
-      outcome.reason !== 'activation_timeout' &&
+      !queueableReasons.has(outcome.reason) &&
       queuedMessageId !== null
     ) {
       pendingMessageQueue?.markFailed?.(queuedMessageId, outcome.reason);
@@ -818,12 +815,11 @@ export function setupSpaceTaskMessageHandlers(
         agentName: params.agentName,
         sessionId: outcome.sessionId,
         activated: outcome.created,
-        queued: queuedMessageId !== null,
-        ...(queuedMessageId !== null ? { queuedMessageId } : {}),
+        queued: false,
       };
     }
 
-    if (outcome.reason !== 'activation_timeout') {
+    if (!queueableReasons.has(outcome.reason)) {
       throw new Error(
         `Could not activate "${params.agentName}"` +
           (params.workflowNodeId ? ` on node ${params.workflowNodeId}` : '') +
