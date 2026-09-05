@@ -7760,7 +7760,8 @@ export class SpaceRuntime {
       (execution) =>
         (execution.status === 'blocked' ||
           execution.status === 'in_progress' ||
-          execution.status === 'pending') &&
+          execution.status === 'pending' ||
+          execution.status === 'waiting_rebind') &&
         !!execution.agentSessionId &&
         (this.config.taskAgentManager?.isSessionInMemory(execution.agentSessionId) ?? false) &&
         !this.isFailedSessionBinding(execution.agentSessionId)
@@ -7824,6 +7825,12 @@ export class SpaceRuntime {
           `SpaceRuntime: skipping task recovery promotion for task ${canonicalTask.id} in run ${runId}; ` +
             `task status moved concurrently — keeping the concurrent status`
         );
+        await this.revertRepairedRunToBlocked(
+          runId,
+          meta.spaceId,
+          blockedExecutions,
+          blockedReason
+        );
         return;
       }
 
@@ -7832,6 +7839,12 @@ export class SpaceRuntime {
         log.info(
           `SpaceRuntime: skipping task_retry notification for task ${canonicalTask.id} in run ${runId}; ` +
             `task status moved concurrently during recovery — keeping the concurrent status`
+        );
+        await this.revertRepairedRunToBlocked(
+          runId,
+          meta.spaceId,
+          blockedExecutions,
+          blockedReason
         );
         return;
       }
@@ -7867,6 +7880,26 @@ export class SpaceRuntime {
           `emitted workflow_run_needs_attention`
       );
     }
+  }
+
+  private async revertRepairedRunToBlocked(
+    runId: string,
+    spaceId: string,
+    repairedExecutions: readonly NodeExecution[],
+    blockedReason: string
+  ): Promise<void> {
+    if (this.config.workflowRunRepo.casRunStatus(runId, ['in_progress'], 'blocked') !== 'won') {
+      return;
+    }
+    for (const execution of repairedExecutions) {
+      this.config.nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: blockedReason,
+        startedAt: null,
+        completedAt: null,
+      });
+    }
+    await this.safeOnWorkflowRunUpdated(spaceId, this.config.workflowRunRepo.getRun(runId)!);
   }
 
   private isFailedSessionBinding(sessionId: string): boolean {
