@@ -287,7 +287,7 @@ function AgentEditor({
       : { tools: [], toolsOverridden: false }
   );
   const [settingSources, setSettingSources] = useState<SettingSource[] | null>(
-    agent?.settingSources ?? null
+    agent?.settingSources ?? template?.settingSources ?? null
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

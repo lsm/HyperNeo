@@ -949,6 +949,20 @@ describe('SpaceLongHorizonAgents', () => {
     expect(getByDisplayValue('Test the product.')).toBeTruthy();
   });
 
+  it('prefills setting sources from a template card click', async () => {
+    mockTemplates.value = [makeTemplate({ settingSources: ['user'] })];
+    const { getByText, getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
+    expect(settingSourceCheckbox('user').checked).toBe(true);
+    expect(settingSourceCheckbox('project').checked).toBe(false);
+    expect(settingSourceCheckbox('local').checked).toBe(false);
+
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    expect(mockCreateAgent.mock.calls[0][0].settingSources).toEqual(['user']);
+  });
+
   it('derives a unique handle when the template handle is already taken', () => {
     mockAgents.value = [makeLongHorizonAgent({ handle: 'qa' })];
     mockTemplates.value = [makeTemplate()];
