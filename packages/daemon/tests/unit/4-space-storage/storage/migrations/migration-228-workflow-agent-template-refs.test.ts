@@ -72,6 +72,13 @@ function insertAgent(
   );
 }
 
+function insertWorker(db: BunDatabase, id: string, spaceId: string): void {
+  db.prepare(
+    `INSERT INTO space_agents (id, space_id, name, handle, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'active', 1000, 1000)`
+  ).run(id, spaceId, id, id);
+}
+
 function insertWorkflowWithNode(
   db: BunDatabase,
   spaceId: string,
@@ -241,6 +248,7 @@ describe('migration 228: workflow agent refs to template keys', () => {
       status: 'paused',
       templateKey: 'migration.legacy_space_agent',
     });
+    insertWorker(db, 'agent-worker', 'space-1');
     insertWorkflowWithNode(db, 'space-1', 'node-1', {
       agents: [{ agentId: 'agent-worker', name: 'worker' }],
     });
@@ -251,6 +259,32 @@ describe('migration 228: workflow agent refs to template keys', () => {
     expect(repo.getByKey('migrated.worker')).not.toBeNull();
     const slots = nodeConfig(db, 'node-1').agents as Array<Record<string, unknown>>;
     expect(slots[0].templateKey).toBe('migrated.worker');
+    db.close();
+  });
+
+  test('leaves orphaned migrated-worker mirrors on the agentId binding', () => {
+    const db = makeDb();
+    insertSpace(db, 'space-1');
+    insertAgent(db, {
+      id: 'agent-orphan-mirror',
+      spaceId: 'space-1',
+      handle: 'ghost-worker',
+      displayName: 'Ghost Worker',
+      instructions: 'Haunted',
+      status: 'active',
+      templateKey: 'migration.legacy_space_agent',
+    });
+    insertWorkflowWithNode(db, 'space-1', 'node-1', {
+      agents: [{ agentId: 'agent-orphan-mirror', name: 'ghost' }],
+    });
+
+    runMigration228(db);
+
+    const repo = new SpaceAgentTemplateRepository(db);
+    expect(repo.list().filter((t) => t.key.startsWith('migrated.'))).toEqual([]);
+    const slots = nodeConfig(db, 'node-1').agents as Array<Record<string, unknown>>;
+    expect(slots[0].templateKey).toBeUndefined();
+    expect(slots[0].agentId).toBe('agent-orphan-mirror');
     db.close();
   });
 

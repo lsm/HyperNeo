@@ -1697,7 +1697,12 @@ describe('Space Agent RPC Handlers', () => {
       expect(result.success).toBe(true);
     });
 
-    it('allows deletion when the agent is only the fallback of a template-bound slot', async () => {
+    it('allows deletion when the agent is only the fallback of a resolvable template slot', async () => {
+      new SpaceAgentTemplateRepository(db as any).create({
+        key: 'migrated.worker',
+        handle: 'worker',
+        displayName: 'Worker',
+      });
       insertWorkflow(db, 'wf-4', 'space-1', 'Migrated Workflow');
       const now = Date.now();
       db.prepare(
@@ -1715,6 +1720,25 @@ describe('Space Agent RPC Handlers', () => {
         id: agentId,
       });
       expect(result.success).toBe(true);
+    });
+
+    it('blocks deletion when the template fallback key does not resolve', async () => {
+      insertWorkflow(db, 'wf-5', 'space-1', 'Broken Template Workflow');
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at)
+         VALUES ('node-5', 'wf-5', 'Node node-5', ?, ?, ?)`
+      ).run(
+        JSON.stringify({
+          agents: [{ agentId, templateKey: 'deleted.template', name: 'worker' }],
+        }),
+        now,
+        now
+      );
+
+      await expect(call(hubData.handlers, 'spaceAgent.delete', { id: agentId })).rejects.toThrow(
+        /Cannot delete agent.*referenced by workflow nodes/
+      );
     });
 
     it('blocks deletion while an executable run is pinned to an agent-bound definition', async () => {

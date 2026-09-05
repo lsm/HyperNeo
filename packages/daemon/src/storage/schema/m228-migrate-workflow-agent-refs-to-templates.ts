@@ -12,6 +12,7 @@ import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 interface AgentRow {
   id: string;
+  space_id: string;
   handle: string | null;
   display_name: string | null;
   template_key: string | null;
@@ -52,7 +53,7 @@ export function runMigration228(db: BunDatabase): void {
     (
       db
         .prepare(
-          `SELECT id, handle, display_name, template_key, status, instructions,
+          `SELECT id, space_id, handle, display_name, template_key, status, instructions,
                 autonomy_level, model, thinking_level, provider, setting_sources,
                 tool_permissions_json, model_pool, description
            FROM space_long_horizon_agents`
@@ -61,6 +62,16 @@ export function runMigration228(db: BunDatabase): void {
     ).map((row) => [row.id, row])
   );
   const templateKeysByAgentId = new Map<string, string>();
+  const workerSpaceById = new Map<string, string>(
+    tableExists(db, 'space_agents')
+      ? (
+          db.prepare(`SELECT id, space_id FROM space_agents`).all() as Array<{
+            id: string;
+            space_id: string;
+          }>
+        ).map((row) => [row.id, row.space_id])
+      : []
+  );
 
   const updateNode = db.prepare(
     `UPDATE space_workflow_nodes SET config = ?, updated_at = ? WHERE id = ?`
@@ -90,7 +101,7 @@ export function runMigration228(db: BunDatabase): void {
         if (typeof slot.templateKey === 'string' && slot.templateKey.trim()) continue;
 
         const agentRow = agentsById.get(agentId);
-        if (agentRow && !isRunnableAgentRow(agentRow)) continue;
+        if (agentRow && !isRunnableAgentRow(agentRow, workerSpaceById)) continue;
         const slotName = typeof slot.name === 'string' && slot.name.trim() ? slot.name : agentId;
         const seed = agentRow ? agentRow.handle || agentRow.display_name || agentRow.id : slotName;
         let key = templateKeysByAgentId.get(agentId);
@@ -124,8 +135,10 @@ export function runMigration228(db: BunDatabase): void {
   }
 }
 
-function isRunnableAgentRow(row: AgentRow): boolean {
-  if (row.template_key === MIGRATED_WORKER_TEMPLATE_KEY) return true;
+function isRunnableAgentRow(row: AgentRow, workerSpaceById: ReadonlyMap<string, string>): boolean {
+  if (row.template_key === MIGRATED_WORKER_TEMPLATE_KEY) {
+    return workerSpaceById.get(row.id) === row.space_id;
+  }
   return row.status === 'active';
 }
 
