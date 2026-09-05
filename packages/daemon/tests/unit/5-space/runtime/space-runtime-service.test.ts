@@ -18,7 +18,6 @@ import type {
   Space,
   SpaceGoalOutcomeNotification,
   SpaceLongHorizonAgent,
-  SpaceWorkerAgent,
 } from '@hyperneo/shared';
 import type { Provider } from '@hyperneo/shared/provider';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
@@ -3770,7 +3769,7 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
     currentProvider?: string,
     currentModel?: string
   ): Promise<Partial<Session['config']>> {
-    return buildAgentSessionConfig({ kind: 'long_horizon', agent }, mockSpace, {
+    return buildAgentSessionConfig({ agent }, mockSpace, {
       provider: currentProvider,
       model: currentModel,
     });
@@ -3908,7 +3907,7 @@ describe('buildLongHorizonAgentSessionConfig — provider inference (Task #768)'
 
 describe('buildLongHorizonAgentSessionConfig — owner-review contract injection (MC5-B1)', () => {
   async function callBuilder(agent: SpaceLongHorizonAgent): Promise<Partial<Session['config']>> {
-    return buildAgentSessionConfig({ kind: 'long_horizon', agent }, mockSpace);
+    return buildAgentSessionConfig({ agent }, mockSpace);
   }
 
   function systemPromptAppend(config: Partial<Session['config']>): string {
@@ -3966,7 +3965,7 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
     } as unknown as AgentSession;
 
     const built = await buildAgentSessionConfig(
-      { kind: 'long_horizon', agent: buildLongHorizonAgent({ model: 'kimi-for-coding' }) },
+      { agent: buildLongHorizonAgent({ model: 'kimi-for-coding' }) },
       mockSpace
     );
 
@@ -4040,7 +4039,7 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
     setModelsCache(cache);
     try {
       const built = await buildAgentSessionConfig(
-        { kind: 'long_horizon', agent: buildLongHorizonAgent({ model: 'gemini-3.1-pro-preview' }) },
+        { agent: buildLongHorizonAgent({ model: 'gemini-3.1-pro-preview' }) },
         mockSpace
       );
       expect(built.provider).toBe('anthropic-copilot');
@@ -4063,188 +4062,10 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
   });
 });
 
-describe('ensureLongTermAgentSession — regular worker agent provider inference (Task #768)', () => {
-  async function captureRegularAgentConfig(
-    agent: SpaceWorkerAgent
-  ): Promise<Partial<Session['config']> | undefined> {
-    const createdConfigs: Partial<Session['config']>[] = [];
-    let lookups = 0;
-    const sessionMock = {
-      getSessionData: () => ({ id: 'sess-1', metadata: {} }),
-      mergeRuntimeMcpServers: () => {},
-    };
-    const sessionManager = {
-      getSessionAsync: mock(async () => {
-        lookups += 1;
-        return lookups === 1 ? null : sessionMock;
-      }),
-      createSession: mock(async (opts: { config: Partial<Session['config']> }) => {
-        createdConfigs.push(opts.config);
-      }),
-    } as unknown as SessionManager;
-    const longHorizonAgentRepo = {
-      getById: mock(() =>
-        buildLongHorizonAgent({
-          id: agent.id,
-          spaceId: agent.spaceId,
-          displayName: agent.name,
-          templateKey: 'migration.legacy_space_agent',
-          instructions: agent.customPrompt ?? '',
-          model: agent.model ?? null,
-          provider: agent.provider ?? null,
-          thinkingLevel: agent.thinkingLevel ?? null,
-          toolPermissions: { tools: agent.tools ?? [] },
-        })
-      ),
-      getCoordinator: mock(() => null),
-      update: mock(() => ({})),
-    } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
-
-    const svc = new SpaceRuntimeService({
-      ...buildConfig(createMockSpaceManager(mockSpace)),
-      sessionManager,
-      longHorizonAgentRepo,
-    });
-    (
-      svc as unknown as { attachLongTermAgentMcpServers: () => void }
-    ).attachLongTermAgentMcpServers = () => {};
-    (
-      svc as unknown as { missingLongTermAgentMcpServers: () => boolean }
-    ).missingLongTermAgentMcpServers = () => false;
-
-    await (
-      svc as unknown as { ensureLongTermAgentSession: (a: ActorRef) => Promise<unknown> }
-    ).ensureLongTermAgentSession({
-      actorId: `agent:${agent.id}`,
-      spaceId: agent.spaceId,
-    } as ActorRef);
-
-    return createdConfigs[0];
-  }
-
-  test('infers kimi provider for a kimi model with no explicit provider', async () => {
-    const config = await captureRegularAgentConfig({
-      id: 'worker-1',
-      spaceId: 'space-1',
-      name: 'Worker',
-      model: 'kimi-for-coding',
-      provider: null,
-      thinkingLevel: null,
-      customPrompt: '',
-      tools: [],
-      settingSources: null,
-    } as unknown as SpaceWorkerAgent);
-
-    expect(config).toBeDefined();
-    expect(config?.model).toBe('kimi-for-coding');
-    expect(config?.provider).toBe('kimi');
-  });
-
-  test('leaves provider undefined for anthropic catch-all models in the regular branch (P1)', async () => {
-    const config = await captureRegularAgentConfig({
-      id: 'worker-3',
-      spaceId: 'space-1',
-      name: 'Worker',
-      model: 'gemini-3.1-pro-preview',
-      provider: null,
-      thinkingLevel: null,
-      customPrompt: '',
-      tools: [],
-      settingSources: null,
-    } as unknown as SpaceWorkerAgent);
-
-    expect(config?.model).toBe('gemini-3.1-pro-preview');
-    expect(config?.provider).toBeUndefined();
-  });
-
-  test('leaves provider undefined for contested gpt-* models in the regular branch (P1)', async () => {
-    const claiming = (id: string) =>
-      ({
-        id,
-        displayName: id,
-        ownsModel: () => true,
-        isAvailable: async () => true,
-      }) as unknown as Provider;
-    const registry = getProviderRegistry();
-    registry.register(claiming('anthropic-codex'));
-    registry.register(claiming('anthropic-copilot'));
-    try {
-      const config = await captureRegularAgentConfig({
-        id: 'worker-4',
-        spaceId: 'space-1',
-        name: 'Worker',
-        model: 'gpt-5.5',
-        provider: null,
-        thinkingLevel: null,
-        customPrompt: '',
-        tools: [],
-        settingSources: null,
-      } as unknown as SpaceWorkerAgent);
-
-      expect(config?.model).toBe('gpt-5.5');
-      expect(config?.provider).toBeUndefined();
-    } finally {
-      resetProviderRegistry();
-    }
-  });
-
-  test('resolves the cached provider for contested models in the regular branch (P1)', async () => {
-    const cache = new Map<string, ModelInfo[]>();
-    cache.set('global', [
-      {
-        id: 'gemini-3.1-pro-preview',
-        name: 'gemini-3.1-pro-preview',
-        alias: 'gemini-3.1-pro-preview',
-        family: 'gemini-3.1-pro-preview',
-        provider: 'anthropic-copilot',
-        contextWindow: 200000,
-        description: '',
-        releaseDate: '2026-01-01',
-        available: true,
-      },
-    ]);
-    setModelsCache(cache);
-    try {
-      const config = await captureRegularAgentConfig({
-        id: 'worker-5',
-        spaceId: 'space-1',
-        name: 'Worker',
-        model: 'gemini-3.1-pro-preview',
-        provider: null,
-        thinkingLevel: null,
-        customPrompt: '',
-        tools: [],
-        settingSources: null,
-      } as unknown as SpaceWorkerAgent);
-
-      expect(config?.provider).toBe('anthropic-copilot');
-    } finally {
-      clearModelsCache();
-    }
-  });
-
-  test('explicit provider wins over inference for regular agents', async () => {
-    const config = await captureRegularAgentConfig({
-      id: 'worker-2',
-      spaceId: 'space-1',
-      name: 'Worker',
-      model: 'kimi-for-coding',
-      provider: 'openrouter',
-      thinkingLevel: null,
-      customPrompt: '',
-      tools: [],
-      settingSources: null,
-    } as unknown as SpaceWorkerAgent);
-
-    expect(config?.provider).toBe('openrouter');
-  });
-});
-
-describe('ensureLongTermAgentSession — id→session routing table (dual-family pin)', () => {
+describe('ensureLongTermAgentSession — id→session routing table', () => {
   function buildRoutingService(options: {
     longHorizonAgents: SpaceLongHorizonAgent[];
     coordinatorId?: string;
-    worker?: SpaceWorkerAgent;
   }): {
     svc: SpaceRuntimeService;
     createCalls: Array<{ sessionId?: string; title?: string }>;
@@ -4269,20 +4090,8 @@ describe('ensureLongTermAgentSession — id→session routing table (dual-family
         createCalls.push(opts);
       }),
     } as unknown as SessionManager;
-    const workerMirror = options.worker
-      ? buildLongHorizonAgent({
-          id: options.worker.id,
-          spaceId: options.worker.spaceId,
-          displayName: options.worker.name,
-          templateKey: 'migration.legacy_space_agent',
-        })
-      : null;
     const longHorizonAgentRepo = {
-      getById: mock((id: string) => {
-        const unified = options.longHorizonAgents.find((a) => a.id === id);
-        if (unified) return unified;
-        return workerMirror && workerMirror.id === id ? workerMirror : null;
-      }),
+      getById: mock((id: string) => options.longHorizonAgents.find((a) => a.id === id) ?? null),
       getCoordinator: mock(
         () => options.longHorizonAgents.find((a) => a.id === options.coordinatorId) ?? null
       ),
@@ -4296,9 +4105,6 @@ describe('ensureLongTermAgentSession — id→session routing table (dual-family
     (
       svc as unknown as { attachLongTermAgentMcpServers: () => void }
     ).attachLongTermAgentMcpServers = () => {};
-    (
-      svc as unknown as { missingLongTermAgentMcpServers: () => boolean }
-    ).missingLongTermAgentMcpServers = () => false;
     return { svc, createCalls, lookupIds };
   }
 
@@ -4360,103 +4166,6 @@ describe('ensureLongTermAgentSession — id→session routing table (dual-family
         worktreeMode: 'direct',
       })
     );
-  });
-
-  test('worker-only id resolves space:agent:<space>:<id> titled with the worker name', async () => {
-    const { svc, createCalls } = buildRoutingService({
-      longHorizonAgents: [],
-      worker: {
-        id: 'worker-1',
-        spaceId: 'space-1',
-        name: 'Worker Name',
-        model: null,
-        provider: null,
-        thinkingLevel: null,
-        customPrompt: '',
-        tools: [],
-        settingSources: null,
-      } as unknown as SpaceWorkerAgent,
-    });
-
-    await route(svc, 'worker-1');
-
-    expect(createCalls).toHaveLength(1);
-    expect(createCalls[0]).toEqual(
-      expect.objectContaining({
-        sessionId: 'space:agent:space-1:worker-1',
-        title: 'Worker Name',
-      })
-    );
-  });
-
-  test('a migrated worker mirror keeps worker session semantics, not long-horizon ones', async () => {
-    const mirror = buildLongHorizonAgent({
-      id: 'worker-migrated',
-      handle: 'migrated-worker',
-      displayName: 'Migrated Worker',
-      templateKey: 'migration.legacy_space_agent',
-      instructions: 'Worker prompt',
-      toolPermissions: { tools: ['Read'] },
-    });
-    const runFor = async (agent: typeof mirror) => {
-      const createdConfigs: Array<{ sessionId?: string; title?: string; config?: unknown }> = [];
-      const sessionManager = {
-        getSessionAsync: mock(async (sessionId: string) =>
-          sessionId.startsWith('space:agent:') ? null : { getSessionData: () => ({ metadata: {} }) }
-        ),
-        createSession: mock(
-          async (opts: { sessionId?: string; title?: string; config?: unknown }) => {
-            createdConfigs.push(opts);
-          }
-        ),
-      } as unknown as SessionManager;
-      const svc = new SpaceRuntimeService({
-        ...buildConfig(createMockSpaceManager(mockSpace)),
-        sessionManager,
-        longHorizonAgentRepo: {
-          getById: mock((id: string) => (id === agent.id ? agent : null)),
-          getCoordinator: mock(() => null),
-          update: mock(() => ({})),
-        } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'],
-      });
-      (
-        svc as unknown as { attachLongTermAgentMcpServers: () => void }
-      ).attachLongTermAgentMcpServers = () => {};
-      (
-        svc as unknown as { missingLongTermAgentMcpServers: () => boolean }
-      ).missingLongTermAgentMcpServers = () => false;
-
-      await route(svc, agent.id);
-
-      return createdConfigs;
-    };
-
-    const createdConfigs = await runFor(mirror);
-
-    expect(createdConfigs).toHaveLength(1);
-    expect(createdConfigs[0]).toEqual(
-      expect.objectContaining({
-        sessionId: 'space:agent:space-1:worker-migrated',
-        title: 'Migrated Worker',
-      })
-    );
-    const config = createdConfigs[0].config as Record<string, unknown>;
-    expect(config.systemPrompt).toMatchObject({
-      type: 'preset',
-      preset: 'claude_code',
-      append: 'Worker prompt',
-    });
-    expect(config.sdkToolsPreset).toBeUndefined();
-
-    const pausedConfigs = await runFor({ ...mirror, status: 'paused' });
-    expect(pausedConfigs).toHaveLength(1);
-    expect(pausedConfigs[0]).toEqual(
-      expect.objectContaining({
-        sessionId: 'space:agent:space-1:worker-migrated',
-        title: 'Migrated Worker',
-      })
-    );
-    expect((pausedConfigs[0].config as Record<string, unknown>).sdkToolsPreset).toBeUndefined();
   });
 });
 

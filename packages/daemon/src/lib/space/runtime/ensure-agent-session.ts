@@ -1,4 +1,4 @@
-import type { Space, SpaceWorkerAgent as WorkerAgent } from '@hyperneo/shared';
+import type { Space } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   type AgentRecordResolution,
@@ -15,7 +15,6 @@ export interface EnsureAgentSessionDeps {
   recordDeps: ResolveAgentRecordDeps;
   ensureCoordinatorSession(spaceId: string): Promise<EnsuredSession | null>;
   ensureLongHorizon(spaceId: string, agentId: string): Promise<EnsuredSession | null>;
-  ensureWorkerAgentSession(spaceId: string, agent: WorkerAgent): Promise<EnsuredSession | null>;
 }
 
 export async function admitSpaceStage(
@@ -36,12 +35,6 @@ export function classifyAgentStage(
   if (resolution.kind === 'missing') {
     return { resolution: null, classifyHalt: 'agent_missing' };
   }
-  if (
-    resolution.kind === 'worker' &&
-    ['paused', 'archived'].includes(resolution.agent.status ?? '')
-  ) {
-    return { resolution: null, classifyHalt: 'agent_inactive' };
-  }
   return { resolution, classifyHalt: undefined };
 }
 
@@ -53,8 +46,7 @@ export async function provisionAgentSessionStage(
 ): Promise<EnsuredSession | null> {
   if (resolution === null || resolution.kind === 'missing') return null;
   if (resolution.kind === 'coordinator') return deps.ensureCoordinatorSession(spaceId);
-  if (resolution.kind === 'long_horizon') return deps.ensureLongHorizon(spaceId, agentId);
-  return deps.ensureWorkerAgentSession(spaceId, resolution.agent);
+  return deps.ensureLongHorizon(spaceId, agentId);
 }
 
 export async function gateEnsuredSessionStage(

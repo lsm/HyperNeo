@@ -1,14 +1,7 @@
-import type {
-  AgentDefinition,
-  Session,
-  Space,
-  SpaceLongHorizonAgent,
-  SpaceWorkerAgent,
-} from '@hyperneo/shared';
+import type { AgentDefinition, Session, Space, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { isScopedBashToolEntry } from '@hyperneo/shared';
 import { findInModels, getAvailableModels } from '../model-service.ts';
 import { inferPersistableProviderForModel } from '../providers/registry.ts';
-import { resolveCustomAgentPrompt } from '../space/agents/custom-agent.ts';
 import {
   LONG_HORIZON_AGENT_BUILTIN_TOOLS,
   LONG_HORIZON_OWNER_REVIEW_CONTRACT,
@@ -26,9 +19,9 @@ const LONG_TERM_AGENT_SESSION_FEATURES = {
 
 const DEFAULT_LONG_HORIZON_AGENT_MODEL = 'claude-sonnet-4-6';
 
-export type AgentSessionConfigInput =
-  | { kind: 'long_horizon'; agent: SpaceLongHorizonAgent }
-  | { kind: 'worker'; agent: SpaceWorkerAgent };
+export interface AgentSessionConfigInput {
+  agent: SpaceLongHorizonAgent;
+}
 
 export interface AgentSessionConfigCurrent {
   provider?: string;
@@ -40,17 +33,14 @@ export async function buildAgentSessionConfig(
   space: Space,
   currentConfig?: AgentSessionConfigCurrent
 ): Promise<Partial<Session['config']>> {
-  const isLongHorizon = input.kind === 'long_horizon';
-  const displayName = isLongHorizon ? input.agent.displayName : input.agent.name;
   const customTools = agentCustomTools(input);
   const customDisallowedBuiltins = deriveWorkerDisallowedTools(customTools);
   const scopedBashToolEntries = customTools?.filter((tool) => isScopedBashToolEntry(tool));
-  const agentKey = sanitizeLongTermAgentKey(displayName);
-  const model = isLongHorizon
-    ? (input.agent.model ??
-      space.defaultModel ??
-      (input.agent.provider ? undefined : DEFAULT_LONG_HORIZON_AGENT_MODEL))
-    : (input.agent.model ?? space.defaultModel);
+  const agentKey = sanitizeLongTermAgentKey(input.agent.displayName);
+  const model =
+    input.agent.model ??
+    space.defaultModel ??
+    (input.agent.provider ? undefined : DEFAULT_LONG_HORIZON_AGENT_MODEL);
   const provider = (input.agent.provider ??
     (model
       ? await resolveAgentConfigProvider(model, currentConfig?.provider, currentConfig?.model)
@@ -59,20 +49,16 @@ export async function buildAgentSessionConfig(
   return {
     model,
     provider,
-    thinkingLevel: isLongHorizon
-      ? (input.agent.thinkingLevel ?? undefined)
-      : input.agent.thinkingLevel,
+    thinkingLevel: input.agent.thinkingLevel ?? undefined,
     systemPrompt: {
       type: 'preset',
       preset: 'claude_code',
       append: promptValues.append,
     },
-    sdkToolsPreset: isLongHorizon ? [...LONG_HORIZON_AGENT_BUILTIN_TOOLS] : undefined,
+    sdkToolsPreset: [...LONG_HORIZON_AGENT_BUILTIN_TOOLS],
     features: LONG_TERM_AGENT_SESSION_FEATURES,
     allowedTools:
-      isLongHorizon && scopedBashToolEntries && scopedBashToolEntries.length > 0
-        ? scopedBashToolEntries
-        : undefined,
+      scopedBashToolEntries && scopedBashToolEntries.length > 0 ? scopedBashToolEntries : undefined,
     disallowedTools: customDisallowedBuiltins.length > 0 ? customDisallowedBuiltins : undefined,
     agent: customDisallowedBuiltins.length > 0 ? agentKey : undefined,
     agents:
@@ -91,7 +77,6 @@ export async function buildAgentSessionConfig(
 }
 
 function agentCustomTools(input: AgentSessionConfigInput): string[] | undefined {
-  if (input.kind !== 'long_horizon') return input.agent.tools;
   return Array.isArray(input.agent.toolPermissions.tools)
     ? (input.agent.toolPermissions.tools.filter((tool) => typeof tool === 'string') as string[])
     : undefined;
@@ -102,23 +87,13 @@ function agentPromptValues(input: AgentSessionConfigInput): {
   prompt: string;
   description: string;
 } {
-  if (input.kind === 'long_horizon') {
-    const instructions = input.agent.instructions?.trim();
-    return {
-      append: instructions
-        ? `${instructions}\n\n${LONG_HORIZON_OWNER_REVIEW_CONTRACT}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`
-        : `${LONG_HORIZON_OWNER_REVIEW_CONTRACT}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`,
-      prompt: input.agent.instructions,
-      description: `Long-horizon Space agent: ${input.agent.displayName}`,
-    };
-  }
-  const resolved = resolveCustomAgentPrompt(input.agent, {
-    resolutionContext: { agentId: input.agent.id, agentName: input.agent.name },
-  });
+  const instructions = input.agent.instructions?.trim();
   return {
-    append: resolved.value,
-    prompt: resolved.value,
-    description: input.agent.description ?? `Space agent: ${input.agent.name}`,
+    append: instructions
+      ? `${instructions}\n\n${LONG_HORIZON_OWNER_REVIEW_CONTRACT}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`
+      : `${LONG_HORIZON_OWNER_REVIEW_CONTRACT}\n\n${LONG_HORIZON_SCHEDULING_GUARDRAIL}`,
+    prompt: input.agent.instructions,
+    description: `Long-horizon Space agent: ${input.agent.displayName}`,
   };
 }
 

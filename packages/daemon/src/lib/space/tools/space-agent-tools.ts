@@ -53,7 +53,6 @@ import {
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import { formatAgentMessage } from '../agent-message-envelope.ts';
 import { getLongHorizonAgentTemplates } from '../agents/long-horizon-agent-templates.ts';
-import { getPresetAgentTemplates } from '../agents/seed-agents.ts';
 import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils.ts';
 import { mergeEvolutionPolicy } from '../evolution-scope-service.ts';
 import { validateGoalAutomationSelfNagPolicy } from '../goals/evolution-policy-validation.ts';
@@ -1531,56 +1530,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
       }
 
-      const template = getPresetAgentTemplates().find(
-        (candidate) => candidate.name.toLowerCase() === templateName.toLowerCase()
-      );
-      if (!template) {
-        return jsonResult({
-          success: false,
-          error: `Agent template not found: ${args.template_name}. Call list_agent_templates to discover available templates.`,
-        });
-      }
-      const name = args.name ?? template.name;
-      try {
-        if (name.trim() === '') {
-          return jsonResult({ success: false, error: 'Agent name cannot be empty' });
-        }
-        if (args.model) {
-          const modelError = await validateLongHorizonModel(args.model, args.provider);
-          if (modelError) return jsonResult({ success: false, error: modelError });
-        }
-        const finalName = args.name
-          ? (ensureUniqueAgentDisplayName(name), name)
-          : uniqueAgentDisplayName(name);
-        const agent = requireLongHorizonAgentRepo().create({
-          spaceId,
-          handle: uniqueLongHorizonAgentHandle(finalName),
-          displayName: finalName,
-          templateKey: template.name,
-          instructions: template.customPrompt ?? template.description,
-          autonomyLevel: getCallingAgentAutonomyLevel(),
-          model: args.model ?? null,
-          provider: args.provider ?? null,
-          thinkingLevel: args.thinking_level ?? template.thinkingLevel ?? null,
-          toolPermissions: template.tools.length > 0 ? { tools: template.tools } : {},
-        });
-        emitLongHorizonAgentCreated(agent);
-        logAudit('create_agent_from_template', {
-          template_name: args.template_name,
-          name: args.name,
-        });
-        return jsonResult({ success: true, agent });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ success: false, error: message });
-      }
+      return jsonResult({
+        success: false,
+        error: `Agent template not found: ${args.template_name}. Call list_agent_templates to discover available templates.`,
+      });
     },
 
     async list_agent_templates(): Promise<ToolResult> {
-      const presets = getPresetAgentTemplates().map((preset) => ({
-        template_name: preset.name,
-        description: preset.description,
-      }));
       const longHorizonTemplates = getLongHorizonAgentTemplates()
         .filter((template) => !isReservedAgentHandle(template.handle))
         .map((template) => ({
@@ -1590,7 +1546,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           description: template.description,
           suggested_autonomy_level: template.suggestedAutonomyLevel,
         }));
-      return jsonResult({ success: true, presets, long_horizon_templates: longHorizonTemplates });
+      return jsonResult({ success: true, long_horizon_templates: longHorizonTemplates });
     },
 
     async update_agent(
@@ -4405,13 +4361,13 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'create_agent_from_template',
-        'Create a long-horizon Space agent from a built-in template. Accepts a worker preset name (Coder, Reviewer, QA, ...) or a long-horizon template key (marketing.default, security-auditor.default, ...). Long-horizon templates seed their suggested event subscriptions and reminders. Call list_agent_templates to discover available templates.',
+        'Create a long-horizon Space agent from a built-in long-horizon template key (marketing.default, security-auditor.default, ...). Long-horizon templates seed their suggested event subscriptions and reminders. Call list_agent_templates to discover available templates.',
         CreateAgentFromTemplateSchema.shape,
         (args) => handlers.create_agent_from_template(args)
       ),
       tool(
         'list_agent_templates',
-        'List the built-in agent templates available to create_agent_from_template: worker presets (Coder, Reviewer, QA, ...) and long-horizon templates (marketing.default, security-auditor.default, ...).',
+        'List the built-in long-horizon agent templates available to create_agent_from_template (marketing.default, security-auditor.default, ...).',
         ListAgentTemplatesSchema.shape,
         () => handlers.list_agent_templates()
       ),
