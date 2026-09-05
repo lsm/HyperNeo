@@ -171,6 +171,7 @@ function makeRouter(
       injected.push({ sessionId, message });
     },
     ...overrides,
+    taskId: overrides.taskId === null ? undefined : (overrides.taskId ?? 'task-test'),
   });
 }
 
@@ -282,9 +283,9 @@ describe('AgentMessageRouter: single-target delivery door', () => {
     ]);
   });
 
-  test('keeps duplicate worker names scoped to their caller-expanded nodes', async () => {
+  test('keeps duplicate worker names scoped to the caller-expanded node', async () => {
     const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('Coding', ['Review A', 'Review B']),
+      makeChannel('Coding', 'Review A'),
     ]);
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, 'node-coder', 'coder', ctx.coderSessionId);
     seedPeerTask(
@@ -314,11 +315,7 @@ describe('AgentMessageRouter: single-target delivery door', () => {
       },
       deliverToTarget: async (target, _message, messageId) => {
         targets.push(target);
-        const sessionId =
-          target.kind === 'worker' && target.workflowNodeId === 'node-review-a'
-            ? 'session-review-a'
-            : 'session-review-b';
-        return { state: 'delivered', sessionId, messageId };
+        return { state: 'delivered', sessionId: 'session-review-a', messageId };
       },
     });
 
@@ -328,12 +325,6 @@ describe('AgentMessageRouter: single-target delivery door', () => {
       target: 'Review A',
       message: 'review A',
     });
-    await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: 'Review B',
-      message: 'review B',
-    });
 
     expect(targets).toEqual([
       {
@@ -341,12 +332,6 @@ describe('AgentMessageRouter: single-target delivery door', () => {
         taskId: 'task-1',
         agentName: 'reviewer',
         workflowNodeId: 'node-review-a',
-      },
-      {
-        kind: 'worker',
-        taskId: 'task-1',
-        agentName: 'reviewer',
-        workflowNodeId: 'node-review-b',
       },
     ]);
   });

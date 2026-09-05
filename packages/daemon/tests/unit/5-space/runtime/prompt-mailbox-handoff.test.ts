@@ -797,6 +797,24 @@ describe('handoffPromptToMailbox', () => {
     expect(deliveryJobCount(h, 'msg-e2e-3')).toBe(1);
   });
 
+  it('keeps deferred admission held across a repeated handoff', async () => {
+    const h = makeHarness();
+    const message = userMessage('msg-e2e-deferred', 'wait');
+    const args = {
+      ...argsFor(h, message),
+      target: { ...targetFor(message), defer: true },
+      stateManager: undefined,
+    };
+
+    const first = await handoffPromptToMailbox(args);
+    const second = await handoffPromptToMailbox(args);
+
+    expect(first).toMatchObject({ state: 'enqueued', changed: true, advanced: true });
+    expect(second).toMatchObject({ state: 'enqueued', changed: false, advanced: false });
+    expect(sendStatus(h, 'msg-e2e-deferred')).toBe('deferred');
+    expect(deliveryJobCount(h, 'msg-e2e-deferred')).toBe(1);
+  });
+
   it('lets consumption evidence win over a failed snapshot', async () => {
     const h = makeHarness();
     const spy = portSpy();

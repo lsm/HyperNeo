@@ -30,6 +30,7 @@ export interface PromptHandoffTarget {
   message: SDKUserMessage;
   origin: MessageDeliveryOrigin;
   messageOrigin?: MessageOrigin;
+  defer?: boolean;
 }
 
 export interface PromptHandoffStageOutcome {
@@ -132,6 +133,7 @@ export function ensurePromptIntoMailbox(
     sessionId: target.sessionId,
     message: target.message,
     origin: target.messageOrigin,
+    ...(target.defer ? { hold: 'manual' as const } : {}),
     delivery: { origin: target.origin },
   });
   return {
@@ -168,7 +170,11 @@ function planHandoffStage(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
     ctx.target.sessionId,
     ctx.target.messageId
   );
-  return { ...ctx, mechanism: planHandoffMechanism(row ?? null) };
+  const mechanism =
+    ctx.target.defer && row?.sendStatus === 'deferred'
+      ? 'ensure'
+      : planHandoffMechanism(row ?? null);
+  return { ...ctx, mechanism };
 }
 
 export function verifyHandoffContent(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
@@ -206,7 +212,9 @@ export async function applyHandoffMechanism(ctx: MailboxHandoffCtx): Promise<Mai
     ctx.target.sessionId,
     ctx.target.messageId
   );
-  return { ...ctx, applied: await dispatchHandoffMechanism(ctx, planHandoffMechanism(fresh)) };
+  const fallback =
+    ctx.target.defer && fresh?.sendStatus === 'deferred' ? 'ensure' : planHandoffMechanism(fresh);
+  return { ...ctx, applied: await dispatchHandoffMechanism(ctx, fallback) };
 }
 
 export function settleHandoffOutcome(ctx: MailboxHandoffCtx): MailboxHandoffCtx {

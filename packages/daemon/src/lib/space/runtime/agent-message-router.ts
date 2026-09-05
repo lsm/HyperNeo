@@ -27,12 +27,11 @@ import { ActivationError, type ChannelRouter } from './channel-router.ts';
 
 export type { AgentMessageResult };
 
-export interface AgentMessageDeliveryOutcome {
-  sessionId?: string;
-  messageId: string;
-  state: 'delivered' | 'queued' | 'not_found';
-  error?: string;
-}
+export type AgentMessageDeliveryOutcome =
+  | { state: 'delivered'; sessionId: string; messageId: string }
+  | { state: 'queued'; sessionId: string; messageId: string }
+  | { state: 'not_found'; messageId: string; error?: string }
+  | { state: 'failed'; sessionId?: string; messageId: string; error: string };
 
 export interface AgentMessageRouterConfig {
   nodeExecutionRepo: NodeExecutionRepository;
@@ -224,7 +223,9 @@ export class AgentMessageRouter {
             )
           : null;
     if (!outcome) throw new Error(`No delivery door configured for ${target.kind} target`);
-    if (outcome.state === 'failed') throw new Error(outcome.error);
+    if (outcome.state === 'failed') {
+      return { state: 'failed', sessionId: outcome.sessionId, messageId, error: outcome.error };
+    }
     return outcome;
   }
 
@@ -375,10 +376,16 @@ export class AgentMessageRouter {
             envelopedMessage,
             generateUUID()
           );
-          if (outcome.state === 'delivered' && outcome.sessionId) {
+          if (outcome.state === 'delivered') {
             delivered.push({ agentName: 'space-agent', sessionId: outcome.sessionId });
           } else if (outcome.state === 'queued') {
             queued.push({ agentName: 'space-agent', messageId: outcome.messageId });
+          } else if (outcome.state === 'failed') {
+            failed.push({
+              agentName: 'space-agent',
+              sessionId: outcome.sessionId ?? `space:chat:${spaceId!}`,
+              error: outcome.error,
+            });
           } else {
             notFound.push('space-agent');
           }
@@ -399,10 +406,16 @@ export class AgentMessageRouter {
             envelopedMessage,
             generateUUID()
           );
-          if (outcome.state === 'delivered' && outcome.sessionId) {
+          if (outcome.state === 'delivered') {
             delivered.push({ agentName: 'space-agent', sessionId: outcome.sessionId });
           } else if (outcome.state === 'queued') {
             queued.push({ agentName: 'space-agent', messageId: outcome.messageId });
+          } else if (outcome.state === 'failed') {
+            failed.push({
+              agentName: 'space-agent',
+              sessionId: outcome.sessionId ?? decision.sessionId,
+              error: outcome.error,
+            });
           } else {
             notFound.push('space-agent');
           }
@@ -581,10 +594,16 @@ export class AgentMessageRouter {
               generateUUID(),
               session.sessionId
             );
-            if (outcome.state === 'delivered' && outcome.sessionId) {
+            if (outcome.state === 'delivered') {
               delivered.push({ agentName, sessionId: outcome.sessionId });
             } else if (outcome.state === 'queued') {
               queued.push({ agentName, messageId: outcome.messageId });
+            } else if (outcome.state === 'failed') {
+              failed.push({
+                agentName,
+                sessionId: outcome.sessionId ?? session.sessionId,
+                error: outcome.error,
+              });
             } else {
               notFound.push(agentName);
             }
@@ -788,10 +807,16 @@ export class AgentMessageRouter {
         const envelopedMessage = buildEnvelope('space-agent');
         try {
           const outcome = await this.deliverSingleTarget(target, envelopedMessage, generateUUID());
-          if (outcome.state === 'delivered' && outcome.sessionId) {
+          if (outcome.state === 'delivered') {
             delivered.push({ agentName, sessionId: outcome.sessionId });
           } else if (outcome.state === 'queued') {
             queued.push({ agentName, messageId: outcome.messageId });
+          } else if (outcome.state === 'failed') {
+            failed.push({
+              agentName,
+              sessionId: outcome.sessionId ?? expectedSessionId,
+              error: outcome.error,
+            });
           } else {
             notFound.push(agentName);
           }
@@ -825,10 +850,16 @@ export class AgentMessageRouter {
               generateUUID(),
               member.sessionId
             );
-            if (outcome.state === 'delivered' && outcome.sessionId) {
+            if (outcome.state === 'delivered') {
               delivered.push({ agentName, sessionId: outcome.sessionId });
             } else if (outcome.state === 'queued') {
               queued.push({ agentName, messageId: outcome.messageId });
+            } else if (outcome.state === 'failed') {
+              failed.push({
+                agentName,
+                sessionId: outcome.sessionId ?? member.sessionId,
+                error: outcome.error,
+              });
             } else {
               notFound.push(agentName);
             }
