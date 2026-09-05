@@ -69,21 +69,6 @@ function insertCustomNamedCoder(db: Database): void {
   );
 }
 
-function createInboxTable(db: Database): void {
-  db.exec(`
-    CREATE TABLE space_agent_inbox_messages (
-      id TEXT PRIMARY KEY,
-      space_id TEXT NOT NULL,
-      target_agent_id TEXT NOT NULL,
-      source_actor_id TEXT NOT NULL,
-      message TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',
-      expires_at INTEGER NOT NULL,
-      created_at INTEGER NOT NULL
-    )
-  `);
-}
-
 function remaining(repo: SpaceLongHorizonAgentRepository): string[] {
   return repo.listBySpaceId('space-1').map((agent) => agent.displayName);
 }
@@ -203,7 +188,6 @@ describe('migration 232: retire pristine seeded worker agents', () => {
   test('keeps pristine workers with pending inbox messages or watchdog state', () => {
     const { db, repo, idsByName } = createDb();
     runMigration213(db);
-    createInboxTable(db);
     db.prepare(
       `INSERT INTO space_agent_inbox_messages (
          id, space_id, target_agent_id, source_actor_id, message, status, expires_at, created_at
