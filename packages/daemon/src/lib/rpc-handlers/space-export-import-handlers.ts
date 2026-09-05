@@ -23,6 +23,7 @@ import {
   type SpaceLongHorizonAgentRepository,
 } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
+import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { exportBundle, validateExportBundle, normalizeOverride } from '../space/export-format.ts';
 import {
   MIGRATED_WORKER_TEMPLATE_KEY,
@@ -33,7 +34,7 @@ import {
   publishUnifiedAgentUpdated,
 } from '../space/agents/unified-agent-events.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug.ts';
-import { getLongHorizonAgentTemplate } from '../space/agents/long-horizon-agent-templates.ts';
+import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates.ts';
 import { Logger } from '../logger.ts';
 
 const log = new Logger('space-export-import-handlers');
@@ -427,7 +428,8 @@ function validateWorkflowForPreview(
   exported: ExportedSpaceWorkflow,
   importedAgentNames: Set<string>,
   existingAgentNameToId: Map<string, string>,
-  agentNameToRole: Map<string, string>
+  agentNameToRole: Map<string, string>,
+  knownTemplateKeys: ReadonlySet<string>
 ): string[] {
   const errors: string[] = [];
 
@@ -435,7 +437,7 @@ function validateWorkflowForPreview(
     for (const a of node.agents) {
       const templateKey = a.templateKey?.trim();
       if (templateKey) {
-        if (!getLongHorizonAgentTemplate(templateKey)) {
+        if (!knownTemplateKeys.has(templateKey)) {
           errors.push(`node "${node.name}" references unknown template "${templateKey}"`);
         }
         continue;
@@ -745,6 +747,13 @@ export function setupSpaceExportImportHandlers(
         .map((a) => nameKey(a.name))
     );
 
+    const knownTemplateKeys = new Set<string>(
+      getLongHorizonAgentTemplates().map((template) => template.key)
+    );
+    for (const template of new SpaceAgentTemplateRepository(db).list()) {
+      knownTemplateKeys.add(template.key);
+    }
+
     for (const wf of bundle.workflows) {
       const existing = existingWorkflowByName.get(wf.name);
       if (existing) {
@@ -757,7 +766,8 @@ export function setupSpaceExportImportHandlers(
         wf,
         importedAgentNames,
         existingAgentNameToId,
-        agentNameToRole
+        agentNameToRole,
+        knownTemplateKeys
       );
       for (const err of errors) {
         validationErrors.push(`Workflow "${wf.name}": ${err}`);

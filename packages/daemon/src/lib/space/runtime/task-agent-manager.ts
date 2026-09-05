@@ -33,6 +33,7 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
+import { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type {
   PendingAgentMessageRecord,
   PendingAgentMessageRepository,
@@ -170,6 +171,7 @@ import {
   resolveSpawnWorkspace,
   resolveTaskWorkspace,
   resolveWorkflowNodeSlot,
+  storedTemplateToNodeAgentSource,
 } from './spawn-slot-resolution.ts';
 import { stagedRun } from './staged-run.ts';
 import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
@@ -378,6 +380,7 @@ export class TaskAgentManager {
   private taskWorktreePaths = new Map<string, string>();
 
   private readonly auditLogRepo: McpAuditLogRepository;
+  private readonly agentTemplateRepo: SpaceAgentTemplateRepository;
   private readonly flagManagedDispatcherServers = new WeakSet<object>();
 
   private taskArchiveListenerUnsub: (() => void) | null = null;
@@ -387,6 +390,7 @@ export class TaskAgentManager {
 
   constructor(private readonly config: TaskAgentManagerConfig) {
     this.auditLogRepo = new McpAuditLogRepository(this.config.db.getDatabase());
+    this.agentTemplateRepo = new SpaceAgentTemplateRepository(this.config.db.getDatabase());
     this.subscribeToTaskArchiveEvents();
     this.subscribeToRateLimitEvents();
     this.subscribeToActivityTracking();
@@ -3683,19 +3687,18 @@ export class TaskAgentManager {
     slot: WorkflowNodeAgent
   ): NodeAgentSpawnConfig | null {
     if (slot.templateKey?.trim()) {
-      const template = getLongHorizonAgentTemplate(slot.templateKey.trim()) as
-        | NodeAgentTemplateSource
-        | undefined;
-      if (!template) return null;
-      return resolveNodeAgentConfig(
-        template,
-        {
-          name: slot.name,
-          model: slot.model,
-          thinkingLevel: slot.thinkingLevel,
-        },
-        []
-      );
+      const template = this.lookupSlotTemplateSource(slot.templateKey.trim());
+      if (template) {
+        return resolveNodeAgentConfig(
+          template,
+          {
+            name: slot.name,
+            model: slot.model,
+            thinkingLevel: slot.thinkingLevel,
+          },
+          []
+        );
+      }
     }
     if (!slot.agentId) return null;
     const registryAgent = this.resolveUnifiedSlotAgent(spaceId, slot.agentId);
@@ -3709,6 +3712,13 @@ export class TaskAgentManager {
       },
       registryAgent ? [registryAgent] : []
     );
+  }
+
+  private lookupSlotTemplateSource(key: string): NodeAgentTemplateSource | null {
+    const builtIn = getLongHorizonAgentTemplate(key) as NodeAgentTemplateSource | undefined;
+    if (builtIn) return builtIn;
+    const stored = this.agentTemplateRepo.getByKey(key);
+    return stored ? storedTemplateToNodeAgentSource(stored) : null;
   }
 
   private slotAgentExists(spaceId: string, agentId: string): boolean {

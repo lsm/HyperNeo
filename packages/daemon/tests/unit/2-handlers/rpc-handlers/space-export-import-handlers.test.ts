@@ -4,7 +4,11 @@ import type { MessageHub, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shar
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { createLongHorizonAgentTables } from '../../../../src/storage/schema/long-horizon-agents';
+import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
+import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
+import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
 import { workerAgentToLongHorizonParams } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
 import {
   SpaceWorkflowManager,
@@ -33,6 +37,9 @@ function makeSeedAgent(
 function createSchema(db: Database): void {
   db.exec('PRAGMA foreign_keys = ON');
   createLongHorizonAgentTables(db);
+  createSpaceAgentTemplatesTable(db);
+  runMigration226(db);
+  runMigration227(db);
 
   db.exec(`
 		CREATE TABLE spaces (
@@ -619,6 +626,57 @@ describe('Space Export/Import RPC Handlers', () => {
       await expect(
         call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
       ).rejects.toThrow('unresolved agent reference');
+    });
+
+    it('accepts stored agent template keys and rejects unknown ones', async () => {
+      new SpaceAgentTemplateRepository(db as any).create({
+        key: 'migrated.coder',
+        handle: 'coder',
+        displayName: 'Coder',
+      });
+
+      const templateBundle = {
+        version: 1,
+        type: 'bundle',
+        name: 'Templates',
+        agents: [],
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Pipe',
+            nodes: [{ name: 'N', agents: [{ name: 'c', templateKey: 'migrated.coder' }] }],
+            startNode: 'N',
+            tags: [],
+          },
+        ],
+      };
+      const accepted = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle: templateBundle,
+      });
+      expect(accepted.validationErrors.some((e) => e.includes('unknown template'))).toBe(false);
+
+      const unknownBundle = {
+        ...templateBundle,
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Pipe',
+            nodes: [{ name: 'N', agents: [{ name: 'c', templateKey: 'nope.template' }] }],
+            startNode: 'N',
+            tags: [],
+          },
+        ],
+      };
+      const rejected = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle: unknownBundle,
+      });
+      expect(
+        rejected.validationErrors.some((e) => e.includes('unknown template "nope.template"'))
+      ).toBe(true);
     });
 
     it('treats orphaned migration mirrors as missing in imports', async () => {

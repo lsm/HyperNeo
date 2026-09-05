@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type {
   McpServerConfig,
+  SpaceAgentTemplate,
   SpaceTask,
   SpaceWorkerAgent,
   SpaceWorkflow,
@@ -8,6 +9,7 @@ import type {
 } from '@hyperneo/shared';
 import type { AgentSessionInit } from '../../../../src/lib/agent/agent-session';
 import { buildExecutionBaseSessionId } from '../../../../src/lib/session/sub-session-identity';
+import { synthesizeWorkflowAgentTemplate } from '../../../../src/lib/space/agents/workflow-agent-template-synthesis';
 import type { NodeAgentTemplateSource } from '../../../../src/lib/space/runtime/spawn-slot-resolution';
 import {
   assembleNodeAgentSessionInit,
@@ -16,6 +18,7 @@ import {
   resolveSpawnWorkspace,
   resolveTaskWorkspace,
   resolveWorkflowNodeSlot,
+  storedTemplateToNodeAgentSource,
 } from '../../../../src/lib/space/runtime/spawn-slot-resolution';
 
 function makeNode(overrides: Partial<WorkflowNode> = {}): WorkflowNode {
@@ -435,5 +438,164 @@ describe('resolveNodeAgentConfig: legacy agentId fallback', () => {
 
     expect(agent.model).toBe('agent-model');
     expect(agent.name).toBe('Registry Agent');
+  });
+});
+
+describe('storedTemplateToNodeAgentSource', () => {
+  function makeStoredTemplate(overrides: Partial<SpaceAgentTemplate> = {}): SpaceAgentTemplate {
+    return {
+      key: 'migrated.registry-agent',
+      handle: 'registry-agent',
+      displayName: 'Registry Agent',
+      description: 'Does the work',
+      instructions: 'Be thorough',
+      suggestedAutonomyLevel: 3,
+      model: 'claude-x',
+      provider: 'anthropic',
+      modelPool: [{ model: 'claude-x', maxConcurrent: 2, weight: 1 }],
+      thinkingLevel: 'think8k',
+      settingSources: ['user'],
+      tools: ['Read', 'Bash(gh pr view:*)'],
+      createdAt: 100,
+      updatedAt: 200,
+      ...overrides,
+    };
+  }
+
+  test('maps a stored template onto the spawn template source shape', () => {
+    const source = storedTemplateToNodeAgentSource(makeStoredTemplate());
+
+    expect(source.key).toBe('migrated.registry-agent');
+    expect(source.handle).toBe('registry-agent');
+    expect(source.displayName).toBe('Registry Agent');
+    expect(source.description).toBe('Does the work');
+    expect(source.instructions).toBe('Be thorough');
+    expect(source.suggestedAutonomyLevel).toBe(3);
+    expect(source.model).toBe('claude-x');
+    expect(source.provider).toBe('anthropic');
+    expect(source.modelPool).toEqual([{ model: 'claude-x', maxConcurrent: 2, weight: 1 }]);
+    expect(source.thinkingLevel).toBe('think8k');
+    expect(source.settingSources).toEqual(['user']);
+    expect(source.toolPermissions).toEqual({ tools: ['Read', 'Bash(gh pr view:*)'] });
+  });
+
+  test('normalizes absent nullable fields to undefined and empty permissions', () => {
+    const source = storedTemplateToNodeAgentSource(
+      makeStoredTemplate({
+        model: null,
+        provider: null,
+        modelPool: null,
+        thinkingLevel: null,
+        settingSources: null,
+        tools: null,
+      })
+    );
+
+    expect(source.model).toBeUndefined();
+    expect(source.provider).toBeUndefined();
+    expect(source.modelPool).toBeNull();
+    expect(source.thinkingLevel).toBeUndefined();
+    expect(source.settingSources).toBeUndefined();
+    expect(source.toolPermissions).toEqual({});
+  });
+
+  test('resolves through the template branch with the stored fields intact', () => {
+    const config = resolveNodeAgentConfig(
+      storedTemplateToNodeAgentSource(makeStoredTemplate()),
+      { name: 'coder' },
+      []
+    );
+
+    expect(config?.source).toBe('template');
+    expect(config?.templateKey).toBe('migrated.registry-agent');
+    expect(config?.agent.customPrompt).toBe('Be thorough');
+    expect(config?.agent.model).toBe('claude-x');
+    expect(config?.agent.provider).toBe('anthropic');
+    expect(config?.agent.thinkingLevel).toBe('think8k');
+    expect(config?.agent.settingSources).toEqual(['user']);
+    expect(config?.agent.tools).toEqual(['Read', 'Bash(gh pr view:*)']);
+    expect(config?.agent.modelPool).toEqual([{ model: 'claude-x', maxConcurrent: 2, weight: 1 }]);
+  });
+});
+
+describe('resolveNodeAgentConfig: migrated template equivalence pin', () => {
+  const agent = makeAgent({
+    name: 'Registry Agent',
+    handle: 'registry-agent',
+    description: 'Does the work',
+    customPrompt: 'Be thorough',
+    model: 'claude-x',
+    provider: 'anthropic',
+    thinkingLevel: 'think8k',
+    settingSources: ['user'],
+    tools: ['Read'],
+    modelPool: [{ model: 'claude-x', maxConcurrent: 2, weight: 1 }],
+  });
+
+  function templateFromAgent(): NodeAgentTemplateSource {
+    const stored = storedTemplateToNodeAgentSource({
+      key: 'migrated.registry-agent',
+      handle: 'registry-agent',
+      displayName: 'Registry Agent',
+      description: 'Does the work',
+      instructions: 'Be thorough',
+      suggestedAutonomyLevel: 2,
+      model: 'claude-x',
+      provider: 'anthropic',
+      modelPool: [{ model: 'claude-x', maxConcurrent: 2, weight: 1 }],
+      thinkingLevel: 'think8k',
+      settingSources: ['user'],
+      tools: ['Read'],
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    return stored;
+  }
+
+  test('a synthesized template resolves the same spawn fields as the registry agent', () => {
+    const viaTemplate = resolveNodeAgentConfig(templateFromAgent(), { name: 'coder' }, []);
+    const viaAgent = resolveNodeAgentConfig(null, { agentId: 'agent-1', name: 'coder' }, [agent]);
+
+    expect(viaTemplate?.agent.name).toBe(viaAgent?.agent.name);
+    expect(viaTemplate?.agent.customPrompt).toBe(viaAgent?.agent.customPrompt);
+    expect(viaTemplate?.agent.model).toBe(viaAgent?.agent.model);
+    expect(viaTemplate?.agent.provider).toBe(viaAgent?.agent.provider);
+    expect(viaTemplate?.agent.thinkingLevel).toBe(viaAgent?.agent.thinkingLevel);
+    expect(viaTemplate?.agent.settingSources).toEqual(viaAgent?.agent.settingSources);
+    expect(viaTemplate?.agent.tools).toEqual(viaAgent?.agent.tools);
+    expect(viaTemplate?.agent.modelPool).toEqual(viaAgent?.agent.modelPool);
+    expect(viaTemplate?.agent.description).toBe(viaAgent?.agent.description);
+  });
+
+  test('the synthesized template marks the spawn as template-sourced under the migrated key', () => {
+    const viaTemplate = resolveNodeAgentConfig(templateFromAgent(), { name: 'coder' }, []);
+
+    expect(viaTemplate?.source).toBe('template');
+    expect(viaTemplate?.templateKey).toBe('migrated.registry-agent');
+    expect(viaTemplate?.agent.id).toBe('template:migrated.registry-agent');
+  });
+
+  test('synthesizing from the agent produces exactly the template the pin resolves', () => {
+    const params = synthesizeWorkflowAgentTemplate(
+      {
+        id: agent.id,
+        handle: agent.handle,
+        displayName: agent.name,
+        description: agent.description,
+        instructions: agent.customPrompt,
+        model: agent.model ?? null,
+        provider: agent.provider ?? null,
+        thinkingLevel: agent.thinkingLevel ?? null,
+        settingSources: agent.settingSources ?? null,
+        tools: agent.tools ?? null,
+        modelPool: agent.modelPool ?? null,
+      },
+      'migrated.registry-agent'
+    );
+
+    expect(params.instructions).toBe('Be thorough');
+    expect(params.model).toBe('claude-x');
+    expect(params.modelPool).toEqual([{ model: 'claude-x', maxConcurrent: 2, weight: 1 }]);
+    expect(params.tools).toEqual(['Read']);
   });
 });

@@ -166,7 +166,27 @@ describe('SpaceWorkflowManager', () => {
           ],
           completionAutonomyLevel: 3,
         })
-      ).toThrow('does not match any built-in agent template');
+      ).toThrow('does not match any agent template');
+    });
+
+    it('accepts a template key from the stored template library', () => {
+      const withLibrary = new SpaceWorkflowManager(repo, null, {
+        hasTemplate: (key: string) => key === 'migrated.coder',
+      });
+      const result = withLibrary.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Stored Template Workflow',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Step One',
+            agents: [{ agentId: '', templateKey: 'migrated.coder', name: 'coder' }],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      });
+
+      expect(result.nodes[0].agents[0].templateKey).toBe('migrated.coder');
     });
   });
 

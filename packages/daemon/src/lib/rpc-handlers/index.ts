@@ -540,7 +540,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     spaceAgentRepo,
     longHorizonAgentRepo
   );
-  const spaceWorkflowManager = new SpaceWorkflowManager(spaceWorkflowRepo, agentLookup);
+  const agentTemplateRepo = new SpaceAgentTemplateRepository(deps.db.getDatabase());
+  const spaceWorkflowManager = new SpaceWorkflowManager(spaceWorkflowRepo, agentLookup, {
+    hasTemplate: (key: string) => agentTemplateRepo.getByKey(key) !== null,
+  });
 
   const spaceTaskManagerFactory: SpaceTaskManagerFactory = (spaceId: string) => {
     return new SpaceTaskManager(
@@ -918,7 +921,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.db,
     longHorizonAgentRepo,
     spaceRuntimeService,
-    new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(deps.db.getDatabase()))
+    new SpaceAgentTemplateManager(agentTemplateRepo)
   );
 
   setupSessionHandlers(

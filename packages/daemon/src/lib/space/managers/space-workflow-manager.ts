@@ -41,6 +41,10 @@ export interface SpaceAgentLookup {
   getAgentById(spaceId: string, id: string): { id: string; name: string } | null;
 }
 
+export interface SpaceAgentTemplateLookup {
+  hasTemplate(key: string): boolean;
+}
+
 export function createSpaceAgentLookup(
   spaceAgentRepo: Pick<SpaceAgentRepository, 'getById'>,
   longHorizonAgentRepo: Pick<SpaceLongHorizonAgentRepository, 'getById' | 'getCoordinator'>
@@ -87,7 +91,8 @@ export class WorkflowDeletionBlockedError extends WorkflowValidationError {
 export class SpaceWorkflowManager {
   constructor(
     private repo: SpaceWorkflowRepository,
-    private agentLookup: SpaceAgentLookup | null = null
+    private agentLookup: SpaceAgentLookup | null = null,
+    private templateLookup: SpaceAgentTemplateLookup | null = null
   ) {}
 
   createWorkflow(params: CreateSpaceWorkflowParams): SpaceWorkflow {
@@ -637,10 +642,13 @@ export class SpaceWorkflowManager {
     for (let j = 0; j < node.agents.length; j++) {
       const entry = node.agents[j];
       if (entry.templateKey?.trim()) {
-        const template = getLongHorizonAgentTemplate(entry.templateKey.trim());
-        if (!template) {
+        const key = entry.templateKey.trim();
+        const knownTemplate =
+          getLongHorizonAgentTemplate(key) !== undefined ||
+          (this.templateLookup?.hasTemplate(key) ?? false);
+        if (!knownTemplate) {
           throw new WorkflowValidationError(
-            `node[${index}].agents[${j}]: templateKey "${entry.templateKey}" does not match any built-in agent template`
+            `node[${index}].agents[${j}]: templateKey "${entry.templateKey}" does not match any agent template`
           );
         }
         entry.agentId = '';
