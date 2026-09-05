@@ -3280,16 +3280,18 @@ describe('SpaceStore — template CRUD methods', () => {
     expect(spaceStore.agentTemplates.value[0].displayName).toBe('Scribe');
   });
 
-  it('deleteTemplate() calls the RPC and removes the entry from agentTemplates', async () => {
+  it('deleteTemplate() calls the RPC and refreshes the merged library', async () => {
     templateListResult = [
       makeAgentTemplate({ key: 'first', createdAt: 0 }),
       makeAgentTemplate({ key: 'scribe', createdAt: 2 }),
     ];
     await spaceStore.fetchTemplates();
 
+    templateListResult = [makeAgentTemplate({ key: 'first', createdAt: 0 })];
     await spaceStore.deleteTemplate('scribe');
 
     expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.deleteTemplate', { key: 'scribe' });
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listTemplates');
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['first']);
   });
 

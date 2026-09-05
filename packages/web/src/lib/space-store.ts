@@ -2466,9 +2466,7 @@ class SpaceStore {
     if (!hub) throw new Error('Not connected');
 
     await hub.request('spaceAgent.deleteTemplate', { key });
-    this.agentTemplates.value = this.agentTemplates.value.filter(
-      (existing) => existing.key !== key
-    );
+    await this.fetchTemplates();
   }
 
   private upsertAgentTemplate(template: SpaceAgentTemplate): void {
