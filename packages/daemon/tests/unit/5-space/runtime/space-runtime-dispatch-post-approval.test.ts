@@ -62,6 +62,7 @@ function buildRuntime(
   const injected: string[] = [];
   const spawned: Ctx['spawned'] = [];
   const cancelled: string[] = [];
+  const liveSessions = new Set<string>();
   const config: SpaceRuntimeConfig = {
     db,
     spaceManager,
@@ -96,9 +97,10 @@ function buildRuntime(
           targetAgent: args.targetAgent,
           kickoffMessage: args.kickoffMessage,
         });
+        liveSessions.add('stub-session');
         return { sessionId: 'stub-session' };
       },
-      isSessionAlive: () => false,
+      isSessionAlive: (sessionId: string) => liveSessions.has(sessionId),
       isSessionOnPostApprovalRoute: () => true,
       cancelBySessionId: (sessionId: string) => {
         cancelled.push(sessionId);
