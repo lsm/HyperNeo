@@ -1,6 +1,7 @@
 import type {
   NodeExecution,
   Space,
+  SpaceAgentTemplate,
   SpaceGoal,
   SpaceGoalEvent,
   SpaceLongHorizonAgent,
@@ -11,6 +12,7 @@ import type {
 } from '@hyperneo/shared';
 import { signal } from '@preact/signals';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { connectionManager } from '../connection-manager.ts';
 
 const currentSpaceIdSignal = signal<string | null>(null);
 const currentSpaceCanonicalIdSignal = signal<string | null>(null);
@@ -19,6 +21,8 @@ let mockEventHandlers: Map<string, (event: unknown) => void>;
 let mockEventHandlerSets: Map<string, Set<(event: unknown) => void>>;
 let mockHub: ReturnType<typeof makeMockHub>;
 let taskDetailResult: SpaceTask | null = null;
+let templateListResult: SpaceAgentTemplate[] | null = null;
+let updateTemplateResult: SpaceAgentTemplate | null | undefined;
 
 function fireMockEvent(eventName: string, data: unknown): void {
   mockEventHandlerSets.get(eventName)?.forEach((h) => {
@@ -159,6 +163,26 @@ function makeLongHorizonAgent(id: string): SpaceLongHorizonAgent {
   };
 }
 
+function makeAgentTemplate(overrides: Partial<SpaceAgentTemplate> = {}): SpaceAgentTemplate {
+  return {
+    key: 'tpl-1',
+    handle: 'tpl-agent',
+    displayName: 'Template One',
+    description: 'A template',
+    instructions: 'Do the thing',
+    suggestedAutonomyLevel: 3,
+    model: null,
+    provider: null,
+    modelPool: null,
+    thinkingLevel: null,
+    settingSources: null,
+    tools: null,
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  };
+}
+
 function makeWorkflow(id: string): SpaceWorkflow {
   return {
     id,
@@ -236,6 +260,16 @@ function makeMockHub() {
       }
       if (method === 'spaceAgent.list') return { agents: [] };
       if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') return { templates: templateListResult ?? [] };
+      if (method === 'spaceAgent.createTemplate')
+        return { template: makeAgentTemplate(params as Partial<SpaceAgentTemplate>) };
+      if (method === 'spaceAgent.updateTemplate') {
+        if (updateTemplateResult !== undefined) return { template: updateTemplateResult };
+        return {
+          template: makeAgentTemplate(params as Partial<SpaceAgentTemplate>),
+        };
+      }
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
       if (method === 'spaceWorkflow.list') return { workflows: [] };
       if (method === 'space.pause') return { ...makeSpace(), paused: true };
       if (method === 'space.resume') return { ...makeSpace(), paused: false };
@@ -399,6 +433,8 @@ async function getStore() {
 async function resetStore() {
   mockEventHandlers = new Map();
   mockEventHandlerSets = new Map();
+  templateListResult = null;
+  updateTemplateResult = undefined;
   mockHub = makeMockHub();
   spaceStore = await getStore();
   if (spaceStore.spaceId.value !== null) {
@@ -3137,5 +3173,149 @@ describe('SpaceStore — refreshAgents preserves cache on failure', () => {
     resolveList({ agents: [makeLongHorizonAgent('stale')] });
     await pending;
     expect(spaceStore.agents.value.map((a) => a.id)).toEqual(['seeded']);
+  });
+});
+
+describe('SpaceStore — template CRUD methods', () => {
+  beforeEach(async () => {
+    await resetStore();
+    spaceStore.agentTemplates.value = [];
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it('fetchTemplates() replaces agentTemplates with the merged library mapped to the pane shape', async () => {
+    templateListResult = [
+      makeAgentTemplate({ key: 'architect', displayName: 'Architect', createdAt: 0 }),
+      makeAgentTemplate({
+        key: 'reviewer',
+        displayName: 'Reviewer',
+        model: 'glm-4.7',
+        provider: 'zai',
+        thinkingLevel: 'think16k',
+      }),
+    ];
+
+    await spaceStore.fetchTemplates();
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listTemplates');
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['architect', 'reviewer']);
+    const reviewer = spaceStore.agentTemplates.value[1];
+    expect(reviewer.model).toBe('glm-4.7');
+    expect(reviewer.provider).toBe('zai');
+    expect(reviewer.thinkingLevel).toBe('think16k');
+    expect(reviewer.suggestedAutonomyLevel).toBe(3);
+    expect(reviewer.suggestedEventSubscriptions).toEqual([]);
+    expect(reviewer.reminderDefaults).toEqual([]);
+    expect(reviewer.ownershipPatterns).toEqual([]);
+    expect(reviewer.toolPermissions).toEqual({});
+  });
+
+  it('fetchTemplates() keeps the cached list when the RPC fails', async () => {
+    templateListResult = [makeAgentTemplate({ key: 'seeded' })];
+    await spaceStore.fetchTemplates();
+
+    mockHub.request.mockRejectedValueOnce(new Error('timeout'));
+    await spaceStore.fetchTemplates();
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['seeded']);
+  });
+
+  it('fetchTemplates() throws when not connected', async () => {
+    vi.mocked(connectionManager.getHubIfConnected).mockReturnValueOnce(null);
+
+    await expect(spaceStore.fetchTemplates()).rejects.toThrow('Not connected');
+    expect(mockHub.request).not.toHaveBeenCalled();
+  });
+
+  it('createTemplate() calls the RPC and appends the mapped template to agentTemplates', async () => {
+    const template = await spaceStore.createTemplate({
+      key: 'scribe',
+      handle: 'scribe-agent',
+      displayName: 'Scribe',
+    });
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.createTemplate', {
+      key: 'scribe',
+      handle: 'scribe-agent',
+      displayName: 'Scribe',
+    });
+    expect(template.key).toBe('scribe');
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['scribe']);
+    expect(spaceStore.agentTemplates.value[0].handle).toBe('scribe-agent');
+  });
+
+  it('updateTemplate() replaces the existing entry in place', async () => {
+    templateListResult = [
+      makeAgentTemplate({ key: 'first', createdAt: 0 }),
+      makeAgentTemplate({ key: 'scribe', displayName: 'Scribe', createdAt: 2 }),
+    ];
+    await spaceStore.fetchTemplates();
+
+    updateTemplateResult = makeAgentTemplate({
+      key: 'scribe',
+      displayName: 'Scribe II',
+      instructions: 'Updated instructions',
+    });
+    const template = await spaceStore.updateTemplate('scribe', { displayName: 'Scribe II' });
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.updateTemplate', {
+      key: 'scribe',
+      displayName: 'Scribe II',
+    });
+    expect(template.displayName).toBe('Scribe II');
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['first', 'scribe']);
+    expect(spaceStore.agentTemplates.value[1].displayName).toBe('Scribe II');
+    expect(spaceStore.agentTemplates.value[1].instructions).toBe('Updated instructions');
+  });
+
+  it('updateTemplate() throws on a concurrent-modification conflict and keeps the cached entry', async () => {
+    templateListResult = [makeAgentTemplate({ key: 'scribe', displayName: 'Scribe' })];
+    await spaceStore.fetchTemplates();
+
+    updateTemplateResult = null;
+    await expect(spaceStore.updateTemplate('scribe', { displayName: 'Scribe II' })).rejects.toThrow(
+      'modified concurrently'
+    );
+
+    expect(spaceStore.agentTemplates.value[0].displayName).toBe('Scribe');
+  });
+
+  it('deleteTemplate() calls the RPC and refreshes the merged library', async () => {
+    templateListResult = [
+      makeAgentTemplate({ key: 'first', createdAt: 0 }),
+      makeAgentTemplate({ key: 'scribe', createdAt: 2 }),
+    ];
+    await spaceStore.fetchTemplates();
+
+    templateListResult = [makeAgentTemplate({ key: 'first', createdAt: 0 })];
+    await spaceStore.deleteTemplate('scribe');
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.deleteTemplate', { key: 'scribe' });
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listTemplates');
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['first']);
+  });
+
+  it('deleteTemplate() propagates RPC errors and keeps the cached list', async () => {
+    templateListResult = [makeAgentTemplate({ key: 'scribe' })];
+    await spaceStore.fetchTemplates();
+    mockHub.request.mockRejectedValueOnce(new Error('Template not found: scribe'));
+
+    await expect(spaceStore.deleteTemplate('scribe')).rejects.toThrow('Template not found');
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['scribe']);
+  });
+
+  it('deleteTemplate() rejects when the post-delete refresh fails', async () => {
+    templateListResult = [makeAgentTemplate({ key: 'scribe' })];
+    await spaceStore.fetchTemplates();
+    mockHub.request
+      .mockImplementationOnce(async () => ({ success: true }))
+      .mockImplementationOnce(async () => {
+        throw new Error('connection dropped');
+      });
+
+    await expect(spaceStore.deleteTemplate('scribe')).rejects.toThrow('connection dropped');
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['scribe']);
   });
 });

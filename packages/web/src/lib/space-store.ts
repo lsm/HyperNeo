@@ -1,4 +1,5 @@
 import type {
+  CreateSpaceAgentTemplateParams,
   CreateSpaceGoalParams,
   CreateSpaceLongHorizonAgentReminderParams,
   CreateSpaceLongHorizonAgentSubscriptionParams,
@@ -12,6 +13,7 @@ import type {
   PaginatedSpaceTaskResult,
   RuntimeState,
   Space,
+  SpaceAgentTemplate,
   SpaceBlockReason,
   SpaceGoal,
   SpaceGoalEvent,
@@ -36,6 +38,7 @@ import type {
   TaskSchedule,
   TaskScheduleStatus,
   TaskScheduleTriggerType,
+  UpdateSpaceAgentTemplateParams,
   UpdateSpaceGoalParams,
   UpdateSpaceLongHorizonAgentSubscriptionParams,
   UpdateSpaceParams,
@@ -224,6 +227,25 @@ function workflowToSummary(wf: SpaceWorkflow): SpaceWorkflowSummary {
     updatedAt: wf.updatedAt,
   };
 }
+
+function toPaneAgentTemplate(template: SpaceAgentTemplate): SpaceLongHorizonAgentTemplate {
+  return {
+    key: template.key,
+    handle: template.handle,
+    displayName: template.displayName,
+    description: template.description,
+    instructions: template.instructions,
+    suggestedAutonomyLevel: template.suggestedAutonomyLevel,
+    suggestedEventSubscriptions: [],
+    reminderDefaults: [],
+    ownershipPatterns: [],
+    toolPermissions: {},
+    model: template.model,
+    provider: template.provider,
+    thinkingLevel: template.thinkingLevel,
+  };
+}
+
 class SpaceStore {
   readonly spaces = signal<Space[]>([]);
 
@@ -2395,6 +2417,75 @@ class SpaceStore {
     );
     this.upsertAgent(agent, spaceId ?? undefined);
     return agent;
+  }
+
+  async fetchTemplates(): Promise<void> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    try {
+      await this.refreshTemplateLibrary(hub);
+    } catch (err) {
+      logger.error('Failed to fetch templates:', err);
+    }
+  }
+
+  private async refreshTemplateLibrary(
+    hub: Awaited<ReturnType<typeof connectionManager.getHub>>
+  ): Promise<void> {
+    const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
+      'spaceAgent.listTemplates'
+    );
+    this.agentTemplates.value = (result?.templates ?? []).map(toPaneAgentTemplate);
+  }
+
+  async createTemplate(params: CreateSpaceAgentTemplateParams): Promise<SpaceAgentTemplate> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const { template } = await hub.request<{ template: SpaceAgentTemplate }>(
+      'spaceAgent.createTemplate',
+      params
+    );
+    this.upsertAgentTemplate(template);
+    return template;
+  }
+
+  async updateTemplate(
+    key: string,
+    params: UpdateSpaceAgentTemplateParams
+  ): Promise<SpaceAgentTemplate> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const { template } = await hub.request<{ template: SpaceAgentTemplate | null }>(
+      'spaceAgent.updateTemplate',
+      { key, ...params }
+    );
+    if (!template) throw new Error(`Template ${key} was modified concurrently`);
+    this.upsertAgentTemplate(template);
+    return template;
+  }
+
+  async deleteTemplate(key: string): Promise<void> {
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    await hub.request('spaceAgent.deleteTemplate', { key });
+    await this.refreshTemplateLibrary(hub);
+  }
+
+  private upsertAgentTemplate(template: SpaceAgentTemplate): void {
+    const mapped = toPaneAgentTemplate(template);
+    const current = this.agentTemplates.value;
+    const index = current.findIndex((existing) => existing.key === mapped.key);
+    if (index === -1) {
+      this.agentTemplates.value = [...current, mapped];
+      return;
+    }
+    const next = [...current];
+    next[index] = mapped;
+    this.agentTemplates.value = next;
   }
 
   async syncAgentFromTemplate(
