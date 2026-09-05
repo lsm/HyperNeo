@@ -27,29 +27,33 @@ export async function findStage(
     return { foundSessionId: undefined, outcome: undefined };
   }
   const cap = delay(workerWaitCapMs(target));
-  const live = await Promise.race([
-    deps.rehydrateSubSession(sessionId),
-    cap.promise.then(() => null),
-  ]);
-  cap.cancel();
-  if (cap.fired) {
+  try {
+    const live = await Promise.race([
+      deps.rehydrateSubSession(sessionId),
+      cap.promise.then(() => null),
+    ]);
     const phase = deps.readWorkerTaskPhase(target.taskId);
+    if (cap.fired) {
+      return {
+        foundSessionId: undefined,
+        outcome:
+          phase === 'run_active'
+            ? { kind: 'unresolved', reason: 'activation_timeout' }
+            : phase === 'done'
+              ? { kind: 'unresolved', reason: 'task_terminal' }
+              : await ensureWorkerSession(target, deps),
+      };
+    }
+    if (live === null || (phase !== 'run_active' && phase !== 'done')) {
+      return { foundSessionId: undefined, outcome: undefined };
+    }
     return {
-      foundSessionId: undefined,
-      outcome:
-        phase === 'run_active'
-          ? { kind: 'unresolved', reason: 'activation_timeout' }
-          : await ensureWorkerSession(target, deps),
+      foundSessionId: sessionId,
+      outcome: { kind: 'resolved', sessionId, created: false },
     };
+  } finally {
+    cap.cancel();
   }
-  if (live === null) {
-    return { foundSessionId: undefined, outcome: undefined };
-  }
-  const phase = deps.readWorkerTaskPhase(target.taskId);
-  if (phase !== 'run_active' && phase !== 'done') {
-    return { foundSessionId: undefined, outcome: undefined };
-  }
-  return { foundSessionId: sessionId, outcome: { kind: 'resolved', sessionId, created: false } };
 }
 
 export async function findTerminalStage(
