@@ -9,6 +9,7 @@ import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
 import { ensurePrompt, type PromptHold } from '../agent/message-delivery-outbox.ts';
 import { parseMailboxEntry } from './entry.ts';
 import { type MailboxSettlement, settleMailboxEntry } from './settlement.ts';
+import { decodeUlidTimestamp } from './ulid.ts';
 
 export type MailboxDeliveryOutcome = MailboxSettlement | { kind: 'failed'; reason: string };
 
@@ -73,6 +74,9 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
     }
     if (deps.isSessionArchived(target)) {
       throw new DeadLetterImmediatelyError('mailbox: target session archived');
+    }
+    if (Date.now() - decodeUlidTimestamp(entry.id) > entry.policy.ttlMs) {
+      throw new DeadLetterImmediatelyError('mailbox: entry expired (ttl)');
     }
     const synthetic = entry.origin !== 'chat';
     const message: SDKUserMessage = {
