@@ -33,7 +33,6 @@ interface SpaceSettingsProps {
 
 type SettingsTab = 'general' | 'instructions' | 'runtime' | 'tools' | 'events' | 'advanced';
 
-/** Tabs whose fields belong to the single `space.update` save form. */
 const FORM_TABS: SettingsTab[] = ['general', 'instructions', 'runtime'];
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
@@ -607,8 +606,6 @@ export function SpaceSettings({ space }: SpaceSettingsProps) {
   return (
     <div class="scrollbar-dark flex h-full min-h-0 flex-col overflow-y-auto py-4 pr-3">
       <div class="space-y-4">
-        {/* Sub-tab navigation — General/Instructions/Runtime share one save
-            form, so unsaved changes mark those tabs with an accent dot. */}
         <GlassTabStrip>
           <div
             class={GLASS_TAB_STRIP_CLASS}

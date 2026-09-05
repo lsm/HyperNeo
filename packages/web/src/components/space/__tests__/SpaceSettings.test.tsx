@@ -126,7 +126,6 @@ function stubHubRequests(workspaces: SpaceWorkspace[] = []) {
   });
 }
 
-/** Open one of the settings sub-tabs (general/instructions/runtime/tools/events/advanced). */
 function openTab(tab: string) {
   fireEvent.click(screen.getByTestId(`space-settings-tab-${tab}`));
 }
@@ -177,7 +176,6 @@ describe('SpaceSettings', () => {
     const { getByDisplayValue } = render(<SpaceSettings space={space} />);
     expect(screen.queryByLabelText('unsaved changes')).toBeNull();
     fireEvent.input(getByDisplayValue('My Space'), { target: { value: 'New Name' } });
-    // One dot per form tab (general, instructions, runtime).
     expect(screen.getAllByLabelText('unsaved changes').length).toBe(3);
   });
 

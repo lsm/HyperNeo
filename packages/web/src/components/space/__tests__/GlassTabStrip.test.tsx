@@ -1,17 +1,9 @@
 // @ts-nocheck
-/**
- * Unit tests for GlassTabStrip scroll chevrons.
- *
- * jsdom has no layout, so the scroller's scroll metrics are stubbed per test
- * via Object.defineProperty and the component is driven with synthetic scroll
- * events (the same signal the real browser fires while swiping).
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, waitFor } from '@testing-library/preact';
 import { GlassTabStrip } from '../glass-workspace';
 
-/** Stub the pointer-capability media query arrows depend on. */
 function stubPointerEnv(matches) {
   vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
     matches: matches(query),
@@ -40,7 +32,6 @@ function stripEl(container) {
   return container.querySelector('[role="tablist"]');
 }
 
-/** Stub the scroller's overflow metrics and notify the component. */
 function setScroll(el, { scrollWidth = 500, clientWidth = 300, scrollLeft = 0, scrollBy }) {
   const props = { configurable: true };
   Object.defineProperty(el, 'scrollWidth', { ...props, value: scrollWidth });
@@ -53,7 +44,6 @@ function setScroll(el, { scrollWidth = 500, clientWidth = 300, scrollLeft = 0, s
 describe('GlassTabStrip', () => {
   beforeEach(() => {
     cleanup();
-    // jsdom's matchMedia never matches; default to a pointer-only environment.
     stubPointerEnv(() => true);
   });
   afterEach(() => {
@@ -62,7 +52,7 @@ describe('GlassTabStrip', () => {
   });
 
   it('hides arrows on touch-primary devices even when overflowing', async () => {
-    stubPointerEnv((q) => !q.includes('hover: hover')); // touch: no hover capability
+    stubPointerEnv((q) => !q.includes('hover: hover'));
     const { container } = mount();
     const el = stripEl(container);
     setScroll(el, { scrollLeft: 0 });
@@ -100,7 +90,7 @@ describe('GlassTabStrip', () => {
       expect(container.querySelectorAll('button[aria-label^="Scroll tabs"]')).toHaveLength(2);
     });
 
-    setScroll(el, { scrollLeft: 200 }); // scrollWidth - clientWidth = 200
+    setScroll(el, { scrollLeft: 200 });
     await waitFor(() => {
       const arrows = container.querySelectorAll('button[aria-label^="Scroll tabs"]');
       expect(arrows).toHaveLength(1);
@@ -122,7 +112,7 @@ describe('GlassTabStrip', () => {
     fireEvent.click(right);
     expect(scrollBy).toHaveBeenCalledTimes(1);
     const { left, behavior } = scrollBy.mock.calls[0][0];
-    expect(left).toBeGreaterThan(0); // clientWidth 300 * 0.75 = 225
+    expect(left).toBeGreaterThan(0);
     expect(behavior).toBe('smooth');
 
     const leftBtn = container.querySelector('button[aria-label="Scroll tabs left"]');
@@ -138,7 +128,6 @@ describe('GlassTabStrip', () => {
     await waitFor(() => {
       expect(container.querySelectorAll('button[aria-label^="Scroll tabs"]')).toHaveLength(0);
     });
-    // Simulate content growing (e.g. a tab gains a dirty dot) past the edge.
     setScroll(el, { scrollWidth: 500, clientWidth: 300, scrollLeft: 0 });
     await waitFor(() => {
       expect(container.querySelectorAll('button[aria-label^="Scroll tabs"]')).toHaveLength(1);

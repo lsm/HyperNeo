@@ -56,15 +56,9 @@ export function GlassRouteShell({
   );
 }
 
-/**
- * Glass pill strip for tab navigation. Fills the remaining column width and
- * swipes horizontally (scrollbar hidden) — pills never wrap or squeeze their
- * labels onto two lines. Mount inside a GlassTabStrip to get scroll chevrons.
- */
 export const GLASS_TAB_STRIP_CLASS =
   'glass-surface scrollbar-none flex min-w-0 flex-1 gap-1 overflow-x-auto rounded-xl p-1.5';
 
-/** Pill inside a GLASS_TAB_STRIP_CLASS strip — single line, accent when active. */
 export const GLASS_TAB_PILL_CLASS =
   'flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition';
 
@@ -94,23 +88,10 @@ function TabStripArrow({ dir, onClick }: { dir: 'left' | 'right'; onClick: () =>
   );
 }
 
-/**
- * Scroll chevrons around an overflowing glass tab strip.
- *
- * Wraps exactly one strip element (e.g. a TabList or a role="tablist" div
- * carrying GLASS_TAB_STRIP_CLASS) and overlays a small round arrow whenever
- * that direction has hidden content — the affordance that the strip scrolls,
- * plus click-to-scroll for pointer users who can't swipe. Arrows vanish at
- * the strip's ends and when everything fits. Touch-primary devices (phones/
- * tablets) never get arrows: swiping is the native gesture there, and
- * `(hover: hover) and (pointer: fine)` is the browser's signal for a mouse/
- * trackpad-driven environment. Restyle call sites, not this component.
- */
 export function GlassTabStrip({ children }: { children: ComponentChildren }) {
   const scrollerRef = useRef<HTMLElement | null>(null);
   const [canLeft, setCanLeft] = useState(false);
   const [canRight, setCanRight] = useState(false);
-  // Pointer-only environments need click-to-scroll; touch devices swipe.
   const [showArrows] = useState(
     () => window.matchMedia?.('(hover: hover) and (pointer: fine)').matches ?? true
   );
@@ -128,7 +109,6 @@ export function GlassTabStrip({ children }: { children: ComponentChildren }) {
     if (!el) return;
     sync();
     el.addEventListener('scroll', sync, { passive: true });
-    // Pills and dirty dots come and go; keep the arrows honest about overflow.
     const mo = new MutationObserver(sync);
     mo.observe(el, { childList: true, subtree: true, attributes: true });
     let ro: ResizeObserver | undefined;
@@ -150,10 +130,6 @@ export function GlassTabStrip({ children }: { children: ComponentChildren }) {
   };
 
   const child = (Array.isArray(children) ? children[0] : children) as VNode;
-  // Arrows OVERLAY the strip edges rather than sitting in flow — in-flow
-  // buttons would change the scroller's width as they appear/disappear and
-  // clamp scrolls short of the true end. Overlaid, the strip's geometry never
-  // shifts, and strips that fit (wide desktop) render no arrows at all.
   return (
     <div class="relative mt-1 w-full self-start sm:w-auto">
       {cloneElement(child, { ref: scrollerRef })}
