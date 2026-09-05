@@ -2758,7 +2758,14 @@ describe('setupSpaceTaskMessageHandlers', () => {
       })) as Record<string, unknown>;
 
       expect(resolutionCalls).toEqual([
-        { kind: 'worker', taskId: 'task-1', agentName: 'reviewer', waitCapMs: 0 },
+        {
+          kind: 'worker',
+          taskId: 'task-1',
+          agentName: 'reviewer',
+          reopenReason: 'web client lazy activation of "reviewer"',
+          reopenBy: 'web-client',
+          waitCapMs: 0,
+        },
       ]);
       expect(result).toMatchObject({
         sessionId: 'sess-live-reviewer',
@@ -2793,6 +2800,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
         taskId: 'task-1',
         agentName: 'reviewer',
         workflowNodeId: 'node-that-does-not-declare-reviewer',
+        reopenReason: 'web client lazy activation of "reviewer"',
+        reopenBy: 'web-client',
         waitCapMs: 0,
       });
       expect(enqueueCalls).toHaveLength(1);
@@ -2814,7 +2823,14 @@ describe('setupSpaceTaskMessageHandlers', () => {
         queuedMessageId: 'pending-1',
       });
       expect(resolutionCalls).toEqual([
-        { kind: 'worker', taskId: 'task-1', agentName: 'reviewer', waitCapMs: 0 },
+        {
+          kind: 'worker',
+          taskId: 'task-1',
+          agentName: 'reviewer',
+          reopenReason: 'web client lazy activation of "reviewer"',
+          reopenBy: 'web-client',
+          waitCapMs: 0,
+        },
       ]);
       expect(injectCalls).toHaveLength(0);
       expect(enqueueCalls).toEqual([
@@ -2854,6 +2870,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
         taskId: 'task-1',
         agentName: 'reviewer',
         workflowNodeId: 'node-2',
+        reopenReason: 'web client lazy activation of "reviewer"',
+        reopenBy: 'web-client',
         waitCapMs: 0,
       });
     });

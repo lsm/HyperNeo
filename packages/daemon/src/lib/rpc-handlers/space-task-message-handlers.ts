@@ -137,6 +137,7 @@ export interface PendingAgentMessageQueue {
     deliveryMode?: 'immediate' | 'defer';
   }): { record: { id: string }; deduped: boolean };
   markFailed?(id: string, error: string): unknown;
+  getById?(id: string): { status: string; lastError?: string | null } | null;
 }
 
 type SpaceTaskMessageTarget =
@@ -897,6 +898,12 @@ export function setupSpaceTaskMessageHandlers(
           params.agentName,
           outcome.sessionId
         );
+        const queuedRecord = pendingMessageQueue?.getById?.(queuedMessageId);
+        if (queuedRecord?.status !== 'delivered') {
+          throw new Error(
+            `Queued message ${queuedMessageId} was not delivered to "${params.agentName}": ${queuedRecord?.lastError ?? queuedRecord?.status ?? 'delivery status unavailable'}`
+          );
+        }
         log.info(
           `space.task.activateNodeAgent: delivered queued message to session ${outcome.sessionId} ` +
             `(agent=${params.agentName}, task=${params.taskId})`
