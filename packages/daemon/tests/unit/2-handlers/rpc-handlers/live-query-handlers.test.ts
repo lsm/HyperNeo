@@ -2996,7 +2996,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(rows.length).toBeGreaterThanOrEqual(4);
       });
 
-      test('resolves display labels from space_agents.name across every feed label join', () => {
+      test('resolves unified agent display names across every feed label join', () => {
         const workflowRunId = 'wr-label-join';
         const orchSessionId = 'orch-label-join';
         const agentSessionId = 'space:task:label-agent';
@@ -3029,7 +3029,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
           `INSERT INTO space_long_horizon_agents (id, space_id, handle, display_name, status, instructions, tool_permissions_json, created_at, updated_at)
            VALUES ('agent-label', ?, 'agent-label', 'Fresh Label', 'active', '', '{}', 1, 1)`
         ).run(spaceId);
-        seedUnifiedAgentMirror(db, { id: 'agent-label', spaceId, name: 'Fresh Label' });
         insertNodeExecution({
           id: 'ne-label',
           workflowRunId,
