@@ -29,7 +29,3 @@ export function settleMailboxEntry(
     settledAt,
   };
 }
-
-export function expireMailboxEntries(_nowMs?: number): number {
-  throw new Error('mailbox: expireMailboxEntries not implemented');
-}
