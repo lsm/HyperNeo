@@ -310,6 +310,41 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
     db.close();
   });
 
+  test('keeps an agentId when rewriting to the slot name would be ambiguous', () => {
+    const db = createMigrationDb();
+    new SpaceAgentTemplateRepository(db).create({
+      key: 'migrated.agent.agent-1',
+      handle: 'coder',
+      displayName: 'Coder',
+    });
+    insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
+    db.prepare(`UPDATE space_workflows SET post_approval = ? WHERE id = 'wf-1'`).run(
+      JSON.stringify({ targetAgent: 'agent-1', instructions: 'merge the PR' })
+    );
+    insertNodeWithSlots(db, 'node-1', 'wf-1', [
+      { templateKey: 'coordinator.default', name: 'coder' },
+    ]);
+    insertNodeWithSlots(db, 'node-2', 'wf-1', [
+      { agentId: 'agent-1', templateKey: 'migrated.agent.agent-1', name: 'coder' },
+    ]);
+
+    runMigration231(db);
+
+    expect(readSlots(db, 'node-1')).toEqual([
+      { templateKey: 'coordinator.default', name: 'coder' },
+    ]);
+    expect(readSlots(db, 'node-2')).toEqual([
+      { agentId: 'agent-1', templateKey: 'migrated.agent.agent-1', name: 'coder' },
+    ]);
+    const workflowRoute = db
+      .prepare(`SELECT post_approval FROM space_workflows WHERE id = 'wf-1'`)
+      .get() as { post_approval: string };
+    expect((JSON.parse(workflowRoute.post_approval) as { targetAgent: string }).targetAgent).toBe(
+      'agent-1'
+    );
+    db.close();
+  });
+
   test('leaves a UUID targetAgent alone when it matches no cleared slot', () => {
     const db = createMigrationDb();
     new SpaceAgentTemplateRepository(db).create({
@@ -528,6 +563,72 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
       agentId: '',
       templateKey: 'coordinator.default',
       name: 'agent-p',
+    });
+    expect(payload.postApproval.targetAgent).toBe('agent-p');
+    db.close();
+  });
+
+  test('keeps an agentId in pinned runs when the slot name would be ambiguous', () => {
+    const db = createMigrationDb();
+    createRunTables(db);
+    insertWorkflow(db, 'wf-pin', 'space-1', 'Pinned Flow');
+    const pinnedPayload = JSON.stringify({
+      id: 'wf-pin',
+      spaceId: 'space-1',
+      name: 'Pinned Flow',
+      nodes: [
+        {
+          id: 'node-a',
+          name: 'First',
+          agents: [{ templateKey: 'coordinator.default', name: 'coder' }],
+        },
+        {
+          id: 'node-b',
+          name: 'Second',
+          agents: [{ agentId: 'agent-p', templateKey: 'migrated.agent.agent-p', name: 'coder' }],
+        },
+      ],
+      channels: [],
+      startNodeId: 'node-a',
+      endNodeId: 'node-b',
+      postApproval: { targetAgent: 'agent-p', instructions: 'merge the PR' },
+    });
+    new SpaceAgentTemplateRepository(db).create({
+      key: 'migrated.agent.agent-p',
+      handle: 'coder',
+      displayName: 'Coder',
+    });
+    db.prepare(
+      `INSERT INTO space_workflow_definition_versions (workflow_id, version_hash, space_id, payload, source, created_at)
+       VALUES ('wf-pin', 'hash-old', 'space-1', ?, 'backfill', 1)`
+    ).run(pinnedPayload);
+    db.prepare(
+      `INSERT INTO space_workflow_runs (id, space_id, workflow_id, definition_version, title, description, status, created_at, updated_at)
+       VALUES ('run-1', 'space-1', 'wf-pin', 'hash-old', 'Run 1', '', 'in_progress', 1, 1)`
+    ).run();
+
+    runMigration231(db);
+
+    const run = db
+      .prepare(`SELECT definition_version FROM space_workflow_runs WHERE id = 'run-1'`)
+      .get() as { definition_version: string };
+    const version = db
+      .prepare(
+        `SELECT payload FROM space_workflow_definition_versions WHERE workflow_id = 'wf-pin' AND version_hash = ?`
+      )
+      .get(run.definition_version) as { payload: string };
+    const payload = JSON.parse(version.payload) as {
+      nodes: Array<{ agents: Array<Record<string, unknown>> }>;
+      postApproval: { targetAgent: string };
+    };
+    expect(payload.nodes[0].agents[0]).toEqual({
+      templateKey: 'coordinator.default',
+      name: 'coder',
+    });
+    expect(payload.nodes[1].agents[0]).toEqual({
+      agentId: 'agent-p',
+      templateKey: 'migrated.agent.agent-p',
+      name: 'coder',
     });
     expect(payload.postApproval.targetAgent).toBe('agent-p');
     db.close();

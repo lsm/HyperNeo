@@ -6,6 +6,8 @@ import type { SpaceWorkflow } from '@hyperneo/shared';
 import { getLongHorizonAgentTemplates } from '../../lib/space/agents/long-horizon-agent-templates.ts';
 import { ensureTemplateForAgentRef } from './m228-migrate-workflow-agent-template-refs.ts';
 
+const TASK_AGENT_TARGET = 'task-agent';
+
 interface NodeRow {
   id: string;
   workflow_id: string;
@@ -22,6 +24,15 @@ interface RunRow {
   id: string;
   workflow_id: string;
   definition_version: string | null;
+}
+
+interface SlotOccurrence {
+  nodeId: string;
+  slot: Record<string, unknown>;
+  agentId: string;
+  rawName: string;
+  effectiveName: string;
+  index: number;
 }
 
 function tableExists(db: BunDatabase, tableName: string): boolean {
@@ -47,6 +58,17 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function parseJsonObject(raw: string | null): Record<string, unknown> | null {
   return asRecord(parseJson(raw));
+}
+
+function addPostApprovalTarget(targets: Set<string>, raw: unknown): void {
+  if (typeof raw !== 'string') return;
+  const value = raw.trim();
+  if (value && value !== TASK_AGENT_TARGET) targets.add(value);
+}
+
+function effectiveSlotName(rawName: unknown, agentId: string): string {
+  if (typeof rawName === 'string' && rawName.trim()) return rawName;
+  return agentId;
 }
 
 export function runMigration231(db: BunDatabase): void {
@@ -90,43 +112,81 @@ function clearLiveNodeAgentIds(
   );
 
   const parsedById = new Map<string, Record<string, unknown>>();
+  const nodesByWorkflow = new Map<string, NodeRow[]>();
+  for (const node of nodes) {
+    const parsed = parseJsonObject(node.config);
+    if (parsed) parsedById.set(node.id, parsed);
+    const list = nodesByWorkflow.get(node.workflow_id) ?? [];
+    list.push(node);
+    nodesByWorkflow.set(node.workflow_id, list);
+  }
+
   const dirtyNodeIds = new Set<string>();
   const dirtyWorkflowIds = new Set<string>();
   const clearedByWorkflow = new Map<string, Map<string, string>>();
-  const seenAgentIdByWorkflow = new Map<string, Set<string>>();
 
-  for (const node of nodes) {
-    const parsed = parseJsonObject(node.config);
-    if (!parsed || !Array.isArray(parsed.agents)) continue;
-    parsedById.set(node.id, parsed);
-    let dirty = false;
-    for (const raw of parsed.agents) {
-      const slot = asRecord(raw);
-      if (!slot) continue;
-      const agentId = typeof slot.agentId === 'string' ? slot.agentId.trim() : '';
-      if (!agentId) continue;
-      const key = typeof slot.templateKey === 'string' ? slot.templateKey.trim() : '';
-      const willClear = !!key && resolvable(key);
-      const seen = seenAgentIdByWorkflow.get(node.workflow_id) ?? new Set<string>();
-      if (willClear) {
-        if (typeof slot.name !== 'string' || !slot.name.trim()) {
-          slot.name = agentId;
-        }
-        const clearedNamesByAgentId =
-          clearedByWorkflow.get(node.workflow_id) ?? new Map<string, string>();
-        if (!seen.has(agentId) && typeof slot.name === 'string') {
-          clearedNamesByAgentId.set(agentId, slot.name);
-        }
-        clearedByWorkflow.set(node.workflow_id, clearedNamesByAgentId);
-        slot.agentId = '';
-        dirty = true;
+  for (const [workflowId, wfNodes] of nodesByWorkflow) {
+    const workflow = workflowById.get(workflowId);
+    const targets = new Set<string>();
+    addPostApprovalTarget(targets, parseJsonObject(workflow?.post_approval ?? null)?.targetAgent);
+
+    const occurrences: SlotOccurrence[] = [];
+    let index = 0;
+    for (const node of wfNodes) {
+      const parsed = parsedById.get(node.id);
+      if (!parsed || !Array.isArray(parsed.agents)) continue;
+      addPostApprovalTarget(targets, asRecord(parsed.postApproval)?.targetAgent);
+      for (const raw of parsed.agents) {
+        const slot = asRecord(raw);
+        if (!slot) continue;
+        const agentId = typeof slot.agentId === 'string' ? slot.agentId.trim() : '';
+        const rawName = typeof slot.name === 'string' ? slot.name : '';
+        occurrences.push({
+          nodeId: node.id,
+          slot,
+          agentId,
+          rawName,
+          effectiveName: effectiveSlotName(rawName, agentId),
+          index: index++,
+        });
       }
-      seen.add(agentId);
-      seenAgentIdByWorkflow.set(node.workflow_id, seen);
     }
-    if (!dirty) continue;
-    dirtyNodeIds.add(node.id);
-    dirtyWorkflowIds.add(node.workflow_id);
+
+    const firstAgentIndex = new Map<string, number>();
+    const firstNameIndex = new Map<string, number>();
+    const firstMatchIndex = new Map<string, number>();
+    for (const occ of occurrences) {
+      if (occ.agentId && !firstAgentIndex.has(occ.agentId)) {
+        firstAgentIndex.set(occ.agentId, occ.index);
+      }
+      if (occ.effectiveName && !firstNameIndex.has(occ.effectiveName)) {
+        firstNameIndex.set(occ.effectiveName, occ.index);
+      }
+      if (occ.agentId && !firstMatchIndex.has(occ.agentId)) {
+        firstMatchIndex.set(occ.agentId, occ.index);
+      }
+      if (occ.effectiveName && !firstMatchIndex.has(occ.effectiveName)) {
+        firstMatchIndex.set(occ.effectiveName, occ.index);
+      }
+    }
+
+    const clearedNames = new Map<string, string>();
+    for (const occ of occurrences) {
+      if (!occ.agentId) continue;
+      const key = typeof occ.slot.templateKey === 'string' ? occ.slot.templateKey.trim() : '';
+      if (!key || !resolvable(key)) continue;
+      const isRouteOwner = firstMatchIndex.get(occ.agentId) === occ.index;
+      const nameUnique = firstNameIndex.get(occ.effectiveName) === occ.index;
+      if (isRouteOwner && !nameUnique && targets.has(occ.agentId)) continue;
+      if (!occ.rawName.trim()) occ.slot.name = occ.agentId;
+      if (isRouteOwner && nameUnique) {
+        clearedNames.set(occ.agentId, occ.slot.name as string);
+      }
+      occ.slot.agentId = '';
+      dirtyNodeIds.add(occ.nodeId);
+      dirtyWorkflowIds.add(workflowId);
+    }
+    if (clearedNames.size > 0) clearedByWorkflow.set(workflowId, clearedNames);
   }
 
   for (const node of nodes) {
@@ -208,10 +268,20 @@ function migratePinnedRunDefinitions(
     const workflow = asRecord(payload);
     if (!workflow || !Array.isArray(workflow.nodes)) continue;
 
-    const seenAgentIds = new Set<string>();
-    const templateKeyByAgentId = new Map<string, string>();
-    const namesByAgentId = new Map<string, string>();
-    let dirty = false;
+    const targets = new Set<string>();
+    addPostApprovalTarget(targets, asRecord(workflow.postApproval)?.targetAgent);
+    for (const rawNode of workflow.nodes) {
+      addPostApprovalTarget(targets, asRecord(asRecord(rawNode)?.postApproval)?.targetAgent);
+    }
+
+    const occurrences: Array<{
+      slot: Record<string, unknown>;
+      agentId: string;
+      rawName: string;
+      effectiveName: string;
+      index: number;
+    }> = [];
+    let index = 0;
     for (const rawNode of workflow.nodes) {
       const node = asRecord(rawNode);
       if (!node || !Array.isArray(node.agents)) continue;
@@ -219,28 +289,62 @@ function migratePinnedRunDefinitions(
         const slot = asRecord(rawSlot);
         if (!slot) continue;
         const agentId = typeof slot.agentId === 'string' ? slot.agentId.trim() : '';
-        if (!agentId) continue;
-        const existingKey = typeof slot.templateKey === 'string' ? slot.templateKey.trim() : '';
-        const key = existingKey
-          ? resolvable(existingKey)
-            ? existingKey
-            : null
-          : (templateKeyByAgentId.get(agentId) ??
-            ensureTemplateForAgentRef(db, templateRepo, spaceId, agentId, slot));
-        if (key) {
-          if (typeof slot.name !== 'string' || !slot.name.trim()) {
-            slot.name = agentId;
-          }
-          if (!seenAgentIds.has(agentId) && typeof slot.name === 'string') {
-            namesByAgentId.set(agentId, slot.name);
-          }
-          if (!existingKey) templateKeyByAgentId.set(agentId, key);
-          slot.templateKey = key;
-          slot.agentId = '';
-          dirty = true;
-        }
-        seenAgentIds.add(agentId);
+        const rawName = typeof slot.name === 'string' ? slot.name : '';
+        occurrences.push({
+          slot,
+          agentId,
+          rawName,
+          effectiveName: effectiveSlotName(rawName, agentId),
+          index: index++,
+        });
       }
+    }
+
+    const firstAgentIndex = new Map<string, number>();
+    const firstNameIndex = new Map<string, number>();
+    const firstMatchIndex = new Map<string, number>();
+    for (const occ of occurrences) {
+      if (occ.agentId && !firstAgentIndex.has(occ.agentId)) {
+        firstAgentIndex.set(occ.agentId, occ.index);
+      }
+      if (occ.effectiveName && !firstNameIndex.has(occ.effectiveName)) {
+        firstNameIndex.set(occ.effectiveName, occ.index);
+      }
+      if (occ.agentId && !firstMatchIndex.has(occ.agentId)) {
+        firstMatchIndex.set(occ.agentId, occ.index);
+      }
+      if (occ.effectiveName && !firstMatchIndex.has(occ.effectiveName)) {
+        firstMatchIndex.set(occ.effectiveName, occ.index);
+      }
+    }
+
+    const templateKeyByAgentId = new Map<string, string>();
+    const namesByAgentId = new Map<string, string>();
+    let dirty = false;
+    for (const occ of occurrences) {
+      if (!occ.agentId) continue;
+      const isRouteOwner = firstMatchIndex.get(occ.agentId) === occ.index;
+      const nameUnique = firstNameIndex.get(occ.effectiveName) === occ.index;
+      if (isRouteOwner && !nameUnique && targets.has(occ.agentId)) continue;
+      const existingKey =
+        typeof occ.slot.templateKey === 'string' ? occ.slot.templateKey.trim() : '';
+      let key: string | null = null;
+      if (existingKey) {
+        if (resolvable(existingKey)) key = existingKey;
+      } else {
+        key =
+          templateKeyByAgentId.get(occ.agentId) ??
+          ensureTemplateForAgentRef(db, templateRepo, spaceId, occ.agentId, occ.slot);
+      }
+      if (!key) continue;
+      if (!occ.rawName.trim()) occ.slot.name = occ.agentId;
+      if (isRouteOwner && nameUnique) {
+        namesByAgentId.set(occ.agentId, occ.slot.name as string);
+      }
+      if (!existingKey) templateKeyByAgentId.set(occ.agentId, key);
+      occ.slot.templateKey = key;
+      occ.slot.agentId = '';
+      dirty = true;
     }
     if (!dirty) continue;
     for (const rawNode of workflow.nodes) {
