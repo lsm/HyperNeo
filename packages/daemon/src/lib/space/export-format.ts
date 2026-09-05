@@ -2,9 +2,9 @@ import { z } from 'zod';
 import { validateGlobPattern } from '../external-events/topic-validator.ts';
 import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 import type {
-  SpaceWorkerAgent,
+  SpaceLongHorizonAgent,
   SpaceWorkflow,
-  ExportedSpaceWorkerAgent,
+  ExportedSpaceAgent,
   ExportedSpaceWorkflow,
   ExportedWorkflowChannel,
   ExportedWorkflowNode,
@@ -295,21 +295,22 @@ export function normalizeOverride(
   return value;
 }
 
-export function exportAgent(agent: SpaceWorkerAgent): ExportedSpaceWorkerAgent {
-  const exported: ExportedSpaceWorkerAgent = {
+export function exportAgent(agent: SpaceLongHorizonAgent): ExportedSpaceAgent {
+  const exported: ExportedSpaceAgent = {
     version: CURRENT_EXPORT_VERSION,
     type: 'agent',
-    name: agent.name,
+    name: agent.displayName,
+    handle: agent.handle,
   };
-  if (agent.handle !== undefined) exported.handle = agent.handle;
+  if (agent.instructions) exported.systemPrompt = agent.instructions;
   if (agent.description !== undefined) exported.description = agent.description;
-  if (agent.model !== undefined) exported.model = agent.model;
-  if (agent.thinkingLevel !== undefined) exported.thinkingLevel = agent.thinkingLevel;
-  if (agent.provider !== undefined) exported.provider = agent.provider;
-  if (agent.customPrompt !== null && agent.customPrompt !== undefined)
-    exported.systemPrompt = agent.customPrompt;
-  if (agent.tools !== undefined) exported.tools = agent.tools;
-  if (agent.settingSources !== undefined) exported.settingSources = agent.settingSources;
+  if (agent.model != null) exported.model = agent.model;
+  if (agent.thinkingLevel != null) exported.thinkingLevel = agent.thinkingLevel;
+  if (agent.provider != null) exported.provider = agent.provider;
+  const tools = agent.toolPermissions.tools;
+  if (Array.isArray(tools))
+    exported.tools = tools.filter((tool): tool is string => typeof tool === 'string');
+  if (agent.settingSources != null) exported.settingSources = agent.settingSources;
   if (agent.modelPool !== undefined && agent.modelPool.length > 0)
     exported.modelPool = agent.modelPool;
   return exported;
@@ -317,7 +318,7 @@ export function exportAgent(agent: SpaceWorkerAgent): ExportedSpaceWorkerAgent {
 
 export function exportWorkflow(
   workflow: SpaceWorkflow,
-  agents: SpaceWorkerAgent[]
+  agents: SpaceLongHorizonAgent[]
 ): ExportedSpaceWorkflow {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const nodes = workflow.nodes ?? (workflow as any).steps ?? [];
@@ -328,7 +329,7 @@ export function exportWorkflow(
 
   const agentIdToName = new Map<string, string>();
   for (const agent of agents) {
-    agentIdToName.set(agent.id, agent.name);
+    agentIdToName.set(agent.id, agent.displayName);
   }
 
   const exportedNodes: ExportedWorkflowNode[] = nodes.map((node) => {
@@ -412,7 +413,7 @@ export function exportWorkflow(
 }
 
 export function exportBundle(
-  agents: SpaceWorkerAgent[],
+  agents: SpaceLongHorizonAgent[],
   workflows: SpaceWorkflow[],
   name: string,
   options?: { description?: string; exportedFrom?: string }
@@ -432,7 +433,7 @@ export function exportBundle(
   return bundle;
 }
 
-export function validateExportedAgent(data: unknown): ValidationResult<ExportedSpaceWorkerAgent> {
+export function validateExportedAgent(data: unknown): ValidationResult<ExportedSpaceAgent> {
   if (typeof data !== 'object' || data === null) {
     return { ok: false, error: 'invalid: expected an object' };
   }

@@ -3,8 +3,8 @@ import type {
   EvolutionLesson,
   Space,
   SpaceGoal,
+  SpaceLongHorizonAgent,
   SpaceTask,
-  SpaceWorkerAgent,
   SpaceWorkflow,
   SpaceWorkflowRun,
 } from '@hyperneo/shared';
@@ -25,12 +25,22 @@ import {
   REVIEW_POLICY_GUIDANCE,
 } from '../../../../src/lib/space/workflows/built-in-workflows.ts';
 
-function makeAgent(overrides?: Partial<SpaceWorkerAgent>): SpaceWorkerAgent {
+function makeAgent(overrides?: Partial<SpaceLongHorizonAgent>): SpaceLongHorizonAgent {
   return {
     id: 'agent-1',
     spaceId: 'space-1',
-    name: 'Test Agent',
-    customPrompt: null,
+    handle: 'test-agent',
+    displayName: 'Test Agent',
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: '',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
     createdAt: Date.now(),
     updatedAt: Date.now(),
     ...overrides,
@@ -218,19 +228,19 @@ function makeConfig(overrides?: Partial<CustomAgentConfig>): CustomAgentConfig {
 
 describe('buildCustomAgentSystemPrompt', () => {
   it('returns only trimmed visible prompt text', () => {
-    expect(buildCustomAgentSystemPrompt(makeAgent({ customPrompt: '  Visible prompt  ' }))).toBe(
+    expect(buildCustomAgentSystemPrompt(makeAgent({ instructions: '  Visible prompt  ' }))).toBe(
       'Visible prompt'
     );
   });
 
   it('returns empty string when no prompt is configured', () => {
-    expect(buildCustomAgentSystemPrompt(makeAgent({ customPrompt: null }))).toBe('');
+    expect(buildCustomAgentSystemPrompt(makeAgent({ instructions: '' }))).toBe('');
   });
 });
 
 describe('resolveCustomAgentPrompt', () => {
   it('resolves workflow node overrides before the persisted agent prompt', () => {
-    const resolved = resolveCustomAgentPrompt(makeAgent({ customPrompt: 'Base prompt' }), {
+    const resolved = resolveCustomAgentPrompt(makeAgent({ instructions: 'Base prompt' }), {
       customPrompt: 'Node override',
     });
 
@@ -240,7 +250,9 @@ describe('resolveCustomAgentPrompt', () => {
   });
 
   it('does not substitute the generic reviewer prompt when no prompt is configured', () => {
-    const resolved = resolveCustomAgentPrompt(makeAgent({ name: 'Reviewer', customPrompt: null }));
+    const resolved = resolveCustomAgentPrompt(
+      makeAgent({ displayName: 'Reviewer', instructions: '' })
+    );
 
     expect(resolved.value).toBe('');
     expect(resolved.source).toBe('empty');
@@ -250,7 +262,7 @@ describe('resolveCustomAgentPrompt', () => {
   });
 
   it('replaces the agent base prompt when replaceAgentPrompt is true', () => {
-    const resolved = resolveCustomAgentPrompt(makeAgent({ customPrompt: 'Agent base prompt' }), {
+    const resolved = resolveCustomAgentPrompt(makeAgent({ instructions: 'Agent base prompt' }), {
       customPrompt: 'Slot-only prompt',
       replaceAgentPrompt: true,
     });
@@ -259,20 +271,20 @@ describe('resolveCustomAgentPrompt', () => {
     expect(resolved.value).not.toContain('Agent base prompt');
     expect(resolved.source).toBe('workflow_node_replaced_prompt');
     expect(resolved.hash).toBe(
-      resolveCustomAgentPrompt(makeAgent({ customPrompt: null }), {
+      resolveCustomAgentPrompt(makeAgent({ instructions: '' }), {
         customPrompt: 'Slot-only prompt',
         replaceAgentPrompt: true,
       }).hash
     );
     expect(resolved.hash).not.toBe(
-      resolveCustomAgentPrompt(makeAgent({ customPrompt: 'Agent base prompt' }), {
+      resolveCustomAgentPrompt(makeAgent({ instructions: 'Agent base prompt' }), {
         customPrompt: 'Slot-only prompt',
       }).hash
     );
   });
 
   it('returns an empty value when replaceAgentPrompt is true but the slot prompt is empty', () => {
-    const resolved = resolveCustomAgentPrompt(makeAgent({ customPrompt: 'Agent base prompt' }), {
+    const resolved = resolveCustomAgentPrompt(makeAgent({ instructions: 'Agent base prompt' }), {
       customPrompt: '   ',
       replaceAgentPrompt: true,
     });
@@ -282,7 +294,7 @@ describe('resolveCustomAgentPrompt', () => {
   });
 
   it('is byte-identical to append when replaceAgentPrompt is false or unset', () => {
-    const agent = makeAgent({ customPrompt: 'Base prompt' });
+    const agent = makeAgent({ instructions: 'Base prompt' });
     const append = resolveCustomAgentPrompt(agent, { customPrompt: 'Slot expansion' });
     const explicitFalse = resolveCustomAgentPrompt(agent, {
       customPrompt: 'Slot expansion',
@@ -626,7 +638,7 @@ describe('buildCustomAgentTaskMessage', () => {
   it('does not include ## Instructions section', () => {
     const message = buildCustomAgentTaskMessage(
       makeConfig({
-        customAgent: makeAgent({ customPrompt: 'Some instructions' }),
+        customAgent: makeAgent({ instructions: 'Some instructions' }),
       })
     );
 
@@ -692,7 +704,7 @@ describe('createCustomAgentInit', () => {
   it('uses permissive SDK tool defaults when no tool profile is configured', () => {
     const init = createCustomAgentInit(
       makeConfig({
-        customAgent: makeAgent({ customPrompt: 'Agent-visible prompt' }),
+        customAgent: makeAgent({ instructions: 'Agent-visible prompt' }),
       })
     );
 
@@ -707,7 +719,7 @@ describe('createCustomAgentInit', () => {
   it('bounds Space worker delegation at one subagent generation', () => {
     const init = createCustomAgentInit(
       makeConfig({
-        customAgent: makeAgent({ customPrompt: 'Delegate independent investigations.' }),
+        customAgent: makeAgent({ instructions: 'Delegate independent investigations.' }),
       })
     );
 
@@ -734,7 +746,7 @@ describe('createCustomAgentInit', () => {
   it('denies only omitted mutation tools for configured worker profiles', () => {
     const init = createCustomAgentInit(
       makeConfig({
-        customAgent: makeAgent({ tools: ['Read', 'Bash', 'Grep', 'Glob'] }),
+        customAgent: makeAgent({ toolPermissions: { tools: ['Read', 'Bash', 'Grep', 'Glob'] } }),
       })
     );
 
@@ -748,7 +760,7 @@ describe('createCustomAgentInit', () => {
   it('does not exclude MCP tools when applying a restricted profile', () => {
     const init = createCustomAgentInit(
       makeConfig({
-        customAgent: makeAgent({ tools: ['Read'] }),
+        customAgent: makeAgent({ toolPermissions: { tools: ['Read'] } }),
       })
     );
 
@@ -763,7 +775,7 @@ describe('createCustomAgentInit', () => {
   it('expands slot customPrompt on top of agent customPrompt inside workflow runs', () => {
     const init = createCustomAgentInit(
       makeConfig({
-        customAgent: makeAgent({ customPrompt: 'Base prompt' }),
+        customAgent: makeAgent({ instructions: 'Base prompt' }),
         workflowRun: makeWorkflowRun(),
         slotOverrides: { customPrompt: 'Slot expansion' },
       })
@@ -775,7 +787,7 @@ describe('createCustomAgentInit', () => {
   it('replaces the agent customPrompt when replaceAgentPrompt is set on the slot', () => {
     const init = createCustomAgentInit(
       makeConfig({
-        customAgent: makeAgent({ customPrompt: 'Agent base prompt' }),
+        customAgent: makeAgent({ instructions: 'Agent base prompt' }),
         workflowRun: makeWorkflowRun(),
         slotOverrides: { customPrompt: 'Slot-only prompt', replaceAgentPrompt: true },
       })
@@ -792,8 +804,8 @@ describe('createCustomAgentInit', () => {
       makeConfig({
         customAgent: makeAgent({
           id: 'reviewer-agent-id',
-          name: 'Reviewer',
-          customPrompt: REVIEWER_SYSTEM_CONTRACT,
+          displayName: 'Reviewer',
+          instructions: REVIEWER_SYSTEM_CONTRACT,
         }),
         workflowRun: makeWorkflowRun({ id: 'run-review' }),
         slotOverrides: {
@@ -861,7 +873,7 @@ describe('createCustomAgentInit', () => {
     const codingSlot = codingNode.agents[0];
     const init = createCustomAgentInit(
       makeConfig({
-        customAgent: makeAgent({ id: codingSlot.agentId, name: 'Coder', customPrompt: null }),
+        customAgent: makeAgent({ id: codingSlot.agentId, displayName: 'Coder', instructions: '' }),
         workflow: CODING_WORKFLOW,
         workflowRun: makeWorkflowRun({ workflowId: CODING_WORKFLOW.id }),
         nodeId: codingNode.id,
@@ -893,7 +905,7 @@ describe('createCustomAgentInit', () => {
   it('uses the agent custom prompt when no slot override is defined', () => {
     const init = createCustomAgentInit(
       makeConfig({
-        customAgent: makeAgent({ customPrompt: 'Agent base prompt' }),
+        customAgent: makeAgent({ instructions: 'Agent base prompt' }),
         workflowRun: makeWorkflowRun(),
       })
     );
@@ -906,8 +918,8 @@ describe('createCustomAgentInit', () => {
       makeConfig({
         customAgent: makeAgent({
           id: 'reviewer-agent-id',
-          name: 'Reviewer',
-          customPrompt: 'Base reviewer prompt',
+          displayName: 'Reviewer',
+          instructions: 'Base reviewer prompt',
         }),
         workflowRun: makeWorkflowRun({ id: 'run-review' }),
         workflow: makeWorkflow({ id: 'workflow-review' }),
@@ -946,8 +958,8 @@ describe('createCustomAgentInit', () => {
       makeConfig({
         customAgent: makeAgent({
           id: 'qa-agent-id',
-          name: 'QA',
-          customPrompt: 'SENTINEL QA PROMPT',
+          displayName: 'QA',
+          instructions: 'SENTINEL QA PROMPT',
         }),
         workflowRun: makeWorkflowRun({ id: 'run-qa' }),
       })
@@ -965,9 +977,9 @@ describe('createCustomAgentInit', () => {
     const init = createCustomAgentInit(
       makeConfig({
         customAgent: makeAgent({
-          name: 'Restricted Agent',
-          customPrompt: 'Visible prompt',
-          tools: ['Read', 'Bash'],
+          displayName: 'Restricted Agent',
+          instructions: 'Visible prompt',
+          toolPermissions: { tools: ['Read', 'Bash'] },
         }),
       })
     );
@@ -987,7 +999,7 @@ describe('createCustomAgentInit', () => {
   it('leaves session-level tool restrictions unset when no tools are configured', () => {
     const init = createCustomAgentInit(
       makeConfig({
-        customAgent: makeAgent({ tools: undefined }),
+        customAgent: makeAgent({ toolPermissions: {} }),
       })
     );
 
@@ -1017,7 +1029,7 @@ describe('createCustomAgentInit', () => {
 
     const space = createCustomAgentInit(
       makeConfig({
-        customAgent: makeAgent({ model: undefined }),
+        customAgent: makeAgent({ model: null }),
         space: makeSpace({ defaultModel: 'space-model' }),
       })
     );
@@ -1025,7 +1037,7 @@ describe('createCustomAgentInit', () => {
 
     const fallback = createCustomAgentInit(
       makeConfig({
-        customAgent: makeAgent({ model: undefined }),
+        customAgent: makeAgent({ model: null }),
         space: makeSpace({ defaultModel: undefined }),
       })
     );
@@ -1092,7 +1104,7 @@ describe('resolveAgentInit', () => {
     const init = resolveAgentInit({
       task: makeTask(),
       space: makeSpace(),
-      agent: makeAgent({ id: 'agent-2', customPrompt: 'Visible prompt' }),
+      agent: makeAgent({ id: 'agent-2', instructions: 'Visible prompt' }),
       agentId: 'agent-2',
       sessionId: 'session-1',
       workspacePath: '/workspace/project',

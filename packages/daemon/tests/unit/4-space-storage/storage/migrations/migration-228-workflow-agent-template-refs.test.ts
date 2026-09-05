@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { SpaceLongHorizonAgent, SpaceWorkerAgent } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat.ts';
 import { runMigration225 } from '../../../../../src/storage/schema/m225-space-agent-templates.ts';
 import { runMigration226 } from '../../../../../src/storage/schema/m226-space-agent-templates-version.ts';
@@ -12,7 +12,6 @@ import {
   insertWorkflow,
 } from '../../../helpers/space-agent-schema.ts';
 import { migratedAgentTemplateKey } from '../../../../../src/lib/space/agents/agent-template-synthesis.ts';
-import { longHorizonAgentToWorkerView } from '../../../../../src/lib/space/agents/worker-long-horizon-mapper.ts';
 import {
   resolveNodeAgentConfig,
   spaceAgentTemplateToNodeSource,
@@ -229,22 +228,21 @@ describe('migration 228: workflow agentId refs to templateKey', () => {
       createdAt: 1,
       updatedAt: 1,
     };
-    const registryAgent: SpaceWorkerAgent = longHorizonAgentToWorkerView(unified);
     const viaRegistry = resolveNodeAgentConfig(
       null,
       { agentId: 'agent-equiv', name: 'equiv', model: 'node-model' },
-      [registryAgent]
+      [unified]
     );
 
     expect(viaTemplate?.source).toBe('template');
     expect(viaRegistry?.source).toBe('agent');
-    expect(viaTemplate?.agent.name).toBe(viaRegistry?.agent.name);
+    expect(viaTemplate?.agent.displayName).toBe(viaRegistry?.agent.displayName);
     expect(viaTemplate?.agent.model).toBe(viaRegistry?.agent.model);
     expect(viaTemplate?.agent.thinkingLevel).toBe(viaRegistry?.agent.thinkingLevel);
     expect(viaTemplate?.agent.provider).toBe(viaRegistry?.agent.provider);
     expect(viaTemplate?.agent.handle).toBe(viaRegistry?.agent.handle);
-    expect(viaTemplate?.agent.customPrompt).toBe(viaRegistry?.agent.customPrompt);
-    expect(viaTemplate?.agent.tools).toEqual(viaRegistry?.agent.tools);
+    expect(viaTemplate?.agent.instructions).toBe(viaRegistry?.agent.instructions);
+    expect(viaTemplate?.agent.toolPermissions).toEqual(viaRegistry?.agent.toolPermissions);
     expect(viaTemplate?.agent.modelPool).toEqual(viaRegistry?.agent.modelPool);
     expect(viaTemplate?.agent.settingSources ?? null).toEqual(
       viaRegistry?.agent.settingSources ?? null

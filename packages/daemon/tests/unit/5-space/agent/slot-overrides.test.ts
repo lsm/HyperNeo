@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import type { WorkflowNodeAgent } from '@hyperneo/shared';
 import { buildSlotOverrides } from '../../../../src/lib/space/runtime/spawn-slot-resolution';
 import { resolveCustomAgentPrompt } from '../../../../src/lib/space/agents/custom-agent';
-import type { SpaceWorkerAgent } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 
 function makeSlot(overrides?: Partial<WorkflowNodeAgent>): WorkflowNodeAgent {
   return {
@@ -37,11 +37,21 @@ describe('buildSlotOverrides', () => {
   });
 
   it('produces a SlotOverrides that resolveCustomAgentPrompt honors as a replace', () => {
-    const agent: SpaceWorkerAgent = {
+    const agent: SpaceLongHorizonAgent = {
       id: 'agent-1',
       spaceId: 'space-1',
-      name: 'Reviewer',
-      customPrompt: 'Agent base contract',
+      handle: 'reviewer',
+      displayName: 'Reviewer',
+      templateKey: null,
+      status: 'active',
+      sessionId: null,
+      instructions: 'Agent base contract',
+      autonomyLevel: null,
+      model: null,
+      thinkingLevel: null,
+      provider: null,
+      settingSources: null,
+      toolPermissions: {},
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -88,8 +98,18 @@ describe('buildSlotOverrides', () => {
       {
         id: 'agent-1',
         spaceId: 'space-1',
-        name: 'Reviewer',
-        customPrompt: 'Agent base contract',
+        handle: 'reviewer',
+        displayName: 'Reviewer',
+        templateKey: null,
+        status: 'active',
+        sessionId: null,
+        instructions: 'Agent base contract',
+        autonomyLevel: null,
+        model: null,
+        thinkingLevel: null,
+        provider: null,
+        settingSources: null,
+        toolPermissions: {},
         createdAt: Date.now(),
         updatedAt: Date.now(),
       },

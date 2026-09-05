@@ -8,8 +8,8 @@ import type {
   NodeExecution,
   Session,
   Space,
+  SpaceLongHorizonAgent,
   SpaceTask,
-  SpaceWorkerAgent,
   SpaceWorkflow,
   SpaceWorkflowRun,
   WorkflowNode,
@@ -50,10 +50,7 @@ import { CleanupState, type SessionManager } from '../../session-manager.ts';
 import type { SkillsManager } from '../../skills-manager.ts';
 import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
 import type { NodeAgentTemplateSource } from './spawn-slot-resolution.ts';
-import {
-  isRunnableUnifiedAgent,
-  longHorizonAgentToWorkerView,
-} from '../agents/worker-long-horizon-mapper.ts';
+import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
@@ -931,7 +928,7 @@ export class TaskAgentManager {
             now: Date.now(),
           });
           if ('deferred' in poolApplication) {
-            raiseModelPoolDeferred(customAgent.name, request.space.id);
+            raiseModelPoolDeferred(customAgent.displayName, request.space.id);
           }
           slot = poolApplication.slot;
           poolProvider = poolApplication.provider;
@@ -3661,11 +3658,11 @@ export class TaskAgentManager {
       this.config.spaceRuntimeService.renderPendingDigestForSession(targetSessionId, digestTaskId);
   }
 
-  private resolveUnifiedSlotAgent(spaceId: string, agentId: string): SpaceWorkerAgent | null {
+  private resolveUnifiedSlotAgent(spaceId: string, agentId: string): SpaceLongHorizonAgent | null {
     const unified = this.config.longHorizonAgentRepo?.getById(agentId) ?? null;
     if (unified && unified.spaceId === spaceId) {
       if (!isRunnableUnifiedAgent(unified)) return null;
-      return longHorizonAgentToWorkerView(unified);
+      return unified;
     }
     return null;
   }
@@ -3741,15 +3738,15 @@ export class TaskAgentManager {
       }
     }
 
-    let spaceAgent: SpaceWorkerAgent | null = null;
+    let spaceAgent: SpaceLongHorizonAgent | null = null;
     if (execution.agentId) {
       spaceAgent = this.resolveUnifiedSlotAgent(workflow.spaceId, execution.agentId);
     } else if (slot) {
       const spawnConfig = this.resolveSlotSpawnConfig(workflow.spaceId, slot);
       spaceAgent = spawnConfig?.agent ?? null;
     }
-    if (spaceAgent?.name) {
-      for (const variant of this.agentNameVariants(spaceAgent.name)) {
+    if (spaceAgent?.displayName) {
+      for (const variant of this.agentNameVariants(spaceAgent.displayName)) {
         aliases.add(variant);
       }
     }
@@ -5682,7 +5679,7 @@ export class TaskAgentManager {
         now: Date.now(),
       });
       if ('deferred' in poolApplication) {
-        raiseModelPoolDeferred(poolAgent.name, spaceId);
+        raiseModelPoolDeferred(poolAgent.displayName, spaceId);
       }
       slot = poolApplication.slot;
       poolProvider = poolApplication.provider;

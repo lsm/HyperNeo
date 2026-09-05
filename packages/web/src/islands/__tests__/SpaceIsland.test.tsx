@@ -5,7 +5,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const LAZY_LOAD_TIMEOUT = 5000;
 
-import type { Space, SpaceTask, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
+import type { Space, SpaceTask, SpaceLongHorizonAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { signal } from '@preact/signals';
 import { connectionState } from '../../lib/state';
 
@@ -13,7 +13,7 @@ let mockLoading = signal(false);
 let mockError = signal<string | null>(null);
 let mockSpace = signal<Space | null>(null);
 let mockWorkflows = signal<SpaceWorkflow[]>([]);
-let mockAgents = signal<SpaceWorkerAgent[]>([]);
+let mockAgents = signal<SpaceLongHorizonAgent[]>([]);
 let mockStoreSpaceId = signal<string | null>('space-1');
 let mockConfigDataLoaded = signal(true);
 let mockTasks = signal<SpaceTask[]>([]);

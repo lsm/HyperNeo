@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import type { Space, SpaceTask, SpaceWorkerAgent } from '@hyperneo/shared';
+import type { Space, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
 import {
   type CustomAgentConfig,
   createCustomAgentInit,
@@ -11,12 +11,22 @@ import {
   SUB_SESSION_FEATURES,
 } from '../../../../src/lib/space/agents/seed-agents';
 
-function makeAgent(overrides?: Partial<SpaceWorkerAgent>): SpaceWorkerAgent {
+function makeAgent(overrides?: Partial<SpaceLongHorizonAgent>): SpaceLongHorizonAgent {
   return {
     id: 'agent-1',
     spaceId: 'space-1',
-    name: 'TestAgent',
-    customPrompt: null,
+    handle: 'testagent',
+    displayName: 'TestAgent',
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: '',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
     createdAt: Date.now(),
     updatedAt: Date.now(),
     ...overrides,
@@ -56,7 +66,10 @@ function makeTask(overrides?: Partial<SpaceTask>): SpaceTask {
 
 function makeConfig(tools?: string[]): CustomAgentConfig {
   return {
-    customAgent: makeAgent({ tools, name: 'TestAgent' }),
+    customAgent: makeAgent({
+      displayName: 'TestAgent',
+      ...(tools ? { toolPermissions: { tools } } : {}),
+    }),
     task: makeTask(),
     workflowRun: null,
     space: makeSpace(),
@@ -295,8 +308,8 @@ describe('createCustomAgentInit — sub-session features', () => {
   it('applies customPrompt slot expansion in system prompt', () => {
     const config = makeConfig(PRESET_AGENT_TOOLS.coder);
     config.customAgent = makeAgent({
-      customPrompt: 'Base prompt',
-      tools: PRESET_AGENT_TOOLS.coder,
+      instructions: 'Base prompt',
+      toolPermissions: { tools: PRESET_AGENT_TOOLS.coder },
     });
     config.slotOverrides = {
       customPrompt: 'Slot expansion',
@@ -309,8 +322,8 @@ describe('createCustomAgentInit — sub-session features', () => {
   it('applies customPrompt expansion in non-tools system prompt path', () => {
     const config = makeConfig(undefined);
     config.customAgent = makeAgent({
-      customPrompt: 'Base prompt',
-      tools: undefined,
+      instructions: 'Base prompt',
+      toolPermissions: {},
     });
     config.slotOverrides = {
       customPrompt: 'Expanded context',

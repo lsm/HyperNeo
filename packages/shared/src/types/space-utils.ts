@@ -1,12 +1,11 @@
 import type {
+  AgentModelPoolEntry,
   SpaceTaskStatus,
-  SpaceWorkerAgent,
   SpaceWorkflow,
   WorkflowChannel,
   WorkflowNode,
   WorkflowNodeAgent,
   WorkflowRunStatus,
-  WorkerAgentModelPoolEntry,
 } from './space.ts';
 
 export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
@@ -26,12 +25,12 @@ export function resolveNodeAgents(node: WorkflowNode): WorkflowNodeAgent[] {
   );
 }
 
-export function modelPoolEntryKey(entry: Pick<WorkerAgentModelPoolEntry, 'model'>): string {
+export function modelPoolEntryKey(entry: Pick<AgentModelPoolEntry, 'model'>): string {
   return entry.model;
 }
 
 export interface ModelPoolPickInput {
-  entry: WorkerAgentModelPoolEntry;
+  entry: AgentModelPoolEntry;
   running: number;
   cap: number;
   left: number;
@@ -39,7 +38,7 @@ export interface ModelPoolPickInput {
 }
 
 export function scoreModelPoolEntries(
-  entries: WorkerAgentModelPoolEntry[],
+  entries: AgentModelPoolEntry[],
   runningCounts: Readonly<Record<string, number>>
 ): ModelPoolPickInput[] {
   return entries.map((entry) => {
@@ -53,10 +52,10 @@ export function scoreModelPoolEntries(
 }
 
 export function pickModelPoolEntry(
-  entries: WorkerAgentModelPoolEntry[],
+  entries: AgentModelPoolEntry[],
   runningCounts: Readonly<Record<string, number>>,
   random: () => number = Math.random
-): WorkerAgentModelPoolEntry | null {
+): AgentModelPoolEntry | null {
   if (entries.length === 0) return null;
   const eligible = scoreModelPoolEntries(entries, runningCounts).filter((item) => item.score > 0);
   if (eligible.length === 0) return null;
@@ -150,7 +149,10 @@ export function findChannel(
   });
 }
 
-export function validateChannels(workflow: SpaceWorkflow, agents: SpaceWorkerAgent[]): string[] {
+export function validateChannels(
+  workflow: SpaceWorkflow,
+  agents: ReadonlyArray<{ id: string }>
+): string[] {
   const errors: string[] = [];
 
   const agentIdSet = new Set(agents.map((a) => a.id));

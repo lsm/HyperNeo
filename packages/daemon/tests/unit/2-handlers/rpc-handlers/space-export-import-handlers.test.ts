@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import type { MessageHub, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
+import type { MessageHub, SpaceLongHorizonAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
@@ -8,7 +8,6 @@ import { runMigration225 } from '../../../../src/storage/schema/m225-space-agent
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { createLongHorizonAgentTables } from '../../../../src/storage/schema/long-horizon-agents';
-import { longHorizonAgentToWorkerView } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
 import {
   SpaceWorkflowManager,
   createSpaceAgentLookup,
@@ -43,7 +42,7 @@ interface SeedAgentParams {
 
 function makeSeedAgent(
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository
-): (params: SeedAgentParams) => SpaceWorkerAgent {
+): (params: SeedAgentParams) => SpaceLongHorizonAgent {
   return (params) => {
     const occupied = longHorizonAgentRepo.listBySpaceId(params.spaceId).map((a) => a.handle);
     const row = longHorizonAgentRepo.create({
@@ -60,7 +59,7 @@ function makeSeedAgent(
         : {}),
       ...(params.settingSources ? { settingSources: params.settingSources } : {}),
     });
-    return longHorizonAgentToWorkerView(row);
+    return row;
   };
 }
 
@@ -250,7 +249,7 @@ const OTHER_SPACE_ID = 'space-2';
 describe('Space Export/Import RPC Handlers', () => {
   let db: Database;
   let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
-  let seedAgent: (params: SeedAgentParams) => SpaceWorkerAgent;
+  let seedAgent: (params: SeedAgentParams) => SpaceLongHorizonAgent;
   let workflowRepo: SpaceWorkflowRepository;
   let workflowManager: SpaceWorkflowManager;
   let spaceManager: SpaceManager;
@@ -2350,7 +2349,7 @@ describe('Space Export/Import RPC Handlers', () => {
 describe('multi-agent step import', () => {
   let db: Database;
   let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
-  let seedAgent: (params: SeedAgentParams) => SpaceWorkerAgent;
+  let seedAgent: (params: SeedAgentParams) => SpaceLongHorizonAgent;
   let workflowRepo: SpaceWorkflowRepository;
   let workflowManager: SpaceWorkflowManager;
   let spaceManager: SpaceManager;
@@ -2895,7 +2894,7 @@ function makeSingleAgentBundle(agentName: string, _agentRole: string, stepName: 
 describe('full export→import round-trip', () => {
   let db: Database;
   let longHorizonAgentRepo: SpaceLongHorizonAgentRepository;
-  let seedAgent: (params: SeedAgentParams) => SpaceWorkerAgent;
+  let seedAgent: (params: SeedAgentParams) => SpaceLongHorizonAgent;
   let workflowRepo: SpaceWorkflowRepository;
   let workflowManager: SpaceWorkflowManager;
   let spaceManager: SpaceManager;
@@ -2963,12 +2962,12 @@ describe('full export→import round-trip', () => {
   });
 
   it('single-agent workflow round-trip: export → import produces equivalent workflow', async () => {
-    const coderAgent: SpaceWorkerAgent = {
+    const coderAgent: SpaceLongHorizonAgent = {
       id: 'src-agent-1',
       spaceId: 'other-space',
-      name: 'My Coder',
-      customPrompt: 'You write code.',
-      tools: ['bash', 'read_file'],
+      displayName: 'My Coder',
+      instructions: 'You write code.',
+      toolPermissions: { tools: ['bash', 'read_file'] },
       createdAt: 1000,
       updatedAt: 2000,
     };
@@ -3029,17 +3028,17 @@ describe('full export→import round-trip', () => {
   });
 
   it('v4 bundle round-trips worker agent config fields through import', async () => {
-    const workerAgent: SpaceWorkerAgent = {
+    const workerAgent: SpaceLongHorizonAgent = {
       id: 'src-agent-v4',
       spaceId: 'other-space',
-      name: 'V4 Worker',
+      displayName: 'V4 Worker',
       handle: 'legacy-handle',
       description: 'Described worker',
       model: 'kimi-for-coding',
       provider: 'openrouter',
       thinkingLevel: 'think16k',
-      customPrompt: 'You write careful code.',
-      tools: ['bash', 'read_file'],
+      instructions: 'You write careful code.',
+      toolPermissions: { tools: ['bash', 'read_file'] },
       settingSources: ['project'],
       modelPool: [{ model: 'kimi-for-coding', maxConcurrent: 2, weight: 1 }],
       createdAt: 1000,
@@ -3161,21 +3160,23 @@ describe('full export→import round-trip', () => {
   });
 
   it('multi-agent step round-trip: export → import preserves agents array, channels, and hooks', async () => {
-    const coderAgent: SpaceWorkerAgent = {
+    const coderAgent: SpaceLongHorizonAgent = {
       id: 'src-coder',
       spaceId: 'other-space',
-      name: 'Senior Coder',
-      customPrompt: null,
+      displayName: 'Senior Coder',
+      instructions: '',
       createdAt: 1000,
       updatedAt: 2000,
+      toolPermissions: {},
     };
-    const reviewerAgent: SpaceWorkerAgent = {
+    const reviewerAgent: SpaceLongHorizonAgent = {
       id: 'src-reviewer',
       spaceId: 'other-space',
-      name: 'Code Reviewer',
-      customPrompt: null,
+      displayName: 'Code Reviewer',
+      instructions: '',
       createdAt: 1000,
       updatedAt: 2000,
+      toolPermissions: {},
     };
 
     const workflow: SpaceWorkflow = {
@@ -3316,21 +3317,25 @@ describe('full export→import round-trip', () => {
   });
 
   it('channel topology round-trip: one-way channel preserved', async () => {
-    const agentA: SpaceWorkerAgent = {
+    const agentA: SpaceLongHorizonAgent = {
       id: 'src-a',
       spaceId: 'other-space',
-      name: 'Agent Alpha',
+      displayName: 'Agent Alpha',
       role: 'alpha',
       createdAt: 1000,
       updatedAt: 2000,
+      toolPermissions: {},
+      instructions: '',
     };
-    const agentB: SpaceWorkerAgent = {
+    const agentB: SpaceLongHorizonAgent = {
       id: 'src-b',
       spaceId: 'other-space',
-      name: 'Agent Beta',
+      displayName: 'Agent Beta',
       role: 'beta',
       createdAt: 1000,
       updatedAt: 2000,
+      toolPermissions: {},
+      instructions: '',
     };
 
     const workflow: SpaceWorkflow = {
@@ -3374,29 +3379,35 @@ describe('full export→import round-trip', () => {
   });
 
   it('channel topology round-trip: fan-out (array `to`) preserved', async () => {
-    const hub: SpaceWorkerAgent = {
+    const hub: SpaceLongHorizonAgent = {
       id: 'src-hub',
       spaceId: 'other-space',
-      name: 'Hub Agent',
+      displayName: 'Hub Agent',
       role: 'hub',
       createdAt: 1000,
       updatedAt: 2000,
+      toolPermissions: {},
+      instructions: '',
     };
-    const spoke1: SpaceWorkerAgent = {
+    const spoke1: SpaceLongHorizonAgent = {
       id: 'src-spoke1',
       spaceId: 'other-space',
-      name: 'Spoke One',
+      displayName: 'Spoke One',
       role: 'spoke1',
       createdAt: 1000,
       updatedAt: 2000,
+      toolPermissions: {},
+      instructions: '',
     };
-    const spoke2: SpaceWorkerAgent = {
+    const spoke2: SpaceLongHorizonAgent = {
       id: 'src-spoke2',
       spaceId: 'other-space',
-      name: 'Spoke Two',
+      displayName: 'Spoke Two',
       role: 'spoke2',
       createdAt: 1000,
       updatedAt: 2000,
+      toolPermissions: {},
+      instructions: '',
     };
 
     const workflow: SpaceWorkflow = {
@@ -3441,13 +3452,15 @@ describe('full export→import round-trip', () => {
   });
 
   it('channel topology round-trip: wildcard (*) preserved', async () => {
-    const a: SpaceWorkerAgent = {
+    const a: SpaceLongHorizonAgent = {
       id: 'src-wa',
       spaceId: 'other-space',
-      name: 'Wild Agent',
+      displayName: 'Wild Agent',
       role: 'wild',
       createdAt: 1000,
       updatedAt: 2000,
+      toolPermissions: {},
+      instructions: '',
     };
 
     const workflow: SpaceWorkflow = {
@@ -3483,29 +3496,32 @@ describe('full export→import round-trip', () => {
   });
 
   it('mixed single/multi-agent workflow round-trip preserves both step types', async () => {
-    const plannerAgent: SpaceWorkerAgent = {
+    const plannerAgent: SpaceLongHorizonAgent = {
       id: 'src-planner',
       spaceId: 'other-space',
-      name: 'Planner',
-      customPrompt: null,
+      displayName: 'Planner',
+      instructions: '',
       createdAt: 1000,
       updatedAt: 2000,
+      toolPermissions: {},
     };
-    const coderAgent2: SpaceWorkerAgent = {
+    const coderAgent2: SpaceLongHorizonAgent = {
       id: 'src-coder2',
       spaceId: 'other-space',
-      name: 'Coder2',
-      customPrompt: null,
+      displayName: 'Coder2',
+      instructions: '',
       createdAt: 1000,
       updatedAt: 2000,
+      toolPermissions: {},
     };
-    const reviewAgent: SpaceWorkerAgent = {
+    const reviewAgent: SpaceLongHorizonAgent = {
       id: 'src-review',
       spaceId: 'other-space',
-      name: 'Reviewer2',
-      customPrompt: null,
+      displayName: 'Reviewer2',
+      instructions: '',
       createdAt: 1000,
       updatedAt: 2000,
+      toolPermissions: {},
     };
 
     const workflow: SpaceWorkflow = {
@@ -3565,13 +3581,14 @@ describe('full export→import round-trip', () => {
   });
 
   it('single-agent workflow export → import via exportBundle', async () => {
-    const agentSrc: SpaceWorkerAgent = {
+    const agentSrc: SpaceLongHorizonAgent = {
       id: 'src-legacy',
       spaceId: 'other-space',
-      name: 'Legacy Coder',
-      customPrompt: null,
+      displayName: 'Legacy Coder',
+      instructions: '',
       createdAt: 1000,
       updatedAt: 2000,
+      toolPermissions: {},
     };
     const wfSrc: SpaceWorkflow = {
       id: 'src-wf-legacy',
@@ -3598,13 +3615,14 @@ describe('full export→import round-trip', () => {
   });
 
   it('disabled workflow export → import round-trip preserves disabled flag', async () => {
-    const agentSrc: SpaceWorkerAgent = {
+    const agentSrc: SpaceLongHorizonAgent = {
       id: 'src-dis',
       spaceId: 'other-space',
-      name: 'Dis Agent',
-      customPrompt: null,
+      displayName: 'Dis Agent',
+      instructions: '',
       createdAt: 1000,
       updatedAt: 2000,
+      toolPermissions: {},
     };
     const wfSrc: SpaceWorkflow = {
       id: 'src-wf-dis',
@@ -3629,13 +3647,14 @@ describe('full export→import round-trip', () => {
   });
 
   it('error: import with unknown agentRef in multi-agent step throws and rolls back', async () => {
-    const agentSrc: SpaceWorkerAgent = {
+    const agentSrc: SpaceLongHorizonAgent = {
       id: 'src-known',
       spaceId: 'other-space',
-      name: 'Known Agent',
-      customPrompt: null,
+      displayName: 'Known Agent',
+      instructions: '',
       createdAt: 1000,
       updatedAt: 2000,
+      toolPermissions: {},
     };
     const wfSrc: SpaceWorkflow = {
       id: 'src-wf-err',
@@ -3684,12 +3703,12 @@ describe('full export→import round-trip', () => {
     });
     db.prepare(`UPDATE space_workflows SET handle = 'taken-handle' WHERE id = ?`).run(existing.id);
 
-    const bundleAgent: SpaceWorkerAgent = {
+    const bundleAgent: SpaceLongHorizonAgent = {
       id: 'bundle-agent',
       spaceId: 'src-space',
-      name: 'Existing Coder',
-      customPrompt: null,
-      tools: [],
+      displayName: 'Existing Coder',
+      instructions: '',
+      toolPermissions: { tools: [] },
       createdAt: 0,
       updatedAt: 0,
     };

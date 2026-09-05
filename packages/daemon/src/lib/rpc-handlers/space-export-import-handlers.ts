@@ -4,12 +4,11 @@ import { generateUUID } from '@hyperneo/shared';
 import type {
   MessageHub,
   Space,
-  SpaceWorkerAgent,
   SpaceWorkflow,
   CreateSpaceWorkflowParams,
   WorkflowNodeInput,
   SpaceExportBundle,
-  ExportedSpaceWorkerAgent,
+  ExportedSpaceAgent,
   ExportedSpaceWorkflow,
 } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -74,50 +73,27 @@ async function requireSpace(spaceManager: SpaceManager, spaceId: string): Promis
   return space;
 }
 
-export function longHorizonAgentToWorkerView(agent: SpaceLongHorizonAgent): SpaceWorkerAgent {
-  const toolEntries = agent.toolPermissions.tools;
-  return {
-    id: agent.id,
-    spaceId: agent.spaceId,
-    name: agent.displayName,
-    handle: agent.handle,
-    description: agent.description,
-    model: agent.model ?? undefined,
-    thinkingLevel: agent.thinkingLevel ?? undefined,
-    provider: agent.provider ?? undefined,
-    customPrompt: agent.instructions,
-    tools: Array.isArray(toolEntries)
-      ? toolEntries.filter((tool): tool is string => typeof tool === 'string')
-      : undefined,
-    settingSources: agent.settingSources ?? undefined,
-    modelPool: agent.modelPool,
-    createdAt: agent.createdAt,
-    updatedAt: agent.updatedAt,
-  };
-}
-
 function unifiedExportAgents(
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
   spaceId: string
-): SpaceWorkerAgent[] {
+): SpaceLongHorizonAgent[] {
   const coordinatorByHandle = longHorizonAgentRepo.getCoordinator(spaceId);
   const unifiedRows = longHorizonAgentRepo.listBySpaceId(spaceId);
   return unifiedRows
     .filter((a) => a.id !== coordinatorLongHorizonAgentId(spaceId))
     .filter((a) => !coordinatorByHandle || a.id !== coordinatorByHandle.id)
     .filter((a) => a.status === 'active')
-    .filter((a) => a.autonomyLevel == null)
-    .map(longHorizonAgentToWorkerView);
+    .filter((a) => a.autonomyLevel == null);
 }
 
-function assertExportableAgentNames(agents: Array<{ id: string; name: string }>): void {
+function assertExportableAgentNames(agents: Array<{ id: string; displayName: string }>): void {
   const idByName = new Map<string, string>();
   for (const agent of agents) {
-    const key = nameKey(agent.name);
+    const key = nameKey(agent.displayName);
     const existingId = idByName.get(key);
     if (existingId && existingId !== agent.id) {
       throw new Error(
-        `Cannot export: duplicate agent name "${agent.name}" in this space. ` +
+        `Cannot export: duplicate agent name "${agent.displayName}" in this space. ` +
           `Rename one of the agents and retry.`
       );
     }
@@ -172,10 +148,10 @@ function findDuplicateBundleAgentNames(agents: Array<{ name: string }>): string[
   );
 }
 
-function findAmbiguousAgentNames(agents: Array<{ name: string; id: string }>): string[] {
+function findAmbiguousAgentNames(agents: Array<{ displayName: string; id: string }>): string[] {
   const idsByName = new Map<string, Set<string>>();
   for (const agent of agents) {
-    const key = nameKey(agent.name);
+    const key = nameKey(agent.displayName);
     idsByName.set(key, (idsByName.get(key) ?? new Set()).add(agent.id));
   }
   return [...idsByName.entries()]
@@ -187,7 +163,7 @@ function findAmbiguousAgentNames(agents: Array<{ name: string; id: string }>): s
     );
 }
 
-function assertUnambiguousAgentNames(agents: Array<{ name: string; id: string }>): void {
+function assertUnambiguousAgentNames(agents: Array<{ displayName: string; id: string }>): void {
   const ambiguities = findAmbiguousAgentNames(agents);
   if (ambiguities.length > 0) throw new Error(ambiguities[0]);
 }
@@ -210,7 +186,7 @@ function generateUniqueName(baseName: string, existingNames: Set<string>): strin
 function buildAgentCreateParams(
   spaceId: string,
   name: string,
-  exported: ExportedSpaceWorkerAgent,
+  exported: ExportedSpaceAgent,
   usedAgentHandles?: Set<string>
 ): CreateSpaceLongHorizonAgentParams {
   const handle = shouldPreserveAgentHandle(exported.handle, usedAgentHandles)
@@ -231,7 +207,7 @@ function shouldPreserveAgentHandle(
 }
 
 function warnOnAgentHandleRewrite(
-  exported: ExportedSpaceWorkerAgent,
+  exported: ExportedSpaceAgent,
   finalName: string,
   usedAgentHandles: Set<string>,
   warnings: string[],
@@ -251,14 +227,14 @@ function warnOnAgentHandleRewrite(
 }
 
 function generateAgentFallbackHandle(
-  existing: SpaceWorkerAgent,
+  existing: SpaceLongHorizonAgent,
   usedAgentHandles: Set<string>,
   fallbackBaseHandles: Set<string>
 ): string {
   if (!usedAgentHandles.has(existing.handle) && !fallbackBaseHandles.has(existing.handle)) {
     return existing.handle;
   }
-  return slugifyWithinLimit(existing.name, [
+  return slugifyWithinLimit(existing.displayName, [
     ...usedAgentHandles,
     ...fallbackBaseHandles,
     ...RESERVED_SPACE_AGENT_HANDLES,
@@ -267,7 +243,7 @@ function generateAgentFallbackHandle(
 
 function applyExportedAgentFields(
   params: CreateSpaceLongHorizonAgentParams,
-  exported: ExportedSpaceWorkerAgent
+  exported: ExportedSpaceAgent
 ): void {
   if (exported.description !== undefined) params.description = exported.description;
   if (exported.model !== undefined) params.model = exported.model;
@@ -534,7 +510,7 @@ export function setupSpaceExportImportHandlers(
     const params = data as { spaceId: string; agentIds?: string[] };
     const space = await requireSpace(spaceManager, params.spaceId);
 
-    let agents: SpaceWorkerAgent[] = unifiedExportAgents(longHorizonAgentRepo, params.spaceId);
+    let agents: SpaceLongHorizonAgent[] = unifiedExportAgents(longHorizonAgentRepo, params.spaceId);
     if (params.agentIds?.length) {
       const idSet = new Set(params.agentIds);
       agents = agents.filter((a) => idSet.has(a.id));
@@ -598,12 +574,12 @@ export function setupSpaceExportImportHandlers(
       const liveMatch = liveById.get(agentId);
       const lhaMatch = allSpaceAgents.find((a) => a.id === agentId);
       if (!liveMatch && !lhaMatch) continue;
-      const referencedName = nameKey(liveMatch?.name ?? lhaMatch?.displayName ?? '');
+      const referencedName = nameKey(liveMatch?.displayName ?? lhaMatch?.displayName ?? '');
       if (!referencedName) continue;
-      const clashes = allAgents.filter((a) => nameKey(a.name) === referencedName);
+      const clashes = allAgents.filter((a) => nameKey(a.displayName) === referencedName);
       if (clashes.length > 1) {
         throw new Error(
-          `Cannot export: agent name "${liveMatch?.name ?? lhaMatch?.displayName}" is ambiguous in this space ` +
+          `Cannot export: agent name "${liveMatch?.displayName ?? lhaMatch?.displayName}" is ambiguous in this space ` +
             `(matched ${clashes.length} agents). Rename one of them and retry.`
         );
       }
@@ -700,20 +676,21 @@ export function setupSpaceExportImportHandlers(
           a.status !== 'archived' &&
           a.id !== coordinatorLongHorizonAgentId(params.spaceId) &&
           (!coordinatorByHandle || a.id !== coordinatorByHandle.id)
-      )
-      .map(longHorizonAgentToWorkerView);
+      );
     const existingWorkflows = workflowRepo.listWorkflows(params.spaceId);
 
     const agentNameAmbiguities = findAmbiguousAgentNames(existingAgents);
-    const existingAgentByName = new Map(existingAgents.map((a) => [nameKey(a.name), a]));
+    const existingAgentByName = new Map(existingAgents.map((a) => [nameKey(a.displayName), a]));
     const existingWorkflowByName = new Map(existingWorkflows.map((w) => [w.name, w]));
     const nonRunnableIds = nonRunnableUnifiedIds(longHorizonAgentRepo, params.spaceId);
     const existingAgentNameToId = new Map(
-      existingAgents.filter((a) => !nonRunnableIds.has(a.id)).map((a) => [nameKey(a.name), a.id])
+      existingAgents
+        .filter((a) => !nonRunnableIds.has(a.id))
+        .map((a) => [nameKey(a.displayName), a.id])
     );
 
     const agentNameToRole = new Map<string, string>(
-      existingAgents.map((a) => [nameKey(a.name), a.name])
+      existingAgents.map((a) => [nameKey(a.displayName), a.displayName])
     );
 
     const agentPreviews: ImportPreview[] = bundle.agents.map((a) => {
@@ -801,8 +778,7 @@ export function setupSpaceExportImportHandlers(
               a.status !== 'archived' &&
               a.id !== coordinatorLongHorizonAgentId(spaceId) &&
               (!coordinatorByHandle || a.id !== coordinatorByHandle.id)
-          )
-          .map(longHorizonAgentToWorkerView);
+          );
         const existingWorkflows = workflowRepo.listWorkflows(spaceId);
 
         assertUnambiguousAgentNames(existingAgents);
@@ -816,16 +792,16 @@ export function setupSpaceExportImportHandlers(
             `Cannot import: agent name "${coordinatorCollision.name}" is reserved by the space coordinator.`
           );
         }
-        const existingAgentByName = new Map(existingAgents.map((a) => [nameKey(a.name), a]));
+        const existingAgentByName = new Map(existingAgents.map((a) => [nameKey(a.displayName), a]));
         const existingWorkflowByName = new Map(existingWorkflows.map((w) => [w.name, w]));
         const nonRunnableIds = nonRunnableUnifiedIds(longHorizonAgentRepo, spaceId);
         const existingAgentNameToId = new Map(
           existingAgents
             .filter((a) => !nonRunnableIds.has(a.id))
-            .map((a) => [nameKey(a.name), a.id])
+            .map((a) => [nameKey(a.displayName), a.id])
         );
 
-        const usedAgentNames = new Set(existingAgents.map((a) => nameKey(a.name)));
+        const usedAgentNames = new Set(existingAgents.map((a) => nameKey(a.displayName)));
         const usedAgentHandles = new Set<string>([
           ...existingAgents.map((a) => a.handle).filter(Boolean),
           ...longHorizonAgentRepo.listBySpaceId(spaceId).map((a) => a.handle),
@@ -835,7 +811,7 @@ export function setupSpaceExportImportHandlers(
           existingWorkflows.map((w) => w.handle).filter((h): h is string => !!h)
         );
 
-        const replacedAgentByName = new Map<string, SpaceWorkerAgent>();
+        const replacedAgentByName = new Map<string, SpaceLongHorizonAgent>();
         const preservedReplaceHandleByName = new Map<string, string>();
         const fallbackReplaceHandleByName = new Map<string, string>();
         const fallbackBaseHandles = new Set<string>();

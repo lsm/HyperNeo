@@ -3,7 +3,7 @@ import type {
   SpaceAgentAutonomyLevel,
   SpaceAgentTemplate,
   UpdateSpaceAgentTemplateParams,
-  WorkerAgentModelPoolEntry,
+  AgentModelPoolEntry,
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type {
@@ -118,7 +118,7 @@ async function validateModelChoice(
 }
 
 async function validateTemplateModelPool(
-  pool: WorkerAgentModelPoolEntry[] | null | undefined
+  pool: AgentModelPoolEntry[] | null | undefined
 ): Promise<string | null> {
   if (pool === undefined || pool === null || pool.length === 0) return null;
   for (const entry of pool) {

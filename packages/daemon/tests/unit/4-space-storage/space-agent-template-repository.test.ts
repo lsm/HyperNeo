@@ -3,7 +3,7 @@ import type {
   CreateSpaceAgentTemplateParams,
   SpaceAgentAutonomyLevel,
   SpaceAgentTemplate,
-  WorkerAgentModelPoolEntry,
+  AgentModelPoolEntry,
 } from '@hyperneo/shared';
 import { SpaceAgentTemplateRepository } from '../../../src/storage/repositories/space-agent-template-repository';
 import { createSpaceAgentTemplatesTable } from '../../../src/storage/schema/space-agent-templates';
@@ -11,7 +11,7 @@ import { runMigration226 } from '../../../src/storage/schema/m226-space-agent-te
 import { runMigration227 } from '../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 
-const MODEL_POOL: WorkerAgentModelPoolEntry[] = [
+const MODEL_POOL: AgentModelPoolEntry[] = [
   { model: 'claude-opus-5', provider: 'anthropic', maxConcurrent: 2, weight: 3 },
   { model: 'claude-sonnet-5', maxConcurrent: 4, weight: 1 },
 ];

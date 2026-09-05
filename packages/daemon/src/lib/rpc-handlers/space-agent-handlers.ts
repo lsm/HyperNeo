@@ -5,10 +5,10 @@ import type {
   SettingSource,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentEventSubscriptionStatus,
-  SpaceWorkerAgentPromotionDraft,
+  SpaceAgentPromotionDraft,
   ThinkingLevel,
   UpdateSpaceAgentTemplateParams,
-  WorkerAgentModelPoolEntry,
+  AgentModelPoolEntry,
 } from '@hyperneo/shared';
 import { isKnownToolEntry, isScopedBashToolEntry } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -84,7 +84,7 @@ interface UnifiedAgentCreateInput {
   tools?: string[];
   status?: string;
   description?: string;
-  modelPool?: WorkerAgentModelPoolEntry[];
+  modelPool?: AgentModelPoolEntry[];
 }
 
 interface UnifiedAgentUpdateInput {
@@ -107,7 +107,7 @@ interface UnifiedAgentUpdateInput {
   tools?: string[] | null;
   status?: string;
   description?: string | null;
-  modelPool?: WorkerAgentModelPoolEntry[] | null;
+  modelPool?: AgentModelPoolEntry[] | null;
 }
 
 function clampText(value: string, limit: number): string {
@@ -174,7 +174,7 @@ function extractSettingSources(session: Session): SettingSource[] | undefined {
   return toolSources !== undefined ? toolSources : undefined;
 }
 
-function buildPromotionDraft(session: Session, db: Database): SpaceWorkerAgentPromotionDraft {
+function buildPromotionDraft(session: Session, db: Database): SpaceAgentPromotionDraft {
   const messages = db.getRenderableTextMessages(session.id, PROMOTION_MESSAGE_LIMIT);
   const context = messages.length
     ? messages

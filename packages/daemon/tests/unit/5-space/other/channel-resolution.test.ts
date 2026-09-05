@@ -1,9 +1,9 @@
 import { describe, test, expect } from 'bun:test';
-import type { SpaceWorkerAgent, SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
+import type { SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
 import { validateChannels } from '@hyperneo/shared';
 
-function makeAgent(id: string, name = id): SpaceWorkerAgent {
-  return { id, spaceId: 'space-1', name, instructions: null, createdAt: 0, updatedAt: 0 };
+function makeAgent(id: string): { id: string } {
+  return { id };
 }
 
 function makeNode(id: string, name: string, agentId = 'agent-coder'): WorkflowNode {
@@ -24,8 +24,8 @@ function makeWorkflow(nodes: WorkflowNode[], channels?: SpaceWorkflow['channels'
   };
 }
 
-const agentCoder = makeAgent('agent-coder', 'Coder');
-const agentReviewer = makeAgent('agent-reviewer', 'Reviewer');
+const agentCoder = makeAgent('agent-coder');
+const agentReviewer = makeAgent('agent-reviewer');
 const allAgents = [agentCoder, agentReviewer];
 
 describe('validateChannels — node-to-node model', () => {

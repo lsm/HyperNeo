@@ -7,11 +7,11 @@ import type {
   EvolutionLesson,
   Space,
   SpaceLongHorizonAgent,
-  SpaceWorkerAgent,
   SpaceGoal,
   SpaceTask,
   SpaceWorkflow,
   SpaceWorkflowRun,
+  ThinkingLevel,
   WorkflowChannel,
   WorkflowNode,
 } from '@hyperneo/shared';
@@ -69,7 +69,7 @@ export interface SlotResolutionContext {
 export interface SlotOverrides {
   model?: string;
   provider?: string;
-  thinkingLevel?: SpaceWorkerAgent['thinkingLevel'];
+  thinkingLevel?: ThinkingLevel;
   customPrompt?: string;
   replaceAgentPrompt?: boolean;
   disabledSkillIds?: string[];
@@ -78,18 +78,17 @@ export interface SlotOverrides {
   resolutionContext?: SlotResolutionContext;
 }
 
-export type UnifiedSpaceAgent = SpaceWorkerAgent | SpaceLongHorizonAgent;
+export type UnifiedSpaceAgent = SpaceLongHorizonAgent;
 
 function unifiedAgentDisplayName(agent: UnifiedSpaceAgent): string {
-  return 'displayName' in agent ? agent.displayName : agent.name;
+  return agent.displayName;
 }
 
 function unifiedAgentInstructions(agent: UnifiedSpaceAgent): string {
-  return 'customPrompt' in agent ? (agent.customPrompt ?? '') : agent.instructions;
+  return agent.instructions;
 }
 
 function unifiedAgentTools(agent: UnifiedSpaceAgent): string[] {
-  if (!('toolPermissions' in agent)) return agent.tools ?? [];
   const tools = agent.toolPermissions.tools;
   return Array.isArray(tools)
     ? tools.filter((tool): tool is string => typeof tool === 'string')
@@ -510,7 +509,7 @@ export function createCustomAgentInit(config: CustomAgentConfig): AgentSessionIn
 export interface ResolveAgentInitConfig {
   task: SpaceTask;
   space: Space;
-  agent: SpaceWorkerAgent | null;
+  agent: SpaceLongHorizonAgent | null;
   sessionId: string;
   workspacePath: string;
   workflowRun?: SpaceWorkflowRun | null;

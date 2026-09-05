@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import { buildCustomAgentTaskMessage } from '../../../../src/lib/space/agents/custom-agent.ts';
-import type { Space, SpaceWorkerAgent, SpaceTask } from '@hyperneo/shared';
+import type { Space, SpaceLongHorizonAgent, SpaceTask } from '@hyperneo/shared';
 import type { AgentMemorySearchResult } from '../../../../src/storage/repositories/agent-memory-repository.ts';
 
 const space: Space = {
@@ -34,13 +34,22 @@ const task: SpaceTask = {
   updatedAt: 1,
 };
 
-const agent: SpaceWorkerAgent = {
+const agent: SpaceLongHorizonAgent = {
   id: 'agent-1',
   spaceId: 'space-1',
-  name: 'coder',
+  handle: 'coder',
+  displayName: 'coder',
+  templateKey: null,
+  status: 'active',
+  sessionId: null,
+  instructions: '',
+  autonomyLevel: null,
+  model: null,
+  thinkingLevel: null,
+  provider: null,
+  settingSources: null,
+  toolPermissions: { tools: [] },
   description: '',
-  customPrompt: '',
-  tools: [],
   createdAt: 1,
   updatedAt: 1,
 };

@@ -3,10 +3,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, waitFor } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import type { SpaceWorkerAgent, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 
 let mockWorkflows = signal<SpaceWorkflow[]>([]);
-let mockAgents = signal<SpaceWorkerAgent[]>([]);
+let mockAgents = signal<SpaceLongHorizonAgent[]>([]);
 let mockTasks = signal<SpaceTask[]>([]);
 let mockNodeExecutionsByNodeId = signal(new Map());
 
@@ -80,7 +80,7 @@ vi.mock('../visual-editor/CanvasToolbar', () => ({
 }));
 
 mockWorkflows = signal<SpaceWorkflow[]>([]);
-mockAgents = signal<SpaceWorkerAgent[]>([]);
+mockAgents = signal<SpaceLongHorizonAgent[]>([]);
 mockTasks = signal<SpaceTask[]>([]);
 mockNodeExecutionsByNodeId = signal(new Map());
 

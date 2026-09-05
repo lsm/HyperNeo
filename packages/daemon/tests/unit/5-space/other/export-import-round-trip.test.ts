@@ -9,7 +9,7 @@ import {
   validateExportBundle,
 } from '../../../../src/lib/space/export-format.ts';
 import { buildWorkflowCreateParams } from '../../../../src/lib/rpc-handlers/space-export-import-handlers.ts';
-import type { SpaceWorkerAgent, SpaceWorkflow, ExportedSpaceWorkflow } from '@hyperneo/shared';
+import type { SpaceLongHorizonAgent, SpaceWorkflow, ExportedSpaceWorkflow } from '@hyperneo/shared';
 
 function makeDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
@@ -36,13 +36,23 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: stri
 function makeTestAgent(
   id: string,
   name: string,
-  overrides: Partial<SpaceWorkerAgent> = {}
-): SpaceWorkerAgent {
+  overrides: Partial<SpaceLongHorizonAgent> = {}
+): SpaceLongHorizonAgent {
   return {
     id,
     spaceId: 'space-1',
-    name,
-    customPrompt: null,
+    handle: id,
+    displayName: name,
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: '',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
     createdAt: 1000,
     updatedAt: 2000,
     ...overrides,

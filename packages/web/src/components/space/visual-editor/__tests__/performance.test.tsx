@@ -3,18 +3,27 @@ import { render, cleanup, act } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
 import type {
   SpaceLongHorizonAgentTemplate,
-  SpaceWorkerAgent,
+  SpaceLongHorizonAgent,
   SpaceWorkflow,
   WorkflowNode,
 } from '@hyperneo/shared';
 
-const mockAgents: Signal<SpaceWorkerAgent[]> = signal([
+const mockAgents: Signal<SpaceLongHorizonAgent[]> = signal([
   {
     id: 'agent-1',
     spaceId: 'space-1',
-    name: 'Test Agent',
     handle: 'agent-1',
-    customPrompt: null,
+    displayName: 'Test Agent',
+    templateKey: null,
+    status: 'paused',
+    sessionId: null,
+    instructions: '',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
     createdAt: 0,
     updatedAt: 0,
   },

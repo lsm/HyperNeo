@@ -5,7 +5,7 @@ import type {
   SpaceAgentTemplate,
   ThinkingLevel,
   UpdateSpaceAgentTemplateParams,
-  WorkerAgentModelPoolEntry,
+  AgentModelPoolEntry,
 } from '@hyperneo/shared';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
@@ -170,7 +170,7 @@ function rowToTemplate(row: Record<string, unknown>): SpaceAgentTemplate {
     suggestedAutonomyLevel: row.suggested_autonomy_level as SpaceAgentAutonomyLevel,
     model: (row.model as string | null) ?? null,
     provider: (row.provider as string | null) ?? null,
-    modelPool: decodeJsonArray<WorkerAgentModelPoolEntry>(row.model_pool),
+    modelPool: decodeJsonArray<AgentModelPoolEntry>(row.model_pool),
     thinkingLevel: (row.thinking_level as ThinkingLevel | null) ?? null,
     settingSources: decodeJsonArray<SettingSource>(row.setting_sources),
     tools: decodeJsonArray<string>(row.tools),
