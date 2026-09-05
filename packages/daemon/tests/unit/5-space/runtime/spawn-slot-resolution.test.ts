@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type {
   McpServerConfig,
+  SpaceAgentTemplate,
   SpaceTask,
   SpaceWorkerAgent,
   SpaceWorkflow,
@@ -13,9 +14,11 @@ import {
   assembleNodeAgentSessionInit,
   findAvailableSessionId,
   resolveNodeAgentConfig,
+  resolveSlotCustomPrompt,
   resolveSpawnWorkspace,
   resolveTaskWorkspace,
   resolveWorkflowNodeSlot,
+  spaceAgentTemplateToNodeSource,
 } from '../../../../src/lib/space/runtime/spawn-slot-resolution';
 
 function makeNode(overrides: Partial<WorkflowNode> = {}): WorkflowNode {
@@ -435,5 +438,144 @@ describe('resolveNodeAgentConfig: legacy agentId fallback', () => {
 
     expect(agent.model).toBe('agent-model');
     expect(agent.name).toBe('Registry Agent');
+  });
+});
+
+function makeStoredTemplate(overrides: Partial<SpaceAgentTemplate> = {}): SpaceAgentTemplate {
+  return {
+    key: 'migrated.agent.agent-1',
+    handle: 'registry-agent',
+    displayName: 'Registry Agent',
+    description: 'Synthesized from a registry agent.',
+    instructions: 'Stored template contract',
+    suggestedAutonomyLevel: 2,
+    model: 'stored-model',
+    provider: 'anthropic',
+    modelPool: null,
+    thinkingLevel: 'think8k',
+    settingSources: ['project'],
+    tools: ['Read', 'Grep'],
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  };
+}
+
+describe('spaceAgentTemplateToNodeSource', () => {
+  test('maps a stored agent template onto a node template source', () => {
+    const source = spaceAgentTemplateToNodeSource(makeStoredTemplate());
+
+    expect(source.key).toBe('migrated.agent.agent-1');
+    expect(source.handle).toBe('registry-agent');
+    expect(source.displayName).toBe('Registry Agent');
+    expect(source.description).toBe('Synthesized from a registry agent.');
+    expect(source.instructions).toBe('Stored template contract');
+    expect(source.suggestedAutonomyLevel).toBe(2);
+    expect(source.model).toBe('stored-model');
+    expect(source.provider).toBe('anthropic');
+    expect(source.thinkingLevel).toBe('think8k');
+    expect(source.settingSources).toEqual(['project']);
+    expect(source.toolPermissions).toEqual({ tools: ['Read', 'Grep'] });
+    expect(source.suggestedEventSubscriptions).toEqual([]);
+    expect(source.reminderDefaults).toEqual([]);
+    expect(source.ownershipPatterns).toEqual([]);
+  });
+
+  test('normalizes null template columns to undefined and empty tool permissions', () => {
+    const source = spaceAgentTemplateToNodeSource(
+      makeStoredTemplate({
+        model: null,
+        provider: null,
+        thinkingLevel: null,
+        settingSources: null,
+        tools: null,
+      })
+    );
+
+    expect(source.model).toBeUndefined();
+    expect(source.provider).toBeUndefined();
+    expect(source.thinkingLevel).toBeUndefined();
+    expect(source.settingSources).toBeUndefined();
+    expect(source.toolPermissions).toEqual({});
+  });
+
+  test('feeds resolveNodeAgentConfig to spawn from a stored template', () => {
+    const config = resolveNodeAgentConfig(
+      spaceAgentTemplateToNodeSource(makeStoredTemplate()),
+      { name: 'coder' },
+      []
+    );
+
+    expect(config?.source).toBe('template');
+    expect(config?.templateKey).toBe('migrated.agent.agent-1');
+    expect(config?.agent.id).toBe('template:migrated.agent.agent-1');
+    expect(config?.agent.customPrompt).toBe('Stored template contract');
+    expect(config?.agent.model).toBe('stored-model');
+    expect(config?.agent.tools).toEqual(['Read', 'Grep']);
+  });
+
+  test('carries a stored model pool onto the ephemeral spawn agent', () => {
+    const pool = [{ model: 'claude-sonnet-5', maxConcurrent: 2, weight: 3 }];
+    const config = resolveNodeAgentConfig(
+      spaceAgentTemplateToNodeSource(makeStoredTemplate({ modelPool: pool })),
+      { name: 'coder' },
+      []
+    );
+
+    expect(config?.agent.modelPool).toEqual(pool);
+  });
+
+  test('leaves the spawn model pool unset when the stored template has none', () => {
+    const config = resolveNodeAgentConfig(
+      spaceAgentTemplateToNodeSource(makeStoredTemplate({ modelPool: null })),
+      { name: 'coder' },
+      []
+    );
+
+    expect(config?.agent.modelPool).toBeUndefined();
+  });
+});
+
+describe('resolveSlotCustomPrompt', () => {
+  test('returns the direct custom prompt when set', () => {
+    const slot = { agentId: 'a', name: 'coder', customPrompt: { value: 'direct' } };
+    expect(resolveSlotCustomPrompt(slot as never)).toBe('direct');
+  });
+
+  test('merges legacy system prompt and instructions fields', () => {
+    const slot = {
+      agentId: 'a',
+      name: 'coder',
+      systemPrompt: { value: 'system part' },
+      instructions: { value: 'instructions part' },
+    };
+    expect(resolveSlotCustomPrompt(slot as never)).toBe('system part\n\ninstructions part');
+  });
+
+  test('uses whichever legacy field is present alone', () => {
+    expect(
+      resolveSlotCustomPrompt({
+        agentId: 'a',
+        name: 'coder',
+        instructions: { value: 'only instructions' },
+      } as never)
+    ).toBe('only instructions');
+    expect(
+      resolveSlotCustomPrompt({
+        agentId: 'a',
+        name: 'coder',
+        systemPrompt: { value: '  ' },
+      } as never)
+    ).toBeUndefined();
+  });
+
+  test('returns undefined when replaceAgentPrompt is set without a custom prompt', () => {
+    const slot = {
+      agentId: 'a',
+      name: 'coder',
+      replaceAgentPrompt: true,
+      systemPrompt: { value: 'ignored legacy' },
+    };
+    expect(resolveSlotCustomPrompt(slot as never)).toBeUndefined();
   });
 });

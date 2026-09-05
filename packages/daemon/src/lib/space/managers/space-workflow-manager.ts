@@ -24,6 +24,7 @@ import {
 import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url.ts';
 import '../runtime/connectors/production.ts';
 import { slugify, validateSlug } from '../slug.ts';
+import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
@@ -79,7 +80,8 @@ export class WorkflowDeletionBlockedError extends WorkflowValidationError {
 export class SpaceWorkflowManager {
   constructor(
     private repo: SpaceWorkflowRepository,
-    private agentLookup: SpaceAgentLookup | null = null
+    private agentLookup: SpaceAgentLookup | null = null,
+    private templateRepo?: SpaceAgentTemplateRepository
   ) {}
 
   createWorkflow(params: CreateSpaceWorkflowParams): SpaceWorkflow {
@@ -593,7 +595,7 @@ export class SpaceWorkflowManager {
       const hasTemplateKey = !!entry.templateKey?.trim();
       if (!hasAgentId && !hasTemplateKey) {
         throw new WorkflowValidationError(
-          `${loc}: agentId must reference a SpaceLongHorizonAgent or templateKey must reference a built-in agent template`
+          `${loc}: agentId must reference a SpaceLongHorizonAgent or templateKey must reference an agent template`
         );
       }
       if (!entry.name || !entry.name.trim()) {
@@ -629,14 +631,18 @@ export class SpaceWorkflowManager {
     for (let j = 0; j < node.agents.length; j++) {
       const entry = node.agents[j];
       if (entry.templateKey?.trim()) {
-        const template = getLongHorizonAgentTemplate(entry.templateKey.trim());
-        if (!template) {
-          throw new WorkflowValidationError(
-            `node[${index}].agents[${j}]: templateKey "${entry.templateKey}" does not match any built-in agent template`
-          );
+        const key = entry.templateKey.trim();
+        if (getLongHorizonAgentTemplate(key)) {
+          entry.agentId = '';
+          continue;
         }
-        entry.agentId = '';
-        continue;
+        if (this.templateRepo?.getByKey(key)) continue;
+        if (this.agentLookup && entry.agentId?.trim()) {
+          if (this.agentLookup.getAgentById(spaceId, entry.agentId)) continue;
+        }
+        throw new WorkflowValidationError(
+          `node[${index}].agents[${j}]: templateKey "${key}" does not match any agent template`
+        );
       }
       if (this.agentLookup) {
         const agent = this.agentLookup.getAgentById(spaceId, entry.agentId);

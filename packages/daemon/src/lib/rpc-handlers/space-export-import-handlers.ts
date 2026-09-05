@@ -1,4 +1,5 @@
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { generateUUID } from '@hyperneo/shared';
 import type {
   MessageHub,
@@ -327,7 +328,19 @@ export function buildWorkflowCreateParams(
       };
       const templateKey = a.templateKey?.trim();
       if (templateKey) {
-        entry.templateKey = templateKey;
+        const agentRef = a.agentRef?.trim() ?? '';
+        const agentId = agentRef
+          ? (normalizedImportedAgentNameToId.get(nameKey(agentRef)) ??
+            normalizedExistingAgentNameToId.get(nameKey(agentRef)) ??
+            null)
+          : null;
+        if (getLongHorizonAgentTemplate(templateKey)) {
+          entry.templateKey = templateKey;
+        } else if (agentId) {
+          entry.agentId = agentId;
+        } else {
+          entry.templateKey = templateKey;
+        }
       } else {
         const agentRef = a.agentRef?.trim() ?? '';
         const agentId =
@@ -409,7 +422,8 @@ function validateWorkflowForPreview(
   exported: ExportedSpaceWorkflow,
   importedAgentNames: Set<string>,
   existingAgentNameToId: Map<string, string>,
-  agentNameToRole: Map<string, string>
+  agentNameToRole: Map<string, string>,
+  storedTemplateExists?: (key: string) => boolean
 ): string[] {
   const errors: string[] = [];
 
@@ -417,9 +431,17 @@ function validateWorkflowForPreview(
     for (const a of node.agents) {
       const templateKey = a.templateKey?.trim();
       if (templateKey) {
-        if (!getLongHorizonAgentTemplate(templateKey)) {
-          errors.push(`node "${node.name}" references unknown template "${templateKey}"`);
+        if (getLongHorizonAgentTemplate(templateKey)) continue;
+        if (storedTemplateExists?.(templateKey)) continue;
+        const agentRef = a.agentRef?.trim() ?? '';
+        if (
+          agentRef &&
+          (importedAgentNames.has(nameKey(agentRef)) ||
+            existingAgentNameToId.has(nameKey(agentRef)))
+        ) {
+          continue;
         }
+        errors.push(`node "${node.name}" references unknown template "${templateKey}"`);
         continue;
       }
       const agentRef = a.agentRef?.trim() ?? '';
@@ -505,6 +527,9 @@ export function setupSpaceExportImportHandlers(
     clearLongTermAgentSessionProvider(spaceId: string, agentId: string): Promise<void>;
   }
 ): void {
+  const templateRepo = new SpaceAgentTemplateRepository(db);
+  const storedTemplateExists = (key: string): boolean => templateRepo.getByKey(key) != null;
+
   messageHub.onRequest('spaceExport.agents', async (data) => {
     const params = data as { spaceId: string; agentIds?: string[] };
     const space = await requireSpace(spaceManager, params.spaceId);
@@ -538,7 +563,9 @@ export function setupSpaceExportImportHandlers(
     for (const wf of workflows) {
       for (const node of wf.nodes ?? []) {
         for (const a of node.agents ?? []) {
-          if (a.agentId?.trim()) referencedAgentIds.add(a.agentId.trim());
+          if (a.agentId?.trim() && !a.templateKey?.trim()) {
+            referencedAgentIds.add(a.agentId.trim());
+          }
         }
       }
     }
@@ -607,7 +634,8 @@ export function setupSpaceExportImportHandlers(
     const params = data as { spaceId: string; agentIds?: string[]; workflowIds?: string[] };
     const space = await requireSpace(spaceManager, params.spaceId);
 
-    let agents = unifiedExportAgents(longHorizonAgentRepo, params.spaceId);
+    const exportableAgents = unifiedExportAgents(longHorizonAgentRepo, params.spaceId);
+    let agents = exportableAgents;
     if (params.agentIds?.length) {
       const idSet = new Set(params.agentIds);
       agents = agents.filter((a) => idSet.has(a.id));
@@ -620,11 +648,16 @@ export function setupSpaceExportImportHandlers(
       workflows = workflows.filter((w) => idSet.has(w.id));
     }
 
+    const exportableIds = new Set(exportableAgents.map((a) => a.id));
     const referencedAgentIds = new Set<string>();
     for (const wf of workflows) {
       for (const node of wf.nodes ?? []) {
         for (const a of node.agents ?? []) {
-          if (a.agentId?.trim()) referencedAgentIds.add(a.agentId.trim());
+          const agentId = a.agentId?.trim();
+          if (!agentId) continue;
+          if (!a.templateKey?.trim() || exportableIds.has(agentId)) {
+            referencedAgentIds.add(agentId);
+          }
         }
       }
     }
@@ -713,7 +746,8 @@ export function setupSpaceExportImportHandlers(
         wf,
         importedAgentNames,
         existingAgentNameToId,
-        agentNameToRole
+        agentNameToRole,
+        storedTemplateExists
       );
       for (const err of errors) {
         validationErrors.push(`Workflow "${wf.name}": ${err}`);
