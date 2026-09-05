@@ -839,6 +839,42 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(created?.nodes[0].agents[0].templateKey).toBeUndefined();
     });
 
+    it('keeps a known built-in template key alongside the agent fallback on import', async () => {
+      const coder = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+
+      const bundle = {
+        version: 5,
+        type: 'bundle',
+        name: 'Templates',
+        agents: [],
+        exportedAt: 1000,
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Pipe',
+            nodes: [
+              {
+                name: 'N',
+                agents: [{ name: 'c', templateKey: 'research.default', agentRef: 'Coder' }],
+              },
+            ],
+            startNode: 'N',
+            tags: [],
+          },
+        ],
+      };
+
+      await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+
+      const created = workflowRepo.listWorkflows(SPACE_ID).find((w) => w.name === 'Pipe');
+      expect(created?.nodes[0].agents[0].templateKey).toBe('research.default');
+      expect(created?.nodes[0].agents[0].agentId).toBe(coder.id);
+    });
+
     it('treats orphaned migration mirrors as missing in imports', async () => {
       const worker = seedAgent({ spaceId: SPACE_ID, name: 'Ghost Twin', handle: 'ghost' });
       db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(worker.id);

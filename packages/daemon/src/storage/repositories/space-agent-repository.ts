@@ -251,7 +251,46 @@ export class SpaceAgentRepository {
       if (!nodeConfigOwnsAgent(row.config, agentId)) continue;
       if (!workflowNames.includes(row.name)) workflowNames.push(row.name);
     }
+
+    const pinnedRows = this.selectExecutableRunPayloads(`%"agentId":"${agentId}"%`);
+    for (const row of pinnedRows) {
+      if (!workflowPayloadOwnsAgent(row.payload, agentId)) continue;
+      if (!workflowNames.includes(row.name)) workflowNames.push(row.name);
+    }
     return { referenced: workflowNames.length > 0, workflowNames };
+  }
+
+  private selectExecutableRunPayloads(
+    payloadLike: string
+  ): Array<{ name: string; payload: string | null }> {
+    for (const table of [
+      'space_workflow_runs',
+      'space_workflow_definition_versions',
+      'space_tasks',
+    ]) {
+      const exists = this.db
+        .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`)
+        .get(table);
+      if (!exists) return [];
+    }
+    return this.db
+      .prepare(
+        `SELECT DISTINCT sw.name, v.payload
+				FROM space_workflow_runs r
+				JOIN space_workflow_definition_versions v
+					ON v.workflow_id = r.workflow_id AND v.version_hash = r.definition_version
+				JOIN space_workflows sw ON sw.id = r.workflow_id
+				WHERE r.definition_version IS NOT NULL
+					AND v.payload LIKE ?
+					AND (
+						NOT EXISTS (SELECT 1 FROM space_tasks t WHERE t.workflow_run_id = r.id)
+						OR EXISTS (
+							SELECT 1 FROM space_tasks t
+							WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+						)
+					)`
+      )
+      .all(payloadLike) as Array<{ name: string; payload: string | null }>;
   }
 
   private generateUniqueHandle(spaceId: string, name: string): string {
@@ -520,6 +559,23 @@ export class SpaceAgentRepository {
       updatedAt: row.updated_at as number,
     };
   }
+}
+
+function workflowPayloadOwnsAgent(rawPayload: string | null, agentId: string): boolean {
+  if (!rawPayload) return false;
+  let nodes: unknown = null;
+  try {
+    nodes = (JSON.parse(rawPayload) as { nodes?: unknown }).nodes;
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(nodes)) return false;
+  for (const node of nodes) {
+    if (!node || typeof node !== 'object') continue;
+    const rawConfig = JSON.stringify(node);
+    if (nodeConfigOwnsAgent(rawConfig, agentId)) return true;
+  }
+  return false;
 }
 
 function nodeConfigOwnsAgent(rawConfig: string | null, agentId: string): boolean {

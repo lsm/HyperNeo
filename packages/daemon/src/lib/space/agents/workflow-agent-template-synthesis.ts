@@ -62,7 +62,7 @@ export function synthesizeWorkflowAgentTemplate(
     provider: source.provider ?? null,
     modelPool: copyEntries(source.modelPool),
     thinkingLevel: source.thinkingLevel ?? null,
-    settingSources: copyEntries(source.settingSources),
+    settingSources: source.settingSources ? [...source.settingSources] : null,
     tools: copyEntries(source.tools),
   };
 }

@@ -1711,6 +1711,50 @@ describe('Space Agent RPC Handlers', () => {
       });
       expect(result.success).toBe(true);
     });
+
+    it('blocks deletion while an executable run is pinned to an agent-bound definition', async () => {
+      db.exec(`CREATE TABLE IF NOT EXISTS space_workflow_runs (
+        id TEXT PRIMARY KEY, space_id TEXT NOT NULL, workflow_id TEXT NOT NULL,
+        definition_version TEXT, title TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      )`);
+      db.exec(`CREATE TABLE IF NOT EXISTS space_tasks (
+        id TEXT PRIMARY KEY, workflow_run_id TEXT, archived_at INTEGER
+      )`);
+      db.exec(`CREATE TABLE IF NOT EXISTS space_workflow_definition_versions (
+        workflow_id TEXT NOT NULL, version_hash TEXT NOT NULL, space_id TEXT NOT NULL,
+        payload TEXT NOT NULL, source TEXT NOT NULL, created_at INTEGER NOT NULL,
+        PRIMARY KEY (workflow_id, version_hash)
+      )`);
+      insertWorkflow(db, 'wf-pinned-agent', 'space-1', 'Pinned Agent Workflow');
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflow_definition_versions
+           (workflow_id, version_hash, space_id, payload, source, created_at)
+         VALUES ('wf-pinned-agent', 'hash-agent-1', 'space-1', ?, 'run_create', ?)`
+      ).run(
+        JSON.stringify({
+          nodes: [{ agents: [{ agentId, name: 'coder' }] }],
+        }),
+        now
+      );
+      db.prepare(
+        `INSERT INTO space_workflow_runs (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
+         VALUES ('run-pinned-agent', 'space-1', 'wf-pinned-agent', 'hash-agent-1', 'Run', 'in_progress', ?, ?)`
+      ).run(now, now);
+
+      await expect(call(hubData.handlers, 'spaceAgent.delete', { id: agentId })).rejects.toThrow(
+        /Cannot delete agent.*referenced by workflow nodes/
+      );
+
+      db.prepare(
+        `INSERT INTO space_tasks (id, workflow_run_id, archived_at) VALUES ('task-agent-1', 'run-pinned-agent', ?)`
+      ).run(now);
+      const result = await call<{ success: boolean }>(hubData.handlers, 'spaceAgent.delete', {
+        id: agentId,
+      });
+      expect(result.success).toBe(true);
+    });
   });
 
   describe('spaceAgent reminders and subscriptions', () => {

@@ -23,7 +23,10 @@ import type { SpaceWorkflowRepository } from '../../storage/repositories/space-w
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
-import { getLongHorizonAgentTemplates } from '../space/agents/long-horizon-agent-templates.ts';
+import {
+  getLongHorizonAgentTemplate,
+  getLongHorizonAgentTemplates,
+} from '../space/agents/long-horizon-agent-templates.ts';
 import {
   publishUnifiedAgentCreated,
   publishUnifiedAgentUpdated,
@@ -355,6 +358,9 @@ export function buildWorkflowCreateParams(
             null);
       if (resolvedAgentId) {
         entry.agentId = resolvedAgentId;
+        if (templateKey && getLongHorizonAgentTemplate(templateKey) !== undefined) {
+          entry.templateKey = templateKey;
+        }
       } else if (
         templateKey &&
         (knownTemplateKeys === undefined || knownTemplateKeys.has(templateKey))

@@ -122,6 +122,21 @@ describe('synthesizeWorkflowAgentTemplate', () => {
     expect(params.modelPool).not.toBe(pool);
     expect(params.settingSources).toEqual(['user']);
   });
+
+  test('preserves an explicitly empty setting-sources list', () => {
+    const params = synthesizeWorkflowAgentTemplate(
+      {
+        id: 'agent-4',
+        handle: 'a4',
+        displayName: 'A4',
+        instructions: 'x',
+        settingSources: [],
+      },
+      'migrated.a4'
+    );
+
+    expect(params.settingSources).toEqual([]);
+  });
 });
 
 describe('synthesizeOrphanWorkflowAgentTemplate', () => {
