@@ -519,6 +519,17 @@ html {
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
+/* Hide scrollbars while keeping the element scrollable — tab strips that
+   overflow on narrow columns swipe horizontally instead of wrapping. */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 .scrollbar-dark::-webkit-scrollbar {
   width: 10px;
   height: 10px;
