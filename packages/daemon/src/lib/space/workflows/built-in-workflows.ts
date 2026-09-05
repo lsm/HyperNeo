@@ -34,6 +34,7 @@ import type {
 import { generateUUID } from '@hyperneo/shared';
 import { Logger } from '../../logger.ts';
 import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
+import { workerTemplateKey } from '../agents/long-horizon-agent-templates.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
 
 export {
@@ -363,7 +364,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       name: 'Coding',
       agents: [
         {
-          agentId: 'Coder',
+          agentId: '',
+          templateKey: workerTemplateKey('coder'),
           name: 'coder',
           customPrompt: { value: CODER_OWNED_MERGE_PROMPT },
           eventInterests: [IMPLEMENTER_PR_EVENT_INTEREST],
@@ -380,7 +382,8 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       name: 'Review',
       agents: [
         {
-          agentId: 'Reviewer',
+          agentId: '',
+          templateKey: workerTemplateKey('reviewer'),
           name: 'reviewer',
           resetContextPerTurn: true,
           customPrompt: { value: CODER_OWNED_REVIEW_PROMPT },
@@ -448,7 +451,8 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
       name: 'Research',
       agents: [
         {
-          agentId: 'Research',
+          agentId: '',
+          templateKey: workerTemplateKey('research'),
           name: 'research',
           eventInterests: [IMPLEMENTER_PR_EVENT_INTEREST],
           customPrompt: { value: RESEARCH_PROMPT },
@@ -465,7 +469,8 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
       name: 'Review',
       agents: [
         {
-          agentId: 'Reviewer',
+          agentId: '',
+          templateKey: workerTemplateKey('reviewer'),
           name: 'reviewer',
           customPrompt: { value: RESEARCH_REVIEW_PROMPT },
         },
@@ -519,7 +524,8 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
       name: 'Review',
       agents: [
         {
-          agentId: 'Reviewer',
+          agentId: '',
+          templateKey: workerTemplateKey('reviewer'),
           name: 'reviewer',
           customPrompt: { value: REVIEW_ONLY_REVIEW_PROMPT },
         },
@@ -547,7 +553,8 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
       name: 'Coding',
       agents: [
         {
-          agentId: 'Coder',
+          agentId: '',
+          templateKey: workerTemplateKey('coder'),
           name: 'coder',
           customPrompt: { value: CODER_OWNED_MERGE_PROMPT },
           eventInterests: [IMPLEMENTER_PR_EVENT_INTEREST],
@@ -564,7 +571,8 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
       name: 'Review',
       agents: [
         {
-          agentId: 'Reviewer',
+          agentId: '',
+          templateKey: workerTemplateKey('reviewer'),
           name: 'reviewer',
           customPrompt: { value: CODER_OWNED_QA_REVIEW_PROMPT },
         },
@@ -575,7 +583,8 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
       name: 'QA',
       agents: [
         {
-          agentId: 'QA',
+          agentId: '',
+          templateKey: workerTemplateKey('qa'),
           name: 'qa',
           customPrompt: { value: CODER_OWNED_QA_PROMPT },
         },
@@ -666,7 +675,8 @@ export const CODER_ONLY_WORKFLOW: SpaceWorkflow = {
       name: 'Coding',
       agents: [
         {
-          agentId: 'Coder',
+          agentId: '',
+          templateKey: workerTemplateKey('coder'),
           name: 'coder',
           customPrompt: { value: CODER_ONLY_PROMPT },
           eventInterests: [IMPLEMENTER_PR_EVENT_INTEREST],
@@ -742,8 +752,7 @@ export interface SeedBuiltInWorkflowsResult {
 
 export function mergeNodeStructuralFieldsFromTemplate(
   existingNodes: WorkflowNode[],
-  templateNodes: Pick<WorkflowNode, 'id' | 'name' | 'agents' | 'postApproval' | 'transitions'>[],
-  resolveAgentId: (name: string) => string | undefined
+  templateNodes: Pick<WorkflowNode, 'id' | 'name' | 'agents' | 'postApproval' | 'transitions'>[]
 ): WorkflowNode[] {
   const templateNodesByName = new Map(templateNodes.map((node) => [node.name, node]));
   const existingNodeNames = new Set(existingNodes.map((node) => node.name));
@@ -759,10 +768,7 @@ export function mergeNodeStructuralFieldsFromTemplate(
     .map((node) => ({
       ...node,
       id: generateUUID(),
-      agents: node.agents.map((agent) => ({
-        ...agent,
-        agentId: resolveAgentId(agent.agentId) ?? agent.agentId,
-      })),
+      agents: node.agents.map((agent) => ({ ...agent })),
     }));
   const templateAgentsByKey = new Map<
     string,
@@ -2163,7 +2169,8 @@ function remapTemplateChannelRef(
         node.agents.some(
           (agent) =>
             (agent.name && agent.name === templateAgent.name) ||
-            agent.agentId === templateAgent.agentId
+            (!!agent.templateKey && agent.templateKey === templateAgent.templateKey) ||
+            (!!agent.agentId && agent.agentId === templateAgent.agentId)
         )
       )
     ) ??
@@ -2490,7 +2497,6 @@ const RESTAMP_FIELDS = [
 export function seedBuiltInWorkflows(
   spaceId: string,
   workflowManager: SpaceWorkflowManager,
-  resolveAgentId: (name: string) => string | undefined,
   hasActiveRuns?: (workflowId: string) => boolean
 ): SeedBuiltInWorkflowsResult {
   const templates = getBuiltInWorkflows();
@@ -2642,11 +2648,7 @@ export function seedBuiltInWorkflows(
       }
 
       try {
-        const mergedNodes = mergeNodeStructuralFieldsFromTemplate(
-          row.nodes,
-          template.nodes,
-          resolveAgentId
-        );
+        const mergedNodes = mergeNodeStructuralFieldsFromTemplate(row.nodes, template.nodes);
         const mergedChannels = mergeChannelsFromTemplate(
           row.channels,
           template.channels,
@@ -2719,26 +2721,6 @@ export function seedBuiltInWorkflows(
     };
   }
 
-  const neededNames = new Set<string>();
-  for (const template of templatesToCreate) {
-    for (const node of template.nodes) {
-      for (const agent of node.agents) {
-        if (agent.agentId) neededNames.add(agent.agentId);
-      }
-    }
-  }
-  const resolvedIds = new Map<string, string>();
-  for (const agentName of neededNames) {
-    const agentId = resolveAgentId(agentName);
-    if (!agentId) {
-      throw new Error(
-        `seedBuiltInWorkflows: no SpaceLongHorizonAgent found with name '${agentName}' in space '${spaceId}'. ` +
-          `Preset agents must be seeded before calling seedBuiltInWorkflows.`
-      );
-    }
-    resolvedIds.set(agentName, agentId);
-  }
-
   const seeded: string[] = [];
 
   for (const template of templatesToCreate) {
@@ -2751,10 +2733,7 @@ export function seedBuiltInWorkflows(
       const nodes = template.nodes.map((s) => ({
         id: nodeIdMap.get(s.id)!,
         name: s.name,
-        agents: s.agents.map((a) => ({
-          ...a,
-          agentId: resolvedIds.get(a.agentId)!,
-        })),
+        agents: s.agents.map((a) => ({ ...a })),
         ...(s.postApproval ? { postApproval: { ...s.postApproval } } : {}),
         ...(s.transitions && s.transitions.length > 0
           ? { transitions: s.transitions.map((t) => ({ ...t })) }

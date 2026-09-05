@@ -1,9 +1,18 @@
 import { describe, expect, test } from 'bun:test';
-import { getLongHorizonAgentTemplates } from '../../../../src/lib/space/agents/long-horizon-agent-templates';
+import {
+  getLongHorizonAgentTemplates,
+  WORKER_TEMPLATE_KEY_PREFIX,
+} from '../../../../src/lib/space/agents/long-horizon-agent-templates';
+
+function getLongHorizonFamilyTemplates() {
+  return getLongHorizonAgentTemplates().filter(
+    (template) => !template.key.startsWith(WORKER_TEMPLATE_KEY_PREFIX)
+  );
+}
 
 describe('long-horizon agent templates', () => {
   test('exports built-in templates for common evergreen roles', () => {
-    const templates = getLongHorizonAgentTemplates();
+    const templates = getLongHorizonFamilyTemplates();
 
     expect(templates.map((template) => template.key)).toEqual([
       'coordinator.default',
@@ -27,8 +36,33 @@ describe('long-horizon agent templates', () => {
     ]);
   });
 
+  test('registers the worker presets as code built-ins under the worker namespace', () => {
+    const workerTemplates = getLongHorizonAgentTemplates().filter((template) =>
+      template.key.startsWith(WORKER_TEMPLATE_KEY_PREFIX)
+    );
+
+    expect(workerTemplates.map((template) => template.key)).toEqual([
+      'worker.coder',
+      'worker.general',
+      'worker.planner',
+      'worker.research',
+      'worker.reviewer',
+      'worker.qa',
+    ]);
+    for (const template of workerTemplates) {
+      expect(template.instructions.length).toBeGreaterThan(0);
+      expect(template.suggestedAutonomyLevel).toBe(1);
+      expect(template.suggestedEventSubscriptions).toEqual([]);
+      expect(template.reminderDefaults).toEqual([]);
+      expect(template.ownershipPatterns).toEqual([]);
+    }
+    const reviewer = workerTemplates.find((template) => template.key === 'worker.reviewer')!;
+    expect(Array.isArray(reviewer.toolPermissions.tools)).toBe(true);
+    expect(reviewer.toolPermissions.tools).toContain('Read');
+  });
+
   test('defines instructions, autonomy, subscriptions, reminders, and ownership patterns', () => {
-    for (const template of getLongHorizonAgentTemplates()) {
+    for (const template of getLongHorizonFamilyTemplates()) {
       expect(template.handle).toMatch(/^[a-z0-9-]+$/);
       expect(template.description.length).toBeGreaterThan(20);
       expect(template.instructions.length).toBeGreaterThan(80);

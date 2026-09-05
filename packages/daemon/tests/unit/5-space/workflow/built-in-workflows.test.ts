@@ -12,6 +12,12 @@ import type {
   WorkflowNode,
 } from '@hyperneo/shared';
 import {
+  getLongHorizonAgentTemplate,
+  WORKER_TEMPLATE_KEY_PREFIX,
+  workerTemplateKey,
+} from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
+import { getPresetAgentTemplates } from '../../../../src/lib/space/agents/seed-agents.ts';
+import {
   exportWorkflow,
   validateExportedWorkflow,
 } from '../../../../src/lib/space/export-format.ts';
@@ -89,16 +95,6 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: stri
      VALUES (?, ?, ?, '', null, '[]', null, ?, ?)`
   ).run(agentId, spaceId, name, Date.now(), Date.now());
 }
-
-const VALID_BUILTIN_ROLES = new Set<string>([
-  'planner',
-  'coder',
-  'general',
-  'research',
-  'reviewer',
-  'pr merger',
-  'qa',
-]);
 
 function hasLeaderAgentId(wf: SpaceWorkflow): boolean {
   return wf.nodes.some((s) =>
@@ -1105,12 +1101,13 @@ describe('getBuiltInWorkflows()', () => {
     }
   });
 
-  test('all agent placeholders are valid builtin role names', () => {
+  test('all agent slots bind worker templateKeys that resolve as code built-ins', () => {
     for (const wf of getBuiltInWorkflows()) {
       for (const step of wf.nodes) {
         expect(step.agents.length).toBeGreaterThan(0);
         for (const agent of step.agents) {
-          expect(VALID_BUILTIN_ROLES.has(agent.agentId.toLowerCase())).toBe(true);
+          expect(agent.templateKey?.startsWith(WORKER_TEMPLATE_KEY_PREFIX)).toBe(true);
+          expect(getLongHorizonAgentTemplate(agent.templateKey ?? '')).toBeDefined();
         }
       }
     }
@@ -1136,7 +1133,8 @@ describe('getBuiltInWorkflows()', () => {
         expect(Array.isArray(node.agents)).toBe(true);
         expect(node.agents.length).toBeGreaterThan(0);
         for (const agent of node.agents) {
-          expect(agent.agentId).toBeTruthy();
+          expect(agent.templateKey).toBeTruthy();
+          expect(agent.agentId).toBe('');
         }
       }
     }
@@ -1172,16 +1170,6 @@ describe('seedBuiltInWorkflows()', () => {
   const MERGER_ID = 'agent-merger-uuid';
 
   const QA_ID = 'agent-qa-uuid';
-  const roleMap: Record<string, string> = {
-    planner: PLANNER_ID,
-    coder: CODER_ID,
-    general: GENERAL_ID,
-    research: RESEARCH_ID,
-    reviewer: REVIEWER_ID,
-    'pr merger': MERGER_ID,
-    qa: QA_ID,
-  };
-  const resolveAgentId = (role: string): string | undefined => roleMap[role.toLowerCase()];
 
   beforeEach(() => {
     db = makeDb();
@@ -1282,13 +1270,13 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('seeds all built-in templates for an empty space', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const workflows = manager.listWorkflows(SPACE_ID);
     expect(workflows).toHaveLength(5);
   });
 
   test('seeded workflow names match all templates', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const names = manager.listWorkflows(SPACE_ID).map((w) => w.name);
     expect(names).toContain(CODING_WORKFLOW.name);
     expect(names).toContain(CODING_WITH_QA_WORKFLOW.name);
@@ -1297,7 +1285,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('CODING_WORKFLOW seeding preserves node custom prompts with non-empty value', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
     expect(wf).toBeDefined();
     for (const node of wf!.nodes) {
@@ -1309,7 +1297,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('RESEARCH_WORKFLOW seeding preserves node custom prompts with non-empty value', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name);
     expect(wf).toBeDefined();
     for (const node of wf!.nodes) {
@@ -1320,18 +1308,18 @@ describe('seedBuiltInWorkflows()', () => {
     }
   });
 
-  test('CODING_WORKFLOW seeded correctly — two nodes with real agent IDs', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+  test('CODING_WORKFLOW seeded correctly — two nodes with worker templateKey bindings', async () => {
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
     expect(wf).toBeDefined();
     expect(wf!.nodes).toHaveLength(2);
-    expect(wf!.nodes[0].agents[0]?.agentId).toBe(CODER_ID);
-    expect(wf!.nodes[1].agents[0]?.agentId).toBe(roleMap.reviewer);
+    expect(wf!.nodes[0].agents[0]?.templateKey).toBe(workerTemplateKey('coder'));
+    expect(wf!.nodes[1].agents[0]?.templateKey).toBe(workerTemplateKey('reviewer'));
     expect(wf!.nodes[0].postApproval?.targetAgent).toBe('coder');
   });
 
   test('CODING_WORKFLOW seeded with two channels (Coding→Review + gated Review→Coding)', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     expect(wf.channels).toHaveLength(2);
 
@@ -1350,7 +1338,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('CODING_WORKFLOW seeded channels all have direction one-way', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     for (const ch of wf.channels!) {
       expect('direction' in ch).toBe(false);
@@ -1358,7 +1346,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('CODING_WORKFLOW seeded channels from/to fields are node names (not UUIDs)', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const nodeNames = new Set(wf.nodes.map((n) => n.name));
     for (const ch of wf.channels!) {
@@ -1368,7 +1356,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('RESEARCH_WORKFLOW seeded with two channels (Research→Review + Review→Research)', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
     expect(wf.channels).toHaveLength(2);
     const forward = wf.channels!.find((c) => c.from === 'Research' && c.to === 'Review');
@@ -1382,17 +1370,17 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('RESEARCH_WORKFLOW seeded correctly — research + reviewer', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name);
     expect(wf).toBeDefined();
     expect(wf!.nodes).toHaveLength(2);
-    expect(wf!.nodes[0].agents[0]?.agentId).toBe(RESEARCH_ID);
-    expect(wf!.nodes[1].agents[0]?.agentId).toBe(REVIEWER_ID);
+    expect(wf!.nodes[0].agents[0]?.templateKey).toBe(workerTemplateKey('research'));
+    expect(wf!.nodes[1].agents[0]?.templateKey).toBe(workerTemplateKey('reviewer'));
     expect(wf!.nodes[0].postApproval?.targetAgent).toBe('research');
   });
 
   test('RESEARCH_WORKFLOW seeded channels reference valid node names', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
     const nodeNames = new Set(wf.nodes.map((n) => n.name));
     for (const ch of wf.channels!) {
@@ -1403,7 +1391,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('RESEARCH_WORKFLOW seeded with a pr_ready hook', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
     const hook = wf.hooks?.find((h) => h.id === 'research-pr-ready');
     expect(hook).toBeDefined();
@@ -1411,35 +1399,35 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('REVIEW_ONLY_WORKFLOW seeded with no channels', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
     expect(wf.channels ?? []).toHaveLength(0);
   });
 
   test('REVIEW_ONLY_WORKFLOW seeded correctly — single reviewer step', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name);
     expect(wf).toBeDefined();
     expect(wf!.nodes).toHaveLength(1);
-    expect(wf!.nodes[0].agents[0]?.agentId).toBe(REVIEWER_ID);
+    expect(wf!.nodes[0].agents[0]?.templateKey).toBe(workerTemplateKey('reviewer'));
   });
 
   test('all seeded workflows have the real spaceId assigned', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     for (const wf of manager.listWorkflows(SPACE_ID)) {
       expect(wf.spaceId).toBe(SPACE_ID);
     }
   });
 
   test('all seeded workflows have non-empty ids assigned', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     for (const wf of manager.listWorkflows(SPACE_ID)) {
       expect(wf.id).toBeTruthy();
     }
   });
 
   test('all seeded workflows get their canonical handle pinned', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const workflows = manager.listWorkflows(SPACE_ID);
     const byName = new Map(workflows.map((w) => [w.name, w]));
     expect(byName.get('Coding')?.handle).toBe('coding');
@@ -1449,7 +1437,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('all seeded workflows have endNodeId pointing to a valid node', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     for (const wf of manager.listWorkflows(SPACE_ID)) {
       expect(wf.endNodeId).toBeTruthy();
       const nodeIds = new Set(wf.nodes.map((n) => n.id));
@@ -1458,20 +1446,20 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('REVIEW_ONLY_WORKFLOW seeded with startNodeId === endNodeId', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
     expect(wf.startNodeId).toBe(wf.endNodeId);
   });
 
   test('is idempotent — second call does not create additional workflows', async () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const workflows = manager.listWorkflows(SPACE_ID);
     expect(workflows).toHaveLength(5);
   });
 
   test('threads node-level postApproval through to Coding, Research, QA seeded rows', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const workflows = manager.listWorkflows(SPACE_ID);
     const assertPostApproval = (name: string, targetAgent: 'coder' | 'research') => {
       const wf = workflows.find((w) => w.name === name);
@@ -1490,7 +1478,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('leaves postApproval undefined on Review-Only', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const workflows = manager.listWorkflows(SPACE_ID);
     const wf = workflows.find((w) => w.name === 'Review-Only Workflow');
     expect(wf).toBeDefined();
@@ -1499,22 +1487,22 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('result exposes restamped=[] on a fresh seed', () => {
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.skipped).toBe(false);
     expect(result.seeded).toHaveLength(5);
     expect(result.restamped).toEqual([]);
   });
 
   test('result exposes restamped=[] when all rows already match current template hashes', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const second = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
+    const second = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(second.skipped).toBe(true);
     expect(second.seeded).toEqual([]);
     expect(second.restamped).toEqual([]);
   });
 
   test('re-stamps existing rows when stored templateHash differs from current template', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
 
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codingNode = coding.nodes.find((node) => node.name === 'Coding')!;
@@ -1533,7 +1521,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(before.nodes.find((node) => node.name === 'Coding')?.postApproval).toBeUndefined();
     expect(before.templateHash).toBe('stale-hash-from-a-prior-pr');
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.seeded).toEqual([]);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
     expect(result.skipped).toBe(false);
@@ -1547,7 +1535,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('the stable Coding template carries exactly one coder-owned postApproval route', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codingNode = coding.nodes.find((node) => node.name === 'Coding')!;
     const reviewNode = coding.nodes.find((node) => node.name === 'Review')!;
@@ -1556,7 +1544,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(reviewNode.postApproval).toBeUndefined();
     expect(coding.nodes.filter((node) => node.postApproval)).toHaveLength(1);
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.skipped).toBe(true);
     const reRow = manager.getWorkflow(coding.id)!;
     expect(reRow.nodes.filter((node) => node.postApproval)).toHaveLength(1);
@@ -1566,7 +1554,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp propagates template maxCycles onto existing Fullstack QA Loop cyclic back-channels', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
@@ -1590,7 +1578,7 @@ describe('seedBuiltInWorkflows()', () => {
     );
     expect(before.channels!.find((c) => c.from === 'QA' && c.to === 'Coding')!.maxCycles).toBe(6);
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.restamped).toContain(CODING_WITH_QA_WORKFLOW.name);
 
     const after = manager.getWorkflow(wf.id)!;
@@ -1601,7 +1589,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp does NOT touch handles — custom user handle is preserved', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 
     manager.updateWorkflow(coding.id, { handle: 'my-custom-handle' });
@@ -1610,7 +1598,7 @@ describe('seedBuiltInWorkflows()', () => {
       coding.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
 
     const after = manager.getWorkflow(coding.id)!;
@@ -1618,7 +1606,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp preserves existing postApproval when a node was renamed', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const routeNode = coding.nodes.find((n) => n.name === 'Coding')!;
     expect(routeNode.postApproval).toBeDefined();
@@ -1632,7 +1620,7 @@ describe('seedBuiltInWorkflows()', () => {
       coding.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
 
     const after = manager.getWorkflow(coding.id)!;
@@ -1642,7 +1630,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp succeeds and leaves handle field untouched (no handle write during restamp)', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 
     db.prepare(`UPDATE space_workflows SET handle = NULL, template_hash = ? WHERE id = ?`).run(
@@ -1650,7 +1638,7 @@ describe('seedBuiltInWorkflows()', () => {
       coding.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
     expect(result.errors).toHaveLength(0);
 
@@ -1662,7 +1650,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp does NOT touch rows without a templateName (user-created)', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
 
     const userWf = manager.createWorkflow({
       spaceId: SPACE_ID,
@@ -1672,7 +1660,7 @@ describe('seedBuiltInWorkflows()', () => {
     });
 
     const before = manager.getWorkflow(userWf.id)!;
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const after = manager.getWorkflow(userWf.id)!;
 
     expect(after.name).toBe(before.name);
@@ -1682,7 +1670,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp does not overwrite persisted node agent custom prompts', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const reviewNode = coding.nodes.find((n) => n.name === 'Review')!;
     const reviewAgent = reviewNode.agents[0];
@@ -1706,7 +1694,7 @@ describe('seedBuiltInWorkflows()', () => {
       coding.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
 
     const after = manager.getWorkflow(coding.id)!;
@@ -1722,7 +1710,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp keeps updateAvailable alive when the template changed a non-merged field', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const template = getBuiltInWorkflows().find((w) => w.name === CODING_WORKFLOW.name)!;
     const expectedHash = computeWorkflowHash(template);
@@ -1733,7 +1721,7 @@ describe('seedBuiltInWorkflows()', () => {
       coding.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
 
     const after = manager.getWorkflow(coding.id)!;
@@ -1748,7 +1736,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('stable Coding coder prompt carries no retired step markers that retired patches could pseudo-converge', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const prompt = coding.nodes.find((n) => n.name === 'Coding')!.agents[0].customPrompt!.value;
     expect(prompt).not.toContain('5. If code changed: open a PR with `gh pr create`');
@@ -1774,17 +1762,13 @@ describe('seedBuiltInWorkflows()', () => {
         i === 0 ? { ...a, customPrompt: { value: customizedPrompt } } : a
       ),
     };
-    const merged = mergeNodeStructuralFieldsFromTemplate(
-      [existingNode],
-      workflow.nodes,
-      () => 'agent-research'
-    );
+    const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], workflow.nodes);
     const mergedAgent = merged.find((n) => n.name === nodeName)!.agents[0];
     expect(mergedAgent.customPrompt!.value).toBe(customizedPrompt);
   });
 
   test('re-stamp preserves customized prompts containing retired built-in text', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
     const customizedPrompt =
@@ -1808,7 +1792,7 @@ describe('seedBuiltInWorkflows()', () => {
       coding.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
 
     const after = manager.getWorkflow(coding.id)!;
@@ -1821,7 +1805,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp upgrades pre-review-modes coder prompts to the policy-aware template', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
     const coderOnly = manager
@@ -1871,7 +1855,7 @@ describe('seedBuiltInWorkflows()', () => {
       coderOnly.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
     expect(result.restamped).toContain(CODER_ONLY_WORKFLOW.name);
 
@@ -1894,7 +1878,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp upgrades strict-base-revalidation coder prompts to the base-advance-policy template', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
     const coderOnly = manager
@@ -1971,7 +1955,7 @@ describe('seedBuiltInWorkflows()', () => {
       );
     }
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
     expect(result.restamped).toContain(CODER_ONLY_WORKFLOW.name);
     expect(result.restamped).toContain(RESEARCH_WORKFLOW.name);
@@ -1998,7 +1982,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp upgrades polling coder prompts to the event-driven template', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
     const coderOnly = manager
@@ -2075,7 +2059,7 @@ describe('seedBuiltInWorkflows()', () => {
       );
     }
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
     expect(result.restamped).toContain(CODER_ONLY_WORKFLOW.name);
     expect(result.restamped).toContain(RESEARCH_WORKFLOW.name);
@@ -2102,7 +2086,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp upgrades [bot]-suffix bot-filter prompts to the __typename template', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const cases = [
       { workflowName: CODING_WORKFLOW.name, current: CODER_OWNED_MERGE_PROMPT },
       { workflowName: CODER_ONLY_WORKFLOW.name, current: CODER_ONLY_PROMPT },
@@ -2140,7 +2124,7 @@ describe('seedBuiltInWorkflows()', () => {
       );
     }
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     for (const { workflowName } of cases) {
       expect(result.restamped).toContain(workflowName);
     }
@@ -2155,7 +2139,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('active-run re-stamp upgrades [bot]-suffix bot-filter prompts via the drift variants', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coderOnly = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODER_ONLY_WORKFLOW.name)!;
@@ -2182,7 +2166,7 @@ describe('seedBuiltInWorkflows()', () => {
       coderOnly.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId, () => true);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager, () => true);
     expect(result.restamped).not.toContain(CODER_ONLY_WORKFLOW.name);
 
     const afterCoderOnly = manager.getWorkflow(coderOnly.id)!;
@@ -2379,7 +2363,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp restores the imperative subscribe instruction to the stable coder prompt', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
 
@@ -2408,7 +2392,7 @@ describe('seedBuiltInWorkflows()', () => {
       coding.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
 
     const after = manager.getWorkflow(coding.id)!;
@@ -2418,7 +2402,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp restores the zero-findings verdict gate to the stable reviewer prompt', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const reviewNode = coding.nodes.find((n) => n.name === 'Review')!;
 
@@ -2444,7 +2428,7 @@ describe('seedBuiltInWorkflows()', () => {
       coding.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
 
     const after = manager.getWorkflow(coding.id)!;
@@ -2469,8 +2453,8 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('restamp prompt migration operates on legacy slot prompts, not the stable behavioral prompts', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const seedAgain = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
+    const seedAgain = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(seedAgain.skipped).toBe(true);
 
     const qaCoderPrompt = CODING_WITH_QA_WORKFLOW.nodes.find((n) => n.name === 'Coding')!.agents[0]
@@ -2556,11 +2540,7 @@ describe('seedBuiltInWorkflows()', () => {
         ? { ...node, agents: node.agents.map((a) => ({ ...a, resetContextPerTurn: undefined })) }
         : node
     );
-    const result = mergeNodeStructuralFieldsFromTemplate(
-      existingNodes,
-      CODING_WORKFLOW.nodes,
-      resolveAgentId
-    );
+    const result = mergeNodeStructuralFieldsFromTemplate(existingNodes, CODING_WORKFLOW.nodes);
     const reviewer = result
       .find((node) => node.name === 'Review')!
       .agents.find((a) => a.name === 'reviewer')!;
@@ -2573,11 +2553,7 @@ describe('seedBuiltInWorkflows()', () => {
         ? { ...node, agents: node.agents.map((a) => ({ ...a, eventInterests: undefined })) }
         : node
     );
-    const result = mergeNodeStructuralFieldsFromTemplate(
-      existingNodes,
-      CODING_WORKFLOW.nodes,
-      resolveAgentId
-    );
+    const result = mergeNodeStructuralFieldsFromTemplate(existingNodes, CODING_WORKFLOW.nodes);
     const coder = result
       .find((node) => node.name === 'Coding')!
       .agents.find((a) => a.name === 'coder')!;
@@ -2595,11 +2571,7 @@ describe('seedBuiltInWorkflows()', () => {
         ? { ...node, agents: node.agents.map((a) => ({ ...a, eventInterests: drifted })) }
         : node
     );
-    const result = mergeNodeStructuralFieldsFromTemplate(
-      existingNodes,
-      CODING_WORKFLOW.nodes,
-      resolveAgentId
-    );
+    const result = mergeNodeStructuralFieldsFromTemplate(existingNodes, CODING_WORKFLOW.nodes);
     const coder = result
       .find((node) => node.name === 'Coding')!
       .agents.find((a) => a.name === 'coder')!;
@@ -2623,11 +2595,7 @@ describe('seedBuiltInWorkflows()', () => {
         agents: [{ agentId: 'Coder', name: 'coder' }],
       },
     ];
-    const result = mergeNodeStructuralFieldsFromTemplate(
-      existingNodes,
-      templateNodes,
-      resolveAgentId
-    );
+    const result = mergeNodeStructuralFieldsFromTemplate(existingNodes, templateNodes);
     expect(result[0]!.agents[0]!.eventInterests).toEqual(customInterest);
   });
 
@@ -2670,7 +2638,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp leaves a customized Validation Complete node alone when no built-in marker remains', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 
     repo.updateWorkflow(coding.id, {
@@ -2692,7 +2660,7 @@ describe('seedBuiltInWorkflows()', () => {
       coding.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.errors).toHaveLength(0);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
 
@@ -2702,7 +2670,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test.skip('re-stamp remaps hook node refs and authorized slots when source node and slot were renamed', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codingNode = coding.nodes.find((node) => node.name === 'Coding')!;
     const reviewNode = coding.nodes.find((node) => node.name === 'Review')!;
@@ -2727,7 +2695,7 @@ describe('seedBuiltInWorkflows()', () => {
       coding.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
     expect(result.errors).toHaveLength(0);
 
@@ -2740,7 +2708,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp preserves user-added custom hooks while updating template hooks', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const customHook = {
       id: 'custom-audit-hook',
@@ -2758,7 +2726,7 @@ describe('seedBuiltInWorkflows()', () => {
       coding.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
     expect(result.errors).toHaveLength(0);
 
@@ -2768,7 +2736,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp maps appended channels to renamed built-in nodes by agent slot', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codingNode = coding.nodes.find((node) => node.name === 'Coding')!;
     const reviewNode = coding.nodes.find((node) => node.name === 'Review')!;
@@ -2793,7 +2761,7 @@ describe('seedBuiltInWorkflows()', () => {
       coding.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
     expect(result.errors).toHaveLength(0);
 
@@ -2816,7 +2784,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp preserves existing node rows, layout, and updates toolGuards in place', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codingNode = coding.nodes.find((n) => n.name === 'Coding')!;
     const originalNodeIds = coding.nodes.map((n) => n.id).sort();
@@ -2853,7 +2821,7 @@ describe('seedBuiltInWorkflows()', () => {
       coding.id
     );
 
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
 
     const after = manager.getWorkflow(coding.id)!;
     const afterNodeIds = after.nodes.map((n) => n.id).sort();
@@ -2871,7 +2839,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('re-stamp propagates the primaryLink eventInterests to existing seeded spaces (task #907)', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     manager.updateWorkflow(coding.id, {
       nodes: coding.nodes.map((node) =>
@@ -2888,7 +2856,7 @@ describe('seedBuiltInWorkflows()', () => {
       coding.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.restamped).toContain(CODING_WORKFLOW.name);
 
     const after = manager.getWorkflow(coding.id)!;
@@ -2901,7 +2869,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('seeds Coding with QA layout for actual generated node IDs', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const workflow = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
@@ -2921,7 +2889,7 @@ describe('seedBuiltInWorkflows()', () => {
       completionAutonomyLevel: 3,
     });
 
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
 
     const workflows = manager.listWorkflows(SPACE_ID);
     expect(workflows).toHaveLength(6);
@@ -2936,7 +2904,7 @@ describe('seedBuiltInWorkflows()', () => {
   }
 
   test('migrates legacy "Coding Workflow" identity to stable "Coding" and strips the Post-Approval node', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const seededCoding = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
@@ -2975,7 +2943,7 @@ describe('seedBuiltInWorkflows()', () => {
       codingId
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
 
     const migrated = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
     expect(migrated).toBeDefined();
@@ -2992,14 +2960,14 @@ describe('seedBuiltInWorkflows()', () => {
     );
 
     expect(result.errors).toEqual([]);
-    const second = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const second = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(second.skipped).toBe(true);
     expect(second.seeded).toEqual([]);
     expect(second.errors).toEqual([]);
   });
 
   test('defers the retired-node strip while an active workflow run references the row', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const seededCoding = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
@@ -3042,7 +3010,6 @@ describe('seedBuiltInWorkflows()', () => {
     const deferred = seedBuiltInWorkflows(
       SPACE_ID,
       manager,
-      resolveAgentId,
       (workflowId) => workflowId === codingId
     );
     const stillLegacy = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
@@ -3053,7 +3020,7 @@ describe('seedBuiltInWorkflows()', () => {
     expect(deferred.restamped).not.toContain('Coding');
     expect(stillLegacy.templateHash).toBe(staleHash);
 
-    const converged = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const converged = seedBuiltInWorkflows(SPACE_ID, manager);
     const migrated = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
     expect(migrated.nodes.some((n) => n.name === 'Post-Approval')).toBe(false);
     expect(migrated.nodes.map((n) => n.name)).toEqual(['Coding', 'Review']);
@@ -3065,7 +3032,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('preserves a user-customized Post-Approval node instead of stripping it', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const seededCoding = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
@@ -3095,7 +3062,7 @@ describe('seedBuiltInWorkflows()', () => {
       codingId
     );
 
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
 
     const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
     expect(after.nodes.some((n) => n.name === 'Post-Approval')).toBe(true);
@@ -3104,7 +3071,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('preserves a Post-Approval node whose merger slot was model-customized', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const seededCoding = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
@@ -3141,7 +3108,7 @@ describe('seedBuiltInWorkflows()', () => {
       codingId
     );
 
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
 
     const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
     expect(after.nodes.some((n) => n.name === 'Post-Approval')).toBe(true);
@@ -3150,7 +3117,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('preserves a Post-Approval node whose merger prompt was appended to', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const seededCoding = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
@@ -3185,7 +3152,7 @@ describe('seedBuiltInWorkflows()', () => {
       codingId
     );
 
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
 
     const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === codingId)!;
     expect(after.nodes.some((n) => n.name === 'Post-Approval')).toBe(true);
@@ -3201,7 +3168,7 @@ describe('seedBuiltInWorkflows()', () => {
       nodes: [{ name: 'Code', agentId: CODER_ID }],
     });
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
 
     expect(result.seeded).toHaveLength(4);
     expect(result.seeded).not.toContain(STABLE_CODING_WORKFLOW.name);
@@ -3212,7 +3179,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('partial legacy migration: a rename collision stamps templateName so the row still groups for cleanup', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const seeded = manager.listWorkflows(SPACE_ID);
     const codingRow = seeded.find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
     const stableQa = seeded.find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
@@ -3226,7 +3193,7 @@ describe('seedBuiltInWorkflows()', () => {
       nodes: [{ name: 'Code', agentId: CODER_ID }],
     });
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
 
     const after = manager.listWorkflows(SPACE_ID);
     expect(after.find((w) => w.id === codingRow.id)!.name).toBe('Coding Workflow');
@@ -3265,7 +3232,7 @@ describe('seedBuiltInWorkflows()', () => {
       manager.listWorkflows(SPACE_ID).filter((w) => w.templateName === 'Coding Workflow')
     ).toHaveLength(2);
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.errors).toEqual([]);
 
     const after = manager.listWorkflows(SPACE_ID);
@@ -3293,7 +3260,7 @@ describe('seedBuiltInWorkflows()', () => {
       custom.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.errors).toEqual([]);
 
     const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === custom.id)!;
@@ -3319,7 +3286,7 @@ describe('seedBuiltInWorkflows()', () => {
       custom.id
     );
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
     expect(result.errors).toEqual([]);
 
     const after = manager.listWorkflows(SPACE_ID).find((w) => w.id === custom.id)!;
@@ -3329,7 +3296,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('legacy identity migration strips the stale default tag from non-default rows', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const seeded = manager.listWorkflows(SPACE_ID);
     const qaRow = seeded.find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
     const stableCoding = seeded.find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
@@ -3339,7 +3306,7 @@ describe('seedBuiltInWorkflows()', () => {
       qaRow.id
     );
 
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
 
     const after = manager.listWorkflows(SPACE_ID);
     const migrated = after.find((w) => w.id === qaRow.id)!;
@@ -3349,7 +3316,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('seed syncs only default-tag membership onto drifted rows, preserving custom tags', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const seeded = manager.listWorkflows(SPACE_ID);
     const coderOnly = seeded.find((w) => w.name === CODER_ONLY_WORKFLOW.name)!;
     const stableCoding = seeded.find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
@@ -3367,7 +3334,7 @@ describe('seedBuiltInWorkflows()', () => {
       research.id
     );
 
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
 
     const after = manager.listWorkflows(SPACE_ID);
     const coderOnlyAfter = after.find((w) => w.id === coderOnly.id)!.tags;
@@ -3385,7 +3352,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('tag sync failure is recorded in errors and leaves the drift retryable', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const stableCoding = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === STABLE_CODING_WORKFLOW.name)!;
@@ -3397,7 +3364,7 @@ describe('seedBuiltInWorkflows()', () => {
       throw new Error('Simulated tag stamp failure');
     };
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
 
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]!.name).toBe(STABLE_CODING_WORKFLOW.name);
@@ -3408,36 +3375,24 @@ describe('seedBuiltInWorkflows()', () => {
     );
   });
 
-  test('throws if resolveAgentId returns undefined for a required role', () => {
-    const brokenResolver = (_role: string): string | undefined => undefined;
-
-    expect(() => seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver)).toThrow(
-      'no SpaceLongHorizonAgent found with name'
+  test('seeded slots bind by worker templateKey and carry no agentId', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager);
+    const workerKeys = new Set(
+      getPresetAgentTemplates().map((preset) => workerTemplateKey(preset.handle))
     );
-  });
-
-  test('does not persist any workflow when resolveAgentId fails on first-template role', async () => {
-    const brokenResolver = (role: string): string | undefined =>
-      role === 'planner' ? undefined : roleMap[role];
-
-    try {
-      seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver);
-    } catch {}
-    expect(manager.listWorkflows(SPACE_ID)).toHaveLength(0);
-  });
-
-  test('does not persist any workflow when resolveAgentId fails on a shared role', async () => {
-    const brokenResolver = (role: string): string | undefined =>
-      role === 'qa' ? undefined : roleMap[role];
-
-    try {
-      seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver);
-    } catch {}
-    expect(manager.listWorkflows(SPACE_ID)).toHaveLength(0);
+    for (const wf of manager.listWorkflows(SPACE_ID)) {
+      for (const node of wf.nodes) {
+        for (const agent of node.agents) {
+          expect(agent.agentId).toBe('');
+          expect(workerKeys.has(agent.templateKey ?? '')).toBe(true);
+          expect(getLongHorizonAgentTemplate(agent.templateKey ?? '')).toBeDefined();
+        }
+      }
+    }
   });
 
   test('returns seeded workflow names on success', () => {
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
 
     expect(result.skipped).toBe(false);
     expect(result.errors).toHaveLength(0);
@@ -3450,8 +3405,8 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('returns skipped=true when workflows already exist', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
 
     expect(result.skipped).toBe(true);
     expect(result.seeded).toHaveLength(0);
@@ -3469,7 +3424,7 @@ describe('seedBuiltInWorkflows()', () => {
       return originalCreate(params);
     };
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
 
     expect(result.seeded).toHaveLength(4);
     expect(result.errors).toHaveLength(1);
@@ -3492,7 +3447,7 @@ describe('seedBuiltInWorkflows()', () => {
       return originalCreate(params);
     };
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
 
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0].name).toBe(templates[2].name);
@@ -3504,7 +3459,7 @@ describe('seedBuiltInWorkflows()', () => {
       throw new Error('DB is read-only');
     };
 
-    const result = seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    const result = seedBuiltInWorkflows(SPACE_ID, manager);
 
     expect(result.seeded).toHaveLength(0);
     expect(result.errors).toHaveLength(5);
@@ -3515,7 +3470,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('seeded node IDs are real UUIDs, not template placeholders', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const templatePrefixes = [
       'tpl-coding-',
       'tpl-pd-',
@@ -3534,7 +3489,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('seeded startNodeId is a real UUID pointing to first node', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     for (const wf of manager.listWorkflows(SPACE_ID)) {
       expect(wf.startNodeId).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
@@ -3545,7 +3500,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('all seeded workflows preserve their descriptions', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const workflows = manager.listWorkflows(SPACE_ID);
     const templates = getBuiltInWorkflows();
     for (const tpl of templates) {
@@ -3556,7 +3511,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('coder-only is seeded with the default tag; stable Coding and QA are not', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const coding = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     expect(coding.tags).toContain('coding');
     expect(coding.tags).not.toContain('default');
@@ -3571,19 +3526,19 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('RESEARCH_WORKFLOW seeded with research tag', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
     expect(wf.tags).toContain('research');
   });
 
   test('REVIEW_ONLY_WORKFLOW seeded with review tag', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
     expect(wf.tags).toContain('review');
   });
 
   test('CODING_WORKFLOW seeded nodes preserve customPrompt content', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codeNode = wf.nodes.find((n) => n.name === 'Coding');
     expect(codeNode?.agents[0].customPrompt?.value).toContain('Runtime Execution Contract');
@@ -3593,7 +3548,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('RESEARCH_WORKFLOW seeded nodes preserve customPrompt content', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
     const researchNode = wf.nodes.find((n) => n.name === 'Research');
     expect(researchNode?.agents[0].customPrompt?.value).toContain('gh pr create');
@@ -3602,7 +3557,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('all seeded channels have non-empty id fields', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     for (const wf of manager.listWorkflows(SPACE_ID)) {
       for (const ch of wf.channels ?? []) {
         expect(ch.id).toBeTruthy();
@@ -3612,7 +3567,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('seeded channels retain all original fields plus a UUID id', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const codeToReview = wf.channels!.find((c) => c.from === 'Coding' && c.to === 'Review');
     expect(codeToReview).toBeDefined();
@@ -3628,7 +3583,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('listWorkflows returns CODING_WORKFLOW first after DB seeding', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const workflows = manager.listWorkflows(SPACE_ID);
     expect(workflows[0].name).toBe(STABLE_CODING_WORKFLOW.name);
   });
@@ -3643,38 +3598,38 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('all seeded workflows have positive timestamps', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     for (const wf of manager.listWorkflows(SPACE_ID)) {
       expect(wf.createdAt).toBeGreaterThan(0);
       expect(wf.updatedAt).toBeGreaterThan(0);
     }
   });
 
-  test('agent ID resolution is case-insensitive via resolver', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+  test('CODING_WITH_QA_WORKFLOW slots bind coder/reviewer/qa worker templateKeys', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
-    expect(wf.nodes[0].agents[0]?.agentId).toBe(CODER_ID);
-    expect(wf.nodes[1].agents[0]?.agentId).toBe(REVIEWER_ID);
-    expect(wf.nodes[2].agents[0]?.agentId).toBe(QA_ID);
+    expect(wf.nodes[0].agents[0]?.templateKey).toBe(workerTemplateKey('coder'));
+    expect(wf.nodes[1].agents[0]?.templateKey).toBe(workerTemplateKey('reviewer'));
+    expect(wf.nodes[2].agents[0]?.templateKey).toBe(workerTemplateKey('qa'));
   });
 
-  test('no seeded agent IDs contain template placeholder names', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+  test('no seeded slot agentIds contain template placeholder names', () => {
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const placeholders = ['Planner', 'Coder', 'General', 'Research', 'Reviewer', 'PR Merger', 'QA'];
     for (const wf of manager.listWorkflows(SPACE_ID)) {
       for (const node of wf.nodes) {
         for (const agent of node.agents) {
           expect(placeholders).not.toContain(agent.agentId);
-          expect(agent.agentId).toMatch(/^agent-[a-z]+-uuid$/);
+          expect(agent.agentId).toBe('');
         }
       }
     }
   });
 
   test('all seeded workflow node names match their template definitions', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const workflows = manager.listWorkflows(SPACE_ID);
     const templates = getBuiltInWorkflows();
     for (const tpl of templates) {
@@ -3686,7 +3641,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('CODING_WORKFLOW seeded with non-empty customPrompt on all agent slots', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     for (const node of wf.nodes) {
       for (const agent of node.agents) {
@@ -3697,7 +3652,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('RESEARCH_WORKFLOW seeded with non-empty customPrompt on all agent slots', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name)!;
     for (const node of wf.nodes) {
       for (const agent of node.agents) {
@@ -3708,7 +3663,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('REVIEW_ONLY_WORKFLOW seeded with non-empty customPrompt on reviewer slot', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name)!;
     expect(wf.nodes).toHaveLength(1);
     const agent = wf.nodes[0].agents[0];
@@ -3717,7 +3672,7 @@ describe('seedBuiltInWorkflows()', () => {
   });
 
   test('all seeded workflows have non-empty customPrompt on all agent slots', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const workflows = manager.listWorkflows(SPACE_ID);
 
     for (const wf of workflows) {
@@ -3744,16 +3699,6 @@ describe('Coding Workflow export/import round-trip', () => {
 
   const REVIEWER_ID = 'agent-reviewer-uuid';
   const MERGER_ID = 'agent-merger-uuid';
-  const roleMap: Record<string, string> = {
-    planner: PLANNER_ID,
-    research: RESEARCH_ID,
-    coder: CODER_ID,
-    general: GENERAL_ID,
-    reviewer: REVIEWER_ID,
-    'pr merger': MERGER_ID,
-    qa: QA_ID,
-  };
-  const resolveAgentId = (role: string): string | undefined => roleMap[role.toLowerCase()];
 
   const mockAgents: SpaceLongHorizonAgent[] = [
     {
@@ -3849,7 +3794,7 @@ describe('Coding Workflow export/import round-trip', () => {
   });
 
   test('exported Coding Workflow passes Zod validation', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 
     const exported = exportWorkflow(wf, mockAgents);
@@ -3858,7 +3803,7 @@ describe('Coding Workflow export/import round-trip', () => {
   });
 
   test('exported Coding Workflow preserves channels and Review→Coding cycle', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 
     const exported = exportWorkflow(wf, mockAgents);
@@ -3871,7 +3816,7 @@ describe('Coding Workflow export/import round-trip', () => {
   });
 
   test('exported Coding Workflow channels do not include gate field (gates are separate entities)', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
 
     const exported = exportWorkflow(wf, mockAgents);
@@ -3882,7 +3827,7 @@ describe('Coding Workflow export/import round-trip', () => {
   });
 
   test('re-imported Coding Workflow preserves channel structure', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const exported = exportWorkflow(wf, mockAgents);
 
@@ -3900,7 +3845,8 @@ describe('Coding Workflow export/import round-trip', () => {
       nodes: exported.nodes.map((s) => ({
         name: s.name,
         agents: s.agents.map((a) => ({
-          agentId: agentNameToId.get(a.agentRef) ?? a.agentRef,
+          agentId: a.templateKey ? '' : (agentNameToId.get(a.agentRef) ?? a.agentRef),
+          ...(a.templateKey ? { templateKey: a.templateKey } : {}),
           name: a.name,
         })),
         instructions: s.instructions,
@@ -3928,7 +3874,7 @@ describe('Coding Workflow export/import round-trip', () => {
   });
 
   test('coder-owned postApproval route survives export/import round-trip', () => {
-    seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+    seedBuiltInWorkflows(SPACE_ID, manager);
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name)!;
     const exported = exportWorkflow(wf, mockAgents);
 
@@ -3952,7 +3898,8 @@ describe('Coding Workflow export/import round-trip', () => {
       nodes: exported.nodes.map((s) => ({
         name: s.name,
         agents: s.agents.map((a) => ({
-          agentId: agentNameToId.get(a.agentRef) ?? a.agentRef,
+          agentId: a.templateKey ? '' : (agentNameToId.get(a.agentRef) ?? a.agentRef),
+          ...(a.templateKey ? { templateKey: a.templateKey } : {}),
           name: a.name,
           toolGuards: a.toolGuards,
         })),
@@ -4189,8 +4136,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
     const merged = mergeNodeStructuralFieldsFromTemplate(
       [existingNode],
-      CODING_WITH_QA_WORKFLOW.nodes,
-      () => 'agent-coder'
+      CODING_WITH_QA_WORKFLOW.nodes
     );
     const mergedCoding = merged.find((n) => n.name === 'Coding')!;
     expect(mergedCoding.transitions).toEqual(installed);
@@ -4207,11 +4153,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       transitions: [{ id: 'stale', target: 'Review' }],
     };
 
-    const merged = mergeNodeStructuralFieldsFromTemplate(
-      [existingNode],
-      templateWithTransitions,
-      () => 'agent-coder'
-    );
+    const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], templateWithTransitions);
     const mergedCoding = merged.find((n) => n.name === 'Coding')!;
     expect(mergedCoding.transitions).toEqual(declared);
   });
@@ -4225,11 +4167,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       transitions: installed,
     };
 
-    const merged = mergeNodeStructuralFieldsFromTemplate(
-      [orphan],
-      CODING_WITH_QA_WORKFLOW.nodes,
-      () => 'agent-coder'
-    );
+    const merged = mergeNodeStructuralFieldsFromTemplate([orphan], CODING_WITH_QA_WORKFLOW.nodes);
     expect(merged[0].transitions).toEqual(installed);
   });
 
@@ -4244,11 +4182,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       n.id === reviewTemplate.id ? { ...n, name: 'Reviewer' } : { ...n }
     );
 
-    const merged = mergeNodeStructuralFieldsFromTemplate(
-      installed,
-      templateWithTransitions,
-      () => 'agent-coder'
-    );
+    const merged = mergeNodeStructuralFieldsFromTemplate(installed, templateWithTransitions);
     const mergedCoding = merged.find((n) => n.id === codingTemplate.id)!;
     expect(mergedCoding.transitions?.[0].target).toBe('Reviewer');
   });
@@ -4264,8 +4198,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
 
     const merged = mergeNodeStructuralFieldsFromTemplate(
       CODING_WITH_QA_WORKFLOW.nodes.map((n) => ({ ...n })),
-      templateWithTransitions,
-      () => 'agent-coder'
+      templateWithTransitions
     );
     const mergedCoding = merged.find((n) => n.id === codingTemplate.id)!;
     expect(mergedCoding.transitions?.[0].target).toBe(reviewerSlotName);
@@ -4285,11 +4218,7 @@ describe('Reviewer Terminal Action Pre-conditions (Task #136 regression)', () =>
       return { ...n, agents };
     });
 
-    const merged = mergeNodeStructuralFieldsFromTemplate(
-      installed,
-      templateWithTransitions,
-      () => 'agent-coder'
-    );
+    const merged = mergeNodeStructuralFieldsFromTemplate(installed, templateWithTransitions);
     const mergedCoding = merged.find((n) => n.id === codingTemplate.id)!;
     expect(mergedCoding.transitions?.[0].target).toBe('Senior Reviewer');
   });
@@ -4359,8 +4288,7 @@ test('patchKnownBuiltInPromptDrift rewrites a persisted legacy Coding-with-QA co
 
   const merged = mergeNodeStructuralFieldsFromTemplate(
     [existingNode],
-    CODING_WITH_QA_WORKFLOW.nodes,
-    () => 'agent-coder'
+    CODING_WITH_QA_WORKFLOW.nodes
   );
   const mergedCoder = merged.find((n) => n.name === 'Coding')!;
   const mergedPrompt = mergedCoder.agents[0].customPrompt!.value;
@@ -4402,11 +4330,7 @@ test('persisted pre-call-action prompts migrate to the dispatcher preference tem
             candidate === agent ? { ...candidate, customPrompt: { value: persisted! } } : candidate
           ),
         };
-        const merged = mergeNodeStructuralFieldsFromTemplate(
-          [existingNode],
-          workflow.nodes,
-          () => 'agent-id'
-        );
+        const merged = mergeNodeStructuralFieldsFromTemplate([existingNode], workflow.nodes);
         const mergedNode = merged.find((candidate) => candidate.name === node.name)!;
         const mergedAgent = mergedNode.agents.find((candidate) => candidate.name === agent.name)!;
         expect(mergedAgent.customPrompt?.value, `${workflow.name}/${node.name}/${agent.name}`).toBe(
