@@ -11,6 +11,7 @@ import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts
 import {
   PermanentSpawnError,
   SpawnSupersededError,
+  TransientSpawnError,
 } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
@@ -339,6 +340,363 @@ describe('SpaceRuntime — tick loop correctness', () => {
       ...overrides,
     };
   }
+
+  async function processRunTick(rt: SpaceRuntime, runId: string): Promise<void> {
+    await (
+      rt as unknown as {
+        processRunTick: (candidateRunId: string) => Promise<void>;
+      }
+    ).processRunTick(runId);
+  }
+
+  describe('processRunTick shell characterization', () => {
+    test('missing and finished runs stop before spawn work', async () => {
+      let spawnCount = 0;
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        spawnWorkflowNodeAgentForExecution: async () => {
+          spawnCount++;
+          return 'session:unexpected';
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+      await processRunTick(rt, 'missing-run');
+      workflowRunRepo.transitionStatus(run.id, 'done');
+      await processRunTick(rt, run.id);
+
+      expect(spawnCount).toBe(0);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+    });
+
+    test.each([
+      'rate_limited',
+      'stopped',
+    ] as const)('%s canonical task stops before spawn work', async (status) => {
+      let spawnCount = 0;
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        spawnWorkflowNodeAgentForExecution: async () => {
+          spawnCount++;
+          return 'session:unexpected';
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, { status });
+
+      await processRunTick(rt, run.id);
+
+      expect(tam._spawned).toEqual([]);
+      expect(spawnCount).toBe(0);
+      expect(nodeExecutionRepo.listByWorkflowRun(run.id)[0]?.status).toBe('pending');
+    });
+
+    test('a run without executions stops before spawn work', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      db.prepare('DELETE FROM node_executions WHERE workflow_run_id = ?').run(run.id);
+
+      await processRunTick(rt, run.id);
+
+      expect(tam._spawned).toEqual([]);
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('open');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+    });
+
+    test('a blocked execution blocks the run and canonical task', async () => {
+      const rt = new SpaceRuntime(
+        buildConfig(makeMockTaskAgentManager(taskRepo, nodeExecutionRepo))
+      );
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'blocked',
+        result: 'Pinned blocked result',
+      });
+
+      await processRunTick(rt, run.id);
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+      expect(taskRepo.getTask(tasks[0].id)).toMatchObject({
+        status: 'blocked',
+        result: 'Pinned blocked result',
+        blockReason: 'execution_failed',
+      });
+    });
+
+    test('a workflow without an end node blocks before execution processing', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const meta = (
+        rt as unknown as {
+          executorMeta: Map<string, { workflow: SpaceWorkflow }>;
+        }
+      ).executorMeta.get(run.id)!;
+      meta.workflow = { ...meta.workflow, endNodeId: undefined };
+
+      await processRunTick(rt, run.id);
+
+      expect(tam._spawned).toEqual([]);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
+      expect(taskRepo.getTask(tasks[0].id)).toMatchObject({
+        status: 'blocked',
+        blockReason: 'workflow_invalid',
+      });
+    });
+
+    test('a pre-tick pending execution with a live session is repaired without spawning', async () => {
+      const sessionId = 'session:live-pending';
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionInMemory: (candidate) => candidate === sessionId,
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'pending',
+        agentSessionId: sessionId,
+        startedAt: null,
+      });
+
+      await processRunTick(rt, run.id);
+
+      const repaired = nodeExecutionRepo.getById(execution.id)!;
+      expect(repaired.status).toBe('in_progress');
+      expect(repaired.agentSessionId).toBe(sessionId);
+      expect(repaired.startedAt).not.toBeNull();
+      expect(tam._spawned).toEqual([]);
+    });
+
+    test('an archived canonical task leaves a pending execution unspawned', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, { status: 'archived' });
+
+      await processRunTick(rt, run.id);
+
+      expect(tam._spawned).toEqual([]);
+      expect(nodeExecutionRepo.listByWorkflowRun(run.id)[0]?.status).toBe('pending');
+    });
+
+    test('a run without pending executions does not spawn', async () => {
+      const sessionId = 'session:already-running';
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionAlive: (candidate) => candidate === sessionId,
+        isSessionInMemory: (candidate) => candidate === sessionId,
+        getAgentSessionById: () => processingState('waiting_for_input'),
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: sessionId,
+        startedAt: Date.now(),
+      });
+      taskRepo.updateTask(tasks[0].id, { status: 'in_progress' });
+
+      await processRunTick(rt, run.id);
+
+      expect(tam._spawned).toEqual([]);
+      expect(nodeExecutionRepo.getById(execution.id)).toMatchObject({
+        status: 'in_progress',
+        agentSessionId: sessionId,
+      });
+    });
+
+    test('a parked approval execution remains pending and unspawned', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, { status: 'pending', startedAt: 123 });
+      taskRepo.updateTask(tasks[0].id, { status: 'review' });
+
+      await processRunTick(rt, run.id);
+
+      expect(tam._spawned).toEqual([]);
+      expect(nodeExecutionRepo.getById(execution.id)).toMatchObject({
+        status: 'pending',
+        startedAt: 123,
+        agentSessionId: null,
+      });
+    });
+
+    test('a missing space leaves pending execution and task unchanged', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      let spaceMissing = false;
+      const missingSpaceManager = {
+        getSpace: async (spaceId: string) => (spaceMissing ? null : spaceManager.getSpace(spaceId)),
+        listSpaces: async () => spaceManager.listSpaces(false),
+      };
+      const rt = new SpaceRuntime(buildConfig(tam, { spaceManager: missingSpaceManager as never }));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      spaceMissing = true;
+
+      await processRunTick(rt, run.id);
+
+      expect(tam._spawned).toEqual([]);
+      expect(nodeExecutionRepo.listByWorkflowRun(run.id)[0]?.status).toBe('pending');
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('open');
+    });
+
+    test('successful spawn wins the trailing open to in_progress CAS', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+
+      await processRunTick(rt, run.id);
+
+      expect(tam._spawned).toEqual([tasks[0].id]);
+      expect(taskRepo.getTask(tasks[0].id)).toMatchObject({
+        status: 'in_progress',
+        completedAt: null,
+      });
+      expect(taskRepo.getTask(tasks[0].id)?.startedAt).not.toBeNull();
+    });
+
+    test('transient spawn failure defers without changing the pending execution', async () => {
+      let spawnAttempts = 0;
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        spawnWorkflowNodeAgentForExecution: async () => {
+          spawnAttempts++;
+          throw new TransientSpawnError('model pool busy');
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+
+      await processRunTick(rt, run.id);
+
+      expect(nodeExecutionRepo.getById(execution.id)).toMatchObject({
+        status: 'pending',
+        agentSessionId: null,
+        startedAt: null,
+      });
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+      expect(spawnAttempts).toBe(1);
+      expect((rt as unknown as { taskCrashCounts: Map<string, number> }).taskCrashCounts.size).toBe(
+        0
+      );
+    });
+
+    test('spawn failure preserves a concurrently terminal execution', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        spawnWorkflowNodeAgentForExecution: async (_task, _space, _workflow, _run, value) => {
+          const execution = value as { id: string };
+          nodeExecutionRepo.update(execution.id, {
+            status: 'idle',
+            result: 'concurrent terminal result',
+            completedAt: 456,
+          });
+          throw new Error('late spawn rejection');
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+
+      await processRunTick(rt, run.id);
+
+      expect(nodeExecutionRepo.getById(execution.id)).toMatchObject({
+        status: 'idle',
+        result: 'concurrent terminal result',
+        completedAt: 456,
+      });
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+    });
+
+    test('completed run updates the task outcome and quiesces a live sibling', async () => {
+      const interrupted: string[] = [];
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionInMemory: () => true,
+        interruptBySessionId: async (sessionId) => {
+          interrupted.push(sessionId);
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+        { id: STEP_B, name: 'Code', agentId: AGENT_CODER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const sibling = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(sibling.id, {
+        status: 'in_progress',
+        agentSessionId: 'session:sibling',
+        startedAt: 123,
+      });
+      const terminal = nodeExecutionRepo.createOrIgnore({
+        workflowRunId: run.id,
+        workflowNodeId: STEP_B,
+        agentName: 'Coder',
+        agentId: AGENT_CODER,
+        status: 'idle',
+      });
+      nodeExecutionRepo.update(terminal.id, {
+        status: 'idle',
+        agentSessionId: 'session:terminal',
+        result: 'Pinned completion result',
+        completedAt: 456,
+      });
+      taskRepo.updateTask(tasks[0].id, { status: 'done', result: null });
+
+      await processRunTick(rt, run.id);
+      await Promise.resolve();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+      expect(taskRepo.getTask(tasks[0].id)).toMatchObject({
+        status: 'done',
+        result: 'Pinned completion result',
+      });
+      expect(nodeExecutionRepo.getById(sibling.id)?.status).toBe('idle');
+      expect(nodeExecutionRepo.getById(terminal.id)?.status).toBe('idle');
+      expect(interrupted).toEqual(['session:sibling']);
+    });
+  });
 
   describe('tick picks up new tasks from workflow runs', () => {
     test('tick spawns agent for task created by startWorkflowRun before first tick', async () => {
@@ -1631,6 +1989,14 @@ describe('SpaceRuntime — tick loop correctness', () => {
     });
 
     test('active space control: blocked run is auto-retried back to in_progress', async () => {
+      const retries: Array<{ runId: string; attemptNumber: number; maxAttempts: number }> = [];
+      internalEventBus.subscribe(
+        'space.workflowRun.retry',
+        (payload) => {
+          retries.push(payload);
+        },
+        { subscriberName: 'test-blocked-recovery:retry-budget' }
+      );
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
       const rt = new SpaceRuntime(buildConfig(tam));
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -1652,6 +2018,13 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('pending');
       expect(nodeExecutionRepo.getById(execution.id)?.result).toBeNull();
       expect(taskRepo.getTask(tasks[0].id)?.status).toBe('in_progress');
+      expect(retries).toEqual([
+        expect.objectContaining({
+          runId: run.id,
+          attemptNumber: 1,
+          maxAttempts: MAX_BLOCKED_RUN_RETRIES,
+        }),
+      ]);
     });
 
     test('blocked-run recovery reconciles an open task with a live session to in_progress', async () => {
@@ -2155,11 +2528,15 @@ describe('SpaceRuntime — tick loop correctness', () => {
     });
 
     test('active space control: exhausted blocked-run retries still emit needs_attention', async () => {
-      const notifications: Array<{ runId?: string }> = [];
+      const notifications: Array<{
+        runId: string;
+        reason: string;
+        retriesExhausted: number;
+      }> = [];
       internalEventBus.subscribe(
         'space.workflowRun.needsAttention',
         (payload) => {
-          notifications.push({ runId: payload.runId });
+          notifications.push(payload);
         },
         { subscriberName: 'test-quiet-supervision:active' }
       );
@@ -2184,12 +2561,31 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
       await rt.executeTick();
 
-      expect(notifications.filter((n) => n.runId === run.id).length).toBeGreaterThanOrEqual(1);
+      expect(notifications).toEqual([
+        expect.objectContaining({
+          runId: run.id,
+          reason: 'Agent session crashed',
+          retriesExhausted: MAX_BLOCKED_RUN_RETRIES,
+        }),
+      ]);
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
-      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('blocked');
+      expect(nodeExecutionRepo.getById(execution.id)).toMatchObject({
+        status: 'blocked',
+        result: 'Agent session crashed',
+      });
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('blocked');
+      expect(tam._spawned).toEqual([]);
     });
 
     test('human-reopened task repairs blocked executions even after retries are exhausted', async () => {
+      const retries: Array<{ runId: string; attemptNumber: number; maxAttempts: number }> = [];
+      internalEventBus.subscribe(
+        'space.workflowRun.retry',
+        (payload) => {
+          retries.push(payload);
+        },
+        { subscriberName: 'test-blocked-recovery:reopened-budget' }
+      );
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
       const rt = new SpaceRuntime(buildConfig(tam));
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
@@ -2230,6 +2626,13 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(repaired?.agentSessionId).not.toBe('session:ghost-after-restart');
       expect(taskRepo.getTask(tasks[0].id)?.status).toBe('in_progress');
       expect(tam._spawned.length).toBeGreaterThanOrEqual(1);
+      expect(retries).toEqual([
+        expect.objectContaining({
+          runId: run.id,
+          attemptNumber: 1,
+          maxAttempts: MAX_BLOCKED_RUN_RETRIES,
+        }),
+      ]);
     });
 
     test('human-reopened task drops bindings whose indexed session ended in an execution error', async () => {
@@ -3165,7 +3568,10 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const { tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
       await rt.executeTick();
 
-      expect(taskRepo.getTask(tasks[0].id)!.status).toBe('stopped');
+      expect(taskRepo.getTask(tasks[0].id)).toMatchObject({
+        status: 'stopped',
+        startedAt: null,
+      });
       const executions = nodeExecutionRepo.listByWorkflowRun(tasks[0].workflowRunId!);
       expect(executions.every((exec) => exec.status === 'pending')).toBe(true);
     });
@@ -3204,7 +3610,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(task.status).toBe('blocked');
       expect(task.result).toContain('worktree');
       expect(task.blockReason).toBe('agent_crashed');
-
+      expect(workflowRunRepo.getRun(runId)?.status).toBe('blocked');
       expect(spawnAttempts).toBe(3);
     });
 
