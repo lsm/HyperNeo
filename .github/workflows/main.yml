@@ -62,9 +62,12 @@ on:
 
 # Cancel in-progress runs when a new run is triggered on the same ref. Tag
 # runs land in their own group (ci-refs/tags/<tag>), so a release's CI
-# evidence run is never cancelled by newer dev pushes.
+# evidence run is never cancelled by newer dev pushes; the group also carries
+# the event name for tags so a manual workflow_dispatch on the same tag
+# cannot cancel the push evidence run mid-watch. Dev pushes and PRs keep
+# their existing per-ref cancel semantics.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}${{ github.ref_type == 'tag' && format('-{0}', github.event_name) || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -134,10 +137,11 @@ jobs:
         run: bun run test:rebuild-daemon-db
 
       # Folded in from the former test-cli job: ~2s of tests that used to occupy
-      # a whole runner. Gated to the same events test-cli ran on (push to dev,
-      # workflow_dispatch) — skipped on PRs, exactly as before.
+      # a whole runner. Gated to the same events test-cli ran on (push to dev
+      # or a release tag, workflow_dispatch) — skipped on PRs, exactly as
+      # before; tag pushes run it so the release evidence run covers it.
       - name: Run CLI tests
-        if: github.event_name == 'push' && github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref_type == 'tag') || github.event_name == 'workflow_dispatch'
         working-directory: packages/cli
         run: bunx vitest run
 
