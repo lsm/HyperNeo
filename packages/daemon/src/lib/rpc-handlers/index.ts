@@ -94,7 +94,6 @@ import {
   deliverSpaceAgentMessage,
   type SpaceAgentInjectionOutcome,
 } from '../space/runtime/space-agent-message-delivery.ts';
-import { createDefaultSessionResolutionDeps } from '../session-resolution/default-deps.ts';
 import { resolveSpaceAgentSession } from '../session-resolution/resolve-space-agent-session.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { JobQueueProcessor } from '../../storage/job-queue-processor.ts';
