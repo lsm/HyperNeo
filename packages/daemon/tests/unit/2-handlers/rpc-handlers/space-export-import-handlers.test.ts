@@ -1,27 +1,31 @@
-import { describe, it, expect, beforeEach, mock } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, SpaceWorkerAgent, SpaceWorkflow } from '@hyperneo/shared';
-import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
-import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
-import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
-import { createLongHorizonAgentTables } from '../../../../src/storage/schema/long-horizon-agents';
-import { workerAgentToLongHorizonParams } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
-import {
-  SpaceWorkflowManager,
-  createSpaceAgentLookup,
-  type SpaceAgentLookup,
-} from '../../../../src/lib/space/managers/space-workflow-manager';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import type {
   DaemonInternalEventMap,
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
 import {
-  setupSpaceExportImportHandlers,
-  type ImportPreviewResult,
   type ImportExecuteResult,
+  type ImportPreviewResult,
+  setupSpaceExportImportHandlers,
 } from '../../../../src/lib/rpc-handlers/space-export-import-handlers';
+import { workerAgentToLongHorizonParams } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
 import { exportBundle, validateExportBundle } from '../../../../src/lib/space/export-format';
+import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import {
+  createSpaceAgentLookup,
+  type SpaceAgentLookup,
+  SpaceWorkflowManager,
+} from '../../../../src/lib/space/managers/space-workflow-manager';
+import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { createLongHorizonAgentTables } from '../../../../src/storage/schema/long-horizon-agents';
+import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
+import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
+import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 function makeSeedAgent(
   agentRepo: SpaceAgentRepository,
@@ -33,6 +37,9 @@ function makeSeedAgent(
 function createSchema(db: Database): void {
   db.exec('PRAGMA foreign_keys = ON');
   createLongHorizonAgentTables(db);
+  createSpaceAgentTemplatesTable(db);
+  runMigration226(db);
+  runMigration227(db);
 
   db.exec(`
 		CREATE TABLE spaces (
@@ -453,6 +460,46 @@ describe('Space Export/Import RPC Handlers', () => {
       );
     });
 
+    it('exports a template-bound slot whose kept agentId fallback is unexportable', async () => {
+      new SpaceAgentTemplateRepository(db as any).create({
+        key: 'migrated.sleeper',
+        handle: 'sleeper',
+        displayName: 'Sleeper',
+      });
+      longHorizonAgentRepo.create({
+        spaceId: SPACE_ID,
+        handle: 'sleeper',
+        displayName: 'Sleeper',
+        status: 'paused',
+      });
+      const sleeperId = longHorizonAgentRepo.listBySpaceId(SPACE_ID)[0].id;
+      workflowRepo.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Pipe',
+        nodes: [
+          {
+            name: 'S',
+            agents: [{ agentId: sleeperId, templateKey: 'migrated.sleeper', name: 'sleeper' }],
+          },
+        ],
+        startNodeId: 'S',
+        tags: [],
+        completionAutonomyLevel: 3,
+        createdAt: 1,
+        updatedAt: 1,
+      } as never);
+
+      const result = await call<{
+        bundle: { workflows: Array<{ nodes: Array<{ agents: unknown[] }> }> };
+      }>(handlers, 'spaceExport.workflows', { spaceId: SPACE_ID });
+      const slot = result.bundle.workflows[0].nodes[0].agents[0] as {
+        templateKey?: string;
+        agentRef?: string;
+      };
+      expect(slot.templateKey).toBe('migrated.sleeper');
+      expect(slot.agentRef).toBeUndefined();
+    });
+
     it('rejects when a workflow references the space coordinator', async () => {
       const coordinator = longHorizonAgentRepo.ensureCoordinator(SPACE_ID);
       workflowRepo.createWorkflow({
@@ -619,6 +666,255 @@ describe('Space Export/Import RPC Handlers', () => {
       await expect(
         call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
       ).rejects.toThrow('unresolved agent reference');
+    });
+
+    it('accepts stored agent template keys and rejects unknown ones', async () => {
+      new SpaceAgentTemplateRepository(db as any).create({
+        key: 'migrated.coder',
+        handle: 'coder',
+        displayName: 'Coder',
+      });
+
+      const templateBundle = {
+        version: 5,
+        type: 'bundle',
+        name: 'Templates',
+        agents: [],
+        exportedAt: 1000,
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Pipe',
+            nodes: [{ name: 'N', agents: [{ name: 'c', templateKey: 'migrated.coder' }] }],
+            startNode: 'N',
+            tags: [],
+          },
+        ],
+      };
+      const accepted = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle: templateBundle,
+      });
+      expect(accepted.validationErrors.some((e) => e.includes('unknown template'))).toBe(false);
+
+      const unknownBundle = {
+        ...templateBundle,
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Pipe',
+            nodes: [{ name: 'N', agents: [{ name: 'c', templateKey: 'nope.template' }] }],
+            startNode: 'N',
+            tags: [],
+          },
+        ],
+      };
+      const rejected = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle: unknownBundle,
+      });
+      expect(
+        rejected.validationErrors.some((e) => e.includes('unknown template "nope.template"'))
+      ).toBe(true);
+    });
+
+    it('accepts an unknown template key when the exported agentRef resolves', async () => {
+      seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+
+      const fallbackBundle = {
+        version: 5,
+        type: 'bundle',
+        name: 'Templates',
+        agents: [],
+        exportedAt: 1000,
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Pipe',
+            nodes: [
+              {
+                name: 'N',
+                agents: [
+                  { name: 'c', templateKey: 'migrated.coder', agentRef: 'Coder' },
+                  { name: 'd', templateKey: 'nope.template', agentRef: 'Nobody' },
+                ],
+              },
+            ],
+            startNode: 'N',
+            tags: [],
+          },
+        ],
+      };
+      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle: fallbackBundle,
+      });
+
+      const errors = preview.validationErrors.filter((e) => e.includes('unknown template'));
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('nope.template');
+      expect(errors[0]).not.toContain('migrated.coder');
+    });
+
+    it('binds the agent fallback when importing a workflow with an unknown migrated template key', async () => {
+      const coder = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+
+      const bundle = {
+        version: 5,
+        type: 'bundle',
+        name: 'Templates',
+        agents: [],
+        exportedAt: 1000,
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Pipe',
+            nodes: [
+              {
+                name: 'N',
+                agents: [{ name: 'c', templateKey: 'migrated.coder', agentRef: 'Coder' }],
+              },
+            ],
+            startNode: 'N',
+            tags: [],
+          },
+        ],
+      };
+
+      const result = await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+      expect(result.workflows[0].action).toBe('created');
+
+      const created = workflowRepo.listWorkflows(SPACE_ID).find((w) => w.name === 'Pipe');
+      expect(created).toBeDefined();
+      expect(created?.nodes[0].agents[0].agentId).toBe(coder.id);
+      expect(created?.nodes[0].agents[0].templateKey).toBeUndefined();
+    });
+
+    it('binds the exported agent in preference to a colliding stored template key', async () => {
+      new SpaceAgentTemplateRepository(db as any).create({
+        key: 'migrated.coder',
+        handle: 'coder',
+        displayName: 'Foreign Coder',
+        instructions: 'Unrelated stored template',
+      });
+      const coder = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+
+      const bundle = {
+        version: 5,
+        type: 'bundle',
+        name: 'Templates',
+        agents: [],
+        exportedAt: 1000,
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Pipe',
+            nodes: [
+              {
+                name: 'N',
+                agents: [{ name: 'c', templateKey: 'migrated.coder', agentRef: 'Coder' }],
+              },
+            ],
+            startNode: 'N',
+            tags: [],
+          },
+        ],
+      };
+
+      await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+
+      const created = workflowRepo.listWorkflows(SPACE_ID).find((w) => w.name === 'Pipe');
+      expect(created?.nodes[0].agents[0].agentId).toBe(coder.id);
+      expect(created?.nodes[0].agents[0].templateKey).toBeUndefined();
+    });
+
+    it('keeps a known built-in template key alongside the agent fallback on import', async () => {
+      const coder = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+
+      const bundle = {
+        version: 5,
+        type: 'bundle',
+        name: 'Templates',
+        agents: [],
+        exportedAt: 1000,
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Pipe',
+            nodes: [
+              {
+                name: 'N',
+                agents: [{ name: 'c', templateKey: 'research.default', agentRef: 'Coder' }],
+              },
+            ],
+            startNode: 'N',
+            tags: [],
+          },
+        ],
+      };
+
+      await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+
+      const created = workflowRepo.listWorkflows(SPACE_ID).find((w) => w.name === 'Pipe');
+      expect(created?.nodes[0].agents[0].templateKey).toBe('research.default');
+      expect(created?.nodes[0].agents[0].agentId).toBe(coder.id);
+    });
+
+    it('binds the agent when a stored template shadows the built-in key on the target', async () => {
+      new SpaceAgentTemplateRepository(db as any).create({
+        key: 'research.default',
+        handle: 'research-shadow',
+        displayName: 'Shadow',
+        instructions: 'Unrelated stored override',
+      });
+      const coder = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+
+      const bundle = {
+        version: 5,
+        type: 'bundle',
+        name: 'Templates',
+        agents: [],
+        exportedAt: 1000,
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Pipe',
+            nodes: [
+              {
+                name: 'N',
+                agents: [{ name: 'c', templateKey: 'research.default', agentRef: 'Coder' }],
+              },
+            ],
+            startNode: 'N',
+            tags: [],
+          },
+        ],
+      };
+
+      await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+
+      const created = workflowRepo.listWorkflows(SPACE_ID).find((w) => w.name === 'Pipe');
+      expect(created?.nodes[0].agents[0].agentId).toBe(coder.id);
+      expect(created?.nodes[0].agents[0].templateKey).toBeUndefined();
     });
 
     it('treats orphaned migration mirrors as missing in imports', async () => {
@@ -790,6 +1086,69 @@ describe('Space Export/Import RPC Handlers', () => {
   });
 
   describe('spaceExport.bundle', () => {
+    it('requires an exportable migrated fallback agent excluded by the agentIds filter', async () => {
+      new SpaceAgentTemplateRepository(db as any).create({
+        key: 'migrated.coder',
+        handle: 'coder',
+        displayName: 'Coder',
+      });
+      const coder = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+      const other = seedAgent({ spaceId: SPACE_ID, name: 'Other', handle: 'other' });
+      workflowRepo.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Pipe',
+        nodes: [
+          {
+            name: 'S',
+            agents: [{ agentId: coder.id, templateKey: 'migrated.coder', name: 'coder' }],
+          },
+        ],
+        startNodeId: 'S',
+        tags: [],
+        completionAutonomyLevel: 3,
+        createdAt: 1,
+        updatedAt: 1,
+      } as never);
+
+      await expect(
+        call(handlers, 'spaceExport.bundle', { spaceId: SPACE_ID, agentIds: [other.id] })
+      ).rejects.toThrow('not included in this export');
+
+      const result = await call<{ bundle: { agents: Array<{ name: string }> } }>(
+        handlers,
+        'spaceExport.bundle',
+        { spaceId: SPACE_ID, agentIds: [coder.id] }
+      );
+      expect(result.bundle.agents.map((a) => a.name)).toContain('Coder');
+    });
+
+    it('exempts portable built-in template keys from the fallback requirement', async () => {
+      const coder = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+      const other = seedAgent({ spaceId: SPACE_ID, name: 'Other', handle: 'other' });
+      workflowRepo.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Pipe',
+        nodes: [
+          {
+            name: 'S',
+            agents: [{ agentId: coder.id, templateKey: 'research.default', name: 'coder' }],
+          },
+        ],
+        startNodeId: 'S',
+        tags: [],
+        completionAutonomyLevel: 3,
+        createdAt: 1,
+        updatedAt: 1,
+      } as never);
+
+      const result = await call<{ bundle: { agents: Array<{ name: string }> } }>(
+        handlers,
+        'spaceExport.bundle',
+        { spaceId: SPACE_ID, agentIds: [other.id] }
+      );
+      expect(result.bundle.agents.map((a) => a.name)).toEqual(['Other']);
+    });
+
     it('exports all agents and workflows', async () => {
       const agent = seedAgent({ spaceId: SPACE_ID, name: 'A' });
       workflowManager.createWorkflow({

@@ -218,6 +218,21 @@ describe('exportWorkflow', () => {
     expect(exported.nodes[0].agents[0].templateKey).toBe('coder.default');
   });
 
+  test('exports the kept agentRef fallback alongside templateKey for migrated slots', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Code step',
+          agents: [{ agentId: 'agent-uuid-1', templateKey: 'migrated.coder', name: 'coder' }],
+        },
+      ],
+    });
+    const exported = exportWorkflow(workflow, [makeAgent()]);
+    expect(exported.nodes[0].agents[0].templateKey).toBe('migrated.coder');
+    expect(exported.nodes[0].agents[0].agentRef).toBe('My Coder');
+  });
+
   test('exports resetContextPerTurn on agent slots', () => {
     const workflow = makeWorkflow({
       nodes: [

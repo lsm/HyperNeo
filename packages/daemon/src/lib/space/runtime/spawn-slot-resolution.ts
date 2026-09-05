@@ -2,11 +2,13 @@ import type {
   McpServerConfig,
   SettingSource,
   Space,
+  SpaceAgentTemplate,
   SpaceLongHorizonAgentTemplate,
   SpaceTask,
   SpaceWorkerAgent,
   SpaceWorkflow,
   ThinkingLevel,
+  WorkerAgentModelPoolEntry,
   WorkflowNode,
   WorkflowNodeAgent,
 } from '@hyperneo/shared';
@@ -93,8 +95,31 @@ export function buildSlotOverrides(
 export interface NodeAgentTemplateSource extends SpaceLongHorizonAgentTemplate {
   model?: string;
   provider?: string;
+  modelPool?: WorkerAgentModelPoolEntry[] | null;
   thinkingLevel?: ThinkingLevel;
   settingSources?: SettingSource[];
+}
+
+export function storedTemplateToNodeAgentSource(
+  template: SpaceAgentTemplate
+): NodeAgentTemplateSource {
+  return {
+    key: template.key,
+    handle: template.handle,
+    displayName: template.displayName,
+    description: template.description,
+    instructions: template.instructions,
+    suggestedAutonomyLevel: template.suggestedAutonomyLevel,
+    suggestedEventSubscriptions: [],
+    reminderDefaults: [],
+    ownershipPatterns: [],
+    toolPermissions: template.tools && template.tools.length > 0 ? { tools: template.tools } : {},
+    model: template.model ?? undefined,
+    provider: template.provider ?? undefined,
+    modelPool: template.modelPool,
+    thinkingLevel: template.thinkingLevel ?? undefined,
+    settingSources: template.settingSources ?? undefined,
+  };
 }
 
 export interface NodeAgentOverrides {
@@ -128,6 +153,7 @@ export function resolveNodeAgentConfig(
         model: overrides.model ?? template.model,
         thinkingLevel: overrides.thinkingLevel ?? template.thinkingLevel,
         provider: template.provider,
+        modelPool: template.modelPool ?? undefined,
         customPrompt: template.instructions,
         tools: templateTools(template),
         settingSources: template.settingSources,

@@ -1,16 +1,17 @@
-import type { Database as BunDatabase } from '../sqlite-compat.ts';
-import { RESERVED_SPACE_AGENT_HANDLES, slugify, slugifyWithinLimit } from '../../lib/space/slug.ts';
-import { generateUUID } from '@hyperneo/shared';
 import type {
-  SpaceWorkerAgent,
   CreateSpaceWorkerAgentParams,
+  SpaceWorkerAgent,
   UpdateSpaceWorkerAgentParams,
 } from '@hyperneo/shared';
-import type { SQLiteValue } from '../types.ts';
+import { generateUUID } from '@hyperneo/shared';
+import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates.ts';
 import {
   MIGRATED_WORKER_TEMPLATE_KEY,
   workerAgentToLongHorizonParams,
 } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
+import { RESERVED_SPACE_AGENT_HANDLES, slugify, slugifyWithinLimit } from '../../lib/space/slug.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
+import type { SQLiteValue } from '../types.ts';
 
 export class SpaceAgentRepository {
   constructor(private db: BunDatabase) {}
@@ -216,7 +217,7 @@ export class SpaceAgentRepository {
         .get();
       const hasSiblingLhAgent =
         row != null &&
-        !!this.db
+        this.db
           .prepare(
             `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_long_horizon_agents'`
           )
@@ -239,15 +240,58 @@ export class SpaceAgentRepository {
   isAgentReferenced(agentId: string): { referenced: boolean; workflowNames: string[] } {
     const rows = this.db
       .prepare(
-        `SELECT DISTINCT sw.name
+        `SELECT DISTINCT sw.name, sws.config
 				FROM space_workflow_nodes sws
 				JOIN space_workflows sw ON sw.id = sws.workflow_id
 				WHERE sws.config LIKE ?`
       )
-      .all(`%"agentId":"${agentId}"%`) as Array<{ name: string }>;
+      .all(`%"agentId":"${agentId}"%`) as Array<{ name: string; config: string | null }>;
 
-    const workflowNames = rows.map((r) => r.name);
+    const workflowNames: string[] = [];
+    for (const row of rows) {
+      if (!nodeConfigOwnsAgent(this.db, row.config, agentId)) continue;
+      if (!workflowNames.includes(row.name)) workflowNames.push(row.name);
+    }
+
+    const pinnedRows = this.selectExecutableRunPayloads(`%"agentId":"${agentId}"%`);
+    for (const row of pinnedRows) {
+      if (!workflowPayloadOwnsAgent(this.db, row.payload, agentId)) continue;
+      if (!workflowNames.includes(row.name)) workflowNames.push(row.name);
+    }
     return { referenced: workflowNames.length > 0, workflowNames };
+  }
+
+  private selectExecutableRunPayloads(
+    payloadLike: string
+  ): Array<{ name: string; payload: string | null }> {
+    for (const table of [
+      'space_workflow_runs',
+      'space_workflow_definition_versions',
+      'space_tasks',
+    ]) {
+      const exists = this.db
+        .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`)
+        .get(table);
+      if (!exists) return [];
+    }
+    return this.db
+      .prepare(
+        `SELECT DISTINCT sw.name, v.payload
+				FROM space_workflow_runs r
+				JOIN space_workflow_definition_versions v
+					ON v.workflow_id = r.workflow_id AND v.version_hash = r.definition_version
+				JOIN space_workflows sw ON sw.id = r.workflow_id
+				WHERE r.definition_version IS NOT NULL
+					AND v.payload LIKE ?
+					AND (
+						NOT EXISTS (SELECT 1 FROM space_tasks t WHERE t.workflow_run_id = r.id)
+						OR EXISTS (
+							SELECT 1 FROM space_tasks t
+							WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+						)
+					)`
+      )
+      .all(payloadLike) as Array<{ name: string; payload: string | null }>;
   }
 
   private generateUniqueHandle(spaceId: string, name: string): string {
@@ -516,4 +560,55 @@ export class SpaceAgentRepository {
       updatedAt: row.updated_at as number,
     };
   }
+}
+
+function workflowPayloadOwnsAgent(
+  db: BunDatabase,
+  rawPayload: string | null,
+  agentId: string
+): boolean {
+  if (!rawPayload) return false;
+  let nodes: unknown = null;
+  try {
+    nodes = (JSON.parse(rawPayload) as { nodes?: unknown }).nodes;
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(nodes)) return false;
+  for (const node of nodes) {
+    if (!node || typeof node !== 'object') continue;
+    const rawConfig = JSON.stringify(node);
+    if (nodeConfigOwnsAgent(db, rawConfig, agentId)) return true;
+  }
+  return false;
+}
+
+function nodeConfigOwnsAgent(db: BunDatabase, rawConfig: string | null, agentId: string): boolean {
+  if (!rawConfig) return false;
+  let agents: unknown = null;
+  try {
+    agents = (JSON.parse(rawConfig) as { agents?: unknown }).agents;
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(agents)) return false;
+  for (const slot of agents) {
+    if (!slot || typeof slot !== 'object') continue;
+    const entry = slot as { agentId?: unknown; templateKey?: unknown };
+    if (entry.agentId !== agentId) continue;
+    const templateKey = typeof entry.templateKey === 'string' ? entry.templateKey.trim() : '';
+    if (templateKey && templateKeyResolves(db, templateKey)) continue;
+    return true;
+  }
+  return false;
+}
+
+function templateKeyResolves(db: BunDatabase, key: string): boolean {
+  if (getLongHorizonAgentTemplate(key) !== undefined) return true;
+  const tableExists = db
+    .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_templates'`)
+    .get();
+  if (!tableExists) return false;
+  const row = db.prepare(`SELECT 1 FROM space_agent_templates WHERE key = ?`).get(key);
+  return row != null;
 }

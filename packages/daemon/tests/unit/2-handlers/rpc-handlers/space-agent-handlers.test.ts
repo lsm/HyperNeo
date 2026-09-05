@@ -9,6 +9,7 @@ import {
 } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SpaceAgentTemplateManager } from '../../../../src/lib/space/managers/space-agent-template-manager';
+import { countWorkflowSlotsReferencingTemplate } from '../../../../src/lib/space/managers/space-agent-template-references';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
@@ -211,7 +212,11 @@ describe('Space Agent RPC Handlers', () => {
       createTestDatabaseFacade(db),
       longHorizonRepo,
       undefined,
-      new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db as any))
+      new SpaceAgentTemplateManager(
+        new SpaceAgentTemplateRepository(db as any),
+        undefined,
+        (key: string) => countWorkflowSlotsReferencingTemplate(db as any, key)
+      )
     );
   });
 
@@ -401,6 +406,91 @@ describe('Space Agent RPC Handlers', () => {
       await expect(
         call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'missing.custom' })
       ).rejects.toThrow('Template not found: missing.custom');
+    });
+
+    it('refuses to delete a template referenced by a workflow node slot', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'referenced.custom',
+        handle: 'referenced',
+      });
+      insertWorkflow(db, 'wf-tpl', 'space-1', 'Template Workflow');
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at)
+         VALUES ('node-tpl', 'wf-tpl', 'Node node-tpl', ?, ?, ?)`
+      ).run(
+        JSON.stringify({
+          agents: [{ agentId: '', templateKey: 'referenced.custom', name: 'coder' }],
+        }),
+        now,
+        now
+      );
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'referenced.custom' })
+      ).rejects.toThrow('referenced by 1 workflow node slot(s)');
+
+      db.prepare(`DELETE FROM space_workflow_nodes WHERE id = 'node-tpl'`).run();
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'referenced.custom' }
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('refuses to delete a template referenced by an executable run definition', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'pinned.custom',
+        handle: 'pinned',
+      });
+      db.exec(`CREATE TABLE IF NOT EXISTS space_workflow_runs (
+        id TEXT PRIMARY KEY, space_id TEXT NOT NULL, workflow_id TEXT NOT NULL,
+        definition_version TEXT, title TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      )`);
+      db.exec(`CREATE TABLE IF NOT EXISTS space_tasks (
+        id TEXT PRIMARY KEY, workflow_run_id TEXT, archived_at INTEGER
+      )`);
+      db.exec(`CREATE TABLE IF NOT EXISTS space_workflow_definition_versions (
+        workflow_id TEXT NOT NULL, version_hash TEXT NOT NULL, space_id TEXT NOT NULL,
+        payload TEXT NOT NULL, source TEXT NOT NULL, created_at INTEGER NOT NULL,
+        PRIMARY KEY (workflow_id, version_hash)
+      )`);
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflow_definition_versions
+           (workflow_id, version_hash, space_id, payload, source, created_at)
+         VALUES ('wf-pinned', 'hash-1', 'space-1', ?, 'run_create', ?)`
+      ).run(
+        JSON.stringify({
+          nodes: [{ agents: [{ agentId: '', templateKey: 'pinned.custom', name: 'coder' }] }],
+        }),
+        now
+      );
+      db.prepare(
+        `INSERT INTO space_workflow_runs (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
+         VALUES ('run-pinned', 'space-1', 'wf-pinned', 'hash-1', 'Run', 'in_progress', ?, ?)`
+      ).run(now, now);
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'pinned.custom' })
+      ).rejects.toThrow('referenced by 1 workflow node slot(s)');
+
+      db.prepare(
+        `INSERT INTO space_tasks (id, workflow_run_id, archived_at) VALUES ('task-1', 'run-pinned', NULL)`
+      ).run();
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'pinned.custom' })
+      ).rejects.toThrow('referenced by 1 workflow node slot(s)');
+
+      db.prepare(`UPDATE space_tasks SET archived_at = ? WHERE id = 'task-1'`).run(now);
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'pinned.custom' }
+      );
+      expect(result.success).toBe(true);
     });
   });
 
@@ -1606,6 +1696,94 @@ describe('Space Agent RPC Handlers', () => {
       });
       expect(result.success).toBe(true);
     });
+
+    it('allows deletion when the agent is only the fallback of a resolvable template slot', async () => {
+      new SpaceAgentTemplateRepository(db as any).create({
+        key: 'migrated.worker',
+        handle: 'worker',
+        displayName: 'Worker',
+      });
+      insertWorkflow(db, 'wf-4', 'space-1', 'Migrated Workflow');
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at)
+         VALUES ('node-4', 'wf-4', 'Node node-4', ?, ?, ?)`
+      ).run(
+        JSON.stringify({
+          agents: [{ agentId, templateKey: 'migrated.worker', name: 'worker' }],
+        }),
+        now,
+        now
+      );
+
+      const result = await call<{ success: boolean }>(hubData.handlers, 'spaceAgent.delete', {
+        id: agentId,
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('blocks deletion when the template fallback key does not resolve', async () => {
+      insertWorkflow(db, 'wf-5', 'space-1', 'Broken Template Workflow');
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at)
+         VALUES ('node-5', 'wf-5', 'Node node-5', ?, ?, ?)`
+      ).run(
+        JSON.stringify({
+          agents: [{ agentId, templateKey: 'deleted.template', name: 'worker' }],
+        }),
+        now,
+        now
+      );
+
+      await expect(call(hubData.handlers, 'spaceAgent.delete', { id: agentId })).rejects.toThrow(
+        /Cannot delete agent.*referenced by workflow nodes/
+      );
+    });
+
+    it('blocks deletion while an executable run is pinned to an agent-bound definition', async () => {
+      db.exec(`CREATE TABLE IF NOT EXISTS space_workflow_runs (
+        id TEXT PRIMARY KEY, space_id TEXT NOT NULL, workflow_id TEXT NOT NULL,
+        definition_version TEXT, title TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      )`);
+      db.exec(`CREATE TABLE IF NOT EXISTS space_tasks (
+        id TEXT PRIMARY KEY, workflow_run_id TEXT, archived_at INTEGER
+      )`);
+      db.exec(`CREATE TABLE IF NOT EXISTS space_workflow_definition_versions (
+        workflow_id TEXT NOT NULL, version_hash TEXT NOT NULL, space_id TEXT NOT NULL,
+        payload TEXT NOT NULL, source TEXT NOT NULL, created_at INTEGER NOT NULL,
+        PRIMARY KEY (workflow_id, version_hash)
+      )`);
+      insertWorkflow(db, 'wf-pinned-agent', 'space-1', 'Pinned Agent Workflow');
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflow_definition_versions
+           (workflow_id, version_hash, space_id, payload, source, created_at)
+         VALUES ('wf-pinned-agent', 'hash-agent-1', 'space-1', ?, 'run_create', ?)`
+      ).run(
+        JSON.stringify({
+          nodes: [{ agents: [{ agentId, name: 'coder' }] }],
+        }),
+        now
+      );
+      db.prepare(
+        `INSERT INTO space_workflow_runs (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
+         VALUES ('run-pinned-agent', 'space-1', 'wf-pinned-agent', 'hash-agent-1', 'Run', 'in_progress', ?, ?)`
+      ).run(now, now);
+
+      await expect(call(hubData.handlers, 'spaceAgent.delete', { id: agentId })).rejects.toThrow(
+        /Cannot delete agent.*referenced by workflow nodes/
+      );
+
+      db.prepare(
+        `INSERT INTO space_tasks (id, workflow_run_id, archived_at) VALUES ('task-agent-1', 'run-pinned-agent', ?)`
+      ).run(now);
+      const result = await call<{ success: boolean }>(hubData.handlers, 'spaceAgent.delete', {
+        id: agentId,
+      });
+      expect(result.success).toBe(true);
+    });
   });
 
   describe('spaceAgent reminders and subscriptions', () => {
@@ -1754,7 +1932,11 @@ describe('Space Agent RPC Handlers', () => {
         createTestDatabaseFacade(db),
         longHorizonRepo,
         runtimeService as any,
-        new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db as any))
+        new SpaceAgentTemplateManager(
+          new SpaceAgentTemplateRepository(db as any),
+          undefined,
+          (key: string) => countWorkflowSlotsReferencingTemplate(db as any, key)
+        )
       );
 
       const created = await call<{ agent: { id: string } }>(

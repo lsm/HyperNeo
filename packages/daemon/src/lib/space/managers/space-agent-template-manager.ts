@@ -46,6 +46,7 @@ export interface DeleteTemplateCtx {
   repo: SpaceAgentTemplateRepository;
   key: string;
   existing?: SpaceAgentTemplate;
+  referenceCounter?: (key: string) => number;
   error?: string;
   deleted?: boolean;
 }
@@ -257,6 +258,20 @@ function deleteLoadExisting(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
   return { ...ctx, existing };
 }
 
+function deleteCheckReferences(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
+  if (!ctx.referenceCounter) return ctx;
+  const referencing = ctx.referenceCounter(ctx.key);
+  if (referencing > 0) {
+    return {
+      ...ctx,
+      error:
+        `Template "${ctx.key}" is referenced by ${referencing} workflow node slot(s); ` +
+        'remove those references before deleting the template',
+    };
+  }
+  return ctx;
+}
+
 function deletePersist(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
   const deleted = ctx.repo.delete(ctx.key);
   if (!deleted) return { ...ctx, error: `Template not found after delete: ${ctx.key}` };
@@ -311,13 +326,16 @@ export const runDeleteTemplate = (templatePipeline('delete-space-agent-template'
   .input(['ctx'])
   .pipe(deleteLoadExisting, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
+  .pipe(deleteCheckReferences, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
   .pipe(deletePersist, 'ctx', 'ctx')
   .end('ctx') as (input: DeleteTemplateCtx) => DeleteTemplateCtx;
 
 export class SpaceAgentTemplateManager {
   constructor(
     private repo: SpaceAgentTemplateRepository,
-    private builtIns: BuiltInTemplateSource = getBuiltInSpaceAgentTemplates
+    private builtIns: BuiltInTemplateSource = getBuiltInSpaceAgentTemplates,
+    private referenceCounter?: (key: string) => number
   ) {}
 
   async create(
@@ -339,7 +357,11 @@ export class SpaceAgentTemplateManager {
   }
 
   delete(key: string): SpaceAgentResult<void> {
-    const ctx = runDeleteTemplate({ repo: this.repo, key });
+    const ctx = runDeleteTemplate({
+      repo: this.repo,
+      key,
+      referenceCounter: this.referenceCounter,
+    });
     if (ctx.error) return { ok: false, error: ctx.error };
     return { ok: true, value: undefined };
   }

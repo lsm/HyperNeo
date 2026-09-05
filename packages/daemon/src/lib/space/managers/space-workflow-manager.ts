@@ -1,30 +1,33 @@
 import type {
+  CreateSpaceWorkflowParams,
   SpaceWorkflow,
   SpaceWorkflowSummary,
-  WorkflowNodeInput,
-  CreateSpaceWorkflowParams,
   UpdateSpaceWorkflowParams,
   WorkflowChannel,
   WorkflowHook,
+  WorkflowNodeInput,
 } from '@hyperneo/shared';
-import { HANDOFF_TARGET_WILDCARD, MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
-import { validateWorkflowHooks } from '../workflow-hook-validation.ts';
-import { generateUUID } from '@hyperneo/shared';
+import {
+  generateUUID,
+  HANDOFF_TARGET_WILDCARD,
+  MAX_NODE_HANDOFF_TRANSITIONS,
+} from '@hyperneo/shared';
+import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
-import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
 import { Logger } from '../../logger.ts';
-import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
-import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
 import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
+import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
+import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
+import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url.ts';
+import { validateWorkflowHooks } from '../workflow-hook-validation.ts';
 import {
   validatePostApproval,
   validatePostApprovalRoutes,
 } from '../workflows/post-approval-validator.ts';
-import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url.ts';
 import '../runtime/connectors/production.ts';
-import { slugify, validateSlug } from '../slug.ts';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository.ts';
+import { slugify, validateSlug } from '../slug.ts';
 
 const logger = new Logger('SpaceWorkflowManager');
 const RESERVED_WORKFLOW_AGENT_NAMES = new Set(['space-agent', 'task-agent']);
@@ -39,6 +42,10 @@ export function isReservedWorkflowAgentName(name: string): boolean {
 
 export interface SpaceAgentLookup {
   getAgentById(spaceId: string, id: string): { id: string; name: string } | null;
+}
+
+export interface SpaceAgentTemplateLookup {
+  hasTemplate(key: string): boolean;
 }
 
 export function createSpaceAgentLookup(
@@ -87,7 +94,8 @@ export class WorkflowDeletionBlockedError extends WorkflowValidationError {
 export class SpaceWorkflowManager {
   constructor(
     private repo: SpaceWorkflowRepository,
-    private agentLookup: SpaceAgentLookup | null = null
+    private agentLookup: SpaceAgentLookup | null = null,
+    private templateLookup: SpaceAgentTemplateLookup | null = null
   ) {}
 
   createWorkflow(params: CreateSpaceWorkflowParams): SpaceWorkflow {
@@ -637,13 +645,21 @@ export class SpaceWorkflowManager {
     for (let j = 0; j < node.agents.length; j++) {
       const entry = node.agents[j];
       if (entry.templateKey?.trim()) {
-        const template = getLongHorizonAgentTemplate(entry.templateKey.trim());
-        if (!template) {
+        const key = entry.templateKey.trim();
+        const knownTemplate =
+          getLongHorizonAgentTemplate(key) !== undefined ||
+          (this.templateLookup?.hasTemplate(key) ?? false);
+        if (!knownTemplate) {
           throw new WorkflowValidationError(
-            `node[${index}].agents[${j}]: templateKey "${entry.templateKey}" does not match any built-in agent template`
+            `node[${index}].agents[${j}]: templateKey "${entry.templateKey}" does not match any agent template`
           );
         }
-        entry.agentId = '';
+        if (entry.agentId?.trim()) {
+          const agent = this.agentLookup?.getAgentById(spaceId, entry.agentId);
+          if (!agent) entry.agentId = '';
+        } else {
+          entry.agentId = '';
+        }
         continue;
       }
       if (this.agentLookup) {

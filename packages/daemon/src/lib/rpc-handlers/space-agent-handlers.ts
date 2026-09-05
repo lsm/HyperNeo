@@ -39,7 +39,7 @@ import {
   validateAgentModelPool,
   validateSpaceAgentTools,
 } from '../space/managers/space-agent-manager.ts';
-import { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
+import type { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
 import { SpaceAgentTemplateReapplyService } from '../space/managers/space-agent-template-reapply-service.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
