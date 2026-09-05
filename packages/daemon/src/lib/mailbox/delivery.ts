@@ -63,6 +63,9 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       );
     }
     const target = entry.to.sessionId;
+    if (Date.now() - decodeUlidTimestamp(entry.id) > entry.policy.ttlMs) {
+      throw new DeadLetterImmediatelyError('mailbox: entry expired (ttl)');
+    }
     if (deps.isSessionArchived(target)) {
       throw new DeadLetterImmediatelyError('mailbox: target session archived');
     }

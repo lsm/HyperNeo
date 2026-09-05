@@ -216,6 +216,18 @@ describe('createMailboxDeliveryHandler', () => {
   });
 
   describe('expired entry', () => {
+    test('dead-letters an already-expired entry before resolving its session', async () => {
+      const { handler, sessionCalls } = makeHandler();
+      const entry = makeEntry({ id: createUlid(Date.now() - 60_000), policy: { ttlMs: 1 } });
+      const job = claimMailboxJob(mailbox, entry);
+
+      await expect(handler(job)).rejects.toBeInstanceOf(DeadLetterImmediatelyError);
+      await expect(handler(job)).rejects.toThrow('mailbox: entry expired (ttl)');
+      expect(sessionCalls()).toBe(0);
+      expect(mailbox.sdkRows()).toHaveLength(0);
+      expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(0);
+    });
+
     test('dead-letters an entry that expires while its session resolves', async () => {
       let releaseSession: ((session: object | null) => void) | undefined;
       const gatedGetSession = (_sessionId: string): Promise<object | null> =>
