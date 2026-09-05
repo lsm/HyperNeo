@@ -412,7 +412,9 @@ export class SpaceRuntimeService {
       outcome = await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey);
     } catch (error) {
       if (error instanceof PromptContentConflictError) return 'pre_admission_failure';
-      throw error;
+      return this.hasLongTermAgentConsumptionEvidence(sessionId, args.idempotencyKey)
+        ? 'terminal_failure_after_consumption'
+        : 'terminal_failure';
     }
     const consumed = this.hasLongTermAgentConsumptionEvidence(sessionId, args.idempotencyKey);
     if (outcome.state === 'accepted') return consumed ? 'consumed' : 'accepted';

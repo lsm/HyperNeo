@@ -22,15 +22,15 @@ export async function provisionAndRefetchAgentDeliverySessionStage<Session>(
   target: SessionTargetAgent,
   deps: SessionResolutionDeps,
   getSession: (sessionId: string) => Promise<Session | null>
-): Promise<Session | null> {
-  if (outcome.kind === 'unresolved') return null;
+): Promise<{ session: Session | null }> {
+  if (outcome.kind === 'unresolved') return { session: null };
   if (
     !outcome.created &&
     (await deps.ensureLongTermAgent(target.spaceId, target.agentId)) === null
   ) {
-    return null;
+    return { session: null };
   }
-  return getSession(outcome.sessionId);
+  return { session: await getSession(outcome.sessionId) };
 }
 
 const runResolveAgentDeliverySession = (
@@ -42,7 +42,7 @@ const runResolveAgentDeliverySession = (
   .pipe(
     provisionAndRefetchAgentDeliverySessionStage,
     ['outcome', 'target', 'deps', 'getSession'],
-    'session'
+    '{...}'
   )
   .endAsync('session') as (...args: unknown[]) => Promise<unknown | null>;
 

@@ -16,6 +16,7 @@ function makeDeps(config?: {
   coordinatorId?: string;
   existing?: TestSession;
   ensured?: TestSession;
+  ensureOutcome?: 'ok' | 'fail';
 }): {
   deps: SessionResolutionDeps;
   getSessionCalls: string[];
@@ -35,9 +36,15 @@ function makeDeps(config?: {
     },
     ensureLongTermAgent: async (spaceId, agentId) => {
       ensureCalls.push([spaceId, agentId]);
-      if (!config?.ensured) return null;
-      sessions.set(agentSessionIdOf(spaceId, agentId, config.coordinatorId), config.ensured);
-      return config.ensured;
+      if (config?.ensureOutcome === 'fail') return null;
+      const ensured =
+        config?.ensured ??
+        ({
+          id: agentSessionIdOf(spaceId, agentId, config?.coordinatorId),
+          generation: 1,
+        } as TestSession);
+      sessions.set(ensured.id, ensured);
+      return ensured;
     },
     rehydrateSubSession: async () => null,
     getCoordinator: async () =>
@@ -99,7 +106,7 @@ describe('resolveAgentDeliverySession', () => {
   });
 
   test('returns null without re-fetching when provisioning fails', async () => {
-    const { deps, refetchCalls, ensureCalls, getSession } = makeDeps();
+    const { deps, refetchCalls, ensureCalls, getSession } = makeDeps({ ensureOutcome: 'fail' });
 
     const session = await resolveAgentDeliverySession('space-1', 'agent-1', deps, getSession);
 

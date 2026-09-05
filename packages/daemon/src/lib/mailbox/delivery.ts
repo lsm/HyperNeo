@@ -6,7 +6,12 @@ import type { Job, JobQueueRepository } from '../../storage/repositories/job-que
 import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
-import { ensurePrompt, type PromptHold, retryPrompt } from '../agent/message-delivery-outbox.ts';
+import {
+  activatePrompts,
+  ensurePrompt,
+  type PromptHold,
+  retryPrompt,
+} from '../agent/message-delivery-outbox.ts';
 import { parseMailboxEntry } from './entry.ts';
 import { type MailboxSettlement, settleMailboxEntry } from './settlement.ts';
 import { decodeUlidTimestamp } from './ulid.ts';
@@ -19,6 +24,7 @@ export interface MailboxDeliveryDeps {
   sdkMessageRepo: SDKMessageRepository;
   getSession(sessionId: string): Promise<object | null>;
   isSessionArchived(sessionId: string): boolean;
+  publishStatusChanged?(sessionId: string, dbId: string, status: 'enqueued'): void | Promise<void>;
 }
 
 export function createMailboxDeadHandler(logError: (message: string) => void) {
@@ -92,7 +98,11 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
     };
     const messageUuid = message.uuid as NonNullable<SDKUserMessage['uuid']>;
     const existing = deps.sdkMessageRepo.getDeliveryContent(target, messageUuid);
-    ensurePrompt({
+    const publish = (dbId: string): void => {
+      if (!deps.publishStatusChanged) return;
+      void Promise.resolve(deps.publishStatusChanged(target, dbId, 'enqueued')).catch(() => {});
+    };
+    const ensured = ensurePrompt({
       sessionId: target,
       message,
       ...(synthetic ? { origin: 'system' as MessageOrigin } : {}),
@@ -102,8 +112,11 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       sdkMessageRepo: deps.sdkMessageRepo,
       jobQueue: deps.jobQueue,
     });
+    if (ensured.created && entry.deliveryMode !== 'defer') {
+      publish(ensured.dbMessageId);
+    }
     if (existing?.sendStatus === 'failed' && entry.deliveryMode !== 'defer') {
-      await retryPrompt({
+      const retried = await retryPrompt({
         sessionId: target,
         messageUuid,
         origin: mapOrigin(entry.origin),
@@ -112,6 +125,16 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         sdkMessageRepo: deps.sdkMessageRepo,
         jobQueue: deps.jobQueue,
       });
+      if (retried) publish(retried.dbId);
+    } else if (existing?.sendStatus === 'deferred' && entry.deliveryMode !== 'defer') {
+      const { activated } = await activatePrompts({
+        db: deps.db,
+        jobQueue: deps.jobQueue,
+        sessionId: target,
+        messageUuids: [messageUuid],
+        origin: mapOrigin(entry.origin),
+      });
+      if (activated[0]) publish(activated[0].dbId);
     }
     return { ...settleMailboxEntry(entry, 'delivered', Date.now()) };
   };
