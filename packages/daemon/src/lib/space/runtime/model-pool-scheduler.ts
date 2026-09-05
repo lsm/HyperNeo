@@ -2,7 +2,7 @@ import { modelPoolEntryKey, pickModelPoolEntry } from '@hyperneo/shared';
 import type {
   NodeExecution,
   SpaceTask,
-  SpaceWorkerAgent,
+  WorkerAgentModelPoolEntry,
   WorkflowNodeAgent,
 } from '@hyperneo/shared';
 import { TransientSpawnError } from './workflow-node-execution-validation.ts';
@@ -62,7 +62,10 @@ export function applyModelPoolToSlot(input: {
   slot: WorkflowNodeAgent;
   task: Pick<SpaceTask, 'workflowModelOverrides'>;
   node: { id: string };
-  agent: SpaceWorkerAgent;
+  agent: {
+    model?: string | null;
+    modelPool?: WorkerAgentModelPoolEntry[] | null;
+  };
   spaceId: string;
   assignments: ModelPoolAssignmentMap;
   getSessionStatus: (sessionId: string) => string | undefined;

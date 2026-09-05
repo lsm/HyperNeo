@@ -3,10 +3,6 @@ import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import {
   getPresetAgentTemplates,
   PRESET_AGENT_TOOLS,
-  RETIRED_PR_MERGER_DESCRIPTION,
-  RETIRED_PR_MERGER_PROMPT,
-  RETIRED_PR_MERGER_TOOLS,
-  retireRemovedPresetAgents,
   SUB_SESSION_FEATURES,
   seedUnifiedSpaceAgents,
 } from '../../../../src/lib/space/agents/seed-agents';
@@ -14,7 +10,6 @@ import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/reposit
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { insertSpace } from '../../helpers/space-agent-schema';
-import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 
 function toolsOf(agent: SpaceLongHorizonAgent): string[] {
   const tools = agent.toolPermissions.tools;
@@ -745,118 +740,5 @@ describe('getPresetAgentTemplates', () => {
       const roleKey = t.handle;
       expect(t.tools).toEqual(PRESET_AGENT_TOOLS[roleKey]);
     }
-  });
-});
-
-describe('retireRemovedPresetAgents', () => {
-  let db: Database;
-  let repo: SpaceLongHorizonAgentRepository;
-
-  beforeEach(() => {
-    db = new Database(':memory:');
-    createSpaceTables(db);
-    insertSpace(db);
-    repo = new SpaceLongHorizonAgentRepository(db);
-  });
-
-  afterEach(() => {
-    db.close();
-  });
-
-  function isPristineUnifiedRetiredPresetTwin(agent: SpaceLongHorizonAgent): boolean {
-    const tools = Array.isArray(agent.toolPermissions.tools)
-      ? agent.toolPermissions.tools.filter((tool): tool is string => typeof tool === 'string')
-      : [];
-    return (
-      agent.displayName === 'PR Merger' &&
-      agent.handle === 'merger' &&
-      agent.templateKey === 'migration.legacy_space_agent' &&
-      agent.instructions === RETIRED_PR_MERGER_PROMPT &&
-      tools.length === RETIRED_PR_MERGER_TOOLS.length &&
-      RETIRED_PR_MERGER_TOOLS.every((tool, i) => tools[i] === tool) &&
-      agent.model === null &&
-      agent.thinkingLevel === null &&
-      agent.provider === null &&
-      agent.settingSources === null &&
-      (agent.description === undefined ||
-        agent.description === null ||
-        agent.description === RETIRED_PR_MERGER_DESCRIPTION) &&
-      agent.status === 'active'
-    );
-  }
-
-  function seedPristinePrMerger(): string {
-    const id = 'pr-merger';
-    seedWorkerMirror(db, {
-      id,
-      spaceId: 'space-1',
-      name: 'PR Merger',
-      handle: 'merger',
-      instructions: RETIRED_PR_MERGER_PROMPT,
-      tools: [...RETIRED_PR_MERGER_TOOLS],
-      description: RETIRED_PR_MERGER_DESCRIPTION,
-    });
-    return id;
-  }
-
-  it('deletes a pristine, unreferenced PR Merger row', () => {
-    const mergerId = seedPristinePrMerger();
-    const retired = retireRemovedPresetAgents('space-1', {
-      agentRepo: repo,
-      referencedAgentIds: new Set(),
-      isPristineRetiredRow: isPristineUnifiedRetiredPresetTwin,
-    });
-    expect(retired).toEqual(['PR Merger']);
-    expect(repo.listBySpaceId('space-1').map((a) => a.id)).not.toContain(mergerId);
-  });
-
-  it('protects a pristine row referenced by a workflow (active run / custom slot)', () => {
-    const mergerId = seedPristinePrMerger();
-    const retired = retireRemovedPresetAgents('space-1', {
-      agentRepo: repo,
-      referencedAgentIds: new Set([mergerId]),
-      isPristineRetiredRow: isPristineUnifiedRetiredPresetTwin,
-    });
-    expect(retired).toEqual([]);
-    expect(repo.listBySpaceId('space-1').map((a) => a.id)).toContain(mergerId);
-  });
-
-  it('preserves a customized PR Merger row (renamed prompt)', () => {
-    const mergerId = seedPristinePrMerger();
-    repo.update(mergerId, { instructions: 'My custom merger prompt' });
-    const retired = retireRemovedPresetAgents('space-1', {
-      agentRepo: repo,
-      referencedAgentIds: new Set(),
-      isPristineRetiredRow: isPristineUnifiedRetiredPresetTwin,
-    });
-    expect(retired).toEqual([]);
-    expect(repo.listBySpaceId('space-1').map((a) => a.id)).toContain(mergerId);
-  });
-
-  it('preserves a customized PR Merger row (tools changed)', () => {
-    const mergerId = seedPristinePrMerger();
-    repo.update(mergerId, { toolPermissions: { tools: ['Bash'] } });
-    const retired = retireRemovedPresetAgents('space-1', {
-      agentRepo: repo,
-      referencedAgentIds: new Set(),
-      isPristineRetiredRow: isPristineUnifiedRetiredPresetTwin,
-    });
-    expect(retired).toEqual([]);
-    expect(repo.listBySpaceId('space-1').map((a) => a.id)).toContain(mergerId);
-  });
-
-  it('never touches non-merger preset rows', () => {
-    const { seeded } = seedUnifiedSpaceAgents('space-1', repo);
-    const before = seeded.map((a) => a.id).sort();
-    retireRemovedPresetAgents('space-1', {
-      agentRepo: repo,
-      referencedAgentIds: new Set(),
-      isPristineRetiredRow: isPristineUnifiedRetiredPresetTwin,
-    });
-    const after = repo
-      .listBySpaceId('space-1')
-      .map((a) => a.id)
-      .sort();
-    expect(after).toEqual(before);
   });
 });

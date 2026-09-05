@@ -17,14 +17,7 @@ import {
   seedBuiltInWorkflows,
 } from '../space/workflows/built-in-workflows.ts';
 import { computeWorkflowHash } from '../space/workflows/template-hash.ts';
-import {
-  getPresetAgentTemplates,
-  retireRemovedPresetAgents,
-  RETIRED_PR_MERGER_DESCRIPTION,
-  RETIRED_PR_MERGER_PROMPT,
-  RETIRED_PR_MERGER_TOOLS,
-} from '../space/agents/seed-agents.ts';
-import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
+import { getPresetAgentTemplates } from '../space/agents/seed-agents.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import { Logger } from '../logger.ts';
 
@@ -51,29 +44,6 @@ const PRESET_AGENT_NAMES_LOWER = new Set(
   getPresetAgentTemplates().map((p) => p.name.toLowerCase())
 );
 
-function isPristineUnifiedRetiredPresetTwin(twin: SpaceLongHorizonAgent | null): boolean {
-  if (!twin) return false;
-  const tools = Array.isArray(twin.toolPermissions.tools)
-    ? twin.toolPermissions.tools.filter((tool): tool is string => typeof tool === 'string')
-    : [];
-  return (
-    twin.displayName === 'PR Merger' &&
-    twin.handle === 'merger' &&
-    twin.templateKey === 'migration.legacy_space_agent' &&
-    twin.instructions === RETIRED_PR_MERGER_PROMPT &&
-    tools.length === RETIRED_PR_MERGER_TOOLS.length &&
-    RETIRED_PR_MERGER_TOOLS.every((tool, i) => tools[i] === tool) &&
-    twin.model === null &&
-    twin.thinkingLevel === null &&
-    twin.provider === null &&
-    twin.settingSources === null &&
-    (twin.description === undefined ||
-      twin.description === null ||
-      twin.description === RETIRED_PR_MERGER_DESCRIPTION) &&
-    twin.status === 'active'
-  );
-}
-
 function buildTemplateUpdateParams(
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
   spaceId: string,
@@ -83,16 +53,13 @@ function buildTemplateUpdateParams(
 ): UpdateSpaceWorkflowParams {
   const coordinatorByHandle = longHorizonAgentRepo.getCoordinator(spaceId);
   const unifiedRows = longHorizonAgentRepo.listBySpaceId(spaceId);
-  const spaceAgents = [
-    ...unifiedRows
-      .filter((a) => !coordinatorByHandle || a.id !== coordinatorByHandle.id)
-      .filter((a) => a.status !== 'archived')
-      .filter(
-        (a) =>
-          a.templateKey === 'migration.legacy_space_agent' || (a.status ?? 'active') === 'active'
-      )
-      .map((a) => ({ id: a.id, displayName: a.displayName ?? a.handle })),
-  ];
+  const spaceAgents = unifiedRows
+    .filter((a) => !coordinatorByHandle || a.id !== coordinatorByHandle.id)
+    .filter((a) => a.status !== 'archived')
+    .filter(
+      (a) => a.templateKey === 'migration.legacy_space_agent' || (a.status ?? 'active') === 'active'
+    )
+    .map((a) => ({ id: a.id, displayName: a.displayName ?? a.handle }));
   function resolveAgentId(roleName: string): string | undefined {
     const role = roleName.toLowerCase();
     const matches = spaceAgents.filter((a) => (a.displayName ?? '').trim().toLowerCase() === role);
@@ -330,17 +297,15 @@ export async function restampBuiltInWorkflowsOnStartup(
       try {
         const restampCoordinatorByHandle = longHorizonAgentRepo.ensureCoordinator(space.id);
         const restampUnifiedRows = longHorizonAgentRepo.listBySpaceId(space.id);
-        const agents = [
-          ...restampUnifiedRows
-            .filter((a) => !restampCoordinatorByHandle || a.id !== restampCoordinatorByHandle.id)
-            .filter((a) => a.status !== 'archived')
-            .filter(
-              (a) =>
-                a.templateKey === 'migration.legacy_space_agent' ||
-                (a.status ?? 'active') === 'active'
-            )
-            .map((a) => ({ id: a.id, displayName: a.displayName ?? a.handle })),
-        ];
+        const agents = restampUnifiedRows
+          .filter((a) => !restampCoordinatorByHandle || a.id !== restampCoordinatorByHandle.id)
+          .filter((a) => a.status !== 'archived')
+          .filter(
+            (a) =>
+              a.templateKey === 'migration.legacy_space_agent' ||
+              (a.status ?? 'active') === 'active'
+          )
+          .map((a) => ({ id: a.id, displayName: a.displayName ?? a.handle }));
         const result = seedBuiltInWorkflows(
           space.id,
           workflowManager,
@@ -367,26 +332,6 @@ export async function restampBuiltInWorkflowsOnStartup(
                 `in space "${space.name}" (${space.id}): ${err.error}`
             );
           }
-        }
-
-        const referencedAgentIds = new Set<string>();
-        for (const wf of workflowManager.listWorkflows(space.id)) {
-          for (const node of wf.nodes) {
-            for (const slot of node.agents) {
-              if (slot.agentId) referencedAgentIds.add(slot.agentId);
-            }
-          }
-        }
-        const retiredAgents = retireRemovedPresetAgents(space.id, {
-          agentRepo: longHorizonAgentRepo,
-          referencedAgentIds,
-          isPristineRetiredRow: isPristineUnifiedRetiredPresetTwin,
-        });
-        if (retiredAgents.length > 0) {
-          log.info(
-            `[startup] Retired removed preset agent(s) in space "${space.name}" ` +
-              `(${space.id}): ${retiredAgents.join(', ')}`
-          );
         }
       } catch (err) {
         log.warn(

@@ -17,6 +17,7 @@ import { ConfirmModal } from '../ui/ConfirmModal';
 import { LineNumberedTextarea } from './LineNumberedTextarea';
 import { ModelPoolEditor, type ModelPoolEditorMode } from './ModelPoolEditor';
 import { SettingSourcesEditor } from './SettingSourcesEditor';
+import { TemplateModelFields, type TemplateModelFieldsValue } from './TemplateModelFields';
 import { ToolsEditor, type ToolsSelection } from './ToolsEditor';
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
@@ -199,6 +200,9 @@ interface TemplateSaveForm {
   instructions: string;
   suggestedAutonomyLevel: number;
   tools: string[];
+  model: string | null;
+  provider: string | null;
+  thinkingLevel: ThinkingLevel | null;
 }
 
 interface TemplateSaveCtx {
@@ -221,6 +225,9 @@ async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateS
     instructions: ctx.form.instructions.trim(),
     suggestedAutonomyLevel: ctx.form.suggestedAutonomyLevel as SpaceAgentAutonomyLevel,
     tools: ctx.form.tools,
+    model: ctx.form.model,
+    provider: ctx.form.provider,
+    thinkingLevel: ctx.form.thinkingLevel,
   });
   return ctx;
 }
@@ -261,14 +268,16 @@ function AgentEditor({
   const [autonomyLevel, setAutonomyLevel] = useState<number | null>(
     agent?.autonomyLevel ?? template?.suggestedAutonomyLevel ?? null
   );
-  const [model, setModel] = useState(agent?.model ?? '');
-  const [modelProvider, setModelProvider] = useState<string>(agent?.provider ?? '');
+  const [model, setModel] = useState(agent?.model ?? template?.model ?? '');
+  const [modelProvider, setModelProvider] = useState<string>(
+    agent?.provider ?? template?.provider ?? ''
+  );
   const [modelPool, setModelPool] = useState<WorkerAgentModelPoolEntry[]>(agent?.modelPool ?? []);
   const [modelMode, setModelMode] = useState<ModelPoolEditorMode>(
     (agent?.modelPool?.length ?? 0) > 0 ? 'pool' : 'single'
   );
   const [thinkingLevel, setThinkingLevel] = useState<'' | ThinkingLevel>(
-    agent?.thinkingLevel ?? ''
+    agent?.thinkingLevel ?? template?.thinkingLevel ?? ''
   );
   const [toolsSelection, setToolsSelection] = useState<ToolsSelection>(
     agent
@@ -564,6 +573,11 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
     tools: [],
     toolsOverridden: false,
   });
+  const [modelFields, setModelFields] = useState<TemplateModelFieldsValue>({
+    model: null,
+    provider: null,
+    thinkingLevel: null,
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -580,6 +594,9 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
           instructions,
           suggestedAutonomyLevel: autonomyLevel,
           tools: toolsSelection.tools,
+          model: modelFields.model,
+          provider: modelFields.provider,
+          thinkingLevel: modelFields.thinkingLevel,
         },
       });
       onCreated();
@@ -683,6 +700,7 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
             </div>
             <p class="mt-1.5 text-xs text-fg-muted">{AUTONOMY_LABELS[autonomyLevel]}</p>
           </div>
+          <TemplateModelFields value={modelFields} onChange={setModelFields} />
           <div>
             <ToolsEditor
               tools={toolsSelection.tools}

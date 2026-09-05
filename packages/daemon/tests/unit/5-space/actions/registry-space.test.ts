@@ -731,7 +731,11 @@ describe('createSpaceRegistryEntries — handler wiring', () => {
           params: { name: 'Created via the registry' },
           success: true,
         },
-        { name: 'create_agent_from_template', params: { template_name: 'QA' }, success: true },
+        {
+          name: 'create_agent_from_template',
+          params: { template_name: 'research.default' },
+          success: true,
+        },
         { name: 'list_agent_templates', params: {}, success: true },
         {
           name: 'update_agent',

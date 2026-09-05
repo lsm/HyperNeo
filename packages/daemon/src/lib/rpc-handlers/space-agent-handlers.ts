@@ -96,7 +96,6 @@ interface UnifiedAgentUpdateInput {
   displayName?: string;
   templateKey?: string | null;
   templateName?: string | null;
-  templateHash?: string | null;
   instructions?: string;
   customPrompt?: string | null;
   autonomyLevel?: number | null;

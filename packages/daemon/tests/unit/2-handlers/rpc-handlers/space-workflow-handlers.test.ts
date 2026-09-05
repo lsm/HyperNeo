@@ -17,13 +17,7 @@ import { SpaceWorkflowManager as RealSpaceWorkflowManager } from '../../../../sr
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
-import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
-import {
-  seedUnifiedSpaceAgents,
-  RETIRED_PR_MERGER_DESCRIPTION,
-  RETIRED_PR_MERGER_PROMPT,
-  RETIRED_PR_MERGER_TOOLS,
-} from '../../../../src/lib/space/agents/seed-agents';
+import { seedUnifiedSpaceAgents } from '../../../../src/lib/space/agents/seed-agents';
 import { restampBuiltInWorkflowsOnStartup } from '../../../../src/lib/rpc-handlers/space-workflow-handlers';
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import type {
@@ -1810,7 +1804,7 @@ describe('checkBuiltInWorkflowDriftOnStartup', () => {
   });
 });
 
-describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard', () => {
+describe('restampBuiltInWorkflowsOnStartup — built-in role target resolution', () => {
   function makeRealEnv() {
     const db = new Database(':memory:');
     createSpaceTables(db);
@@ -1832,118 +1826,6 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
       spaceManager,
     };
   }
-
-  function seedRetiree(
-    env: ReturnType<typeof makeRealEnv>,
-    twinOverrides: { instructions?: string } = {}
-  ): string {
-    seedWorkerMirror(env.db, {
-      id: 'pr-merger',
-      spaceId: 'space-retire',
-      name: 'PR Merger',
-      handle: 'merger',
-      instructions: RETIRED_PR_MERGER_PROMPT,
-      tools: [...RETIRED_PR_MERGER_TOOLS],
-      description: RETIRED_PR_MERGER_DESCRIPTION,
-    });
-    if (twinOverrides.instructions !== undefined) {
-      env.db
-        .prepare(`UPDATE space_long_horizon_agents SET instructions = ? WHERE id = ?`)
-        .run(twinOverrides.instructions, 'pr-merger');
-    }
-    return 'pr-merger';
-  }
-
-  it('retires the unified twin of a pristine removed preset', async () => {
-    const env = makeRealEnv();
-    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
-    const id = seedRetiree(env);
-    await restampBuiltInWorkflowsOnStartup(
-      env.workflowManager,
-      env.spaceManager,
-      env.longHorizonAgentRepo,
-      () => false
-    );
-    expect(env.longHorizonAgentRepo.getById(id)).toBeNull();
-    env.db.close();
-  });
-
-  it('keeps a diverged unified twin on retirement', async () => {
-    const env = makeRealEnv();
-    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
-    const id = seedRetiree(env, { instructions: 'Customized by the owner.' });
-    await restampBuiltInWorkflowsOnStartup(
-      env.workflowManager,
-      env.spaceManager,
-      env.longHorizonAgentRepo,
-      () => false
-    );
-    expect(env.longHorizonAgentRepo.getById(id)).not.toBeNull();
-    env.db.close();
-  });
-
-  it('keeps a goal-owning unified twin on retirement', async () => {
-    const env = makeRealEnv();
-    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
-    const id = seedRetiree(env);
-    env.db
-      .prepare(
-        `INSERT INTO space_goals (id, space_id, title, created_at, updated_at)
-         VALUES ('goal-own', 'space-retire', 'Own me', 1000, 1000)`
-      )
-      .run();
-    env.longHorizonAgentRepo.assignGoal(id, 'goal-own', 'owner');
-    await restampBuiltInWorkflowsOnStartup(
-      env.workflowManager,
-      env.spaceManager,
-      env.longHorizonAgentRepo,
-      () => false
-    );
-    expect(env.longHorizonAgentRepo.getById(id)).not.toBeNull();
-    env.db.close();
-  });
-
-  it('keeps a reminder-owning unified twin on retirement', async () => {
-    const env = makeRealEnv();
-    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
-    const id = seedRetiree(env);
-    env.longHorizonAgentRepo.createReminder({
-      spaceId: 'space-retire',
-      agentId: id,
-      title: 'Standup notes',
-      triggerType: 'at',
-    });
-    await restampBuiltInWorkflowsOnStartup(
-      env.workflowManager,
-      env.spaceManager,
-      env.longHorizonAgentRepo,
-      () => false
-    );
-    expect(env.longHorizonAgentRepo.getById(id)).not.toBeNull();
-    expect(env.longHorizonAgentRepo.listReminders(id)).toHaveLength(1);
-    env.db.close();
-  });
-
-  it('keeps a subscription-owning unified twin on retirement', async () => {
-    const env = makeRealEnv();
-    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
-    const id = seedRetiree(env);
-    env.longHorizonAgentRepo.createSubscription({
-      spaceId: 'space-retire',
-      agentId: id,
-      source: 'github',
-      topic: 'github/*/*/pull_request/*',
-    });
-    await restampBuiltInWorkflowsOnStartup(
-      env.workflowManager,
-      env.spaceManager,
-      env.longHorizonAgentRepo,
-      () => false
-    );
-    expect(env.longHorizonAgentRepo.getById(id)).not.toBeNull();
-    expect(env.longHorizonAgentRepo.listSubscriptions(id)).toHaveLength(1);
-    env.db.close();
-  });
 
   it('does not bind handle-discovered coordinators as role targets', async () => {
     const env = makeRealEnv();
@@ -1993,23 +1875,6 @@ describe('restampBuiltInWorkflowsOnStartup — unified preset retirement guard',
       .flatMap((w) => w.nodes.flatMap((n) => n.agents ?? []))
       .map((a) => a.agentId);
     expect(boundAgentIds).not.toContain(coordinator.id);
-    env.db.close();
-  });
-
-  it('keeps a non-mirror twin on retirement', async () => {
-    const env = makeRealEnv();
-    seedUnifiedSpaceAgents('space-retire', env.longHorizonAgentRepo);
-    const id = seedRetiree(env);
-    env.db.prepare(`UPDATE space_long_horizon_agents SET template_key = NULL WHERE id = ?`).run(id);
-
-    await restampBuiltInWorkflowsOnStartup(
-      env.workflowManager,
-      env.spaceManager,
-      env.longHorizonAgentRepo,
-      () => false
-    );
-
-    expect(env.longHorizonAgentRepo.getById(id)).not.toBeNull();
     env.db.close();
   });
 

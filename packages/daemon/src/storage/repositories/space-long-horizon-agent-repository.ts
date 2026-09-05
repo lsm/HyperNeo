@@ -107,20 +107,12 @@ export class SpaceLongHorizonAgentRepository {
 
   ensureCoordinator(spaceId: string): SpaceLongHorizonAgent {
     const existingByHandle = this.getCoordinator(spaceId);
-    if (existingByHandle) {
-      if (existingByHandle.status === 'active') return existingByHandle;
-      return this.update(existingByHandle.id, {
-        status: 'active',
-        description: existingByHandle.description ?? null,
-        modelPool: existingByHandle.modelPool ?? null,
-      }) as SpaceLongHorizonAgent;
-    }
+    if (existingByHandle) return existingByHandle;
     const existingById = this.getById(coordinatorLongHorizonAgentId(spaceId));
     if (existingById) {
-      if (existingById.status !== 'active' || existingById.handle !== 'coordinator') {
+      if (existingById.handle !== 'coordinator') {
         return this.update(existingById.id, {
-          ...(existingById.status !== 'active' ? { status: 'active' as const } : {}),
-          ...(existingById.handle !== 'coordinator' ? { handle: 'coordinator' } : {}),
+          handle: 'coordinator',
           description: existingById.description ?? null,
           modelPool: existingById.modelPool ?? null,
         }) as SpaceLongHorizonAgent;

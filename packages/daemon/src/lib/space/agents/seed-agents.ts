@@ -154,57 +154,6 @@ export function getPresetAgentTemplates(): PresetAgentTemplate[] {
   }));
 }
 
-export const RETIRED_PR_MERGER_TOOLS: readonly string[] = ['Bash', 'Read', 'Grep', 'Glob'];
-export const RETIRED_PR_MERGER_DESCRIPTION =
-  'Post-approval PR merge specialist. The designated execution agent: it runs gh pr merge, ' +
-  'branch cleanup, worktree sync, and conflict routing. Spawned only after a task is approved.';
-export const RETIRED_PR_MERGER_PROMPT =
-  'You are the PR Merger — the designated execution agent for post-approval PR merges. ' +
-  'You run after a task has been approved. Your sole job is to merge the approved PR using ' +
-  '`gh pr merge`, clean up the branch, sync the worktree, and route any merge conflicts back ' +
-  'to the implementation agent. You are given the exact merge procedure as your first message; ' +
-  'follow it precisely. Do NOT review code, do NOT write features, and do NOT call approve_task ' +
-  'or submit_for_approval — the task is already approved. When the merge and sync are complete, ' +
-  'call mark_complete to close the task.';
-
-export interface RetireRemovedPresetAgentsDeps {
-  agentRepo: Pick<
-    SpaceLongHorizonAgentRepository,
-    | 'listBySpaceId'
-    | 'delete'
-    | 'listGoals'
-    | 'listForgeScopes'
-    | 'listReminders'
-    | 'listSubscriptions'
-  >;
-  referencedAgentIds: ReadonlySet<string>;
-  isPristineRetiredRow: (agent: SpaceLongHorizonAgent) => boolean;
-}
-
-export function retireRemovedPresetAgents(
-  spaceId: string,
-  deps: RetireRemovedPresetAgentsDeps
-): string[] {
-  const retired: string[] = [];
-  for (const agent of deps.agentRepo.listBySpaceId(spaceId)) {
-    if (!deps.isPristineRetiredRow(agent)) continue;
-    if (deps.referencedAgentIds.has(agent.id)) continue;
-    if (
-      deps.agentRepo.listGoals(agent.id).length > 0 ||
-      deps.agentRepo.listForgeScopes(agent.id).length > 0 ||
-      deps.agentRepo.listReminders(agent.id).length > 0 ||
-      deps.agentRepo.listSubscriptions(agent.id).length > 0
-    ) {
-      continue;
-    }
-    try {
-      deps.agentRepo.delete(agent.id);
-      retired.push(agent.displayName);
-    } catch {}
-  }
-  return retired;
-}
-
 export interface SeedUnifiedSpaceAgentsResult {
   seeded: SpaceLongHorizonAgent[];
   errors: Array<{ name: string; error: string }>;

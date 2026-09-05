@@ -62,14 +62,15 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(repo.listBySpaceId('space-1')).toHaveLength(2);
   });
 
-  test('unarchives deterministic Coordinator row instead of inserting duplicate id', () => {
+  test('returns the archived deterministic Coordinator row without reviving it', () => {
     const archived = repo.ensureCoordinator('space-1');
     repo.update(archived.id, { status: 'archived' });
 
     const coordinator = repo.ensureCoordinator('space-1');
 
     expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
-    expect(coordinator.status).toBe('active');
+    expect(coordinator.status).toBe('archived');
+    expect(repo.getCoordinator('space-1')).toBeNull();
     expect(repo.listBySpaceId('space-1')).toHaveLength(1);
   });
 
@@ -86,7 +87,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(repo.listBySpaceId('space-1')).toHaveLength(1);
   });
 
-  test('self-heal normalizes handle and status together in one ensureCoordinator call', () => {
+  test('self-heal restores the handle without reviving the status', () => {
     const created = repo.ensureCoordinator('space-1');
     repo.update(created.id, { handle: 'renamed', status: 'archived' });
 
@@ -94,8 +95,8 @@ describe('SpaceLongHorizonAgentRepository', () => {
 
     expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
     expect(coordinator.handle).toBe('coordinator');
-    expect(coordinator.status).toBe('active');
-    expect(repo.getCoordinator('space-1')?.id).toBe(coordinator.id);
+    expect(coordinator.status).toBe('archived');
+    expect(repo.getCoordinator('space-1')).toBeNull();
     expect(repo.listBySpaceId('space-1')).toHaveLength(1);
 
     db.prepare(
@@ -111,10 +112,10 @@ describe('SpaceLongHorizonAgentRepository', () => {
     const healedPaused = repo.ensureCoordinator('space-2');
 
     expect(healedPaused.handle).toBe('coordinator');
-    expect(healedPaused.status).toBe('active');
+    expect(healedPaused.status).toBe('paused');
   });
 
-  test('self-heal reactivates an unchanged-handle coordinator row found by handle', () => {
+  test('returns an unchanged-handle paused coordinator row as-is', () => {
     const created = repo.ensureCoordinator('space-1');
     repo.update(created.id, { status: 'paused' });
     expect(repo.getCoordinator('space-1')?.status).toBe('paused');
@@ -123,7 +124,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
 
     expect(healed.id).toBe(coordinatorLongHorizonAgentId('space-1'));
     expect(healed.handle).toBe('coordinator');
-    expect(healed.status).toBe('active');
+    expect(healed.status).toBe('paused');
     expect(repo.listBySpaceId('space-1')).toHaveLength(1);
   });
 

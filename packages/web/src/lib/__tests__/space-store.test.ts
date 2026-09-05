@@ -312,22 +312,6 @@ function makeMockHub() {
       if (method === 'spaceAgent.update') return { agent: makeLongHorizonAgent('a1') };
       if (method === 'spaceAgent.reapplyTemplate')
         return { agent: makeLongHorizonAgent(params?.agentId as string) };
-      if (method === 'spaceAgent.syncFromTemplate')
-        return { agent: makeLongHorizonAgent(params?.agentId as string) };
-      if (method === 'spaceAgent.previewTemplateSync')
-        return {
-          preview: {
-            agentId: params?.agentId as string,
-            agentName: 'Agent',
-            templateName: 'Coder',
-            storedHash: 'stale',
-            liveHash: 'live',
-            rowHash: 'row',
-            updateAvailable: true,
-            customized: true,
-            diff: { customPrompt: { before: 'old prompt', after: 'new prompt' } },
-          },
-        };
       if (method === 'spaceAgent.create') {
         return {
           agent: makeLongHorizonAgent((params?.id as string | undefined) ?? 'new-agent'),
@@ -2044,31 +2028,6 @@ describe('SpaceStore — CRUD methods', () => {
     await request;
 
     expect(spaceStore.agents.value.some((agent) => agent.id === 'stale-agent')).toBe(false);
-  });
-
-  it('syncAgentFromTemplate calls spaceAgent.syncFromTemplate RPC and leaves the unified list to events', async () => {
-    await spaceStore.selectSpace('space-1');
-    await spaceStore.syncAgentFromTemplate('a1');
-
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.syncFromTemplate', {
-      spaceId: 'space-1',
-      agentId: 'a1',
-    });
-  });
-
-  it('previewAgentTemplateSync calls spaceAgent.previewTemplateSync RPC and returns the preview', async () => {
-    await spaceStore.selectSpace('space-1');
-
-    const preview = await spaceStore.previewAgentTemplateSync('a1');
-
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.previewTemplateSync', {
-      spaceId: 'space-1',
-      agentId: 'a1',
-    });
-    expect(preview.agentId).toBe('a1');
-    expect(preview.updateAvailable).toBe(true);
-    expect(preview.customized).toBe(true);
-    expect(preview.diff.customPrompt?.after).toBe('new prompt');
   });
 
   it('previewWorkflowTemplateSync calls spaceWorkflow.previewTemplateSync RPC and returns the preview', async () => {
