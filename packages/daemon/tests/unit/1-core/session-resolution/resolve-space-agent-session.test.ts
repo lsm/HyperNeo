@@ -15,6 +15,7 @@ function makeDeps(config?: {
   existingSessionIds?: string[];
   coordinatorId?: string;
   ensureOutcome?: 'create' | 'fail';
+  getSessionError?: Error;
 }): {
   deps: SessionResolutionDeps;
   getSessionCalls: string[];
@@ -31,6 +32,7 @@ function makeDeps(config?: {
   const deps: SessionResolutionDeps = {
     getSession: async (sessionId) => {
       getSessionCalls.push(sessionId);
+      if (config?.getSessionError !== undefined) throw config.getSessionError;
       return sessions.get(sessionId) ?? null;
     },
     ensureLongTermAgent: async (spaceId, agentId) => {
@@ -101,6 +103,20 @@ describe('resolveSpaceAgentSession', () => {
     expect(refetchCalls).toEqual([sessionId]);
   });
 
+  test('does not fall back when explicit reply resolution fails internally', async () => {
+    const { deps, refetchCalls, ensureCalls, getSession } = makeDeps({
+      getSessionError: new Error('database unavailable'),
+    });
+
+    expect(
+      resolveSpaceAgentSession<TestSession>('space-1', 'reply-session', deps, getSession)
+    ).rejects.toThrow(
+      'Session not found for Space Agent reply routing: reply-session; internal: database unavailable'
+    );
+    expect(ensureCalls).toHaveLength(0);
+    expect(refetchCalls).toHaveLength(0);
+  });
+
   test('maps the coordinator row id to coordinatorSessionId without provisioning', async () => {
     const spaceId = 'space-1';
     const coordinatorId = coordinatorLongHorizonAgentId(spaceId);
@@ -126,7 +142,7 @@ describe('resolveSpaceAgentSession', () => {
     const { deps, ensureCalls, getSession } = makeDeps({ ensureOutcome: 'fail' });
 
     expect(resolveSpaceAgentSession<TestSession>(spaceId, null, deps, getSession)).rejects.toThrow(
-      `Session not found for Space Agent reply routing: ${coordinatorSessionId(spaceId)}`
+      `Session not found for Space Agent reply routing: ${coordinatorSessionId(spaceId)}; ensure_failed`
     );
     expect(ensureCalls).toEqual([[spaceId, 'coordinator']]);
   });
