@@ -7772,11 +7772,13 @@ export class SpaceRuntime {
     if (effectiveRetryCount < MAX_BLOCKED_RUN_RETRIES) {
       if (!taskReopenedOutsideRuntime && this.getAvailableTaskSlots(space) <= 0) return;
 
+      let hasLiveExecutionBinding = false;
       for (const execution of blockedExecutions) {
         const bindingAlive =
           !!execution.agentSessionId &&
           (this.config.taskAgentManager?.isSessionInMemory(execution.agentSessionId) ?? false) &&
           !this.isFailedSessionBinding(execution.agentSessionId);
+        hasLiveExecutionBinding ||= bindingAlive;
         this.config.nodeExecutionRepo.update(execution.id, {
           status: 'pending',
           result: null,
@@ -7788,7 +7790,10 @@ export class SpaceRuntime {
       this.blockedRetryCounts.set(runId, effectiveRetryCount + 1);
 
       await this.transitionRunStatusAndEmit(runId, 'in_progress');
-      if (canonicalTask.status === 'blocked' || canonicalTask.status === 'open') {
+      if (
+        canonicalTask.status === 'blocked' ||
+        (canonicalTask.status === 'open' && hasLiveExecutionBinding)
+      ) {
         await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
           status: 'in_progress',
           completedAt: null,
