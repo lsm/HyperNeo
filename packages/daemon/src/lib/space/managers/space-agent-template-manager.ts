@@ -11,7 +11,10 @@ import type {
   SpaceAgentTemplateRepository,
 } from '../../../storage/repositories/space-agent-template-repository.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
-import { getLongHorizonAgentTemplates } from '../agents/long-horizon-agent-templates.ts';
+import {
+  getLongHorizonAgentTemplate,
+  getLongHorizonAgentTemplates,
+} from '../agents/long-horizon-agent-templates.ts';
 import { validateSlug } from '../slug.ts';
 import type { SpaceAgentResult } from '../agents/agent-validation.ts';
 import {
@@ -51,22 +54,27 @@ export interface DeleteTemplateCtx {
 }
 
 function getBuiltInSpaceAgentTemplates(): SpaceAgentTemplate[] {
-  return getLongHorizonAgentTemplates().map((template) => ({
-    key: template.key,
-    handle: template.handle,
-    displayName: template.displayName,
-    description: template.description,
-    instructions: template.instructions,
-    suggestedAutonomyLevel: template.suggestedAutonomyLevel,
-    model: null,
-    provider: null,
-    modelPool: null,
-    thinkingLevel: null,
-    settingSources: null,
-    tools: null,
-    createdAt: 0,
-    updatedAt: 0,
-  }));
+  return getLongHorizonAgentTemplates().map((template) => {
+    const presetTools = template.toolPermissions.tools;
+    return {
+      key: template.key,
+      handle: template.handle,
+      displayName: template.displayName,
+      description: template.description,
+      instructions: template.instructions,
+      suggestedAutonomyLevel: template.suggestedAutonomyLevel,
+      model: null,
+      provider: null,
+      modelPool: null,
+      thinkingLevel: null,
+      settingSources: null,
+      tools: Array.isArray(presetTools)
+        ? presetTools.filter((tool): tool is string => typeof tool === 'string')
+        : null,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+  });
 }
 
 function validateTemplateKey(key: string): string | null {
@@ -75,6 +83,9 @@ function validateTemplateKey(key: string): string | null {
   }
   if (key === MIGRATED_WORKER_TEMPLATE_KEY) {
     return `Template key "${key}" is reserved`;
+  }
+  if (getLongHorizonAgentTemplate(key)) {
+    return `Template key "${key}" is reserved for a built-in agent template`;
   }
   return null;
 }
@@ -347,13 +358,15 @@ export class SpaceAgentTemplateManager {
   list(): SpaceAgentTemplate[] {
     const byKey = new Map<string, SpaceAgentTemplate>();
     for (const template of this.builtIns()) byKey.set(template.key, template);
-    for (const template of this.repo.list()) byKey.set(template.key, template);
+    for (const template of this.repo.list()) {
+      if (!byKey.has(template.key)) byKey.set(template.key, template);
+    }
     return [...byKey.values()].sort(compareByCreatedAtAndKey);
   }
 
   getByKey(key: string): SpaceAgentTemplate | null {
     return (
-      this.repo.getByKey(key) ?? this.builtIns().find((template) => template.key === key) ?? null
+      this.builtIns().find((template) => template.key === key) ?? this.repo.getByKey(key) ?? null
     );
   }
 }

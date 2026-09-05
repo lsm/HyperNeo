@@ -99,15 +99,16 @@ describe('SpaceAgentTemplateManager', () => {
       expect(custom).toEqual(created);
     });
 
-    test('custom template with the same key overrides the built-in', () => {
+    test('a stored row with a built-in key never shadows the built-in', () => {
       repo.create({
         key: 'builtin.default',
         handle: 'builtin-override',
         displayName: 'Override',
       });
 
-      const override = manager.list().find((template) => template.key === 'builtin.default');
-      expect(override?.displayName).toBe('Override');
+      const templates = manager.list().filter((template) => template.key === 'builtin.default');
+      expect(templates).toHaveLength(1);
+      expect(templates[0]?.displayName).toBe('Built-in');
     });
 
     test('orders by createdAt then key', () => {
@@ -221,6 +222,14 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('reserved');
+    });
+
+    test('rejects keys reserved for code built-in templates', async () => {
+      for (const key of ['worker.coder', 'worker.reviewer', 'coordinator.default']) {
+        const result = await manager.create({ ...fullParams(), key });
+        expect(result.ok, key).toBe(false);
+        if (!result.ok) expect(result.error).toContain('reserved for a built-in agent template');
+      }
     });
 
     test('rejects a blank model', async () => {
@@ -721,7 +730,7 @@ describe('SpaceAgentTemplateManager', () => {
       expect(template?.displayName).toBe('Release Readiness');
     });
 
-    test('custom template with the same key shadows the built-in', async () => {
+    test('a stored row with a built-in key never shadows the built-in', async () => {
       repo.create({
         key: 'builtin.default',
         handle: 'builtin-override',
@@ -729,7 +738,24 @@ describe('SpaceAgentTemplateManager', () => {
       });
 
       const template = manager.getByKey('builtin.default');
-      expect(template?.displayName).toBe('Override');
+      expect(template?.displayName).toBe('Built-in');
+    });
+
+    test('worker built-ins keep their tool policy through the template view', () => {
+      const defaultManager = new SpaceAgentTemplateManager(repo);
+      const template = defaultManager.getByKey('worker.reviewer');
+      expect(template?.tools).toContain('Read');
+      expect(template?.tools).toContain('Bash(gh pr view:*)');
+      expect(template?.tools).not.toContain('Bash');
+
+      const coder = defaultManager.getByKey('worker.coder');
+      expect(coder?.tools).toBeNull();
+    });
+
+    test('long-horizon built-ins still expose no tools', () => {
+      const defaultManager = new SpaceAgentTemplateManager(repo);
+      const template = defaultManager.getByKey('coordinator.default');
+      expect(template?.tools).toBeNull();
     });
 
     test('returns null for an unknown key', () => {
