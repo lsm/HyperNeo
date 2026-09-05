@@ -47,6 +47,8 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-ev
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import { CleanupState, type SessionManager } from '../../session-manager.ts';
 import type { SkillsManager } from '../../skills-manager.ts';
+import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
+import type { NodeAgentTemplateSource } from './spawn-slot-resolution.ts';
 import {
   isRunnableUnifiedAgent,
   longHorizonAgentToWorkerView,
@@ -960,7 +962,7 @@ export class TaskAgentManager {
 
           if (!customAgent) {
             throw new PermanentSpawnError(
-              `Agent not found: ${slot.agentId} (task: ${request.task.id})`
+              `Agent not found: ${slot.agentId || slot.templateKey} (task: ${request.task.id})`
             );
           }
 
@@ -974,7 +976,7 @@ export class TaskAgentManager {
             workflowRun: request.workflowRun,
             workflow: request.workflow,
             slotOverrides,
-            agentId: slot.agentId,
+            agentId: customAgent.id,
           });
 
           const nodeAgentMcpServers = this.buildNodeAgentMcpServersForSession(
@@ -1008,7 +1010,7 @@ export class TaskAgentManager {
             request.sessionId,
             init,
             {
-              agentId: slot.agentId,
+              agentId: customAgent.id,
               agentName: request.execution.agentName,
               nodeId: request.execution.workflowNodeId,
               deferFreshExecutionBind: true,
@@ -1099,9 +1101,15 @@ export class TaskAgentManager {
             })
           : [];
 
-        const customAgent = this.resolveUnifiedSlotAgent(request.space.id, request.slot.agentId);
+        const spawnConfig = this.resolveSlotSpawnConfig(request.space.id, request.slot);
+        if (!spawnConfig) {
+          throw new PermanentSpawnError(
+            `Agent not found: ${request.slot.agentId || request.slot.templateKey} (task: ${request.task.id})`
+          );
+        }
+        const customAgent = spawnConfig.agent;
         const initialMessage = buildCustomAgentTaskMessage({
-          customAgent: customAgent!,
+          customAgent,
           task: request.task,
           workflowRun: request.workflowRun,
           workflow: request.workflow,
@@ -2528,28 +2536,33 @@ export class TaskAgentManager {
     }
 
     let slotInit: AgentSessionInit | null = null;
-    if (matchedSlot?.agentId && matchedNode) {
+    if ((matchedSlot?.agentId || matchedSlot?.templateKey) && matchedNode) {
       const slotOverrides = buildSlotOverrides(matchedSlot, {
         task,
         node: matchedNode,
         workflow: workflow ?? undefined,
         workflowRun: workflowRun ?? undefined,
       });
-      slotInit = resolveAgentInit({
-        task,
-        space,
-        agentManager: this.config.spaceAgentManager,
-        agent: this.resolveUnifiedSlotAgent(space.id, matchedSlot.agentId),
-        sessionId,
-        workspacePath,
-        workflowRun: workflowRun ?? undefined,
-        workflow: workflow ?? undefined,
-        slotOverrides,
-        agentId: matchedSlot.agentId,
-      });
-      if (slotInit.systemPrompt) agentSession.setRuntimeSystemPrompt(slotInit.systemPrompt);
-      agentSession.toolGuards = slotInit.toolGuards;
-      agentSession.skillOverrides = slotInit.skillOverrides;
+      const spawnConfig = this.resolveSlotSpawnConfig(space.id, matchedSlot);
+      if (spawnConfig) {
+        slotInit = resolveAgentInit({
+          task,
+          space,
+          agentManager: this.config.spaceAgentManager,
+          agent: spawnConfig.agent,
+          sessionId,
+          workspacePath,
+          workflowRun: workflowRun ?? undefined,
+          workflow: workflow ?? undefined,
+          slotOverrides,
+          agentId: spawnConfig.agent.id,
+        });
+      }
+      if (slotInit) {
+        if (slotInit.systemPrompt) agentSession.setRuntimeSystemPrompt(slotInit.systemPrompt);
+        agentSession.toolGuards = slotInit.toolGuards;
+        agentSession.skillOverrides = slotInit.skillOverrides;
+      }
     }
 
     const nodeAgentMcpServers = this.buildNodeAgentMcpServersForSession(
@@ -3669,10 +3682,31 @@ export class TaskAgentManager {
     spaceId: string,
     slot: WorkflowNodeAgent
   ): NodeAgentSpawnConfig | null {
+    if (slot.templateKey?.trim()) {
+      const template = getLongHorizonAgentTemplate(slot.templateKey.trim()) as
+        | NodeAgentTemplateSource
+        | undefined;
+      if (!template) return null;
+      return resolveNodeAgentConfig(
+        template,
+        {
+          name: slot.name,
+          model: slot.model,
+          thinkingLevel: slot.thinkingLevel,
+        },
+        []
+      );
+    }
+    if (!slot.agentId) return null;
     const registryAgent = this.resolveUnifiedSlotAgent(spaceId, slot.agentId);
     return resolveNodeAgentConfig(
       null,
-      { agentId: slot.agentId },
+      {
+        agentId: slot.agentId,
+        name: slot.name,
+        model: slot.model,
+        thinkingLevel: slot.thinkingLevel,
+      },
       registryAgent ? [registryAgent] : []
     );
   }
@@ -3709,13 +3743,16 @@ export class TaskAgentManager {
       }
     }
 
-    const spaceAgentId = execution.agentId ?? slot?.agentId;
-    if (spaceAgentId && workflow) {
-      const spaceAgent = this.resolveUnifiedSlotAgent(workflow.spaceId, spaceAgentId);
-      if (spaceAgent?.name) {
-        for (const variant of this.agentNameVariants(spaceAgent.name)) {
-          aliases.add(variant);
-        }
+    let spaceAgent: SpaceWorkerAgent | null = null;
+    if (execution.agentId) {
+      spaceAgent = this.resolveUnifiedSlotAgent(workflow.spaceId, execution.agentId);
+    } else if (slot) {
+      const spawnConfig = this.resolveSlotSpawnConfig(workflow.spaceId, slot);
+      spaceAgent = spawnConfig?.agent ?? null;
+    }
+    if (spaceAgent?.name) {
+      for (const variant of this.agentNameVariants(spaceAgent.name)) {
+        aliases.add(variant);
       }
     }
 
@@ -4328,9 +4365,18 @@ export class TaskAgentManager {
       nodeAgents.length === 1
         ? nodeAgents[0]
         : nodeAgents.find((agentSlot) => agentSlot.name === execution.agentName);
-    if (!slot?.agentId) {
+    if (!slot?.agentId && !slot?.templateKey) {
       log.warn(
         `TaskAgentManager.rehydrateSubSession: no agent slot found for agent ${execution.agentName} ` +
+          `in node ${execution.workflowNodeId}; keeping persisted system prompt`
+      );
+      return null;
+    }
+
+    const spawnConfig = this.resolveSlotSpawnConfig(space.id, slot);
+    if (!spawnConfig) {
+      log.warn(
+        `TaskAgentManager.rehydrateSubSession: could not resolve agent config for ${execution.agentName} ` +
           `in node ${execution.workflowNodeId}; keeping persisted system prompt`
       );
       return null;
@@ -4340,7 +4386,7 @@ export class TaskAgentManager {
       task,
       space,
       agentManager: this.config.spaceAgentManager,
-      agent: this.resolveUnifiedSlotAgent(space.id, slot.agentId),
+      agent: spawnConfig.agent,
       sessionId,
       workspacePath,
       workflowRun,
@@ -4351,7 +4397,7 @@ export class TaskAgentManager {
         workflow: workflow ?? undefined,
         workflowRun: workflowRun ?? undefined,
       }),
-      agentId: slot.agentId,
+      agentId: spawnConfig.agent.id,
     });
   }
 
@@ -5522,7 +5568,11 @@ export class TaskAgentManager {
     let matchedNodeId: string | null = null;
     for (const node of workflow.nodes) {
       for (const slot of resolveNodeAgents(node)) {
-        if (slot.name === targetAgent || slot.agentId === targetAgent) {
+        if (
+          slot.name === targetAgent ||
+          slot.agentId === targetAgent ||
+          slot.templateKey === targetAgent
+        ) {
           matchedSlot = slot;
           matchedNodeId = node.id;
           break;
@@ -5530,7 +5580,7 @@ export class TaskAgentManager {
       }
       if (matchedSlot) break;
     }
-    if (!matchedSlot?.agentId || !matchedNodeId) {
+    if ((!matchedSlot?.agentId && !matchedSlot?.templateKey) || !matchedNodeId) {
       throw new Error(
         `spawnPostApprovalSubSession: no agent slot "${targetAgent}" declared in workflow ${workflow.id}`
       );
@@ -5618,7 +5668,8 @@ export class TaskAgentManager {
     }).workspacePath;
 
     const matchedNode = workflow.nodes.find((node) => node.id === matchedNodeId);
-    const poolAgent = this.resolveUnifiedSlotAgent(spaceId, matchedSlot.agentId);
+    const spawnConfig = this.resolveSlotSpawnConfig(spaceId, matchedSlot);
+    const poolAgent = spawnConfig?.agent ?? null;
     let slot = matchedSlot;
     let poolProvider: string | undefined;
     if (poolAgent) {
@@ -5673,7 +5724,7 @@ export class TaskAgentManager {
         workflowRun: workflowRun ?? undefined,
         workflow,
         slotOverrides,
-        agentId: slot.agentId,
+        agentId: poolAgent?.id ?? slot.agentId,
       });
 
       const nodeAgentMcpServers = this.buildNodeAgentMcpServersForSession(
@@ -5700,7 +5751,7 @@ export class TaskAgentManager {
       };
 
       const actualSessionId = await this.createSubSession(taskId, sessionId, init, {
-        agentId: matchedSlot.agentId,
+        agentId: poolAgent?.id ?? matchedSlot.agentId,
         agentName: matchedSlot.name,
         nodeId: matchedNodeId,
         freshSessionOnly: true,

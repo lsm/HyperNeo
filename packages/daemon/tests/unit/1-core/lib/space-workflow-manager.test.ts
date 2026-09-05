@@ -134,6 +134,40 @@ describe('SpaceWorkflowManager', () => {
         })
       ).toThrow('endNodeId "nonexistent-node" does not match any node in this workflow');
     });
+
+    it('accepts a template-only agent slot', () => {
+      const result = manager.createWorkflow({
+        spaceId: 'space-1',
+        name: 'Template Workflow',
+        nodes: [
+          {
+            id: 'node-1',
+            name: 'Step One',
+            agents: [{ agentId: '', templateKey: 'coordinator.default', name: 'coordinator' }],
+          },
+        ],
+        completionAutonomyLevel: 3,
+      });
+
+      expect(result.nodes[0].agents[0].templateKey).toBe('coordinator.default');
+    });
+
+    it('rejects an unknown template key', () => {
+      expect(() =>
+        manager.createWorkflow({
+          spaceId: 'space-1',
+          name: 'Template Workflow',
+          nodes: [
+            {
+              id: 'node-1',
+              name: 'Step One',
+              agents: [{ agentId: '', templateKey: 'missing', name: 'coordinator' }],
+            },
+          ],
+          completionAutonomyLevel: 3,
+        })
+      ).toThrow('does not match any built-in agent template');
+    });
   });
 
   describe('static external event interest validation', () => {

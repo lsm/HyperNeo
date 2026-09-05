@@ -38,7 +38,7 @@ export function resolveWorkflowNodeSlot(
     nodeAgents.length === 1
       ? nodeAgents[0]
       : nodeAgents.find((agentSlot) => agentSlot.name === agentName);
-  return slot?.agentId ? { node, slot } : null;
+  return slot?.agentId || slot?.templateKey ? { node, slot } : null;
 }
 
 export interface BuildSlotOverridesContext {
@@ -80,7 +80,7 @@ export function buildSlotOverrides(
     extraMcpServers: slot.extraMcpServers,
     toolGuards: effectiveGuards,
     resolutionContext: {
-      agentId: slot.agentId,
+      agentId: slot.agentId || slot.templateKey || '',
       agentName: slot.name,
       workflowRunId: context?.workflowRun?.id,
       workflowId: context?.workflow?.id,

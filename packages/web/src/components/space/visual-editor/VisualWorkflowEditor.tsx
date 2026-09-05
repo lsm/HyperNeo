@@ -68,6 +68,7 @@ function buildTemplateCanvasSignature(
       id: node.step.id ?? null,
       name: node.step.name,
       agentId: node.step.agentId ?? null,
+      templateKey: node.step.templateKey ?? null,
       model: node.step.model ?? null,
       thinkingLevel: node.step.thinkingLevel ?? null,
       customPrompt: node.step.customPrompt ?? null,
@@ -76,6 +77,7 @@ function buildTemplateCanvasSignature(
       agents:
         node.step.agents?.map((agent) => ({
           agentId: agent.agentId ?? null,
+          templateKey: agent.templateKey ?? null,
           name: agent.name ?? '',
           model: agent.model ?? null,
           thinkingLevel: agent.thinkingLevel ?? null,
@@ -217,6 +219,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   const canvasContainerRef = useRef<HTMLDivElement>(null);
 
   const agents = filterAgents(spaceStore.agents.value);
+  const agentTemplates = spaceStore.agentTemplates.value;
   const availableTemplates = useMemo(
     () => getAvailableTemplates(spaceStore.workflowTemplates.value),
     [spaceStore.workflowTemplates.value]
@@ -273,6 +276,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   const endpointNodeIdLookup = useMemo(() => {
     const map = new Map<string, string>();
     for (const node of nodes) {
+      map.set(node.step.localId, node.step.localId);
       if (node.step.agentId) map.set(node.step.agentId, node.step.localId);
       if (node.step.name) map.set(node.step.name, node.step.localId);
       for (const agent of node.step.agents ?? []) {
@@ -351,6 +355,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
         step: node.step,
         position: node.position,
         agents,
+        agentTemplates,
         workflowChannels: channels,
         isStartNode: nodeIsStart(node),
         isEndNode: nodeIsEnd(node),
@@ -361,6 +366,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   }, [
     regularNodes,
     agents,
+    agentTemplates,
     channels,
     nodeIsStart,
     nodeIsEnd,
@@ -627,13 +633,13 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
   const resolveSourceChannelName = useCallback((node: VisualNode): string | null => {
     if (node.step.name?.trim()) return node.step.name.trim();
     if (node.step.agentId?.trim()) return node.step.agentId.trim();
-    return null;
+    return node.step.localId;
   }, []);
 
   const resolveTargetChannelName = useCallback((node: VisualNode): string | null => {
     if (node.step.name?.trim()) return node.step.name.trim();
     if (node.step.agentId?.trim()) return node.step.agentId.trim();
-    return null;
+    return node.step.localId;
   }, []);
 
   const handleCreateTransition = useCallback(
@@ -930,7 +936,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
     for (let i = 0; i < regularNodes.length; i++) {
       const step = regularNodes[i].step;
       const hasMultiAgent = Array.isArray(step.agents) && step.agents.length > 0;
-      if (!hasMultiAgent && !step.agentId) {
+      if (!hasMultiAgent && !step.agentId && !step.templateKey) {
         setError(`Node ${i + 1} requires an agent.`);
         return;
       }
@@ -1340,6 +1346,7 @@ export function VisualWorkflowEditor({ workflow, onSave, onCancel }: VisualWorkf
           <NodeConfigPanel
             step={selectedNode.step}
             agents={agents}
+            agentTemplates={agentTemplates}
             isStartNode={nodeIsStart(selectedNode)}
             onUpdate={handleUpdateNode}
             onSetAsStart={handleSetAsStart}

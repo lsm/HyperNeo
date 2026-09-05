@@ -1,14 +1,18 @@
 import { describe, test, expect } from 'bun:test';
 import type { WorkflowNode } from '@hyperneo/shared';
+import type { NodeExecution, SpaceWorkflow } from '@hyperneo/shared';
 import {
   findMissingNodeAgentReferences,
   formatMissingAgentReference,
   isMissingWorkflowAgentError,
   MissingWorkflowAgentError,
   PermanentSpawnError,
+  validateExecutionAgainstWorkflow,
 } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 
-function makeNode(agents: Array<{ agentId?: string | null; name: string }>): WorkflowNode {
+function makeNode(
+  agents: Array<{ agentId?: string | null; templateKey?: string; name: string }>
+): WorkflowNode {
   return {
     id: 'node-1',
     name: 'Review',
@@ -60,6 +64,103 @@ describe('MissingWorkflowAgentError', () => {
     expect(err.reference).toEqual({ agentName: 'reviewer', agentId: 'gone' });
     expect(isMissingWorkflowAgentError(err)).toBe(true);
     expect(isMissingWorkflowAgentError(new PermanentSpawnError('other'))).toBe(false);
+  });
+});
+
+describe('validateExecutionAgainstWorkflow', () => {
+  function makeExecution(overrides: Partial<NodeExecution> = {}): NodeExecution {
+    return {
+      id: 'exec-1',
+      taskId: 'task-1',
+      workflowRunId: 'run-1',
+      workflowNodeId: 'node-1',
+      agentName: 'coder',
+      agentId: '',
+      status: 'pending',
+      createdAt: 0,
+      updatedAt: 0,
+      ...overrides,
+    } as NodeExecution;
+  }
+
+  function makeWorkflow(agents: WorkflowNode['agents']): SpaceWorkflow {
+    return {
+      id: 'wf-1',
+      spaceId: 'space-1',
+      name: 'Test',
+      nodes: [{ id: 'node-1', name: 'Review', agents }],
+      tags: [],
+      createdAt: 0,
+      updatedAt: 0,
+    } as unknown as SpaceWorkflow;
+  }
+
+  test('is valid for a template-only slot', () => {
+    const workflow = makeWorkflow([{ agentId: '', templateKey: 'coder.default', name: 'coder' }]);
+    const result = validateExecutionAgainstWorkflow(makeExecution(), workflow);
+    expect(result).toEqual({ valid: true });
+  });
+
+  test('is invalid when the slot has neither agentId nor templateKey', () => {
+    const workflow = makeWorkflow([{ agentId: '', name: 'coder' }]);
+    const result = validateExecutionAgainstWorkflow(makeExecution(), workflow);
+    expect(result).toEqual({
+      valid: false,
+      reason: 'Agent slot coder no longer exists on workflow node node-1',
+      permanent: true,
+    });
+  });
+
+  test('whitespace templateKey falls back to agentId', () => {
+    const workflow = makeWorkflow([{ agentId: 'agent-1', templateKey: '   ', name: 'coder' }]);
+    const result = validateExecutionAgainstWorkflow(
+      makeExecution({ agentId: 'agent-1' }),
+      workflow
+    );
+    expect(result).toEqual({ valid: true });
+  });
+
+  test('templateKey takes precedence over stale agentId', () => {
+    const workflow = makeWorkflow([
+      { agentId: 'stale', templateKey: 'coder.default', name: 'coder' },
+    ]);
+    const result = validateExecutionAgainstWorkflow(
+      makeExecution({ agentId: 'template:coder.default' }),
+      workflow
+    );
+    expect(result).toEqual({ valid: true });
+  });
+
+  test('templateKey precedence fails when execution carries stale agentId', () => {
+    const workflow = makeWorkflow([
+      { agentId: 'stale', templateKey: 'coder.default', name: 'coder' },
+    ]);
+    const result = validateExecutionAgainstWorkflow(makeExecution({ agentId: 'stale' }), workflow);
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.permanent).toBe(true);
+    }
+  });
+});
+
+describe('findMissingNodeAgentReferences template precedence', () => {
+  test('skips agent-existence check when templateKey is present', () => {
+    const node = makeNode([{ agentId: 'missing', templateKey: 'coder.default', name: 'coder' }]);
+    expect(findMissingNodeAgentReferences(node, () => false)).toEqual([]);
+  });
+
+  test('still reports a missing agent when no templateKey is present', () => {
+    const node = makeNode([{ agentId: 'missing', name: 'coder' }]);
+    expect(findMissingNodeAgentReferences(node, () => false)).toEqual([
+      { agentName: 'coder', agentId: 'missing' },
+    ]);
+  });
+
+  test('skips check for whitespace-only templateKey', () => {
+    const node = makeNode([{ agentId: 'missing', templateKey: '   ', name: 'coder' }]);
+    expect(findMissingNodeAgentReferences(node, () => false)).toEqual([
+      { agentName: 'coder', agentId: 'missing' },
+    ]);
   });
 });
 

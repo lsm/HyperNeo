@@ -90,7 +90,7 @@ export function findMissingNodeAgentReferences(
   const missing: MissingNodeAgentReference[] = [];
   for (const agent of agents) {
     if (slotFilter && !slotFilter.has(agent.name)) continue;
-    if (agent.agentId && !agentExists(agent.agentId)) {
+    if (agent.agentId && !agent.templateKey?.trim() && !agentExists(agent.agentId)) {
       missing.push({ agentName: agent.name, agentId: agent.agentId });
     }
   }
@@ -160,17 +160,20 @@ export function validateExecutionAgainstWorkflow(
   }
 
   const slot = nodeAgents.find((agentSlot) => agentSlot.name === execution.agentName);
-  if (!slot?.agentId) {
+  const resolvedAgentId = slot?.templateKey?.trim()
+    ? `template:${slot.templateKey.trim()}`
+    : slot?.agentId || '';
+  if (!resolvedAgentId) {
     return {
       valid: false,
       reason: `Agent slot ${execution.agentName} no longer exists on workflow node ${execution.workflowNodeId}`,
       permanent: true,
     };
   }
-  if (execution.agentId && slot.agentId !== execution.agentId) {
+  if (execution.agentId && resolvedAgentId !== execution.agentId) {
     return {
       valid: false,
-      reason: `Agent slot ${execution.agentName} on workflow node ${execution.workflowNodeId} now references agent ${slot.agentId} instead of ${execution.agentId}`,
+      reason: `Agent slot ${execution.agentName} on workflow node ${execution.workflowNodeId} now references agent ${resolvedAgentId} instead of ${execution.agentId}`,
       permanent: true,
     };
   }

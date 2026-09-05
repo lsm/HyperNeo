@@ -88,6 +88,18 @@ describe('resolveWorkflowNodeSlot', () => {
     const resolution = resolveWorkflowNodeSlot(makeWorkflow([node]), 'node-legacy', 'anyone');
     expect(resolution?.slot).toEqual({ agentId: 'agent-legacy', name: 'legacy' });
   });
+
+  test('resolves a template-only slot', () => {
+    const node = makeNode({
+      agents: [{ agentId: '', templateKey: 'coder.default', name: 'coder' }],
+    });
+    const resolution = resolveWorkflowNodeSlot(makeWorkflow([node]), 'node-coder', 'coder');
+    expect(resolution?.slot).toEqual({
+      agentId: '',
+      templateKey: 'coder.default',
+      name: 'coder',
+    });
+  });
 });
 
 describe('buildExecutionBaseSessionId', () => {

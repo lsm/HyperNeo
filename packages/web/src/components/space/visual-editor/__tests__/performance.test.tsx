@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup, act } from '@testing-library/preact';
 import { signal, type Signal } from '@preact/signals';
-import type { SpaceWorkerAgent, SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
+import type {
+  SpaceLongHorizonAgentTemplate,
+  SpaceWorkerAgent,
+  SpaceWorkflow,
+  WorkflowNode,
+} from '@hyperneo/shared';
 
 const mockAgents: Signal<SpaceWorkerAgent[]> = signal([
   {
@@ -14,6 +19,7 @@ const mockAgents: Signal<SpaceWorkerAgent[]> = signal([
     updatedAt: 0,
   },
 ]);
+const mockAgentTemplates: Signal<SpaceLongHorizonAgentTemplate[]> = signal([]);
 const mockWorkflows: Signal<SpaceWorkflow[]> = signal([]);
 const mockWorkflowTemplates: Signal<SpaceWorkflow[]> = signal([]);
 
@@ -24,6 +30,7 @@ vi.mock('../../../../lib/space-store', () => ({
   get spaceStore() {
     return {
       agents: mockAgents,
+      agentTemplates: mockAgentTemplates,
       workflows: mockWorkflows,
       workflowTemplates: mockWorkflowTemplates,
       nodeExecutionsByNodeId: mockNodeExecutionsByNodeId,

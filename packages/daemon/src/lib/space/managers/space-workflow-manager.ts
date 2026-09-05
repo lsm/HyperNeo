@@ -16,6 +16,7 @@ import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
 import { Logger } from '../../logger.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
+import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
 import {
   validatePostApproval,
   validatePostApprovalRoutes,
@@ -596,9 +597,11 @@ export class SpaceWorkflowManager {
     for (let j = 0; j < node.agents.length; j++) {
       const entry = node.agents[j];
       const loc = `node[${index}].agents[${j}]`;
-      if (!entry.agentId || !entry.agentId.trim()) {
+      const hasAgentId = !!entry.agentId?.trim();
+      const hasTemplateKey = !!entry.templateKey?.trim();
+      if (!hasAgentId && !hasTemplateKey) {
         throw new WorkflowValidationError(
-          `${loc}: agentId must be a non-empty SpaceLongHorizonAgent UUID`
+          `${loc}: agentId must reference a SpaceLongHorizonAgent or templateKey must reference a built-in agent template`
         );
       }
       if (!entry.name || !entry.name.trim()) {
@@ -631,9 +634,19 @@ export class SpaceWorkflowManager {
       }
     }
 
-    if (this.agentLookup) {
-      for (let j = 0; j < node.agents.length; j++) {
-        const entry = node.agents[j];
+    for (let j = 0; j < node.agents.length; j++) {
+      const entry = node.agents[j];
+      if (entry.templateKey?.trim()) {
+        const template = getLongHorizonAgentTemplate(entry.templateKey.trim());
+        if (!template) {
+          throw new WorkflowValidationError(
+            `node[${index}].agents[${j}]: templateKey "${entry.templateKey}" does not match any built-in agent template`
+          );
+        }
+        entry.agentId = '';
+        continue;
+      }
+      if (this.agentLookup) {
         const agent = this.agentLookup.getAgentById(spaceId, entry.agentId);
         if (!agent) {
           throw new WorkflowValidationError(

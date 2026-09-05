@@ -1206,6 +1206,7 @@ export interface WorkerAgentModelPoolEntry {
 
 export interface WorkflowNodeAgent {
   agentId: string;
+  templateKey?: string | null;
   name: string;
   model?: string;
   thinkingLevel?: ThinkingLevel;
@@ -1362,7 +1363,8 @@ export interface ExportedWorkflowChannel {
 }
 
 export interface ExportedWorkflowNodeAgent {
-  agentRef: string;
+  agentRef?: string;
+  templateKey?: string;
   name: string;
   model?: string;
   thinkingLevel?: ThinkingLevel;
@@ -1393,7 +1395,7 @@ export interface ExportedWorkflowNode {
 }
 
 export interface ExportedSpaceWorkerAgent {
-  version: 1 | 2 | 3 | 4;
+  version: 1 | 2 | 3 | 4 | 5;
   type: 'agent';
   name: string;
   handle?: string;
@@ -1409,7 +1411,7 @@ export interface ExportedSpaceWorkerAgent {
 }
 
 export interface ExportedSpaceWorkflow {
-  version: 1 | 2 | 3 | 4;
+  version: 1 | 2 | 3 | 4 | 5;
   type: 'workflow';
   name: string;
   description?: string;
@@ -1426,7 +1428,7 @@ export interface ExportedSpaceWorkflow {
 }
 
 export interface SpaceExportBundle {
-  version: 1 | 2 | 3 | 4;
+  version: 1 | 2 | 3 | 4 | 5;
   type: 'bundle';
   name: string;
   description?: string;

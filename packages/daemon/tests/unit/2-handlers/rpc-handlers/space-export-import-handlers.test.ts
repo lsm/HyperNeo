@@ -392,7 +392,7 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(exported.tools).toEqual(['read_file']);
       expect(exported.id).toBeUndefined();
       expect(exported.spaceId).toBeUndefined();
-      expect(exported.version).toBe(4);
+      expect(exported.version).toBe(5);
       expect(exported.type).toBe('agent');
     });
 
@@ -2919,9 +2919,9 @@ describe('full export→import round-trip', () => {
     };
 
     const bundle = exportBundle([workerAgent], [workflow], 'V4 Export');
-    expect(bundle.version).toBe(4);
+    expect(bundle.version).toBe(5);
     expect(bundle.agents[0]).toMatchObject({
-      version: 4,
+      version: 5,
       type: 'agent',
       name: 'V4 Worker',
       handle: 'legacy-handle',
