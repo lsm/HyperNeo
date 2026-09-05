@@ -2601,6 +2601,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         task?: SpaceTask | null;
         declared?: string[];
         resolutionOutcome?: Awaited<ReturnType<SessionEnsurer>>;
+        liveSession?: { session: { id: string } } | null;
         includeQueue?: boolean;
       } = {}
     ) {
@@ -2626,6 +2627,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         injectSubSessionMessage: mock(async (sid: string, msg: string) => {
           injectCalls.push({ sessionId: sid, message: msg });
         }),
+        getSubSessionByAgentName: mock(async () => opts.liveSession ?? null),
         getWorkflowDeclaredAgentNamesForTask: mock(() => declared),
       };
 
@@ -2746,6 +2748,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         enqueueCalls,
       } = setupActivate({
         resolutionOutcome: { kind: 'resolved', sessionId: 'sess-live-reviewer', created: false },
+        liveSession: { session: { id: 'sess-live-reviewer' } },
       });
       const result = (await (h.get('space.task.activateNodeAgent') as RequestHandler)({
         spaceId: 'space-1',
@@ -2792,7 +2795,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         workflowNodeId: 'node-that-does-not-declare-reviewer',
         waitCapMs: 0,
       });
-      expect(enqueueCalls).toHaveLength(0);
+      expect(enqueueCalls).toHaveLength(1);
     });
 
     it('queues after zero-wait activation when the worker session is unresolved', async () => {

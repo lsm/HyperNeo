@@ -86,6 +86,7 @@ export interface PendingAgentMessageQueue {
     idempotencyKey?: string | null;
     deliveryMode?: 'immediate' | 'defer';
   }): { record: { id: string }; deduped: boolean };
+  markFailed?(id: string, error: string): unknown;
 }
 
 type SpaceTaskMessageTarget =
@@ -162,13 +163,14 @@ export function setupSpaceTaskMessageHandlers(
         }
         return { kind: 'unresolved', reason: 'activation_timeout' };
       }
-      const activated = taskAgentManager.ensureWorkflowNodeActivationForAgent
-        ? await taskAgentManager.ensureWorkflowNodeActivationForAgent(
-            target.taskId,
-            target.agentName,
-            target.workflowNodeId ? { workflowNodeId: target.workflowNodeId } : undefined
-          )
-        : false;
+      if (!taskAgentManager.ensureWorkflowNodeActivationForAgent) {
+        return { kind: 'unresolved', reason: 'activation_timeout' };
+      }
+      const activated = await taskAgentManager.ensureWorkflowNodeActivationForAgent(
+        target.taskId,
+        target.agentName,
+        target.workflowNodeId ? { workflowNodeId: target.workflowNodeId } : undefined
+      );
       return activated
         ? { kind: 'unresolved', reason: 'activation_timeout' }
         : { kind: 'unresolved', reason: 'activate_failed' };
@@ -439,7 +441,8 @@ export function setupSpaceTaskMessageHandlers(
       (item) =>
         item.outcome.reason !== 'activation_timeout' &&
         item.outcome.reason !== 'post_approval_pending' &&
-        item.outcome.reason !== 'restore_timeout'
+        item.outcome.reason !== 'restore_timeout' &&
+        item.outcome.reason !== 'activate_failed'
     );
     if (rejected) {
       throw new Error(
@@ -545,6 +548,14 @@ export function setupSpaceTaskMessageHandlers(
     }
 
     if (params.target?.kind === 'node_agent' || params.target?.kind === 'generic') {
+      if (
+        params.target.kind === 'node_agent' &&
+        !params.target.sessionId &&
+        !params.target.nodeExecutionId &&
+        (!params.target.agentName || params.target.agentName.trim() === '')
+      ) {
+        throw new Error('Node-agent target requires agentName, nodeExecutionId, or sessionId');
+      }
       const target =
         params.target.kind === 'generic'
           ? resolveGenericTarget(task, params.target.target)
@@ -779,6 +790,13 @@ export function setupSpaceTaskMessageHandlers(
     }
 
     const outcome = await ensureWorker(params.taskId, params.agentName, params.workflowNodeId);
+    if (
+      outcome.kind === 'unresolved' &&
+      outcome.reason !== 'activation_timeout' &&
+      queuedMessageId !== null
+    ) {
+      pendingMessageQueue?.markFailed?.(queuedMessageId, outcome.reason);
+    }
     if (outcome.kind === 'resolved') {
       if (params.message && queuedMessageId === null) {
         await injectResolvedSession(
