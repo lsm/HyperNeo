@@ -5,6 +5,12 @@ import type { EnsureSessionOutcome, SessionTargetWorker } from './target.ts';
 export const WORKER_SESSION_POLL_INTERVAL_MS = 1_000;
 export const WORKER_SESSION_WAIT_CAP_MS = 30_000;
 
+const workerWaitCapMs = (target: SessionTargetWorker): number => {
+  const requested = target.waitCapMs;
+  if (requested === undefined || Number.isNaN(requested)) return WORKER_SESSION_WAIT_CAP_MS;
+  return Math.max(0, Math.min(requested, WORKER_SESSION_WAIT_CAP_MS));
+};
+
 export function newestWorkerSessionId(rows: WorkerExecutionSession[]): string | null {
   const live = rows.filter(
     (row) => row.sessionId !== null && row.status !== 'cancelled' && row.status !== 'pending'
@@ -130,7 +136,7 @@ export async function postApprovalStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
-  const cap = delay(WORKER_SESSION_WAIT_CAP_MS);
+  const cap = delay(workerWaitCapMs(target));
   try {
     const worker = deps.getPostApprovalWorkerSession(target.taskId);
     if (worker !== null) {
@@ -189,7 +195,7 @@ export async function postApprovalDoneStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
-  const cap = delay(WORKER_SESSION_WAIT_CAP_MS);
+  const cap = delay(workerWaitCapMs(target));
   try {
     const worker = deps.getPostApprovalWorkerSession(target.taskId);
     if (worker !== null) {
@@ -224,7 +230,7 @@ export async function awaitRoutingStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
-  const cap = delay(WORKER_SESSION_WAIT_CAP_MS);
+  const cap = delay(workerWaitCapMs(target));
   try {
     for (;;) {
       if (deps.readWorkerTaskPhase(target.taskId) !== 'routing') {
@@ -292,12 +298,7 @@ export async function awaitSessionStage(
   target: SessionTargetWorker,
   deps: SessionResolutionDeps
 ): Promise<EnsureSessionOutcome> {
-  const requestedWaitCapMs = target.waitCapMs;
-  const waitCapMs =
-    requestedWaitCapMs === undefined || Number.isNaN(requestedWaitCapMs)
-      ? WORKER_SESSION_WAIT_CAP_MS
-      : Math.max(0, Math.min(requestedWaitCapMs, WORKER_SESSION_WAIT_CAP_MS));
-  const cap = delay(waitCapMs);
+  const cap = delay(workerWaitCapMs(target));
   try {
     for (;;) {
       if (deps.readWorkerTaskPhase(target.taskId) !== 'run_active') {

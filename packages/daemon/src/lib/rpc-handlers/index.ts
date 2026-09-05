@@ -39,6 +39,8 @@ import { setupQuestionHandlers } from './question-handlers.ts';
 import { setupSpaceHandlers } from './space-handlers.ts';
 import { setupSpaceTaskHandlers, type SpaceTaskManagerFactory } from './space-task-handlers.ts';
 import { setupSpaceTaskMessageHandlers } from './space-task-message-handlers.ts';
+import { createDefaultSessionResolutionDeps } from '../session-resolution/default-deps.ts';
+import { ensureSession } from '../session-resolution/ensure-session.ts';
 import { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
 import { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
 import { ReplyRoutingRegistry } from '../space/runtime/reply-routing-registry.ts';
@@ -1106,6 +1108,14 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   deps.sessionManager.setSpaceRuntimeMcpProvider(spaceRuntimeService);
   spaceRuntimeService.start();
 
+  const sessionResolutionDeps = createDefaultSessionResolutionDeps({
+    sessionManager: deps.sessionManager,
+    taskAgentManager,
+    spaceRuntimeService,
+    nodeExecutionRepo,
+    taskRepo: spaceTaskRepo,
+    longHorizonAgentRepo,
+  });
   setupSpaceTaskMessageHandlers(
     deps.messageHub,
     taskAgentManager,
@@ -1113,10 +1123,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     nodeExecutionRepo,
     channelCycleRepo,
-    async (runId, nodeId) => {
-      await spaceRuntimeService.activateWorkflowNode(runId, nodeId);
-    },
-    pendingMessageRepo
+    undefined,
+    pendingMessageRepo,
+    (target) => ensureSession(target, sessionResolutionDeps)
   );
 
   setupSpaceExportImportHandlers(
