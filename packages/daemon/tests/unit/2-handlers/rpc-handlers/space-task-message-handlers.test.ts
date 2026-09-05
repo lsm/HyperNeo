@@ -878,14 +878,19 @@ describe('setupSpaceTaskMessageHandlers', () => {
           declared: ['coder', 'reviewer', 'merger'],
         });
 
-        await expect(
-          call('space.task.sendMessage', {
-            spaceId: 'space-1',
-            taskId: 'task-1',
-            message: 'continue',
-            target: { kind: 'node_agent', agentName: 'coder' },
-          })
-        ).rejects.toThrow('Workflow agent not found: coder');
+        const result = await call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: 'continue',
+          target: { kind: 'node_agent', agentName: 'coder' },
+        });
+
+        expect(result).toEqual({
+          ok: true,
+          routedTo: ['coder'],
+          activated: true,
+          delivered: false,
+        });
         expect(injectSubSession).not.toHaveBeenCalled();
       });
 
@@ -2775,7 +2780,13 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(injectCalls).toEqual([
         { sessionId: 'sess-live-reviewer', message: '[Message from human]: hi reviewer' },
       ]);
-      expect(enqueueCalls).toHaveLength(0);
+      expect(enqueueCalls).toEqual([
+        {
+          targetAgentName: 'reviewer',
+          message: 'hi reviewer',
+          sourceAgentName: 'human',
+        },
+      ]);
     });
 
     it('throws when ensureSession reports activation failure', async () => {
@@ -2887,6 +2898,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
         kind: 'worker',
         taskId: 'task-1',
         agentName: 'reviewer',
+        reopenReason: 'web client lazy activation of "reviewer"',
+        reopenBy: 'web-client',
         waitCapMs: 0,
       });
     });
