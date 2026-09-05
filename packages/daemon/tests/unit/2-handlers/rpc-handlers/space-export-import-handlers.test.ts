@@ -875,6 +875,48 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(created?.nodes[0].agents[0].agentId).toBe(coder.id);
     });
 
+    it('binds the agent when a stored template shadows the built-in key on the target', async () => {
+      new SpaceAgentTemplateRepository(db as any).create({
+        key: 'research.default',
+        handle: 'research-shadow',
+        displayName: 'Shadow',
+        instructions: 'Unrelated stored override',
+      });
+      const coder = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+
+      const bundle = {
+        version: 5,
+        type: 'bundle',
+        name: 'Templates',
+        agents: [],
+        exportedAt: 1000,
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Pipe',
+            nodes: [
+              {
+                name: 'N',
+                agents: [{ name: 'c', templateKey: 'research.default', agentRef: 'Coder' }],
+              },
+            ],
+            startNode: 'N',
+            tags: [],
+          },
+        ],
+      };
+
+      await call<ImportExecuteResult>(handlers, 'spaceImport.execute', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+
+      const created = workflowRepo.listWorkflows(SPACE_ID).find((w) => w.name === 'Pipe');
+      expect(created?.nodes[0].agents[0].agentId).toBe(coder.id);
+      expect(created?.nodes[0].agents[0].templateKey).toBeUndefined();
+    });
+
     it('treats orphaned migration mirrors as missing in imports', async () => {
       const worker = seedAgent({ spaceId: SPACE_ID, name: 'Ghost Twin', handle: 'ghost' });
       db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(worker.id);
@@ -1044,6 +1086,42 @@ describe('Space Export/Import RPC Handlers', () => {
   });
 
   describe('spaceExport.bundle', () => {
+    it('requires an exportable migrated fallback agent excluded by the agentIds filter', async () => {
+      new SpaceAgentTemplateRepository(db as any).create({
+        key: 'migrated.coder',
+        handle: 'coder',
+        displayName: 'Coder',
+      });
+      const coder = seedAgent({ spaceId: SPACE_ID, name: 'Coder', handle: 'coder' });
+      const other = seedAgent({ spaceId: SPACE_ID, name: 'Other', handle: 'other' });
+      workflowRepo.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Pipe',
+        nodes: [
+          {
+            name: 'S',
+            agents: [{ agentId: coder.id, templateKey: 'migrated.coder', name: 'coder' }],
+          },
+        ],
+        startNodeId: 'S',
+        tags: [],
+        completionAutonomyLevel: 3,
+        createdAt: 1,
+        updatedAt: 1,
+      } as never);
+
+      await expect(
+        call(handlers, 'spaceExport.bundle', { spaceId: SPACE_ID, agentIds: [other.id] })
+      ).rejects.toThrow('not included in this export');
+
+      const result = await call<{ bundle: { agents: Array<{ name: string }> } }>(
+        handlers,
+        'spaceExport.bundle',
+        { spaceId: SPACE_ID, agentIds: [coder.id] }
+      );
+      expect(result.bundle.agents.map((a) => a.name)).toContain('Coder');
+    });
+
     it('exports all agents and workflows', async () => {
       const agent = seedAgent({ spaceId: SPACE_ID, name: 'A' });
       workflowManager.createWorkflow({

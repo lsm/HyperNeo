@@ -91,9 +91,8 @@ export function runMigration228(db: BunDatabase): void {
 
         const agentRow = agentsById.get(agentId);
         if (agentRow && !isRunnableAgentRow(agentRow)) continue;
-        const seed = agentRow
-          ? agentRow.handle || agentRow.display_name || agentRow.id
-          : slot.name || agentId;
+        const slotName = typeof slot.name === 'string' && slot.name.trim() ? slot.name : agentId;
+        const seed = agentRow ? agentRow.handle || agentRow.display_name || agentRow.id : slotName;
         let key = templateKeysByAgentId.get(agentId);
         if (!key) {
           key = allocateMigratedTemplateKey(seed, agentId, claimed);
@@ -102,10 +101,7 @@ export function runMigration228(db: BunDatabase): void {
           templateRepo.create(
             agentRow
               ? synthesizeWorkflowAgentTemplate(rowToSynthesisSource(agentRow), key)
-              : synthesizeOrphanWorkflowAgentTemplate(
-                  { agentId, slotName: typeof slot.name === 'string' ? slot.name : '' },
-                  key
-                )
+              : synthesizeOrphanWorkflowAgentTemplate({ agentId, slotName }, key)
           );
         }
 
@@ -113,11 +109,7 @@ export function runMigration228(db: BunDatabase): void {
         changed = true;
 
         if (clearExecutionAgentId) {
-          clearExecutionAgentId.run(
-            nodeRow.id,
-            typeof slot.name === 'string' ? slot.name : '',
-            agentId
-          );
+          clearExecutionAgentId.run(nodeRow.id, slotName, agentId);
         }
       }
 

@@ -375,6 +375,30 @@ describe('migration 228: workflow agent refs to template keys', () => {
     db.close();
   });
 
+  test('clears executions recorded under the agentId-normalized name of blank-named slots', () => {
+    const db = makeDb();
+    insertSpace(db, 'space-1');
+    insertAgent(db, {
+      id: 'agent-coder',
+      spaceId: 'space-1',
+      handle: 'coder',
+      displayName: 'Coder',
+      instructions: 'Write the code',
+    });
+    insertWorkflowWithNode(db, 'space-1', 'node-1', {
+      agents: [{ agentId: 'agent-coder', name: '' }],
+    });
+    insertWorkflowRun(db, 'run-1', 'space-1', 'wf-node-1');
+    insertNodeExecution(db, 'node-1', 'agent-coder', 'agent-coder');
+
+    runMigration228(db);
+
+    expect(nodeExecutionAgentId(db, 'node-1', 'agent-coder')).toBeNull();
+    const slots = nodeConfig(db, 'node-1').agents as Array<Record<string, unknown>>;
+    expect(slots[0].templateKey).toBe('migrated.coder');
+    db.close();
+  });
+
   test('is idempotent when run twice', () => {
     const db = makeDb();
     insertSpace(db, 'space-1');

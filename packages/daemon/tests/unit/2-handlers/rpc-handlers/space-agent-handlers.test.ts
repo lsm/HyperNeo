@@ -9,6 +9,7 @@ import {
 } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceAgentManager } from '../../../../src/lib/space/managers/space-agent-manager';
 import { SpaceAgentTemplateManager } from '../../../../src/lib/space/managers/space-agent-template-manager';
+import { countWorkflowSlotsReferencingTemplate } from '../../../../src/lib/space/managers/space-agent-template-references';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
@@ -211,7 +212,11 @@ describe('Space Agent RPC Handlers', () => {
       createTestDatabaseFacade(db),
       longHorizonRepo,
       undefined,
-      new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db as any))
+      new SpaceAgentTemplateManager(
+        new SpaceAgentTemplateRepository(db as any),
+        undefined,
+        (key: string) => countWorkflowSlotsReferencingTemplate(db as any, key)
+      )
     );
   });
 
@@ -1903,7 +1908,11 @@ describe('Space Agent RPC Handlers', () => {
         createTestDatabaseFacade(db),
         longHorizonRepo,
         runtimeService as any,
-        new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db as any))
+        new SpaceAgentTemplateManager(
+          new SpaceAgentTemplateRepository(db as any),
+          undefined,
+          (key: string) => countWorkflowSlotsReferencingTemplate(db as any, key)
+        )
       );
 
       const created = await call<{ agent: { id: string } }>(

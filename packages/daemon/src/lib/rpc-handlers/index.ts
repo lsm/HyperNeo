@@ -89,6 +89,7 @@ import { SpaceAgentRepository } from '../../storage/repositories/space-agent-rep
 import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
+import { countWorkflowSlotsReferencingTemplate } from '../space/managers/space-agent-template-references.ts';
 import {
   deliverSpaceAgentMessage,
   type SpaceAgentInjectionOutcome,
@@ -921,7 +922,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.db,
     longHorizonAgentRepo,
     spaceRuntimeService,
-    new SpaceAgentTemplateManager(agentTemplateRepo)
+    new SpaceAgentTemplateManager(agentTemplateRepo, undefined, (key: string) =>
+      countWorkflowSlotsReferencingTemplate(deps.db.getDatabase(), key)
+    )
   );
 
   setupSessionHandlers(
