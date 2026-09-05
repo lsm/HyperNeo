@@ -210,7 +210,7 @@ describe('SpaceLongHorizonAgents', () => {
     cleanup();
   });
 
-  it('renders the Glass Workspace summary, configured cards, and template hierarchy', () => {
+  it('renders the Glass Workspace summary with Templates above the Agents section', () => {
     mockAgents.value = [makeLongHorizonAgent()];
     mockTemplates.value = [
       {
@@ -230,8 +230,13 @@ describe('SpaceLongHorizonAgents', () => {
     expect(getByTestId('space-agents-introduction')).toBeTruthy();
     expect(getByTestId('configured-agent-count').textContent).toBe('1');
     expect(getByTestId('agent-template-count').textContent).toBe('1');
-    expect(getByRole('region', { name: 'Configured agents' })).toBeTruthy();
-    expect(getByRole('heading', { name: 'Templates · 1' })).toBeTruthy();
+    expect(getByTestId('agent-instance-count').textContent).toBe('1');
+    expect(getByRole('region', { name: 'Agents' })).toBeTruthy();
+    const templatesHeading = getByRole('heading', { name: 'Templates · 1' });
+    const agentsHeading = getByRole('heading', { name: 'Agents · 1' });
+    expect(
+      templatesHeading.compareDocumentPosition(agentsHeading) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
     expect(getByText('Research Long Horizon')).toBeTruthy();
     expect(getByText('QA Engineer')).toBeTruthy();
   });
@@ -501,7 +506,7 @@ describe('SpaceLongHorizonAgents', () => {
 
     fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
 
-    expect(getByRole('region', { name: 'Configured agents' })).toBeTruthy();
+    expect(getByRole('region', { name: 'Agents' })).toBeTruthy();
     expect(getByRole('button', { name: 'Create agent' })).toBeTruthy();
     expect(getByRole('button', { name: 'Close agent editor' })).toBeTruthy();
   });
@@ -1136,11 +1141,11 @@ describe('SpaceLongHorizonAgents', () => {
     );
   });
 
-  it('renders a readable empty configured-agent state', () => {
+  it('renders a readable empty agents state pointing at the templates above', () => {
     const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
-    expect(getByText('No configured agents yet')).toBeTruthy();
-    expect(getByText('Add a custom agent or choose a template below.')).toBeTruthy();
+    expect(getByText('No agents yet')).toBeTruthy();
+    expect(getByText('Add a custom agent or choose a template above.')).toBeTruthy();
   });
 
   it('shows the unified record for a shared handle (worker record no longer wins)', () => {
@@ -1249,6 +1254,53 @@ describe('SpaceLongHorizonAgents', () => {
     fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
 
     expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-slug', 'session-research');
+  });
+
+  it('shows session presence on instance cards', () => {
+    mockAgents.value = [
+      makeLongHorizonAgent(),
+      makeLongHorizonAgent({
+        id: 'lh-2',
+        handle: 'draft',
+        displayName: 'Draft Agent',
+        sessionId: null,
+      }),
+    ];
+
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    const liveCard = getByText('Research Long Horizon').closest('[role="button"]');
+    expect(liveCard?.textContent).toContain('Session');
+    expect(getByText('Draft Agent').closest('[role="button"]')).toBeNull();
+    expect(getByText('No session')).toBeTruthy();
+  });
+
+  it('keeps a sessionless instance card inert', () => {
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Research Long Horizon'));
+
+    expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
+  });
+
+  it('treats the space chat as the coordinator session', () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({
+        handle: 'coordinator',
+        displayName: 'Lead Coordinator',
+        sessionId: null,
+      }),
+    ];
+
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    const card = getByText('Lead Coordinator').closest('[role="button"]')!;
+    expect(card.textContent).toContain('Session');
+    fireEvent.click(card);
+
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'space:chat:space-1');
   });
 
   it('loads active-reminder counts via a single batched RPC', async () => {
