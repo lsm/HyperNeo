@@ -3177,7 +3177,10 @@ describe('SpaceStore — refreshAgents preserves cache on failure', () => {
 });
 
 describe('SpaceStore — template CRUD methods', () => {
-  beforeEach(resetStore);
+  beforeEach(async () => {
+    await resetStore();
+    spaceStore.agentTemplates.value = [];
+  });
   afterEach(() => vi.clearAllMocks());
 
   it('fetchTemplates() replaces agentTemplates with the merged library mapped to the pane shape', async () => {
