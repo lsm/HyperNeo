@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
 import {
   getPresetAgentTemplates,
+  LEGACY_REVIEWER_PROMPT,
   seedUnifiedSpaceAgents,
 } from '../../../../../src/lib/space/agents/seed-agents.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
@@ -69,6 +70,37 @@ function insertCustomNamedCoder(db: Database): void {
   );
 }
 
+function insertNodeWithAgents(db: Database, nodeId: string, config: string): void {
+  db.prepare(
+    `INSERT INTO space_workflows (
+       id, space_id, name, created_at, updated_at
+     ) VALUES ('workflow-${nodeId}', 'space-1', 'Workflow ${nodeId}', 1, 1)`
+  ).run();
+  db.prepare(
+    `INSERT INTO space_workflow_nodes (
+       id, workflow_id, name, config, created_at, updated_at
+     ) VALUES (?, 'workflow-${nodeId}', 'Node', ?, 1, 1)`
+  ).run(nodeId, config);
+}
+
+function insertPinnedRun(db: Database, runId: string, status: string, agents: unknown[]): void {
+  db.prepare(
+    `INSERT INTO space_workflows (
+       id, space_id, name, created_at, updated_at
+     ) VALUES ('workflow-${runId}', 'space-1', 'Workflow ${runId}', 1, 1)`
+  ).run();
+  db.prepare(
+    `INSERT INTO space_workflow_definition_versions (
+       workflow_id, version_hash, space_id, payload, source, created_at
+     ) VALUES ('workflow-${runId}', 'hash-${runId}', 'space-1', ?, 'backfill', 1)`
+  ).run(JSON.stringify({ nodes: [{ name: 'Node', agents }] }));
+  db.prepare(
+    `INSERT INTO space_workflow_runs (
+       id, space_id, workflow_id, definition_version, title, status, created_at, updated_at
+     ) VALUES (?, 'space-1', 'workflow-${runId}', 'hash-${runId}', 'Run', ?, 1, 1)`
+  ).run(runId, status);
+}
+
 function remaining(repo: SpaceLongHorizonAgentRepository): string[] {
   return repo.listBySpaceId('space-1').map((agent) => agent.displayName);
 }
@@ -79,6 +111,43 @@ describe('migration 232: retire pristine seeded worker agents', () => {
 
     runMigration232(db);
 
+    expect(remaining(repo)).toEqual([]);
+    db.close();
+  });
+
+  test('retires a Reviewer whose legacy prompt lags behind later restamps', () => {
+    const { db, repo, idsByName } = createDb();
+    db.prepare(`UPDATE space_agents SET custom_prompt = ? WHERE id = ?`).run(
+      LEGACY_REVIEWER_PROMPT,
+      idsByName.get('Reviewer')!
+    );
+
+    runMigration232(db);
+
+    expect(remaining(repo)).toEqual([]);
+    db.close();
+  });
+
+  test('retires a mirror whose handle carries repeated collision suffixes', () => {
+    const { db, repo, idsByName } = createDb();
+    const coderId = idsByName.get('Coder')!;
+    db.prepare(`UPDATE space_long_horizon_agents SET handle = ? WHERE id = ?`).run(
+      `coder-${coderId}-${coderId}`,
+      coderId
+    );
+
+    runMigration232(db);
+
+    expect(remaining(repo)).toEqual([]);
+    db.close();
+  });
+
+  test('ignores junk agent entries and malformed node configs', () => {
+    const { db, repo } = createDb();
+    insertNodeWithAgents(db, 'node-junk', JSON.stringify({ agents: [null, 'garbage', 42] }));
+    insertNodeWithAgents(db, 'node-bad-json', 'not-json-at-all');
+
+    expect(() => runMigration232(db)).not.toThrow();
     expect(remaining(repo)).toEqual([]);
     db.close();
   });
@@ -98,20 +167,25 @@ describe('migration 232: retire pristine seeded worker agents', () => {
 
     runMigration232(db);
 
-    expect(remaining(repo)).toEqual(['Coder', 'General', 'Personal']);
+    expect(remaining(repo)).toEqual(['Coder', 'Personal']);
     db.close();
   });
 
   test('keeps mirrors customized outside the fingerprint', () => {
     const { db, repo, idsByName } = createDb();
+    const qaPreset = getPresetAgentTemplates().find((preset) => preset.name === 'QA');
     repo.update(idsByName.get('Coder')!, { model: 'claude-sonnet-5' });
     repo.update(idsByName.get('General')!, { handle: 'my-renamed-general' });
     repo.update(idsByName.get('Planner')!, { sessionId: 'session-1' });
     repo.update(idsByName.get('Research')!, { thinkingLevel: 'think16k' });
+    repo.update(idsByName.get('Reviewer')!, { displayName: 'REVIEWER' });
+    repo.update(idsByName.get('QA')!, {
+      toolPermissions: { mode: 'restricted', tools: [...(qaPreset?.tools ?? [])] },
+    });
 
     runMigration232(db);
 
-    expect(remaining(repo)).toEqual(['Coder', 'General', 'Planner', 'Research']);
+    expect(remaining(repo)).toEqual(['Coder', 'General', 'Planner', 'Research', 'Reviewer', 'QA']);
     db.close();
   });
 
@@ -127,16 +201,22 @@ describe('migration 232: retire pristine seeded worker agents', () => {
 
   test('keeps a pristine worker still referenced by a workflow slot', () => {
     const { db, repo, idsByName } = createDb();
-    db.prepare(
-      `INSERT INTO space_workflows (
-         id, space_id, name, created_at, updated_at
-       ) VALUES ('workflow-1', 'space-1', 'Workflow', 1, 1)`
-    ).run();
-    db.prepare(
-      `INSERT INTO space_workflow_nodes (
-         id, workflow_id, name, config, created_at, updated_at
-       ) VALUES ('node-1', 'workflow-1', 'Node', ?, 1, 1)`
-    ).run(JSON.stringify({ agents: [{ agentId: idsByName.get('Coder') }] }));
+    insertNodeWithAgents(
+      db,
+      'node-ref',
+      JSON.stringify({ agents: [{ agentId: idsByName.get('Coder') }] })
+    );
+
+    runMigration232(db);
+
+    expect(remaining(repo)).toEqual(['Coder']);
+    db.close();
+  });
+
+  test('keeps a pristine worker referenced only by a pinned nonterminal run', () => {
+    const { db, repo, idsByName } = createDb();
+    insertPinnedRun(db, 'run-live', 'in_progress', [{ agentId: idsByName.get('Coder') }]);
+    insertPinnedRun(db, 'run-done', 'done', [{ agentId: idsByName.get('General') }]);
 
     runMigration232(db);
 

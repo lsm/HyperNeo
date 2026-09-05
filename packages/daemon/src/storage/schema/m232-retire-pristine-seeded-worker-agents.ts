@@ -3,7 +3,6 @@ import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-
 import {
   getPresetAgentTemplates,
   retireRemovedPresetAgents,
-  type PresetAgentTemplate,
 } from '../../lib/space/agents/seed-agents.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
 import { SpaceLongHorizonAgentRepository } from '../repositories/space-long-horizon-agent-repository.ts';
@@ -11,11 +10,12 @@ import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 interface LegacyWorkerRow {
   id: string;
-  description: string | null;
-  tools: string | null;
-  custom_prompt: string | null;
   template_name: string | null;
 }
+
+const PRESET_HASHES = new Map(
+  getPresetAgentTemplates().map((preset) => [preset.name, computeAgentTemplateHash(preset)])
+);
 
 const PRESETS_BY_TEMPLATE_NAME = new Map(
   getPresetAgentTemplates().map((preset) => [preset.name, preset])
@@ -25,18 +25,6 @@ function tableExists(db: BunDatabase, tableName: string): boolean {
   return !!db
     .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`)
     .get(tableName);
-}
-
-function parseTools(raw: string | null): string[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed)
-      ? parsed.filter((tool): tool is string => typeof tool === 'string')
-      : [];
-  } catch {
-    return [];
-  }
 }
 
 function collectAgentIds(db: BunDatabase, sql: string, column: string, ids: Set<string>): void {
@@ -75,18 +63,11 @@ function agentsWithLiveState(db: BunDatabase): Set<string> {
   return ids;
 }
 
-function isUntouchedMirror(agent: SpaceLongHorizonAgent, preset: PresetAgentTemplate): boolean {
-  return (
-    (agent.handle === preset.handle || agent.handle === `${preset.handle}-${agent.id}`) &&
-    agent.status === 'active' &&
-    agent.sessionId === null &&
-    agent.autonomyLevel === null &&
-    agent.model === null &&
-    agent.thinkingLevel === null &&
-    agent.provider === null &&
-    agent.settingSources === null &&
-    (agent.modelPool == null || agent.modelPool.length === 0)
-  );
+function isMigratedHandle(handle: string, presetHandle: string, agentId: string): boolean {
+  const suffix = `-${agentId}`;
+  let base = handle;
+  while (base.endsWith(suffix)) base = base.slice(0, base.length - suffix.length);
+  return base === presetHandle;
 }
 
 function isPristineWorker(
@@ -98,26 +79,84 @@ function isPristineWorker(
   if (liveAgentIds.has(agent.id)) return false;
   const legacy = legacyRows.get(agent.id);
   const preset = PRESETS_BY_TEMPLATE_NAME.get(legacy?.template_name ?? '');
-  if (!legacy || !preset || !isUntouchedMirror(agent, preset)) return false;
-  const presetHash = computeAgentTemplateHash(preset);
-  const legacyHash = computeAgentTemplateHash({
-    name: preset.name,
-    description: legacy.description ?? '',
-    tools: parseTools(legacy.tools),
-    customPrompt: legacy.custom_prompt ?? '',
-  });
-  if (legacyHash !== presetHash) return false;
-  const tools = Array.isArray(agent.toolPermissions.tools)
-    ? agent.toolPermissions.tools.filter((tool): tool is string => typeof tool === 'string')
+  if (!legacy || !preset) return false;
+  if (agent.displayName !== preset.name) return false;
+  if (!isMigratedHandle(agent.handle, preset.handle, agent.id)) return false;
+  if (
+    agent.status !== 'active' ||
+    agent.sessionId !== null ||
+    agent.autonomyLevel !== null ||
+    agent.model !== null ||
+    agent.thinkingLevel !== null ||
+    agent.provider !== null ||
+    agent.settingSources !== null ||
+    (agent.modelPool != null && agent.modelPool.length > 0)
+  ) {
+    return false;
+  }
+  const permissions = (agent.toolPermissions ?? {}) as Record<string, unknown>;
+  if (Object.keys(permissions).some((key) => key !== 'tools')) return false;
+  const tools = Array.isArray(permissions.tools)
+    ? permissions.tools.filter((tool): tool is string => typeof tool === 'string')
     : [];
   return (
     computeAgentTemplateHash({
-      name: agent.displayName,
+      name: preset.name,
       description: agent.description ?? '',
       tools,
       customPrompt: agent.instructions,
-    }) === presetHash
+    }) === PRESET_HASHES.get(preset.name)
   );
+}
+
+function referencedAgentIds(db: BunDatabase): Set<string> {
+  const referenced = new Set<string>();
+  collectAgentIds(
+    db,
+    `SELECT DISTINCT json_extract(slot.value, '$.agentId') AS agent_id
+       FROM space_workflow_nodes nodes,
+            json_each(
+              CASE WHEN json_valid(nodes.config) THEN nodes.config END,
+              '$.agents'
+            ) slot
+      WHERE slot.type = 'object'
+        AND json_type(slot.value, '$.agentId') = 'text'
+        AND json_extract(slot.value, '$.agentId') != ''`,
+    'agent_id',
+    referenced
+  );
+  if (
+    !tableExists(db, 'space_workflow_definition_versions') ||
+    !tableExists(db, 'space_workflow_runs')
+  ) {
+    return referenced;
+  }
+  collectAgentIds(
+    db,
+    `SELECT DISTINCT json_extract(slot.value, '$.agentId') AS agent_id
+       FROM space_workflow_definition_versions versions
+       JOIN space_workflow_runs runs
+         ON runs.workflow_id = versions.workflow_id
+        AND runs.definition_version = versions.version_hash
+       JOIN json_each(
+              CASE WHEN json_valid(versions.payload) THEN versions.payload END,
+              '$.nodes'
+            ) node
+       JOIN json_each(
+              CASE
+                WHEN json_valid(node.value) AND json_type(node.value) = 'object'
+                THEN node.value
+              END,
+              '$.agents'
+            ) slot
+      WHERE runs.status IN ('pending', 'in_progress', 'blocked')
+        AND slot.type = 'object'
+        AND json_type(slot.value, '$.agentId') = 'text'
+        AND json_extract(slot.value, '$.agentId') != ''`,
+    'agent_id',
+    referenced
+  );
+  return referenced;
 }
 
 export function runMigration232(db: BunDatabase): void {
@@ -129,33 +168,19 @@ export function runMigration232(db: BunDatabase): void {
     return;
   }
   const legacyRows = new Map(
-    (
-      db
-        .prepare(`SELECT id, description, tools, custom_prompt, template_name FROM space_agents`)
-        .all() as LegacyWorkerRow[]
-    ).map((row) => [row.id, row])
+    (db.prepare(`SELECT id, template_name FROM space_agents`).all() as LegacyWorkerRow[]).map(
+      (row) => [row.id, row]
+    )
   );
-  const referenced = new Set(
-    (
-      db
-        .prepare(
-          `SELECT DISTINCT json_extract(slot.value, '$.agentId') AS agent_id
-             FROM space_workflow_nodes nodes, json_each(nodes.config, '$.agents') slot
-            WHERE json_valid(nodes.config)
-              AND json_type(slot.value, '$.agentId') = 'text'
-              AND json_extract(slot.value, '$.agentId') != ''`
-        )
-        .all() as Array<{ agent_id: string }>
-    ).map((row) => row.agent_id)
-  );
-  const liveState = agentsWithLiveState(db);
+  const liveAgentIds = agentsWithLiveState(db);
+  const referenced = referencedAgentIds(db);
   const agentRepo = new SpaceLongHorizonAgentRepository(db);
   const spaces = db.prepare(`SELECT id FROM spaces`).all() as Array<{ id: string }>;
   for (const space of spaces) {
     retireRemovedPresetAgents(space.id, {
       agentRepo,
       referencedAgentIds: referenced,
-      isPristineRetiredRow: (agent) => isPristineWorker(agent, legacyRows, liveState),
+      isPristineRetiredRow: (agent) => isPristineWorker(agent, legacyRows, liveAgentIds),
     });
   }
 }
