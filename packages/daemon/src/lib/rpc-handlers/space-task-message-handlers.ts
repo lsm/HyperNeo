@@ -883,6 +883,7 @@ export function setupSpaceTaskMessageHandlers(
       'activation_timeout',
       'post_approval_pending',
       'restore_timeout',
+      'spawn_timeout',
     ]);
     if (
       outcome.kind === 'unresolved' &&

@@ -165,11 +165,19 @@ export async function postApprovalStage(
     if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval') {
       return ensureWorkerSession(target, deps);
     }
-    const spawnedSessionId = await deps.spawnPostApprovalWorker(
-      target.taskId,
-      target.agentName,
-      target.workflowNodeId ?? worker?.nodeId ?? undefined
-    );
+    const spawnedSessionId = await Promise.race([
+      deps.spawnPostApprovalWorker(
+        target.taskId,
+        target.agentName,
+        target.workflowNodeId ?? worker?.nodeId ?? undefined
+      ),
+      cap.promise.then(() => null),
+    ]);
+    if (cap.fired) {
+      return deps.readWorkerTaskPhase(target.taskId) === 'post_approval'
+        ? { kind: 'unresolved', reason: 'spawn_timeout' }
+        : ensureWorkerSession(target, deps);
+    }
     if (deps.readWorkerTaskPhase(target.taskId) !== 'post_approval') {
       return ensureWorkerSession(target, deps);
     }
