@@ -11,6 +11,7 @@ import {
   CODER_OWNED_REVIEW_PROMPT,
   CODEX_REACTION_APPROVAL_GUIDANCE,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
+  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME,
   FULLSTACK_CODING_NOCHANGE_GUIDANCE,
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
   RESEARCH_PROMPT,
@@ -45,6 +46,7 @@ export {
   CODER_OWNED_REVIEW_PROMPT,
   CODEX_REACTION_APPROVAL_GUIDANCE,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
+  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME,
   FULLSTACK_CODING_NOCHANGE_GUIDANCE,
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
   RESEARCH_PROMPT,
@@ -112,6 +114,56 @@ const PREVIOUS_QA_SYSTEM_CONTRACT =
 
 const PREVIOUS_CODER_OWNED_QA_PROMPT =
   'You are QA. Validate the reviewer-approved pull request using the project QA instructions and the relevant backend, frontend, browser, and CI checks. If validation fails, send the implementer concrete failures and reproduction steps via the feedback handoff in Your Role in This Workflow — the runtime supplies the target, so follow that contract exactly and do not restate or assume it here — save a non-terminal QA note, and stop. When the current head is green, save the PR link and a passing decision artifact, then call approve_task or submit_for_approval. Do not merge. If the implementer later reports a post-approval merge blocker, re-approve the EXACT head you revalidated — a concurrent push must not inherit your approval. Capture `VALIDATED_OID=$(gh pr view <pr_url> --json headRefOid --jq .headRefOid)` and echo it (`echo "VALIDATED_OID=$VALIDATED_OID"`) BEFORE you revalidate; revalidation spans later Bash invocations that do NOT retain shell variables, so copy the echoed OID into the posting step. Immediately before posting, re-check `gh pr view <pr_url> --json headRefOid --jq .headRefOid` still equals the carried `$VALIDATED_OID` — if it changed, revalidate the new head from scratch. Post the approval bound to that head via the GraphQL `addPullRequestReview` mutation with `commitOID: "$VALIDATED_OID"` (do NOT use `gh pr review`, which has no commit binding and would approve a head you never validated): `PR_ID=$(gh pr view <pr_url> --json id --jq .id)`, build a `{query,variables}` JSON with jq (`mutation($id:ID!,$head:GitObjectID!,$event:PullRequestReviewEvent!,$body:String!){addPullRequestReview(input:{pullRequestId:$id,commitOID:$head,event:$event,body:$body}){pullRequestReview{url}}}`), and submit it with `gh api graphql --hostname <host> --input`; use `event:"APPROVE"`, or — on an own-PR where GitHub rejects your self-APPROVE — `event:"COMMENT"` with a body carrying the exact line `Recommendation: APPROVE` (the implementer accepts that marked comment as covering the head, matching the own-PR fallback in the Reviewer System Contract). Then signal them to continue.';
+
+export const LEGACY_FULLSTACK_REVIEWER_SLOT_PROMPT =
+  'You are the Reviewer in a Fullstack QA Loop workflow. Review the PR for correctness, ' +
+  'maintainability, and coverage before QA. Follow the Reviewer System Contract for ' +
+  'review quality and severity.\n\n' +
+  'Review is not the end node: approve_task/submit_for_approval are unavailable. Your ' +
+  'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
+  'APPROVE verdict with zero P0-P2 findings. Send the handoff to start the Codex review ' +
+  'timeout window (2 hours by default), then wait for a Codex bot `+1` reaction or the ' +
+  'timeout before proceeding. ' +
+  CODEX_REACTION_APPROVAL_GUIDANCE +
+  ' If findings remain, do not send the QA handoff; send actionable feedback to Coding and stop. ' +
+  'Never set a PR to auto-merge.\n\n' +
+  'Expected inputs: Open PR from Coding.\n' +
+  'Expected outputs: QA handoff or actionable feedback.\n\n' +
+  'Steps:\n' +
+  '1. Review diff quality, correctness, and test coverage\n' +
+  '2. If approved: send_message to QA with data: { approved: true, pr_url: "<url>" } to start the Codex review timeout window (2 hours by default), then wait for a Codex bot +1 reaction or the timeout\n' +
+  '3. If changes needed: send clear feedback to Coding';
+
+export const RETIRED_PRE_TYPENAME_CODEX_REACTION_APPROVAL_GUIDANCE =
+  'After posting your approval review, verify the Codex review bot reaction' +
+  ' status before closing or handing off. Use the run-scoped GraphQL reaction' +
+  ' lookup (the Reviewer contract permits the run-scoped `gh api graphql`' +
+  ' lookup; direct `gh api repos/...` REST reads against other repos are' +
+  ' forbidden by contract), resolving the PR number and host from the run PR' +
+  ' URL and reading `reactions` (parse the host and pass `--hostname` so GitHub' +
+  ' Enterprise PRs are queried on the enterprise host, not the default' +
+  ' github.com): `PR_URL=<pr_url>; HOST=${PR_URL#https://}; HOST=${HOST%%/*};' +
+  ' gh api graphql --hostname "$HOST" -f query=\'query($owner:String!,$name:Str' +
+  'ing!,$number:Int!){repository(owner:$owner,name:$name){issueOrPullRequest(nu' +
+  'mber:$number){... on PullRequest {reactions(first:100){nodes{content' +
+  " user{login}}}}}}}' -f owner=<owner> -f name=<repo> -F number=<number>` and" +
+  ' inspect reactions from any login containing `codex` (case-insensitive —' +
+  ' GitHub ships multiple variants such as `codex[bot]` and' +
+  ' `chatgpt-codex-connector[bot]`, and the matcher accepts any of them):' +
+  ' content `+1` means Codex passed, content `eyes` means Codex is still' +
+  ' reviewing, and no such reaction means it has not started or has not' +
+  ' reported yet. If no codex login has reacted at all, comment `@codex review`' +
+  ' on the PR to trigger its review, then wait for an `eyes` or `+1` reaction.' +
+  ' Only a +1 newer than the current PR head commit counts — after a revision' +
+  ' push, an older +1 from a previous cycle is stale and will not satisfy the' +
+  ' hook. If the +1 looks old, retrigger Codex with a fresh `@codex review`' +
+  ' comment. Send the approval handoff to start the Codex timeout window (2' +
+  ' hours by default; configurable per workflow node). If the hook blocks' +
+  ' because Codex has not yet posted `+1`, poll every 60 seconds and retry the' +
+  ' handoff. If the bot still has not posted `+1` after the timeout window' +
+  ' elapses, proceed only with a warning recorded in your result artifact. Do' +
+  ' not close the task before the Codex bot has `+1` unless that timeout window' +
+  ' has elapsed.';
 
 const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
   'Coding|coder': [
@@ -203,23 +255,11 @@ const LEGACY_CODING_SLOT_PROMPTS: Record<string, string[]> = {
       '5. Share blockers clearly with Reviewer/QA when needed',
   ],
   'Coding with QA|reviewer': [
-    'You are the Reviewer in a Fullstack QA Loop workflow. Review the PR for correctness, ' +
-      'maintainability, and coverage before QA. Follow the Reviewer System Contract for ' +
-      'review quality and severity.\n\n' +
-      'Review is not the end node: approve_task/submit_for_approval are unavailable. Your ' +
-      'terminal hand-off is sending `data: { approved: true, pr_url: "<url>" }` to QA after an ' +
-      'APPROVE verdict with zero P0-P2 findings. Send the handoff to start the Codex review ' +
-      'timeout window (2 hours by default), then wait for a Codex bot `+1` reaction or the ' +
-      'timeout before proceeding. ' +
-      CODEX_REACTION_APPROVAL_GUIDANCE +
-      ' If findings remain, do not send the QA handoff; send actionable feedback to Coding and stop. ' +
-      'Never set a PR to auto-merge.\n\n' +
-      'Expected inputs: Open PR from Coding.\n' +
-      'Expected outputs: QA handoff or actionable feedback.\n\n' +
-      'Steps:\n' +
-      '1. Review diff quality, correctness, and test coverage\n' +
-      '2. If approved: send_message to QA with data: { approved: true, pr_url: "<url>" } to start the Codex review timeout window (2 hours by default), then wait for a Codex bot +1 reaction or the timeout\n' +
-      '3. If changes needed: send clear feedback to Coding',
+    LEGACY_FULLSTACK_REVIEWER_SLOT_PROMPT,
+    LEGACY_FULLSTACK_REVIEWER_SLOT_PROMPT.replace(
+      CODEX_REACTION_APPROVAL_GUIDANCE,
+      RETIRED_PRE_TYPENAME_CODEX_REACTION_APPROVAL_GUIDANCE
+    ),
   ],
   'QA|qa': [
     QA_SYSTEM_CONTRACT +
@@ -1992,6 +2032,7 @@ const BUILT_IN_PROMPT_PATCH_VARIANTS = [
   [[CODER_OWNED_MERGE_PROMPT, RETIRED_PRE_EVENT_DRIVEN_CODER_OWNED_MERGE_PROMPT]],
   [[CODER_ONLY_PROMPT, RETIRED_PRE_EVENT_DRIVEN_CODER_ONLY_PROMPT]],
   [[RESEARCH_PROMPT, RETIRED_PRE_EVENT_DRIVEN_RESEARCH_PROMPT]],
+  [[EXTERNAL_REVIEW_BOTS_GUIDANCE, EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME]],
 ] as const;
 
 function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | undefined>(
@@ -2007,6 +2048,43 @@ function patchKnownBuiltInPromptDrift<T extends WorkflowNodeAgentOverride | unde
 
 function isExactRetiredBuiltInPrompt(existingValue: string, templateValue: string): boolean {
   return buildRetiredBuiltInPromptValues(templateValue).some((value) => existingValue === value);
+}
+
+export function patchPinnedBuiltInPromptDrift(workflow: SpaceWorkflow): SpaceWorkflow {
+  const template = resolveBuiltInWorkflowTemplate(workflow.templateName ?? '');
+  if (!template) return workflow;
+  let changed = false;
+  const nodes = workflow.nodes.map((node) => {
+    const templateNode =
+      template.nodes.find((candidate) => candidate.id === node.id) ??
+      template.nodes.find((candidate) => candidate.name === node.name);
+    if (!templateNode) return node;
+    const agents = node.agents.map((agent) => {
+      const templateAgent = templateNode.agents.find((candidate) => candidate.name === agent.name);
+      if (!templateAgent) return agent;
+      const drifted = patchKnownBuiltInPromptDrift(agent.customPrompt, templateAgent.customPrompt);
+      const nodeKeyed = patchLegacyStableSlotPrompt(
+        drifted?.value,
+        templateAgent.customPrompt?.value,
+        node.name,
+        agent.name
+      );
+      const value =
+        nodeKeyed !== undefined && nodeKeyed !== agent.customPrompt?.value
+          ? nodeKeyed
+          : patchLegacyStableSlotPrompt(
+              drifted?.value,
+              templateAgent.customPrompt?.value,
+              template.name,
+              agent.name
+            );
+      if (value === undefined || value === agent.customPrompt?.value) return agent;
+      changed = true;
+      return { ...agent, customPrompt: { value } };
+    });
+    return agents === node.agents ? node : { ...node, agents };
+  });
+  return changed ? { ...workflow, nodes } : workflow;
 }
 
 function buildRetiredBuiltInPromptValues(templateValue: string): string[] {
@@ -2473,8 +2551,12 @@ export function seedBuiltInWorkflows(
               (candidate) => candidate.name === agent.name
             );
             if (!templateAgent) return agent;
+            const driftedPrompt = patchKnownBuiltInPromptDrift(
+              agent.customPrompt,
+              templateAgent.customPrompt
+            );
             const prompt = patchLegacyStableSlotPrompt(
-              agent.customPrompt?.value,
+              driftedPrompt?.value,
               templateAgent.customPrompt?.value,
               node.name,
               agent.name

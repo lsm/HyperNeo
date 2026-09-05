@@ -1,8 +1,5 @@
 /// <reference path="./markdown.d.ts" />
-import { buildPromptRegistry } from './loader.ts';
-import mdagentsLongHorizonSchedulingGuardrail from './agents/long-horizon-scheduling-guardrail.md' with {
-  type: 'text',
-};
+
 import mdagentsLongHorizonCoordinator from './agents/long-horizon/coordinator.md' with {
   type: 'text',
 };
@@ -22,6 +19,9 @@ import mdagentsLongHorizonReleaseManager from './agents/long-horizon/release-man
 import mdagentsLongHorizonResearch from './agents/long-horizon/research.md' with { type: 'text' };
 import mdagentsLongHorizonSales from './agents/long-horizon/sales.md' with { type: 'text' };
 import mdagentsLongHorizonSecurityAuditor from './agents/long-horizon/security-auditor.md' with {
+  type: 'text',
+};
+import mdagentsLongHorizonSchedulingGuardrail from './agents/long-horizon-scheduling-guardrail.md' with {
   type: 'text',
 };
 import mdagentsNonDelegatingGeneral from './agents/non-delegating-general.md' with { type: 'text' };
@@ -48,6 +48,7 @@ import mdcoordinatorVcs from './coordinator/vcs.md' with { type: 'text' };
 import mdcoordinatorVerifier from './coordinator/verifier.md' with { type: 'text' };
 import mdgithubRouterSystemPrompt from './github/router-system-prompt.md' with { type: 'text' };
 import mdgithubSecuritySystemPrompt from './github/security-system-prompt.md' with { type: 'text' };
+import { buildPromptRegistry } from './loader.ts';
 import mdruntimePostApprovalCompletion from './runtime/post-approval-completion.md' with {
   type: 'text',
 };
@@ -109,6 +110,9 @@ import mdworkflowsGuidanceFullstackCodingNochange from './workflows/guidance/ful
   type: 'text',
 };
 import mdworkflowsGuidanceFullstackQaPostApproval from './workflows/guidance/fullstack-qa-post-approval.md' with {
+  type: 'text',
+};
+import mdworkflowsGuidanceRetiredExternalReviewBotsPreTypename from './workflows/guidance/retired/external-review-bots-pre-typename.md' with {
   type: 'text',
 };
 import mdworkflowsGuidanceReviewPolicy from './workflows/guidance/review-policy.md' with {
@@ -196,6 +200,8 @@ const registry: Record<string, string> = {
   'workflows/guidance/call-action-preference.md': mdworkflowsGuidanceCallActionPreference,
   'workflows/guidance/codex-reaction-approval.md': mdworkflowsGuidanceCodexReactionApproval,
   'workflows/guidance/external-review-bots.md': mdworkflowsGuidanceExternalReviewBots,
+  'workflows/guidance/retired/external-review-bots-pre-typename.md':
+    mdworkflowsGuidanceRetiredExternalReviewBotsPreTypename,
   'workflows/guidance/fullstack-coding-nochange.md': mdworkflowsGuidanceFullstackCodingNochange,
   'workflows/guidance/fullstack-qa-post-approval.md': mdworkflowsGuidanceFullstackQaPostApproval,
   'workflows/guidance/review-policy.md': mdworkflowsGuidanceReviewPolicy,
@@ -267,6 +273,7 @@ export const {
   CALL_ACTION_PREFERENCE_GUIDANCE,
   CODEX_REACTION_APPROVAL_GUIDANCE,
   EXTERNAL_REVIEW_BOTS_GUIDANCE,
+  EXTERNAL_REVIEW_BOTS_GUIDANCE_PRE_TYPENAME,
   FULLSTACK_CODING_NOCHANGE_GUIDANCE,
   FULLSTACK_QA_POST_APPROVAL_PARAGRAPH,
   REVIEW_POLICY_GUIDANCE,
