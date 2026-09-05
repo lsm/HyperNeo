@@ -257,6 +257,18 @@ describe('findStage', () => {
     expect(seen).toEqual([target]);
   });
 
+  test('waitCapMs 0 does not block on initial worker rehydration', async () => {
+    const deps = buildDeps({
+      listWorkerExecutions: () => [row('s-persisted', 'in_progress')],
+      rehydrateSubSession: () => new Promise<never>(() => {}),
+    });
+
+    await expect(findStage(workerTarget({ waitCapMs: 0 }), deps)).resolves.toEqual({
+      foundSessionId: undefined,
+      outcome: { kind: 'unresolved', reason: 'activation_timeout' },
+    });
+  });
+
   test('verifies the binding through rehydrateSubSession before resolving', async () => {
     const rehydrated: string[] = [];
     const deps = buildDeps({

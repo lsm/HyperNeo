@@ -26,7 +26,23 @@ export async function findStage(
   if (sessionId === null) {
     return { foundSessionId: undefined, outcome: undefined };
   }
-  if ((await deps.rehydrateSubSession(sessionId)) === null) {
+  const cap = delay(workerWaitCapMs(target));
+  const live = await Promise.race([
+    deps.rehydrateSubSession(sessionId),
+    cap.promise.then(() => null),
+  ]);
+  cap.cancel();
+  if (cap.fired) {
+    const phase = deps.readWorkerTaskPhase(target.taskId);
+    return {
+      foundSessionId: undefined,
+      outcome:
+        phase === 'run_active'
+          ? { kind: 'unresolved', reason: 'activation_timeout' }
+          : await ensureWorkerSession(target, deps),
+    };
+  }
+  if (live === null) {
     return { foundSessionId: undefined, outcome: undefined };
   }
   const phase = deps.readWorkerTaskPhase(target.taskId);
