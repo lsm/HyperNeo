@@ -289,8 +289,44 @@ describe('SpaceLongHorizonAgents', () => {
       description: 'Checks release readiness.',
       instructions: 'Verify the release.',
       suggestedAutonomyLevel: 4,
+      model: null,
+      provider: null,
+      thinkingLevel: null,
     });
     await waitFor(() => expect(queryByRole('button', { name: 'Create template' })).toBeNull());
+  });
+
+  it('persists model override and thinking level from the template form', async () => {
+    const { getByRole, getByPlaceholderText, getByTestId } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'New Template' }));
+    fireEvent.input(getByPlaceholderText('e.g. Release Readiness'), {
+      target: { value: 'Release Readiness' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness.custom'), {
+      target: { value: 'release-readiness.custom' },
+    });
+    fireEvent.input(getByPlaceholderText('e.g. release-readiness'), {
+      target: { value: 'release-readiness' },
+    });
+    const modelSelect = getByTestId('template-model-fields-model-select') as HTMLSelectElement;
+    modelSelect.value = 'claude-sonnet-4-6';
+    fireEvent.change(modelSelect);
+    const thinkingSelect = getByTestId('template-model-fields-thinking-level') as HTMLSelectElement;
+    thinkingSelect.value = 'think16k';
+    fireEvent.change(thinkingSelect);
+    fireEvent.click(getByRole('button', { name: 'Create template' }));
+
+    await waitFor(() => expect(mockCreateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockCreateTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        thinkingLevel: 'think16k',
+      })
+    );
   });
 
   it('shows the store error and keeps the modal open when create fails', async () => {
@@ -825,6 +861,30 @@ describe('SpaceLongHorizonAgents', () => {
       })
     );
     expect(mockUpdateAgent).not.toHaveBeenCalled();
+  });
+
+  it('seeds model override and thinking level from the template when creating an agent', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        thinkingLevel: 'think16k',
+      }),
+    ];
+    const { getByText, getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    expect(mockCreateAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateKey: 'qa',
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        thinkingLevel: 'think16k',
+      })
+    );
   });
 
   it('creates a custom agent with a null template key', async () => {
