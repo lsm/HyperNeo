@@ -9,8 +9,6 @@ import type {
   UpdateSpaceTaskParams,
 } from '@hyperneo/shared';
 import { generateUUID, isRateOrUsageLimited } from '@hyperneo/shared';
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import type { UUID } from 'crypto';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
@@ -34,11 +32,9 @@ import type { SpaceTaskRepository } from '../../../storage/repositories/space-ta
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository.ts';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
-import type { PostApprovalRouteResult } from './post-approval-router.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type { AgentSession } from '../../agent/agent-session.ts';
-import { PromptContentConflictError } from '../../agent/message-delivery-outbox.ts';
 import { createDbQueryMcpServer, type DbQueryMcpServer } from '../../db-query/tools.ts';
 import type { ExternalEventService } from '../../external-events/external-event-service.ts';
 import type { ExternalEventStore } from '../../external-events/external-event-store.ts';
@@ -49,8 +45,13 @@ import {
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
+import { renderAddress } from '../../mailbox/address.ts';
+import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
 import type { SessionManager } from '../../session-manager.ts';
 import { buildAgentSessionConfig } from '../../session-resolution/agent-session-config.ts';
+import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
+import type { SessionResolutionDeps } from '../../session-resolution/deps.ts';
+import { resolveAgentDeliverySession } from '../../session-resolution/resolve-agent-delivery-session.ts';
 import {
   type ResolveAgentRecordDeps,
   resolveAgentRecord,
@@ -86,7 +87,7 @@ import {
 } from './ensure-agent-session.ts';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
 import { selectWorkflowWithLlmDefault } from './llm-workflow-selector.ts';
-import { handoffPromptToMailbox, type MailboxHandoffOutcome } from './prompt-mailbox-handoff.ts';
+import type { PostApprovalRouteResult } from './post-approval-router.ts';
 import type { RenderPendingDigestOutcome } from './render-pending-digest-pipeline.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import { SpaceAgentLateSettlements } from './space-agent-message-delivery.ts';
@@ -103,6 +104,10 @@ import type { TaskAgentManager } from './task-agent-manager.ts';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine.ts';
 
 const log = new Logger('space-runtime-service');
+
+type LongTermAgentAdmission =
+  | { state: 'accepted'; mailboxEntryId: string }
+  | { state: 'rejected'; reason: string };
 
 type LongTermAgentDirectDelivery =
   | { state: 'delivered'; sessionId: string }
@@ -312,7 +317,7 @@ export class SpaceRuntimeService {
         return { delivered: false };
       }
     }
-    const session = await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
+    const session = await this.resolveAgentSession(args.spaceId, args.agentId);
     if (!session) return { delivered: false };
     if (gateLifecycle) {
       const space = await this.config.spaceManager.getSpace(args.spaceId);
@@ -324,8 +329,12 @@ export class SpaceRuntimeService {
         return { delivered: false };
       }
     }
-    await this.injectLongTermAgentMessage(session, args.message, args.idempotencyKey);
-    return { delivered: true };
+    const outcome = await this.injectLongTermAgentMessage(
+      session,
+      args.message,
+      args.idempotencyKey
+    );
+    return { delivered: outcome.state === 'accepted' };
   }
 
   async deliverLongHorizonAgentReminder(args: {
@@ -364,15 +373,7 @@ export class SpaceRuntimeService {
         return 'pre_admission_failure';
       }
     }
-    const isDefaultAgent = resolveIsDefaultAgent(
-      args.spaceId,
-      agent.id,
-      this.config.longHorizonAgentRepo
-    );
-    const session = isDefaultAgent
-      ? ((await this.resolveCoordinatorSession(args.spaceId)) ??
-        (await this.ensureCoordinatorSession(args.spaceId)))
-      : await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
+    const session = await this.resolveAgentSession(args.spaceId, args.agentId);
     if (!session) return 'terminal_failure';
     const spaceAfter = await this.config.spaceManager.getSpace(args.spaceId);
     if (!spaceAfter || spaceAfter.status !== 'active' || spaceAfter.paused || spaceAfter.stopped) {
@@ -401,24 +402,14 @@ export class SpaceRuntimeService {
       return 'pre_admission_failure';
     }
     const sessionId = session.getSessionData().id;
-    try {
-      const outcome = await this.injectLongTermAgentMessage(
-        session,
-        args.message,
-        args.idempotencyKey
-      );
-      if (outcome.state === 'settled') {
-        return this.readLongTermAgentSendStatus(sessionId, args.idempotencyKey) === 'failed'
-          ? 'terminal_failure_after_consumption'
-          : 'consumed';
-      }
-      return 'accepted';
-    } catch (err) {
-      if (err instanceof PromptContentConflictError) return 'pre_admission_failure';
-      return this.hasLongTermAgentConsumptionEvidence(sessionId, args.idempotencyKey)
-        ? 'terminal_failure_after_consumption'
-        : 'terminal_failure';
-    }
+    const outcome = await this.injectLongTermAgentMessage(
+      session,
+      args.message,
+      args.idempotencyKey
+    );
+    const consumed = this.hasLongTermAgentConsumptionEvidence(sessionId, args.idempotencyKey);
+    if (outcome.state === 'accepted') return consumed ? 'consumed' : 'accepted';
+    return consumed ? 'terminal_failure_after_consumption' : 'terminal_failure';
   }
 
   private async deliverToLongTermAgent(
@@ -428,17 +419,21 @@ export class SpaceRuntimeService {
     if (!(await this.isGoalOutcomeWakeDeliverable(actor, message))) {
       return { state: 'recipient_stale' };
     }
-    const session = await this.ensureLongTermAgentSession(actor);
+    const agentId = agentIdFromActorId(actor.actorId);
+    if (!agentId) return { state: 'failed' };
+    const session = await this.resolveAgentSession(actor.spaceId, agentId);
     if (!session) return { state: 'failed' };
     if (!(await this.isGoalOutcomeWakeDeliverable(actor, message))) {
       return { state: 'recipient_stale' };
     }
-    await this.injectLongTermAgentMessage(
+    const outcome = await this.injectLongTermAgentMessage(
       session,
       message.body,
       message.idempotencyKey ?? message.messageId
     );
-    return { state: 'delivered', sessionId: session.getSessionData().id };
+    return outcome.state === 'accepted'
+      ? { state: 'delivered', sessionId: session.getSessionData().id }
+      : { state: 'failed' };
   }
 
   private async isGoalOutcomeWakeDeliverable(
@@ -640,16 +635,17 @@ export class SpaceRuntimeService {
   private settleLongTermAgentInboxRow(
     row: SpaceAgentInboxMessageRecord,
     sessionId: string,
-    outcome: MailboxHandoffOutcome
+    outcome: LongTermAgentAdmission
   ): void {
     const inboxRepo = this.config.spaceAgentInboxRepo;
     if (!inboxRepo) return;
     const messageId = row.idempotencyKey ?? row.id;
-    if (
-      outcome.state === 'settled' ||
-      this.hasLongTermAgentConsumptionEvidence(sessionId, messageId)
-    ) {
+    if (this.hasLongTermAgentConsumptionEvidence(sessionId, messageId)) {
       inboxRepo.markDelivered(row.id, sessionId);
+      return;
+    }
+    if (outcome.state === 'rejected') {
+      inboxRepo.markAttemptFailed(row.id, outcome.reason);
       return;
     }
     if (this.readLongTermAgentSendStatus(sessionId, messageId) === 'failed') {
@@ -732,70 +728,33 @@ export class SpaceRuntimeService {
   }
 
   private async injectLongTermAgentMessage(
-    session: {
-      getSessionData(): Session;
-      ensureQueryStarted(): Promise<void>;
-      messageQueue: { enqueueWithId: (id: string, message: string) => Promise<void> };
-      stateManager?: {
-        setQueuedIfIdle(messageId: string): Promise<boolean>;
-        getState(): { status: string };
-      };
-    },
+    session: { getSessionData(): Session },
     message: string,
     messageId?: string
-  ): Promise<MailboxHandoffOutcome> {
+  ): Promise<LongTermAgentAdmission> {
     const id = messageId ?? generateRuntimeMessageId();
     const sessionId = session.getSessionData().id;
-    const sdkUserMessage: SDKUserMessage & { isSynthetic: boolean } = {
-      type: 'user' as const,
-      uuid: id as UUID,
-      session_id: sessionId,
-      parent_tool_use_id: null,
-      isSynthetic: true,
+    const jobQueue = this.config.reactiveDb?.db.getJobQueueRepo();
+    if (!jobQueue) {
+      return {
+        state: 'rejected',
+        reason: `injectLongTermAgentMessage: reactiveDb unavailable; cannot deliver to ${sessionId}`,
+      };
+    }
+    const outcome = await handoffPromptToMailbox({
+      to: renderAddress({ kind: 'session', sessionId }),
       message: {
-        role: 'user' as const,
-        content: [{ type: 'text' as const, text: message }],
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'text', text: message }] },
       },
-    };
-    const reactiveDb = this.config.reactiveDb?.db;
-    if (!reactiveDb) {
-      throw new Error(
-        `injectLongTermAgentMessage: reactiveDb unavailable; cannot deliver to ${sessionId}`
-      );
-    }
-    return handoffPromptToMailbox({
-      deps: {
-        db: this.config.db,
-        sdkMessageRepo: reactiveDb.getSDKMessageRepo(),
-        jobQueue: reactiveDb.getJobQueueRepo(),
-      },
-      target: {
-        sessionId,
-        messageId: id,
-        message: sdkUserMessage,
-        origin: 'long_term_agent',
-      },
-      stateManager: session.stateManager,
-      publishStatusChanged: (settledSessionId, dbId, status) =>
-        this.publishMessageStatusChanged(settledSessionId, dbId, status),
+      origin: 'long_term_agent',
+      messageUuid: id,
+      jobQueue,
     });
-  }
-
-  private async publishMessageStatusChanged(
-    sessionId: string,
-    dbId: string,
-    status: 'enqueued' | 'deferred' | 'failed'
-  ): Promise<void> {
-    if (!this.config.internalEventBus) {
-      return;
-    }
-    await this.config.internalEventBus
-      .publish('messages.statusChanged', {
-        sessionId,
-        messageIds: [dbId],
-        status,
-      })
-      .catch(() => {});
+    return outcome.kind === 'enqueued'
+      ? { state: 'accepted', mailboxEntryId: outcome.id }
+      : { state: 'rejected', reason: outcome.reason };
   }
 
   private async refreshLongHorizonAgentSessionConfig(
@@ -829,12 +788,6 @@ export class SpaceRuntimeService {
     await session.restart({
       beforeStart: () => session.reevaluateContextBudgetAfterModelSwitch?.(),
     });
-  }
-
-  private async resolveCoordinatorSession(spaceId: string) {
-    const sessionManager = this.config.sessionManager;
-    if (!sessionManager) return null;
-    return sessionManager.getSessionAsync(coordinatorSessionId(spaceId));
   }
 
   private async ensureCoordinatorSession(spaceId: string) {
@@ -927,15 +880,37 @@ export class SpaceRuntimeService {
     return session;
   }
 
-  private async ensureLongTermAgentSession(actor: ActorRef) {
+  private createSessionResolutionDeps(): SessionResolutionDeps | null {
     const sessionManager = this.config.sessionManager;
-    if (!sessionManager) return null;
+    const longHorizonAgentRepo = this.config.longHorizonAgentRepo;
+    const taskAgentManager = this.taskAgentManager;
+    if (!sessionManager || !longHorizonAgentRepo || !taskAgentManager) return null;
+    return createDefaultSessionResolutionDeps({
+      sessionManager,
+      taskAgentManager,
+      spaceRuntimeService: this,
+      nodeExecutionRepo: this.nodeExecutionRepo,
+      taskRepo: this.config.taskRepo,
+      longHorizonAgentRepo,
+    });
+  }
+
+  private async resolveAgentSession(
+    spaceId: string,
+    agentId: string
+  ): Promise<AgentSession | null> {
+    const sessionManager = this.config.sessionManager;
+    const deps = this.createSessionResolutionDeps();
+    if (!sessionManager || !deps) return null;
+    return resolveAgentDeliverySession(spaceId, agentId, deps, (sessionId) =>
+      sessionManager.getSessionAsync(sessionId)
+    );
+  }
+
+  private async ensureLongTermAgentSession(actor: ActorRef) {
     const agentId = agentIdFromActorId(actor.actorId);
     if (!agentId) return null;
-    const resolution = resolveAgentRecord(actor.spaceId, agentId, this.agentRecordDeps());
-    if (resolution.kind === 'missing') return null;
-    if (resolution.kind === 'coordinator') return this.resolveCoordinatorSession(actor.spaceId);
-    return this.ensureLongHorizonAgentSession(actor.spaceId, agentId);
+    return this.resolveAgentSession(actor.spaceId, agentId);
   }
 
   async ensureAgentSession(spaceId: string, agentId: string): Promise<EnsuredSession | null> {

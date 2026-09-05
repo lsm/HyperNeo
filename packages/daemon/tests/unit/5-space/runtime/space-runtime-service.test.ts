@@ -24,6 +24,8 @@ import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 import { persistPrompt } from '../../../../src/lib/agent/message-delivery-outbox';
+import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery.ts';
+import { MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue.ts';
 import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
 import {
   getProviderRegistry,
@@ -40,7 +42,6 @@ import type { SpaceManager } from '../../../../src/lib/space/managers/space-mana
 import { SpaceManager as SpaceMgr } from '../../../../src/lib/space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceWorkflowManager as WorkflowMgr } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
-import type { MailboxHandoffOutcome } from '../../../../src/lib/space/runtime/prompt-mailbox-handoff.ts';
 import type { SpaceRuntimeServiceConfig } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
@@ -109,6 +110,14 @@ function makeNoopNodeExecutionRepo(): NodeExecutionRepository {
   } as unknown as NodeExecutionRepository;
 }
 
+function buildDeliveryService(config: SpaceRuntimeServiceConfig): SpaceRuntimeService {
+  const svc = new SpaceRuntimeService(config);
+  svc.setTaskAgentManager({
+    getSubSession: mock(() => undefined),
+  } as unknown as TaskAgentManager);
+  return svc;
+}
+
 function buildMailboxDeliveryDb(sessionIds: string[] = []): {
   db: BunDatabase;
   reactiveDb: SpaceRuntimeServiceConfig['reactiveDb'];
@@ -170,6 +179,36 @@ function completeSeededJobs(h: ReturnType<typeof buildMailboxDeliveryDb>, uuid: 
       "UPDATE job_queue SET status = 'completed' WHERE json_extract(payload, '$.messageUuid') = ?"
     )
     .run(uuid);
+}
+
+function pendingMailboxEntries(
+  h: ReturnType<typeof buildMailboxDeliveryDb>,
+  messageUuid: string
+): Array<Record<string, unknown>> {
+  return h.db
+    .prepare(
+      `SELECT payload FROM job_queue
+       WHERE queue = ? AND status = 'pending' AND json_extract(payload, '$.messageUuid') = ?`
+    )
+    .all(MAILBOX_LANE, messageUuid)
+    .map((row) => JSON.parse((row as { payload: string }).payload) as Record<string, unknown>);
+}
+
+async function deliverMailboxEntry(
+  h: ReturnType<typeof buildMailboxDeliveryDb>,
+  sessionId: string
+): Promise<void> {
+  const [job] = h.jobQueue.dequeue(MAILBOX_LANE, 1);
+  if (!job) throw new Error('expected a pending mailbox entry');
+  const handler = createMailboxDeliveryHandler({
+    jobQueue: h.jobQueue,
+    db: h.db,
+    sdkMessageRepo: h.sdkRepo,
+    getSession: async (targetSessionId) =>
+      targetSessionId === sessionId ? { sessionId: targetSessionId } : null,
+    isSessionArchived: () => false,
+  });
+  await handler(job);
 }
 
 function activeDeliveryJobCount(db: BunDatabase, sessionId: string, uuid: string): number {
@@ -1114,7 +1153,7 @@ describe('SpaceRuntimeService', () => {
         getCoordinator: mock(() => null),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const mailbox = buildMailboxDeliveryDb([sessionId]);
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
         db: mailbox.db,
         reactiveDb: mailbox.reactiveDb,
@@ -1143,10 +1182,8 @@ describe('SpaceRuntimeService', () => {
 
       expect(deliveredSessionId).toBe(sessionId);
       expect(inboxRepo.enqueue).not.toHaveBeenCalled();
-      expect(mailbox.sdkRepo.getDeliveryContent(sessionId, 'message-1')).toMatchObject({
-        sendStatus: 'enqueued',
-      });
-      expect(activeDeliveryJobCount(mailbox.db, sessionId, 'message-1')).toBe(1);
+      expect(pendingMailboxEntries(mailbox, 'message-1')).toHaveLength(1);
+      expect(mailbox.sdkRepo.getDeliveryContent(sessionId, 'message-1')).toBeNull();
     });
 
     test('long-term Space agent sessions use the agent name as title', async () => {
@@ -1177,7 +1214,7 @@ describe('SpaceRuntimeService', () => {
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const mailbox = buildMailboxDeliveryDb([longTermAgentSessionId(mockSpace.id, 'agent-1')]);
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfigWithSession(sessionManager, spaceManager),
         db: mailbox.db,
         reactiveDb: mailbox.reactiveDb,
@@ -1250,7 +1287,7 @@ describe('SpaceRuntimeService', () => {
         getCoordinator: mock(() => null),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const mailbox = buildMailboxDeliveryDb([sessionId]);
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
         db: mailbox.db,
         reactiveDb: mailbox.reactiveDb,
@@ -1276,9 +1313,7 @@ describe('SpaceRuntimeService', () => {
           }),
         })
       );
-      expect(mailbox.sdkRepo.getDeliveryContent(sessionId, 'delivery-1')).toMatchObject({
-        sendStatus: 'enqueued',
-      });
+      expect(pendingMailboxEntries(mailbox, 'delivery-1')).toHaveLength(1);
     });
 
     function makeNagSessionManager(sessionId: string): SessionManager {
@@ -1327,7 +1362,7 @@ describe('SpaceRuntimeService', () => {
       sessionId: string,
       mailbox: ReturnType<typeof buildMailboxDeliveryDb>
     ): SpaceRuntimeService {
-      return new SpaceRuntimeService({
+      return buildDeliveryService({
         ...buildConfigWithSession(
           makeNagSessionManager(sessionId),
           createMockSpaceManager(mockSpace)
@@ -1370,12 +1405,19 @@ describe('SpaceRuntimeService', () => {
         idempotencyKey: 'inactivity-nag:lh-agent-1:100:0',
       });
       expect(result).toBe('accepted');
+      const [entry] = pendingMailboxEntries(mailbox, 'inactivity-nag:lh-agent-1:100:0');
+      expect(entry).toMatchObject({
+        to: { kind: 'session', sessionId },
+        origin: 'long_term_agent',
+        messageUuid: 'inactivity-nag:lh-agent-1:100:0',
+      });
+      expect(
+        mailbox.sdkRepo.getDeliveryContent(sessionId, 'inactivity-nag:lh-agent-1:100:0')
+      ).toBeNull();
+      await deliverMailboxEntry(mailbox, sessionId);
       expect(
         mailbox.sdkRepo.getDeliveryContent(sessionId, 'inactivity-nag:lh-agent-1:100:0')
       ).toMatchObject({ sendStatus: 'enqueued' });
-      expect(activeDeliveryJobCount(mailbox.db, sessionId, 'inactivity-nag:lh-agent-1:100:0')).toBe(
-        1
-      );
     });
 
     test('deliverLongHorizonAgentNag reports consumed for an already-consumed nag', async () => {
@@ -1397,24 +1439,7 @@ describe('SpaceRuntimeService', () => {
       expect(activeDeliveryJobCount(mailbox.db, sessionId, nagKey)).toBe(0);
     });
 
-    test('deliverLongHorizonAgentNag reports pre_admission_failure on a content conflict', async () => {
-      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
-      const mailbox = buildMailboxDeliveryDb([sessionId]);
-      const nagKey = 'inactivity-nag:lh-agent-1:100:0';
-      seedMailboxRow(mailbox, sessionId, nagKey, 'A different nag text entirely.');
-      completeSeededJobs(mailbox, nagKey);
-      const svc = buildLhDeliveryService(sessionId, mailbox);
-      const result = await svc.deliverLongHorizonAgentNag({
-        spaceId: mockSpace.id,
-        agentId: 'lh-agent-1',
-        message: 'You have been idle.',
-        idempotencyKey: nagKey,
-      });
-      expect(result).toBe('pre_admission_failure');
-      expect(activeDeliveryJobCount(mailbox.db, sessionId, nagKey)).toBe(0);
-    });
-
-    test('deliverLongHorizonAgentNag reports terminal_failure_after_consumption for consumed dead-letters', async () => {
+    test('deliverLongHorizonAgentNag keeps consumed evidence authoritative after admission', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
       const mailbox = buildMailboxDeliveryDb([sessionId]);
       const nagKey = 'inactivity-nag:lh-agent-1:100:0';
@@ -1430,12 +1455,12 @@ describe('SpaceRuntimeService', () => {
         message: 'You have been idle.',
         idempotencyKey: nagKey,
       });
-      expect(result).toBe('terminal_failure_after_consumption');
+      expect(result).toBe('consumed');
     });
 
-    test('deliverLongHorizonAgentNag reports terminal_failure when the handoff throws without evidence', async () => {
+    test('deliverLongHorizonAgentNag reports terminal_failure when admission rejects', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfigWithSession(
           makeNagSessionManager(sessionId),
           createMockSpaceManager(mockSpace)
@@ -1463,7 +1488,7 @@ describe('SpaceRuntimeService', () => {
           updatedAt: NOW,
         })),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
         longHorizonAgentRepo,
       });
@@ -1488,7 +1513,7 @@ describe('SpaceRuntimeService', () => {
           updatedAt: NOW,
         })),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfigWithSession(
           sessionManager,
           createMockSpaceManager({ ...mockSpace, paused: true })
@@ -1519,7 +1544,7 @@ describe('SpaceRuntimeService', () => {
       const inactivityConfigRepo = {
         getByAgent: mock(() => ({ enabled: true, configRevision: 2 })),
       } as unknown as SpaceRuntimeServiceConfig['inactivityConfigRepo'];
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
         longHorizonAgentRepo,
         inactivityConfigRepo,
@@ -1578,7 +1603,7 @@ describe('SpaceRuntimeService', () => {
           return { enabled: true, configRevision: configCalls === 1 ? 1 : 2 };
         }),
       } as unknown as SpaceRuntimeServiceConfig['inactivityConfigRepo'];
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
         longHorizonAgentRepo,
         inactivityConfigRepo,
@@ -1636,7 +1661,7 @@ describe('SpaceRuntimeService', () => {
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const mailbox = buildMailboxDeliveryDb([sessionId]);
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
         db: mailbox.db,
         reactiveDb: mailbox.reactiveDb,
@@ -1654,9 +1679,7 @@ describe('SpaceRuntimeService', () => {
           }),
         })
       );
-      expect(mailbox.sdkRepo.getDeliveryContent(sessionId, 'delivery-1')).toMatchObject({
-        sendStatus: 'enqueued',
-      });
+      expect(pendingMailboxEntries(mailbox, 'delivery-1')).toHaveLength(1);
     });
 
     test('long-horizon event sessions leave model unset for custom provider defaults', async () => {
@@ -1701,7 +1724,7 @@ describe('SpaceRuntimeService', () => {
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const mailbox = buildMailboxDeliveryDb([sessionId]);
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
         db: mailbox.db,
         reactiveDb: mailbox.reactiveDb,
@@ -1782,7 +1805,7 @@ describe('SpaceRuntimeService', () => {
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const mailbox = buildMailboxDeliveryDb([sessionId]);
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
         db: mailbox.db,
         reactiveDb: mailbox.reactiveDb,
@@ -1820,15 +1843,13 @@ describe('SpaceRuntimeService', () => {
       };
       expect(updateCall.systemPrompt.append).toContain('Use updated tools.');
       expect(updateCall.systemPrompt.append).toContain(LONG_HORIZON_SCHEDULING_GUARDRAIL);
-      expect(mailbox.sdkRepo.getDeliveryContent(sessionId, 'delivery-1')).toMatchObject({
-        sendStatus: 'enqueued',
-      });
+      expect(pendingMailboxEntries(mailbox, 'delivery-1')).toHaveLength(1);
     });
 
     test('long-horizon handoff leaves no orphan row when the durable enqueue throws', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
       const mailbox = buildMailboxDeliveryDb([sessionId]);
-      mailbox.jobQueue.enqueue = () => {
+      mailbox.jobQueue.enqueueUniquePending = () => {
         throw new Error('sqlite locked');
       };
       const svc = buildLhDeliveryService(sessionId, mailbox);
@@ -1838,39 +1859,20 @@ describe('SpaceRuntimeService', () => {
       expect(mailbox.sdkRepo.getDeliveryContent(sessionId, 'delivery-1')).toBeNull();
     });
 
-    test('long-horizon crash-retry does not re-save or re-drive a terminal message', async () => {
+    test('long-horizon crash-retry preserves the caller idempotency key', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
       const mailbox = buildMailboxDeliveryDb([sessionId]);
-      const dbId = seedMailboxRow(mailbox, sessionId, 'delivery-1', 'event payload');
-      completeSeededJobs(mailbox, 'delivery-1');
-      mailbox.sdkRepo.updateMessageStatus([dbId], 'consumed');
       const svc = buildLhDeliveryService(sessionId, mailbox);
 
-      const result = await deliverExternalEvent(svc, 'delivery-1');
+      expect(await deliverExternalEvent(svc, 'delivery-1')).toEqual({ delivered: true });
+      expect(await deliverExternalEvent(svc, 'delivery-1')).toEqual({ delivered: true });
 
-      expect(result).toEqual({ delivered: true });
+      expect(pendingMailboxEntries(mailbox, 'delivery-1')).toHaveLength(2);
+      await deliverMailboxEntry(mailbox, sessionId);
+      await deliverMailboxEntry(mailbox, sessionId);
       expect(mailbox.sdkRepo.getDeliveryMessageIdsByUuids(sessionId, ['delivery-1'])).toHaveLength(
         1
       );
-      expect(mailbox.sdkRepo.getDeliveryContent(sessionId, 'delivery-1')).toMatchObject({
-        sendStatus: 'consumed',
-      });
-      expect(activeDeliveryJobCount(mailbox.db, sessionId, 'delivery-1')).toBe(0);
-    });
-
-    test('long-horizon crash-retry reopens a failed row and re-enqueues it', async () => {
-      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
-      const mailbox = buildMailboxDeliveryDb([sessionId]);
-      const dbId = seedMailboxRow(mailbox, sessionId, 'delivery-1', 'event payload');
-      mailbox.sdkRepo.updateMessageStatus([dbId], 'failed');
-      const svc = buildLhDeliveryService(sessionId, mailbox);
-
-      const result = await deliverExternalEvent(svc, 'delivery-1');
-
-      expect(result).toEqual({ delivered: true });
-      expect(mailbox.sdkRepo.getDeliveryContent(sessionId, 'delivery-1')).toMatchObject({
-        sendStatus: 'enqueued',
-      });
       expect(activeDeliveryJobCount(mailbox.db, sessionId, 'delivery-1')).toBe(1);
     });
 
@@ -1882,10 +1884,8 @@ describe('SpaceRuntimeService', () => {
       const result = await deliverExternalEvent(svc, 'delivery-admitted');
 
       expect(result).toEqual({ delivered: true });
-      expect(mailbox.sdkRepo.getDeliveryContent(sessionId, 'delivery-admitted')).toMatchObject({
-        sendStatus: 'enqueued',
-      });
-      expect(activeDeliveryJobCount(mailbox.db, sessionId, 'delivery-admitted')).toBe(1);
+      expect(pendingMailboxEntries(mailbox, 'delivery-admitted')).toHaveLength(1);
+      expect(mailbox.sdkRepo.getDeliveryContent(sessionId, 'delivery-admitted')).toBeNull();
     });
 
     test('session.reset re-provisions reset long-term Space agents before query replay', async () => {
@@ -1999,7 +1999,7 @@ describe('SpaceRuntimeService', () => {
         getCoordinator: mock(() => null),
         getById: mock(() => ({ status: 'pending' })),
       } as unknown as SpaceGoalOutcomeNotificationRepository;
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfig(createMockSpaceManager(mockSpace)),
         longHorizonAgentRepo,
         goalService,
@@ -2024,7 +2024,7 @@ describe('SpaceRuntimeService', () => {
         getCoordinator: mock(() => null),
         getById: mock(() => ({ status: 'pending' })),
       } as unknown as SpaceGoalOutcomeNotificationRepository;
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfig(createMockSpaceManager(mockSpace)),
         enableGoalOutcomeWake: true,
         longHorizonAgentRepo,
@@ -2053,7 +2053,7 @@ describe('SpaceRuntimeService', () => {
       const outcomeNotificationRepo = {
         getById: mock(() => ({ status: 'pending' })),
       } as unknown as SpaceGoalOutcomeNotificationRepository;
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfig(createMockSpaceManager(mockSpace)),
         enableGoalOutcomeWake: true,
         longHorizonAgentRepo,
@@ -2092,7 +2092,7 @@ describe('SpaceRuntimeService', () => {
           status: 'pending',
         })),
       } as unknown as SpaceGoalOutcomeNotificationRepository;
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfig(createMockSpaceManager(mockSpace)),
         db: mailbox.db,
         sessionManager,
@@ -2107,9 +2107,7 @@ describe('SpaceRuntimeService', () => {
 
       await svc.deliverGoalOutcomeWake(notification);
 
-      expect(
-        mailbox.sdkRepo.getDeliveryContent(`space:chat:${mockSpace.id}`, 'goal-outcome:notif-1')
-      ).toMatchObject({ sendStatus: 'enqueued' });
+      expect(pendingMailboxEntries(mailbox, 'goal-outcome:notif-1')).toHaveLength(1);
       expect(inboxRepo.enqueue).not.toHaveBeenCalled();
     });
 
@@ -2174,7 +2172,7 @@ describe('SpaceRuntimeService', () => {
           status: 'pending',
         })),
       } as unknown as SpaceGoalOutcomeNotificationRepository;
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfig(createMockSpaceManager(mockSpace)),
         sessionManager,
         spaceWorkflowManager: {
@@ -2193,12 +2191,12 @@ describe('SpaceRuntimeService', () => {
       await svc.deliverGoalOutcomeWake(notification);
 
       const deliveredSessionId = longTermAgentSessionId(mockSpace.id, 'agent-b');
-      expect(
-        mailbox.sdkRepo.getDeliveryMessageIdsByUuids(deliveredSessionId, ['goal-outcome:notif-1'])
-      ).toHaveLength(1);
-      expect(
-        mailbox.sdkRepo.getDeliveryContent(deliveredSessionId, 'goal-outcome:notif-1')
-      ).toMatchObject({ sendStatus: 'enqueued' });
+      expect(pendingMailboxEntries(mailbox, 'goal-outcome:notif-1')).toEqual([
+        expect.objectContaining({
+          to: { kind: 'session', sessionId: deliveredSessionId },
+          messageUuid: 'goal-outcome:notif-1',
+        }),
+      ]);
       expect(inboxRepo.enqueue).not.toHaveBeenCalled();
     });
 
@@ -2235,7 +2233,7 @@ describe('SpaceRuntimeService', () => {
           };
         }),
       } as unknown as SpaceGoalOutcomeNotificationRepository;
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfig(createMockSpaceManager(mockSpace)),
         sessionManager,
         spaceWorkflowManager: {
@@ -2366,10 +2364,8 @@ describe('SpaceRuntimeService', () => {
 
       await flushInbox(svc);
 
-      expect(mailbox.sdkRepo.getDeliveryContent(inboxSessionId, row.idempotencyKey!)).toMatchObject(
-        { sendStatus: 'enqueued' }
-      );
-      expect(activeDeliveryJobCount(mailbox.db, inboxSessionId, row.idempotencyKey!)).toBe(1);
+      expect(pendingMailboxEntries(mailbox, row.idempotencyKey!)).toHaveLength(1);
+      expect(mailbox.sdkRepo.getDeliveryContent(inboxSessionId, row.idempotencyKey!)).toBeNull();
       expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
       expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
 
@@ -2395,14 +2391,12 @@ describe('SpaceRuntimeService', () => {
           settleLongTermAgentInboxRow(
             row: SpaceAgentInboxMessageRecord,
             sessionId: string,
-            outcome: MailboxHandoffOutcome
+            outcome: { state: 'accepted'; mailboxEntryId: string }
           ): void;
         }
       ).settleLongTermAgentInboxRow(row, inboxSessionId, {
-        state: 'enqueued',
-        dbId,
-        changed: true,
-        advanced: true,
+        state: 'accepted',
+        mailboxEntryId: dbId,
       });
 
       expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
