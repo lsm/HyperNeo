@@ -1423,6 +1423,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
         status?: string;
       }>;
       declared?: string[];
+      postApproval?: { sessionId: string; agentName: string; nodeId?: string | null } | null;
       outcomes: Array<Awaited<ReturnType<SessionEnsurer>>>;
     }) {
       const mh = createMockMessageHub();
@@ -1432,6 +1433,9 @@ describe('setupSpaceTaskMessageHandlers', () => {
       taskAgentManager = {
         injectSubSessionMessage,
         getWorkflowDeclaredAgentNamesForTask: mock(() => opts.declared ?? []),
+        ...(opts.postApproval !== undefined
+          ? { getPostApprovalWorkerSession: mock(() => opts.postApproval ?? null) }
+          : {}),
       };
       db = createMockDatabase(mockTaskWithRun);
       internalEventBus = {
@@ -1518,7 +1522,31 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(injectSubSessionMessage).not.toHaveBeenCalled();
     });
 
-    it('pre-translates nodeExecutionId to an exact worker target with zero wait', async () => {
+    it('rejects a foreign live session when a different post-approval worker is recorded', async () => {
+      const { targets, injectSubSessionMessage } = setupWithResolver({
+        executions: [],
+        outcomes: [{ kind: 'resolved', sessionId: 'foreign-session', created: false }],
+        postApproval: {
+          sessionId: 'post-approval-session',
+          agentName: 'Merger',
+          nodeId: 'node-merger',
+        },
+      });
+
+      await expect(
+        call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: 'foreign session',
+          target: { kind: 'node_agent', sessionId: 'foreign-session' },
+        })
+      ).rejects.toThrow('no longer attached');
+
+      expect(targets).toEqual([{ kind: 'session', sessionId: 'foreign-session' }]);
+      expect(injectSubSessionMessage).not.toHaveBeenCalled();
+    });
+
+    it('pre-translates nodeExecutionId without a live session to a zero-wait worker target', async () => {
       const { targets } = setupWithResolver({
         executions: [
           {
@@ -1551,6 +1579,41 @@ describe('setupSpaceTaskMessageHandlers', () => {
           waitCapMs: 0,
         },
       ]);
+    });
+
+    it('pre-translates nodeExecutionId with a live session through session-kind resolution', async () => {
+      const { targets, injectSubSessionMessage } = setupWithResolver({
+        executions: [
+          {
+            id: 'exec-reviewer',
+            workflowNodeId: 'node-review',
+            agentName: 'Reviewer',
+            agentSessionId: 'session-reviewer',
+            status: 'in_progress',
+          },
+        ],
+        outcomes: [{ kind: 'resolved', sessionId: 'session-reviewer', created: false }],
+      });
+
+      await call('space.task.sendMessage', {
+        spaceId: 'space-1',
+        taskId: 'task-1',
+        message: 'exact live execution',
+        target: {
+          kind: 'node_agent',
+          nodeExecutionId: 'exec-reviewer',
+          agentName: 'Wrong',
+        },
+      });
+
+      expect(targets).toEqual([{ kind: 'session', sessionId: 'session-reviewer' }]);
+      expect(injectSubSessionMessage).toHaveBeenCalledWith(
+        'session-reviewer',
+        'exact live execution',
+        false,
+        undefined,
+        undefined
+      );
     });
 
     it('loops over same-name worker targets without extending SessionTargetWorker', async () => {

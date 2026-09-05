@@ -56,6 +56,7 @@ type NodeAgentRouteResult = {
 type NodeAgentWorkerTarget = {
   agentName: string;
   workflowNodeId?: string;
+  sessionId?: string;
 };
 
 type NodeAgentRouteOutcome = {
@@ -397,8 +398,9 @@ export function setupSpaceTaskMessageHandlers(
         let outcome = await resolveTargetSession({ kind: 'session', sessionId: target.sessionId });
         let agentName =
           attachedExecution?.agentName ??
-          (!target.workflowNodeId || postApproval?.nodeId === target.workflowNodeId
-            ? postApproval?.agentName
+          (postApproval?.sessionId === target.sessionId &&
+          (!target.workflowNodeId || postApproval.nodeId === target.workflowNodeId)
+            ? postApproval.agentName
             : undefined);
         if (
           outcome.kind === 'unresolved' &&
@@ -464,6 +466,9 @@ export function setupSpaceTaskMessageHandlers(
           : matchingExecutions.map((execution) => ({
               agentName: execution.agentName,
               workflowNodeId: execution.workflowNodeId,
+              ...(exactExecution && execution.status !== 'pending' && execution.agentSessionId
+                ? { sessionId: execution.agentSessionId }
+                : {}),
             }))
       ).filter(
         (worker, index, all) =>
@@ -491,7 +496,9 @@ export function setupSpaceTaskMessageHandlers(
       const outcomes = await Promise.all(
         workerTargets.map(async (worker) => ({
           worker,
-          outcome: await ensureWorker(taskId, worker.agentName, worker.workflowNodeId),
+          outcome: worker.sessionId
+            ? await resolveTargetSession({ kind: 'session', sessionId: worker.sessionId })
+            : await ensureWorker(taskId, worker.agentName, worker.workflowNodeId),
         }))
       );
       const resolved = outcomes.filter(
