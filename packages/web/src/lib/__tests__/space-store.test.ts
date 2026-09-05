@@ -1742,7 +1742,7 @@ describe('SpaceStore — agent template CRUD', () => {
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['new.custom']);
   });
 
-  it('createTemplate before any fetch keeps the mutation across a refresh', async () => {
+  it('createTemplate before any fetch keeps built-ins and the mutation across a refresh', async () => {
     await spaceStore.selectSpace('space-1');
     const created = await spaceStore.createTemplate({
       key: 'new.custom',
@@ -1751,9 +1751,64 @@ describe('SpaceStore — agent template CRUD', () => {
     });
     expect(created.key).toBe('new.custom');
 
+    const richBuiltIn = makeLongHorizonAgentTemplate({ key: 'builtin.default' });
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [richBuiltIn] };
+      return {};
+    });
     await spaceStore.refresh();
+    await spaceStore.ensureConfigData();
 
-    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toContain('new.custom');
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual([
+      'builtin.default',
+      'new.custom',
+    ]);
+  });
+
+  it('deleteTemplate fallback preserves a newer same-key mutation', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.agentTemplates.value = [
+      makeLongHorizonAgentTemplate({ key: 'recreated', displayName: 'Old' }),
+    ];
+    const stalledList: {
+      resolve: ((templates: SpaceAgentTemplate[]) => void) | null;
+    } = { resolve: null };
+    mockHub.request.mockImplementation(async (method: string): Promise<any> => {
+      if (method === 'spaceAgent.listBuiltInTemplates') return { templates: [] };
+      if (method === 'spaceAgent.listTemplates') {
+        return new Promise((resolve) => {
+          stalledList.resolve = (templates) => resolve({ templates });
+        });
+      }
+      if (method === 'spaceAgent.deleteTemplate') return { success: true };
+      if (method === 'spaceAgent.createTemplate') {
+        return {
+          template: makeAgentTemplate({
+            key: 'recreated',
+            displayName: 'Recreated',
+            createdAt: 9,
+            updatedAt: 9,
+          }),
+        };
+      }
+      return {};
+    });
+
+    const pendingDelete = spaceStore.deleteTemplate('recreated');
+    await vi.waitFor(() => {
+      if (!stalledList.resolve) throw new Error('listTemplates not yet requested');
+    });
+    await spaceStore.createTemplate({
+      key: 'recreated',
+      handle: 'recreated',
+      displayName: 'Recreated',
+    });
+    stalledList.resolve?.([]);
+    await pendingDelete;
+
+    const templates = spaceStore.agentTemplates.value;
+    expect(templates.map((t) => t.key)).toEqual(['recreated']);
+    expect(templates[0].displayName).toBe('Recreated');
   });
 
   it('createTemplate calls spaceAgent.createTemplate and merges into agentTemplates', async () => {

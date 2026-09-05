@@ -320,12 +320,14 @@ interface SpaceTemplateDeleteDeps {
   deleteTemplate(key: string): Promise<void>;
   fetchTemplates(): Promise<{ applied: boolean }>;
   builtInForKey(key: string): SpaceLongHorizonAgentTemplate | undefined;
+  mutationGenerationFor(key: string): number | undefined;
   currentTemplates(): SpaceLongHorizonAgentTemplate[];
   applyTemplates(templates: SpaceLongHorizonAgentTemplate[]): void;
 }
 
 type SpaceTemplateDeleteCtx = {
   key: string;
+  deleteStartGeneration: number;
   reloadApplied?: boolean;
   deps: SpaceTemplateDeleteDeps;
 };
@@ -348,6 +350,10 @@ async function reloadSpaceTemplates(ctx: SpaceTemplateDeleteCtx): Promise<SpaceT
 }
 
 function applySpaceTemplateDeleteFallback(ctx: SpaceTemplateDeleteCtx): SpaceTemplateDeleteCtx {
+  const mutationGeneration = ctx.deps.mutationGenerationFor(ctx.key);
+  if (mutationGeneration !== undefined && mutationGeneration > ctx.deleteStartGeneration) {
+    return ctx;
+  }
   const builtIn = ctx.deps.builtInForKey(ctx.key);
   const current = ctx.deps.currentTemplates();
   ctx.deps.applyTemplates(
@@ -485,6 +491,8 @@ class SpaceStore {
   private templateListMerged = false;
 
   private templateFetchGeneration = 0;
+
+  private mutatedTemplateKeys = new Map<string, number>();
 
   readonly workflows = signal<SpaceWorkflowSummary[]>([]);
 
@@ -836,6 +844,7 @@ class SpaceStore {
     this.builtInTemplatesByKey = new Map();
     this.templateListMerged = false;
     this.templateFetchGeneration += 1;
+    this.mutatedTemplateKeys = new Map();
     this.workflows.value = [];
     this.workflowSummariesLoaded = false;
     this.workflowDetails.value = [];
@@ -1216,12 +1225,12 @@ class SpaceStore {
       const templates = result?.templates ?? [];
       this.builtInTemplatesByKey = new Map(templates.map((t) => [t.key, t]));
       if (!this.templateListMerged) {
-        this.agentTemplates.value = templates;
+        this.applyBuiltInTemplates(templates);
       }
     } catch (err) {
       logger.error('Failed to fetch agent templates:', err);
       if (this.spaceId.value === spaceId && !this.templateListMerged) {
-        this.agentTemplates.value = [];
+        this.applyBuiltInTemplates([]);
       }
     }
   }
@@ -2699,12 +2708,20 @@ class SpaceStore {
   }
 
   private mergeAgentTemplate(template: SpaceLongHorizonAgentTemplate): void {
-    this.templateFetchGeneration += 1;
-    this.templateListMerged = true;
+    this.mutatedTemplateKeys.set(template.key, ++this.templateFetchGeneration);
     const exists = this.agentTemplates.value.some((t) => t.key === template.key);
     this.agentTemplates.value = exists
       ? this.agentTemplates.value.map((t) => (t.key === template.key ? template : t))
       : [...this.agentTemplates.value, template];
+  }
+
+  private applyBuiltInTemplates(builtIns: SpaceLongHorizonAgentTemplate[]): void {
+    const byKey = new Map(builtIns.map((t) => [t.key, t]));
+    for (const key of this.mutatedTemplateKeys.keys()) {
+      const current = this.agentTemplates.value.find((t) => t.key === key);
+      if (current) byKey.set(key, current);
+    }
+    this.agentTemplates.value = [...byKey.values()];
   }
 
   private async runTemplateListFetch(): Promise<{
@@ -2794,6 +2811,7 @@ class SpaceStore {
   async deleteTemplate(key: string): Promise<void> {
     await runSpaceTemplateDeletion({
       key,
+      deleteStartGeneration: this.templateFetchGeneration,
       deps: {
         deleteTemplate: async (templateKey) => {
           const hub = await connectionManager.getHub();
@@ -2803,6 +2821,7 @@ class SpaceStore {
         },
         fetchTemplates: () => this.runTemplateListFetch(),
         builtInForKey: (templateKey) => this.builtInTemplatesByKey.get(templateKey),
+        mutationGenerationFor: (templateKey) => this.mutatedTemplateKeys.get(templateKey),
         currentTemplates: () => this.agentTemplates.value,
         applyTemplates: (templates) => {
           this.agentTemplates.value = templates;
