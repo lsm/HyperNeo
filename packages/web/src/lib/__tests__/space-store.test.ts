@@ -1465,6 +1465,7 @@ describe('SpaceStore — agent template CRUD', () => {
   afterEach(() => vi.clearAllMocks());
 
   it('fetchTemplates populates agentTemplates from spaceAgent.listTemplates', async () => {
+    await spaceStore.selectSpace('space-1');
     const fetched = makeAgentTemplate({ key: 'custom.test', handle: 'custom' });
     mockHub.request.mockImplementation(async (method: string): Promise<any> => {
       if (method === 'spaceAgent.listTemplates') return { templates: [fetched] };
@@ -1481,6 +1482,7 @@ describe('SpaceStore — agent template CRUD', () => {
   });
 
   it('fetchTemplates converts tools to toolPermissions on the signal', async () => {
+    await spaceStore.selectSpace('space-1');
     const fetched = makeAgentTemplate({ key: 'with-tools', tools: ['Read', 'Write'] });
     mockHub.request.mockImplementation(async (method: string): Promise<any> => {
       if (method === 'spaceAgent.listTemplates') return { templates: [fetched] };
@@ -1494,14 +1496,13 @@ describe('SpaceStore — agent template CRUD', () => {
     });
   });
 
-  it('fetchTemplates skips the built-in fetch when no space is selected', async () => {
-    await spaceStore.fetchTemplates();
-
+  it('fetchTemplates throws when no space is selected', async () => {
+    await expect(spaceStore.fetchTemplates()).rejects.toThrow('No space selected');
     expect(mockHub.request).not.toHaveBeenCalledWith(
       'spaceAgent.listBuiltInTemplates',
       expect.anything()
     );
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listTemplates', {});
+    expect(mockHub.request).not.toHaveBeenCalledWith('spaceAgent.listTemplates', {});
   });
 
   it('fetchTemplates resolves flattened built-in metadata via listBuiltInTemplates', async () => {
@@ -1664,6 +1665,7 @@ describe('SpaceStore — agent template CRUD', () => {
   });
 
   it('deleteTemplate calls spaceAgent.deleteTemplate and refetches the list', async () => {
+    await spaceStore.selectSpace('space-1');
     let list = [makeAgentTemplate({ key: 'keep' }), makeAgentTemplate({ key: 'delete-me' })];
     mockHub.request.mockImplementation(async (method: string): Promise<any> => {
       if (method === 'spaceAgent.deleteTemplate') {
@@ -1740,6 +1742,7 @@ describe('SpaceStore — agent template CRUD', () => {
   });
 
   it('deleteTemplate removes a non-shadowing custom when the refetch fails', async () => {
+    await spaceStore.selectSpace('space-1');
     spaceStore.agentTemplates.value = [
       makeLongHorizonAgentTemplate({ key: 'keep' }),
       makeLongHorizonAgentTemplate({ key: 'delete-me' }),

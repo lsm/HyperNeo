@@ -2492,25 +2492,22 @@ class SpaceStore {
       : [...this.agentTemplates.value, template];
   }
 
-  private async ensureBuiltInTemplateMap(
-    hub: Awaited<ReturnType<typeof connectionManager.getHub>>
-  ): Promise<void> {
-    if (this.builtInTemplatesByKey.size > 0) return;
-    const spaceId = this.spaceId.value;
-    if (!spaceId) return;
-    const result = await hub.request<{ templates: SpaceLongHorizonAgentTemplate[] }>(
-      'spaceAgent.listBuiltInTemplates',
-      { spaceId }
-    );
-    this.builtInTemplatesByKey = new Map((result?.templates ?? []).map((t) => [t.key, t]));
-  }
-
   async fetchTemplates(): Promise<SpaceLongHorizonAgentTemplate[]> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
     const hub = await connectionManager.getHub();
-    try {
-      await this.ensureBuiltInTemplateMap(hub);
-    } catch (err) {
-      logger.error('Failed to fetch built-in agent templates:', err);
+    if (this.builtInTemplatesByKey.size === 0) {
+      try {
+        const builtInResult = await hub.request<{ templates: SpaceLongHorizonAgentTemplate[] }>(
+          'spaceAgent.listBuiltInTemplates',
+          { spaceId }
+        );
+        this.builtInTemplatesByKey = new Map(
+          (builtInResult?.templates ?? []).map((t) => [t.key, t])
+        );
+      } catch (err) {
+        logger.error('Failed to fetch built-in agent templates:', err);
+      }
     }
     const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
       'spaceAgent.listTemplates',
