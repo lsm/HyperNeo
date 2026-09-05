@@ -75,7 +75,7 @@ export default defineConfig({
         ws: true,
       },
       '/ws': {
-        target: 'ws://localhost:8283',
+        target: process.env.DAEMON_URL?.replace('http', 'ws') || 'ws://localhost:8283',
         changeOrigin: true,
         ws: true,
       },
