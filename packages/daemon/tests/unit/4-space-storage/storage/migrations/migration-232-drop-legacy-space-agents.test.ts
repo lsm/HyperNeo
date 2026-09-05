@@ -92,6 +92,44 @@ describe('migration 232 — drop legacy space agent tables', () => {
     db.close();
   });
 
+  test('aborts when an assignment for a live agent was never copied off the legacy table', () => {
+    const db = makeRecreatedLegacyDb();
+    insertSpace(db, 'space-a');
+    insertWorker(db, 'worker-1', 'space-a');
+    insertLongHorizonAgent(db, 'worker-1', 'space-a');
+    db.prepare(
+      `INSERT INTO space_goals (id, space_id, title, description, created_at, updated_at)
+       VALUES ('goal-1', 'space-a', 'Goal', '', 10, 10)`
+    );
+    db.prepare(
+      `INSERT INTO space_agent_goal_assignments (space_id, agent_id, goal_id, created_at)
+       VALUES ('space-a', 'worker-1', 'goal-1', 10)`
+    );
+
+    expect(() => runMigration232(db)).toThrow(/space_agent_goal_assignments worker-1 → goal-1/);
+    expect(tableExists(db, 'space_agent_goal_assignments')).toBe(true);
+    expect(tableExists(db, 'space_agents')).toBe(true);
+    db.close();
+  });
+
+  test('drops assignment ghosts whose goal no longer exists', () => {
+    const db = makeRecreatedLegacyDb();
+    insertSpace(db, 'space-a');
+    insertWorker(db, 'worker-1', 'space-a');
+    insertLongHorizonAgent(db, 'worker-1', 'space-a');
+    db.prepare(
+      `INSERT INTO space_agent_goal_assignments (space_id, agent_id, goal_id, created_at)
+       VALUES ('space-a', 'worker-1', 'deleted-goal', 10)`
+    );
+
+    runMigration232(db);
+
+    for (const table of LEGACY_TABLES) {
+      expect(tableExists(db, table)).toBe(false);
+    }
+    db.close();
+  });
+
   test('is a no-op on a database that no longer has space_agents', () => {
     const db = new BunDatabase(':memory:');
     db.exec('PRAGMA foreign_keys = ON');

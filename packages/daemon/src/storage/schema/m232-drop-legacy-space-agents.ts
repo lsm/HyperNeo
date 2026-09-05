@@ -46,6 +46,72 @@ export function runMigration232(db: BunDatabase): void {
     );
   }
 
+  const undrainedChecks: Array<{ tableName: string; sql: string }> = [
+    {
+      tableName: 'space_agent_goal_assignments',
+      sql: `
+        SELECT legacy.agent_id AS agent_id, legacy.goal_id AS target_id
+        FROM space_agent_goal_assignments legacy
+        JOIN space_long_horizon_agents live
+          ON live.id = legacy.agent_id AND live.space_id = legacy.space_id
+        WHERE NOT EXISTS (
+          SELECT 1 FROM space_long_horizon_agent_goals copied
+          WHERE copied.agent_id = legacy.agent_id AND copied.goal_id = legacy.goal_id
+        )
+        AND EXISTS (
+          SELECT 1 FROM space_goals goal
+          WHERE goal.id = legacy.goal_id AND goal.space_id = legacy.space_id
+        )`,
+    },
+    {
+      tableName: 'space_agent_forge_scope_assignments',
+      sql: `
+        SELECT legacy.agent_id AS agent_id, legacy.scope_id AS target_id
+        FROM space_agent_forge_scope_assignments legacy
+        JOIN space_long_horizon_agents live
+          ON live.id = legacy.agent_id AND live.space_id = legacy.space_id
+        WHERE NOT EXISTS (
+          SELECT 1 FROM space_long_horizon_agent_forge_scopes copied
+          WHERE copied.agent_id = legacy.agent_id AND copied.scope_id = legacy.scope_id
+        )
+        AND EXISTS (
+          SELECT 1 FROM evolution_scopes scope
+          WHERE scope.id = legacy.scope_id AND scope.space_id = legacy.space_id
+        )`,
+    },
+    {
+      tableName: 'space_agent_reminders',
+      sql: `
+        SELECT legacy.agent_id AS agent_id, legacy.id AS target_id
+        FROM space_agent_reminders legacy
+        JOIN space_long_horizon_agents live
+          ON live.id = legacy.agent_id AND live.space_id = legacy.space_id
+        WHERE legacy.status = 'active'
+          AND NOT EXISTS (
+            SELECT 1 FROM space_long_horizon_agent_reminders copied
+            WHERE copied.id = legacy.id
+          )`,
+    },
+  ];
+  const undrained = undrainedChecks
+    .filter((check) => tableExists(db, check.tableName))
+    .flatMap((check) =>
+      (
+        db.prepare(`${check.sql} LIMIT 5`).all() as Array<{
+          agent_id: string;
+          target_id: string;
+        }>
+      ).map((row) => ({ tableName: check.tableName, ...row }))
+    );
+  if (undrained.length > 0) {
+    throw new Error(
+      `Migration 232 found undrained legacy assignment rows whose only copy would be ` +
+        `destroyed by the drop: ${undrained
+          .map((row) => `${row.tableName} ${row.agent_id} → ${row.target_id}`)
+          .join(', ')}. Refusing to drop; the pre-migration backup retains them.`
+    );
+  }
+
   db.exec('BEGIN');
   try {
     db.exec('DROP TABLE IF EXISTS space_agent_goal_assignments');
