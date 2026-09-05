@@ -483,7 +483,7 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
         if (e.target !== e.currentTarget) return;
         if (e.key === 'Enter' || e.key === ' ') openSession();
       }}
-      class="group flex min-h-32 cursor-pointer flex-col rounded-xl border border-line bg-surface-overlay/90 px-4 py-3.5 glass-hairline transition-all hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface-raised/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+      class="group flex min-h-32 cursor-pointer flex-col rounded-xl px-4 py-3.5 flat-surface flat-hover transition-all hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
     >
       <div class="flex items-start justify-between gap-3">
         <div class="flex min-w-0 flex-1 items-start gap-3">
