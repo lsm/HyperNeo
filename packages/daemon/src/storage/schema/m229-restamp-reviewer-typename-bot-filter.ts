@@ -43,6 +43,7 @@ export const STALE_PRE_TYPENAME_REVIEWER_TOOLS: readonly string[] = [
 
 interface ReviewerRow {
   id: string;
+  template_key: string | null;
   instructions: string | null;
   description: string | null;
   tool_permissions_json: string | null;
@@ -55,23 +56,32 @@ function tableExists(db: BunDatabase, tableName: string): boolean {
   return !!result;
 }
 
-function isPristineReviewerRow(row: ReviewerRow): boolean {
+export function hasStockReviewerToolList(storedTools: string[]): boolean {
+  return (
+    [...storedTools].sort().join('\u0000') ===
+    [...STALE_PRE_TYPENAME_REVIEWER_TOOLS].sort().join('\u0000')
+  );
+}
+
+export function hasStockReviewerTools(toolPermissionsJson: string | null): boolean {
   let storedTools: string[] = [];
   try {
-    const parsed = row.tool_permissions_json
-      ? (JSON.parse(row.tool_permissions_json) as { tools?: unknown })
+    const parsed = toolPermissionsJson
+      ? (JSON.parse(toolPermissionsJson) as { tools?: unknown })
       : {};
     storedTools = Array.isArray(parsed.tools) ? parsed.tools.map((t) => String(t)) : [];
   } catch {
     return false;
   }
+  return hasStockReviewerToolList(storedTools);
+}
+
+export function isPristineReviewerRow(row: ReviewerRow): boolean {
   const descriptionPristine =
-    row.description === null || row.description === STALE_PRE_TYPENAME_REVIEWER_DESCRIPTION;
-  return (
-    descriptionPristine &&
-    [...storedTools].sort().join('\u0000') ===
-      [...STALE_PRE_TYPENAME_REVIEWER_TOOLS].sort().join('\u0000')
-  );
+    row.template_key === 'Reviewer'
+      ? row.description === null || row.description === STALE_PRE_TYPENAME_REVIEWER_DESCRIPTION
+      : row.description === STALE_PRE_TYPENAME_REVIEWER_DESCRIPTION;
+  return descriptionPristine && hasStockReviewerTools(row.tool_permissions_json);
 }
 
 export function runMigration229(db: BunDatabase): void {
@@ -83,7 +93,7 @@ export function runMigration229(db: BunDatabase): void {
 
   const rows = db
     .prepare(
-      `SELECT id, instructions, description, tool_permissions_json
+      `SELECT id, template_key, instructions, description, tool_permissions_json
        FROM space_long_horizon_agents
        WHERE handle = 'reviewer' OR display_name = 'Reviewer' OR template_key = 'Reviewer'`
     )

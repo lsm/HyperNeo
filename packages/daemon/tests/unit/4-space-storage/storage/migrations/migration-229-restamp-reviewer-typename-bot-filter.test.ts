@@ -137,6 +137,13 @@ describe('migration 229: re-stamp reviewer presets with the __typename bot filte
       status: 'archived',
     });
     insertAgent(db, {
+      id: 'seeded-cleared-description',
+      handle: 'reviewer-6',
+      displayName: 'Reviewer',
+      instructions: STALE_CONTRACT,
+      description: null,
+    });
+    insertAgent(db, {
       id: 'other-agent',
       handle: 'general',
       displayName: 'General',
@@ -152,6 +159,7 @@ describe('migration 229: re-stamp reviewer presets with the __typename bot filte
     );
     expect(getInstructions(db, 'customized-description')).toBe(STALE_CONTRACT);
     expect(getInstructions(db, 'archived-pristine')).toBe(REVIEWER_SYSTEM_CONTRACT);
+    expect(getInstructions(db, 'seeded-cleared-description')).toBe(STALE_CONTRACT);
     expect(getInstructions(db, 'other-agent')).toBe(STALE_CONTRACT);
   });
 
