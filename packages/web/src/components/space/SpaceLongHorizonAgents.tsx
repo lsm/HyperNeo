@@ -257,7 +257,7 @@ function AgentEditor({
 
   return (
     <div class="fixed inset-0 z-50 flex items-end justify-center bg-scrim p-0 backdrop-blur-sm sm:items-center sm:p-5">
-      <div class="relative isolate max-h-[calc(100dvh-1rem)] w-full max-w-2xl overflow-hidden rounded-t-3xl border border-line bg-surface/95 shadow-[inset_0_1px_0_rgba(255,255,255,0.1),0_28px_90px_rgba(0,0,0,0.55)] before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-[radial-gradient(circle_at_4%_0%,rgba(145,77,108,0.22),transparent_34%),radial-gradient(circle_at_100%_6%,rgba(42,94,125,0.18),transparent_38%)] sm:rounded-3xl">
+      <div class="relative isolate max-h-[calc(100dvh-1rem)] w-full max-w-2xl overflow-hidden rounded-t-3xl border border-line bg-surface/95 glass-modal-surface sm:rounded-3xl">
         <div class="flex items-start justify-between border-b border-line px-5 py-5 sm:px-7">
           <div>
             <p class="text-xl font-semibold tracking-tight text-fg">
@@ -293,7 +293,7 @@ function AgentEditor({
                 type="text"
                 value={displayName}
                 onInput={(e) => setDisplayName((e.target as HTMLInputElement).value)}
-                class="w-full rounded-xl border border-line bg-surface-overlay/90 px-4 py-3 text-sm text-fg placeholder-gray-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
+                class="w-full rounded-xl border border-line bg-surface-overlay/90 px-4 py-3 text-sm text-fg placeholder-gray-600 glass-hairline transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
                 placeholder="e.g. Release Manager"
               />
             </div>
@@ -304,7 +304,7 @@ function AgentEditor({
                 value={handle}
                 disabled={isEdit}
                 onInput={(e) => setHandle((e.target as HTMLInputElement).value)}
-                class="w-full rounded-xl border border-line bg-surface-overlay/90 px-4 py-3 text-sm text-fg placeholder-gray-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10 disabled:opacity-50"
+                class="w-full rounded-xl border border-line bg-surface-overlay/90 px-4 py-3 text-sm text-fg placeholder-gray-600 glass-hairline transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10 disabled:opacity-50"
                 placeholder="e.g. release-manager"
               />
             </div>
@@ -389,7 +389,7 @@ function AgentEditor({
                   type="text"
                   value={extraToolDraft}
                   onInput={(e) => setExtraToolDraft((e.target as HTMLInputElement).value)}
-                  class="w-full rounded-xl border border-line bg-surface-overlay/90 px-3 py-2 text-xs text-fg placeholder:text-fg-faint shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
+                  class="w-full rounded-xl border border-line bg-surface-overlay/90 px-3 py-2 text-xs text-fg placeholder:text-fg-faint glass-hairline transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
                   placeholder="Add scoped tool entry, e.g. Bash(gh pr view:*)"
                   data-testid="lh-agent-extra-tool-input"
                 />
@@ -483,7 +483,7 @@ function AgentCard({ agent, navigationSpaceId, reminderCount, onEdit, onDelete }
         if (e.target !== e.currentTarget) return;
         if (e.key === 'Enter' || e.key === ' ') openSession();
       }}
-      class="group flex min-h-32 cursor-pointer flex-col rounded-xl border border-line bg-surface-overlay/90 px-4 py-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface-raised/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+      class="group flex min-h-32 cursor-pointer flex-col rounded-xl border border-line bg-surface-overlay/90 px-4 py-3.5 glass-hairline transition-all hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface-raised/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
     >
       <div class="flex items-start justify-between gap-3">
         <div class="flex min-w-0 flex-1 items-start gap-3">
