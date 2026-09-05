@@ -87,17 +87,22 @@ import {
   createMemoryConsolidationHandler,
   enqueueMemoryConsolidationIfMissing,
 } from './lib/job-handlers/memory-consolidation.handler.ts';
+import {
+  createMailboxExpireHandler,
+  enqueueMailboxExpireIfMissing,
+} from './lib/job-handlers/mailbox-expire.handler.ts';
 import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler.ts';
 import {
   JOB_QUEUE_CLEANUP,
   LONG_HORIZON_AGENT_REMINDER_FIRE,
+  MAILBOX_EXPIRE_FIRE,
   MEMORY_CONSOLIDATION,
   MESSAGE_DELIVERY,
   SKILL_VALIDATE,
   TASK_SCHEDULE_FIRE,
 } from './lib/job-queue-constants.ts';
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler.ts';
-import { createMailboxDeliveryHandler } from './lib/mailbox/delivery.ts';
+import { createMailboxDeadHandler, createMailboxDeliveryHandler } from './lib/mailbox/delivery.ts';
 import { MAILBOX_LANE } from './lib/mailbox/enqueue.ts';
 import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter.ts';
 import { asMessageDeliveryPayload } from './lib/agent/message-delivery.ts';
@@ -939,6 +944,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       MEMORY_CONSOLIDATION,
       createMemoryConsolidationHandler(db.agentMemory, jobQueue)
     );
+    jobProcessor.register(MAILBOX_EXPIRE_FIRE, createMailboxExpireHandler(jobQueue));
     jobProcessor.register(
       MAILBOX_LANE,
       createMailboxDeliveryHandler({
@@ -974,12 +980,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         isSessionArchived: (sessionId: string) =>
           reactiveDb?.db.getSession(sessionId)?.status === 'archived',
       }),
-      {
-        onDead: (job) => {
-          const entryId = typeof job.payload.id === 'string' ? job.payload.id : 'unknown';
-          logError(`mailbox: entry ${entryId} dead-lettered: ${job.error ?? 'unknown error'}`);
-        },
-      }
+      { onDead: createMailboxDeadHandler(logError) }
     );
 
     messageDeliveryProcessor.register(
@@ -1160,6 +1161,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     }
     enqueueMemoryConsolidationIfMissing(jobQueue, Date.now());
     logInfo('[Daemon] Ensured initial memory_consolidation job');
+    enqueueMailboxExpireIfMissing(jobQueue, Date.now());
+    logInfo('[Daemon] Ensured initial mailbox.expire job');
     enqueueLongHorizonAgentReminderScanIfMissing(jobQueue, Date.now());
     logInfo('[Daemon] Ensured initial longHorizonAgentReminder.fire scan job');
     if (process.env.NODE_ENV !== 'test') {
