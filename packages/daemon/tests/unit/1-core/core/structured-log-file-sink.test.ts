@@ -81,6 +81,28 @@ describe('StructuredLogFileSink', () => {
     });
   });
 
+  it('preserves active goal token counts while redacting actual tokens', () => {
+    const redacted = redactStructuredLogEvent(
+      event('active goal', {
+        sdkMessagePayload: {
+          value: {
+            tokens_at_start: 12345,
+            access_token: 'secret-token',
+          },
+        },
+      })
+    );
+
+    expect(redacted.metadata).toEqual({
+      sdkMessagePayload: {
+        value: {
+          tokens_at_start: 12345,
+          access_token: '[REDACTED]',
+        },
+      },
+    });
+  });
+
   it('redacts comma-delimited Authorization schemes through end of line', () => {
     const redacted = redactStructuredLogEvent(
       event(

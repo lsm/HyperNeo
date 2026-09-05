@@ -12,6 +12,11 @@ export interface StructuredLogFileSinkOptions {
 
 const SENSITIVE_KEY =
   /token|secret|password|api[-_]?key|private[-_]?key|authorization|cookie|credential|signature/i;
+const NON_SECRET_TOKEN_COUNT_KEY = /^(?:tokens_at_start)$/i;
+
+function isSensitiveKey(key: string): boolean {
+  return SENSITIVE_KEY.test(key) && !NON_SECRET_TOKEN_COUNT_KEY.test(key);
+}
 
 export class StructuredLogFileSink {
   private tail: Promise<void>;
@@ -150,7 +155,7 @@ export function redactStructuredLogEvent(event: StructuredLogEvent): StructuredL
 function redactLogValue(value: unknown): unknown {
   if (typeof value === 'string') return redactString(value);
   if (Array.isArray(value)) {
-    if (value.length === 2 && typeof value[0] === 'string' && SENSITIVE_KEY.test(value[0])) {
+    if (value.length === 2 && typeof value[0] === 'string' && isSensitiveKey(value[0])) {
       return [value[0], '[REDACTED]'];
     }
     return value.map(redactLogValue);
@@ -158,13 +163,13 @@ function redactLogValue(value: unknown): unknown {
   if (!value || typeof value !== 'object') return value;
 
   const object = value as Record<string, unknown>;
-  if (typeof object.name === 'string' && SENSITIVE_KEY.test(object.name) && 'value' in object) {
+  if (typeof object.name === 'string' && isSensitiveKey(object.name) && 'value' in object) {
     return { ...object, value: '[REDACTED]' };
   }
 
   const result: Record<string, unknown> = {};
   for (const [key, nested] of Object.entries(object)) {
-    result[key] = SENSITIVE_KEY.test(key) ? '[REDACTED]' : redactLogValue(nested);
+    result[key] = isSensitiveKey(key) ? '[REDACTED]' : redactLogValue(nested);
   }
   return result;
 }
