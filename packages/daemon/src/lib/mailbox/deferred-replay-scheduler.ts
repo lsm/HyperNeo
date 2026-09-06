@@ -22,7 +22,12 @@ function emitReplayEvent(
 }
 
 function isBusyStatus(status: string): boolean {
-  return status === 'processing' || status === 'queued' || status === 'waiting_for_input';
+  return (
+    status === 'processing' ||
+    status === 'queued' ||
+    status === 'waiting_for_input' ||
+    status === 'interrupted'
+  );
 }
 
 export interface MailboxDeferredReplaySchedulerDeps {

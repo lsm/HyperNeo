@@ -123,6 +123,38 @@ describe('createMailboxDeferredReplayScheduler', () => {
     expect(publish).toHaveBeenCalledWith(SESSION_ID);
   });
 
+  test('parks while the session is interrupted and publishes after idle settles', async () => {
+    const publish = mock(async () => {});
+    const deps = makeDeps(publish);
+    let status = 'interrupted';
+    let resolveIdle: (() => void) | undefined;
+    deps.sessionManager = {
+      getCachedSession: () =>
+        ({
+          getSessionData: () => ({ config: { queryMode: 'immediate' } }),
+          getProcessingState: () => ({ status }),
+          stateManager: {
+            waitForIdleTransition: () => ({
+              promise: new Promise<void>((resolve) => {
+                resolveIdle = resolve;
+              }),
+              cancel: () => {},
+            }),
+          },
+        }) as never,
+    };
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(20);
+    expect(publish).not.toHaveBeenCalled();
+
+    status = 'idle';
+    resolveIdle?.();
+    await flush(20);
+    expect(publish).toHaveBeenCalledWith(SESSION_ID);
+  });
+
   test('parked sessions do not consume publication slots', async () => {
     const published: string[] = [];
     const waiters: Array<{ sessionId: string; resolve: () => void }> = [];

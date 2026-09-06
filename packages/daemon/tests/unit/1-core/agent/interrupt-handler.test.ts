@@ -298,6 +298,37 @@ describe('InterruptHandler', () => {
       expect(cancelForSessionSpy).not.toHaveBeenCalled();
     });
 
+    it('fails materialized deferred rows when suppressing replay without preserving jobs', async () => {
+      (mockDb.getUserMessageIdsByStatus as ReturnType<typeof mock>).mockImplementation(
+        (_sessionId: string, status: string) =>
+          status === 'deferred' ? [{ dbId: 'row-1', uuid: 'deferred-materialized' }] : []
+      );
+      markFailedSpy.mockImplementation((_sessionId: string, uuid: string) => `db-${uuid}`);
+      handler = createHandler();
+
+      await handler.handleInterrupt({ skipDeferredReplay: true });
+
+      expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'deferred-materialized');
+      expect(busPublishSpy).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'test-session-id',
+        messageIds: ['db-deferred-materialized'],
+        status: 'failed',
+      });
+    });
+
+    it('keeps materialized deferred rows replayable on a plain interrupt', async () => {
+      (mockDb.getUserMessageIdsByStatus as ReturnType<typeof mock>).mockImplementation(
+        (_sessionId: string, status: string) =>
+          status === 'deferred' ? [{ dbId: 'row-1', uuid: 'deferred-materialized' }] : []
+      );
+      markFailedSpy.mockImplementation((_sessionId: string, uuid: string) => `db-${uuid}`);
+      handler = createHandler();
+
+      await handler.handleInterrupt();
+
+      expect(markFailedSpy).not.toHaveBeenCalledWith('test-session-id', 'deferred-materialized');
+    });
+
     it('should clear message queue if has pending messages', async () => {
       queueSizeSpy.mockReturnValue(5);
       handler = createHandler();

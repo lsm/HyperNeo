@@ -109,6 +109,15 @@ export class InterruptHandler {
               if (failedDbId) failedDbIds.push(failedDbId);
             }
           }
+          if (opts?.skipDeferredReplay === true) {
+            const deferredRows =
+              this.ctx.db.getUserMessageIdsByStatus?.(session.id, 'deferred') ?? [];
+            for (const row of deferredRows) {
+              if (!row.uuid) continue;
+              const failedDbId = sdkRepo?.markDeliveryFailedByUuid(session.id, row.uuid) ?? null;
+              if (failedDbId) failedDbIds.push(failedDbId);
+            }
+          }
         });
         if (failedDbIds.length > 0) {
           await this.ctx.internalEventBus
