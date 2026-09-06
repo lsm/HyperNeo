@@ -3,8 +3,8 @@ import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.t
 import type { PendingAgentMessageRecord } from '../../../storage/repositories/pending-agent-message-repository.ts';
 
 export type SpaceAgentPendingDrainOutcome =
-  | { action: 'skip' }
-  | { action: 'drain'; rows: PendingAgentMessageRecord[] };
+  | { action: 'skip'; activeDeliveryIds: string[] }
+  | { action: 'drain'; rows: PendingAgentMessageRecord[]; activeDeliveryIds: string[] };
 
 export interface SpaceAgentPendingDrainDeps {
   repo: {
@@ -132,7 +132,11 @@ export async function runSpaceAgentPendingDrain(
   input: SpaceAgentPendingDrainInput
 ): Promise<SpaceAgentPendingDrainOutcome> {
   const ctx = await run({ ...input, deps });
-  return { action: 'drain', rows: ctx.pendingRows ?? [] };
+  return {
+    action: 'drain',
+    rows: ctx.pendingRows ?? [],
+    activeDeliveryIds: ctx.activeDeliveryIds ?? [],
+  };
 }
 
 export function collectActiveSpaceDeliveryIds(args: {

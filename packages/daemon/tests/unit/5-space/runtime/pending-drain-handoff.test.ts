@@ -70,13 +70,22 @@ describe('drainPendingRowOntoMailbox', () => {
 
     expect(outcome).toEqual({ action: 'delivered', sessionId: 'sub-session-1' });
     expect(deps.ensureTargetSession).toHaveBeenCalledWith(WORKER_TARGET);
-    expect(deps.handoffToMailbox).toHaveBeenCalledWith({
+    const handoffArgs = deps.handoffToMailbox.mock.calls[0][0] as {
+      to: string;
+      message: string;
+      origin: string;
+      messageUuid: string;
+      policy: { ttlMs: number; maxAttempts: number };
+    };
+    expect(handoffArgs).toMatchObject({
       to: 'session:sub-session-1',
       message: 'formatted note',
       origin: 'space_inject',
       messageUuid: 'row-1',
-      policy: pendingDrainMailboxPolicy(row),
     });
+    expect(handoffArgs.policy.maxAttempts).toBe(row.maxAttempts);
+    expect(handoffArgs.policy.ttlMs).toBeGreaterThan(row.expiresAt - Date.now() - 1_000);
+    expect(handoffArgs.policy.ttlMs).toBeLessThanOrEqual(row.expiresAt);
     expect(deps.markDelivered).toHaveBeenCalledWith('row-1', 'sub-session-1');
     expect(deps.onDelivered).toHaveBeenCalledWith(row, 'sub-session-1');
     expect(deps.markAttemptFailed).not.toHaveBeenCalled();
@@ -97,14 +106,15 @@ describe('drainPendingRowOntoMailbox', () => {
       origin: 'chat',
     });
 
-    expect(deps.handoffToMailbox).toHaveBeenCalledWith({
-      to: 'session:sub-session-1',
-      message: 'formatted note',
-      origin: 'chat',
-      messageUuid: 'human:task-1:coder:node-1:cli-9',
-      policy: pendingDrainMailboxPolicy(row),
-      deliveryMode: 'defer',
-    });
+    const handoffArgs = deps.handoffToMailbox.mock.calls[0][0] as {
+      messageUuid: string;
+      deliveryMode?: string;
+      policy: { ttlMs: number; maxAttempts: number };
+    };
+    expect(handoffArgs.messageUuid).toBe('human:task-1:coder:node-1:cli-9');
+    expect(handoffArgs.deliveryMode).toBe('defer');
+    expect(handoffArgs.policy.maxAttempts).toBe(row.maxAttempts);
+    expect(handoffArgs.policy.ttlMs).toBeGreaterThan(row.expiresAt - Date.now() - 1_000);
   });
 
   it('skips without touching the repo when the row is already expired', async () => {
@@ -121,6 +131,35 @@ describe('drainPendingRowOntoMailbox', () => {
 
     expect(outcome).toEqual({ action: 'skipped', reason: 'expired' });
     expect(deps.ensureTargetSession).not.toHaveBeenCalled();
+    expect(deps.markDelivered).not.toHaveBeenCalled();
+    expect(deps.markAttemptFailed).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the deadline after session resolution and skips rows that expired mid-wait', async () => {
+    const deps = {
+      ensureTargetSession: mock(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        return { kind: 'resolved', sessionId: 'sub-session-1', created: false };
+      }),
+      handoffToMailbox: mock(async () => ({ kind: 'enqueued', id: 'entry-1' })),
+      markDelivered: mock(() => {}),
+      markFailed: mock(() => {}),
+      markAttemptFailed: mock(() => null),
+      onDelivered: mock(() => {}),
+    };
+    const row = makeRow({ expiresAt: Date.now() + 20 });
+
+    const outcome = await drainPendingRowOntoMailbox({
+      deps,
+      row,
+      target: WORKER_TARGET,
+      message: 'short ttl note',
+      origin: 'space_inject',
+    });
+
+    expect(outcome).toEqual({ action: 'skipped', reason: 'expired' });
+    expect(deps.ensureTargetSession).toHaveBeenCalledTimes(1);
+    expect(deps.handoffToMailbox).not.toHaveBeenCalled();
     expect(deps.markDelivered).not.toHaveBeenCalled();
     expect(deps.markAttemptFailed).not.toHaveBeenCalled();
   });

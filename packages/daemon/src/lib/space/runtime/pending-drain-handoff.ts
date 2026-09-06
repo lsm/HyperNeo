@@ -75,6 +75,11 @@ async function resolveStage(ctx: PendingDrainHandoffCtx): Promise<PendingDrainHa
   return { ...ctx, outcome: { action: 'retry', reason } };
 }
 
+function postResolveExpiryStage(ctx: PendingDrainHandoffCtx): PendingDrainHandoffCtx {
+  if (ctx.row.expiresAt > Date.now()) return ctx;
+  return { ...ctx, outcome: { action: 'skipped', reason: 'expired' } };
+}
+
 async function handoffStage(ctx: PendingDrainHandoffCtx): Promise<PendingDrainHandoffCtx> {
   const handoff = await ctx.deps.handoffToMailbox({
     to: `session:${ctx.sessionId}`,
@@ -116,6 +121,8 @@ const runDrainPendingRowOntoMailbox = (
   .pipe(budgetStage, 'ctx', 'ctx')
   .pipe('!settled', 'ctx')
   .pipe(resolveStage, 'ctx', 'ctx')
+  .pipe('!settled', 'ctx')
+  .pipe(postResolveExpiryStage, 'ctx', 'ctx')
   .pipe('!settled', 'ctx')
   .pipe(handoffStage, 'ctx', 'ctx')
   .pipe(settleStage, 'ctx', 'ctx')

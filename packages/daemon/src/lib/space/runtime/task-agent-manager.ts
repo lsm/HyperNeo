@@ -1686,8 +1686,10 @@ export class TaskAgentManager {
       workflowRunId,
       spaceChatSessionId,
     });
+    if (retryableRows > 0 || drainOutcome.activeDeliveryIds.length > 0) {
+      this.scheduleSpaceAgentRetry(spaceId, workflowRunId);
+    }
     if (drainOutcome.action === 'skip') return;
-    if (retryableRows > 0) this.scheduleSpaceAgentRetry(spaceId, workflowRunId);
 
     log.info(
       `TaskAgentManager: flushing ${drainOutcome.rows.length} pending message(s) for Space Agent session=${spaceChatSessionId}`

@@ -1072,6 +1072,59 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
   });
 
+  it('keeps watching legacy in-flight rows and hands them off once the delivery fails', async () => {
+    const h = makeSpaceAgentHarness({ retryDelayMs: 10 });
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'legacy delivery in flight then fails' });
+    let legacyStatus = 'enqueued';
+    (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getDatabase: () => h.db,
+      getJobQueueRepo: () => h.mailbox,
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, uuid: string) =>
+          uuid === row.id ? { content: 'x', sendStatus: legacyStatus } : null,
+      }),
+    };
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.mailbox.jobs).toHaveLength(0);
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+
+    legacyStatus = 'failed';
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(h.mailbox.jobs).toHaveLength(1);
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
+  });
+
+  it('keeps watching legacy in-flight rows and settles them once consumed', async () => {
+    const h = makeSpaceAgentHarness({ retryDelayMs: 10 });
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'legacy delivery in flight then consumed' });
+    let legacyStatus = 'submitted';
+    (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getDatabase: () => h.db,
+      getJobQueueRepo: () => h.mailbox,
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, uuid: string) =>
+          uuid === row.id ? { content: 'x', sendStatus: legacyStatus } : null,
+      }),
+    };
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+
+    legacyStatus = 'consumed';
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(h.mailbox.jobs).toHaveLength(0);
+    const record = h.spyRepo.repo.getById(row.id);
+    expect(record?.status).toBe('delivered');
+    expect(record?.deliveredSessionId).toBe(`space:chat:${h.spaceId}`);
+  });
+
   it('schedules a failure-driven re-drain that delivers once the door recovers', async () => {
     let doorOpen = false;
     const h = makeSpaceAgentHarness({
