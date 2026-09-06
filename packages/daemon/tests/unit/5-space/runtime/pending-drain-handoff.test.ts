@@ -86,7 +86,7 @@ describe('drainPendingRowOntoMailbox', () => {
     expect(deps.markAttemptFailed).not.toHaveBeenCalled();
   });
 
-  it('seeds the delivery messageId from the idempotency key and marks human input', async () => {
+  it('scopes the delivery messageId to the pending record and marks human input', async () => {
     const deps = makeDeps();
     const row = makeRow({
       idempotencyKey: 'human:task-1:coder:node-1:cli-9',
@@ -105,7 +105,7 @@ describe('drainPendingRowOntoMailbox', () => {
     expect(deps.deliverRoutedMessage).toHaveBeenCalledWith({
       target: WORKER_TARGET,
       message: 'formatted note',
-      messageId: 'human:task-1:coder:node-1:cli-9',
+      messageId: 'row-1',
       inputKind: 'human',
       origin: 'chat',
       deliveryMode: 'defer',
@@ -293,46 +293,6 @@ describe('drainPendingRowOntoMailbox', () => {
     );
   });
 
-  it('reuses the legacy row uuid when a pre-migration delivery exists for it', async () => {
-    const deps = {
-      ...makeDeps(),
-      probeLegacyDeliveryStatus: mock(() => 'enqueued' as const),
-    };
-    const row = makeRow({ idempotencyKey: 'human:task-1:coder:node-1:cli-9' });
-
-    await drainPendingRowOntoMailbox({
-      deps,
-      row,
-      target: WORKER_TARGET,
-      message: 'converge note',
-      origin: 'space_inject',
-    });
-
-    expect(deps.deliverRoutedMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ messageId: 'row-1' })
-    );
-  });
-
-  it('seeds from the idempotency key when no legacy delivery exists', async () => {
-    const deps = {
-      ...makeDeps(),
-      probeLegacyDeliveryStatus: mock(() => undefined),
-    };
-    const row = makeRow({ idempotencyKey: 'human:task-1:coder:node-1:cli-9' });
-
-    await drainPendingRowOntoMailbox({
-      deps,
-      row,
-      target: WORKER_TARGET,
-      message: 'fresh note',
-      origin: 'space_inject',
-    });
-
-    expect(deps.deliverRoutedMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ messageId: 'human:task-1:coder:node-1:cli-9' })
-    );
-  });
-
   it('charges an attempt when a stage crashes', async () => {
     const deps = makeDeps();
     deps.deliverRoutedMessage.mockImplementation(async () => {
@@ -357,8 +317,8 @@ describe('drainPendingRowOntoMailbox', () => {
 });
 
 describe('pendingDrainMessageUuid', () => {
-  it('prefers the idempotency key and falls back to the row id', () => {
-    expect(pendingDrainMessageUuid({ id: 'row-1', idempotencyKey: 'key-1' })).toBe('key-1');
-    expect(pendingDrainMessageUuid({ id: 'row-1', idempotencyKey: null })).toBe('row-1');
+  it('scopes the delivery uuid to the pending record id', () => {
+    expect(pendingDrainMessageUuid({ id: 'row-1', idempotencyKey: 'key-1' })).toBe('row-1');
+    expect(pendingDrainMessageUuid({ id: 'row-1' })).toBe('row-1');
   });
 });

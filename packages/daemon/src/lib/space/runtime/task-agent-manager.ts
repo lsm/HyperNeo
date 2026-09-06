@@ -1581,9 +1581,6 @@ export class TaskAgentManager {
           });
     return {
       ensureTargetSession,
-      probeLegacyDeliveryStatus: (probeSessionId, messageUuid) =>
-        this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(probeSessionId, messageUuid)
-          ?.sendStatus,
       deliverRoutedMessage,
       markDelivered: (id, deliveredSessionId) => repo.markDelivered(id, deliveredSessionId),
       markFailed: (id, error) => repo.markFailed(id, error),

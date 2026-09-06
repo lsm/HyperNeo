@@ -15,7 +15,6 @@ export interface PendingDrainRoutedDeliveryArgs {
 
 export interface PendingDrainHandoffDeps {
   ensureTargetSession(target: SessionTarget): Promise<EnsureSessionOutcome>;
-  probeLegacyDeliveryStatus?(sessionId: string, messageUuid: string): string | undefined;
   deliverRoutedMessage(args: PendingDrainRoutedDeliveryArgs): Promise<AgentMessageDeliveryOutcome>;
   markDelivered(id: string, sessionId: string): void;
   markFailed(id: string, error: string): void;
@@ -37,24 +36,7 @@ export type PendingDrainHandoffOutcome =
   | { action: 'retry'; reason: string }
   | { action: 'skipped'; reason: string };
 
-export const pendingDrainMessageUuid = (row: {
-  id: string;
-  idempotencyKey: string | null;
-}): string => row.idempotencyKey ?? row.id;
-
-export function pendingDrainDeliveryUuid(
-  deps: Pick<PendingDrainHandoffDeps, 'probeLegacyDeliveryStatus'>,
-  sessionId: string | undefined,
-  row: { id: string; idempotencyKey: string | null }
-): string {
-  if (
-    sessionId !== undefined &&
-    deps.probeLegacyDeliveryStatus?.(sessionId, row.id) !== undefined
-  ) {
-    return row.id;
-  }
-  return pendingDrainMessageUuid(row);
-}
+export const pendingDrainMessageUuid = (row: { id: string }): string => row.id;
 
 interface PendingDrainHandoffCtx extends PendingDrainHandoffInput {
   sessionId?: string;
@@ -95,7 +77,7 @@ async function deliverStage(ctx: PendingDrainHandoffCtx): Promise<PendingDrainHa
   const delivery = await ctx.deps.deliverRoutedMessage({
     target: ctx.target,
     message: ctx.message,
-    messageId: pendingDrainDeliveryUuid(ctx.deps, ctx.sessionId, ctx.row),
+    messageId: pendingDrainMessageUuid(ctx.row),
     inputKind: ctx.row.sourceAgentName === 'human' ? 'human' : 'task',
     origin: ctx.origin,
     ...(ctx.row.deliveryMode ? { deliveryMode: ctx.row.deliveryMode } : {}),

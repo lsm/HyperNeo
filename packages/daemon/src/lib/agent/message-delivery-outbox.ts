@@ -594,6 +594,15 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function normalizePromptForComparison(message: SDKMessage): SDKMessage {
+  const roleNormalized = normalizeLegacyPromptRole(message);
+  const withKind = roleNormalized as SDKMessage & { inputKind?: string };
+  if (withKind.inputKind !== 'task') return roleNormalized;
+  const normalized = { ...roleNormalized } as SDKMessage & { inputKind?: string };
+  delete normalized.inputKind;
+  return normalized;
+}
+
 export class PromptContentConflictError extends Error {
   constructor(message: string) {
     super(message);
@@ -624,8 +633,8 @@ export function verifyPromptContent(args: {
   for (const row of rows) {
     const stored = JSON.parse(row.sdkMessage) as SDKMessage;
     if (
-      canonicalJson(normalizeLegacyPromptRole(stored)) !==
-      canonicalJson(normalizeLegacyPromptRole(args.message))
+      canonicalJson(normalizePromptForComparison(stored)) !==
+      canonicalJson(normalizePromptForComparison(args.message))
     ) {
       throw new PromptContentConflictError(
         `prompt handoff: message ${args.messageUuid} in session ${args.sessionId} ` +
@@ -641,8 +650,8 @@ function checkPromptContent(ctx: EnsurePromptCtx): EnsurePromptSettledCtx {
   }
   const stored = JSON.parse(ctx.existing.sdkMessage) as SDKMessage;
   if (
-    canonicalJson(normalizeLegacyPromptRole(stored)) !==
-    canonicalJson(normalizeLegacyPromptRole(ctx.message))
+    canonicalJson(normalizePromptForComparison(stored)) !==
+    canonicalJson(normalizePromptForComparison(ctx.message))
   ) {
     throw new PromptContentConflictError(
       `ensurePrompt: message ${ctx.messageUuid} in session ${ctx.sessionId} ` +

@@ -634,8 +634,8 @@ describe('flushPendingMessagesForTarget — door resolution and handoff', () => 
     expect(record?.lastError).toBe('task/run is terminal (cancelled)');
   });
 
-  it('seeds the delivery messageId from the row idempotency key', async () => {
-    h.enqueue({
+  it('scopes the delivery messageId to the pending record id', async () => {
+    const keyedRow = h.enqueue({
       idempotencyKey: 'human:task-7:coder:node-build:cli-42',
       message: 'keyed note',
     });
@@ -644,33 +644,37 @@ describe('flushPendingMessagesForTarget — door resolution and handoff', () => 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
     expect(h.delivery.calls.map((call) => call.args.messageId)).toEqual([
-      'human:task-7:coder:node-build:cli-42',
+      keyedRow.id,
       unkeyedRow.id,
     ]);
   });
 
   it('migrates a row exactly once across a simulated double drain', async () => {
-    const key = 'human:task-7:coder:node-build:cli-42';
-    h.enqueue({ idempotencyKey: key, message: 'migrate once' });
+    const row = h.enqueue({
+      idempotencyKey: 'human:task-7:coder:node-build:cli-42',
+      message: 'migrate once',
+    });
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
     expect(h.delivery.calls).toHaveLength(1);
-    expect(h.delivery.calls[0].args.messageId).toBe(key);
+    expect(h.delivery.calls[0].args.messageId).toBe(row.id);
   });
 
-  it('re-handoffs with the same uuid when a delivered row is re-enqueued under its key', async () => {
+  it('delivers a re-enqueued row under its own uuid instead of the consumed key', async () => {
     const key = 'human:task-7:coder:node-build:cli-43';
-    h.enqueue({ idempotencyKey: key, message: 'first pass' });
+    h.enqueue({ idempotencyKey: key, message: 'repeated send' });
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
-    h.enqueue({ idempotencyKey: key, message: 'first pass' });
+    const resent = h.enqueue({ idempotencyKey: key, message: 'repeated send' });
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
     expect(h.delivery.calls).toHaveLength(2);
-    expect(new Set(h.delivery.calls.map((call) => call.args.messageId))).toEqual(new Set([key]));
+    expect(h.delivery.calls[1].args.messageId).toBe(resent.id);
+    expect(h.delivery.calls[0].args.messageId).not.toBe(h.delivery.calls[1].args.messageId);
+    expect(h.spyRepo.repo.getById(resent.id)?.status).toBe('delivered');
   });
 
   it('charges an attempt and keeps the row pending when the door cannot resolve', async () => {
@@ -715,9 +719,11 @@ describe('flushPendingMessagesForTarget — door resolution and handoff', () => 
   });
 
   it('charges an attempt and keeps the row pending when routed delivery fails', async () => {
-    const key = 'human:task-7:coder:node-build:cli-44';
-    const row = h.enqueue({ idempotencyKey: key, message: 'lane rejects' });
-    h.delivery.failMessageIds.add(key);
+    const row = h.enqueue({
+      idempotencyKey: 'human:task-7:coder:node-build:cli-44',
+      message: 'lane rejects',
+    });
+    h.delivery.failMessageIds.add(row.id);
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
