@@ -528,9 +528,14 @@ function mailboxDeliverySenderExpr(textExpr: string): string {
   const secondSegment = `SUBSTR(${nameRaw}, ${secondMarker})`;
   const isTaskSuffix = (segment: string) =>
     `SUBSTR(${segment}, 9) = CAST(SUBSTR(${segment}, 9) AS INTEGER) || ')'`;
+  const replyEchoStart = `INSTR(${textExpr}, 'send_message with target "')`;
+  const replyEchoAt = `${replyEchoStart} + 26`;
+  const replyEcho = `SUBSTR(${textExpr}, ${replyEchoAt}, INSTR(SUBSTR(${textExpr}, ${replyEchoAt}), '"') - 1)`;
   return `CASE
       WHEN ${textExpr} LIKE '─── Message from %' THEN
         CASE
+          WHEN ${replyEchoStart} > 0 AND ${replyEcho} NOT LIKE '@%'
+            THEN ${replyEcho}
           WHEN ${firstMarker} > 0 AND ${isTaskSuffix(firstSegment)}
             THEN TRIM(SUBSTR(${nameRaw}, 1, ${firstMarker} - 1))
           WHEN ${secondMarkerRelative} > 0 AND ${isTaskSuffix(secondSegment)}
