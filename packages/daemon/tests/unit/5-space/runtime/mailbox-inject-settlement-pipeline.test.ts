@@ -19,7 +19,12 @@ type SettlementLike =
   | { kind: 'materialized'; dbId: string }
   | { kind: 'dead' | 'absent' | 'cancelled' | 'stuck' };
 
-function makeDeps(overrides?: { handoff?: MailboxHandoffOutcome; settlement?: SettlementLike }): {
+function makeDeps(overrides?: {
+  handoff?: MailboxHandoffOutcome;
+  settlement?: SettlementLike;
+  settled?: boolean;
+  inFlight?: boolean;
+}): {
   deps: MailboxInjectSettlementDeps;
   calls: string[];
 } {
@@ -34,6 +39,8 @@ function makeDeps(overrides?: { handoff?: MailboxHandoffOutcome; settlement?: Se
       calls.push('activate');
       return true;
     },
+    hasSettledDelivery: () => overrides?.settled ?? false,
+    hasInFlightDelivery: () => overrides?.inFlight ?? true,
     claimQueued: async () => {
       calls.push('claimQueued');
     },
@@ -111,22 +118,50 @@ describe('mailbox-inject-settlement stages', () => {
     expect(calls).toEqual(['activate']);
   });
 
-  it('activateDeferredStage fails the settlement when activation activates nothing', async () => {
-    const { deps, calls } = makeDeps();
-    const originalActivate = deps.activateDeferredRow;
+  it('activateDeferredStage tolerates a no-op activation when the row already settled or is in flight', async () => {
+    const settled = makeDeps({ settled: true });
+    settled.deps.activateDeferredRow = async () => false;
+    expect(await activateDeferredStage(settled.deps, SESSION_ID, MESSAGE_ID, 'deferred')).toEqual({
+      activated: false,
+      finalOutcome: undefined,
+    });
+
+    const inFlight = makeDeps({ inFlight: true });
+    inFlight.deps.activateDeferredRow = async () => false;
+    expect(await activateDeferredStage(inFlight.deps, SESSION_ID, MESSAGE_ID, 'deferred')).toEqual({
+      activated: false,
+      finalOutcome: undefined,
+    });
+  });
+
+  it('activateDeferredStage fails the settlement when activation activates nothing and the row is gone', async () => {
+    const { deps, calls } = makeDeps({ settled: false, inFlight: false });
     deps.activateDeferredRow = async () => false;
     expect(await activateDeferredStage(deps, SESSION_ID, MESSAGE_ID, 'deferred')).toEqual({
       activated: false,
       finalOutcome: { action: 'failed', reason: 'deferred row activated nothing' },
     });
     expect(calls).toEqual([]);
-    deps.activateDeferredRow = originalActivate;
   });
 
-  it('claimQueuedStage claims the queued state for the message', async () => {
-    const { deps, calls } = makeDeps();
-    expect(await claimQueuedStage(deps, MESSAGE_ID)).toEqual({ queued: true });
+  it('claimQueuedStage claims the queued state while the delivery is in flight', async () => {
+    const { deps, calls } = makeDeps({ inFlight: true });
+    expect(await claimQueuedStage(deps, SESSION_ID, MESSAGE_ID)).toEqual({ queued: true });
     expect(calls).toEqual(['claimQueued']);
+  });
+
+  it('claimQueuedStage skips the claim when no delivery remains in flight', async () => {
+    const { deps, calls } = makeDeps({ inFlight: false });
+    expect(await claimQueuedStage(deps, SESSION_ID, MESSAGE_ID)).toEqual({ queued: false });
+    expect(calls).toEqual([]);
+  });
+
+  it('claimQueuedStage treats queue-state publication as best-effort', async () => {
+    const { deps } = makeDeps({ inFlight: true });
+    deps.claimQueued = async () => {
+      throw new Error('state manager down');
+    };
+    expect(await claimQueuedStage(deps, SESSION_ID, MESSAGE_ID)).toEqual({ queued: true });
   });
 
   it('deliverOutcomeStage resolves the materialized row id', () => {
@@ -188,8 +223,8 @@ describe('settleMailboxInject — halted pipeline composition', () => {
     expect(calls).toEqual(['normalize', 'persistFailed']);
   });
 
-  it('halts after activation when the deferred row activated nothing', async () => {
-    const { deps, calls } = makeDeps();
+  it('halts after activation when the deferred row activated nothing and left no live delivery', async () => {
+    const { deps, calls } = makeDeps({ settled: false, inFlight: false });
     deps.activateDeferredRow = async () => false;
     const outcome = await settleMailboxInject({
       sessionId: SESSION_ID,

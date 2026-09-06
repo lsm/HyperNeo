@@ -19,6 +19,8 @@ export interface MailboxInjectSettlementDeps {
     rowExistedAtHandoff: boolean
   ): Promise<MailboxSettlement>;
   activateDeferredRow(sessionId: string, messageId: string): Promise<boolean>;
+  hasSettledDelivery(sessionId: string, messageId: string): boolean;
+  hasInFlightDelivery(sessionId: string, messageId: string): boolean;
   claimQueued(messageId: string): Promise<void>;
   persistFailedRow(sessionId: string, messageId: string): Promise<void>;
 }
@@ -103,20 +105,28 @@ export async function activateDeferredStage(
     return { activated: false, finalOutcome: undefined };
   }
   const activated = await deps.activateDeferredRow(sessionId, messageId);
-  if (!activated) {
-    return {
-      activated: false,
-      finalOutcome: { action: 'failed', reason: 'deferred row activated nothing' },
-    };
+  if (
+    activated ||
+    deps.hasSettledDelivery(sessionId, messageId) ||
+    deps.hasInFlightDelivery(sessionId, messageId)
+  ) {
+    return { activated, finalOutcome: undefined };
   }
-  return { activated: true, finalOutcome: undefined };
+  return {
+    activated: false,
+    finalOutcome: { action: 'failed', reason: 'deferred row activated nothing' },
+  };
 }
 
 export async function claimQueuedStage(
   deps: MailboxInjectSettlementDeps,
+  sessionId: string,
   messageId: string
-): Promise<{ queued: true }> {
-  await deps.claimQueued(messageId);
+): Promise<{ queued: boolean }> {
+  if (!deps.hasInFlightDelivery(sessionId, messageId)) return { queued: false };
+  try {
+    await deps.claimQueued(messageId);
+  } catch {}
   return { queued: true };
 }
 
@@ -157,7 +167,7 @@ const runMailboxInjectSettlement = (
     ['activated', 'finalOutcome']
   )
   .pipe('!isTerminalOutcome', 'finalOutcome')
-  .pipe(claimQueuedStage, ['deps', 'messageId'], ['queued'])
+  .pipe(claimQueuedStage, ['deps', 'sessionId', 'messageId'], ['queued'])
   .pipe(deliverOutcomeStage, ['settlement', 'messageId'], ['finalOutcome'])
   .endAsync('finalOutcome') as (
   sessionId: string,
