@@ -1841,6 +1841,23 @@ export class SDKMessageRepository {
     return this.parseUserMessageRow(row, uuid);
   }
 
+  getStoredPromptsByUuid(sessionId: string, uuid: string): SDKMessage[] {
+    const rows = this.db
+      .prepare(
+        `SELECT sdk_message FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+          ORDER BY timestamp ASC, rowid ASC`
+      )
+      .all(sessionId, uuid) as Array<{ sdk_message: string }>;
+    const messages: SDKMessage[] = [];
+    for (const row of rows) {
+      try {
+        messages.push(JSON.parse(row.sdk_message) as SDKMessage);
+      } catch {}
+    }
+    return messages;
+  }
+
   getUserMessageContentByUuid(sessionId: string, uuid: string): string | MessageContent[] | null {
     const row = this.db
       .prepare(

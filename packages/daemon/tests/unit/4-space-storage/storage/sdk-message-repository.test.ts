@@ -4773,6 +4773,119 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('getStoredPromptsByUuid (W6-S2a2)', () => {
+    function insertSiblingRow(
+      rowId: string,
+      sessionId: string,
+      uuid: string,
+      content: string,
+      timestamp: string
+    ): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+         VALUES (?, ?, 'user', ?, ?, 'consumed', ?)`
+      ).run(rowId, sessionId, JSON.stringify(createUserMessage(content, uuid)), timestamp, uuid);
+    }
+
+    it('returns every uuid sibling ordered by timestamp regardless of insertion order', () => {
+      insertSiblingRow(
+        'later-row',
+        'session-siblings',
+        'shared-uuid',
+        'Later copy',
+        '2026-08-11T15:41:01.000Z'
+      );
+      insertSiblingRow(
+        'earlier-row',
+        'session-siblings',
+        'shared-uuid',
+        'Earlier copy',
+        '2026-08-11T15:41:00.000Z'
+      );
+
+      expect(repository.getStoredPromptsByUuid('session-siblings', 'shared-uuid')).toEqual([
+        createUserMessage('Earlier copy', 'shared-uuid'),
+        createUserMessage('Later copy', 'shared-uuid'),
+      ]);
+    });
+
+    it('breaks timestamp ties by rowid order', () => {
+      const tied = '2026-08-11T15:41:02.000Z';
+      insertSiblingRow('tied-a', 'session-tied', 'tied-uuid', 'First inserted', tied);
+      insertSiblingRow('tied-b', 'session-tied', 'tied-uuid', 'Second inserted', tied);
+
+      expect(repository.getStoredPromptsByUuid('session-tied', 'tied-uuid')).toEqual([
+        createUserMessage('First inserted', 'tied-uuid'),
+        createUserMessage('Second inserted', 'tied-uuid'),
+      ]);
+    });
+
+    it('skips corrupt sibling rows and keeps the parseable ones', () => {
+      insertSiblingRow(
+        'good-a',
+        'session-corrupt',
+        'corrupt-uuid',
+        'First copy',
+        '2026-08-11T15:41:00.000Z'
+      );
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+         VALUES (?, ?, 'user', ?, ?, 'consumed', ?)`
+      ).run('bad-row', 'session-corrupt', '{not-json', '2026-08-11T15:41:01.000Z', 'corrupt-uuid');
+      insertSiblingRow(
+        'good-b',
+        'session-corrupt',
+        'corrupt-uuid',
+        'Last copy',
+        '2026-08-11T15:41:02.000Z'
+      );
+
+      expect(repository.getStoredPromptsByUuid('session-corrupt', 'corrupt-uuid')).toEqual([
+        createUserMessage('First copy', 'corrupt-uuid'),
+        createUserMessage('Last copy', 'corrupt-uuid'),
+      ]);
+    });
+
+    it('scopes to the session, uuid, and user rows', () => {
+      insertSiblingRow(
+        'target-row',
+        'session-scope',
+        'scoped-uuid',
+        'Target copy',
+        '2026-08-11T15:41:00.000Z'
+      );
+      insertSiblingRow(
+        'other-uuid-row',
+        'session-scope',
+        'other-uuid',
+        'Other uuid copy',
+        '2026-08-11T15:41:00.000Z'
+      );
+      insertSiblingRow(
+        'other-session-row',
+        'session-other',
+        'scoped-uuid',
+        'Other session copy',
+        '2026-08-11T15:41:00.000Z'
+      );
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, sdk_uuid)
+         VALUES (?, ?, 'assistant', ?, ?, ?)`
+      ).run(
+        'assistant-row',
+        'session-scope',
+        JSON.stringify(createUserMessage('Assistant row', 'scoped-uuid')),
+        '2026-08-11T15:41:00.000Z',
+        'scoped-uuid'
+      );
+
+      expect(repository.getStoredPromptsByUuid('session-scope', 'scoped-uuid')).toEqual([
+        createUserMessage('Target copy', 'scoped-uuid'),
+      ]);
+      expect(repository.getStoredPromptsByUuid('session-scope', 'missing-uuid')).toEqual([]);
+    });
+  });
+
   describe('getUserMessageContentByUuid (A1)', () => {
     function insertUserContentRow(
       sessionId: string,
