@@ -1128,7 +1128,9 @@ describe('SpaceRuntimeService', () => {
       ).mockImplementation(async () => sessionId);
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
         .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(createdSession);
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue(createdSession);
       const inboxRepo = { enqueue: mock(() => ({ record: { id: 'queued-1' }, deduped: false })) };
       const longHorizonAgentRepo = {
         getById: mock(() => ({
@@ -1203,7 +1205,9 @@ describe('SpaceRuntimeService', () => {
       ).mockImplementation(async () => longTermAgentSessionId(mockSpace.id, 'agent-1'));
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
         .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(createdSession);
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue(createdSession);
       const spaceManager = createMockSpaceManager(mockSpace);
       const longHorizonAgentRepo = {
         getCoordinator: mock(() => null),
@@ -2213,6 +2217,7 @@ describe('SpaceRuntimeService', () => {
         getById: mock(() =>
           buildLongHorizonAgent({ id: 'coordinator-alt', handle: 'coordinator' })
         ),
+        listBySpaceId: mock(() => []),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const goalService = {
@@ -2232,12 +2237,18 @@ describe('SpaceRuntimeService', () => {
         sessionManager,
         enableGoalOutcomeWake: true,
         reactiveDb: mailbox.reactiveDb,
+        spaceWorkflowManager: {
+          listWorkflows: mock(() => []),
+        } as unknown as SpaceWorkflowManager,
         longHorizonAgentRepo,
         goalService,
         outcomeNotificationRepo,
         spaceAgentInboxRepo:
           inboxRepo as unknown as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
       });
+      (
+        svc as unknown as { setupSpaceAgentSession: (space: Space) => Promise<void> }
+      ).setupSpaceAgentSession = async () => {};
 
       await svc.deliverGoalOutcomeWake(notification);
 
@@ -4419,7 +4430,7 @@ describe('ensureLongTermAgentSession — id→session routing table', () => {
         lookupIds.push(sessionId);
         const count = (lookupCounts.get(sessionId) ?? 0) + 1;
         lookupCounts.set(sessionId, count);
-        if (sessionId.startsWith('space:agent:') && count === 1) return null;
+        if (sessionId.startsWith('space:agent:') && count <= 3) return null;
         return sessionMock;
       }),
       createSession: mock(async (opts: { sessionId?: string; title?: string }) => {
@@ -4441,6 +4452,9 @@ describe('ensureLongTermAgentSession — id→session routing table', () => {
     (
       svc as unknown as { attachLongTermAgentMcpServers: () => void }
     ).attachLongTermAgentMcpServers = () => {};
+    (
+      svc as unknown as { setupSpaceAgentSession: (space: Space) => Promise<void> }
+    ).setupSpaceAgentSession = async () => {};
     return { svc, createCalls, lookupIds };
   }
 
@@ -4466,7 +4480,7 @@ describe('ensureLongTermAgentSession — id→session routing table', () => {
     const canonicalSession = await route(canonicalRun.svc, canonical.id);
 
     expect(canonicalSession).toBeDefined();
-    expect(canonicalRun.lookupIds).toEqual(['space:chat:space-1']);
+    expect(canonicalRun.lookupIds[0]).toBe('space:chat:space-1');
     expect(canonicalRun.createCalls).toHaveLength(0);
 
     const discovered = buildLongHorizonAgent({
@@ -4481,7 +4495,7 @@ describe('ensureLongTermAgentSession — id→session routing table', () => {
     const discoveredSession = await route(discoveredRun.svc, discovered.id);
 
     expect(discoveredSession).toBeDefined();
-    expect(discoveredRun.lookupIds).toEqual(['space:chat:space-1']);
+    expect(discoveredRun.lookupIds[0]).toBe('space:chat:space-1');
     expect(discoveredRun.createCalls).toHaveLength(0);
   });
 

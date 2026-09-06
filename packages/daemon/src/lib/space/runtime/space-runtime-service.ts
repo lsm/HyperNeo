@@ -433,7 +433,9 @@ export class SpaceRuntimeService {
     if (!(await this.isGoalOutcomeWakeDeliverable(actor, message))) {
       return { state: 'recipient_stale' };
     }
-    const session = await this.ensureLongTermAgentSession(actor);
+    const agentId = agentIdFromActorId(actor.actorId);
+    if (!agentId) return { state: 'failed' };
+    const session = await this.resolveAgentSession(actor.spaceId, agentId);
     if (!session) return { state: 'failed' };
     if (!(await this.isGoalOutcomeWakeDeliverable(actor, message))) {
       return { state: 'recipient_stale' };
@@ -886,12 +888,6 @@ export class SpaceRuntimeService {
     });
   }
 
-  private async resolveCoordinatorSession(spaceId: string) {
-    const sessionManager = this.config.sessionManager;
-    if (!sessionManager) return null;
-    return sessionManager.getSessionAsync(coordinatorSessionId(spaceId));
-  }
-
   private async ensureCoordinatorSession(spaceId: string) {
     const sessionManager = this.config.sessionManager;
     if (!sessionManager) return null;
@@ -1009,14 +1005,9 @@ export class SpaceRuntimeService {
   }
 
   private async ensureLongTermAgentSession(actor: ActorRef) {
-    const sessionManager = this.config.sessionManager;
-    if (!sessionManager) return null;
     const agentId = agentIdFromActorId(actor.actorId);
     if (!agentId) return null;
-    const resolution = resolveAgentRecord(actor.spaceId, agentId, this.agentRecordDeps());
-    if (resolution.kind === 'missing') return null;
-    if (resolution.kind === 'coordinator') return this.resolveCoordinatorSession(actor.spaceId);
-    return this.ensureLongHorizonAgentSession(actor.spaceId, agentId);
+    return this.resolveAgentSession(actor.spaceId, agentId);
   }
 
   async ensureAgentSession(spaceId: string, agentId: string): Promise<EnsuredSession | null> {
