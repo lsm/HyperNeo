@@ -275,26 +275,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					updated_at INTEGER NOT NULL,
 					completed_at INTEGER
 				);
-				CREATE TABLE IF NOT EXISTS pending_agent_messages (
-					id TEXT PRIMARY KEY,
-					workflow_run_id TEXT NOT NULL,
-					space_id TEXT NOT NULL,
-					task_id TEXT,
-					source_agent_name TEXT NOT NULL DEFAULT 'task-agent',
-					target_kind TEXT NOT NULL,
-					target_agent_name TEXT NOT NULL,
-					message TEXT NOT NULL,
-					idempotency_key TEXT,
-					attempts INTEGER NOT NULL DEFAULT 0,
-					max_attempts INTEGER NOT NULL DEFAULT 5,
-					last_attempt_at INTEGER,
-					last_error TEXT,
-					status TEXT NOT NULL DEFAULT 'pending',
-					delivered_at INTEGER,
-					delivered_session_id TEXT,
-					expires_at INTEGER NOT NULL,
-					created_at INTEGER NOT NULL
-				);
 				CREATE TABLE IF NOT EXISTS workflow_run_artifacts (
 					id TEXT PRIMARY KEY NOT NULL,
 					run_id TEXT NOT NULL,
@@ -955,29 +935,52 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(otherRows.find((r) => r.sessionId === taskAgentSessionId)).toBeDefined();
     });
 
-    function insertPendingAgentMessage(overrides: Record<string, unknown>): void {
+    function insertOutboxUserMessage(params: {
+      id: string;
+      sessionId: string;
+      timestampMs: number;
+      sendStatus?: string | null;
+      origin?: string | null;
+      sdkUuid?: string;
+      payload: Record<string, unknown>;
+    }): void {
+      const taskIdForSession = sessionTaskIds.get(params.sessionId) ?? null;
       db.exec(`
-				INSERT INTO pending_agent_messages (
-					id, workflow_run_id, space_id, task_id, source_agent_name, target_kind,
-					target_agent_name, message, attempts, last_attempt_at, last_error, status,
-					delivered_at, delivered_session_id, expires_at, created_at
+				INSERT INTO sdk_messages (
+					id, session_id, message_type, message_subtype, sdk_message, timestamp,
+					send_status, origin, sdk_uuid, task_id
 				) VALUES (
-					'${String(overrides.id)}', '${String(overrides.workflowRunId)}', '${spaceId}',
-					${overrides.taskId ? `'${String(overrides.taskId)}'` : 'NULL'},
-					'${String(overrides.sourceAgentName ?? 'coder')}',
-					'${String(overrides.targetKind ?? 'node_agent')}',
-					'${String(overrides.targetAgentName ?? 'reviewer')}',
-					'${String(overrides.message ?? 'please review').replace(/'/g, "''")}',
-					${Number(overrides.attempts ?? 1)},
-					${overrides.lastAttemptAt === null ? 'NULL' : Number(overrides.lastAttemptAt ?? now + 5000)},
-					${overrides.lastError ? `'${String(overrides.lastError).replace(/'/g, "''")}'` : 'NULL'},
-					'${String(overrides.status ?? 'delivered')}',
-					${overrides.deliveredAt === null ? 'NULL' : Number(overrides.deliveredAt ?? now + 7000)},
-					${overrides.deliveredSessionId ? `'${String(overrides.deliveredSessionId)}'` : 'NULL'},
-					${Number(overrides.expiresAt ?? now + 60000)},
-					${Number(overrides.createdAt ?? now)}
+					'${params.id}', '${params.sessionId}', 'user', NULL,
+					'${JSON.stringify(params.payload).replace(/'/g, "''")}',
+					'${new Date(params.timestampMs).toISOString()}',
+					${params.sendStatus ? `'${params.sendStatus}'` : 'NULL'},
+					${params.origin ? `'${params.origin}'` : 'NULL'},
+					${params.sdkUuid ? `'${params.sdkUuid}'` : 'NULL'},
+					${taskIdForSession ? `'${taskIdForSession}'` : 'NULL'}
 				)
 			`);
+    }
+
+    function envelopeHandoffPayload(
+      uuid: string,
+      sender: string,
+      body: string
+    ): Record<string, unknown> {
+      return {
+        type: 'user',
+        uuid,
+        isSynthetic: true,
+        inputKind: 'task',
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `─── Message from ${sender} ───\n\n${body}\n\n─── Reply ───\nTo reply, use: send_message with target "@${sender}"`,
+            },
+          ],
+        },
+      };
     }
 
     function insertWorkflowRun(id: string): void {
@@ -1020,26 +1023,193 @@ describe('NAMED_QUERY_REGISTRY', () => {
 			`);
     }
 
-    test('actorMessages.byTask timestamps delivery outcomes by attempt time', () => {
-      const workflowRunId = 'wr-actor-task';
-      const taskId = insertSpaceTask({ id: 'actor-task', workflowRunId, status: 'in_progress' });
-      insertPendingAgentMessage({
-        id: 'pm-delivered',
+    test('actorMessages.byTask projects consumed handoffs as delivered mailbox delivery rows', () => {
+      const workflowRunId = 'wr-actor-delivery';
+      const nodeSessionId = 'session-actor-delivery';
+      const taskId = insertSpaceTask({
+        id: 'actor-delivery',
         workflowRunId,
-        taskId,
-        status: 'delivered',
-        createdAt: now + 1000,
-        lastAttemptAt: now + 9000,
-        deliveredAt: now + 7000,
+        status: 'in_progress',
+      });
+      insertSession(nodeSessionId, 'worker', '{}');
+      insertNodeExecution({
+        id: 'ne-actor-delivery',
+        workflowRunId,
+        workflowNodeId: 'node-reviewer',
+        agentName: 'reviewer',
+        agentSessionId: nodeSessionId,
+        status: 'in_progress',
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-brief',
+        sessionId: nodeSessionId,
+        timestampMs: now + 1000,
+        sendStatus: 'consumed',
+        payload: {
+          type: 'user',
+          isSynthetic: true,
+          inputKind: 'task',
+          message: { role: 'user', content: [{ type: 'text', text: 'You are the reviewer.' }] },
+        },
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-handoff',
+        sessionId: nodeSessionId,
+        timestampMs: now + 9000,
+        sendStatus: 'consumed',
+        sdkUuid: 'u-handoff',
+        payload: envelopeHandoffPayload('u-handoff', 'coder', 'please review the PR'),
       });
 
       const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
       const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
       const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
 
-      expect(mapped).toHaveLength(1);
-      expect(mapped[0].id).toBe('delivery:pm-delivered');
-      expect(mapped[0].createdAt).toBe(now + 9000);
+      expect(mapped.filter((row) => String(row.id).startsWith('delivery:'))).toEqual([
+        expect.objectContaining({
+          id: 'delivery:sdk-handoff',
+          eventKind: 'handoff',
+          deliveryState: 'delivered',
+          targetResolution: 'direct',
+          title: 'Delivered message',
+          severity: 'success',
+          summary:
+            '─── Message from coder ───\n\nplease review the PR\n\n─── Reply ───\nTo reply, use: send_message with target "@coder"',
+          createdAt: now + 9000,
+        }),
+      ]);
+      const delivery = mapped.find((row) => row.id === 'delivery:sdk-handoff')!;
+      expect((delivery.from as Record<string, unknown>).label).toBe('coder');
+      expect((delivery.from as Record<string, unknown>).kind).toBe('worker');
+      expect((delivery.target as Record<string, unknown>).label).toBe('reviewer');
+      expect((delivery.target as Record<string, unknown>).sessionId).toBe(nodeSessionId);
+    });
+
+    test('actorMessages.byTask excludes the session brief and human rows from delivery rows', () => {
+      const workflowRunId = 'wr-actor-exclude';
+      const nodeSessionId = 'session-actor-exclude';
+      const taskId = insertSpaceTask({
+        id: 'actor-exclude',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      insertSession(nodeSessionId, 'worker', '{}');
+      insertNodeExecution({
+        id: 'ne-actor-exclude',
+        workflowRunId,
+        workflowNodeId: 'node-coder',
+        agentName: 'coder',
+        agentSessionId: nodeSessionId,
+        status: 'in_progress',
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-brief-only',
+        sessionId: nodeSessionId,
+        timestampMs: now + 1000,
+        sendStatus: 'consumed',
+        payload: {
+          type: 'user',
+          isSynthetic: true,
+          inputKind: 'task',
+          message: { role: 'user', content: [{ type: 'text', text: 'You are the coder.' }] },
+        },
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-human',
+        sessionId: nodeSessionId,
+        timestampMs: now + 2000,
+        sendStatus: 'consumed',
+        payload: {
+          type: 'user',
+          message: { role: 'user', content: [{ type: 'text', text: 'human question' }] },
+        },
+      });
+
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+      const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+
+      expect(rows.filter((row) => String(row.id).startsWith('delivery:'))).toHaveLength(0);
+    });
+
+    test('actorMessages.byTask maps queued and failed outbox rows onto the delivery lifecycle', () => {
+      const workflowRunId = 'wr-actor-lifecycle';
+      const nodeSessionId = 'session-actor-lifecycle';
+      const taskId = insertSpaceTask({
+        id: 'actor-lifecycle',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      insertSession(nodeSessionId, 'worker', '{}');
+      insertNodeExecution({
+        id: 'ne-actor-lifecycle',
+        workflowRunId,
+        workflowNodeId: 'node-reviewer',
+        agentName: 'reviewer',
+        agentSessionId: nodeSessionId,
+        status: 'in_progress',
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-brief-lc',
+        sessionId: nodeSessionId,
+        timestampMs: now + 1000,
+        sendStatus: 'consumed',
+        payload: {
+          type: 'user',
+          isSynthetic: true,
+          inputKind: 'task',
+          message: { role: 'user', content: [{ type: 'text', text: 'You are the reviewer.' }] },
+        },
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-queued',
+        sessionId: nodeSessionId,
+        timestampMs: now + 2000,
+        sendStatus: 'enqueued',
+        sdkUuid: 'u-queued',
+        payload: envelopeHandoffPayload('u-queued', 'coder', 'queued handoff body'),
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-failed',
+        sessionId: nodeSessionId,
+        timestampMs: now + 3000,
+        sendStatus: 'failed',
+        sdkUuid: 'u-failed',
+        payload: envelopeHandoffPayload('u-failed', 'coder', 'failed handoff body'),
+      });
+      db.prepare(
+        `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at, error)
+         VALUES (?, 'message_delivery', 'pending', ?, 0, 8, ?, ?, ?)`
+      ).run(
+        'job-delivery-failed',
+        JSON.stringify({
+          sessionId: nodeSessionId,
+          messageUuid: 'u-failed',
+          origin: 'space_agent',
+        }),
+        now,
+        now,
+        'SDK subprocess exited before submit'
+      );
+
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+      const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+      const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+      const byId = new Map(mapped.map((row) => [row.id as string, row]));
+
+      expect(byId.get('delivery:sdk-queued')).toMatchObject({
+        eventKind: 'handoff',
+        deliveryState: 'queued',
+        targetResolution: 'queued',
+        title: 'Queued delivery',
+        severity: 'info',
+      });
+      expect(byId.get('delivery:sdk-failed')).toMatchObject({
+        deliveryState: 'failed',
+        targetResolution: 'direct',
+        title: 'Failed delivery',
+        severity: 'error',
+        details: 'SDK subprocess exited before submit',
+      });
     });
 
     test('actorMessages.byTask describes failed user sends as failures', () => {
@@ -1952,6 +2122,74 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(new Set(mapped.map((row) => row.id)).size).toBe(2);
     });
 
+    test('actorMessages.byWorkflowRun projects mailbox delivery rows with retry state', () => {
+      const workflowRunId = 'wr-run-delivery';
+      insertWorkflowRun(workflowRunId);
+      const nodeSessionId = 'session-run-delivery';
+      insertSpaceTask({ id: 'run-delivery-task', workflowRunId, status: 'in_progress' });
+      insertSession(nodeSessionId, 'worker', '{}');
+      insertNodeExecution({
+        id: 'ne-run-delivery',
+        workflowRunId,
+        workflowNodeId: 'node-reviewer',
+        agentName: 'reviewer',
+        agentSessionId: nodeSessionId,
+        status: 'in_progress',
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-run-brief',
+        sessionId: nodeSessionId,
+        timestampMs: now + 1000,
+        sendStatus: 'consumed',
+        payload: {
+          type: 'user',
+          isSynthetic: true,
+          inputKind: 'task',
+          message: { role: 'user', content: [{ type: 'text', text: 'You are the reviewer.' }] },
+        },
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-run-queued',
+        sessionId: nodeSessionId,
+        timestampMs: now + 2000,
+        sendStatus: 'enqueued',
+        sdkUuid: 'u-run-queued',
+        payload: envelopeHandoffPayload('u-run-queued', 'coder', 'run-scoped handoff body'),
+      });
+      db.prepare(
+        `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
+         VALUES (?, 'message_delivery', 'pending', ?, 1, 8, ?, ?)`
+      ).run(
+        'job-run-delivery-retry',
+        JSON.stringify({
+          sessionId: nodeSessionId,
+          messageUuid: 'u-run-queued',
+          origin: 'space_agent',
+        }),
+        now,
+        now
+      );
+
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byWorkflowRun')!;
+      const rows = db.prepare(entry.sql).all(workflowRunId, workflowRunId, workflowRunId) as Record<
+        string,
+        unknown
+      >[];
+      const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+
+      const delivery = mapped.find((row) => row.id === 'delivery:sdk-run-queued');
+      expect(delivery).toMatchObject({
+        eventKind: 'retry',
+        title: 'Queued delivery',
+        deliveryState: 'queued',
+        targetResolution: 'queued',
+        taskId: 'run-delivery-task',
+      });
+      expect((delivery!.from as Record<string, unknown>).label).toBe('coder');
+      expect((delivery!.target as Record<string, unknown>).label).toBe('reviewer');
+      expect(mapped.find((row) => row.id === 'delivery:sdk-run-brief')).toBeUndefined();
+    });
+
     test('actorMessages.byWorkflowRun preserves node handoff event for completed nodes', () => {
       const workflowRunId = 'wr-node-history';
       insertWorkflowRun(workflowRunId);
@@ -2424,26 +2662,60 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(answers[0].body).toBe('top-level answer');
       });
 
-      test('renders queued human instructions from pending_agent_messages', () => {
-        const taskId = insertSpaceTask({ id: 'ms-queued', status: 'in_progress' });
-        db.exec(`
-					INSERT INTO pending_agent_messages (
-						id, workflow_run_id, space_id, task_id, source_agent_name, target_kind,
-						target_agent_name, message, attempts, max_attempts, status, expires_at, created_at
-					) VALUES (
-						'pm-1', 'wr-q', '${spaceId}', '${taskId}', 'human', 'node_agent',
-						'coder', 'please review when ready', 0, 5, 'pending', ${now + 600000}, ${now + 1000}
-					)
-				`);
+      test('renders queued human instructions from the session outbox', () => {
+        const workflowRunId = 'wr-ms-outbox-queued';
+        const nodeSessionId = 'session-ms-outbox-queued';
+        const taskId = insertSpaceTask({
+          id: 'ms-queued',
+          workflowRunId,
+          status: 'in_progress',
+        });
+        insertSession(nodeSessionId, 'worker', '{}');
+        insertNodeExecution({
+          id: 'ne-ms-outbox-queued',
+          workflowRunId,
+          workflowNodeId: 'node-coder',
+          agentName: 'coder',
+          agentSessionId: nodeSessionId,
+          status: 'in_progress',
+        });
+        insertOutboxUserMessage({
+          id: 'sdk-ms-brief',
+          sessionId: nodeSessionId,
+          timestampMs: now + 1000,
+          sendStatus: 'consumed',
+          payload: {
+            type: 'user',
+            isSynthetic: true,
+            inputKind: 'task',
+            message: { role: 'user', content: [{ type: 'text', text: 'You are the coder.' }] },
+          },
+        });
+        insertOutboxUserMessage({
+          id: 'sdk-ms-queued',
+          sessionId: nodeSessionId,
+          timestampMs: now + 2000,
+          sendStatus: 'enqueued',
+          payload: {
+            type: 'user',
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: 'please review when ready' }],
+            },
+          },
+        });
 
         const rows = queryMilestones(taskId);
-        const queued = rows.find((r) => r.id === 'pending:pm-1');
+        const queued = rows.find((r) => r.id === 'queued:sdk-ms-queued');
         expect(queued).toMatchObject({
           category: 'instruction',
           tone: 'info',
           title: 'Instruction queued',
           body: 'please review when ready',
+          sourceLabel: 'Human',
+          sourceKind: 'human',
         });
+        expect(rows.find((r) => r.id === 'queued:sdk-ms-brief')).toBeUndefined();
       });
 
       test('renders real agent answer text and skips tool-only assistant turns', () => {
@@ -2757,7 +3029,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 
       test('sdk_message BLOB is re-fetched by primary key only in the final row candidates (#2660)', () => {
         const sql = NAMED_QUERY_REGISTRY.get('taskMilestones.byTask')!.sql;
-        expect(sql.match(/JOIN sdk_messages msg ON msg\.id = tsm\.id/g)).toHaveLength(3);
+        expect(sql.match(/JOIN sdk_messages msg ON msg\.id = tsm\.id/g)).toHaveLength(4);
       });
 
       test('attributes execution-less worker milestones via per-session promptProvenance', () => {
