@@ -379,15 +379,7 @@ export class SpaceRuntimeService {
         return 'pre_admission_failure';
       }
     }
-    const isDefaultAgent = resolveIsDefaultAgent(
-      args.spaceId,
-      agent.id,
-      this.config.longHorizonAgentRepo
-    );
-    const session = isDefaultAgent
-      ? ((await this.resolveCoordinatorSession(args.spaceId)) ??
-        (await this.ensureCoordinatorSession(args.spaceId)))
-      : await this.ensureLongHorizonAgentSession(args.spaceId, args.agentId);
+    const session = await this.resolveAgentSession(args.spaceId, args.agentId);
     if (!session) return 'terminal_failure';
     const spaceAfter = await this.config.spaceManager.getSpace(args.spaceId);
     if (!spaceAfter || spaceAfter.status !== 'active' || spaceAfter.paused || spaceAfter.stopped) {

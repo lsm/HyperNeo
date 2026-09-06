@@ -1332,7 +1332,9 @@ describe('SpaceRuntimeService', () => {
       ).mockImplementation(async () => sessionId);
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
         .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(createdSession);
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue(createdSession);
       return sessionManager;
     }
 
@@ -1365,7 +1367,7 @@ describe('SpaceRuntimeService', () => {
       sessionId: string,
       mailbox: ReturnType<typeof buildMailboxDeliveryDb>
     ): SpaceRuntimeService {
-      return new SpaceRuntimeService({
+      return buildDeliveryService({
         ...buildConfigWithSession(
           makeNagSessionManager(sessionId),
           createMockSpaceManager(mockSpace)
@@ -1572,7 +1574,7 @@ describe('SpaceRuntimeService', () => {
           updatedAt: NOW,
         })),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
         longHorizonAgentRepo,
       });
@@ -1597,7 +1599,7 @@ describe('SpaceRuntimeService', () => {
           updatedAt: NOW,
         })),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfigWithSession(
           sessionManager,
           createMockSpaceManager({ ...mockSpace, paused: true })
@@ -1628,7 +1630,7 @@ describe('SpaceRuntimeService', () => {
       const inactivityConfigRepo = {
         getByAgent: mock(() => ({ enabled: true, configRevision: 2 })),
       } as unknown as SpaceRuntimeServiceConfig['inactivityConfigRepo'];
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
         longHorizonAgentRepo,
         inactivityConfigRepo,
@@ -1657,7 +1659,9 @@ describe('SpaceRuntimeService', () => {
       ).mockImplementation(async () => sessionId);
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
         .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(createdSession);
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue(createdSession);
       const longHorizonAgentRepo = {
         getById: mock(() => ({
           id: 'lh-agent-1',
@@ -1687,7 +1691,7 @@ describe('SpaceRuntimeService', () => {
           return { enabled: true, configRevision: configCalls === 1 ? 1 : 2 };
         }),
       } as unknown as SpaceRuntimeServiceConfig['inactivityConfigRepo'];
-      const svc = new SpaceRuntimeService({
+      const svc = buildDeliveryService({
         ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
         longHorizonAgentRepo,
         inactivityConfigRepo,
