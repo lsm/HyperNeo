@@ -83,7 +83,6 @@ import {
 } from '../agent/message-delivery-metrics.ts';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository.ts';
 import { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository.ts';
-import { SpaceAgentInboxRepository } from '../../storage/repositories/space-agent-inbox-repository.ts';
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import { setupSpaceAgentHandlers } from './space-agent-handlers.ts';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
@@ -433,7 +432,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.db.getDatabase(),
     deps.reactiveDb
   );
-  const spaceAgentInboxRepo = new SpaceAgentInboxRepository(deps.db.getDatabase());
   const taskScheduleRepo = new TaskScheduleRepository(deps.db.getDatabase());
   const spaceRepo = new SpaceRepository(deps.db.getDatabase());
   const sessionRepo = new SessionRepository(deps.db.getDatabase());
@@ -679,7 +677,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     internalEventBus: deps.internalEventBus,
     artifactRepo,
     pendingMessageRepo,
-    spaceAgentInboxRepo,
     actorRegistryRepos: {
       spaceRepo,
       sessionRepo,
@@ -933,7 +930,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       log.error('schedule recovery after space resume failed (non-fatal)', err);
     }
     spaceRuntimeService.recoverStalledWorkflowRunsAfterSpaceResume(spaceId);
-    spaceRuntimeService.recoverLongTermAgentInboxForSpace(spaceId);
     void spaceRuntimeService.recoverPendingOutcomeNotificationsForSpace(spaceId);
   });
 

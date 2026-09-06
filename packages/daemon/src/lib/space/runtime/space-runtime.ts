@@ -33,7 +33,6 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository.ts';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
-import type { SpaceAgentInboxRepository } from '../../../storage/repositories/space-agent-inbox-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository.ts';
@@ -237,7 +236,6 @@ export interface SpaceRuntimeConfig {
   >;
   evolutionScopeService?: import('../evolution-scope-service.ts').EvolutionScopeService;
   actorRegistry?: SpaceActorRegistryAdapter;
-  spaceAgentInboxRepo?: SpaceAgentInboxRepository;
   deliverLongHorizonExternalEvent?: (args: {
     spaceId: string;
     agentId: string;
