@@ -317,6 +317,7 @@ export interface SessionMetadata {
   lastSdkCost?: number;
   costBaseline?: number;
   refusalRewindTargetUuid?: string | null;
+  sdkCapabilities?: string[];
   acpInstructionsSent?: boolean;
   acpCommandIdentity?: string;
   acpSessionCommand?: string;

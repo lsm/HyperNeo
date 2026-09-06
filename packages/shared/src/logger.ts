@@ -392,14 +392,15 @@ export class Logger {
     logLevel: LogLevel,
     structuredLevel: StructuredLogLevel,
     consoleMethod: 'debug' | 'info' | 'warn' | 'error',
-    args: unknown[]
+    args: unknown[],
+    metadata?: Record<string, unknown>
   ): void {
     emitStructuredLogEvent({
       level: structuredLevel,
       args,
       source: 'logger',
       module: this.namespace,
-      metadata: { loggerLevel: LOG_LEVEL_NAMES[logLevel] },
+      metadata: { loggerLevel: LOG_LEVEL_NAMES[logLevel], ...metadata },
     });
     const formatted = this.formatMessage(logLevel, args);
     if (this.consoleDeltas) {
@@ -428,6 +429,12 @@ export class Logger {
   debug(...args: unknown[]): void {
     if (this.shouldLogLevel(LogLevel.DEBUG)) {
       this.emitAndWrite(LogLevel.DEBUG, 'debug', 'debug', args);
+    }
+  }
+
+  debugWithMetadata(metadata: Record<string, unknown>, ...args: unknown[]): void {
+    if (this.shouldLogLevel(LogLevel.DEBUG)) {
+      this.emitAndWrite(LogLevel.DEBUG, 'debug', 'debug', args, metadata);
     }
   }
 

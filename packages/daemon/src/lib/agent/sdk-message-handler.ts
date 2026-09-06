@@ -190,9 +190,12 @@ export class SDKMessageHandler {
 
   private repeatedToolErrorGuardrail: RepeatedToolErrorGuardrail;
 
-  constructor(private ctx: SDKMessageHandlerContext) {
+  constructor(
+    private ctx: SDKMessageHandlerContext,
+    logger?: Logger
+  ) {
     const { session } = ctx;
-    this.logger = new Logger(`SDKMessageHandler ${session.id}`);
+    this.logger = logger ?? new Logger(`SDKMessageHandler ${session.id}`);
     this.contextFetcher = new ContextFetcher(session.id);
     this.circuitBreaker = new ApiErrorCircuitBreaker(session.id);
 
@@ -861,6 +864,13 @@ export class SDKMessageHandler {
     } as unknown as SDKMessage).catch(() => {});
   }
 
+  private logFilteredSDKMessage(messageType: string, message: SDKMessage): void {
+    this.logger.debugWithMetadata(
+      { sdkMessagePayload: message },
+      `Filtered SDK ${messageType} message`
+    );
+  }
+
   async handleMessage(message: SDKMessage, runnerGeneration?: number): Promise<void> {
     const { session, db, messageHub, stateManager } = this.ctx;
     const invocationGeneration = runnerGeneration ?? this.ctx.getQueryGeneration?.() ?? null;
@@ -871,6 +881,7 @@ export class SDKMessageHandler {
     }
 
     if (isSDKCommandLifecycleMessage(message)) {
+      this.logFilteredSDKMessage('command_lifecycle', message);
       return;
     }
 
@@ -880,17 +891,22 @@ export class SDKMessageHandler {
         session.metadata = metadata;
         db.updateSession(session.id, { metadata, title: 'New Session' });
       }
+      this.logFilteredSDKMessage('conversation_reset', message);
       return;
     }
 
     if (isSDKActiveGoalMessage(message)) {
+      this.logFilteredSDKMessage('active_goal', message);
       return;
     }
 
-    if (
-      isSDKBackgroundTasksChangedMessage(message) ||
-      isSDKControlRequestProgressMessage(message)
-    ) {
+    if (isSDKBackgroundTasksChangedMessage(message)) {
+      this.logFilteredSDKMessage('background_tasks_changed', message);
+      return;
+    }
+
+    if (isSDKControlRequestProgressMessage(message)) {
+      this.logFilteredSDKMessage('control_request_progress', message);
       return;
     }
 
@@ -1276,7 +1292,16 @@ export class SDKMessageHandler {
 
     if (isSDKSystemInit(message)) {
       this.resetThinkingTokenTracking();
-      this.sdkCapabilities = new Set(message.capabilities ?? []);
+      const sdkCapabilities = [...(message.capabilities ?? [])];
+      this.sdkCapabilities = new Set(sdkCapabilities);
+      session.metadata = { ...session.metadata, sdkCapabilities };
+      db.updateSession(session.id, { metadata: session.metadata });
+      await internalEventBus.publish('session.updated', {
+        sessionId: session.id,
+        source: 'metadata',
+        session: { metadata: session.metadata },
+      });
+      this.logger.debugWithMetadata({ sdkMessagePayload: message }, 'SDK system/init capabilities');
     }
 
     if (

@@ -40,6 +40,10 @@ export class Logger {
     this.sharedLogger.debug(...args);
   }
 
+  debugWithMetadata(metadata: Record<string, unknown>, ...args: unknown[]): void {
+    this.sharedLogger.debugWithMetadata(metadata, ...args);
+  }
+
   trace(...args: unknown[]): void {
     this.sharedLogger.trace(...args);
   }

@@ -15,6 +15,7 @@ import {
 import { recordResultUsage } from '../../../../src/lib/agent/usage-accounting';
 import type { ErrorManager } from '../../../../src/lib/error-manager';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
+import type { Logger } from '../../../../src/lib/logger';
 import { getProviderCatalogEpoch, setModelsCache } from '../../../../src/lib/model-service';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
@@ -78,6 +79,7 @@ describe('SDKMessageHandler', () => {
   let updateMessageStatusSpy: ReturnType<typeof mock>;
   let publishSpy: ReturnType<typeof mock>;
   let emitSpy: ReturnType<typeof mock>;
+  let loggerDebugWithMetadataSpy: ReturnType<typeof mock>;
   let detectPhaseFromMessageSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
   let beginTerminalIdleSpy: ReturnType<typeof mock>;
@@ -281,6 +283,7 @@ describe('SDKMessageHandler', () => {
     mockLifecycleManager = {
       stop: lifecycleStopSpy,
     } as unknown as QueryLifecycleManager;
+    loggerDebugWithMetadataSpy = mock(() => {});
 
     mockContext = {
       session: mockSession,
@@ -299,7 +302,13 @@ describe('SDKMessageHandler', () => {
       onCommandsChanged: mock(async () => {}),
     };
 
-    handler = new SDKMessageHandler(mockContext);
+    handler = new SDKMessageHandler(mockContext, {
+      debug: mock(() => {}),
+      debugWithMetadata: loggerDebugWithMetadataSpy,
+      error: mock(() => {}),
+      info: mock(() => {}),
+      warn: mock(() => {}),
+    } as unknown as Logger);
   });
 
   afterEach(() => {
@@ -399,50 +408,98 @@ describe('SDKMessageHandler', () => {
       expect(saveSDKMessageSpy).toHaveBeenCalledWith('test-session-id', message);
     });
 
-    it('never persists or broadcasts internal CLI lifecycle/state messages', async () => {
-      const internalMessages: SDKMessage[] = [
-        {
-          type: 'command_lifecycle',
-          command_uuid: 'cmd-1',
-          state: 'queued',
-          uuid: 'm-1',
-          session_id: 'test-session-id',
-        },
-        {
-          type: 'conversation_reset',
-          new_conversation_id: 'conv-2',
-          uuid: 'm-2',
-          session_id: 'test-session-id',
-        },
-        {
-          type: 'active_goal',
-          value: null,
-          uuid: 'm-3',
-          session_id: 'test-session-id',
-        },
-        {
-          type: 'system',
-          subtype: 'background_tasks_changed',
-          tasks: [],
-          uuid: 'm-4',
-          session_id: 'test-session-id',
-        },
-        {
-          type: 'system',
-          subtype: 'control_request_progress',
-          request_id: 'req-1',
-          status: 'started',
-          uuid: 'm-5',
-          session_id: 'test-session-id',
-        },
-      ] as unknown as SDKMessage[];
-
-      for (const message of internalMessages) {
-        await handler.handleMessage(message);
-      }
+    it.each(
+      [
+        [
+          'command_lifecycle',
+          {
+            type: 'command_lifecycle',
+            command_uuid: 'cmd-1',
+            state: 'queued',
+            uuid: 'm-1',
+            session_id: 'test-session-id',
+          },
+          'Filtered SDK command_lifecycle message',
+        ],
+        [
+          'conversation_reset',
+          {
+            type: 'conversation_reset',
+            new_conversation_id: 'conv-2',
+            uuid: 'm-2',
+            session_id: 'test-session-id',
+          },
+          'Filtered SDK conversation_reset message',
+        ],
+        [
+          'active_goal',
+          {
+            type: 'active_goal',
+            value: null,
+            uuid: 'm-3',
+            session_id: 'test-session-id',
+          },
+          'Filtered SDK active_goal message',
+        ],
+        [
+          'background_tasks_changed',
+          {
+            type: 'system',
+            subtype: 'background_tasks_changed',
+            tasks: [],
+            uuid: 'm-4',
+            session_id: 'test-session-id',
+          },
+          'Filtered SDK background_tasks_changed message',
+        ],
+        [
+          'control_request_progress',
+          {
+            type: 'system',
+            subtype: 'control_request_progress',
+            request_id: 'req-1',
+            status: 'started',
+            uuid: 'm-5',
+            session_id: 'test-session-id',
+          },
+          'Filtered SDK control_request_progress message',
+        ],
+      ].map(
+        ([label, message, logLabel]) => [label, message as unknown as SDKMessage, logLabel] as const
+      )
+    )('logs and filters the complete %s payload', async (_label, message, logLabel) => {
+      await handler.handleMessage(message);
 
       expect(saveSDKMessageSpy).not.toHaveBeenCalled();
       expect(publishSpy).not.toHaveBeenCalled();
+      expect(emitSpy).not.toHaveBeenCalledWith('sdk.message', expect.anything());
+      expect(loggerDebugWithMetadataSpy).toHaveBeenCalledTimes(1);
+      expect(loggerDebugWithMetadataSpy).toHaveBeenCalledWith(
+        { sdkMessagePayload: message },
+        logLabel
+      );
+    });
+
+    it('preserves the conversation reset title update before filtering', async () => {
+      const message = {
+        type: 'conversation_reset',
+        new_conversation_id: 'conv-2',
+        uuid: 'm-2',
+        session_id: 'test-session-id',
+      } as unknown as SDKMessage;
+
+      await handler.handleMessage(message);
+
+      expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
+        metadata: { ...mockSession.metadata, titleGenerated: false },
+        title: 'New Session',
+      });
+      expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+      expect(publishSpy).not.toHaveBeenCalled();
+      expect(loggerDebugWithMetadataSpy).toHaveBeenCalledWith(
+        { sdkMessagePayload: message },
+        'Filtered SDK conversation_reset message'
+      );
     });
 
     it('should normalize missing usage on messages with BetaMessage (bridge provider crash guard)', async () => {
@@ -805,7 +862,10 @@ describe('SDKMessageHandler', () => {
       await handler.handleMessage(message);
 
       expect(mockSession.sdkSessionId).toBe('same-session-id');
-      expect(updateSessionSpy).not.toHaveBeenCalledWith('test-session-id', expect.anything());
+      expect(updateSessionSpy).not.toHaveBeenCalledWith(
+        'test-session-id',
+        expect.objectContaining({ sdkSessionId: expect.anything() })
+      );
     });
 
     it('strips terminal-bound commands from the init slash command list', async () => {
@@ -3325,30 +3385,66 @@ describe('SDKMessageHandler', () => {
     });
 
     describe('SDK capability capture', () => {
-      it('exposes capabilities advertised on system/init', async () => {
-        await handler.handleMessage({
+      it('persists, publishes, and logs capabilities advertised on system/init', async () => {
+        const message = {
           type: 'system',
           subtype: 'init',
           capabilities: ['interrupt_receipt_v1', 'interrupt_cancel_queued_v1'],
-        } as unknown as SDKMessage);
+        } as unknown as SDKMessage;
+
+        await handler.handleMessage(message);
 
         expect(handler.getSdkCapabilities().has('interrupt_cancel_queued_v1')).toBe(true);
         expect(handler.getSdkCapabilities().has('interrupt_receipt_v1')).toBe(true);
         expect(handler.getSdkCapabilities().has('unknown_capability')).toBe(false);
+        expect(mockSession.metadata.sdkCapabilities).toEqual([
+          'interrupt_receipt_v1',
+          'interrupt_cancel_queued_v1',
+        ]);
+        expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
+          metadata: mockSession.metadata,
+        });
+        expect(emitSpy).toHaveBeenCalledWith('session.updated', {
+          sessionId: 'test-session-id',
+          source: 'metadata',
+          session: { metadata: mockSession.metadata },
+        });
+        expect(loggerDebugWithMetadataSpy).toHaveBeenCalledWith(
+          { sdkMessagePayload: message },
+          'SDK system/init capabilities'
+        );
       });
 
-      it('starts empty and resets when a fresh init advertises nothing', async () => {
+      it('persists and publishes an empty capability list from a fresh init', async () => {
         await handler.handleMessage({
           type: 'system',
           subtype: 'init',
           capabilities: ['interrupt_cancel_queued_v1'],
         } as unknown as SDKMessage);
-        await handler.handleMessage({
+        updateSessionSpy.mockClear();
+        emitSpy.mockClear();
+        loggerDebugWithMetadataSpy.mockClear();
+        const message = {
           type: 'system',
           subtype: 'init',
-        } as unknown as SDKMessage);
+        } as unknown as SDKMessage;
+
+        await handler.handleMessage(message);
 
         expect(handler.getSdkCapabilities().size).toBe(0);
+        expect(mockSession.metadata.sdkCapabilities).toEqual([]);
+        expect(updateSessionSpy).toHaveBeenCalledWith('test-session-id', {
+          metadata: mockSession.metadata,
+        });
+        expect(emitSpy).toHaveBeenCalledWith('session.updated', {
+          sessionId: 'test-session-id',
+          source: 'metadata',
+          session: { metadata: mockSession.metadata },
+        });
+        expect(loggerDebugWithMetadataSpy).toHaveBeenCalledWith(
+          { sdkMessagePayload: message },
+          'SDK system/init capabilities'
+        );
       });
     });
 
