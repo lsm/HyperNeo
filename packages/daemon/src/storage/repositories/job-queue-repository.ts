@@ -655,58 +655,6 @@ export class JobQueueRepository {
     return out;
   }
 
-  activeMailboxMessageUuids(sessionId: string): Set<string> {
-    const rows = this.db
-      .prepare(
-        `SELECT json_extract(payload, '$.messageUuid') AS uuid
-           FROM job_queue
-          WHERE queue = 'mailbox'
-            AND json_extract(payload, '$.to.kind') = 'session'
-            AND json_extract(payload, '$.to.sessionId') = ?
-            AND status IN ('pending', 'processing')`
-      )
-      .all(sessionId) as Array<{ uuid: string | null }>;
-    const out = new Set<string>();
-    for (const r of rows) {
-      if (typeof r.uuid === 'string' && r.uuid.length > 0) out.add(r.uuid);
-    }
-    return out;
-  }
-
-  mailboxEntryJobStatus(
-    entryId: string
-  ): 'pending' | 'processing' | 'completed' | 'dead' | 'absent' {
-    const row = this.db
-      .prepare(
-        `SELECT status AS status FROM job_queue
-          WHERE queue = 'mailbox' AND json_extract(payload, '$.id') = ?
-          ORDER BY rowid DESC LIMIT 1`
-      )
-      .get(entryId) as { status: string } | null | undefined;
-    if (row === null || row === undefined) return 'absent';
-    if (
-      row.status === 'pending' ||
-      row.status === 'processing' ||
-      row.status === 'completed' ||
-      row.status === 'dead'
-    ) {
-      return row.status;
-    }
-    return 'dead';
-  }
-
-  cancelPendingMailboxEntry(entryId: string): boolean {
-    const result = withBusyRetry(() =>
-      this.db
-        .prepare(
-          `DELETE FROM job_queue
-            WHERE queue = 'mailbox' AND json_extract(payload, '$.id') = ? AND status = 'pending'`
-        )
-        .run(entryId)
-    );
-    return result.changes > 0;
-  }
-
   cancelHeldDeliveryJob(sessionId: string, messageUuid: string): boolean {
     const result = withBusyRetry(() =>
       this.db
