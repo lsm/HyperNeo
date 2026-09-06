@@ -528,7 +528,11 @@ function portSpy() {
         return true;
       },
     },
-    publishStatusChanged: async (sessionId: string, dbId: string, status: 'enqueued') => {
+    publishStatusChanged: async (
+      sessionId: string,
+      dbId: string,
+      status: 'enqueued' | 'deferred'
+    ) => {
       published.push({ sessionId, dbId, status });
     },
   };
@@ -799,9 +803,11 @@ describe('handoffPromptToMailbox', () => {
 
   it('keeps deferred admission held across a repeated handoff', async () => {
     const h = makeHarness();
+    const spy = portSpy();
     const message = userMessage('msg-e2e-deferred', 'wait');
     const args = {
       ...argsFor(h, message),
+      ...spy,
       target: { ...targetFor(message), defer: true },
       stateManager: undefined,
     };
@@ -813,6 +819,14 @@ describe('handoffPromptToMailbox', () => {
     expect(second).toMatchObject({ state: 'enqueued', changed: false, advanced: false });
     expect(sendStatus(h, 'msg-e2e-deferred')).toBe('deferred');
     expect(deliveryJobCount(h, 'msg-e2e-deferred')).toBe(1);
+    expect(spy.queued).toEqual([]);
+    expect(spy.published).toEqual([
+      {
+        sessionId: SESSION,
+        dbId: first.state === 'enqueued' ? first.dbId : '',
+        status: 'deferred',
+      },
+    ]);
   });
 
   it('lets consumption evidence win over a failed snapshot', async () => {

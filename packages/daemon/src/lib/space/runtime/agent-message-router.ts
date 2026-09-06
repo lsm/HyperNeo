@@ -229,6 +229,22 @@ export class AgentMessageRouter {
     return outcome;
   }
 
+  private async deliverSpaceAgentWithFallback(
+    spaceId: string,
+    target: SessionTarget,
+    envelopedMessage: string
+  ): Promise<AgentMessageDeliveryOutcome> {
+    const outcome = await this.deliverSingleTarget(target, envelopedMessage, generateUUID());
+    if (outcome.state === 'not_found' && target.kind === 'session') {
+      return this.deliverSingleTarget(
+        { kind: 'agent', spaceId, agentId: 'coordinator' },
+        envelopedMessage,
+        generateUUID()
+      );
+    }
+    return outcome;
+  }
+
   private enqueueNodeAgentMessage(input: {
     repo: PendingAgentMessageRepository;
     spaceId: string;
@@ -401,10 +417,10 @@ export class AgentMessageRouter {
       if (decision.action === 'deliverToSession') {
         const envelopedMessage = buildEnvelope('space-agent');
         try {
-          const outcome = await this.deliverSingleTarget(
+          const outcome = await this.deliverSpaceAgentWithFallback(
+            spaceId!,
             { kind: 'session', sessionId: decision.sessionId },
-            envelopedMessage,
-            generateUUID()
+            envelopedMessage
           );
           if (outcome.state === 'delivered') {
             delivered.push({ agentName: 'space-agent', sessionId: outcome.sessionId });
@@ -605,7 +621,11 @@ export class AgentMessageRouter {
                 error: outcome.error,
               });
             } else {
-              notFound.push(agentName);
+              failed.push({
+                agentName,
+                sessionId: session.sessionId,
+                error: outcome.error ?? 'target session unavailable during delivery',
+              });
             }
           } catch (err) {
             failed.push({ ...session, error: err instanceof Error ? err.message : String(err) });
@@ -806,7 +826,11 @@ export class AgentMessageRouter {
         const expectedSessionId = replyTo || `space:chat:${spaceId}`;
         const envelopedMessage = buildEnvelope('space-agent');
         try {
-          const outcome = await this.deliverSingleTarget(target, envelopedMessage, generateUUID());
+          const outcome = await this.deliverSpaceAgentWithFallback(
+            spaceId,
+            target,
+            envelopedMessage
+          );
           if (outcome.state === 'delivered') {
             delivered.push({ agentName, sessionId: outcome.sessionId });
           } else if (outcome.state === 'queued') {
@@ -861,7 +885,11 @@ export class AgentMessageRouter {
                 error: outcome.error,
               });
             } else {
-              notFound.push(agentName);
+              failed.push({
+                agentName,
+                sessionId: member.sessionId,
+                error: outcome.error ?? 'target session unavailable during delivery',
+              });
             }
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);

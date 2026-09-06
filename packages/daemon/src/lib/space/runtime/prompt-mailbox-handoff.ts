@@ -151,7 +151,11 @@ export interface MailboxHandoffArgs {
   deps: PromptHandoffDeps;
   target: PromptHandoffTarget;
   stateManager?: MailboxHandoffStateManager;
-  publishStatusChanged?: (sessionId: string, dbId: string, status: 'enqueued') => Promise<void>;
+  publishStatusChanged?: (
+    sessionId: string,
+    dbId: string,
+    status: 'enqueued' | 'deferred'
+  ) => Promise<void>;
 }
 
 export type MailboxHandoffOutcome =
@@ -237,7 +241,9 @@ export function settleHandoffOutcome(ctx: MailboxHandoffCtx): MailboxHandoffCtx 
 
 export async function markQueuedIfIdle(ctx: MailboxHandoffCtx): Promise<MailboxHandoffCtx> {
   const outcome = ctx.outcome;
-  if (!ctx.stateManager || outcome?.state !== 'enqueued' || !outcome.advanced) return ctx;
+  if (!ctx.stateManager || ctx.target.defer || outcome?.state !== 'enqueued' || !outcome.advanced) {
+    return ctx;
+  }
   try {
     await ctx.stateManager.setQueuedIfIdle(ctx.target.messageId);
   } catch {}
@@ -248,7 +254,11 @@ export async function publishEnqueuedIfChanged(ctx: MailboxHandoffCtx): Promise<
   const outcome = ctx.outcome;
   if (!ctx.publishStatusChanged || outcome?.state !== 'enqueued' || !outcome.changed) return ctx;
   try {
-    await ctx.publishStatusChanged(ctx.target.sessionId, outcome.dbId, 'enqueued');
+    await ctx.publishStatusChanged(
+      ctx.target.sessionId,
+      outcome.dbId,
+      ctx.target.defer ? 'deferred' : 'enqueued'
+    );
   } catch {}
   return ctx;
 }

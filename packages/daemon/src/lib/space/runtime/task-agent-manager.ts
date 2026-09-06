@@ -143,6 +143,10 @@ import {
   isHumanPendingSource,
 } from './pending-envelope.ts';
 import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
+import {
+  deliverAgentMessageToTarget,
+  type AgentMessageDeliveryDeps,
+} from './agent-message-delivery-pipeline.ts';
 import { handoffPromptToMailbox } from './prompt-mailbox-handoff.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import { decideRestoredWorkerAdmission } from './restored-worker-admission-decision-pipeline.ts';
@@ -5079,6 +5083,61 @@ export class TaskAgentManager {
     };
   }
 
+  private agentMessageDeliveryDeps(workflowRunId: string): AgentMessageDeliveryDeps {
+    const longHorizonAgentRepo = this.config.longHorizonAgentRepo;
+    if (!longHorizonAgentRepo) {
+      throw new Error('Long-horizon agent repository unavailable');
+    }
+    return {
+      workflowRunId,
+      taskRepo: this.config.taskRepo,
+      nodeExecutionRepo: this.config.nodeExecutionRepo,
+      resolveTerminalStatus: (runId, taskId) => this.resolveTerminalInjectionStatus(runId, taskId),
+      ensureSession: (target) =>
+        ensureSession(
+          target,
+          createDefaultSessionResolutionDeps({
+            sessionManager: this.config.sessionManager,
+            taskAgentManager: this,
+            spaceRuntimeService: this.config.spaceRuntimeService,
+            nodeExecutionRepo: this.config.nodeExecutionRepo,
+            taskRepo: this.config.taskRepo,
+            longHorizonAgentRepo,
+          })
+        ),
+      getSessionAsync: (sessionId) => this.config.sessionManager.getSessionAsync(sessionId),
+      withSessionInjectLock: (sessionId, fn) => this.withSessionInjectLock(sessionId, fn),
+      isRateOrUsageLimited,
+      slotResetsContext: (sessionId) => this.slotResetsContextForSession(sessionId),
+      hasActiveDeliveryJob: (sessionId) => this.hasActiveDeliveryJob(sessionId),
+      hasUnconsumedDeliveredWork: (sessionId, messageId) =>
+        this.hasUnconsumedDeliveredWork(sessionId, messageId),
+      hasHeldDeliveryBacklog: (sessionId, messageId) =>
+        this.hasHeldDeliveryBacklog(sessionId, messageId),
+      handoffToMailbox: (args) =>
+        handoffPromptToMailbox({
+          ...args,
+          deps: {
+            db: this.config.db.getDatabase(),
+            sdkMessageRepo: this.config.db.getSDKMessageRepo(),
+            jobQueue: this.config.db.getJobQueueRepo(),
+          },
+        }),
+      publishStatusChanged: (sessionId, dbId, status) =>
+        this.publishMessageStatusChanged(sessionId, dbId, status),
+      recordActivity: (sessionId) => this.recordActivityForSession(sessionId),
+    };
+  }
+
+  private hasHeldDeliveryBacklog(sessionId: string, excludeMessageId?: string): boolean {
+    return this.config.db
+      .getUserMessageIdsByStatus(sessionId, 'deferred')
+      .some(
+        (row) =>
+          typeof row.uuid === 'string' && row.uuid.length > 0 && row.uuid !== excludeMessageId
+      );
+  }
+
   buildNodeAgentMcpServersForSession(
     taskId: string,
     subSessionId: string,
@@ -5129,165 +5188,13 @@ export class TaskAgentManager {
       nodeExecutionRepo: this.config.nodeExecutionRepo,
       workflowRunId,
       workflowChannels: channels,
-      deliverToTarget: async (target, message, messageId) => {
-        const longHorizonAgentRepo = this.config.longHorizonAgentRepo;
-        if (!longHorizonAgentRepo) {
-          throw new Error('Long-horizon agent repository unavailable');
-        }
-        if (target.kind === 'worker') {
-          const task = this.config.taskRepo.getTask(target.taskId);
-          if (task?.workflowRunId !== workflowRunId) {
-            return { state: 'not_found', messageId, error: 'workflow run changed' } as const;
-          }
-          const terminalStatus = this.resolveTerminalInjectionStatus(workflowRunId, target.taskId);
-          if (terminalStatus) {
-            return {
-              state: 'failed',
-              messageId,
-              error: `task/run is terminal (${terminalStatus})`,
-            } as const;
-          }
-        }
-        const resolution = await ensureSession(
+      deliverToTarget: (target, message, messageId) =>
+        deliverAgentMessageToTarget({
+          deps: this.agentMessageDeliveryDeps(workflowRunId),
           target,
-          createDefaultSessionResolutionDeps({
-            sessionManager: this.config.sessionManager,
-            taskAgentManager: this,
-            spaceRuntimeService: this.config.spaceRuntimeService,
-            nodeExecutionRepo: this.config.nodeExecutionRepo,
-            taskRepo: this.config.taskRepo,
-            longHorizonAgentRepo,
-          })
-        );
-        if (resolution.kind === 'unresolved') {
-          return resolution.reason.startsWith('internal:')
-            ? { state: 'failed', messageId, error: resolution.reason }
-            : { state: 'not_found', messageId, error: resolution.reason };
-        }
-        if (target.kind === 'worker') {
-          const task = this.config.taskRepo.getTask(target.taskId);
-          const execution = this.config.nodeExecutionRepo
-            .listByWorkflowRun(workflowRunId)
-            .find(
-              (candidate) =>
-                candidate.agentSessionId === resolution.sessionId &&
-                candidate.agentName === target.agentName &&
-                (target.workflowNodeId === undefined ||
-                  candidate.workflowNodeId === target.workflowNodeId)
-            );
-          if (task?.workflowRunId !== workflowRunId || !execution) {
-            return { state: 'not_found', messageId, error: 'workflow run changed' } as const;
-          }
-        }
-        const session = await this.config.sessionManager.getSessionAsync(resolution.sessionId);
-        if (!session) {
-          return { state: 'not_found', messageId, error: 'resolved session unavailable' } as const;
-        }
-        const sdkUserMessage: SDKUserMessage & {
-          isSynthetic: boolean;
-          inputKind: MessageInputKind;
-        } = {
-          type: 'user' as const,
-          uuid: messageId as UUID,
-          session_id: resolution.sessionId,
-          parent_tool_use_id: null,
-          isSynthetic: true,
-          inputKind: 'task',
-          message: {
-            role: 'user' as const,
-            content: [{ type: 'text' as const, text: message }],
-          },
-        };
-        return this.withSessionInjectLock(resolution.sessionId, async () => {
-          if (target.kind === 'worker') {
-            const task = this.config.taskRepo.getTask(target.taskId);
-            const execution = this.config.nodeExecutionRepo
-              .listByWorkflowRun(workflowRunId)
-              .find(
-                (candidate) =>
-                  candidate.agentSessionId === resolution.sessionId &&
-                  candidate.agentName === target.agentName &&
-                  (target.workflowNodeId === undefined ||
-                    candidate.workflowNodeId === target.workflowNodeId)
-              );
-            if (task?.workflowRunId !== workflowRunId || !execution) {
-              return { state: 'not_found', messageId, error: 'workflow run changed' } as const;
-            }
-            const terminalStatus = this.resolveTerminalInjectionStatus(
-              workflowRunId,
-              target.taskId
-            );
-            if (terminalStatus) {
-              return {
-                state: 'failed',
-                sessionId: resolution.sessionId,
-                messageId,
-                error: `task/run is terminal (${terminalStatus})`,
-              } as const;
-            }
-          }
-          const state = session.getProcessingState();
-          const isBusy =
-            state.status === 'processing' ||
-            state.status === 'queued' ||
-            state.status === 'waiting_for_input' ||
-            state.status === 'interrupted' ||
-            state.status === 'rate_limit_cooldown';
-          const task =
-            target.kind === 'worker' ? this.config.taskRepo.getTask(target.taskId) : null;
-          const shouldDefer =
-            state.status === 'rate_limit_cooldown' ||
-            (task !== null && isRateOrUsageLimited(task.status));
-          let boundaryOwner: ContextClearBoundaryOwner | null = null;
-          if (
-            !shouldDefer &&
-            !isBusy &&
-            session.session.sdkSessionId &&
-            this.slotResetsContextForSession(resolution.sessionId) &&
-            !this.hasActiveDeliveryJob(resolution.sessionId) &&
-            !this.hasUnconsumedDeliveredWork(resolution.sessionId, messageId)
-          ) {
-            try {
-              boundaryOwner = await acquireContextClearBoundary(resolution.sessionId);
-              await session.clearConversationContext(boundaryOwner);
-            } catch (err) {
-              boundaryOwner?.release();
-              boundaryOwner = null;
-              if (err instanceof ClearConversationCancelledError) throw err;
-              log.warn(
-                `TaskAgentManager: resetContextPerTurn clear failed for session ${resolution.sessionId}: ` +
-                  `${err instanceof Error ? err.message : String(err)} — delivering without clear`
-              );
-            }
-          }
-          try {
-            const outcome = await handoffPromptToMailbox({
-              deps: {
-                db: this.config.db.getDatabase(),
-                sdkMessageRepo: this.config.db.getSDKMessageRepo(),
-                jobQueue: this.config.db.getJobQueueRepo(),
-              },
-              target: {
-                sessionId: resolution.sessionId,
-                messageId,
-                message: sdkUserMessage,
-                origin: 'space_agent',
-                ...(shouldDefer ? { defer: true } : {}),
-              },
-              stateManager: shouldDefer ? undefined : session.stateManager,
-              publishStatusChanged: (sessionId, dbId, status) =>
-                this.publishMessageStatusChanged(sessionId, dbId, status),
-            });
-            if (outcome.state === 'stale') {
-              throw new Error('Mailbox handoff became stale');
-            }
-            this.recordActivityForSession(resolution.sessionId);
-            return { state: 'delivered', sessionId: resolution.sessionId, messageId } as const;
-          } finally {
-            boundaryOwner?.release();
-          }
-        });
-      },
+          message,
+          messageId,
+        }),
       activateTargetSession: (targetAgentName) =>
         this.activateTargetSessionsForMessage(taskId, workflowRunId, targetAgentName, {
           reopenReason: `node-agent send_message to activate "${targetAgentName}"`,
