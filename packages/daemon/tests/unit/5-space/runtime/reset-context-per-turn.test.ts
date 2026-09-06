@@ -35,6 +35,8 @@ function makeManager(opts: {
   materializedRowIds?: string[];
   mailboxEntryStatus?: 'pending' | 'processing' | 'completed' | 'dead' | 'absent';
   normalizeThrows?: boolean;
+  consumedAfterHandoff?: boolean;
+  materializeOnEnqueue?: boolean;
 }): {
   manager: TaskAgentManager;
   session: Record<string, ReturnType<typeof mock>>;
@@ -55,8 +57,12 @@ function makeManager(opts: {
   );
   const mailboxEnqueue = mock(() => {
     if (opts.enqueueThrows) throw new Error('job queue unavailable');
+    mailboxEntryEnqueued = true;
+    if (opts.materializeOnEnqueue) materializedRowIds = ['db-id'];
     return { id: 'mailbox-job-1' };
   });
+  let mailboxEntryEnqueued = false;
+  let materializedRowIds = opts.materializedRowIds ?? ['db-id'];
   const cancelHeldJob = mock(() => false);
   const reopenDeliveryByUuid = mock(() => opts.reopenDbId ?? null);
   const normalizeDeliveryMailbox = mock(() => {
@@ -105,8 +111,11 @@ function makeManager(opts: {
       saveUserMessage,
       getUserMessageIdsByStatus,
       getSDKMessageRepo: () => ({
-        getDeliveryContent: () => opts.deliveryContent ?? null,
-        getDeliveryMessageIdsByUuids: () => opts.materializedRowIds ?? ['db-id'],
+        getDeliveryContent: () =>
+          mailboxEntryEnqueued && opts.consumedAfterHandoff !== false
+            ? { content: 'x', sendStatus: 'consumed' }
+            : (opts.deliveryContent ?? null),
+        getDeliveryMessageIdsByUuids: () => materializedRowIds,
         normalizeDeliveryMessageForMailbox: normalizeDeliveryMailbox,
         reopenDeliveryByUuid,
         markDeliveryFailedByUuid,
@@ -396,7 +405,10 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
   });
 
   it('fails the settlement when deferred activation activates nothing', async () => {
-    const { manager } = makeManager({ deliveryContent: { sendStatus: 'deferred' } });
+    const { manager, session } = makeManager({
+      deliveryContent: { sendStatus: 'deferred' },
+      consumedAfterHandoff: false,
+    });
     indexSession(manager, liveSession(session));
     (
       manager as unknown as {
@@ -411,6 +423,58 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     await expect(
       manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
     ).rejects.toThrow('activated nothing');
+  });
+
+  it('waits for delivery consumption before resolving the inject', async () => {
+    const { manager, session } = makeManager({ consumedAfterHandoff: false });
+    indexSession(manager, liveSession(session));
+
+    const injectPromise = manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true
+    );
+    let resolved = false;
+    void injectPromise.then(() => {
+      resolved = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(resolved).toBe(false);
+    expect(session.mailboxEnqueue).toHaveBeenCalledTimes(1);
+
+    const enqueueArgs = session.mailboxEnqueue.mock.calls[0][0] as {
+      payload?: { to?: { sessionId?: string }; messageUuid?: string };
+    };
+    signalDeliveryConsumed(
+      enqueueArgs!.payload!.to!.sessionId!,
+      enqueueArgs!.payload!.messageUuid!
+    );
+
+    await expect(injectPromise).resolves.toBe('db-id');
+  });
+
+  it('terminalizes a fresh row and throws when delivery consumption times out', async () => {
+    const previousTimeout = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '40';
+    try {
+      const { manager, session } = makeManager({
+        materializedRowIds: [],
+        materializeOnEnqueue: true,
+        consumedAfterHandoff: false,
+      });
+      indexSession(manager, liveSession(session));
+
+      await expect(
+        manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+      ).rejects.toThrow('delivery not consumed within timeout');
+
+      expect(session.failDeliveryUnless).toHaveBeenCalledTimes(1);
+      expect(session.cancelHeldJob).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previousTimeout === undefined)
+        delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
+      else process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = previousTimeout;
+    }
   });
 
   it('a normalization error over an existing row restores the failed status', async () => {

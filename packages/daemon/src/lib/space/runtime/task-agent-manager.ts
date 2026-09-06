@@ -88,6 +88,10 @@ import type { AgentMemoryRepository } from '../../../storage/repositories/agent-
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
+import {
+  awaitDeliveryConsumption,
+  deliveryConsumptionTimeoutMs,
+} from '../../agent/message-delivery.ts';
 import { activatePrompts } from '../../agent/message-delivery-outbox.ts';
 import { Logger } from '../../logger.ts';
 import { renderAddress } from '../../mailbox/address.ts';
@@ -4476,6 +4480,39 @@ export class TaskAgentManager {
     );
   }
 
+  private async awaitMailboxDeliveryConsumption(
+    session: AgentSession,
+    sessionId: string,
+    messageId: string,
+    rowExistedAtHandoff: boolean,
+    entryMessage: MailboxMessage,
+    isSyntheticMessage: boolean,
+    origin: MessageOrigin | undefined
+  ): Promise<void> {
+    await awaitDeliveryConsumption({
+      sessionId,
+      messageUuid: messageId,
+      timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
+      getSendStatus: () =>
+        this.config.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)?.sendStatus ??
+        null,
+      deliver: async () => {},
+      ...(!rowExistedAtHandoff
+        ? {
+            terminalizeOnTimeout: () => {
+              void this.persistFailedMailboxRow(
+                sessionId,
+                messageId,
+                entryMessage,
+                isSyntheticMessage,
+                origin
+              ).catch(() => {});
+            },
+          }
+        : {}),
+    });
+  }
+
   private async awaitMailboxMaterialization(
     sessionId: string,
     messageId: string,
@@ -4879,6 +4916,15 @@ export class TaskAgentManager {
         }`
       );
     }
+    await this.awaitMailboxDeliveryConsumption(
+      session,
+      sessionId,
+      messageId,
+      rowExistedAtHandoff,
+      mailboxEntryMessage,
+      isSyntheticMessage,
+      origin
+    );
     return settledOutcome.dbId;
   }
 

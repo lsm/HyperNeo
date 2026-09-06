@@ -477,8 +477,10 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       }
     ).config;
     config.nodeExecutionRepo.getByAgentSessionId = () => makeExecution();
+    let lockMailboxConsumed = false;
     config.db.getSDKMessageRepo = () => ({
-      getDeliveryContent: () => null,
+      getDeliveryContent: () =>
+        lockMailboxConsumed ? { content: 'x', sendStatus: 'consumed' } : null,
       getDeliveryMessageIdsByUuids: () => ['db-id'],
       reopenDeliveryByUuid: () => null,
       markDeliveryFailedByUuid: () => null,
@@ -494,7 +496,10 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
         if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
         return { id: 'job-1' };
       },
-      enqueueUniquePending: () => ({ id: 'mailbox-job-1' }),
+      enqueueUniquePending: () => {
+        lockMailboxConsumed = true;
+        return { id: 'mailbox-job-1' };
+      },
     });
     config.db.saveUserMessage = () => 'db-id';
     config.db.getUserMessageIdsByStatus = () => [];
@@ -540,8 +545,10 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     ).config;
     config.nodeExecutionRepo.getByAgentSessionId = () => makeExecution();
     let mailboxMessageUuid: string | null = null;
+    let deadlockMailboxConsumed = false;
     config.db.getSDKMessageRepo = () => ({
-      getDeliveryContent: () => null,
+      getDeliveryContent: () =>
+        deadlockMailboxConsumed ? { content: 'x', sendStatus: 'consumed' } : null,
       getDeliveryMessageIdsByUuids: () => (mailboxMessageUuid ? [mailboxMessageUuid] : []),
       reopenDeliveryByUuid: () => null,
       markDeliveryFailedByUuid: () => null,
@@ -559,6 +566,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       },
       enqueueUniquePending: (args: { payload?: { messageUuid?: string } }) => {
         mailboxMessageUuid = args?.payload?.messageUuid ?? null;
+        deadlockMailboxConsumed = true;
         return { id: 'mailbox-job-1' };
       },
     });
