@@ -6669,6 +6669,13 @@ export class SpaceRuntime {
                 blockReason: null,
                 reportedStatus: null,
                 reportedSummary: null,
+                approvalSource: null,
+                approvalReason: null,
+                approvedAt: null,
+                postApprovalSessionId: null,
+                postApprovalStartedAt: null,
+                postApprovalBlockedReason: null,
+                postApprovalSourceNodeId: null,
               }
             : {}),
         });

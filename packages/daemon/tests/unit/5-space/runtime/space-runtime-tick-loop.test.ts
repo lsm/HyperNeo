@@ -807,8 +807,14 @@ describe('SpaceRuntime — tick loop correctness', () => {
         goalId: goal.id,
         result: 'Stale blocked result',
         blockReason: 'execution_failed',
-        reportedStatus: 'blocked',
         reportedSummary: 'Stale blocked summary',
+        approvalSource: 'human',
+        approvalReason: 'Stale approval',
+        approvedAt: 456,
+        postApprovalSessionId: 'session:stale-post-approval',
+        postApprovalStartedAt: 457,
+        postApprovalBlockedReason: 'Stale post-approval block',
+        postApprovalSourceNodeId: STEP_A,
       });
       const notification = notificationRepo.create({
         spaceId: SPACE_ID,
@@ -832,6 +838,13 @@ describe('SpaceRuntime — tick loop correctness', () => {
         blockReason: null,
         reportedStatus: null,
         reportedSummary: null,
+        approvalSource: null,
+        approvalReason: null,
+        approvedAt: null,
+        postApprovalSessionId: null,
+        postApprovalStartedAt: null,
+        postApprovalBlockedReason: null,
+        postApprovalSourceNodeId: null,
       });
       expect(notificationRepo.getById(notification.id)?.status).toBe('superseded');
       expect(transitions).toContainEqual({ taskId: task.id, fromStatus: 'blocked' });
