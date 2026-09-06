@@ -724,6 +724,21 @@ describe('createMailboxDeliveryHandler', () => {
       expect(published).toEqual([[SESSION_ID, rowId, 'enqueued']]);
     });
 
+    test('a synchronous publisher throw never fails an already-delivered entry', async () => {
+      const { handler } = makeHandler(undefined, undefined, () => {
+        throw new Error('listener exploded');
+      });
+      const messageUuid = '00000000-0000-4000-8000-000000000004';
+      const job = claimMailboxJob(mailbox, makeEntry({ origin: 'space_agent', messageUuid }));
+
+      const result = await handler(job);
+
+      expect(result).toMatchObject({ terminal: 'delivered', sessionId: SESSION_ID });
+      expect(mailbox.sdkRows()).toHaveLength(1);
+      expect(mailbox.sdkRows()[0].send_status).toBe('enqueued');
+      expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)).toHaveLength(1);
+    });
+
     test('a reclaim re-run converges on the single content row instead of minting another', async () => {
       const { handler } = makeHandler();
       const entry = makeEntry({ origin: 'recovery' });

@@ -100,7 +100,11 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
     const existing = deps.sdkMessageRepo.getDeliveryContent(target, messageUuid);
     const publish = (dbId: string): void => {
       if (!deps.publishStatusChanged) return;
-      void Promise.resolve(deps.publishStatusChanged(target, dbId, 'enqueued')).catch(() => {});
+      try {
+        void Promise.resolve(deps.publishStatusChanged(target, dbId, 'enqueued')).catch(() => {});
+      } catch {
+        return;
+      }
     };
     const ensured = ensurePrompt({
       sessionId: target,
