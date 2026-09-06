@@ -5,13 +5,18 @@ import type {
   MessageDeliveryStatus,
   MessageInputKind,
   MessageOrigin,
+  ReferenceMetadata,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Logger } from '../../lib/logger.ts';
-import { type MailboxMessageContent, toMailboxMessage } from '../../lib/mailbox/entry.ts';
+import {
+  type MailboxMessage,
+  type MailboxMessageContent,
+  toMailboxMessage,
+} from '../../lib/mailbox/entry.ts';
 import { withBusyRetry } from '../busy-retry.ts';
 import {
   buildFtsQuery,
@@ -1776,6 +1781,7 @@ export class SDKMessageRepository {
     } catch {
       return false;
     }
+    if (stored === null || typeof stored !== 'object' || Array.isArray(stored)) return false;
     const storedMessage = stored.message as { role?: unknown; content?: unknown } | undefined;
     if (storedMessage?.role === undefined) return false;
     const storedInputKind = stored.inputKind;
@@ -1786,10 +1792,24 @@ export class SDKMessageRepository {
         : synthetic
           ? 'task'
           : 'human';
+    const storedPriority = stored.priority;
+    const priority =
+      typeof storedPriority === 'string' && ['now', 'next', 'later'].includes(storedPriority)
+        ? { priority: storedPriority as MailboxMessage['priority'] }
+        : {};
+    const storedReferenceMetadata = stored.referenceMetadata;
+    const referenceMetadata =
+      typeof storedReferenceMetadata === 'object' &&
+      storedReferenceMetadata !== null &&
+      !Array.isArray(storedReferenceMetadata)
+        ? { referenceMetadata: storedReferenceMetadata as ReferenceMetadata }
+        : {};
     const projected = toMailboxMessage({
       type: 'user',
       message: { content: storedMessage.content as MailboxMessageContent },
       parent_tool_use_id: null,
+      ...priority,
+      ...referenceMetadata,
     });
     if ('reason' in projected) return false;
     const normalized = {

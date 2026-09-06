@@ -272,7 +272,7 @@ describe('SDKMessageRepository', () => {
     function insertDeliveryRow(
       sessionId: string,
       uuid: string,
-      message: Record<string, unknown>,
+      message: unknown,
       options: { sendStatus?: string; rowId?: string; timestamp?: string } = {}
     ): void {
       db.prepare(
@@ -414,6 +414,71 @@ describe('SDKMessageRepository', () => {
         role: 'user',
         content: [{ type: 'text', text: 'second copy' }],
       });
+    });
+
+    it('retains mailbox-compatible priority and referenceMetadata from legacy rows', () => {
+      insertDeliveryRow('session-1', 'msg-ref', {
+        type: 'user',
+        isSynthetic: true,
+        inputKind: 'task',
+        priority: 'next',
+        referenceMetadata: { '@task': { type: 'task', id: 'T-1', displayText: 'Task one' } },
+        message: { role: 'user', content: 'queued with reference' },
+      });
+
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-ref')).toBe(true);
+      expect(storedMessage('session-1', 'msg-ref')).toEqual({
+        type: 'user',
+        message: { content: 'queued with reference' },
+        parent_tool_use_id: null,
+        priority: 'next',
+        referenceMetadata: { '@task': { type: 'task', id: 'T-1', displayText: 'Task one' } },
+        inputKind: 'task',
+        uuid: 'msg-ref',
+        session_id: 'session-1',
+        isSynthetic: true,
+      });
+    });
+
+    it('refuses to rewrite a legacy row whose referenceMetadata fails projection', () => {
+      insertDeliveryRow('session-1', 'msg-badref', {
+        type: 'user',
+        isSynthetic: true,
+        inputKind: 'task',
+        priority: 'whenever',
+        referenceMetadata: { '@task': { type: 'bogus' } },
+        message: { role: 'user', content: 'corrupt reference' },
+      });
+
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-badref')).toBe(false);
+      expect(storedMessage('session-1', 'msg-badref')).toEqual({
+        type: 'user',
+        isSynthetic: true,
+        inputKind: 'task',
+        priority: 'whenever',
+        referenceMetadata: { '@task': { type: 'bogus' } },
+        message: { role: 'user', content: 'corrupt reference' },
+      });
+    });
+
+    it('returns false without throwing for non-object sdk_message JSON', () => {
+      insertDeliveryRow('session-1', 'msg-json-null', null);
+      insertDeliveryRow('session-1', 'msg-json-array', [1, 2]);
+      insertDeliveryRow('session-1', 'msg-json-string', 'not an object');
+      insertDeliveryRow('session-1', 'msg-json-number', 42);
+
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-json-null')).toBe(
+        false
+      );
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-json-array')).toBe(
+        false
+      );
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-json-string')).toBe(
+        false
+      );
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-json-number')).toBe(
+        false
+      );
     });
 
     it('leaves already mailbox-shaped rows and unknown uuids untouched', () => {
