@@ -3865,7 +3865,7 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
   });
 });
 
-describe('ensureLongTermAgentSession — id→session routing table', () => {
+describe('long-term agent delivery — id→session routing table', () => {
   function buildRoutingService(options: {
     longHorizonAgents: SpaceLongHorizonAgent[];
     coordinatorId?: string;
@@ -3915,12 +3915,22 @@ describe('ensureLongTermAgentSession — id→session routing table', () => {
   }
 
   async function route(svc: SpaceRuntimeService, agentId: string): Promise<unknown> {
-    return (
-      svc as unknown as { ensureLongTermAgentSession: (a: ActorRef) => Promise<unknown> }
-    ).ensureLongTermAgentSession({
-      actorId: `agent:${agentId}`,
-      spaceId: 'space-1',
-    } as ActorRef);
+    const delivery = svc.longTermAgentDeliveryCallbacks();
+    return delivery?.deliverToSession(
+      {
+        actorId: `agent:${agentId}`,
+        spaceId: 'space-1',
+        status: 'active',
+      } as ActorRef,
+      {
+        messageId: 'routing-probe-1',
+        spaceId: 'space-1',
+        senderActorId: 'space:space-1:human:user-1',
+        kind: 'message',
+        body: 'routing probe',
+        createdAt: NOW,
+      } as MessageRecord
+    );
   }
 
   test('coordinator alias resolves the space:chat session instead of an agent session', async () => {
@@ -3933,9 +3943,8 @@ describe('ensureLongTermAgentSession — id→session routing table', () => {
       coordinatorId: canonical.id,
     });
 
-    const canonicalSession = await route(canonicalRun.svc, canonical.id);
+    await route(canonicalRun.svc, canonical.id);
 
-    expect(canonicalSession).toBeDefined();
     expect(canonicalRun.lookupIds[0]).toBe('space:chat:space-1');
     expect(canonicalRun.createCalls).toHaveLength(0);
 
@@ -3948,9 +3957,8 @@ describe('ensureLongTermAgentSession — id→session routing table', () => {
       coordinatorId: discovered.id,
     });
 
-    const discoveredSession = await route(discoveredRun.svc, discovered.id);
+    await route(discoveredRun.svc, discovered.id);
 
-    expect(discoveredSession).toBeDefined();
     expect(discoveredRun.lookupIds[0]).toBe('space:chat:space-1');
     expect(discoveredRun.createCalls).toHaveLength(0);
   });
