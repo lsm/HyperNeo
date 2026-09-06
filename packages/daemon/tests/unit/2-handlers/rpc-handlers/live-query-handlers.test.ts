@@ -1148,6 +1148,52 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(rows.filter((row) => String(row.id).startsWith('delivery:'))).toHaveLength(0);
     });
 
+    test('actorMessages.byTask breaks delivery-rank ties by insertion order, not message id', () => {
+      const workflowRunId = 'wr-actor-rank-tie';
+      const nodeSessionId = 'session-actor-rank-tie';
+      const taskId = insertSpaceTask({
+        id: 'actor-rank-tie',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      insertSession(nodeSessionId, 'worker', '{}');
+      insertNodeExecution({
+        id: 'ne-actor-rank-tie',
+        workflowRunId,
+        workflowNodeId: 'node-reviewer',
+        agentName: 'reviewer',
+        agentSessionId: nodeSessionId,
+        status: 'in_progress',
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-z-brief',
+        sessionId: nodeSessionId,
+        timestampMs: now + 5000,
+        sendStatus: 'consumed',
+        payload: {
+          type: 'user',
+          isSynthetic: true,
+          inputKind: 'task',
+          message: { role: 'user', content: [{ type: 'text', text: 'You are the reviewer.' }] },
+        },
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-a-handoff',
+        sessionId: nodeSessionId,
+        timestampMs: now + 5000,
+        sendStatus: 'consumed',
+        sdkUuid: 'u-rank-tie',
+        payload: envelopeHandoffPayload('u-rank-tie', 'coder', 'same-millisecond handoff'),
+      });
+
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+      const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+
+      expect(
+        rows.filter((row) => String(row.id).startsWith('delivery:')).map((row) => row.id)
+      ).toEqual(['delivery:sdk-a-handoff']);
+    });
+
     test('actorMessages.byTask maps queued and failed outbox rows onto the delivery lifecycle', () => {
       const workflowRunId = 'wr-actor-lifecycle';
       const nodeSessionId = 'session-actor-lifecycle';

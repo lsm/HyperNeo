@@ -594,6 +594,7 @@ session_node_exec AS (
 task_sdk_messages AS MATERIALIZED (
   SELECT
     sm.*,
+    sm.rowid AS ins_rowid,
     COALESCE(sm.sdk_uuid, sm.id) AS resolved_sdk_uuid,
     -- Post-approval worker sessions (e.g. the merger) carry no
     -- node_executions row, so the session_node_exec LEFT JOIN downstream
@@ -809,7 +810,7 @@ delivery_user_rank AS MATERIALIZED (
     sm.id AS id,
     ROW_NUMBER() OVER (
       PARTITION BY sm.session_id
-      ORDER BY sm.timestamp ASC, sm.id ASC
+      ORDER BY sm.timestamp ASC, sm.ins_rowid ASC
     ) AS user_rank
   FROM task_sdk_messages sm
   WHERE sm.message_type = 'user'
@@ -991,7 +992,8 @@ delivery_targets AS MATERIALIZED (
     sm.sdk_message AS sdk_message,
     COALESCE(sm.sdk_uuid, sm.id) AS resolved_uuid,
     sm.send_status AS send_status,
-    sm.timestamp AS timestamp
+    sm.timestamp AS timestamp,
+    sm.rowid AS ins_rowid
   FROM space_tasks st
   JOIN sdk_messages sm ON sm.task_id = st.id
   WHERE st.workflow_run_id = ?
@@ -1004,7 +1006,7 @@ delivery_user_rank AS MATERIALIZED (
     message_id,
     ROW_NUMBER() OVER (
       PARTITION BY session_id
-      ORDER BY timestamp ASC, message_id ASC
+      ORDER BY timestamp ASC, ins_rowid ASC
     ) AS user_rank
   FROM delivery_targets
 ),
