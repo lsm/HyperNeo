@@ -355,6 +355,11 @@ function mailboxConsumptionHardWaitMs(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : MAILBOX_CONSUMPTION_HARD_WAIT_MS;
 }
 
+function mailboxConsumptionSettleGraceMs(): number {
+  const raw = Number(process.env.HYPERNEO_MAILBOX_CONSUMPTION_SETTLE_GRACE_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : MAILBOX_CONSUMPTION_SETTLE_GRACE_MS;
+}
+
 interface SpawnTaskAgentOptions {
   kickoff?: boolean;
 }
@@ -4485,9 +4490,21 @@ export class TaskAgentManager {
     );
   }
 
+  private siblingDeliveredSameContent(
+    sessionId: string,
+    messageId: string,
+    content: string | MessageContent[]
+  ): boolean {
+    const sibling = this.config.db
+      .getSDKMessageRepo()
+      .getConsumedSiblingContent(sessionId, messageId);
+    return sibling !== null && JSON.stringify(sibling) === JSON.stringify(content);
+  }
+
   private async awaitMailboxDeliveryConsumptionOutcome(
     sessionId: string,
-    messageId: string
+    messageId: string,
+    expectedContent: string | MessageContent[]
   ): Promise<'consumed' | 'inactive' | 'timeout'> {
     const deadline = Date.now() + mailboxConsumptionHardWaitMs();
     let settleGraceDeadline: number | null = null;
@@ -4501,14 +4518,14 @@ export class TaskAgentManager {
         .activeDeliveryMessageUuids(sessionId)
         .has(messageId);
       const siblingConsumed = () =>
-        this.config.db.getSDKMessageRepo().hasConsumedDeliverySibling(sessionId, messageId);
+        this.siblingDeliveredSameContent(sessionId, messageId, expectedContent);
       const now = Date.now();
       if (inFlight) {
         settleGraceDeadline = null;
       } else if (sendStatus !== 'enqueued') {
         return siblingConsumed() ? 'consumed' : 'inactive';
       } else if (settleGraceDeadline === null) {
-        settleGraceDeadline = now + MAILBOX_CONSUMPTION_SETTLE_GRACE_MS;
+        settleGraceDeadline = now + mailboxConsumptionSettleGraceMs();
       } else if (now >= settleGraceDeadline) {
         return siblingConsumed() ? 'consumed' : 'inactive';
       }
@@ -4753,7 +4770,7 @@ export class TaskAgentManager {
     if (outcome.decision.action === 'noop') {
       return messageId;
     }
-    if (this.config.db.getSDKMessageRepo().hasConsumedDeliverySibling(sessionId, messageId)) {
+    if (this.siblingDeliveredSameContent(sessionId, messageId, sdkContent)) {
       return messageId;
     }
     if (outcome.decision.action === 'defer') {
@@ -4795,7 +4812,13 @@ export class TaskAgentManager {
     }
 
     if (outcome.reopenFailedDelivery) {
-      await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
+      try {
+        await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
+      } catch (err) {
+        boundaryOwner?.release();
+        boundaryOwner = null;
+        throw err;
+      }
     }
 
     const mailboxEntryMessage: MailboxMessage = {
@@ -4804,13 +4827,14 @@ export class TaskAgentManager {
       parent_tool_use_id: null,
       inputKind,
     };
-    const rowExistedAtHandoff =
-      existing !== null ||
-      this.config.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(sessionId, [messageId])
-        .length > 0;
+    let rowExistedAtHandoff = false;
     let settledOutcome: MailboxInjectSettlementOutcome | undefined;
 
     try {
+      rowExistedAtHandoff =
+        existing !== null ||
+        this.config.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(sessionId, [messageId])
+          .length > 0;
       if (!isBusy) {
         const clearSuppressedByPendingWork =
           outcome.decision.action === 'deliver_without_clear' &&
@@ -4905,9 +4929,7 @@ export class TaskAgentManager {
             return (
               sendStatus === 'consumed' ||
               sendStatus === 'failed' ||
-              this.config.db
-                .getSDKMessageRepo()
-                .hasConsumedDeliverySibling(targetSessionId, targetMessageId)
+              this.siblingDeliveredSameContent(targetSessionId, targetMessageId, sdkContent)
             );
           },
           hasInFlightDelivery: (targetSessionId, targetMessageId) =>
@@ -4930,7 +4952,11 @@ export class TaskAgentManager {
           awaitDeliveryConsumption: async (targetSessionId, targetMessageId) => {
             boundaryOwner?.release();
             boundaryOwner = null;
-            return this.awaitMailboxDeliveryConsumptionOutcome(targetSessionId, targetMessageId);
+            return this.awaitMailboxDeliveryConsumptionOutcome(
+              targetSessionId,
+              targetMessageId,
+              sdkContent
+            );
           },
           persistFailedRow: (targetSessionId, targetMessageId) =>
             this.persistFailedMailboxRow(

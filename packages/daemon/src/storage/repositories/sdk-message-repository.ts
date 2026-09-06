@@ -1860,16 +1860,24 @@ export class SDKMessageRepository {
     }
   }
 
-  hasConsumedDeliverySibling(sessionId: string, uuid: string): boolean {
+  getConsumedSiblingContent(sessionId: string, uuid: string): string | MessageContent[] | null {
     const row = this.db
       .prepare(
-        `SELECT 1 FROM sdk_messages
+        `SELECT sdk_message FROM sdk_messages
           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
             AND (consumed_seq IS NOT NULL OR COALESCE(send_status, 'consumed') = 'consumed')
-          LIMIT 1`
+          ORDER BY timestamp DESC, rowid DESC LIMIT 1`
       )
-      .get(sessionId, uuid);
-    return row !== null && row !== undefined;
+      .get(sessionId, uuid) as { sdk_message: string } | null | undefined;
+    if (row === null || row === undefined) return null;
+    try {
+      const parsed = JSON.parse(row.sdk_message) as {
+        message?: { content?: string | MessageContent[] };
+      };
+      return parsed.message?.content ?? null;
+    } catch {
+      return null;
+    }
   }
 
   getDeliveryContent(

@@ -40,6 +40,7 @@ function makeManager(opts: {
   consumeAfterPolls?: number;
   throwAfterPolls?: number;
   consumedSibling?: boolean;
+  consumedSiblingContent?: string;
   holdDeliveryInFlight?: boolean;
   clearInFlightAfterProbe?: boolean;
   materializeOnEnqueue?: boolean;
@@ -137,7 +138,10 @@ function makeManager(opts: {
           }
           return { content: 'x', sendStatus: 'consumed' };
         },
-        hasConsumedDeliverySibling: () => opts.consumedSibling === true,
+        getConsumedSiblingContent: () =>
+          opts.consumedSibling === true
+            ? (opts.consumedSiblingContent ?? '─── Message from coder ───')
+            : null,
         getDeliveryMessageIdsByUuids: () => materializedRowIds,
         normalizeDeliveryMessageForMailbox: normalizeDeliveryMailbox,
         reopenDeliveryByUuid,
@@ -630,6 +634,30 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
 
     expect(dbId).toBe('db-id');
     expect(session.mailboxEnqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a consumed sibling whose content differs from the durable source', async () => {
+    const previousGrace = process.env.HYPERNEO_MAILBOX_CONSUMPTION_SETTLE_GRACE_MS;
+    process.env.HYPERNEO_MAILBOX_CONSUMPTION_SETTLE_GRACE_MS = '100';
+    try {
+      const { manager, session } = makeManager({
+        deliveryContent: { sendStatus: 'failed' },
+        consumedAfterHandoff: false,
+        consumedSibling: true,
+        consumedSiblingContent: 'an older envelope body',
+      });
+      indexSession(manager, liveSession(session));
+
+      await expect(
+        manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+      ).rejects.toThrow('mailbox delivery not consumed (inactive)');
+
+      expect(session.mailboxEnqueue).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previousGrace === undefined)
+        delete process.env.HYPERNEO_MAILBOX_CONSUMPTION_SETTLE_GRACE_MS;
+      else process.env.HYPERNEO_MAILBOX_CONSUMPTION_SETTLE_GRACE_MS = previousGrace;
+    }
   });
 
   it('a normalization error over an existing row restores the failed status', async () => {

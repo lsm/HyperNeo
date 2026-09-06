@@ -1485,7 +1485,7 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
         getSDKMessageRepo: () => ({
           getDeliveryContent: () =>
             guardMailboxConsumed ? { content: 'x', sendStatus: 'consumed' } : null,
-          hasConsumedDeliverySibling: () => false,
+          getConsumedSiblingContent: () => null,
           getDeliveryMessageIdsByUuids: () => ['db-id'],
           normalizeDeliveryMessageForMailbox: mock(() => false),
           reopenDeliveryByUuid: mock(() => null),
