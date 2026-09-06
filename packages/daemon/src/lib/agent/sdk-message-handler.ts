@@ -68,9 +68,8 @@ const CONTEXT_REFRESH_EVENT_INTERVAL = 5;
 const DELIVERY_GATE_WINDOW_MS = 5000;
 
 const TURN_END_FLAG_KEYS = [
-  'suppressIdleOnNextResult',
+  'suppressIdleOnTurnEnd',
   'usesSessionStateChangedTurnEnd',
-  'expectsSessionStateIdleAfterResult',
   'lastResultWasSuccess',
   'clearAwaitingTrailingIdle',
   'clearMessageInFlight',
@@ -155,9 +154,8 @@ export class SDKMessageHandler {
   private circuitBreaker: ApiErrorCircuitBreaker;
   private acknowledgedPersistedUserThisTurn: boolean = false;
   private usesSessionStateChangedTurnEnd: boolean = false;
-  private expectsSessionStateIdleAfterResult: boolean = false;
   private lastResultWasSuccess: boolean | null = null;
-  private suppressIdleOnNextResult: boolean = false;
+  private suppressIdleOnTurnEnd: boolean = false;
   private lastRateLimitInfo: SDKRateLimitInfo | null = null;
   private lastSdkErrorTag: string | null = null;
   private clearAwaitingTrailingIdle: boolean = false;
@@ -280,8 +278,8 @@ export class SDKMessageHandler {
     this.lastSdkErrorTag = null;
   }
 
-  suppressIdleForNextResult(): void {
-    this.suppressIdleOnNextResult = true;
+  suppressIdleForNextTurnEnd(): void {
+    this.suppressIdleOnTurnEnd = true;
   }
 
   markClearMessageSent(): void {
@@ -333,11 +331,10 @@ export class SDKMessageHandler {
   }
 
   private abandonClearTurnBookkeeping(): void {
-    this.suppressIdleOnNextResult = false;
+    this.suppressIdleOnTurnEnd = false;
     this.clearAwaitingTrailingIdle = false;
     this.clearMessageInFlight = false;
     this.usesSessionStateChangedTurnEnd = false;
-    this.expectsSessionStateIdleAfterResult = false;
     this.lastResultWasSuccess = null;
     this.releaseTrailingIdleDeliveryGate();
   }
@@ -360,7 +357,7 @@ export class SDKMessageHandler {
   }
 
   private matchesArmedClearResult(message: SDKMessage): boolean {
-    if (!this.suppressIdleOnNextResult || !isSDKResultMessage(message)) {
+    if (!this.suppressIdleOnTurnEnd || !isSDKResultMessage(message)) {
       return false;
     }
     const parentToolUseId = (message as SDKMessage & { parent_tool_use_id?: string | null })
@@ -388,9 +385,8 @@ export class SDKMessageHandler {
 
   private currentTurnEndFlags(): TurnEndFlags {
     return {
-      suppressIdleOnNextResult: this.suppressIdleOnNextResult,
+      suppressIdleOnTurnEnd: this.suppressIdleOnTurnEnd,
       usesSessionStateChangedTurnEnd: this.usesSessionStateChangedTurnEnd,
-      expectsSessionStateIdleAfterResult: this.expectsSessionStateIdleAfterResult,
       lastResultWasSuccess: this.lastResultWasSuccess,
       clearAwaitingTrailingIdle: this.clearAwaitingTrailingIdle,
       clearMessageInFlight: this.clearMessageInFlight,
@@ -398,9 +394,8 @@ export class SDKMessageHandler {
   }
 
   private applyTurnEndFlags(flags: TurnEndFlags): void {
-    this.suppressIdleOnNextResult = flags.suppressIdleOnNextResult;
+    this.suppressIdleOnTurnEnd = flags.suppressIdleOnTurnEnd;
     this.usesSessionStateChangedTurnEnd = flags.usesSessionStateChangedTurnEnd;
-    this.expectsSessionStateIdleAfterResult = flags.expectsSessionStateIdleAfterResult;
     this.lastResultWasSuccess = flags.lastResultWasSuccess;
     this.clearAwaitingTrailingIdle = flags.clearAwaitingTrailingIdle;
     this.clearMessageInFlight = flags.clearMessageInFlight;
@@ -1153,9 +1148,6 @@ export class SDKMessageHandler {
         : null;
       if (turnEndPlan) {
         this.applyTurnEndFlags(turnEndPlan.nextFlags);
-        if (turnEndPlan.idleFence) {
-          stateManager.beginTerminalIdle(this.invocationIdleOwner(invocationGeneration));
-        }
       }
 
       messageHub.event(
@@ -1204,17 +1196,11 @@ export class SDKMessageHandler {
         return;
       }
 
-      if (isSDKSessionStateChangedMessage(message) && message.state !== 'idle') {
-        if (!this.isInvocationStale(invocationGeneration)) {
-          this.applyTurnEndFlags(this.routeSessionStateTurnEnd(message.state).nextFlags);
-        }
-      }
-
       let enforcedTurnEnd = false;
       const settlePlan = isSDKResultMessage(message)
         ? this.routeResultTurnEnd(resultEventInput())
         : null;
-      if (settlePlan?.earlySetIdle) {
+      if (settlePlan?.fallbackSetIdle) {
         const compactingClear = this.clearStaleCompacting();
         await this.refreshContextUsage('turn-end', undefined, invocationGeneration, resultOwner);
         enforcedTurnEnd = true;
@@ -1261,7 +1247,7 @@ export class SDKMessageHandler {
       if (isSDKResultMessage(message)) {
         const compactingClear = isTopLevelResult ? this.clearStaleCompacting() : null;
         if (isTopLevelResult && !enforcedTurnEnd) {
-          if (this.expectsSessionStateIdleAfterResult) {
+          if (this.usesSessionStateChangedTurnEnd) {
             this.armTrailingIdleDeliveryGate(invocationGeneration);
           }
           await this.refreshContextUsage('turn-end', undefined, invocationGeneration);
@@ -1450,7 +1436,7 @@ export class SDKMessageHandler {
       this.circuitBreaker.markSuccess();
     }
 
-    if (!this.acknowledgedPersistedUserThisTurn && !this.suppressIdleOnNextResult) {
+    if (!this.acknowledgedPersistedUserThisTurn && !this.suppressIdleOnTurnEnd) {
       await this.acknowledgeOldestQueuedUserOnTurnEnd(
         activeMessageId,
         message.uuid ?? '',
@@ -1464,16 +1450,12 @@ export class SDKMessageHandler {
     });
 
     if (confirmsArmedClear) {
-      this.suppressIdleOnNextResult = false;
-    } else if (
-      !this.suppressIdleOnNextResult &&
-      !this.usesSessionStateChangedTurnEnd &&
-      !this.expectsSessionStateIdleAfterResult
-    ) {
+      this.suppressIdleOnTurnEnd = false;
+    } else if (!this.suppressIdleOnTurnEnd && !this.usesSessionStateChangedTurnEnd) {
       await this.finishTurn(this.lastResultWasSuccess !== false, invocationGeneration);
     }
     if (confirmsArmedClear) {
-      if (this.usesSessionStateChangedTurnEnd && this.expectsSessionStateIdleAfterResult) {
+      if (this.usesSessionStateChangedTurnEnd) {
         this.clearAwaitingTrailingIdle = true;
         this.rearmSuppressedResultTimer();
       } else {
@@ -1611,10 +1593,6 @@ export class SDKMessageHandler {
     if (!isSDKSessionStateChangedMessage(message)) return;
     if (this.isInvocationStale(invocationGeneration)) {
       this.logger.warn('Ignoring session-state event from a replaced query.');
-      const staleOwner = this.invocationIdleOwner(invocationGeneration);
-      if (staleOwner) {
-        this.ctx.stateManager.cancelTerminalIdleArm(staleOwner);
-      }
       return;
     }
 

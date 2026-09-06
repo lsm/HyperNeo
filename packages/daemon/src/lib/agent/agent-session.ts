@@ -974,7 +974,7 @@ export class AgentSession
     }
 
     await this.lifecycleManager.ensureQueryStarted();
-    this.messageHandler.suppressIdleForNextResult();
+    this.messageHandler.suppressIdleForNextTurnEnd();
     const clearMessageId = generateUUID();
     const confirmedClear = this.messageHandler.armSuppressedResultWait(clearMessageId);
     let clearWaitOutcome: SuppressedResultOutcome | null = null;

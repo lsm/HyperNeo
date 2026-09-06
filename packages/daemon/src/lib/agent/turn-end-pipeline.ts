@@ -80,7 +80,7 @@ function applyAckSelectionGate(ctx: TurnEndPipelineCtx): TurnEndPipelineCtx {
     result.isSuccess &&
     result.isLimitRecoveryEngaged === false &&
     !ctx.acknowledgedPersistedUserThisTurn &&
-    !ctx.flags.suppressIdleOnNextResult;
+    !ctx.flags.suppressIdleOnTurnEnd;
   if (!admitted) {
     return { ...ctx, ackSelection: [] };
   }

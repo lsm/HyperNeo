@@ -101,7 +101,7 @@ describe('decideTurnEnd', () => {
   }> = [
     {
       label: 'an armed idle suppression skips the fallback-ack loop but still accounts usage',
-      overrides: { flags: { ...resetTurnEndFlags, suppressIdleOnNextResult: true } },
+      overrides: { flags: { ...resetTurnEndFlags, suppressIdleOnTurnEnd: true } },
       usageFolded: true,
     },
     {
