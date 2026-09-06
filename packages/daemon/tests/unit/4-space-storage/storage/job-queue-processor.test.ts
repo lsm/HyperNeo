@@ -670,5 +670,24 @@ describe('JobQueueProcessor', () => {
       expect(scopes.length).toBeGreaterThan(0);
       expect(scopes[0]).toBeUndefined();
     });
+
+    it('notifies at claim time, before the handler settles', async () => {
+      const scopes: Array<Record<string, string> | undefined> = [];
+      processor.setChangeNotifier((_table, scope) => scopes.push(scope));
+      let scopesAtHandlerStart = -1;
+      processor.register('message_delivery', async () => {
+        scopesAtHandlerStart = scopes.length;
+      });
+
+      repo.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: 'sess-claim', messageUuid: 'u-1', role: 'turn' },
+      });
+      await processor.tick();
+      await flush();
+
+      expect(scopesAtHandlerStart).toBe(1);
+      expect(scopes[0]).toEqual({ sessionId: 'sess-claim' });
+    });
   });
 });
