@@ -660,17 +660,21 @@ export class SpaceRuntimeService {
       inboxRepo.markAttemptFailed(row.id, outcome.reason);
       return;
     }
-    if (this.readLongTermAgentSendStatus(sessionId, messageId) === 'failed') {
+    if (
+      this.readLongTermAgentSettlementStatus(sessionId, messageId, outcome.mailboxEntryId) ===
+      'failed'
+    ) {
       inboxRepo.markAttemptFailed(row.id, 'delivery dead-lettered without consumption evidence');
       return;
     }
-    this.armLongTermAgentInboxSettlement(row, sessionId, messageId);
+    this.armLongTermAgentInboxSettlement(row, sessionId, messageId, outcome.mailboxEntryId);
   }
 
   private armLongTermAgentInboxSettlement(
     row: SpaceAgentInboxMessageRecord,
     sessionId: string,
-    messageId: string
+    messageId: string,
+    mailboxEntryId: string
   ): void {
     const inboxRepo = this.config.spaceAgentInboxRepo;
     if (!inboxRepo) return;
@@ -681,16 +685,18 @@ export class SpaceRuntimeService {
         inboxRepo.markDelivered(row.id, sessionId);
       },
       onFailed: () => {
-        this.settleLongTermAgentInboxRowFailure(row, sessionId, messageId);
+        this.settleLongTermAgentInboxRowFailure(row, sessionId, messageId, mailboxEntryId);
       },
-      getSendStatus: () => this.readLongTermAgentSendStatus(sessionId, messageId) ?? undefined,
+      getSendStatus: () =>
+        this.readLongTermAgentSettlementStatus(sessionId, messageId, mailboxEntryId),
     });
   }
 
   private settleLongTermAgentInboxRowFailure(
     row: SpaceAgentInboxMessageRecord,
     sessionId: string,
-    messageId: string
+    messageId: string,
+    mailboxEntryId: string
   ): void {
     const inboxRepo = this.config.spaceAgentInboxRepo;
     if (!inboxRepo) return;
@@ -698,13 +704,37 @@ export class SpaceRuntimeService {
       inboxRepo.markDelivered(row.id, sessionId);
       return;
     }
-    if (this.readLongTermAgentSendStatus(sessionId, messageId) === 'failed') {
+    if (this.readLongTermAgentSettlementStatus(sessionId, messageId, mailboxEntryId) === 'failed') {
       inboxRepo.markAttemptFailed(row.id, 'delivery dead-lettered without consumption evidence');
       return;
     }
     const inboxRow = inboxRepo.getById?.(row.id);
     if (inboxRow && inboxRow.status !== 'pending') return;
-    this.armLongTermAgentInboxSettlement(row, sessionId, messageId);
+    this.armLongTermAgentInboxSettlement(row, sessionId, messageId, mailboxEntryId);
+  }
+
+  private readLongTermAgentSettlementStatus(
+    sessionId: string,
+    messageId: string,
+    mailboxEntryId: string
+  ): string | undefined {
+    const sendStatus = this.readLongTermAgentSendStatus(sessionId, messageId);
+    if (sendStatus === 'failed') {
+      return this.listActiveMailboxAdmissions(sessionId, messageId).length > 0
+        ? undefined
+        : 'failed';
+    }
+    if (sendStatus != null && sendStatus !== 'deferred') return sendStatus;
+    const mailboxDead =
+      this.config.reactiveDb?.db
+        .getJobQueueRepo()
+        .getLatestByPayload('mailbox', { id: mailboxEntryId })?.status === 'dead';
+    if (mailboxDead) {
+      return this.listActiveMailboxAdmissions(sessionId, messageId).length > 0
+        ? undefined
+        : 'failed';
+    }
+    return sendStatus ?? undefined;
   }
 
   private hasLongTermAgentConsumptionEvidence(sessionId: string, messageId: string): boolean {
