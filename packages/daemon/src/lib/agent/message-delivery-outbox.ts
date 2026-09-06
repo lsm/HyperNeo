@@ -37,6 +37,8 @@ interface PromptInput {
     origin: MessageDeliveryOrigin;
     parentToolUseId?: string | null;
     injectedMidTurn?: boolean;
+    admittedAt?: number;
+    admissionRowid?: number;
   };
 }
 
@@ -84,6 +86,8 @@ export interface ActivatePromptsArgs {
   dbIds?: Array<string | undefined>;
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
+  admittedAt?: number;
+  admissionRowid?: number;
   publishStatusChanged?: OutboxStatusPublisher;
 }
 
@@ -106,6 +110,8 @@ export interface RetryPromptArgs {
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
   injectedMidTurn?: boolean;
+  admittedAt?: number;
+  admissionRowid?: number;
   publishStatusChanged?: OutboxStatusPublisher;
 }
 
@@ -358,6 +364,7 @@ function enqueueDeliveryJob(
     queue: MESSAGE_DELIVERY,
     payload: { ...basePayload },
     maxRetries: DELIVERY_MAX_RETRIES,
+    ...(basePayload.admittedAt !== undefined ? { createdAt: basePayload.admittedAt } : {}),
   });
 }
 
@@ -456,6 +463,8 @@ function buildReleasedPayload(args: {
   parentToolUseId?: string | null;
   released: boolean;
   injectedMidTurn?: boolean;
+  admittedAt?: number;
+  admissionRowid?: number;
 }): ReleasedDeliveryPayload {
   return {
     sessionId: args.sessionId,
@@ -464,6 +473,8 @@ function buildReleasedPayload(args: {
     parentToolUseId: args.parentToolUseId ?? null,
     released: args.released,
     ...(args.injectedMidTurn === true ? { injectedMidTurn: true } : {}),
+    ...(args.admittedAt !== undefined ? { admittedAt: args.admittedAt } : {}),
+    ...(args.admissionRowid !== undefined ? { admissionRowid: args.admissionRowid } : {}),
   };
 }
 
@@ -493,6 +504,8 @@ function buildPromptPayload(ctx: PromptHeldCtx): PromptPayloadCtx {
       origin: ctx.delivery.origin,
       parentToolUseId: ctx.delivery.parentToolUseId,
       released: ctx.released,
+      admittedAt: ctx.delivery.admittedAt,
+      admissionRowid: ctx.delivery.admissionRowid,
     }),
   };
 }
@@ -697,6 +710,8 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
             parentToolUseId: ctx.delivery.parentToolUseId,
             released,
             injectedMidTurn: ctx.delivery.injectedMidTurn,
+            admittedAt: ctx.delivery.admittedAt,
+            admissionRowid: ctx.delivery.admissionRowid,
           })
         );
         return { dbId: fresh.dbId, activated: true, released, countsTowardsBadge: false };
@@ -719,6 +734,8 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
           parentToolUseId: ctx.delivery.parentToolUseId,
           released,
           injectedMidTurn: ctx.delivery.injectedMidTurn,
+          admittedAt: ctx.delivery.admittedAt,
+          admissionRowid: ctx.delivery.admissionRowid,
         }),
         released
       );
@@ -746,6 +763,8 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
         parentToolUseId: ctx.delivery.parentToolUseId,
         released: ctx.ensureStatus !== 'deferred',
         injectedMidTurn: ctx.delivery.injectedMidTurn,
+        admittedAt: ctx.delivery.admittedAt,
+        admissionRowid: ctx.delivery.admissionRowid,
       })
     );
     return {
@@ -836,6 +855,8 @@ function commitActivatePrompts(ctx: ActivatePromptsCtx): ActivatePromptsCommitte
           origin: ctx.origin,
           parentToolUseId: ctx.parentToolUseId,
           released: true,
+          admittedAt: ctx.admittedAt,
+          admissionRowid: ctx.admissionRowid,
         })
       );
       activated.push({ dbId: row.db_id, messageUuid });
@@ -903,6 +924,8 @@ function commitRetryPrompt(ctx: RetryPromptCtx): RetryPromptCtx {
           parentToolUseId: ctx.parentToolUseId,
           released: true,
           injectedMidTurn: ctx.injectedMidTurn,
+          admittedAt: ctx.admittedAt,
+          admissionRowid: ctx.admissionRowid,
         })
       );
       ctx.sdkMessageRepo?.updateMessageStatus([row.db_id], 'enqueued');

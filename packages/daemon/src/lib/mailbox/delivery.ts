@@ -57,6 +57,13 @@ function mapOrigin(origin: string): MessageDeliveryOrigin {
   return isMailboxDeliveryOrigin(origin) ? origin : 'space_inject';
 }
 
+function readAdmissionRowid(db: BunDatabase, jobId: string): number | undefined {
+  const row = db.prepare('SELECT rowid AS rid FROM job_queue WHERE id = ?').get(jobId) as
+    | { rid: number }
+    | undefined;
+  return row?.rid;
+}
+
 export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHandler {
   return async (job) => {
     const entry = parseMailboxEntry(job.payload);
@@ -88,6 +95,8 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       throw new DeadLetterImmediatelyError('mailbox: entry expired (ttl)');
     }
     const synthetic = entry.origin !== 'chat';
+    const admittedAt = decodeUlidTimestamp(entry.id);
+    const admissionRowid = readAdmissionRowid(deps.db, job.id);
     const message: SDKUserMessage & { referenceMetadata?: ReferenceMetadata } = {
       ...entry.message,
       uuid: (entry.messageUuid ?? deterministicUuid(entry.id)) as NonNullable<
@@ -111,7 +120,12 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       message,
       ...(synthetic ? { origin: 'system' as MessageOrigin } : {}),
       ...(entry.deliveryMode === 'defer' ? { hold: 'manual' as PromptHold } : {}),
-      delivery: { origin: mapOrigin(entry.origin), parentToolUseId: null },
+      delivery: {
+        origin: mapOrigin(entry.origin),
+        parentToolUseId: null,
+        admittedAt,
+        ...(admissionRowid !== undefined ? { admissionRowid } : {}),
+      },
       db: deps.db,
       sdkMessageRepo: deps.sdkMessageRepo,
       jobQueue: deps.jobQueue,
@@ -125,6 +139,8 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         messageUuid,
         origin: mapOrigin(entry.origin),
         parentToolUseId: null,
+        admittedAt,
+        ...(admissionRowid !== undefined ? { admissionRowid } : {}),
         db: deps.db,
         sdkMessageRepo: deps.sdkMessageRepo,
         jobQueue: deps.jobQueue,
@@ -137,6 +153,8 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         sessionId: target,
         messageUuids: [messageUuid],
         origin: mapOrigin(entry.origin),
+        admittedAt,
+        ...(admissionRowid !== undefined ? { admissionRowid } : {}),
       });
       if (activated[0]) publish(activated[0].dbId);
     }

@@ -10,6 +10,7 @@ import type {
   JobQueueRepository,
   PayloadMatch,
   ReclaimedJobClaim,
+  SessionFifoPredecessorLane,
 } from './repositories/job-queue-repository.ts';
 
 const log = new Logger('job-queue-processor');
@@ -106,6 +107,7 @@ export interface SessionFifoDequeueMode {
   kind: 'session-fifo';
   sessionIdPath?: string;
   releasedPath?: string;
+  waitsBehind?: SessionFifoPredecessorLane[];
 }
 
 export interface RegisterOptions {
@@ -300,6 +302,7 @@ export class JobQueueProcessor {
                 ? this.repo.dequeueSessionFifo(queue, cappedSlots, {
                     sessionIdPath: dequeueMode.sessionIdPath,
                     releasedPath: dequeueMode.releasedPath,
+                    waitsBehind: dequeueMode.waitsBehind,
                     exclude: reg.exemptJobs,
                     excludeIds,
                   })

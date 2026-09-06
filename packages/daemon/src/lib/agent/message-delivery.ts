@@ -30,6 +30,8 @@ export type MessageDeliveryPayload = {
   parentToolUseId?: string | null;
   released?: boolean;
   injectedMidTurn?: boolean;
+  admittedAt?: number;
+  admissionRowid?: number;
 };
 
 export const MESSAGE_DELIVERY_MAX_RETRIES = (() => {
@@ -139,6 +141,10 @@ export function asMessageDeliveryPayload(
     ...(typeof payload.released === 'boolean' ? { released: payload.released } : {}),
     ...(payload.injectedMidTurn === true || payload.role === 'steer'
       ? { injectedMidTurn: true }
+      : {}),
+    ...(typeof payload.admittedAt === 'number' ? { admittedAt: payload.admittedAt } : {}),
+    ...(typeof payload.admissionRowid === 'number'
+      ? { admissionRowid: payload.admissionRowid }
       : {}),
   };
 }
