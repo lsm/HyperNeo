@@ -47,7 +47,7 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
-import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
+import { handoffPromptToMailbox as enqueueMailboxHandoff } from '../../mailbox/handoff.ts';
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import { CleanupState, type SessionManager } from '../../session-manager.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
@@ -1563,7 +1563,7 @@ export class TaskAgentManager {
     return {
       ensureTargetSession,
       handoffToMailbox: (args) =>
-        handoffPromptToMailbox({
+        enqueueMailboxHandoff({
           to: args.to,
           message: { type: 'user', message: { content: args.message }, parent_tool_use_id: null },
           origin: args.origin,
