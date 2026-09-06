@@ -1,3 +1,4 @@
+import type { UUID } from 'node:crypto';
 import type {
   ImageContent,
   MessageContent,
@@ -9,12 +10,10 @@ import type {
 } from '@hyperneo/shared';
 import { composeDraftWhole } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import type { UUID } from 'node:crypto';
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { Database } from '../../storage/database.ts';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import type { AgentSession } from '../agent/agent-session.ts';
 import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
-import { renderAddress } from '../mailbox/address.ts';
-import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import {
   buildReferenceContext,
   prependContextToMessage,
@@ -22,7 +21,8 @@ import {
 import { expandBuiltInCommand } from '../built-in-commands.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
-import type { AgentSession } from '../agent/agent-session.ts';
+import { renderAddress } from '../mailbox/address.ts';
+import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import {
   type PreprocessedMessage,
   ReferenceResolver,
@@ -242,7 +242,11 @@ export class MessagePersistence {
         throw new Error(`Mailbox handoff rejected: ${handoff.reason}`);
       }
 
-      if (this.db.getSession?.(sessionId)?.status === 'archived') {
+      const postHandoffSession = this.db.getSession?.(sessionId);
+      if (postHandoffSession == null) {
+        throw new Error(`Session ${sessionId} no longer exists`);
+      }
+      if (postHandoffSession.status === 'archived') {
         throw new Error(`Session ${sessionId} is archived`);
       }
 

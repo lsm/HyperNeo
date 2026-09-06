@@ -418,7 +418,10 @@ export class JobQueueRepository {
     );
   }
 
-  cancelMailboxForSession(sessionId: string, opts?: { excludeDeferred?: boolean }): string[] {
+  cancelMailboxForSession(
+    sessionId: string,
+    opts?: { excludeDeferred?: boolean }
+  ): Array<{ id: string; payload: string }> {
     const modeFilter =
       opts?.excludeDeferred === true
         ? `AND COALESCE(json_extract(payload, '$.deliveryMode'), 'immediate') != 'defer'`
@@ -427,14 +430,14 @@ export class JobQueueRepository {
       this.db.transaction(() => {
         const rows = this.db
           .prepare(
-            `SELECT json_extract(payload, '$.messageUuid') AS message_uuid
+            `SELECT id, payload
                  FROM job_queue
                 WHERE queue = 'mailbox'
                   AND json_extract(payload, '$.to.sessionId') = ?
                   AND status IN ('pending', 'processing')
                   ${modeFilter}`
           )
-          .all(sessionId) as Array<{ message_uuid: string | null }>;
+          .all(sessionId) as Array<{ id: string; payload: string }>;
         this.db
           .prepare(
             `DELETE FROM job_queue
@@ -444,24 +447,8 @@ export class JobQueueRepository {
                   ${modeFilter}`
           )
           .run(sessionId);
-        return rows.flatMap((row) =>
-          typeof row.message_uuid === 'string' ? [row.message_uuid] : []
-        );
+        return rows;
       }, 'immediate')()
-    );
-  }
-
-  listMailboxJobsForSession(sessionId: string): Array<{ id: string; payload: string }> {
-    return withBusyRetry(
-      () =>
-        this.db
-          .prepare(
-            `SELECT id, payload FROM job_queue
-            WHERE queue = 'mailbox'
-              AND json_extract(payload, '$.to.sessionId') = ?
-              AND status IN ('pending', 'processing')`
-          )
-          .all(sessionId) as Array<{ id: string; payload: string }>
     );
   }
 

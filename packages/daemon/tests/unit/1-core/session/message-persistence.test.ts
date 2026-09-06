@@ -455,6 +455,22 @@ describe('MessagePersistence', () => {
     expect(internalEventBusPublishSpy).not.toHaveBeenCalled();
   });
 
+  it('rejects a send whose session was deleted before the handoff settled', async () => {
+    mockDb.getSession = mock(() => undefined) as never;
+
+    await expect(
+      persistence.persist({
+        sessionId: 'test-session-id',
+        messageId: 'msg-deleted',
+        content: 'session vanished mid-send',
+      })
+    ).rejects.toThrow('Session test-session-id no longer exists');
+
+    expect(enqueueUniquePendingSpy).toHaveBeenCalled();
+    expect(mockAgentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
+    expect(internalEventBusPublishSpy).not.toHaveBeenCalled();
+  });
+
   it('does not downgrade a busy session from processing to queued', async () => {
     processingStateSpy.mockReturnValue({ status: 'processing' });
 

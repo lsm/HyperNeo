@@ -3,7 +3,7 @@ import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { Database } from '../../storage/database.ts';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import { materializeMailboxFailure, type MailboxFailureDeps } from './failure.ts';
+import { type MailboxFailureDeps, materializeMailboxFailure } from './failure.ts';
 
 export interface MailboxCancelMaterializerDeps {
   db: Database;
@@ -15,14 +15,32 @@ export interface MailboxCancelMaterializerDeps {
 function jobQueueSupportsMailboxCancel(
   jobQueue: JobQueueRepository | null | undefined
 ): jobQueue is JobQueueRepository & {
-  listMailboxJobsForSession(sessionId: string): Array<{ id: string; payload: string }>;
-  cancelMailboxForSession(sessionId: string, opts?: { excludeDeferred?: boolean }): string[];
+  cancelMailboxForSession(
+    sessionId: string,
+    opts?: { excludeDeferred?: boolean }
+  ): Array<{ id: string; payload: string }>;
 } {
-  return (
-    jobQueue != null &&
-    typeof jobQueue.listMailboxJobsForSession === 'function' &&
-    typeof jobQueue.cancelMailboxForSession === 'function'
-  );
+  return jobQueue != null && typeof jobQueue.cancelMailboxForSession === 'function';
+}
+
+function deletedRowAsJob(id: string, payload: Record<string, unknown>): Job {
+  return {
+    id,
+    queue: 'mailbox',
+    status: 'dead',
+    payload,
+    result: null,
+    error: 'cancelled by session abort',
+    priority: 0,
+    maxRetries: 0,
+    retryCount: 0,
+    runAt: 0,
+    createdAt: 0,
+    startedAt: null,
+    heartbeatAt: null,
+    completedAt: null,
+    claimToken: null,
+  } as Job;
 }
 
 export function materializeMailboxFailuresForSession(
@@ -35,9 +53,9 @@ export function materializeMailboxFailuresForSession(
   if (!sdkMessageRepo) return [];
   const failureDeps: MailboxFailureDeps = {
     sdkMessageRepo,
-    saveFailed: (sid: string, message: SDKUserMessage, origin?: MessageOrigin) =>
+    saveFailed: (sid, message: SDKUserMessage, origin?: MessageOrigin) =>
       deps.db.saveUserMessage(sid, message, 'failed', origin),
-    publishFailed: async (sid: string, dbMessageId: string) => {
+    publishFailed: async (sid, dbMessageId: string) => {
       await deps.internalEventBus
         .publish('messages.statusChanged', {
           sessionId: sid,
@@ -53,34 +71,17 @@ export function materializeMailboxFailuresForSession(
         }
       : {}),
   };
-  for (const row of jobQueue.listMailboxJobsForSession(sessionId)) {
-    try {
-      const payload = JSON.parse(row.payload) as Record<string, unknown>;
-      if (deps.preserveDeferred === true && payload.deliveryMode === 'defer') continue;
-      materializeMailboxFailure(
-        {
-          id: row.id,
-          queue: 'mailbox',
-          status: 'dead',
-          payload,
-          result: null,
-          error: 'cancelled by session abort',
-          priority: 0,
-          maxRetries: 0,
-          retryCount: 0,
-          runAt: 0,
-          createdAt: 0,
-          startedAt: null,
-          heartbeatAt: null,
-          completedAt: null,
-          claimToken: null,
-        } as Job,
-        failureDeps
-      );
-    } catch {}
-  }
-  return jobQueue.cancelMailboxForSession(
+  const cancelled: string[] = [];
+  const deleted = jobQueue.cancelMailboxForSession(
     sessionId,
     deps.preserveDeferred === true ? { excludeDeferred: true } : undefined
   );
+  for (const row of deleted) {
+    try {
+      const payload = JSON.parse(row.payload) as Record<string, unknown>;
+      materializeMailboxFailure(deletedRowAsJob(row.id, payload), failureDeps);
+      if (typeof payload.messageUuid === 'string') cancelled.push(payload.messageUuid);
+    } catch {}
+  }
+  return cancelled;
 }
