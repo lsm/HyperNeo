@@ -5155,6 +5155,7 @@ export class SpaceRuntime {
         }
 
         let activatedForTarget = false;
+        let resetExistingTarget = false;
         for (const agentEntry of resolveNodeAgents(targetNode)) {
           const existing = this.config.nodeExecutionRepo
             .listByNode(run.id, targetNode.id)
@@ -5168,6 +5169,7 @@ export class SpaceRuntime {
                 completedAt: null,
               });
               activatedForTarget = true;
+              resetExistingTarget = true;
             }
             continue;
           }
@@ -5183,6 +5185,16 @@ export class SpaceRuntime {
         if (activatedForTarget) {
           createdOrReset.push(targetNode.name);
           activatedOnChannel = true;
+          const message = resetExistingTarget
+            ? `[Daemon restart recovery] The ${targetNode.name} node's previous session ended before completing the workflow. Please check the PR and review status, then continue.`
+            : `[Daemon restart recovery] The previous agent (${sourceExecution.agentName}) completed but the handoff message was not delivered. Please check the PR and review status, then continue.`;
+          for (const agentEntry of resolveNodeAgents(targetNode)) {
+            const execution = this.config.nodeExecutionRepo
+              .listByNode(run.id, targetNode.id)
+              .find((row) => row.agentName === agentEntry.name);
+            if (execution)
+              this.config.taskAgentManager?.recordRestartRecoveryNotice?.(execution.id, message);
+          }
         }
       }
       if (activatedOnChannel) {

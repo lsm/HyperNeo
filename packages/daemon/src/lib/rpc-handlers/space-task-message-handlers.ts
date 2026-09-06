@@ -304,8 +304,12 @@ export function setupSpaceTaskMessageHandlers(
   ): Promise<void> {
     const inject = taskAgentManager.injectSubSessionMessage;
     if (!inject) throw new Error('Workflow agent targeting is unavailable on this daemon.');
+    const deliver = async (targetSessionId: string): Promise<string | void> =>
+      messageId === undefined
+        ? inject(targetSessionId, message, false, images, deliveryMode)
+        : inject(targetSessionId, message, false, images, deliveryMode, undefined, messageId);
     try {
-      await inject(sessionId, message, false, images, deliveryMode, undefined, messageId);
+      await deliver(sessionId);
     } catch (err) {
       const postApproval =
         taskAgentManager.getPostApprovalWorkerSession?.(taskId, sessionId) ?? null;
@@ -321,7 +325,7 @@ export function setupSpaceTaskMessageHandlers(
           `Post-approval worker "${agentName}" is not live and could not be restored (session ${sessionId}). Retry once the worker is back online.`
         );
       }
-      await inject(restored, message, false, images, deliveryMode, undefined, messageId);
+      await deliver(restored);
     }
   }
 

@@ -59,7 +59,8 @@ export interface AgentMessageRouterConfig {
   findPostApprovalSessionId?: () => string | undefined;
   findPostApprovalTargetAgentName?: () => string | undefined;
   activateTargetSession?: (
-    agentName: string
+    agentName: string,
+    workflowNodeId?: string
   ) => Promise<Array<{ agentName: string; sessionId: string }>>;
   workflowNodeNameById?: Record<string, string>;
   replyRoutingLookup?: (agentName?: string | null) => string | null;
@@ -286,6 +287,7 @@ export class AgentMessageRouter {
       workflowNodeNameById,
       messageResolver,
       longTermAgentDelivery,
+      nodeGroups,
     } = this.config;
     const resolver = new ChannelResolver(workflowChannels);
     const fromNodeName = slotToNode.get(fromAgentName) ?? fromAgentName;
@@ -293,6 +295,18 @@ export class AgentMessageRouter {
     const singleNodeByAgentName = enrichedPeers.singleNodeByAgentName;
     let peers = enrichedPeers.peers;
     const hasNodeNameMap = workflowNodeNameById && Object.keys(workflowNodeNameById).length > 0;
+    const resolveWorkflowNodeId = (nodeRef: string, agentName: string): string | undefined => {
+      if (!workflowNodeNameById) return undefined;
+      const entries = Object.entries(workflowNodeNameById);
+      const hasSlot = (nodeName: string) =>
+        nodeGroups ? nodeGroups[nodeName]?.includes(agentName) === true : false;
+      const slotMatch = entries.find(
+        ([nodeId, name]) => (nodeId === nodeRef || name === nodeRef) && hasSlot(name)
+      );
+      if (slotMatch) return slotMatch[0];
+      if (entries.some(([nodeId]) => nodeId === nodeRef)) return nodeRef;
+      return entries.find(([, name]) => name === nodeRef)?.[0];
+    };
     const delivered: Array<{ agentName: string; sessionId: string }> = [];
     const queued: Array<{ agentName: string; messageId: string }> = [];
     const notFound: string[] = [];
@@ -513,7 +527,10 @@ export class AgentMessageRouter {
         peer.agentName === agentName && (!hasNodeNameMap || peer.nodeName === nodeName);
       if (!peers.some(matchesTargetNode) && activateTargetSession) {
         try {
-          const activated = await activateTargetSession(agentName);
+          const targetWorkflowNodeId = hasNodeNameMap
+            ? resolveWorkflowNodeId(nodeName, agentName)
+            : undefined;
+          const activated = await activateTargetSession(agentName, targetWorkflowNodeId);
           const refreshed = nodeExecutionRepo.listByWorkflowRun(workflowRunId);
           const hydrated = activated.map((session) => {
             const execution = refreshed.find(

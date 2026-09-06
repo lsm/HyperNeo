@@ -341,6 +341,8 @@ export class TaskAgentManager {
 
   private readonly rehydrateInFlight = new Map<string, Promise<AgentSession | null>>();
 
+  private readonly restartRecoveryKickoffNotes = new Map<string, string>();
+
   private spawningExecutionIds = new Set<string>();
   private concurrentSpawnWaiters = new Map<
     string,
@@ -1103,7 +1105,10 @@ export class TaskAgentManager {
           request.space,
           spawnState.dispatcherActionNames
         );
-        return runtimeContract ? `${initialMessage}\n\n${runtimeContract}` : initialMessage;
+        const recoveryNote = this.restartRecoveryKickoffNotes.get(request.execution.id);
+        if (recoveryNote) this.restartRecoveryKickoffNotes.delete(request.execution.id);
+        const kickoffBase = recoveryNote ? `${initialMessage}\n\n${recoveryNote}` : initialMessage;
+        return runtimeContract ? `${kickoffBase}\n\n${runtimeContract}` : kickoffBase;
       },
       injectKickoffMessage: async (sessionId, message) => {
         const spawned = this.getSubSession(sessionId);
@@ -1390,6 +1395,10 @@ export class TaskAgentManager {
 
     log.info(`TaskAgentManager: created sub-session ${sessionId} for task ${taskId}`);
     return sessionId;
+  }
+
+  recordRestartRecoveryNotice(executionId: string, message: string): void {
+    this.restartRecoveryKickoffNotes.set(executionId, message);
   }
 
   async tryResumeNodeAgentSession(
@@ -4795,10 +4804,11 @@ export class TaskAgentManager {
           message,
           messageId,
         }),
-      activateTargetSession: (targetAgentName) =>
+      activateTargetSession: (targetAgentName, targetWorkflowNodeId) =>
         this.activateTargetSessionsForMessage(taskId, workflowRunId, targetAgentName, {
           reopenReason: `node-agent send_message to activate "${targetAgentName}"`,
           reopenBy: `agent:${agentName}`,
+          ...(targetWorkflowNodeId ? { workflowNodeId: targetWorkflowNodeId } : {}),
         }),
       channelRouter: nodeAgentChannelRouter,
       nodeGroups,

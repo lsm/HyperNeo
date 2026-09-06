@@ -878,14 +878,29 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         status: 'in_progress',
       });
       seedExec(run.id, STEP_A, 'Coding', 'idle');
+      const notices: Array<{ executionId: string; message: string }> = [];
+      const recoveryTam = {
+        rehydrate: async () => {},
+        recordRestartRecoveryNotice: (executionId: string, message: string) => {
+          notices.push({ executionId, message });
+        },
+      };
 
-      await makeRuntime().recoverStalledRuns();
+      await makeRuntime({ taskAgentManager: recoveryTam as never }).recoverStalledRuns();
 
       const reviewer = findExec(run.id, STEP_B);
       expect(reviewer.status).toBe('pending');
       expect(reviewer.agentSessionId).toBeNull();
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
       expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+      expect(notices).toEqual([
+        {
+          executionId: reviewer.id,
+          message: expect.stringContaining(
+            'The previous agent (Coding) completed but the handoff message was not delivered'
+          ),
+        },
+      ]);
     });
 
     test('coder idle and reviewer idle from previous cycle → reviewer resets to pending', async () => {
