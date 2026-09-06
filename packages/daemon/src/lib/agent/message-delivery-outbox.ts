@@ -46,6 +46,7 @@ export interface PersistPromptArgs extends PromptInput {
   db: BunDatabase;
   sdkMessageRepo: SDKMessageRepository;
   jobQueue: JobQueueRepository;
+  materializeOnly?: boolean;
 }
 
 export interface PersistPromptResult {
@@ -702,6 +703,10 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
       }
       const ensureStatus = fresh.sendStatus;
       const released = ensureStatus !== 'deferred';
+      if (ctx.materializeOnly === true) {
+        ctx.jobQueue.cancelHeldDeliveryJob(ctx.sessionId, ctx.messageUuid);
+        return { dbId: fresh.dbId, activated: false, released, countsTowardsBadge: false };
+      }
       if (
         !ENSURABLE_PROMPT_STATUSES.includes(ensureStatus) ||
         hasSettledUuidSibling(ctx.db, ctx.sessionId, ctx.messageUuid)
@@ -763,22 +768,24 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
       ctx.origin,
       admission
     );
-    enqueueDeliveryJob(
-      ctx.jobQueue,
-      buildReleasedPayload({
-        sessionId: ctx.sessionId,
-        messageUuid: ctx.messageUuid,
-        origin: ctx.delivery.origin,
-        parentToolUseId: ctx.delivery.parentToolUseId,
-        released: ctx.ensureStatus !== 'deferred',
-        injectedMidTurn: ctx.delivery.injectedMidTurn,
-        admittedAt: ctx.delivery.admittedAt,
-        admissionRowid: ctx.delivery.admissionRowid,
-      })
-    );
+    if (ctx.materializeOnly !== true) {
+      enqueueDeliveryJob(
+        ctx.jobQueue,
+        buildReleasedPayload({
+          sessionId: ctx.sessionId,
+          messageUuid: ctx.messageUuid,
+          origin: ctx.delivery.origin,
+          parentToolUseId: ctx.delivery.parentToolUseId,
+          released: ctx.ensureStatus !== 'deferred',
+          injectedMidTurn: ctx.delivery.injectedMidTurn,
+          admittedAt: ctx.delivery.admittedAt,
+          admissionRowid: ctx.delivery.admissionRowid,
+        })
+      );
+    }
     return {
       dbId: core.id,
-      activated: true,
+      activated: ctx.materializeOnly !== true,
       released: ctx.ensureStatus !== 'deferred',
       countsTowardsBadge: core.countsTowardsBadge,
     };

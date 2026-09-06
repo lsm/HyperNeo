@@ -25,6 +25,7 @@ export interface MailboxDeliveryDeps {
   getSession(sessionId: string): Promise<object | null>;
   isSessionArchived(sessionId: string): boolean;
   publishStatusChanged?(sessionId: string, dbId: string, status: 'enqueued'): void | Promise<void>;
+  publishDeferredStatus?(sessionId: string, dbMessageId: string): Promise<void>;
 }
 
 export function createMailboxDeadHandler(logError: (message: string) => void) {
@@ -119,7 +120,9 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       sessionId: target,
       message,
       ...(synthetic ? { origin: 'system' as MessageOrigin } : {}),
-      ...(entry.deliveryMode === 'defer' ? { hold: 'manual' as PromptHold } : {}),
+      ...(entry.deliveryMode === 'defer'
+        ? { hold: 'manual' as PromptHold, materializeOnly: true }
+        : {}),
       delivery: {
         origin: mapOrigin(entry.origin),
         parentToolUseId: null,
@@ -157,6 +160,12 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         ...(admissionRowid !== undefined ? { admissionRowid } : {}),
       });
       if (activated[0]) publish(activated[0].dbId);
+    }
+    if (entry.deliveryMode === 'defer' && deps.publishDeferredStatus) {
+      const deferredDbId = deps.sdkMessageRepo.findMessageIdByUuid(target, messageUuid);
+      if (deferredDbId !== null) {
+        await deps.publishDeferredStatus(target, deferredDbId);
+      }
     }
     return { ...settleMailboxEntry(entry, 'delivered', Date.now()) };
   };
