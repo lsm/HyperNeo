@@ -5192,8 +5192,11 @@ export class SpaceRuntime {
             const execution = this.config.nodeExecutionRepo
               .listByNode(run.id, targetNode.id)
               .find((row) => row.agentName === agentEntry.name);
-            if (execution)
-              this.config.taskAgentManager?.recordRestartRecoveryNotice?.(execution.id, message);
+            if (execution) {
+              this.config.nodeExecutionRepo.update(execution.id, {
+                data: { ...(execution.data ?? {}), restartRecoveryNote: message },
+              });
+            }
           }
         }
       }

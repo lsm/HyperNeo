@@ -87,7 +87,7 @@ export interface SpawnExecutionFlowDeps {
   attachNodeAgent(request: AttachNodeAgentRequest): Promise<void>;
   registerSpawnCompletionCallback(taskId: string, workflowNodeId: string, sessionId: string): void;
   buildKickoffMessage(request: KickoffMessageRequest): Promise<string>;
-  injectKickoffMessage(sessionId: string, message: string): Promise<void>;
+  injectKickoffMessage(sessionId: string, message: string, executionId: string): Promise<void>;
   activateSpawnedSessionPoolAssignment(executionId: string, sessionId: string): void;
 }
 
@@ -403,7 +403,7 @@ export function runSpawnExecutionFlow(
             sessionId: view.spawnedSessionId,
             workspacePath: view.workspacePath,
           });
-          await deps.injectKickoffMessage(view.spawnedSessionId, message);
+          await deps.injectKickoffMessage(view.spawnedSessionId, message, view.execution.id);
         },
       }),
       s.effect({

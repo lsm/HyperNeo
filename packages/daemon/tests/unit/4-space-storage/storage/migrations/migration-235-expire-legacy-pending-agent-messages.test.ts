@@ -70,7 +70,7 @@ describe('Migration 235: expire legacy pending_agent_messages rows', () => {
       fresh
         .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`)
         .get(LEGACY_TABLE)
-    ).toBeUndefined();
+    ).toBeFalsy();
     fresh.close();
   });
 });

@@ -7405,7 +7405,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     });
     const parsed = JSON.parse(result.content[0].text);
 
-    expect(parsed.success).toBe(true);
+    expect(parsed.success).toBe(false);
     expect(parsed.activated).toBe(true);
     expect(parsed.delivered).toBe(false);
     expect(parsed.queued).toBeUndefined();
@@ -7413,6 +7413,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     expect(parsed.delivered_session_id).toBeNull();
     expect(parsed.sdk_message_id).toBeNull();
     expect(parsed.node_execution_id).toBe(exec.id);
+    expect(parsed.error).toContain('was activated but does not yet have a live session');
     expect(tam.subSessionInjects).toHaveLength(0);
   });
 
@@ -8676,7 +8677,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(parsed.queued_message_id).toBeUndefined();
       expect(parsed.delivered_session_id).toBeNull();
       expect(parsed.node_execution_id).toBe(exec.id);
-      expect(parsed.message).toContain('does not yet have a live session');
+      expect(parsed.error).toContain('does not yet have a live session');
       expect(tam.subSessionInjects).toHaveLength(0);
       expect(auditSummaries).toEqual([
         expect.objectContaining({

@@ -299,6 +299,11 @@ const VERIFIED_STOP_PROCESS_EXIT_SETTLE_MS = 500;
 
 const VERIFIED_STOP_ESCALATION_FORCE_KILL_MS = 2000;
 
+function readRestartRecoveryNote(execution: NodeExecution): string | null {
+  const note = execution.data?.restartRecoveryNote;
+  return typeof note === 'string' && note.length > 0 ? note : null;
+}
+
 interface SpawnTaskAgentOptions {
   kickoff?: boolean;
 }
@@ -340,8 +345,6 @@ export class TaskAgentManager {
   private readonly sessionRestoreLocks = new Map<string, Promise<void>>();
 
   private readonly rehydrateInFlight = new Map<string, Promise<AgentSession | null>>();
-
-  private readonly restartRecoveryKickoffNotes = new Map<string, string>();
 
   private spawningExecutionIds = new Set<string>();
   private concurrentSpawnWaiters = new Map<
@@ -1105,11 +1108,11 @@ export class TaskAgentManager {
           request.space,
           spawnState.dispatcherActionNames
         );
-        const recoveryNote = this.restartRecoveryKickoffNotes.get(request.execution.id);
+        const recoveryNote = readRestartRecoveryNote(request.execution);
         const kickoffBase = recoveryNote ? `${initialMessage}\n\n${recoveryNote}` : initialMessage;
         return runtimeContract ? `${kickoffBase}\n\n${runtimeContract}` : kickoffBase;
       },
-      injectKickoffMessage: async (sessionId, message) => {
+      injectKickoffMessage: async (sessionId, message, executionId) => {
         const spawned = this.getSubSession(sessionId);
         if (!spawned) {
           throw new Error(`Spawned node session ${sessionId} is not registered in memory`);
@@ -1117,8 +1120,12 @@ export class TaskAgentManager {
         await this.withSessionInjectLock(spawned.session.id, () =>
           this.injectMessageIntoSession(spawned, message)
         );
-        const injectedExecution = this.resolveNodeExecutionForSubSession(sessionId);
-        if (injectedExecution) this.restartRecoveryKickoffNotes.delete(injectedExecution.id);
+        const execution = this.config.nodeExecutionRepo.getById(executionId);
+        if (execution && readRestartRecoveryNote(execution)) {
+          this.config.nodeExecutionRepo.update(executionId, {
+            data: { ...(execution.data ?? {}), restartRecoveryNote: null },
+          });
+        }
       },
       activateSpawnedSessionPoolAssignment: (executionId, sessionId) => {
         activateModelPoolReservation(this.modelPoolAssignments, { id: executionId }, sessionId);
@@ -1396,10 +1403,6 @@ export class TaskAgentManager {
 
     log.info(`TaskAgentManager: created sub-session ${sessionId} for task ${taskId}`);
     return sessionId;
-  }
-
-  recordRestartRecoveryNotice(executionId: string, message: string): void {
-    this.restartRecoveryKickoffNotes.set(executionId, message);
   }
 
   async tryResumeNodeAgentSession(
