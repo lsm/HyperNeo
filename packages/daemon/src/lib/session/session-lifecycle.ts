@@ -1,20 +1,20 @@
-import type { Provider, Session, WorktreeMetadata, MessageHub } from '@hyperneo/shared';
 import { TITLE_GENERATION_PROMPT } from '@hyperneo/prompts';
+import type { MessageHub, Provider, Session, WorktreeMetadata } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { Database } from '../../storage/database.ts';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import type { WorktreeManager } from '../worktree-manager.ts';
-import { Logger } from '../logger.ts';
-import type { SessionCache, AgentSessionFactory } from './session-cache.ts';
-import type { ToolsConfigManager } from './tools-config.ts';
-import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
-import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-file-manager.ts';
-import { materializeMailboxFailuresForSession } from '../mailbox/cancellation.ts';
-import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
+import { isRunningUnderBun, resolveSDKCliPath } from '../agent/sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
+import { materializeMailboxFailuresForSession } from '../mailbox/cancellation.ts';
+import { findInModels } from '../model-service.ts';
+import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
 import { inferProviderForModel } from '../providers/registry.ts';
-import { findInModels } from '../model-service.ts';
+import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-file-manager.ts';
+import type { WorktreeManager } from '../worktree-manager.ts';
+import type { AgentSessionFactory, SessionCache } from './session-cache.ts';
+import type { ToolsConfigManager } from './tools-config.ts';
 
 export function buildTitleGenerationPrompt(messageText: string): string {
   return `${TITLE_GENERATION_PROMPT}\n${messageText.slice(0, 2000)}`;
@@ -552,6 +552,12 @@ export class SessionLifecycle {
         const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid) ?? null;
         if (failedDbId) failedDbIds.push(failedDbId);
       }
+      const deferredRows = this.db.getUserMessageIdsByStatus?.(sessionId, 'deferred') ?? [];
+      for (const row of deferredRows) {
+        if (!row.uuid) continue;
+        const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, row.uuid) ?? null;
+        if (failedDbId) failedDbIds.push(failedDbId);
+      }
       if (failedDbIds.length > 0) {
         await this.internalEventBus
           .publish('messages.statusChanged', {
@@ -689,6 +695,12 @@ export class SessionLifecycle {
         const sdkRepo = this.db.getSDKMessageRepo?.();
         for (const messageUuid of messageUuids) {
           const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid) ?? null;
+          if (failedDbId) failedDbIds.push(failedDbId);
+        }
+        const deferredRows = this.db.getUserMessageIdsByStatus?.(sessionId, 'deferred') ?? [];
+        for (const row of deferredRows) {
+          if (!row.uuid) continue;
+          const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, row.uuid) ?? null;
           if (failedDbId) failedDbIds.push(failedDbId);
         }
         if (failedDbIds.length > 0) {
