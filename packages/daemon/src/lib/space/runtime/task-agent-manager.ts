@@ -131,7 +131,6 @@ import { createGithubConnector } from './connectors/github-connector.ts';
 import { HookExecutor } from './hook-executor.ts';
 import type { InjectionDeliveryRowDeps } from './injection-delivery-steps.ts';
 import {
-  deliverInjectedMessage,
   flipDeliveryRowToDeferred,
   reopenFailedDeliveryRow,
   settleDeliveryRowStatus,
@@ -4659,22 +4658,26 @@ export class TaskAgentManager {
         }
       }
 
-      return deliverInjectedMessage(
-        {
-          ...deliveryRows,
+      const handoff = await handoffPromptToMailbox({
+        deps: {
           db: this.config.db.getDatabase(),
           sdkMessageRepo: this.config.db.getSDKMessageRepo(),
           jobQueue: this.config.db.getJobQueueRepo(),
         },
-        {
-          session,
+        target: {
           sessionId,
           messageId,
-          sdkUserMessage,
-          origin,
-          boundaryOwner: boundaryOwner ?? undefined,
-        }
-      );
+          message: sdkUserMessage,
+          origin: 'space_inject',
+          messageOrigin: origin,
+        },
+        stateManager: session.stateManager,
+        publishStatusChanged: deliveryRows.publishStatusChanged,
+      });
+      if (handoff.state === 'stale') {
+        throw new Error('Mailbox handoff became stale');
+      }
+      return handoff.dbId;
     } finally {
       boundaryOwner?.release();
     }
