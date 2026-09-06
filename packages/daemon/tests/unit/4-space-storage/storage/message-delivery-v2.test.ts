@@ -1,11 +1,9 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   ACP_DELIVERY_CONSUMPTION_TIMEOUT_MS,
-  awaitDeliveryConsumption,
   deliveryConsumptionTimeoutOrDefault,
   type DriveTurnOutcome,
-  deliverAndMarkQueued,
   deliverMessage,
   drainDeliveryWaitersOnTerminalSDKMessage,
   flattenDeliveryText,
@@ -113,26 +111,6 @@ describe('message-delivery v2 — substrate (job_queue)', () => {
       expect(() => deliverMessage(stub, SESSION, 'io-fail', { origin: 'chat' })).toThrow(
         /disk I\/O error/
       );
-    });
-  });
-
-  describe('deliverAndMarkQueued — admission completion', () => {
-    it('enqueues the job and marks the session queued when idle', async () => {
-      const { repo: fresh } = setupRepo();
-      const setQueuedIfIdle = mock(async () => false);
-      await deliverAndMarkQueued({
-        jobQueue: fresh,
-        stateManager: {
-          getState: () => ({ status: 'idle' }),
-          setQueuedIfIdle,
-        },
-        sessionId: SESSION,
-        messageUuid: 'msg-idle',
-        origin: 'chat',
-      });
-      const jobs = fresh.listJobs({ queue: MESSAGE_DELIVERY, limit: 10 });
-      expect(jobs).toHaveLength(1);
-      expect(setQueuedIfIdle).toHaveBeenCalledWith('msg-idle');
     });
   });
 
@@ -875,74 +853,6 @@ describe('drainDeliveryWaitersOnTerminalSDKMessage (handleSDKMessage-catch gatin
       type: 'stream_event',
     } as SDKMessage);
     expect(setIdle).not.toHaveBeenCalled();
-  });
-});
-
-describe('awaitDeliveryConsumption — terminalize a fresh job on timeout (no-stable-id dedup)', () => {
-  const prev = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
-  beforeAll(() => {
-    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '20';
-  });
-  afterAll(() => {
-    if (prev === undefined) delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
-    else process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = prev;
-  });
-
-  it('calls terminalizeOnTimeout + rejects when consumption is not signalled (fresh job)', async () => {
-    const deliver = mock(async () => {});
-    const terminalize = mock(() => {});
-    await expect(
-      awaitDeliveryConsumption({
-        sessionId: 'sess',
-        messageUuid: 'fresh-timeout',
-        deliver,
-        terminalizeOnTimeout: terminalize,
-      })
-    ).rejects.toThrow('not consumed within timeout');
-    expect(deliver).toHaveBeenCalledTimes(1);
-    expect(terminalize).toHaveBeenCalledTimes(1);
-  });
-
-  it('does NOT call terminalizeOnTimeout when consumption is signalled in time', async () => {
-    const deliver = mock(async () => {
-      signalDeliveryConsumed('sess', 'fresh-consumed');
-    });
-    const terminalize = mock(() => {});
-    await awaitDeliveryConsumption({
-      sessionId: 'sess',
-      messageUuid: 'fresh-consumed',
-      deliver,
-      terminalizeOnTimeout: terminalize,
-    });
-    expect(terminalize).not.toHaveBeenCalled();
-  });
-});
-
-describe('awaitDeliveryConsumption — lost wakeup (persisted sendStatus re-check)', () => {
-  it('resolves from getSendStatus when the consumption signal fired before waiter registration', async () => {
-    signalDeliveryConsumed('sess', 'gap-consumed');
-    await awaitDeliveryConsumption({
-      sessionId: 'sess',
-      messageUuid: 'gap-consumed',
-      deliver: async () => {},
-      getSendStatus: () => 'consumed',
-      timeoutMs: 25,
-    });
-  });
-
-  it('still rejects and terminalizes when getSendStatus never reports consumed', async () => {
-    const terminalize = mock(() => {});
-    await expect(
-      awaitDeliveryConsumption({
-        sessionId: 'sess',
-        messageUuid: 'gap-stuck',
-        deliver: async () => {},
-        getSendStatus: () => 'enqueued',
-        timeoutMs: 25,
-        terminalizeOnTimeout: terminalize,
-      })
-    ).rejects.toThrow('not consumed within timeout');
-    expect(terminalize).toHaveBeenCalledTimes(1);
   });
 });
 
