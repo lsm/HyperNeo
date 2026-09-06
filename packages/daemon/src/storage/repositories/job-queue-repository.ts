@@ -765,6 +765,32 @@ export class JobQueueRepository {
     return row ? this.rowToJob(row) : null;
   }
 
+  listActiveByPayload(
+    queue: string,
+    matchPayload: Record<string, unknown>,
+    activeStatuses: JobStatus[] = ['pending', 'processing']
+  ): Job[] {
+    if (activeStatuses.length === 0 || Object.keys(matchPayload).length === 0) return [];
+    const statusPlaceholders = activeStatuses.map(() => '?').join(',');
+    const payloadPredicates = Object.values(matchPayload).map((value) =>
+      value === null ? `json_type(payload, ?) = 'null'` : `json_extract(payload, ?) = ?`
+    );
+    const params: (string | number | null)[] = [queue, ...activeStatuses];
+    for (const [key, value] of Object.entries(matchPayload)) {
+      params.push(`$.${key}`);
+      if (value !== null) params.push(sqliteJsonScalar(value));
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM job_queue
+          WHERE queue = ? AND status IN (${statusPlaceholders})
+            AND ${payloadPredicates.join(' AND ')}
+          ORDER BY created_at ASC, rowid ASC`
+      )
+      .all(...params) as Record<string, unknown>[];
+    return rows.map((row) => this.rowToJob(row));
+  }
+
   listJobs(filter: {
     queue?: string;
     status?: JobStatus | JobStatus[];

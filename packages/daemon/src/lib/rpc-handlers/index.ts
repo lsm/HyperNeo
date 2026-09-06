@@ -852,27 +852,50 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       isNagDeliveryPending: (spaceId, agentId, claimKey) => {
         const agent = longHorizonAgentRepo.getById(agentId);
         if (agent === null || agent.spaceId !== spaceId || agent.sessionId === null) return false;
+        const sessionId = agent.sessionId;
         const row = deps.db
           .getDatabase()
           .prepare(
             `SELECT send_status FROM sdk_messages
              WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'`
           )
-          .get(agent.sessionId, claimKey) as { send_status?: string | null } | null;
+          .get(sessionId, claimKey) as { send_status?: string | null } | null;
         const status = row?.send_status ?? null;
-        return status === 'enqueued' || status === 'submitted' || status === 'deferred';
+        if (status === 'enqueued' || status === 'submitted' || status === 'deferred') return true;
+        return (
+          deps.db.getJobQueueRepo().listActiveByPayload('mailbox', {
+            'to.sessionId': sessionId,
+            messageUuid: claimKey,
+          }).length > 0
+        );
       },
       isNagDeliveryFailed: (spaceId, agentId, claimKey) => {
         const agent = longHorizonAgentRepo.getById(agentId);
         if (agent === null || agent.spaceId !== spaceId || agent.sessionId === null) return false;
+        const sessionId = agent.sessionId;
         const row = deps.db
           .getDatabase()
           .prepare(
             `SELECT send_status FROM sdk_messages
              WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'`
           )
-          .get(agent.sessionId, claimKey) as { send_status?: string | null } | null;
-        return row?.send_status === 'failed';
+          .get(sessionId, claimKey) as { send_status?: string | null } | null;
+        const activeMailbox =
+          deps.db.getJobQueueRepo().listActiveByPayload('mailbox', {
+            'to.sessionId': sessionId,
+            messageUuid: claimKey,
+          }).length > 0;
+        if (row?.send_status === 'failed') return !activeMailbox;
+        if (row == null) {
+          return (
+            !activeMailbox &&
+            deps.db.getJobQueueRepo().getLatestByPayload('mailbox', {
+              'to.sessionId': sessionId,
+              messageUuid: claimKey,
+            })?.status === 'dead'
+          );
+        }
+        return false;
       },
       deliverNag: (args) =>
         spaceRuntimeService.deliverLongHorizonAgentNag({

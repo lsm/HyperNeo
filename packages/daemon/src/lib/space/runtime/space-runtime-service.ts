@@ -16,6 +16,7 @@ import type { AgentMemoryRepository } from '../../../storage/repositories/agent-
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
+import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository.ts';
 import type { SessionRepository } from '../../../storage/repositories/session-repository.ts';
 import type {
@@ -715,7 +716,11 @@ export class SpaceRuntimeService {
     mailboxEntryId: string
   ): string | undefined {
     const sendStatus = this.readLongTermAgentSendStatus(sessionId, messageId);
-    if (sendStatus === 'failed') return sendStatus;
+    if (sendStatus === 'failed') {
+      return this.listActiveMailboxAdmissions(sessionId, messageId).length > 0
+        ? undefined
+        : 'failed';
+    }
     if (sendStatus != null && sendStatus !== 'deferred') return sendStatus;
     const mailboxDead =
       this.config.reactiveDb?.db
@@ -814,18 +819,8 @@ export class SpaceRuntimeService {
     messageUuid: string,
     content: unknown
   ): void {
-    const jobQueue = this.config.reactiveDb?.db.getJobQueueRepo();
-    if (!jobQueue) return;
-    const active = jobQueue.listJobs({
-      queue: MAILBOX_LANE,
-      status: ['pending', 'processing'],
-      limit: 500,
-    });
-    for (const job of active) {
+    for (const job of this.listActiveMailboxAdmissions(sessionId, messageUuid)) {
       const payload = job.payload as Record<string, unknown>;
-      const to = payload.to as { kind?: string; sessionId?: string } | undefined;
-      if (to?.kind !== 'session' || to.sessionId !== sessionId) continue;
-      if (payload.messageUuid !== messageUuid) continue;
       const pending = (payload.message as { message?: { content?: unknown } } | undefined)?.message
         ?.content;
       if (JSON.stringify(pending) !== JSON.stringify(content)) {
@@ -835,6 +830,18 @@ export class SpaceRuntimeService {
         );
       }
     }
+  }
+
+  private listActiveMailboxAdmissions(
+    sessionId: string,
+    messageUuid: string
+  ): ReturnType<JobQueueRepository['listActiveByPayload']> {
+    const jobQueue = this.config.reactiveDb?.db.getJobQueueRepo();
+    if (!jobQueue) return [];
+    return jobQueue.listActiveByPayload(MAILBOX_LANE, {
+      'to.sessionId': sessionId,
+      messageUuid,
+    });
   }
 
   private async refreshLongHorizonAgentSessionConfig(
