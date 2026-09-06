@@ -1,12 +1,10 @@
 import type { MessageOrigin } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import {
-  awaitDeliveryConsumption,
-  type ContextClearBoundaryOwner,
-  deliverAndMarkQueued,
-  deliveryConsumptionTimeoutMs,
-} from '../../../lib/agent/message-delivery.ts';
+import type { ContextClearBoundaryOwner } from '../../../lib/agent/message-delivery.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
+import type { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
+import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
+import { handoffPromptToMailbox } from './prompt-mailbox-handoff.ts';
 
 export type InjectionDeliveryStatus = 'enqueued' | 'deferred' | 'failed';
 
@@ -22,10 +20,8 @@ export interface InjectionDeliveryRowDeps {
     sendStatus: 'enqueued' | 'deferred',
     origin?: MessageOrigin
   ): string;
-  getDeliverySendStatus(sessionId: string, uuid: string): string | null | undefined;
   reopenDeliveryByUuid(sessionId: string, uuid: string): string | null;
   markDeliveryDeferredByUuid(sessionId: string, uuid: string): string | null;
-  markDeliveryFailedByUuid(sessionId: string, uuid: string): string | null;
 }
 
 export async function reopenFailedDeliveryRow(
@@ -51,17 +47,6 @@ export async function flipDeliveryRowToDeferred(
   return flippedDbId;
 }
 
-export function failDeliveryRowInBackground(
-  deps: InjectionDeliveryRowDeps,
-  sessionId: string,
-  messageId: string
-): void {
-  const failedDbId = deps.markDeliveryFailedByUuid(sessionId, messageId);
-  if (failedDbId) {
-    void deps.publishStatusChanged(sessionId, failedDbId, 'failed').catch(() => {});
-  }
-}
-
 export interface SettleDeliveryRowStatusArgs {
   sessionId: string;
   message: SDKUserMessage;
@@ -85,12 +70,12 @@ export async function settleDeliveryRowStatus(
 export interface InjectionDeliveryTargetSession {
   stateManager?: {
     setQueuedIfIdle(messageId: string): Promise<boolean>;
-    getState(): { status: string };
   };
-  getSessionData?: () => { config?: { provider?: string } };
 }
 
 export interface InjectDeliveryBranchDeps extends InjectionDeliveryRowDeps {
+  db: BunDatabase;
+  sdkMessageRepo: SDKMessageRepository;
   jobQueue: JobQueueRepository;
 }
 
@@ -99,7 +84,6 @@ export interface DeliverInjectedMessageArgs {
   sessionId: string;
   messageId: string;
   sdkUserMessage: SDKUserMessage;
-  rowExists: boolean;
   origin?: MessageOrigin;
   boundaryOwner?: ContextClearBoundaryOwner;
 }
@@ -108,42 +92,25 @@ export async function deliverInjectedMessage(
   deps: InjectDeliveryBranchDeps,
   args: DeliverInjectedMessageArgs
 ): Promise<string> {
-  const dbId = await settleDeliveryRowStatus(deps, {
-    sessionId: args.sessionId,
-    message: args.sdkUserMessage,
-    messageId: args.messageId,
-    rowExists: args.rowExists,
-    status: 'enqueued',
-    origin: args.origin,
-  });
-  await awaitDeliveryConsumption({
-    sessionId: args.sessionId,
-    messageUuid: args.messageId,
-    timeoutMs: deliveryConsumptionTimeoutMs(args.session.getSessionData?.().config?.provider),
-    getSendStatus: () => deps.getDeliverySendStatus(args.sessionId, args.messageId),
-    deliver: async () => {
-      try {
-        await deliverAndMarkQueued({
-          jobQueue: deps.jobQueue,
-          stateManager: args.session.stateManager,
-          sessionId: args.sessionId,
-          messageUuid: args.messageId,
-          origin: 'space_inject',
-          onEnqueueFailure: () => {
-            failDeliveryRowInBackground(deps, args.sessionId, args.messageId);
-          },
-        });
-      } finally {
-        args.boundaryOwner?.release();
-      }
-    },
-    ...(!args.rowExists
-      ? {
-          terminalizeOnTimeout: () => {
-            failDeliveryRowInBackground(deps, args.sessionId, args.messageId);
-          },
-        }
-      : {}),
-  });
-  return dbId;
+  try {
+    const outcome = await handoffPromptToMailbox({
+      deps: {
+        db: deps.db,
+        sdkMessageRepo: deps.sdkMessageRepo,
+        jobQueue: deps.jobQueue,
+      },
+      target: {
+        sessionId: args.sessionId,
+        messageId: args.messageId,
+        message: args.sdkUserMessage,
+        origin: 'space_inject',
+        messageOrigin: args.origin,
+      },
+      stateManager: args.session.stateManager,
+      publishStatusChanged: deps.publishStatusChanged,
+    });
+    return outcome.state === 'stale' ? args.messageId : outcome.dbId;
+  } finally {
+    args.boundaryOwner?.release();
+  }
 }

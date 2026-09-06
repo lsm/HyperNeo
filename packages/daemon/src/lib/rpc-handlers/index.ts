@@ -1029,7 +1029,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       onConsumed?: (settledSessionId: string) => void;
       lateSettlement?: import('../space/runtime/space-agent-message-delivery.ts').SpaceAgentLateSettlementOwner;
       onLateFailure?: () => void;
-      disposeSignal?: AbortSignal;
     }
   ): Promise<SpaceAgentInjectionOutcome> => {
     const { sessionId, session } = await resolveSpaceAgentSession<AgentSession>(
@@ -1052,8 +1051,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     };
     return await deliverSpaceAgentMessage(
       {
+        db: deps.db.getDatabase(),
         sdkMessageRepo: deps.reactiveDb.db.getSDKMessageRepo(),
-        saveUserMessage: (sid, msg, status) => deps.reactiveDb.db.saveUserMessage(sid, msg, status),
         publishStatusChanged: async (sid, dbId, status) => {
           await deps.internalEventBus
             .publish('messages.statusChanged', {
@@ -1068,13 +1067,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
         onConsumed: injectorOptions?.onConsumed,
         lateSettlement: injectorOptions?.lateSettlement,
         onLateFailure: injectorOptions?.onLateFailure,
-        disposeSignal: injectorOptions?.disposeSignal,
       },
       {
         sessionId,
         messageId,
         sdkUserMessage,
-        provider: session.getSessionData?.().config?.provider,
       }
     );
   };
