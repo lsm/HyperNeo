@@ -162,6 +162,29 @@ function makeHarness(
 
 describe('createDefaultSessionResolutionDeps', () => {
   describe('getSession', () => {
+    test('resolves ordinary sessions before task-agent initialization', async () => {
+      const live = sessionOf('active');
+      const { deps } = makeHarness({ asyncSession: () => live });
+      const services = {
+        sessionManager: {
+          getCachedSession: () => undefined,
+          getSessionAsync: async () => live,
+        },
+        spaceRuntimeService: {
+          ensureAgentSession: async () => null,
+          isAgentTargetLifecycleEligible: async () => true,
+        },
+        nodeExecutionRepo: { listByWorkflowRun: () => [] },
+        taskRepo: { getTask: () => null },
+        longHorizonAgentRepo: { getCoordinator: () => null },
+      } as unknown as DefaultSessionResolutionServices;
+
+      expect(await createDefaultSessionResolutionDeps(services).getSession('agent-session')).toBe(
+        live
+      );
+      expect(await deps.getSession('agent-session')).toBe(live);
+    });
+
     test('indexed sub-session backed by the cache resolves without the async lookup', async () => {
       const live = sessionOf('active');
       const { deps, calls } = makeHarness({
