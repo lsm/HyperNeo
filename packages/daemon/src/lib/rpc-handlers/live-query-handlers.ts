@@ -516,13 +516,23 @@ function mailboxDeliveryTextExpr(sdkMessageExpr: string): string {
 }
 
 function mailboxDeliverySenderExpr(textExpr: string): string {
+  const rest = `SUBSTR(${textExpr}, 18)`;
+  const nameRaw = `SUBSTR(${rest}, 1, COALESCE(NULLIF(INSTR(${rest}, ' ───') - 1, -1), LENGTH(${textExpr}) - 17))`;
+  const firstMarker = `INSTR(${nameRaw}, ' (task #')`;
+  const firstSegment = `SUBSTR(${nameRaw}, ${firstMarker})`;
+  const secondMarkerRelative = `INSTR(SUBSTR(${nameRaw}, ${firstMarker} + 9), ' (task #')`;
+  const secondMarker = `${firstMarker} + 8 + ${secondMarkerRelative}`;
+  const secondSegment = `SUBSTR(${nameRaw}, ${secondMarker})`;
+  const isTaskSuffix = (segment: string) =>
+    `SUBSTR(${segment}, 9) = CAST(SUBSTR(${segment}, 9) AS INTEGER) || ')'`;
   return `CASE
       WHEN ${textExpr} LIKE '─── Message from %' THEN
         CASE
-          WHEN INSTR(SUBSTR(${textExpr}, 18), ' (task #') > 0
-            AND INSTR(SUBSTR(${textExpr}, 18), ' (task #') < COALESCE(NULLIF(INSTR(SUBSTR(${textExpr}, 18), ' ───'), 0), 2147483647)
-            THEN TRIM(SUBSTR(${textExpr}, 18, INSTR(SUBSTR(${textExpr}, 18), ' (task #') - 1))
-          ELSE TRIM(SUBSTR(${textExpr}, 18, COALESCE(NULLIF(INSTR(SUBSTR(${textExpr}, 18), ' ───') - 1, -1), LENGTH(${textExpr}) - 17)))
+          WHEN ${firstMarker} > 0 AND ${isTaskSuffix(firstSegment)}
+            THEN TRIM(SUBSTR(${nameRaw}, 1, ${firstMarker} - 1))
+          WHEN ${secondMarkerRelative} > 0 AND ${isTaskSuffix(secondSegment)}
+            THEN TRIM(SUBSTR(${nameRaw}, 1, ${secondMarker} - 1))
+          ELSE TRIM(${nameRaw})
         END
       ELSE NULL
     END`;

@@ -966,7 +966,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
     function envelopeHandoffPayload(
       uuid: string,
       sender: string,
-      body: string
+      body: string,
+      taskLabel?: string
     ): Record<string, unknown> {
       return {
         type: 'user',
@@ -978,7 +979,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
           content: [
             {
               type: 'text',
-              text: `─── Message from ${sender} ───\n\n${body}\n\n─── Reply ───\nTo reply, use: send_message with target "@${sender}"`,
+              text: `─── Message from ${sender}${taskLabel ?? ''} ───\n\n${body}\n\n─── Reply ───\nTo reply, use: send_message with target "@${sender}"`,
             },
           ],
         },
@@ -1087,6 +1088,70 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect((delivery.target as Record<string, unknown>).label).toBe('reviewer');
       expect((delivery.target as Record<string, unknown>).kind).toBe('worker');
       expect((delivery.target as Record<string, unknown>).sessionId).toBe(nodeSessionId);
+    });
+
+    test('actorMessages.byTask preserves sender names containing task-label-like text', () => {
+      const workflowRunId = 'wr-actor-sender-name';
+      const nodeSessionId = 'session-actor-sender-name';
+      const taskId = insertSpaceTask({
+        id: 'actor-sender-name',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      insertSession(nodeSessionId, 'worker', '{}');
+      insertNodeExecution({
+        id: 'ne-actor-sender-name',
+        workflowRunId,
+        workflowNodeId: 'node-reviewer',
+        agentName: 'reviewer',
+        agentSessionId: nodeSessionId,
+        status: 'in_progress',
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-sender-brief',
+        sessionId: nodeSessionId,
+        timestampMs: now + 1000,
+        sendStatus: 'consumed',
+        payload: {
+          type: 'user',
+          isSynthetic: true,
+          inputKind: 'task',
+          message: { role: 'user', content: [{ type: 'text', text: 'You are the reviewer.' }] },
+        },
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-sender-marker',
+        sessionId: nodeSessionId,
+        timestampMs: now + 2000,
+        sendStatus: 'consumed',
+        sdkUuid: 'u-sender-marker',
+        payload: envelopeHandoffPayload(
+          'u-sender-marker',
+          'reviewer (task #2)',
+          'marker name body',
+          ' (task #5)'
+        ),
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-sender-plain',
+        sessionId: nodeSessionId,
+        timestampMs: now + 3000,
+        sendStatus: 'consumed',
+        sdkUuid: 'u-sender-plain',
+        payload: envelopeHandoffPayload('u-sender-plain', 'coder', 'plain body', ' (task #7)'),
+      });
+
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+      const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+      const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+      const byId = new Map(mapped.map((row) => [row.id as string, row]));
+
+      expect((byId.get('delivery:sdk-sender-marker')!.from as Record<string, unknown>).label).toBe(
+        'reviewer (task #2)'
+      );
+      expect((byId.get('delivery:sdk-sender-plain')!.from as Record<string, unknown>).label).toBe(
+        'coder'
+      );
     });
 
     test('actorMessages.byTask excludes the session brief, human rows, and SDK tool-result echoes from delivery rows', () => {
