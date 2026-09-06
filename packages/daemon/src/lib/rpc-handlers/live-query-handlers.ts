@@ -528,18 +528,26 @@ function mailboxDeliverySenderExpr(textExpr: string): string {
   const secondSegment = `SUBSTR(${nameRaw}, ${secondMarker})`;
   const isTaskSuffix = (segment: string) =>
     `SUBSTR(${segment}, 9) = CAST(SUBSTR(${segment}, 9) AS INTEGER) || ')'`;
-  const replyBlock = `SUBSTR(${textExpr}, INSTR(${textExpr}, '─── Reply ───'))`;
+  const firstReplyAt = `INSTR(${textExpr}, '─── Reply ───')`;
+  const secondReplyRelative = `INSTR(SUBSTR(${textExpr}, ${firstReplyAt} + 14), '─── Reply ───')`;
+  const replyBlockStart = `CASE WHEN ${firstReplyAt} > 0 AND ${secondReplyRelative} > 0
+      THEN ${firstReplyAt} + 14 + ${secondReplyRelative} - 1
+      ELSE ${firstReplyAt} END`;
+  const replyBlock = `SUBSTR(${textExpr}, ${replyBlockStart})`;
   const replyEchoStart = `INSTR(${replyBlock}, 'send_message with target "')`;
   const replyEchoAt = `${replyEchoStart} + 26`;
   const replyEcho = `SUBSTR(${replyBlock}, ${replyEchoAt}, INSTR(SUBSTR(${replyBlock}, ${replyEchoAt}), '"') - 1)`;
+  const replyTaskVerb = `INSTR(${replyBlock}, 'send_message_to_task')`;
   return `CASE
       WHEN ${textExpr} LIKE '─── Message from %' THEN
         CASE
-          WHEN INSTR(${textExpr}, '─── Reply ───') > 0 AND ${replyEchoStart} > 0 AND ${replyEcho} NOT LIKE '@%'
+          WHEN ${firstReplyAt} > 0 AND ${replyEchoStart} > 0 AND ${replyEcho} NOT LIKE '@%'
             THEN ${replyEcho}
-          WHEN ${firstMarker} > 0 AND ${isTaskSuffix(firstSegment)}
+          WHEN ${firstReplyAt} > 0 AND ${replyEchoStart} > 0
+            THEN TRIM(${nameRaw})
+          WHEN ${firstReplyAt} > 0 AND ${replyTaskVerb} > 0 AND ${firstMarker} > 0 AND ${isTaskSuffix(firstSegment)}
             THEN TRIM(SUBSTR(${nameRaw}, 1, ${firstMarker} - 1))
-          WHEN ${secondMarkerRelative} > 0 AND ${isTaskSuffix(secondSegment)}
+          WHEN ${firstReplyAt} > 0 AND ${replyTaskVerb} > 0 AND ${secondMarkerRelative} > 0 AND ${isTaskSuffix(secondSegment)}
             THEN TRIM(SUBSTR(${nameRaw}, 1, ${secondMarker} - 1))
           ELSE TRIM(${nameRaw})
         END
