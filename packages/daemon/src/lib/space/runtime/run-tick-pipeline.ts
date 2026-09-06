@@ -14,18 +14,19 @@ import {
   type TickResult,
 } from './run-tick-contract.ts';
 
-export async function loadRunContext(ctx: RunTickCtx): Promise<RunTickCtx> {
+export function loadRunContext(ctx: RunTickCtx, next: (err: unknown, value: RunTickCtx) => void) {
   const run = ctx.deps.getRun(ctx.runId);
-  let context: RunTickContext | null = null;
+  const deliver = (context: RunTickContext | null) => next(null, { ...ctx, run, context });
   if (
     run &&
     run.status !== 'cancelled' &&
     !isWorkflowRunSucceeded(run.status) &&
     !isWorkflowRunWaiting(run.status)
   ) {
-    context = await ctx.deps.loadRunContext(ctx.runId, run);
+    ctx.deps.loadRunContext(ctx.runId, run).then(deliver);
+    return;
   }
-  return { ...ctx, run, context };
+  deliver(null);
 }
 
 export function haltIfRunMissing(ctx: RunTickCtx): TickResult {
@@ -209,7 +210,7 @@ const runTickRun = (
   })('space-workflow-run-tick') as PipelineAPI
 )
   .input(['ctx'])
-  .pipe(loadRunContext, 'ctx', 'ctx')
+  .pipe(loadRunContext, ['ctx', 'next'], 'ctx')
   .pipe(haltIfRunMissing, 'ctx', 'result:tickOutcome')
   .pipe(haltIfRunFinished, 'ctx', 'result:tickOutcome')
   .pipe(routeWaitingRun, 'ctx', 'result:tickOutcome')

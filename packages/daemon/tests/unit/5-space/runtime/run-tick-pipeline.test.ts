@@ -32,6 +32,7 @@ import {
   spawnPendingExecutions,
 } from '../../../../src/lib/space/runtime/run-tick-pipeline.ts';
 import type {
+  RunTickCtx,
   SpaceWorkflowRunTickDeps,
   SpaceWorkflowRunTickOutcome,
 } from '../../../../src/lib/space/runtime/run-tick-contract.ts';
@@ -213,10 +214,16 @@ function makeDeps(state: Partial<DepsState> = {}): RecordedDeps {
   };
 }
 
+function deliverLoad(ctx: RunTickCtx): Promise<RunTickCtx> {
+  return new Promise((resolve) => {
+    loadRunContext(ctx, (_err, value) => resolve(value));
+  });
+}
+
 describe('spaceWorkflowRunTick stages', () => {
   test('loadRunContext fetches the run and loads the context for an active run', async () => {
     const deps = makeDeps();
-    const ctx = await loadRunContext({ runId: RUN_ID, deps });
+    const ctx = await deliverLoad({ runId: RUN_ID, deps });
     expect(ctx.run).toEqual(makeRun('in_progress'));
     expect(ctx.context).toEqual(deps.context);
     expect(deps.calls).toEqual(['getRun', 'loadRunContext']);
@@ -225,7 +232,7 @@ describe('spaceWorkflowRunTick stages', () => {
   test('loadRunContext skips the context load for missing, finished, and waiting runs', async () => {
     for (const status of [null, 'cancelled', 'done', 'blocked'] as const) {
       const deps = makeDeps({ run: status === null ? null : makeRun(status) });
-      const ctx = await loadRunContext({ runId: RUN_ID, deps });
+      const ctx = await deliverLoad({ runId: RUN_ID, deps });
       expect(ctx.context).toBeNull();
       expect(deps.calls).toEqual(['getRun']);
     }
@@ -756,5 +763,53 @@ describe('spaceWorkflowRunTick pipeline', () => {
     expect(deps.calls).not.toContain('spawnPendingExecutions');
     expect(deps.calls).not.toContain('blockRunForSpawnFailure');
     expect(deps.calls).not.toContain('casCanonicalTaskOpenToInProgress');
+  });
+
+  test('admission gates run as an atomic burst with a single scheduler point after the context load', async () => {
+    const deps = makeDeps({
+      context: makeContext({
+        executions: [makeExecution('blocked', 'needs review')],
+      }),
+    });
+    const order: string[] = [];
+    let releaseContext: (value: RunTickContext | null) => void = () => {};
+    const gatedContext = new Promise<RunTickContext | null>((resolve) => {
+      releaseContext = resolve;
+    });
+    let started: () => void = () => {};
+    const startedPromise = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    deps.loadRunContext = () => {
+      order.push('context-load');
+      started();
+      return gatedContext;
+    };
+    deps.pruneStaleNotifyDedupKeys = () => order.push('prune');
+    deps.blockRunOnBlockedExecutions = async () => order.push('block-on-blocked');
+
+    const outcomePromise = runSpaceWorkflowRunTick(deps, RUN_ID);
+    await startedPromise;
+    releaseContext(deps.context);
+    queueMicrotask(() => order.push('interleave-observer'));
+    const outcome = await outcomePromise;
+
+    expect(outcome).toEqual({ action: 'blocked_on_blocked_executions' });
+    expect(order).toEqual(['context-load', 'interleave-observer', 'prune', 'block-on-blocked']);
+  });
+
+  test('the front routing cascade runs synchronously from the entry call', async () => {
+    const deps = makeDeps({ run: null });
+    const order: string[] = [];
+    deps.getRun = () => {
+      order.push('getRun');
+      return null;
+    };
+    const outcomePromise = runSpaceWorkflowRunTick(deps, RUN_ID);
+    queueMicrotask(() => order.push('interleave-observer'));
+    const outcome = await outcomePromise;
+
+    expect(outcome).toEqual({ action: 'skip', reason: 'missing_run' });
+    expect(order).toEqual(['getRun', 'interleave-observer']);
   });
 });
