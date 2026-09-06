@@ -15,6 +15,7 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { Database } from '../../../../src/storage/sqlite-compat';
+import { createOutboxTestDb, type OutboxTestDb } from '../../../helpers/outbox-test-db';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 const NODE_ID = 'node-build';
@@ -1437,7 +1438,8 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
 
   function makeGuardManager(
     taskStatus: string | null,
-    runStatus: string
+    runStatus: string,
+    outbox?: OutboxTestDb
   ): {
     manager: TaskAgentManager;
     saveUserMessage: ReturnType<typeof mock>;
@@ -1473,19 +1475,21 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
 
     const manager = new TaskAgentManager({
       db: {
-        getDatabase: () => ({}),
+        getDatabase: () => outbox?.db ?? {},
         saveUserMessage,
         getUserMessageIdsByStatus: mock(() => []),
-        getSDKMessageRepo: () => ({
-          getDeliveryContent: () => null,
-          reopenDeliveryByUuid: mock(() => null),
-          markDeliveryDeferredByUuid: mock(() => null),
-          markDeliveryFailedByUuid: mock(() => null),
-        }),
-        getJobQueueRepo: () => ({
-          activeDeliveryMessageUuids: () => new Set<string>(),
-          enqueue: jobQueueEnqueue,
-        }),
+        getSDKMessageRepo: () =>
+          outbox?.sdkRepo ?? {
+            getDeliveryContent: () => null,
+            reopenDeliveryByUuid: mock(() => null),
+            markDeliveryDeferredByUuid: mock(() => null),
+            markDeliveryFailedByUuid: mock(() => null),
+          },
+        getJobQueueRepo: () =>
+          outbox?.jobQueue ?? {
+            activeDeliveryMessageUuids: () => new Set<string>(),
+            enqueue: jobQueueEnqueue,
+          },
       },
       internalEventBus: { subscribe: mock(() => () => {}), publish: mock(async () => {}) },
       nodeExecutionRepo: {
@@ -1532,14 +1536,15 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
   });
 
   it('lets done task and run states through to the durable injection shell', async () => {
-    const { manager, saveUserMessage, jobQueueEnqueue } = makeGuardManager('done', 'done');
+    const outbox = createOutboxTestDb();
+    const { manager } = makeGuardManager('done', 'done', outbox);
 
     const dbId = await manager.injectSubSessionMessage(GUARD_SESSION_ID, 'note', true);
 
-    expect(dbId).toBe('db-id');
-    expect(saveUserMessage).toHaveBeenCalledTimes(1);
-    expect(saveUserMessage.mock.calls[0][2]).toBe('enqueued');
-    expect(jobQueueEnqueue).toHaveBeenCalledTimes(1);
+    expect(typeof dbId).toBe('string');
+    expect(outbox.userRowCount(GUARD_SESSION_ID)).toBe(1);
+    expect(outbox.pendingDeliveryJobCount(GUARD_SESSION_ID)).toBe(1);
+    outbox.db.close();
   });
 
   it('rejects runtime-origin injections when the canonical task is done (#3109)', async () => {
