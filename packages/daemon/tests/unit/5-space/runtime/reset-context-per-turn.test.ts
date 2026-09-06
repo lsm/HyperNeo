@@ -35,6 +35,7 @@ function makeManager(opts: {
   materializedRowIds?: string[];
   mailboxEntryStatus?: 'pending' | 'processing' | 'completed' | 'dead' | 'absent';
   normalizeThrows?: boolean;
+  entryCompletesAfterPolls?: number;
   consumedAfterHandoff?: boolean;
   consumeAfterPolls?: number;
   throwAfterPolls?: number;
@@ -70,6 +71,7 @@ function makeManager(opts: {
   let mailboxEntryEnqueued = false;
   let mailboxMessageUuid: string | null = null;
   let deliveryContentPolls = 0;
+  let entryStatusPolls = 0;
   let postEnqueueInFlightProbes = 0;
   let materializedRowIds = opts.materializedRowIds ?? ['db-id'];
   const cancelHeldJob = mock(() => false);
@@ -154,7 +156,16 @@ function makeManager(opts: {
           ]);
         },
         activeMailboxMessageUuids: () => new Set<string>(),
-        mailboxEntryJobStatus: () => opts.mailboxEntryStatus ?? 'completed',
+        mailboxEntryJobStatus: () => {
+          entryStatusPolls += 1;
+          if (
+            opts.entryCompletesAfterPolls !== undefined &&
+            entryStatusPolls > opts.entryCompletesAfterPolls
+          ) {
+            return 'completed' as const;
+          }
+          return opts.mailboxEntryStatus ?? ('completed' as const);
+        },
         cancelPendingMailboxEntry: () => false,
         cancelHeldDeliveryJob: cancelHeldJob,
         enqueue: jobQueueEnqueue,
@@ -584,7 +595,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     expect(session.cancelHeldJob).toHaveBeenCalledTimes(1);
   });
 
-  it('treats a consumed sibling row as delivered even when the earliest row is not consumed', async () => {
+  it('treats a consumed sibling row as delivered without reopening the failed earliest row', async () => {
     const { manager, session } = makeManager({
       deliveryContent: { sendStatus: 'failed' },
       consumedAfterHandoff: false,
@@ -598,8 +609,27 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       true
     );
 
-    expect(dbId).toBe('db-id');
+    expect(typeof dbId).toBe('string');
+    expect(session.reopenDeliveryByUuid).not.toHaveBeenCalled();
+    expect(session.mailboxEnqueue).not.toHaveBeenCalled();
     expect(session.failDeliveryUnless).not.toHaveBeenCalled();
+  });
+
+  it('keeps waiting for a processing mailbox entry until it settles', async () => {
+    const { manager, session } = makeManager({
+      mailboxEntryStatus: 'processing',
+      entryCompletesAfterPolls: 2,
+    });
+    indexSession(manager, liveSession(session));
+
+    const dbId = await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true
+    );
+
+    expect(dbId).toBe('db-id');
+    expect(session.mailboxEnqueue).toHaveBeenCalledTimes(1);
   });
 
   it('a normalization error over an existing row restores the failed status', async () => {

@@ -342,8 +342,6 @@ const VERIFIED_STOP_ESCALATION_FORCE_KILL_MS = 2000;
 
 const MAILBOX_MATERIALIZATION_WAIT_MS = 30_000;
 
-const MAILBOX_MATERIALIZATION_GRACE_MS = 30_000;
-
 const MAILBOX_MATERIALIZATION_POLL_MS = 150;
 
 const MAILBOX_CONSUMPTION_HARD_WAIT_MS = 12 * 60_000;
@@ -4577,8 +4575,8 @@ export class TaskAgentManager {
   ): Promise<
     { kind: 'materialized'; dbId: string } | { kind: 'dead' | 'absent' | 'cancelled' | 'stuck' }
   > {
-    let deadline = Date.now() + MAILBOX_MATERIALIZATION_WAIT_MS;
-    let processingGraceArmed = false;
+    const pendingDeadline = Date.now() + MAILBOX_MATERIALIZATION_WAIT_MS;
+    const hardDeadline = Date.now() + mailboxConsumptionHardWaitMs();
     for (;;) {
       const entryStatus = jobQueue.mailboxEntryJobStatus(entryId);
       if (entryStatus === 'dead') return { kind: 'dead' };
@@ -4589,17 +4587,15 @@ export class TaskAgentManager {
         return { kind: 'materialized', dbId: rowIds[0] ?? messageId };
       }
       if (entryStatus === 'absent' && rowIds.length === 0) return { kind: 'absent' };
-      if (Date.now() >= deadline) {
-        if (entryStatus === 'processing' && !processingGraceArmed) {
-          processingGraceArmed = true;
-          deadline = Date.now() + MAILBOX_MATERIALIZATION_GRACE_MS;
-          continue;
-        }
-        if (entryStatus === 'pending' && jobQueue.cancelPendingMailboxEntry(entryId)) {
-          return { kind: 'cancelled' };
-        }
-        return { kind: 'stuck' };
+      const now = Date.now();
+      if (
+        entryStatus === 'pending' &&
+        now >= pendingDeadline &&
+        jobQueue.cancelPendingMailboxEntry(entryId)
+      ) {
+        return { kind: 'cancelled' };
       }
+      if (now >= hardDeadline) return { kind: 'stuck' };
       await new Promise((resolve) => setTimeout(resolve, MAILBOX_MATERIALIZATION_POLL_MS));
     }
   }
@@ -4755,6 +4751,9 @@ export class TaskAgentManager {
     const deliveryRows = this.injectDeliveryRowDeps();
 
     if (outcome.decision.action === 'noop') {
+      return messageId;
+    }
+    if (this.config.db.getSDKMessageRepo().hasConsumedDeliverySibling(sessionId, messageId)) {
       return messageId;
     }
     if (outcome.decision.action === 'defer') {
