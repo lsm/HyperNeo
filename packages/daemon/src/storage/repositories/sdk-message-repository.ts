@@ -1841,20 +1841,21 @@ export class SDKMessageRepository {
     return this.parseUserMessageRow(row, uuid);
   }
 
-  getStoredPromptByUuid(sessionId: string, uuid: string): SDKMessage | null {
-    const row = this.db
+  getStoredPromptsByUuid(sessionId: string, uuid: string): SDKMessage[] {
+    const rows = this.db
       .prepare(
         `SELECT sdk_message FROM sdk_messages
           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-          ORDER BY timestamp ASC, rowid ASC LIMIT 1`
+          ORDER BY timestamp ASC, rowid ASC`
       )
-      .get(sessionId, uuid) as { sdk_message: string } | undefined;
-    if (row === undefined) return null;
-    try {
-      return JSON.parse(row.sdk_message) as SDKMessage;
-    } catch {
-      return null;
+      .all(sessionId, uuid) as Array<{ sdk_message: string }>;
+    const messages: SDKMessage[] = [];
+    for (const row of rows) {
+      try {
+        messages.push(JSON.parse(row.sdk_message) as SDKMessage);
+      } catch {}
     }
+    return messages;
   }
 
   getUserMessageContentByUuid(sessionId: string, uuid: string): string | MessageContent[] | null {

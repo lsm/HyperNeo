@@ -101,13 +101,15 @@ export function persistFailedRowStage(ctx: MailboxFailureCtx): MailboxFailureCtx
   const entry = ctx.entry;
   if (target === undefined || message === undefined || entry === null) return ctx;
   const synthetic = entry.origin !== 'chat';
+  let conflict = false;
   try {
     const outcome = withBusyRetry((): { failedId: string; uuidOwned: boolean } => {
-      const stored = ctx.deps.sdkMessageRepo.getStoredPromptByUuid(
+      const siblings = ctx.deps.sdkMessageRepo.getStoredPromptsByUuid(
         target.sessionId,
         target.messageUuid
       );
-      if (stored !== null && !samePromptMessage(stored, message)) {
+      if (siblings.some((stored) => !samePromptMessage(stored, message))) {
+        conflict = true;
         const receipt: SDKUserMessage = {
           ...message,
           uuid: deterministicMailboxUuid(entry.id) as NonNullable<SDKUserMessage['uuid']>,
@@ -130,7 +132,7 @@ export function persistFailedRowStage(ctx: MailboxFailureCtx): MailboxFailureCtx
     return { ...ctx, failedId: outcome.failedId, uuidOwned: outcome.uuidOwned };
   } catch (error) {
     emitMaterializeFailure(target, entry.id, error);
-    return ctx;
+    return conflict ? { ...ctx, uuidOwned: false } : ctx;
   }
 }
 
