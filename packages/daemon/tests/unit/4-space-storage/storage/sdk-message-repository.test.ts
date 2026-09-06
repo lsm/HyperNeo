@@ -4928,6 +4928,98 @@ describe('SDKMessageRepository', () => {
     });
   });
 
+  describe('getConsumedSiblingContent (NT-3f)', () => {
+    function insertSiblingRow(opts: {
+      sessionId: string;
+      uuid: string;
+      id: string;
+      timestamp: string;
+      content: string | Array<Record<string, string>>;
+      sendStatus?: string | null;
+      consumedSeq?: number | null;
+    }): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, consumed_seq, sdk_uuid)
+         VALUES (?, ?, 'user', ?, ?, ?, ?, ?)`
+      ).run(
+        opts.id,
+        opts.sessionId,
+        JSON.stringify({
+          type: 'user',
+          uuid: opts.uuid,
+          message: { role: 'user', content: opts.content },
+        }),
+        opts.timestamp,
+        opts.sendStatus ?? null,
+        opts.consumedSeq ?? null,
+        opts.uuid
+      );
+    }
+
+    it('returns the latest settled sibling content when send_status marks it consumed', () => {
+      insertSiblingRow({
+        sessionId: 'session-sibling',
+        uuid: 'uuid-sibling',
+        id: 'sibling-old',
+        timestamp: '2026-09-05T10:00:00.000Z',
+        content: 'Older consumed copy',
+        sendStatus: 'consumed',
+      });
+      insertSiblingRow({
+        sessionId: 'session-sibling',
+        uuid: 'uuid-sibling',
+        id: 'sibling-new',
+        timestamp: '2026-09-05T11:00:00.000Z',
+        content: 'Newer consumed copy',
+        sendStatus: 'consumed',
+      });
+
+      expect(repository.getConsumedSiblingContent('session-sibling', 'uuid-sibling')).toBe(
+        'Newer consumed copy'
+      );
+    });
+
+    it('returns sibling content settled via consumed_seq even when send_status is not consumed', () => {
+      insertSiblingRow({
+        sessionId: 'session-sibling',
+        uuid: 'uuid-seq',
+        id: 'sibling-seq',
+        timestamp: '2026-09-05T12:00:00.000Z',
+        content: [{ type: 'text', text: 'Seq-settled copy' }],
+        sendStatus: 'queued',
+        consumedSeq: 7,
+      });
+
+      expect(repository.getConsumedSiblingContent('session-sibling', 'uuid-seq')).toEqual([
+        { type: 'text', text: 'Seq-settled copy' },
+      ]);
+    });
+
+    it('returns null when no sibling is settled — unknown uuid, foreign session, or still unconsumed', () => {
+      insertSiblingRow({
+        sessionId: 'session-sibling',
+        uuid: 'uuid-unconsumed',
+        id: 'sibling-unconsumed',
+        timestamp: '2026-09-05T13:00:00.000Z',
+        content: 'Still queued',
+        sendStatus: 'queued',
+      });
+
+      expect(repository.getConsumedSiblingContent('session-sibling', 'uuid-missing')).toBeNull();
+      expect(repository.getConsumedSiblingContent('session-other', 'uuid-unconsumed')).toBeNull();
+      expect(repository.getConsumedSiblingContent('session-sibling', 'uuid-unconsumed')).toBeNull();
+    });
+
+    it('returns null when the settled sibling payload is corrupt JSON', () => {
+      db.prepare(
+        `INSERT INTO sdk_messages (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+         VALUES ('sibling-corrupt', 'session-sibling', 'user', '{not-json', '2026-09-05T14:00:00.000Z', 'consumed', 'uuid-corrupt')`
+      ).run();
+
+      expect(repository.getConsumedSiblingContent('session-sibling', 'uuid-corrupt')).toBeNull();
+    });
+  });
+
   describe('getAssistantMessagesSince (A1)', () => {
     function insertAssistantProjectionRow(
       sessionId: string,

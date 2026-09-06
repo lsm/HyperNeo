@@ -3,9 +3,11 @@ import type { MailboxHandoffOutcome } from '../../../../src/lib/mailbox/handoff.
 import {
   activateDeferredStage,
   claimQueuedStage,
+  consumeDeliveryStage,
   deliverOutcomeStage,
   handoffStage,
   isTerminalOutcome,
+  type MailboxConsumptionOutcome,
   type MailboxInjectSettlementDeps,
   normalizeExistingRowStage,
   settleMailboxInject,
@@ -24,6 +26,7 @@ function makeDeps(overrides?: {
   settlement?: SettlementLike;
   settled?: boolean;
   inFlight?: boolean;
+  consumption?: MailboxConsumptionOutcome;
 }): {
   deps: MailboxInjectSettlementDeps;
   calls: string[];
@@ -43,6 +46,10 @@ function makeDeps(overrides?: {
     hasInFlightDelivery: () => overrides?.inFlight ?? true,
     claimQueued: async () => {
       calls.push('claimQueued');
+    },
+    awaitDeliveryConsumption: async () => {
+      calls.push('consume');
+      return overrides?.consumption ?? 'consumed';
     },
     persistFailedRow: async () => {
       calls.push('persistFailed');
@@ -164,6 +171,33 @@ describe('mailbox-inject-settlement stages', () => {
     expect(await claimQueuedStage(deps, SESSION_ID, MESSAGE_ID)).toEqual({ queued: true });
   });
 
+  it('consumeDeliveryStage passes a consumed delivery through without persisting', async () => {
+    const { deps, calls } = makeDeps({ consumption: 'consumed' });
+    expect(await consumeDeliveryStage(deps, SESSION_ID, MESSAGE_ID)).toEqual({
+      consumed: true,
+      finalOutcome: undefined,
+    });
+    expect(calls).toEqual(['consume']);
+  });
+
+  it('consumeDeliveryStage persists the failed row and fails on an inactive delivery', async () => {
+    const { deps, calls } = makeDeps({ consumption: 'inactive' });
+    expect(await consumeDeliveryStage(deps, SESSION_ID, MESSAGE_ID)).toEqual({
+      consumed: false,
+      finalOutcome: { action: 'failed', reason: 'mailbox delivery not consumed (inactive)' },
+    });
+    expect(calls).toEqual(['consume', 'persistFailed']);
+  });
+
+  it('consumeDeliveryStage persists the failed row and fails on a hard timeout', async () => {
+    const { deps, calls } = makeDeps({ consumption: 'timeout' });
+    expect(await consumeDeliveryStage(deps, SESSION_ID, MESSAGE_ID)).toEqual({
+      consumed: false,
+      finalOutcome: { action: 'failed', reason: 'mailbox delivery not consumed (timeout)' },
+    });
+    expect(calls).toEqual(['consume', 'persistFailed']);
+  });
+
   it('deliverOutcomeStage resolves the materialized row id', () => {
     expect(deliverOutcomeStage({ kind: 'materialized', dbId: 'db-1' }, MESSAGE_ID)).toEqual({
       finalOutcome: { action: 'delivered', dbId: 'db-1' },
@@ -191,7 +225,7 @@ describe('settleMailboxInject — halted pipeline composition', () => {
       deps,
     });
     expect(outcome).toEqual({ action: 'delivered', dbId: 'db-1' });
-    expect(calls).toEqual(['claimQueued']);
+    expect(calls).toEqual(['claimQueued', 'consume']);
   });
 
   it('normalizes, activates, and claims queued for a deferred-row retry', async () => {
@@ -204,7 +238,23 @@ describe('settleMailboxInject — halted pipeline composition', () => {
       deps,
     });
     expect(outcome).toEqual({ action: 'delivered', dbId: 'db-1' });
-    expect(calls).toEqual(['normalize', 'activate', 'claimQueued']);
+    expect(calls).toEqual(['normalize', 'activate', 'claimQueued', 'consume']);
+  });
+
+  it('halts at the consumption gate when the delivery never consumes', async () => {
+    const { deps, calls } = makeDeps({ consumption: 'inactive' });
+    const outcome = await settleMailboxInject({
+      sessionId: SESSION_ID,
+      messageId: MESSAGE_ID,
+      rowExistedAtHandoff: false,
+      existingSendStatus: null,
+      deps,
+    });
+    expect(outcome).toEqual({
+      action: 'failed',
+      reason: 'mailbox delivery not consumed (inactive)',
+    });
+    expect(calls).toEqual(['claimQueued', 'consume', 'persistFailed']);
   });
 
   it('halts at the settlement gate on a dead entry — activation and queue claim never run', async () => {
