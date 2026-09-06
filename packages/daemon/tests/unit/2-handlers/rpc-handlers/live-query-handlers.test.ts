@@ -1140,6 +1140,18 @@ describe('NAMED_QUERY_REGISTRY', () => {
         sdkUuid: 'u-sender-plain',
         payload: envelopeHandoffPayload('u-sender-plain', 'coder', 'plain body', ' (task #7)'),
       });
+      insertOutboxUserMessage({
+        id: 'sdk-sender-delimiter',
+        sessionId: nodeSessionId,
+        timestampMs: now + 4000,
+        sendStatus: 'consumed',
+        sdkUuid: 'u-sender-delimiter',
+        payload: envelopeHandoffPayload(
+          'u-sender-delimiter',
+          'reviewer ─── west',
+          'delimiter body'
+        ),
+      });
 
       const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
       const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
@@ -1152,6 +1164,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect((byId.get('delivery:sdk-sender-plain')!.from as Record<string, unknown>).label).toBe(
         'coder'
       );
+      expect(
+        (byId.get('delivery:sdk-sender-delimiter')!.from as Record<string, unknown>).label
+      ).toBe('reviewer ─── west');
     });
 
     test('actorMessages.byTask excludes the session brief, human rows, and SDK tool-result echoes from delivery rows', () => {

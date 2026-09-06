@@ -517,7 +517,10 @@ function mailboxDeliveryTextExpr(sdkMessageExpr: string): string {
 
 function mailboxDeliverySenderExpr(textExpr: string): string {
   const rest = `SUBSTR(${textExpr}, 18)`;
-  const nameRaw = `SUBSTR(${rest}, 1, COALESCE(NULLIF(INSTR(${rest}, ' ───') - 1, -1), LENGTH(${textExpr}) - 17))`;
+  const nameRaw = `SUBSTR(${rest}, 1, COALESCE(
+      NULLIF(INSTR(${rest}, ' ───\n\n') - 1, -1),
+      COALESCE(NULLIF(INSTR(${rest}, ' ───') - 1, -1), LENGTH(${textExpr}) - 17)
+    ))`;
   const firstMarker = `INSTR(${nameRaw}, ' (task #')`;
   const firstSegment = `SUBSTR(${nameRaw}, ${firstMarker})`;
   const secondMarkerRelative = `INSTR(SUBSTR(${nameRaw}, ${firstMarker} + 9), ' (task #')`;
