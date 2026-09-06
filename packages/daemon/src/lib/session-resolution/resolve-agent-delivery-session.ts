@@ -7,7 +7,8 @@ export function resolveAgentDeliveryTargetStage(
   spaceId: string,
   agentId: string
 ): SessionTargetAgent {
-  return { kind: 'agent', spaceId, agentId };
+  const normalized = agentId === `coordinator:${spaceId}` ? 'coordinator' : agentId;
+  return { kind: 'agent', spaceId, agentId: normalized };
 }
 
 export function ensureAgentDeliverySessionStage(

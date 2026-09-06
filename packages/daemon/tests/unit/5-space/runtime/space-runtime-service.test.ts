@@ -152,7 +152,7 @@ function syntheticUserMessage(sessionId: string, uuid: string, text: string) {
     session_id: sessionId,
     parent_tool_use_id: null,
     isSynthetic: true,
-    message: { role: 'user' as const, content: [{ type: 'text' as const, text }] },
+    message: { content: [{ type: 'text' as const, text }] },
   };
 }
 
@@ -1129,8 +1129,8 @@ describe('SpaceRuntimeService', () => {
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(createdSession)
-        .mockResolvedValueOnce(createdSession);
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue(createdSession);
       const inboxRepo = { enqueue: mock(() => ({ record: { id: 'queued-1' }, deduped: false })) };
       const longHorizonAgentRepo = {
         getById: mock(() => ({
@@ -1206,8 +1206,8 @@ describe('SpaceRuntimeService', () => {
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(createdSession)
-        .mockResolvedValueOnce(createdSession);
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue(createdSession);
       const spaceManager = createMockSpaceManager(mockSpace);
       const longHorizonAgentRepo = {
         getCoordinator: mock(() => null),
@@ -1268,8 +1268,8 @@ describe('SpaceRuntimeService', () => {
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(createdSession)
-        .mockResolvedValueOnce(createdSession);
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue(createdSession);
       const longHorizonAgentRepo = {
         getById: mock(() => ({
           id: 'lh-agent-1',
@@ -1336,8 +1336,8 @@ describe('SpaceRuntimeService', () => {
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(createdSession)
-        .mockResolvedValueOnce(createdSession);
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue(createdSession);
       return sessionManager;
     }
 
@@ -1600,8 +1600,8 @@ describe('SpaceRuntimeService', () => {
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(createdSession)
-        .mockResolvedValueOnce(createdSession);
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue(createdSession);
       const longHorizonAgentRepo = {
         getById: mock(() => ({
           id: 'lh-agent-1',
@@ -1666,8 +1666,8 @@ describe('SpaceRuntimeService', () => {
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(createdSession)
-        .mockResolvedValueOnce(createdSession);
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue(createdSession);
       const longHorizonAgentRepo = {
         getCoordinator: mock(() => null),
         getById: mock(() => ({
@@ -1731,8 +1731,8 @@ describe('SpaceRuntimeService', () => {
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(createdSession)
-        .mockResolvedValueOnce(createdSession);
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue(createdSession);
       const longHorizonAgentRepo = {
         getCoordinator: mock(() => null),
         getById: mock(() => ({
@@ -2140,6 +2140,9 @@ describe('SpaceRuntimeService', () => {
         spaceAgentInboxRepo:
           inboxRepo as unknown as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
       });
+      (
+        svc as unknown as { setupSpaceAgentSession: (space: Space) => Promise<void> }
+      ).setupSpaceAgentSession = async () => {};
 
       await svc.deliverGoalOutcomeWake(notification);
 
@@ -2523,6 +2526,37 @@ describe('SpaceRuntimeService', () => {
         row.idempotencyKey!,
         mailboxEntryId
       );
+
+      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
+      expect(inboxRepo.markAttemptFailed).toHaveBeenCalledWith(
+        row.id,
+        'delivery dead-lettered without consumption evidence'
+      );
+    });
+
+    test('a dead mailbox entry behind a deferred SDK row fails the inbox attempt', async () => {
+      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
+      const row = makeInboxRow();
+      const dbId = seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
+      mailbox.sdkRepo.updateMessageStatus([dbId], 'deferred');
+      const mailboxEntryId = 'mailbox-entry-2';
+      const mailboxEntry = mailbox.jobQueue.enqueue({
+        queue: MAILBOX_LANE,
+        payload: { id: mailboxEntryId },
+      });
+      mailbox.jobQueue.markDeadIfActive(mailboxEntry.id, 'activation kept failing');
+      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
+
+      (
+        svc as unknown as {
+          armLongTermAgentInboxSettlement(
+            row: SpaceAgentInboxMessageRecord,
+            sessionId: string,
+            messageId: string,
+            mailboxEntryId: string
+          ): void;
+        }
+      ).armLongTermAgentInboxSettlement(row, inboxSessionId, row.idempotencyKey!, mailboxEntryId);
 
       expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
       expect(inboxRepo.markAttemptFailed).toHaveBeenCalledWith(
@@ -4163,7 +4197,7 @@ describe('ensureLongTermAgentSession — id→session routing table', () => {
         lookupIds.push(sessionId);
         const count = (lookupCounts.get(sessionId) ?? 0) + 1;
         lookupCounts.set(sessionId, count);
-        if (sessionId.startsWith('space:agent:') && count <= 2) return null;
+        if (sessionId.startsWith('space:agent:') && count <= 3) return null;
         return sessionMock;
       }),
       createSession: mock(async (opts: { sessionId?: string; title?: string }) => {

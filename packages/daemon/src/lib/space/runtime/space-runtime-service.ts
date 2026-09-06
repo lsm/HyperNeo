@@ -52,6 +52,7 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-ev
 import { Logger } from '../../logger.ts';
 import { renderAddress } from '../../mailbox/address.ts';
 import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
+import { toMailboxMessage } from '../../mailbox/entry.ts';
 import type { SessionManager } from '../../session-manager.ts';
 import { buildAgentSessionConfig } from '../../session-resolution/agent-session-config.ts';
 import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
@@ -713,12 +714,14 @@ export class SpaceRuntimeService {
     mailboxEntryId: string
   ): string | undefined {
     const sendStatus = this.readLongTermAgentSendStatus(sessionId, messageId);
-    if (sendStatus !== undefined && sendStatus !== null) return sendStatus;
-    return this.config.reactiveDb?.db
-      .getJobQueueRepo()
-      .getLatestByPayload('mailbox', { id: mailboxEntryId })?.status === 'dead'
-      ? 'failed'
-      : undefined;
+    if (sendStatus === 'failed') return sendStatus;
+    if (sendStatus != null && sendStatus !== 'deferred') return sendStatus;
+    const mailboxDead =
+      this.config.reactiveDb?.db
+        .getJobQueueRepo()
+        .getLatestByPayload('mailbox', { id: mailboxEntryId })?.status === 'dead';
+    if (mailboxDead) return 'failed';
+    return sendStatus ?? undefined;
   }
 
   private hasLongTermAgentConsumptionEvidence(sessionId: string, messageId: string): boolean {
@@ -768,10 +771,16 @@ export class SpaceRuntimeService {
       };
     }
     const jobQueue = reactiveDb.getJobQueueRepo();
-    const mailboxMessage: SDKUserMessage = {
+    const projected = toMailboxMessage({
       type: 'user',
       parent_tool_use_id: null,
-      message: { role: 'user', content: [{ type: 'text', text: message }] },
+      message: { content: [{ type: 'text', text: message }] },
+    });
+    if ('reason' in projected) {
+      return { state: 'rejected', reason: projected.reason };
+    }
+    const persistedMessage = {
+      ...projected.message,
       uuid: id as NonNullable<SDKUserMessage['uuid']>,
       session_id: sessionId,
       isSynthetic: true,
@@ -780,15 +789,11 @@ export class SpaceRuntimeService {
       db: this.config.db,
       sessionId,
       messageUuid: id,
-      message: mailboxMessage,
+      message: persistedMessage,
     });
     const outcome = await handoffPromptToMailbox({
       to: renderAddress({ kind: 'session', sessionId }),
-      message: {
-        type: mailboxMessage.type,
-        parent_tool_use_id: null,
-        message: mailboxMessage.message,
-      },
+      message: projected.message,
       origin: 'long_term_agent',
       messageUuid: id,
       jobQueue,
