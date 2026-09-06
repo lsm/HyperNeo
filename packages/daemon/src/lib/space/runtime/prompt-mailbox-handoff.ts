@@ -98,6 +98,15 @@ export async function retryFailedPromptIntoMailbox(
     }
     return null;
   }
+  if (target.defer) {
+    const flipped = deps.sdkMessageRepo.markDeliveryDeferredByUuid(
+      target.sessionId,
+      target.messageId
+    );
+    if (flipped) {
+      return { dbId: flipped, changed: true };
+    }
+  }
   return { dbId: retried.dbId, changed: true };
 }
 

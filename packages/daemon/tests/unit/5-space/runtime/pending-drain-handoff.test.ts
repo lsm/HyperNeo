@@ -129,7 +129,7 @@ describe('drainPendingRowOntoMailbox', () => {
     expect(deps.markDelivered).toHaveBeenCalledWith('row-1', 'sub-session-1');
   });
 
-  it('skips without touching the repo when the row is already expired', async () => {
+  it('terminalizes rows that expired before drain admission', async () => {
     const deps = makeDeps();
     const row = makeRow({ expiresAt: 1 });
 
@@ -141,10 +141,34 @@ describe('drainPendingRowOntoMailbox', () => {
       origin: 'space_inject',
     });
 
-    expect(outcome).toEqual({ action: 'skipped', reason: 'expired' });
+    expect(outcome).toEqual({ action: 'failed', reason: 'expired before drain admission' });
+    expect(deps.markFailed).toHaveBeenCalledWith('row-1', 'expired before drain admission');
     expect(deps.ensureTargetSession).not.toHaveBeenCalled();
     expect(deps.markDelivered).not.toHaveBeenCalled();
     expect(deps.markAttemptFailed).not.toHaveBeenCalled();
+  });
+
+  it('terminalizes rows whose deadline passes while the routed delivery waits', async () => {
+    const deps = makeDeps({
+      delivery: { state: 'delivered', sessionId: 'sub-session-1', messageId: 'row-1' },
+    });
+    const row = makeRow({ expiresAt: Date.now() + 20 });
+    deps.deliverRoutedMessage.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return { state: 'delivered', sessionId: 'sub-session-1', messageId: 'row-1' };
+    });
+
+    const outcome = await drainPendingRowOntoMailbox({
+      deps,
+      row,
+      target: WORKER_TARGET,
+      message: 'slow delivery note',
+      origin: 'space_inject',
+    });
+
+    expect(outcome).toEqual({ action: 'failed', reason: 'expired during routed delivery' });
+    expect(deps.markFailed).toHaveBeenCalledWith('row-1', 'expired during routed delivery');
+    expect(deps.markDelivered).not.toHaveBeenCalled();
   });
 
   it('terminalizes the row without delivering when the attempt budget is spent', async () => {

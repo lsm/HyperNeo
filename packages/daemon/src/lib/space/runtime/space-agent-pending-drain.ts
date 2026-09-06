@@ -14,6 +14,7 @@ export interface SpaceAgentPendingDrainDeps {
     markDelivered(id: string, sessionId: string): void;
     markAttemptFailed(id: string, error: string): PendingAgentMessageRecord | null;
     markFailed(id: string, error: string): unknown;
+    deferExpiration(ids: string[], ttlMs?: number): void;
     enforceRetention(options: { runId?: string | null; excludeIds?: string[] }): unknown;
     expireStale(runId: string, excludeIds?: string[]): unknown;
   };
@@ -80,6 +81,9 @@ function settleConsumedRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDr
 
 function runRetention(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
   const excludeIds = [...(ctx.activeDeliveryIds ?? [])];
+  if (excludeIds.length > 0) {
+    ctx.deps.repo.deferExpiration(excludeIds);
+  }
   ctx.deps.repo.enforceRetention({ runId: ctx.workflowRunId, excludeIds });
   ctx.deps.repo.expireStale(ctx.workflowRunId, excludeIds);
   return ctx;

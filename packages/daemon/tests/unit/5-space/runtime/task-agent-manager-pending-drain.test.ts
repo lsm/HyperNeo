@@ -1043,6 +1043,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     expect(h.delivery.calls).toHaveLength(0);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+    expect(h.spyRepo.calls).toContain(`defer:${row.id}`);
     expect(h.spyRepo.retentionArgs[0]?.[0]).toMatchObject({ excludeIds: [row.id] });
   });
 

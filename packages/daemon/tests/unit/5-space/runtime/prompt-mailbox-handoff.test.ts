@@ -339,6 +339,18 @@ describe('retryFailedPromptIntoMailbox', () => {
     expect(deliveryJobCount(h, 'msg-retry-1')).toBe(1);
   });
 
+  it('flips a retried row back to deferred when the target requests a hold', async () => {
+    const h = makeHarness();
+    const dbId = seedEnqueuedRow(h, 'msg-retry-defer');
+    markRowStatus(h, dbId, 'failed');
+    const outcome = await retryFailedPromptIntoMailbox(h.deps, {
+      ...targetFor(userMessage('msg-retry-defer')),
+      defer: true,
+    });
+    expect(outcome).toEqual({ dbId, changed: true });
+    expect(sendStatus(h, 'msg-retry-defer')).toBe('deferred');
+  });
+
   it('settles as deliverable without a new job when consumption evidence exists', async () => {
     const h = makeHarness();
     const dbId = seedEnqueuedRow(h, 'msg-retry-2');

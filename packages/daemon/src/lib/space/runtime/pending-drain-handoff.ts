@@ -49,7 +49,9 @@ interface PendingDrainHandoffCtx extends PendingDrainHandoffInput {
 
 function expiryStage(ctx: PendingDrainHandoffCtx): PendingDrainHandoffCtx {
   if (ctx.row.expiresAt > Date.now()) return ctx;
-  return { ...ctx, outcome: { action: 'skipped', reason: 'expired' } };
+  const reason = 'expired before drain admission';
+  ctx.deps.markFailed(ctx.row.id, reason);
+  return { ...ctx, outcome: { action: 'failed', reason } };
 }
 
 function budgetStage(ctx: PendingDrainHandoffCtx): PendingDrainHandoffCtx {
@@ -89,6 +91,11 @@ async function deliverStage(ctx: PendingDrainHandoffCtx): Promise<PendingDrainHa
 function settleStage(ctx: PendingDrainHandoffCtx): PendingDrainHandoffCtx {
   const delivery = ctx.delivery;
   if (delivery && (delivery.state === 'delivered' || delivery.state === 'queued')) {
+    if (ctx.row.expiresAt <= Date.now()) {
+      const reason = 'expired during routed delivery';
+      ctx.deps.markFailed(ctx.row.id, reason);
+      return { ...ctx, outcome: { action: 'failed', reason } };
+    }
     const sessionId = delivery.state === 'delivered' ? delivery.sessionId : (ctx.sessionId ?? '');
     ctx.deps.markDelivered(ctx.row.id, sessionId);
     ctx.deps.onDelivered?.(ctx.row, sessionId);
