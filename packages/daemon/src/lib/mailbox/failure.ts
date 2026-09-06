@@ -5,7 +5,7 @@ import { withBusyRetry } from '../../storage/busy-retry.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import { emitStructuredLogEvent } from '../logger.ts';
-import { type MailboxEntry, parseMailboxEntry } from './entry.ts';
+import { type MailboxEntry, type MailboxMessageContent, parseMailboxEntry } from './entry.ts';
 
 export interface MailboxFailureDeps {
   sdkMessageRepo: SDKMessageRepository;
@@ -77,18 +77,34 @@ export function buildFailureMessageStage(ctx: MailboxFailureCtx): MailboxFailure
   return { ...ctx, message };
 }
 
+function sameFailureContent(
+  stored: MailboxMessageContent | null,
+  incoming: MailboxMessageContent | undefined
+): boolean {
+  if (stored === null || incoming === undefined) return false;
+  return JSON.stringify(stored) === JSON.stringify(incoming);
+}
+
 export function persistFailedRowStage(ctx: MailboxFailureCtx): MailboxFailureCtx {
   const target = ctx.target;
   const message = ctx.message;
   if (target === undefined || message === undefined) return ctx;
   const synthetic = ctx.entry?.origin !== 'chat';
   try {
-    const failedId = withBusyRetry(
-      () =>
+    const failedId = withBusyRetry(() => {
+      const existing = ctx.deps.sdkMessageRepo.getDeliveryContent(
+        target.sessionId,
+        target.messageUuid
+      );
+      if (existing !== null && !sameFailureContent(existing.content, message.message?.content)) {
+        return ctx.deps.saveFailed(target.sessionId, message, synthetic ? 'system' : undefined);
+      }
+      return (
         ctx.deps.sdkMessageRepo.markDeliveryFailedByUuid(target.sessionId, target.messageUuid) ??
         ctx.deps.sdkMessageRepo.findMessageIdByUuid?.(target.sessionId, target.messageUuid) ??
         ctx.deps.saveFailed(target.sessionId, message, synthetic ? 'system' : undefined)
-    );
+      );
+    });
     return { ...ctx, failedId };
   } catch (error) {
     emitMaterializeFailure(target, ctx.entry?.id ?? 'unknown', error);

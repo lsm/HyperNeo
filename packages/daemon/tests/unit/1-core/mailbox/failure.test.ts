@@ -170,6 +170,46 @@ describe('createMailboxDeadHandler', () => {
     expect(job.result).toBeNull();
   });
 
+  test('preserves the original row when a uuid is reused with different content', async () => {
+    const mailbox = createMailboxTestDb();
+    const original: MailboxMessage = {
+      type: 'user',
+      message: { content: 'original content' },
+      parent_tool_use_id: null,
+    };
+    mailbox.sdkMessageRepo.saveUserMessage(
+      SESSION_ID,
+      { ...original, uuid: 'reused-uuid', session_id: SESSION_ID },
+      'enqueued'
+    );
+    const conflicting: MailboxMessage = {
+      type: 'user',
+      message: { content: 'conflicting content' },
+      parent_tool_use_id: null,
+    };
+    const entry = makeEntry({ origin: 'chat', messageUuid: 'reused-uuid', message: conflicting });
+    const job = claimMailboxJob(mailbox, entry);
+    const publishFailed = mock(async () => {});
+    const saveFailed = mock(() => 'receipt-row');
+    const handler = createMailboxDeadHandler(() => {}, {
+      sdkMessageRepo: mailbox.sdkMessageRepo,
+      saveFailed,
+      publishFailed,
+    });
+    job.status = 'dead';
+    job.error = 'delivery failed';
+
+    handler(job);
+    await Promise.resolve();
+
+    const row = mailbox.sdkRows()[0];
+    expect(row.sdk_uuid).toBe('reused-uuid');
+    expect(row.send_status).toBe('enqueued');
+    expect(saveFailed).toHaveBeenCalledTimes(1);
+    expect(publishFailed).toHaveBeenCalledWith(SESSION_ID, 'receipt-row');
+    mailbox.close();
+  });
+
   test('emits a structured error event instead of escaping when the chain throws', () => {
     const mailbox = createMailboxTestDb();
     const events: StructuredLogEvent[] = [];
