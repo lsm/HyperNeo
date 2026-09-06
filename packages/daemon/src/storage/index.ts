@@ -69,11 +69,6 @@ export type {
 // @public - Library export
 export { GoalRepository } from './repositories/goal-repository.ts';
 export { TaskRepository } from './repositories/task-repository.ts';
-export { SpaceAgentInboxRepository } from './repositories/space-agent-inbox-repository.ts';
-export type {
-  SpaceAgentInboxMessageRecord,
-  SpaceAgentInboxMessageStatus,
-} from './repositories/space-agent-inbox-repository.ts';
 export { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
 export { McpEnablementRepository } from './repositories/mcp-enablement-repository.ts';
 export { SkillRepository } from './repositories/skill-repository.ts';

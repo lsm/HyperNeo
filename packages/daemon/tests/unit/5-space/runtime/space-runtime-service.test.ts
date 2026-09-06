@@ -22,7 +22,6 @@ import type {
 import type { Provider } from '@hyperneo/shared/provider';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
-import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 import { persistPrompt } from '../../../../src/lib/agent/message-delivery-outbox';
 import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery.ts';
 import { MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue.ts';
@@ -49,7 +48,6 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import type { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository.ts';
-import type { SpaceAgentInboxMessageRecord } from '../../../../src/storage/repositories/space-agent-inbox-repository.ts';
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
 import {
   coordinatorLongHorizonAgentId,
@@ -1131,7 +1129,6 @@ describe('SpaceRuntimeService', () => {
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(null)
         .mockResolvedValue(createdSession);
-      const inboxRepo = { enqueue: mock(() => ({ record: { id: 'queued-1' }, deduped: false })) };
       const longHorizonAgentRepo = {
         getById: mock(() => ({
           id: 'lh-agent-1',
@@ -1160,8 +1157,6 @@ describe('SpaceRuntimeService', () => {
         db: mailbox.db,
         reactiveDb: mailbox.reactiveDb,
         longHorizonAgentRepo,
-        spaceAgentInboxRepo:
-          inboxRepo as unknown as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
       });
 
       const delivery = svc.longTermAgentDeliveryCallbacks();
@@ -1183,7 +1178,6 @@ describe('SpaceRuntimeService', () => {
       );
 
       expect(deliveredSessionId).toBe(sessionId);
-      expect(inboxRepo.enqueue).not.toHaveBeenCalled();
       expect(pendingMailboxEntries(mailbox, 'message-1')).toHaveLength(1);
       expect(mailbox.sdkRepo.getDeliveryContent(sessionId, 'message-1')).toBeNull();
     });
@@ -1223,7 +1217,6 @@ describe('SpaceRuntimeService', () => {
         db: mailbox.db,
         reactiveDb: mailbox.reactiveDb,
         longHorizonAgentRepo,
-        spaceAgentInboxRepo: {} as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
       });
 
       const delivery = svc.longTermAgentDeliveryCallbacks();
@@ -2208,7 +2201,6 @@ describe('SpaceRuntimeService', () => {
       const sessions = new Map<string, AgentSession>();
       sessions.set(`space:chat:${mockSpace.id}`, makeWakeSession(`space:chat:${mockSpace.id}`));
       const sessionManager = makeWakeSessionManager(sessions);
-      const inboxRepo = { enqueue: mock(() => ({ record: { id: 'queued-1' }, deduped: false })) };
       const mailbox = buildMailboxDeliveryDb([`space:chat:${mockSpace.id}`]);
       const longHorizonAgentRepo = {
         getPrimaryGoalOwner: mock(() => ({ action: 'no_recipient' })),
@@ -2243,8 +2235,6 @@ describe('SpaceRuntimeService', () => {
         longHorizonAgentRepo,
         goalService,
         outcomeNotificationRepo,
-        spaceAgentInboxRepo:
-          inboxRepo as unknown as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
       });
       (
         svc as unknown as { setupSpaceAgentSession: (space: Space) => Promise<void> }
@@ -2253,7 +2243,6 @@ describe('SpaceRuntimeService', () => {
       await svc.deliverGoalOutcomeWake(notification);
 
       expect(pendingMailboxEntries(mailbox, 'goal-outcome:notif-1')).toHaveLength(1);
-      expect(inboxRepo.enqueue).not.toHaveBeenCalled();
     });
 
     function makeWakeSession(sessionId: string): AgentSession {
@@ -2292,7 +2281,6 @@ describe('SpaceRuntimeService', () => {
       let ownerCalls = 0;
       const sessions = new Map<string, AgentSession>();
       const sessionManager = makeWakeSessionManager(sessions);
-      const inboxRepo = { enqueue: mock(() => ({ record: { id: 'queued-1' }, deduped: false })) };
       const mailbox = buildMailboxDeliveryDb([
         longTermAgentSessionId(mockSpace.id, 'agent-a'),
         longTermAgentSessionId(mockSpace.id, 'agent-b'),
@@ -2329,8 +2317,6 @@ describe('SpaceRuntimeService', () => {
         longHorizonAgentRepo,
         goalService,
         outcomeNotificationRepo,
-        spaceAgentInboxRepo:
-          inboxRepo as unknown as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
       });
 
       await svc.deliverGoalOutcomeWake(notification);
@@ -2342,7 +2328,6 @@ describe('SpaceRuntimeService', () => {
           messageUuid: 'goal-outcome:notif-1',
         }),
       ]);
-      expect(inboxRepo.enqueue).not.toHaveBeenCalled();
     });
 
     test('leaves a wake pending without queueing when it goes stale mid-provisioning', async () => {
@@ -2351,7 +2336,6 @@ describe('SpaceRuntimeService', () => {
       const sessionManager = makeWakeSessionManager(sessions, [
         longTermAgentSessionId(mockSpace.id, 'lh-agent-1'),
       ]);
-      const inboxRepo = { enqueue: mock(() => ({ record: { id: 'queued-1' }, deduped: false })) };
       const mailbox = buildMailboxDeliveryDb([longTermAgentSessionId(mockSpace.id, 'lh-agent-1')]);
       const longHorizonAgentRepo = {
         getPrimaryGoalOwner: mock(() => ({
@@ -2390,544 +2374,16 @@ describe('SpaceRuntimeService', () => {
         longHorizonAgentRepo,
         goalService,
         outcomeNotificationRepo,
-        spaceAgentInboxRepo:
-          inboxRepo as unknown as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
       });
 
       await svc.deliverGoalOutcomeWake(notification);
 
-      expect(inboxRepo.enqueue).not.toHaveBeenCalled();
       expect(
         mailbox.sdkRepo.getDeliveryContent(
           longTermAgentSessionId(mockSpace.id, 'lh-agent-1'),
           'goal-outcome:notif-1'
         )
       ).toBeNull();
-    });
-  });
-
-  describe('long-term agent inbox settlement', () => {
-    const inboxSessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
-    const inboxActor: ActorRef = {
-      actorId: 'agent:lh-agent-1',
-      kind: 'agent',
-      spaceId: mockSpace.id,
-      status: 'active',
-    };
-
-    function makeInboxSession() {
-      return {
-        getSessionData: mock(() => ({ id: inboxSessionId, metadata: {}, config: {} }) as Session),
-        ensureQueryStarted: mock(async () => {}),
-        messageQueue: { enqueueWithId: mock(async () => {}) },
-      };
-    }
-
-    function makeInboxRow(overrides: Partial<SpaceAgentInboxMessageRecord> = {}) {
-      return {
-        id: 'inbox-1',
-        spaceId: mockSpace.id,
-        targetAgentId: 'lh-agent-1',
-        sourceActorId: 'space:space-1:human:user-1',
-        sourceSessionId: null,
-        message: 'inbox payload',
-        messageRecordJson: null,
-        idempotencyKey: 'inbox-key-1',
-        attempts: 0,
-        maxAttempts: 3,
-        lastAttemptAt: null,
-        lastError: null,
-        status: 'pending',
-        deliveredAt: null,
-        deliveredSessionId: null,
-        expiresAt: NOW + 60_000,
-        createdAt: NOW,
-        ...overrides,
-      } as SpaceAgentInboxMessageRecord;
-    }
-
-    function buildInboxService(
-      mailbox: ReturnType<typeof buildMailboxDeliveryDb>,
-      rows: SpaceAgentInboxMessageRecord[],
-      extras: Partial<SpaceRuntimeServiceConfig> = {}
-    ) {
-      const inboxRepo = {
-        expireStale: mock(() => {}),
-        listPendingForAgent: mock(() => rows),
-        markDelivered: mock(() => {}),
-        markAttemptFailed: mock(() => {}),
-      };
-      const svc = new SpaceRuntimeService({
-        ...buildConfig(createMockSpaceManager(mockSpace)),
-        db: mailbox.db,
-        reactiveDb: mailbox.reactiveDb,
-        spaceAgentInboxRepo:
-          inboxRepo as unknown as SpaceRuntimeServiceConfig['spaceAgentInboxRepo'],
-        ...extras,
-      });
-      return { svc, inboxRepo };
-    }
-
-    async function flushInbox(svc: SpaceRuntimeService): Promise<void> {
-      await (
-        svc as unknown as {
-          flushLongTermAgentInbox(
-            actor: ActorRef,
-            session: {
-              getSessionData(): Session;
-              ensureQueryStarted(): Promise<void>;
-              messageQueue: { enqueueWithId: (id: string, message: string) => Promise<void> };
-            }
-          ): Promise<void>;
-        }
-      ).flushLongTermAgentInbox(inboxActor, makeInboxSession());
-    }
-
-    test('evidence settles a row delivered even when the row says failed', async () => {
-      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
-      const row = makeInboxRow();
-      const dbId = seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
-      mailbox.db
-        .prepare('UPDATE sdk_messages SET consumed_seq = 1 WHERE session_id = ? AND sdk_uuid = ?')
-        .run(inboxSessionId, row.idempotencyKey);
-      mailbox.sdkRepo.updateMessageStatus([dbId], 'failed');
-      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
-
-      await flushInbox(svc);
-
-      expect(inboxRepo.markDelivered).toHaveBeenCalledWith(row.id, inboxSessionId);
-      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
-      (
-        svc as unknown as { inboxLateSettlements: { dispose(): void } }
-      ).inboxLateSettlements.dispose();
-    });
-
-    test('a row still in flight stays pending until a late settlement observes consumption', async () => {
-      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
-      const row = makeInboxRow();
-      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
-
-      await flushInbox(svc);
-
-      expect(pendingMailboxEntries(mailbox, row.idempotencyKey!)).toHaveLength(1);
-      expect(mailbox.sdkRepo.getDeliveryContent(inboxSessionId, row.idempotencyKey!)).toBeNull();
-      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
-      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
-
-      signalDeliveryConsumed(inboxSessionId, row.idempotencyKey!);
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      expect(inboxRepo.markDelivered).toHaveBeenCalledWith(row.id, inboxSessionId);
-      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
-      (
-        svc as unknown as { inboxLateSettlements: { dispose(): void } }
-      ).inboxLateSettlements.dispose();
-    });
-
-    test('a dead-letter without evidence fails the attempt', async () => {
-      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
-      const row = makeInboxRow();
-      const dbId = seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
-      mailbox.sdkRepo.updateMessageStatus([dbId], 'failed');
-      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
-
-      (
-        svc as unknown as {
-          settleLongTermAgentInboxRow(
-            row: SpaceAgentInboxMessageRecord,
-            sessionId: string,
-            outcome: { state: 'accepted'; mailboxEntryId: string }
-          ): void;
-        }
-      ).settleLongTermAgentInboxRow(row, inboxSessionId, {
-        state: 'accepted',
-        mailboxEntryId: dbId,
-      });
-
-      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
-      expect(inboxRepo.markAttemptFailed).toHaveBeenCalledWith(
-        row.id,
-        'delivery dead-lettered without consumption evidence'
-      );
-      (
-        svc as unknown as { inboxLateSettlements: { dispose(): void } }
-      ).inboxLateSettlements.dispose();
-    });
-
-    test('an armed settlement fails the attempt on a confirmed dead-letter', async () => {
-      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
-      const row = makeInboxRow();
-      const dbId = seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
-      mailbox.sdkRepo.updateMessageStatus([dbId], 'failed');
-      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
-
-      (
-        svc as unknown as {
-          armLongTermAgentInboxSettlement(
-            row: SpaceAgentInboxMessageRecord,
-            sessionId: string,
-            messageId: string,
-            mailboxEntryId: string
-          ): void;
-        }
-      ).armLongTermAgentInboxSettlement(row, inboxSessionId, row.idempotencyKey!, dbId);
-
-      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
-      expect(inboxRepo.markAttemptFailed).toHaveBeenCalledWith(
-        row.id,
-        'delivery dead-lettered without consumption evidence'
-      );
-    });
-
-    test('a settlement horizon expiry on a still-active row leaves the attempt untouched', async () => {
-      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
-      const row = makeInboxRow();
-      seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
-      const mailboxEntryId = mailbox.jobQueue.enqueue({ queue: MAILBOX_LANE, payload: {} }).id;
-      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
-
-      (
-        svc as unknown as {
-          settleLongTermAgentInboxRowFailure(
-            row: SpaceAgentInboxMessageRecord,
-            sessionId: string,
-            messageId: string,
-            mailboxEntryId: string
-          ): void;
-        }
-      ).settleLongTermAgentInboxRowFailure(
-        row,
-        inboxSessionId,
-        row.idempotencyKey!,
-        mailboxEntryId
-      );
-
-      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
-      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
-    });
-
-    test('a dead mailbox entry fails the inbox attempt before an SDK row exists', async () => {
-      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
-      const row = makeInboxRow();
-      const mailboxEntryId = 'mailbox-entry-1';
-      const mailboxEntry = mailbox.jobQueue.enqueue({
-        queue: MAILBOX_LANE,
-        payload: { id: mailboxEntryId },
-      });
-      mailbox.jobQueue.markDeadIfActive(mailboxEntry.id, 'target archived');
-      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
-
-      (
-        svc as unknown as {
-          settleLongTermAgentInboxRowFailure(
-            row: SpaceAgentInboxMessageRecord,
-            sessionId: string,
-            messageId: string,
-            mailboxEntryId: string
-          ): void;
-        }
-      ).settleLongTermAgentInboxRowFailure(
-        row,
-        inboxSessionId,
-        row.idempotencyKey!,
-        mailboxEntryId
-      );
-
-      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
-      expect(inboxRepo.markAttemptFailed).toHaveBeenCalledWith(
-        row.id,
-        'delivery dead-lettered without consumption evidence'
-      );
-    });
-
-    test('an in-flight retry admission defers the stale SDK failure verdict', async () => {
-      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
-      const row = makeInboxRow();
-      const dbId = seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
-      mailbox.sdkRepo.updateMessageStatus([dbId], 'failed');
-      const mailboxEntryId = 'mailbox-entry-retry';
-      const mailboxEntry = mailbox.jobQueue.enqueue({
-        queue: MAILBOX_LANE,
-        payload: {
-          id: mailboxEntryId,
-          to: { kind: 'session', sessionId: inboxSessionId },
-          messageUuid: row.idempotencyKey,
-          message: { message: { content: [{ type: 'text', text: row.message }] } },
-        },
-      });
-      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
-
-      (
-        svc as unknown as {
-          settleLongTermAgentInboxRow(
-            row: SpaceAgentInboxMessageRecord,
-            sessionId: string,
-            outcome: { state: 'accepted'; mailboxEntryId: string }
-          ): void;
-        }
-      ).settleLongTermAgentInboxRow(row, inboxSessionId, {
-        state: 'accepted',
-        mailboxEntryId,
-      });
-
-      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
-      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
-      (
-        svc as unknown as { inboxLateSettlements: { dispose(): void } }
-      ).inboxLateSettlements.dispose();
-
-      mailbox.jobQueue.markDeadIfActive(mailboxEntry.id, 'retry exhausted');
-
-      (
-        svc as unknown as {
-          settleLongTermAgentInboxRowFailure(
-            row: SpaceAgentInboxMessageRecord,
-            sessionId: string,
-            messageId: string,
-            mailboxEntryId: string
-          ): void;
-        }
-      ).settleLongTermAgentInboxRowFailure(
-        row,
-        inboxSessionId,
-        row.idempotencyKey!,
-        mailboxEntryId
-      );
-
-      expect(inboxRepo.markAttemptFailed).toHaveBeenCalledWith(
-        row.id,
-        'delivery dead-lettered without consumption evidence'
-      );
-    });
-
-    test('a dead mailbox entry behind a deferred SDK row fails the inbox attempt', async () => {
-      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
-      const row = makeInboxRow();
-      const dbId = seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
-      mailbox.sdkRepo.updateMessageStatus([dbId], 'deferred');
-      const mailboxEntryId = 'mailbox-entry-2';
-      const mailboxEntry = mailbox.jobQueue.enqueue({
-        queue: MAILBOX_LANE,
-        payload: { id: mailboxEntryId },
-      });
-      mailbox.jobQueue.markDeadIfActive(mailboxEntry.id, 'activation kept failing');
-      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
-
-      (
-        svc as unknown as {
-          armLongTermAgentInboxSettlement(
-            row: SpaceAgentInboxMessageRecord,
-            sessionId: string,
-            messageId: string,
-            mailboxEntryId: string
-          ): void;
-        }
-      ).armLongTermAgentInboxSettlement(row, inboxSessionId, row.idempotencyKey!, mailboxEntryId);
-
-      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
-      expect(inboxRepo.markAttemptFailed).toHaveBeenCalledWith(
-        row.id,
-        'delivery dead-lettered without consumption evidence'
-      );
-    });
-
-    test('a dead tracked entry defers the verdict while another admission stays active', async () => {
-      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
-      const row = makeInboxRow();
-      const dbId = seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
-      mailbox.sdkRepo.updateMessageStatus([dbId], 'deferred');
-      const mailboxEntryId = 'mailbox-entry-dead';
-      const deadEntry = mailbox.jobQueue.enqueue({
-        queue: MAILBOX_LANE,
-        payload: { id: mailboxEntryId },
-      });
-      mailbox.jobQueue.markDeadIfActive(deadEntry.id, 'attempt superseded');
-      const survivor = mailbox.jobQueue.enqueue({
-        queue: MAILBOX_LANE,
-        payload: {
-          id: 'mailbox-entry-survivor',
-          to: { kind: 'session', sessionId: inboxSessionId },
-          messageUuid: row.idempotencyKey,
-        },
-      });
-      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
-
-      (
-        svc as unknown as {
-          settleLongTermAgentInboxRowFailure(
-            row: SpaceAgentInboxMessageRecord,
-            sessionId: string,
-            messageId: string,
-            mailboxEntryId: string
-          ): void;
-        }
-      ).settleLongTermAgentInboxRowFailure(
-        row,
-        inboxSessionId,
-        row.idempotencyKey!,
-        mailboxEntryId
-      );
-
-      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
-      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
-
-      mailbox.jobQueue.markDeadIfActive(survivor.id, 'retry exhausted');
-
-      (
-        svc as unknown as {
-          settleLongTermAgentInboxRowFailure(
-            row: SpaceAgentInboxMessageRecord,
-            sessionId: string,
-            messageId: string,
-            mailboxEntryId: string
-          ): void;
-        }
-      ).settleLongTermAgentInboxRowFailure(
-        row,
-        inboxSessionId,
-        row.idempotencyKey!,
-        mailboxEntryId
-      );
-
-      expect(inboxRepo.markAttemptFailed).toHaveBeenCalledWith(
-        row.id,
-        'delivery dead-lettered without consumption evidence'
-      );
-      (
-        svc as unknown as { inboxLateSettlements: { dispose(): void } }
-      ).inboxLateSettlements.dispose();
-    });
-
-    test('late consumption evidence outranks the armed failure signal', async () => {
-      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
-      const row = makeInboxRow();
-      const dbId = seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
-      mailbox.db
-        .prepare('UPDATE sdk_messages SET consumed_seq = 1 WHERE session_id = ? AND sdk_uuid = ?')
-        .run(inboxSessionId, row.idempotencyKey);
-      mailbox.sdkRepo.updateMessageStatus([dbId], 'failed');
-      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
-
-      (
-        svc as unknown as {
-          settleLongTermAgentInboxRowFailure(
-            row: SpaceAgentInboxMessageRecord,
-            sessionId: string,
-            messageId: string,
-            mailboxEntryId: string
-          ): void;
-        }
-      ).settleLongTermAgentInboxRowFailure(row, inboxSessionId, row.idempotencyKey!, dbId);
-
-      expect(inboxRepo.markDelivered).toHaveBeenCalledWith(row.id, inboxSessionId);
-      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
-    });
-
-    test('a restart recreates the late-settlement owner', async () => {
-      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
-      const row = makeInboxRow();
-      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
-
-      svc.start();
-      await svc.stop();
-      svc.start();
-      await flushInbox(svc);
-
-      signalDeliveryConsumed(inboxSessionId, row.idempotencyKey!);
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      expect(inboxRepo.markDelivered).toHaveBeenCalledWith(row.id, inboxSessionId);
-      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
-      await svc.stop();
-    });
-
-    test('a restart overlapping an in-flight stop keeps the new settlement owner armed', async () => {
-      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
-      const row = makeInboxRow();
-      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
-
-      svc.start();
-      let releaseProvisioning: () => void = () => {};
-      const blockedProvisioning = new Promise<void>((resolve) => {
-        releaseProvisioning = resolve;
-      });
-      (svc as unknown as { provisioningPromise: Promise<void> | null }).provisioningPromise =
-        blockedProvisioning;
-
-      const stopping = svc.stop();
-      svc.start();
-      releaseProvisioning();
-      await stopping;
-
-      await flushInbox(svc);
-      signalDeliveryConsumed(inboxSessionId, row.idempotencyKey!);
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      expect(inboxRepo.markDelivered).toHaveBeenCalledWith(row.id, inboxSessionId);
-      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
-      await svc.stop();
-    });
-
-    test('a settlement horizon expiry on an active row re-arms the watcher', async () => {
-      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
-      const row = makeInboxRow();
-      seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
-      const mailboxEntryId = mailbox.jobQueue.enqueue({ queue: MAILBOX_LANE, payload: {} }).id;
-      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
-
-      (
-        svc as unknown as {
-          settleLongTermAgentInboxRowFailure(
-            row: SpaceAgentInboxMessageRecord,
-            sessionId: string,
-            messageId: string,
-            mailboxEntryId: string
-          ): void;
-        }
-      ).settleLongTermAgentInboxRowFailure(
-        row,
-        inboxSessionId,
-        row.idempotencyKey!,
-        mailboxEntryId
-      );
-      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
-      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
-
-      signalDeliveryConsumed(inboxSessionId, row.idempotencyKey!);
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      expect(inboxRepo.markDelivered).toHaveBeenCalledWith(row.id, inboxSessionId);
-    });
-
-    test('a stale goal-outcome wake row is dismissed without injecting', async () => {
-      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
-      const row = makeInboxRow({ idempotencyKey: 'goal-outcome:notif-stale' });
-      const goalService = {
-        getGoal: mock(() => ({ id: 'goal-1', spaceId: mockSpace.id })),
-      } as unknown as SpaceRuntimeServiceConfig['goalService'];
-      const outcomeNotificationRepo = {
-        getById: mock(() => ({
-          id: 'notif-stale',
-          goalId: 'goal-1',
-          spaceId: mockSpace.id,
-          status: 'acknowledged',
-        })),
-      } as unknown as SpaceGoalOutcomeNotificationRepository;
-      const { svc, inboxRepo } = buildInboxService(mailbox, [row], {
-        goalService,
-        outcomeNotificationRepo,
-      });
-
-      await flushInbox(svc);
-
-      expect(inboxRepo.markDelivered).toHaveBeenCalledWith(row.id, inboxSessionId);
-      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
-      expect(
-        mailbox.sdkRepo.getDeliveryContent(inboxSessionId, 'goal-outcome:notif-stale')
-      ).toBeNull();
-      (
-        svc as unknown as { inboxLateSettlements: { dispose(): void } }
-      ).inboxLateSettlements.dispose();
     });
   });
 
@@ -4409,7 +3865,7 @@ describe('refreshLongHorizonAgentSessionConfig — self-heals undefined provider
   });
 });
 
-describe('ensureLongTermAgentSession — id→session routing table', () => {
+describe('long-term agent delivery — id→session routing table', () => {
   function buildRoutingService(options: {
     longHorizonAgents: SpaceLongHorizonAgent[];
     coordinatorId?: string;
@@ -4442,6 +3898,9 @@ describe('ensureLongTermAgentSession — id→session routing table', () => {
       getCoordinator: mock(
         () => options.longHorizonAgents.find((a) => a.id === options.coordinatorId) ?? null
       ),
+      getCoordinatorRecord: mock(
+        () => options.longHorizonAgents.find((a) => a.id === options.coordinatorId) ?? null
+      ),
       update: mock(() => ({})),
     } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
     const svc = new SpaceRuntimeService({
@@ -4459,12 +3918,22 @@ describe('ensureLongTermAgentSession — id→session routing table', () => {
   }
 
   async function route(svc: SpaceRuntimeService, agentId: string): Promise<unknown> {
-    return (
-      svc as unknown as { ensureLongTermAgentSession: (a: ActorRef) => Promise<unknown> }
-    ).ensureLongTermAgentSession({
-      actorId: `agent:${agentId}`,
-      spaceId: 'space-1',
-    } as ActorRef);
+    const delivery = svc.longTermAgentDeliveryCallbacks();
+    return delivery?.deliverToSession(
+      {
+        actorId: `agent:${agentId}`,
+        spaceId: 'space-1',
+        status: 'active',
+      } as ActorRef,
+      {
+        messageId: 'routing-probe-1',
+        spaceId: 'space-1',
+        senderActorId: 'space:space-1:human:user-1',
+        kind: 'message',
+        body: 'routing probe',
+        createdAt: NOW,
+      } as MessageRecord
+    );
   }
 
   test('coordinator alias resolves the space:chat session instead of an agent session', async () => {
@@ -4477,9 +3946,8 @@ describe('ensureLongTermAgentSession — id→session routing table', () => {
       coordinatorId: canonical.id,
     });
 
-    const canonicalSession = await route(canonicalRun.svc, canonical.id);
+    await route(canonicalRun.svc, canonical.id);
 
-    expect(canonicalSession).toBeDefined();
     expect(canonicalRun.lookupIds[0]).toBe('space:chat:space-1');
     expect(canonicalRun.createCalls).toHaveLength(0);
 
@@ -4492,9 +3960,8 @@ describe('ensureLongTermAgentSession — id→session routing table', () => {
       coordinatorId: discovered.id,
     });
 
-    const discoveredSession = await route(discoveredRun.svc, discovered.id);
+    await route(discoveredRun.svc, discovered.id);
 
-    expect(discoveredSession).toBeDefined();
     expect(discoveredRun.lookupIds[0]).toBe('space:chat:space-1');
     expect(discoveredRun.createCalls).toHaveLength(0);
   });
@@ -4516,6 +3983,38 @@ describe('ensureLongTermAgentSession — id→session routing table', () => {
         worktreeMode: 'direct',
       })
     );
+  });
+
+  test('coordinator alias actor reaches the space:chat session via queueForActivation', async () => {
+    const canonical = buildLongHorizonAgent({
+      id: 'space-lh-agent:coordinator:space-1',
+      handle: 'coordinator',
+    });
+    const run = buildRoutingService({
+      longHorizonAgents: [canonical],
+      coordinatorId: canonical.id,
+    });
+    const delivery = run.svc.longTermAgentDeliveryCallbacks();
+
+    await delivery?.queueForActivation(
+      {
+        actorId: 'agent:coordinator:space-1',
+        spaceId: 'space-1',
+        status: 'inactive',
+      } as ActorRef,
+      {
+        messageId: 'routing-probe-2',
+        spaceId: 'space-1',
+        senderActorId: 'space:space-1:human:user-1',
+        kind: 'message',
+        body: 'routing probe',
+        createdAt: NOW,
+      } as MessageRecord
+    );
+
+    expect(run.lookupIds[0]).toBe('space:chat:space-1');
+    expect(run.lookupIds.some((id) => id.startsWith('space:agent:'))).toBe(false);
+    expect(run.createCalls).toHaveLength(0);
   });
 });
 

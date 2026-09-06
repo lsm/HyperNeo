@@ -19,10 +19,6 @@ import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-l
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository.ts';
 import type { SessionRepository } from '../../../storage/repositories/session-repository.ts';
-import type {
-  SpaceAgentInboxMessageRecord,
-  SpaceAgentInboxRepository,
-} from '../../../storage/repositories/space-agent-inbox-repository.ts';
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import {
@@ -59,10 +55,7 @@ import { createDefaultSessionResolutionDeps } from '../../session-resolution/def
 import type { SessionResolutionDeps } from '../../session-resolution/deps.ts';
 import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import { resolveAgentDeliverySession } from '../../session-resolution/resolve-agent-delivery-session.ts';
-import {
-  type ResolveAgentRecordDeps,
-  resolveAgentRecord,
-} from '../../session-resolution/resolve-agent-record.ts';
+import type { ResolveAgentRecordDeps } from '../../session-resolution/resolve-agent-record.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
 import { isSpaceActionsDispatcherEnabled } from '../actions/dispatcher-flag.ts';
 import {
@@ -98,7 +91,6 @@ import { selectWorkflowWithLlmDefault } from './llm-workflow-selector.ts';
 import type { PostApprovalRouteResult } from './post-approval-router.ts';
 import type { RenderPendingDigestOutcome } from './render-pending-digest-pipeline.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
-import { SpaceAgentLateSettlements } from './space-agent-message-delivery.ts';
 import {
   SpaceAgentNotificationService,
   type SpaceAgentNotificationServiceConfig,
@@ -124,7 +116,6 @@ type LongTermAgentDirectDelivery =
 
 type LongTermAgentQueueing =
   | { state: 'delivered'; sessionId: string }
-  | { state: 'queued'; messageId: string }
   | { state: 'recipient_stale' }
   | { state: 'undeliverable' };
 
@@ -164,7 +155,6 @@ export interface SpaceRuntimeServiceConfig {
     nodeExecutionRepo: NodeExecutionRepository;
     pendingMessageRepo?: PendingAgentMessageRepository;
   };
-  spaceAgentInboxRepo?: SpaceAgentInboxRepository;
   goalService?: import('../goals/goal-service.ts').SpaceGoalService;
   evolutionScopeService?: import('../evolution-scope-service.ts').EvolutionScopeService;
   evolutionEpisodeService?: import('../evolution-episode-service.ts').EvolutionEpisodeService;
@@ -189,8 +179,6 @@ export class SpaceRuntimeService {
   private readonly memberSessionDbQueryServers = new Map<string, DbQueryMcpServer>();
   private readonly longTermAgentDbQueryServers = new Map<string, DbQueryMcpServer>();
   private readonly spaceAgentNotificationUnsubs = new Map<string, () => void>();
-  private readonly longTermAgentFlushes = new Map<string, Promise<void>>();
-  private inboxLateSettlements = new SpaceAgentLateSettlements();
   private resumeStalledRecoveryPromise: Promise<void> = Promise.resolve();
   private provisioningPromise: Promise<void> | null = null;
 
@@ -279,8 +267,7 @@ export class SpaceRuntimeService {
       },
       queueForActivation: async (actor, message) => {
         const outcome = await this.queueLongTermAgentMessage(actor, message);
-        if (outcome.state === 'delivered') return outcome.sessionId;
-        return outcome.state === 'queued' ? outcome.messageId : null;
+        return outcome.state === 'delivered' ? outcome.sessionId : null;
       },
     };
   }
@@ -550,227 +537,18 @@ export class SpaceRuntimeService {
     actor: ActorRef,
     message: MessageRecord
   ): Promise<LongTermAgentQueueing> {
-    const inboxRepo = this.config.spaceAgentInboxRepo;
-    const agentId = agentIdFromActorId(actor.actorId);
-    if (!agentId) return { state: 'undeliverable' };
-    const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(agentId);
-    if (longHorizonAgent?.spaceId === actor.spaceId) {
-      const delivered = await this.deliverToLongTermAgent(actor, message);
-      if (delivered.state === 'delivered') {
-        return { state: 'delivered', sessionId: delivered.sessionId };
-      }
-      if (delivered.state === 'recipient_stale') return { state: 'recipient_stale' };
+    if (!agentIdFromActorId(actor.actorId)) return { state: 'undeliverable' };
+    const delivered = await this.deliverToLongTermAgent(actor, message);
+    if (delivered.state === 'delivered') {
+      return { state: 'delivered', sessionId: delivered.sessionId };
     }
-    if (!inboxRepo) return { state: 'undeliverable' };
-    const sourceSessionId = sourceSessionIdFromActorId(message.senderActorId);
-    const { record } = inboxRepo.enqueue({
-      spaceId: message.spaceId,
-      targetAgentId: agentId,
-      sourceActorId: message.senderActorId,
-      sourceSessionId,
-      message: message.body,
-      messageRecordJson: JSON.stringify(message),
-      idempotencyKey: message.idempotencyKey ?? message.messageId,
-    });
-    void this.activateLongTermAgentAndFlush(actor, record.id).catch((err) => {
-      inboxRepo.markAttemptFailed(record.id, err instanceof Error ? err.message : String(err));
-      log.warn(
-        `Long-term Space agent activation failed for ${actor.actorId}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    });
-    return { state: 'queued', messageId: record.id };
-  }
-
-  private async activateLongTermAgentAndFlush(
-    actor: ActorRef,
-    queuedMessageId?: string
-  ): Promise<void> {
-    const space = await this.config.spaceManager.getSpace(actor.spaceId);
-    if (!space || space.status !== 'active' || space.paused || space.stopped) return;
-    const agentId = agentIdFromActorId(actor.actorId);
-    const lockKey = agentId ? `${actor.spaceId}:${agentId}` : actor.actorId;
-    const previous = this.longTermAgentFlushes.get(lockKey) ?? Promise.resolve();
-    const current = previous
-      .catch(() => {})
-      .then(async () => {
-        const session = await this.ensureLongTermAgentSession(actor);
-        if (!session) return;
-        const resumed = await this.config.spaceManager.getSpace(actor.spaceId);
-        if (!resumed || resumed.status !== 'active' || resumed.paused || resumed.stopped) return;
-        await this.flushLongTermAgentInbox(actor, session, queuedMessageId);
-      });
-    this.longTermAgentFlushes.set(lockKey, current);
-    try {
-      await current;
-    } finally {
-      if (this.longTermAgentFlushes.get(lockKey) === current) {
-        this.longTermAgentFlushes.delete(lockKey);
-      }
-    }
-  }
-
-  private async flushLongTermAgentInbox(
-    actor: ActorRef,
-    session: {
-      getSessionData(): Session;
-      ensureQueryStarted(): Promise<void>;
-      messageQueue: { enqueueWithId: (id: string, message: string) => Promise<void> };
-    },
-    preferredMessageId?: string
-  ): Promise<void> {
-    const inboxRepo = this.config.spaceAgentInboxRepo;
-    if (!inboxRepo) return;
-    const agentId = agentIdFromActorId(actor.actorId);
-    if (!agentId) return;
-    inboxRepo.expireStale(actor.spaceId);
-    const pending = inboxRepo.listPendingForAgent(actor.spaceId, agentId);
-    const ordered = preferredMessageId
-      ? [
-          ...pending.filter((row) => row.id === preferredMessageId),
-          ...pending.filter((row) => row.id !== preferredMessageId),
-        ]
-      : pending;
-    for (const row of ordered) {
-      if (this.isGoalOutcomeWakeStale(row)) {
-        inboxRepo.markDelivered(row.id, session.getSessionData().id);
-        continue;
-      }
-      try {
-        const outcome = await this.injectLongTermAgentMessage(
-          session,
-          row.message,
-          row.idempotencyKey ?? row.id
-        );
-        this.settleLongTermAgentInboxRow(row, session.getSessionData().id, outcome);
-      } catch (err) {
-        inboxRepo.markAttemptFailed(row.id, err instanceof Error ? err.message : String(err));
-      }
-    }
-  }
-
-  private settleLongTermAgentInboxRow(
-    row: SpaceAgentInboxMessageRecord,
-    sessionId: string,
-    outcome: LongTermAgentAdmission
-  ): void {
-    const inboxRepo = this.config.spaceAgentInboxRepo;
-    if (!inboxRepo) return;
-    const messageId = row.idempotencyKey ?? row.id;
-    if (this.hasLongTermAgentConsumptionEvidence(sessionId, messageId)) {
-      inboxRepo.markDelivered(row.id, sessionId);
-      return;
-    }
-    if (outcome.state === 'rejected') {
-      inboxRepo.markAttemptFailed(row.id, outcome.reason);
-      return;
-    }
-    if (
-      this.readLongTermAgentSettlementStatus(sessionId, messageId, outcome.mailboxEntryId) ===
-      'failed'
-    ) {
-      inboxRepo.markAttemptFailed(row.id, 'delivery dead-lettered without consumption evidence');
-      return;
-    }
-    this.armLongTermAgentInboxSettlement(row, sessionId, messageId, outcome.mailboxEntryId);
-  }
-
-  private armLongTermAgentInboxSettlement(
-    row: SpaceAgentInboxMessageRecord,
-    sessionId: string,
-    messageId: string,
-    mailboxEntryId: string
-  ): void {
-    const inboxRepo = this.config.spaceAgentInboxRepo;
-    if (!inboxRepo) return;
-    this.inboxLateSettlements.arm({
-      sessionId,
-      messageId,
-      onConsumed: () => {
-        inboxRepo.markDelivered(row.id, sessionId);
-      },
-      onFailed: () => {
-        this.settleLongTermAgentInboxRowFailure(row, sessionId, messageId, mailboxEntryId);
-      },
-      getSendStatus: () =>
-        this.readLongTermAgentSettlementStatus(sessionId, messageId, mailboxEntryId),
-    });
-  }
-
-  private settleLongTermAgentInboxRowFailure(
-    row: SpaceAgentInboxMessageRecord,
-    sessionId: string,
-    messageId: string,
-    mailboxEntryId: string
-  ): void {
-    const inboxRepo = this.config.spaceAgentInboxRepo;
-    if (!inboxRepo) return;
-    if (this.hasLongTermAgentConsumptionEvidence(sessionId, messageId)) {
-      inboxRepo.markDelivered(row.id, sessionId);
-      return;
-    }
-    if (this.readLongTermAgentSettlementStatus(sessionId, messageId, mailboxEntryId) === 'failed') {
-      inboxRepo.markAttemptFailed(row.id, 'delivery dead-lettered without consumption evidence');
-      return;
-    }
-    const inboxRow = inboxRepo.getById?.(row.id);
-    if (inboxRow && inboxRow.status !== 'pending') return;
-    this.armLongTermAgentInboxSettlement(row, sessionId, messageId, mailboxEntryId);
-  }
-
-  private readLongTermAgentSettlementStatus(
-    sessionId: string,
-    messageId: string,
-    mailboxEntryId: string
-  ): string | undefined {
-    const sendStatus = this.readLongTermAgentSendStatus(sessionId, messageId);
-    if (sendStatus === 'failed') {
-      return this.listActiveMailboxAdmissions(sessionId, messageId).length > 0
-        ? undefined
-        : 'failed';
-    }
-    if (sendStatus != null && sendStatus !== 'deferred') return sendStatus;
-    const mailboxDead =
-      this.config.reactiveDb?.db
-        .getJobQueueRepo()
-        .getLatestByPayload('mailbox', { id: mailboxEntryId })?.status === 'dead';
-    if (mailboxDead) {
-      return this.listActiveMailboxAdmissions(sessionId, messageId).length > 0
-        ? undefined
-        : 'failed';
-    }
-    return sendStatus ?? undefined;
+    if (delivered.state === 'recipient_stale') return { state: 'recipient_stale' };
+    return { state: 'undeliverable' };
   }
 
   private hasLongTermAgentConsumptionEvidence(sessionId: string, messageId: string): boolean {
     const repo = this.config.reactiveDb?.db.getSDKMessageRepo();
     return repo?.hasConsumptionEvidence(sessionId, messageId) ?? false;
-  }
-
-  private readLongTermAgentSendStatus(
-    sessionId: string,
-    messageId: string
-  ): string | null | undefined {
-    return this.config.reactiveDb?.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)
-      ?.sendStatus;
-  }
-
-  private isGoalOutcomeWakeStale(row: SpaceAgentInboxMessageRecord): boolean {
-    if (!row.idempotencyKey?.startsWith('goal-outcome:')) return false;
-    const notificationId = row.idempotencyKey.slice('goal-outcome:'.length);
-    const notification = this.config.outcomeNotificationRepo?.getById(notificationId);
-    if (notification == null || notification.status !== 'pending') return true;
-    const goal = this.config.goalService?.getGoal(notification.goalId);
-    if (!goal || goal.spaceId !== notification.spaceId) return true;
-    const resolution = this.config.longHorizonAgentRepo?.getPrimaryGoalOwner(goal.id, goal.spaceId);
-    let targetAgentId: string | null = null;
-    if (resolution?.action === 'resolved') {
-      targetAgentId = resolution.owner.agentId;
-    } else if (resolution?.action === 'coordinator_fallback') {
-      targetAgentId = resolution.coordinatorAgentId;
-    } else if (resolution?.action === 'degraded' || resolution?.action === 'no_recipient') {
-      targetAgentId = this.config.longHorizonAgentRepo?.getCoordinator(goal.spaceId)?.id ?? null;
-    }
-    return targetAgentId == null || row.targetAgentId !== targetAgentId;
   }
 
   private async injectLongTermAgentMessage(
@@ -1012,12 +790,6 @@ export class SpaceRuntimeService {
       return Promise.resolve({ kind: 'unresolved', reason: 'session_resolution_unavailable' });
     }
     return ensureSession(target, deps);
-  }
-
-  private async ensureLongTermAgentSession(actor: ActorRef) {
-    const agentId = agentIdFromActorId(actor.actorId);
-    if (!agentId) return null;
-    return this.resolveAgentSession(actor.spaceId, agentId);
   }
 
   async ensureAgentSession(spaceId: string, agentId: string): Promise<EnsuredSession | null> {
@@ -1379,12 +1151,10 @@ export class SpaceRuntimeService {
   start(): void {
     if (this.started) return;
     this.started = true;
-    this.inboxLateSettlements = new SpaceAgentLateSettlements();
     this.runtime.start();
     this.subscribeToSpaceEvents();
     this.provisioningPromise = (async () => {
       await this.provisionExistingSpaces();
-      await this.recoverLongTermAgentInbox();
       await this.recoverPendingOutcomeNotifications();
       await this.recoverStalledWorkflowRuns();
     })().catch((err) => {
@@ -1414,50 +1184,6 @@ export class SpaceRuntimeService {
           );
         }
       });
-  }
-
-  recoverLongTermAgentInboxForSpace(spaceId: string): void {
-    const inboxRepo = this.config.spaceAgentInboxRepo;
-    if (!inboxRepo) return;
-    try {
-      inboxRepo.expireStale(spaceId);
-      for (const row of inboxRepo.listPendingForSpace(spaceId)) {
-        const resolution = resolveAgentRecord(spaceId, row.targetAgentId, this.agentRecordDeps());
-        if (resolution.kind === 'missing') {
-          continue;
-        }
-        void this.activateLongTermAgentAndFlush(
-          {
-            actorId: `agent:${encodeActorIdComponent(row.targetAgentId)}`,
-            kind: 'agent',
-            spaceId,
-            roles: ['space-agent'],
-            status: 'inactive',
-          },
-          row.id
-        ).catch((err) => {
-          inboxRepo.markAttemptFailed(row.id, err instanceof Error ? err.message : String(err));
-          log.warn(
-            `Long-term Space agent inbox recovery failed for ${row.targetAgentId}: ${err instanceof Error ? err.message : String(err)}`
-          );
-        });
-      }
-    } catch (err) {
-      log.error(`SpaceRuntimeService: recoverLongTermAgentInbox failed for ${spaceId}:`, err);
-    }
-  }
-
-  private async recoverLongTermAgentInbox(): Promise<void> {
-    const inboxRepo = this.config.spaceAgentInboxRepo;
-    if (!inboxRepo) return;
-    try {
-      inboxRepo.expireStale();
-      for (const space of await this.config.spaceManager.listSpaces()) {
-        this.recoverLongTermAgentInboxForSpace(space.id);
-      }
-    } catch (err) {
-      log.error('SpaceRuntimeService: recoverLongTermAgentInbox failed:', err);
-    }
   }
 
   async recoverPendingOutcomeNotificationsForSpace(spaceId: string): Promise<void> {
@@ -1511,7 +1237,6 @@ export class SpaceRuntimeService {
   async stop(): Promise<void> {
     if (!this.started) return;
     this.started = false;
-    const inboxLateSettlements = this.inboxLateSettlements;
     if (this.provisioningPromise) {
       await this.provisioningPromise;
       this.provisioningPromise = null;
@@ -1521,7 +1246,6 @@ export class SpaceRuntimeService {
       unsub();
     }
     this.unsubscribers.length = 0;
-    inboxLateSettlements.dispose();
 
     for (const [spaceId, server] of this.spaceDbQueryServers) {
       try {
@@ -2358,11 +2082,6 @@ function agentIdFromActorId(actorId: string): string | null {
   } catch {
     return null;
   }
-}
-
-function sourceSessionIdFromActorId(actorId: string): string | null {
-  if (!actorId.startsWith('session:')) return null;
-  return actorId.slice('session:'.length) || null;
 }
 
 function generateRuntimeMessageId(): string {
