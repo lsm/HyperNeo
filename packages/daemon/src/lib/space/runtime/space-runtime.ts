@@ -244,13 +244,13 @@ interface StartWorkflowRunOptions {
 
 type WorkflowTaskRecoveryTargetStatus = 'open' | 'in_progress';
 
-interface ExecutorMeta {
+export interface ExecutorMeta {
   workflow: SpaceWorkflow;
   spaceId: string;
   workspacePath: string;
 }
 
-interface RunTickContext {
+export interface RunTickContext {
   meta: ExecutorMeta;
   runTaskCount: number;
   canonicalTask: SpaceTask;
@@ -258,13 +258,13 @@ interface RunTickContext {
   resolveRunIsComplete: () => boolean;
 }
 
-interface AdmitSpawnExecutionOutcome {
+export interface AdmitSpawnExecutionOutcome {
   canonicalTask: SpaceTask;
   pendingExecutions: NodeExecution[];
   spawnAdmission: SpawnAdmissionDecision;
 }
 
-interface SpawnPendingExecutionsOutcome {
+export interface SpawnPendingExecutionsOutcome {
   blockedByCrash: boolean;
   permanentSpawnFailureReason: string | null;
 }
