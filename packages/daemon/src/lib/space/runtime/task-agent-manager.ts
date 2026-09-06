@@ -30,6 +30,7 @@ import {
   withSessionOperationLock,
 } from '../../../lib/agent/message-delivery.ts';
 import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
+import { readRestartRecoveryNote } from './restart-recovery-note.ts';
 import type { Database } from '../../../storage/database.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
@@ -298,11 +299,6 @@ const WORKER_REINJECTABLE_MCP_SERVERS = ['node-agent', 'space-actions'] as const
 const VERIFIED_STOP_PROCESS_EXIT_SETTLE_MS = 500;
 
 const VERIFIED_STOP_ESCALATION_FORCE_KILL_MS = 2000;
-
-function readRestartRecoveryNote(execution: NodeExecution): string | null {
-  const note = execution.data?.restartRecoveryNote;
-  return typeof note === 'string' && note.length > 0 ? note : null;
-}
 
 interface SpawnTaskAgentOptions {
   kickoff?: boolean;

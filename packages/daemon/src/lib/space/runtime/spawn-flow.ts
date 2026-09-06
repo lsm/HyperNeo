@@ -7,6 +7,7 @@ import type {
   WorkflowNode,
   WorkflowNodeAgent,
 } from '@hyperneo/shared';
+import { readRestartRecoveryNote } from './restart-recovery-note.ts';
 import { decideSpawnExecutionAdmissionViaPipeline } from './spawn-admission-decision-pipeline.ts';
 import type { WorkflowNodeSlotResolution } from './spawn-slot-resolution.ts';
 import { type StagedRunOutcome, stagedRun } from './staged-run.ts';
@@ -212,6 +213,10 @@ export function runSpawnExecutionFlow(
             } catch (err) {
               deps.revertLiveExecutionRebind?.(view.execution, sessionId);
               throw err;
+            }
+            const recoveryNote = readRestartRecoveryNote(view.execution);
+            if (recoveryNote) {
+              await deps.injectKickoffMessage(sessionId, recoveryNote, view.execution.id);
             }
           }
           return rebind;

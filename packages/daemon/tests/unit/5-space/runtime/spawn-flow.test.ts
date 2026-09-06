@@ -96,7 +96,9 @@ interface FlowFixture {
   ) => Promise<ReturnType<typeof runSpawnExecutionFlow>>;
 }
 
-function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {}): FlowFixture {
+function makeFlowFixture(
+  options: { taskStatus?: string; kickoff?: boolean; execution?: Partial<NodeExecution> } = {}
+): FlowFixture {
   const calls: string[] = [];
   const cancels: string[] = [];
   const releases: string[] = [];
@@ -110,7 +112,7 @@ function makeFlowFixture(options: { taskStatus?: string; kickoff?: boolean } = {
   const injected: Array<{ sessionId: string; message: string }> = [];
   const spawningExecutionIds = new Set<string>();
   const task = makeTask(options.taskStatus ?? 'in_progress');
-  const execution = makeExecution();
+  const execution = makeExecution(options.execution);
   const boundExecution = {
     ...execution,
     status: 'in_progress' as const,
@@ -326,6 +328,26 @@ describe('spawn flow — alternative admission branches', () => {
     expect(h.rebinds).toEqual([{ executionId: EXECUTION_ID, sessionId: 'live-1' }]);
     expect(h.calls).toEqual(['rebind:live-1']);
     expect(h.reservations).toEqual([]);
+  });
+
+  test('reuse_live injects a persisted restart-recovery note into the reused session', async () => {
+    const h = makeFlowFixture({
+      execution: { data: { restartRecoveryNote: 'handoff was lost — check the PR state' } },
+    });
+    const outcome = await h.run({
+      inspectIndexedSession: (agentSessionId) => ({
+        sessionId: agentSessionId ?? 'live-1',
+        alive: true,
+      }),
+    });
+    expect(outcome).toEqual({
+      status: 'completed',
+      result: { kind: 'reused_session', sessionId: 'live-1' },
+    });
+    expect(h.rebinds).toEqual([{ executionId: EXECUTION_ID, sessionId: 'live-1' }]);
+    expect(h.injected).toEqual([
+      { sessionId: 'live-1', message: 'handoff was lost — check the PR state' },
+    ]);
   });
 
   test('wait_concurrent halts with the wait marker and runs no effect stage', async () => {
