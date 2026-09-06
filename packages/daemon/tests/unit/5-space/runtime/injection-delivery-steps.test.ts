@@ -126,6 +126,35 @@ describe('deliverInjectedMessage', () => {
     h.db.close();
   });
 
+  it('rejects a stale handoff instead of reporting delivery', async () => {
+    const h = makeHarness();
+    const persisted = persistPrompt({
+      db: h.db,
+      sdkMessageRepo: h.sdkRepo,
+      jobQueue: h.jobQueue,
+      sessionId: SESSION_ID,
+      message: makeSdkUserMessage(),
+      delivery: { origin: 'space_inject' },
+    });
+    h.sdkRepo.updateMessageStatus([persisted.dbMessageId], 'submitted');
+    h.completeDeliveryJobs(SESSION_ID, MESSAGE_ID);
+    const sdkMessageRepo = new Proxy(h.sdkRepo, {
+      get(target, property, receiver) {
+        if (property === 'getDeliveryContent') {
+          return () => ({ content: 'shell step', sendStatus: 'failed' });
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    await expect(deliverInjectedMessage({ ...h.deps, sdkMessageRepo }, h.args())).rejects.toThrow(
+      'Mailbox handoff became stale'
+    );
+
+    expect(h.sendStatus(SESSION_ID, MESSAGE_ID)).toBe('submitted');
+    h.db.close();
+  });
+
   it('releases the context-clear boundary and leaves a conflicting row live', async () => {
     const h = makeHarness();
     persistPrompt({

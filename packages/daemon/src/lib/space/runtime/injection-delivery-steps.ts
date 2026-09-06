@@ -109,7 +109,10 @@ export async function deliverInjectedMessage(
       stateManager: args.session.stateManager,
       publishStatusChanged: deps.publishStatusChanged,
     });
-    return outcome.state === 'stale' ? args.messageId : outcome.dbId;
+    if (outcome.state === 'stale') {
+      throw new Error('Mailbox handoff became stale');
+    }
+    return outcome.dbId;
   } finally {
     args.boundaryOwner?.release();
   }
