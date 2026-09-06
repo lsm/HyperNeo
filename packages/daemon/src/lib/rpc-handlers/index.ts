@@ -824,6 +824,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
            WHERE session_id = ? AND send_status IN ('enqueued', 'submitted', 'deferred')`
           )
           .get(agent.sessionId) as { n?: number } | null;
+        const pendingMailboxRow = db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM job_queue
+           WHERE queue = 'mailbox' AND status IN ('pending', 'processing')
+             AND json_extract(payload, '$.to.sessionId') = ?`
+          )
+          .get(agent.sessionId) as { n?: number } | null;
         let status = 'idle';
         const liveSession = deps.sessionManager?.getCachedSession(agent.sessionId);
         if (liveSession) {
@@ -846,7 +853,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
             status === 'running' ||
             status === 'rate_limit_cooldown' ||
             status === 'waiting_for_input',
-          pendingOtherAcceptedDelivery: (pendingRow?.n ?? 0) > 0,
+          pendingOtherAcceptedDelivery: (pendingRow?.n ?? 0) > 0 || (pendingMailboxRow?.n ?? 0) > 0,
         };
       },
       isNagDeliveryPending: (spaceId, agentId, claimKey) => {

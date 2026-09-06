@@ -991,7 +991,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             .catch(() => {});
         },
       }),
-      { onDead: createMailboxDeadHandler(logError) }
+      {
+        dequeueMode: { kind: 'session-fifo', sessionIdPath: '$.to.sessionId' },
+        onDead: createMailboxDeadHandler(logError),
+      }
     );
 
     messageDeliveryProcessor.register(

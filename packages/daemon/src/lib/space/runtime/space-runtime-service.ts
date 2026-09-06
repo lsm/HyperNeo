@@ -51,10 +51,8 @@ import {
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
-import { renderAddress } from '../../mailbox/address.ts';
-import { toMailboxMessage } from '../../mailbox/entry.ts';
-import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
-import { MAILBOX_LANE } from '../../mailbox/enqueue.ts';
+import { createMailboxEntry, toMailboxMessage, type MailboxEntry } from '../../mailbox/entry.ts';
+import { enqueueMailboxEntry, MAILBOX_LANE } from '../../mailbox/enqueue.ts';
 import type { SessionManager } from '../../session-manager.ts';
 import { buildAgentSessionConfig } from '../../session-resolution/agent-session-config.ts';
 import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
@@ -660,7 +658,10 @@ export class SpaceRuntimeService {
       inboxRepo.markAttemptFailed(row.id, outcome.reason);
       return;
     }
-    if (this.readLongTermAgentSendStatus(sessionId, messageId) === 'failed') {
+    if (
+      this.readLongTermAgentSettlementStatus(sessionId, messageId, outcome.mailboxEntryId) ===
+      'failed'
+    ) {
       inboxRepo.markAttemptFailed(row.id, 'delivery dead-lettered without consumption evidence');
       return;
     }
@@ -785,6 +786,18 @@ export class SpaceRuntimeService {
     if ('reason' in projected) {
       return { state: 'rejected', reason: projected.reason };
     }
+    let entry: MailboxEntry;
+    try {
+      entry = createMailboxEntry({
+        to: { kind: 'session', sessionId },
+        message: projected.message,
+        origin: 'long_term_agent',
+        messageUuid: id,
+      });
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      return { state: 'rejected', reason: error.message };
+    }
     const persistedMessage = {
       ...projected.message,
       uuid: id as NonNullable<SDKUserMessage['uuid']>,
@@ -798,20 +811,10 @@ export class SpaceRuntimeService {
       message: persistedMessage,
     });
     this.assertNoPendingMailboxContentConflict(sessionId, id, projected.message.message.content);
-    const outcome = await handoffPromptToMailbox({
-      to: renderAddress({ kind: 'session', sessionId }),
-      message: projected.message,
-      origin: 'long_term_agent',
-      messageUuid: id,
-      jobQueue,
-    });
-    if (outcome.kind === 'enqueued') {
-      return { state: 'accepted', mailboxEntryId: outcome.id };
-    }
-    if (outcome.reason.startsWith('internal: ')) {
-      throw new Error(outcome.reason.slice('internal: '.length));
-    }
-    return { state: 'rejected', reason: outcome.reason };
+    const outcome = enqueueMailboxEntry(jobQueue, entry);
+    return outcome.kind === 'enqueued'
+      ? { state: 'accepted', mailboxEntryId: outcome.id }
+      : { state: 'rejected', reason: outcome.reason };
   }
 
   private assertNoPendingMailboxContentConflict(
