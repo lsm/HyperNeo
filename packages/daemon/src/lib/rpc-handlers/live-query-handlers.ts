@@ -556,7 +556,8 @@ delivery_job_errors AS MATERIALIZED (
     ) AS rn
   FROM job_queue jq
   WHERE jq.queue = 'message_delivery'
-    AND jq.error IS NOT NULL${sessionFilter}
+    AND jq.error IS NOT NULL
+    AND jq.status != 'completed'${sessionFilter}
 )`;
 }
 
@@ -812,15 +813,19 @@ delivery_user_rank AS MATERIALIZED (
     ) AS user_rank
   FROM task_sdk_messages sm
   WHERE sm.message_type = 'user'
+    AND sm.send_status IS NOT NULL
 ),
 -- Delivery rows project the mailbox delivery lifecycle from the session outbox
 -- (sdk_messages user rows) rather than the legacy pending_agent_messages queue:
--- synthetic non-initial user rows are routed deliveries, and send_status carries
--- the lifecycle (enqueued/deferred/submitted → queued, consumed → delivered,
--- failed → failed). A session's FIRST user row is its initial brief, never a
--- delivery, so it is excluded. The sender chip comes from the agent-message
--- envelope header when present; runtime injections (wakes, recovery, nags)
--- fall back to the Runtime actor.
+-- outbox-persisted synthetic non-initial user rows are routed deliveries, and
+-- send_status carries the lifecycle (enqueued/deferred/submitted → queued,
+-- consumed → delivered, failed → failed). A non-NULL send_status plus a NULL
+-- parent_tool_use_id is the outbox evidence: SDK-emitted user echoes (tool
+-- results) are also stamped isSynthetic but persist without a send status.
+-- A session's FIRST outbox row is its initial brief, never a delivery, so it
+-- is excluded. The sender chip comes from the agent-message envelope header
+-- when present; runtime injections (wakes, recovery, nags) fall back to the
+-- Runtime actor.
 delivery_rows AS (
   SELECT
     id,
@@ -865,7 +870,7 @@ delivery_rows AS (
     SELECT
       'delivery:' || tsm.id AS id,
       CASE
-        WHEN adr.retrying AND COALESCE(tsm.send_status, 'consumed') NOT IN ('consumed', 'failed') THEN 'retry'
+        WHEN adr.retrying AND tsm.send_status NOT IN ('consumed', 'failed') THEN 'retry'
         ELSE 'handoff'
       END AS eventKind,
       tt.id AS taskId,
@@ -880,7 +885,7 @@ delivery_rows AS (
       ) AS target_label,
       COALESCE(ne.agent_name, tsm.provenance_agent_name, '') AS target_role,
       tsm.session_id AS session_id,
-      COALESCE(tsm.send_status, 'consumed') AS send_status,
+      tsm.send_status AS send_status,
       SUBSTR(${mailboxDeliveryTextExpr('tsm.sdk_message')}, 1, 500) AS summary,
       dje.error AS error,
       CAST(ROUND((julianday(tsm.timestamp) - 2440587.5) * 86400000) AS INTEGER) AS createdAt
@@ -904,6 +909,7 @@ delivery_rows AS (
     WHERE tsm.message_type = 'user'
       AND json_valid(tsm.sdk_message)
       AND COALESCE(CAST(json_extract(tsm.sdk_message, '$.isSynthetic') AS INTEGER), 0) = 1
+      AND tsm.parent_tool_use_id IS NULL
   )
 ),
 github_rows AS (
@@ -990,6 +996,8 @@ delivery_targets AS MATERIALIZED (
   JOIN sdk_messages sm ON sm.task_id = st.id
   WHERE st.workflow_run_id = ?
     AND sm.message_type = 'user'
+    AND sm.send_status IS NOT NULL
+    AND sm.parent_tool_use_id IS NULL
 ),
 delivery_user_rank AS MATERIALIZED (
   SELECT
@@ -1036,8 +1044,9 @@ ${deliveryRetryStateCtes(`AND json_extract(jq.payload, '$.sessionId') IN (
     SELECT session_id FROM delivery_targets
   )`)},
 -- Same mailbox delivery projection as the task timeline, scoped to the run's
--- tasks through sdk_messages.task_id; synthetic non-initial user rows are the
--- routed deliveries that used to surface from pending_agent_messages.
+-- tasks through sdk_messages.task_id; outbox-persisted synthetic non-initial
+-- user rows (send_status non-NULL, no parent tool use) are the routed
+-- deliveries that used to surface from pending_agent_messages.
 delivery_rows AS (
   SELECT
     id,
@@ -1082,7 +1091,7 @@ delivery_rows AS (
     SELECT
       'delivery:' || dt.message_id AS id,
       CASE
-        WHEN adr.retrying AND COALESCE(dt.send_status, 'consumed') NOT IN ('consumed', 'failed') THEN 'retry'
+        WHEN adr.retrying AND dt.send_status NOT IN ('consumed', 'failed') THEN 'retry'
         ELSE 'handoff'
       END AS eventKind,
       dt.task_id AS taskId,
@@ -1097,7 +1106,7 @@ delivery_rows AS (
       ) AS target_label,
       COALESCE(dse.agent_name, dsess.provenance_agent_name, '') AS target_role,
       dt.session_id AS session_id,
-      COALESCE(dt.send_status, 'consumed') AS send_status,
+      dt.send_status AS send_status,
       SUBSTR(${mailboxDeliveryTextExpr('dt.sdk_message')}, 1, 500) AS summary,
       dje.error AS error,
       CAST(ROUND((julianday(dt.timestamp) - 2440587.5) * 86400000) AS INTEGER) AS createdAt

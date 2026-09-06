@@ -942,13 +942,14 @@ describe('NAMED_QUERY_REGISTRY', () => {
       sendStatus?: string | null;
       origin?: string | null;
       sdkUuid?: string;
+      parentToolUseId?: string | null;
       payload: Record<string, unknown>;
     }): void {
       const taskIdForSession = sessionTaskIds.get(params.sessionId) ?? null;
       db.exec(`
 				INSERT INTO sdk_messages (
 					id, session_id, message_type, message_subtype, sdk_message, timestamp,
-					send_status, origin, sdk_uuid, task_id
+					send_status, origin, sdk_uuid, parent_tool_use_id, task_id
 				) VALUES (
 					'${params.id}', '${params.sessionId}', 'user', NULL,
 					'${JSON.stringify(params.payload).replace(/'/g, "''")}',
@@ -956,6 +957,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
 					${params.sendStatus ? `'${params.sendStatus}'` : 'NULL'},
 					${params.origin ? `'${params.origin}'` : 'NULL'},
 					${params.sdkUuid ? `'${params.sdkUuid}'` : 'NULL'},
+					${params.parentToolUseId ? `'${params.parentToolUseId}'` : 'NULL'},
 					${taskIdForSession ? `'${taskIdForSession}'` : 'NULL'}
 				)
 			`);
@@ -1085,7 +1087,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect((delivery.target as Record<string, unknown>).sessionId).toBe(nodeSessionId);
     });
 
-    test('actorMessages.byTask excludes the session brief and human rows from delivery rows', () => {
+    test('actorMessages.byTask excludes the session brief, human rows, and SDK tool-result echoes from delivery rows', () => {
       const workflowRunId = 'wr-actor-exclude';
       const nodeSessionId = 'session-actor-exclude';
       const taskId = insertSpaceTask({
@@ -1122,6 +1124,21 @@ describe('NAMED_QUERY_REGISTRY', () => {
         payload: {
           type: 'user',
           message: { role: 'user', content: [{ type: 'text', text: 'human question' }] },
+        },
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-tool-result',
+        sessionId: nodeSessionId,
+        timestampMs: now + 3000,
+        sendStatus: null,
+        parentToolUseId: 'toolu-1',
+        payload: {
+          type: 'user',
+          isSynthetic: true,
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'toolu-1', content: 'tool output' }],
+          },
         },
       });
 
@@ -1176,6 +1193,14 @@ describe('NAMED_QUERY_REGISTRY', () => {
         sdkUuid: 'u-failed',
         payload: envelopeHandoffPayload('u-failed', 'coder', 'failed handoff body'),
       });
+      insertOutboxUserMessage({
+        id: 'sdk-delivered-retry',
+        sessionId: nodeSessionId,
+        timestampMs: now + 4000,
+        sendStatus: 'consumed',
+        sdkUuid: 'u-delivered-retry',
+        payload: envelopeHandoffPayload('u-delivered-retry', 'coder', 'delivered after retry'),
+      });
       db.prepare(
         `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at, error)
          VALUES (?, 'message_delivery', 'pending', ?, 0, 8, ?, ?, ?)`
@@ -1189,6 +1214,20 @@ describe('NAMED_QUERY_REGISTRY', () => {
         now,
         now,
         'SDK subprocess exited before submit'
+      );
+      db.prepare(
+        `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at, error)
+         VALUES (?, 'message_delivery', 'completed', ?, 1, 8, ?, ?, ?)`
+      ).run(
+        'job-delivery-retry-done',
+        JSON.stringify({
+          sessionId: nodeSessionId,
+          messageUuid: 'u-delivered-retry',
+          origin: 'space_agent',
+        }),
+        now,
+        now,
+        'transient submit failure, succeeded on retry'
       );
 
       const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
@@ -1209,6 +1248,12 @@ describe('NAMED_QUERY_REGISTRY', () => {
         title: 'Failed delivery',
         severity: 'error',
         details: 'SDK subprocess exited before submit',
+      });
+      expect(byId.get('delivery:sdk-delivered-retry')).toMatchObject({
+        deliveryState: 'delivered',
+        title: 'Delivered message',
+        severity: 'success',
+        details: null,
       });
     });
 
