@@ -3898,6 +3898,9 @@ describe('long-term agent delivery — id→session routing table', () => {
       getCoordinator: mock(
         () => options.longHorizonAgents.find((a) => a.id === options.coordinatorId) ?? null
       ),
+      getCoordinatorRecord: mock(
+        () => options.longHorizonAgents.find((a) => a.id === options.coordinatorId) ?? null
+      ),
       update: mock(() => ({})),
     } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
     const svc = new SpaceRuntimeService({
@@ -3980,6 +3983,38 @@ describe('long-term agent delivery — id→session routing table', () => {
         worktreeMode: 'direct',
       })
     );
+  });
+
+  test('coordinator alias actor reaches the space:chat session via queueForActivation', async () => {
+    const canonical = buildLongHorizonAgent({
+      id: 'space-lh-agent:coordinator:space-1',
+      handle: 'coordinator',
+    });
+    const run = buildRoutingService({
+      longHorizonAgents: [canonical],
+      coordinatorId: canonical.id,
+    });
+    const delivery = run.svc.longTermAgentDeliveryCallbacks();
+
+    await delivery?.queueForActivation(
+      {
+        actorId: 'agent:coordinator:space-1',
+        spaceId: 'space-1',
+        status: 'inactive',
+      } as ActorRef,
+      {
+        messageId: 'routing-probe-2',
+        spaceId: 'space-1',
+        senderActorId: 'space:space-1:human:user-1',
+        kind: 'message',
+        body: 'routing probe',
+        createdAt: NOW,
+      } as MessageRecord
+    );
+
+    expect(run.lookupIds[0]).toBe('space:chat:space-1');
+    expect(run.lookupIds.some((id) => id.startsWith('space:agent:'))).toBe(false);
+    expect(run.createCalls).toHaveLength(0);
   });
 });
 

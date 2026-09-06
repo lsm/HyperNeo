@@ -537,16 +537,12 @@ export class SpaceRuntimeService {
     actor: ActorRef,
     message: MessageRecord
   ): Promise<LongTermAgentQueueing> {
-    const agentId = agentIdFromActorId(actor.actorId);
-    if (!agentId) return { state: 'undeliverable' };
-    const longHorizonAgent = this.config.longHorizonAgentRepo?.getById(agentId);
-    if (longHorizonAgent?.spaceId === actor.spaceId) {
-      const delivered = await this.deliverToLongTermAgent(actor, message);
-      if (delivered.state === 'delivered') {
-        return { state: 'delivered', sessionId: delivered.sessionId };
-      }
-      if (delivered.state === 'recipient_stale') return { state: 'recipient_stale' };
+    if (!agentIdFromActorId(actor.actorId)) return { state: 'undeliverable' };
+    const delivered = await this.deliverToLongTermAgent(actor, message);
+    if (delivered.state === 'delivered') {
+      return { state: 'delivered', sessionId: delivered.sessionId };
     }
+    if (delivered.state === 'recipient_stale') return { state: 'recipient_stale' };
     return { state: 'undeliverable' };
   }
 
