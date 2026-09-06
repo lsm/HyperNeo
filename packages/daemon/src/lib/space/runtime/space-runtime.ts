@@ -5789,9 +5789,14 @@ export class SpaceRuntime {
 
       const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(execution.agentSessionId);
       const classification = classifyLastMessageForIdleAgent(lastMessage);
-      const state = this.getAgentStuckState(runId, execution);
+      let state = this.getAgentStuckState(runId, execution);
       const thresholdMs = this.getAgentNoProgressThresholdMs(workflow, execution);
-      const observedAt = observeExecutionProgress(state, execution, lastMessage, now);
+      const observation = observeExecutionProgress(state, execution, lastMessage, now);
+      if (observation.state !== state) {
+        this.agentStuckRecovery.set(this.makeAgentStuckKey(runId, execution.id), observation.state);
+        state = observation.state;
+      }
+      const observedAt = observation.observedAt;
 
       if (classification.terminal) {
         this.clearAgentStuckState(runId, execution.id);

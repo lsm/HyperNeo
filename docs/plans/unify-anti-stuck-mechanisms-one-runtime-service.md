@@ -17,14 +17,25 @@ slice below maps 1:1 to a GitHub child issue and a PR targeting `dev`.
 | 4 | Blocked-run auto-retry | `attemptBlockedRunRecovery` (`space-runtime.ts:7954`, ~111 lines) + `revertRepairedRunToBlocked` + `repairBlockedCanonicalTask` | in-memory `blockedRetryCounts` | run tick (waiting-run route) | CAS retry / `workflow_run_needs_attention` on exhaustion |
 | 5 | Spawn-failure classification | classification already pure (`spawn-admission-gates.ts`, `run-spawn-decisions.ts`); crash counter `resetWorkflowNodeExecutionForSpawnRetry` (`space-runtime.ts:5957`, ~37 lines) | in-memory `taskCrashCounts` | run tick | retry-as-pending / block |
 
-Adjacent handlers in the same cluster (stay in place unless a slice says otherwise):
-`handleWaitingRebindExecutions`, `handleNonTerminalIdleExecutions`,
-`handleTerminalErrorIdleExecutions`, `detectSilentStallForAttention` (notify-only),
-prompt-too-long recovery.
+Adjacent handlers in the same recovery cluster are also in scope — measured and
+assigned below, not left beside the ladder (they are detection/intervention
+paths too, and would otherwise stay outside the unified owner and the autonomy
+policy):
+
+| Handler | Where | Lines | State today | Assigned slice |
+|---|---|---|---|---|
+| Non-terminal idle nudge ladder | `handleNonTerminalIdleExecutions` (`space-runtime.ts:7094`) | ~195 | in-memory `nonTerminalIdleStates` (nudgeCount, failedNudgeCount, backoff) | AS-S3 extracts its decision; state folds in AS-S4; wired AS-S6 |
+| Terminal-error continue ladder | `handleTerminalErrorIdleExecutions` (`space-runtime.ts:7288`) + `escalateTerminalErrorToBlocked` (`:7598`) | ~199 + ~138 | in-memory `terminalErrorContinueStates` | AS-S3 extracts its decision; state folds in AS-S4; wired AS-S6 |
+| Waiting-rebind retry | `handleWaitingRebindExecutions` (`space-runtime.ts:7736`) | ~160 | deterministic single retry, no map | decision joins AS-S2; wired AS-S6 |
+| Silent-stall detection | `detectSilentStallForAttention` (`space-runtime.ts:7486`) | ~103 | in-memory `silentStallAttentionLogAt` | becomes a notify-rung detection stage in AS-S5; log map folds in AS-S4 |
+| Prompt-overflow recovery | `recoverPromptTooLongIdleExecution` (`space-runtime.ts:5501`, ~200) + `prompt-too-long-recovery.ts` (116) | ~316 | in-memory `promptTooLongRecovery` | its compact/continue mechanics stay in their module (transport-level recovery of a specific error class); its autonomous outcomes (continue, compact-retry, escalate) register on the unified policy rungs in AS-S6 — the autonomy gate applies to them like any other intervention |
 
 Defects this unification removes: five liveness derivations that re-derive
-"is this agent stuck" differently; three scattered in-memory state maps plus one
-durable claim pair; no shared intervention vocabulary; none of it autonomy-aware.
+"is this agent stuck" differently; the scattered in-memory state maps
+(`agentStuckRecovery`, `blockedRetryCounts`, `taskCrashCounts`,
+`nonTerminalIdleStates`, `terminalErrorContinueStates`, `silentStallAttentionLogAt`,
+`promptTooLongRecovery`) plus one durable claim pair; no shared intervention
+vocabulary; none of it autonomy-aware.
 
 ## Pin status
 
@@ -42,9 +53,9 @@ each slice's equivalence/behavior tests ride that slice per ADR 0004.
 ## Target shape
 
 - `packages/daemon/src/lib/space/runtime/anti-stuck/` owns the unified logic:
-  `stuck-ladder-gates.ts` (S1), `recovery-retry-gates.ts` (S2), `policy.ts`
-  (intervention ladder + autonomy requirements, S3), `anti-stuck-pipeline.ts`
-  (S4), and a shared per-subject state store (S3).
+  `stuck-ladder-gates.ts` (S1), `recovery-retry-gates.ts` (S2),
+  `idle-ladder-gates.ts` (S3), `policy.ts` (intervention ladder + autonomy
+  requirements + shared state store, S4), `anti-stuck-pipeline.ts` (S5).
 - Detection reuses the run tick's already-loaded context (`loadRunContext`,
   `loadExecutionsAndSpace`, session liveness via `tam.isSessionInMemory`) — the
   anti-stuck pipeline is composed inside the tick's stranded-recovery stage
@@ -76,12 +87,13 @@ Serial; each slice branches from updated `dev` after its dependency merges.
 
 | Slice | Phase | Deliverable | Budget (prod) |
 |---|---|---|---|
-| AS-S1 | extract | `stuck-ladder-gates.ts`: `observeExecutionProgress` (session-change/progress-message state reducer + `observedAt` computation) and `decideStuckLadderAction` (threshold → nag → grace → restart → block), verbatim moves out of `handleAliveStuckExecutions`; equivalence pins; carries this plan doc | ~150 |
-| AS-S2 | extract | `recovery-retry-gates.ts`: `decideBlockedRunRecovery` (budget, reopen-reset, CAS precondition) and `decideSpawnRetryOutcome` (crash-count exhaustion), verbatim moves; equivalence pins | ~150 |
-| AS-S3 | build | `policy.ts` + shared state store: `AntiStuckIntervention` ladder, `ANTI_STUCK_INTERVENTION_REQUIREMENTS`, `decideAntiStuckIntervention`; additive dead code + tests | ~250 |
-| AS-S4 | build | `anti-stuck-pipeline.ts`: one superpipe composing detection (S1/S2 gates, `selectTimedOutExecutions`, watchdog snapshot) → autonomy gate → intervention dispatch; additive dead code + per-stage tests | ~300 |
-| AS-S5 | wire | run-tick paths call the pipeline; `agentStuckRecovery` / `blockedRetryCounts` / `taskCrashCounts` fold into the shared store; autonomy gating live for run mechanisms; pins updated with level-explicit fixtures. Splits into S5a (stuck ladder + timeout) / S5b (retry + crash) if measured over budget | ~300 |
-| AS-S6 | wire | inactivity watchdog scan routes its decision through the unified policy (autonomy-gated nag); durable claims preserved | ~250 |
-| AS-S7 | delete | superseded inline handlers, old decision copies, scattered state maps; removal-only | negative |
+| AS-S1 | extract | `stuck-ladder-gates.ts`: `observeExecutionProgress` (session-change/progress-message state reducer + `observedAt` computation, returning the next state without mutating its input) and `decideStuckLadderAction` (threshold → nag → grace → restart → block), verbatim moves out of `handleAliveStuckExecutions`; equivalence pins; carries this plan doc | ~150 |
+| AS-S2 | extract | `recovery-retry-gates.ts`: `decideBlockedRunRecovery` (budget, reopen-reset, CAS precondition) and `decideSpawnRetryOutcome` (crash-count exhaustion), plus the waiting-rebind single-retry decision from `handleWaitingRebindExecutions`; verbatim moves; equivalence pins | ~200 |
+| AS-S3 | extract | `idle-ladder-gates.ts`: the non-terminal-idle nudge ladder (nudge budget, failed-nudge backoff) and the terminal-error continue ladder (continue budget, escalate) decisions out of `handleNonTerminalIdleExecutions` / `handleTerminalErrorIdleExecutions`; verbatim moves; equivalence pins | ~250 |
+| AS-S4 | build | `policy.ts` + shared state store: `AntiStuckIntervention` ladder, `ANTI_STUCK_INTERVENTION_REQUIREMENTS`, `decideAntiStuckIntervention`; the store folds every in-memory map listed in the inventory; additive dead code + tests | ~250 |
+| AS-S5 | build | `anti-stuck-pipeline.ts`: one superpipe composing detection (S1–S3 gates, `selectTimedOutExecutions`, silent-stall detection, watchdog snapshot) → autonomy gate → intervention dispatch; additive dead code + per-stage tests | ~300 |
+| AS-S6 | wire | run-tick paths call the pipeline — stuck ladder, idle/terminal-error ladders, waiting-rebind, timeout, crash retry, blocked-run retry, silent-stall, and prompt-overflow outcome registration; state maps fold into the shared store; autonomy gating live; pins updated with level-explicit fixtures. Splits into S6a/S6b if measured over budget | ~300 |
+| AS-S7 | wire | inactivity watchdog scan routes its decision through the unified policy (autonomy-gated nag); durable claims preserved | ~250 |
+| AS-S8 | delete | superseded inline handlers, old decision copies, scattered state maps; removal-only | negative |
 
-Standing per-slice merge contracts live in each child issue (AS-S1..AS-S7).
+Standing per-slice merge contracts live in each child issue (AS-S1..AS-S8).

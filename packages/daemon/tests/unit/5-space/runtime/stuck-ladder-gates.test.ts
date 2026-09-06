@@ -59,33 +59,31 @@ describe('createAgentStuckRecoveryState', () => {
 
 describe('observeExecutionProgress', () => {
   test('observedAt is the max of lastActivityAt and the latest non-nag message timestamp', () => {
-    const state = makeState();
-    const observedAt = observeExecutionProgress(
-      state,
+    const result = observeExecutionProgress(
+      makeState(),
       { agentSessionId: 'session-1', lastActivityAt: 6_000, startedAt: 1_000 },
       makeMessage({ timestamp: 4_000 }),
       NOW
     );
-    expect(observedAt).toBe(6_000);
+    expect(result.observedAt).toBe(6_000);
   });
 
   test('observedAt falls back to startedAt, then lastActionAt, then now', () => {
-    const state = makeState({ lastActionAt: 3_000 });
     expect(
       observeExecutionProgress(
-        state,
+        makeState({ lastActionAt: 3_000 }),
         { agentSessionId: 'session-1', lastActivityAt: null, startedAt: 2_000 },
         null,
         NOW
-      )
+      ).observedAt
     ).toBe(2_000);
     expect(
       observeExecutionProgress(
-        state,
+        makeState({ lastActionAt: 3_000 }),
         { agentSessionId: 'session-1', lastActivityAt: null, startedAt: null },
         null,
         NOW
-      )
+      ).observedAt
     ).toBe(3_000);
     expect(
       observeExecutionProgress(
@@ -93,171 +91,172 @@ describe('observeExecutionProgress', () => {
         { agentSessionId: 'session-1', lastActivityAt: null, startedAt: null },
         null,
         NOW
-      )
+      ).observedAt
     ).toBe(NOW);
   });
 
-  test('a session change resets the ladder and rebinds observations', () => {
+  test('a session change returns a rebound state and never mutates the input', () => {
     const state = spentState({ lastSessionId: 'session-old' });
+    const snapshot = { ...state };
     const message = makeMessage({ dbId: 'msg-new', timestamp: 4_500 });
-    const observedAt = observeExecutionProgress(
+    const result = observeExecutionProgress(
       state,
       { agentSessionId: 'session-new', lastActivityAt: null, startedAt: 1_000 },
       message,
       NOW
     );
-    expect(observedAt).toBe(4_500);
-    expect(state.lastSessionId).toBe('session-new');
-    expect(state.lastObservedMessageId).toBe('msg-new');
-    expect(state.lastObservedMessageAt).toBe(4_500);
-    expect(state.lastObservedProgressMessageId).toBe('msg-new');
-    expect(state.lastObservedProgressMessageAt).toBe(4_500);
-    expect(state.lastRuntimeNagMessageId).toBeNull();
-    expect(state.lastAction).toBeNull();
-    expect(state.lastActionAt).toBeNull();
-    expect(state.nagCount).toBe(0);
-    expect(state.restartCount).toBe(0);
-    expect(state.pendingRestartNotice).toBeNull();
+    expect(result.observedAt).toBe(4_500);
+    expect(result.state).not.toBe(state);
+    expect(result.state.lastSessionId).toBe('session-new');
+    expect(result.state.lastObservedMessageId).toBe('msg-new');
+    expect(result.state.lastObservedMessageAt).toBe(4_500);
+    expect(result.state.lastObservedProgressMessageId).toBe('msg-new');
+    expect(result.state.lastObservedProgressMessageAt).toBe(4_500);
+    expect(result.state.lastRuntimeNagMessageId).toBeNull();
+    expect(result.state.lastAction).toBeNull();
+    expect(result.state.lastActionAt).toBeNull();
+    expect(result.state.nagCount).toBe(0);
+    expect(result.state.restartCount).toBe(0);
+    expect(result.state.pendingRestartNotice).toBeNull();
+    expect(state).toEqual(snapshot);
   });
 
-  test('a new progress message resets the ladder but keeps the session binding', () => {
+  test('a new progress message returns a ladder-reset state and never mutates the input', () => {
     const state = spentState({ lastObservedMessageId: 'msg-old' });
+    const snapshot = { ...state };
     const message = makeMessage({ dbId: 'msg-new', timestamp: 7_000 });
-    const observedAt = observeExecutionProgress(
+    const result = observeExecutionProgress(
       state,
       { agentSessionId: 'session-1', lastActivityAt: null, startedAt: 1_000 },
       message,
       NOW
     );
-    expect(observedAt).toBe(7_000);
-    expect(state.lastSessionId).toBe('session-1');
-    expect(state.lastObservedMessageId).toBe('msg-new');
-    expect(state.lastObservedProgressMessageId).toBe('msg-new');
-    expect(state.nagCount).toBe(0);
-    expect(state.restartCount).toBe(0);
-    expect(state.lastAction).toBeNull();
-    expect(state.pendingRestartNotice).toBeNull();
+    expect(result.observedAt).toBe(7_000);
+    expect(result.state).not.toBe(state);
+    expect(result.state.lastSessionId).toBe('session-1');
+    expect(result.state.lastObservedMessageId).toBe('msg-new');
+    expect(result.state.lastObservedProgressMessageId).toBe('msg-new');
+    expect(result.state.nagCount).toBe(0);
+    expect(result.state.restartCount).toBe(0);
+    expect(result.state.lastAction).toBeNull();
+    expect(result.state.pendingRestartNotice).toBeNull();
+    expect(state).toEqual(snapshot);
   });
 
-  test('the runtime nag message itself is tracked but never counts as progress', () => {
+  test('the runtime nag message is tracked but never counts as progress', () => {
     const state = spentState({
       lastObservedMessageId: 'msg-old',
       lastObservedProgressMessageId: 'msg-progress',
       lastRuntimeNagMessageId: 'msg-nag',
     });
+    const snapshot = { ...state };
     const nag = makeMessage({ type: 'user', dbId: 'msg-nag', timestamp: 8_000 });
-    const observedAt = observeExecutionProgress(
+    const result = observeExecutionProgress(
       state,
       { agentSessionId: 'session-1', lastActivityAt: null, startedAt: 1_000 },
       nag,
       NOW
     );
-    expect(observedAt).toBe(1_000);
-    expect(state.lastObservedMessageId).toBe('msg-nag');
-    expect(state.lastObservedMessageAt).toBe(8_000);
-    expect(state.lastObservedProgressMessageId).toBe('msg-progress');
-    expect(state.nagCount).toBe(MAX_AGENT_STUCK_NAGS);
-    expect(state.restartCount).toBe(MAX_AGENT_STUCK_RESTARTS);
-    expect(state.lastAction).toBe('restart');
+    expect(result.observedAt).toBe(1_000);
+    expect(result.state).not.toBe(state);
+    expect(result.state.lastObservedMessageId).toBe('msg-nag');
+    expect(result.state.lastObservedMessageAt).toBe(8_000);
+    expect(result.state.lastObservedProgressMessageId).toBe('msg-progress');
+    expect(result.state.nagCount).toBe(MAX_AGENT_STUCK_NAGS);
+    expect(result.state.restartCount).toBe(MAX_AGENT_STUCK_RESTARTS);
+    expect(result.state.lastAction).toBe('restart');
+    expect(state).toEqual(snapshot);
   });
 
-  test('an unchanged last message leaves the ladder untouched', () => {
+  test('an unchanged last message returns the input state by reference', () => {
     const state = spentState({ lastObservedMessageId: 'msg-1' });
-    observeExecutionProgress(
+    const result = observeExecutionProgress(
       state,
       { agentSessionId: 'session-1', lastActivityAt: null, startedAt: 1_000 },
       makeMessage({ dbId: 'msg-1', timestamp: 5_000 }),
       NOW
     );
-    expect(state.nagCount).toBe(MAX_AGENT_STUCK_NAGS);
-    expect(state.restartCount).toBe(MAX_AGENT_STUCK_RESTARTS);
-    expect(state.lastAction).toBe('restart');
+    expect(result.state).toBe(state);
   });
 });
 
 describe('decideStuckLadderAction', () => {
   test('within the threshold the ladder holds', () => {
-    const state = makeState();
     expect(
       decideStuckLadderAction({
         now: NOW,
         observedAt: NOW - THRESHOLD_MS,
         thresholdMs: THRESHOLD_MS,
         nagGraceMs: NAG_GRACE_MS,
-        state,
+        state: makeState(),
       })
     ).toEqual({ action: 'within_threshold' });
   });
 
   test('a stale execution with nag budget remaining nags first', () => {
-    const state = makeState();
     expect(
       decideStuckLadderAction({
         now: NOW,
         observedAt: NOW - THRESHOLD_MS - 1,
         thresholdMs: THRESHOLD_MS,
         nagGraceMs: NAG_GRACE_MS,
-        state,
+        state: makeState(),
       })
     ).toEqual({ action: 'nag' });
   });
 
   test('a spent nag still inside its grace window waits', () => {
-    const state = spentState({
-      restartCount: 0,
-      lastAction: 'nag',
-      lastActionAt: NOW - NAG_GRACE_MS + 1,
-    });
     expect(
       decideStuckLadderAction({
         now: NOW,
         observedAt: NOW - THRESHOLD_MS - 1,
         thresholdMs: THRESHOLD_MS,
         nagGraceMs: NAG_GRACE_MS,
-        state,
+        state: spentState({
+          restartCount: 0,
+          lastAction: 'nag',
+          lastActionAt: NOW - NAG_GRACE_MS + 1,
+        }),
       })
     ).toEqual({ action: 'wait_nag_grace' });
   });
 
   test('a nag exactly past its grace window proceeds to restart', () => {
-    const state = spentState({
-      restartCount: 0,
-      lastAction: 'nag',
-      lastActionAt: NOW - NAG_GRACE_MS,
-    });
     expect(
       decideStuckLadderAction({
         now: NOW,
         observedAt: NOW - THRESHOLD_MS - 1,
         thresholdMs: THRESHOLD_MS,
         nagGraceMs: NAG_GRACE_MS,
-        state,
+        state: spentState({
+          restartCount: 0,
+          lastAction: 'nag',
+          lastActionAt: NOW - NAG_GRACE_MS,
+        }),
       })
     ).toEqual({ action: 'restart' });
   });
 
   test('no nag grace applies when the last action was not a nag', () => {
-    const state = spentState({ restartCount: 0, lastAction: null, lastActionAt: null });
     expect(
       decideStuckLadderAction({
         now: NOW,
         observedAt: NOW - THRESHOLD_MS - 1,
         thresholdMs: THRESHOLD_MS,
         nagGraceMs: NAG_GRACE_MS,
-        state,
+        state: spentState({ restartCount: 0, lastAction: null, lastActionAt: null }),
       })
     ).toEqual({ action: 'restart' });
   });
 
   test('an exhausted ladder blocks', () => {
-    const state = spentState();
     expect(
       decideStuckLadderAction({
         now: NOW,
         observedAt: NOW - THRESHOLD_MS - 1,
         thresholdMs: THRESHOLD_MS,
         nagGraceMs: NAG_GRACE_MS,
-        state,
+        state: spentState(),
       })
     ).toEqual({ action: 'block' });
   });

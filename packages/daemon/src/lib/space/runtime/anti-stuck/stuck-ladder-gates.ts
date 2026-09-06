@@ -44,12 +44,17 @@ export function createAgentStuckRecoveryState(
   };
 }
 
+export interface ExecutionProgressObservation {
+  observedAt: number;
+  state: AgentStuckRecoveryState;
+}
+
 export function observeExecutionProgress(
   state: AgentStuckRecoveryState,
   execution: StuckLadderExecutionSnapshot,
   lastMessage: StuckLadderMessageSnapshot | null,
   now: number
-): number {
+): ExecutionProgressObservation {
   const isRuntimeNagMessage =
     lastMessage !== null &&
     lastMessage.type === 'user' &&
@@ -64,31 +69,50 @@ export function observeExecutionProgress(
       : (execution.startedAt ?? state.lastActionAt ?? now);
 
   if (state.lastSessionId !== execution.agentSessionId) {
-    state.lastSessionId = execution.agentSessionId;
-    state.lastObservedMessageId = lastMessage?.dbId ?? null;
-    state.lastObservedMessageAt = lastMessage?.timestamp ?? null;
-    state.lastObservedProgressMessageId = progressMessage?.dbId ?? null;
-    state.lastObservedProgressMessageAt = progressMessage?.timestamp ?? null;
-    state.lastRuntimeNagMessageId = null;
-    state.lastAction = null;
-    state.lastActionAt = null;
-    state.nagCount = 0;
-    state.restartCount = 0;
-    state.pendingRestartNotice = null;
-  } else if (state.lastObservedMessageId !== (lastMessage?.dbId ?? null)) {
-    state.lastObservedMessageId = lastMessage?.dbId ?? null;
-    state.lastObservedMessageAt = lastMessage?.timestamp ?? null;
-    if (progressMessage && state.lastObservedProgressMessageId !== progressMessage.dbId) {
-      state.lastObservedProgressMessageId = progressMessage.dbId;
-      state.lastObservedProgressMessageAt = progressMessage.timestamp;
-      state.lastAction = null;
-      state.lastActionAt = null;
-      state.nagCount = 0;
-      state.restartCount = 0;
-      state.pendingRestartNotice = null;
-    }
+    return {
+      observedAt,
+      state: {
+        ...state,
+        lastSessionId: execution.agentSessionId,
+        lastObservedMessageId: lastMessage?.dbId ?? null,
+        lastObservedMessageAt: lastMessage?.timestamp ?? null,
+        lastObservedProgressMessageId: progressMessage?.dbId ?? null,
+        lastObservedProgressMessageAt: progressMessage?.timestamp ?? null,
+        lastRuntimeNagMessageId: null,
+        lastAction: null,
+        lastActionAt: null,
+        nagCount: 0,
+        restartCount: 0,
+        pendingRestartNotice: null,
+      },
+    };
   }
-  return observedAt;
+
+  if (state.lastObservedMessageId !== (lastMessage?.dbId ?? null)) {
+    const progressed =
+      progressMessage && state.lastObservedProgressMessageId !== progressMessage.dbId
+        ? {
+            ...state,
+            lastObservedProgressMessageId: progressMessage.dbId,
+            lastObservedProgressMessageAt: progressMessage.timestamp,
+            lastAction: null,
+            lastActionAt: null,
+            nagCount: 0,
+            restartCount: 0,
+            pendingRestartNotice: null,
+          }
+        : state;
+    return {
+      observedAt,
+      state: {
+        ...progressed,
+        lastObservedMessageId: lastMessage?.dbId ?? null,
+        lastObservedMessageAt: lastMessage?.timestamp ?? null,
+      },
+    };
+  }
+
+  return { observedAt, state };
 }
 
 export type StuckLadderDecision =
