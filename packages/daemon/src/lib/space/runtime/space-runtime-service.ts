@@ -733,7 +733,11 @@ export class SpaceRuntimeService {
       this.config.reactiveDb?.db
         .getJobQueueRepo()
         .getLatestByPayload('mailbox', { id: mailboxEntryId })?.status === 'dead';
-    if (mailboxDead) return 'failed';
+    if (mailboxDead) {
+      return this.listActiveMailboxAdmissions(sessionId, messageId).length > 0
+        ? undefined
+        : 'failed';
+    }
     return sendStatus ?? undefined;
   }
 

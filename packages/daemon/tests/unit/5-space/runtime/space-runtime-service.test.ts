@@ -2679,6 +2679,73 @@ describe('SpaceRuntimeService', () => {
       );
     });
 
+    test('a dead tracked entry defers the verdict while another admission stays active', async () => {
+      const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
+      const row = makeInboxRow();
+      const dbId = seedMailboxRow(mailbox, inboxSessionId, row.idempotencyKey!, row.message);
+      mailbox.sdkRepo.updateMessageStatus([dbId], 'deferred');
+      const mailboxEntryId = 'mailbox-entry-dead';
+      const deadEntry = mailbox.jobQueue.enqueue({
+        queue: MAILBOX_LANE,
+        payload: { id: mailboxEntryId },
+      });
+      mailbox.jobQueue.markDeadIfActive(deadEntry.id, 'attempt superseded');
+      const survivor = mailbox.jobQueue.enqueue({
+        queue: MAILBOX_LANE,
+        payload: {
+          id: 'mailbox-entry-survivor',
+          to: { kind: 'session', sessionId: inboxSessionId },
+          messageUuid: row.idempotencyKey,
+        },
+      });
+      const { svc, inboxRepo } = buildInboxService(mailbox, [row]);
+
+      (
+        svc as unknown as {
+          settleLongTermAgentInboxRowFailure(
+            row: SpaceAgentInboxMessageRecord,
+            sessionId: string,
+            messageId: string,
+            mailboxEntryId: string
+          ): void;
+        }
+      ).settleLongTermAgentInboxRowFailure(
+        row,
+        inboxSessionId,
+        row.idempotencyKey!,
+        mailboxEntryId
+      );
+
+      expect(inboxRepo.markDelivered).not.toHaveBeenCalled();
+      expect(inboxRepo.markAttemptFailed).not.toHaveBeenCalled();
+
+      mailbox.jobQueue.markDeadIfActive(survivor.id, 'retry exhausted');
+
+      (
+        svc as unknown as {
+          settleLongTermAgentInboxRowFailure(
+            row: SpaceAgentInboxMessageRecord,
+            sessionId: string,
+            messageId: string,
+            mailboxEntryId: string
+          ): void;
+        }
+      ).settleLongTermAgentInboxRowFailure(
+        row,
+        inboxSessionId,
+        row.idempotencyKey!,
+        mailboxEntryId
+      );
+
+      expect(inboxRepo.markAttemptFailed).toHaveBeenCalledWith(
+        row.id,
+        'delivery dead-lettered without consumption evidence'
+      );
+      (
+        svc as unknown as { inboxLateSettlements: { dispose(): void } }
+      ).inboxLateSettlements.dispose();
+    });
+
     test('late consumption evidence outranks the armed failure signal', async () => {
       const mailbox = buildMailboxDeliveryDb([inboxSessionId]);
       const row = makeInboxRow();
