@@ -1324,8 +1324,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
         'SDK subprocess exited before submit'
       );
       db.prepare(
-        `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at, error)
-         VALUES (?, 'message_delivery', 'completed', ?, 1, 8, ?, ?, ?)`
+        `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at, completed_at, error)
+         VALUES (?, 'message_delivery', 'completed', ?, 1, 8, ?, ?, ?, ?)`
       ).run(
         'job-delivery-retry-done',
         JSON.stringify({
@@ -1335,6 +1335,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         }),
         now,
         now,
+        now + 9500,
         'transient submit failure, succeeded on retry'
       );
 
@@ -1363,6 +1364,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         title: 'Delivered message',
         severity: 'success',
         details: null,
+        createdAt: now + 9500,
       });
     });
 

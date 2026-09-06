@@ -567,6 +567,24 @@ function deliveryJobErrorsCte(sessionFilterSql: string): string {
 )`;
 }
 
+function deliveryJobSettledCte(sessionFilterSql: string): string {
+  const sessionFilter = sessionFilterSql.length > 0 ? `\n    ${sessionFilterSql}` : '';
+  return `delivery_settled_jobs AS MATERIALIZED (
+  SELECT
+    json_extract(jq.payload, '$.sessionId') AS session_id,
+    json_extract(jq.payload, '$.messageUuid') AS message_uuid,
+    jq.completed_at AS settled_at,
+    ROW_NUMBER() OVER (
+      PARTITION BY json_extract(jq.payload, '$.sessionId'), json_extract(jq.payload, '$.messageUuid')
+      ORDER BY jq.created_at DESC, jq.rowid DESC
+    ) AS rn
+  FROM job_queue jq
+  WHERE jq.queue = 'message_delivery'
+    AND jq.status = 'completed'
+    AND jq.completed_at IS NOT NULL${sessionFilter}
+)`;
+}
+
 function deliveryRetryStateCtes(sessionFilterSql: string): string {
   return `${deliveryRetryingCtes(sessionFilterSql)},
 ${deliveryJobErrorsCte(sessionFilterSql)}`;
@@ -815,6 +833,9 @@ sdk_rows AS (
 ${deliveryRetryStateCtes(`AND json_extract(jq.payload, '$.sessionId') IN (
     SELECT session_id FROM sdk_messages WHERE task_id = (SELECT id FROM target_task)
   )`)},
+${deliveryJobSettledCte(`AND json_extract(jq.payload, '$.sessionId') IN (
+    SELECT session_id FROM sdk_messages WHERE task_id = (SELECT id FROM target_task)
+  )`)},
 -- Delivery rows project the mailbox delivery lifecycle from the session outbox
 -- (sdk_messages user rows) rather than the legacy pending_agent_messages queue,
 -- and send_status carries the lifecycle (enqueued/deferred/submitted → queued,
@@ -893,6 +914,8 @@ delivery_rows AS (
           THEN adr.retry_run_at
         WHEN tsm.send_status = 'failed' AND dje.error_settled_at IS NOT NULL
           THEN dje.error_settled_at
+        WHEN tsm.send_status = 'consumed' AND djs.settled_at IS NOT NULL
+          THEN djs.settled_at
         ELSE CAST(ROUND((julianday(tsm.timestamp) - 2440587.5) * 86400000) AS INTEGER)
       END AS createdAt
     FROM target_task tt
@@ -904,6 +927,10 @@ delivery_rows AS (
       ON dje.session_id = tsm.session_id
      AND dje.message_uuid = tsm.resolved_sdk_uuid
      AND dje.rn = 1
+    LEFT JOIN delivery_settled_jobs djs
+      ON djs.session_id = tsm.session_id
+     AND djs.message_uuid = tsm.resolved_sdk_uuid
+     AND djs.rn = 1
     LEFT JOIN session_node_exec ne
       ON ne.workflow_run_id = tt.workflow_run_id
      AND ne.agent_session_id = tsm.session_id
@@ -1041,6 +1068,9 @@ delivery_sessions AS (
 ${deliveryRetryStateCtes(`AND json_extract(jq.payload, '$.sessionId') IN (
     SELECT session_id FROM delivery_targets
   )`)},
+${deliveryJobSettledCte(`AND json_extract(jq.payload, '$.sessionId') IN (
+    SELECT session_id FROM delivery_targets
+  )`)},
 -- Same mailbox delivery projection as the task timeline, scoped to the run's
 -- tasks through sdk_messages.task_id; outbox-persisted synthetic user rows
 -- (send_status non-NULL, no parent tool use) carrying an agent-message
@@ -1113,6 +1143,8 @@ delivery_rows AS (
           THEN adr.retry_run_at
         WHEN dt.send_status = 'failed' AND dje.error_settled_at IS NOT NULL
           THEN dje.error_settled_at
+        WHEN dt.send_status = 'consumed' AND djs.settled_at IS NOT NULL
+          THEN djs.settled_at
         ELSE CAST(ROUND((julianday(dt.timestamp) - 2440587.5) * 86400000) AS INTEGER)
       END AS createdAt
     FROM delivery_targets dt
@@ -1129,6 +1161,10 @@ delivery_rows AS (
       ON dje.session_id = dt.session_id
      AND dje.message_uuid = dt.resolved_uuid
      AND dje.rn = 1
+    LEFT JOIN delivery_settled_jobs djs
+      ON djs.session_id = dt.session_id
+     AND djs.message_uuid = dt.resolved_uuid
+     AND djs.rn = 1
     WHERE json_valid(dt.sdk_message)
       AND COALESCE(CAST(json_extract(dt.sdk_message, '$.isSynthetic') AS INTEGER), 0) = 1
   )
