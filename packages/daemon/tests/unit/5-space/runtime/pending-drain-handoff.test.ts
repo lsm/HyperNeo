@@ -157,10 +157,11 @@ describe('drainPendingRowOntoMailbox', () => {
       origin: 'space_inject',
     });
 
-    expect(outcome).toEqual({ action: 'skipped', reason: 'expired' });
+    expect(outcome).toEqual({ action: 'failed', reason: 'expired during session resolution' });
     expect(deps.ensureTargetSession).toHaveBeenCalledTimes(1);
     expect(deps.handoffToMailbox).not.toHaveBeenCalled();
     expect(deps.markDelivered).not.toHaveBeenCalled();
+    expect(deps.markFailed).toHaveBeenCalledWith('row-1', 'expired during session resolution');
     expect(deps.markAttemptFailed).not.toHaveBeenCalled();
   });
 

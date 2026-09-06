@@ -77,7 +77,9 @@ async function resolveStage(ctx: PendingDrainHandoffCtx): Promise<PendingDrainHa
 
 function postResolveExpiryStage(ctx: PendingDrainHandoffCtx): PendingDrainHandoffCtx {
   if (ctx.row.expiresAt > Date.now()) return ctx;
-  return { ...ctx, outcome: { action: 'skipped', reason: 'expired' } };
+  const reason = 'expired during session resolution';
+  ctx.deps.markFailed(ctx.row.id, reason);
+  return { ...ctx, outcome: { action: 'failed', reason } };
 }
 
 async function handoffStage(ctx: PendingDrainHandoffCtx): Promise<PendingDrainHandoffCtx> {
