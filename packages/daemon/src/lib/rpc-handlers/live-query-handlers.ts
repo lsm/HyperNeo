@@ -536,7 +536,12 @@ function mailboxDeliverySenderExpr(textExpr: string): string {
   const replyBlock = `SUBSTR(${textExpr}, ${replyBlockStart})`;
   const replyEchoStart = `INSTR(${replyBlock}, 'send_message with target "')`;
   const replyEchoAt = `${replyEchoStart} + 26`;
-  const replyEcho = `SUBSTR(${replyBlock}, ${replyEchoAt}, INSTR(SUBSTR(${replyBlock}, ${replyEchoAt}), '"') - 1)`;
+  const replyEchoRest = `SUBSTR(${replyBlock}, ${replyEchoAt})`;
+  const replyEchoLineLen = `INSTR(${replyEchoRest} || char(10), char(10)) - 1`;
+  const replyEchoLine = `SUBSTR(${replyEchoRest}, 1, ${replyEchoLineLen})`;
+  const replyEcho = `CASE WHEN ${replyEchoLine} LIKE '%"'
+    THEN SUBSTR(${replyEchoLine}, 1, LENGTH(${replyEchoLine}) - 1)
+    ELSE ${replyEchoLine} END`;
   const replyTaskVerb = `INSTR(${replyBlock}, 'send_message_to_task')`;
   return `CASE
       WHEN ${textExpr} LIKE '─── Message from %' THEN

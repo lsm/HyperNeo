@@ -1228,6 +1228,28 @@ describe('NAMED_QUERY_REGISTRY', () => {
           },
         },
       });
+      insertOutboxUserMessage({
+        id: 'sdk-sender-inner-quote',
+        sessionId: nodeSessionId,
+        timestampMs: now + 8000,
+        sendStatus: 'consumed',
+        sdkUuid: 'u-sender-inner-quote',
+        payload: {
+          type: 'user',
+          uuid: 'u-sender-inner-quote',
+          isSynthetic: true,
+          inputKind: 'task',
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: `─── Message from review"west ───\n\nquote name body\n\n─── Reply ───\nTo reply, use: send_message with target "review"west"`,
+              },
+            ],
+          },
+        },
+      });
 
       const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
       const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
@@ -1252,6 +1274,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect((byId.get('delivery:sdk-sender-quoted')!.from as Record<string, unknown>).label).toBe(
         'coder'
       );
+      expect(
+        (byId.get('delivery:sdk-sender-inner-quote')!.from as Record<string, unknown>).label
+      ).toBe('review"west');
     });
 
     test('actorMessages.byTask excludes the session brief, human rows, and SDK tool-result echoes from delivery rows', () => {
