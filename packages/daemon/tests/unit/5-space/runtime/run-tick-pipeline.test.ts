@@ -812,4 +812,17 @@ describe('spaceWorkflowRunTick pipeline', () => {
     expect(outcome).toEqual({ action: 'skip', reason: 'missing_run' });
     expect(order).toEqual(['getRun', 'interleave-observer']);
   });
+
+  test('a rejected context load rejects the tick instead of hanging it', async () => {
+    const deps = makeDeps();
+    let rejectContext: (reason: unknown) => void = () => {};
+    const failingContext = new Promise<RunTickContext>((_resolve, reject) => {
+      rejectContext = reject;
+    });
+    deps.loadRunContext = () => failingContext;
+
+    const outcomePromise = runSpaceWorkflowRunTick(deps, RUN_ID);
+    rejectContext(new Error('duplicate archival failed'));
+    await expect(outcomePromise).rejects.toThrow('duplicate archival failed');
+  });
 });

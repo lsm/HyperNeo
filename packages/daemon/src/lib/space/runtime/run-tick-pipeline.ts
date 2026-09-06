@@ -14,7 +14,7 @@ import {
   type TickResult,
 } from './run-tick-contract.ts';
 
-export function loadRunContext(ctx: RunTickCtx, next: (err: unknown, value: RunTickCtx) => void) {
+export function loadRunContext(ctx: RunTickCtx, next: (err: unknown, value?: RunTickCtx) => void) {
   const run = ctx.deps.getRun(ctx.runId);
   const deliver = (context: RunTickContext | null) => next(null, { ...ctx, run, context });
   if (
@@ -23,7 +23,7 @@ export function loadRunContext(ctx: RunTickCtx, next: (err: unknown, value: RunT
     !isWorkflowRunSucceeded(run.status) &&
     !isWorkflowRunWaiting(run.status)
   ) {
-    ctx.deps.loadRunContext(ctx.runId, run).then(deliver);
+    ctx.deps.loadRunContext(ctx.runId, run).then(deliver, (err: unknown) => next(err));
     return;
   }
   deliver(null);
