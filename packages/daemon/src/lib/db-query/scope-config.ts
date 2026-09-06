@@ -462,7 +462,6 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'node_executions',
   'tool_continuation_recovery',
   'tool_continuation_inbox',
-  'pending_agent_messages',
   'sdk_message_replacements',
   'github_filter_configs',
   'workspace_history',

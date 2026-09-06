@@ -23,7 +23,7 @@ export type SpaceWorkflowRunTickOutcome =
   | { action: 'blocked_on_blocked_executions' }
   | { action: 'halted_stranded_recovery' }
   | { action: 'settled_run' }
-  | { action: 'halted_node_handoff_drain' }
+  | { action: 'halted_space_inactive' }
   | { action: 'blocked_for_spawn_failure' }
   | { action: 'ran_to_completion' };
 
@@ -68,7 +68,7 @@ export interface SpaceWorkflowRunTickDeps {
     meta: ExecutorMeta,
     canonicalTask: SpaceTask
   ): Promise<boolean>;
-  drainPendingNodeHandoffs(
+  haltTickForInactiveSpace(
     runId: string,
     run: SpaceWorkflowRun,
     context: RunTickContext

@@ -6,7 +6,6 @@ import { SpaceRepository } from '../../../../src/storage/repositories/space-repo
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
-import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository';
 import { createDaemonInternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
@@ -129,49 +128,5 @@ describe('TaskAgentManager agent-activity listener', () => {
     await flush();
 
     expect(nodeExecutionRepo.getById(executionId)!.lastActivityAt).toBeNull();
-  });
-
-  it('stamps lastActivityAt when a queued peer message is delivered via flushPendingMessagesForTarget', async () => {
-    const pendingRepo = new PendingAgentMessageRepository(
-      db as unknown as Parameters<typeof PendingAgentMessageRepository.prototype.constructor>[0]
-    );
-    const manager2 = new TaskAgentManager({
-      db: { getDatabase: () => db },
-      taskRepo: { getTask: () => null } as never,
-      workflowRunRepo: { getRun: () => null } as never,
-      nodeExecutionRepo,
-      pendingMessageRepo: pendingRepo,
-      ensureTargetSession: async () => ({
-        kind: 'resolved',
-        sessionId: subSessionId,
-        created: false,
-      }),
-      agentMessageDelivery: async (_workflowRunId: string, args: { messageId: string }) => ({
-        state: 'delivered' as const,
-        sessionId: subSessionId,
-        messageId: args.messageId,
-      }),
-      internalEventBus: bus,
-    } as unknown as TaskAgentManagerConfig);
-
-    const taskRepo = new SpaceTaskRepository(
-      db as unknown as Parameters<typeof SpaceTaskRepository.prototype.constructor>[0]
-    );
-    const task = taskRepo.createTask({ spaceId, title: 'T2', description: '' });
-    pendingRepo.enqueue({
-      workflowRunId,
-      spaceId,
-      taskId: task.id,
-      sourceAgentName: 'reviewer',
-      targetKind: 'node_agent',
-      targetAgentName: 'coder',
-      message: 'queued peer note',
-      workflowNodeId: 'node-1',
-    });
-    expect(nodeExecutionRepo.getById(executionId)!.lastActivityAt).toBeNull();
-
-    await manager2.flushPendingMessagesForTarget(workflowRunId, 'coder', subSessionId);
-
-    expect(nodeExecutionRepo.getById(executionId)!.lastActivityAt).not.toBeNull();
   });
 });

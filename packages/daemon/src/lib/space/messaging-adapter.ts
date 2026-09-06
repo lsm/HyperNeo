@@ -1,11 +1,6 @@
 import { parseAddress } from '../../../../messaging/src/address.ts';
 import type { ParsedAddress, WorkerAddress } from '../../../../messaging/src/address.ts';
-import type {
-  ActorRef,
-  DeliveryRecord,
-  DeliveryState,
-  MessageRecord,
-} from '../../../../messaging/src/types.ts';
+import type { ActorRef, DeliveryRecord, MessageRecord } from '../../../../messaging/src/types.ts';
 import type {
   ActorResolver,
   ResolvedTarget,
@@ -13,7 +8,6 @@ import type {
   RouteMessageResult,
   UnresolvedTarget,
 } from '../../../../messaging/src/contracts.ts';
-import type { PendingAgentMessageRecord } from '../../storage/repositories/pending-agent-message-repository.ts';
 import type { NodeExecution } from '@hyperneo/shared';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
@@ -506,40 +500,6 @@ export class SpaceDeliveryFacade {
   }
 }
 
-export function pendingMessageToMessageRecord(
-  row: PendingAgentMessageRecord,
-  actors: ActorRef[] = []
-): MessageRecord {
-  return {
-    messageId: `msg_legacy_${row.id}`,
-    spaceId: row.spaceId,
-    senderActorId: legacySenderActorId(row, actors),
-    targets: [row.targetAgentName],
-    body: row.message,
-    kind: 'message',
-    workflowRunId: row.workflowRunId,
-    ...(row.taskId ? { taskId: row.taskId } : {}),
-    ...(row.idempotencyKey ? { idempotencyKey: row.idempotencyKey } : {}),
-    createdAt: row.createdAt,
-  };
-}
-
-export function pendingMessageToDeliveryRecords(
-  row: PendingAgentMessageRecord,
-  actors: ActorRef[],
-  workflow?: SpaceWorkflow | null
-): DeliveryRecord[] {
-  const messageId = `msg_legacy_${row.id}`;
-  const state = pendingStatusToDeliveryState(row.status);
-  const targetActors = legacyTargetActors(row, actors, workflow);
-  if (targetActors.length === 0) {
-    return [createLegacyDelivery(row, messageId, state)];
-  }
-  return targetActors.map((actor, index) =>
-    createLegacyDelivery(row, messageId, state, actor, index === 0 ? undefined : index)
-  );
-}
-
 function createDeliveryFromActor(
   message: MessageRecord,
   targetRef: string,
@@ -573,29 +533,6 @@ function createFailedDelivery(
     maxAttempts: 0,
     createdAt: Date.now(),
     lastError,
-  };
-}
-
-function createLegacyDelivery(
-  row: PendingAgentMessageRecord,
-  messageId: string,
-  state: DeliveryState,
-  actor?: ActorRef,
-  fanoutIndex?: number
-): DeliveryRecord {
-  return {
-    deliveryId: `delivery_legacy_${row.id}${fanoutIndex === undefined ? '' : `_${fanoutIndex}`}`,
-    messageId,
-    targetActorId: actor?.actorId,
-    targetRef: row.targetAgentName,
-    state,
-    attemptCount: row.attempts,
-    maxAttempts: row.maxAttempts,
-    createdAt: row.createdAt,
-    expiresAt: row.expiresAt,
-    ...(row.lastError ? { lastError: row.lastError } : {}),
-    ...(row.deliveredSessionId ? { deliveredSessionId: row.deliveredSessionId } : {}),
-    ...(row.deliveredAt ? { deliveredAt: row.deliveredAt } : {}),
   };
 }
 
@@ -685,92 +622,6 @@ function resolveTaskNodeExecution(
 
 function workerTarget(workflowRunId: string, nodeName: string, agentName: string): string {
   return `@worker:${encodeURIComponent(workflowRunId)}/${encodeURIComponent(nodeName)}/${encodeURIComponent(agentName)}`;
-}
-
-function legacyTargetActors(
-  row: PendingAgentMessageRecord,
-  actors: ActorRef[],
-  workflow?: SpaceWorkflow | null
-): ActorRef[] {
-  if (row.targetKind === 'space_agent') {
-    return actors.filter(
-      (actor) =>
-        actor.handle === '@coordinator' && (row.status === 'pending' ? isRoutable(actor) : true)
-    );
-  }
-  const matches = actors.filter((actor) => {
-    if (actor.kind !== 'worker') return false;
-    if (row.status === 'pending' && !isRoutable(actor)) return false;
-    const parsed = parseWorkerActorId(actor.actorId);
-    return (
-      parsed?.workflowRunId === row.workflowRunId &&
-      parsed.agentName === row.targetAgentName &&
-      (row.workflowNodeId == null || parsed.nodeId === row.workflowNodeId)
-    );
-  });
-  if (row.status === 'pending') {
-    return stableActors([...matches, ...declaredLegacyTargetActors(row, actors, workflow)]);
-  }
-  const sorted = stableActors(matches);
-  if (sorted.length === 1) return sorted;
-  return [];
-}
-
-function declaredLegacyTargetActors(
-  row: PendingAgentMessageRecord,
-  actors: ActorRef[],
-  workflow?: SpaceWorkflow | null
-): ActorRef[] {
-  if (!workflow) return [];
-  return workflow.nodes.flatMap((node) =>
-    node.agents.flatMap((agent): ActorRef[] => {
-      if (agent.name !== row.targetAgentName) return [];
-      if (row.workflowNodeId != null && node.id !== row.workflowNodeId) return [];
-      const actorId = workerActorId(row.workflowRunId, node.id, agent.name);
-      if (actors.some((actor) => actor.actorId === actorId)) return [];
-      return [
-        {
-          actorId,
-          kind: 'worker',
-          spaceId: row.spaceId,
-          handle: workerHandle(row.workflowRunId, node.id, agent.name),
-          roles: uniqueStrings([actorRole(agent.name), actorRole(node.id)]),
-          status: 'inactive',
-        },
-      ];
-    })
-  );
-}
-
-function pendingStatusToDeliveryState(status: PendingAgentMessageRecord['status']): DeliveryState {
-  switch (status) {
-    case 'pending':
-      return 'queued';
-    case 'delivered':
-      return 'delivered';
-    case 'failed':
-      return 'failed';
-    case 'expired':
-      return 'expired';
-  }
-}
-
-function legacySenderActorId(row: PendingAgentMessageRecord, actors: ActorRef[]): string {
-  if (row.sourceAgentName === 'human') return 'human:legacy';
-  if (
-    row.sourceAgentName === 'coordinator' ||
-    row.sourceAgentName === 'space-agent' ||
-    row.sourceAgentName === 'task-agent'
-  ) {
-    return `agent:coordinator:${row.spaceId}`;
-  }
-  const matches = actors.filter((actor) => {
-    if (actor.kind !== 'worker') return false;
-    const parsed = parseWorkerActorId(actor.actorId);
-    return parsed?.workflowRunId === row.workflowRunId && parsed.agentName === row.sourceAgentName;
-  });
-  if (matches.length === 1) return matches[0].actorId;
-  return `worker:${encodeURIComponent(row.workflowRunId)}:unresolved:${encodeURIComponent(row.sourceAgentName)}`;
 }
 
 function isRoutable(actor: ActorRef): boolean {

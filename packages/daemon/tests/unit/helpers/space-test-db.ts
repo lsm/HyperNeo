@@ -693,51 +693,6 @@ export function createSpaceTables(db: BunDatabase): void {
   );
 
   db.exec(`
-		CREATE TABLE IF NOT EXISTS pending_agent_messages (
-			id TEXT PRIMARY KEY,
-			workflow_run_id TEXT NOT NULL,
-			space_id TEXT NOT NULL,
-			task_id TEXT,
-			source_agent_name TEXT NOT NULL DEFAULT 'task-agent',
-			target_kind TEXT NOT NULL
-				CHECK(target_kind IN ('node_agent', 'space_agent')),
-			target_agent_name TEXT NOT NULL,
-			message TEXT NOT NULL,
-			workflow_node_id TEXT,
-			idempotency_key TEXT,
-			attempts INTEGER NOT NULL DEFAULT 0,
-			max_attempts INTEGER NOT NULL DEFAULT 5,
-			last_attempt_at INTEGER,
-			last_error TEXT,
-			status TEXT NOT NULL DEFAULT 'pending'
-				CHECK(status IN ('pending', 'delivered', 'expired', 'failed')),
-			delivered_at INTEGER,
-			delivered_session_id TEXT,
-			expires_at INTEGER NOT NULL,
-			created_at INTEGER NOT NULL,
-			delivery_mode TEXT,
-			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
-		)
-	`);
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_pending_agent_messages_run_status ` +
-      `ON pending_agent_messages(workflow_run_id, status, created_at)`
-  );
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_pending_agent_messages_space_status ` +
-      `ON pending_agent_messages(space_id, status, created_at)`
-  );
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_pending_agent_messages_run_target ` +
-      `ON pending_agent_messages(workflow_run_id, target_agent_name, status, created_at)`
-  );
-  db.exec(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_agent_messages_idem_pending ` +
-      `ON pending_agent_messages(workflow_run_id, target_agent_name, idempotency_key) ` +
-      `WHERE idempotency_key IS NOT NULL AND status = 'pending'`
-  );
-
-  db.exec(`
 		CREATE TABLE IF NOT EXISTS space_external_event_source_configs (
 			space_id TEXT NOT NULL,
 			source TEXT NOT NULL,

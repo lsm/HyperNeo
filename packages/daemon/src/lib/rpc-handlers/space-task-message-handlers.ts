@@ -1,4 +1,4 @@
-import type { MessageHub, MessageImage } from '@hyperneo/shared';
+import type { MessageHub, MessageImage, MessageInputKind } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { parseAddress } from '../../../../messaging/src/address.ts';
 import type { Database } from '../../storage/database.ts';
@@ -50,7 +50,6 @@ type NodeAgentRouteResult = {
   routedTo: string[];
   delivered?: false;
   activated?: true;
-  queued?: true;
 };
 
 type NodeAgentWorkerTarget = {
@@ -96,7 +95,9 @@ export interface TaskAgentManagerInterface {
     message: string,
     isSyntheticMessage?: boolean,
     images?: MessageImage[],
-    deliveryMode?: 'immediate' | 'defer'
+    deliveryMode?: 'immediate' | 'defer',
+    inputKindOverride?: MessageInputKind,
+    messageId?: string
   ): Promise<string | void>;
   ensureWorkflowNodeActivationForAgent?(
     taskId: string,
@@ -110,12 +111,6 @@ export interface TaskAgentManagerInterface {
     agentName: string,
     workflowNodeId?: string
   ): Promise<{ session: { id: string } } | null>;
-  flushPendingMessagesForTarget?(
-    workflowRunId: string,
-    targetAgentName: string,
-    sessionId: string,
-    workflowNodeId?: string
-  ): Promise<void>;
   getPostApprovalWorkerSession?(
     taskId: string,
     hintSessionId?: string
@@ -124,23 +119,6 @@ export interface TaskAgentManagerInterface {
 }
 
 export type SessionEnsurer = (target: SessionTarget) => Promise<EnsureSessionOutcome>;
-
-export interface PendingAgentMessageQueue {
-  enqueue(input: {
-    workflowRunId: string;
-    spaceId: string;
-    taskId: string;
-    sourceAgentName?: string;
-    targetKind: 'node_agent' | 'space_agent';
-    targetAgentName: string;
-    message: string;
-    workflowNodeId?: string | null;
-    idempotencyKey?: string | null;
-    deliveryMode?: 'immediate' | 'defer';
-  }): { record: { id: string }; deduped: boolean };
-  markFailed?(id: string, error: string): unknown;
-  getById?(id: string): { status: string; lastError?: string | null } | null;
-}
 
 type SpaceTaskMessageTarget =
   | {
@@ -167,7 +145,6 @@ export function setupSpaceTaskMessageHandlers(
   nodeExecutionRepo?: NodeExecutionLookup,
   channelCycleResetter?: ChannelCycleResetter,
   activateNode?: (runId: string, nodeId: string) => Promise<void>,
-  pendingMessageQueue?: PendingAgentMessageQueue,
   ensureTargetSession?: SessionEnsurer
 ): void {
   const taskRepo = new SpaceTaskRepository(db.getDatabase());
@@ -322,12 +299,17 @@ export function setupSpaceTaskMessageHandlers(
     agentName: string,
     message: string,
     images?: MessageImage[],
-    deliveryMode?: 'immediate' | 'defer'
+    deliveryMode?: 'immediate' | 'defer',
+    messageId?: string
   ): Promise<void> {
     const inject = taskAgentManager.injectSubSessionMessage;
     if (!inject) throw new Error('Workflow agent targeting is unavailable on this daemon.');
+    const deliver = async (targetSessionId: string): Promise<string | void> =>
+      messageId === undefined
+        ? inject(targetSessionId, message, false, images, deliveryMode)
+        : inject(targetSessionId, message, false, images, deliveryMode, undefined, messageId);
     try {
-      await inject(sessionId, message, false, images, deliveryMode);
+      await deliver(sessionId);
     } catch (err) {
       const postApproval =
         taskAgentManager.getPostApprovalWorkerSession?.(taskId, sessionId) ?? null;
@@ -343,7 +325,7 @@ export function setupSpaceTaskMessageHandlers(
           `Post-approval worker "${agentName}" is not live and could not be restored (session ${sessionId}). Retry once the worker is back online.`
         );
       }
-      await inject(restored, message, false, images, deliveryMode);
+      await deliver(restored);
     }
   }
 
@@ -383,7 +365,7 @@ export function setupSpaceTaskMessageHandlers(
   }
 
   async function executeNodeAgentRoute(ctx: NodeAgentRouteContext): Promise<NodeAgentRouteContext> {
-    const { task, taskId, message, target, images, deliveryMode } = ctx;
+    const { taskId, message, target, images, deliveryMode } = ctx;
     const executions = ctx.executions!;
     const declared = ctx.declared!;
     const postApproval = ctx.postApproval ?? null;
@@ -557,27 +539,11 @@ export function setupSpaceTaskMessageHandlers(
         };
       }
 
-      if (pendingMessageQueue) {
-        for (const { worker } of unresolved) {
-          pendingMessageQueue.enqueue({
-            workflowRunId: ctx.workflowRunId!,
-            spaceId: task!.spaceId,
-            taskId,
-            sourceAgentName: 'human',
-            targetKind: 'node_agent',
-            targetAgentName: worker.agentName,
-            message,
-            workflowNodeId: worker.workflowNodeId,
-            ...(deliveryMode ? { deliveryMode } : {}),
-          });
-        }
-      }
       return {
         ok: true,
         routedTo: [...new Set(outcomes.map(({ worker }) => worker.agentName))],
         ...(activated ? { activated: true as const } : {}),
         delivered: false,
-        ...(pendingMessageQueue ? { queued: true as const } : {}),
       };
     })();
     return { ...ctx, result };
@@ -866,69 +832,28 @@ export function setupSpaceTaskMessageHandlers(
       }
     }
 
-    let queuedMessageId: string | null = null;
-    if (params.message && pendingMessageQueue) {
-      const { record } = pendingMessageQueue.enqueue({
-        workflowRunId,
-        spaceId: params.spaceId,
-        taskId: params.taskId,
-        sourceAgentName: 'human',
-        targetKind: 'node_agent',
-        targetAgentName: params.agentName,
-        message: params.message,
-        workflowNodeId: params.workflowNodeId,
-        idempotencyKey: params.clientMessageId
-          ? `human:${params.taskId}:${params.agentName}:${params.workflowNodeId ?? ''}:${params.clientMessageId}`
-          : `human:${params.taskId}:${params.agentName}:${params.workflowNodeId ?? ''}:${params.message}`,
-      });
-      queuedMessageId = record.id;
-    }
-
     const outcome = await ensureWorker(params.taskId, params.agentName, params.workflowNodeId, {
       reopenReason: `web client lazy activation of "${params.agentName}"`,
       reopenBy: 'web-client',
     });
-    const queueableReasons = new Set([
+    const retryableReasons = new Set([
       'activation_timeout',
       'post_approval_pending',
       'restore_timeout',
       'spawn_timeout',
     ]);
-    if (
-      outcome.kind === 'unresolved' &&
-      !queueableReasons.has(outcome.reason) &&
-      queuedMessageId !== null
-    ) {
-      pendingMessageQueue?.markFailed?.(queuedMessageId, outcome.reason);
-    }
     if (outcome.kind === 'resolved') {
-      const canDrainQueuedMessage =
-        queuedMessageId !== null &&
-        taskAgentManager.flushPendingMessagesForTarget !== undefined &&
-        pendingMessageQueue?.getById !== undefined;
-      if (params.message && canDrainQueuedMessage && queuedMessageId !== null) {
-        await taskAgentManager.flushPendingMessagesForTarget!(
-          workflowRunId,
-          params.agentName,
-          outcome.sessionId,
-          params.workflowNodeId
-        );
-        const queuedRecord = pendingMessageQueue!.getById!(queuedMessageId);
-        if (queuedRecord?.status !== 'delivered') {
-          throw new Error(
-            `Queued message ${queuedMessageId} was not delivered to "${params.agentName}": ${queuedRecord?.lastError ?? queuedRecord?.status ?? 'delivery status unavailable'}`
-          );
-        }
-        log.info(
-          `space.task.activateNodeAgent: delivered queued message to session ${outcome.sessionId} ` +
-            `(agent=${params.agentName}, task=${params.taskId})`
-        );
-      } else if (params.message && queuedMessageId === null) {
+      if (params.message) {
         await injectResolvedSession(
           params.taskId,
           outcome.sessionId,
           params.agentName,
-          `[Message from human]: ${params.message}`
+          `[Message from human]: ${params.message}`,
+          undefined,
+          undefined,
+          params.clientMessageId
+            ? `human:${params.taskId}:${params.agentName}:${params.clientMessageId}`
+            : undefined
         );
         log.info(
           `space.task.activateNodeAgent: delivered message to session ${outcome.sessionId} ` +
@@ -943,12 +868,10 @@ export function setupSpaceTaskMessageHandlers(
         agentName: params.agentName,
         sessionId: outcome.sessionId,
         activated: outcome.created,
-        queued: queuedMessageId !== null && !canDrainQueuedMessage,
-        ...(queuedMessageId !== null && !canDrainQueuedMessage ? { queuedMessageId } : {}),
       };
     }
 
-    if (!queueableReasons.has(outcome.reason)) {
+    if (!retryableReasons.has(outcome.reason)) {
       throw new Error(
         `Could not activate "${params.agentName}"` +
           (params.workflowNodeId ? ` on node ${params.workflowNodeId}` : '') +
@@ -956,9 +879,16 @@ export function setupSpaceTaskMessageHandlers(
       );
     }
 
+    if (params.message) {
+      throw new Error(
+        `"${params.agentName}" is still starting (${outcome.reason}) and the message was not delivered. ` +
+          'Send it again once the agent is online.'
+      );
+    }
+
     log.info(
       `space.task.activateNodeAgent: agent=${params.agentName} task=${params.taskId} ` +
-        `node=${params.workflowNodeId ?? 'any'} activated=true queuedMessageId=${queuedMessageId ?? 'none'}`
+        `node=${params.workflowNodeId ?? 'any'} activated=true`
     );
 
     await resetChannelCyclesOnHumanTouch(workflowRunId, params.taskId);
@@ -968,8 +898,6 @@ export function setupSpaceTaskMessageHandlers(
       agentName: params.agentName,
       sessionId: null,
       activated: true,
-      queued: queuedMessageId !== null,
-      ...(queuedMessageId !== null ? { queuedMessageId } : {}),
     };
   });
 }

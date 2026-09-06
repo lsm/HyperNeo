@@ -48,12 +48,7 @@ export { TaskAgentManager } from './runtime/task-agent-manager.ts';
 export type { TaskAgentManagerConfig } from './runtime/task-agent-manager.ts';
 export { SpaceActorRegistryAdapter, SPACE_SYSTEM_ACTORS } from './actor-registry.ts';
 export type { SpaceActorRegistryRepositories } from './actor-registry.ts';
-export {
-  SpaceMessageResolver,
-  SpaceDeliveryFacade,
-  pendingMessageToMessageRecord,
-  pendingMessageToDeliveryRecords,
-} from './messaging-adapter.ts';
+export { SpaceMessageResolver, SpaceDeliveryFacade } from './messaging-adapter.ts';
 export type {
   SpaceMessageResolverConfig,
   SpaceMessageResolverContext,

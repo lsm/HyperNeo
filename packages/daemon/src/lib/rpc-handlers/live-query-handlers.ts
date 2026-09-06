@@ -948,8 +948,7 @@ ${deliveryNameMarkerCte({
     "tsm.message_type = 'user' AND tsm.send_status IS NOT NULL AND tsm.parent_tool_use_id IS NULL",
 })},
 -- Delivery rows project the mailbox delivery lifecycle from the session outbox
--- (sdk_messages user rows) rather than the legacy pending_agent_messages queue,
--- and send_status carries the lifecycle (enqueued/deferred/submitted → queued,
+-- (sdk_messages user rows), and send_status carries the lifecycle (enqueued/deferred/submitted → queued,
 -- consumed → delivered, failed → failed). Three pieces of outbox evidence gate
 -- a row in: a non-NULL send_status and a NULL parent_tool_use_id (SDK-emitted
 -- user echoes like tool results are also stamped isSynthetic but persist
@@ -1205,8 +1204,7 @@ ${deliveryNameMarkerCte({
 -- Same mailbox delivery projection as the task timeline, scoped to the run's
 -- tasks through sdk_messages.task_id; outbox-persisted synthetic user rows
 -- (send_status non-NULL, no parent tool use) carrying an agent-message
--- envelope are the routed deliveries that used to surface from
--- pending_agent_messages.
+-- envelope are the routed agent-to-agent deliveries.
 delivery_rows AS (
   SELECT
     id,

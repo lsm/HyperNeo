@@ -17,7 +17,6 @@ import type { ChannelCycleRepository } from '../../../storage/repositories/chann
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
-import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository.ts';
 import type { SessionRepository } from '../../../storage/repositories/session-repository.ts';
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
@@ -132,7 +131,6 @@ export interface SpaceRuntimeServiceConfig {
   reactiveDb?: ReactiveDatabase;
   taskAgentManager?: TaskAgentManager;
   tickIntervalMs?: number;
-  pendingMessageRepo?: PendingAgentMessageRepository;
   channelCycleRepo?: ChannelCycleRepository;
   sessionManager?: SessionManager;
   artifactRepo?: WorkflowRunArtifactRepository;
@@ -153,7 +151,6 @@ export interface SpaceRuntimeServiceConfig {
     workflowRepo: SpaceWorkflowRepository;
     workflowRunRepo: SpaceWorkflowRunRepository;
     nodeExecutionRepo: NodeExecutionRepository;
-    pendingMessageRepo?: PendingAgentMessageRepository;
   };
   goalService?: import('../goals/goal-service.ts').SpaceGoalService;
   evolutionScopeService?: import('../evolution-scope-service.ts').EvolutionScopeService;
@@ -1016,7 +1013,6 @@ export class SpaceRuntimeService {
       taskAgentManager: this.taskAgentManager ?? undefined,
       internalEventBus: this.config.internalEventBus,
       ensureTargetSession: (target) => this.ensureToolTargetSession(target),
-      pendingMessageQueue: this.config.pendingMessageRepo,
       getSpaceAutonomyLevel: async (sid) => {
         const s = await this.config.spaceManager.getSpace(sid);
         return s?.autonomyLevel ?? 1;
@@ -1574,7 +1570,6 @@ export class SpaceRuntimeService {
       taskAgentManager: this.taskAgentManager ?? undefined,
       internalEventBus: this.config.internalEventBus,
       ensureTargetSession: (target) => this.ensureToolTargetSession(target),
-      pendingMessageQueue: this.config.pendingMessageRepo,
       getSpaceAutonomyLevel: async (sid) => {
         const s = await spaceManagerForApproval.getSpace(sid);
         return s?.autonomyLevel ?? 1;
@@ -1766,7 +1761,6 @@ export class SpaceRuntimeService {
         await this.activateWorkflowNode(runId, nodeId);
       },
       ensureTargetSession: (target) => this.ensureToolTargetSession(target),
-      pendingMessageQueue: this.config.pendingMessageRepo,
       getSpaceAutonomyLevel: async (sid) => {
         const s = await spaceManagerForApproval.getSpace(sid);
         return s?.autonomyLevel ?? 1;
@@ -1871,15 +1865,6 @@ export class SpaceRuntimeService {
     log.info(`Space chat session provisioned for space ${space.id}`);
     if (options.replayPendingMessages !== false) {
       await this.replayPendingMessagesAfterRuntimeProvisioning(session);
-    }
-
-    if (this.taskAgentManager) {
-      const activeRuns = this.config.workflowRunRepo.getActiveRuns(space.id);
-      for (const run of activeRuns) {
-        void this.taskAgentManager
-          .flushPendingMessagesForSpaceAgent(space.id, run.id)
-          .catch(() => {});
-      }
     }
 
     if (this.config.internalEventBus && sessionManager) {

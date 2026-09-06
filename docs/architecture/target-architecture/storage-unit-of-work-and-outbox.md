@@ -93,7 +93,6 @@ It does not currently give us a general command receipt model, nor does it guara
 
 The codebase already has useful idempotency patterns:
 
-- `pending_agent_messages` uses idempotency keys for workflow handoff dedupe.
 - task schedules use `pendingJobId` as a compare-and-swap fence.
 - external events use `(space_id, source, dedupe_key)`.
 - node executions use a unique `(workflow_run_id, workflow_node_id, agent_name)` slot.

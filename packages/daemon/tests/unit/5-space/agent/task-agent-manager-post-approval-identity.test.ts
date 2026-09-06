@@ -362,7 +362,7 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
   });
 
-  it('rejects a consumed pending-queue input before kickoff injection', () => {
+  it('rejects a consumed legacy drained handoff before kickoff injection', () => {
     const sessionId = postApprovalSessionId('queue-drain');
     insertTask(db, { status: 'approved', postApprovalSessionId: null, approvedAt: 10 });
     insertWorkerSession(db, { sessionId, createdAt: 10, lastActiveAt: 11 });

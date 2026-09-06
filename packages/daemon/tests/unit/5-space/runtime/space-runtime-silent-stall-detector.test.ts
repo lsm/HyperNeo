@@ -6,7 +6,6 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -672,33 +671,6 @@ describe('SpaceRuntime — silent-stall detector for terminal-healthy idle tasks
       });
 
       const rt = makeRuntime();
-      runDetector(rt, runId, taskId);
-      expect(silentStallWarnings()).toHaveLength(0);
-    });
-
-    test('stays quiet while a queued node-agent handoff is pending for the run', () => {
-      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
-        { id: STEP_A, name: 'Coding', agentId: AGENT },
-        { id: STEP_B, name: 'Review', agentId: AGENT },
-      ]);
-      const { runId, taskId } = seedRun(workflow, 'Queued Handoff Run');
-      seedExec(runId, STEP_A, 'Coding', 'idle', {
-        agentSessionId: 'queued-handoff-session',
-        lastActivityAt: Date.now() - 3 * 60 * 60 * 1000,
-      });
-      saveTerminalResultMessage('queued-handoff-session', threeHoursAgo());
-      const pendingRepo = new PendingAgentMessageRepository(db);
-      pendingRepo.enqueue({
-        workflowRunId: runId,
-        spaceId: SPACE_ID,
-        taskId,
-        sourceAgentName: 'Coding',
-        targetKind: 'node_agent',
-        targetAgentName: 'Review',
-        message: 'review request',
-      });
-
-      const rt = makeRuntime({ pendingMessageRepo: pendingRepo });
       runDetector(rt, runId, taskId);
       expect(silentStallWarnings()).toHaveLength(0);
     });

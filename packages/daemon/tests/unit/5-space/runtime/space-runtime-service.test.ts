@@ -985,36 +985,6 @@ describe('SpaceRuntimeService', () => {
       await expect(svc.setupSpaceAgentSession(mockSpace)).resolves.toBeUndefined();
     });
 
-    test('flushes pending Space Agent messages for active runs after provisioning', async () => {
-      const session = makeSession();
-      const sessionManager = makeSessionManager(session);
-
-      const activeRun = { id: 'run-flush-wiring', status: 'in_progress', spaceId: mockSpace.id };
-      const workflowRunRepo = {
-        getActiveRuns: mock(() => [activeRun]),
-      } as unknown as SpaceWorkflowRunRepository;
-
-      const flushCalls: Array<{ spaceId: string; runId: string }> = [];
-      const mockTaskAgentManager = {
-        flushPendingMessagesForSpaceAgent: mock(async (spaceId: string, runId: string) => {
-          flushCalls.push({ spaceId, runId });
-        }),
-      } as unknown as TaskAgentManager;
-
-      const config: SpaceRuntimeServiceConfig = {
-        ...buildConfigWithSession(sessionManager),
-        workflowRunRepo,
-      };
-      const svc = new SpaceRuntimeService(config);
-      svc.setTaskAgentManager(mockTaskAgentManager);
-
-      await svc.setupSpaceAgentSession(mockSpace);
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-      expect(flushCalls).toHaveLength(1);
-      expect(flushCalls[0]).toEqual({ spaceId: mockSpace.id, runId: activeRun.id });
-    });
-
     test('start() provisions existing spaces', async () => {
       const session = makeSession();
       const sessionManager = makeSessionManager(session);

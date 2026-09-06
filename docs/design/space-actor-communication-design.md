@@ -47,7 +47,7 @@ Current behavior must keep working:
 | Workflow node agent / coder / reviewer | `worker` actor, scoped by `workflowRunId` + `nodeId` + `agentName` |
 | `node-agent send_message` | wrapper around generic `send_message` |
 | task message RPC/tooling | compatibility wrapper around generic `send_message` |
-| `pending_agent_messages` | delivery rows / queue with same retry, TTL, terminal state |
+| `pending_agent_messages` | legacy delivery queue (removed; deliveries project from the session mailbox outbox) |
 | task/workflow message UI | projection of messages/events; not LLM chat thread |
 
 ## Non-goals for v1

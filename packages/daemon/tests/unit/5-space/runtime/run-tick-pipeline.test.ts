@@ -9,7 +9,7 @@ import type {
 import {
   admitSpawnExecution,
   blockRunForSpawnFailure,
-  drainPendingNodeHandoffs,
+  haltIfSpaceInactive,
   ensureCanonicalTaskInProgress,
   finalizeTick,
   haltIfBlockedExecutions,
@@ -89,7 +89,7 @@ interface DepsState {
   space: Space | null;
   recoveryHalted: boolean;
   settled: boolean;
-  drainHalted: boolean;
+  spaceInactiveHalted: boolean;
   spawnAdmissionAction: 'spawn' | 'skipSpawn';
   spawnFailureBlocks: boolean;
   availableTaskSlots: number;
@@ -115,7 +115,7 @@ function makeDeps(state: Partial<DepsState> = {}): RecordedDeps {
     space: { id: SPACE_ID } as Space,
     recoveryHalted: false,
     settled: false,
-    drainHalted: false,
+    spaceInactiveHalted: false,
     spawnAdmissionAction: 'spawn',
     spawnFailureBlocks: false,
     availableTaskSlots: 1,
@@ -161,9 +161,9 @@ function makeDeps(state: Partial<DepsState> = {}): RecordedDeps {
       calls.push('settleIfComplete');
       return full.settled;
     },
-    drainPendingNodeHandoffs: async () => {
-      calls.push('drainPendingNodeHandoffs');
-      return full.drainHalted ? 'halted' : 'continue';
+    haltTickForInactiveSpace: async () => {
+      calls.push('haltTickForInactiveSpace');
+      return full.spaceInactiveHalted ? 'halted' : 'continue';
     },
     promotePendingExecutionsWithLiveSessions: () => {
       calls.push('promotePendingExecutionsWithLiveSessions');
@@ -447,15 +447,15 @@ describe('spaceWorkflowRunTick stages', () => {
     expect(await settleIfComplete(activeCtx)).toEqual({ value: activeCtx });
   });
 
-  test('drainPendingNodeHandoffs halts only when the drain reports a halt', async () => {
-    const halted = makeDeps({ drainHalted: true });
+  test('haltIfSpaceInactive halts only when the gate reports a halt', async () => {
+    const halted = makeDeps({ spaceInactiveHalted: true });
     const ctx = { runId: RUN_ID, deps: halted, run: halted.run, context: halted.context };
-    expect(await drainPendingNodeHandoffs(ctx)).toEqual({
-      reason: { action: 'halted_node_handoff_drain' },
+    expect(await haltIfSpaceInactive(ctx)).toEqual({
+      reason: { action: 'halted_space_inactive' },
     });
     const passing = makeDeps();
     const passCtx = { runId: RUN_ID, deps: passing, run: passing.run, context: passing.context };
-    expect(await drainPendingNodeHandoffs(passCtx)).toEqual({ value: passCtx });
+    expect(await haltIfSpaceInactive(passCtx)).toEqual({ value: passCtx });
   });
 
   test('promotePendingExecutionsWithLiveSessions uses the recovery thread', () => {
@@ -630,7 +630,7 @@ describe('spaceWorkflowRunTick pipeline', () => {
       'getSpace',
       'recoverStrandedExecutions',
       'settleIfComplete',
-      'drainPendingNodeHandoffs',
+      'haltTickForInactiveSpace',
       'promotePendingExecutionsWithLiveSessions',
       'getAvailableTaskSlots',
       'admitSpawnExecution',
@@ -754,9 +754,9 @@ describe('spaceWorkflowRunTick pipeline', () => {
       ],
     },
     {
-      name: 'halts when the queued node-handoff drain halts',
-      state: { drainHalted: true },
-      expected: { action: 'halted_node_handoff_drain' },
+      name: 'halts when the inactive-space gate halts',
+      state: { spaceInactiveHalted: true },
+      expected: { action: 'halted_space_inactive' },
       expectedCalls: [
         'getRun',
         'loadRunContext',
@@ -764,7 +764,7 @@ describe('spaceWorkflowRunTick pipeline', () => {
         'getSpace',
         'recoverStrandedExecutions',
         'settleIfComplete',
-        'drainPendingNodeHandoffs',
+        'haltTickForInactiveSpace',
       ],
     },
   ];

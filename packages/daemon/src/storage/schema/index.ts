@@ -62,8 +62,6 @@ export { runMigration101 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration109 } from './migrations.ts';
 // knip-ignore-next-line
-export { runMigration110 } from './migrations.ts';
-// knip-ignore-next-line
 export { runMigration111 } from './migrations.ts';
 // knip-ignore-next-line
 export { runMigration112 } from './migrations.ts';

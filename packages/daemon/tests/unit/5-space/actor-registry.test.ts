@@ -8,7 +8,6 @@ import {
 import { longTermAgentSessionId } from '../../../src/lib/space/long-term-agent-session';
 import { coordinatorLongHorizonAgentId } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository';
-import { PendingAgentMessageRepository } from '../../../src/storage/repositories/pending-agent-message-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
@@ -49,7 +48,6 @@ describe('SpaceActorRegistryAdapter', () => {
   let workflowRepo: SpaceWorkflowRepository;
   let workflowRunRepo: SpaceWorkflowRunRepository;
   let nodeExecutionRepo: NodeExecutionRepository;
-  let pendingMessageRepo: PendingAgentMessageRepository;
   let registry: SpaceActorRegistryAdapter;
 
   beforeEach(() => {
@@ -62,7 +60,6 @@ describe('SpaceActorRegistryAdapter', () => {
     workflowRepo = new SpaceWorkflowRepository(db);
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     nodeExecutionRepo = new NodeExecutionRepository(db);
-    pendingMessageRepo = new PendingAgentMessageRepository(db);
     registry = new SpaceActorRegistryAdapter({
       spaceRepo,
       sessionRepo,
@@ -70,7 +67,6 @@ describe('SpaceActorRegistryAdapter', () => {
       workflowRepo,
       workflowRunRepo,
       nodeExecutionRepo,
-      pendingMessageRepo,
     });
   });
 
@@ -78,7 +74,7 @@ describe('SpaceActorRegistryAdapter', () => {
     db.close();
   });
 
-  it('seeds humans, coordinator, ad-hoc sessions, agents, workers, pending workers, and systems', () => {
+  it('seeds humans, coordinator, ad-hoc sessions, agents, workers, and systems', () => {
     const space = spaceRepo.createSpace({
       workspacePath: '/workspace/project',
       slug: 'project',
@@ -234,21 +230,6 @@ describe('SpaceActorRegistryAdapter', () => {
       agentSessionId: null,
       status: 'cancelled',
     });
-    pendingMessageRepo.enqueue({
-      workflowRunId: run.id,
-      spaceId: space.id,
-      targetKind: 'node_agent',
-      targetAgentName: 'reviewer:lead',
-      message: 'review this',
-    });
-    pendingMessageRepo.enqueue({
-      workflowRunId: run.id,
-      spaceId: space.id,
-      targetKind: 'node_agent',
-      targetAgentName: 'messaging',
-      message: 'message cancelled worker',
-    });
-
     const actors = registry.listActors(space.id);
 
     expect(canonicalAgentHandle([agent, reservedNameAgent], reservedNameAgent)).toBe(
@@ -328,14 +309,6 @@ describe('SpaceActorRegistryAdapter', () => {
       status: 'active',
     });
     expect(actors).toContainEqual({
-      actorId: `worker:${encodeURIComponent(run.id)}:Review%2FQA:reviewer%3Alead`,
-      kind: 'worker',
-      spaceId: space.id,
-      handle: `@worker:${encodeURIComponent(run.id)}/Review%2FQA/reviewer%3Alead`,
-      roles: ['actor-role:Review%2FQA', 'actor-role:reviewer%3Alead'],
-      status: 'inactive',
-    });
-    expect(actors).toContainEqual({
       actorId: `worker:${encodeURIComponent(run.id)}:coordinator:messaging`,
       kind: 'worker',
       spaceId: space.id,
@@ -374,42 +347,6 @@ describe('SpaceActorRegistryAdapter', () => {
     for (const actor of actors) {
       if (actor.handle) expect(() => parseAddress(actor.handle!)).not.toThrow();
     }
-  });
-
-  it('scopes pending worker projection to the row workflowNodeId', () => {
-    const space = spaceRepo.createSpace({ workspacePath: '/w', slug: 'p', name: 'P' });
-    const workflow = workflowRepo.createWorkflow({
-      spaceId: space.id,
-      name: 'Two reviewers',
-      nodes: [
-        { id: 'rev-a', name: 'Review A', agents: [{ agentId: 'a1', name: 'reviewer' }] },
-        { id: 'rev-b', name: 'Review B', agents: [{ agentId: 'a2', name: 'reviewer' }] },
-      ],
-      transitions: [],
-      startNodeId: 'rev-a',
-      rules: [],
-      completionAutonomyLevel: 3,
-    });
-    const run = workflowRunRepo.createRun({
-      spaceId: space.id,
-      workflowId: workflow.id,
-      title: 'R',
-    });
-    pendingMessageRepo.enqueue({
-      workflowRunId: run.id,
-      spaceId: space.id,
-      targetKind: 'node_agent',
-      targetAgentName: 'reviewer',
-      workflowNodeId: 'rev-b',
-      message: 'for B',
-    });
-
-    const handles = registry
-      .listActors(space.id)
-      .filter((a) => a.kind === 'worker')
-      .map((a) => a.handle);
-    expect(handles).toContain(`@worker:${encodeURIComponent(run.id)}/rev-b/reviewer`);
-    expect(handles).not.toContain(`@worker:${encodeURIComponent(run.id)}/rev-a/reviewer`);
   });
 
   it('exposes row-backed agent handles and keeps every actor address parseable', () => {
@@ -647,7 +584,6 @@ describe('SpaceActorRegistryAdapter', () => {
       workflowRepo,
       workflowRunRepo,
       nodeExecutionRepo,
-      pendingMessageRepo,
     });
 
     expect(fallbackRegistry.getActor(space.id, `agent:coordinator:${space.id}`)).toEqual({

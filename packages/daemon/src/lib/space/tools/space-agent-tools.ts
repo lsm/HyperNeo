@@ -47,7 +47,6 @@ import type { EnsureSessionOutcome, SessionTarget } from '../../session-resoluti
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
-import type { PendingAgentMessageQueue } from '../../rpc-handlers/space-task-message-handlers.ts';
 import {
   publishUnifiedAgentCreated,
   publishUnifiedAgentUpdated,
@@ -499,17 +498,6 @@ function describeTaskExecution(exec: NodeExecution): string {
   return `workflow node "${exec.agentName}" (${exec.id})`;
 }
 
-const DOOR_QUEUEABLE_UNRESOLVED_REASONS = new Set([
-  'post_approval_pending',
-  'restore_timeout',
-  'spawn_timeout',
-]);
-
-const DOOR_TIMED_OUT_UNRESOLVED_REASONS = new Set([
-  ...DOOR_QUEUEABLE_UNRESOLVED_REASONS,
-  'activation_timeout',
-]);
-
 type TaskWorkerDeliveryCtx = {
   task: SpaceTask;
   workflowRunId: string;
@@ -554,7 +542,6 @@ export interface SpaceAgentToolsConfig {
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   activateNode?: (runId: string, nodeId: string) => Promise<void>;
   ensureTargetSession?: (target: SessionTarget) => Promise<EnsureSessionOutcome>;
-  pendingMessageQueue?: PendingAgentMessageQueue;
   getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
   myAgentName?: string;
   myAgentNameAliases?: string[];
@@ -642,7 +629,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     internalEventBus,
     activateNode,
     ensureTargetSession,
-    pendingMessageQueue,
     getSpaceAutonomyLevel,
     myAgentName,
     myAgentNameAliases,
@@ -773,32 +759,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     }
   };
 
-  const queueForNodeActivation = (ctx: TaskWorkerDeliveryCtx): ToolResult => {
-    let queuedMessageId: string | null = null;
-    if (pendingMessageQueue) {
-      const { record } = pendingMessageQueue.enqueue({
-        workflowRunId: ctx.workflowRunId,
-        spaceId,
-        taskId: ctx.task.id,
-        sourceAgentName: outboundSenderName,
-        targetKind: 'node_agent',
-        targetAgentName: ctx.resolved.agentName,
-        workflowNodeId: ctx.resolved.workflowNodeId,
-        message: nodeAgentEnvelopeFor(ctx),
-      });
-      queuedMessageId = record.id;
-    }
-    ctx.audit(queuedMessageId !== null ? 'queued' : 'activated', {
+  const reportActivatedWithoutLiveSession = (ctx: TaskWorkerDeliveryCtx): ToolResult => {
+    ctx.audit('activated', {
       target: 'node',
       node_id: ctx.resolved.id,
       agent_name: ctx.resolved.agentName,
       node_execution_id: ctx.resolved.id,
-      ...(queuedMessageId !== null
-        ? { queued_message_id: queuedMessageId }
-        : { reason: 'pending_message_queue_unavailable' }),
+      reason: 'no_live_session_after_activation',
     });
     return jsonResult({
-      success: true,
+      success: false,
       task_id: ctx.task.id,
       target: 'node',
       node_execution_id: ctx.resolved.id,
@@ -807,13 +777,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       sdk_message_id: null,
       activated: true,
       delivered: false,
-      queued: queuedMessageId !== null,
-      ...(queuedMessageId !== null ? { queued_message_id: queuedMessageId } : {}),
-      message:
-        queuedMessageId !== null
-          ? `Node "${ctx.resolved.agentName}" was activated and the message was queued; it will be delivered once the session spawns.`
-          : `Node "${ctx.resolved.agentName}" was activated but does not yet have a live session; ` +
-            `the message was not queued because no pending message queue is configured. Retry after the node starts.`,
+      error:
+        `Node "${ctx.resolved.agentName}" was activated but does not yet have a live session; ` +
+        `the message was not delivered. Retry after the node starts.`,
     });
   };
 
@@ -834,11 +800,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       return delivered === undefined ? ctx : { ...ctx, result: delivered };
     }
     if (ctx.sessionSelector !== undefined) return ctx;
-    if (DOOR_QUEUEABLE_UNRESOLVED_REASONS.has(outcome.reason)) {
-      return { ...ctx, result: queueAndDrainNodeMessage(ctx) };
-    }
-    if (outcome.reason === 'activation_timeout' && ctx.resolved.agentSessionId === null) {
-      return { ...ctx, result: queueAndDrainNodeMessage(ctx) };
+    if (
+      outcome.reason === 'post_approval_pending' ||
+      outcome.reason === 'restore_timeout' ||
+      outcome.reason === 'spawn_timeout' ||
+      (outcome.reason === 'activation_timeout' && ctx.resolved.agentSessionId === null)
+    ) {
+      return { ...ctx, result: reportActivatedWithoutLiveSession(ctx) };
     }
     if (
       outcome.reason !== 'task_terminal' &&
@@ -917,36 +885,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return { ...ctx, result: await injectNodeSessionOrReport(ctx, sessionIdAfter, true) };
   };
 
-  const drainQueuedNodeMessageAfterDoorTimeout = (ctx: TaskWorkerDeliveryCtx): void => {
-    const outcome = ctx.doorOutcome;
-    if (!ensureTargetSession || !taskAgentManager || !pendingMessageQueue) return;
-    if (outcome?.kind !== 'unresolved' || !DOOR_TIMED_OUT_UNRESOLVED_REASONS.has(outcome.reason)) {
-      return;
-    }
-    void (async () => {
-      try {
-        const resolved = await ensureTargetSession(doorTargetFor(ctx));
-        if (resolved.kind !== 'resolved') return;
-        await taskAgentManager.flushPendingMessagesForTarget(
-          ctx.workflowRunId,
-          ctx.resolved.agentName,
-          resolved.sessionId,
-          ctx.resolved.workflowNodeId
-        );
-      } catch {}
-    })();
-  };
-
-  const queueAndDrainNodeMessage = (ctx: TaskWorkerDeliveryCtx): ToolResult => {
-    const result = queueForNodeActivation(ctx);
-    drainQueuedNodeMessageAfterDoorTimeout(ctx);
-    return result;
-  };
-
-  const queuePendingNodeMessageStage = (ctx: TaskWorkerDeliveryCtx): TaskWorkerDeliveryCtx => ({
-    ...ctx,
-    result: queueAndDrainNodeMessage(ctx),
-  });
+  const reportActivatedWithoutSessionStage = (
+    ctx: TaskWorkerDeliveryCtx
+  ): TaskWorkerDeliveryCtx => ({ ...ctx, result: reportActivatedWithoutLiveSession(ctx) });
 
   const workerDeliverySettled = (ctx?: TaskWorkerDeliveryCtx): boolean =>
     ctx !== undefined && ctx.result !== undefined;
@@ -967,7 +908,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     .pipe('!settled', 'ctx')
     .pipe(deliverRefreshedSessionStage, 'ctx', 'ctx')
     .pipe('!settled', 'ctx')
-    .pipe(queuePendingNodeMessageStage, 'ctx', 'ctx')
+    .pipe(reportActivatedWithoutSessionStage, 'ctx', 'ctx')
     .endAsync('ctx') as (ctx: TaskWorkerDeliveryCtx) => Promise<TaskWorkerDeliveryCtx>;
 
   function requireGoalService() {

@@ -82,7 +82,6 @@ import {
   type MessageDeliveryDiagnostics,
 } from '../agent/message-delivery-metrics.ts';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository.ts';
-import { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository.ts';
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import { setupSpaceAgentHandlers } from './space-agent-handlers.ts';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
@@ -428,10 +427,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const artifactRepo = new WorkflowRunArtifactRepository(deps.db.getDatabase(), deps.reactiveDb);
   const artifactCacheRepo = new WorkflowRunArtifactCacheRepository(deps.db.getDatabase());
   const channelCycleRepo = new ChannelCycleRepository(deps.db.getDatabase());
-  const pendingMessageRepo = new PendingAgentMessageRepository(
-    deps.db.getDatabase(),
-    deps.reactiveDb
-  );
   const taskScheduleRepo = new TaskScheduleRepository(deps.db.getDatabase());
   const spaceRepo = new SpaceRepository(deps.db.getDatabase());
   const sessionRepo = new SessionRepository(deps.db.getDatabase());
@@ -676,7 +671,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     sessionManager: deps.sessionManager,
     internalEventBus: deps.internalEventBus,
     artifactRepo,
-    pendingMessageRepo,
     actorRegistryRepos: {
       spaceRepo,
       sessionRepo,
@@ -684,7 +678,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       workflowRepo: spaceWorkflowRepo,
       workflowRunRepo: spaceWorkflowRunRepo,
       nodeExecutionRepo,
-      pendingMessageRepo,
     },
     scheduleService,
     commandBus: deps.commandBus,
@@ -1093,7 +1086,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     nodeExecutionRepo,
     dbPath: deps.db.getDatabasePath(),
     artifactRepo,
-    pendingMessageRepo,
     spaceAgentInjector,
     messageResolverFactory: (spaceId, context) =>
       spaceRuntimeService.createMessageResolver(spaceId, context),
@@ -1139,7 +1131,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     taskRepo: spaceTaskRepo,
     longHorizonAgentRepo,
   });
-  taskAgentManager.attachSessionEnsurer((target) => ensureSession(target, sessionResolutionDeps));
   setupSpaceTaskMessageHandlers(
     deps.messageHub,
     taskAgentManager,
@@ -1148,7 +1139,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     nodeExecutionRepo,
     channelCycleRepo,
     undefined,
-    pendingMessageRepo,
     (target) => ensureSession(target, sessionResolutionDeps)
   );
 

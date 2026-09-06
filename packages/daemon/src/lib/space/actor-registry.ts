@@ -1,13 +1,6 @@
 import type { ActorRef, ActorStatus } from '../../../../messaging/src/types.ts';
-import type {
-  NodeExecution,
-  Session,
-  Space,
-  SpaceLongHorizonAgent,
-  SpaceWorkflow,
-} from '@hyperneo/shared';
+import type { NodeExecution, Session, Space, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
-import type { PendingAgentMessageRepository } from '../../storage/repositories/pending-agent-message-repository.ts';
 import type { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from './agents/worker-long-horizon-mapper.ts';
@@ -29,7 +22,6 @@ export interface SpaceActorRegistryRepositories {
   workflowRepo: SpaceWorkflowRepository;
   workflowRunRepo: SpaceWorkflowRunRepository;
   nodeExecutionRepo: NodeExecutionRepository;
-  pendingMessageRepo?: PendingAgentMessageRepository;
 }
 
 export class SpaceActorRegistryAdapter {
@@ -54,32 +46,9 @@ export class SpaceActorRegistryAdapter {
       this.add(actors, actor);
     }
 
-    const workflowByKey = new Map<string, SpaceWorkflow>();
-    const definitionKey = (wfId: string, version: string | null): string =>
-      `${wfId}:${version ?? 'head'}`;
     for (const run of this.repos.workflowRunRepo.listBySpace(spaceId)) {
       for (const execution of this.repos.nodeExecutionRepo.listByWorkflowRun(run.id)) {
         this.add(actors, workerActorFromExecution(spaceId, execution));
-      }
-    }
-
-    for (const row of this.repos.pendingMessageRepo?.listPendingForSpace(spaceId) ?? []) {
-      if (row.targetKind !== 'node_agent') continue;
-      const run = this.repos.workflowRunRepo.getRun(row.workflowRunId);
-      let workflow: SpaceWorkflow | null = null;
-      if (run) {
-        const key = definitionKey(run.workflowId, run.definitionVersion);
-        workflow = workflowByKey.get(key) ?? this.repos.workflowRepo.getWorkflowForRun(run);
-        if (workflow) workflowByKey.set(key, workflow);
-      }
-      for (const worker of pendingWorkerActors(
-        spaceId,
-        row.workflowRunId,
-        row.targetAgentName,
-        workflow,
-        row.workflowNodeId
-      )) {
-        this.add(actors, worker);
       }
     }
 
@@ -222,34 +191,6 @@ function workerActorFromExecution(spaceId: string, execution: NodeExecution): Ac
     roles: unique([routingRole(execution.agentName), routingRole(execution.workflowNodeId)]),
     status: statusFromNodeExecution(execution),
   };
-}
-
-function pendingWorkerActors(
-  spaceId: string,
-  workflowRunId: string,
-  targetAgentName: string,
-  workflow: SpaceWorkflow | null,
-  workflowNodeId?: string | null
-): ActorRef[] {
-  let nodes =
-    workflow?.nodes.filter((node) => node.agents.some((agent) => agent.name === targetAgentName)) ??
-    [];
-  if (workflowNodeId != null) {
-    nodes = nodes.filter((node) => node.id === workflowNodeId);
-  }
-  if (nodes.length === 0) return [];
-
-  const node = nodes[0];
-  return [
-    {
-      actorId: workerActorId(workflowRunId, node.id, targetAgentName),
-      kind: 'worker',
-      spaceId,
-      handle: workerHandle(workflowRunId, node.id, targetAgentName),
-      roles: unique([routingRole(targetAgentName), routingRole(node.id)]),
-      status: 'inactive',
-    },
-  ];
 }
 
 function workerActorId(workflowRunId: string, nodeId: string, agentName: string): string {
