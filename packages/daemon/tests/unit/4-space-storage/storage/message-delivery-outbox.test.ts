@@ -1430,6 +1430,23 @@ describe('prompt content verification (verifyPromptContent)', () => {
     ).not.toThrow();
   });
 
+  it('still conflicts when a nested role differs beyond the legacy shape', () => {
+    seedRow('verify-legacy-role-shift', 'original');
+    const retry = userMessage('verify-legacy-role-shift', 'original');
+    const shifted = {
+      ...retry,
+      message: { ...(retry.message as Record<string, unknown>), role: 'assistant' },
+    } as SDKMessage;
+    expect(() =>
+      verifyPromptContent({
+        db: db as never,
+        sessionId: SESSION,
+        messageUuid: 'verify-legacy-role-shift',
+        message: shifted,
+      })
+    ).toThrow(PromptContentConflictError);
+  });
+
   it('types the conflict ensurePrompt raises so producers can classify it', () => {
     seedRow('verify-ensure', 'original');
     expect(() =>

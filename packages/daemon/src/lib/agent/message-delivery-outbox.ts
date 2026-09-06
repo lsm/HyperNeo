@@ -604,7 +604,7 @@ export class PromptContentConflictError extends Error {
 export function normalizeLegacyPromptRole(message: SDKMessage): SDKMessage {
   if (message?.type !== 'user') return message;
   const nested = message.message as Record<string, unknown> | undefined;
-  if (nested == null || typeof nested !== 'object' || !('role' in nested)) return message;
+  if (nested == null || typeof nested !== 'object' || nested.role !== 'user') return message;
   const { role: _role, ...rest } = nested;
   return { ...message, message: rest } as SDKMessage;
 }
