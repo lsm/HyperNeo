@@ -515,19 +515,20 @@ function mailboxDeliveryTextExpr(sdkMessageExpr: string): string {
     END`;
 }
 
-function mailboxDeliverySenderExpr(textExpr: string, replyBlockExpr: string): string {
+function mailboxDeliveryNameRawExpr(textExpr: string): string {
   const rest = `SUBSTR(${textExpr}, 18)`;
-  const nameRaw = `SUBSTR(${rest}, 1, COALESCE(
+  return `SUBSTR(${rest}, 1, COALESCE(
       NULLIF(INSTR(${rest}, ' ───\n\n') - 1, -1),
       COALESCE(NULLIF(INSTR(${rest}, ' ───') - 1, -1), LENGTH(${textExpr}) - 17)
     ))`;
-  const firstMarker = `INSTR(${nameRaw}, ' (task #')`;
-  const firstSegment = `SUBSTR(${nameRaw}, ${firstMarker})`;
-  const secondMarkerRelative = `INSTR(SUBSTR(${nameRaw}, ${firstMarker} + 9), ' (task #')`;
-  const secondMarker = `${firstMarker} + 8 + ${secondMarkerRelative}`;
-  const secondSegment = `SUBSTR(${nameRaw}, ${secondMarker})`;
-  const isTaskSuffix = (segment: string) =>
-    `SUBSTR(${segment}, 9) = CAST(SUBSTR(${segment}, 9) AS INTEGER) || ')'`;
+}
+
+function mailboxDeliverySenderExpr(
+  textExpr: string,
+  replyBlockExpr: string,
+  taskStrippedExpr: string
+): string {
+  const nameRaw = mailboxDeliveryNameRawExpr(textExpr);
   const replyBlock = replyBlockExpr;
   const replyBlockPresent = `LENGTH(${replyBlock}) > 0`;
   const replyEchoStart = `INSTR(${replyBlock}, 'send_message with target "')`;
@@ -539,25 +540,18 @@ function mailboxDeliverySenderExpr(textExpr: string, replyBlockExpr: string): st
     THEN SUBSTR(${replyEchoLine}, 1, LENGTH(${replyEchoLine}) - 1)
     ELSE ${replyEchoLine} END`;
   const replyTaskVerb = `INSTR(${replyBlock}, 'send_message_to_task')`;
-  const strippedFirst = `TRIM(SUBSTR(${nameRaw}, 1, ${firstMarker} - 1))`;
-  const strippedSecond = `TRIM(SUBSTR(${nameRaw}, 1, ${secondMarker} - 1))`;
-  const atEchoMatchesLabelledName = `(
-            (${firstMarker} > 0 AND ${isTaskSuffix(firstSegment)} AND ${strippedFirst} = ${replyEcho})
-            OR (${secondMarkerRelative} > 0 AND ${isTaskSuffix(secondSegment)} AND ${strippedSecond} = ${replyEcho})
-          )`;
+  const taskStripped = `TRIM(${taskStrippedExpr})`;
   return `CASE
       WHEN ${textExpr} LIKE '─── Message from %' THEN
         CASE
           WHEN ${replyBlockPresent} AND ${replyEchoStart} > 0 AND ${replyEcho} NOT LIKE '@%'
             THEN ${replyEcho}
-          WHEN ${replyBlockPresent} AND ${replyEchoStart} > 0 AND ${atEchoMatchesLabelledName}
+          WHEN ${replyBlockPresent} AND ${replyEchoStart} > 0 AND ${taskStripped} = ${replyEcho}
             THEN ${replyEcho}
           WHEN ${replyBlockPresent} AND ${replyEchoStart} > 0
             THEN TRIM(${nameRaw})
-          WHEN ${replyBlockPresent} AND ${replyTaskVerb} > 0 AND ${firstMarker} > 0 AND ${isTaskSuffix(firstSegment)}
-            THEN ${strippedFirst}
-          WHEN ${replyBlockPresent} AND ${replyTaskVerb} > 0 AND ${secondMarkerRelative} > 0 AND ${isTaskSuffix(secondSegment)}
-            THEN ${strippedSecond}
+          WHEN ${replyBlockPresent} AND ${replyTaskVerb} > 0 AND ${taskStripped} IS NOT NULL
+            THEN ${taskStripped}
           ELSE TRIM(${nameRaw})
         END
       ELSE NULL
@@ -593,6 +587,45 @@ delivery_reply_last AS (
   WHERE INSTR(SUBSTR(reply_text, sep_at + 14), '─── Reply ───') = 0
 )`;
 }
+
+function deliveryNameMarkerCte(args: {
+  relation: string;
+  idColumn: string;
+  textExpr: string;
+  filterSql?: string;
+}): string {
+  const nameRaw = mailboxDeliveryNameRawExpr(args.textExpr);
+  return `delivery_name_marker (
+  message_id,
+  marker_at,
+  name_text
+) AS (
+  SELECT ${args.idColumn} AS message_id,
+    INSTR(${nameRaw}, ' (task #') AS marker_at,
+    ${nameRaw} AS name_text
+  FROM ${args.relation}${args.filterSql ? `\n  WHERE ${args.filterSql}` : ''}
+  UNION ALL
+  SELECT message_id,
+    marker_at + 8 + INSTR(SUBSTR(name_text, marker_at + 9), ' (task #'),
+    name_text
+  FROM delivery_name_marker
+  WHERE marker_at > 0
+    AND INSTR(SUBSTR(name_text, marker_at + 9), ' (task #') > 0
+),
+delivery_name_last AS (
+  SELECT message_id, marker_at, name_text
+  FROM delivery_name_marker
+  WHERE INSTR(SUBSTR(name_text, marker_at + 9), ' (task #') = 0
+)`;
+}
+
+const deliveryTaskStrippedExpr = `CASE
+  WHEN dtm.marker_at > 0
+    AND SUBSTR(dtm.name_text, dtm.marker_at) IS NOT NULL
+    AND SUBSTR(SUBSTR(dtm.name_text, dtm.marker_at), 9) = CAST(SUBSTR(SUBSTR(dtm.name_text, dtm.marker_at), 9) AS INTEGER) || ')'
+    THEN SUBSTR(dtm.name_text, 1, dtm.marker_at - 1)
+  ELSE NULL
+END`;
 
 function deliveryRetryingCtes(sessionFilterSql: string): string {
   const sessionFilter = sessionFilterSql.length > 0 ? `\n    ${sessionFilterSql}` : '';
@@ -907,6 +940,13 @@ ${deliveryReplyTailCte({
   filterSql:
     "tsm.message_type = 'user' AND tsm.send_status IS NOT NULL AND tsm.parent_tool_use_id IS NULL",
 })},
+${deliveryNameMarkerCte({
+  relation: 'task_sdk_messages tsm',
+  idColumn: 'tsm.id',
+  textExpr: mailboxDeliveryTextExpr('tsm.sdk_message'),
+  filterSql:
+    "tsm.message_type = 'user' AND tsm.send_status IS NOT NULL AND tsm.parent_tool_use_id IS NULL",
+})},
 -- Delivery rows project the mailbox delivery lifecycle from the session outbox
 -- (sdk_messages user rows) rather than the legacy pending_agent_messages queue,
 -- and send_status carries the lifecycle (enqueued/deferred/submitted → queued,
@@ -974,7 +1014,8 @@ delivery_rows AS (
       tsm.id AS eventRef,
       ${mailboxDeliverySenderExpr(
         mailboxDeliveryTextExpr('tsm.sdk_message'),
-        `CASE WHEN drt.sep_at > 0 THEN SUBSTR(drt.reply_text, drt.sep_at) ELSE '' END`
+        `CASE WHEN drt.sep_at > 0 THEN SUBSTR(drt.reply_text, drt.sep_at) ELSE '' END`,
+        deliveryTaskStrippedExpr
       )} AS sender,
       s_kind.type AS session_type,
       COALESCE(
@@ -998,6 +1039,7 @@ delivery_rows AS (
     FROM target_task tt
     JOIN task_sdk_messages tsm ON tsm.task_id = tt.id
     LEFT JOIN delivery_reply_last drt ON drt.message_id = tsm.id
+    LEFT JOIN delivery_name_last dtm ON dtm.message_id = tsm.id
     LEFT JOIN delivery_retrying adr
       ON adr.message_uuid = tsm.resolved_sdk_uuid
      AND adr.session_id = tsm.session_id
@@ -1155,6 +1197,11 @@ ${deliveryReplyTailCte({
   idColumn: 'dtd.message_id',
   textExpr: mailboxDeliveryTextExpr('dtd.sdk_message'),
 })},
+${deliveryNameMarkerCte({
+  relation: 'delivery_targets dtn',
+  idColumn: 'dtn.message_id',
+  textExpr: mailboxDeliveryTextExpr('dtn.sdk_message'),
+})},
 -- Same mailbox delivery projection as the task timeline, scoped to the run's
 -- tasks through sdk_messages.task_id; outbox-persisted synthetic user rows
 -- (send_status non-NULL, no parent tool use) carrying an agent-message
@@ -1216,7 +1263,8 @@ delivery_rows AS (
       dt.message_id AS eventRef,
       ${mailboxDeliverySenderExpr(
         mailboxDeliveryTextExpr('dt.sdk_message'),
-        `CASE WHEN drt.sep_at > 0 THEN SUBSTR(drt.reply_text, drt.sep_at) ELSE '' END`
+        `CASE WHEN drt.sep_at > 0 THEN SUBSTR(drt.reply_text, drt.sep_at) ELSE '' END`,
+        deliveryTaskStrippedExpr
       )} AS sender,
       dsess.session_type AS session_type,
       COALESCE(
@@ -1239,6 +1287,7 @@ delivery_rows AS (
       END AS createdAt
     FROM delivery_targets dt
     LEFT JOIN delivery_reply_last drt ON drt.message_id = dt.message_id
+    LEFT JOIN delivery_name_last dtm ON dtm.message_id = dt.message_id
     LEFT JOIN delivery_session_exec dse
       ON dse.session_id = dt.session_id
      AND dse.rn = 1

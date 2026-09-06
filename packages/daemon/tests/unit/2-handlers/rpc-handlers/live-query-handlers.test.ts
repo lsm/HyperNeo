@@ -1272,6 +1272,20 @@ describe('NAMED_QUERY_REGISTRY', () => {
           },
         },
       });
+      insertOutboxUserMessage({
+        id: 'sdk-sender-multi-marker',
+        sessionId: nodeSessionId,
+        timestampMs: now + 10000,
+        sendStatus: 'consumed',
+        sdkUuid: 'u-sender-multi-marker',
+        payload: envelopeHandoffPayload(
+          'u-sender-multi-marker',
+          'reviewer (task #1) / (task #2)',
+          'multi marker body',
+          ' (task #9)',
+          'send_message_to_task with task_id="t-multi"'
+        ),
+      });
 
       const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
       const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
@@ -1306,6 +1320,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect((byId.get('delivery:sdk-sender-at-name')!.from as Record<string, unknown>).label).toBe(
         '@reviewer'
       );
+      expect(
+        (byId.get('delivery:sdk-sender-multi-marker')!.from as Record<string, unknown>).label
+      ).toBe('reviewer (task #1) / (task #2)');
     });
 
     test('actorMessages.byTask excludes the session brief, human rows, and SDK tool-result echoes from delivery rows', () => {
