@@ -9,6 +9,8 @@ export type MailboxInjectSettlementOutcome =
   | { action: 'delivered'; dbId: string }
   | { action: 'failed'; reason: string };
 
+export type MailboxConsumptionOutcome = 'consumed' | 'inactive' | 'timeout';
+
 export interface MailboxInjectSettlementDeps {
   normalizeExistingRow(sessionId: string, messageId: string): void;
   handoffToMailbox(): Promise<MailboxHandoffOutcome>;
@@ -22,6 +24,10 @@ export interface MailboxInjectSettlementDeps {
   hasSettledDelivery(sessionId: string, messageId: string): boolean;
   hasInFlightDelivery(sessionId: string, messageId: string): boolean;
   claimQueued(messageId: string): Promise<void>;
+  awaitDeliveryConsumption(
+    sessionId: string,
+    messageId: string
+  ): Promise<MailboxConsumptionOutcome>;
   persistFailedRow(sessionId: string, messageId: string): Promise<void>;
 }
 
@@ -130,6 +136,20 @@ export async function claimQueuedStage(
   return { queued: true };
 }
 
+export async function consumeDeliveryStage(
+  deps: MailboxInjectSettlementDeps,
+  sessionId: string,
+  messageId: string
+): Promise<{ consumed: boolean; finalOutcome?: MailboxInjectSettlementOutcome }> {
+  const outcome = await deps.awaitDeliveryConsumption(sessionId, messageId);
+  if (outcome === 'consumed') return { consumed: true, finalOutcome: undefined };
+  await deps.persistFailedRow(sessionId, messageId);
+  return {
+    consumed: false,
+    finalOutcome: { action: 'failed', reason: `mailbox delivery not consumed (${outcome})` },
+  };
+}
+
 export function deliverOutcomeStage(
   settlement: MailboxSettlement | undefined,
   messageId: string
@@ -168,6 +188,9 @@ const runMailboxInjectSettlement = (
   )
   .pipe('!isTerminalOutcome', 'finalOutcome')
   .pipe(claimQueuedStage, ['deps', 'sessionId', 'messageId'], ['queued'])
+  .pipe('!isTerminalOutcome', 'finalOutcome')
+  .pipe(consumeDeliveryStage, ['deps', 'sessionId', 'messageId'], ['consumed', 'finalOutcome'])
+  .pipe('!isTerminalOutcome', 'finalOutcome')
   .pipe(deliverOutcomeStage, ['settlement', 'messageId'], ['finalOutcome'])
   .endAsync('finalOutcome') as (
   sessionId: string,

@@ -1860,6 +1860,26 @@ export class SDKMessageRepository {
     }
   }
 
+  getConsumedSiblingContent(sessionId: string, uuid: string): string | MessageContent[] | null {
+    const row = this.db
+      .prepare(
+        `SELECT sdk_message FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+            AND (consumed_seq IS NOT NULL OR COALESCE(send_status, 'consumed') = 'consumed')
+          ORDER BY timestamp DESC, rowid DESC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { sdk_message: string } | null | undefined;
+    if (row === null || row === undefined) return null;
+    try {
+      const parsed = JSON.parse(row.sdk_message) as {
+        message?: { content?: string | MessageContent[] };
+      };
+      return parsed.message?.content ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   getDeliveryContent(
     sessionId: string,
     uuid: string
