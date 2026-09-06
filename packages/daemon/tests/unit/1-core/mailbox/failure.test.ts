@@ -203,7 +203,7 @@ describe('createMailboxDeadHandler', () => {
       error: 'boom',
     });
     expect(publishFailed).not.toHaveBeenCalled();
-    expect(settleSkipped).not.toHaveBeenCalled();
+    expect(settleSkipped).toHaveBeenCalledWith(SESSION_ID, 'boom-uuid');
     mailbox.close();
   });
 });
@@ -327,5 +327,22 @@ describe('failure pipeline stages', () => {
     await Promise.resolve();
 
     expect(settleSkipped).toHaveBeenCalledWith(SESSION_ID, 'uuid-1');
+  });
+
+  test('settleSkipped still runs when the persist chain failed', async () => {
+    const publishFailed = mock(async () => {});
+    const settleSkipped = mock(async () => {});
+    const ctx: MailboxFailureCtx = {
+      job: makeDeadJob({}, null),
+      deps: stubDeps({ publishFailed, settleSkipped }),
+      entry: null,
+      target: { sessionId: SESSION_ID, messageUuid: 'uuid-9' },
+    };
+
+    notifyFailureObserversStage(ctx);
+    await Promise.resolve();
+
+    expect(publishFailed).not.toHaveBeenCalled();
+    expect(settleSkipped).toHaveBeenCalledWith(SESSION_ID, 'uuid-9');
   });
 });

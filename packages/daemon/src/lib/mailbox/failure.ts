@@ -105,8 +105,10 @@ function detachFailureCallback(invoke: () => Promise<void> | undefined): void {
 export function notifyFailureObserversStage(ctx: MailboxFailureCtx): MailboxFailureCtx {
   const target = ctx.target;
   const failedId = ctx.failedId;
-  if (target === undefined || failedId === undefined) return ctx;
-  detachFailureCallback(() => ctx.deps.publishFailed?.(target.sessionId, failedId));
+  if (target === undefined) return ctx;
+  if (failedId !== undefined) {
+    detachFailureCallback(() => ctx.deps.publishFailed?.(target.sessionId, failedId));
+  }
   detachFailureCallback(() => ctx.deps.settleSkipped?.(target.sessionId, target.messageUuid));
   return ctx;
 }
