@@ -1309,8 +1309,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
         payload: envelopeHandoffPayload('u-delivered-retry', 'coder', 'delivered after retry'),
       });
       db.prepare(
-        `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at, error)
-         VALUES (?, 'message_delivery', 'pending', ?, 0, 8, ?, ?, ?)`
+        `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at, completed_at, error)
+         VALUES (?, 'message_delivery', 'dead', ?, 8, 8, ?, ?, ?, ?)`
       ).run(
         'job-delivery-failed',
         JSON.stringify({
@@ -1320,6 +1320,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         }),
         now,
         now,
+        now + 9000,
         'SDK subprocess exited before submit'
       );
       db.prepare(
@@ -1355,6 +1356,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         title: 'Failed delivery',
         severity: 'error',
         details: 'SDK subprocess exited before submit',
+        createdAt: now + 9000,
       });
       expect(byId.get('delivery:sdk-delivered-retry')).toMatchObject({
         deliveryState: 'delivered',

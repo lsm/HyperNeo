@@ -550,6 +550,7 @@ delivery_job_errors AS MATERIALIZED (
     json_extract(jq.payload, '$.sessionId') AS session_id,
     json_extract(jq.payload, '$.messageUuid') AS message_uuid,
     jq.error AS error,
+    jq.completed_at AS error_settled_at,
     ROW_NUMBER() OVER (
       PARTITION BY json_extract(jq.payload, '$.sessionId'), json_extract(jq.payload, '$.messageUuid')
       ORDER BY jq.created_at DESC, jq.rowid DESC
@@ -877,7 +878,11 @@ delivery_rows AS (
       tsm.send_status AS send_status,
       SUBSTR(${mailboxDeliveryTextExpr('tsm.sdk_message')}, 1, 500) AS summary,
       dje.error AS error,
-      CAST(ROUND((julianday(tsm.timestamp) - 2440587.5) * 86400000) AS INTEGER) AS createdAt
+      CASE
+        WHEN tsm.send_status = 'failed' AND dje.error_settled_at IS NOT NULL
+          THEN dje.error_settled_at
+        ELSE CAST(ROUND((julianday(tsm.timestamp) - 2440587.5) * 86400000) AS INTEGER)
+      END AS createdAt
     FROM target_task tt
     JOIN task_sdk_messages tsm ON tsm.task_id = tt.id
     LEFT JOIN delivery_retrying adr
@@ -1091,7 +1096,11 @@ delivery_rows AS (
       dt.send_status AS send_status,
       SUBSTR(${mailboxDeliveryTextExpr('dt.sdk_message')}, 1, 500) AS summary,
       dje.error AS error,
-      CAST(ROUND((julianday(dt.timestamp) - 2440587.5) * 86400000) AS INTEGER) AS createdAt
+      CASE
+        WHEN dt.send_status = 'failed' AND dje.error_settled_at IS NOT NULL
+          THEN dje.error_settled_at
+        ELSE CAST(ROUND((julianday(dt.timestamp) - 2440587.5) * 86400000) AS INTEGER)
+      END AS createdAt
     FROM delivery_targets dt
     LEFT JOIN delivery_session_exec dse
       ON dse.session_id = dt.session_id
