@@ -511,6 +511,33 @@ describe('SDKMessageRepository', () => {
       });
     });
 
+    it('rejects rows whose stored role or type is not the legacy user shape', () => {
+      insertDeliveryRow('session-1', 'msg-wrong-role', {
+        type: 'user',
+        isSynthetic: true,
+        inputKind: 'task',
+        message: { role: 'assistant', content: 'assistant-shaped user row' },
+      });
+      insertDeliveryRow('session-1', 'msg-wrong-type', {
+        type: 'assistant',
+        isSynthetic: true,
+        inputKind: 'task',
+        message: { role: 'user', content: 'non-user typed row' },
+      });
+
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-wrong-role')).toBe(
+        false
+      );
+      expect(storedMessage('session-1', 'msg-wrong-role').message).toEqual({
+        role: 'assistant',
+        content: 'assistant-shaped user row',
+      });
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-wrong-type')).toBe(
+        false
+      );
+      expect(storedMessage('session-1', 'msg-wrong-type').type).toBe('assistant');
+    });
+
     it('returns false without throwing for non-object sdk_message JSON', () => {
       insertDeliveryRow('session-1', 'msg-json-null', null);
       insertDeliveryRow('session-1', 'msg-json-array', [1, 2]);

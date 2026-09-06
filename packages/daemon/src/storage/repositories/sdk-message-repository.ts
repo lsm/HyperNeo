@@ -505,8 +505,9 @@ function parseDeliveryMessageRow(ctx: NormalizeDeliveryMessageCtx): NormalizeDel
 function projectDeliveryMessageRow(ctx: NormalizeDeliveryMessageCtx): NormalizeDeliveryMessageCtx {
   if (ctx.stored === undefined) return ctx;
   const stored = ctx.stored;
+  if (stored.type !== 'user') return ctx;
   const storedMessage = stored.message as { role?: unknown; content?: unknown } | undefined;
-  if (storedMessage?.role === undefined) return ctx;
+  if (storedMessage?.role !== 'user') return ctx;
   const synthetic = stored.isSynthetic === true;
   const storedInputKind = stored.inputKind;
   const inputKind: MessageInputKind =
