@@ -37,6 +37,8 @@ function makeManager(opts: {
   normalizeThrows?: boolean;
   consumedAfterHandoff?: boolean;
   consumeAfterPolls?: number;
+  throwAfterPolls?: number;
+  consumedSibling?: boolean;
   holdDeliveryInFlight?: boolean;
   clearInFlightAfterProbe?: boolean;
   materializeOnEnqueue?: boolean;
@@ -121,15 +123,19 @@ function makeManager(opts: {
         getDeliveryContent: () => {
           if (!mailboxEntryEnqueued) return opts.deliveryContent ?? null;
           deliveryContentPolls += 1;
+          if (opts.throwAfterPolls !== undefined && deliveryContentPolls > opts.throwAfterPolls) {
+            throw new Error('consumption read failed');
+          }
           if (opts.consumedAfterHandoff === false) return opts.deliveryContent ?? null;
           if (
             opts.consumeAfterPolls !== undefined &&
             deliveryContentPolls <= opts.consumeAfterPolls
           ) {
-            return opts.deliveryContent ?? null;
+            return { content: 'x', sendStatus: 'enqueued' };
           }
           return { content: 'x', sendStatus: 'consumed' };
         },
+        hasConsumedDeliverySibling: () => opts.consumedSibling === true,
         getDeliveryMessageIdsByUuids: () => materializedRowIds,
         normalizeDeliveryMessageForMailbox: normalizeDeliveryMailbox,
         reopenDeliveryByUuid,
@@ -522,6 +528,78 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
 
     expect(setQueuedIfIdle).toHaveBeenCalledTimes(1);
     expect(clearQueuedIfOwnedBy).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the context-clear boundary before waiting for delivery consumption', async () => {
+    const { manager, session } = makeManager({ slotResets: true, consumeAfterPolls: 2 });
+    const events: string[] = [];
+    session.clearMock.mockImplementation(async (ownerArg: unknown) => {
+      events.push('clear');
+      const owner = ownerArg as { release: () => void };
+      const originalRelease = owner.release.bind(owner);
+      owner.release = () => {
+        events.push('release');
+        originalRelease();
+      };
+    });
+    const originalMailboxEnqueue = session.mailboxEnqueue;
+    session.mailboxEnqueue = mock((...args: unknown[]) => {
+      events.push('enqueue');
+      return originalMailboxEnqueue(...args);
+    });
+    indexSession(manager, liveSession(session));
+
+    const injectPromise = manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true
+    );
+    let resolved = false;
+    void injectPromise.then(() => {
+      resolved = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(events).toContain('release');
+    expect(events.indexOf('release')).toBeGreaterThan(events.indexOf('enqueue'));
+    expect(resolved).toBe(false);
+
+    await expect(injectPromise).resolves.toBe('db-id');
+  });
+
+  it('cleans up a fresh materialized row when consumption polling throws', async () => {
+    const { manager, session } = makeManager({
+      materializedRowIds: [],
+      materializeOnEnqueue: true,
+      consumeAfterPolls: 2,
+      throwAfterPolls: 2,
+    });
+    indexSession(manager, liveSession(session));
+
+    await expect(
+      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+    ).rejects.toThrow('consumption read failed');
+
+    expect(session.failDeliveryUnless).toHaveBeenCalledTimes(1);
+    expect(session.cancelHeldJob).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a consumed sibling row as delivered even when the earliest row is not consumed', async () => {
+    const { manager, session } = makeManager({
+      deliveryContent: { sendStatus: 'failed' },
+      consumedAfterHandoff: false,
+      consumedSibling: true,
+    });
+    indexSession(manager, liveSession(session));
+
+    const dbId = await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true
+    );
+
+    expect(dbId).toBe('db-id');
+    expect(session.failDeliveryUnless).not.toHaveBeenCalled();
   });
 
   it('a normalization error over an existing row restores the failed status', async () => {

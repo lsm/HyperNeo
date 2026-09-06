@@ -4502,19 +4502,45 @@ export class TaskAgentManager {
         .getJobQueueRepo()
         .activeDeliveryMessageUuids(sessionId)
         .has(messageId);
+      const siblingConsumed = () =>
+        this.config.db.getSDKMessageRepo().hasConsumedDeliverySibling(sessionId, messageId);
       const now = Date.now();
       if (inFlight) {
         settleGraceDeadline = null;
       } else if (sendStatus !== 'enqueued') {
-        return 'inactive';
+        return siblingConsumed() ? 'consumed' : 'inactive';
       } else if (settleGraceDeadline === null) {
         settleGraceDeadline = now + MAILBOX_CONSUMPTION_SETTLE_GRACE_MS;
       } else if (now >= settleGraceDeadline) {
-        return 'inactive';
+        return siblingConsumed() ? 'consumed' : 'inactive';
       }
-      if (now >= deadline) return 'timeout';
+      if (now >= deadline) return siblingConsumed() ? 'consumed' : 'timeout';
       await new Promise((resolve) => setTimeout(resolve, MAILBOX_CONSUMPTION_POLL_MS));
     }
+  }
+
+  private async cleanupMailboxRowAfterPipelineError(
+    sessionId: string,
+    messageId: string,
+    rowExistedAtHandoff: boolean,
+    entryMessage: MailboxMessage,
+    isSyntheticMessage: boolean,
+    origin: MessageOrigin | undefined
+  ): Promise<void> {
+    try {
+      const rowNowExists =
+        rowExistedAtHandoff ||
+        this.config.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(sessionId, [messageId])
+          .length > 0;
+      if (!rowNowExists) return;
+      await this.persistFailedMailboxRow(
+        sessionId,
+        messageId,
+        entryMessage,
+        isSyntheticMessage,
+        origin
+      );
+    } catch {}
   }
 
   private async awaitMailboxMaterialization(
@@ -4877,7 +4903,13 @@ export class TaskAgentManager {
             const sendStatus = this.config.db
               .getSDKMessageRepo()
               .getDeliveryContent(targetSessionId, targetMessageId)?.sendStatus;
-            return sendStatus === 'consumed' || sendStatus === 'failed';
+            return (
+              sendStatus === 'consumed' ||
+              sendStatus === 'failed' ||
+              this.config.db
+                .getSDKMessageRepo()
+                .hasConsumedDeliverySibling(targetSessionId, targetMessageId)
+            );
           },
           hasInFlightDelivery: (targetSessionId, targetMessageId) =>
             this.config.db
@@ -4896,8 +4928,11 @@ export class TaskAgentManager {
               await session.stateManager.clearQueuedIfOwnedBy(targetMessageId);
             }
           },
-          awaitDeliveryConsumption: (targetSessionId, targetMessageId) =>
-            this.awaitMailboxDeliveryConsumptionOutcome(targetSessionId, targetMessageId),
+          awaitDeliveryConsumption: async (targetSessionId, targetMessageId) => {
+            boundaryOwner?.release();
+            boundaryOwner = null;
+            return this.awaitMailboxDeliveryConsumptionOutcome(targetSessionId, targetMessageId);
+          },
           persistFailedRow: (targetSessionId, targetMessageId) =>
             this.persistFailedMailboxRow(
               targetSessionId,
@@ -4909,15 +4944,14 @@ export class TaskAgentManager {
         },
       });
     } catch (err) {
-      if (rowExistedAtHandoff) {
-        await this.persistFailedMailboxRow(
-          sessionId,
-          messageId,
-          mailboxEntryMessage,
-          isSyntheticMessage,
-          origin
-        ).catch(() => {});
-      }
+      await this.cleanupMailboxRowAfterPipelineError(
+        sessionId,
+        messageId,
+        rowExistedAtHandoff,
+        mailboxEntryMessage,
+        isSyntheticMessage,
+        origin
+      );
       throw err;
     } finally {
       boundaryOwner?.release();

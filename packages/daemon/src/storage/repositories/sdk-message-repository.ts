@@ -1860,6 +1860,18 @@ export class SDKMessageRepository {
     }
   }
 
+  hasConsumedDeliverySibling(sessionId: string, uuid: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+            AND (consumed_seq IS NOT NULL OR COALESCE(send_status, 'consumed') = 'consumed')
+          LIMIT 1`
+      )
+      .get(sessionId, uuid);
+    return row !== null && row !== undefined;
+  }
+
   getDeliveryContent(
     sessionId: string,
     uuid: string
