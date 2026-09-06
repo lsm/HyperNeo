@@ -533,6 +533,32 @@ describe('SpaceRuntime — tick loop correctness', () => {
       });
     });
 
+    test('an unbound in-progress execution resets and respawns', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: null,
+        startedAt: 123,
+        result: 'Stale partial spawn',
+      });
+
+      await processRunTick(rt, run.id);
+
+      expect(tam._spawned).toEqual([tasks[0].id]);
+      expect(nodeExecutionRepo.getById(execution.id)).toMatchObject({
+        status: 'in_progress',
+        agentSessionId: `session:${execution.id}`,
+        result: null,
+      });
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('in_progress');
+    });
+
     test('a parked approval execution remains pending and unspawned', async () => {
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
       const rt = new SpaceRuntime(buildConfig(tam));
@@ -776,7 +802,14 @@ describe('SpaceRuntime — tick loop correctness', () => {
         agentSessionId: sessionId,
         startedAt: 123,
       });
-      taskRepo.updateTask(task.id, { status: 'blocked', goalId: goal.id });
+      taskRepo.updateTask(task.id, {
+        status: 'blocked',
+        goalId: goal.id,
+        result: 'Stale blocked result',
+        blockReason: 'execution_failed',
+        reportedStatus: 'blocked',
+        reportedSummary: 'Stale blocked summary',
+      });
       const notification = notificationRepo.create({
         spaceId: SPACE_ID,
         goalId: goal.id,
@@ -793,7 +826,13 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
       await processRunTick(rt, run.id);
 
-      expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(task.id)).toMatchObject({
+        status: 'in_progress',
+        result: null,
+        blockReason: null,
+        reportedStatus: null,
+        reportedSummary: null,
+      });
       expect(notificationRepo.getById(notification.id)?.status).toBe('superseded');
       expect(transitions).toContainEqual({ taskId: task.id, fromStatus: 'blocked' });
     });
@@ -1024,6 +1063,12 @@ describe('SpaceRuntime — tick loop correctness', () => {
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
       await realRt.startWorkflowRun(SPACE_ID, failingWorkflow.id, 'Failing Run');
+      const deferred = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Deferred standalone task',
+        status: 'open',
+        preferredWorkflowId: failingWorkflow.id,
+      });
       const admittedWorkflow = buildLinearWorkflow(SPACE_ID_2, workflowManager, [
         { id: STEP_B, name: 'Code', agentId: `${AGENT_CODER}-s2` },
       ]);
@@ -1051,6 +1096,8 @@ describe('SpaceRuntime — tick loop correctness', () => {
         status: 'in_progress',
       });
       expect(taskRepo.getTask(standalone.id)?.workflowRunId).not.toBeNull();
+      expect(taskRepo.getTask(deferred.id)).toMatchObject({ status: 'open' });
+      expect(taskRepo.getTask(deferred.id)?.workflowRunId ?? null).toBeNull();
     });
 
     test('first error is re-thrown after all runs are processed', async () => {

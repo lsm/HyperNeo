@@ -3823,13 +3823,14 @@ export class SpaceRuntime {
       }
 
       let activationError: unknown = null;
+      const failedActivationSpaceIds = new Set<string>();
       try {
-        await this.processCompletedTasks();
+        await this.processCompletedTasks(failedActivationSpaceIds);
       } catch (err) {
         activationError = err;
       }
       try {
-        await this.attachStandaloneTasksToWorkflows();
+        await this.attachStandaloneTasksToWorkflows(failedActivationSpaceIds);
       } catch (err) {
         if (activationError === null) activationError = err;
       }
@@ -5400,13 +5401,15 @@ export class SpaceRuntime {
     }
   }
 
-  private async processCompletedTasks(): Promise<void> {
+  private async processCompletedTasks(failedSpaceIds = new Set<string>()): Promise<void> {
     let firstError: unknown = null;
 
     for (const [runId] of this.executors) {
       try {
         await this.processRunTick(runId);
       } catch (err) {
+        const spaceId = this.executorMeta.get(runId)?.spaceId;
+        if (spaceId) failedSpaceIds.add(spaceId);
         if (firstError === null) firstError = err;
       }
     }
@@ -6254,6 +6257,15 @@ export class SpaceRuntime {
 
     if (!space?.stopped) {
       for (const execution of nodeExecutions) {
+        if (execution.status === 'in_progress' && !execution.agentSessionId) {
+          this.config.nodeExecutionRepo.update(execution.id, {
+            status: 'pending',
+            result: null,
+            startedAt: null,
+            completedAt: null,
+          });
+          continue;
+        }
         if (
           !execution.agentSessionId ||
           (execution.status !== 'in_progress' && execution.status !== 'pending')
@@ -6651,6 +6663,14 @@ export class SpaceRuntime {
           startedAt: canonicalTask.startedAt ?? Date.now(),
           completedAt: null,
           pendingCheckpointType: null,
+          ...(canonicalTask.status === 'blocked'
+            ? {
+                result: null,
+                blockReason: null,
+                reportedStatus: null,
+                reportedSummary: null,
+              }
+            : {}),
         });
         if (canonicalTask.status === 'blocked') {
           this.config.goalService?.supersedeOutcomeNotificationsForTask(canonicalTask.id);
@@ -8373,10 +8393,13 @@ export class SpaceRuntime {
     });
   }
 
-  private async attachStandaloneTasksToWorkflows(): Promise<void> {
+  private async attachStandaloneTasksToWorkflows(
+    excludedSpaceIds = new Set<string>()
+  ): Promise<void> {
     const spaces = await this.listActiveSpaces();
 
     for (const space of spaces) {
+      if (excludedSpaceIds.has(space.id)) continue;
       const workflows = this.config.spaceWorkflowManager
         .listWorkflows(space.id)
         .filter((w) => !w.disabled);
