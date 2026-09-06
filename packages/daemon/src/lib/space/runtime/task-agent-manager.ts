@@ -4596,10 +4596,6 @@ export class TaskAgentManager {
       }
     }
 
-    if (outcome.reopenFailedDelivery) {
-      await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
-    }
-
     try {
       if (!isBusy) {
         const clearSuppressedByPendingWork =
