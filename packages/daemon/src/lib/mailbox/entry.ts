@@ -1,4 +1,9 @@
-import type { MessageContent, ReferenceMetadata, ReferenceType } from '@hyperneo/shared';
+import type {
+  MessageContent,
+  MessageInputKind,
+  ReferenceMetadata,
+  ReferenceType,
+} from '@hyperneo/shared';
 import { MAX_IMAGE_BASE64_SIZE } from '../session/message-persistence.ts';
 import type { MailboxAddress } from './address.ts';
 import { createUlid, isUlid } from './ulid.ts';
@@ -22,6 +27,7 @@ export type MailboxMessage = {
   message: { content: MailboxMessageContent };
   parent_tool_use_id: null;
   priority?: 'now' | 'next' | 'later';
+  inputKind?: MessageInputKind;
   referenceMetadata?: ReferenceMetadata;
 };
 
@@ -43,6 +49,7 @@ const MAILBOX_CONTENT_REASON =
   'message.content must be a non-empty string or a non-empty array of text or image blocks';
 const MAILBOX_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
 const MAILBOX_REFERENCE_TYPES: readonly ReferenceType[] = ['task', 'goal', 'file', 'folder'];
+const MAILBOX_INPUT_KINDS: readonly MessageInputKind[] = ['task', 'human', 'system'];
 
 function isMailboxDeliveryMode(value: unknown): value is MailboxDeliveryMode {
   return value === 'immediate' || value === 'defer';
@@ -109,6 +116,9 @@ export function toMailboxMessage(message: MailboxMessage): MailboxMessageProject
   if (message.priority !== undefined && !MAILBOX_MESSAGE_PRIORITIES.includes(message.priority)) {
     return { reason: 'message.priority must be one of "now", "next", "later"' };
   }
+  if (message.inputKind !== undefined && !MAILBOX_INPUT_KINDS.includes(message.inputKind)) {
+    return { reason: 'message.inputKind must be one of "task", "human", "system"' };
+  }
   const content = message.message?.content;
   let projected: { content: MailboxMessageContent } | null = null;
   if (typeof content === 'string') {
@@ -136,6 +146,7 @@ export function toMailboxMessage(message: MailboxMessage): MailboxMessageProject
       message: projected,
       parent_tool_use_id: null,
       ...(message.priority !== undefined ? { priority: message.priority } : {}),
+      ...(message.inputKind !== undefined ? { inputKind: message.inputKind } : {}),
       ...(referenceMetadata !== undefined ? { referenceMetadata } : {}),
     },
   };
