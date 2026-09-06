@@ -1,19 +1,19 @@
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { Session } from '@hyperneo/shared';
 import {
   EventSubscriptionSetup,
   type EventSubscriptionSetupContext,
 } from '../../../../src/lib/agent/event-subscription-setup';
 import { InterruptHandler } from '../../../../src/lib/agent/interrupt-handler';
 import { deliverMessage } from '../../../../src/lib/agent/message-delivery';
-import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
-import { createTables } from '../../../../src/storage/schema/index';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
-import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
-import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
-import type { Session } from '@hyperneo/shared';
 import type { ModelSwitchHandler } from '../../../../src/lib/agent/model-switch-handler';
 import type { QueryModeHandler } from '../../../../src/lib/agent/query-mode-handler';
+import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import { createTables } from '../../../../src/storage/schema/index';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+import type { DaemonHub } from '../../../../tests/helpers/daemon-hub';
 
 describe('EventSubscriptionSetup', () => {
   let setup: EventSubscriptionSetup;
@@ -63,7 +63,7 @@ describe('EventSubscriptionSetup', () => {
     mockQueryModeHandler = {
       handleQueryTrigger: mock(async () => ({ success: true, messageCount: 1 })),
       replayPendingMessagesForImmediateMode: mock(async () => {}),
-      replayPendingMessagesForAutomaticTurnEnd: mock(async () => {}),
+      replayPendingMessagesForAutomaticTurnEnd: mock(async () => true),
       sendEnqueuedMessagesOnTurnEnd: mock(async () => {}),
     } as unknown as QueryModeHandler;
 
@@ -411,6 +411,19 @@ describe('EventSubscriptionSetup', () => {
 
         expect(mockQueryModeHandler.replayPendingMessagesForAutomaticTurnEnd).toHaveBeenCalled();
         expect(mockQueryModeHandler.handleQueryTrigger).not.toHaveBeenCalled();
+      });
+
+      it('rejects when the guarded replay reports an unsuccessful outcome', async () => {
+        (
+          mockQueryModeHandler.replayPendingMessagesForAutomaticTurnEnd as ReturnType<typeof mock>
+        ).mockImplementation(async () => false);
+        setup.setup();
+
+        const callback = registeredCallbacks.get('query.trigger')!;
+
+        await expect(callback({ sessionId: 'test-session-id' })).rejects.toThrow(
+          'query.trigger: automatic replay did not complete'
+        );
       });
     });
   });

@@ -155,6 +155,7 @@ export function createMailboxDeferredReplayScheduler(
       }
       tracked.add(sessionId);
       attempts.delete(sessionId);
+      cancelled.delete(sessionId);
       ready.push(sessionId);
       setImmediate(pump);
     },
@@ -165,6 +166,7 @@ export function createMailboxDeferredReplayScheduler(
         ready.splice(index, 1);
         tracked.delete(sessionId);
         dirty.delete(sessionId);
+        cancelled.delete(sessionId);
         return;
       }
       cancelled.add(sessionId);

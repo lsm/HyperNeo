@@ -257,6 +257,64 @@ describe('createMailboxDeferredReplayScheduler', () => {
     expect(publish).toHaveBeenCalledTimes(1);
   });
 
+  test('a cancel that removes a ready replay clears the stale cancellation marker', async () => {
+    let aFailures = 1;
+    const publishCalls: string[] = [];
+    const gates = new Map<string, () => void>();
+    const gatePromises = new Map<string, Promise<void>>();
+    const deps: MailboxDeferredReplaySchedulerDeps = {
+      internalEventBus: {
+        publish: mock(async (_event: string, data: { sessionId: string }) => {
+          const { sessionId } = data;
+          if (sessionId === SESSION_ID) {
+            publishCalls.push(sessionId);
+            if (aFailures > 0) {
+              aFailures -= 1;
+              throw new Error('transient');
+            }
+            return;
+          }
+          publishCalls.push(sessionId);
+          if (!gatePromises.has(sessionId)) {
+            gatePromises.set(
+              sessionId,
+              new Promise<void>((resolve) => {
+                gates.set(sessionId, resolve);
+              })
+            );
+          }
+          await gatePromises.get(sessionId);
+        }),
+      } as never,
+      sessionManager: {
+        getCachedSession: () =>
+          ({
+            getSessionData: () => ({ config: { queryMode: 'immediate' } }),
+            getProcessingState: () => ({ status: 'idle' }),
+            stateManager: {},
+          }) as never,
+      },
+      retryBackoffBaseMs: 20,
+    };
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(5);
+    expect(publishCalls.filter((id) => id === SESSION_ID)).toHaveLength(1);
+
+    scheduler.cancel(SESSION_ID);
+    const fillers = Array.from({ length: 8 }, (_, i) => `filler-${i + 1}`);
+    for (const id of fillers) scheduler.schedule(id);
+    await flush(30);
+    scheduler.cancel(SESSION_ID);
+    scheduler.schedule(SESSION_ID);
+
+    for (const id of fillers) gates.get(id)?.();
+    await flush(60);
+
+    expect(publishCalls.filter((id) => id === SESSION_ID)).toHaveLength(2);
+  });
+
   test('a fresh schedule during backoff revives a cancelled replay', async () => {
     let failures = 1;
     const publish = mock(async () => {

@@ -1,9 +1,9 @@
-import type { Session, MessageContent } from '@hyperneo/shared';
+import type { MessageContent, Session } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
 import { Logger as LoggerClass } from '../logger.ts';
-import type { ModelSwitchHandler } from './model-switch-handler.ts';
 import type { InterruptHandler } from './interrupt-handler.ts';
+import type { ModelSwitchHandler } from './model-switch-handler.ts';
 import type { QueryModeHandler } from './query-mode-handler.ts';
 
 export interface EventSubscriptionSetupContext {
@@ -113,7 +113,10 @@ export class EventSubscriptionSetup {
     const unsubQueryTrigger = internalEventBus.subscribe(
       'query.trigger',
       async () => {
-        await queryModeHandler.replayPendingMessagesForAutomaticTurnEnd();
+        const replayed = await queryModeHandler.replayPendingMessagesForAutomaticTurnEnd();
+        if (!replayed) {
+          throw new Error('query.trigger: automatic replay did not complete');
+        }
       },
       { sessionId, subscriberName: 'EventSubscriptionSetup.queryTrigger' }
     );
