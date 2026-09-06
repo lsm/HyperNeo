@@ -8842,26 +8842,26 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     });
 
     test('fails with the activation error when the door reports a non-queueable reason', async () => {
-      const { task } = await makeTaskWithCoderExecution('WF Door Terminal');
+      const { task } = await makeTaskWithCoderExecution('WF Door Activate Failed');
       const tam = makeFakeTaskAgentManager(ctx);
       const auditLogRepo = new McpAuditLogRepository(ctx.db);
       const fakeQueue = makeFakePendingMessageQueue();
       const handlers = makeHandlersWith(tam, {
         auditLogRepo,
         pendingMessageQueue: fakeQueue,
-        ensureWorkerSession: async () => ({ kind: 'unresolved', reason: 'task_terminal' }),
+        ensureWorkerSession: async () => ({ kind: 'unresolved', reason: 'activate_failed' }),
       });
 
       const result = await handlers.send_message_to_task({
         task_id: task.id,
         node_id: 'coder',
-        message: 'door terminal',
+        message: 'door activate failed',
       });
       const parsed = JSON.parse(result.content[0].text);
       const auditSummaries = parseAuditSummaries(auditLogRepo, task.id);
 
       expect(parsed.success).toBe(false);
-      expect(parsed.error).toBe('Failed to activate node "coder": task_terminal');
+      expect(parsed.error).toBe('Failed to activate node "coder": activate_failed');
       expect(fakeQueue.enqueued).toHaveLength(0);
       expect(tam.subSessionInjects).toHaveLength(0);
       expect(auditSummaries).toEqual([
@@ -8869,19 +8869,84 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
           task_id: task.id,
           outcome: 'error',
           target: 'node',
-          reason: 'task_terminal',
+          reason: 'activate_failed',
         }),
       ]);
     });
 
-    test('returns the inject-failure error when the door-resolved session rejects injection', async () => {
-      const { task } = await makeTaskWithCoderExecution('WF Door Dead Session');
+    test('door task_terminal falls back to the reopen-capable activation path', async () => {
+      const { wf, run, task, exec } = await makeTaskWithCoderExecution('WF Door Reopen');
       const tam = makeFakeTaskAgentManager(ctx);
-      tam.deadSessionIds.add('coder-door-dead');
+      const activateCalls: Array<[string, string]> = [];
       const handlers = makeHandlersWith(tam, {
+        activateNode: async (runId, nodeId) => {
+          activateCalls.push([runId, nodeId]);
+          ctx.nodeExecutionRepo.update(exec.id, {
+            status: 'in_progress',
+            agentSessionId: 'coder-reopened-session',
+          });
+        },
+        ensureWorkerSession: async () => ({ kind: 'unresolved', reason: 'task_terminal' }),
+      });
+
+      const result = await handlers.send_message_to_task({
+        task_id: task.id,
+        node_id: 'coder',
+        message: 'door reopen',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.activated).toBe(true);
+      expect(parsed.delivered_session_id).toBe('coder-reopened-session');
+      expect(activateCalls).toEqual([[run.id, wf.startNodeId]]);
+      expect(tam.subSessionInjects).toEqual([
+        {
+          sessionId: 'coder-reopened-session',
+          message: spaceAgentToNodeEnvelope(task, 'door reopen', 'coder'),
+          isSyntheticMessage: true,
+          sdkMessageId: 'sdk-message-0',
+        },
+      ]);
+    });
+
+    test('door task_terminal without an activation callback reports the missing callback', async () => {
+      const { task } = await makeTaskWithCoderExecution('WF Door Terminal No Callback');
+      const tam = makeFakeTaskAgentManager(ctx);
+      const handlers = makeHandlersWith(tam, {
+        ensureWorkerSession: async () => ({ kind: 'unresolved', reason: 'task_terminal' }),
+      });
+
+      const result = await handlers.send_message_to_task({
+        task_id: task.id,
+        node_id: 'coder',
+        message: 'door terminal no callback',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(false);
+      expect(parsed.error).toBe(
+        'Node "coder" has no live session and no activation callback is configured.'
+      );
+      expect(tam.subSessionInjects).toHaveLength(0);
+    });
+
+    test('recovers through activation when a door-resolved session rejects injection', async () => {
+      const { wf, run, task, exec } = await makeTaskWithCoderExecution('WF Door Stale Session');
+      const tam = makeFakeTaskAgentManager(ctx);
+      tam.deadSessionIds.add('coder-door-stale');
+      const activateCalls: Array<[string, string]> = [];
+      const handlers = makeHandlersWith(tam, {
+        activateNode: async (runId, nodeId) => {
+          activateCalls.push([runId, nodeId]);
+          ctx.nodeExecutionRepo.update(exec.id, {
+            status: 'in_progress',
+            agentSessionId: 'coder-replacement-session',
+          });
+        },
         ensureWorkerSession: async () => ({
           kind: 'resolved',
-          sessionId: 'coder-door-dead',
+          sessionId: 'coder-door-stale',
           created: false,
         }),
       });
@@ -8889,13 +8954,22 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       const result = await handlers.send_message_to_task({
         task_id: task.id,
         node_id: 'coder',
-        message: 'door dead',
+        message: 'door stale session',
       });
       const parsed = JSON.parse(result.content[0].text);
 
-      expect(parsed.success).toBe(false);
-      expect(parsed.error).toContain('Failed to inject message into node "coder"');
-      expect(tam.subSessionInjects).toHaveLength(0);
+      expect(parsed.success).toBe(true);
+      expect(parsed.activated).toBe(true);
+      expect(parsed.delivered_session_id).toBe('coder-replacement-session');
+      expect(activateCalls).toEqual([[run.id, wf.startNodeId]]);
+      expect(tam.subSessionInjects).toEqual([
+        {
+          sessionId: 'coder-replacement-session',
+          message: spaceAgentToNodeEnvelope(task, 'door stale session', 'coder'),
+          isSyntheticMessage: true,
+          sdkMessageId: 'sdk-message-0',
+        },
+      ]);
     });
   });
 

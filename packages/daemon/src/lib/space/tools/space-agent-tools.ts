@@ -2916,9 +2916,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           waitCapMs: 0,
         });
         if (outcome.kind === 'resolved') {
-          return deliverToNodeSession(outcome.sessionId, outcome.created);
-        }
-        if (!QUEUEABLE_UNRESOLVED_REASONS.has(outcome.reason)) {
+          try {
+            return await deliverToNodeSession(outcome.sessionId, outcome.created, 'rethrow');
+          } catch {}
+        } else if (QUEUEABLE_UNRESOLVED_REASONS.has(outcome.reason)) {
+          return queueForNodeSession();
+        } else if (outcome.reason !== 'task_terminal') {
           audit('error', {
             target: 'node',
             node_id: resolved.id,
@@ -2930,7 +2933,6 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             error: `Failed to activate node "${resolved.agentName}": ${outcome.reason}`,
           });
         }
-        return queueForNodeSession();
       }
 
       if (resolved.agentSessionId) {
