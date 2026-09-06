@@ -8,7 +8,10 @@ import { z } from 'zod';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
 import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
-import type { SessionTargetWorker } from '../../../../src/lib/session-resolution/target.ts';
+import type {
+  EnsureSessionOutcome,
+  SessionTargetWorker,
+} from '../../../../src/lib/session-resolution/target.ts';
 import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope.ts';
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
 import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution-episode-service.ts';
@@ -6610,12 +6613,19 @@ interface FakeTaskAgentManager {
   }>;
   deadSessionIds: Set<string>;
   onEnsure?: (taskId: string) => Promise<void> | void;
+  flushCalls: Array<{
+    workflowRunId: string;
+    targetAgentName: string;
+    sessionId: string;
+    workflowNodeId?: string;
+  }>;
 }
 
 function makeFakeTaskAgentManager(ctx: TestCtx): FakeTaskAgentManager {
   const state: Omit<FakeTaskAgentManager, 'manager'> = {
     subSessionInjects: [],
     deadSessionIds: new Set(),
+    flushCalls: [],
   };
   const manager = {
     async injectSubSessionMessage(
@@ -6629,6 +6639,14 @@ function makeFakeTaskAgentManager(ctx: TestCtx): FakeTaskAgentManager {
       const sdkMessageId = `sdk-message-${state.subSessionInjects.length}`;
       state.subSessionInjects.push({ sessionId, message, isSyntheticMessage, sdkMessageId });
       return sdkMessageId;
+    },
+    async flushPendingMessagesForTarget(
+      workflowRunId: string,
+      targetAgentName: string,
+      sessionId: string,
+      workflowNodeId?: string
+    ): Promise<void> {
+      state.flushCalls.push({ workflowRunId, targetAgentName, sessionId, workflowNodeId });
     },
   } as unknown as TaskAgentManager;
   return { manager, ...state };
@@ -8911,6 +8929,63 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(parsed.activated).toBe(false);
       expect(parsed.delivered_session_id).toBe('coder-row-live');
       expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-row-live');
+    });
+
+    test('drains the queued message when the door resolves right after a timeout', async () => {
+      const { wf, run, task } = await makeTaskWithCoderExecution('WF Door Drain');
+      const tam = makeFakeTaskAgentManager(ctx);
+      const fakeQueue = makeFakePendingMessageQueue();
+      const outcomes: EnsureSessionOutcome[] = [
+        { kind: 'unresolved', reason: 'spawn_timeout' },
+        { kind: 'resolved', sessionId: 'coder-late-session', created: false },
+      ];
+      const handlers = makeHandlersWith(tam, {
+        pendingMessageQueue: fakeQueue,
+        ensureWorkerSession: async () => outcomes.shift()!,
+      });
+
+      const result = await handlers.send_message_to_task({
+        task_id: task.id,
+        node_id: 'coder',
+        message: 'door drain',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.queued).toBe(true);
+      expect(parsed.queued_message_id).toBe('pending-message-0');
+      expect(fakeQueue.enqueued).toHaveLength(1);
+      expect(tam.flushCalls).toEqual([
+        {
+          workflowRunId: run.id,
+          targetAgentName: 'coder',
+          sessionId: 'coder-late-session',
+          workflowNodeId: wf.startNodeId,
+        },
+      ]);
+    });
+
+    test('leaves the queued row pending when the door still times out after enqueue', async () => {
+      const { task } = await makeTaskWithCoderExecution('WF Door Still Timed Out');
+      const tam = makeFakeTaskAgentManager(ctx);
+      const fakeQueue = makeFakePendingMessageQueue();
+      const handlers = makeHandlersWith(tam, {
+        pendingMessageQueue: fakeQueue,
+        ensureWorkerSession: async () => ({ kind: 'unresolved', reason: 'activation_timeout' }),
+      });
+
+      const result = await handlers.send_message_to_task({
+        task_id: task.id,
+        node_id: 'coder',
+        message: 'door still timed out',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.queued).toBe(true);
+      expect(fakeQueue.enqueued).toHaveLength(1);
+      expect(tam.flushCalls).toHaveLength(0);
+      expect(tam.subSessionInjects).toHaveLength(0);
     });
 
     test('reports deferred delivery without a pending queue on a queueable timeout', async () => {

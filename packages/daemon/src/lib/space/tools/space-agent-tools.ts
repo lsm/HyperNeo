@@ -505,6 +505,11 @@ const DOOR_QUEUEABLE_UNRESOLVED_REASONS = new Set([
   'spawn_timeout',
 ]);
 
+const DOOR_TIMED_OUT_UNRESOLVED_REASONS = new Set([
+  ...DOOR_QUEUEABLE_UNRESOLVED_REASONS,
+  'activation_timeout',
+]);
+
 type TaskWorkerDeliveryCtx = {
   task: SpaceTask;
   workflowRunId: string;
@@ -823,10 +828,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       return delivered === undefined ? ctx : { ...ctx, result: delivered };
     }
     if (DOOR_QUEUEABLE_UNRESOLVED_REASONS.has(outcome.reason)) {
-      return { ...ctx, result: queueForNodeActivation(ctx) };
+      return { ...ctx, result: await queueAndDrainNodeMessage(ctx) };
     }
     if (outcome.reason === 'activation_timeout' && ctx.resolved.agentSessionId === null) {
-      return { ...ctx, result: queueForNodeActivation(ctx) };
+      return { ...ctx, result: await queueAndDrainNodeMessage(ctx) };
     }
     if (
       outcome.reason !== 'task_terminal' &&
@@ -905,9 +910,37 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return { ...ctx, result: await injectNodeSessionOrReport(ctx, sessionIdAfter, true) };
   };
 
-  const queuePendingNodeMessageStage = (ctx: TaskWorkerDeliveryCtx): TaskWorkerDeliveryCtx => ({
+  const drainQueuedNodeMessageAfterDoorTimeout = async (
+    ctx: TaskWorkerDeliveryCtx
+  ): Promise<void> => {
+    const outcome = ctx.doorOutcome;
+    if (!ensureWorkerSession || !taskAgentManager || !pendingMessageQueue) return;
+    if (outcome?.kind !== 'unresolved' || !DOOR_TIMED_OUT_UNRESOLVED_REASONS.has(outcome.reason)) {
+      return;
+    }
+    try {
+      const resolved = await ensureWorkerSession(workerDoorTargetFor(ctx));
+      if (resolved.kind !== 'resolved') return;
+      await taskAgentManager.flushPendingMessagesForTarget(
+        ctx.workflowRunId,
+        ctx.resolved.agentName,
+        resolved.sessionId,
+        ctx.resolved.workflowNodeId
+      );
+    } catch {}
+  };
+
+  const queueAndDrainNodeMessage = async (ctx: TaskWorkerDeliveryCtx): Promise<ToolResult> => {
+    const result = queueForNodeActivation(ctx);
+    await drainQueuedNodeMessageAfterDoorTimeout(ctx);
+    return result;
+  };
+
+  const queuePendingNodeMessageStage = async (
+    ctx: TaskWorkerDeliveryCtx
+  ): Promise<TaskWorkerDeliveryCtx> => ({
     ...ctx,
-    result: queueForNodeActivation(ctx),
+    result: await queueAndDrainNodeMessage(ctx),
   });
 
   const workerDeliverySettled = (ctx?: TaskWorkerDeliveryCtx): boolean =>
