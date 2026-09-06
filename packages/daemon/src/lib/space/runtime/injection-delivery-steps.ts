@@ -1,10 +1,5 @@
 import type { MessageOrigin } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import type { ContextClearBoundaryOwner } from '../../../lib/agent/message-delivery.ts';
-import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
-import type { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
-import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
-import { handoffPromptToMailbox } from './prompt-mailbox-handoff.ts';
 
 export type InjectionDeliveryStatus = 'enqueued' | 'deferred' | 'failed';
 
@@ -65,55 +60,4 @@ export async function settleDeliveryRowStatus(
     : deps.saveUserMessage(args.sessionId, args.message, args.status, args.origin);
   await deps.publishStatusChanged(args.sessionId, dbId, args.status);
   return dbId;
-}
-
-export interface InjectionDeliveryTargetSession {
-  stateManager?: {
-    setQueuedIfIdle(messageId: string): Promise<boolean>;
-  };
-}
-
-export interface InjectDeliveryBranchDeps extends InjectionDeliveryRowDeps {
-  db: BunDatabase;
-  sdkMessageRepo: SDKMessageRepository;
-  jobQueue: JobQueueRepository;
-}
-
-export interface DeliverInjectedMessageArgs {
-  session: InjectionDeliveryTargetSession;
-  sessionId: string;
-  messageId: string;
-  sdkUserMessage: SDKUserMessage;
-  origin?: MessageOrigin;
-  boundaryOwner?: ContextClearBoundaryOwner;
-}
-
-export async function deliverInjectedMessage(
-  deps: InjectDeliveryBranchDeps,
-  args: DeliverInjectedMessageArgs
-): Promise<string> {
-  try {
-    const outcome = await handoffPromptToMailbox({
-      deps: {
-        db: deps.db,
-        sdkMessageRepo: deps.sdkMessageRepo,
-        jobQueue: deps.jobQueue,
-      },
-      target: {
-        sessionId: args.sessionId,
-        messageId: args.messageId,
-        message: args.sdkUserMessage,
-        origin: 'space_inject',
-        messageOrigin: args.origin,
-      },
-      stateManager: args.session.stateManager,
-      publishStatusChanged: deps.publishStatusChanged,
-    });
-    if (outcome.state === 'stale') {
-      throw new Error('Mailbox handoff became stale');
-    }
-    return outcome.dbId;
-  } finally {
-    args.boundaryOwner?.release();
-  }
 }
