@@ -2503,7 +2503,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const rt = new SpaceRuntime(
         buildConfig(tam, {
           onTaskUpdated: (payload) => {
-            if (payload.task.id === taskId && payload.fromStatus === 'blocked') {
+            if (payload.task.id === taskId && payload.fromStatus === 'open') {
               taskRepo.updateTask(taskId, { status: 'open' });
             }
           },
