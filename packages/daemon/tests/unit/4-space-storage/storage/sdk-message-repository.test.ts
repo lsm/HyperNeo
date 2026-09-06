@@ -273,19 +273,20 @@ describe('SDKMessageRepository', () => {
       sessionId: string,
       uuid: string,
       message: unknown,
-      options: { sendStatus?: string; rowId?: string; timestamp?: string } = {}
+      options: { sendStatus?: string; rowId?: string; timestamp?: string; origin?: string } = {}
     ): void {
       db.prepare(
         `INSERT INTO sdk_messages (
-           id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid
-         ) VALUES (?, ?, 'user', ?, ?, ?, ?)`
+           id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid, origin
+         ) VALUES (?, ?, 'user', ?, ?, ?, ?, ?)`
       ).run(
         options.rowId ?? `${uuid}-row`,
         sessionId,
         JSON.stringify(message),
         options.timestamp ?? new Date().toISOString(),
         options.sendStatus ?? 'failed',
-        uuid
+        uuid,
+        options.origin ?? null
       );
     }
 
@@ -378,6 +379,32 @@ describe('SDKMessageRepository', () => {
         true
       );
       expect(storedMessage('session-1', 'msg-kindless-human').inputKind).toBe('human');
+    });
+
+    it('derives synthetic task inputKind from a legacy system origin when isSynthetic is absent', () => {
+      insertDeliveryRow(
+        'session-1',
+        'msg-system-origin',
+        {
+          type: 'user',
+          message: { role: 'user', content: 'legacy injected instruction' },
+        },
+        { origin: 'system' }
+      );
+
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-system-origin')).toBe(
+        true
+      );
+      expect(storedMessage('session-1', 'msg-system-origin')).toEqual({
+        type: 'user',
+        message: { content: 'legacy injected instruction' },
+        parent_tool_use_id: null,
+        inputKind: 'task',
+        uuid: 'msg-system-origin',
+        session_id: 'session-1',
+        isSynthetic: true,
+      });
+      expect(storedOrigin('session-1', 'msg-system-origin')).toBe('system');
     });
 
     it('rewrites only the selected earliest sibling when a uuid has duplicate rows', () => {

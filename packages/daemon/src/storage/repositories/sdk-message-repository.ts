@@ -472,7 +472,7 @@ interface NormalizeDeliveryMessageDeps {
   selectDeliveryMessageRow(
     sessionId: string,
     uuid: string
-  ): { id: string; sdk_message: string } | null | undefined;
+  ): { id: string; sdk_message: string; origin: string | null } | null | undefined;
   applyNormalizedDeliveryMessage(rowId: string, sdkMessage: string, synthetic: boolean): number;
 }
 
@@ -481,7 +481,7 @@ interface NormalizeDeliveryMessageCtx {
   uuid: string;
   deps: NormalizeDeliveryMessageDeps;
   changed: boolean;
-  row?: { id: string; sdk_message: string };
+  row?: { id: string; sdk_message: string; origin: string | null };
   stored?: Record<string, unknown>;
   normalized?: Record<string, unknown>;
   synthetic?: boolean;
@@ -509,7 +509,9 @@ function projectDeliveryMessageRow(ctx: NormalizeDeliveryMessageCtx): NormalizeD
   const storedMessage = stored.message as { role?: unknown; content?: unknown } | undefined;
   if (storedMessage?.role !== 'user') return ctx;
   if (stored.isReplay === true) return ctx;
-  const synthetic = stored.isSynthetic === true;
+  const synthetic =
+    stored.isSynthetic === true ||
+    (stored.isSynthetic === undefined && ctx.row?.origin === 'system');
   const storedInputKind = stored.inputKind;
   const inputKind: MessageInputKind =
     typeof storedInputKind === 'string' && ['task', 'human', 'system'].includes(storedInputKind)
@@ -1892,12 +1894,12 @@ export class SDKMessageRepository {
         selectDeliveryMessageRow: (selectSessionId, selectUuid) =>
           this.db
             .prepare(
-              `SELECT id, sdk_message FROM sdk_messages
+              `SELECT id, sdk_message, origin FROM sdk_messages
                 WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
                 ORDER BY timestamp ASC, rowid ASC LIMIT 1`
             )
             .get(selectSessionId, selectUuid) as
-            | { id: string; sdk_message: string }
+            | { id: string; sdk_message: string; origin: string | null }
             | null
             | undefined,
         applyNormalizedDeliveryMessage: (rowId, sdkMessage, synthetic) =>
