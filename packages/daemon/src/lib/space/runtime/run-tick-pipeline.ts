@@ -154,7 +154,10 @@ export function promotePendingExecutionsWithLiveSessions(ctx: RunTickCtx): RunTi
 export async function ensureCanonicalTaskInProgress(ctx: RunTickCtx): Promise<TickResult> {
   const task = ctx.spawn?.canonicalTask ?? ctx.context!.canonicalTask;
   const active =
-    ctx.spawned || ctx.nodeExecutions?.some((execution) => execution.status === 'in_progress');
+    ctx.spawned ||
+    ctx.nodeExecutions?.some(
+      (execution) => execution.status === 'in_progress' || execution.status === 'waiting_rebind'
+    );
   const canonicalTask =
     active && (task.status === 'open' || task.status === 'blocked')
       ? await ctx.deps.ensureCanonicalTaskInProgress(ctx.context!.meta.spaceId, task)

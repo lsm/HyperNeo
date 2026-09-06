@@ -3822,8 +3822,18 @@ export class SpaceRuntime {
         this.redispatchRetainedExternalEvents();
       }
 
-      await this.processCompletedTasks();
-      await this.attachStandaloneTasksToWorkflows();
+      let activationError: unknown = null;
+      try {
+        await this.processCompletedTasks();
+      } catch (err) {
+        activationError = err;
+      }
+      try {
+        await this.attachStandaloneTasksToWorkflows();
+      } catch (err) {
+        if (activationError === null) activationError = err;
+      }
+      if (activationError !== null) throw activationError;
       await this.cleanupTerminalExecutors();
       await this.reconcileTerminalRunsWithoutExecutors();
       await this.checkStandaloneTasks();
@@ -6625,18 +6635,37 @@ export class SpaceRuntime {
     canonicalTask: SpaceTask
   ): Promise<SpaceTask | null> {
     if (canonicalTask.status !== 'open' && canonicalTask.status !== 'blocked') return canonicalTask;
-    const outcome = this.config.taskRepo.casStatus(
-      canonicalTask.id,
-      canonicalTask.status,
-      'in_progress'
-    );
-    if (outcome === 'superseded') return this.config.taskRepo.getTask(canonicalTask.id);
-    await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
-      startedAt: canonicalTask.startedAt ?? Date.now(),
-      completedAt: null,
-      pendingCheckpointType: null,
-    });
-    return this.config.taskRepo.getTask(canonicalTask.id);
+    this.config.reactiveDb?.beginTransaction();
+    let updated: SpaceTask | null;
+    let promoted = false;
+    try {
+      updated = this.config.db.transaction(() => {
+        const outcome = this.config.taskRepo.casStatus(
+          canonicalTask.id,
+          canonicalTask.status,
+          'in_progress'
+        );
+        if (outcome === 'superseded') return this.config.taskRepo.getTask(canonicalTask.id);
+        promoted = true;
+        const result = this.config.taskRepo.updateTask(canonicalTask.id, {
+          startedAt: canonicalTask.startedAt ?? Date.now(),
+          completedAt: null,
+          pendingCheckpointType: null,
+        });
+        if (canonicalTask.status === 'blocked') {
+          this.config.goalService?.supersedeOutcomeNotificationsForTask(canonicalTask.id);
+        }
+        return result;
+      })();
+      this.config.reactiveDb?.commitTransaction();
+    } catch (err) {
+      this.config.reactiveDb?.abortTransaction();
+      throw err;
+    }
+    if (promoted && updated) {
+      await this.safeOnTaskUpdated(spaceId, updated, { fromStatus: canonicalTask.status });
+    }
+    return updated;
   }
 
   private async blockRunForPermanentSpawnFailure(

@@ -550,6 +550,7 @@ describe('spaceWorkflowRunTick stages', () => {
   test('ensureCanonicalTaskInProgress runs for live or freshly spawned executions', async () => {
     for (const active of [
       { nodeExecutions: [makeExecution('in_progress')] },
+      { nodeExecutions: [makeExecution('waiting_rebind')] },
       { spawned: { blockedByCrash: false, permanentSpawnFailureReason: null } },
     ]) {
       const deps = makeDeps({ context: makeContext({ canonicalTaskStatus: 'open' }) });
@@ -788,10 +789,7 @@ describe('spaceWorkflowRunTick pipeline', () => {
     const deps = makeDeps({ spawnAdmissionAction: 'skipSpawn' });
     const outcome = await runSpaceWorkflowRunTick(deps, RUN_ID);
     expect(outcome).toEqual({ action: 'ran_to_completion' });
-    expect(deps.calls.slice(-2)).toEqual([
-      'promotePendingExecutionsWithLiveSessions',
-      'admitSpawnExecution',
-    ]);
+    expect(deps.calls.slice(-2)).toEqual(['admitSpawnExecution', 'getAvailableTaskSlots']);
     expect(deps.calls).not.toContain('spawnPendingExecutions');
     expect(deps.calls).not.toContain('blockRunForSpawnFailure');
     expect(deps.calls).not.toContain('ensureCanonicalTaskInProgress');

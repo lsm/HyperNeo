@@ -15,6 +15,8 @@ import {
 } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
+import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
@@ -741,6 +743,93 @@ describe('SpaceRuntime — tick loop correctness', () => {
       });
     });
 
+    test('blocked task activation supersedes its pending goal outcome', async () => {
+      const sessionId = 'session:blocked-goal-reopen';
+      const notificationRepo = new SpaceGoalOutcomeNotificationRepository(db);
+      const goal = new SpaceGoalRepository(db).create({
+        spaceId: SPACE_ID,
+        title: 'Activation goal',
+      });
+      const transitions: Array<{ taskId: string; fromStatus: string | null | undefined }> = [];
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionInMemory: (candidate) => candidate === sessionId,
+      });
+      const rt = new SpaceRuntime(
+        buildConfig(tam, {
+          goalService: {
+            supersedeOutcomeNotificationsForTask: (taskId) =>
+              notificationRepo.supersedeForTask(taskId),
+          } as never,
+          onTaskUpdated: ({ task, fromStatus }) => {
+            transitions.push({ taskId: task.id, fromStatus });
+          },
+        })
+      );
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0];
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: sessionId,
+        startedAt: 123,
+      });
+      taskRepo.updateTask(task.id, { status: 'blocked', goalId: goal.id });
+      const notification = notificationRepo.create({
+        spaceId: SPACE_ID,
+        goalId: goal.id,
+        taskId: task.id,
+        terminalGeneration: 1,
+        goalRevision: goal.revision,
+        payload: {
+          summary: 'Blocked',
+          taskStatus: 'blocked',
+          taskTitle: task.title,
+          goalTitle: goal.title,
+        },
+      });
+
+      await processRunTick(rt, run.id);
+
+      expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+      expect(notificationRepo.getById(notification.id)?.status).toBe('superseded');
+      expect(transitions).toContainEqual({ taskId: task.id, fromStatus: 'blocked' });
+    });
+
+    test('blocked task activation rolls back when outcome supersession fails', async () => {
+      const sessionId = 'session:blocked-goal-rollback';
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionInMemory: (candidate) => candidate === sessionId,
+      });
+      const rt = new SpaceRuntime(
+        buildConfig(tam, {
+          goalService: {
+            supersedeOutcomeNotificationsForTask: () => {
+              throw new Error('supersession failed');
+            },
+          } as never,
+        })
+      );
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const task = tasks[0];
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: sessionId,
+        startedAt: 123,
+      });
+      taskRepo.updateTask(task.id, { status: 'blocked' });
+
+      await expect(processRunTick(rt, run.id)).rejects.toThrow('supersession failed');
+
+      expect(taskRepo.getTask(task.id)?.status).toBe('blocked');
+    });
+
     test('tick picks up workflow run created between ticks', async () => {
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
         isTaskAgentAlive: (taskId: string) => {
@@ -928,6 +1017,42 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(taskRepo.getTask(tasks2[0].id)!.status).toBe('in_progress');
     });
 
+    test('run errors do not prevent standalone admission in another space', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const realRt = new SpaceRuntime(buildConfig(tam));
+      const failingWorkflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      await realRt.startWorkflowRun(SPACE_ID, failingWorkflow.id, 'Failing Run');
+      const admittedWorkflow = buildLinearWorkflow(SPACE_ID_2, workflowManager, [
+        { id: STEP_B, name: 'Code', agentId: `${AGENT_CODER}-s2` },
+      ]);
+      const standalone = taskRepo.createTask({
+        spaceId: SPACE_ID_2,
+        title: 'Standalone task',
+        status: 'open',
+        preferredWorkflowId: admittedWorkflow.id,
+      });
+      const faultySpaceManager = {
+        getSpace: async (id: string) => {
+          if (id === SPACE_ID) throw new Error('failing run lookup');
+          return spaceManager.getSpace(id);
+        },
+        listSpaces: async () => spaceManager.listSpaces(false),
+      };
+      const faultyRt = new SpaceRuntime({
+        ...buildConfig(tam),
+        spaceManager: faultySpaceManager as never,
+      });
+
+      await expect(faultyRt.executeTick()).rejects.toThrow('failing run lookup');
+
+      expect(taskRepo.getTask(standalone.id)).toMatchObject({
+        status: 'in_progress',
+      });
+      expect(taskRepo.getTask(standalone.id)?.workflowRunId).not.toBeNull();
+    });
+
     test('first error is re-thrown after all runs are processed', async () => {
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
       const realRt = new SpaceRuntime(buildConfig(tam));
@@ -1095,7 +1220,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       await freshRt.executeTick();
 
       expect(taskRepo.getTask(waiting.id)?.status).toBe('open');
-      expect(taskRepo.getTask(waiting.id)?.workflowRunId).toBeNull();
+      expect(taskRepo.getTask(waiting.id)?.workflowRunId ?? null).toBeNull();
     });
 
     test('rehydration loads runs from multiple spaces', async () => {
@@ -2378,7 +2503,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       const rt = new SpaceRuntime(
         buildConfig(tam, {
           onTaskUpdated: (payload) => {
-            if (payload.task.id === taskId && payload.fromStatus === 'in_progress') {
+            if (payload.task.id === taskId && payload.fromStatus === 'blocked') {
               taskRepo.updateTask(taskId, { status: 'open' });
             }
           },
