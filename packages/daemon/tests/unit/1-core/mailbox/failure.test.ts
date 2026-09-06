@@ -13,9 +13,13 @@ import {
   type MailboxMessage,
 } from '../../../../src/lib/mailbox/entry';
 import {
+  buildFailureMessageStage,
   createMailboxDeadHandler,
+  type MailboxFailureCtx,
   type MailboxFailureDeps,
   materializeMailboxFailure,
+  notifyFailureObserversStage,
+  sessionFailureTarget,
 } from '../../../../src/lib/mailbox/failure';
 import { createUlid } from '../../../../src/lib/mailbox/ulid';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
@@ -28,6 +32,12 @@ const message: MailboxMessage = {
   message: { content: 'hello from the mailbox' },
   parent_tool_use_id: null,
 };
+
+const stubDeps = (overrides?: Partial<MailboxFailureDeps>): MailboxFailureDeps => ({
+  sdkMessageRepo: {} as MailboxFailureDeps['sdkMessageRepo'],
+  saveFailed: () => 'stub-row',
+  ...overrides,
+});
 
 function makeEntry(overrides?: {
   id?: string;
@@ -224,5 +234,98 @@ describe('materializeMailboxFailure', () => {
     });
 
     expect(saveFailed).not.toHaveBeenCalled();
+  });
+
+  test('keeps the no-throw contract when publishFailed throws synchronously', async () => {
+    const mailbox = createMailboxTestDb();
+    const settleSkipped = mock(async () => {});
+    const deps: MailboxFailureDeps = {
+      sdkMessageRepo: mailbox.sdkMessageRepo,
+      saveFailed: (sessionId, message, origin) =>
+        mailbox.sdkMessageRepo.saveUserMessage(sessionId, message, 'failed', origin),
+      publishFailed: () => {
+        throw new Error('publish boom');
+      },
+      settleSkipped,
+    };
+    const entry = makeEntry({ origin: 'chat', messageUuid: 'sync-throw-uuid' });
+    const job = claimMailboxJob(mailbox, entry);
+
+    expect(() => materializeMailboxFailure(job, deps)).not.toThrow();
+    await Promise.resolve();
+
+    const row = mailbox.sdkRows()[0];
+    expect(row.send_status).toBe('failed');
+    expect(settleSkipped).toHaveBeenCalledWith(SESSION_ID, 'sync-throw-uuid');
+    mailbox.close();
+  });
+});
+
+describe('failure pipeline stages', () => {
+  test('sessionFailureTarget targets only session entries admitted with a message uuid', () => {
+    expect(sessionFailureTarget(makeEntry({ messageUuid: 'uuid-1' }))).toEqual({
+      sessionId: SESSION_ID,
+      messageUuid: 'uuid-1',
+    });
+    expect(
+      sessionFailureTarget(
+        makeEntry({
+          to: { kind: 'agent', spaceId: 'sp-1', handle: 'coder' },
+          messageUuid: 'uuid-1',
+        })
+      )
+    ).toBeNull();
+    expect(sessionFailureTarget(makeEntry())).toBeNull();
+    expect(sessionFailureTarget(null)).toBeNull();
+  });
+
+  test('buildFailureMessageStage stamps synthetic provenance for non-chat origins', () => {
+    const entry = makeEntry({ origin: 'space_agent', messageUuid: 'uuid-1' });
+    const ctx = buildFailureMessageStage({
+      job: makeDeadJob(entry, null),
+      deps: stubDeps(),
+      entry,
+      target: sessionFailureTarget(entry) ?? undefined,
+    });
+
+    expect(ctx.message).toMatchObject({
+      uuid: 'uuid-1',
+      session_id: SESSION_ID,
+      isSynthetic: true,
+    });
+  });
+
+  test('buildFailureMessageStage keeps chat-origin messages human', () => {
+    const entry = makeEntry({ origin: 'chat', messageUuid: 'uuid-2' });
+    const ctx = buildFailureMessageStage({
+      job: makeDeadJob(entry, null),
+      deps: stubDeps(),
+      entry,
+      target: sessionFailureTarget(entry) ?? undefined,
+    });
+
+    expect(ctx.message).toMatchObject({ uuid: 'uuid-2', session_id: SESSION_ID });
+    expect(ctx.message?.isSynthetic).toBeUndefined();
+  });
+
+  test('a synchronously throwing publishFailed does not escape and settleSkipped still runs', async () => {
+    const settleSkipped = mock(async () => {});
+    const ctx: MailboxFailureCtx = {
+      job: makeDeadJob({}, null),
+      deps: stubDeps({
+        publishFailed: () => {
+          throw new Error('sync boom');
+        },
+        settleSkipped,
+      }),
+      entry: null,
+      target: { sessionId: SESSION_ID, messageUuid: 'uuid-1' },
+      failedId: 'row-1',
+    };
+
+    expect(() => notifyFailureObserversStage(ctx)).not.toThrow();
+    await Promise.resolve();
+
+    expect(settleSkipped).toHaveBeenCalledWith(SESSION_ID, 'uuid-1');
   });
 });

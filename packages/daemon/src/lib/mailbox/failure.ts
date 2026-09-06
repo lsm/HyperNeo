@@ -1,10 +1,11 @@
 import type { MessageOrigin } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { withBusyRetry } from '../../storage/busy-retry.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import { emitStructuredLogEvent } from '../logger.ts';
-import { parseMailboxEntry } from './entry.ts';
+import { type MailboxEntry, parseMailboxEntry } from './entry.ts';
 
 export interface MailboxFailureDeps {
   sdkMessageRepo: SDKMessageRepository;
@@ -13,10 +14,23 @@ export interface MailboxFailureDeps {
   settleSkipped?(sessionId: string, messageUuid: string): Promise<void>;
 }
 
+export interface SessionFailureTarget {
+  sessionId: string;
+  messageUuid: string;
+}
+
+export interface MailboxFailureCtx {
+  job: Job;
+  deps: MailboxFailureDeps;
+  entry: MailboxEntry | null;
+  target?: SessionFailureTarget;
+  message?: SDKUserMessage;
+  failedId?: string;
+}
+
 function emitMaterializeFailure(
+  target: SessionFailureTarget,
   entryId: string,
-  sessionId: string,
-  messageUuid: string,
   error: unknown
 ): void {
   try {
@@ -27,40 +41,91 @@ function emitMaterializeFailure(
       module: 'hyperneo:daemon:mailbox:materialize-failure',
       metadata: {
         entryId,
-        sessionId,
-        messageUuid,
+        sessionId: target.sessionId,
+        messageUuid: target.messageUuid,
         error: error instanceof Error ? error.message : String(error),
       },
     });
   } catch {}
 }
 
-export function materializeMailboxFailure(job: Job, deps: MailboxFailureDeps): void {
-  const entry = parseMailboxEntry(job.payload);
-  if (entry?.to.kind !== 'session' || entry.messageUuid === undefined) return;
-  const sessionId = entry.to.sessionId;
-  const messageUuid = entry.messageUuid;
+export function sessionFailureTarget(entry: MailboxEntry | null): SessionFailureTarget | null {
+  if (entry?.to.kind !== 'session' || entry.messageUuid === undefined) return null;
+  return { sessionId: entry.to.sessionId, messageUuid: entry.messageUuid };
+}
+
+export function parseFailureEntryStage(ctx: MailboxFailureCtx): MailboxFailureCtx {
+  const entry = parseMailboxEntry(ctx.job.payload);
+  return { ...ctx, entry, target: sessionFailureTarget(entry) ?? undefined };
+}
+
+function isSkippedMailboxFailure(ctx: MailboxFailureCtx): boolean {
+  return ctx.target === undefined;
+}
+
+export function buildFailureMessageStage(ctx: MailboxFailureCtx): MailboxFailureCtx {
+  const target = ctx.target;
+  const entry = ctx.entry;
+  if (target === undefined || entry === null) return ctx;
   const synthetic = entry.origin !== 'chat';
   const message: SDKUserMessage = {
     ...entry.message,
-    uuid: messageUuid as NonNullable<SDKUserMessage['uuid']>,
-    session_id: sessionId,
+    uuid: target.messageUuid as NonNullable<SDKUserMessage['uuid']>,
+    session_id: target.sessionId,
     ...(synthetic ? { isSynthetic: true } : {}),
   };
-  let failedId: string | null;
+  return { ...ctx, message };
+}
+
+export function persistFailedRowStage(ctx: MailboxFailureCtx): MailboxFailureCtx {
+  const target = ctx.target;
+  const message = ctx.message;
+  if (target === undefined || message === undefined) return ctx;
+  const synthetic = ctx.entry?.origin !== 'chat';
   try {
-    failedId = withBusyRetry(
+    const failedId = withBusyRetry(
       () =>
-        deps.sdkMessageRepo.markDeliveryFailedByUuid(sessionId, messageUuid) ??
-        deps.sdkMessageRepo.findMessageIdByUuid?.(sessionId, messageUuid) ??
-        deps.saveFailed(sessionId, message, synthetic ? 'system' : undefined)
+        ctx.deps.sdkMessageRepo.markDeliveryFailedByUuid(target.sessionId, target.messageUuid) ??
+        ctx.deps.sdkMessageRepo.findMessageIdByUuid?.(target.sessionId, target.messageUuid) ??
+        ctx.deps.saveFailed(target.sessionId, message, synthetic ? 'system' : undefined)
     );
+    return { ...ctx, failedId };
   } catch (error) {
-    emitMaterializeFailure(entry.id, sessionId, messageUuid, error);
-    return;
+    emitMaterializeFailure(target, ctx.entry?.id ?? 'unknown', error);
+    return ctx;
   }
-  void Promise.resolve(deps.publishFailed?.(sessionId, failedId)).catch(() => {});
-  void Promise.resolve(deps.settleSkipped?.(sessionId, messageUuid)).catch(() => {});
+}
+
+function detachFailureCallback(invoke: () => Promise<void> | undefined): void {
+  try {
+    void Promise.resolve(invoke()).catch(() => {});
+  } catch {}
+}
+
+export function notifyFailureObserversStage(ctx: MailboxFailureCtx): MailboxFailureCtx {
+  const target = ctx.target;
+  const failedId = ctx.failedId;
+  if (target === undefined || failedId === undefined) return ctx;
+  detachFailureCallback(() => ctx.deps.publishFailed?.(target.sessionId, failedId));
+  detachFailureCallback(() => ctx.deps.settleSkipped?.(target.sessionId, target.messageUuid));
+  return ctx;
+}
+
+const runMaterializeMailboxFailure = (
+  superpipe<{ isSkippedMailboxFailure: (ctx: MailboxFailureCtx) => boolean }>({
+    isSkippedMailboxFailure,
+  })('materialize-mailbox-failure') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(parseFailureEntryStage, 'ctx', 'ctx')
+  .pipe('!isSkippedMailboxFailure', 'ctx')
+  .pipe(buildFailureMessageStage, 'ctx', 'ctx')
+  .pipe(persistFailedRowStage, 'ctx', 'ctx')
+  .pipe(notifyFailureObserversStage, 'ctx', 'ctx')
+  .end('ctx') as (ctx: MailboxFailureCtx) => MailboxFailureCtx;
+
+export function materializeMailboxFailure(job: Job, deps: MailboxFailureDeps): void {
+  runMaterializeMailboxFailure({ job, deps, entry: null });
 }
 
 export function createMailboxDeadHandler(
