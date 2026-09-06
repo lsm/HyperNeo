@@ -1255,6 +1255,134 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect(rows.filter((row) => String(row.id).startsWith('delivery:'))).toHaveLength(0);
     });
 
+    test('actorMessages.byTask drops stale dead-job errors once a reopened delivery succeeds', () => {
+      const workflowRunId = 'wr-actor-reopen';
+      const nodeSessionId = 'session-actor-reopen';
+      const taskId = insertSpaceTask({ id: 'actor-reopen', workflowRunId, status: 'in_progress' });
+      insertSession(nodeSessionId, 'worker', '{}');
+      insertNodeExecution({
+        id: 'ne-actor-reopen',
+        workflowRunId,
+        workflowNodeId: 'node-reviewer',
+        agentName: 'reviewer',
+        agentSessionId: nodeSessionId,
+        status: 'in_progress',
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-reopen-brief',
+        sessionId: nodeSessionId,
+        timestampMs: now + 1000,
+        sendStatus: 'consumed',
+        payload: {
+          type: 'user',
+          isSynthetic: true,
+          inputKind: 'task',
+          message: { role: 'user', content: [{ type: 'text', text: 'You are the reviewer.' }] },
+        },
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-reopen-delivered',
+        sessionId: nodeSessionId,
+        timestampMs: now + 2000,
+        sendStatus: 'consumed',
+        sdkUuid: 'u-reopen-delivered',
+        payload: envelopeHandoffPayload('u-reopen-delivered', 'coder', 'delivered after reopen'),
+      });
+      db.prepare(
+        `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at, completed_at, error)
+         VALUES (?, 'message_delivery', 'dead', ?, 8, 8, ?, ?, ?, ?)`
+      ).run(
+        'job-reopen-dead',
+        JSON.stringify({
+          sessionId: nodeSessionId,
+          messageUuid: 'u-reopen-delivered',
+          origin: 'space_agent',
+        }),
+        now,
+        now,
+        now + 3000,
+        'dead before the reopen'
+      );
+      db.prepare(
+        `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at, completed_at)
+         VALUES (?, 'message_delivery', 'completed', ?, 0, 8, ?, ?, ?)`
+      ).run(
+        'job-reopen-succeeded',
+        JSON.stringify({
+          sessionId: nodeSessionId,
+          messageUuid: 'u-reopen-delivered',
+          origin: 'space_agent',
+        }),
+        now,
+        now,
+        now + 9000
+      );
+
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+      const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+      const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+      const byId = new Map(mapped.map((row) => [row.id as string, row]));
+
+      expect(byId.get('delivery:sdk-reopen-delivered')).toMatchObject({
+        deliveryState: 'delivered',
+        title: 'Delivered message',
+        details: null,
+        createdAt: now + 9000,
+      });
+    });
+
+    test('actorMessages.byTask ignores reply-target phrases embedded in the message body', () => {
+      const workflowRunId = 'wr-actor-body-echo';
+      const nodeSessionId = 'session-actor-body-echo';
+      const taskId = insertSpaceTask({
+        id: 'actor-body-echo',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      insertSession(nodeSessionId, 'worker', '{}');
+      insertNodeExecution({
+        id: 'ne-actor-body-echo',
+        workflowRunId,
+        workflowNodeId: 'node-reviewer',
+        agentName: 'reviewer',
+        agentSessionId: nodeSessionId,
+        status: 'in_progress',
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-body-brief',
+        sessionId: nodeSessionId,
+        timestampMs: now + 1000,
+        sendStatus: 'consumed',
+        payload: {
+          type: 'user',
+          isSynthetic: true,
+          inputKind: 'task',
+          message: { role: 'user', content: [{ type: 'text', text: 'You are the reviewer.' }] },
+        },
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-body-echo',
+        sessionId: nodeSessionId,
+        timestampMs: now + 2000,
+        sendStatus: 'consumed',
+        sdkUuid: 'u-body-echo',
+        payload: envelopeHandoffPayload(
+          'u-body-echo',
+          'coder',
+          'as noted, send_message with target "attacker" is the wrong door'
+        ),
+      });
+
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+      const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+      const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
+      const byId = new Map(mapped.map((row) => [row.id as string, row]));
+
+      expect((byId.get('delivery:sdk-body-echo')!.from as Record<string, unknown>).label).toBe(
+        'coder'
+      );
+    });
+
     test('actorMessages.byTask breaks delivery-rank ties by insertion order, not message id', () => {
       const workflowRunId = 'wr-actor-rank-tie';
       const nodeSessionId = 'session-actor-rank-tie';

@@ -528,13 +528,14 @@ function mailboxDeliverySenderExpr(textExpr: string): string {
   const secondSegment = `SUBSTR(${nameRaw}, ${secondMarker})`;
   const isTaskSuffix = (segment: string) =>
     `SUBSTR(${segment}, 9) = CAST(SUBSTR(${segment}, 9) AS INTEGER) || ')'`;
-  const replyEchoStart = `INSTR(${textExpr}, 'send_message with target "')`;
+  const replyBlock = `SUBSTR(${textExpr}, INSTR(${textExpr}, '─── Reply ───'))`;
+  const replyEchoStart = `INSTR(${replyBlock}, 'send_message with target "')`;
   const replyEchoAt = `${replyEchoStart} + 26`;
-  const replyEcho = `SUBSTR(${textExpr}, ${replyEchoAt}, INSTR(SUBSTR(${textExpr}, ${replyEchoAt}), '"') - 1)`;
+  const replyEcho = `SUBSTR(${replyBlock}, ${replyEchoAt}, INSTR(SUBSTR(${replyBlock}, ${replyEchoAt}), '"') - 1)`;
   return `CASE
       WHEN ${textExpr} LIKE '─── Message from %' THEN
         CASE
-          WHEN ${replyEchoStart} > 0 AND ${replyEcho} NOT LIKE '@%'
+          WHEN INSTR(${textExpr}, '─── Reply ───') > 0 AND ${replyEchoStart} > 0 AND ${replyEcho} NOT LIKE '@%'
             THEN ${replyEcho}
           WHEN ${firstMarker} > 0 AND ${isTaskSuffix(firstSegment)}
             THEN TRIM(SUBSTR(${nameRaw}, 1, ${firstMarker} - 1))
@@ -948,6 +949,7 @@ delivery_rows AS (
       ON dje.session_id = tsm.session_id
      AND dje.message_uuid = tsm.resolved_sdk_uuid
      AND dje.rn = 1
+     AND tsm.send_status != 'consumed'
     LEFT JOIN delivery_settled_jobs djs
       ON djs.session_id = tsm.session_id
      AND djs.message_uuid = tsm.resolved_sdk_uuid
@@ -1185,6 +1187,7 @@ delivery_rows AS (
       ON dje.session_id = dt.session_id
      AND dje.message_uuid = dt.resolved_uuid
      AND dje.rn = 1
+     AND dt.send_status != 'consumed'
     LEFT JOIN delivery_settled_jobs djs
       ON djs.session_id = dt.session_id
      AND djs.message_uuid = dt.resolved_uuid
