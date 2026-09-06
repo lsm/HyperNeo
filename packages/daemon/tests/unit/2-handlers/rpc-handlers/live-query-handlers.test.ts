@@ -2320,7 +2320,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
           messageUuid: 'u-run-queued',
           origin: 'space_agent',
         }),
-        now,
+        now + 7000,
         now
       );
 
@@ -2338,6 +2338,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         deliveryState: 'queued',
         targetResolution: 'queued',
         taskId: 'run-delivery-task',
+        createdAt: now + 7000,
       });
       expect((delivery!.from as Record<string, unknown>).label).toBe('coder');
       expect((delivery!.target as Record<string, unknown>).label).toBe('reviewer');

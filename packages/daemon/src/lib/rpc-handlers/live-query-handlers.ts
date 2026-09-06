@@ -534,13 +534,14 @@ function deliveryRetryingCtes(sessionFilterSql: string): string {
   SELECT
     json_extract(jq.payload, '$.sessionId') AS session_id,
     json_extract(jq.payload, '$.messageUuid') AS message_uuid,
-    jq.retry_count
+    jq.retry_count,
+    jq.run_at
   FROM job_queue jq
   WHERE jq.queue = 'message_delivery'
     AND jq.status IN ('pending', 'processing')${sessionFilter}
 ),
 delivery_retrying AS MATERIALIZED (
-  SELECT message_uuid, session_id, MAX(retry_count) > 0 AS retrying
+  SELECT message_uuid, session_id, MAX(retry_count) > 0 AS retrying, MAX(run_at) AS retry_run_at
   FROM delivery_active_jobs
   WHERE message_uuid IS NOT NULL
   GROUP BY message_uuid, session_id
@@ -888,6 +889,8 @@ delivery_rows AS (
       SUBSTR(${mailboxDeliveryTextExpr('tsm.sdk_message')}, 1, 500) AS summary,
       dje.error AS error,
       CASE
+        WHEN adr.retrying AND tsm.send_status NOT IN ('consumed', 'failed') AND adr.retry_run_at IS NOT NULL
+          THEN adr.retry_run_at
         WHEN tsm.send_status = 'failed' AND dje.error_settled_at IS NOT NULL
           THEN dje.error_settled_at
         ELSE CAST(ROUND((julianday(tsm.timestamp) - 2440587.5) * 86400000) AS INTEGER)
@@ -1106,6 +1109,8 @@ delivery_rows AS (
       SUBSTR(${mailboxDeliveryTextExpr('dt.sdk_message')}, 1, 500) AS summary,
       dje.error AS error,
       CASE
+        WHEN adr.retrying AND dt.send_status NOT IN ('consumed', 'failed') AND adr.retry_run_at IS NOT NULL
+          THEN adr.retry_run_at
         WHEN dt.send_status = 'failed' AND dje.error_settled_at IS NOT NULL
           THEN dje.error_settled_at
         ELSE CAST(ROUND((julianday(dt.timestamp) - 2440587.5) * 86400000) AS INTEGER)
