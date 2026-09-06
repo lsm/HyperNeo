@@ -649,6 +649,51 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(repo.getReminder(fired.id)!.lastFiredAt).toBeNull();
   });
 
+  function seedInboxRow(id: string, targetAgentId: string): void {
+    db.prepare(
+      `INSERT INTO space_agent_inbox_messages
+       (id, space_id, target_agent_id, source_actor_id, message, expires_at, created_at)
+       VALUES (?, 'space-1', ?, 'src', 'hello', 9999, 1)`
+    ).run(id, targetAgentId);
+  }
+
+  function inboxRowsFor(agentId: string): number {
+    return (
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM space_agent_inbox_messages WHERE target_agent_id = ?`)
+        .get(agentId) as { n: number }
+    ).n;
+  }
+
+  test('delete purges inbox rows for an LHA-only agent (no worker mirror)', () => {
+    const solo = repo.create({ spaceId: 'space-1', handle: 'solo', displayName: 'Solo' });
+    const shared = repo.create({ spaceId: 'space-1', handle: 'shared', displayName: 'Shared' });
+    seedInboxRow('in-solo', solo.id);
+    seedInboxRow('in-shared', shared.id);
+
+    repo.delete(solo.id);
+    expect(inboxRowsFor(solo.id)).toBe(0);
+
+    repo.delete(shared.id);
+    expect(inboxRowsFor(shared.id)).toBe(0);
+  });
+
+  test('delete purges inbox rows when the same-id worker row lives in another space', () => {
+    db.prepare(
+      `INSERT INTO spaces (id, slug, workspace_path, name, description, background_context,
+       instructions, allowed_models, session_ids, status, paused, stopped, autonomy_level,
+       max_concurrent_tasks, created_at, updated_at)
+       VALUES ('space-2', 'space-2', '/tmp/space-2', 'Space 2', '', '', '', '[]', '[]',
+       'active', 0, 0, 1, 1, 1, 1)`
+    ).run();
+    const agent = repo.create({ spaceId: 'space-1', handle: 'cross', displayName: 'Cross' });
+    seedInboxRow('in-cross', agent.id);
+
+    repo.delete(agent.id);
+
+    expect(inboxRowsFor(agent.id)).toBe(0);
+  });
+
   test('create rejects the reserved migration template key', () => {
     expect(() =>
       repo.create({
