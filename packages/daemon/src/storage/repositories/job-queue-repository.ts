@@ -445,6 +445,40 @@ export class JobQueueRepository {
     );
   }
 
+  cancelMailboxForSession(
+    sessionId: string,
+    opts?: { excludeDeferred?: boolean }
+  ): Array<{ id: string; payload: string }> {
+    const modeFilter =
+      opts?.excludeDeferred === true
+        ? `AND COALESCE(json_extract(payload, '$.deliveryMode'), 'immediate') != 'defer'`
+        : '';
+    return withBusyRetry(() =>
+      this.db.transaction(() => {
+        const rows = this.db
+          .prepare(
+            `SELECT id, payload
+                 FROM job_queue
+                WHERE queue = 'mailbox'
+                  AND json_extract(payload, '$.to.sessionId') = ?
+                  AND status IN ('pending', 'processing')
+                  ${modeFilter}`
+          )
+          .all(sessionId) as Array<{ id: string; payload: string }>;
+        this.db
+          .prepare(
+            `DELETE FROM job_queue
+                WHERE queue = 'mailbox'
+                  AND json_extract(payload, '$.to.sessionId') = ?
+                  AND status IN ('pending', 'processing')
+                  ${modeFilter}`
+          )
+          .run(sessionId);
+        return rows;
+      }, 'immediate')()
+    );
+  }
+
   rescheduleSessionDeliveries(sessionId: string, runAt: number): boolean {
     const result = withBusyRetry(() =>
       this.db
