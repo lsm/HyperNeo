@@ -717,6 +717,30 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(updated.status).toBe('in_progress');
     });
 
+    test('promotion repair reconciles an open task in the same tick', async () => {
+      const sessionId = 'session:promotion-repair';
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionInMemory: (candidate) => candidate === sessionId,
+      });
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, { agentSessionId: sessionId });
+      taskRepo.updateTask(tasks[0].id, { startedAt: 123, completedAt: 456 });
+
+      await processRunTick(rt, run.id);
+
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(tasks[0].id)).toMatchObject({
+        status: 'in_progress',
+        startedAt: 123,
+        completedAt: null,
+      });
+    });
+
     test('tick picks up workflow run created between ticks', async () => {
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
         isTaskAgentAlive: (taskId: string) => {
@@ -954,18 +978,64 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(freshRt.executorCount).toBe(0);
     });
 
-    test('rehydration does not duplicate executors on second tick', async () => {
+    test('restart recovery reconciles a live run task before counting capacity', async () => {
+      const sessionId = 'session:rehydrated-live';
       const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
         { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
       ]);
-
       const run = workflowRunRepo.createRun({
         spaceId: SPACE_ID,
         workflowId: workflow.id,
         title: 'Rehydrate Run',
       });
       workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Plan',
+        description: '',
+        workflowRunId: run.id,
+        status: 'open',
+      });
+      const execution = nodeExecutionRepo.createOrIgnore({
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        agentName: 'Planner',
+        agentId: AGENT_PLANNER,
+        agentSessionId: sessionId,
+        status: 'in_progress',
+      });
+      nodeExecutionRepo.update(execution.id, { startedAt: Date.now() });
+      const freshRt = new SpaceRuntime(
+        buildConfig(
+          makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+            isSessionInMemory: (candidate) => candidate === sessionId,
+          })
+        )
+      );
 
+      await freshRt.executeTick();
+
+      const recovered = taskRepo.getTask(task.id)!;
+      expect(recovered.status).toBe('in_progress');
+      expect(recovered.startedAt).not.toBeNull();
+      expect(
+        (
+          freshRt as unknown as { getRunningTaskCount: (spaceId: string) => number }
+        ).getRunningTaskCount(SPACE_ID)
+      ).toBe(1);
+      expect(freshRt.executorCount).toBe(1);
+    });
+
+    test('rehydration does not duplicate executors on second tick', async () => {
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Rehydrate Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
       taskRepo.createTask({
         spaceId: SPACE_ID,
         title: 'Plan',
@@ -973,7 +1043,6 @@ describe('SpaceRuntime — tick loop correctness', () => {
         workflowRunId: run.id,
         status: 'open',
       });
-
       const freshRt = new SpaceRuntime(buildConfig());
 
       await freshRt.executeTick();
@@ -981,6 +1050,52 @@ describe('SpaceRuntime — tick loop correctness', () => {
 
       await freshRt.executeTick();
       expect(freshRt.executorCount).toBe(1);
+    });
+
+    test('live execution at the concurrency limit defers standalone task admission', async () => {
+      const sessionId = 'session:capacity-live';
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Live Run',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+      taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Live Run',
+        workflowRunId: run.id,
+        status: 'open',
+      });
+      const execution = nodeExecutionRepo.createOrIgnore({
+        workflowRunId: run.id,
+        workflowNodeId: STEP_A,
+        agentName: 'Planner',
+        agentId: AGENT_PLANNER,
+        agentSessionId: sessionId,
+        status: 'in_progress',
+      });
+      nodeExecutionRepo.update(execution.id, { startedAt: Date.now() });
+      const waiting = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'Waiting task',
+        status: 'open',
+        preferredWorkflowId: workflow.id,
+      });
+      const freshRt = new SpaceRuntime(
+        buildConfig(
+          makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+            isSessionInMemory: (candidate) => candidate === sessionId,
+          })
+        )
+      );
+
+      await freshRt.executeTick();
+
+      expect(taskRepo.getTask(waiting.id)?.status).toBe('open');
+      expect(taskRepo.getTask(waiting.id)?.workflowRunId).toBeNull();
     });
 
     test('rehydration loads runs from multiple spaces', async () => {

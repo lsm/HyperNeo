@@ -102,7 +102,11 @@ export interface SpaceWorkflowRunTickDeps {
     permanentSpawnFailureReason: string | null,
     blockedByCrash: boolean
   ): Promise<boolean>;
-  casCanonicalTaskOpenToInProgress(spaceId: string, canonicalTask: SpaceTask): Promise<void>;
+  ensureCanonicalTaskInProgress(
+    spaceId: string,
+    canonicalTask: SpaceTask
+  ): Promise<SpaceTask | null>;
+  getAvailableTaskSlots(space: Space | null): number;
 }
 
 export interface RunTickCtx {

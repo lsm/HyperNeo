@@ -9,8 +9,8 @@ import type {
 import {
   admitSpawnExecution,
   blockRunForSpawnFailure,
-  casCanonicalTaskOpenToInProgress,
   drainPendingNodeHandoffs,
+  ensureCanonicalTaskInProgress,
   finalizeTick,
   haltIfBlockedExecutions,
   haltIfNoExecutions,
@@ -92,6 +92,7 @@ interface DepsState {
   drainHalted: boolean;
   spawnAdmissionAction: 'spawn' | 'skipSpawn';
   spawnFailureBlocks: boolean;
+  availableTaskSlots: number;
 }
 
 interface RecordedDeps extends SpaceWorkflowRunTickDeps {
@@ -117,6 +118,7 @@ function makeDeps(state: Partial<DepsState> = {}): RecordedDeps {
     drainHalted: false,
     spawnAdmissionAction: 'spawn',
     spawnFailureBlocks: false,
+    availableTaskSlots: 1,
     ...state,
   };
   const calls: string[] = [];
@@ -201,7 +203,14 @@ function makeDeps(state: Partial<DepsState> = {}): RecordedDeps {
       calls.push('blockRunForSpawnFailure');
       return full.spawnFailureBlocks;
     },
-    casCanonicalTaskOpenToInProgress: async () => calls.push('casCanonicalTaskOpenToInProgress'),
+    ensureCanonicalTaskInProgress: async (_spaceId, canonicalTask) => {
+      calls.push('ensureCanonicalTaskInProgress');
+      return { ...canonicalTask, status: 'in_progress' };
+    },
+    getAvailableTaskSlots: () => {
+      calls.push('getAvailableTaskSlots');
+      return full.availableTaskSlots;
+    },
   };
   return {
     ...deps,
@@ -538,7 +547,48 @@ describe('spaceWorkflowRunTick stages', () => {
     expect(spaceless.calls).toEqual([]);
   });
 
-  test('blockRunForSpawnFailure and casCanonicalTaskOpenToInProgress stay inside the spawn branch', async () => {
+  test('ensureCanonicalTaskInProgress runs for live or freshly spawned executions', async () => {
+    for (const active of [
+      { nodeExecutions: [makeExecution('in_progress')] },
+      { spawned: { blockedByCrash: false, permanentSpawnFailureReason: null } },
+    ]) {
+      const deps = makeDeps({ context: makeContext({ canonicalTaskStatus: 'open' }) });
+      const result = await ensureCanonicalTaskInProgress({
+        runId: RUN_ID,
+        deps,
+        context: deps.context,
+        space: deps.space,
+        ...active,
+      });
+      expect(result).toMatchObject({
+        value: { context: { canonicalTask: { status: 'in_progress' } } },
+      });
+      expect(deps.calls).toEqual(['ensureCanonicalTaskInProgress', 'getAvailableTaskSlots']);
+    }
+  });
+
+  test('ensureCanonicalTaskInProgress checks capacity after reconciliation', async () => {
+    const deps = makeDeps({
+      context: makeContext({ canonicalTaskStatus: 'open' }),
+      availableTaskSlots: 0,
+    });
+    const inactive = { runId: RUN_ID, deps, context: deps.context, space: deps.space };
+    expect(await ensureCanonicalTaskInProgress(inactive)).toEqual({
+      reason: { action: 'halted_stranded_recovery' },
+    });
+    expect(
+      await ensureCanonicalTaskInProgress({
+        ...inactive,
+        nodeExecutions: [makeExecution('in_progress')],
+      })
+    ).toMatchObject({ value: { context: { canonicalTask: { status: 'in_progress' } } } });
+    expect(deps.calls.slice(-2)).toEqual([
+      'ensureCanonicalTaskInProgress',
+      'getAvailableTaskSlots',
+    ]);
+  });
+
+  test('blockRunForSpawnFailure stays inside the spawn branch', async () => {
     const deps = makeDeps();
     const spawned = { blockedByCrash: false, permanentSpawnFailureReason: null };
     const spawn = deps.admitSpawnExecution(
@@ -556,27 +606,7 @@ describe('spaceWorkflowRunTick stages', () => {
       spawned,
     });
     expect(ctx.spawnFailureBlocked).toBe(false);
-    await casCanonicalTaskOpenToInProgress({
-      runId: RUN_ID,
-      deps,
-      context: deps.context,
-      spawn,
-      spawned,
-    });
-    expect(deps.calls).toEqual([
-      'admitSpawnExecution',
-      'blockRunForSpawnFailure',
-      'casCanonicalTaskOpenToInProgress',
-    ]);
-
-    const unspawned = makeDeps();
-    await blockRunForSpawnFailure({ runId: RUN_ID, deps: unspawned, context: unspawned.context });
-    await casCanonicalTaskOpenToInProgress({
-      runId: RUN_ID,
-      deps: unspawned,
-      context: unspawned.context,
-    });
-    expect(unspawned.calls).toEqual([]);
+    expect(deps.calls).toEqual(['admitSpawnExecution', 'blockRunForSpawnFailure']);
   });
 
   test('finalizeTick resolves the tick as complete', () => {
@@ -589,7 +619,7 @@ describe('spaceWorkflowRunTick stages', () => {
 
 describe('spaceWorkflowRunTick pipeline', () => {
   test('a healthy run flows through every stage in order', async () => {
-    const deps = makeDeps();
+    const deps = makeDeps({ context: makeContext({ canonicalTaskStatus: 'open' }) });
     const outcome = await runSpaceWorkflowRunTick(deps, RUN_ID);
     expect(outcome).toEqual({ action: 'ran_to_completion' });
     expect(deps.calls).toEqual([
@@ -601,10 +631,12 @@ describe('spaceWorkflowRunTick pipeline', () => {
       'settleIfComplete',
       'drainPendingNodeHandoffs',
       'promotePendingExecutionsWithLiveSessions',
+      'getAvailableTaskSlots',
       'admitSpawnExecution',
       'spawnPendingExecutions',
       'blockRunForSpawnFailure',
-      'casCanonicalTaskOpenToInProgress',
+      'ensureCanonicalTaskInProgress',
+      'getAvailableTaskSlots',
     ]);
   });
 
@@ -749,7 +781,7 @@ describe('spaceWorkflowRunTick pipeline', () => {
     const outcome = await runSpaceWorkflowRunTick(deps, RUN_ID);
     expect(outcome).toEqual({ action: 'blocked_for_spawn_failure' });
     expect(deps.calls.slice(-2)).toEqual(['spawnPendingExecutions', 'blockRunForSpawnFailure']);
-    expect(deps.calls).not.toContain('casCanonicalTaskOpenToInProgress');
+    expect(deps.calls).not.toContain('ensureCanonicalTaskInProgress');
   });
 
   test('skips the spawn branch when admission declines to spawn', async () => {
@@ -762,7 +794,7 @@ describe('spaceWorkflowRunTick pipeline', () => {
     ]);
     expect(deps.calls).not.toContain('spawnPendingExecutions');
     expect(deps.calls).not.toContain('blockRunForSpawnFailure');
-    expect(deps.calls).not.toContain('casCanonicalTaskOpenToInProgress');
+    expect(deps.calls).not.toContain('ensureCanonicalTaskInProgress');
   });
 
   test('admission gates run as an atomic burst with a single scheduler point after the context load', async () => {

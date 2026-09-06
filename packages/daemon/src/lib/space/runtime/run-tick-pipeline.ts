@@ -151,6 +151,21 @@ export function promotePendingExecutionsWithLiveSessions(ctx: RunTickCtx): RunTi
   };
 }
 
+export async function ensureCanonicalTaskInProgress(ctx: RunTickCtx): Promise<TickResult> {
+  const task = ctx.spawn?.canonicalTask ?? ctx.context!.canonicalTask;
+  const active =
+    ctx.spawned || ctx.nodeExecutions?.some((execution) => execution.status === 'in_progress');
+  const canonicalTask =
+    active && (task.status === 'open' || task.status === 'blocked')
+      ? await ctx.deps.ensureCanonicalTaskInProgress(ctx.context!.meta.spaceId, task)
+      : task;
+  const next = canonicalTask ? { ...ctx, context: { ...ctx.context!, canonicalTask } } : ctx;
+  const availableTaskSlots = ctx.deps.getAvailableTaskSlots(ctx.space ?? null);
+  return !active && next.context!.canonicalTask.status === 'open' && availableTaskSlots <= 0
+    ? { reason: { action: 'halted_stranded_recovery' } }
+    : continued(next);
+}
+
 export function admitSpawnExecution(ctx: RunTickCtx): RunTickCtx {
   return {
     ...ctx,
@@ -192,14 +207,6 @@ export async function blockRunForSpawnFailure(ctx: RunTickCtx): Promise<RunTickC
   return { ...ctx, spawnFailureBlocked: blocked };
 }
 
-export async function casCanonicalTaskOpenToInProgress(ctx: RunTickCtx): Promise<void> {
-  if (!ctx.spawned) return;
-  await ctx.deps.casCanonicalTaskOpenToInProgress(
-    ctx.context!.meta.spaceId,
-    ctx.spawn!.canonicalTask
-  );
-}
-
 export function finalizeTick(_ctx: RunTickCtx): TickResult {
   return { reason: { action: 'ran_to_completion' } };
 }
@@ -227,11 +234,12 @@ const runTickRun = (
   .pipe(settleIfComplete, 'ctx', 'result:tickOutcome')
   .pipe(drainPendingNodeHandoffs, 'ctx', 'result:tickOutcome')
   .pipe(promotePendingExecutionsWithLiveSessions, 'ctx', 'ctx')
+  .pipe(ensureCanonicalTaskInProgress, 'ctx', 'result:tickOutcome')
   .pipe(admitSpawnExecution, 'ctx', 'ctx')
   .pipe(spawnPendingExecutions, 'ctx', 'ctx')
   .pipe(blockRunForSpawnFailure, 'ctx', 'ctx')
   .pipe('!spawnFailureBlocksRun', 'ctx')
-  .pipe(casCanonicalTaskOpenToInProgress, 'ctx')
+  .pipe(ensureCanonicalTaskInProgress, 'ctx', 'result:tickOutcome')
   .pipe(finalizeTick, 'ctx', 'result:tickOutcome')
   .endAsync('tickOutcome') as (input: RunTickCtx) => Promise<SpaceWorkflowRunTickOutcome>;
 
