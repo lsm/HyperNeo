@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { MessageHub, Session } from '@hyperneo/shared';
+import type { Session } from '@hyperneo/shared';
 import type { Database } from '../../../src/storage/database';
-import type { DaemonHub } from '../../../tests/helpers/daemon-hub';
+import type { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import { MessagePersistence } from '../../../src/lib/session/message-persistence';
 import { ReferenceResolver } from '../../../src/lib/session/reference-resolver';
@@ -221,8 +221,6 @@ describe('ReferenceResolver.resolveAllReferences', () => {
 describe('MessagePersistence with ReferenceResolver', () => {
   let mockSessionCache: SessionCache;
   let mockDb: Database;
-  let mockMessageHub: MessageHub;
-  let mockDaemonHub: DaemonHub;
   const mockInternalEventBus = {
     publish: mock(async () => {}),
     publishAsync: mock(() => {}),
@@ -233,9 +231,10 @@ describe('MessagePersistence with ReferenceResolver', () => {
     getSessionData: ReturnType<typeof mock>;
     getProcessingState: ReturnType<typeof mock>;
     startQueryAndEnqueue: ReturnType<typeof mock>;
+    stateManager: { setQueuedIfIdle: ReturnType<typeof mock> };
   };
-  let saveUserMessageSpy: ReturnType<typeof mock>;
-  let daemonHubEmitSpy: ReturnType<typeof mock>;
+  let enqueueUniquePendingSpy: ReturnType<typeof mock>;
+  let mockJobQueue: JobQueueRepository;
 
   beforeEach(() => {
     mockSession = makeSession({
@@ -246,36 +245,29 @@ describe('MessagePersistence with ReferenceResolver', () => {
       getSessionData: mock(() => mockSession),
       getProcessingState: mock(() => ({ status: 'idle' })),
       startQueryAndEnqueue: mock(async () => {}),
+      stateManager: { setQueuedIfIdle: mock(async () => true) },
     };
 
     mockSessionCache = {
       getAsync: mock(async () => mockAgentSession),
     } as unknown as SessionCache;
 
-    saveUserMessageSpy = mock(() => 'db-msg-1');
     mockDb = {
-      saveUserMessage: saveUserMessageSpy,
+      getSession: mock(() => ({ ...mockSession, status: 'active' })),
     } as unknown as Database;
 
-    mockMessageHub = {
-      event: mock(async () => {}),
-      onRequest: mock((_method: string, _handler: Function) => () => {}),
-      query: mock(async () => ({})),
-      command: mock(async () => {}),
-    } as unknown as MessageHub;
-
-    daemonHubEmitSpy = mock(async () => {});
-    mockDaemonHub = {
-      emit: daemonHubEmitSpy,
-    } as unknown as DaemonHub;
+    enqueueUniquePendingSpy = mock(() => 'mailbox-job-1');
+    mockJobQueue = {
+      enqueueUniquePending: enqueueUniquePendingSpy,
+    } as unknown as JobQueueRepository;
   });
 
   it('persists without referenceMetadata when no resolver is provided', async () => {
     const persistence = new MessagePersistence(
       mockSessionCache,
       mockDb,
-      mockMessageHub,
-      mockInternalEventBus
+      mockInternalEventBus,
+      mockJobQueue
     );
 
     await persistence.persist({
@@ -284,11 +276,8 @@ describe('MessagePersistence with ReferenceResolver', () => {
       content: 'hello @ref{task:t-1}',
     });
 
-    expect(saveUserMessageSpy).toHaveBeenCalledWith(
-      'test-session-id',
-      expect.not.objectContaining({ referenceMetadata: expect.anything() }),
-      'enqueued',
-      undefined
+    expect(enqueueUniquePendingSpy.mock.calls[0]?.[0]?.payload.message).toEqual(
+      expect.not.objectContaining({ referenceMetadata: expect.anything() })
     );
   });
 
@@ -307,8 +296,8 @@ describe('MessagePersistence with ReferenceResolver', () => {
     const persistence = new MessagePersistence(
       mockSessionCache,
       mockDb,
-      mockMessageHub,
       mockInternalEventBus,
+      mockJobQueue,
       resolver
     );
 
@@ -318,11 +307,8 @@ describe('MessagePersistence with ReferenceResolver', () => {
       content: 'plain text, no references',
     });
 
-    expect(saveUserMessageSpy).toHaveBeenCalledWith(
-      'test-session-id',
-      expect.not.objectContaining({ referenceMetadata: expect.anything() }),
-      'enqueued',
-      undefined
+    expect(enqueueUniquePendingSpy.mock.calls[0]?.[0]?.payload.message).toEqual(
+      expect.not.objectContaining({ referenceMetadata: expect.anything() })
     );
   });
 
@@ -355,8 +341,8 @@ describe('MessagePersistence with ReferenceResolver', () => {
     const persistence = new MessagePersistence(
       mockSessionCache,
       mockDb,
-      mockMessageHub,
       mockInternalEventBus,
+      mockJobQueue,
       resolver
     );
 
@@ -366,15 +352,12 @@ describe('MessagePersistence with ReferenceResolver', () => {
       content: 'Check @ref{task:t-1} please',
     });
 
-    expect(saveUserMessageSpy).toHaveBeenCalledWith(
-      'test-session-id',
+    expect(enqueueUniquePendingSpy.mock.calls[0]?.[0]?.payload.message).toEqual(
       expect.objectContaining({
         referenceMetadata: {
           '@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Task one' },
         },
-      }),
-      'enqueued',
-      undefined
+      })
     );
   });
 
@@ -393,8 +376,8 @@ describe('MessagePersistence with ReferenceResolver', () => {
     const persistence = new MessagePersistence(
       mockSessionCache,
       mockDb,
-      mockMessageHub,
       mockInternalEventBus,
+      mockJobQueue,
       resolver
     );
 
@@ -404,8 +387,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
       content: 'See @ref{task:t-999} which does not exist',
     });
 
-    expect(saveUserMessageSpy).toHaveBeenCalledWith(
-      'test-session-id',
+    expect(enqueueUniquePendingSpy.mock.calls[0]?.[0]?.payload.message).toEqual(
       expect.objectContaining({
         referenceMetadata: {
           '@ref{task:t-999}': {
@@ -415,9 +397,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
             status: 'unresolved',
           },
         },
-      }),
-      'enqueued',
-      undefined
+      })
     );
   });
 
@@ -440,8 +420,8 @@ describe('MessagePersistence with ReferenceResolver', () => {
     const persistence = new MessagePersistence(
       mockSessionCache,
       mockDb,
-      mockMessageHub,
       mockInternalEventBus,
+      mockJobQueue,
       badResolver
     );
 
@@ -451,11 +431,8 @@ describe('MessagePersistence with ReferenceResolver', () => {
       content: 'See @ref{task:t-1}',
     });
 
-    expect(saveUserMessageSpy).toHaveBeenCalledWith(
-      'test-session-id',
-      expect.objectContaining({ uuid: 'msg-5', type: 'user' }),
-      'enqueued',
-      undefined
+    expect(enqueueUniquePendingSpy.mock.calls[0]?.[0]?.payload).toEqual(
+      expect.objectContaining({ messageUuid: 'msg-5' })
     );
   });
 
@@ -488,8 +465,8 @@ describe('MessagePersistence with ReferenceResolver', () => {
     const persistence = new MessagePersistence(
       mockSessionCache,
       mockDb,
-      mockMessageHub,
       mockInternalEventBus,
+      mockJobQueue,
       resolver
     );
 
@@ -499,8 +476,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
       content: 'See @ref{task:t-1} and @ref{task:t-999}',
     });
 
-    expect(saveUserMessageSpy).toHaveBeenCalledWith(
-      'test-session-id',
+    expect(enqueueUniquePendingSpy.mock.calls[0]?.[0]?.payload.message).toEqual(
       expect.objectContaining({
         referenceMetadata: {
           '@ref{task:t-1}': { type: 'task', id: 't-1', displayText: 'Task one' },
@@ -511,9 +487,7 @@ describe('MessagePersistence with ReferenceResolver', () => {
             status: 'unresolved',
           },
         },
-      }),
-      'enqueued',
-      undefined
+      })
     );
   });
 });

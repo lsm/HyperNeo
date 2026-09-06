@@ -401,6 +401,7 @@ describe('AgentSession task-notification requery (incident replay)', () => {
       getJobQueueRepo: mock(() => ({
         activeDeliveryMessageUuids: () => activeDeliveryUuids,
         cancelForSessionWithMessages: () => [],
+        cancelMailboxForSession: () => [],
         cancelDelivery: () => {},
       })),
       getNodeExecutionRepo: mock(() => ({

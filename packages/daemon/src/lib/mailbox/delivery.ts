@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { MessageOrigin, ReferenceMetadata } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor.ts';
-import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
@@ -13,6 +13,11 @@ import {
   retryPrompt,
 } from '../agent/message-delivery-outbox.ts';
 import { parseMailboxEntry } from './entry.ts';
+import {
+  createMailboxDeadHandler,
+  type MailboxFailureDeps,
+  materializeMailboxFailure,
+} from './failure.ts';
 import { type MailboxSettlement, settleMailboxEntry } from './settlement.ts';
 import { decodeUlidTimestamp } from './ulid.ts';
 
@@ -25,14 +30,13 @@ export interface MailboxDeliveryDeps {
   getSession(sessionId: string): Promise<object | null>;
   isSessionArchived(sessionId: string): boolean;
   publishStatusChanged?(sessionId: string, dbId: string, status: 'enqueued'): void | Promise<void>;
+  publishFailed?(sessionId: string, dbMessageId: string): Promise<void>;
+  publishDeferredStatus?(sessionId: string, dbMessageId: string): Promise<void>;
+  scheduleDeferredReplay?(sessionId: string): void | Promise<void>;
 }
 
-export function createMailboxDeadHandler(logError: (message: string) => void) {
-  return (job: Job): void => {
-    const entryId = typeof job.payload.id === 'string' ? job.payload.id : 'unknown';
-    logError(`mailbox: entry ${entryId} dead-lettered: ${job.error ?? 'unknown error'}`);
-  };
-}
+export type { MailboxFailureDeps };
+export { createMailboxDeadHandler, materializeMailboxFailure };
 
 const MAILBOX_MESSAGE_UUID_PREFIX = 'mbox-';
 
@@ -110,7 +114,9 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       sessionId: target,
       message,
       ...(synthetic ? { origin: 'system' as MessageOrigin } : {}),
-      ...(entry.deliveryMode === 'defer' ? { hold: 'manual' as PromptHold } : {}),
+      ...(entry.deliveryMode === 'defer'
+        ? { hold: 'manual' as PromptHold, materializeOnly: true }
+        : {}),
       delivery: { origin: mapOrigin(entry.origin), parentToolUseId: null },
       db: deps.db,
       sdkMessageRepo: deps.sdkMessageRepo,
@@ -128,6 +134,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         db: deps.db,
         sdkMessageRepo: deps.sdkMessageRepo,
         jobQueue: deps.jobQueue,
+        claimValid: () => deps.jobQueue.isClaimCurrent(job.id, job.claimToken),
       });
       if (retried) publish(retried.dbId);
     } else if (existing?.sendStatus === 'deferred' && entry.deliveryMode !== 'defer') {
@@ -137,8 +144,25 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         sessionId: target,
         messageUuids: [messageUuid],
         origin: mapOrigin(entry.origin),
+        claimValid: () => deps.jobQueue.isClaimCurrent(job.id, job.claimToken),
       });
       if (activated[0]) publish(activated[0].dbId);
+    }
+    if (entry.deliveryMode === 'defer' && deps.publishDeferredStatus) {
+      const deferredDbId = deps.sdkMessageRepo.findMessageIdByUuid(target, messageUuid);
+      if (deferredDbId !== null) {
+        await deps.publishDeferredStatus(target, deferredDbId);
+      }
+    }
+    if (deps.isSessionArchived(target)) {
+      const failedId = deps.sdkMessageRepo.markDeliveryFailedByUuid(target, messageUuid);
+      if (failedId !== null) {
+        await deps.publishFailed?.(target, failedId);
+      }
+      throw new DeadLetterImmediatelyError('mailbox: target session archived');
+    }
+    if (entry.deliveryMode === 'defer' && deps.scheduleDeferredReplay) {
+      await deps.scheduleDeferredReplay(target);
     }
     return { ...settleMailboxEntry(entry, 'delivered', Date.now()) };
   };

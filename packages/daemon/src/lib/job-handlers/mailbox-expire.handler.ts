@@ -13,8 +13,11 @@ export function mailboxExpireScheduleStage(jobQueue: JobQueueRepository, nextRun
   enqueueMailboxExpireIfMissing(jobQueue, nextRunAt);
 }
 
-export function mailboxExpireSweepStage(jobQueue: JobQueueRepository): Promise<number> {
-  return expireMailboxEntries({ jobQueue });
+export function mailboxExpireSweepStage(
+  jobQueue: JobQueueRepository,
+  onExpired?: (job: Job) => void
+): Promise<number> {
+  return expireMailboxEntries({ jobQueue, onExpired });
 }
 
 export function mailboxExpireResultStage(
@@ -25,17 +28,21 @@ export function mailboxExpireResultStage(
 }
 
 const runMailboxExpire = (superpipe()('mailbox-expire') as PipelineAPI)
-  .input(['jobQueue'])
+  .input(['jobQueue', 'onExpired'])
   .pipe(mailboxExpireNextRunStage, 'jobQueue', 'nextRunAt')
   .pipe(mailboxExpireScheduleStage, ['jobQueue', 'nextRunAt'])
-  .pipe(mailboxExpireSweepStage, 'jobQueue', 'expired')
+  .pipe(mailboxExpireSweepStage, ['jobQueue', 'onExpired'], 'expired')
   .pipe(mailboxExpireResultStage, ['expired', 'nextRunAt'], 'result')
   .endAsync('result') as (
-  jobQueue: JobQueueRepository
+  jobQueue: JobQueueRepository,
+  onExpired?: (job: Job) => void
 ) => Promise<{ expired: number; nextRunAt: number }>;
 
-export function createMailboxExpireHandler(jobQueue: JobQueueRepository) {
-  return (_job: Job) => runMailboxExpire(jobQueue);
+export function createMailboxExpireHandler(
+  jobQueue: JobQueueRepository,
+  onExpired?: (job: Job) => void
+) {
+  return (_job: Job) => runMailboxExpire(jobQueue, onExpired);
 }
 
 export function enqueueMailboxExpireIfMissing(

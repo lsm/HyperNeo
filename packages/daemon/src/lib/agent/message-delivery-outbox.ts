@@ -3,18 +3,18 @@ import { generateUUID } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { withBusyRetry } from '../../storage/busy-retry.ts';
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import {
+  decideMessageAdmission,
+  type MessageAdmissionRecord,
+  normalizeMessageAdmissionInput,
+} from '../../storage/repositories/sdk-message-admission.ts';
 import type {
   SDKMessageRepository,
   SendStatus,
 } from '../../storage/repositories/sdk-message-repository.ts';
-import {
-  decideMessageAdmission,
-  normalizeMessageAdmissionInput,
-  type MessageAdmissionRecord,
-} from '../../storage/repositories/sdk-message-admission.ts';
 import { extractSdkUuid } from '../../storage/repositories/sdk-message-repository.ts';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import { MESSAGE_DELIVERY } from '../job-queue-constants.ts';
 import {
   MESSAGE_DELIVERY_MAX_RETRIES,
@@ -44,6 +44,7 @@ export interface PersistPromptArgs extends PromptInput {
   db: BunDatabase;
   sdkMessageRepo: SDKMessageRepository;
   jobQueue: JobQueueRepository;
+  materializeOnly?: boolean;
 }
 
 export interface PersistPromptResult {
@@ -85,6 +86,7 @@ export interface ActivatePromptsArgs {
   origin: MessageDeliveryOrigin;
   parentToolUseId?: string | null;
   publishStatusChanged?: OutboxStatusPublisher;
+  claimValid?: () => boolean;
 }
 
 export interface ActivatedPromptEntry {
@@ -107,6 +109,7 @@ export interface RetryPromptArgs {
   parentToolUseId?: string | null;
   injectedMidTurn?: boolean;
   publishStatusChanged?: OutboxStatusPublisher;
+  claimValid?: () => boolean;
 }
 
 export interface RetryPromptResult {
@@ -680,6 +683,9 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
       }
       const ensureStatus = fresh.sendStatus;
       const released = ensureStatus !== 'deferred';
+      if (ctx.materializeOnly === true) {
+        return { dbId: fresh.dbId, activated: false, released, countsTowardsBadge: false };
+      }
       if (
         !ENSURABLE_PROMPT_STATUSES.includes(ensureStatus) ||
         hasSettledUuidSibling(ctx.db, ctx.sessionId, ctx.messageUuid)
@@ -737,20 +743,22 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
       ctx.origin,
       admission
     );
-    enqueueDeliveryJob(
-      ctx.jobQueue,
-      buildReleasedPayload({
-        sessionId: ctx.sessionId,
-        messageUuid: ctx.messageUuid,
-        origin: ctx.delivery.origin,
-        parentToolUseId: ctx.delivery.parentToolUseId,
-        released: ctx.ensureStatus !== 'deferred',
-        injectedMidTurn: ctx.delivery.injectedMidTurn,
-      })
-    );
+    if (ctx.materializeOnly !== true) {
+      enqueueDeliveryJob(
+        ctx.jobQueue,
+        buildReleasedPayload({
+          sessionId: ctx.sessionId,
+          messageUuid: ctx.messageUuid,
+          origin: ctx.delivery.origin,
+          parentToolUseId: ctx.delivery.parentToolUseId,
+          released: ctx.ensureStatus !== 'deferred',
+          injectedMidTurn: ctx.delivery.injectedMidTurn,
+        })
+      );
+    }
     return {
       dbId: core.id,
-      activated: true,
+      activated: ctx.materializeOnly !== true,
       released: ctx.ensureStatus !== 'deferred',
       countsTowardsBadge: core.countsTowardsBadge,
     };
@@ -816,6 +824,7 @@ function normalizeActivateUuids(ctx: ActivatePromptsArgs): ActivatePromptsCtx {
 function commitActivatePrompts(ctx: ActivatePromptsCtx): ActivatePromptsCommittedCtx {
   const activated: ActivatedPromptEntry[] = [];
   const txn = ctx.db.transaction(() => {
+    if (ctx.claimValid?.() === false) return;
     const rowByIdStmt = ctx.db.prepare(ACTIVATE_PROMPT_ROW_BY_ID_SQL);
     const rowByUuidStmt = ctx.db.prepare(ACTIVATE_PROMPT_ROW_BY_UUID_SQL);
     ctx.uuids.forEach((messageUuid, index) => {
@@ -880,6 +889,7 @@ function validateRetryPromptUuid(ctx: RetryPromptArgs): RetryPromptCtx {
 function commitRetryPrompt(ctx: RetryPromptCtx): RetryPromptCtx {
   const retried = withBusyRetry(() =>
     ctx.db.transaction(() => {
+      if (ctx.claimValid?.() === false) return null;
       const rows = (
         ctx.dbId !== undefined
           ? ctx.db

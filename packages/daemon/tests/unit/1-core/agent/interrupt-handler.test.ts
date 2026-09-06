@@ -1,16 +1,16 @@
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import type { MessageHub, Session } from '@hyperneo/shared';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   InterruptHandler,
   type InterruptHandlerContext,
 } from '../../../../src/lib/agent/interrupt-handler';
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import type { Session, MessageHub } from '@hyperneo/shared';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
-import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import {
   MESSAGE_DELIVERY,
   MESSAGE_DELIVERY_MAX_RETRIES,
 } from '../../../../src/lib/agent/message-delivery';
+import { MessageQueue } from '../../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../../src/lib/agent/processing-state-manager';
 import type { Logger } from '../../../../src/lib/logger';
 import { createTestDb, createTestSession } from '../../../helpers/database';
@@ -110,7 +110,10 @@ describe('InterruptHandler', () => {
     cancelForSessionSpy = mock(() => [] as string[]);
     markFailedSpy = mock(() => null);
     mockDb = {
-      getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
+      getJobQueueRepo: mock(() => ({
+        cancelForSessionWithMessages: cancelForSessionSpy,
+        cancelMailboxForSession: mock(() => []),
+      })),
       getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
       getUserMessageIdsByStatus: mock(() => []),
       notifyChange: mock(() => {}),
@@ -285,6 +288,16 @@ describe('InterruptHandler', () => {
       expect(busPublishSpy).not.toHaveBeenCalledWith('messages.statusChanged', expect.anything());
     });
 
+    it('suppresses deferred replay even when delivery jobs are preserved', async () => {
+      const suppressDeferredReplay = mock(() => {});
+      handler = createHandler({ suppressDeferredReplay });
+
+      await handler.handleInterrupt({ preserveDeliveryJobs: true, skipDeferredReplay: true });
+
+      expect(suppressDeferredReplay).toHaveBeenCalledWith('test-session-id');
+      expect(cancelForSessionSpy).not.toHaveBeenCalled();
+    });
+
     it('should clear message queue if has pending messages', async () => {
       queueSizeSpy.mockReturnValue(5);
       handler = createHandler();
@@ -316,7 +329,10 @@ describe('InterruptHandler', () => {
     it('cancels ALL durable deliveries before anything else (#3743968030/#3744105273)', async () => {
       cancelForSessionSpy = mock(() => ['turn-uuid', 'steer-uuid']);
       mockDb = {
-        getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
+        getJobQueueRepo: mock(() => ({
+          cancelForSessionWithMessages: cancelForSessionSpy,
+          cancelMailboxForSession: mock(() => []),
+        })),
         getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
       } as unknown as InterruptHandlerContext['db'];
       const callOrder: string[] = [];
@@ -341,7 +357,10 @@ describe('InterruptHandler', () => {
       const notifySpy = mock(() => {});
       cancelForSessionSpy = mock(() => ['turn-uuid']);
       mockDb = {
-        getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
+        getJobQueueRepo: mock(() => ({
+          cancelForSessionWithMessages: cancelForSessionSpy,
+          cancelMailboxForSession: mock(() => []),
+        })),
         getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
         notifyChange: notifySpy,
       } as unknown as InterruptHandlerContext['db'];
@@ -357,7 +376,10 @@ describe('InterruptHandler', () => {
       getStateSpy.mockReturnValue({ status: 'idle', phase: 'idle' });
       cancelForSessionSpy = mock(() => ['pre-claim-uuid']);
       mockDb = {
-        getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
+        getJobQueueRepo: mock(() => ({
+          cancelForSessionWithMessages: cancelForSessionSpy,
+          cancelMailboxForSession: mock(() => []),
+        })),
         getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
       } as unknown as InterruptHandlerContext['db'];
       handler = createHandler({ db: mockDb });
@@ -375,7 +397,10 @@ describe('InterruptHandler', () => {
         status === 'enqueued' ? [orphan] : []
       );
       mockDb = {
-        getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
+        getJobQueueRepo: mock(() => ({
+          cancelForSessionWithMessages: cancelForSessionSpy,
+          cancelMailboxForSession: mock(() => []),
+        })),
         getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
         getUserMessageIdsByStatus: getUserMessageIdsByStatusSpy,
       } as unknown as InterruptHandlerContext['db'];

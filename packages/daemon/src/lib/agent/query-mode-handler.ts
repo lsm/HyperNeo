@@ -4,6 +4,7 @@ import { isSDKUserMessage } from '@hyperneo/shared/sdk/type-guards';
 import type { Database } from '../../storage/database.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
+import { emitStructuredLogEvent } from '../logger.ts';
 import {
   DETERMINISTIC_DIGEST_UUID_PREFIX,
   type RenderPendingDigestOutcome,
@@ -381,9 +382,34 @@ export class QueryModeHandler {
   }
 
   async replayPendingMessagesForAutomaticTurnEnd(): Promise<boolean> {
-    if (this.ctx.session.config.queryMode === 'manual') return true;
-    if (this.ctx.stateManager?.getState().status === 'waiting_for_input') return true;
-    return this.replayPendingMessagesForImmediateMode();
+    const replayStatus = this.ctx.stateManager?.getState().status ?? 'unknown';
+    if (this.ctx.session.config.queryMode === 'manual') {
+      this.emitReplayTrace('skipped_manual', replayStatus);
+      return true;
+    }
+    if (this.ctx.stateManager?.getState().status === 'waiting_for_input') {
+      this.emitReplayTrace('skipped_waiting_for_input', replayStatus);
+      return true;
+    }
+    const outcome = await this.replayPendingMessagesForImmediateMode();
+    this.emitReplayTrace('completed', replayStatus, { outcome: outcome ? 1 : 0 });
+    return outcome;
+  }
+
+  private emitReplayTrace(
+    event: string,
+    status: string,
+    extra: Record<string, string | number | boolean | null> = {}
+  ): void {
+    try {
+      emitStructuredLogEvent({
+        level: 'info',
+        args: ['query_mode.replay'],
+        source: 'logger',
+        module: 'hyperneo:daemon:query-mode:replay',
+        metadata: { event, sessionId: this.ctx.session.id, status, ...extra },
+      });
+    } catch {}
   }
 
   async replayPendingMessagesForImmediateMode(): Promise<boolean> {

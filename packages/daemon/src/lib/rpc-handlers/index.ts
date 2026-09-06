@@ -948,14 +948,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     new SpaceAgentTemplateManager(spaceAgentTemplateRepo)
   );
 
-  setupSessionHandlers(
-    deps.messageHub,
-    deps.sessionManager,
-    deps.internalEventBus,
-    deps.spaceManager,
-    spaceRuntimeService
-  );
-
   setupSpaceTaskHandlers(
     deps.messageHub,
     deps.spaceManager,
@@ -1121,6 +1113,23 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     artifactProfile,
   });
 
+  const sessionResolutionDeps = createDefaultSessionResolutionDeps({
+    sessionManager: deps.sessionManager,
+    taskAgentManager,
+    spaceRuntimeService,
+    nodeExecutionRepo,
+    taskRepo: spaceTaskRepo,
+    longHorizonAgentRepo,
+  });
+  setupSessionHandlers(
+    deps.messageHub,
+    deps.sessionManager,
+    deps.internalEventBus,
+    deps.spaceManager,
+    spaceRuntimeService,
+    { ensureSession: (target) => ensureSession(target, sessionResolutionDeps) }
+  );
+
   deps.commandBus.register('agent.message.inject', async (command) => {
     if (!taskAgentManager) {
       return { ok: false, error: 'TaskAgentManager unavailable' };
@@ -1144,14 +1153,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   deps.sessionManager.setSpaceRuntimeMcpProvider(spaceRuntimeService);
   spaceRuntimeService.start();
 
-  const sessionResolutionDeps = createDefaultSessionResolutionDeps({
-    sessionManager: deps.sessionManager,
-    taskAgentManager,
-    spaceRuntimeService,
-    nodeExecutionRepo,
-    taskRepo: spaceTaskRepo,
-    longHorizonAgentRepo,
-  });
   setupSpaceTaskMessageHandlers(
     deps.messageHub,
     taskAgentManager,

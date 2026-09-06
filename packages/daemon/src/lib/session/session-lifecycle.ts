@@ -9,6 +9,7 @@ import type { SessionCache, AgentSessionFactory } from './session-cache.ts';
 import type { ToolsConfigManager } from './tools-config.ts';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service.ts';
 import { archiveSDKSessionFiles, deleteSDKSessionFiles } from '../sdk-session-file-manager.ts';
+import { materializeMailboxFailuresForSession } from '../mailbox/cancellation.ts';
 import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
 import { withSdkTranscriptRetention } from '../agent/sdk-transcript-retention.ts';
 import { KimiProvider } from '../providers/kimi-provider.js';
@@ -536,8 +537,16 @@ export class SessionLifecycle {
 
     try {
       const failedDbIds: string[] = [];
-      const messageUuids =
-        this.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(sessionId) ?? [];
+      materializeMailboxFailuresForSession(sessionId, {
+        db: this.db,
+        internalEventBus: this.internalEventBus,
+        settleSkipped: (sid, messageUuid) =>
+          (this.sessionCache.has(sid) ? this.sessionCache.get(sid) : null)?.settleSkippedDelivery(
+            messageUuid
+          ) ?? Promise.resolve(),
+      });
+      const jobQueue = this.db.getJobQueueRepo?.();
+      const messageUuids = jobQueue?.cancelForSessionWithMessages(sessionId) ?? [];
       const sdkRepo = this.db.getSDKMessageRepo?.();
       for (const messageUuid of messageUuids) {
         const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid) ?? null;
@@ -667,8 +676,16 @@ export class SessionLifecycle {
       }
       try {
         const failedDbIds: string[] = [];
-        const messageUuids =
-          this.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(sessionId) ?? [];
+        materializeMailboxFailuresForSession(sessionId, {
+          db: this.db,
+          internalEventBus: this.internalEventBus,
+          settleSkipped: (sid, messageUuid) =>
+            (this.sessionCache.has(sid) ? this.sessionCache.get(sid) : null)?.settleSkippedDelivery(
+              messageUuid
+            ) ?? Promise.resolve(),
+        });
+        const jobQueue = this.db.getJobQueueRepo?.();
+        const messageUuids = jobQueue?.cancelForSessionWithMessages(sessionId) ?? [];
         const sdkRepo = this.db.getSDKMessageRepo?.();
         for (const messageUuid of messageUuids) {
           const failedDbId = sdkRepo?.markDeliveryFailedByUuid(sessionId, messageUuid) ?? null;

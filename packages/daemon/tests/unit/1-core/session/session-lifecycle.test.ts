@@ -1121,7 +1121,10 @@ describe('SessionLifecycle', () => {
         return ['msg-uuid-1'];
       });
       const markFailedSpy = mock(() => null);
-      mockDb.getJobQueueRepo = mock(() => ({ cancelForSessionWithMessages: cancelSpy }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        cancelForSessionWithMessages: cancelSpy,
+        cancelMailboxForSession: mock(() => []),
+      }));
       mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid: markFailedSpy }));
       (mockDb.deleteSession as ReturnType<typeof mock>).mockImplementation(() => {
         order.push('db-delete');
@@ -1146,6 +1149,7 @@ describe('SessionLifecycle', () => {
       });
       mockDb.getJobQueueRepo = mock(() => ({
         cancelForSessionWithMessages: mock(() => ['msg-uuid-1', 'msg-uuid-2']),
+        cancelMailboxForSession: mock(() => []),
       }));
       mockDb.getSDKMessageRepo = mock(() => ({
         markDeliveryFailedByUuid: mock((_sessionId: string, uuid: string) => `db-${uuid}`),
@@ -1212,6 +1216,7 @@ describe('SessionLifecycle', () => {
       });
       mockDb.getJobQueueRepo = mock(() => ({
         cancelForSessionWithMessages: mock(() => ['msg-uuid-1', 'msg-uuid-2']),
+        cancelMailboxForSession: mock(() => []),
       }));
       mockDb.getSDKMessageRepo = mock(() => ({
         markDeliveryFailedByUuid: mock((_sessionId: string, uuid: string) => `db-${uuid}`),

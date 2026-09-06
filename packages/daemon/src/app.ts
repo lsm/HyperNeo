@@ -22,7 +22,8 @@ import {
   MessageHub,
   MessageHubRouter,
 } from '@hyperneo/shared';
-import type { ProviderRecord } from '@hyperneo/shared';
+import type { MessageOrigin, ProviderRecord } from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { Provider, ProviderCredentials } from '@hyperneo/shared/provider';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import {
@@ -91,6 +92,7 @@ import {
   createMailboxExpireHandler,
   enqueueMailboxExpireIfMissing,
 } from './lib/job-handlers/mailbox-expire.handler.ts';
+import { createMailboxDeferredReplayScheduler } from './lib/mailbox/deferred-replay-scheduler.ts';
 import { createSkillValidateHandler } from './lib/job-handlers/skill-validate.handler.ts';
 import {
   JOB_QUEUE_CLEANUP,
@@ -102,7 +104,11 @@ import {
   TASK_SCHEDULE_FIRE,
 } from './lib/job-queue-constants.ts';
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler.ts';
-import { createMailboxDeadHandler, createMailboxDeliveryHandler } from './lib/mailbox/delivery.ts';
+import {
+  createMailboxDeadHandler,
+  createMailboxDeliveryHandler,
+  materializeMailboxFailure,
+} from './lib/mailbox/delivery.ts';
 import { MAILBOX_LANE } from './lib/mailbox/enqueue.ts';
 import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter.ts';
 import { asMessageDeliveryPayload } from './lib/agent/message-delivery.ts';
@@ -950,7 +956,36 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       MEMORY_CONSOLIDATION,
       createMemoryConsolidationHandler(db.agentMemory, jobQueue)
     );
-    mailboxExpireProcessor.register(MAILBOX_EXPIRE_FIRE, createMailboxExpireHandler(jobQueue));
+    const mailboxDeferredReplayScheduler = createMailboxDeferredReplayScheduler({
+      internalEventBus,
+      sessionManager,
+    });
+    sessionManager?.setMailboxDeferredReplaySuppressor((sessionId) =>
+      mailboxDeferredReplayScheduler.cancel(sessionId)
+    );
+    const mailboxFailureDeps = {
+      sdkMessageRepo: db.getSDKMessageRepo(),
+      saveFailed: (sessionId: string, message: SDKUserMessage, origin?: MessageOrigin) =>
+        db.saveUserMessage(sessionId, message, 'failed', origin),
+      publishFailed: async (sessionId: string, dbMessageId: string) => {
+        await internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId,
+            messageIds: [dbMessageId],
+            status: 'failed',
+          })
+          .catch(() => {});
+      },
+      settleSkipped: (sessionId: string, messageUuid: string) =>
+        sessionManager?.getCachedSession(sessionId)?.settleSkippedDelivery(messageUuid) ??
+        Promise.resolve(),
+    };
+    mailboxExpireProcessor.register(
+      MAILBOX_EXPIRE_FIRE,
+      createMailboxExpireHandler(jobQueue, (job) =>
+        materializeMailboxFailure(job, mailboxFailureDeps)
+      )
+    );
     jobProcessor.register(
       MAILBOX_LANE,
       createMailboxDeliveryHandler({
@@ -990,10 +1025,31 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
             .publish('messages.statusChanged', { sessionId, messageIds: [dbId], status })
             .catch(() => {});
         },
+        scheduleDeferredReplay: (sessionId: string) => {
+          mailboxDeferredReplayScheduler.schedule(sessionId);
+        },
+        publishDeferredStatus: async (sessionId: string, dbMessageId: string) => {
+          await internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId,
+              messageIds: [dbMessageId],
+              status: 'deferred',
+            })
+            .catch(() => {});
+        },
+        publishFailed: async (sessionId: string, dbMessageId: string) => {
+          await internalEventBus
+            .publish('messages.statusChanged', {
+              sessionId,
+              messageIds: [dbMessageId],
+              status: 'failed',
+            })
+            .catch(() => {});
+        },
       }),
       {
         dequeueMode: { kind: 'session-fifo', sessionIdPath: '$.to.sessionId' },
-        onDead: createMailboxDeadHandler(logError),
+        onDead: createMailboxDeadHandler(logError, mailboxFailureDeps),
       }
     );
 

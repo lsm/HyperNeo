@@ -1,19 +1,19 @@
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
-import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
-import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
 import {
   activatePrompts,
   ensurePrompt,
+  PromptContentConflictError,
   persistAndEnqueueDelivery,
   persistPrompt,
-  PromptContentConflictError,
   retryPrompt,
   verifyPromptContent,
 } from '../../../../src/lib/agent/message-delivery-outbox';
+import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import type { JobQueueRepository as JobQueueRepoType } from '../../../../src/storage/repositories/job-queue-repository';
-import type { SDKMessage } from '@hyperneo/shared/sdk';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
 
 const SESSION = 'sess-outbox';
 
@@ -627,6 +627,36 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       expect(publishes).toEqual([{ ids: activated.map((entry) => entry.dbId), jobsAtPublish: 3 }]);
     });
 
+    it('activatePrompts gates activation on the caller-supplied claim fence', async () => {
+      insertStatusRow('act-fenced', 'deferred');
+
+      const denied = await activatePrompts({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuids: ['act-fenced'],
+        origin: 'recovery',
+        claimValid: () => false,
+      });
+
+      expect(denied.activated).toEqual([]);
+      expect(rowStatus('act-fenced')).toBe('deferred');
+      expect(jobsFor('act-fenced')).toHaveLength(0);
+
+      const { activated } = await activatePrompts({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuids: ['act-fenced'],
+        origin: 'recovery',
+        claimValid: () => true,
+      });
+
+      expect(activated.map((entry) => entry.messageUuid)).toEqual(['act-fenced']);
+      expect(rowStatus('act-fenced')).toBe('enqueued');
+      expect(jobsFor('act-fenced')).toHaveLength(1);
+    });
+
     it('activatePrompts releases a held job in place instead of inserting a second one', async () => {
       insertStatusRow('held-1', 'deferred');
       jobQueue.enqueue({
@@ -778,6 +808,36 @@ describe('transactional outbox (persistAndEnqueueDelivery)', () => {
       expect(jobs[0].status).toBe('pending');
       expect(jobs[0].released).toBe(1);
       expect(publishedIds).toEqual([retried?.dbId]);
+    });
+
+    it('retryPrompt gates the reopen on the caller-supplied claim fence', async () => {
+      insertStatusRow('retry-fenced', 'failed');
+
+      const denied = await retryPrompt({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuid: 'retry-fenced',
+        origin: 'chat',
+        claimValid: () => false,
+      });
+
+      expect(denied).toBeNull();
+      expect(rowStatus('retry-fenced')).toBe('failed');
+      expect(jobsFor('retry-fenced')).toHaveLength(0);
+
+      const retried = await retryPrompt({
+        db: db as never,
+        jobQueue,
+        sessionId: SESSION,
+        messageUuid: 'retry-fenced',
+        origin: 'chat',
+        claimValid: () => true,
+      });
+
+      expect(retried?.dbId).toBeTruthy();
+      expect(rowStatus('retry-fenced')).toBe('enqueued');
+      expect(jobsFor('retry-fenced')).toHaveLength(1);
     });
 
     it('retryPrompt re-pends the SAME dead job with a fresh retry budget', async () => {

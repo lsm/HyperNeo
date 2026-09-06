@@ -1,4 +1,4 @@
-import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
+import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import { MAILBOX_LANE } from './enqueue.ts';
 import { parseMailboxEntry } from './entry.ts';
 import { decodeUlidTimestamp } from './ulid.ts';
@@ -7,6 +7,7 @@ export const MAILBOX_SCAN_PAGE_SIZE = 1000;
 
 export async function expireMailboxEntries(deps: {
   jobQueue: JobQueueRepository;
+  onExpired?: (job: Job) => void;
   now?: number;
 }): Promise<number> {
   const now = deps.now ?? Date.now();
@@ -27,8 +28,10 @@ export async function expireMailboxEntries(deps: {
       const entry = parseMailboxEntry(job.payload);
       if (entry === null) continue;
       if (now - decodeUlidTimestamp(entry.id) > entry.policy.ttlMs) {
-        if (deps.jobQueue.markDeadIfActive(job.id, 'mailbox: entry expired (ttl)') !== null) {
+        const dead = deps.jobQueue.markDeadIfActive(job.id, 'mailbox: entry expired (ttl)');
+        if (dead !== null) {
           expired += 1;
+          deps.onExpired?.(dead);
         }
       }
     }

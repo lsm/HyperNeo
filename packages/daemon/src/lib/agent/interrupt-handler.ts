@@ -1,12 +1,13 @@
-import type { Session, MessageHub } from '@hyperneo/shared';
-import type { QueryLike } from './query-like.ts';
+import type { MessageHub, Session } from '@hyperneo/shared';
+import type { Database } from '../../storage/database.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import type { Logger } from '../logger.ts';
+import { materializeMailboxFailuresForSession } from '../mailbox/cancellation.ts';
+import { withSessionLock } from './message-delivery.ts';
 import type { MessageQueue } from './message-queue.ts';
 import type { ProcessingStateManager } from './processing-state-manager.ts';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import type { Database } from '../../storage/database.ts';
 import type { QueryAttemptRegistry } from './query-attempt-token.ts';
-import { withSessionLock } from './message-delivery.ts';
+import type { QueryLike } from './query-like.ts';
 
 const DEFAULT_INTERRUPT_CONTROL_TIMEOUT_MS = 2000;
 const INTERRUPT_CONTROL_TIMED_OUT = 'interrupt-control-timed-out';
@@ -39,6 +40,7 @@ export interface InterruptHandlerContext {
   onInterruptRequested?(): void;
 
   attemptTokens?: QueryAttemptRegistry;
+  suppressDeferredReplay?(sessionId: string): void;
 }
 
 export class InterruptHandler {
@@ -78,11 +80,21 @@ export class InterruptHandler {
         this.ctx.attemptTokens?.invalidateCurrent();
       }
 
+      if (opts?.skipDeferredReplay === true) {
+        this.ctx.suppressDeferredReplay?.(session.id);
+      }
       if (!opts?.preserveDeliveryJobs) {
         const failedDbIds: string[] = [];
         await withSessionLock(session.id, async () => {
-          const messageUuids =
-            this.ctx.db.getJobQueueRepo?.()?.cancelForSessionWithMessages(session.id) ?? [];
+          materializeMailboxFailuresForSession(session.id, {
+            db: this.ctx.db,
+            internalEventBus: this.ctx.internalEventBus,
+            preserveDeferred: opts?.skipDeferredReplay !== true,
+            settleSkipped: (_sessionId, messageUuid) =>
+              stateManager.clearQueuedIfOwnedBy(messageUuid).then(() => {}),
+          });
+          const jobQueue = this.ctx.db.getJobQueueRepo?.();
+          const messageUuids = jobQueue?.cancelForSessionWithMessages(session.id) ?? [];
           const sdkRepo = this.ctx.db.getSDKMessageRepo?.();
           for (const messageUuid of messageUuids) {
             const failedDbId = sdkRepo?.markDeliveryFailedByUuid(session.id, messageUuid) ?? null;

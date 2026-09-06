@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import {
   createMailboxExpireHandler,
   enqueueMailboxExpireIfMissing,
@@ -28,11 +28,12 @@ const fakeJob = {
   claimToken: 'claim-1',
 } as Job;
 
-function expiredEntry(): MailboxEntry {
+function expiredEntry(messageUuid?: string): MailboxEntry {
   return {
     id: createUlid(Date.now() - 120_000),
     to: { kind: 'session', sessionId: 'sess-1' },
     origin: 'test',
+    ...(messageUuid ? { messageUuid } : {}),
     deliveryMode: 'immediate',
     message: {
       type: 'user',
@@ -94,6 +95,22 @@ describe('createMailboxExpireHandler', () => {
     expect(pending[0].runAt).toBeGreaterThanOrEqual(before + 60_000);
     expect(pending[0].runAt).toBeLessThanOrEqual(after + 60_000);
     expect(result.nextRunAt).toBe(pending[0].runAt);
+  });
+
+  test('reports each expired seeded entry through the failure callback', async () => {
+    const entry = expiredEntry('accepted-message');
+    const onExpired = mock(() => {});
+    enqueueMailboxEntry(mailbox.jobQueue, entry);
+
+    await createMailboxExpireHandler(mailbox.jobQueue, onExpired)(fakeJob);
+
+    expect(onExpired).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'dead',
+        error: 'mailbox: entry expired (ttl)',
+        payload: expect.objectContaining({ messageUuid: 'accepted-message' }),
+      })
+    );
   });
 });
 

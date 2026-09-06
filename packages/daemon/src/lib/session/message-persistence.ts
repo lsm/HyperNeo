@@ -2,7 +2,6 @@ import type {
   ImageContent,
   MessageContent,
   MessageDeliveryMode,
-  MessageHub,
   MessageImage,
   MessageOrigin,
   ReferenceMetadata,
@@ -10,9 +9,12 @@ import type {
 } from '@hyperneo/shared';
 import { composeDraftWhole } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import type { UUID } from 'crypto';
+import type { UUID } from 'node:crypto';
+import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { Database } from '../../storage/database.ts';
-import { persistAndEnqueueDelivery } from '../agent/message-delivery-outbox.ts';
+import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
+import { renderAddress } from '../mailbox/address.ts';
+import { handoffPromptToMailbox } from '../mailbox/handoff.ts';
 import {
   buildReferenceContext,
   prependContextToMessage,
@@ -52,6 +54,7 @@ export interface MessagePersistenceData {
   images?: MessageImageInput[];
   deliveryMode?: MessageDeliveryMode;
   origin?: MessageOrigin;
+  mailboxOrigin?: MessageDeliveryOrigin;
 }
 
 export class MessagePersistence {
@@ -60,8 +63,8 @@ export class MessagePersistence {
   constructor(
     private sessionCache: SessionCache,
     private db: Database,
-    private messageHub: MessageHub,
     private internalEventBus: InternalEventBus<DaemonInternalEventMap>,
+    private jobQueue: JobQueueRepository,
     private referenceResolver?: ReferenceResolver,
     private resolveSession?: (sessionId: string) => Promise<AgentSession | null>
   ) {
@@ -114,7 +117,14 @@ export class MessagePersistence {
   }
 
   async persist(data: MessagePersistenceData): Promise<void> {
-    const { sessionId, messageId, content, images, deliveryMode = 'immediate', origin } = data;
+    const {
+      sessionId,
+      messageId,
+      content,
+      images,
+      deliveryMode = 'immediate',
+      mailboxOrigin = 'chat',
+    } = data;
 
     const persistedSession = this.db.getSession?.(sessionId);
     if (persistedSession?.status === 'archived') {
@@ -193,70 +203,57 @@ export class MessagePersistence {
           ? 'deferred'
           : 'enqueued';
 
-      const jobQueueRepo = this.db.getJobQueueRepo?.();
-      const useOutbox = shouldDispatchToQuery && !!jobQueueRepo;
-      let dbMessageId: string;
-      if (useOutbox) {
-        if (this.db.getSession?.(sessionId)?.status === 'archived') {
-          dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, 'failed', origin);
-          await this.internalEventBus
-            .publish('messages.statusChanged', {
-              sessionId,
-              messageIds: [dbMessageId],
-              status: 'failed',
-            })
-            .catch(() => {});
-          throw new Error(`Session ${sessionId} is archived`);
-        }
-        const outbox = persistAndEnqueueDelivery({
-          db: this.db.getDatabase(),
-          sdkMessageRepo: this.db.getSDKMessageRepo(),
-          jobQueue: jobQueueRepo,
-          sessionId,
-          message: sdkUserMessage,
-          sendStatus,
-          origin,
-          delivery: { origin: 'chat' },
-        });
-        dbMessageId = outbox.dbMessageId;
-        await agentSession.stateManager.setQueuedIfIdle(messageId).catch(() => {});
-      } else {
-        dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, sendStatus, origin);
-      }
-
       if (this.db.getSession?.(sessionId)?.status === 'archived') {
-        const flipped = this.db
-          .getSDKMessageRepo?.()
-          ?.markDeliveryFailedByUuid?.(sessionId, messageId);
-        if (flipped) {
-          await this.internalEventBus
-            .publish('messages.statusChanged', {
-              sessionId,
-              messageIds: [flipped],
-              status: 'failed',
-            })
-            .catch(() => {});
-        }
+        const dbMessageId = this.db.saveUserMessage(
+          sessionId,
+          sdkUserMessage,
+          'failed',
+          data.origin
+        );
+        await this.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId,
+            messageIds: [dbMessageId],
+            status: 'failed',
+          })
+          .catch(() => {});
         throw new Error(`Session ${sessionId} is archived`);
       }
 
-      if (isManualMode) {
-        try {
-          this.messageHub.event(
-            'state.sdkMessages.delta',
-            { added: [sdkUserMessage], timestamp: Date.now() },
-            { channel: `session:${sessionId}` }
-          );
-        } catch (_err) {
-          /* v8 ignore next 2 */
-          this.logger.error('[MessagePersistence] Error publishing message to UI:', _err);
-        }
+      const handoff = await handoffPromptToMailbox({
+        to: renderAddress({ kind: 'session', sessionId }),
+        message: {
+          type: 'user',
+          parent_tool_use_id: null,
+          message: {
+            role: 'user',
+            content: sdkUserMessage.message.content,
+          },
+          ...(sdkUserMessage.referenceMetadata
+            ? { referenceMetadata: sdkUserMessage.referenceMetadata }
+            : {}),
+        },
+        origin: mailboxOrigin,
+        deliveryMode: isManualMode ? 'defer' : effectiveDeliveryMode,
+        messageUuid: messageId,
+        jobQueue: this.jobQueue,
+      });
+      if (handoff.kind === 'rejected') {
+        throw new Error(`Mailbox handoff rejected: ${handoff.reason}`);
+      }
+
+      if (this.db.getSession?.(sessionId)?.status === 'archived') {
+        throw new Error(`Session ${sessionId} is archived`);
+      }
+
+      if (shouldDispatchToQuery) {
+        await agentSession.stateManager.setQueuedIfIdle(messageId).catch(() => {});
       }
 
       await this.internalEventBus
         .publish('messages.statusChanged', {
           sessionId,
-          messageIds: [dbMessageId],
+          messageIds: [messageId],
           status: sendStatus,
         })
         .catch((err) =>
@@ -276,7 +273,7 @@ export class MessagePersistence {
             ...(compositionAtSend ? { voicePendingSent: preSendPending } : {}),
             sendStatus,
             deliveryMode: effectiveDeliveryMode,
-            skipQueryStart: useOutbox,
+            skipQueryStart: true,
           })
           .catch((err) =>
             this.logger.warn('[MessagePersistence] message.persisted publish failed:', err)
@@ -309,8 +306,11 @@ function buildMessageContent(
   if (!images || images.length === 0) {
     return content;
   }
-
-  return [...images.map(toImageContent), { type: 'text' as const, text: content }];
+  const blocks: MessageContent[] = images.map(toImageContent);
+  if (content.length > 0) {
+    blocks.push({ type: 'text' as const, text: content });
+  }
+  return blocks;
 }
 
 function getImageData(image: MessageImageInput): string {
