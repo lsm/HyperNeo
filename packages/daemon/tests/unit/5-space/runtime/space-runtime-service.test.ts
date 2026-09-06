@@ -1707,6 +1707,43 @@ describe('SpaceRuntimeService', () => {
       expect(configCalls).toBeGreaterThanOrEqual(2);
     });
 
+    test('deliverLongHorizonAgentNag reports pre_admission_failure when the space pauses during session resolution', async () => {
+      const sessionManager = makeSessionManager(null);
+      const spaceManager = createMockSpaceManager(mockSpace);
+      (spaceManager.getSpace as Mock<typeof spaceManager.getSpace>)
+        .mockResolvedValueOnce(mockSpace)
+        .mockResolvedValue({ ...mockSpace, paused: true });
+      const svc = buildDeliveryService({
+        ...buildConfigWithSession(sessionManager, spaceManager),
+        longHorizonAgentRepo: makeActiveLhAgentRepo(),
+      });
+      const result = await svc.deliverLongHorizonAgentNag({
+        spaceId: mockSpace.id,
+        agentId: 'lh-agent-1',
+        message: 'nag',
+        idempotencyKey: 'k',
+      });
+      expect(result).toBe('pre_admission_failure');
+    });
+
+    test('deliverLongHorizonAgentNag reports terminal_failure when session resolution fails while eligibility holds', async () => {
+      const sessionManager = makeSessionManager(null);
+      (sessionManager.createSession as Mock<typeof sessionManager.createSession>).mockRejectedValue(
+        new Error('create failed')
+      );
+      const svc = buildDeliveryService({
+        ...buildConfigWithSession(sessionManager, createMockSpaceManager(mockSpace)),
+        longHorizonAgentRepo: makeActiveLhAgentRepo(),
+      });
+      const result = await svc.deliverLongHorizonAgentNag({
+        spaceId: mockSpace.id,
+        agentId: 'lh-agent-1',
+        message: 'nag',
+        idempotencyKey: 'k',
+      });
+      expect(result).toBe('terminal_failure');
+    });
+
     test('long-horizon event sessions forward scoped Bash entries so the scope hook installs', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
       const createdSession = {

@@ -380,7 +380,11 @@ export class SpaceRuntimeService {
       }
     }
     const session = await this.resolveAgentSession(args.spaceId, args.agentId);
-    if (!session) return 'terminal_failure';
+    if (!session) {
+      return (await this.isAgentTargetLifecycleEligible(args.spaceId, args.agentId))
+        ? 'terminal_failure'
+        : 'pre_admission_failure';
+    }
     const spaceAfter = await this.config.spaceManager.getSpace(args.spaceId);
     if (!spaceAfter || spaceAfter.status !== 'active' || spaceAfter.paused || spaceAfter.stopped) {
       return 'pre_admission_failure';
