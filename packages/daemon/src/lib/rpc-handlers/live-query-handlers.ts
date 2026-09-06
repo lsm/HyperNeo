@@ -528,7 +528,7 @@ function mailboxDeliverySenderExpr(textExpr: string): string {
     END`;
 }
 
-function deliveryRetryStateCtes(sessionFilterSql: string): string {
+function deliveryRetryingCtes(sessionFilterSql: string): string {
   const sessionFilter = sessionFilterSql.length > 0 ? `\n    ${sessionFilterSql}` : '';
   return `delivery_active_jobs AS MATERIALIZED (
   SELECT
@@ -544,8 +544,12 @@ delivery_retrying AS MATERIALIZED (
   FROM delivery_active_jobs
   WHERE message_uuid IS NOT NULL
   GROUP BY message_uuid, session_id
-),
-delivery_job_errors AS MATERIALIZED (
+)`;
+}
+
+function deliveryJobErrorsCte(sessionFilterSql: string): string {
+  const sessionFilter = sessionFilterSql.length > 0 ? `\n    ${sessionFilterSql}` : '';
+  return `delivery_job_errors AS MATERIALIZED (
   SELECT
     json_extract(jq.payload, '$.sessionId') AS session_id,
     json_extract(jq.payload, '$.messageUuid') AS message_uuid,
@@ -560,6 +564,11 @@ delivery_job_errors AS MATERIALIZED (
     AND jq.error IS NOT NULL
     AND jq.status != 'completed'${sessionFilter}
 )`;
+}
+
+function deliveryRetryStateCtes(sessionFilterSql: string): string {
+  return `${deliveryRetryingCtes(sessionFilterSql)},
+${deliveryJobErrorsCte(sessionFilterSql)}`;
 }
 
 const ACTOR_MESSAGES_BY_TASK_SQL = `
@@ -1303,6 +1312,9 @@ lifecycle AS (
     tt.archived_at
   FROM target_task tt WHERE tt.archived_at IS NOT NULL
 ),
+${deliveryJobErrorsCte(`AND json_extract(jq.payload, '$.sessionId') IN (
+    SELECT session_id FROM sdk_messages WHERE task_id = (SELECT id FROM target_task)
+  )`)},
 instruction_candidates AS (
   SELECT
     'instruction:' || tsm.id AS id,
@@ -1326,13 +1338,21 @@ instruction_candidates AS (
     'Human' AS sourceLabel,
     'human' AS sourceKind,
     NULL AS sourceId,
-    CAST(ROUND((julianday(tsm.timestamp) - 2440587.5) * 86400000) AS INTEGER) AS createdAt
+    CASE
+      WHEN tsm.send_status = 'failed' AND dje.error_settled_at IS NOT NULL
+        THEN dje.error_settled_at
+      ELSE CAST(ROUND((julianday(tsm.timestamp) - 2440587.5) * 86400000) AS INTEGER)
+    END AS createdAt
   FROM target_task tt
   JOIN task_sdk_messages tsm ON tsm.task_id = tt.id
   -- The sdk_message BLOB is re-fetched by primary key only for rows that
   -- reach this candidate stage; task_sdk_messages deliberately excludes it
   -- so materialization never reads every message's overflow pages (#2660).
   JOIN sdk_messages msg ON msg.id = tsm.id
+  LEFT JOIN delivery_job_errors dje
+    ON dje.session_id = tsm.session_id
+   AND dje.message_uuid = tsm.resolved_sdk_uuid
+   AND dje.rn = 1
   LEFT JOIN sdk_replacement_status srs ON srs.id = tsm.id
   WHERE tsm.message_type = 'user'
     -- A human instruction is any non-synthetic user message. The task-panel

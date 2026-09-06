@@ -2635,6 +2635,25 @@ describe('NAMED_QUERY_REGISTRY', () => {
           null,
           { type: 'user', message: { role: 'user', content: 'please retry this' } }
         );
+        db.prepare(`UPDATE sdk_messages SET sdk_uuid = ? WHERE id = ?`).run(
+          'u-ms-failed-send',
+          'sdk-failed-send'
+        );
+        db.prepare(
+          `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at, completed_at, error)
+           VALUES (?, 'message_delivery', 'dead', ?, 8, 8, ?, ?, ?, ?)`
+        ).run(
+          'job-ms-failed-send',
+          JSON.stringify({
+            sessionId: 'sess-failed-send',
+            messageUuid: 'u-ms-failed-send',
+            origin: 'chat',
+          }),
+          now,
+          now,
+          now + 8000,
+          'submit rejected by provider'
+        );
 
         const rows = queryMilestones(taskId);
         const instr = rows.find((r) => r.category === 'instruction');
@@ -2642,6 +2661,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         expect(instr?.tone).toBe('danger');
         expect(instr?.title).toBe('Instruction failed to send');
         expect(instr?.body).toBe('please retry this');
+        expect(instr?.createdAt).toBe(now + 8000);
       });
 
       test('renders archived tasks as Archived (the sole terminal milestone)', () => {
