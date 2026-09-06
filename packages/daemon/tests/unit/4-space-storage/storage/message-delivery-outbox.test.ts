@@ -1418,14 +1418,14 @@ describe('prompt content verification (verifyPromptContent)', () => {
 
   it('accepts a legacy stored shape whose nested message carries role', () => {
     seedRow('verify-legacy-role', 'original');
-    db.prepare(`UPDATE sdk_messages SET sdk_message = json_set(sdk_message, '$.message.role', json('user'))
-        WHERE session_id = ? AND sdk_uuid = ?`).run(SESSION, 'verify-legacy-role');
+    const retry = userMessage('verify-legacy-role', 'original');
+    const { role: _role, ...roleless } = retry.message as Record<string, unknown>;
     expect(() =>
       verifyPromptContent({
         db: db as never,
         sessionId: SESSION,
         messageUuid: 'verify-legacy-role',
-        message: userMessage('verify-legacy-role', 'original'),
+        message: { ...retry, message: roleless } as SDKMessage,
       })
     ).not.toThrow();
   });
