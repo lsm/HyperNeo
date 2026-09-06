@@ -669,26 +669,30 @@ export class JobQueueRepository {
   }
 
   cancelPendingMailboxEntry(entryId: string): boolean {
-    const result = this.db
-      .prepare(
-        `DELETE FROM job_queue
-          WHERE queue = 'mailbox' AND json_extract(payload, '$.id') = ? AND status = 'pending'`
-      )
-      .run(entryId);
+    const result = withBusyRetry(() =>
+      this.db
+        .prepare(
+          `DELETE FROM job_queue
+            WHERE queue = 'mailbox' AND json_extract(payload, '$.id') = ? AND status = 'pending'`
+        )
+        .run(entryId)
+    );
     return result.changes > 0;
   }
 
   cancelHeldDeliveryJob(sessionId: string, messageUuid: string): boolean {
-    const result = this.db
-      .prepare(
-        `DELETE FROM job_queue
-          WHERE queue = 'message_delivery'
-            AND json_extract(payload, '$.sessionId') = ?
-            AND json_extract(payload, '$.messageUuid') = ?
-            AND status = 'pending'
-            AND COALESCE(json_extract(payload, '$.released'), 1) = 0`
-      )
-      .run(sessionId, messageUuid);
+    const result = withBusyRetry(() =>
+      this.db
+        .prepare(
+          `DELETE FROM job_queue
+            WHERE queue = 'message_delivery'
+              AND json_extract(payload, '$.sessionId') = ?
+              AND json_extract(payload, '$.messageUuid') = ?
+              AND status = 'pending'
+              AND COALESCE(json_extract(payload, '$.released'), 1) = 0`
+        )
+        .run(sessionId, messageUuid)
+    );
     return result.changes > 0;
   }
 
