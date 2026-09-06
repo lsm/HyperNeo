@@ -36,6 +36,9 @@ function makeManager(opts: {
   mailboxEntryStatus?: 'pending' | 'processing' | 'completed' | 'dead' | 'absent';
   normalizeThrows?: boolean;
   consumedAfterHandoff?: boolean;
+  consumeAfterPolls?: number;
+  holdDeliveryInFlight?: boolean;
+  clearInFlightAfterProbe?: boolean;
   materializeOnEnqueue?: boolean;
 }): {
   manager: TaskAgentManager;
@@ -55,13 +58,17 @@ function makeManager(opts: {
       return { id: 'job-1' };
     }
   );
-  const mailboxEnqueue = mock(() => {
+  const mailboxEnqueue = mock((args: { payload?: { messageUuid?: string } }) => {
     if (opts.enqueueThrows) throw new Error('job queue unavailable');
     mailboxEntryEnqueued = true;
+    mailboxMessageUuid = args?.payload?.messageUuid ?? null;
     if (opts.materializeOnEnqueue) materializedRowIds = ['db-id'];
     return { id: 'mailbox-job-1' };
   });
   let mailboxEntryEnqueued = false;
+  let mailboxMessageUuid: string | null = null;
+  let deliveryContentPolls = 0;
+  let postEnqueueInFlightProbes = 0;
   let materializedRowIds = opts.materializedRowIds ?? ['db-id'];
   const cancelHeldJob = mock(() => false);
   const reopenDeliveryByUuid = mock(() => opts.reopenDbId ?? null);
@@ -111,10 +118,18 @@ function makeManager(opts: {
       saveUserMessage,
       getUserMessageIdsByStatus,
       getSDKMessageRepo: () => ({
-        getDeliveryContent: () =>
-          mailboxEntryEnqueued && opts.consumedAfterHandoff !== false
-            ? { content: 'x', sendStatus: 'consumed' }
-            : (opts.deliveryContent ?? null),
+        getDeliveryContent: () => {
+          if (!mailboxEntryEnqueued) return opts.deliveryContent ?? null;
+          deliveryContentPolls += 1;
+          if (opts.consumedAfterHandoff === false) return opts.deliveryContent ?? null;
+          if (
+            opts.consumeAfterPolls !== undefined &&
+            deliveryContentPolls <= opts.consumeAfterPolls
+          ) {
+            return opts.deliveryContent ?? null;
+          }
+          return { content: 'x', sendStatus: 'consumed' };
+        },
         getDeliveryMessageIdsByUuids: () => materializedRowIds,
         normalizeDeliveryMessageForMailbox: normalizeDeliveryMailbox,
         reopenDeliveryByUuid,
@@ -123,8 +138,15 @@ function makeManager(opts: {
         markDeliveryDeferredByUuid,
       }),
       getJobQueueRepo: () => ({
-        activeDeliveryMessageUuids: () =>
-          new Set<string>(opts.hasActiveDeliveryJob ? ['pending-job'] : []),
+        activeDeliveryMessageUuids: () => {
+          if (mailboxMessageUuid) postEnqueueInFlightProbes += 1;
+          const hold = opts.holdDeliveryInFlight && mailboxMessageUuid !== null;
+          const stillHeld = !opts.clearInFlightAfterProbe || postEnqueueInFlightProbes <= 1;
+          return new Set<string>([
+            ...(opts.hasActiveDeliveryJob ? ['pending-job'] : []),
+            ...(hold && stillHeld && mailboxMessageUuid ? [mailboxMessageUuid] : []),
+          ]);
+        },
         activeMailboxMessageUuids: () => new Set<string>(),
         mailboxEntryJobStatus: () => opts.mailboxEntryStatus ?? 'completed',
         cancelPendingMailboxEntry: () => false,
@@ -426,7 +448,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
   });
 
   it('waits for delivery consumption before resolving the inject', async () => {
-    const { manager, session } = makeManager({ consumedAfterHandoff: false });
+    const { manager, session } = makeManager({ consumeAfterPolls: 2 });
     indexSession(manager, liveSession(session));
 
     const injectPromise = manager.injectSubSessionMessage(
@@ -442,39 +464,64 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     expect(resolved).toBe(false);
     expect(session.mailboxEnqueue).toHaveBeenCalledTimes(1);
 
-    const enqueueArgs = session.mailboxEnqueue.mock.calls[0][0] as {
-      payload?: { to?: { sessionId?: string }; messageUuid?: string };
-    };
-    signalDeliveryConsumed(
-      enqueueArgs!.payload!.to!.sessionId!,
-      enqueueArgs!.payload!.messageUuid!
-    );
-
     await expect(injectPromise).resolves.toBe('db-id');
   });
 
-  it('terminalizes a fresh row and throws when delivery consumption times out', async () => {
-    const previousTimeout = process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
-    process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = '40';
+  it('fails the settlement when the delivery settles without consuming', async () => {
+    const { manager, session } = makeManager({ consumedAfterHandoff: false });
+    indexSession(manager, liveSession(session));
+
+    await expect(
+      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+    ).rejects.toThrow('mailbox delivery not consumed (inactive)');
+
+    expect(session.failDeliveryUnless).toHaveBeenCalledTimes(1);
+    expect(session.cancelHeldJob).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps waiting while the delivery is in flight and reconciles at the hard timeout', async () => {
+    const previousWait = process.env.HYPERNEO_MAILBOX_CONSUMPTION_HARD_WAIT_MS;
+    process.env.HYPERNEO_MAILBOX_CONSUMPTION_HARD_WAIT_MS = '80';
     try {
       const { manager, session } = makeManager({
-        materializedRowIds: [],
-        materializeOnEnqueue: true,
         consumedAfterHandoff: false,
+        holdDeliveryInFlight: true,
       });
       indexSession(manager, liveSession(session));
 
       await expect(
         manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
-      ).rejects.toThrow('delivery not consumed within timeout');
+      ).rejects.toThrow('mailbox delivery not consumed (timeout)');
 
       expect(session.failDeliveryUnless).toHaveBeenCalledTimes(1);
       expect(session.cancelHeldJob).toHaveBeenCalledTimes(1);
     } finally {
-      if (previousTimeout === undefined)
-        delete process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS;
-      else process.env.HYPERNEO_DELIVERY_CONSUMPTION_TIMEOUT_MS = previousTimeout;
+      if (previousWait === undefined) delete process.env.HYPERNEO_MAILBOX_CONSUMPTION_HARD_WAIT_MS;
+      else process.env.HYPERNEO_MAILBOX_CONSUMPTION_HARD_WAIT_MS = previousWait;
     }
+  });
+
+  it('rolls back a queued claim when the delivery job completes inside the claim window', async () => {
+    const { manager, session } = makeManager({
+      consumedAfterHandoff: false,
+      holdDeliveryInFlight: true,
+      clearInFlightAfterProbe: true,
+    });
+    const live = liveSession(session);
+    const setQueuedIfIdle = mock(async () => true);
+    const clearQueuedIfOwnedBy = mock(async () => true);
+    (live as unknown as Record<string, unknown>).stateManager = {
+      setQueuedIfIdle,
+      clearQueuedIfOwnedBy,
+    };
+    indexSession(manager, live);
+
+    await expect(
+      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+    ).rejects.toThrow('mailbox delivery not consumed');
+
+    expect(setQueuedIfIdle).toHaveBeenCalledTimes(1);
+    expect(clearQueuedIfOwnedBy).toHaveBeenCalledTimes(1);
   });
 
   it('a normalization error over an existing row restores the failed status', async () => {

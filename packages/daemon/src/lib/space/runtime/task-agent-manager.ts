@@ -88,10 +88,6 @@ import type { AgentMemoryRepository } from '../../../storage/repositories/agent-
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
-import {
-  awaitDeliveryConsumption,
-  deliveryConsumptionTimeoutMs,
-} from '../../agent/message-delivery.ts';
 import { activatePrompts } from '../../agent/message-delivery-outbox.ts';
 import { Logger } from '../../logger.ts';
 import { renderAddress } from '../../mailbox/address.ts';
@@ -349,6 +345,17 @@ const MAILBOX_MATERIALIZATION_WAIT_MS = 30_000;
 const MAILBOX_MATERIALIZATION_GRACE_MS = 30_000;
 
 const MAILBOX_MATERIALIZATION_POLL_MS = 150;
+
+const MAILBOX_CONSUMPTION_HARD_WAIT_MS = 12 * 60_000;
+
+const MAILBOX_CONSUMPTION_SETTLE_GRACE_MS = 5_000;
+
+const MAILBOX_CONSUMPTION_POLL_MS = 150;
+
+function mailboxConsumptionHardWaitMs(): number {
+  const raw = Number(process.env.HYPERNEO_MAILBOX_CONSUMPTION_HARD_WAIT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : MAILBOX_CONSUMPTION_HARD_WAIT_MS;
+}
 
 interface SpawnTaskAgentOptions {
   kickoff?: boolean;
@@ -4480,37 +4487,34 @@ export class TaskAgentManager {
     );
   }
 
-  private async awaitMailboxDeliveryConsumption(
-    session: AgentSession,
+  private async awaitMailboxDeliveryConsumptionOutcome(
     sessionId: string,
-    messageId: string,
-    rowExistedAtHandoff: boolean,
-    entryMessage: MailboxMessage,
-    isSyntheticMessage: boolean,
-    origin: MessageOrigin | undefined
-  ): Promise<void> {
-    await awaitDeliveryConsumption({
-      sessionId,
-      messageUuid: messageId,
-      timeoutMs: deliveryConsumptionTimeoutMs(session.getSessionData?.().config?.provider),
-      getSendStatus: () =>
-        this.config.db.getSDKMessageRepo().getDeliveryContent(sessionId, messageId)?.sendStatus ??
-        null,
-      deliver: async () => {},
-      ...(!rowExistedAtHandoff
-        ? {
-            terminalizeOnTimeout: () => {
-              void this.persistFailedMailboxRow(
-                sessionId,
-                messageId,
-                entryMessage,
-                isSyntheticMessage,
-                origin
-              ).catch(() => {});
-            },
-          }
-        : {}),
-    });
+    messageId: string
+  ): Promise<'consumed' | 'inactive' | 'timeout'> {
+    const deadline = Date.now() + mailboxConsumptionHardWaitMs();
+    let settleGraceDeadline: number | null = null;
+    for (;;) {
+      const sendStatus = this.config.db
+        .getSDKMessageRepo()
+        .getDeliveryContent(sessionId, messageId)?.sendStatus;
+      if (sendStatus === 'consumed') return 'consumed';
+      const inFlight = this.config.db
+        .getJobQueueRepo()
+        .activeDeliveryMessageUuids(sessionId)
+        .has(messageId);
+      const now = Date.now();
+      if (inFlight) {
+        settleGraceDeadline = null;
+      } else if (sendStatus !== 'enqueued') {
+        return 'inactive';
+      } else if (settleGraceDeadline === null) {
+        settleGraceDeadline = now + MAILBOX_CONSUMPTION_SETTLE_GRACE_MS;
+      } else if (now >= settleGraceDeadline) {
+        return 'inactive';
+      }
+      if (now >= deadline) return 'timeout';
+      await new Promise((resolve) => setTimeout(resolve, MAILBOX_CONSUMPTION_POLL_MS));
+    }
   }
 
   private async awaitMailboxMaterialization(
@@ -4881,8 +4885,19 @@ export class TaskAgentManager {
               .activeDeliveryMessageUuids(targetSessionId)
               .has(targetMessageId),
           claimQueued: async (targetMessageId) => {
-            await session.stateManager.setQueuedIfIdle(targetMessageId);
+            const claimed = await session.stateManager.setQueuedIfIdle(targetMessageId);
+            if (
+              claimed &&
+              !this.config.db
+                .getJobQueueRepo()
+                .activeDeliveryMessageUuids(sessionId)
+                .has(targetMessageId)
+            ) {
+              await session.stateManager.clearQueuedIfOwnedBy(targetMessageId);
+            }
           },
+          awaitDeliveryConsumption: (targetSessionId, targetMessageId) =>
+            this.awaitMailboxDeliveryConsumptionOutcome(targetSessionId, targetMessageId),
           persistFailedRow: (targetSessionId, targetMessageId) =>
             this.persistFailedMailboxRow(
               targetSessionId,
@@ -4916,15 +4931,6 @@ export class TaskAgentManager {
         }`
       );
     }
-    await this.awaitMailboxDeliveryConsumption(
-      session,
-      sessionId,
-      messageId,
-      rowExistedAtHandoff,
-      mailboxEntryMessage,
-      isSyntheticMessage,
-      origin
-    );
     return settledOutcome.dbId;
   }
 
