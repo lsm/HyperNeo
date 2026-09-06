@@ -468,6 +468,121 @@ const runSaveHyperNeoActionMessage = (superpipe({})('save-hyperneo-action-messag
   .pipe(publishHyperNeoActionMessage, 'ctx', 'ctx')
   .end('ctx') as (ctx: SaveHyperNeoActionMessageCtx) => SaveHyperNeoActionMessageSavedCtx;
 
+interface NormalizeDeliveryMessageDeps {
+  selectDeliveryMessageRow(
+    sessionId: string,
+    uuid: string
+  ): { id: string; sdk_message: string } | null | undefined;
+  applyNormalizedDeliveryMessage(rowId: string, sdkMessage: string, synthetic: boolean): number;
+}
+
+interface NormalizeDeliveryMessageCtx {
+  sessionId: string;
+  uuid: string;
+  deps: NormalizeDeliveryMessageDeps;
+  changed: boolean;
+  row?: { id: string; sdk_message: string };
+  stored?: Record<string, unknown>;
+  normalized?: Record<string, unknown>;
+  synthetic?: boolean;
+}
+
+function loadDeliveryMessageRow(ctx: NormalizeDeliveryMessageCtx): NormalizeDeliveryMessageCtx {
+  return { ...ctx, row: ctx.deps.selectDeliveryMessageRow(ctx.sessionId, ctx.uuid) ?? undefined };
+}
+
+function parseDeliveryMessageRow(ctx: NormalizeDeliveryMessageCtx): NormalizeDeliveryMessageCtx {
+  let stored: unknown;
+  try {
+    stored = JSON.parse(ctx.row?.sdk_message ?? '');
+  } catch {
+    return ctx;
+  }
+  if (stored === null || typeof stored !== 'object' || Array.isArray(stored)) return ctx;
+  return { ...ctx, stored: stored as Record<string, unknown> };
+}
+
+function projectDeliveryMessageRow(ctx: NormalizeDeliveryMessageCtx): NormalizeDeliveryMessageCtx {
+  if (ctx.stored === undefined) return ctx;
+  const stored = ctx.stored;
+  const storedMessage = stored.message as { role?: unknown; content?: unknown } | undefined;
+  if (storedMessage?.role === undefined) return ctx;
+  const synthetic = stored.isSynthetic === true;
+  const storedInputKind = stored.inputKind;
+  const inputKind: MessageInputKind =
+    typeof storedInputKind === 'string' && ['task', 'human', 'system'].includes(storedInputKind)
+      ? (storedInputKind as MessageInputKind)
+      : synthetic
+        ? 'task'
+        : 'human';
+  const projected = toMailboxMessage({
+    type: 'user',
+    message: { content: storedMessage.content as MailboxMessageContent },
+    parent_tool_use_id: (stored.parent_tool_use_id ?? null) as MailboxMessage['parent_tool_use_id'],
+    ...(stored.priority !== undefined
+      ? { priority: stored.priority as MailboxMessage['priority'] }
+      : {}),
+    ...(stored.referenceMetadata !== undefined
+      ? { referenceMetadata: stored.referenceMetadata as ReferenceMetadata }
+      : {}),
+  });
+  if ('reason' in projected) return ctx;
+  return {
+    ...ctx,
+    synthetic,
+    normalized: {
+      ...projected.message,
+      inputKind,
+      uuid: ctx.uuid,
+      session_id: ctx.sessionId,
+      ...(synthetic ? { isSynthetic: true } : {}),
+    },
+  };
+}
+
+function applyDeliveryMessageRow(ctx: NormalizeDeliveryMessageCtx): NormalizeDeliveryMessageCtx {
+  if (ctx.row === undefined || ctx.normalized === undefined) return ctx;
+  const changes = ctx.deps.applyNormalizedDeliveryMessage(
+    ctx.row.id,
+    JSON.stringify(ctx.normalized),
+    ctx.synthetic === true
+  );
+  return { ...ctx, changed: changes > 0 };
+}
+
+function deliveryMessageRowAbsent(ctx: NormalizeDeliveryMessageCtx): boolean {
+  return ctx.row === undefined;
+}
+
+function deliveryMessageStoredAbsent(ctx: NormalizeDeliveryMessageCtx): boolean {
+  return ctx.stored === undefined;
+}
+
+function deliveryMessageNormalizedAbsent(ctx: NormalizeDeliveryMessageCtx): boolean {
+  return ctx.normalized === undefined;
+}
+
+const runNormalizeDeliveryMessageForMailbox = (
+  superpipe<{
+    deliveryMessageRowAbsent: (ctx: NormalizeDeliveryMessageCtx) => boolean;
+    deliveryMessageStoredAbsent: (ctx: NormalizeDeliveryMessageCtx) => boolean;
+    deliveryMessageNormalizedAbsent: (ctx: NormalizeDeliveryMessageCtx) => boolean;
+  }>({
+    deliveryMessageRowAbsent,
+    deliveryMessageStoredAbsent,
+    deliveryMessageNormalizedAbsent,
+  })('normalize-delivery-message-for-mailbox') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(loadDeliveryMessageRow, 'ctx', 'ctx')
+  .pipe('!deliveryMessageRowAbsent', 'ctx')
+  .pipe(parseDeliveryMessageRow, 'ctx', 'ctx')
+  .pipe('!deliveryMessageStoredAbsent', 'ctx')
+  .pipe(projectDeliveryMessageRow, 'ctx', 'ctx')
+  .pipe('!deliveryMessageNormalizedAbsent', 'ctx')
+  .pipe(applyDeliveryMessageRow, 'ctx', 'ctx')
+  .end('ctx') as (ctx: NormalizeDeliveryMessageCtx) => NormalizeDeliveryMessageCtx;
+
 export class SDKMessageRepository {
   private logger = new Logger('Database');
 
@@ -1767,67 +1882,33 @@ export class SDKMessageRepository {
   }
 
   normalizeDeliveryMessageForMailbox(sessionId: string, uuid: string): boolean {
-    const row = this.db
-      .prepare(
-        `SELECT id, sdk_message FROM sdk_messages
-          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-          ORDER BY timestamp ASC LIMIT 1`
-      )
-      .get(sessionId, uuid) as { id: string; sdk_message: string } | null | undefined;
-    if (row === null || row === undefined) return false;
-    let stored: Record<string, unknown>;
-    try {
-      stored = JSON.parse(row.sdk_message) as Record<string, unknown>;
-    } catch {
-      return false;
-    }
-    if (stored === null || typeof stored !== 'object' || Array.isArray(stored)) return false;
-    const storedMessage = stored.message as { role?: unknown; content?: unknown } | undefined;
-    if (storedMessage?.role === undefined) return false;
-    const storedInputKind = stored.inputKind;
-    const synthetic = stored.isSynthetic === true;
-    const inputKind: MessageInputKind =
-      typeof storedInputKind === 'string' && ['task', 'human', 'system'].includes(storedInputKind)
-        ? (storedInputKind as MessageInputKind)
-        : synthetic
-          ? 'task'
-          : 'human';
-    const storedPriority = stored.priority;
-    const priority =
-      typeof storedPriority === 'string' && ['now', 'next', 'later'].includes(storedPriority)
-        ? { priority: storedPriority as MailboxMessage['priority'] }
-        : {};
-    const storedReferenceMetadata = stored.referenceMetadata;
-    const referenceMetadata =
-      typeof storedReferenceMetadata === 'object' &&
-      storedReferenceMetadata !== null &&
-      !Array.isArray(storedReferenceMetadata)
-        ? { referenceMetadata: storedReferenceMetadata as ReferenceMetadata }
-        : {};
-    const projected = toMailboxMessage({
-      type: 'user',
-      message: { content: storedMessage.content as MailboxMessageContent },
-      parent_tool_use_id: null,
-      ...priority,
-      ...referenceMetadata,
-    });
-    if ('reason' in projected) return false;
-    const normalized = {
-      ...projected.message,
-      inputKind,
+    return runNormalizeDeliveryMessageForMailbox({
+      sessionId,
       uuid,
-      session_id: sessionId,
-      ...(synthetic ? { isSynthetic: true } : {}),
-    };
-    const updated = this.db
-      .prepare(
-        `UPDATE sdk_messages
-            SET sdk_message = ?,
-                origin = CASE WHEN ? = 1 THEN COALESCE(origin, 'system') ELSE origin END
-          WHERE id = ?`
-      )
-      .run(JSON.stringify(normalized), synthetic ? 1 : 0, row.id);
-    return updated.changes > 0;
+      changed: false,
+      deps: {
+        selectDeliveryMessageRow: (selectSessionId, selectUuid) =>
+          this.db
+            .prepare(
+              `SELECT id, sdk_message FROM sdk_messages
+                WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+                ORDER BY timestamp ASC LIMIT 1`
+            )
+            .get(selectSessionId, selectUuid) as
+            | { id: string; sdk_message: string }
+            | null
+            | undefined,
+        applyNormalizedDeliveryMessage: (rowId, sdkMessage, synthetic) =>
+          this.db
+            .prepare(
+              `UPDATE sdk_messages
+                  SET sdk_message = ?,
+                      origin = CASE WHEN ? = 1 THEN COALESCE(origin, 'system') ELSE origin END
+                    WHERE id = ?`
+            )
+            .run(sdkMessage, synthetic ? 1 : 0, rowId).changes,
+      },
+    }).changed;
   }
 
   hasTerminalResultAfter(sessionId: string, uuid: string): boolean {

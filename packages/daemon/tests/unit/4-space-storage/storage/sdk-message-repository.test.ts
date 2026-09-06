@@ -445,7 +445,7 @@ describe('SDKMessageRepository', () => {
         type: 'user',
         isSynthetic: true,
         inputKind: 'task',
-        priority: 'whenever',
+        priority: 'later',
         referenceMetadata: { '@task': { type: 'bogus' } },
         message: { role: 'user', content: 'corrupt reference' },
       });
@@ -455,9 +455,59 @@ describe('SDKMessageRepository', () => {
         type: 'user',
         isSynthetic: true,
         inputKind: 'task',
-        priority: 'whenever',
+        priority: 'later',
         referenceMetadata: { '@task': { type: 'bogus' } },
         message: { role: 'user', content: 'corrupt reference' },
+      });
+    });
+
+    it('rejects a legacy row whose referenceMetadata is present but not an object', () => {
+      for (const [uuid, value] of [
+        ['msg-refmeta-null', null],
+        ['msg-refmeta-string', 'not metadata'],
+        ['msg-refmeta-array', [{ type: 'task', id: 'T-1', displayText: 'x' }]],
+      ] as Array<[string, unknown]>) {
+        insertDeliveryRow('session-1', uuid, {
+          type: 'user',
+          isSynthetic: true,
+          inputKind: 'task',
+          referenceMetadata: value,
+          message: { role: 'user', content: 'row with malformed reference metadata' },
+        });
+        expect(repository.normalizeDeliveryMessageForMailbox('session-1', uuid)).toBe(false);
+        expect(storedMessage('session-1', uuid).referenceMetadata).toEqual(value);
+      }
+    });
+
+    it('rejects a legacy row whose priority is not a valid mailbox priority', () => {
+      insertDeliveryRow('session-1', 'msg-badprio', {
+        type: 'user',
+        isSynthetic: true,
+        inputKind: 'task',
+        priority: 'whenever',
+        message: { role: 'user', content: 'row with invalid priority' },
+      });
+
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-badprio')).toBe(false);
+      expect(storedMessage('session-1', 'msg-badprio').priority).toBe('whenever');
+    });
+
+    it('rejects a nested legacy delivery instead of clearing its parent', () => {
+      insertDeliveryRow('session-1', 'msg-nested', {
+        type: 'user',
+        isSynthetic: true,
+        inputKind: 'task',
+        parent_tool_use_id: 'tool-call-9',
+        message: { role: 'user', content: 'nested delivery' },
+      });
+
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-nested')).toBe(false);
+      expect(storedMessage('session-1', 'msg-nested')).toEqual({
+        type: 'user',
+        isSynthetic: true,
+        inputKind: 'task',
+        parent_tool_use_id: 'tool-call-9',
+        message: { role: 'user', content: 'nested delivery' },
       });
     });
 
