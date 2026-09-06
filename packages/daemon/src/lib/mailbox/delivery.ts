@@ -88,6 +88,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       throw new DeadLetterImmediatelyError('mailbox: entry expired (ttl)');
     }
     const synthetic = entry.origin !== 'chat';
+    const admittedAt = decodeUlidTimestamp(entry.id);
     const message: SDKUserMessage & { referenceMetadata?: ReferenceMetadata } = {
       ...entry.message,
       uuid: (entry.messageUuid ?? deterministicUuid(entry.id)) as NonNullable<
@@ -111,7 +112,11 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       message,
       ...(synthetic ? { origin: 'system' as MessageOrigin } : {}),
       ...(entry.deliveryMode === 'defer' ? { hold: 'manual' as PromptHold } : {}),
-      delivery: { origin: mapOrigin(entry.origin), parentToolUseId: null },
+      delivery: {
+        origin: mapOrigin(entry.origin),
+        parentToolUseId: null,
+        admittedAt,
+      },
       db: deps.db,
       sdkMessageRepo: deps.sdkMessageRepo,
       jobQueue: deps.jobQueue,
@@ -125,6 +130,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         messageUuid,
         origin: mapOrigin(entry.origin),
         parentToolUseId: null,
+        admittedAt,
         db: deps.db,
         sdkMessageRepo: deps.sdkMessageRepo,
         jobQueue: deps.jobQueue,
@@ -137,6 +143,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         sessionId: target,
         messageUuids: [messageUuid],
         origin: mapOrigin(entry.origin),
+        admittedAt,
       });
       if (activated[0]) publish(activated[0].dbId);
     }

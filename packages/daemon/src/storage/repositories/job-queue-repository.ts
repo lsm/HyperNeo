@@ -28,6 +28,7 @@ export interface EnqueueParams {
   priority?: number;
   maxRetries?: number;
   runAt?: number;
+  createdAt?: number;
 }
 
 export interface EnqueueUniquePendingParams extends EnqueueParams {
@@ -102,11 +103,17 @@ export function buildJobQueueCandidateSelection(
   return { sql, params };
 }
 
+export interface SessionFifoPredecessorLane {
+  queue: string;
+  sessionIdPath?: string;
+}
+
 export interface SessionFifoDequeueOptions {
   sessionIdPath?: string;
   releasedPath?: string;
   exclude?: PayloadMatch;
   excludeIds?: string[];
+  waitsBehind?: SessionFifoPredecessorLane[];
 }
 
 export interface JobQueueSessionFifoSelectionInput {
@@ -117,6 +124,7 @@ export interface JobQueueSessionFifoSelectionInput {
   releasedPath?: string;
   exclude?: PayloadMatch;
   excludeIds?: string[];
+  waitsBehind?: SessionFifoPredecessorLane[];
 }
 
 export function buildJobQueueSessionFifoSelection(
@@ -152,6 +160,19 @@ export function buildJobQueueSessionFifoSelection(
   const params: Array<string | number> = [];
   if (!defaultSessionPath) params.push(sessionIdPath);
   params.push(input.queue, input.queue, input.now);
+  for (const lane of input.waitsBehind ?? []) {
+    const candidateSessionSql = defaultSessionPath
+      ? `json_extract(candidate.payload, '$.sessionId')`
+      : `json_extract(candidate.payload, ?)`;
+    sql += ` AND NOT EXISTS (
+      SELECT 1 FROM job_queue ahead
+       WHERE ahead.queue = ? AND ahead.status IN ('pending', 'processing')
+         AND json_extract(ahead.payload, ?) = ${candidateSessionSql}
+         AND ahead.created_at <= candidate.created_at
+    )`;
+    params.push(lane.queue, lane.sessionIdPath ?? '$.sessionId');
+    if (!defaultSessionPath) params.push(sessionIdPath);
+  }
   if (input.releasedPath) {
     sql += ` AND COALESCE(json_extract(candidate.payload, ?), 1) = 1`;
     params.push(input.releasedPath);
@@ -194,7 +215,7 @@ export class JobQueueRepository {
         params.maxRetries ?? 3,
         0,
         params.runAt ?? now,
-        now,
+        params.createdAt ?? now,
         null,
         null,
         null
@@ -272,6 +293,7 @@ export class JobQueueRepository {
         releasedPath: options?.releasedPath,
         exclude: options?.exclude,
         excludeIds: options?.excludeIds,
+        waitsBehind: options?.waitsBehind,
       });
       const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
       this.claimRows(rows, claimed);

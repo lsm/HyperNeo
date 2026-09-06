@@ -480,3 +480,221 @@ describe('JobQueueProcessor — session-fifo dequeue mode (dark launch)', () => 
     expect(repo.getJob(second.id)?.status).toBe('pending');
   });
 });
+
+describe('JobQueueRepository — dequeueSessionFifo waitsBehind cross-lane gate', () => {
+  let db: Database;
+  let repo: JobQueueRepository;
+
+  const WAITS_BEHIND_MAILBOX = [{ queue: 'mailbox', sessionIdPath: '$.to.sessionId' }];
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    db.exec(DB_SCHEMA);
+    repo = new JobQueueRepository(db as any);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  function enqueueMailboxEntry(
+    sessionId: string,
+    options?: { createdAt?: number; status?: string }
+  ) {
+    const job = repo.enqueue({
+      queue: 'mailbox',
+      payload: { to: { kind: 'session', sessionId } },
+      ...(options?.createdAt !== undefined ? { createdAt: options.createdAt } : {}),
+    });
+    if (options?.status !== undefined && options.status !== 'pending') {
+      db.prepare(`UPDATE job_queue SET status = ? WHERE id = ?`).run(options.status, job.id);
+    }
+    return job;
+  }
+
+  it('enqueue stamps created_at from the explicit createdAt param', () => {
+    const stamped = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a' },
+      createdAt: 1234,
+    });
+
+    expect(repo.getJob(stamped.id)?.createdAt).toBe(1234);
+  });
+
+  it('a pending predecessor-lane entry older than the delivery job blocks that session', () => {
+    const entry = enqueueMailboxEntry('sess-a', { createdAt: 1000 });
+    const delivery = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a' },
+      createdAt: 2000,
+    });
+
+    expect(
+      repo.dequeueSessionFifo('message_delivery', 5, { waitsBehind: WAITS_BEHIND_MAILBOX })
+    ).toHaveLength(0);
+    expect(repo.getJob(delivery.id)?.status).toBe('pending');
+    expect(repo.getJob(entry.id)?.status).toBe('pending');
+  });
+
+  it('a processing predecessor-lane entry blocks the session', () => {
+    const entry = enqueueMailboxEntry('sess-a');
+    db.prepare(`UPDATE job_queue SET status = 'processing' WHERE id = ?`).run(entry.id);
+    const delivery = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a' },
+    });
+
+    expect(
+      repo.dequeueSessionFifo('message_delivery', 5, { waitsBehind: WAITS_BEHIND_MAILBOX })
+    ).toHaveLength(0);
+    expect(repo.getJob(delivery.id)?.status).toBe('pending');
+  });
+
+  it('a settled predecessor-lane entry releases the gate', () => {
+    for (const status of ['completed', 'failed', 'dead'] as const) {
+      const delivery = repo.enqueue({
+        queue: 'message_delivery',
+        payload: { sessionId: `sess-${status}` },
+        createdAt: 2000,
+      });
+      enqueueMailboxEntry(`sess-${status}`, { createdAt: 1000, status });
+
+      const claimed = repo.dequeueSessionFifo('message_delivery', 5, {
+        waitsBehind: WAITS_BEHIND_MAILBOX,
+      });
+
+      expect(claimed.map((job) => job.id)).toEqual([delivery.id]);
+    }
+  });
+
+  it('a predecessor-lane entry younger than the delivery job does not block it', () => {
+    enqueueMailboxEntry('sess-a', { createdAt: 3000 });
+    const delivery = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a' },
+      createdAt: 2000,
+    });
+
+    const claimed = repo.dequeueSessionFifo('message_delivery', 5, {
+      waitsBehind: WAITS_BEHIND_MAILBOX,
+    });
+
+    expect(claimed.map((job) => job.id)).toEqual([delivery.id]);
+  });
+
+  it('a predecessor-lane entry for another session does not block the lane', () => {
+    enqueueMailboxEntry('sess-b', { createdAt: 1000 });
+    const delivery = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a' },
+      createdAt: 2000,
+    });
+
+    const claimed = repo.dequeueSessionFifo('message_delivery', 5, {
+      waitsBehind: WAITS_BEHIND_MAILBOX,
+    });
+
+    expect(claimed.map((job) => job.id)).toEqual([delivery.id]);
+  });
+
+  it('the gate composes with releasedPath and only the gated session is held back', () => {
+    enqueueMailboxEntry('sess-a', { createdAt: 1000 });
+    const gated = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a', released: true },
+      createdAt: 2000,
+    });
+    const freeSession = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-b', released: true },
+      createdAt: 2000,
+    });
+
+    const claimed = repo.dequeueSessionFifo('message_delivery', 5, {
+      releasedPath: '$.released',
+      waitsBehind: WAITS_BEHIND_MAILBOX,
+    });
+
+    expect(claimed.map((job) => job.id)).toEqual([freeSession.id]);
+    expect(repo.getJob(gated.id)?.status).toBe('pending');
+  });
+
+  it('the predecessor lane defaults to the $.sessionId payload path', () => {
+    repo.enqueue({
+      queue: 'mailbox',
+      payload: { sessionId: 'sess-a' },
+      createdAt: 1000,
+    });
+    const delivery = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a' },
+      createdAt: 2000,
+    });
+
+    expect(
+      repo.dequeueSessionFifo('message_delivery', 5, { waitsBehind: [{ queue: 'mailbox' }] })
+    ).toHaveLength(0);
+    expect(repo.getJob(delivery.id)?.status).toBe('pending');
+  });
+
+  it('the gate works for a custom candidate sessionIdPath', () => {
+    const entry = repo.enqueue({
+      queue: 'mailbox',
+      payload: { sessionId: 'sess-a' },
+      createdAt: 1000,
+    });
+    const delivery = repo.enqueue({
+      queue: 'chat_out',
+      payload: { chat: 'sess-a' },
+      createdAt: 2000,
+    });
+
+    const blocked = repo.dequeueSessionFifo('chat_out', 5, {
+      sessionIdPath: '$.chat',
+      waitsBehind: [{ queue: 'mailbox' }],
+    });
+    expect(blocked).toHaveLength(0);
+    expect(repo.getJob(delivery.id)?.status).toBe('pending');
+
+    db.prepare(`UPDATE job_queue SET status = 'completed' WHERE id = ?`).run(entry.id);
+    const claimed = repo.dequeueSessionFifo('chat_out', 5, {
+      sessionIdPath: '$.chat',
+      waitsBehind: [{ queue: 'mailbox' }],
+    });
+    expect(claimed.map((job) => job.id)).toEqual([delivery.id]);
+  });
+
+  it('a processor registration threads waitsBehind into the dequeue', async () => {
+    const processor = new JobQueueProcessor(repo, { pollIntervalMs: 60_000, maxConcurrent: 5 });
+    const claimedIds: string[] = [];
+    processor.register(
+      'message_delivery',
+      (job: Job) => {
+        claimedIds.push(job.id);
+        return Promise.resolve();
+      },
+      {
+        dequeueMode: {
+          kind: 'session-fifo',
+          releasedPath: '$.released',
+          waitsBehind: WAITS_BEHIND_MAILBOX,
+        },
+      }
+    );
+
+    enqueueMailboxEntry('sess-a', { createdAt: 1000 });
+    const delivery = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a', released: true },
+      createdAt: 2000,
+    });
+
+    await processor.tick();
+    await flush();
+
+    expect(claimedIds).toHaveLength(0);
+    expect(repo.getJob(delivery.id)?.status).toBe('pending');
+    await processor.stop();
+  });
+});

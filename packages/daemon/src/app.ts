@@ -1033,7 +1033,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
           }),
       }),
       {
-        dequeueMode: { kind: 'session-fifo', releasedPath: '$.released' },
+        dequeueMode: {
+          kind: 'session-fifo',
+          releasedPath: '$.released',
+          waitsBehind: [{ queue: MAILBOX_LANE, sessionIdPath: '$.to.sessionId' }],
+        },
         onDead: (job) => {
           deliveryMetrics.recordDeadLetter();
           const payload = asMessageDeliveryPayload(job.payload);

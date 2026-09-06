@@ -1635,3 +1635,152 @@ describe('retryPrompt consumption-evidence guard', () => {
     expect(retried).toBeNull();
   });
 });
+
+describe('admission-stamped delivery enqueue (admittedAt)', () => {
+  let db: Database;
+  let sdkRepo: SDKMessageRepository;
+  let jobQueue: JobQueueRepository;
+
+  beforeEach(() => {
+    ({ db, sdkRepo, jobQueue } = setup());
+  });
+  afterEach(() => db.close());
+
+  function deliveryJobRow(messageUuid: string): { created_at: number; payload: string } {
+    const row = db
+      .prepare(
+        `SELECT created_at, payload FROM job_queue
+          WHERE queue = ? AND json_extract(payload, '$.messageUuid') = ?
+          ORDER BY rowid DESC LIMIT 1`
+      )
+      .get(MESSAGE_DELIVERY, messageUuid) as { created_at: number; payload: string };
+    return row;
+  }
+
+  it('persistPrompt stamps the delivery job created_at with delivery.admittedAt', () => {
+    const before = Date.now();
+    persistPrompt({
+      db: db as never,
+      sdkMessageRepo: sdkRepo,
+      jobQueue,
+      sessionId: SESSION,
+      message: userMessage('stamp-persist'),
+      delivery: { origin: 'space_agent', admittedAt: 1234 },
+    });
+
+    const row = deliveryJobRow('stamp-persist');
+    expect(row.created_at).toBe(1234);
+    expect(JSON.parse(row.payload).admittedAt).toBe(1234);
+    expect(before).toBeGreaterThan(1234);
+  });
+
+  it('persistPrompt without admittedAt keeps created_at as the physical insert time', () => {
+    const before = Date.now();
+    persistPrompt({
+      db: db as never,
+      sdkMessageRepo: sdkRepo,
+      jobQueue,
+      sessionId: SESSION,
+      message: userMessage('stamp-now'),
+      delivery: { origin: 'chat' },
+    });
+
+    const row = deliveryJobRow('stamp-now');
+    expect(row.created_at).toBeGreaterThanOrEqual(before);
+    expect(JSON.parse(row.payload).admittedAt).toBeUndefined();
+  });
+
+  it('ensurePrompt stamps the minted job on the created path', () => {
+    ensurePrompt({
+      db: db as never,
+      sdkMessageRepo: sdkRepo,
+      jobQueue,
+      sessionId: SESSION,
+      message: userMessage('stamp-ensure'),
+      delivery: { origin: 'space_agent', admittedAt: 2345 },
+    });
+
+    expect(deliveryJobRow('stamp-ensure').created_at).toBe(2345);
+  });
+
+  it('an admittedAt-stamped job sorts ahead of a later direct sibling in the session FIFO', () => {
+    const before = Date.now();
+    persistPrompt({
+      db: db as never,
+      sdkMessageRepo: sdkRepo,
+      jobQueue,
+      sessionId: SESSION,
+      message: userMessage('stamp-early'),
+      delivery: { origin: 'space_agent', admittedAt: before - 60_000 },
+    });
+    persistPrompt({
+      db: db as never,
+      sdkMessageRepo: sdkRepo,
+      jobQueue,
+      sessionId: SESSION,
+      message: userMessage('stamp-late'),
+      delivery: { origin: 'chat' },
+    });
+
+    const [head] = jobQueue.dequeueSessionFifo(MESSAGE_DELIVERY, 2);
+    expect(head?.payload.messageUuid).toBe('stamp-early');
+    jobQueue.complete(head!.id, { ok: true });
+    const [tail] = jobQueue.dequeueSessionFifo(MESSAGE_DELIVERY, 2);
+    expect(tail?.payload.messageUuid).toBe('stamp-late');
+  });
+
+  it('retryPrompt mints a fallback job stamped with admittedAt', async () => {
+    db.prepare(
+      `INSERT INTO sdk_messages
+        (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+         replacement_metadata_normalized)
+       VALUES (?, ?, 'user', ?, ?, 'failed', ?, 1)`
+    ).run(
+      'db-retry-stamp',
+      SESSION,
+      JSON.stringify(userMessage('stamp-retry')),
+      new Date().toISOString(),
+      'stamp-retry'
+    );
+
+    const retried = await retryPrompt({
+      db: db as never,
+      jobQueue,
+      sdkMessageRepo: sdkRepo,
+      sessionId: SESSION,
+      messageUuid: 'stamp-retry',
+      origin: 'space_agent',
+      admittedAt: 3456,
+    });
+
+    expect(retried).not.toBeNull();
+    expect(deliveryJobRow('stamp-retry').created_at).toBe(3456);
+  });
+
+  it('activatePrompts mints a released job stamped with admittedAt', async () => {
+    db.prepare(
+      `INSERT INTO sdk_messages
+        (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid,
+         replacement_metadata_normalized)
+       VALUES (?, ?, 'user', ?, ?, 'deferred', ?, 1)`
+    ).run(
+      'db-activate-stamp',
+      SESSION,
+      JSON.stringify(userMessage('stamp-activate')),
+      new Date().toISOString(),
+      'stamp-activate'
+    );
+
+    const { activated } = await activatePrompts({
+      db: db as never,
+      jobQueue,
+      sessionId: SESSION,
+      messageUuids: ['stamp-activate'],
+      origin: 'space_agent',
+      admittedAt: 4567,
+    });
+
+    expect(activated).toHaveLength(1);
+    expect(deliveryJobRow('stamp-activate').created_at).toBe(4567);
+  });
+});

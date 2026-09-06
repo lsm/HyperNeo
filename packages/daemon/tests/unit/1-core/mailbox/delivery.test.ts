@@ -14,6 +14,7 @@ import {
   type MailboxMessage,
 } from '../../../../src/lib/mailbox/entry';
 import { createUlid } from '../../../../src/lib/mailbox/ulid';
+import { persistAndEnqueueDelivery } from '../../../../src/lib/agent/message-delivery-outbox';
 import { DeadLetterImmediatelyError } from '../../../../src/storage/job-queue-processor';
 import type {
   Job,
@@ -803,5 +804,143 @@ describe('createMailboxDeliveryHandler', () => {
       expect(mailbox.sdkRows()).toHaveLength(0);
       expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(0);
     });
+  });
+});
+
+describe('cross-lane per-session ordering (mailbox vs direct message_delivery)', () => {
+  let mailbox: MailboxTestDb;
+
+  beforeEach(() => {
+    mailbox = createMailboxTestDb();
+  });
+
+  afterEach(() => {
+    mailbox.close();
+  });
+
+  const dequeueDelivery = (limit = 5) =>
+    mailbox.jobQueue.dequeueSessionFifo(MESSAGE_DELIVERY, limit, {
+      releasedPath: '$.released',
+      waitsBehind: [{ queue: MAILBOX_LANE, sessionIdPath: '$.to.sessionId' }],
+    });
+
+  function chatMessage(messageUuid: string, text: string) {
+    return {
+      type: 'user',
+      uuid: messageUuid,
+      session_id: SESSION_ID,
+      parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'text', text }] },
+    };
+  }
+
+  function persistChatPrompt(messageUuid: string, text: string) {
+    return persistAndEnqueueDelivery({
+      db: mailbox.db as never,
+      sdkMessageRepo: mailbox.sdkMessageRepo,
+      jobQueue: mailbox.jobQueue,
+      sessionId: SESSION_ID,
+      message: chatMessage(messageUuid, text),
+      sendStatus: 'enqueued',
+      delivery: { origin: 'chat' },
+    });
+  }
+
+  function makeOrderingHandler() {
+    return createMailboxDeliveryHandler({
+      jobQueue: mailbox.jobQueue,
+      db: mailbox.db,
+      sdkMessageRepo: mailbox.sdkMessageRepo,
+      getSession: async () => ({ ok: true }),
+      isSessionArchived: () => false,
+    });
+  }
+
+  test('a direct chat prompt admitted after a mailbox entry cannot overtake it', async () => {
+    const handler = makeOrderingHandler();
+    const admittedAt = Date.now() - 60_000;
+    const entry = makeEntry({ id: createUlid(admittedAt), origin: 'space_agent' });
+    expect(enqueueMailboxEntry(mailbox.jobQueue, entry).kind).toBe('enqueued');
+
+    persistChatPrompt('chat-late', 'a later direct chat prompt');
+
+    expect(dequeueDelivery()).toHaveLength(0);
+
+    const mailboxJob = mailbox.jobQueue.dequeue(MAILBOX_LANE, 1)[0];
+    await handler(mailboxJob);
+    mailbox.jobQueue.complete(mailboxJob.id, {}, mailboxJob.claimToken);
+
+    const first = dequeueDelivery()[0];
+    expect(first.payload.messageUuid).toBe(expectedMessageUuid(entry.id));
+    expect(first.payload.admittedAt).toBe(admittedAt);
+    expect(first.createdAt).toBe(admittedAt);
+    mailbox.jobQueue.complete(first.id, {}, first.claimToken);
+
+    const second = dequeueDelivery()[0];
+    expect(second.payload.messageUuid).toBe('chat-late');
+  });
+
+  test('a direct chat prompt admitted before the mailbox entry keeps its place', async () => {
+    const handler = makeOrderingHandler();
+    const chatAdmittedAt = Date.now() - 90_000;
+    persistChatPrompt('chat-early', 'an earlier direct chat prompt');
+    mailbox.db
+      .prepare(
+        `UPDATE job_queue SET created_at = ?
+          WHERE queue = ? AND json_extract(payload, '$.messageUuid') = ?`
+      )
+      .run(chatAdmittedAt, MESSAGE_DELIVERY, 'chat-early');
+
+    const entry = makeEntry({ id: createUlid(Date.now() - 60_000), origin: 'space_agent' });
+    expect(enqueueMailboxEntry(mailbox.jobQueue, entry).kind).toBe('enqueued');
+
+    const first = dequeueDelivery()[0];
+    expect(first.payload.messageUuid).toBe('chat-early');
+    mailbox.jobQueue.complete(first.id, {}, first.claimToken);
+
+    const mailboxJob = mailbox.jobQueue.dequeue(MAILBOX_LANE, 1)[0];
+    await handler(mailboxJob);
+    mailbox.jobQueue.complete(mailboxJob.id, {}, mailboxJob.claimToken);
+
+    const second = dequeueDelivery()[0];
+    expect(second.payload.messageUuid).toBe(expectedMessageUuid(entry.id));
+  });
+
+  test('a dead-lettered mailbox entry releases the gate for direct prompts', () => {
+    const entry = makeEntry({ id: createUlid(Date.now() - 60_000), origin: 'space_agent' });
+    expect(enqueueMailboxEntry(mailbox.jobQueue, entry).kind).toBe('enqueued');
+    persistChatPrompt('chat-after-dead', 'a direct prompt behind a dying entry');
+
+    expect(dequeueDelivery()).toHaveLength(0);
+
+    const mailboxJob = mailbox.jobQueue.dequeue(MAILBOX_LANE, 1)[0];
+    const dead = mailbox.jobQueue.markDead(
+      mailboxJob.id,
+      'mailbox: session not found',
+      mailboxJob.claimToken
+    );
+    expect(dead?.status).toBe('dead');
+    expect(mailbox.sdkRows()).toHaveLength(0);
+
+    const claimed = dequeueDelivery();
+    expect(claimed.map((job) => job.payload.messageUuid)).toEqual(['chat-after-dead']);
+  });
+
+  test('the gate is scoped per session — another session is never held back', () => {
+    const entry = makeEntry({ id: createUlid(Date.now() - 60_000), origin: 'space_agent' });
+    expect(enqueueMailboxEntry(mailbox.jobQueue, entry).kind).toBe('enqueued');
+    mailbox.jobQueue.enqueue({
+      queue: MESSAGE_DELIVERY,
+      payload: {
+        sessionId: 'sess-other',
+        messageUuid: 'other-session-prompt',
+        origin: 'chat',
+        released: true,
+      },
+      createdAt: Date.now(),
+    });
+
+    const claimed = dequeueDelivery();
+    expect(claimed.map((job) => job.payload.messageUuid)).toEqual(['other-session-prompt']);
   });
 });
