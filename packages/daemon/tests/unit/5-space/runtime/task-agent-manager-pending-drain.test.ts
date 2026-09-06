@@ -1442,6 +1442,7 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
     manager: TaskAgentManager;
     saveUserMessage: ReturnType<typeof mock>;
     jobQueueEnqueue: ReturnType<typeof mock>;
+    mailboxEnqueue: ReturnType<typeof mock>;
   } {
     const execution = {
       id: 'exec-guard',
@@ -1461,6 +1462,11 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
         return { id: 'job-1' };
       }
     );
+    let guardMailboxConsumed = false;
+    const mailboxEnqueue = mock(() => {
+      guardMailboxConsumed = true;
+      return { id: 'mailbox-job-1' };
+    });
     const replayMock = mock(async () => ({ success: true, messageCount: 0 }));
     const workflow = { nodes: [{ id: NODE_ID, name: NODE_NAME, agents: [] }] };
     const session = {
@@ -1477,14 +1483,24 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
         saveUserMessage,
         getUserMessageIdsByStatus: mock(() => []),
         getSDKMessageRepo: () => ({
-          getDeliveryContent: () => null,
+          getDeliveryContent: () =>
+            guardMailboxConsumed ? { content: 'x', sendStatus: 'consumed' } : null,
+          getConsumedSiblingContent: () => null,
+          getDeliveryMessageIdsByUuids: () => ['db-id'],
+          normalizeDeliveryMessageForMailbox: mock(() => false),
           reopenDeliveryByUuid: mock(() => null),
           markDeliveryDeferredByUuid: mock(() => null),
           markDeliveryFailedByUuid: mock(() => null),
+          failDeliveryUnlessProcessing: mock(() => null),
         }),
         getJobQueueRepo: () => ({
           activeDeliveryMessageUuids: () => new Set<string>(),
+          activeMailboxMessageUuids: () => new Set<string>(),
+          mailboxEntryJobStatus: () => 'completed' as const,
+          cancelPendingMailboxEntry: () => false,
+          cancelHeldDeliveryJob: () => false,
           enqueue: jobQueueEnqueue,
+          enqueueUniquePending: mailboxEnqueue,
         }),
       },
       internalEventBus: { subscribe: mock(() => () => {}), publish: mock(async () => {}) },
@@ -1507,7 +1523,7 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
       GUARD_SESSION_ID,
       session
     );
-    return { manager, saveUserMessage, jobQueueEnqueue };
+    return { manager, saveUserMessage, jobQueueEnqueue, mailboxEnqueue };
   }
 
   it('rejects when the canonical task is cancelled', async () => {
@@ -1532,14 +1548,21 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
   });
 
   it('lets done task and run states through to the durable injection shell', async () => {
-    const { manager, saveUserMessage, jobQueueEnqueue } = makeGuardManager('done', 'done');
+    const { manager, saveUserMessage, mailboxEnqueue } = makeGuardManager('done', 'done');
 
     const dbId = await manager.injectSubSessionMessage(GUARD_SESSION_ID, 'note', true);
 
     expect(dbId).toBe('db-id');
-    expect(saveUserMessage).toHaveBeenCalledTimes(1);
-    expect(saveUserMessage.mock.calls[0][2]).toBe('enqueued');
-    expect(jobQueueEnqueue).toHaveBeenCalledTimes(1);
+    expect(saveUserMessage).not.toHaveBeenCalled();
+    expect(mailboxEnqueue).toHaveBeenCalledTimes(1);
+    const enqueueArgs = mailboxEnqueue.mock.calls[0][0] as {
+      queue?: string;
+      payload?: { to?: { sessionId?: string }; origin?: string; messageUuid?: string };
+    };
+    expect(enqueueArgs.queue).toBe('mailbox');
+    expect(enqueueArgs.payload?.to?.sessionId).toBe(GUARD_SESSION_ID);
+    expect(enqueueArgs.payload?.origin).toBe('space_inject');
+    expect(typeof enqueueArgs.payload?.messageUuid).toBe('string');
   });
 
   it('rejects runtime-origin injections when the canonical task is done (#3109)', async () => {

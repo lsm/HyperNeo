@@ -88,7 +88,11 @@ import type { AgentMemoryRepository } from '../../../storage/repositories/agent-
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
+import { activatePrompts } from '../../agent/message-delivery-outbox.ts';
 import { Logger } from '../../logger.ts';
+import { renderAddress } from '../../mailbox/address.ts';
+import type { MailboxMessage } from '../../mailbox/entry.ts';
+import { handoffPromptToMailbox as handoffPromptToMailboxLane } from '../../mailbox/handoff.ts';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager.ts';
 import {
   buildExecutionBaseSessionId,
@@ -131,12 +135,15 @@ import { createGithubConnector } from './connectors/github-connector.ts';
 import { HookExecutor } from './hook-executor.ts';
 import type { InjectionDeliveryRowDeps } from './injection-delivery-steps.ts';
 import {
-  deliverInjectedMessage,
   flipDeliveryRowToDeferred,
   reopenFailedDeliveryRow,
   settleDeliveryRowStatus,
 } from './injection-delivery-steps.ts';
 import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
+import {
+  settleMailboxInject,
+  type MailboxInjectSettlementOutcome,
+} from './mailbox-inject-settlement-pipeline.ts';
 import { derivePendingQueueTargetNames } from './pending-drain-gates.ts';
 import {
   drainPendingRowOntoMailbox,
@@ -332,6 +339,26 @@ const WORKER_REINJECTABLE_MCP_SERVERS = ['node-agent', 'space-actions'] as const
 const VERIFIED_STOP_PROCESS_EXIT_SETTLE_MS = 500;
 
 const VERIFIED_STOP_ESCALATION_FORCE_KILL_MS = 2000;
+
+const MAILBOX_MATERIALIZATION_WAIT_MS = 30_000;
+
+const MAILBOX_MATERIALIZATION_POLL_MS = 150;
+
+const MAILBOX_CONSUMPTION_HARD_WAIT_MS = 12 * 60_000;
+
+const MAILBOX_CONSUMPTION_SETTLE_GRACE_MS = 5_000;
+
+const MAILBOX_CONSUMPTION_POLL_MS = 150;
+
+function mailboxConsumptionHardWaitMs(): number {
+  const raw = Number(process.env.HYPERNEO_MAILBOX_CONSUMPTION_HARD_WAIT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : MAILBOX_CONSUMPTION_HARD_WAIT_MS;
+}
+
+function mailboxConsumptionSettleGraceMs(): number {
+  const raw = Number(process.env.HYPERNEO_MAILBOX_CONSUMPTION_SETTLE_GRACE_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : MAILBOX_CONSUMPTION_SETTLE_GRACE_MS;
+}
 
 interface SpawnTaskAgentOptions {
   kickoff?: boolean;
@@ -4456,7 +4483,192 @@ export class TaskAgentManager {
   }
 
   private hasActiveDeliveryJob(sessionId: string): boolean {
-    return this.config.db.getJobQueueRepo().activeDeliveryMessageUuids(sessionId).size > 0;
+    const jobQueue = this.config.db.getJobQueueRepo();
+    return (
+      jobQueue.activeDeliveryMessageUuids(sessionId).size > 0 ||
+      jobQueue.activeMailboxMessageUuids(sessionId).size > 0
+    );
+  }
+
+  private siblingDeliveredSameContent(
+    sessionId: string,
+    messageId: string,
+    content: string | MessageContent[]
+  ): boolean {
+    const sibling = this.config.db
+      .getSDKMessageRepo()
+      .getConsumedSiblingContent(sessionId, messageId);
+    return sibling !== null && JSON.stringify(sibling) === JSON.stringify(content);
+  }
+
+  private async awaitMailboxDeliveryConsumptionOutcome(
+    sessionId: string,
+    messageId: string,
+    expectedContent: string | MessageContent[]
+  ): Promise<'consumed' | 'inactive' | 'timeout'> {
+    const deadline = Date.now() + mailboxConsumptionHardWaitMs();
+    let settleGraceDeadline: number | null = null;
+    for (;;) {
+      const sendStatus = this.config.db
+        .getSDKMessageRepo()
+        .getDeliveryContent(sessionId, messageId)?.sendStatus;
+      if (sendStatus === 'consumed') return 'consumed';
+      const inFlight = this.config.db
+        .getJobQueueRepo()
+        .activeDeliveryMessageUuids(sessionId)
+        .has(messageId);
+      const siblingConsumed = () =>
+        this.siblingDeliveredSameContent(sessionId, messageId, expectedContent);
+      const now = Date.now();
+      if (inFlight) {
+        settleGraceDeadline = null;
+      } else if (sendStatus !== 'enqueued') {
+        return siblingConsumed() ? 'consumed' : 'inactive';
+      } else if (settleGraceDeadline === null) {
+        settleGraceDeadline = now + mailboxConsumptionSettleGraceMs();
+      } else if (now >= settleGraceDeadline) {
+        return siblingConsumed() ? 'consumed' : 'inactive';
+      }
+      if (now >= deadline) return siblingConsumed() ? 'consumed' : 'timeout';
+      await new Promise((resolve) => setTimeout(resolve, MAILBOX_CONSUMPTION_POLL_MS));
+    }
+  }
+
+  private async cleanupMailboxRowAfterPipelineError(
+    sessionId: string,
+    messageId: string,
+    rowExistedAtHandoff: boolean,
+    entryMessage: MailboxMessage,
+    isSyntheticMessage: boolean,
+    origin: MessageOrigin | undefined
+  ): Promise<void> {
+    try {
+      const rowNowExists =
+        rowExistedAtHandoff ||
+        this.config.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(sessionId, [messageId])
+          .length > 0;
+      if (!rowNowExists) return;
+      await this.persistFailedMailboxRow(
+        sessionId,
+        messageId,
+        entryMessage,
+        isSyntheticMessage,
+        origin
+      );
+    } catch {}
+  }
+
+  private async awaitMailboxMaterialization(
+    sessionId: string,
+    messageId: string,
+    entryId: string,
+    rowExistedAtHandoff: boolean
+  ): Promise<
+    { kind: 'materialized'; dbId: string } | { kind: 'dead' | 'absent' | 'cancelled' | 'stuck' }
+  > {
+    const jobQueue = this.config.db.getJobQueueRepo();
+    try {
+      return await this.pollMailboxMaterialization(
+        jobQueue,
+        sessionId,
+        messageId,
+        entryId,
+        rowExistedAtHandoff
+      );
+    } catch (err) {
+      try {
+        jobQueue.cancelPendingMailboxEntry(entryId);
+      } catch {}
+      throw err;
+    }
+  }
+
+  private async pollMailboxMaterialization(
+    jobQueue: ReturnType<TaskAgentManager['config']['db']['getJobQueueRepo']>,
+    sessionId: string,
+    messageId: string,
+    entryId: string,
+    rowExistedAtHandoff: boolean
+  ): Promise<
+    { kind: 'materialized'; dbId: string } | { kind: 'dead' | 'absent' | 'cancelled' | 'stuck' }
+  > {
+    const pendingDeadline = Date.now() + MAILBOX_MATERIALIZATION_WAIT_MS;
+    const hardDeadline = Date.now() + mailboxConsumptionHardWaitMs();
+    for (;;) {
+      const entryStatus = jobQueue.mailboxEntryJobStatus(entryId);
+      if (entryStatus === 'dead') return { kind: 'dead' };
+      const rowIds = this.config.db
+        .getSDKMessageRepo()
+        .getDeliveryMessageIdsByUuids(sessionId, [messageId]);
+      if (rowExistedAtHandoff ? entryStatus === 'completed' : rowIds.length > 0) {
+        return { kind: 'materialized', dbId: rowIds[0] ?? messageId };
+      }
+      if (entryStatus === 'absent' && rowIds.length === 0) return { kind: 'absent' };
+      const now = Date.now();
+      if (
+        entryStatus === 'pending' &&
+        now >= pendingDeadline &&
+        jobQueue.cancelPendingMailboxEntry(entryId)
+      ) {
+        return { kind: 'cancelled' };
+      }
+      if (now >= hardDeadline) return { kind: 'stuck' };
+      await new Promise((resolve) => setTimeout(resolve, MAILBOX_MATERIALIZATION_POLL_MS));
+    }
+  }
+
+  private async activateDeferredDeliveryRow(
+    sessionId: string,
+    messageId: string,
+    origin: 'space_inject' | 'chat'
+  ): Promise<boolean> {
+    const { activated } = await activatePrompts({
+      db: this.config.db.getDatabase(),
+      jobQueue: this.config.db.getJobQueueRepo(),
+      sessionId,
+      messageUuids: [messageId],
+      origin,
+      publishStatusChanged: (messageIds) =>
+        void this.config.internalEventBus
+          .publish('messages.statusChanged', {
+            sessionId,
+            messageIds,
+            status: 'enqueued',
+          })
+          .catch(() => {}),
+    });
+    return activated.some((entry) => entry.messageUuid === messageId);
+  }
+
+  private async persistFailedMailboxRow(
+    sessionId: string,
+    messageId: string,
+    entryMessage: MailboxMessage,
+    isSyntheticMessage: boolean,
+    origin: MessageOrigin | undefined
+  ): Promise<void> {
+    const jobQueue = this.config.db.getJobQueueRepo();
+    jobQueue.cancelHeldDeliveryJob(sessionId, messageId);
+    const failedRow = {
+      ...entryMessage,
+      uuid: messageId as UUID,
+      session_id: sessionId,
+      ...(isSyntheticMessage ? { isSynthetic: true } : {}),
+    };
+    const rowExists =
+      this.config.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(sessionId, [messageId])
+        .length > 0;
+    const failedDbId = rowExists
+      ? this.config.db.getSDKMessageRepo().failDeliveryUnlessProcessing(sessionId, messageId)
+      : this.config.db.saveUserMessage(
+          sessionId,
+          failedRow,
+          'failed',
+          isSyntheticMessage ? ('system' as MessageOrigin) : origin
+        );
+    if (failedDbId) {
+      await this.publishMessageStatusChanged(sessionId, failedDbId, 'failed');
+    }
   }
 
   private hasUnconsumedDeliveredWork(sessionId: string, excludeMessageId?: string): boolean {
@@ -4558,6 +4770,9 @@ export class TaskAgentManager {
     if (outcome.decision.action === 'noop') {
       return messageId;
     }
+    if (this.siblingDeliveredSameContent(sessionId, messageId, sdkContent)) {
+      return messageId;
+    }
     if (outcome.decision.action === 'defer') {
       if (outcome.reopenFailedDelivery) {
         await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
@@ -4597,10 +4812,29 @@ export class TaskAgentManager {
     }
 
     if (outcome.reopenFailedDelivery) {
-      await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
+      try {
+        await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
+      } catch (err) {
+        boundaryOwner?.release();
+        boundaryOwner = null;
+        throw err;
+      }
     }
 
+    const mailboxEntryMessage: MailboxMessage = {
+      type: 'user',
+      message: { content: sdkContent },
+      parent_tool_use_id: null,
+      inputKind,
+    };
+    let rowExistedAtHandoff = false;
+    let settledOutcome: MailboxInjectSettlementOutcome | undefined;
+
     try {
+      rowExistedAtHandoff =
+        existing !== null ||
+        this.config.db.getSDKMessageRepo().getDeliveryMessageIdsByUuids(sessionId, [messageId])
+          .length > 0;
       if (!isBusy) {
         const clearSuppressedByPendingWork =
           outcome.decision.action === 'deliver_without_clear' &&
@@ -4660,21 +4894,103 @@ export class TaskAgentManager {
         }
       }
 
-      return deliverInjectedMessage(
-        { ...deliveryRows, jobQueue: this.config.db.getJobQueueRepo() },
-        {
-          session,
-          sessionId,
-          messageId,
-          sdkUserMessage,
-          rowExists: !!existing,
-          origin,
-          boundaryOwner: boundaryOwner ?? undefined,
-        }
+      settledOutcome = await settleMailboxInject({
+        sessionId,
+        messageId,
+        rowExistedAtHandoff,
+        existingSendStatus: existing?.sendStatus ?? null,
+        deps: {
+          normalizeExistingRow: (targetSessionId, targetMessageId) => {
+            this.config.db
+              .getSDKMessageRepo()
+              .normalizeDeliveryMessageForMailbox(targetSessionId, targetMessageId);
+          },
+          handoffToMailbox: () =>
+            handoffPromptToMailboxLane({
+              to: renderAddress({ kind: 'session', sessionId }),
+              message: mailboxEntryMessage,
+              origin: isSyntheticMessage ? 'space_inject' : 'chat',
+              deliveryMode: 'immediate',
+              messageUuid: messageId,
+              jobQueue: this.config.db.getJobQueueRepo(),
+            }),
+          awaitSettlement: (targetSessionId, targetMessageId, entryId, rowExisted) =>
+            this.awaitMailboxMaterialization(targetSessionId, targetMessageId, entryId, rowExisted),
+          activateDeferredRow: (targetSessionId, targetMessageId) =>
+            this.activateDeferredDeliveryRow(
+              targetSessionId,
+              targetMessageId,
+              isSyntheticMessage ? 'space_inject' : 'chat'
+            ),
+          hasSettledDelivery: (targetSessionId, targetMessageId) => {
+            const sendStatus = this.config.db
+              .getSDKMessageRepo()
+              .getDeliveryContent(targetSessionId, targetMessageId)?.sendStatus;
+            return (
+              sendStatus === 'consumed' ||
+              sendStatus === 'failed' ||
+              this.siblingDeliveredSameContent(targetSessionId, targetMessageId, sdkContent)
+            );
+          },
+          hasInFlightDelivery: (targetSessionId, targetMessageId) =>
+            this.config.db
+              .getJobQueueRepo()
+              .activeDeliveryMessageUuids(targetSessionId)
+              .has(targetMessageId),
+          claimQueued: async (targetMessageId) => {
+            const claimed = await session.stateManager.setQueuedIfIdle(targetMessageId);
+            if (
+              claimed &&
+              !this.config.db
+                .getJobQueueRepo()
+                .activeDeliveryMessageUuids(sessionId)
+                .has(targetMessageId)
+            ) {
+              await session.stateManager.clearQueuedIfOwnedBy(targetMessageId);
+            }
+          },
+          awaitDeliveryConsumption: async (targetSessionId, targetMessageId) => {
+            boundaryOwner?.release();
+            boundaryOwner = null;
+            return this.awaitMailboxDeliveryConsumptionOutcome(
+              targetSessionId,
+              targetMessageId,
+              sdkContent
+            );
+          },
+          persistFailedRow: (targetSessionId, targetMessageId) =>
+            this.persistFailedMailboxRow(
+              targetSessionId,
+              targetMessageId,
+              mailboxEntryMessage,
+              isSyntheticMessage,
+              origin
+            ),
+        },
+      });
+    } catch (err) {
+      await this.cleanupMailboxRowAfterPipelineError(
+        sessionId,
+        messageId,
+        rowExistedAtHandoff,
+        mailboxEntryMessage,
+        isSyntheticMessage,
+        origin
       );
+      throw err;
     } finally {
       boundaryOwner?.release();
     }
+    if (settledOutcome === undefined || settledOutcome.action === 'failed') {
+      throw new Error(
+        `mailbox injection for session ${sessionId} message ${messageId}: ${
+          settledOutcome?.action === 'failed'
+            ? settledOutcome.reason
+            : 'settlement produced no outcome'
+        }`
+      );
+    }
+    return settledOutcome.dbId;
   }
 
   private injectDeliveryRowDeps(): InjectionDeliveryRowDeps {
