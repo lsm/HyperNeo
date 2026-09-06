@@ -114,7 +114,6 @@
 7	packages/daemon/tests/unit/5-space/runtime/run-completion-settlement.test.ts
 9	packages/daemon/tests/unit/5-space/runtime/run-spawn-decisions.test.ts
 10	packages/daemon/tests/unit/5-space/runtime/run-tick-admission-gates.test.ts
-14	packages/daemon/tests/unit/5-space/runtime/run-tick-decision-pipeline.test.ts
 698	packages/daemon/tests/unit/5-space/runtime/space-agent-autonomy.test.ts
 1052	packages/daemon/tests/unit/5-space/runtime/space-agent-task-creation-flow.test.ts
 36990	packages/daemon/tests/unit/5-space/runtime/space-agent-tools.test.ts
