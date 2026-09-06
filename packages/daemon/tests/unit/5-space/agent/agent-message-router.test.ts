@@ -1103,7 +1103,7 @@ describe('AgentMessageRouter: notFoundAgentNames structured field', () => {
       message: 'broadcast to available',
     });
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe('partial');
     expect(result.delivered).toHaveLength(1);
     expect(result.delivered[0].agentName).toBe('reviewer');
     expect(result.notFoundAgentNames).toBeDefined();

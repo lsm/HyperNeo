@@ -422,12 +422,12 @@ describe('foldAgentMessageResult', () => {
     });
   });
 
-  test('not-found with deliveries falls through to success', () => {
+  test('not-found with deliveries falls through to partial success', () => {
     const delivered = [{ agentName: 'qa', sessionId: 's1' }];
     expect(
       foldAgentMessageResult({ delivered, queued: [], failed: [], notFound: ['reviewer'] })
     ).toEqual({
-      success: true,
+      success: 'partial',
       delivered,
       failed: [],
       notFoundAgentNames: ['reviewer'],

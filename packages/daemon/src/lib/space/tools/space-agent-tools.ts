@@ -799,6 +799,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       const delivered = await tryInjectNodeSession(ctx, outcome.sessionId, outcome.created);
       return delivered === undefined ? ctx : { ...ctx, result: delivered };
     }
+    if (ctx.sessionSelector !== undefined) return ctx;
+    if (
+      outcome.reason === 'post_approval_pending' ||
+      outcome.reason === 'restore_timeout' ||
+      outcome.reason === 'spawn_timeout' ||
+      (outcome.reason === 'activation_timeout' && ctx.resolved.agentSessionId === null)
+    ) {
+      return { ...ctx, result: reportActivatedWithoutLiveSession(ctx) };
+    }
     if (
       outcome.reason !== 'task_terminal' &&
       outcome.reason !== 'session_resolution_unavailable' &&

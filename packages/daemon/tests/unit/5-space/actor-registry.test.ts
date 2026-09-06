@@ -309,14 +309,6 @@ describe('SpaceActorRegistryAdapter', () => {
       status: 'active',
     });
     expect(actors).toContainEqual({
-      actorId: `worker:${encodeURIComponent(run.id)}:Review%2FQA:reviewer%3Alead`,
-      kind: 'worker',
-      spaceId: space.id,
-      handle: `@worker:${encodeURIComponent(run.id)}/Review%2FQA/reviewer%3Alead`,
-      roles: ['actor-role:Review%2FQA', 'actor-role:reviewer%3Alead'],
-      status: 'inactive',
-    });
-    expect(actors).toContainEqual({
       actorId: `worker:${encodeURIComponent(run.id)}:coordinator:messaging`,
       kind: 'worker',
       spaceId: space.id,

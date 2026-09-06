@@ -784,6 +784,7 @@ function makeActivateHarness(
     },
     nodeExecutionRepo: {
       listByWorkflowRun: () => rows,
+      listByAgentSessionId: () => [],
       update: (id: string, patch: Record<string, unknown>) => {
         updates.push({ id, patch });
         return { ...makeExecution(), ...patch };

@@ -2764,20 +2764,16 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
     });
 
-    it('reports activation without a session when zero-wait activation is unresolved', async () => {
+    it('fails loudly when a message cannot be delivered on unresolved activation', async () => {
       const { handlers: h, resolutionCalls, injectCalls } = setupActivate();
-      const result = (await (h.get('space.task.activateNodeAgent') as RequestHandler)({
-        spaceId: 'space-1',
-        taskId: 'task-1',
-        agentName: 'reviewer',
-        message: 'wake up reviewer',
-      })) as Record<string, unknown>;
-
-      expect(result).toMatchObject({
-        sessionId: null,
-        activated: true,
-      });
-      expect((result as { queued?: boolean }).queued).toBeUndefined();
+      await expect(
+        (h.get('space.task.activateNodeAgent') as RequestHandler)({
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          agentName: 'reviewer',
+          message: 'wake up reviewer',
+        })
+      ).rejects.toThrow(/still starting.*message was not delivered/s);
       expect(resolutionCalls).toEqual([
         {
           kind: 'worker',

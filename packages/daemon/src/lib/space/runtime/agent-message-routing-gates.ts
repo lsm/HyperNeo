@@ -155,8 +155,9 @@ export function foldAgentMessageResult(input: FoldAgentMessageResultInput): Agen
       notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
     };
   }
+  const skippedSome = notFound.length > 0 && delivered.length + queued.length > 0;
   return {
-    success: failed.length > 0 ? 'partial' : true,
+    success: failed.length > 0 || skippedSome ? 'partial' : true,
     delivered,
     failed,
     queued: queued.length > 0 ? queued : undefined,

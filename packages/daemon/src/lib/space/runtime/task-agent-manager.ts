@@ -1946,12 +1946,21 @@ export class TaskAgentManager {
     taskId: string,
     approvedAt: number
   ): boolean {
-    const row = this.config.db
-      .getDatabase()
+    const db = this.config.db.getDatabase();
+    const legacyPendingTableExists =
+      (db
+        .prepare(
+          `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pending_agent_messages'`
+        )
+        .get() as unknown) !== null;
+    const legacyDrainExclusion = legacyPendingTableExists
+      ? ` AND NOT EXISTS (SELECT 1 FROM pending_agent_messages p WHERE p.id = sdk_messages.sdk_uuid)`
+      : '';
+    const row = db
       .prepare(
         `SELECT 1 FROM sdk_messages
           WHERE session_id = ? AND task_id = ? AND message_type = 'user'
-            AND consumed_seq IS NOT NULL AND timestamp >= ?
+            AND consumed_seq IS NOT NULL AND timestamp >= ?${legacyDrainExclusion}
             AND json_valid(sdk_message)
             AND json_extract(sdk_message, '$.type') = 'user'
             AND (

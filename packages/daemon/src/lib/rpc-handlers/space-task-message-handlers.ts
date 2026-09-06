@@ -1,4 +1,4 @@
-import type { MessageHub, MessageImage } from '@hyperneo/shared';
+import type { MessageHub, MessageImage, MessageInputKind } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { parseAddress } from '../../../../messaging/src/address.ts';
 import type { Database } from '../../storage/database.ts';
@@ -95,7 +95,9 @@ export interface TaskAgentManagerInterface {
     message: string,
     isSyntheticMessage?: boolean,
     images?: MessageImage[],
-    deliveryMode?: 'immediate' | 'defer'
+    deliveryMode?: 'immediate' | 'defer',
+    inputKindOverride?: MessageInputKind,
+    messageId?: string
   ): Promise<string | void>;
   ensureWorkflowNodeActivationForAgent?(
     taskId: string,
@@ -297,12 +299,13 @@ export function setupSpaceTaskMessageHandlers(
     agentName: string,
     message: string,
     images?: MessageImage[],
-    deliveryMode?: 'immediate' | 'defer'
+    deliveryMode?: 'immediate' | 'defer',
+    messageId?: string
   ): Promise<void> {
     const inject = taskAgentManager.injectSubSessionMessage;
     if (!inject) throw new Error('Workflow agent targeting is unavailable on this daemon.');
     try {
-      await inject(sessionId, message, false, images, deliveryMode);
+      await inject(sessionId, message, false, images, deliveryMode, undefined, messageId);
     } catch (err) {
       const postApproval =
         taskAgentManager.getPostApprovalWorkerSession?.(taskId, sessionId) ?? null;
@@ -318,7 +321,7 @@ export function setupSpaceTaskMessageHandlers(
           `Post-approval worker "${agentName}" is not live and could not be restored (session ${sessionId}). Retry once the worker is back online.`
         );
       }
-      await inject(restored, message, false, images, deliveryMode);
+      await inject(restored, message, false, images, deliveryMode, undefined, messageId);
     }
   }
 
@@ -841,7 +844,12 @@ export function setupSpaceTaskMessageHandlers(
           params.taskId,
           outcome.sessionId,
           params.agentName,
-          `[Message from human]: ${params.message}`
+          `[Message from human]: ${params.message}`,
+          undefined,
+          undefined,
+          params.clientMessageId
+            ? `human:${params.taskId}:${params.agentName}:${params.clientMessageId}`
+            : undefined
         );
         log.info(
           `space.task.activateNodeAgent: delivered message to session ${outcome.sessionId} ` +
@@ -864,6 +872,13 @@ export function setupSpaceTaskMessageHandlers(
         `Could not activate "${params.agentName}"` +
           (params.workflowNodeId ? ` on node ${params.workflowNodeId}` : '') +
           '. The node may not declare this agent, or activation is temporarily unavailable.'
+      );
+    }
+
+    if (params.message) {
+      throw new Error(
+        `"${params.agentName}" is still starting (${outcome.reason}) and the message was not delivered. ` +
+          'Send it again once the agent is online.'
       );
     }
 
