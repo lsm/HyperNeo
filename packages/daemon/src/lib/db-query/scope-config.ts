@@ -464,7 +464,6 @@ const EXCLUDED_TABLE_NAMES: string[] = [
   'tool_continuation_inbox',
   'pending_agent_messages',
   'sdk_message_replacements',
-  'space_agent_inbox_messages',
   'github_filter_configs',
   'workspace_history',
   'mcp_enablement',

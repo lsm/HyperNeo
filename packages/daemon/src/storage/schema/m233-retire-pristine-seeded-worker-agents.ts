@@ -94,14 +94,6 @@ function collectAgentIds(db: BunDatabase, sql: string, column: string, ids: Set<
 
 function agentsWithLiveState(db: BunDatabase): Set<string> {
   const ids = new Set<string>();
-  if (tableExists(db, 'space_agent_inbox_messages')) {
-    collectAgentIds(
-      db,
-      `SELECT DISTINCT target_agent_id FROM space_agent_inbox_messages WHERE status = 'pending'`,
-      'target_agent_id',
-      ids
-    );
-  }
   if (tableExists(db, 'space_agent_inactivity_config')) {
     collectAgentIds(
       db,

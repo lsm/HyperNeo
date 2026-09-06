@@ -23,7 +23,6 @@ import { runMigration198 } from './m198-session-counters.ts';
 import { runMigration206 } from './m206-restamp-reviewer-depth-tiers.ts';
 import { runMigration207 } from './m207-restamp-reviewer-review-modes.ts';
 import { runMigration208 } from './m208-restamp-reviewer-gate-artifact-fields.ts';
-import { runMigration209 } from './m209-drop-inbox-agent-fk.ts';
 import { runMigration213 } from './m213-inactivity-watchdog.ts';
 import { runMigration214 } from './m214-backfill-session-agent-provenance.ts';
 import { runMigration215 } from './m215-space-agent-model-pool.ts';
@@ -45,6 +44,7 @@ import { runMigration230 } from './m230-restamp-reviewer-check-seeding-contract.
 import { runMigration231 } from './m231-clear-resolved-workflow-slot-agent-ids.ts';
 import { runMigration232 } from './m232-drop-legacy-space-agents.ts';
 import { runMigration233 } from './m233-retire-pristine-seeded-worker-agents.ts';
+import { runMigration234 } from './m234-drop-space-agent-inbox-messages.ts';
 import {
   findPendingMigrationSpaceReclaims,
   type MigrationSpaceReclaimRequest,
@@ -492,7 +492,6 @@ export function runMigrations(
   run(migrationMarkerKey(207), () => runMigration207(db));
 
   run(migrationMarkerKey(208), () => runMigration208(db));
-  rewrite(migrationMarkerKey(209), () => runMigration209(db));
 
   run(migrationMarkerKey(210), () => runMigration210(db));
 
@@ -541,6 +540,8 @@ export function runMigrations(
   run(migrationMarkerKey(232), () => runMigration232(db));
 
   run(migrationMarkerKey(233), () => runMigration233(db));
+
+  run(migrationMarkerKey(234), () => runMigration234(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
@@ -8329,39 +8330,6 @@ export function runMigration139(db: BunDatabase): void {
 }
 
 export function runMigration138(db: BunDatabase): void {
-  db.exec(`
-		CREATE TABLE IF NOT EXISTS space_agent_inbox_messages (
-			id TEXT PRIMARY KEY,
-			space_id TEXT NOT NULL,
-			target_agent_id TEXT NOT NULL,
-			source_actor_id TEXT NOT NULL,
-			source_session_id TEXT,
-			message TEXT NOT NULL,
-			message_record_json TEXT,
-			idempotency_key TEXT,
-			attempts INTEGER NOT NULL DEFAULT 0,
-			max_attempts INTEGER NOT NULL DEFAULT 5,
-			last_attempt_at INTEGER,
-			last_error TEXT,
-			status TEXT NOT NULL DEFAULT 'pending'
-				CHECK(status IN ('pending', 'delivered', 'expired', 'failed')),
-			delivered_at INTEGER,
-			delivered_session_id TEXT,
-			expires_at INTEGER NOT NULL,
-			created_at INTEGER NOT NULL,
-			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-			FOREIGN KEY (target_agent_id) REFERENCES space_agents(id) ON DELETE CASCADE
-		)
-	`);
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_space_agent_inbox_target_status ` +
-      `ON space_agent_inbox_messages(space_id, target_agent_id, status, created_at)`
-  );
-  db.exec(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_space_agent_inbox_idempotency ` +
-      `ON space_agent_inbox_messages(space_id, target_agent_id, idempotency_key) ` +
-      `WHERE idempotency_key IS NOT NULL AND status = 'pending'`
-  );
   if (tableExists(db, 'sessions')) {
     db.exec(
       `CREATE INDEX IF NOT EXISTS idx_sessions_space_agent_provenance ` +

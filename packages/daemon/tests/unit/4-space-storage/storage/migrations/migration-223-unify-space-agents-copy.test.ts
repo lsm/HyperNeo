@@ -34,29 +34,6 @@ function makeOverlayDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   createSpaceAgentSchema(db);
   db.exec('DROP INDEX idx_space_agents_handle');
-  db.exec(`
-    CREATE TABLE space_agent_inbox_messages (
-      id TEXT PRIMARY KEY,
-      space_id TEXT NOT NULL,
-      target_agent_id TEXT NOT NULL,
-      source_actor_id TEXT NOT NULL,
-      source_session_id TEXT,
-      message TEXT NOT NULL,
-      message_record_json TEXT,
-      idempotency_key TEXT,
-      attempts INTEGER NOT NULL DEFAULT 0,
-      max_attempts INTEGER NOT NULL DEFAULT 5,
-      last_attempt_at INTEGER,
-      last_error TEXT,
-      status TEXT NOT NULL DEFAULT 'pending'
-        CHECK(status IN ('pending', 'delivered', 'expired', 'failed')),
-      delivered_at INTEGER,
-      delivered_session_id TEXT,
-      expires_at INTEGER NOT NULL,
-      created_at INTEGER NOT NULL,
-      FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
-    )
-  `);
   return db;
 }
 
@@ -659,7 +636,7 @@ describe('migration 223 — idempotency and partial retry', () => {
 });
 
 describe('migration 223 — reference resolution pins', () => {
-  test('workflow node agents, node_executions, promptProvenance, and inbox targets resolve in the unified table', () => {
+  test('workflow node agents, node_executions, and promptProvenance resolve in the unified table', () => {
     const db = makeOverlayDb();
     insertSpace(db, 'space-a');
     db.prepare(
@@ -685,11 +662,6 @@ describe('migration 223 — reference resolution pins', () => {
         promptProvenance: { agentId: 'w-coder', agentName: 'coder', nodeId: 'node-1' },
       })
     );
-    db.prepare(
-      `INSERT INTO space_agent_inbox_messages (
-         id, space_id, target_agent_id, source_actor_id, message, expires_at, created_at
-       ) VALUES ('inbox-1', 'space-a', 'w-coder', 'agent:coordinator:space-a', 'wake up', 999, 1)`
-    ).run();
 
     runMigration223(db);
 
@@ -728,16 +700,6 @@ describe('migration 223 — reference resolution pins', () => {
       )
       .get() as { count: number };
     expect(unresolvedSessions.count).toBe(0);
-
-    const unresolvedInbox = db
-      .prepare(
-        `SELECT COUNT(*) AS count
-         FROM space_agent_inbox_messages message
-         LEFT JOIN space_long_horizon_agents resolved ON resolved.id = message.target_agent_id
-         WHERE resolved.id IS NULL`
-      )
-      .get() as { count: number };
-    expect(unresolvedInbox.count).toBe(0);
 
     const workers = db.prepare(`SELECT COUNT(*) AS count FROM space_agents`).get() as {
       count: number;
