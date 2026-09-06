@@ -1416,6 +1416,37 @@ describe('prompt content verification (verifyPromptContent)', () => {
     ).toThrow(PromptContentConflictError);
   });
 
+  it('accepts a legacy stored shape whose nested message carries role', () => {
+    seedRow('verify-legacy-role', 'original');
+    const retry = userMessage('verify-legacy-role', 'original');
+    const { role: _role, ...roleless } = retry.message as Record<string, unknown>;
+    expect(() =>
+      verifyPromptContent({
+        db: db as never,
+        sessionId: SESSION,
+        messageUuid: 'verify-legacy-role',
+        message: { ...retry, message: roleless } as SDKMessage,
+      })
+    ).not.toThrow();
+  });
+
+  it('still conflicts when a nested role differs beyond the legacy shape', () => {
+    seedRow('verify-legacy-role-shift', 'original');
+    const retry = userMessage('verify-legacy-role-shift', 'original');
+    const shifted = {
+      ...retry,
+      message: { ...(retry.message as Record<string, unknown>), role: 'assistant' },
+    } as SDKMessage;
+    expect(() =>
+      verifyPromptContent({
+        db: db as never,
+        sessionId: SESSION,
+        messageUuid: 'verify-legacy-role-shift',
+        message: shifted,
+      })
+    ).toThrow(PromptContentConflictError);
+  });
+
   it('types the conflict ensurePrompt raises so producers can classify it', () => {
     seedRow('verify-ensure', 'original');
     expect(() =>
