@@ -164,10 +164,11 @@ import {
   selectSiblingsToQuiesce,
 } from './run-completion-settlement.ts';
 import {
-  decideSpawnAdmission,
-  selectPromotablePendingExecutions,
   classifySpawnFailure,
+  decideSpawnAdmission,
   hasDriveableExecution,
+  selectPromotablePendingExecutions,
+  type SpawnAdmissionDecision,
 } from './run-spawn-decisions.ts';
 
 const log = new Logger('space-runtime');
@@ -247,6 +248,25 @@ interface ExecutorMeta {
   workflow: SpaceWorkflow;
   spaceId: string;
   workspacePath: string;
+}
+
+interface RunTickContext {
+  meta: ExecutorMeta;
+  runTaskCount: number;
+  canonicalTask: SpaceTask;
+  loadNodeExecutions: () => NodeExecution[];
+  resolveRunIsComplete: () => boolean;
+}
+
+interface AdmitSpawnExecutionOutcome {
+  canonicalTask: SpaceTask;
+  pendingExecutions: NodeExecution[];
+  spawnAdmission: SpawnAdmissionDecision;
+}
+
+interface SpawnPendingExecutionsOutcome {
+  blockedByCrash: boolean;
+  permanentSpawnFailureReason: string | null;
 }
 
 interface WorkflowSubscriptionTarget {
@@ -5955,6 +5975,90 @@ export class SpaceRuntime {
     return false;
   }
 
+  private async settleIfComplete(
+    runId: string,
+    runIsComplete: boolean,
+    meta: ExecutorMeta,
+    canonicalTask: SpaceTask
+  ): Promise<boolean> {
+    if (!runIsComplete) return false;
+
+    await this.transitionRunStatusAndEmit(runId, 'done');
+    const summaryFromArtifact = this.resolvePrimaryResultArtifactSummary(runId);
+    const computedSummary = this.resolveCompletionSummary(runId, meta.workflow);
+    const reportedSummary = normalizeMeaningfulTaskResult(canonicalTask.reportedSummary);
+    const existingResult = normalizeMeaningfulTaskResult(canonicalTask.result);
+    const { nextTaskResult, nextReportedSummary } = resolveCompletionSummaries({
+      summaryFromArtifact: summaryFromArtifact ?? null,
+      computedSummary: computedSummary ?? null,
+      existingResult,
+      reportedSummary,
+    });
+
+    const alreadyResolved = isTaskAlreadyResolved(canonicalTask.status);
+    let finalTaskStatus: SpaceTask['status'] = canonicalTask.status;
+    let spawnedPostApprovalSessionId: string | undefined;
+
+    if (!alreadyResolved) {
+      const updates = this.buildTaskOutcomeUpdates(
+        canonicalTask,
+        nextTaskResult,
+        nextReportedSummary
+      );
+      if (updates) {
+        await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, updates);
+      }
+      const result = await this.dispatchPostApproval(canonicalTask.id, 'agent');
+      const postApprovalSessionId =
+        result.mode === 'spawn' || result.mode === 'already-routed'
+          ? result.postApprovalSessionId
+          : undefined;
+      spawnedPostApprovalSessionId = resolveSpawnedPostApprovalSession(
+        result.mode,
+        postApprovalSessionId
+      );
+      finalTaskStatus = mapFinalTaskStatus(result.mode, canonicalTask.status);
+    } else {
+      const updates = this.buildTaskOutcomeUpdates(
+        canonicalTask,
+        nextTaskResult,
+        nextReportedSummary
+      );
+      if (updates) {
+        await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, updates);
+      }
+    }
+
+    if (isSettlementTerminal(finalTaskStatus)) {
+      const sourceNodeId = resolveQuiesceSourceNodeId(canonicalTask, meta.workflow.endNodeId);
+      const siblingsToQuiesce = selectSiblingsToQuiesce(
+        this.config.nodeExecutionRepo.listByWorkflowRun(runId),
+        spawnedPostApprovalSessionId,
+        sourceNodeId
+      );
+      for (const sibling of siblingsToQuiesce) {
+        this.config.nodeExecutionRepo.updateStatus(sibling.id, 'idle');
+        if (this.config.taskAgentManager) {
+          void this.config.taskAgentManager
+            .interruptBySessionId(sibling.agentSessionId!)
+            .catch((err) => {
+              log.warn(
+                `SpaceRuntime: failed to interrupt sibling session ${sibling.agentSessionId}:`,
+                err
+              );
+            });
+        }
+        log.info(
+          `SpaceRuntime: quiesced sibling node execution ${sibling.id} ` +
+            `(node ${sibling.workflowNodeId}, agent ${sibling.agentName}) ` +
+            `to idle for finished execution attempt ${runId}; session kept alive for post-completion messaging`
+        );
+      }
+    }
+
+    return true;
+  }
+
   private async processRunTick(runId: string): Promise<void> {
     const run = this.config.workflowRunRepo.getRun(runId);
     if (!run) return;
@@ -5968,41 +6072,15 @@ export class SpaceRuntime {
       return;
     }
 
-    const meta = this.executorMeta.get(runId);
-    if (!meta) return;
-
-    const allRunTasks = this.config.taskRepo.listByWorkflowRun(runId);
-    if (allRunTasks.length === 0) return;
-
-    let canonicalTask = this.pickCanonicalTaskForRun(run, allRunTasks);
-    if (!canonicalTask) return;
-    if (allRunTasks.length > 1) {
-      await this.archiveDuplicateRunTasks(
-        meta.spaceId,
-        run,
-        canonicalTask,
-        allRunTasks,
-        'active_run'
-      );
-    }
-    if (canonicalTask.workflowRunId !== runId) {
-      const refreshed = await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
-        workflowRunId: runId,
-      });
-      canonicalTask = refreshed ?? canonicalTask;
-    }
-
-    let cachedNodeExecutions: NodeExecution[] | null = null;
-    const loadNodeExecutions = (): NodeExecution[] =>
-      (cachedNodeExecutions ??= this.config.nodeExecutionRepo.listByWorkflowRun(runId));
-    let cachedRunIsComplete: boolean | null = null;
-    const resolveRunIsComplete = (): boolean =>
-      (cachedRunIsComplete ??= this.completionDetector.isComplete({ workflowRunId: runId }));
+    const context = await this.loadRunContext(runId, run);
+    if (!context) return;
+    const { meta, loadNodeExecutions, resolveRunIsComplete } = context;
+    let canonicalTask = context.canonicalTask;
 
     const admission = decideRunTickAdmission({
       runStatus: run.status,
       hasExecutorMeta: true,
-      runTaskCount: allRunTasks.length,
+      runTaskCount: context.runTaskCount,
       hasCanonicalTask: true,
       hasEndNodeId: !!meta.workflow.endNodeId,
       canonicalTaskStatus: canonicalTask.status,
@@ -6239,82 +6317,7 @@ export class SpaceRuntime {
 
     if (space?.stopped) return;
 
-    if (runIsComplete) {
-      await this.transitionRunStatusAndEmit(runId, 'done');
-      const summaryFromArtifact = this.resolvePrimaryResultArtifactSummary(runId);
-      const computedSummary = this.resolveCompletionSummary(runId, meta.workflow);
-      const reportedSummary = normalizeMeaningfulTaskResult(canonicalTask.reportedSummary);
-      const existingResult = normalizeMeaningfulTaskResult(canonicalTask.result);
-      const { nextTaskResult, nextReportedSummary } = resolveCompletionSummaries({
-        summaryFromArtifact: summaryFromArtifact ?? null,
-        computedSummary: computedSummary ?? null,
-        existingResult,
-        reportedSummary,
-      });
-
-      const alreadyResolved = isTaskAlreadyResolved(canonicalTask.status);
-      let finalTaskStatus: SpaceTask['status'] = canonicalTask.status;
-      let spawnedPostApprovalSessionId: string | undefined;
-
-      if (!alreadyResolved) {
-        const updates = this.buildTaskOutcomeUpdates(
-          canonicalTask,
-          nextTaskResult,
-          nextReportedSummary
-        );
-        if (updates) {
-          await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, updates);
-        }
-        const result = await this.dispatchPostApproval(canonicalTask.id, 'agent');
-        const postApprovalSessionId =
-          result.mode === 'spawn' || result.mode === 'already-routed'
-            ? result.postApprovalSessionId
-            : undefined;
-        spawnedPostApprovalSessionId = resolveSpawnedPostApprovalSession(
-          result.mode,
-          postApprovalSessionId
-        );
-        finalTaskStatus = mapFinalTaskStatus(result.mode, canonicalTask.status);
-      } else {
-        const updates = this.buildTaskOutcomeUpdates(
-          canonicalTask,
-          nextTaskResult,
-          nextReportedSummary
-        );
-        if (updates) {
-          await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, updates);
-        }
-      }
-
-      if (isSettlementTerminal(finalTaskStatus)) {
-        const sourceNodeId = resolveQuiesceSourceNodeId(canonicalTask, meta.workflow.endNodeId);
-        const siblingsToQuiesce = selectSiblingsToQuiesce(
-          this.config.nodeExecutionRepo.listByWorkflowRun(runId),
-          spawnedPostApprovalSessionId,
-          sourceNodeId
-        );
-        for (const sibling of siblingsToQuiesce) {
-          this.config.nodeExecutionRepo.updateStatus(sibling.id, 'idle');
-          if (this.config.taskAgentManager) {
-            void this.config.taskAgentManager
-              .interruptBySessionId(sibling.agentSessionId!)
-              .catch((err) => {
-                log.warn(
-                  `SpaceRuntime: failed to interrupt sibling session ${sibling.agentSessionId}:`,
-                  err
-                );
-              });
-          }
-          log.info(
-            `SpaceRuntime: quiesced sibling node execution ${sibling.id} ` +
-              `(node ${sibling.workflowNodeId}, agent ${sibling.agentName}) ` +
-              `to idle for finished execution attempt ${runId}; session kept alive for post-completion messaging`
-          );
-        }
-      }
-
-      return;
-    }
+    if (await this.settleIfComplete(runId, runIsComplete, meta, canonicalTask)) return;
 
     if (space?.paused || space?.stopped) return;
 
@@ -6335,7 +6338,95 @@ export class SpaceRuntime {
       return;
     }
 
-    nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+    nodeExecutions = this.promotePendingExecutionsWithLiveSessions(runId, preTickPendingIds, tam);
+
+    const spawnOutcome = this.admitSpawnExecution(
+      runId,
+      meta,
+      canonicalTask,
+      nodeExecutions,
+      space
+    );
+    canonicalTask = spawnOutcome.canonicalTask;
+
+    if (spawnOutcome.spawnAdmission.action === 'spawn' && space) {
+      const spawned = await this.spawnPendingExecutions(
+        runId,
+        canonicalTask,
+        space,
+        meta,
+        run,
+        spawnOutcome.pendingExecutions,
+        tam,
+        blockedByCrash
+      );
+      if (
+        await this.blockRunForSpawnFailure(
+          runId,
+          meta,
+          canonicalTask,
+          spawned.permanentSpawnFailureReason,
+          spawned.blockedByCrash
+        )
+      ) {
+        return;
+      }
+      await this.casCanonicalTaskOpenToInProgress(meta.spaceId, canonicalTask);
+    }
+
+    return;
+  }
+
+  private async loadRunContext(
+    runId: string,
+    run: SpaceWorkflowRun
+  ): Promise<RunTickContext | null> {
+    const meta = this.executorMeta.get(runId);
+    if (!meta) return null;
+
+    const allRunTasks = this.config.taskRepo.listByWorkflowRun(runId);
+    if (allRunTasks.length === 0) return null;
+
+    let canonicalTask = this.pickCanonicalTaskForRun(run, allRunTasks);
+    if (!canonicalTask) return null;
+    if (allRunTasks.length > 1) {
+      await this.archiveDuplicateRunTasks(
+        meta.spaceId,
+        run,
+        canonicalTask,
+        allRunTasks,
+        'active_run'
+      );
+    }
+    if (canonicalTask.workflowRunId !== runId) {
+      const refreshed = await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
+        workflowRunId: runId,
+      });
+      canonicalTask = refreshed ?? canonicalTask;
+    }
+
+    let cachedNodeExecutions: NodeExecution[] | null = null;
+    const loadNodeExecutions = (): NodeExecution[] =>
+      (cachedNodeExecutions ??= this.config.nodeExecutionRepo.listByWorkflowRun(runId));
+    let cachedRunIsComplete: boolean | null = null;
+    const resolveRunIsComplete = (): boolean =>
+      (cachedRunIsComplete ??= this.completionDetector.isComplete({ workflowRunId: runId }));
+
+    return {
+      meta,
+      runTaskCount: allRunTasks.length,
+      canonicalTask,
+      loadNodeExecutions,
+      resolveRunIsComplete,
+    };
+  }
+
+  private promotePendingExecutionsWithLiveSessions(
+    runId: string,
+    preTickPendingIds: Set<string>,
+    tam: TaskAgentManager
+  ): NodeExecution[] {
+    const nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
     const aliveSessionIds = new Set<string>();
     for (const execution of nodeExecutions) {
@@ -6364,16 +6455,25 @@ export class SpaceRuntime {
         completedAt: null,
       });
     }
-    nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+    return this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+  }
 
+  private admitSpawnExecution(
+    runId: string,
+    meta: ExecutorMeta,
+    canonicalTask: SpaceTask,
+    nodeExecutions: NodeExecution[],
+    space: Space | null
+  ): AdmitSpawnExecutionOutcome {
     const pendingExecutions = nodeExecutions.filter((execution) => execution.status === 'pending');
 
+    let effectiveCanonicalTask = canonicalTask;
     const freshCanonicalTask = this.config.taskRepo.getTask(canonicalTask.id);
-    if (freshCanonicalTask) canonicalTask = freshCanonicalTask;
+    if (freshCanonicalTask) effectiveCanonicalTask = freshCanonicalTask;
 
     const spawnAdmission = decideSpawnAdmission({
       pendingExecutionCount: pendingExecutions.length,
-      canonicalTaskStatus: canonicalTask.status,
+      canonicalTaskStatus: effectiveCanonicalTask.status,
       pendingExecutions,
       hasSpace: !!space,
     });
@@ -6384,117 +6484,145 @@ export class SpaceRuntime {
         spawnAdmission.reason === 'parked_awaiting_approval'
       ) {
         log.info(
-          `SpaceRuntime: skipping agent spawn for run ${runId} — canonical task ${canonicalTask.id} status is ${canonicalTask.status}`
+          `SpaceRuntime: skipping agent spawn for run ${runId} — canonical task ${effectiveCanonicalTask.id} status is ${effectiveCanonicalTask.status}`
         );
       } else if (spawnAdmission.reason === 'space_missing') {
         log.warn(
           `SpaceRuntime: cannot spawn workflow node agents for run ${runId} — space ${meta.spaceId} not found`
         );
       }
-    } else if (spawnAdmission.action === 'spawn' && space) {
-      let permanentSpawnFailureReason: string | null = null;
-      for (const execution of pendingExecutions) {
-        if (tam.isExecutionSpawning(execution.id)) continue;
-        try {
-          const sessionId = await tam.spawnWorkflowNodeAgentForExecution(
-            canonicalTask,
-            space,
-            meta.workflow,
-            run,
-            execution,
-            { kickoff: true }
-          );
-          this.tryRequeuePendingDeliveries(this.pausedSpaceIds, runId);
-          const restartNotice = this.consumeAgentRestartNotice(runId, execution);
-          if (restartNotice) {
-            void tam.injectRuntimeRecoveryMessage(sessionId, restartNotice).catch((err) => {
-              log.warn(
-                `SpaceRuntime: failed to deliver restart recovery notice to session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
-              );
-            });
-          }
-        } catch (err) {
-          if (isSpawnSupersededError(err)) {
-            log.info(
-              `SpaceRuntime: spawn for execution ${execution.id} superseded at ${err.stage ?? 'unknown'} — concurrent writer moved a guarded row; skipping for this tick`
-            );
-            continue;
-          }
-          if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
-            permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
-            continue;
-          }
-          if (isTransientSpawnError(err)) {
-            log.warn(
-              `SpaceRuntime: deferring spawn for limited-task execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
-            );
-            continue;
-          }
-          const stale = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
-          const classification = classifySpawnFailure({
-            isPermanent: isPermanentSpawnError(err),
-            isTransient: isTransientSpawnError(err),
-            staleExecutionStatus: stale.status,
-          });
-          if (classification === 'preserve_stale_terminal') {
-            log.warn(
-              `SpaceRuntime: preserving terminal execution ${execution.id} (${stale.status}) after spawn failure: ${err instanceof Error ? err.message : String(err)}`
-            );
-            continue;
-          }
-          if (stale.agentSessionId) {
-            tam.cancelBySessionId(stale.agentSessionId);
-          }
-          if (
-            this.resetWorkflowNodeExecutionForSpawnRetry(
-              runId,
-              stale,
-              err instanceof Error ? err.message : String(err),
-              stale.agentSessionId
-            )
-          ) {
-            blockedByCrash = true;
-          }
-          log.warn(
-            `SpaceRuntime: transient spawn failure for workflow node execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
-          );
-        }
-      }
-      if (permanentSpawnFailureReason) {
-        const refreshedExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-        if (!hasDriveableExecution(refreshedExecutions)) {
-          await this.blockRunForPermanentSpawnFailure(
-            runId,
-            meta.spaceId,
-            canonicalTask,
-            permanentSpawnFailureReason
-          );
-          return;
-        }
-      }
-      if (blockedByCrash) {
-        nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
-        await this.blockRunForAgentCrash(runId, meta.spaceId, canonicalTask, nodeExecutions);
-        return;
-      }
-      if (canonicalTask.status === 'open') {
-        const outcome = this.config.taskRepo.casStatus(canonicalTask.id, ['open'], 'in_progress');
-        if (outcome === 'won') {
-          const nowTs = Date.now();
-          await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
-            startedAt: canonicalTask.startedAt ?? nowTs,
-            completedAt: null,
-            pendingCheckpointType: null,
-          });
-        } else {
-          log.info(
-            `SpaceRuntime: skipping trailing open→in_progress for task ${canonicalTask.id} — status moved concurrently during the spawn pass`
-          );
-        }
-      }
     }
 
-    return;
+    return { canonicalTask: effectiveCanonicalTask, pendingExecutions, spawnAdmission };
+  }
+
+  private async spawnPendingExecutions(
+    runId: string,
+    canonicalTask: SpaceTask,
+    space: Space,
+    meta: ExecutorMeta,
+    run: SpaceWorkflowRun,
+    pendingExecutions: NodeExecution[],
+    tam: TaskAgentManager,
+    blockedByCrash: boolean
+  ): Promise<SpawnPendingExecutionsOutcome> {
+    let permanentSpawnFailureReason: string | null = null;
+    for (const execution of pendingExecutions) {
+      if (tam.isExecutionSpawning(execution.id)) continue;
+      try {
+        const sessionId = await tam.spawnWorkflowNodeAgentForExecution(
+          canonicalTask,
+          space,
+          meta.workflow,
+          run,
+          execution,
+          { kickoff: true }
+        );
+        this.tryRequeuePendingDeliveries(this.pausedSpaceIds, runId);
+        const restartNotice = this.consumeAgentRestartNotice(runId, execution);
+        if (restartNotice) {
+          void tam.injectRuntimeRecoveryMessage(sessionId, restartNotice).catch((err) => {
+            log.warn(
+              `SpaceRuntime: failed to deliver restart recovery notice to session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
+            );
+          });
+        }
+      } catch (err) {
+        if (isSpawnSupersededError(err)) {
+          log.info(
+            `SpaceRuntime: spawn for execution ${execution.id} superseded at ${err.stage ?? 'unknown'} — concurrent writer moved a guarded row; skipping for this tick`
+          );
+          continue;
+        }
+        if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
+          permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
+          continue;
+        }
+        if (isTransientSpawnError(err)) {
+          log.warn(
+            `SpaceRuntime: deferring spawn for limited-task execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
+          );
+          continue;
+        }
+        const stale = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
+        const classification = classifySpawnFailure({
+          isPermanent: isPermanentSpawnError(err),
+          isTransient: isTransientSpawnError(err),
+          staleExecutionStatus: stale.status,
+        });
+        if (classification === 'preserve_stale_terminal') {
+          log.warn(
+            `SpaceRuntime: preserving terminal execution ${execution.id} (${stale.status}) after spawn failure: ${err instanceof Error ? err.message : String(err)}`
+          );
+          continue;
+        }
+        if (stale.agentSessionId) {
+          tam.cancelBySessionId(stale.agentSessionId);
+        }
+        if (
+          this.resetWorkflowNodeExecutionForSpawnRetry(
+            runId,
+            stale,
+            err instanceof Error ? err.message : String(err),
+            stale.agentSessionId
+          )
+        ) {
+          blockedByCrash = true;
+        }
+        log.warn(
+          `SpaceRuntime: transient spawn failure for workflow node execution ${execution.id}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+    return { blockedByCrash, permanentSpawnFailureReason };
+  }
+
+  private async blockRunForSpawnFailure(
+    runId: string,
+    meta: ExecutorMeta,
+    canonicalTask: SpaceTask,
+    permanentSpawnFailureReason: string | null,
+    blockedByCrash: boolean
+  ): Promise<boolean> {
+    if (permanentSpawnFailureReason) {
+      const refreshedExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+      if (!hasDriveableExecution(refreshedExecutions)) {
+        await this.blockRunForPermanentSpawnFailure(
+          runId,
+          meta.spaceId,
+          canonicalTask,
+          permanentSpawnFailureReason
+        );
+        return true;
+      }
+    }
+    if (blockedByCrash) {
+      const nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
+      await this.blockRunForAgentCrash(runId, meta.spaceId, canonicalTask, nodeExecutions);
+      return true;
+    }
+    return false;
+  }
+
+  private async casCanonicalTaskOpenToInProgress(
+    spaceId: string,
+    canonicalTask: SpaceTask
+  ): Promise<void> {
+    if (canonicalTask.status === 'open') {
+      const outcome = this.config.taskRepo.casStatus(canonicalTask.id, ['open'], 'in_progress');
+      if (outcome === 'won') {
+        const nowTs = Date.now();
+        await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
+          startedAt: canonicalTask.startedAt ?? nowTs,
+          completedAt: null,
+          pendingCheckpointType: null,
+        });
+      } else {
+        log.info(
+          `SpaceRuntime: skipping trailing open→in_progress for task ${canonicalTask.id} — status moved concurrently during the spawn pass`
+        );
+      }
+    }
   }
 
   private async blockRunForPermanentSpawnFailure(
@@ -7737,6 +7865,22 @@ export class SpaceRuntime {
     return false;
   }
 
+  private repairBlockedCanonicalTask(blockedExecutions: readonly NodeExecution[]): void {
+    for (const execution of blockedExecutions) {
+      const bindingAlive =
+        !!execution.agentSessionId &&
+        (this.config.taskAgentManager?.isSessionInMemory(execution.agentSessionId) ?? false) &&
+        !this.isFailedSessionBinding(execution.agentSessionId);
+      this.config.nodeExecutionRepo.update(execution.id, {
+        status: 'pending',
+        result: null,
+        startedAt: null,
+        completedAt: null,
+        ...(bindingAlive ? {} : { agentSessionId: null }),
+      });
+    }
+  }
+
   private async attemptBlockedRunRecovery(runId: string, run: SpaceWorkflowRun): Promise<void> {
     const meta = this.executorMeta.get(runId);
     if (!meta) return;
@@ -7782,19 +7926,7 @@ export class SpaceRuntime {
         return;
       }
 
-      for (const execution of blockedExecutions) {
-        const bindingAlive =
-          !!execution.agentSessionId &&
-          (this.config.taskAgentManager?.isSessionInMemory(execution.agentSessionId) ?? false) &&
-          !this.isFailedSessionBinding(execution.agentSessionId);
-        this.config.nodeExecutionRepo.update(execution.id, {
-          status: 'pending',
-          result: null,
-          startedAt: null,
-          completedAt: null,
-          ...(bindingAlive ? {} : { agentSessionId: null }),
-        });
-      }
+      this.repairBlockedCanonicalTask(blockedExecutions);
       await this.safeOnWorkflowRunUpdated(meta.spaceId, this.config.workflowRunRepo.getRun(runId)!);
 
       const hasLiveExecutionBinding = this.config.nodeExecutionRepo
