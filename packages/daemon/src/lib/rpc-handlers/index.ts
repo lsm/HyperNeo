@@ -825,6 +825,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
            WHERE session_id = ? AND send_status IN ('enqueued', 'submitted', 'deferred')`
           )
           .get(agent.sessionId) as { n?: number } | null;
+        const pendingMailboxRow = db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM job_queue
+           WHERE queue = 'mailbox' AND status IN ('pending', 'processing')
+             AND json_extract(payload, '$.to.sessionId') = ?`
+          )
+          .get(agent.sessionId) as { n?: number } | null;
         let status = 'idle';
         const liveSession = deps.sessionManager?.getCachedSession(agent.sessionId);
         if (liveSession) {
@@ -847,33 +854,56 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
             status === 'running' ||
             status === 'rate_limit_cooldown' ||
             status === 'waiting_for_input',
-          pendingOtherAcceptedDelivery: (pendingRow?.n ?? 0) > 0,
+          pendingOtherAcceptedDelivery: (pendingRow?.n ?? 0) > 0 || (pendingMailboxRow?.n ?? 0) > 0,
         };
       },
       isNagDeliveryPending: (spaceId, agentId, claimKey) => {
         const agent = longHorizonAgentRepo.getById(agentId);
         if (agent === null || agent.spaceId !== spaceId || agent.sessionId === null) return false;
+        const sessionId = agent.sessionId;
         const row = deps.db
           .getDatabase()
           .prepare(
             `SELECT send_status FROM sdk_messages
              WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'`
           )
-          .get(agent.sessionId, claimKey) as { send_status?: string | null } | null;
+          .get(sessionId, claimKey) as { send_status?: string | null } | null;
         const status = row?.send_status ?? null;
-        return status === 'enqueued' || status === 'submitted' || status === 'deferred';
+        if (status === 'enqueued' || status === 'submitted' || status === 'deferred') return true;
+        return (
+          deps.db.getJobQueueRepo().listActiveByPayload('mailbox', {
+            'to.sessionId': sessionId,
+            messageUuid: claimKey,
+          }).length > 0
+        );
       },
       isNagDeliveryFailed: (spaceId, agentId, claimKey) => {
         const agent = longHorizonAgentRepo.getById(agentId);
         if (agent === null || agent.spaceId !== spaceId || agent.sessionId === null) return false;
+        const sessionId = agent.sessionId;
         const row = deps.db
           .getDatabase()
           .prepare(
             `SELECT send_status FROM sdk_messages
              WHERE session_id = ? AND sdk_uuid = ? AND message_type = 'user'`
           )
-          .get(agent.sessionId, claimKey) as { send_status?: string | null } | null;
-        return row?.send_status === 'failed';
+          .get(sessionId, claimKey) as { send_status?: string | null } | null;
+        const activeMailbox =
+          deps.db.getJobQueueRepo().listActiveByPayload('mailbox', {
+            'to.sessionId': sessionId,
+            messageUuid: claimKey,
+          }).length > 0;
+        if (row?.send_status === 'failed') return !activeMailbox;
+        if (row == null) {
+          return (
+            !activeMailbox &&
+            deps.db.getJobQueueRepo().getLatestByPayload('mailbox', {
+              'to.sessionId': sessionId,
+              messageUuid: claimKey,
+            })?.status === 'dead'
+          );
+        }
+        return false;
       },
       deliverNag: (args) =>
         spaceRuntimeService.deliverLongHorizonAgentNag({
