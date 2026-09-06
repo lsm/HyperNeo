@@ -193,6 +193,247 @@ describe('SDKMessageRepository', () => {
     );
   }
 
+  describe('failDeliveryUnlessProcessing — atomic ownership fence', () => {
+    beforeEach(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS job_queue (
+          id TEXT PRIMARY KEY,
+          queue TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          payload TEXT NOT NULL DEFAULT '{}'
+        );
+      `);
+    });
+
+    function insertDeliveryRow(sessionId: string, uuid: string, sendStatus: string): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (
+           id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid
+         ) VALUES (?, ?, 'user', ?, ?, ?, ?)`
+      ).run(
+        `${uuid}-row`,
+        sessionId,
+        JSON.stringify({
+          type: 'user',
+          uuid,
+          session_id: sessionId,
+          message: { role: 'user', content: [{ type: 'text', text: 'note' }] },
+        }),
+        new Date().toISOString(),
+        sendStatus,
+        uuid
+      );
+    }
+
+    function insertDeliveryJob(sessionId: string, uuid: string, status: string): void {
+      db.prepare(
+        `INSERT INTO job_queue (id, queue, status, payload) VALUES (?, 'message_delivery', ?, ?)`
+      ).run(
+        `job-${uuid}-${status}`,
+        status,
+        JSON.stringify({ sessionId, messageUuid: uuid, origin: 'chat', parentToolUseId: null })
+      );
+    }
+
+    function sendStatus(sessionId: string, uuid: string): string | null {
+      const row = db
+        .prepare(`SELECT send_status FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?`)
+        .get(sessionId, uuid) as { send_status: string | null };
+      return row.send_status;
+    }
+
+    it('fails the row when no processing delivery job owns it', () => {
+      insertDeliveryRow('session-1', 'msg-a', 'enqueued');
+      expect(repository.failDeliveryUnlessProcessing('session-1', 'msg-a')).toBe('msg-a-row');
+      expect(sendStatus('session-1', 'msg-a')).toBe('failed');
+    });
+
+    it('refuses the transition while the delivery job is processing', () => {
+      insertDeliveryRow('session-1', 'msg-b', 'enqueued');
+      insertDeliveryJob('session-1', 'msg-b', 'processing');
+      expect(repository.failDeliveryUnlessProcessing('session-1', 'msg-b')).toBe(null);
+      expect(sendStatus('session-1', 'msg-b')).toBe('enqueued');
+    });
+
+    it('ignores pending, completed, and other-uuid processing jobs', () => {
+      insertDeliveryRow('session-1', 'msg-c', 'enqueued');
+      insertDeliveryJob('session-1', 'msg-c', 'pending');
+      insertDeliveryJob('session-1', 'msg-other', 'processing');
+      expect(repository.failDeliveryUnlessProcessing('session-1', 'msg-c')).toBe('msg-c-row');
+      expect(sendStatus('session-1', 'msg-c')).toBe('failed');
+    });
+
+    it('returns null for unknown uuids', () => {
+      expect(repository.failDeliveryUnlessProcessing('session-1', 'msg-missing')).toBe(null);
+    });
+  });
+
+  describe('normalizeDeliveryMessageForMailbox', () => {
+    function insertDeliveryRow(
+      sessionId: string,
+      uuid: string,
+      message: Record<string, unknown>,
+      options: { sendStatus?: string; rowId?: string; timestamp?: string } = {}
+    ): void {
+      db.prepare(
+        `INSERT INTO sdk_messages (
+           id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid
+         ) VALUES (?, ?, 'user', ?, ?, ?, ?)`
+      ).run(
+        options.rowId ?? `${uuid}-row`,
+        sessionId,
+        JSON.stringify(message),
+        options.timestamp ?? new Date().toISOString(),
+        options.sendStatus ?? 'failed',
+        uuid
+      );
+    }
+
+    function storedMessage(sessionId: string, uuid: string): Record<string, unknown> {
+      const row = db
+        .prepare(`SELECT sdk_message FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?`)
+        .get(sessionId, uuid) as { sdk_message: string };
+      return JSON.parse(row.sdk_message) as Record<string, unknown>;
+    }
+
+    function storedMessageByRowId(rowId: string): Record<string, unknown> {
+      const row = db.prepare(`SELECT sdk_message FROM sdk_messages WHERE id = ?`).get(rowId) as {
+        sdk_message: string;
+      };
+      return JSON.parse(row.sdk_message) as Record<string, unknown>;
+    }
+
+    function storedOrigin(sessionId: string, uuid: string): string | null {
+      const row = db
+        .prepare(`SELECT origin FROM sdk_messages WHERE session_id = ? AND sdk_uuid = ?`)
+        .get(sessionId, uuid) as { origin: string | null };
+      return row.origin;
+    }
+
+    it('rewrites a legacy synthetic row to the mailbox worker shape, stamps system origin, and is idempotent', () => {
+      insertDeliveryRow('session-1', 'msg-legacy', {
+        type: 'user',
+        uuid: 'msg-legacy',
+        session_id: 'session-1',
+        parent_tool_use_id: null,
+        isSynthetic: true,
+        inputKind: 'task',
+        message: { role: 'user', content: [{ type: 'text', text: 'queued note' }] },
+      });
+
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-legacy')).toBe(true);
+      expect(storedMessage('session-1', 'msg-legacy')).toEqual({
+        type: 'user',
+        message: { content: [{ type: 'text', text: 'queued note' }] },
+        parent_tool_use_id: null,
+        inputKind: 'task',
+        uuid: 'msg-legacy',
+        session_id: 'session-1',
+        isSynthetic: true,
+      });
+      expect(storedOrigin('session-1', 'msg-legacy')).toBe('system');
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-legacy')).toBe(false);
+    });
+
+    it('drops an explicit isSynthetic false from legacy human rows and keeps their null origin', () => {
+      insertDeliveryRow('session-1', 'msg-human', {
+        type: 'user',
+        uuid: 'msg-human',
+        session_id: 'session-1',
+        parent_tool_use_id: null,
+        isSynthetic: false,
+        inputKind: 'human',
+        message: { role: 'user', content: 'hello there' },
+      });
+
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-human')).toBe(true);
+      expect(storedMessage('session-1', 'msg-human')).toEqual({
+        type: 'user',
+        message: { content: 'hello there' },
+        parent_tool_use_id: null,
+        inputKind: 'human',
+        uuid: 'msg-human',
+        session_id: 'session-1',
+      });
+      expect(storedOrigin('session-1', 'msg-human')).toBe(null);
+    });
+
+    it('derives inputKind for legacy rows persisted before inputKind existed', () => {
+      insertDeliveryRow('session-1', 'msg-kindless-task', {
+        type: 'user',
+        isSynthetic: true,
+        message: { role: 'user', content: 'old synthetic nudge' },
+      });
+      insertDeliveryRow('session-1', 'msg-kindless-human', {
+        type: 'user',
+        isSynthetic: false,
+        message: { role: 'user', content: 'old human note' },
+      });
+
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-kindless-task')).toBe(
+        true
+      );
+      expect(storedMessage('session-1', 'msg-kindless-task').inputKind).toBe('task');
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-kindless-human')).toBe(
+        true
+      );
+      expect(storedMessage('session-1', 'msg-kindless-human').inputKind).toBe('human');
+    });
+
+    it('rewrites only the selected earliest sibling when a uuid has duplicate rows', () => {
+      const earlier = new Date('2026-01-01T00:00:00Z').toISOString();
+      const later = new Date('2026-01-02T00:00:00Z').toISOString();
+      insertDeliveryRow(
+        'session-1',
+        'msg-dup',
+        {
+          type: 'user',
+          isSynthetic: true,
+          inputKind: 'task',
+          message: { role: 'user', content: [{ type: 'text', text: 'first copy' }] },
+        },
+        { rowId: 'dup-a', timestamp: earlier }
+      );
+      insertDeliveryRow(
+        'session-1',
+        'msg-dup',
+        {
+          type: 'user',
+          isSynthetic: true,
+          inputKind: 'task',
+          message: { role: 'user', content: [{ type: 'text', text: 'second copy' }] },
+        },
+        { rowId: 'dup-b', timestamp: later, sendStatus: 'deferred' }
+      );
+
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-dup')).toBe(true);
+      expect(storedMessageByRowId('dup-a').message).toEqual({
+        content: [{ type: 'text', text: 'first copy' }],
+      });
+      expect(storedMessageByRowId('dup-b').message).toEqual({
+        role: 'user',
+        content: [{ type: 'text', text: 'second copy' }],
+      });
+    });
+
+    it('leaves already mailbox-shaped rows and unknown uuids untouched', () => {
+      insertDeliveryRow('session-1', 'msg-modern', {
+        type: 'user',
+        message: { content: [{ type: 'text', text: 'lane message' }] },
+        parent_tool_use_id: null,
+        inputKind: 'task',
+        uuid: 'msg-modern',
+        session_id: 'session-1',
+        isSynthetic: true,
+      });
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-modern')).toBe(false);
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-missing')).toBe(false);
+      expect(storedMessage('session-1', 'msg-modern').message).toEqual({
+        content: [{ type: 'text', text: 'lane message' }],
+      });
+    });
+  });
+
   describe('hasConsumedTaskInputForSession', () => {
     function insertTaskInput(
       id: string,

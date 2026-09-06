@@ -3,6 +3,7 @@ import type {
   HyperNeoActionMessage,
   MessageContent,
   MessageDeliveryStatus,
+  MessageInputKind,
   MessageOrigin,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
@@ -10,6 +11,7 @@ import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import { HIDDEN_SYSTEM_SUBTYPES } from '@hyperneo/shared/sdk/type-guards';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { Logger } from '../../lib/logger.ts';
+import { type MailboxMessageContent, toMailboxMessage } from '../../lib/mailbox/entry.ts';
 import { withBusyRetry } from '../busy-retry.ts';
 import {
   buildFtsQuery,
@@ -1759,6 +1761,55 @@ export class SDKMessageRepository {
     }
   }
 
+  normalizeDeliveryMessageForMailbox(sessionId: string, uuid: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT id, sdk_message FROM sdk_messages
+          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+          ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { id: string; sdk_message: string } | null | undefined;
+    if (row === null || row === undefined) return false;
+    let stored: Record<string, unknown>;
+    try {
+      stored = JSON.parse(row.sdk_message) as Record<string, unknown>;
+    } catch {
+      return false;
+    }
+    const storedMessage = stored.message as { role?: unknown; content?: unknown } | undefined;
+    if (storedMessage?.role === undefined) return false;
+    const storedInputKind = stored.inputKind;
+    const synthetic = stored.isSynthetic === true;
+    const inputKind: MessageInputKind =
+      typeof storedInputKind === 'string' && ['task', 'human', 'system'].includes(storedInputKind)
+        ? (storedInputKind as MessageInputKind)
+        : synthetic
+          ? 'task'
+          : 'human';
+    const projected = toMailboxMessage({
+      type: 'user',
+      message: { content: storedMessage.content as MailboxMessageContent },
+      parent_tool_use_id: null,
+    });
+    if ('reason' in projected) return false;
+    const normalized = {
+      ...projected.message,
+      inputKind,
+      uuid,
+      session_id: sessionId,
+      ...(synthetic ? { isSynthetic: true } : {}),
+    };
+    const updated = this.db
+      .prepare(
+        `UPDATE sdk_messages
+            SET sdk_message = ?,
+                origin = CASE WHEN ? = 1 THEN COALESCE(origin, 'system') ELSE origin END
+          WHERE id = ?`
+      )
+      .run(JSON.stringify(normalized), synthetic ? 1 : 0, row.id);
+    return updated.changes > 0;
+  }
+
   hasTerminalResultAfter(sessionId: string, uuid: string): boolean {
     const row = this.db.prepare(HAS_TERMINAL_RESULT_AFTER_SQL).get(sessionId, sessionId, uuid) as
       | { 1: number }
@@ -1865,6 +1916,34 @@ export class SDKMessageRepository {
 
   markDeliveryFailedByUuid(sessionId: string, uuid: string): string | null {
     return this.markDeliveryTransitionByUuid(sessionId, uuid, 'fail');
+  }
+
+  failDeliveryUnlessProcessing(sessionId: string, uuid: string): string | null {
+    const { acceptedFrom, target } = deliveryTransitionRule('fail');
+    const txn = this.db.transaction(() => {
+      const row = this.db
+        .prepare(
+          `SELECT id FROM sdk_messages
+             WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+               AND send_status IN (${acceptedFrom.map(() => '?').join(', ')})
+               AND NOT EXISTS (
+                 SELECT 1 FROM job_queue
+                  WHERE queue = 'message_delivery'
+                    AND json_extract(payload, '$.sessionId') = ?
+                    AND json_extract(payload, '$.messageUuid') = ?
+                    AND status = 'processing'
+               )
+             ORDER BY timestamp ASC LIMIT 1`
+        )
+        .get(sessionId, uuid, ...acceptedFrom, sessionId, uuid) as
+        | { id: string }
+        | null
+        | undefined;
+      if (row === null || row === undefined) return null;
+      this.updateMessageStatus([row.id], target);
+      return row.id;
+    }, 'immediate');
+    return withBusyRetry(() => txn());
   }
 
   markDeliveryFailedByUuidInclusive(sessionId: string, uuid: string): string | null {
