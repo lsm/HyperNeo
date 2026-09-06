@@ -1,18 +1,20 @@
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { PendingAgentMessageRecord } from '../../../storage/repositories/pending-agent-message-repository.ts';
-import type { MailboxHandoffOutcome } from '../../mailbox/handoff.ts';
+import type { MessageDeliveryOrigin } from '../../agent/message-delivery.ts';
+import type { AgentMessageDeliveryOutcome } from './agent-message-router.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
+
+export interface PendingDrainRoutedDeliveryArgs {
+  target: SessionTarget;
+  message: string;
+  messageId: string;
+  inputKind: 'human' | 'task';
+  origin: MessageDeliveryOrigin;
+}
 
 export interface PendingDrainHandoffDeps {
   ensureTargetSession(target: SessionTarget): Promise<EnsureSessionOutcome>;
-  handoffToMailbox(args: {
-    to: string;
-    message: string;
-    origin: string;
-    messageUuid: string;
-    policy: { ttlMs: number; maxAttempts: number };
-    deliveryMode?: 'immediate' | 'defer';
-  }): Promise<MailboxHandoffOutcome>;
+  deliverRoutedMessage(args: PendingDrainRoutedDeliveryArgs): Promise<AgentMessageDeliveryOutcome>;
   markDelivered(id: string, sessionId: string): void;
   markFailed(id: string, error: string): void;
   markAttemptFailed(id: string, error: string): void;
@@ -23,7 +25,7 @@ export interface PendingDrainHandoffInput {
   row: PendingAgentMessageRecord;
   target: SessionTarget;
   message: string;
-  origin: string;
+  origin: MessageDeliveryOrigin;
   deps: PendingDrainHandoffDeps;
 }
 
@@ -38,20 +40,9 @@ export const pendingDrainMessageUuid = (row: {
   idempotencyKey: string | null;
 }): string => row.idempotencyKey ?? row.id;
 
-export function pendingDrainMailboxPolicy(row: {
-  expiresAt: number;
-  attempts: number;
-  maxAttempts: number;
-}): { ttlMs: number; maxAttempts: number } {
-  return {
-    ttlMs: Math.max(1, row.expiresAt - Date.now()),
-    maxAttempts: Math.max(1, row.maxAttempts - row.attempts),
-  };
-}
-
 interface PendingDrainHandoffCtx extends PendingDrainHandoffInput {
   sessionId?: string;
-  handoff?: MailboxHandoffOutcome;
+  delivery?: AgentMessageDeliveryOutcome;
   outcome?: PendingDrainHandoffOutcome;
 }
 
@@ -82,30 +73,29 @@ function postResolveExpiryStage(ctx: PendingDrainHandoffCtx): PendingDrainHandof
   return { ...ctx, outcome: { action: 'failed', reason } };
 }
 
-async function handoffStage(ctx: PendingDrainHandoffCtx): Promise<PendingDrainHandoffCtx> {
-  const handoff = await ctx.deps.handoffToMailbox({
-    to: `session:${ctx.sessionId}`,
+async function deliverStage(ctx: PendingDrainHandoffCtx): Promise<PendingDrainHandoffCtx> {
+  const delivery = await ctx.deps.deliverRoutedMessage({
+    target: ctx.target,
     message: ctx.message,
+    messageId: pendingDrainMessageUuid(ctx.row),
+    inputKind: ctx.row.sourceAgentName === 'human' ? 'human' : 'task',
     origin: ctx.origin,
-    messageUuid: pendingDrainMessageUuid(ctx.row),
-    policy: pendingDrainMailboxPolicy(ctx.row),
-    ...(ctx.row.deliveryMode ? { deliveryMode: ctx.row.deliveryMode } : {}),
   });
-  return { ...ctx, handoff };
+  return { ...ctx, delivery };
 }
 
 function settleStage(ctx: PendingDrainHandoffCtx): PendingDrainHandoffCtx {
-  const handoff = ctx.handoff;
-  const sessionId = ctx.sessionId;
-  if (handoff && handoff.kind === 'enqueued' && sessionId !== undefined) {
+  const delivery = ctx.delivery;
+  if (delivery && (delivery.state === 'delivered' || delivery.state === 'queued')) {
+    const sessionId = delivery.state === 'delivered' ? delivery.sessionId : (ctx.sessionId ?? '');
     ctx.deps.markDelivered(ctx.row.id, sessionId);
     ctx.deps.onDelivered?.(ctx.row, sessionId);
     return { ...ctx, outcome: { action: 'delivered', sessionId } };
   }
-  const reason =
-    handoff?.kind === 'rejected'
-      ? `mailbox handoff rejected: ${handoff.reason}`
-      : 'mailbox handoff unsettled';
+  const detail = delivery
+    ? `${delivery.state}: ${delivery.error ?? 'unavailable'}`
+    : 'routed delivery unsettled';
+  const reason = `routed delivery ${detail}`;
   ctx.deps.markAttemptFailed(ctx.row.id, reason);
   return { ...ctx, outcome: { action: 'retry', reason } };
 }
@@ -126,7 +116,7 @@ const runDrainPendingRowOntoMailbox = (
   .pipe('!settled', 'ctx')
   .pipe(postResolveExpiryStage, 'ctx', 'ctx')
   .pipe('!settled', 'ctx')
-  .pipe(handoffStage, 'ctx', 'ctx')
+  .pipe(deliverStage, 'ctx', 'ctx')
   .pipe(settleStage, 'ctx', 'ctx')
   .endAsync('ctx') as (input: PendingDrainHandoffInput) => Promise<PendingDrainHandoffCtx>;
 

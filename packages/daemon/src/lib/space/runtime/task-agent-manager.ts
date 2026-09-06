@@ -47,7 +47,6 @@ import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/s
 import type { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
-import { handoffPromptToMailbox as enqueueMailboxHandoff } from '../../mailbox/handoff.ts';
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import { CleanupState, type SessionManager } from '../../session-manager.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
@@ -142,6 +141,7 @@ import { derivePendingQueueTargetNames } from './pending-drain-gates.ts';
 import {
   drainPendingRowOntoMailbox,
   type PendingDrainHandoffDeps,
+  type PendingDrainRoutedDeliveryArgs,
 } from './pending-drain-handoff.ts';
 import {
   formatPendingRowForNodeAgent,
@@ -153,6 +153,7 @@ import {
   deliverAgentMessageToTarget,
   type AgentMessageDeliveryDeps,
 } from './agent-message-delivery-pipeline.ts';
+import type { AgentMessageDeliveryOutcome } from './agent-message-router.ts';
 import { handoffPromptToMailbox } from './prompt-mailbox-handoff.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import { decideRestoredWorkerAdmission } from './restored-worker-admission-decision-pipeline.ts';
@@ -278,6 +279,10 @@ export interface TaskAgentManagerConfig {
   toolContinuationRepo?: ToolContinuationRecoveryRepository;
   ensureTargetSession?: (target: SessionTarget) => Promise<EnsureSessionOutcome>;
   spaceAgentRetryDelayMs?: number;
+  agentMessageDelivery?: (
+    workflowRunId: string,
+    args: PendingDrainRoutedDeliveryArgs
+  ) => Promise<AgentMessageDeliveryOutcome>;
   spaceAgentInjector?: (
     spaceId: string,
     message: string,
@@ -1472,7 +1477,7 @@ export class TaskAgentManager {
   ): Promise<void> {
     const repo = this.config.pendingMessageRepo;
     if (!repo) return;
-    const handoffDeps = this.pendingDrainHandoffDeps();
+    const handoffDeps = this.pendingDrainHandoffDeps(workflowRunId);
     if (!handoffDeps) {
       log.warn(
         `TaskAgentManager: pending drain for agent=${targetAgentName} skipped — no session ensurer configured`
@@ -1530,21 +1535,18 @@ export class TaskAgentManager {
         fallbackTaskId = this.config.taskRepo?.listByWorkflowRun(workflowRunId).at(-1)?.id ?? null;
       }
       const taskId = row.taskId ?? fallbackTaskId;
-      if (taskId == null) {
-        log.warn(
-          `TaskAgentManager: pending message ${row.id} for agent=${targetAgentName} has no resolvable task — leaving it queued`
-        );
-        continue;
-      }
       const outcome = await drainPendingRowOntoMailbox({
         deps: handoffDeps,
         row,
-        target: {
-          kind: 'worker',
-          taskId,
-          agentName: targetAgentName,
-          workflowNodeId: row.workflowNodeId ?? drainWorkflowNodeId ?? undefined,
-        },
+        target:
+          taskId == null
+            ? { kind: 'session', sessionId }
+            : {
+                kind: 'worker',
+                taskId,
+                agentName: targetAgentName,
+                workflowNodeId: row.workflowNodeId ?? drainWorkflowNodeId ?? undefined,
+              },
         message: formatPendingRowForNodeAgent(row, targetAgentName),
         origin: isHumanPendingSource(row.sourceAgentName) ? 'chat' : 'space_inject',
       });
@@ -1556,22 +1558,21 @@ export class TaskAgentManager {
     }
   }
 
-  private pendingDrainHandoffDeps(): PendingDrainHandoffDeps | null {
+  private pendingDrainHandoffDeps(workflowRunId: string): PendingDrainHandoffDeps | null {
     const repo = this.config.pendingMessageRepo;
     const ensureTargetSession = this.config.ensureTargetSession;
     if (!repo || !ensureTargetSession) return null;
+    const agentMessageDelivery = this.config.agentMessageDelivery;
+    const deliverRoutedMessage: PendingDrainHandoffDeps['deliverRoutedMessage'] = (args) =>
+      agentMessageDelivery
+        ? agentMessageDelivery(workflowRunId, args)
+        : deliverAgentMessageToTarget({
+            deps: this.agentMessageDeliveryDeps(workflowRunId),
+            ...args,
+          });
     return {
       ensureTargetSession,
-      handoffToMailbox: (args) =>
-        enqueueMailboxHandoff({
-          to: args.to,
-          message: { type: 'user', message: { content: args.message }, parent_tool_use_id: null },
-          origin: args.origin,
-          policy: args.policy,
-          ...(args.deliveryMode ? { deliveryMode: args.deliveryMode } : {}),
-          messageUuid: args.messageUuid,
-          jobQueue: this.config.db.getJobQueueRepo(),
-        }),
+      deliverRoutedMessage,
       markDelivered: (id, deliveredSessionId) => repo.markDelivered(id, deliveredSessionId),
       markFailed: (id, error) => repo.markFailed(id, error),
       markAttemptFailed: (id, error) => repo.markAttemptFailed(id, error),
@@ -1631,10 +1632,11 @@ export class TaskAgentManager {
 
   private async flushSpaceAgentDrainLocked(spaceId: string, workflowRunId: string): Promise<void> {
     const repo = this.config.pendingMessageRepo;
-    const handoffDeps = this.pendingDrainHandoffDeps();
+    const handoffDeps = this.pendingDrainHandoffDeps(workflowRunId);
     if (!repo || !handoffDeps) return;
 
     const spaceChatSessionId = `space:chat:${spaceId}`;
+    const coordinatorTarget: SessionTarget = { kind: 'agent', spaceId, agentId: 'coordinator' };
     const resolveReplySession = (row: PendingAgentMessageRecord): string | null =>
       this.resolveSpaceAgentReplySession(row);
     let retryableRows = 0;
@@ -1649,7 +1651,7 @@ export class TaskAgentManager {
         const replyTo = resolveReplySession(row);
         const target: SessionTarget = replyTo
           ? { kind: 'session', sessionId: replyTo }
-          : { kind: 'agent', spaceId, agentId: 'coordinator' };
+          : coordinatorTarget;
         const outcome = await drainPendingRowOntoMailbox({
           deps: replyTo
             ? {
@@ -1657,13 +1659,16 @@ export class TaskAgentManager {
                 ensureTargetSession: async (sessionTarget) => {
                   const resolved = await handoffDeps.ensureTargetSession(sessionTarget);
                   if (resolved.kind === 'unresolved' && resolved.reason === 'not_found') {
-                    return handoffDeps.ensureTargetSession({
-                      kind: 'agent',
-                      spaceId,
-                      agentId: 'coordinator',
-                    });
+                    return handoffDeps.ensureTargetSession(coordinatorTarget);
                   }
                   return resolved;
+                },
+                deliverRoutedMessage: async (args) => {
+                  const first = await handoffDeps.deliverRoutedMessage(args);
+                  if (first.state === 'not_found') {
+                    return handoffDeps.deliverRoutedMessage({ ...args, target: coordinatorTarget });
+                  }
+                  return first;
                 },
               }
             : handoffDeps,

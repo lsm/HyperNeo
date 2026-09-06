@@ -1,9 +1,9 @@
 import { describe, expect, it, mock } from 'bun:test';
 import {
   drainPendingRowOntoMailbox,
-  pendingDrainMailboxPolicy,
   pendingDrainMessageUuid,
 } from '../../../../src/lib/space/runtime/pending-drain-handoff.ts';
+import type { AgentMessageDeliveryOutcome } from '../../../../src/lib/space/runtime/agent-message-router.ts';
 import type { PendingAgentMessageRecord } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 
 const WORKER_TARGET = { kind: 'worker', taskId: 'task-1', agentName: 'coder' } as const;
@@ -37,7 +37,7 @@ function makeRow(overrides: Partial<PendingAgentMessageRecord> = {}): PendingAge
 function makeDeps(
   overrides: {
     resolved?: { sessionId: string } | { reason: string };
-    handoff?: { kind: 'enqueued'; id: string } | { kind: 'rejected'; reason: string };
+    delivery?: AgentMessageDeliveryOutcome;
   } = {}
 ) {
   const resolved = overrides.resolved ?? { sessionId: 'sub-session-1' };
@@ -47,7 +47,10 @@ function makeDeps(
         ? { kind: 'resolved', sessionId: resolved.sessionId }
         : { kind: 'unresolved', reason: resolved.reason }
     ),
-    handoffToMailbox: mock(async () => overrides.handoff ?? { kind: 'enqueued', id: 'entry-1' }),
+    deliverRoutedMessage: mock(
+      async () =>
+        overrides.delivery ?? { state: 'delivered', sessionId: 'sub-session-1', messageId: 'row-1' }
+    ),
     markDelivered: mock(() => {}),
     markFailed: mock(() => {}),
     markAttemptFailed: mock(() => null),
@@ -56,7 +59,7 @@ function makeDeps(
 }
 
 describe('drainPendingRowOntoMailbox', () => {
-  it('delivers through the door and the mailbox, then settles the row', async () => {
+  it('delivers through the routed delivery pipeline, then settles the row', async () => {
     const deps = makeDeps();
     const row = makeRow();
 
@@ -70,32 +73,23 @@ describe('drainPendingRowOntoMailbox', () => {
 
     expect(outcome).toEqual({ action: 'delivered', sessionId: 'sub-session-1' });
     expect(deps.ensureTargetSession).toHaveBeenCalledWith(WORKER_TARGET);
-    const handoffArgs = deps.handoffToMailbox.mock.calls[0][0] as {
-      to: string;
-      message: string;
-      origin: string;
-      messageUuid: string;
-      policy: { ttlMs: number; maxAttempts: number };
-    };
-    expect(handoffArgs).toMatchObject({
-      to: 'session:sub-session-1',
+    expect(deps.deliverRoutedMessage).toHaveBeenCalledWith({
+      target: WORKER_TARGET,
       message: 'formatted note',
+      messageId: 'row-1',
+      inputKind: 'task',
       origin: 'space_inject',
-      messageUuid: 'row-1',
     });
-    expect(handoffArgs.policy.maxAttempts).toBe(row.maxAttempts);
-    expect(handoffArgs.policy.ttlMs).toBeGreaterThan(row.expiresAt - Date.now() - 1_000);
-    expect(handoffArgs.policy.ttlMs).toBeLessThanOrEqual(row.expiresAt);
     expect(deps.markDelivered).toHaveBeenCalledWith('row-1', 'sub-session-1');
     expect(deps.onDelivered).toHaveBeenCalledWith(row, 'sub-session-1');
     expect(deps.markAttemptFailed).not.toHaveBeenCalled();
   });
 
-  it('seeds the message uuid from the idempotency key and passes defer mode through', async () => {
+  it('seeds the delivery messageId from the idempotency key and marks human input', async () => {
     const deps = makeDeps();
     const row = makeRow({
       idempotencyKey: 'human:task-1:coder:node-1:cli-9',
-      deliveryMode: 'defer',
+      sourceAgentName: 'human',
     });
 
     await drainPendingRowOntoMailbox({
@@ -106,15 +100,31 @@ describe('drainPendingRowOntoMailbox', () => {
       origin: 'chat',
     });
 
-    const handoffArgs = deps.handoffToMailbox.mock.calls[0][0] as {
-      messageUuid: string;
-      deliveryMode?: string;
-      policy: { ttlMs: number; maxAttempts: number };
-    };
-    expect(handoffArgs.messageUuid).toBe('human:task-1:coder:node-1:cli-9');
-    expect(handoffArgs.deliveryMode).toBe('defer');
-    expect(handoffArgs.policy.maxAttempts).toBe(row.maxAttempts);
-    expect(handoffArgs.policy.ttlMs).toBeGreaterThan(row.expiresAt - Date.now() - 1_000);
+    expect(deps.deliverRoutedMessage).toHaveBeenCalledWith({
+      target: WORKER_TARGET,
+      message: 'formatted note',
+      messageId: 'human:task-1:coder:node-1:cli-9',
+      inputKind: 'human',
+      origin: 'chat',
+    });
+  });
+
+  it('settles queued deliveries as delivered to the checkpoint session', async () => {
+    const deps = makeDeps({
+      delivery: { state: 'queued', sessionId: 'sub-session-1', messageId: 'row-1' },
+    });
+    const row = makeRow();
+
+    const outcome = await drainPendingRowOntoMailbox({
+      deps,
+      row,
+      target: WORKER_TARGET,
+      message: 'formatted note',
+      origin: 'space_inject',
+    });
+
+    expect(outcome).toEqual({ action: 'delivered', sessionId: 'sub-session-1' });
+    expect(deps.markDelivered).toHaveBeenCalledWith('row-1', 'sub-session-1');
   });
 
   it('skips without touching the repo when the row is already expired', async () => {
@@ -135,37 +145,7 @@ describe('drainPendingRowOntoMailbox', () => {
     expect(deps.markAttemptFailed).not.toHaveBeenCalled();
   });
 
-  it('rechecks the deadline after session resolution and skips rows that expired mid-wait', async () => {
-    const deps = {
-      ensureTargetSession: mock(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 40));
-        return { kind: 'resolved', sessionId: 'sub-session-1', created: false };
-      }),
-      handoffToMailbox: mock(async () => ({ kind: 'enqueued', id: 'entry-1' })),
-      markDelivered: mock(() => {}),
-      markFailed: mock(() => {}),
-      markAttemptFailed: mock(() => null),
-      onDelivered: mock(() => {}),
-    };
-    const row = makeRow({ expiresAt: Date.now() + 20 });
-
-    const outcome = await drainPendingRowOntoMailbox({
-      deps,
-      row,
-      target: WORKER_TARGET,
-      message: 'short ttl note',
-      origin: 'space_inject',
-    });
-
-    expect(outcome).toEqual({ action: 'failed', reason: 'expired during session resolution' });
-    expect(deps.ensureTargetSession).toHaveBeenCalledTimes(1);
-    expect(deps.handoffToMailbox).not.toHaveBeenCalled();
-    expect(deps.markDelivered).not.toHaveBeenCalled();
-    expect(deps.markFailed).toHaveBeenCalledWith('row-1', 'expired during session resolution');
-    expect(deps.markAttemptFailed).not.toHaveBeenCalled();
-  });
-
-  it('terminalizes the row without handing off when the attempt budget is spent', async () => {
+  it('terminalizes the row without delivering when the attempt budget is spent', async () => {
     const deps = makeDeps();
     const row = makeRow({ attempts: 5, maxAttempts: 5 });
 
@@ -179,7 +159,7 @@ describe('drainPendingRowOntoMailbox', () => {
 
     expect(outcome).toEqual({ action: 'failed', reason: 'delivery attempts exhausted (5)' });
     expect(deps.markFailed).toHaveBeenCalledWith('row-1', 'delivery attempts exhausted (5)');
-    expect(deps.handoffToMailbox).not.toHaveBeenCalled();
+    expect(deps.deliverRoutedMessage).not.toHaveBeenCalled();
   });
 
   it('charges an attempt and keeps the row retryable when the door cannot resolve', async () => {
@@ -200,11 +180,47 @@ describe('drainPendingRowOntoMailbox', () => {
       'session resolution: task_terminal'
     );
     expect(deps.markDelivered).not.toHaveBeenCalled();
-    expect(deps.handoffToMailbox).not.toHaveBeenCalled();
+    expect(deps.deliverRoutedMessage).not.toHaveBeenCalled();
   });
 
-  it('charges an attempt and keeps the row retryable when the mailbox rejects', async () => {
-    const deps = makeDeps({ handoff: { kind: 'rejected', reason: 'address unreachable' } });
+  it('rechecks the deadline after session resolution and skips rows that expired mid-wait', async () => {
+    const deps = {
+      ensureTargetSession: mock(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        return { kind: 'resolved', sessionId: 'sub-session-1', created: false };
+      }),
+      deliverRoutedMessage: mock(async () => ({
+        state: 'delivered',
+        sessionId: 'sub-session-1',
+        messageId: 'row-1',
+      })),
+      markDelivered: mock(() => {}),
+      markFailed: mock(() => {}),
+      markAttemptFailed: mock(() => null),
+      onDelivered: mock(() => {}),
+    };
+    const row = makeRow({ expiresAt: Date.now() + 20 });
+
+    const outcome = await drainPendingRowOntoMailbox({
+      deps,
+      row,
+      target: WORKER_TARGET,
+      message: 'short ttl note',
+      origin: 'space_inject',
+    });
+
+    expect(outcome).toEqual({ action: 'failed', reason: 'expired during session resolution' });
+    expect(deps.ensureTargetSession).toHaveBeenCalledTimes(1);
+    expect(deps.deliverRoutedMessage).not.toHaveBeenCalled();
+    expect(deps.markDelivered).not.toHaveBeenCalled();
+    expect(deps.markFailed).toHaveBeenCalledWith('row-1', 'expired during session resolution');
+    expect(deps.markAttemptFailed).not.toHaveBeenCalled();
+  });
+
+  it('charges an attempt and keeps the row retryable when routed delivery fails', async () => {
+    const deps = makeDeps({
+      delivery: { state: 'failed', messageId: 'row-1', error: 'task/run is terminal (cancelled)' },
+    });
     const row = makeRow();
 
     const outcome = await drainPendingRowOntoMailbox({
@@ -217,19 +233,43 @@ describe('drainPendingRowOntoMailbox', () => {
 
     expect(outcome).toEqual({
       action: 'retry',
-      reason: 'mailbox handoff rejected: address unreachable',
+      reason: 'routed delivery failed: task/run is terminal (cancelled)',
     });
     expect(deps.markAttemptFailed).toHaveBeenCalledWith(
       'row-1',
-      'mailbox handoff rejected: address unreachable'
+      'routed delivery failed: task/run is terminal (cancelled)'
     );
     expect(deps.markDelivered).not.toHaveBeenCalled();
   });
 
+  it('charges an attempt and keeps the row retryable when the routed target is not found', async () => {
+    const deps = makeDeps({
+      delivery: { state: 'not_found', messageId: 'row-1', error: 'activation_timeout' },
+    });
+    const row = makeRow();
+
+    const outcome = await drainPendingRowOntoMailbox({
+      deps,
+      row,
+      target: WORKER_TARGET,
+      message: 'activation note',
+      origin: 'space_inject',
+    });
+
+    expect(outcome).toEqual({
+      action: 'retry',
+      reason: 'routed delivery not_found: activation_timeout',
+    });
+    expect(deps.markAttemptFailed).toHaveBeenCalledWith(
+      'row-1',
+      'routed delivery not_found: activation_timeout'
+    );
+  });
+
   it('charges an attempt when a stage crashes', async () => {
     const deps = makeDeps();
-    deps.handoffToMailbox.mockImplementation(async () => {
-      throw new Error('job queue exploded');
+    deps.deliverRoutedMessage.mockImplementation(async () => {
+      throw new Error('delivery pipeline exploded');
     });
     const row = makeRow();
 
@@ -241,8 +281,11 @@ describe('drainPendingRowOntoMailbox', () => {
       origin: 'space_inject',
     });
 
-    expect(outcome).toEqual({ action: 'retry', reason: 'internal: job queue exploded' });
-    expect(deps.markAttemptFailed).toHaveBeenCalledWith('row-1', 'internal: job queue exploded');
+    expect(outcome).toEqual({ action: 'retry', reason: 'internal: delivery pipeline exploded' });
+    expect(deps.markAttemptFailed).toHaveBeenCalledWith(
+      'row-1',
+      'internal: delivery pipeline exploded'
+    );
   });
 });
 
@@ -250,27 +293,5 @@ describe('pendingDrainMessageUuid', () => {
   it('prefers the idempotency key and falls back to the row id', () => {
     expect(pendingDrainMessageUuid({ id: 'row-1', idempotencyKey: 'key-1' })).toBe('key-1');
     expect(pendingDrainMessageUuid({ id: 'row-1', idempotencyKey: null })).toBe('row-1');
-  });
-});
-
-describe('pendingDrainMailboxPolicy', () => {
-  it('preserves the remaining ttl and attempt budget from the row', () => {
-    const now = Date.now();
-    const policy = pendingDrainMailboxPolicy({
-      expiresAt: now + 60_000,
-      attempts: 2,
-      maxAttempts: 5,
-    });
-    expect(policy.maxAttempts).toBe(3);
-    expect(policy.ttlMs).toBeGreaterThan(50_000);
-    expect(policy.ttlMs).toBeLessThanOrEqual(60_000);
-  });
-
-  it('clamps the policy to at least one attempt and one millisecond', () => {
-    const now = Date.now();
-    expect(pendingDrainMailboxPolicy({ expiresAt: now, attempts: 9, maxAttempts: 5 })).toEqual({
-      ttlMs: 1,
-      maxAttempts: 1,
-    });
   });
 });

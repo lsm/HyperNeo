@@ -25,19 +25,6 @@ const ORPHAN_SESSION_ID = 'sub-session-orphan';
 const WORKFLOW_ID = 'wf-drain';
 const TASK_ID = 'task-drain';
 
-interface MailboxJob {
-  queue: string;
-  payload: {
-    id: string;
-    to: { kind: string; sessionId?: string };
-    origin: string;
-    messageUuid?: string;
-    deliveryMode?: string;
-    policy?: { ttlMs?: number; maxAttempts?: number };
-    message: { message: { content: unknown } };
-  };
-}
-
 interface SpyRepo {
   repo: PendingAgentMessageRepository;
   spy: Record<string, unknown>;
@@ -94,23 +81,40 @@ function spyPendingRepo(repo: PendingAgentMessageRepository): SpyRepo {
   return { repo, spy, calls, retentionArgs, expireArgs, listCalls };
 }
 
-interface MailboxLaneFake {
-  jobs: MailboxJob[];
-  enqueueUniquePending: ReturnType<typeof mock>;
-  failUuids: Set<string>;
+interface DeliveryCall {
+  workflowRunId: string;
+  args: {
+    target: Record<string, unknown>;
+    message: string;
+    messageId: string;
+    inputKind: string;
+    origin: string;
+  };
 }
 
-function makeMailboxLane(): MailboxLaneFake {
-  const jobs: MailboxJob[] = [];
-  const failUuids = new Set<string>();
-  const enqueueUniquePending = mock((args: { payload?: MailboxJob['payload'] }) => {
-    if (args?.payload?.messageUuid && failUuids.has(args.payload.messageUuid)) {
-      throw new Error('mailbox lane down');
+interface DeliveryFake {
+  calls: DeliveryCall[];
+  deliver: ReturnType<typeof mock>;
+  failMessageIds: Set<string>;
+}
+
+function makeDeliveryFake(
+  resolveSession: (target: Record<string, unknown>) => string
+): DeliveryFake {
+  const calls: DeliveryCall[] = [];
+  const failMessageIds = new Set<string>();
+  const deliver = mock(async (workflowRunId: string, args: DeliveryCall['args']) => {
+    calls.push({ workflowRunId, args: { ...args, target: { ...args.target } } });
+    if (failMessageIds.has(args.messageId)) {
+      return { state: 'failed' as const, messageId: args.messageId, error: 'delivery lane down' };
     }
-    jobs.push(args as MailboxJob);
-    return { id: 'job-1' };
+    return {
+      state: 'delivered' as const,
+      sessionId: resolveSession(args.target),
+      messageId: args.messageId,
+    };
   });
-  return { jobs, enqueueUniquePending, failUuids };
+  return { calls, deliver, failMessageIds };
 }
 
 interface EnqueueOverrides {
@@ -129,7 +133,7 @@ interface EnqueueOverrides {
 interface RealDbHarness {
   manager: TaskAgentManager;
   spyRepo: SpyRepo;
-  mailbox: MailboxLaneFake;
+  delivery: DeliveryFake;
   ensureTargetSession: ReturnType<typeof mock>;
   publish: ReturnType<typeof mock>;
   db: Database;
@@ -178,7 +182,7 @@ function makeRealDbHarness(
     )
   );
   const publish = mock(async (_event: string, _payload: unknown) => {});
-  const mailbox = makeMailboxLane();
+  const delivery = makeDeliveryFake(() => SESSION_ID);
   const ensureTargetSession = mock(
     options.ensureImpl ??
       (async () => ({ kind: 'resolved', sessionId: SESSION_ID, created: false }))
@@ -186,12 +190,13 @@ function makeRealDbHarness(
   const workflow = { nodes: [{ id: NODE_ID, name: NODE_NAME }] };
 
   const manager = new TaskAgentManager({
-    db: { getDatabase: () => db, getJobQueueRepo: () => mailbox },
+    db: { getDatabase: () => db },
     taskRepo,
     workflowRunRepo: runRepo,
     nodeExecutionRepo,
     pendingMessageRepo: spyRepo.spy,
     ensureTargetSession,
+    agentMessageDelivery: delivery.deliver,
     internalEventBus: { subscribe: mock(() => () => {}), publish },
     spaceWorkflowManager: {
       getWorkflow: () => workflow,
@@ -202,7 +207,7 @@ function makeRealDbHarness(
   return {
     manager,
     spyRepo,
-    mailbox,
+    delivery,
     ensureTargetSession,
     publish,
     db,
@@ -263,10 +268,10 @@ function makeMockRepoManager(
   } = {}
 ): {
   manager: TaskAgentManager;
-  mailbox: MailboxLaneFake;
+  delivery: DeliveryFake;
   ensureTargetSession: ReturnType<typeof mock>;
 } {
-  const mailbox = makeMailboxLane();
+  const delivery = makeDeliveryFake(() => SESSION_ID);
   const ensureTargetSession = mock(async () => ({
     kind: 'resolved',
     sessionId: SESSION_ID,
@@ -293,7 +298,7 @@ function makeMockRepoManager(
     })),
   };
   const manager = new TaskAgentManager({
-    db: { getDatabase: () => db, getJobQueueRepo: () => mailbox },
+    db: { getDatabase: () => db },
     nodeExecutionRepo: {
       getByAgentSessionId: mock(() => (options.executionPresent === false ? null : execution)),
       listByAgentSessionId: mock(() => [execution]),
@@ -305,9 +310,10 @@ function makeMockRepoManager(
     spaceWorkflowManager: { getWorkflow: () => workflow, getWorkflowForRun: () => workflow },
     pendingMessageRepo: repo,
     ensureTargetSession,
+    agentMessageDelivery: delivery.deliver,
     internalEventBus: { subscribe: mock(() => () => {}), publish: mock(async () => {}) },
   } as unknown as TaskAgentManagerConfig);
-  return { manager, mailbox, ensureTargetSession };
+  return { manager, delivery, ensureTargetSession };
 }
 
 describe('flushPendingMessagesForTarget — drain admission', () => {
@@ -325,8 +331,8 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
-    expect(h.mailbox.jobs).toHaveLength(1);
-    expect(h.mailbox.jobs[0].payload.message.message.content).toContain('agent note');
+    expect(h.delivery.calls).toHaveLength(1);
+    expect(h.delivery.calls[0].args.message).toContain('agent note');
     expect(h.spyRepo.repo.getById(agentRow.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(spaceRow.id)?.status).toBe('pending');
   });
@@ -344,7 +350,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
       [AGENT_NAME, NODE_ID],
       [`${NODE_NAME}/${AGENT_NAME}`, NODE_ID],
     ]);
-    expect(h.mailbox.jobs).toHaveLength(1);
+    expect(h.delivery.calls).toHaveLength(1);
     expect(h.spyRepo.repo.getById(aliasRow.id)?.status).toBe('delivered');
   });
 
@@ -358,7 +364,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
     expect(h.spyRepo.repo.getById(sameNode.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(runScoped.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(otherNode.id)?.status).toBe('pending');
-    expect(h.mailbox.jobs).toHaveLength(2);
+    expect(h.delivery.calls).toHaveLength(2);
   });
 
   it('executionless drain lists run-scoped only and admits just workflowNodeId-null rows', async () => {
@@ -376,7 +382,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
     expect(h.spyRepo.repo.getById(runScoped.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(nodeScoped.id)?.status).toBe('pending');
     expect(h.spyRepo.repo.getById(aliasRow.id)?.status).toBe('pending');
-    expect(h.mailbox.jobs).toHaveLength(1);
+    expect(h.delivery.calls).toHaveLength(1);
   });
 
   it('executionless drain uses matching session provenance to admit node-scoped rows', async () => {
@@ -389,7 +395,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
       markDelivered: mock(() => {}),
       markAttemptFailed: mock(() => null),
     };
-    const { manager, mailbox } = makeMockRepoManager(repo, {
+    const { manager, delivery } = makeMockRepoManager(repo, {
       executionPresent: false,
       provenance: { workflowRunId: 'run-mock', agentName: AGENT_NAME, nodeId: NODE_ID },
     });
@@ -397,7 +403,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
     await manager.flushPendingMessagesForTarget('run-mock', AGENT_NAME, SESSION_ID);
 
     expect(repo.listPendingForTarget).toHaveBeenCalledWith('run-mock', AGENT_NAME, NODE_ID);
-    expect(mailbox.jobs.map((job) => job.payload.messageUuid)).toEqual(['row-node']);
+    expect(delivery.calls.map((call) => call.args.messageId)).toEqual(['row-node']);
     expect(repo.markDelivered).toHaveBeenCalledWith('row-node', SESSION_ID);
   });
 
@@ -411,7 +417,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
       markDelivered: mock(() => {}),
       markAttemptFailed: mock(() => null),
     };
-    const { manager, mailbox } = makeMockRepoManager(repo, {
+    const { manager, delivery } = makeMockRepoManager(repo, {
       executionPresent: false,
       provenance: { workflowRunId: 'run-mock', agentName: AGENT_NAME },
     });
@@ -419,7 +425,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
     await manager.flushPendingMessagesForTarget('run-mock', AGENT_NAME, SESSION_ID, NODE_ID);
 
     expect(repo.listPendingForTarget).toHaveBeenCalledWith('run-mock', AGENT_NAME, NODE_ID);
-    expect(mailbox.jobs.map((job) => job.payload.messageUuid)).toEqual(['row-node']);
+    expect(delivery.calls.map((call) => call.args.messageId)).toEqual(['row-node']);
     expect(repo.markDelivered).toHaveBeenCalledWith('row-node', SESSION_ID);
   });
 
@@ -432,7 +438,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
       markDelivered: mock(() => {}),
       markAttemptFailed: mock(() => null),
     };
-    const { manager, mailbox } = makeMockRepoManager(repo, {
+    const { manager, delivery } = makeMockRepoManager(repo, {
       executionPresent: false,
       provenance: { workflowRunId: 'run-other', agentName: AGENT_NAME, nodeId: NODE_ID },
     });
@@ -440,7 +446,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
     await manager.flushPendingMessagesForTarget('run-mock', AGENT_NAME, SESSION_ID);
 
     expect(repo.listPendingForTarget).toHaveBeenCalledWith('run-mock', AGENT_NAME);
-    expect(mailbox.jobs).toHaveLength(0);
+    expect(delivery.calls).toHaveLength(0);
     expect(repo.markDelivered).not.toHaveBeenCalled();
   });
 
@@ -453,11 +459,11 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
       markDelivered: mock(() => {}),
       markAttemptFailed: mock(() => null),
     };
-    const { manager, mailbox } = makeMockRepoManager(repo);
+    const { manager, delivery } = makeMockRepoManager(repo);
 
     await manager.flushPendingMessagesForTarget(row.workflowRunId, AGENT_NAME, SESSION_ID);
 
-    expect(mailbox.jobs).toHaveLength(1);
+    expect(delivery.calls).toHaveLength(1);
     expect(repo.markDelivered).toHaveBeenCalledTimes(1);
     expect(repo.markDelivered).toHaveBeenCalledWith('row-dup', SESSION_ID);
   });
@@ -480,11 +486,11 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
       markDelivered: mock(() => {}),
       markAttemptFailed: mock(() => null),
     };
-    const { manager, mailbox } = makeMockRepoManager(repo);
+    const { manager, delivery } = makeMockRepoManager(repo);
 
     await manager.flushPendingMessagesForTarget('run-mock', AGENT_NAME, SESSION_ID);
 
-    expect(mailbox.jobs.map((job) => job.payload.messageUuid)).toEqual([
+    expect(delivery.calls.map((call) => call.args.messageId)).toEqual([
       'row-alias',
       'row-mid',
       'row-late',
@@ -505,7 +511,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
   it('returns early without handing off when no pending rows match', async () => {
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
-    expect(h.mailbox.jobs).toHaveLength(0);
+    expect(h.delivery.calls).toHaveLength(0);
     expect(h.spyRepo.calls).toEqual([
       'enforceRetention',
       'expireStale',
@@ -524,7 +530,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
 
       expect(harness.spyRepo.calls).toEqual([]);
       expect(harness.spyRepo.repo.getById(row.id)?.status).toBe('pending');
-      expect(harness.mailbox.jobs).toHaveLength(0);
+      expect(harness.delivery.calls).toHaveLength(0);
     } finally {
       harness.db.close();
     }
@@ -550,9 +556,9 @@ describe('flushPendingMessagesForTarget — door resolution and handoff', () => 
       { kind: 'worker', taskId: TASK_ID, agentName: AGENT_NAME, workflowNodeId: NODE_ID },
       { kind: 'worker', taskId: TASK_ID, agentName: AGENT_NAME, workflowNodeId: NODE_ID },
     ]);
-    expect(h.mailbox.jobs.map((job) => job.payload.to)).toEqual([
-      { kind: 'session', sessionId: SESSION_ID },
-      { kind: 'session', sessionId: SESSION_ID },
+    expect(h.delivery.calls.map((call) => call.args.target)).toEqual([
+      { kind: 'worker', taskId: TASK_ID, agentName: AGENT_NAME, workflowNodeId: NODE_ID },
+      { kind: 'worker', taskId: TASK_ID, agentName: AGENT_NAME, workflowNodeId: NODE_ID },
     ]);
     expect(h.spyRepo.repo.getById(nodeRow.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(runRow.id)?.status).toBe('delivered');
@@ -604,20 +610,17 @@ describe('flushPendingMessagesForTarget — door resolution and handoff', () => 
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
   });
 
-  it('leaves rows queued without charging an attempt when no task resolves', async () => {
-    const row = h.enqueue({ taskId: null, message: 'orphan row' });
+  it('delivers taskless recovery rows to the known session when no task resolves', async () => {
+    const row = h.enqueue({ taskId: null, message: 'orphan recovery row' });
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
-    expect(h.mailbox.jobs).toHaveLength(0);
-    expect(h.ensureTargetSession).not.toHaveBeenCalled();
-    const record = h.spyRepo.repo.getById(row.id);
-    expect(record?.status).toBe('pending');
-    expect(record?.attempts).toBe(0);
-    expect(h.spyRepo.calls).not.toContain(`attemptFailed:${row.id}`);
+    expect(h.ensureTargetSession).toHaveBeenCalledWith({ kind: 'session', sessionId: SESSION_ID });
+    expect(h.delivery.calls[0].args.target).toEqual({ kind: 'session', sessionId: SESSION_ID });
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
   });
 
-  it('seeds the mailbox messageUuid from the row idempotency key', async () => {
+  it('seeds the delivery messageId from the row idempotency key', async () => {
     h.enqueue({
       idempotencyKey: 'human:task-7:coder:node-build:cli-42',
       message: 'keyed note',
@@ -626,24 +629,10 @@ describe('flushPendingMessagesForTarget — door resolution and handoff', () => 
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
-    expect(h.mailbox.jobs.map((job) => job.payload.messageUuid)).toEqual([
+    expect(h.delivery.calls.map((call) => call.args.messageId)).toEqual([
       'human:task-7:coder:node-build:cli-42',
       unkeyedRow.id,
     ]);
-  });
-
-  it('carries the row remaining ttl and attempt budget into the mailbox entry policy', async () => {
-    const freshRow = h.enqueue({ message: 'fresh policy', ttlMs: 60_000, maxAttempts: 3 });
-    const spentRow = h.enqueue({ message: 'spent policy', ttlMs: 60_000, maxAttempts: 3 });
-    for (let i = 0; i < 2; i++) h.spyRepo.repo.markAttemptFailed(spentRow.id, 'earlier');
-
-    await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
-
-    const freshPolicy = h.mailbox.jobs[0].payload.policy;
-    expect(freshPolicy?.maxAttempts).toBe(3);
-    expect(freshPolicy?.ttlMs).toBeGreaterThan(0);
-    expect(freshPolicy?.ttlMs).toBeLessThanOrEqual(60_000);
-    expect(h.mailbox.jobs[1].payload.policy?.maxAttempts).toBe(1);
   });
 
   it('migrates a row exactly once across a simulated double drain', async () => {
@@ -653,8 +642,8 @@ describe('flushPendingMessagesForTarget — door resolution and handoff', () => 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
-    expect(h.mailbox.jobs).toHaveLength(1);
-    expect(h.mailbox.jobs[0].payload.messageUuid).toBe(key);
+    expect(h.delivery.calls).toHaveLength(1);
+    expect(h.delivery.calls[0].args.messageId).toBe(key);
   });
 
   it('re-handoffs with the same uuid when a delivered row is re-enqueued under its key', async () => {
@@ -666,8 +655,8 @@ describe('flushPendingMessagesForTarget — door resolution and handoff', () => 
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
-    expect(h.mailbox.jobs).toHaveLength(2);
-    expect(new Set(h.mailbox.jobs.map((job) => job.payload.messageUuid))).toEqual(new Set([key]));
+    expect(h.delivery.calls).toHaveLength(2);
+    expect(new Set(h.delivery.calls.map((call) => call.args.messageId))).toEqual(new Set([key]));
   });
 
   it('charges an attempt and keeps the row pending when the door cannot resolve', async () => {
@@ -678,7 +667,7 @@ describe('flushPendingMessagesForTarget — door resolution and handoff', () => 
     try {
       await harness.manager.flushPendingMessagesForTarget(harness.runId, AGENT_NAME, SESSION_ID);
 
-      expect(harness.mailbox.jobs).toHaveLength(0);
+      expect(harness.delivery.calls).toHaveLength(0);
       const record = harness.spyRepo.repo.getById(row.id);
       expect(record?.status).toBe('pending');
       expect(record?.attempts).toBe(1);
@@ -704,25 +693,25 @@ describe('flushPendingMessagesForTarget — door resolution and handoff', () => 
       doorOpen = true;
       await harness.manager.flushPendingMessagesForTarget(harness.runId, AGENT_NAME, SESSION_ID);
 
-      expect(harness.mailbox.jobs).toHaveLength(1);
+      expect(harness.delivery.calls).toHaveLength(1);
       expect(harness.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
     } finally {
       harness.db.close();
     }
   });
 
-  it('charges an attempt and keeps the row pending when the mailbox handoff is rejected', async () => {
+  it('charges an attempt and keeps the row pending when routed delivery fails', async () => {
     const key = 'human:task-7:coder:node-build:cli-44';
     const row = h.enqueue({ idempotencyKey: key, message: 'lane rejects' });
-    h.mailbox.failUuids.add(key);
+    h.delivery.failMessageIds.add(key);
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
-    expect(h.mailbox.jobs).toHaveLength(0);
+    expect(h.delivery.calls).toHaveLength(1);
     const record = h.spyRepo.repo.getById(row.id);
     expect(record?.status).toBe('pending');
     expect(record?.attempts).toBe(1);
-    expect(record?.lastError).toBe('mailbox handoff rejected: internal: mailbox lane down');
+    expect(record?.lastError).toBe('routed delivery failed: delivery lane down');
   });
 });
 
@@ -746,10 +735,15 @@ describe('flushPendingMessagesForTarget — envelope formatting', () => {
       ...(row.taskId != null ? { taskId: row.taskId } : {}),
     });
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
-    expect(h.mailbox.jobs).toHaveLength(1);
-    expect(h.mailbox.jobs[0].payload.to).toEqual({ kind: 'session', sessionId: SESSION_ID });
+    expect(h.delivery.calls).toHaveLength(1);
+    expect(h.delivery.calls[0].args.target).toEqual({
+      kind: 'worker',
+      taskId: row.taskId ?? TASK_ID,
+      agentName: AGENT_NAME,
+      workflowNodeId: NODE_ID,
+    });
     expect(h.spyRepo.repo.getById(record.id)?.status).toBe('delivered');
-    return h.mailbox.jobs[0].payload.message.message.content as string;
+    return h.delivery.calls[0].args.message;
   }
 
   it('formats a peer node-agent source through formatAgentMessage', async () => {
@@ -893,26 +887,24 @@ describe('flushPendingMessagesForTarget — per-row outcomes', () => {
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
-    expect(h.mailbox.jobs[0].payload).toMatchObject({
+    expect(h.delivery.calls[0].args).toMatchObject({
       origin: 'space_inject',
-      deliveryMode: 'defer',
-      messageUuid: agentRow.id,
+      inputKind: 'task',
+      messageId: agentRow.id,
     });
-    expect(h.mailbox.jobs[0].payload.message.message.content).toContain('agent note');
-    expect(h.mailbox.jobs[1].payload).toMatchObject({
+    expect(h.delivery.calls[0].args.message).toContain('agent note');
+    expect(h.delivery.calls[1].args).toMatchObject({
       origin: 'chat',
-      messageUuid: humanRow.id,
+      inputKind: 'human',
+      messageId: humanRow.id,
     });
-    expect(h.mailbox.jobs[1].payload.message.message.content).toBe(
-      '[Message from human]: human note'
-    );
-    expect(h.mailbox.jobs[1].payload.deliveryMode).toBe('immediate');
+    expect(h.delivery.calls[1].args.message).toBe('[Message from human]: human note');
   });
 
   it('marks the attempt failed and continues draining the remaining rows', async () => {
     const failingRow = h.enqueue({ message: 'fails first' });
     const laterRow = h.enqueue({ message: 'still drains' });
-    h.mailbox.failUuids.add(failingRow.idempotencyKey ?? failingRow.id);
+    h.delivery.failMessageIds.add(failingRow.idempotencyKey ?? failingRow.id);
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
@@ -927,7 +919,7 @@ describe('flushPendingMessagesForTarget — per-row outcomes', () => {
 interface SpaceAgentHarness {
   manager: TaskAgentManager;
   spyRepo: SpyRepo;
-  mailbox: MailboxLaneFake;
+  delivery: DeliveryFake;
   ensureTargetSession: ReturnType<typeof mock>;
   publish: ReturnType<typeof mock>;
   db: Database;
@@ -967,23 +959,26 @@ function makeSpaceAgentHarness(
     )
   );
   const publish = mock(async (_event: string, _payload: unknown) => {});
-  const mailbox = makeMailboxLane();
+  const spaceIdRef = { id: space.id };
+  const coordinatorSession = `space:agent:${spaceIdRef.id}:coordinator`;
+  const delivery = makeDeliveryFake((target) =>
+    target.kind === 'agent'
+      ? coordinatorSession
+      : ((target.sessionId as string) ?? coordinatorSession)
+  );
   const ensureTargetSession = mock(
     options.ensureImpl ??
       (async (target: SessionTarget) =>
         target.kind === 'agent'
-          ? {
-              kind: 'resolved',
-              sessionId: `space:agent:${target.spaceId}:coordinator`,
-              created: false,
-            }
+          ? { kind: 'resolved', sessionId: coordinatorSession, created: false }
           : { kind: 'resolved', sessionId: target.sessionId, created: false })
   );
 
   const config: Record<string, unknown> = {
-    db: { getDatabase: () => db, getJobQueueRepo: () => mailbox },
+    db: { getDatabase: () => db },
     pendingMessageRepo: spyRepo.spy,
     ensureTargetSession,
+    agentMessageDelivery: delivery.deliver,
     spaceAgentRetryDelayMs: options.retryDelayMs ?? 10,
     internalEventBus: { subscribe: mock(() => () => {}), publish },
   };
@@ -995,7 +990,7 @@ function makeSpaceAgentHarness(
   return {
     manager,
     spyRepo,
-    mailbox,
+    delivery,
     ensureTargetSession,
     publish,
     db,
@@ -1038,7 +1033,6 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     const row = h.enqueue({ message: 'still in flight' });
     (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
       getDatabase: () => h.db,
-      getJobQueueRepo: () => h.mailbox,
       getSDKMessageRepo: () => ({
         getDeliveryContent: (_sessionId: string, uuid: string) =>
           uuid === row.id ? { content: 'x', sendStatus: 'enqueued' } : null,
@@ -1047,7 +1041,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.mailbox.jobs).toHaveLength(0);
+    expect(h.delivery.calls).toHaveLength(0);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
     expect(h.spyRepo.retentionArgs[0]?.[0]).toMatchObject({ excludeIds: [row.id] });
   });
@@ -1058,7 +1052,6 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     const row = h.enqueue({ message: 'legacy delivery failed' });
     (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
       getDatabase: () => h.db,
-      getJobQueueRepo: () => h.mailbox,
       getSDKMessageRepo: () => ({
         getDeliveryContent: (_sessionId: string, uuid: string) =>
           uuid === row.id ? { content: 'x', sendStatus: 'failed' } : null,
@@ -1067,8 +1060,8 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.mailbox.jobs).toHaveLength(1);
-    expect(h.mailbox.jobs[0].payload.messageUuid).toBe(row.id);
+    expect(h.delivery.calls).toHaveLength(1);
+    expect(h.delivery.calls[0].args.messageId).toBe(row.id);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
   });
 
@@ -1079,7 +1072,6 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     let legacyStatus = 'enqueued';
     (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
       getDatabase: () => h.db,
-      getJobQueueRepo: () => h.mailbox,
       getSDKMessageRepo: () => ({
         getDeliveryContent: (_sessionId: string, uuid: string) =>
           uuid === row.id ? { content: 'x', sendStatus: legacyStatus } : null,
@@ -1088,13 +1080,13 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.mailbox.jobs).toHaveLength(0);
+    expect(h.delivery.calls).toHaveLength(0);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
 
     legacyStatus = 'failed';
     await new Promise((resolve) => setTimeout(resolve, 60));
 
-    expect(h.mailbox.jobs).toHaveLength(1);
+    expect(h.delivery.calls).toHaveLength(1);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
   });
 
@@ -1105,7 +1097,6 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     let legacyStatus = 'submitted';
     (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
       getDatabase: () => h.db,
-      getJobQueueRepo: () => h.mailbox,
       getSDKMessageRepo: () => ({
         getDeliveryContent: (_sessionId: string, uuid: string) =>
           uuid === row.id ? { content: 'x', sendStatus: legacyStatus } : null,
@@ -1119,7 +1110,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     legacyStatus = 'consumed';
     await new Promise((resolve) => setTimeout(resolve, 60));
 
-    expect(h.mailbox.jobs).toHaveLength(0);
+    expect(h.delivery.calls).toHaveLength(0);
     const record = h.spyRepo.repo.getById(row.id);
     expect(record?.status).toBe('delivered');
     expect(record?.deliveredSessionId).toBe(`space:chat:${h.spaceId}`);
@@ -1139,13 +1130,13 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.mailbox.jobs).toHaveLength(0);
+    expect(h.delivery.calls).toHaveLength(0);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
 
     doorOpen = true;
     await new Promise((resolve) => setTimeout(resolve, 60));
 
-    expect(h.mailbox.jobs).toHaveLength(1);
+    expect(h.delivery.calls).toHaveLength(1);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
   });
 
@@ -1156,7 +1147,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.mailbox.jobs).toHaveLength(1);
+    expect(h.delivery.calls).toHaveLength(1);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
     const timers = (h.manager as unknown as { spaceAgentRetryTimers: Map<string, unknown> })
       .spaceAgentRetryTimers;
@@ -1183,7 +1174,6 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     const fallbackRow = h.enqueue({ message: 'plain', taskId: 'task-gone' });
     (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
       getDatabase: () => h.db,
-      getJobQueueRepo: () => h.mailbox,
       getSDKMessageRepo: () => ({
         getDeliveryContent: (sessionId: string, uuid: string) => {
           if (uuid === footerRow.id && sessionId === 'footer-session') {
@@ -1199,7 +1189,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.mailbox.jobs).toHaveLength(0);
+    expect(h.delivery.calls).toHaveLength(0);
     expect(h.spyRepo.repo.getById(footerRow.id)?.deliveredSessionId).toBe('footer-session');
     expect(h.spyRepo.repo.getById(fallbackRow.id)?.deliveredSessionId).toBe(
       `space:chat:${h.spaceId}`
@@ -1214,7 +1204,6 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     const row = h.enqueue({ message: 'consumed while the daemon was down' });
     (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
       getDatabase: () => h.db,
-      getJobQueueRepo: () => h.mailbox,
       getSDKMessageRepo: () => ({
         getDeliveryContent: (_sessionId: string, uuid: string) =>
           uuid === row.id ? { content: 'x', sendStatus: 'consumed' } : null,
@@ -1223,7 +1212,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.mailbox.jobs).toHaveLength(0);
+    expect(h.delivery.calls).toHaveLength(0);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(row.id)?.deliveredSessionId).toBe(`space:chat:${h.spaceId}`);
     const deliveredAt = h.spyRepo.calls.indexOf(`delivered:${row.id}`);
@@ -1240,8 +1229,8 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.mailbox.jobs).toHaveLength(1);
-    expect(h.mailbox.jobs[0].payload.message.message.content).toContain('space row');
+    expect(h.delivery.calls).toHaveLength(1);
+    expect(h.delivery.calls[0].args.message).toContain('space row');
     expect(h.spyRepo.repo.getById(spaceRow.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(nodeRow.id)?.status).toBe('pending');
   });
@@ -1253,7 +1242,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.mailbox.jobs).toHaveLength(1);
+    expect(h.delivery.calls).toHaveLength(1);
     expect(h.spyRepo.repo.getById(nodeScoped.id)?.status).toBe('delivered');
   });
 
@@ -1267,11 +1256,12 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     const record = h.spyRepo.repo.getById(row.id);
     expect(record?.status).toBe('delivered');
     expect(record?.deliveredSessionId).toBe(`space:agent:${h.spaceId}:coordinator`);
-    expect(h.mailbox.jobs[0].payload.to).toEqual({
-      kind: 'session',
-      sessionId: `space:agent:${h.spaceId}:coordinator`,
+    expect(h.delivery.calls[0].args.target).toEqual({
+      kind: 'agent',
+      spaceId: h.spaceId,
+      agentId: 'coordinator',
     });
-    expect(h.mailbox.jobs[0].payload.origin).toBe('space_agent');
+    expect(h.delivery.calls[0].args.origin).toBe('space_agent');
     const events = h.publish.mock.calls.filter(
       (call: unknown[]) => call[0] === 'space.pendingMessage.delivered'
     );
@@ -1318,17 +1308,21 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
   });
 
   it('falls back to the coordinator agent target when a reply session is gone', async () => {
+    let coordinator = '';
     const h = makeSpaceAgentHarness({
       ensureImpl: async (target: SessionTarget) =>
         target.kind === 'agent'
-          ? {
-              kind: 'resolved',
-              sessionId: `space:agent:${target.spaceId}:coordinator`,
-              created: true,
-            }
+          ? { kind: 'resolved', sessionId: coordinator, created: true }
           : { kind: 'unresolved', reason: 'not_found' },
     });
+    coordinator = `space:agent:${h.spaceId}:coordinator`;
     dbByTest.push(h.db);
+    h.delivery.deliver.mockImplementation(
+      async (_runId: string, args: { target: { kind: string }; messageId: string }) =>
+        args.target.kind === 'session'
+          ? { state: 'not_found' as const, messageId: args.messageId, error: 'not_found' }
+          : { state: 'delivered' as const, sessionId: coordinator, messageId: args.messageId }
+    );
     const row = h.enqueue({
       message: formatAgentMessage({
         fromLevel: 'node-agent',
@@ -1347,10 +1341,14 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
       { kind: 'session', sessionId: 'gone-session' },
       { kind: 'agent', spaceId: h.spaceId, agentId: 'coordinator' },
     ]);
-    expect(h.mailbox.jobs[0].payload.to).toEqual({
-      kind: 'session',
-      sessionId: `space:agent:${h.spaceId}:coordinator`,
-    });
+    expect(
+      h.delivery.deliver.mock.calls.map(
+        (call: unknown[]) => (call[1] as { target: unknown }).target
+      )
+    ).toEqual([
+      { kind: 'session', sessionId: 'gone-session' },
+      { kind: 'agent', spaceId: h.spaceId, agentId: 'coordinator' },
+    ]);
     expect(h.spyRepo.calls).toContain(`delivered:${row.id}`);
   });
 
@@ -1369,7 +1367,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    const formatted = h.mailbox.jobs[0].payload.message.message.content as string;
+    const formatted = h.delivery.calls[0].args.message;
     expect(formatted).toBe(
       formatAgentMessage({
         fromLevel: 'node-agent',
@@ -1380,15 +1378,15 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
       })
     );
     expect(formatted).toContain('send_message_to_task with task_id="task-7"');
-    expect(h.mailbox.jobs[1].payload.message.message.content).toBe(enveloped);
+    expect(h.delivery.calls[1].args.message).toBe(enveloped);
   });
 
-  it('charges an attempt and continues when the mailbox handoff rejects', async () => {
+  it('charges an attempt and continues when routed delivery fails', async () => {
     const h = makeSpaceAgentHarness();
     dbByTest.push(h.db);
     const failingRow = h.enqueue({ message: 'fails first' });
     const laterRow = h.enqueue({ message: 'still drains' });
-    h.mailbox.failUuids.add(failingRow.idempotencyKey ?? failingRow.id);
+    h.delivery.failMessageIds.add(failingRow.idempotencyKey ?? failingRow.id);
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
@@ -1406,7 +1404,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.mailbox.jobs).toHaveLength(0);
+    expect(h.delivery.calls).toHaveLength(0);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('failed');
     expect(h.spyRepo.repo.getById(row.id)?.lastError).toBe('historical failure');
   });

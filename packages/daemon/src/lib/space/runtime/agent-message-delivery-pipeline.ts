@@ -3,6 +3,7 @@ import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { ClearConversationCancelledError, type AgentSession } from '../../agent/agent-session.ts';
+import type { MessageDeliveryOrigin } from '../../agent/message-delivery.ts';
 import {
   acquireContextClearBoundary,
   type ContextClearBoundaryOwner,
@@ -50,6 +51,8 @@ export interface AgentMessageDeliveryArgs {
   target: SessionTarget;
   message: string;
   messageId: string;
+  inputKind?: MessageInputKind;
+  origin?: MessageDeliveryOrigin;
 }
 
 export interface AgentMessageDeliveryPlan {
@@ -74,7 +77,8 @@ export interface LockedAgentMessageDeliveryCtx
 function buildSyntheticDeliveryMessage(
   sessionId: string,
   messageId: string,
-  text: string
+  text: string,
+  inputKind: MessageInputKind = 'task'
 ): SDKUserMessage & { isSynthetic: boolean; inputKind: MessageInputKind } {
   return {
     type: 'user' as const,
@@ -82,7 +86,7 @@ function buildSyntheticDeliveryMessage(
     session_id: sessionId,
     parent_tool_use_id: null,
     isSynthetic: true,
-    inputKind: 'task',
+    inputKind,
     message: {
       role: 'user' as const,
       content: [{ type: 'text' as const, text }],
@@ -247,14 +251,19 @@ export async function handoffDeliveryToMailbox(
   if (ctx.outcome) return ctx;
   const sessionId = ctx.resolution.sessionId;
   const shouldDefer = ctx.plan?.shouldDefer === true;
-  const message = buildSyntheticDeliveryMessage(sessionId, ctx.messageId, ctx.message);
+  const message = buildSyntheticDeliveryMessage(
+    sessionId,
+    ctx.messageId,
+    ctx.message,
+    ctx.inputKind
+  );
   try {
     const outcome = await ctx.deps.handoffToMailbox({
       target: {
         sessionId,
         messageId: ctx.messageId,
         message,
-        origin: 'space_agent',
+        origin: ctx.origin ?? 'space_agent',
         ...(shouldDefer ? { defer: true } : {}),
       },
       ...(shouldDefer ? {} : { stateManager: ctx.session.stateManager }),

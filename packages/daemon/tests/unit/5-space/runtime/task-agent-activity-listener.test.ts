@@ -136,12 +136,7 @@ describe('TaskAgentManager agent-activity listener', () => {
       db as unknown as Parameters<typeof PendingAgentMessageRepository.prototype.constructor>[0]
     );
     const manager2 = new TaskAgentManager({
-      db: {
-        getDatabase: () => db,
-        getJobQueueRepo: () => ({
-          enqueueUniquePending: () => ({ id: 'mailbox-job-1' }),
-        }),
-      },
+      db: { getDatabase: () => db },
       taskRepo: { getTask: () => null } as never,
       workflowRunRepo: { getRun: () => null } as never,
       nodeExecutionRepo,
@@ -150,6 +145,11 @@ describe('TaskAgentManager agent-activity listener', () => {
         kind: 'resolved',
         sessionId: subSessionId,
         created: false,
+      }),
+      agentMessageDelivery: async (_workflowRunId: string, args: { messageId: string }) => ({
+        state: 'delivered' as const,
+        sessionId: subSessionId,
+        messageId: args.messageId,
       }),
       internalEventBus: bus,
     } as unknown as TaskAgentManagerConfig);
