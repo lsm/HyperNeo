@@ -33,6 +33,7 @@ interface MailboxJob {
     origin: string;
     messageUuid?: string;
     deliveryMode?: string;
+    policy?: { ttlMs?: number; maxAttempts?: number };
     message: { message: { content: unknown } };
   };
 }
@@ -121,6 +122,8 @@ interface EnqueueOverrides {
   taskId?: string | null;
   deliveryMode?: 'immediate' | 'defer';
   idempotencyKey?: string | null;
+  ttlMs?: number;
+  maxAttempts?: number;
 }
 
 interface RealDbHarness {
@@ -545,7 +548,7 @@ describe('flushPendingMessagesForTarget — door resolution and handoff', () => 
 
     expect(h.ensureTargetSession.mock.calls.map((call: unknown[]) => call[0])).toEqual([
       { kind: 'worker', taskId: TASK_ID, agentName: AGENT_NAME, workflowNodeId: NODE_ID },
-      { kind: 'worker', taskId: TASK_ID, agentName: AGENT_NAME },
+      { kind: 'worker', taskId: TASK_ID, agentName: AGENT_NAME, workflowNodeId: NODE_ID },
     ]);
     expect(h.mailbox.jobs.map((job) => job.payload.to)).toEqual([
       { kind: 'session', sessionId: SESSION_ID },
@@ -553,6 +556,30 @@ describe('flushPendingMessagesForTarget — door resolution and handoff', () => 
     ]);
     expect(h.spyRepo.repo.getById(nodeRow.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(runRow.id)?.status).toBe('delivered');
+  });
+
+  it('pins run-scoped rows to the execution being flushed when the agent spans nodes', async () => {
+    h.enqueue({ workflowNodeId: null, message: 'run scoped' });
+    const siblingNode = new NodeExecutionRepository(
+      h.db as unknown as Parameters<typeof NodeExecutionRepository.prototype.constructor>[0]
+    ).create({
+      workflowRunId: h.runId,
+      workflowNodeId: 'node-review',
+      agentName: AGENT_NAME,
+      agentSessionId: 'sub-session-coder-review',
+      status: 'in_progress',
+    });
+    expect(siblingNode.id).toBeTruthy();
+
+    await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
+
+    expect(h.ensureTargetSession).toHaveBeenCalledTimes(1);
+    expect(h.ensureTargetSession).toHaveBeenCalledWith({
+      kind: 'worker',
+      taskId: TASK_ID,
+      agentName: AGENT_NAME,
+      workflowNodeId: NODE_ID,
+    });
   });
 
   it('falls back to the run-latest task when a row carries no taskId', async () => {
@@ -572,6 +599,7 @@ describe('flushPendingMessagesForTarget — door resolution and handoff', () => 
       kind: 'worker',
       taskId: task.id,
       agentName: AGENT_NAME,
+      workflowNodeId: NODE_ID,
     });
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
   });
@@ -602,6 +630,20 @@ describe('flushPendingMessagesForTarget — door resolution and handoff', () => 
       'human:task-7:coder:node-build:cli-42',
       unkeyedRow.id,
     ]);
+  });
+
+  it('carries the row remaining ttl and attempt budget into the mailbox entry policy', async () => {
+    const freshRow = h.enqueue({ message: 'fresh policy', ttlMs: 60_000, maxAttempts: 3 });
+    const spentRow = h.enqueue({ message: 'spent policy', ttlMs: 60_000, maxAttempts: 3 });
+    for (let i = 0; i < 2; i++) h.spyRepo.repo.markAttemptFailed(spentRow.id, 'earlier');
+
+    await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
+
+    const freshPolicy = h.mailbox.jobs[0].payload.policy;
+    expect(freshPolicy?.maxAttempts).toBe(3);
+    expect(freshPolicy?.ttlMs).toBeGreaterThan(0);
+    expect(freshPolicy?.ttlMs).toBeLessThanOrEqual(60_000);
+    expect(h.mailbox.jobs[1].payload.policy?.maxAttempts).toBe(1);
   });
 
   it('migrates a row exactly once across a simulated double drain', async () => {
@@ -899,6 +941,7 @@ function makeSpaceAgentHarness(
     withEnsurer?: boolean;
     ensureImpl?: (target: SessionTarget) => Promise<EnsureSessionOutcome>;
     registry?: { get: (taskId: string) => string | null };
+    retryDelayMs?: number;
   } = {}
 ): SpaceAgentHarness {
   const db = new Database(':memory:');
@@ -941,6 +984,7 @@ function makeSpaceAgentHarness(
     db: { getDatabase: () => db, getJobQueueRepo: () => mailbox },
     pendingMessageRepo: spyRepo.spy,
     ensureTargetSession,
+    spaceAgentRetryDelayMs: options.retryDelayMs ?? 10,
     internalEventBus: { subscribe: mock(() => () => {}), publish },
   };
   if (options.withEnsurer === false) config.ensureTargetSession = undefined;
@@ -1006,6 +1050,64 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     expect(h.mailbox.jobs).toHaveLength(0);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
     expect(h.spyRepo.retentionArgs[0]?.[0]).toMatchObject({ excludeIds: [row.id] });
+  });
+
+  it('retries rows whose legacy SDK delivery already failed instead of stranding them', async () => {
+    const h = makeSpaceAgentHarness();
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'legacy delivery failed' });
+    (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getDatabase: () => h.db,
+      getJobQueueRepo: () => h.mailbox,
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, uuid: string) =>
+          uuid === row.id ? { content: 'x', sendStatus: 'failed' } : null,
+      }),
+    };
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.mailbox.jobs).toHaveLength(1);
+    expect(h.mailbox.jobs[0].payload.messageUuid).toBe(row.id);
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
+  });
+
+  it('schedules a failure-driven re-drain that delivers once the door recovers', async () => {
+    let doorOpen = false;
+    const h = makeSpaceAgentHarness({
+      retryDelayMs: 10,
+      ensureImpl: async () =>
+        doorOpen
+          ? { kind: 'resolved', sessionId: `space:agent:${h.spaceId}:coordinator`, created: false }
+          : { kind: 'unresolved', reason: 'ensure_failed' },
+    });
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'transient door failure' });
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.mailbox.jobs).toHaveLength(0);
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+
+    doorOpen = true;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(h.mailbox.jobs).toHaveLength(1);
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
+  });
+
+  it('does not arm a re-drain when the drain fully succeeds', async () => {
+    const h = makeSpaceAgentHarness();
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'delivered first try' });
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.mailbox.jobs).toHaveLength(1);
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
+    const timers = (h.manager as unknown as { spaceAgentRetryTimers: Map<string, unknown> })
+      .spaceAgentRetryTimers;
+    expect(timers.size).toBe(0);
   });
 
   it('settles reply-routed rows against their reply session and falls back to the chat session', async () => {

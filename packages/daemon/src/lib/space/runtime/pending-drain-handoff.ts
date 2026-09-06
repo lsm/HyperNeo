@@ -10,6 +10,7 @@ export interface PendingDrainHandoffDeps {
     message: string;
     origin: string;
     messageUuid: string;
+    policy: { ttlMs: number; maxAttempts: number };
     deliveryMode?: 'immediate' | 'defer';
   }): Promise<MailboxHandoffOutcome>;
   markDelivered(id: string, sessionId: string): void;
@@ -36,6 +37,17 @@ export const pendingDrainMessageUuid = (row: {
   id: string;
   idempotencyKey: string | null;
 }): string => row.idempotencyKey ?? row.id;
+
+export function pendingDrainMailboxPolicy(row: {
+  expiresAt: number;
+  attempts: number;
+  maxAttempts: number;
+}): { ttlMs: number; maxAttempts: number } {
+  return {
+    ttlMs: Math.max(1, row.expiresAt - Date.now()),
+    maxAttempts: Math.max(1, row.maxAttempts - row.attempts),
+  };
+}
 
 interface PendingDrainHandoffCtx extends PendingDrainHandoffInput {
   sessionId?: string;
@@ -69,6 +81,7 @@ async function handoffStage(ctx: PendingDrainHandoffCtx): Promise<PendingDrainHa
     message: ctx.message,
     origin: ctx.origin,
     messageUuid: pendingDrainMessageUuid(ctx.row),
+    policy: pendingDrainMailboxPolicy(ctx.row),
     ...(ctx.row.deliveryMode ? { deliveryMode: ctx.row.deliveryMode } : {}),
   });
   return { ...ctx, handoff };

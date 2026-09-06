@@ -201,6 +201,8 @@ const log = new Logger('task-agent-manager');
 
 const WORKFLOW_ESCALATION_TARGET = 'space-agent';
 
+const SPACE_AGENT_RETRY_DELAY_MS = 30_000;
+
 export function isWorkflowTerminalNode(
   workflow: SpaceWorkflow | null | undefined,
   workflowNodeId: string
@@ -275,6 +277,7 @@ export interface TaskAgentManagerConfig {
   pendingMessageRepo?: PendingAgentMessageRepository;
   toolContinuationRepo?: ToolContinuationRecoveryRepository;
   ensureTargetSession?: (target: SessionTarget) => Promise<EnsureSessionOutcome>;
+  spaceAgentRetryDelayMs?: number;
   spaceAgentInjector?: (
     spaceId: string,
     message: string,
@@ -351,6 +354,7 @@ export function resolvePostApprovalRouteNodeId(
 }
 
 export class TaskAgentManager {
+  private readonly spaceAgentRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly spaceAgentDrainsInFlight = new Set<string>();
   private readonly spaceAgentDrainRerunQueued = new Set<string>();
   private disposed = false;
@@ -1539,7 +1543,7 @@ export class TaskAgentManager {
           kind: 'worker',
           taskId,
           agentName: targetAgentName,
-          ...(row.workflowNodeId != null ? { workflowNodeId: row.workflowNodeId } : {}),
+          workflowNodeId: row.workflowNodeId ?? drainWorkflowNodeId ?? undefined,
         },
         message: formatPendingRowForNodeAgent(row, targetAgentName),
         origin: isHumanPendingSource(row.sourceAgentName) ? 'chat' : 'space_inject',
@@ -1563,6 +1567,7 @@ export class TaskAgentManager {
           to: args.to,
           message: { type: 'user', message: { content: args.message }, parent_tool_use_id: null },
           origin: args.origin,
+          policy: args.policy,
           ...(args.deliveryMode ? { deliveryMode: args.deliveryMode } : {}),
           messageUuid: args.messageUuid,
           jobQueue: this.config.db.getJobQueueRepo(),
@@ -1632,6 +1637,7 @@ export class TaskAgentManager {
     const spaceChatSessionId = `space:chat:${spaceId}`;
     const resolveReplySession = (row: PendingAgentMessageRecord): string | null =>
       this.resolveSpaceAgentReplySession(row);
+    let retryableRows = 0;
     const drainDeps: SpaceAgentPendingDrainDeps = {
       repo,
       resolveReplySession,
@@ -1666,6 +1672,7 @@ export class TaskAgentManager {
           message: formatPendingRowForSpaceAgent(row),
           origin: 'space_agent',
         });
+        if (outcome.action === 'retry') retryableRows += 1;
         if (outcome.action !== 'delivered') {
           log.warn(
             `TaskAgentManager: Space Agent pending message ${row.id} not delivered ` +
@@ -1680,10 +1687,22 @@ export class TaskAgentManager {
       spaceChatSessionId,
     });
     if (drainOutcome.action === 'skip') return;
+    if (retryableRows > 0) this.scheduleSpaceAgentRetry(spaceId, workflowRunId);
 
     log.info(
       `TaskAgentManager: flushing ${drainOutcome.rows.length} pending message(s) for Space Agent session=${spaceChatSessionId}`
     );
+  }
+
+  private scheduleSpaceAgentRetry(spaceId: string, workflowRunId: string): void {
+    if (this.disposed) return;
+    const key = `${spaceId}\0${workflowRunId}`;
+    if (this.spaceAgentRetryTimers.has(key)) return;
+    const timer = setTimeout(() => {
+      this.spaceAgentRetryTimers.delete(key);
+      void this.flushPendingMessagesForSpaceAgent(spaceId, workflowRunId).catch(() => {});
+    }, this.config.spaceAgentRetryDelayMs ?? SPACE_AGENT_RETRY_DELAY_MS);
+    this.spaceAgentRetryTimers.set(key, timer);
   }
 
   activeSpaceDeliveryIdsForRun(workflowRunId: string): string[] {
@@ -3266,6 +3285,8 @@ export class TaskAgentManager {
 
   async cleanupAll(): Promise<void> {
     this.disposed = true;
+    for (const [, timer] of this.spaceAgentRetryTimers) clearTimeout(timer);
+    this.spaceAgentRetryTimers.clear();
     clearAllRetryableHookActionTimers();
     for (const executionId of this.concurrentSpawnWaiters.keys()) {
       this.settleConcurrentSpawnWaiters(executionId, { status: 'failed' });

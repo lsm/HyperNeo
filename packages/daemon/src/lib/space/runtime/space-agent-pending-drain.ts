@@ -60,7 +60,7 @@ function settleConsumedRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDr
         consumedAt = sessionId;
         break;
       }
-      if (sendStatus === 'enqueued' || sendStatus === 'submitted' || sendStatus === 'failed') {
+      if (sendStatus === 'enqueued' || sendStatus === 'submitted') {
         ownedByLegacyDelivery = true;
       }
     }

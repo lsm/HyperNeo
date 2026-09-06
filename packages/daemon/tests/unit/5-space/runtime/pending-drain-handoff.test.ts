@@ -1,6 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test';
 import {
   drainPendingRowOntoMailbox,
+  pendingDrainMailboxPolicy,
   pendingDrainMessageUuid,
 } from '../../../../src/lib/space/runtime/pending-drain-handoff.ts';
 import type { PendingAgentMessageRecord } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
@@ -74,6 +75,7 @@ describe('drainPendingRowOntoMailbox', () => {
       message: 'formatted note',
       origin: 'space_inject',
       messageUuid: 'row-1',
+      policy: pendingDrainMailboxPolicy(row),
     });
     expect(deps.markDelivered).toHaveBeenCalledWith('row-1', 'sub-session-1');
     expect(deps.onDelivered).toHaveBeenCalledWith(row, 'sub-session-1');
@@ -100,6 +102,7 @@ describe('drainPendingRowOntoMailbox', () => {
       message: 'formatted note',
       origin: 'chat',
       messageUuid: 'human:task-1:coder:node-1:cli-9',
+      policy: pendingDrainMailboxPolicy(row),
       deliveryMode: 'defer',
     });
   });
@@ -207,5 +210,27 @@ describe('pendingDrainMessageUuid', () => {
   it('prefers the idempotency key and falls back to the row id', () => {
     expect(pendingDrainMessageUuid({ id: 'row-1', idempotencyKey: 'key-1' })).toBe('key-1');
     expect(pendingDrainMessageUuid({ id: 'row-1', idempotencyKey: null })).toBe('row-1');
+  });
+});
+
+describe('pendingDrainMailboxPolicy', () => {
+  it('preserves the remaining ttl and attempt budget from the row', () => {
+    const now = Date.now();
+    const policy = pendingDrainMailboxPolicy({
+      expiresAt: now + 60_000,
+      attempts: 2,
+      maxAttempts: 5,
+    });
+    expect(policy.maxAttempts).toBe(3);
+    expect(policy.ttlMs).toBeGreaterThan(50_000);
+    expect(policy.ttlMs).toBeLessThanOrEqual(60_000);
+  });
+
+  it('clamps the policy to at least one attempt and one millisecond', () => {
+    const now = Date.now();
+    expect(pendingDrainMailboxPolicy({ expiresAt: now, attempts: 9, maxAttempts: 5 })).toEqual({
+      ttlMs: 1,
+      maxAttempts: 1,
+    });
   });
 });
