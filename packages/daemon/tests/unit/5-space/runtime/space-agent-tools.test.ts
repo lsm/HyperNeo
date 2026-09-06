@@ -6613,19 +6613,12 @@ interface FakeTaskAgentManager {
   }>;
   deadSessionIds: Set<string>;
   onEnsure?: (taskId: string) => Promise<void> | void;
-  flushCalls: Array<{
-    workflowRunId: string;
-    targetAgentName: string;
-    sessionId: string;
-    workflowNodeId?: string;
-  }>;
 }
 
 function makeFakeTaskAgentManager(ctx: TestCtx): FakeTaskAgentManager {
   const state: Omit<FakeTaskAgentManager, 'manager'> = {
     subSessionInjects: [],
     deadSessionIds: new Set(),
-    flushCalls: [],
   };
   const manager = {
     async injectSubSessionMessage(
@@ -6639,14 +6632,6 @@ function makeFakeTaskAgentManager(ctx: TestCtx): FakeTaskAgentManager {
       const sdkMessageId = `sdk-message-${state.subSessionInjects.length}`;
       state.subSessionInjects.push({ sessionId, message, isSyntheticMessage, sdkMessageId });
       return sdkMessageId;
-    },
-    async flushPendingMessagesForTarget(
-      workflowRunId: string,
-      targetAgentName: string,
-      sessionId: string,
-      workflowNodeId?: string
-    ): Promise<void> {
-      state.flushCalls.push({ workflowRunId, targetAgentName, sessionId, workflowNodeId });
     },
   } as unknown as TaskAgentManager;
   return { manager, ...state };
@@ -6686,24 +6671,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     });
   }
 
-  interface FakePendingMessageQueue {
-    enqueued: Array<{
-      workflowRunId: string;
-      spaceId: string;
-      taskId?: string | null;
-      sourceAgentName?: string;
-      targetKind: 'node_agent' | 'space_agent';
-      targetAgentName: string;
-      workflowNodeId?: string | null;
-      message: string;
-      idempotencyKey?: string | null;
-    }>;
-  }
-
-  function makeFakePendingMessageQueue(): FakePendingMessageQueue {
-    return { enqueued: [] };
-  }
-
   function parseAuditSummaries(auditLogRepo: McpAuditLogRepository, taskId: string) {
     return auditLogRepo
       .listByTask(taskId)
@@ -6717,7 +6684,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       ensureTargetSession?: Parameters<
         typeof createSpaceAgentToolHandlers
       >[0]['ensureTargetSession'];
-      pendingMessageQueue?: FakePendingMessageQueue;
       myAgentName?: string;
       myAgentNameAliases?: string[];
       mySessionId?: string;
@@ -6728,7 +6694,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       >[0]['longTermAgentDelivery'];
     } = {}
   ) {
-    const fakeQueue = opts.pendingMessageQueue;
     return createSpaceAgentToolHandlers({
       spaceId: ctx.spaceId,
       runtime: ctx.runtime,
@@ -6747,18 +6712,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       auditLogRepo: opts.auditLogRepo,
       messageResolver: opts.messageResolver,
       longTermAgentDelivery: opts.longTermAgentDelivery,
-      pendingMessageQueue: fakeQueue
-        ? {
-            enqueue(input) {
-              const index = fakeQueue.enqueued.length;
-              fakeQueue.enqueued.push(input);
-              return {
-                record: { id: `pending-message-${index}` },
-                deduped: false,
-              };
-            },
-          }
-        : undefined,
       messageResolver: opts.messageResolver,
       longTermAgentDelivery: opts.longTermAgentDelivery,
     });
@@ -7452,19 +7405,19 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     });
     const parsed = JSON.parse(result.content[0].text);
 
-    expect(parsed.success).toBe(true);
+    expect(parsed.success).toBe(false);
     expect(parsed.activated).toBe(true);
     expect(parsed.delivered).toBe(false);
-    expect(parsed.queued).toBe(false);
-    expect(parsed.queuedMessageId).toBeUndefined();
+    expect(parsed.queued).toBeUndefined();
     expect(parsed.queued_message_id).toBeUndefined();
     expect(parsed.delivered_session_id).toBeNull();
     expect(parsed.sdk_message_id).toBeNull();
     expect(parsed.node_execution_id).toBe(exec.id);
+    expect(parsed.error).toContain('was activated but does not yet have a live session');
     expect(tam.subSessionInjects).toHaveLength(0);
   });
 
-  test('queues the message when activation creates no live session and a pending queue is configured', async () => {
+  test('reports activation without delivery when no live session exists after activation', async () => {
     const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, 'WF Queued');
     const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Queued');
     const task = tasks[0];
@@ -7476,10 +7429,8 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     });
 
     const tam = makeFakeTaskAgentManager(ctx);
-    const fakeQueue = makeFakePendingMessageQueue();
     const handlers = makeHandlersWith(tam, {
       activateNode: async () => {},
-      pendingMessageQueue: fakeQueue,
     });
 
     const result = await handlers.send_message_to_task({
@@ -7489,96 +7440,16 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     });
     const parsed = JSON.parse(result.content[0].text);
 
-    expect(parsed.success).toBe(true);
+    expect(parsed.success).toBe(false);
     expect(parsed.activated).toBe(true);
     expect(parsed.delivered).toBe(false);
-    expect(parsed.queued).toBe(true);
-    expect(parsed.queuedMessageId).toBeUndefined();
-    expect(parsed.queued_message_id).toBe('pending-message-0');
+    expect(parsed.queued).toBeUndefined();
+    expect(parsed.queued_message_id).toBeUndefined();
     expect(parsed.delivered_session_id).toBeNull();
     expect(parsed.sdk_message_id).toBeNull();
     expect(parsed.node_execution_id).toBe(exec.id);
+    expect(parsed.error).toContain('was activated but does not yet have a live session');
     expect(tam.subSessionInjects).toHaveLength(0);
-
-    expect(fakeQueue.enqueued).toEqual([
-      {
-        workflowRunId: run.id,
-        spaceId: ctx.spaceId,
-        taskId: task.id,
-        sourceAgentName: 'space-agent',
-        targetKind: 'node_agent',
-        targetAgentName: 'reviewer',
-        workflowNodeId: wf.startNodeId,
-        message: spaceAgentToNodeEnvelope(task, 'please review this PR', 'reviewer'),
-      },
-    ]);
-  });
-
-  test('queued task-agent messages preserve task-agent sender identity', async () => {
-    const wf = buildSingleStepWorkflow(
-      ctx.spaceId,
-      ctx.workflowManager,
-      ctx.agentId,
-      'WF Task Agent Queued'
-    );
-    const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, 'Queued');
-    const task = tasks[0];
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId: run.id,
-      workflowNodeId: wf.startNodeId,
-      agentName: 'reviewer',
-      status: 'pending',
-    });
-
-    const tam = makeFakeTaskAgentManager(ctx);
-    const fakeQueue = makeFakePendingMessageQueue();
-    const handlers = createSpaceAgentToolHandlers({
-      spaceId: ctx.spaceId,
-      runtime: ctx.runtime,
-      workflowManager: ctx.workflowManager,
-      taskRepo: ctx.taskRepo,
-      workflowRunRepo: ctx.workflowRunRepo,
-      taskManager: ctx.taskManager,
-      nodeExecutionRepo: ctx.nodeExecutionRepo,
-      taskAgentManager: tam.manager,
-      myAgentName: 'task-agent',
-      activateNode: async () => {},
-      pendingMessageQueue: {
-        enqueue(input) {
-          fakeQueue.enqueued.push(input);
-          return { record: { id: 'pending-message-task-agent' }, deduped: false };
-        },
-      },
-    });
-
-    const result = await handlers.send_message_to_task({
-      task_id: task.id,
-      node_id: 'reviewer',
-      message: 'task agent queued reminder',
-    });
-    const parsed = JSON.parse(result.content[0].text);
-
-    expect(parsed.success).toBe(true);
-    expect(fakeQueue.enqueued).toEqual([
-      {
-        workflowRunId: run.id,
-        spaceId: ctx.spaceId,
-        taskId: task.id,
-        sourceAgentName: 'task-agent',
-        targetKind: 'node_agent',
-        targetAgentName: 'reviewer',
-        workflowNodeId: wf.startNodeId,
-        message: formatAgentMessage({
-          fromLevel: 'task-agent',
-          fromAgentName: 'task-agent',
-          toLevel: 'node-agent',
-          body: 'task agent queued reminder',
-          taskId: task.id,
-          taskNumber: task.taskNumber,
-          nodeId: 'reviewer',
-        }),
-      },
-    ]);
   });
 
   test('generic @worker target resolves by workflow node name and injects live session', async () => {
@@ -8782,14 +8653,12 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-door-session');
     });
 
-    test('queues immediately when the door times out activation without a row session', async () => {
-      const { wf, run, task, exec } = await makeTaskWithCoderExecution('WF Door Queue');
+    test('reports activation without delivery when the door times out without a row session', async () => {
+      const { task, exec } = await makeTaskWithCoderExecution('WF Door Queue');
       const tam = makeFakeTaskAgentManager(ctx);
-      const fakeQueue = makeFakePendingMessageQueue();
       const auditLogRepo = new McpAuditLogRepository(ctx.db);
       const handlers = makeHandlersWith(tam, {
         auditLogRepo,
-        pendingMessageQueue: fakeQueue,
         ensureTargetSession: async () => ({ kind: 'unresolved', reason: 'activation_timeout' }),
       });
 
@@ -8801,32 +8670,21 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       const parsed = JSON.parse(result.content[0].text);
       const auditSummaries = parseAuditSummaries(auditLogRepo, task.id);
 
-      expect(parsed.success).toBe(true);
+      expect(parsed.success).toBe(false);
       expect(parsed.activated).toBe(true);
       expect(parsed.delivered).toBe(false);
-      expect(parsed.queued).toBe(true);
-      expect(parsed.queued_message_id).toBe('pending-message-0');
+      expect(parsed.queued).toBeUndefined();
+      expect(parsed.queued_message_id).toBeUndefined();
       expect(parsed.delivered_session_id).toBeNull();
       expect(parsed.node_execution_id).toBe(exec.id);
+      expect(parsed.error).toContain('does not yet have a live session');
       expect(tam.subSessionInjects).toHaveLength(0);
-      expect(fakeQueue.enqueued).toEqual([
-        {
-          workflowRunId: run.id,
-          spaceId: ctx.spaceId,
-          taskId: task.id,
-          sourceAgentName: 'space-agent',
-          targetKind: 'node_agent',
-          targetAgentName: 'coder',
-          workflowNodeId: wf.startNodeId,
-          message: spaceAgentToNodeEnvelope(task, 'door queue', 'coder'),
-        },
-      ]);
       expect(auditSummaries).toEqual([
         expect.objectContaining({
           task_id: task.id,
-          outcome: 'queued',
+          outcome: 'activated',
           target: 'node',
-          queued_message_id: 'pending-message-0',
+          reason: 'no_live_session_after_activation',
         }),
       ]);
     });
@@ -8836,13 +8694,11 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         liveSession: 'coder-row-live',
       });
       const tam = makeFakeTaskAgentManager(ctx);
-      const fakeQueue = makeFakePendingMessageQueue();
       const activateCalls: Array<[string, string]> = [];
       const handlers = makeHandlersWith(tam, {
         activateNode: async (runId, nodeId) => {
           activateCalls.push([runId, nodeId]);
         },
-        pendingMessageQueue: fakeQueue,
         ensureTargetSession: async () => ({ kind: 'unresolved', reason: 'activation_timeout' }),
       });
 
@@ -8858,7 +8714,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(parsed.delivered_session_id).toBe('coder-row-live');
       expect(parsed.sdk_message_id).toBe('sdk-message-0');
       expect(activateCalls).toHaveLength(0);
-      expect(fakeQueue.enqueued).toHaveLength(0);
     });
 
     test('does not retry the execution-row session after a door-resolved session rejects injection', async () => {
@@ -8931,65 +8786,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-row-live');
     });
 
-    test('drains the queued message when the door resolves after a timeout', async () => {
-      const { wf, run, task } = await makeTaskWithCoderExecution('WF Door Drain');
-      const tam = makeFakeTaskAgentManager(ctx);
-      const fakeQueue = makeFakePendingMessageQueue();
-      const outcomes: EnsureSessionOutcome[] = [
-        { kind: 'unresolved', reason: 'spawn_timeout' },
-        { kind: 'resolved', sessionId: 'coder-late-session', created: false },
-      ];
-      const handlers = makeHandlersWith(tam, {
-        pendingMessageQueue: fakeQueue,
-        ensureTargetSession: async () => outcomes.shift()!,
-      });
-
-      const result = await handlers.send_message_to_task({
-        task_id: task.id,
-        node_id: 'coder',
-        message: 'door drain',
-      });
-      const parsed = JSON.parse(result.content[0].text);
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      expect(parsed.success).toBe(true);
-      expect(parsed.queued).toBe(true);
-      expect(parsed.queued_message_id).toBe('pending-message-0');
-      expect(fakeQueue.enqueued).toHaveLength(1);
-      expect(tam.flushCalls).toEqual([
-        {
-          workflowRunId: run.id,
-          targetAgentName: 'coder',
-          sessionId: 'coder-late-session',
-          workflowNodeId: wf.startNodeId,
-        },
-      ]);
-    });
-
-    test('leaves the queued row pending when the door still times out after enqueue', async () => {
-      const { task } = await makeTaskWithCoderExecution('WF Door Still Timed Out');
-      const tam = makeFakeTaskAgentManager(ctx);
-      const fakeQueue = makeFakePendingMessageQueue();
-      const handlers = makeHandlersWith(tam, {
-        pendingMessageQueue: fakeQueue,
-        ensureTargetSession: async () => ({ kind: 'unresolved', reason: 'activation_timeout' }),
-      });
-
-      const result = await handlers.send_message_to_task({
-        task_id: task.id,
-        node_id: 'coder',
-        message: 'door still timed out',
-      });
-      const parsed = JSON.parse(result.content[0].text);
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      expect(parsed.success).toBe(true);
-      expect(parsed.queued).toBe(true);
-      expect(fakeQueue.enqueued).toHaveLength(1);
-      expect(tam.flushCalls).toHaveLength(0);
-      expect(tam.subSessionInjects).toHaveLength(0);
-    });
-
     test('explicit @session target resolves through the door by the addressed session id', async () => {
       const { task, exec } = await makeTaskWithCoderExecution('WF Door Session Exact', {
         liveSession: 'coder-exact-session',
@@ -9050,7 +8846,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-new');
     });
 
-    test('reports deferred delivery without a pending queue on a queueable timeout', async () => {
+    test('reports activation without delivery on a queueable door timeout', async () => {
       const { task } = await makeTaskWithCoderExecution('WF Door No Queue');
       const tam = makeFakeTaskAgentManager(ctx);
       const auditLogRepo = new McpAuditLogRepository(ctx.db);
@@ -9067,17 +8863,17 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       const parsed = JSON.parse(result.content[0].text);
       const auditSummaries = parseAuditSummaries(auditLogRepo, task.id);
 
-      expect(parsed.success).toBe(true);
+      expect(parsed.success).toBe(false);
       expect(parsed.activated).toBe(true);
       expect(parsed.delivered).toBe(false);
-      expect(parsed.queued).toBe(false);
+      expect(parsed.queued).toBeUndefined();
       expect(parsed.queued_message_id).toBeUndefined();
       expect(auditSummaries).toEqual([
         expect.objectContaining({
           task_id: task.id,
           outcome: 'activated',
           target: 'node',
-          reason: 'pending_message_queue_unavailable',
+          reason: 'no_live_session_after_activation',
         }),
       ]);
     });
@@ -9086,10 +8882,8 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       const { task } = await makeTaskWithCoderExecution('WF Door Activate Failed');
       const tam = makeFakeTaskAgentManager(ctx);
       const auditLogRepo = new McpAuditLogRepository(ctx.db);
-      const fakeQueue = makeFakePendingMessageQueue();
       const handlers = makeHandlersWith(tam, {
         auditLogRepo,
-        pendingMessageQueue: fakeQueue,
         ensureTargetSession: async () => ({ kind: 'unresolved', reason: 'activate_failed' }),
       });
 
@@ -9103,7 +8897,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 
       expect(parsed.success).toBe(false);
       expect(parsed.error).toBe('Failed to activate node "coder": activate_failed');
-      expect(fakeQueue.enqueued).toHaveLength(0);
       expect(tam.subSessionInjects).toHaveLength(0);
       expect(auditSummaries).toEqual([
         expect.objectContaining({
@@ -9393,7 +9186,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(audit[0].sdk_message_id).toBe(parsed.sdk_message_id);
     });
 
-    test('deferred (queued) delivery reports null identifiers and a non-delivered audit outcome', async () => {
+    test('deferred delivery reports null identifiers and a non-delivered audit outcome', async () => {
       const { wf, run, task } = await makeTracedTask('Trace deferred');
       ctx.nodeExecutionRepo.createOrIgnore({
         workflowRunId: run.id,
@@ -9406,7 +9199,6 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       const handlers = makeHandlersWith(tam, {
         auditLogRepo,
         activateNode: async () => {},
-        pendingMessageQueue: makeFakePendingMessageQueue(),
       });
 
       const result = await handlers.send_message_to_task({
@@ -9417,13 +9209,13 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       const parsed = JSON.parse(result.content[0].text);
       const audit = parseAuditSummaries(auditLogRepo, task.id);
 
-      expect(parsed.success).toBe(true);
+      expect(parsed.success).toBe(false);
       expect(parsed.delivered_session_id).toBeNull();
       expect(parsed.sdk_message_id).toBeNull();
-      expect(parsed.queued).toBe(true);
+      expect(parsed.delivered).toBe(false);
       expect(audit).toHaveLength(1);
       expect(audit[0].outcome).not.toBe('delivered');
-      expect(audit[0]).toMatchObject({ outcome: 'queued' });
+      expect(audit[0]).toMatchObject({ outcome: 'activated' });
     });
 
     test('ambiguous @handle + task_id (long-horizon only) is rejected with actionable, audited error', async () => {

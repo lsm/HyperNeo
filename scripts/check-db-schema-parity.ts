@@ -56,7 +56,6 @@ export const HELPER_SCHEMA_TABLES = [
   'goal_automation_cursors',
   'mcp_audit_log',
   'node_executions',
-  'pending_agent_messages',
   'sdk_message_replacements',
   'sdk_messages',
   'session_counters',

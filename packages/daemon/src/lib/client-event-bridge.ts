@@ -75,16 +75,6 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     channel: () => Channels.global(),
   },
   {
-    event: 'space.pendingMessage.queued',
-    clientEvent: 'space.pendingMessage.queued',
-    channel: () => Channels.global(),
-  },
-  {
-    event: 'space.pendingMessage.delivered',
-    clientEvent: 'space.pendingMessage.delivered',
-    channel: () => Channels.global(),
-  },
-  {
     event: 'space.workflowRun.cyclesReset',
     clientEvent: 'space.workflowRun.cyclesReset',
     channel: () => Channels.global(),

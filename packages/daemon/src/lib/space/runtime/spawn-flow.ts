@@ -7,6 +7,7 @@ import type {
   WorkflowNode,
   WorkflowNodeAgent,
 } from '@hyperneo/shared';
+import { readRestartRecoveryNote } from './restart-recovery-note.ts';
 import { decideSpawnExecutionAdmissionViaPipeline } from './spawn-admission-decision-pipeline.ts';
 import type { WorkflowNodeSlotResolution } from './spawn-slot-resolution.ts';
 import { type StagedRunOutcome, stagedRun } from './staged-run.ts';
@@ -84,11 +85,10 @@ export interface SpawnExecutionFlowDeps {
   resolveWorkspacePath(task: SpaceTask, space: Space): Promise<string>;
   createSpawnedSession(request: SpawnSessionRequest): Promise<string>;
   bindExecutionToSession(execution: NodeExecution, sessionId: string): 'won' | 'superseded';
-  flushPendingMessagesForTarget(workflowRunId: string, agentName: string, sessionId: string): void;
   attachNodeAgent(request: AttachNodeAgentRequest): Promise<void>;
   registerSpawnCompletionCallback(taskId: string, workflowNodeId: string, sessionId: string): void;
   buildKickoffMessage(request: KickoffMessageRequest): Promise<string>;
-  injectKickoffMessage(sessionId: string, message: string): Promise<void>;
+  injectKickoffMessage(sessionId: string, message: string, executionId: string): Promise<void>;
   activateSpawnedSessionPoolAssignment(executionId: string, sessionId: string): void;
 }
 
@@ -210,6 +210,10 @@ export function runSpawnExecutionFlow(
                 view.execution,
                 sessionId
               );
+              const recoveryNote = readRestartRecoveryNote(view.execution);
+              if (recoveryNote) {
+                await deps.injectKickoffMessage(sessionId, recoveryNote, view.execution.id);
+              }
             } catch (err) {
               deps.revertLiveExecutionRebind?.(view.execution, sessionId);
               throw err;
@@ -404,7 +408,7 @@ export function runSpawnExecutionFlow(
             sessionId: view.spawnedSessionId,
             workspacePath: view.workspacePath,
           });
-          await deps.injectKickoffMessage(view.spawnedSessionId, message);
+          await deps.injectKickoffMessage(view.spawnedSessionId, message, view.execution.id);
         },
       }),
       s.effect({
@@ -414,19 +418,6 @@ export function runSpawnExecutionFlow(
         writes: [],
         run: (view) => {
           deps.activateSpawnedSessionPoolAssignment(view.execution.id, view.spawnedSessionId);
-        },
-      }),
-      s.effect({
-        name: 'flush-pending-messages',
-        when: 'proceedFresh',
-        reads: ['workflowRun', 'execution', 'spawnedSessionId'],
-        writes: [],
-        run: (view) => {
-          deps.flushPendingMessagesForTarget(
-            view.workflowRun.id,
-            view.execution.agentName,
-            view.spawnedSessionId
-          );
         },
       }),
       s.halt({

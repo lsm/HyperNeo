@@ -82,8 +82,6 @@ describe('ClientEventBridge', () => {
       expect(eventHandlers.has('space.workflowRun.updated')).toBe(true);
       expect(eventHandlers.has('space.hookState.updated')).toBe(true);
       expect(eventHandlers.has('space.artifactCache.updated')).toBe(true);
-      expect(eventHandlers.has('space.pendingMessage.queued')).toBe(true);
-      expect(eventHandlers.has('space.pendingMessage.delivered')).toBe(true);
       expect(eventHandlers.has('space.workflowRun.cyclesReset')).toBe(true);
       expect(eventHandlers.has('spaceAgent.created')).toBe(true);
       expect(eventHandlers.has('spaceAgent.updated')).toBe(true);
@@ -144,7 +142,7 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.start();
 
-      expect(eventHandlers.size).toBe(32);
+      expect(eventHandlers.size).toBe(30);
     });
   });
 
@@ -155,7 +153,7 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.stop();
 
-      expect(unsubscribers.length).toBe(33);
+      expect(unsubscribers.length).toBe(31);
     });
   });
 
@@ -318,31 +316,6 @@ describe('ClientEventBridge', () => {
       eventHandlers.get('space.artifactCache.updated')![0](data);
 
       expect(published[0].channel).toEqual({ kind: 'global' });
-    });
-
-    it('forwards pending-message lifecycle events to global channel', () => {
-      const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
-      createClientEventBridge(internalEventBus, gateway).start();
-
-      eventHandlers.get('space.pendingMessage.queued')![0]({
-        sessionId: 'global',
-        spaceId: 's-1',
-        workflowRunId: 'run-1',
-        taskId: 'task-1',
-        messageId: 'msg-1',
-      });
-      eventHandlers.get('space.pendingMessage.delivered')![0]({
-        sessionId: 'global',
-        spaceId: 's-1',
-        workflowRunId: 'run-1',
-        taskId: 'task-1',
-        messageId: 'msg-1',
-      });
-
-      expect(published[0].method).toBe('space.pendingMessage.queued');
-      expect(published[0].channel).toEqual({ kind: 'global' });
-      expect(published[1].method).toBe('space.pendingMessage.delivered');
-      expect(published[1].channel).toEqual({ kind: 'global' });
     });
 
     it('forwards space.workflowRun.cyclesReset to global channel', () => {

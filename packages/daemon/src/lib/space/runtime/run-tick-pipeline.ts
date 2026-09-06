@@ -135,9 +135,9 @@ export async function settleIfComplete(ctx: RunTickCtx): Promise<TickResult> {
   return settled ? { reason: { action: 'settled_run' } } : continued(ctx);
 }
 
-export async function drainPendingNodeHandoffs(ctx: RunTickCtx): Promise<TickResult> {
-  const result = await ctx.deps.drainPendingNodeHandoffs(ctx.runId, ctx.run!, ctx.context!);
-  return result === 'halted' ? { reason: { action: 'halted_node_handoff_drain' } } : continued(ctx);
+export async function haltIfSpaceInactive(ctx: RunTickCtx): Promise<TickResult> {
+  const result = await ctx.deps.haltTickForInactiveSpace(ctx.runId, ctx.run!, ctx.context!);
+  return result === 'halted' ? { reason: { action: 'halted_space_inactive' } } : continued(ctx);
 }
 
 export function promotePendingExecutionsWithLiveSessions(ctx: RunTickCtx): RunTickCtx {
@@ -235,7 +235,7 @@ const runTickRun = (
   .pipe(recoverStrandedExecutions, 'ctx', 'ctx')
   .pipe(haltIfStrandedRecoveryHalted, 'ctx', 'result:tickOutcome')
   .pipe(settleIfComplete, 'ctx', 'result:tickOutcome')
-  .pipe(drainPendingNodeHandoffs, 'ctx', 'result:tickOutcome')
+  .pipe(haltIfSpaceInactive, 'ctx', 'result:tickOutcome')
   .pipe(promotePendingExecutionsWithLiveSessions, 'ctx', 'ctx')
   .pipe(ensureCanonicalTaskInProgress, 'ctx', 'result:tickOutcome')
   .pipe(admitSpawnExecution, 'ctx', 'ctx')

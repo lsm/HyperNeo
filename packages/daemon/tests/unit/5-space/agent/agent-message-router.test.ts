@@ -1,7 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
-import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -1057,10 +1056,8 @@ describe('AgentMessageRouter: fromNodeName resolution edge cases', () => {
     ]);
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
 
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
     const router = makeRouter(ctx, workflowRunId, [], [makeChannel('Coding', 'Review')], {
       nodeGroups: { Coding: ['coder'] },
-      pendingMessageRepo,
       spaceId: ctx.spaceId,
     });
 
@@ -1072,8 +1069,7 @@ describe('AgentMessageRouter: fromNodeName resolution edge cases', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.queued).toHaveLength(1);
-    expect(result.queued?.[0].agentName).toBe('Review');
+    expect(result.notFoundAgentNames).toEqual(['Review']);
   });
 });
 
@@ -1107,7 +1103,7 @@ describe('AgentMessageRouter: notFoundAgentNames structured field', () => {
       message: 'broadcast to available',
     });
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe('partial');
     expect(result.delivered).toHaveLength(1);
     expect(result.delivered[0].agentName).toBe('reviewer');
     expect(result.notFoundAgentNames).toBeDefined();
@@ -1126,148 +1122,7 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
     ctx.db.close();
   });
 
-  test('queues message when target has a pending execution but no active session', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder', 'reviewer'),
-    ]);
-
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: ctx.nodeId,
-      agentName: 'reviewer',
-      status: 'pending',
-    });
-
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const injected: string[] = [];
-
-    const router = new AgentMessageRouter({
-      nodeExecutionRepo: ctx.nodeExecutionRepo,
-      workflowRunId,
-      workflowChannels: [makeChannel('coder', 'reviewer')],
-      messageInjector: async (sid) => {
-        injected.push(sid);
-      },
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-      taskId: null,
-    });
-
-    const result = await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: 'reviewer',
-      message: 'code ready',
-    });
-
-    expect(result.success).toBe(false);
-    expect(result.queued).toBeDefined();
-    expect(result.queued).toHaveLength(1);
-    expect(result.queued![0].agentName).toBe('reviewer');
-    expect(result.delivered).toHaveLength(0);
-    expect(injected).toHaveLength(0);
-
-    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
-    expect(pending).toHaveLength(1);
-    expect(pending[0].sourceAgentName).toBe('coder');
-    expect(pending[0].message).toBe(
-      '─── Message from coder ───\n\ncode ready\n\n─── Reply ───\n' +
-        REPLY_PROTOCOL +
-        '\nTo reply, use: send_message with target "coder"'
-    );
-    expect(pending[0].targetKind).toBe('node_agent');
-  });
-
-  test('resolves target declared in execution even without live session (no sessionId filter)', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder', 'reviewer'),
-    ]);
-
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: ctx.nodeId,
-      agentName: 'reviewer',
-      status: 'in_progress',
-    });
-
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-
-    const router = new AgentMessageRouter({
-      nodeExecutionRepo: ctx.nodeExecutionRepo,
-      workflowRunId,
-      workflowChannels: [makeChannel('coder', 'reviewer')],
-      messageInjector: async () => {},
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-      taskId: null,
-    });
-
-    const result = await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: 'reviewer',
-      message: 'hello reviewer',
-    });
-
-    expect(result.success).toBe(false);
-    expect(result.queued).toBeDefined();
-    expect(result.queued![0].agentName).toBe('reviewer');
-  });
-
-  test('activates and queues during pre-session window when the only execution has no session', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder', 'reviewer'),
-    ]);
-
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: ctx.nodeId,
-      agentName: 'reviewer',
-      status: 'pending',
-    });
-
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const activated: Array<{ runId: string; from: string; to: string; message: string }> = [];
-    const injected: Array<{ sessionId: string; message: string }> = [];
-    const router = makeRouter(ctx, workflowRunId, injected, [makeChannel('coder', 'reviewer')], {
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-      channelRouter: {
-        deliverMessage: async (runId: string, from: string, to: string, msg: string) => {
-          activated.push({ runId, from, to, message: msg });
-          return {
-            fromRole: from,
-            toRole: to,
-            message: msg,
-            targetNodeId: 'review-node',
-            isFanOut: false,
-            activatedTasks: [{}],
-          };
-        },
-      } as AgentMessageRouterConfig['channelRouter'],
-    });
-
-    const result = await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: 'reviewer',
-      message: 'code ready',
-    });
-
-    expect(result.success).toBe(false);
-    expect(result.delivered).toHaveLength(0);
-    expect(result.queued).toHaveLength(1);
-    expect(result.queued![0].agentName).toBe('reviewer');
-    expect(injected).toHaveLength(0);
-    expect(activated).toEqual([
-      { runId: workflowRunId, from: 'coder', to: 'reviewer', message: 'code ready' },
-    ]);
-    expect(pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer')).toHaveLength(1);
-  });
-
-  test('delivers to live session if available, queues for inactive declared agents', async () => {
+  test('delivers to the live session and reports inactive declared agents as not found', async () => {
     const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
       makeChannel('coder', 'reviewer'),
       makeChannel('coder', 'security'),
@@ -1282,7 +1137,6 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
       status: 'pending',
     });
 
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
     const injected: string[] = [];
 
     const router = new AgentMessageRouter({
@@ -1292,7 +1146,6 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
       messageInjector: async (sid) => {
         injected.push(sid);
       },
-      pendingMessageRepo,
       spaceId: ctx.spaceId,
       taskId: null,
     });
@@ -1304,17 +1157,14 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
       message: 'status update',
     });
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe('partial');
     expect(result.delivered).toHaveLength(1);
     expect(result.delivered[0].agentName).toBe('reviewer');
     expect(injected).toContain(ctx.reviewerSessionId);
-
-    expect(result.queued).toBeDefined();
-    expect(result.queued).toHaveLength(1);
-    expect(result.queued![0].agentName).toBe('security');
+    expect(result.notFoundAgentNames).toContain('security');
   });
 
-  test('still returns no-session error for topology-declared target without pendingMessageRepo', async () => {
+  test('still returns no-session error for topology-declared target without a live session', async () => {
     const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
       makeChannel('coder', 'reviewer'),
     ]);
@@ -1342,318 +1192,6 @@ describe('AgentMessageRouter: queue message for declared-but-inactive target', (
   });
 });
 
-describe('AgentMessageRouter: persist workflowNodeId on queued @worker targets', () => {
-  let ctx: TestCtx;
-
-  beforeEach(() => {
-    ctx = makeCtx();
-  });
-
-  afterEach(() => {
-    ctx.db.close();
-  });
-
-  test('keeps plain queue target names unscoped', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('Coding', 'Review'),
-    ]);
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, 'node-coding', 'coder', ctx.coderSessionId);
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: 'missing-review-node',
-      agentName: 'reviewer',
-      status: 'pending',
-    });
-
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const router = makeRouter(ctx, workflowRunId, [], [makeChannel('Coding', 'Review')], {
-      nodeGroups: { Coding: ['coder'], Review: ['reviewer'] },
-      workflowNodeNameById: { 'node-coding': 'Coding' },
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-    });
-
-    const result = await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: 'reviewer',
-      message: 'please review',
-    });
-
-    expect(result.queued?.[0].agentName).toBe('reviewer');
-    const pending = pendingMessageRepo.listAllForRun(workflowRunId);
-    expect(pending).toHaveLength(1);
-    expect(pending[0].targetAgentName).toBe('reviewer');
-    expect(pending[0].workflowNodeId).toBeNull();
-  });
-
-  test('scopes @worker queue target names when the node id is unresolved', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('Coding', 'Review'),
-    ]);
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, 'node-coding', 'coder', ctx.coderSessionId);
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: 'missing-review-node',
-      agentName: 'reviewer',
-      status: 'pending',
-    });
-
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const router = makeRouter(ctx, workflowRunId, [], [makeChannel('Coding', 'Review')], {
-      nodeGroups: { Coding: ['coder'], Review: ['reviewer'] },
-      workflowNodeNameById: { 'node-coding': 'Coding' },
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-    });
-
-    const result = await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: '@worker:Review/reviewer',
-      message: 'please review',
-    });
-
-    expect(result.queued?.[0].agentName).toBe('Review/reviewer');
-    const pending = pendingMessageRepo.listAllForRun(workflowRunId);
-    expect(pending).toHaveLength(1);
-    expect(pending[0].targetAgentName).toBe('Review/reviewer');
-    expect(pending[0].workflowNodeId).toBeNull();
-  });
-
-  test('scoped compound row carries the resolved node id (node-name worker handle)', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder', 'Review'),
-    ]);
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: 'review-node-id',
-      agentName: 'reviewer',
-      status: 'pending',
-    });
-
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const router = new AgentMessageRouter({
-      nodeExecutionRepo: ctx.nodeExecutionRepo,
-      workflowRunId,
-      workflowChannels: [makeChannel('coder', 'Review')],
-      messageInjector: async () => {},
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-      taskId: null,
-      workflowNodeNameById: { 'review-node-id': 'Review' },
-    });
-
-    const result = await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: '@worker:Review/reviewer',
-      message: 'please review',
-    });
-
-    expect(result.queued).toBeDefined();
-    expect(result.queued).toHaveLength(1);
-    expect(result.queued![0].agentName).toBe('Review/reviewer');
-    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
-    expect(pending).toHaveLength(1);
-    expect(pending[0].targetAgentName).toBe('reviewer');
-    expect(pending[0].workflowNodeId).toBe('review-node-id');
-  });
-
-  test('scoped compound row carries the resolved node id (node-id worker handle)', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder', 'review-node-id'),
-    ]);
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: 'review-node-id',
-      agentName: 'reviewer',
-      status: 'pending',
-    });
-
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const router = new AgentMessageRouter({
-      nodeExecutionRepo: ctx.nodeExecutionRepo,
-      workflowRunId,
-      workflowChannels: [makeChannel('coder', 'review-node-id')],
-      messageInjector: async () => {},
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-      taskId: null,
-      workflowNodeNameById: { 'review-node-id': 'Review' },
-    });
-
-    const result = await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: '@worker:review-node-id/reviewer',
-      message: 'please review',
-    });
-
-    expect(result.queued).toBeDefined();
-    expect(result.queued).toHaveLength(1);
-    expect(result.queued![0].agentName).toBe('review-node-id/reviewer');
-    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
-    expect(pending).toHaveLength(1);
-    expect(pending[0].targetAgentName).toBe('reviewer');
-    expect(pending[0].workflowNodeId).toBe('review-node-id');
-  });
-
-  test('a node named like an inherited Object.prototype key still resolves to its id', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder', 'constructor'),
-    ]);
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: 'ctor-node-id',
-      agentName: 'ctor-agent',
-      status: 'pending',
-    });
-
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const router = new AgentMessageRouter({
-      nodeExecutionRepo: ctx.nodeExecutionRepo,
-      workflowRunId,
-      workflowChannels: [makeChannel('coder', 'constructor')],
-      messageInjector: async () => {},
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-      taskId: null,
-      workflowNodeNameById: { 'ctor-node-id': 'constructor' },
-    });
-
-    const result = await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: '@worker:constructor/ctor-agent',
-      message: 'please review',
-    });
-
-    expect(result.queued).toBeDefined();
-    expect(result.queued).toHaveLength(1);
-    expect(result.queued![0].agentName).toBe('constructor/ctor-agent');
-    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'ctor-agent');
-    expect(pending).toHaveLength(1);
-    expect(pending[0].targetAgentName).toBe('ctor-agent');
-    expect(pending[0].workflowNodeId).toBe('ctor-node-id');
-  });
-
-  test('a node id that collides with another node name resolves to the id (ids authoritative)', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder', 'Review'),
-    ]);
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: 'Review',
-      agentName: 'other-agent',
-      status: 'pending',
-    });
-
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const router = new AgentMessageRouter({
-      nodeExecutionRepo: ctx.nodeExecutionRepo,
-      workflowRunId,
-      workflowChannels: [makeChannel('coder', 'Review')],
-      messageInjector: async () => {},
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-      taskId: null,
-      workflowNodeNameById: { x: 'Review', Review: 'other' },
-    });
-
-    const result = await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: '@worker:Review/other-agent',
-      message: 'please review',
-    });
-
-    expect(result.queued).toBeDefined();
-    expect(result.queued).toHaveLength(1);
-    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'other-agent');
-    expect(pending).toHaveLength(1);
-    expect(pending[0].workflowNodeId).toBe('Review');
-  });
-
-  test('a name/id ref collision resolves by the agent slot, not by namespace precedence', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder', 'Review'),
-    ]);
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: 'x',
-      agentName: 'reviewer',
-      status: 'pending',
-    });
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const router = new AgentMessageRouter({
-      nodeExecutionRepo: ctx.nodeExecutionRepo,
-      workflowRunId,
-      workflowChannels: [makeChannel('coder', 'Review')],
-      messageInjector: async () => {},
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-      taskId: null,
-      workflowNodeNameById: { x: 'Review', Review: 'Other' },
-      nodeGroups: { Review: ['reviewer'], Other: ['other-agent'] },
-    });
-
-    const result = await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: '@worker:Review/reviewer',
-      message: 'please review',
-    });
-
-    expect(result.queued).toBeDefined();
-    expect(result.queued).toHaveLength(1);
-    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
-    expect(pending).toHaveLength(1);
-    expect(pending[0].workflowNodeId).toBe('x');
-  });
-
-  test('does not fire the activation callback for an unknown worker node ref', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder', 'reviewer'),
-    ]);
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: 'review-node',
-      agentName: 'reviewer',
-      status: 'pending',
-    });
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const queuedAgents: string[] = [];
-    const router = new AgentMessageRouter({
-      nodeExecutionRepo: ctx.nodeExecutionRepo,
-      workflowRunId,
-      workflowChannels: [makeChannel('coder', 'reviewer')],
-      messageInjector: async () => {},
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-      taskId: null,
-      workflowNodeNameById: { 'review-node': 'Review' },
-      nodeGroups: { Review: ['reviewer'] },
-      onMessageQueued: (agentName) => queuedAgents.push(agentName),
-    });
-
-    await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: '@worker:WrongNode/reviewer',
-      message: 'please review',
-    });
-
-    expect(queuedAgents).toEqual([]);
-  });
-});
-
 describe('AgentMessageRouter: broadcast * with mixed active/inactive targets', () => {
   let ctx: TestCtx;
 
@@ -1665,7 +1203,7 @@ describe('AgentMessageRouter: broadcast * with mixed active/inactive targets', (
     ctx.db.close();
   });
 
-  test('delivers to active targets and queues for inactive declared targets', async () => {
+  test('delivers to active targets and reports inactive declared targets as not found', async () => {
     const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
       makeChannel('coder', 'reviewer'),
       makeChannel('coder', 'security'),
@@ -1680,7 +1218,6 @@ describe('AgentMessageRouter: broadcast * with mixed active/inactive targets', (
       status: 'pending',
     });
 
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
     const delivered: string[] = [];
     const router = makeRouter(
       ctx,
@@ -1691,7 +1228,6 @@ describe('AgentMessageRouter: broadcast * with mixed active/inactive targets', (
         messageInjector: async (sid) => {
           delivered.push(sid);
         },
-        pendingMessageRepo,
         spaceId: ctx.spaceId,
       }
     );
@@ -1703,65 +1239,11 @@ describe('AgentMessageRouter: broadcast * with mixed active/inactive targets', (
       message: 'broadcast to all',
     });
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe('partial');
     expect(result.delivered).toHaveLength(1);
     expect(result.delivered[0].agentName).toBe('reviewer');
-    expect(result.queued).toHaveLength(1);
-    expect(result.queued![0].agentName).toBe('security');
+    expect(result.notFoundAgentNames).toContain('security');
     expect(delivered).toContain(ctx.reviewerSessionId);
-
-    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'security');
-    expect(pending).toHaveLength(1);
-    expect(pending[0].sourceAgentName).toBe('coder');
-  });
-});
-
-describe('AgentMessageRouter: queue enqueue failure graceful degradation', () => {
-  let ctx: TestCtx;
-
-  beforeEach(() => {
-    ctx = makeCtx();
-  });
-
-  afterEach(() => {
-    ctx.db.close();
-  });
-
-  test('falls back to notFound when pendingMessageRepo.enqueue throws', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder', 'reviewer'),
-    ]);
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: ctx.nodeId,
-      agentName: 'reviewer',
-      status: 'pending',
-    });
-
-    const failingRepo = {
-      enqueue: () => {
-        throw new Error('DB write failed');
-      },
-      listPendingForTarget: () => [],
-    } as unknown as PendingAgentMessageRepository;
-
-    const router = makeRouter(ctx, workflowRunId, [], [makeChannel('coder', 'reviewer')], {
-      pendingMessageRepo: failingRepo,
-      spaceId: ctx.spaceId,
-    });
-
-    const result = await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: 'reviewer',
-      message: 'hello',
-    });
-
-    expect(result.success).toBe(false);
-    expect(result.reason).toContain('Could not deliver message to target agent(s): reviewer');
-    expect(result.reason).toContain('no live session received the message');
-    expect(result.notFoundAgentNames).toContain('reviewer');
   });
 });
 
@@ -1776,52 +1258,17 @@ describe('AgentMessageRouter: workflow-declared (via nodeGroups) slot target wit
     ctx.db.close();
   });
 
-  test('queues message when target is a workflow-declared slot with no node_execution row', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder-node', 'review-node'),
-    ]);
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const router = makeRouter(ctx, workflowRunId, [], [makeChannel('coder-node', 'review-node')], {
-      nodeGroups: {
-        'coder-node': ['coder'],
-        'review-node': ['reviewer'],
-      },
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-    });
-
-    const result = await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: 'reviewer',
-      message: 'lazy activation please',
-    });
-
-    expect(result.success).toBe(false);
-    expect(result.queued).toHaveLength(1);
-    expect(result.queued![0].agentName).toBe('reviewer');
-    expect(result.delivered).toHaveLength(0);
-    expect(result.notFoundAgentNames).toContain('reviewer');
-
-    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
-    expect(pending).toHaveLength(1);
-    expect(pending[0].message).toContain('lazy activation please');
-  });
-
   test('returns "Unknown target" when slot is not declared in workflow nor in node_executions', async () => {
     const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
       makeChannel('coder-node', 'review-node'),
     ]);
     seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
 
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
     const router = makeRouter(ctx, workflowRunId, [], [makeChannel('coder-node', 'review-node')], {
       nodeGroups: {
         'coder-node': ['coder'],
         'review-node': ['reviewer'],
       },
-      pendingMessageRepo,
       spaceId: ctx.spaceId,
     });
 
@@ -1835,47 +1282,6 @@ describe('AgentMessageRouter: workflow-declared (via nodeGroups) slot target wit
     expect(result.success).toBe(false);
     expect(result.reason).toContain("Unknown target 'ghost-slot'");
     expect(result.reason).toContain('reviewer');
-  });
-});
-
-describe('AgentMessageRouter: pure topology target (no execution, no nodeGroups) with pendingMessageRepo', () => {
-  let ctx: TestCtx;
-
-  beforeEach(() => {
-    ctx = makeCtx();
-  });
-
-  afterEach(() => {
-    ctx.db.close();
-  });
-
-  test('queues message when target is topology-declared but has no execution record', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder', 'reviewer'),
-    ]);
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const router = makeRouter(ctx, workflowRunId, [], [makeChannel('coder', 'reviewer')], {
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-    });
-
-    const result = await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: 'reviewer',
-      message: 'activate and review',
-    });
-
-    expect(result.success).toBe(false);
-    expect(result.queued).toHaveLength(1);
-    expect(result.queued![0].agentName).toBe('reviewer');
-    expect(result.delivered).toHaveLength(0);
-
-    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
-    expect(pending).toHaveLength(1);
-    expect(pending[0].message).toContain('activate and review');
   });
 });
 
@@ -2000,93 +1406,6 @@ describe('AgentMessageRouter: generic address targets', () => {
     });
 
     expect(checkedTargets).toEqual(['Review A']);
-  });
-
-  test('queues inactive @worker targets and fires queue callback', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('Coding', 'Review'),
-    ]);
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, 'node-coding', 'coder', ctx.coderSessionId);
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: 'node-review',
-      agentName: 'reviewer',
-      status: 'pending',
-    });
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const queuedAgents: string[] = [];
-    const queuedNodeIds: string[] = [];
-    const router = makeRouter(ctx, workflowRunId, [], [makeChannel('Coding', 'Review')], {
-      nodeGroups: { Coding: ['coder'], Review: ['reviewer'] },
-      workflowNodeNameById: { 'node-coding': 'Coding', 'node-review': 'Review' },
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-      onMessageQueued: (agentName, workflowNodeId) => {
-        queuedAgents.push(agentName);
-        queuedNodeIds.push(workflowNodeId ?? '');
-      },
-    });
-
-    const result = await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: `@worker:${encodeURIComponent(workflowRunId)}/Review/reviewer`,
-      message: 'wake reviewer',
-    });
-
-    expect(result.success).toBe(false);
-    expect(result.queued).toHaveLength(1);
-    expect(queuedAgents).toEqual(['reviewer']);
-    expect(queuedNodeIds).toEqual(['node-review']);
-    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
-    expect(pending).toHaveLength(1);
-    expect(pending[0].targetAgentName).toBe('reviewer');
-    expect(pending[0].workflowNodeId).toBe('node-review');
-  });
-
-  test('keeps queued @worker targets scoped by node name when agent names repeat', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('Coding', 'Review A'),
-    ]);
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, 'node-coding', 'coder', ctx.coderSessionId);
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: 'node-review-a',
-      agentName: 'reviewer',
-      status: 'pending',
-    });
-    seedPeerTask(
-      ctx.db,
-      ctx.spaceId,
-      workflowRunId,
-      'node-review-b',
-      'reviewer',
-      'session-review-b'
-    );
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const router = makeRouter(ctx, workflowRunId, [], [makeChannel('Coding', 'Review A')], {
-      nodeGroups: { Coding: ['coder'], 'Review A': ['reviewer'], 'Review B': ['reviewer'] },
-      workflowNodeNameById: {
-        'node-coding': 'Coding',
-        'node-review-a': 'Review A',
-        'node-review-b': 'Review B',
-      },
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-    });
-
-    const result = await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: `@worker:${encodeURIComponent(workflowRunId)}/${encodeURIComponent('Review A')}/reviewer`,
-      message: 'queue review A only',
-    });
-
-    expect(result.success).toBe(false);
-    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
-    expect(pending).toHaveLength(1);
-    expect(pending[0].targetAgentName).toBe('reviewer');
-    expect(pending[0].workflowNodeId).toBe('node-review-a');
   });
 
   test('does not infer a node name for a slot declared in two node groups', async () => {
@@ -2481,253 +1800,6 @@ describe('AgentMessageRouter: generic address targets', () => {
     });
     expect(unsupported.success).toBe(false);
     expect(unsupported.reason).toContain('not supported');
-  });
-});
-
-describe('AgentMessageRouter: onMessageQueued callback fires for non-deduped enqueues', () => {
-  let ctx: TestCtx;
-
-  beforeEach(() => {
-    ctx = makeCtx();
-  });
-
-  afterEach(() => {
-    ctx.db.close();
-  });
-
-  test('calls onMessageQueued with agent name when message is newly queued', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder', 'reviewer'),
-    ]);
-
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: ctx.nodeId,
-      agentName: 'reviewer',
-      status: 'pending',
-    });
-
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const resumedAgents: string[] = [];
-
-    const router = new AgentMessageRouter({
-      nodeExecutionRepo: ctx.nodeExecutionRepo,
-      workflowRunId,
-      workflowChannels: [makeChannel('coder', 'reviewer')],
-      messageInjector: async () => {},
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-      taskId: null,
-      onMessageQueued: (agentName) => resumedAgents.push(agentName),
-    });
-
-    await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: 'reviewer',
-      message: 'activate and review',
-    });
-
-    expect(resumedAgents).toHaveLength(1);
-    expect(resumedAgents[0]).toBe('reviewer');
-  });
-
-  test('does NOT call onMessageQueued when pendingMessageRepo returns deduped=true', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder', 'reviewer'),
-    ]);
-
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: ctx.nodeId,
-      agentName: 'reviewer',
-      status: 'pending',
-    });
-
-    const existingRecord = {
-      id: 'existing-msg-id',
-      workflowRunId,
-      spaceId: ctx.spaceId,
-      taskId: null,
-      sourceAgentName: 'coder',
-      targetAgentName: 'reviewer',
-      targetKind: 'node_agent',
-      message: 'already queued',
-      status: 'pending',
-      attempts: 0,
-      maxAttempts: 3,
-      idempotencyKey: null,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      expiresAt: Date.now() + 600_000,
-      lastAttemptAt: null,
-      lastError: null,
-    };
-    const dedupedRepo = {
-      enqueue: () => ({ record: existingRecord, deduped: true }),
-      listPendingForTarget: () => [existingRecord],
-    } as unknown as PendingAgentMessageRepository;
-
-    const resumedAgents: string[] = [];
-
-    const router = new AgentMessageRouter({
-      nodeExecutionRepo: ctx.nodeExecutionRepo,
-      workflowRunId,
-      workflowChannels: [makeChannel('coder', 'reviewer')],
-      messageInjector: async () => {},
-      pendingMessageRepo: dedupedRepo,
-      spaceId: ctx.spaceId,
-      taskId: null,
-      onMessageQueued: (agentName) => resumedAgents.push(agentName),
-    });
-
-    await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: 'reviewer',
-      message: 'review please again',
-    });
-
-    expect(resumedAgents).toHaveLength(0);
-  });
-
-  test('dedupes repeated queued handoff sends with a stable idempotency key', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder', 'reviewer'),
-    ]);
-
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-    ctx.nodeExecutionRepo.createOrIgnore({
-      workflowRunId,
-      workflowNodeId: ctx.nodeId,
-      agentName: 'reviewer',
-      status: 'pending',
-    });
-
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const resumedAgents: string[] = [];
-    const router = new AgentMessageRouter({
-      nodeExecutionRepo: ctx.nodeExecutionRepo,
-      workflowRunId,
-      workflowChannels: [makeChannel('coder', 'reviewer')],
-      messageInjector: async () => {},
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-      taskId: null,
-      onMessageQueued: (agentName) => resumedAgents.push(agentName),
-    });
-
-    for (let i = 0; i < 2; i++) {
-      await router.deliverMessage({
-        fromAgentName: 'coder',
-        fromSessionId: ctx.coderSessionId,
-        target: 'reviewer',
-        message: 'same handoff',
-      });
-    }
-
-    const pending = pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer');
-    expect(pending).toHaveLength(1);
-    expect(pending[0].maxAttempts).toBe(3);
-    expect(pending[0].idempotencyKey).toBe(
-      JSON.stringify([
-        ctx.coderSessionId,
-        'reviewer',
-        '─── Message from coder ───\n\nsame handoff\n\n─── Reply ───\n' +
-          REPLY_PROTOCOL +
-          '\nTo reply, use: send_message with target "coder"',
-      ])
-    );
-    expect(pending[0].expiresAt - pending[0].createdAt).toBeLessThanOrEqual(60_000);
-    expect(resumedAgents).toEqual(['reviewer']);
-
-    pendingMessageRepo.markDelivered(pending[0].id, 'session:reviewer:delivered');
-    await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: 'reviewer',
-      message: 'same handoff',
-    });
-    expect(pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer')).toHaveLength(1);
-    expect(pendingMessageRepo.listAllForRun(workflowRunId)).toHaveLength(2);
-    expect(resumedAgents).toEqual(['reviewer', 'reviewer']);
-  });
-
-  test('does not dedupe distinct tuples that contain colon separators', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder', 'reviewer:b'),
-      makeChannel('coder', 'b:msg'),
-    ]);
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-    for (const agentName of ['reviewer:b', 'b:msg']) {
-      ctx.nodeExecutionRepo.createOrIgnore({
-        workflowRunId,
-        workflowNodeId: ctx.nodeId,
-        agentName,
-        status: 'pending',
-      });
-    }
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const router = new AgentMessageRouter({
-      nodeExecutionRepo: ctx.nodeExecutionRepo,
-      workflowRunId,
-      workflowChannels: [makeChannel('coder', 'reviewer:b'), makeChannel('coder', 'b:msg')],
-      messageInjector: async () => {},
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-      taskId: null,
-    });
-
-    await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: 'session:a',
-      target: 'reviewer:b',
-      message: 'msg',
-    });
-    await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: 'session:a:reviewer',
-      target: 'b:msg',
-      message: '',
-    });
-
-    expect(pendingMessageRepo.listPendingForTarget(workflowRunId, 'reviewer:b')).toHaveLength(1);
-    expect(pendingMessageRepo.listPendingForTarget(workflowRunId, 'b:msg')).toHaveLength(1);
-    expect(pendingMessageRepo.listAllForRun(workflowRunId)).toHaveLength(2);
-  });
-
-  test('does NOT call onMessageQueued when message is delivered directly (live session)', async () => {
-    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
-      makeChannel('coder', 'reviewer'),
-    ]);
-
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
-    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'reviewer', ctx.reviewerSessionId);
-
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const resumedAgents: string[] = [];
-
-    const router = new AgentMessageRouter({
-      nodeExecutionRepo: ctx.nodeExecutionRepo,
-      workflowRunId,
-      workflowChannels: [makeChannel('coder', 'reviewer')],
-      messageInjector: async () => {},
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-      taskId: null,
-      onMessageQueued: (agentName) => resumedAgents.push(agentName),
-    });
-
-    await router.deliverMessage({
-      fromAgentName: 'coder',
-      fromSessionId: ctx.coderSessionId,
-      target: 'reviewer',
-      message: 'review ready',
-    });
-
-    expect(resumedAgents).toHaveLength(0);
   });
 });
 

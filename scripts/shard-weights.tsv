@@ -99,9 +99,6 @@
 7	packages/daemon/tests/unit/5-space/runtime/last-message-classifier.test.ts
 5	packages/daemon/tests/unit/5-space/runtime/long-horizon-subscription-pattern.test.ts
 7	packages/daemon/tests/unit/5-space/runtime/parse-pr-url.test.ts
-8	packages/daemon/tests/unit/5-space/runtime/pending-drain-decision-pipeline.test.ts
-6	packages/daemon/tests/unit/5-space/runtime/pending-drain-gates.test.ts
-7	packages/daemon/tests/unit/5-space/runtime/pending-envelope.test.ts
 4	packages/daemon/tests/unit/5-space/runtime/post-approval-only-validator.test.ts
 1224	packages/daemon/tests/unit/5-space/runtime/post-approval-router.test.ts
 1134	packages/daemon/tests/unit/5-space/runtime/post-approval-routing-integration.test.ts
@@ -152,7 +149,6 @@
 5	packages/daemon/tests/unit/5-space/runtime/task-agent-manager-activation-routing.test.ts
 63	packages/daemon/tests/unit/5-space/runtime/task-agent-manager-activation-timeout.test.ts
 6	packages/daemon/tests/unit/5-space/runtime/task-agent-manager-contract.test.ts
-202	packages/daemon/tests/unit/5-space/runtime/task-agent-manager-pending-drain.test.ts
 4	packages/daemon/tests/unit/5-space/runtime/task-agent-manager-post-approval.test.ts
 23	packages/daemon/tests/unit/5-space/runtime/task-agent-manager-rehydration-mcp.test.ts
 20	packages/daemon/tests/unit/5-space/runtime/task-agent-manager-stop-verified-flow.test.ts

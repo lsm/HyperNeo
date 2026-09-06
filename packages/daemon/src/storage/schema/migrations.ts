@@ -45,6 +45,7 @@ import { runMigration231 } from './m231-clear-resolved-workflow-slot-agent-ids.t
 import { runMigration232 } from './m232-drop-legacy-space-agents.ts';
 import { runMigration233 } from './m233-retire-pristine-seeded-worker-agents.ts';
 import { runMigration234 } from './m234-drop-space-agent-inbox-messages.ts';
+import { runMigration235 } from './m235-expire-legacy-pending-agent-messages.ts';
 import {
   findPendingMigrationSpaceReclaims,
   type MigrationSpaceReclaimRequest,
@@ -250,8 +251,6 @@ export function runMigrations(
 
   run(migrationMarkerKey(91), () => runMigration91(db));
 
-  run(migrationMarkerKey(92), () => runMigration92(db));
-
   run(migrationMarkerKey(93), () => runMigration93(db));
 
   run(migrationMarkerKey(94), () => runMigration94(db));
@@ -285,8 +284,6 @@ export function runMigrations(
   run(migrationMarkerKey(108), () => runMigration108(db));
 
   rewrite(migrationMarkerKey(109), () => runMigration109(db));
-
-  run(migrationMarkerKey(110), () => runMigration110(db));
 
   run(migrationMarkerKey(111), () => runMigration111(db));
 
@@ -335,8 +332,6 @@ export function runMigrations(
   run(migrationMarkerKey(133), () => runMigration133(db));
 
   run(migrationMarkerKey(134), () => runMigration134(db));
-
-  run(migrationMarkerKey(135), () => runMigration135(db));
 
   rewrite(migrationMarkerKey(136), () => runMigration136(db));
 
@@ -433,8 +428,6 @@ export function runMigrations(
 
   run(migrationMarkerKey(178), () => runMigration178(db));
 
-  run(migrationMarkerKey(179), () => runMigration179(db));
-
   run(migrationMarkerKey(180), () => runMigration180(db));
 
   rewrite(migrationMarkerKey(181), () => runMigration181(db));
@@ -458,8 +451,6 @@ export function runMigrations(
   rewrite(migrationMarkerKey(190), () => runMigration190(db));
 
   run(migrationMarkerKey(191), () => runMigration191(db));
-
-  run(migrationMarkerKey(192), () => runMigration192(db));
 
   run(migrationMarkerKey(193), () => runMigration193(db));
 
@@ -542,6 +533,8 @@ export function runMigrations(
   run(migrationMarkerKey(233), () => runMigration233(db));
 
   run(migrationMarkerKey(234), () => runMigration234(db));
+
+  run(migrationMarkerKey(235), () => runMigration235(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
@@ -5313,51 +5306,6 @@ function runMigration91(db: BunDatabase): void {
   }
 }
 
-export function runMigration92(db: BunDatabase): void {
-  if (!tableExists(db, 'space_workflow_runs')) return;
-  if (tableExists(db, 'pending_agent_messages')) return;
-
-  db.exec(`
-		CREATE TABLE pending_agent_messages (
-			id TEXT PRIMARY KEY,
-			workflow_run_id TEXT NOT NULL,
-			space_id TEXT NOT NULL,
-			task_id TEXT,
-			source_agent_name TEXT NOT NULL DEFAULT 'task-agent',
-			target_kind TEXT NOT NULL
-				CHECK(target_kind IN ('node_agent', 'space_agent')),
-			target_agent_name TEXT NOT NULL,
-			message TEXT NOT NULL,
-			idempotency_key TEXT,
-			attempts INTEGER NOT NULL DEFAULT 0,
-			max_attempts INTEGER NOT NULL DEFAULT 5,
-			last_attempt_at INTEGER,
-			last_error TEXT,
-			status TEXT NOT NULL DEFAULT 'pending'
-				CHECK(status IN ('pending', 'delivered', 'expired', 'failed')),
-			delivered_at INTEGER,
-			delivered_session_id TEXT,
-			expires_at INTEGER NOT NULL,
-			created_at INTEGER NOT NULL,
-			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE CASCADE
-		)
-	`);
-
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_pending_agent_messages_run_status ` +
-      `ON pending_agent_messages(workflow_run_id, status, created_at)`
-  );
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_pending_agent_messages_run_target ` +
-      `ON pending_agent_messages(workflow_run_id, target_agent_name, status, created_at)`
-  );
-  db.exec(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_agent_messages_idem ` +
-      `ON pending_agent_messages(workflow_run_id, target_agent_name, idempotency_key) ` +
-      `WHERE idempotency_key IS NOT NULL`
-  );
-}
-
 export function runMigration93(db: BunDatabase): void {
   if (!tableExists(db, 'sessions')) return;
   try {
@@ -5919,12 +5867,6 @@ export function runMigration172(db: BunDatabase): void {
   runMigration172External(db);
 }
 
-export function runMigration179(db: BunDatabase): void {
-  if (!tableExists(db, 'pending_agent_messages')) return;
-  if (tableHasColumn(db, 'pending_agent_messages', 'workflow_node_id')) return;
-  db.exec(`ALTER TABLE pending_agent_messages ADD COLUMN workflow_node_id TEXT`);
-}
-
 export function runMigration182(db: BunDatabase): void {
   if (!tableExists(db, 'job_queue')) return;
   db.exec(`
@@ -6255,17 +6197,6 @@ export function runMigration109(db: BunDatabase): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_tool_continuation_inbox_tool
 		 ON tool_continuation_inbox(tool_use_id, status, expires_at)`
-  );
-}
-
-export function runMigration110(db: BunDatabase): void {
-  if (!tableExists(db, 'pending_agent_messages')) return;
-
-  db.exec('DROP INDEX IF EXISTS idx_pending_agent_messages_idem');
-  db.exec(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_agent_messages_idem_pending
-		 ON pending_agent_messages(workflow_run_id, target_agent_name, idempotency_key)
-		 WHERE idempotency_key IS NOT NULL AND status = 'pending'`
   );
 }
 
@@ -8282,15 +8213,6 @@ function createAgentMemoryTables(db: BunDatabase): void {
   }
 }
 
-export function runMigration135(db: BunDatabase): void {
-  if (!tableExists(db, 'pending_agent_messages')) return;
-
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_pending_agent_messages_space_status ` +
-      `ON pending_agent_messages(space_id, status, created_at)`
-  );
-}
-
 export function runMigration139(db: BunDatabase): void {
   createEvolutionTables(db);
   if (tableExists(db, 'goal_automation_cursors')) {
@@ -9615,13 +9537,6 @@ export function runMigration191(db: BunDatabase): void {
   if (!tableExists(db, 'node_executions')) return;
   if (!tableHasColumn(db, 'node_executions', 'last_activity_at')) {
     db.exec(`ALTER TABLE node_executions ADD COLUMN last_activity_at INTEGER`);
-  }
-}
-
-export function runMigration192(db: BunDatabase): void {
-  if (!tableExists(db, 'pending_agent_messages')) return;
-  if (!tableHasColumn(db, 'pending_agent_messages', 'delivery_mode')) {
-    db.exec(`ALTER TABLE pending_agent_messages ADD COLUMN delivery_mode TEXT`);
   }
 }
 
