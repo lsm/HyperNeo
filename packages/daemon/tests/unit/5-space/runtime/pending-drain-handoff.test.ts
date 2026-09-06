@@ -3,6 +3,7 @@ import {
   drainPendingRowOntoMailbox,
   pendingDrainMessageUuid,
 } from '../../../../src/lib/space/runtime/pending-drain-handoff.ts';
+
 import type { AgentMessageDeliveryOutcome } from '../../../../src/lib/space/runtime/agent-message-router.ts';
 import type { PendingAgentMessageRecord } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 
@@ -292,6 +293,46 @@ describe('drainPendingRowOntoMailbox', () => {
     );
   });
 
+  it('reuses the legacy row uuid when a pre-migration delivery exists for it', async () => {
+    const deps = {
+      ...makeDeps(),
+      probeLegacyDeliveryStatus: mock(() => 'enqueued' as const),
+    };
+    const row = makeRow({ idempotencyKey: 'human:task-1:coder:node-1:cli-9' });
+
+    await drainPendingRowOntoMailbox({
+      deps,
+      row,
+      target: WORKER_TARGET,
+      message: 'converge note',
+      origin: 'space_inject',
+    });
+
+    expect(deps.deliverRoutedMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'row-1' })
+    );
+  });
+
+  it('seeds from the idempotency key when no legacy delivery exists', async () => {
+    const deps = {
+      ...makeDeps(),
+      probeLegacyDeliveryStatus: mock(() => undefined),
+    };
+    const row = makeRow({ idempotencyKey: 'human:task-1:coder:node-1:cli-9' });
+
+    await drainPendingRowOntoMailbox({
+      deps,
+      row,
+      target: WORKER_TARGET,
+      message: 'fresh note',
+      origin: 'space_inject',
+    });
+
+    expect(deps.deliverRoutedMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'human:task-1:coder:node-1:cli-9' })
+    );
+  });
+
   it('charges an attempt when a stage crashes', async () => {
     const deps = makeDeps();
     deps.deliverRoutedMessage.mockImplementation(async () => {
@@ -319,5 +360,45 @@ describe('pendingDrainMessageUuid', () => {
   it('prefers the idempotency key and falls back to the row id', () => {
     expect(pendingDrainMessageUuid({ id: 'row-1', idempotencyKey: 'key-1' })).toBe('key-1');
     expect(pendingDrainMessageUuid({ id: 'row-1', idempotencyKey: null })).toBe('row-1');
+  });
+
+  it('reuses the legacy row uuid when a pre-migration delivery exists for it', async () => {
+    const deps = {
+      ...makeDeps(),
+      probeLegacyDeliveryStatus: mock(() => 'enqueued' as const),
+    };
+    const row = makeRow({ idempotencyKey: 'human:task-1:coder:node-1:cli-9' });
+
+    await drainPendingRowOntoMailbox({
+      deps,
+      row,
+      target: WORKER_TARGET,
+      message: 'converge note',
+      origin: 'space_inject',
+    });
+
+    expect(deps.deliverRoutedMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'row-1' })
+    );
+  });
+
+  it('seeds from the idempotency key when no legacy delivery exists', async () => {
+    const deps = {
+      ...makeDeps(),
+      probeLegacyDeliveryStatus: mock(() => undefined),
+    };
+    const row = makeRow({ idempotencyKey: 'human:task-1:coder:node-1:cli-9' });
+
+    await drainPendingRowOntoMailbox({
+      deps,
+      row,
+      target: WORKER_TARGET,
+      message: 'fresh note',
+      origin: 'space_inject',
+    });
+
+    expect(deps.deliverRoutedMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: 'human:task-1:coder:node-1:cli-9' })
+    );
   });
 });

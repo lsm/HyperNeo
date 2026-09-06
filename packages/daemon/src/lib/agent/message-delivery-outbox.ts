@@ -782,6 +782,15 @@ const runEnsurePrompt = (superpipe({})('ensure-prompt') as PipelineAPI)
   .pipe(publishEnsuredPrompt, 'ctx', 'ctx')
   .end('ctx') as (ctx: PromptCtx & PersistPromptArgs) => EnsurePromptAppliedCtx;
 
+export function holdDeliveryJobs(db: BunDatabase, sessionId: string, messageUuid: string): number {
+  let held = 0;
+  for (const job of listActiveDeliveryJobs(db, sessionId, messageUuid)) {
+    setDeliveryJobReleased(db, job.jobId, false);
+    held += 1;
+  }
+  return held;
+}
+
 export function ensurePrompt(args: PersistPromptArgs): EnsurePromptResult {
   const deps: PromptDeps = {
     persistAdmittedPrompt: (ctx) => persistAdmittedPrompt(args, ctx),

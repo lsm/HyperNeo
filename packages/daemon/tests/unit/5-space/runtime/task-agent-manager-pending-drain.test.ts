@@ -620,6 +620,20 @@ describe('flushPendingMessagesForTarget — door resolution and handoff', () => 
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
   });
 
+  it('charges an attempt and skips taskless recovery rows when the run is cancelled', async () => {
+    const row = h.enqueue({ taskId: null, message: 'recovery after cancel' });
+    h.db
+      .prepare('UPDATE space_workflow_runs SET status = ? WHERE id = ?')
+      .run('cancelled', h.runId);
+
+    await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
+
+    expect(h.delivery.calls).toHaveLength(0);
+    const record = h.spyRepo.repo.getById(row.id);
+    expect(record?.status).toBe('pending');
+    expect(record?.lastError).toBe('task/run is terminal (cancelled)');
+  });
+
   it('seeds the delivery messageId from the row idempotency key', async () => {
     h.enqueue({
       idempotencyKey: 'human:task-7:coder:node-build:cli-42',

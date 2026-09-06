@@ -1535,6 +1535,15 @@ export class TaskAgentManager {
         fallbackTaskId = this.config.taskRepo?.listByWorkflowRun(workflowRunId).at(-1)?.id ?? null;
       }
       const taskId = row.taskId ?? fallbackTaskId;
+      if (taskId == null) {
+        const terminalStatus = this.resolveTerminalInjectionStatus(workflowRunId, undefined);
+        if (terminalStatus) {
+          const reason = `task/run is terminal (${terminalStatus})`;
+          repo.markAttemptFailed(row.id, reason);
+          log.warn(`TaskAgentManager: pending recovery message ${row.id} skipped — ${reason}`);
+          continue;
+        }
+      }
       const outcome = await drainPendingRowOntoMailbox({
         deps: handoffDeps,
         row,
@@ -1572,6 +1581,9 @@ export class TaskAgentManager {
           });
     return {
       ensureTargetSession,
+      probeLegacyDeliveryStatus: (probeSessionId, messageUuid) =>
+        this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(probeSessionId, messageUuid)
+          ?.sendStatus,
       deliverRoutedMessage,
       markDelivered: (id, deliveredSessionId) => repo.markDelivered(id, deliveredSessionId),
       markFailed: (id, error) => repo.markFailed(id, error),
