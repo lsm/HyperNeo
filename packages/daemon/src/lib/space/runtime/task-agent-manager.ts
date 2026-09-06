@@ -18,6 +18,8 @@ import type {
 import { generateUUID, isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
+import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
+import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { AgentSessionInit } from '../../../lib/agent/agent-session.ts';
@@ -141,6 +143,11 @@ import {
   isHumanPendingSource,
 } from './pending-envelope.ts';
 import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
+import {
+  deliverAgentMessageToTarget,
+  type AgentMessageDeliveryDeps,
+} from './agent-message-delivery-pipeline.ts';
+import { handoffPromptToMailbox } from './prompt-mailbox-handoff.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import { decideRestoredWorkerAdmission } from './restored-worker-admission-decision-pipeline.ts';
 import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
@@ -5076,6 +5083,69 @@ export class TaskAgentManager {
     };
   }
 
+  private agentMessageDeliveryDeps(workflowRunId: string): AgentMessageDeliveryDeps {
+    const longHorizonAgentRepo =
+      this.config.longHorizonAgentRepo ??
+      ({
+        getCoordinator: () => {
+          throw new Error('Long-horizon agent repository unavailable');
+        },
+      } as unknown as SpaceLongHorizonAgentRepository);
+    return {
+      workflowRunId,
+      taskRepo: this.config.taskRepo,
+      nodeExecutionRepo: this.config.nodeExecutionRepo,
+      resolveTerminalStatus: (runId, taskId) => this.resolveTerminalInjectionStatus(runId, taskId),
+      isPostApprovalWorker: (taskId, agentName, sessionId) => {
+        const task = this.config.taskRepo.getTask(taskId);
+        if (!task || task.postApprovalSessionId !== sessionId) return false;
+        return this.legacyWorkflowRouteAgentName(task) === agentName;
+      },
+      ensureSession: (target) =>
+        ensureSession(
+          target,
+          createDefaultSessionResolutionDeps({
+            sessionManager: this.config.sessionManager,
+            taskAgentManager: this,
+            spaceRuntimeService: this.config.spaceRuntimeService,
+            nodeExecutionRepo: this.config.nodeExecutionRepo,
+            taskRepo: this.config.taskRepo,
+            longHorizonAgentRepo,
+          })
+        ),
+      getSessionAsync: (sessionId) => this.config.sessionManager.getSessionAsync(sessionId),
+      withSessionInjectLock: (sessionId, fn) => this.withSessionInjectLock(sessionId, fn),
+      isRateOrUsageLimited,
+      slotResetsContext: (sessionId) => this.slotResetsContextForSession(sessionId),
+      hasActiveDeliveryJob: (sessionId) => this.hasActiveDeliveryJob(sessionId),
+      hasUnconsumedDeliveredWork: (sessionId, messageId) =>
+        this.hasUnconsumedDeliveredWork(sessionId, messageId),
+      hasHeldDeliveryBacklog: (sessionId, messageId) =>
+        this.hasHeldDeliveryBacklog(sessionId, messageId),
+      handoffToMailbox: (args) =>
+        handoffPromptToMailbox({
+          ...args,
+          deps: {
+            db: this.config.db.getDatabase(),
+            sdkMessageRepo: this.config.db.getSDKMessageRepo(),
+            jobQueue: this.config.db.getJobQueueRepo(),
+          },
+        }),
+      publishStatusChanged: (sessionId, dbId, status) =>
+        this.publishMessageStatusChanged(sessionId, dbId, status),
+      recordActivity: (sessionId) => this.recordActivityForSession(sessionId),
+    };
+  }
+
+  private hasHeldDeliveryBacklog(sessionId: string, excludeMessageId?: string): boolean {
+    return this.config.db
+      .getUserMessageIdsByStatus(sessionId, 'deferred')
+      .some(
+        (row) =>
+          typeof row.uuid === 'string' && row.uuid.length > 0 && row.uuid !== excludeMessageId
+      );
+  }
+
   buildNodeAgentMcpServersForSession(
     taskId: string,
     subSessionId: string,
@@ -5126,10 +5196,13 @@ export class TaskAgentManager {
       nodeExecutionRepo: this.config.nodeExecutionRepo,
       workflowRunId,
       workflowChannels: channels,
-      messageInjector: async (targetSessionId, message) => {
-        await this.injectSubSessionMessage(targetSessionId, message, true);
-        this.recordActivityForSession(targetSessionId);
-      },
+      deliverToTarget: (target, message, messageId) =>
+        deliverAgentMessageToTarget({
+          deps: this.agentMessageDeliveryDeps(workflowRunId),
+          target,
+          message,
+          messageId,
+        }),
       activateTargetSession: (targetAgentName) =>
         this.activateTargetSessionsForMessage(taskId, workflowRunId, targetAgentName, {
           reopenReason: `node-agent send_message to activate "${targetAgentName}"`,

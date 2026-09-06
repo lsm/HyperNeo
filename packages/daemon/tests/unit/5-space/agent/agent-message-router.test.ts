@@ -8,6 +8,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-message-router.ts';
 import type { AgentMessageRouterConfig } from '../../../../src/lib/space/runtime/agent-message-router.ts';
 import type { WorkflowChannel } from '@hyperneo/shared';
+import type { SessionTarget } from '../../../../src/lib/session-resolution/target.ts';
 
 const REPLY_PROTOCOL =
   'Messaging protocol: if this message requests work or information from you, reply to the sender with the outcome when done — or promptly if you cannot do it. Do not leave the sender waiting.';
@@ -138,6 +139,30 @@ function makeRouter(
   channels: WorkflowChannel[] = [],
   overrides: Partial<AgentMessageRouterConfig> = {}
 ): AgentMessageRouter {
+  const deliverToTarget: NonNullable<AgentMessageRouterConfig['deliverToTarget']> = async (
+    target,
+    message,
+    messageId,
+    sessionIdHint
+  ) => {
+    const sessionId =
+      target.kind === 'session'
+        ? target.sessionId
+        : target.kind === 'agent'
+          ? `space:chat:${target.spaceId}`
+          : (sessionIdHint ??
+            ctx.nodeExecutionRepo
+              .listByWorkflowRun(workflowRunId)
+              .find(
+                (execution) =>
+                  execution.agentName === target.agentName &&
+                  (target.workflowNodeId === undefined ||
+                    execution.workflowNodeId === target.workflowNodeId)
+              )?.agentSessionId ??
+            '');
+    injected.push({ sessionId, message });
+    return { state: 'delivered', sessionId, messageId };
+  };
   return new AgentMessageRouter({
     nodeExecutionRepo: ctx.nodeExecutionRepo,
     workflowRunId,
@@ -146,8 +171,234 @@ function makeRouter(
       injected.push({ sessionId, message });
     },
     ...overrides,
+    deliverToTarget:
+      overrides.deliverToTarget ??
+      (overrides.messageInjector || overrides.spaceAgentInjector ? undefined : deliverToTarget),
+    taskId: overrides.taskId === null ? undefined : (overrides.taskId ?? 'task-test'),
   });
 }
+
+describe('AgentMessageRouter: single-target delivery door', () => {
+  let ctx: TestCtx;
+
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  test('keeps channel activation before one worker-door call', async () => {
+    const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+      makeChannel('coder', 'reviewer'),
+    ]);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, 'node-coder', 'coder', ctx.coderSessionId);
+    seedPeerTask(
+      ctx.db,
+      ctx.spaceId,
+      workflowRunId,
+      'node-reviewer',
+      'reviewer',
+      ctx.reviewerSessionId
+    );
+    const order: string[] = [];
+    const targets: SessionTarget[] = [];
+    const router = makeRouter(ctx, workflowRunId, [], channels, {
+      taskId: 'task-1',
+      channelRouter: {
+        deliverMessage: async () => {
+          order.push('channel');
+          return {} as never;
+        },
+      } as AgentMessageRouterConfig['channelRouter'],
+      deliverToTarget: async (target, _message, messageId) => {
+        order.push('door');
+        targets.push(target);
+        return { state: 'delivered', sessionId: ctx.reviewerSessionId, messageId };
+      },
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: 'reviewer',
+      message: 'review',
+    });
+
+    expect(result.success).toBe(true);
+    expect(order).toEqual(['channel', 'door']);
+    expect(targets).toEqual([
+      {
+        kind: 'worker',
+        taskId: 'task-1',
+        agentName: 'reviewer',
+        workflowNodeId: 'node-reviewer',
+      },
+    ]);
+  });
+
+  test('keeps fan-out and partial failures caller-side', async () => {
+    const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+      makeChannel('coder', ['reviewer', 'security']),
+    ]);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, 'node-coder', 'coder', ctx.coderSessionId);
+    seedPeerTask(
+      ctx.db,
+      ctx.spaceId,
+      workflowRunId,
+      'node-reviewer',
+      'reviewer',
+      'session-reviewer'
+    );
+    seedPeerTask(
+      ctx.db,
+      ctx.spaceId,
+      workflowRunId,
+      'node-security',
+      'security',
+      'session-security'
+    );
+    const targets: SessionTarget[] = [];
+    const router = makeRouter(ctx, workflowRunId, [], channels, {
+      taskId: 'task-1',
+      deliverToTarget: async (target, _message, messageId) => {
+        targets.push(target);
+        if (target.kind === 'worker' && target.agentName === 'security') {
+          throw new Error('security unavailable');
+        }
+        return { state: 'delivered', sessionId: 'session-reviewer', messageId };
+      },
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: ['reviewer', 'security'],
+      message: 'review',
+    });
+
+    expect(targets).toHaveLength(2);
+    expect(result.success).toBe('partial');
+    expect(result.delivered).toEqual([{ agentName: 'reviewer', sessionId: 'session-reviewer' }]);
+    expect(result.failed).toEqual([
+      { agentName: 'security', sessionId: 'session-security', error: 'security unavailable' },
+    ]);
+  });
+
+  test('keeps duplicate worker names scoped to the caller-expanded node', async () => {
+    const { runId: workflowRunId, channels } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, [
+      makeChannel('Coding', 'Review A'),
+    ]);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, 'node-coder', 'coder', ctx.coderSessionId);
+    seedPeerTask(
+      ctx.db,
+      ctx.spaceId,
+      workflowRunId,
+      'node-review-a',
+      'reviewer',
+      'session-review-a'
+    );
+    seedPeerTask(
+      ctx.db,
+      ctx.spaceId,
+      workflowRunId,
+      'node-review-b',
+      'reviewer',
+      'session-review-b'
+    );
+    const targets: SessionTarget[] = [];
+    const router = makeRouter(ctx, workflowRunId, [], channels, {
+      taskId: 'task-1',
+      nodeGroups: { Coding: ['coder'], 'Review A': ['reviewer'], 'Review B': ['reviewer'] },
+      workflowNodeNameById: {
+        'node-coder': 'Coding',
+        'node-review-a': 'Review A',
+        'node-review-b': 'Review B',
+      },
+      deliverToTarget: async (target, _message, messageId) => {
+        targets.push(target);
+        return { state: 'delivered', sessionId: 'session-review-a', messageId };
+      },
+    });
+
+    await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@worker:Review%20A/reviewer',
+      message: 'review A',
+    });
+
+    expect(targets).toEqual([
+      {
+        kind: 'worker',
+        taskId: 'task-1',
+        agentName: 'reviewer',
+        workflowNodeId: 'node-review-a',
+      },
+    ]);
+  });
+
+  test('routes coordinator and authorized session targets through their target kinds', async () => {
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    const targets: SessionTarget[] = [];
+    const router = makeRouter(ctx, workflowRunId, [], [], {
+      spaceId: ctx.spaceId,
+      replyRoutingLookup: () => 'authorized-session',
+      deliverToTarget: async (target, _message, messageId) => {
+        targets.push(target);
+        return {
+          state: 'delivered',
+          sessionId: target.kind === 'session' ? target.sessionId : `space:chat:${ctx.spaceId}`,
+          messageId,
+        };
+      },
+    });
+
+    await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@coordinator',
+      message: 'escalate',
+    });
+    await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@session:authorized-session',
+      message: 'reply',
+    });
+
+    expect(targets).toEqual([
+      { kind: 'agent', spaceId: ctx.spaceId, agentId: 'coordinator' },
+      { kind: 'session', sessionId: 'authorized-session' },
+    ]);
+  });
+
+  test('rejects unauthorized sessions before invoking the door', async () => {
+    const { runId: workflowRunId } = seedWorkflowRunWithChannels(ctx.db, ctx.spaceId, []);
+    seedPeerTask(ctx.db, ctx.spaceId, workflowRunId, ctx.nodeId, 'coder', ctx.coderSessionId);
+    const targets: SessionTarget[] = [];
+    const router = makeRouter(ctx, workflowRunId, [], [], {
+      spaceId: ctx.spaceId,
+      replyRoutingLookup: () => 'authorized-session',
+      deliverToTarget: async (target, _message, messageId) => {
+        targets.push(target);
+        return { state: 'delivered', sessionId: 'other-session', messageId };
+      },
+    });
+
+    const result = await router.deliverMessage({
+      fromAgentName: 'coder',
+      fromSessionId: ctx.coderSessionId,
+      target: '@session:other-session',
+      message: 'not authorized',
+    });
+
+    expect(result.success).toBe(false);
+    expect(targets).toEqual([]);
+  });
+});
 
 describe('AgentMessageRouter: agent name (role) target → DM', () => {
   let ctx: TestCtx;

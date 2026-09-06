@@ -30,6 +30,7 @@ export interface PromptHandoffTarget {
   message: SDKUserMessage;
   origin: MessageDeliveryOrigin;
   messageOrigin?: MessageOrigin;
+  defer?: boolean;
 }
 
 export interface PromptHandoffStageOutcome {
@@ -132,6 +133,7 @@ export function ensurePromptIntoMailbox(
     sessionId: target.sessionId,
     message: target.message,
     origin: target.messageOrigin,
+    ...(target.defer ? { hold: 'manual' as const } : {}),
     delivery: { origin: target.origin },
   });
   return {
@@ -149,7 +151,11 @@ export interface MailboxHandoffArgs {
   deps: PromptHandoffDeps;
   target: PromptHandoffTarget;
   stateManager?: MailboxHandoffStateManager;
-  publishStatusChanged?: (sessionId: string, dbId: string, status: 'enqueued') => Promise<void>;
+  publishStatusChanged?: (
+    sessionId: string,
+    dbId: string,
+    status: 'enqueued' | 'deferred'
+  ) => Promise<void>;
 }
 
 export type MailboxHandoffOutcome =
@@ -168,7 +174,11 @@ function planHandoffStage(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
     ctx.target.sessionId,
     ctx.target.messageId
   );
-  return { ...ctx, mechanism: planHandoffMechanism(row ?? null) };
+  const mechanism =
+    ctx.target.defer && row?.sendStatus === 'deferred'
+      ? 'ensure'
+      : planHandoffMechanism(row ?? null);
+  return { ...ctx, mechanism };
 }
 
 export function verifyHandoffContent(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
@@ -206,7 +216,9 @@ export async function applyHandoffMechanism(ctx: MailboxHandoffCtx): Promise<Mai
     ctx.target.sessionId,
     ctx.target.messageId
   );
-  return { ...ctx, applied: await dispatchHandoffMechanism(ctx, planHandoffMechanism(fresh)) };
+  const fallback =
+    ctx.target.defer && fresh?.sendStatus === 'deferred' ? 'ensure' : planHandoffMechanism(fresh);
+  return { ...ctx, applied: await dispatchHandoffMechanism(ctx, fallback) };
 }
 
 export function settleHandoffOutcome(ctx: MailboxHandoffCtx): MailboxHandoffCtx {
@@ -229,7 +241,9 @@ export function settleHandoffOutcome(ctx: MailboxHandoffCtx): MailboxHandoffCtx 
 
 export async function markQueuedIfIdle(ctx: MailboxHandoffCtx): Promise<MailboxHandoffCtx> {
   const outcome = ctx.outcome;
-  if (!ctx.stateManager || outcome?.state !== 'enqueued' || !outcome.advanced) return ctx;
+  if (!ctx.stateManager || ctx.target.defer || outcome?.state !== 'enqueued' || !outcome.advanced) {
+    return ctx;
+  }
   try {
     await ctx.stateManager.setQueuedIfIdle(ctx.target.messageId);
   } catch {}
@@ -240,7 +254,11 @@ export async function publishEnqueuedIfChanged(ctx: MailboxHandoffCtx): Promise<
   const outcome = ctx.outcome;
   if (!ctx.publishStatusChanged || outcome?.state !== 'enqueued' || !outcome.changed) return ctx;
   try {
-    await ctx.publishStatusChanged(ctx.target.sessionId, outcome.dbId, 'enqueued');
+    await ctx.publishStatusChanged(
+      ctx.target.sessionId,
+      outcome.dbId,
+      ctx.target.defer ? 'deferred' : 'enqueued'
+    );
   } catch {}
   return ctx;
 }
