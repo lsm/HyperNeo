@@ -5155,49 +5155,38 @@ export class SpaceRuntime {
         }
 
         let activatedForTarget = false;
-        let resetExistingTarget = false;
         for (const agentEntry of resolveNodeAgents(targetNode)) {
           const existing = this.config.nodeExecutionRepo
             .listByNode(run.id, targetNode.id)
             .find((execution) => execution.agentName === agentEntry.name);
           if (existing) {
             if (existing.status === 'idle' || existing.status === 'cancelled') {
+              const message = `[Daemon restart recovery] The ${targetNode.name} node's previous session ended before completing the workflow. Please check the PR and review status, then continue.`;
               this.config.nodeExecutionRepo.update(existing.id, {
                 status: 'pending',
                 result: null,
                 startedAt: null,
                 completedAt: null,
+                data: { ...(existing.data ?? {}), restartRecoveryNote: message },
               });
               activatedForTarget = true;
-              resetExistingTarget = true;
             }
             continue;
           }
+          const message = `[Daemon restart recovery] The previous agent (${sourceExecution.agentName}) completed but the handoff message was not delivered. Please check the PR and review status, then continue.`;
           this.createNodeExecutionOrIgnore({
             workflowRunId: run.id,
             workflowNodeId: targetNode.id,
             agentName: agentEntry.name,
             agentId: this.slotAgentId(agentEntry),
             status: 'pending',
+            data: { restartRecoveryNote: message },
           });
           activatedForTarget = true;
         }
         if (activatedForTarget) {
           createdOrReset.push(targetNode.name);
           activatedOnChannel = true;
-          const message = resetExistingTarget
-            ? `[Daemon restart recovery] The ${targetNode.name} node's previous session ended before completing the workflow. Please check the PR and review status, then continue.`
-            : `[Daemon restart recovery] The previous agent (${sourceExecution.agentName}) completed but the handoff message was not delivered. Please check the PR and review status, then continue.`;
-          for (const agentEntry of resolveNodeAgents(targetNode)) {
-            const execution = this.config.nodeExecutionRepo
-              .listByNode(run.id, targetNode.id)
-              .find((row) => row.agentName === agentEntry.name);
-            if (execution) {
-              this.config.nodeExecutionRepo.update(execution.id, {
-                data: { ...(execution.data ?? {}), restartRecoveryNote: message },
-              });
-            }
-          }
         }
       }
       if (activatedOnChannel) {

@@ -812,6 +812,7 @@ export interface CreateNodeExecutionParams {
   agentId?: string | null;
   status?: NodeExecutionStatus;
   agentSessionId?: string | null;
+  data?: Record<string, unknown> | null;
 }
 
 export interface UpdateNodeExecutionParams {
