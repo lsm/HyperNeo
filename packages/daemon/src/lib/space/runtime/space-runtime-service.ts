@@ -51,8 +51,9 @@ import type { DaemonCommandMap, InternalCommandBus } from '../../internal-comman
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
 import { renderAddress } from '../../mailbox/address.ts';
-import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
 import { toMailboxMessage } from '../../mailbox/entry.ts';
+import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
+import { MAILBOX_LANE } from '../../mailbox/enqueue.ts';
 import type { SessionManager } from '../../session-manager.ts';
 import { buildAgentSessionConfig } from '../../session-resolution/agent-session-config.ts';
 import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
@@ -791,6 +792,7 @@ export class SpaceRuntimeService {
       messageUuid: id,
       message: persistedMessage,
     });
+    this.assertNoPendingMailboxContentConflict(sessionId, id, projected.message.message.content);
     const outcome = await handoffPromptToMailbox({
       to: renderAddress({ kind: 'session', sessionId }),
       message: projected.message,
@@ -805,6 +807,34 @@ export class SpaceRuntimeService {
       throw new Error(outcome.reason.slice('internal: '.length));
     }
     return { state: 'rejected', reason: outcome.reason };
+  }
+
+  private assertNoPendingMailboxContentConflict(
+    sessionId: string,
+    messageUuid: string,
+    content: unknown
+  ): void {
+    const jobQueue = this.config.reactiveDb?.db.getJobQueueRepo();
+    if (!jobQueue) return;
+    const active = jobQueue.listJobs({
+      queue: MAILBOX_LANE,
+      status: ['pending', 'processing'],
+      limit: 500,
+    });
+    for (const job of active) {
+      const payload = job.payload as Record<string, unknown>;
+      const to = payload.to as { kind?: string; sessionId?: string } | undefined;
+      if (to?.kind !== 'session' || to.sessionId !== sessionId) continue;
+      if (payload.messageUuid !== messageUuid) continue;
+      const pending = (payload.message as { message?: { content?: unknown } } | undefined)?.message
+        ?.content;
+      if (JSON.stringify(pending) !== JSON.stringify(content)) {
+        throw new PromptContentConflictError(
+          `prompt handoff: message ${messageUuid} in session ${sessionId} ` +
+            'already exists with different content'
+        );
+      }
+    }
   }
 
   private async refreshLongHorizonAgentSessionConfig(

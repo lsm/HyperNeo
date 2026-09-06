@@ -1484,6 +1484,42 @@ describe('SpaceRuntimeService', () => {
       expect(pendingMailboxEntries(mailbox, nagKey)).toHaveLength(0);
     });
 
+    test('deliverLongHorizonAgentNag rejects content conflicting with a pending mailbox admission', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const mailbox = buildMailboxDeliveryDb([sessionId]);
+      const nagKey = 'inactivity-nag:lh-agent-1:100:0';
+      mailbox.jobQueue.enqueue({
+        queue: MAILBOX_LANE,
+        payload: {
+          id: 'pending-entry-1',
+          to: { kind: 'session', sessionId },
+          messageUuid: nagKey,
+          message: { message: { content: [{ type: 'text', text: 'Different nag content.' }] } },
+        },
+      });
+      const svc = buildLhDeliveryService(sessionId, mailbox);
+
+      const result = await svc.deliverLongHorizonAgentNag({
+        spaceId: mockSpace.id,
+        agentId: 'lh-agent-1',
+        message: 'You have been idle.',
+        idempotencyKey: nagKey,
+      });
+
+      expect(result).toBe('pre_admission_failure');
+      expect(pendingMailboxEntries(mailbox, nagKey)).toHaveLength(1);
+    });
+
+    test('an identical pending mailbox admission does not block re-admission', async () => {
+      const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
+      const mailbox = buildMailboxDeliveryDb([sessionId]);
+      const svc = buildLhDeliveryService(sessionId, mailbox);
+
+      expect(await deliverExternalEvent(svc, 'delivery-1')).toEqual({ delivered: true });
+      expect(await deliverExternalEvent(svc, 'delivery-1')).toEqual({ delivered: true });
+      expect(pendingMailboxEntries(mailbox, 'delivery-1')).toHaveLength(2);
+    });
+
     test('deliverLongHorizonAgentNag reports terminal_failure when admission rejects', async () => {
       const sessionId = longTermAgentSessionId(mockSpace.id, 'lh-agent-1');
       const svc = buildDeliveryService({
