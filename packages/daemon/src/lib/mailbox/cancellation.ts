@@ -3,7 +3,12 @@ import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { Database } from '../../storage/database.ts';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import { type MailboxFailureDeps, materializeMailboxFailure } from './failure.ts';
+import { parseMailboxEntry } from './entry.ts';
+import {
+  type MailboxFailureDeps,
+  materializeMailboxFailure,
+  sessionFailureTarget,
+} from './failure.ts';
 
 export interface MailboxCancelMaterializerDeps {
   db: Database;
@@ -79,8 +84,9 @@ export function materializeMailboxFailuresForSession(
   for (const row of deleted) {
     try {
       const payload = JSON.parse(row.payload) as Record<string, unknown>;
+      const target = sessionFailureTarget(parseMailboxEntry(payload));
       materializeMailboxFailure(deletedRowAsJob(row.id, payload), failureDeps);
-      if (typeof payload.messageUuid === 'string') cancelled.push(payload.messageUuid);
+      if (target) cancelled.push(target.messageUuid);
     } catch {}
   }
   return cancelled;

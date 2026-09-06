@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { materializeMailboxFailuresForSession } from '../../../../src/lib/mailbox/cancellation';
 import { enqueueMailboxEntry } from '../../../../src/lib/mailbox/enqueue';
 import type { MailboxEntry } from '../../../../src/lib/mailbox/entry';
+import { deterministicMailboxUuid } from '../../../../src/lib/mailbox/failure';
 import { createUlid } from '../../../../src/lib/mailbox/ulid';
 import type { Database } from '../../../../src/storage/database';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
@@ -66,6 +67,41 @@ describe('materializeMailboxFailuresForSession', () => {
       status: 'failed',
     });
     expect(settleSkipped).toHaveBeenCalledWith(SESSION_ID, 'accepted-then-cancelled');
+  });
+
+  test('reports the deterministic uuid for entries materialized without messageUuid', () => {
+    const entry: MailboxEntry = {
+      id: createUlid(),
+      to: { kind: 'session', sessionId: SESSION_ID },
+      origin: 'chat',
+      message: {
+        type: 'user',
+        message: { content: [{ type: 'text', text: 'unseeded then cancelled' }] },
+        parent_tool_use_id: null,
+      },
+      status: 'enqueued',
+      policy: { ttlMs: 60_000, maxAttempts: 5, priority: 0 },
+      deliveryMode: 'immediate',
+    };
+    enqueueMailboxEntry(mailbox.jobQueue, entry);
+    const publish = mock(async () => {});
+    const db = {
+      getJobQueueRepo: () => mailbox.jobQueue,
+      getSDKMessageRepo: () => mailbox.sdkMessageRepo,
+      saveUserMessage: (sessionId: string, message: never, status: string, origin?: string) =>
+        mailbox.sdkMessageRepo.saveUserMessage(sessionId, message, status, origin),
+    } as unknown as Database;
+
+    const cancelled = materializeMailboxFailuresForSession(SESSION_ID, {
+      db,
+      internalEventBus: { publish } as never,
+    });
+
+    const expectedUuid = deterministicMailboxUuid(entry.id);
+    expect(cancelled).toEqual([expectedUuid]);
+    expect(mailbox.sdkRows()).toHaveLength(1);
+    expect(mailbox.sdkRows()[0].sdk_uuid).toBe(expectedUuid);
+    expect(mailbox.sdkRows()[0].send_status).toBe('failed');
   });
 
   test('is a no-op when the job queue lacks mailbox cancellation support', () => {
