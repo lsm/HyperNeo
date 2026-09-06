@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import type { MessageInputKind } from '@hyperneo/shared';
 import { type MailboxAddress, renderAddress } from '../../../../src/lib/mailbox/address';
-import { MAX_IMAGE_BASE64_SIZE } from '../../../../src/lib/session/message-persistence';
 import {
   createMailboxEntry,
   DEFAULT_MAILBOX_ENTRY_POLICY,
@@ -13,6 +13,7 @@ import {
   toMailboxPolicy,
 } from '../../../../src/lib/mailbox/entry';
 import { isUlid } from '../../../../src/lib/mailbox/ulid';
+import { MAX_IMAGE_BASE64_SIZE } from '../../../../src/lib/session/message-persistence';
 
 describe('DEFAULT_MAILBOX_ENTRY_POLICY', () => {
   test('equals the literal policy', () => {
@@ -166,6 +167,9 @@ describe('toMailboxMessage', () => {
       ['priority now', { ...validMessage, priority: 'now' }],
       ['priority next', { ...validMessage, priority: 'next' }],
       ['priority later', { ...validMessage, priority: 'later' }],
+      ['inputKind task', { ...validMessage, inputKind: 'task' }],
+      ['inputKind human', { ...validMessage, inputKind: 'human' }],
+      ['inputKind system', { ...validMessage, inputKind: 'system' }],
     ])('projects %s to a fresh deep-equal message', (_label, input) => {
       expect(toMailboxMessage(input)).toEqual({ message: input });
     });
@@ -180,11 +184,13 @@ describe('toMailboxMessage', () => {
       const withOptionalFields = toMailboxMessage({
         ...validMessage,
         priority: 'next',
+        inputKind: 'system',
         referenceMetadata: {
           '@ref{goal:1}': { type: 'goal', id: '1', displayText: 'Goal 1' },
         },
       }) as { message: MailboxMessage };
       expect(Object.keys(withOptionalFields.message).sort()).toEqual([
+        'inputKind',
         'message',
         'parent_tool_use_id',
         'priority',
@@ -294,6 +300,7 @@ describe('toMailboxMessage', () => {
       ],
       ['a non-null parent_tool_use_id', { ...validMessage, parent_tool_use_id: 'tool-1' }],
       ['an invalid priority', { ...validMessage, priority: 'soon' }],
+      ['an invalid inputKind', { ...validMessage, inputKind: 'nudge' as MessageInputKind }],
     ])('returns a reason for %s', (_label, message) => {
       expect(toMailboxMessage(message as unknown as MailboxMessage)).toEqual({
         reason: expect.any(String),
@@ -775,6 +782,30 @@ describe('parseMailboxEntry', () => {
       const parsed = parseMailboxEntry(payload);
       expect(parsed?.to).toEqual({ kind: 'agent', spaceId: 'sp-1', handle: 'reviewer' });
       expect(Object.keys(parsed?.to ?? {}).sort()).toEqual(['handle', 'kind', 'spaceId']);
+    });
+
+    test('round-trips inputKind through a stored entry and rejects unknown values', () => {
+      const payload = {
+        ...sessionPayload,
+        message: {
+          type: 'user',
+          message: { content: 'hello' },
+          parent_tool_use_id: null,
+          inputKind: 'system',
+        },
+      };
+      expect(parseMailboxEntry(payload)?.message.inputKind).toBe('system');
+      expect(
+        parseMailboxEntry({
+          ...sessionPayload,
+          message: {
+            type: 'user',
+            message: { content: 'hello' },
+            parent_tool_use_id: null,
+            inputKind: 'nudge',
+          },
+        })
+      ).toBeNull();
     });
   });
 
