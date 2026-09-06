@@ -32,6 +32,9 @@ function makeManager(opts: {
   failedDbId?: string;
   enqueueThrows?: boolean;
   unconsumedCounts?: Record<string, number>;
+  materializedRowIds?: string[];
+  mailboxEntryStatus?: 'pending' | 'processing' | 'completed' | 'dead' | 'absent';
+  normalizeThrows?: boolean;
 }): {
   manager: TaskAgentManager;
   session: Record<string, ReturnType<typeof mock>>;
@@ -50,9 +53,19 @@ function makeManager(opts: {
       return { id: 'job-1' };
     }
   );
+  const mailboxEnqueue = mock(() => {
+    if (opts.enqueueThrows) throw new Error('job queue unavailable');
+    return { id: 'mailbox-job-1' };
+  });
+  const cancelHeldJob = mock(() => false);
   const reopenDeliveryByUuid = mock(() => opts.reopenDbId ?? null);
+  const normalizeDeliveryMailbox = mock(() => {
+    if (opts.normalizeThrows) throw new Error('sqlite unavailable');
+    return false;
+  });
   const markDeliveryDeferredByUuid = mock(() => null);
   const markDeliveryFailedByUuid = mock(() => opts.failedDbId ?? null);
+  const failDeliveryUnless = mock(() => opts.failedDbId ?? null);
   const getUserMessageIdsByStatus = mock((_sessionId: string, status: string) =>
     Array.from({ length: opts.unconsumedCounts?.[status] ?? 0 }, (_, i) => ({
       dbId: `db-${status}-${i}`,
@@ -93,14 +106,22 @@ function makeManager(opts: {
       getUserMessageIdsByStatus,
       getSDKMessageRepo: () => ({
         getDeliveryContent: () => opts.deliveryContent ?? null,
+        getDeliveryMessageIdsByUuids: () => opts.materializedRowIds ?? ['db-id'],
+        normalizeDeliveryMessageForMailbox: normalizeDeliveryMailbox,
         reopenDeliveryByUuid,
         markDeliveryFailedByUuid,
+        failDeliveryUnlessProcessing: failDeliveryUnless,
         markDeliveryDeferredByUuid,
       }),
       getJobQueueRepo: () => ({
         activeDeliveryMessageUuids: () =>
           new Set<string>(opts.hasActiveDeliveryJob ? ['pending-job'] : []),
+        activeMailboxMessageUuids: () => new Set<string>(),
+        mailboxEntryJobStatus: () => opts.mailboxEntryStatus ?? 'completed',
+        cancelPendingMailboxEntry: () => false,
+        cancelHeldDeliveryJob: cancelHeldJob,
         enqueue: jobQueueEnqueue,
+        enqueueUniquePending: mailboxEnqueue,
       }),
     },
     internalEventBus: {
@@ -144,9 +165,13 @@ function makeManager(opts: {
       getProcessingState,
       saveUserMessage,
       jobQueueEnqueue,
+      mailboxEnqueue,
+      cancelHeldJob,
+      normalizeDeliveryMailbox,
       reopenDeliveryByUuid,
       markDeliveryDeferredByUuid,
       markDeliveryFailedByUuid,
+      failDeliveryUnless,
       getUserMessageIdsByStatus,
       publishStatusChanged,
     },
@@ -184,14 +209,251 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     } as unknown as AgentSession;
   }
 
-  it('first inject persists the row and enqueues a durable job', async () => {
+  it('first inject hands the prompt to the mailbox lane and returns the materialized row id', async () => {
     const { manager, session } = makeManager({});
     indexSession(manager, liveSession(session));
 
-    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+    const returnedId = await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true
+    );
+
+    expect(session.saveUserMessage).not.toHaveBeenCalled();
+    expect(session.mailboxEnqueue).toHaveBeenCalledTimes(1);
+    const enqueueArgs = session.mailboxEnqueue.mock.calls[0][0] as {
+      queue?: string;
+      payload?: {
+        to?: { kind?: string; sessionId?: string };
+        origin?: string;
+        deliveryMode?: string;
+        messageUuid?: string;
+        message?: unknown;
+      };
+    };
+    expect(returnedId).toBe('db-id');
+    expect(enqueueArgs.queue).toBe('mailbox');
+    expect(enqueueArgs.payload?.to).toEqual({ kind: 'session', sessionId: SESSION_ID });
+    expect(enqueueArgs.payload?.origin).toBe('space_inject');
+    expect(enqueueArgs.payload?.deliveryMode).toBe('immediate');
+    expect(typeof enqueueArgs.payload?.messageUuid).toBe('string');
+    expect(enqueueArgs.payload?.message).toEqual({
+      type: 'user',
+      message: { content: [{ type: 'text', text: '─── Message from coder ───' }] },
+      parent_tool_use_id: null,
+      inputKind: 'task',
+    });
+  });
+
+  it('a human inject hands off with chat provenance and image content preserved', async () => {
+    const { manager, session } = makeManager({});
+    indexSession(manager, liveSession(session));
+
+    await manager.injectSubSessionMessage(SESSION_ID, 'look at this', false, [
+      { media_type: 'image/png' as const, data: 'aW1hZ2U=' },
+    ]);
+
+    expect(session.mailboxEnqueue).toHaveBeenCalledTimes(1);
+    const enqueueArgs = session.mailboxEnqueue.mock.calls[0][0] as {
+      payload?: { origin?: string; message?: unknown };
+    };
+    expect(enqueueArgs.payload?.origin).toBe('chat');
+    expect(enqueueArgs.payload?.message).toEqual({
+      type: 'user',
+      message: {
+        content: [
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: 'aW1hZ2U=' },
+          },
+          { type: 'text', text: 'look at this' },
+        ],
+      },
+      parent_tool_use_id: null,
+      inputKind: 'human',
+    });
+  });
+
+  it('a system nudge carries its inputKind so it cannot read as task input after delivery', async () => {
+    const { manager, session } = makeManager({});
+    indexSession(manager, liveSession(session));
+
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      'runtime recovery nudge',
+      true,
+      undefined,
+      'immediate',
+      'system'
+    );
+
+    expect(session.mailboxEnqueue).toHaveBeenCalledTimes(1);
+    const enqueueArgs = session.mailboxEnqueue.mock.calls[0][0] as {
+      payload?: { origin?: string; message?: { inputKind?: string } };
+    };
+    expect(enqueueArgs.payload?.origin).toBe('space_inject');
+    expect(enqueueArgs.payload?.message?.inputKind).toBe('system');
+  });
+
+  it('a mailbox entry that dead-letters before materializing a row fails the injection', async () => {
+    const { manager, session } = makeManager({
+      mailboxEntryStatus: 'dead',
+      materializedRowIds: [],
+    });
+    indexSession(manager, liveSession(session));
+
+    await expect(
+      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+    ).rejects.toThrow('failed to materialize (dead)');
 
     expect(session.saveUserMessage).toHaveBeenCalledTimes(1);
-    expect(session.jobQueueEnqueue).toHaveBeenCalled();
+    expect(session.saveUserMessage.mock.calls[0][2]).toBe('failed');
+    expect(session.publishStatusChanged).toHaveBeenCalledWith('messages.statusChanged', {
+      sessionId: SESSION_ID,
+      messageIds: ['db-id'],
+      status: 'failed',
+    });
+  });
+
+  it('a retry over an existing row waits for its own mailbox entry instead of the stale row', async () => {
+    const { manager, session } = makeManager({
+      deliveryContent: { sendStatus: 'failed' },
+      mailboxEntryStatus: 'dead',
+    });
+    indexSession(manager, liveSession(session));
+
+    await expect(
+      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+    ).rejects.toThrow('failed to materialize (dead)');
+
+    expect(session.reopenDeliveryByUuid).toHaveBeenCalledTimes(1);
+    expect(session.normalizeDeliveryMailbox).toHaveBeenCalledTimes(1);
+    expect(session.failDeliveryUnless).toHaveBeenCalled();
+    expect(session.saveUserMessage).not.toHaveBeenCalled();
+  });
+
+  it('an immediate retry over a deferred row activates it only after the entry materializes', async () => {
+    const { manager, session } = makeManager({ deliveryContent: { sendStatus: 'deferred' } });
+    indexSession(manager, liveSession(session));
+    const activate = mock(async () => true);
+    (
+      manager as unknown as {
+        activateDeferredDeliveryRow: (
+          sessionId: string,
+          messageId: string,
+          origin: 'space_inject' | 'chat'
+        ) => Promise<boolean>;
+      }
+    ).activateDeferredDeliveryRow = activate;
+
+    await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
+
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(activate.mock.calls[0][0]).toBe(SESSION_ID);
+    expect(activate.mock.calls[0][2]).toBe('space_inject');
+    expect(session.normalizeDeliveryMailbox).toHaveBeenCalledTimes(1);
+    expect(session.mailboxEnqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('a deferred human retry activates its held job with chat origin', async () => {
+    const { manager, session } = makeManager({ deliveryContent: { sendStatus: 'deferred' } });
+    indexSession(manager, liveSession(session));
+    const activate = mock(async () => true);
+    (
+      manager as unknown as {
+        activateDeferredDeliveryRow: (
+          sessionId: string,
+          messageId: string,
+          origin: 'space_inject' | 'chat'
+        ) => Promise<boolean>;
+      }
+    ).activateDeferredDeliveryRow = activate;
+
+    await manager.injectSubSessionMessage(SESSION_ID, 'a human follow-up', false);
+
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(activate.mock.calls[0][2]).toBe('chat');
+  });
+
+  it('skips failure publication when the atomic fence refuses the transition', async () => {
+    const { manager, session } = makeManager({
+      deliveryContent: { sendStatus: 'enqueued' },
+      mailboxEntryStatus: 'dead',
+    });
+    indexSession(manager, liveSession(session));
+
+    await expect(
+      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+    ).rejects.toThrow('failed to materialize (dead)');
+
+    expect(session.failDeliveryUnless).toHaveBeenCalledTimes(1);
+    expect(session.saveUserMessage).not.toHaveBeenCalled();
+    expect(
+      session.publishStatusChanged.mock.calls.filter(
+        ([event]) => event === 'messages.statusChanged'
+      )
+    ).toEqual([]);
+  });
+
+  it('fails the settlement when deferred activation activates nothing', async () => {
+    const { manager } = makeManager({ deliveryContent: { sendStatus: 'deferred' } });
+    indexSession(manager, liveSession(session));
+    (
+      manager as unknown as {
+        activateDeferredDeliveryRow: (
+          sessionId: string,
+          messageId: string,
+          origin: 'space_inject' | 'chat'
+        ) => Promise<boolean>;
+      }
+    ).activateDeferredDeliveryRow = mock(async () => false);
+
+    await expect(
+      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+    ).rejects.toThrow('activated nothing');
+  });
+
+  it('a normalization error over an existing row restores the failed status', async () => {
+    const { manager, session } = makeManager({
+      deliveryContent: { sendStatus: 'failed' },
+      normalizeThrows: true,
+    });
+    indexSession(manager, liveSession(session));
+
+    await expect(
+      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+    ).rejects.toThrow();
+
+    expect(session.failDeliveryUnless).toHaveBeenCalledTimes(1);
+    expect(session.saveUserMessage).not.toHaveBeenCalled();
+  });
+
+  it('a deferred-row retry whose entry dead-letters never releases the deferred hold', async () => {
+    const { manager, session } = makeManager({
+      deliveryContent: { sendStatus: 'deferred' },
+      mailboxEntryStatus: 'dead',
+    });
+    indexSession(manager, liveSession(session));
+    const activate = mock(async () => true);
+    (
+      manager as unknown as {
+        activateDeferredDeliveryRow: (
+          sessionId: string,
+          messageId: string,
+          origin: 'space_inject' | 'chat'
+        ) => Promise<boolean>;
+      }
+    ).activateDeferredDeliveryRow = activate;
+
+    await expect(
+      manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
+    ).rejects.toThrow('failed to materialize (dead)');
+
+    expect(activate).not.toHaveBeenCalled();
+    expect(session.cancelHeldJob).toHaveBeenCalledTimes(1);
+    expect(session.cancelHeldJob.mock.calls[0][0]).toBe(SESSION_ID);
+    expect(session.failDeliveryUnless).toHaveBeenCalled();
+    expect(session.saveUserMessage).not.toHaveBeenCalled();
   });
 
   it('a retry finding an existing CONSUMED row does not re-persist or re-enqueue (no re-drive)', async () => {
@@ -212,7 +474,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
 
     expect(session.reopenDeliveryByUuid).toHaveBeenCalledTimes(1);
     expect(session.saveUserMessage).not.toHaveBeenCalled();
-    expect(session.jobQueueEnqueue).toHaveBeenCalled();
+    expect(session.mailboxEnqueue).toHaveBeenCalledTimes(1);
   });
 
   it('a cancelled clear during a FAILED-row retry aborts before reopening the row', async () => {
@@ -345,17 +607,18 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     });
   });
 
-  it('a fresh enqueued injection publishes messages.statusChanged', async () => {
+  it('a fresh injection defers row creation and status publication to the mailbox lane', async () => {
     const { manager, session } = makeManager({});
     indexSession(manager, liveSession(session));
 
     await manager.injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true);
 
-    expect(session.publishStatusChanged).toHaveBeenCalledWith('messages.statusChanged', {
-      sessionId: SESSION_ID,
-      messageIds: ['db-id'],
-      status: 'enqueued',
-    });
+    expect(session.mailboxEnqueue).toHaveBeenCalledTimes(1);
+    expect(
+      session.publishStatusChanged.mock.calls.filter(
+        ([event]) => event === 'messages.statusChanged'
+      )
+    ).toEqual([]);
   });
 
   it('a failed-row retry publishes reopen and deferred status changes', async () => {
@@ -381,15 +644,30 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     expect(statuses).toContain('deferred');
   });
 
-  it('publishes a failed status when the delivery job cannot be enqueued', async () => {
-    const { manager, session } = makeManager({ enqueueThrows: true, failedDbId: 'db-id' });
+  it('publishes a failed status and persists a retry-compatible failed row when the handoff is rejected', async () => {
+    const { manager, session } = makeManager({ enqueueThrows: true, materializedRowIds: [] });
     indexSession(manager, liveSession(session));
 
     await manager
       .injectSubSessionMessage(SESSION_ID, '─── Message from coder ───', true)
       .catch(() => {});
 
-    expect(session.markDeliveryFailedByUuid).toHaveBeenCalled();
+    expect(session.markDeliveryFailedByUuid).not.toHaveBeenCalled();
+    expect(session.saveUserMessage).toHaveBeenCalledTimes(1);
+    expect(session.saveUserMessage.mock.calls[0][2]).toBe('failed');
+    expect(session.saveUserMessage.mock.calls[0][3]).toBe('system');
+    const saved = session.saveUserMessage.mock.calls[0][1] as Record<string, unknown>;
+    expect(saved).toMatchObject({
+      type: 'user',
+      session_id: SESSION_ID,
+      parent_tool_use_id: null,
+      inputKind: 'task',
+      isSynthetic: true,
+    });
+    expect(typeof saved.uuid).toBe('string');
+    expect(saved.message).toEqual({
+      content: [{ type: 'text', text: '─── Message from coder ───' }],
+    });
     expect(session.publishStatusChanged).toHaveBeenCalledWith('messages.statusChanged', {
       sessionId: SESSION_ID,
       messageIds: ['db-id'],

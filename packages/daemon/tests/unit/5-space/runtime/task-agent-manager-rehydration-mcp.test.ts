@@ -479,17 +479,22 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     config.nodeExecutionRepo.getByAgentSessionId = () => makeExecution();
     config.db.getSDKMessageRepo = () => ({
       getDeliveryContent: () => null,
+      getDeliveryMessageIdsByUuids: () => ['db-id'],
       reopenDeliveryByUuid: () => null,
       markDeliveryFailedByUuid: () => null,
       markDeliveryDeferredByUuid: () => null,
     });
     config.db.getJobQueueRepo = () => ({
       activeDeliveryMessageUuids: () => new Set<string>(),
+      activeMailboxMessageUuids: () => new Set<string>(),
+      mailboxEntryJobStatus: () => 'completed' as const,
+      cancelPendingMailboxEntry: () => false,
       enqueue: (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
         const uuid = args?.payload?.messageUuid;
         if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
         return { id: 'job-1' };
       },
+      enqueueUniquePending: () => ({ id: 'mailbox-job-1' }),
     });
     config.db.saveUserMessage = () => 'db-id';
     config.db.getUserMessageIdsByStatus = () => [];
@@ -534,18 +539,27 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       }
     ).config;
     config.nodeExecutionRepo.getByAgentSessionId = () => makeExecution();
+    let mailboxMessageUuid: string | null = null;
     config.db.getSDKMessageRepo = () => ({
       getDeliveryContent: () => null,
+      getDeliveryMessageIdsByUuids: () => (mailboxMessageUuid ? [mailboxMessageUuid] : []),
       reopenDeliveryByUuid: () => null,
       markDeliveryFailedByUuid: () => null,
       markDeliveryDeferredByUuid: () => null,
     });
     config.db.getJobQueueRepo = () => ({
       activeDeliveryMessageUuids: () => new Set<string>(),
+      activeMailboxMessageUuids: () => new Set<string>(),
+      mailboxEntryJobStatus: () => 'completed' as const,
+      cancelPendingMailboxEntry: () => false,
       enqueue: (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
         const uuid = args?.payload?.messageUuid;
         if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
         return { id: 'job-1' };
+      },
+      enqueueUniquePending: (args: { payload?: { messageUuid?: string } }) => {
+        mailboxMessageUuid = args?.payload?.messageUuid ?? null;
+        return { id: 'mailbox-job-1' };
       },
     });
     config.db.saveUserMessage = () => 'db-id';
@@ -564,7 +578,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       true
     );
 
-    expect(dbId).toBe('db-id');
+    expect(dbId).toBe(mailboxMessageUuid);
   });
 
   test('task.workspacePath outranks the stale session workspace and syncs the restored session (WS10)', async () => {
