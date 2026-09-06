@@ -2063,6 +2063,17 @@ export class SDKMessageRepository {
     return withBusyRetry(() => txn());
   }
 
+  findMessageIdByUuid(sessionId: string, uuid: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT id FROM sdk_messages
+           WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
+           ORDER BY timestamp ASC LIMIT 1`
+      )
+      .get(sessionId, uuid) as { id: string } | undefined;
+    return row?.id ?? null;
+  }
+
   markDeliveryFailedByUuidInclusive(sessionId: string, uuid: string): string | null {
     return this.markDeliveryTransitionByUuid(sessionId, uuid, 'fail_inclusive');
   }
