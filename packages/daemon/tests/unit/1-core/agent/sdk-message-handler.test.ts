@@ -83,7 +83,6 @@ describe('SDKMessageHandler', () => {
   let detectPhaseFromMessageSpy: ReturnType<typeof mock>;
   let setIdleSpy: ReturnType<typeof mock>;
   let beginTerminalIdleSpy: ReturnType<typeof mock>;
-  let cancelTerminalIdleArmSpy: ReturnType<typeof mock>;
   let setCompactingSpy: ReturnType<typeof mock>;
   let getIsCompactingSpy: ReturnType<typeof mock>;
   let getContextInfoSpy: ReturnType<typeof mock>;
@@ -186,12 +185,10 @@ describe('SDKMessageHandler', () => {
     setCompactingSpy = mock(async () => {});
     getIsCompactingSpy = mock(() => false);
     getStateSpy = mock(() => ({ phase: 'idle' }));
-    cancelTerminalIdleArmSpy = mock(() => {});
     mockStateManager = {
       detectPhaseFromMessage: detectPhaseFromMessageSpy,
       setIdle: setIdleSpy,
       beginTerminalIdle: beginTerminalIdleSpy,
-      cancelTerminalIdleArm: cancelTerminalIdleArmSpy,
       idleOwnerForQuery: mock((queryGeneration: number) => ({ queryGeneration, turnToken: 0 })),
       setCompacting: setCompactingSpy,
       getIsCompacting: getIsCompactingSpy,
@@ -913,7 +910,7 @@ describe('SDKMessageHandler', () => {
           modelUsage: {},
         }) as unknown as SDKMessage;
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       setIdleSpy.mockClear();
 
       await handler.handleMessage(result('clear-result'));
@@ -940,7 +937,7 @@ describe('SDKMessageHandler', () => {
           modelUsage: {},
         }) as unknown as SDKMessage;
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       let settled: string | null = null;
       void wait.then((confirmed) => {
@@ -961,7 +958,7 @@ describe('SDKMessageHandler', () => {
     });
 
     it('waitForSuppressedResult resolves false on timeout', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(15);
 
       expect(await wait).toBe('reset');
@@ -977,7 +974,7 @@ describe('SDKMessageHandler', () => {
           session_id: 'sdk-session-123',
         }) as unknown as SDKMessage;
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
       let settled: string | null = null;
       void wait.then((confirmed) => {
@@ -1047,7 +1044,7 @@ describe('SDKMessageHandler', () => {
           modelUsage: {},
         }) as unknown as SDKMessage;
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
       let settled: string | null = null;
       void wait.then((confirmed) => {
@@ -1062,7 +1059,7 @@ describe('SDKMessageHandler', () => {
     });
 
     it('a result omitting user_message_uuid never confirms the correlated clear wait', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(20, 'clear-msg-id');
 
       await handler.handleMessage({
@@ -1099,7 +1096,7 @@ describe('SDKMessageHandler', () => {
         modelUsage: {},
       } as unknown as SDKMessage;
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       handler.markClearMessageSent();
       setIdleSpy.mockClear();
@@ -1111,7 +1108,7 @@ describe('SDKMessageHandler', () => {
     });
 
     it('clearIdleSuppression settles a pending wait as unconfirmed', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
 
       handler.clearIdleSuppression();
@@ -1120,7 +1117,7 @@ describe('SDKMessageHandler', () => {
     });
 
     it('a uuid-less error result releases a correlated clear wait promptly', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
       handler.markClearMessageSent();
       setIdleSpy.mockClear();
@@ -1162,7 +1159,7 @@ describe('SDKMessageHandler', () => {
         modelUsage: {},
       } as unknown as SDKMessage;
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       let settled: string | null = null;
       void handler.waitForSuppressedResult(5_000, 'clear-msg-id').then((outcome) => {
         settled = outcome;
@@ -1191,7 +1188,7 @@ describe('SDKMessageHandler', () => {
         total_cost_usd: 0.001,
         modelUsage: {},
       } as unknown as SDKMessage;
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const confirmedWait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
       handler.markClearMessageSent();
       await handler.handleMessage(successResult);
@@ -1201,7 +1198,7 @@ describe('SDKMessageHandler', () => {
 
       handler.markClearMessageSent();
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       let settled2: string | null = null;
       void handler.waitForSuppressedResult(5_000, 'clear-msg-id-2').then((outcome) => {
         settled2 = outcome;
@@ -1223,7 +1220,7 @@ describe('SDKMessageHandler', () => {
         await gate;
       });
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
       handler.markClearMessageSent();
       let settled: string | null = null;
@@ -1258,7 +1255,7 @@ describe('SDKMessageHandler', () => {
     });
 
     it('cancelSuppressedResultWait settles a pending wait as cancelled', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
 
       handler.cancelSuppressedResultWait();
@@ -1275,7 +1272,7 @@ describe('SDKMessageHandler', () => {
         }
       });
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
 
       await expect(
@@ -1305,7 +1302,7 @@ describe('SDKMessageHandler', () => {
         }
       });
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
 
       await expect(
@@ -1339,7 +1336,7 @@ describe('SDKMessageHandler', () => {
         }
       });
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(30, 'clear-msg-id');
 
       const handled = handler.handleMessage({
@@ -1387,7 +1384,7 @@ describe('SDKMessageHandler', () => {
           session_id: 'sdk-session-123',
         }) as unknown as SDKMessage;
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(30, 'clear-msg-id');
       let settled: string | null = null;
       void wait.then((outcome) => {
@@ -1429,7 +1426,7 @@ describe('SDKMessageHandler', () => {
           session_id: 'sdk-session-123',
         }) as unknown as SDKMessage;
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
       handler.markClearMessageSent();
 
@@ -1469,7 +1466,7 @@ describe('SDKMessageHandler', () => {
     });
 
     it('the result deadline stays disarmed until startSuppressedResultTimer runs', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.armSuppressedResultWait('clear-msg-id');
       let settled: string | null = null;
       void wait.then((outcome) => {
@@ -1513,7 +1510,7 @@ describe('SDKMessageHandler', () => {
         modelUsage: {},
       } as unknown as SDKMessage;
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       getUserMessagesByStatusSpy.mockReturnValue({
         messages: [reopenedRow],
         total: 1,
@@ -1523,7 +1520,7 @@ describe('SDKMessageHandler', () => {
       await wait;
       expect(getUserMessagesByStatusSpy).not.toHaveBeenCalled();
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       getUserMessagesByStatusSpy.mockClear();
       const plainWait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
       const plainResult = { ...clearResult, user_message_uuid: 'other-turn' } as SDKMessage;
@@ -1547,7 +1544,7 @@ describe('SDKMessageHandler', () => {
     });
 
     it('clear recovery resets session-state turn flags so result-based idle still works', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       await handler.handleMessage({
         type: 'system',
         subtype: 'session_state_changed',
@@ -1583,7 +1580,7 @@ describe('SDKMessageHandler', () => {
         order.push('metadata-write');
       });
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id').then((confirmed) => {
         order.push(`settled:${confirmed}`);
         return confirmed;
@@ -1623,7 +1620,7 @@ describe('SDKMessageHandler', () => {
         modelUsage: {},
       } as unknown as SDKMessage;
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       saveSDKMessageSpy.mockReturnValueOnce(false);
       setIdleSpy.mockClear();
@@ -3571,20 +3568,17 @@ describe('SDKMessageHandler', () => {
       });
 
       describe('legacy-fragility characterization', () => {
-        it('legacy success path fires beginTerminalIdle then two setIdle calls', async () => {
+        it('legacy success path settles idle twice with no terminal-idle fence', async () => {
           const order: string[] = [];
-          beginTerminalIdleSpy.mockImplementation(() => {
-            order.push('beginTerminalIdle');
-          });
           setIdleSpy.mockImplementation(async () => {
             order.push('setIdle');
           });
 
           await handler.handleMessage(makeResultMessage(0.001));
 
-          expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+          expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
           expect(setIdleSpy).toHaveBeenCalledTimes(2);
-          expect(order).toEqual(['beginTerminalIdle', 'setIdle', 'setIdle']);
+          expect(order).toEqual(['setIdle', 'setIdle']);
         });
 
         it('cost accounting runs between the two setIdle calls', async () => {
@@ -4891,7 +4885,7 @@ describe('SDKMessageHandler', () => {
       };
     }
 
-    it('starts the terminal fence before publishing a persisted result', async () => {
+    it('defers the legacy idle settle until the persisted result finishes publishing', async () => {
       let resolvePublish!: () => void;
       emitSpy.mockImplementation(
         (_event: string) =>
@@ -4915,14 +4909,10 @@ describe('SDKMessageHandler', () => {
       } as unknown as SDKMessage;
 
       const handling = handler.handleMessage(resultMessage);
-      for (
-        let attempt = 0;
-        attempt < 20 && beginTerminalIdleSpy.mock.calls.length === 0;
-        attempt += 1
-      ) {
+      for (let attempt = 0; attempt < 20 && !resolvePublish; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 1));
       }
-      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
       expect(setIdleSpy).not.toHaveBeenCalled();
 
       resolvePublish();
@@ -6390,17 +6380,16 @@ describe('SDKMessageHandler', () => {
 
       await handler.handleMessage(makeResult(), 3);
 
-      expect(beginTerminalIdleSpy).toHaveBeenCalledWith({ queryGeneration: 3, turnToken: 0 });
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
       expect(idleSettleArgs()).toContainEqual({ owner: { queryGeneration: 3, turnToken: 0 } });
       expect(publishedTopics()).toContain('query.trigger');
     });
 
-    it('a stale result arms and settles with its own owner (paired) and skips the turn replay', async () => {
+    it('a stale result settles with its own owner and skips the turn replay', async () => {
       setGeneration(9);
 
       await handler.handleMessage(makeResult(), 2);
 
-      expect(beginTerminalIdleSpy).toHaveBeenCalledWith({ queryGeneration: 2, turnToken: 0 });
       expect(idleSettleArgs()).toContainEqual({ owner: { queryGeneration: 2, turnToken: 0 } });
       expect(publishedTopics()).not.toContain('query.trigger');
     });
@@ -6420,14 +6409,13 @@ describe('SDKMessageHandler', () => {
       expect(publishedTopics()).not.toContain('query.trigger');
     });
 
-    it('a stale session-state idle does not settle idle, cancels its orphaned arm, and leaves the successor turn flags alone', async () => {
+    it('a stale session-state idle does not settle idle and leaves the successor turn flags alone', async () => {
       setGeneration(9);
       setIdleSpy.mockClear();
 
       await handler.handleMessage(sessionState('idle'), 2);
 
       expect(setIdleSpy).not.toHaveBeenCalled();
-      expect(cancelTerminalIdleArmSpy).toHaveBeenCalledWith({ queryGeneration: 2, turnToken: 0 });
       expect(publishedTopics()).not.toContain('query.trigger');
       expect(
         (handler as unknown as { usesSessionStateChangedTurnEnd: boolean })
@@ -6435,17 +6423,15 @@ describe('SDKMessageHandler', () => {
       ).toBe(false);
     });
 
-    it('a stale session-state busy event does not arm the successor turn-end expectations', async () => {
+    it('a stale session-state busy event does not arm the successor turn flags', async () => {
       setGeneration(9);
 
       await handler.handleMessage(sessionState('busy'), 2);
 
-      const flags = handler as unknown as {
-        usesSessionStateChangedTurnEnd: boolean;
-        expectsSessionStateIdleAfterResult: boolean;
-      };
-      expect(flags.usesSessionStateChangedTurnEnd).toBe(false);
-      expect(flags.expectsSessionStateIdleAfterResult).toBe(false);
+      expect(
+        (handler as unknown as { usesSessionStateChangedTurnEnd: boolean })
+          .usesSessionStateChangedTurnEnd
+      ).toBe(false);
     });
 
     it('an idle event going stale during the finishTurn await keeps the successor turn flags', async () => {

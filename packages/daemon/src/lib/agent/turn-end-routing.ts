@@ -1,16 +1,14 @@
 export type TurnEndFlags = {
-  suppressIdleOnNextResult: boolean;
+  suppressIdleOnTurnEnd: boolean;
   usesSessionStateChangedTurnEnd: boolean;
-  expectsSessionStateIdleAfterResult: boolean;
   lastResultWasSuccess: boolean | null;
   clearAwaitingTrailingIdle: boolean;
   clearMessageInFlight: boolean;
 };
 
 export const resetTurnEndFlags: TurnEndFlags = {
-  suppressIdleOnNextResult: false,
+  suppressIdleOnTurnEnd: false,
   usesSessionStateChangedTurnEnd: false,
-  expectsSessionStateIdleAfterResult: false,
   lastResultWasSuccess: null,
   clearAwaitingTrailingIdle: false,
   clearMessageInFlight: false,
@@ -29,8 +27,7 @@ export type TurnEndEvent =
   | { kind: 'sessionState'; state: 'idle' | 'running' | 'requires_action' };
 
 export type TurnEndPlan = {
-  idleFence: boolean;
-  earlySetIdle: boolean;
+  fallbackSetIdle: boolean;
   finishTurn: boolean;
   allowQueueReplay: boolean;
   setIdleSuppressed: boolean;
@@ -60,8 +57,7 @@ function makePlan(
   afterEffectsFlags?: TurnEndFlags
 ): TurnEndPlan {
   return {
-    idleFence: false,
-    earlySetIdle: false,
+    fallbackSetIdle: false,
     finishTurn: false,
     allowQueueReplay: false,
     setIdleSuppressed: false,
@@ -86,7 +82,6 @@ export function routeTurnEnd(
       return makePlan({
         ...flags,
         usesSessionStateChangedTurnEnd: true,
-        expectsSessionStateIdleAfterResult: true,
       });
     }
     const next = { ...flags, usesSessionStateChangedTurnEnd: true };
@@ -101,10 +96,10 @@ export function routeTurnEnd(
         resetTurnEndFlags
       );
     }
-    if (next.suppressIdleOnNextResult) {
+    if (next.suppressIdleOnTurnEnd) {
       const kept = {
         ...resetTurnEndFlags,
-        suppressIdleOnNextResult: next.suppressIdleOnNextResult,
+        suppressIdleOnTurnEnd: next.suppressIdleOnTurnEnd,
         clearMessageInFlight: next.clearMessageInFlight,
       };
       return makePlan(next, { setIdleSuppressed: true, resetThinkingTokens: true }, kept);
@@ -131,13 +126,13 @@ export function routeTurnEnd(
     resetThinkingTokens: isTopLevel && !isLimitError,
     cancelSuppressedTimer: confirmsArmedClear,
   };
-  const canBeginIdle =
-    isTopLevel && isLimitRecoveryEngaged === false && !flags.suppressIdleOnNextResult;
-  if (canBeginIdle) {
-    plan.idleFence = true;
-    if (!flags.usesSessionStateChangedTurnEnd && !settlesArmedClearError) {
-      plan.earlySetIdle = true;
-    }
+  const canFallbackIdle =
+    isTopLevel &&
+    isLimitRecoveryEngaged === false &&
+    !flags.suppressIdleOnTurnEnd &&
+    !flags.usesSessionStateChangedTurnEnd;
+  if (canFallbackIdle && !settlesArmedClearError) {
+    plan.fallbackSetIdle = true;
   }
   if (isLimitRecoveryEngaged) {
     return makePlan(nextFlags, plan);
@@ -150,8 +145,8 @@ export function routeTurnEnd(
     );
   }
   if (confirmsArmedClear) {
-    const after = { ...nextFlags, suppressIdleOnNextResult: false };
-    if (nextFlags.usesSessionStateChangedTurnEnd && nextFlags.expectsSessionStateIdleAfterResult) {
+    const after = { ...nextFlags, suppressIdleOnTurnEnd: false };
+    if (nextFlags.usesSessionStateChangedTurnEnd) {
       after.clearAwaitingTrailingIdle = true;
       plan.rearmSuppressedTimer = true;
     } else {
@@ -160,14 +155,7 @@ export function routeTurnEnd(
     }
     return makePlan(nextFlags, plan, after);
   }
-  if (
-    isTopLevel &&
-    isSuccess &&
-    !flags.suppressIdleOnNextResult &&
-    !flags.usesSessionStateChangedTurnEnd &&
-    !flags.expectsSessionStateIdleAfterResult &&
-    isLimitRecoveryEngaged === false
-  ) {
+  if (canFallbackIdle && isSuccess) {
     plan.finishTurn = true;
     plan.allowQueueReplay = canReplay(nextFlags.lastResultWasSuccess, ctx.queryMode);
   }

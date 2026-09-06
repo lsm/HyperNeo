@@ -143,7 +143,7 @@ describe('AgentSession.clearConversationContext', () => {
   it('arms idle suppression before /clear so its result cannot fire the completion callback early', async () => {
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
     stubClearExternals(session);
-    const suppressSpy = spyOn(session.messageHandler, 'suppressIdleForNextResult');
+    const suppressSpy = spyOn(session.messageHandler, 'suppressIdleForNextTurnEnd');
 
     await session.clearConversationContext();
 
@@ -187,7 +187,7 @@ describe('AgentSession.clearConversationContext', () => {
   it('clear resolves on the SDK result of the /clear turn, not on sent (confirmed clear)', async () => {
     const session = createAgentSession({ sdkSessionId: 'sdk-1' } as Partial<Session>);
     spyOn(session['lifecycleManager'], 'ensureQueryStarted').mockResolvedValue(undefined);
-    const suppressSpy = spyOn(session.messageHandler, 'suppressIdleForNextResult');
+    const suppressSpy = spyOn(session.messageHandler, 'suppressIdleForNextTurnEnd');
     const warnSpy = spyOn(session.logger, 'warn').mockImplementation(() => {});
     session.messageQueue.start();
     const messages = session.messageQueue.messageGenerator(session.session.id);

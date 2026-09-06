@@ -14,9 +14,8 @@ import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import type { Database } from '../../../../src/storage/database';
 
 type FlagView = {
-  suppressIdleOnNextResult: boolean;
+  suppressIdleOnTurnEnd: boolean;
   usesSessionStateChangedTurnEnd: boolean;
-  expectsSessionStateIdleAfterResult: boolean;
   lastResultWasSuccess: boolean | null;
   clearAwaitingTrailingIdle: boolean;
   clearMessageInFlight: boolean;
@@ -25,9 +24,8 @@ type FlagView = {
 };
 
 const resetFlags: FlagView = {
-  suppressIdleOnNextResult: false,
+  suppressIdleOnTurnEnd: false,
   usesSessionStateChangedTurnEnd: false,
-  expectsSessionStateIdleAfterResult: false,
   lastResultWasSuccess: null,
   clearAwaitingTrailingIdle: false,
   clearMessageInFlight: false,
@@ -38,9 +36,8 @@ const resetFlags: FlagView = {
 function readFlags(handler: SDKMessageHandler): FlagView {
   const view = handler as unknown as FlagView;
   return {
-    suppressIdleOnNextResult: view.suppressIdleOnNextResult,
+    suppressIdleOnTurnEnd: view.suppressIdleOnTurnEnd,
     usesSessionStateChangedTurnEnd: view.usesSessionStateChangedTurnEnd,
-    expectsSessionStateIdleAfterResult: view.expectsSessionStateIdleAfterResult,
     lastResultWasSuccess: view.lastResultWasSuccess,
     clearAwaitingTrailingIdle: view.clearAwaitingTrailingIdle,
     clearMessageInFlight: view.clearMessageInFlight,
@@ -257,7 +254,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       suppress?: boolean;
       clearInFlight?: boolean;
       manual?: boolean;
-      expectedFence: number;
       expectedSetIdle: number;
       expectedReplay: number;
       expectedWait?: 'reset';
@@ -266,50 +262,45 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
     const legacyRows: LegacyRow[] = [
       {
-        name: 'success without suppression: fence, doubled idle (direct + finishTurn), replay',
+        name: 'success without suppression: doubled idle (fallback settle + finishTurn), replay',
         result: () => successResult('legacy-success'),
-        expectedFence: 1,
         expectedSetIdle: 2,
         expectedReplay: 1,
         expectedFlags: { ...resetFlags, lastResultWasSuccess: true },
       },
       {
-        name: 'success without suppression in manual mode: fence, doubled idle, no replay',
+        name: 'success without suppression in manual mode: doubled idle, no replay',
         result: () => successResult('legacy-success-manual'),
         manual: true,
-        expectedFence: 1,
         expectedSetIdle: 2,
         expectedReplay: 0,
         expectedFlags: { ...resetFlags, lastResultWasSuccess: true },
       },
       {
-        name: 'error result without suppression: fence, direct idle only, no replay',
+        name: 'error result without suppression: fallback idle only, no replay',
         result: () => errorResult('legacy-error'),
-        expectedFence: 1,
         expectedSetIdle: 1,
         expectedReplay: 0,
         expectedFlags: { ...resetFlags, lastResultWasSuccess: false },
       },
       {
-        name: 'suppressed success: no fence, no idle, suppression cleared by confirmation',
+        name: 'suppressed success: no idle, suppression cleared by confirmation',
         result: () => successResult('legacy-suppressed-success'),
         suppress: true,
-        expectedFence: 0,
         expectedSetIdle: 0,
         expectedReplay: 0,
         expectedFlags: { ...resetFlags, lastResultWasSuccess: true },
       },
       {
-        name: 'suppressed error with no clear in flight: no fence, no idle, suppression retained',
+        name: 'suppressed error with no clear in flight: no idle, suppression retained',
         result: () => errorResult('legacy-suppressed-error'),
         suppress: true,
-        expectedFence: 0,
         expectedSetIdle: 0,
         expectedReplay: 0,
         expectedFlags: {
           ...resetFlags,
           lastResultWasSuccess: false,
-          suppressIdleOnNextResult: true,
+          suppressIdleOnTurnEnd: true,
         },
       },
       {
@@ -317,7 +308,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         result: () => errorResult('legacy-clear-error'),
         suppress: true,
         clearInFlight: true,
-        expectedFence: 0,
         expectedSetIdle: 0,
         expectedReplay: 0,
         expectedWait: 'reset',
@@ -331,7 +321,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
           mockSession.config = { ...mockSession.config, queryMode: 'manual' };
         }
         if (row.suppress) {
-          handler.suppressIdleForNextResult();
+          handler.suppressIdleForNextTurnEnd();
         }
         let wait: Promise<string> | null = null;
         if (row.clearInFlight) {
@@ -341,7 +331,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
         await handler.handleMessage(row.result());
 
-        expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(row.expectedFence);
+        expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
         expect(setIdleSpy).toHaveBeenCalledTimes(row.expectedSetIdle);
         expect(setIdleSpy.mock.calls).toEqual(
           Array.from({ length: row.expectedSetIdle }, () => [])
@@ -375,7 +365,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     });
 
     it('a nested result during an armed clear leaves suppression and the waiter untouched', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       handler.markClearMessageSent();
       let settled: string | null = null;
@@ -389,7 +379,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(settled).toBe(null);
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
-        suppressIdleOnNextResult: true,
+        suppressIdleOnTurnEnd: true,
         clearMessageInFlight: true,
       });
 
@@ -399,7 +389,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(settled).toBe(null);
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
-        suppressIdleOnNextResult: true,
+        suppressIdleOnTurnEnd: true,
         clearMessageInFlight: true,
       });
 
@@ -409,7 +399,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     });
 
     it('a successful sent clear in legacy mode confirms immediately without a trailing idle', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
       handler.markClearMessageSent();
 
@@ -436,12 +426,11 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
     const stateModeRows: StateModeRow[] = [
       {
-        name: 'success then idle event: fence on the result, finishTurn on idle with replay',
+        name: 'success then idle event: finishTurn on idle with replay',
         result: () => successResult('state-success'),
         expectedMidFlags: {
           ...resetFlags,
           usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
           lastResultWasSuccess: true,
         },
         expectedReplay: 1,
@@ -453,7 +442,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         expectedMidFlags: {
           ...resetFlags,
           usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
           lastResultWasSuccess: true,
         },
         expectedReplay: 0,
@@ -464,7 +452,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         expectedMidFlags: {
           ...resetFlags,
           usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
           lastResultWasSuccess: false,
         },
         expectedReplay: 0,
@@ -480,7 +467,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         expect(readFlags(handler)).toEqual({
           ...resetFlags,
           usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
         });
 
         setIdleSpy.mockClear();
@@ -488,7 +474,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         emitSpy.mockClear();
 
         await handler.handleMessage(row.result());
-        expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+        expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
         expect(setIdleSpy).not.toHaveBeenCalled();
         expect(replayCount()).toBe(0);
         expect(readFlags(handler)).toEqual(row.expectedMidFlags);
@@ -515,7 +501,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         expect(readFlags(handler)).toEqual({
           ...resetFlags,
           usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
           currentThinkingTokensEstimate: 120,
           lastStampedThinkingTokensEstimate: 120,
         });
@@ -552,7 +537,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       const armedFlags = {
         ...resetFlags,
         usesSessionStateChangedTurnEnd: true,
-        expectsSessionStateIdleAfterResult: true,
       };
       expect(readFlags(handler)).toEqual(armedFlags);
 
@@ -563,7 +547,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     });
 
     it('a suppressed result-less idle event uses the suppressed transition and retains the clear', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       handler.markClearMessageSent();
       let settled: string | null = null;
@@ -583,7 +567,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
-        suppressIdleOnNextResult: true,
+        suppressIdleOnTurnEnd: true,
         clearMessageInFlight: true,
       });
 
@@ -592,7 +576,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     });
 
     it('a result-less idle event with an armed but unsent clear also uses the suppressed transition', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       let settled: string | null = null;
       void wait.then((outcome) => {
@@ -609,7 +593,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         suppressIdleCallback: true,
       });
       expect(replayCount()).toBe(0);
-      expect(readFlags(handler)).toEqual({ ...resetFlags, suppressIdleOnNextResult: true });
+      expect(readFlags(handler)).toEqual({ ...resetFlags, suppressIdleOnTurnEnd: true });
 
       handler.clearIdleSuppression();
       expect(await wait).toBe('reset');
@@ -618,7 +602,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     it('a result-less idle after the mode is armed still uses the suppressed transition', async () => {
       await handler.handleMessage(sessionState('running'));
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       handler.markClearMessageSent();
       let settled: string | null = null;
@@ -638,7 +622,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
-        suppressIdleOnNextResult: true,
+        suppressIdleOnTurnEnd: true,
         clearMessageInFlight: true,
       });
 
@@ -648,7 +632,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
     it('a suppressed confirmed result under session-state mode holds the shell retention row until idle', async () => {
       await handler.handleMessage(sessionState('running'));
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
       handler.markClearMessageSent();
       expect(readFlags(handler).clearMessageInFlight).toBe(true);
@@ -662,7 +646,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
         usesSessionStateChangedTurnEnd: true,
-        expectsSessionStateIdleAfterResult: true,
         lastResultWasSuccess: true,
         clearAwaitingTrailingIdle: true,
         clearMessageInFlight: true,
@@ -714,19 +697,17 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         afterBusy: {
           ...resetFlags,
           usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
         },
         afterResult: {
           ...resetFlags,
-          suppressIdleOnNextResult: true,
+          suppressIdleOnTurnEnd: true,
           usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
           lastResultWasSuccess: false,
         },
         sendIdleEvent: true,
         expectedIdle: 'suppressed',
         expectedReplay: 0,
-        expectedFlags: { ...resetFlags, suppressIdleOnNextResult: true },
+        expectedFlags: { ...resetFlags, suppressIdleOnTurnEnd: true },
       },
       {
         name: 'session-state mode with a suppressed error and clear in flight unwinds on the result',
@@ -735,7 +716,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         afterBusy: {
           ...resetFlags,
           usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
         },
         afterResult: resetFlags,
         sendIdleEvent: false,
@@ -751,13 +731,11 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         afterBusy: {
           ...resetFlags,
           usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
         },
         afterResult: {
           ...resetFlags,
-          suppressIdleOnNextResult: true,
+          suppressIdleOnTurnEnd: true,
           usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
           lastResultWasSuccess: true,
           clearMessageInFlight: true,
         },
@@ -766,7 +744,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         expectedReplay: 0,
         expectedFlags: {
           ...resetFlags,
-          suppressIdleOnNextResult: true,
+          suppressIdleOnTurnEnd: true,
           clearMessageInFlight: true,
         },
         cleanupClear: true,
@@ -778,12 +756,10 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         afterBusy: {
           ...resetFlags,
           usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
         },
         afterResult: {
           ...resetFlags,
           usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
         },
         sendIdleEvent: true,
         expectedIdle: 'plain',
@@ -796,12 +772,10 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         afterBusy: {
           ...resetFlags,
           usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
         },
         afterResult: {
           ...resetFlags,
           usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
         },
         sendIdleEvent: true,
         expectedIdle: 'plain',
@@ -816,7 +790,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         afterBusy: {
           ...resetFlags,
           usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
           lastResultWasSuccess: true,
         },
         sendIdleEvent: true,
@@ -832,7 +805,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         afterBusy: {
           ...resetFlags,
           usesSessionStateChangedTurnEnd: true,
-          expectsSessionStateIdleAfterResult: true,
           lastResultWasSuccess: false,
         },
         sendIdleEvent: true,
@@ -856,14 +828,14 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
         let wait: Promise<string> | null = null;
         if (row.suppress === 'plain' || row.suppress === 'mismatch') {
-          handler.suppressIdleForNextResult();
+          handler.suppressIdleForNextTurnEnd();
         }
         if (row.suppress === 'mismatch') {
           wait = handler.waitForSuppressedResult(5_000, 'other-msg-id');
           handler.markClearMessageSent();
         }
         if (row.suppress === 'clearInFlight') {
-          handler.suppressIdleForNextResult();
+          handler.suppressIdleForNextTurnEnd();
           wait = handler.waitForSuppressedResult(5_000);
           handler.markClearMessageSent();
         }
@@ -918,14 +890,11 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
   });
 
   describe('publication phase and failure-path boundaries', () => {
-    it('legacy success: fence fires before publication, direct idle follows it, finishTurn idles last', async () => {
+    it('legacy success: direct idle follows publication, finishTurn idles last', async () => {
       const order: string[] = [];
       saveSDKMessageSpy.mockImplementation(() => {
         order.push('save');
         return true;
-      });
-      beginTerminalIdleSpy.mockImplementation(() => {
-        order.push('fence');
       });
       publishSpy.mockImplementation((topic: string) => {
         if (topic === 'state.sdkMessages.delta') {
@@ -943,7 +912,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
       expect(order).toEqual([
         'save',
-        'fence',
         'delta',
         'sdk.message',
         'setIdle',
@@ -954,11 +922,8 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       ]);
     });
 
-    it('session-state mode: fence fires before publication but idle is deferred to the idle event', async () => {
+    it('session-state mode: the result takes no turn-end action and idle is deferred to the idle event', async () => {
       const order: string[] = [];
-      beginTerminalIdleSpy.mockImplementation(() => {
-        order.push('fence');
-      });
       publishSpy.mockImplementation((topic: string) => {
         if (topic === 'state.sdkMessages.delta') {
           order.push('delta');
@@ -974,13 +939,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       await handler.handleMessage(sessionState('running'));
       order.length = 0;
       await handler.handleMessage(successResult('ordered-state-success'));
-      expect(order).toEqual([
-        'fence',
-        'delta',
-        'sdk.message',
-        'session.updated',
-        'session.errorClear',
-      ]);
+      expect(order).toEqual(['delta', 'sdk.message', 'session.updated', 'session.errorClear']);
 
       order.length = 0;
       await handler.handleMessage(sessionState('idle'));
@@ -994,14 +953,14 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
           duringEffects.push(readFlags(handler));
         }
       });
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
 
       await handler.handleMessage(successResult('phased-suppressed-success'));
 
       expect(duringEffects).toHaveLength(2);
       for (const snapshot of duringEffects) {
         expect(snapshot.lastResultWasSuccess).toBe(true);
-        expect(snapshot.suppressIdleOnNextResult).toBe(true);
+        expect(snapshot.suppressIdleOnTurnEnd).toBe(true);
       }
       expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: true });
     });
@@ -1012,7 +971,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
           throw new Error('sdk.message subscriber failed');
         }
       });
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       handler.markClearMessageSent();
       expect(readFlags(handler).clearMessageInFlight).toBe(true);
@@ -1047,7 +1006,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(duringPublish[0].lastResultWasSuccess).toBe(true);
       expect(duringPublish[0].currentThinkingTokensEstimate).toBe(null);
       expect(duringPublish[0].lastStampedThinkingTokensEstimate).toBe(0);
-      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
       expect(setIdleSpy).not.toHaveBeenCalled();
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: true });
@@ -1079,7 +1038,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
           throw new Error('session.errorClear subscriber failed');
         }
       });
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       handler.markClearMessageSent();
       expect(readFlags(handler).clearMessageInFlight).toBe(true);
@@ -1090,7 +1049,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
       expect(duringSessionUpdated).toHaveLength(1);
       expect(duringSessionUpdated[0].lastResultWasSuccess).toBe(true);
-      expect(duringSessionUpdated[0].suppressIdleOnNextResult).toBe(true);
+      expect(duringSessionUpdated[0].suppressIdleOnTurnEnd).toBe(true);
       expect(await wait).toBe('reset');
       expect(readFlags(handler)).toEqual(resetFlags);
     });
@@ -1107,20 +1066,19 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         'sdk.message subscriber failed'
       );
 
-      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
       expect(setIdleSpy).not.toHaveBeenCalled();
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
         usesSessionStateChangedTurnEnd: true,
-        expectsSessionStateIdleAfterResult: true,
         lastResultWasSuccess: true,
       });
     });
 
     it('session-state mode: sdk.message rejection under an armed clear unwinds every flag', async () => {
       await handler.handleMessage(sessionState('running'));
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
       handler.markClearMessageSent();
       emitSpy.mockImplementation(async (topic: string) => {
@@ -1154,13 +1112,12 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         'session.errorClear subscriber failed'
       );
 
-      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
       expect(setIdleSpy).not.toHaveBeenCalled();
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
         usesSessionStateChangedTurnEnd: true,
-        expectsSessionStateIdleAfterResult: true,
         lastResultWasSuccess: true,
       });
     });
@@ -1174,7 +1131,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         'setIdle transition failed'
       );
 
-      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
       expect(setIdleSpy).toHaveBeenCalledTimes(1);
       expect(setIdleSpy.mock.calls[0]).toEqual([]);
       expect(emitSpy.mock.calls.some((call) => call[0] === 'session.updated')).toBe(false);
@@ -1214,7 +1171,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
         usesSessionStateChangedTurnEnd: true,
-        expectsSessionStateIdleAfterResult: true,
         lastResultWasSuccess: false,
       });
 
@@ -1228,7 +1184,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
     it('a confirmed clear that never receives its trailing idle times out as reset via the rearmed timer', async () => {
       await handler.handleMessage(sessionState('running'));
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(25, 'clear-msg-id');
       handler.markClearMessageSent();
 
@@ -1243,7 +1199,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
         usesSessionStateChangedTurnEnd: true,
-        expectsSessionStateIdleAfterResult: true,
         lastResultWasSuccess: true,
         clearAwaitingTrailingIdle: true,
         clearMessageInFlight: true,
@@ -1251,7 +1206,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     });
 
     it('a rejected publication of an unrelated result leaves the armed clear waiting', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
       handler.markClearMessageSent();
       emitSpy.mockImplementation(async (topic: string) => {
@@ -1273,7 +1228,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(settled).toBe(null);
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
-        suppressIdleOnNextResult: true,
+        suppressIdleOnTurnEnd: true,
         clearMessageInFlight: true,
         lastResultWasSuccess: true,
       });
@@ -1283,7 +1238,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     });
 
     it('a failed bookkeeping effect of an unrelated result leaves the armed clear waiting', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
       handler.markClearMessageSent();
       emitSpy.mockImplementation(async (topic: string) => {
@@ -1305,7 +1260,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(settled).toBe(null);
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
-        suppressIdleOnNextResult: true,
+        suppressIdleOnTurnEnd: true,
         clearMessageInFlight: true,
         lastResultWasSuccess: true,
       });
@@ -1315,7 +1270,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     });
 
     it('an armed sent clear whose error publication rejects also unwinds every flag', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       handler.markClearMessageSent();
       emitSpy.mockImplementation(async (topic: string) => {
@@ -1343,7 +1298,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       const primedFlags = {
         ...resetFlags,
         usesSessionStateChangedTurnEnd: true,
-        expectsSessionStateIdleAfterResult: true,
         lastResultWasSuccess: false,
         currentThinkingTokensEstimate: 120,
         lastStampedThinkingTokensEstimate: 120,
@@ -1390,7 +1344,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
     it('a failing suppressed result-less idle after the mode is armed retains every flag', async () => {
       await handler.handleMessage(sessionState('running'));
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       handler.markClearMessageSent();
       setIdleSpy.mockImplementation(async () => {
@@ -1414,9 +1368,8 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
-        suppressIdleOnNextResult: true,
+        suppressIdleOnTurnEnd: true,
         usesSessionStateChangedTurnEnd: true,
-        expectsSessionStateIdleAfterResult: true,
         clearMessageInFlight: true,
       });
 
@@ -1446,7 +1399,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     });
 
     it('a failed save under an armed clear unwinds the suppression without any idle action', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       handler.markClearMessageSent();
       saveSDKMessageSpy.mockReturnValueOnce(false);
@@ -1462,7 +1415,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
 
     it('session-state mode: a later-effect failure under an armed clear unwinds every flag', async () => {
       await handler.handleMessage(sessionState('running'));
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
       handler.markClearMessageSent();
       emitSpy.mockImplementation(async (topic: string) => {
@@ -1495,7 +1448,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         'sdk.message subscriber failed'
       );
 
-      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
       expect(setIdleSpy).not.toHaveBeenCalled();
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: false });
@@ -1515,7 +1468,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
         usesSessionStateChangedTurnEnd: true,
-        expectsSessionStateIdleAfterResult: true,
         lastResultWasSuccess: false,
       });
 
@@ -1547,7 +1499,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
         usesSessionStateChangedTurnEnd: true,
-        expectsSessionStateIdleAfterResult: true,
         lastResultWasSuccess: true,
         currentThinkingTokensEstimate: 120,
         lastStampedThinkingTokensEstimate: 120,
@@ -1571,14 +1522,13 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
         usesSessionStateChangedTurnEnd: true,
-        expectsSessionStateIdleAfterResult: true,
         lastResultWasSuccess: true,
       });
     });
 
     it('a failing suppressed setIdle during the trailing idle keeps the clear bookkeeping armed', async () => {
       await handler.handleMessage(sessionState('running'));
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
       handler.markClearMessageSent();
       await handler.handleMessage(
@@ -1608,7 +1558,6 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
         usesSessionStateChangedTurnEnd: true,
-        expectsSessionStateIdleAfterResult: true,
         lastResultWasSuccess: true,
         clearAwaitingTrailingIdle: true,
         clearMessageInFlight: true,
@@ -1649,7 +1598,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(readFlags(handler)).toEqual(resetFlags);
     });
 
-    it('a failing setIdle on a first idle event retains the mode flag without the expectation', async () => {
+    it('a failing setIdle on a first idle event keeps the capability armed so the clear settles on the trailing idle', async () => {
       await handler.handleMessage(thinkingTokensMessage(120));
       await handler.handleMessage(thinkingAssistantMessage('first-idle-fail-prime'));
       setIdleSpy.mockImplementation(async () => {
@@ -1663,7 +1612,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({ ...resetFlags, usesSessionStateChangedTurnEnd: true });
 
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'clear-msg-id');
       handler.markClearMessageSent();
 
@@ -1671,16 +1620,23 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         successResult('mode-only-clear-confirm', { user_message_uuid: 'clear-msg-id' })
       );
 
-      expect(await wait).toBe('confirmed');
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
         usesSessionStateChangedTurnEnd: true,
         lastResultWasSuccess: true,
+        clearAwaitingTrailingIdle: true,
+        clearMessageInFlight: true,
       });
+
+      setIdleSpy.mockImplementation(async () => {});
+      await handler.handleMessage(sessionState('idle'));
+
+      expect(await wait).toBe('confirmed');
+      expect(readFlags(handler)).toEqual(resetFlags);
     });
 
     it('a failing suppressed setIdle on a result-less idle retains the armed clear', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       handler.markClearMessageSent();
       setIdleSpy.mockImplementation(async () => {
@@ -1699,7 +1655,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
-        suppressIdleOnNextResult: true,
+        suppressIdleOnTurnEnd: true,
         usesSessionStateChangedTurnEnd: true,
         clearMessageInFlight: true,
       });
@@ -1731,7 +1687,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     });
 
     it('a rejected idle-event publication under an armed clear retains the clear untouched', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       handler.markClearMessageSent();
       emitSpy.mockImplementation(async (topic: string) => {
@@ -1753,7 +1709,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
-        suppressIdleOnNextResult: true,
+        suppressIdleOnTurnEnd: true,
         clearMessageInFlight: true,
       });
 
@@ -1762,7 +1718,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     });
 
     it('a rejecting metadata publication under an armed clear unwinds every flag', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       handler.markClearMessageSent();
       emitSpy.mockImplementation(async (topic: string) => {
@@ -1783,7 +1739,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     });
 
     it('a failed save of a matching error result under a sent clear unwinds the suppression', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       handler.markClearMessageSent();
       saveSDKMessageSpy.mockReturnValueOnce(false);
@@ -1798,7 +1754,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     });
 
     it('a failed save of a mismatched success retains the armed clear', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000, 'other-msg-id');
       handler.markClearMessageSent();
       saveSDKMessageSpy.mockReturnValueOnce(false);
@@ -1814,7 +1770,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(settled).toBe(null);
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
-        suppressIdleOnNextResult: true,
+        suppressIdleOnTurnEnd: true,
         clearMessageInFlight: true,
       });
 
@@ -1823,7 +1779,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     });
 
     it('a failed save of a nested result during an armed clear leaves the clear untouched', async () => {
-      handler.suppressIdleForNextResult();
+      handler.suppressIdleForNextTurnEnd();
       const wait = handler.waitForSuppressedResult(5_000);
       handler.markClearMessageSent();
       saveSDKMessageSpy.mockReturnValueOnce(false);
@@ -1842,7 +1798,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({
         ...resetFlags,
-        suppressIdleOnNextResult: true,
+        suppressIdleOnTurnEnd: true,
         clearMessageInFlight: true,
       });
 
@@ -1935,7 +1891,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
         }
       });
 
-      await expect(handler.handleMessage(successResult('fence-cancel'))).rejects.toThrow(
+      await expect(handler.handleMessage(successResult('gate-release'))).rejects.toThrow(
         'sdk.message subscriber failed'
       );
 
@@ -1948,7 +1904,7 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       expect(outcome).toBe('released');
     });
 
-    it('an engaged limit recovery resets thinking tokens via the pre-recovery plan but fences and idles nothing', async () => {
+    it('an engaged limit recovery resets thinking tokens via the pre-recovery plan but idles nothing', async () => {
       handler = new SDKMessageHandler(
         createContext({ onResultLimitError: mock(async () => true) })
       );
@@ -1968,14 +1924,14 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       });
     });
 
-    it('a declined limit recovery keeps the fence, direct idle, and replay block through the routed plan', async () => {
+    it('a declined limit recovery keeps the direct idle and replay block through the routed plan', async () => {
       handler = new SDKMessageHandler(
         createContext({ onResultLimitError: mock(async () => false) })
       );
 
       await handler.handleMessage(limitErrorResult('limit-declined'));
 
-      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
       expect(setIdleSpy).toHaveBeenCalledTimes(2);
       expect(setIdleSpy.mock.calls).toEqual([[], []]);
       expect(replayCount()).toBe(0);
@@ -1985,13 +1941,13 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
     it('a clear armed during the sdk.message publish suppresses the early settle (routed re-decision)', async () => {
       emitSpy.mockImplementation(async (topic: string) => {
         if (topic === 'sdk.message') {
-          handler.suppressIdleForNextResult();
+          handler.suppressIdleForNextTurnEnd();
         }
       });
 
       await handler.handleMessage(successResult('publish-race-clear'));
 
-      expect(beginTerminalIdleSpy).toHaveBeenCalledTimes(1);
+      expect(beginTerminalIdleSpy).not.toHaveBeenCalled();
       expect(setIdleSpy).not.toHaveBeenCalled();
       expect(replayCount()).toBe(0);
       expect(readFlags(handler)).toEqual({ ...resetFlags, lastResultWasSuccess: true });
@@ -2001,14 +1957,14 @@ describe('SDKMessageHandler flag-machine truth table (C1a)', () => {
       await handler.handleMessage(sessionState('running'));
       await handler.handleMessage(successResult('idle-race-result'));
       setIdleSpy.mockImplementation(async () => {
-        handler.suppressIdleForNextResult();
+        handler.suppressIdleForNextTurnEnd();
       });
 
       await handler.handleMessage(sessionState('idle'));
 
       expect(setIdleSpy).toHaveBeenCalledTimes(1);
       expect(replayCount()).toBe(1);
-      expect(readFlags(handler)).toEqual({ ...resetFlags, suppressIdleOnNextResult: true });
+      expect(readFlags(handler)).toEqual({ ...resetFlags, suppressIdleOnTurnEnd: true });
     });
   });
 
