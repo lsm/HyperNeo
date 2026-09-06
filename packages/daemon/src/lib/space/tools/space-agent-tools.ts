@@ -43,7 +43,7 @@ import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositor
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { AgentSession } from '../../agent/agent-session.ts';
-import type { EnsureSessionOutcome, SessionTargetWorker } from '../../session-resolution/target.ts';
+import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
@@ -515,6 +515,7 @@ type TaskWorkerDeliveryCtx = {
   workflowRunId: string;
   resolved: NodeExecution;
   message: string;
+  sessionSelector?: string;
   audit: (outcome: string, extra?: Record<string, unknown>) => void;
   doorOutcome?: EnsureSessionOutcome;
   result?: ToolResult;
@@ -552,7 +553,7 @@ export interface SpaceAgentToolsConfig {
   taskAgentManager?: TaskAgentManager;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   activateNode?: (runId: string, nodeId: string) => Promise<void>;
-  ensureWorkerSession?: (target: SessionTargetWorker) => Promise<EnsureSessionOutcome>;
+  ensureTargetSession?: (target: SessionTarget) => Promise<EnsureSessionOutcome>;
   pendingMessageQueue?: PendingAgentMessageQueue;
   getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
   myAgentName?: string;
@@ -640,7 +641,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     taskAgentManager,
     internalEventBus,
     activateNode,
-    ensureWorkerSession,
+    ensureTargetSession,
     pendingMessageQueue,
     getSpaceAutonomyLevel,
     myAgentName,
@@ -676,13 +677,18 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return taskAgentManager;
   };
 
-  const workerDoorTargetFor = (ctx: TaskWorkerDeliveryCtx): SessionTargetWorker => ({
-    kind: 'worker',
-    taskId: ctx.task.id,
-    agentName: ctx.resolved.agentName,
-    workflowNodeId: ctx.resolved.workflowNodeId,
-    waitCapMs: 0,
-  });
+  const doorTargetFor = (ctx: TaskWorkerDeliveryCtx, waitCapMs?: number): SessionTarget => {
+    if (ctx.sessionSelector !== undefined) {
+      return { kind: 'session', sessionId: ctx.sessionSelector };
+    }
+    return {
+      kind: 'worker',
+      taskId: ctx.task.id,
+      agentName: ctx.resolved.agentName,
+      workflowNodeId: ctx.resolved.workflowNodeId,
+      ...(waitCapMs !== undefined ? { waitCapMs } : {}),
+    };
+  };
 
   const nodeAgentEnvelopeFor = (ctx: TaskWorkerDeliveryCtx): string =>
     formatAgentMessage({
@@ -814,8 +820,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   const resolveWorkerDoorStage = async (
     ctx: TaskWorkerDeliveryCtx
   ): Promise<TaskWorkerDeliveryCtx> => {
-    if (!ensureWorkerSession) return ctx;
-    return { ...ctx, doorOutcome: await ensureWorkerSession(workerDoorTargetFor(ctx)) };
+    if (!ensureTargetSession) return ctx;
+    return { ...ctx, doorOutcome: await ensureTargetSession(doorTargetFor(ctx, 0)) };
   };
 
   const routeWorkerDoorStage = async (
@@ -827,11 +833,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       const delivered = await tryInjectNodeSession(ctx, outcome.sessionId, outcome.created);
       return delivered === undefined ? ctx : { ...ctx, result: delivered };
     }
+    if (ctx.sessionSelector !== undefined) return ctx;
     if (DOOR_QUEUEABLE_UNRESOLVED_REASONS.has(outcome.reason)) {
-      return { ...ctx, result: await queueAndDrainNodeMessage(ctx) };
+      return { ...ctx, result: queueAndDrainNodeMessage(ctx) };
     }
     if (outcome.reason === 'activation_timeout' && ctx.resolved.agentSessionId === null) {
-      return { ...ctx, result: await queueAndDrainNodeMessage(ctx) };
+      return { ...ctx, result: queueAndDrainNodeMessage(ctx) };
     }
     if (
       outcome.reason !== 'task_terminal' &&
@@ -910,37 +917,35 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return { ...ctx, result: await injectNodeSessionOrReport(ctx, sessionIdAfter, true) };
   };
 
-  const drainQueuedNodeMessageAfterDoorTimeout = async (
-    ctx: TaskWorkerDeliveryCtx
-  ): Promise<void> => {
+  const drainQueuedNodeMessageAfterDoorTimeout = (ctx: TaskWorkerDeliveryCtx): void => {
     const outcome = ctx.doorOutcome;
-    if (!ensureWorkerSession || !taskAgentManager || !pendingMessageQueue) return;
+    if (!ensureTargetSession || !taskAgentManager || !pendingMessageQueue) return;
     if (outcome?.kind !== 'unresolved' || !DOOR_TIMED_OUT_UNRESOLVED_REASONS.has(outcome.reason)) {
       return;
     }
-    try {
-      const resolved = await ensureWorkerSession(workerDoorTargetFor(ctx));
-      if (resolved.kind !== 'resolved') return;
-      await taskAgentManager.flushPendingMessagesForTarget(
-        ctx.workflowRunId,
-        ctx.resolved.agentName,
-        resolved.sessionId,
-        ctx.resolved.workflowNodeId
-      );
-    } catch {}
+    void (async () => {
+      try {
+        const resolved = await ensureTargetSession(doorTargetFor(ctx));
+        if (resolved.kind !== 'resolved') return;
+        await taskAgentManager.flushPendingMessagesForTarget(
+          ctx.workflowRunId,
+          ctx.resolved.agentName,
+          resolved.sessionId,
+          ctx.resolved.workflowNodeId
+        );
+      } catch {}
+    })();
   };
 
-  const queueAndDrainNodeMessage = async (ctx: TaskWorkerDeliveryCtx): Promise<ToolResult> => {
+  const queueAndDrainNodeMessage = (ctx: TaskWorkerDeliveryCtx): ToolResult => {
     const result = queueForNodeActivation(ctx);
-    await drainQueuedNodeMessageAfterDoorTimeout(ctx);
+    drainQueuedNodeMessageAfterDoorTimeout(ctx);
     return result;
   };
 
-  const queuePendingNodeMessageStage = async (
-    ctx: TaskWorkerDeliveryCtx
-  ): Promise<TaskWorkerDeliveryCtx> => ({
+  const queuePendingNodeMessageStage = (ctx: TaskWorkerDeliveryCtx): TaskWorkerDeliveryCtx => ({
     ...ctx,
-    result: await queueAndDrainNodeMessage(ctx),
+    result: queueAndDrainNodeMessage(ctx),
   });
 
   const workerDeliverySettled = (ctx?: TaskWorkerDeliveryCtx): boolean =>
@@ -2870,6 +2875,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       );
       let resolved: NodeExecution | null = null;
       let routedTarget = args.node_id ?? null;
+      let sessionTargetSelector: string | undefined;
 
       const trimmedTarget = args.target?.trim() ?? '';
       if (trimmedTarget) {
@@ -3061,6 +3067,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         } else if (address.kind === 'session') {
           resolved =
             allExecutions.find((exec) => exec.agentSessionId === address.sessionId) ?? null;
+          if (resolved) {
+            sessionTargetSelector = address.sessionId;
+          }
         } else {
           audit('failed', { target: genericTarget, reason: 'generic_target_not_routable' });
           return jsonResult({
@@ -3119,6 +3128,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         workflowRunId: task.workflowRunId,
         resolved,
         message: args.message,
+        ...(sessionTargetSelector ? { sessionSelector: sessionTargetSelector } : {}),
         audit,
       });
       return delivered.result!;

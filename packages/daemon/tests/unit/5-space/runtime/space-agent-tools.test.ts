@@ -10,7 +10,7 @@ import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts
 import { getModelsCache, setModelsCache } from '../../../../src/lib/model-service.ts';
 import type {
   EnsureSessionOutcome,
-  SessionTargetWorker,
+  SessionTarget,
 } from '../../../../src/lib/session-resolution/target.ts';
 import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope.ts';
 import { getLongHorizonAgentTemplate } from '../../../../src/lib/space/agents/long-horizon-agent-templates.ts';
@@ -6714,9 +6714,9 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     tam: FakeTaskAgentManager,
     opts: {
       activateNode?: (runId: string, nodeId: string) => Promise<void>;
-      ensureWorkerSession?: Parameters<
+      ensureTargetSession?: Parameters<
         typeof createSpaceAgentToolHandlers
-      >[0]['ensureWorkerSession'];
+      >[0]['ensureTargetSession'];
       pendingMessageQueue?: FakePendingMessageQueue;
       myAgentName?: string;
       myAgentNameAliases?: string[];
@@ -6740,7 +6740,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       longHorizonAgentRepo: ctx.longHorizonAgentRepo,
       taskAgentManager: tam.manager,
       activateNode: opts.activateNode,
-      ensureWorkerSession: opts.ensureWorkerSession,
+      ensureTargetSession: opts.ensureTargetSession,
       myAgentName: opts.myAgentName,
       myAgentNameAliases: opts.myAgentNameAliases,
       mySessionId: opts.mySessionId,
@@ -8670,7 +8670,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     ]);
   });
 
-  describe('ensureWorkerSession door wiring (no-wait worker mode)', () => {
+  describe('ensureTargetSession door wiring (no-wait worker mode)', () => {
     async function makeTaskWithCoderExecution(label: string, opts: { liveSession?: string } = {}) {
       const wf = buildSingleStepWorkflow(ctx.spaceId, ctx.workflowManager, ctx.agentId, label);
       const { run, tasks } = await ctx.runtime.startWorkflowRun(ctx.spaceId, wf.id, label);
@@ -8689,9 +8689,9 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         liveSession: 'coder-row-session',
       });
       const tam = makeFakeTaskAgentManager(ctx);
-      const doorTargets: SessionTargetWorker[] = [];
+      const doorTargets: SessionTarget[] = [];
       const handlers = makeHandlersWith(tam, {
-        ensureWorkerSession: async (target) => {
+        ensureTargetSession: async (target) => {
           doorTargets.push(target);
           return { kind: 'resolved', sessionId: 'coder-door-session', created: false };
         },
@@ -8732,7 +8732,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       const { task } = await makeTaskWithCoderExecution('WF Door Created');
       const tam = makeFakeTaskAgentManager(ctx);
       const handlers = makeHandlersWith(tam, {
-        ensureWorkerSession: async () => ({
+        ensureTargetSession: async () => ({
           kind: 'resolved',
           sessionId: 'coder-spawned-session',
           created: true,
@@ -8762,7 +8762,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         activateNode: async (runId, nodeId) => {
           activateCalls.push([runId, nodeId]);
         },
-        ensureWorkerSession: async () => ({
+        ensureTargetSession: async () => ({
           kind: 'resolved',
           sessionId: 'coder-door-session',
           created: false,
@@ -8790,7 +8790,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       const handlers = makeHandlersWith(tam, {
         auditLogRepo,
         pendingMessageQueue: fakeQueue,
-        ensureWorkerSession: async () => ({ kind: 'unresolved', reason: 'activation_timeout' }),
+        ensureTargetSession: async () => ({ kind: 'unresolved', reason: 'activation_timeout' }),
       });
 
       const result = await handlers.send_message_to_task({
@@ -8843,7 +8843,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
           activateCalls.push([runId, nodeId]);
         },
         pendingMessageQueue: fakeQueue,
-        ensureWorkerSession: async () => ({ kind: 'unresolved', reason: 'activation_timeout' }),
+        ensureTargetSession: async () => ({ kind: 'unresolved', reason: 'activation_timeout' }),
       });
 
       const result = await handlers.send_message_to_task({
@@ -8876,7 +8876,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
             agentSessionId: 'coder-new',
           });
         },
-        ensureWorkerSession: async () => ({
+        ensureTargetSession: async () => ({
           kind: 'resolved',
           sessionId: 'coder-door-dead',
           created: false,
@@ -8912,7 +8912,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       const tam = makeFakeTaskAgentManager(ctx);
       const handlers = makeHandlersWith(tam, {
         activateNode: async () => {},
-        ensureWorkerSession: async () => ({
+        ensureTargetSession: async () => ({
           kind: 'unresolved',
           reason: 'session_resolution_unavailable',
         }),
@@ -8931,7 +8931,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-row-live');
     });
 
-    test('drains the queued message when the door resolves right after a timeout', async () => {
+    test('drains the queued message when the door resolves after a timeout', async () => {
       const { wf, run, task } = await makeTaskWithCoderExecution('WF Door Drain');
       const tam = makeFakeTaskAgentManager(ctx);
       const fakeQueue = makeFakePendingMessageQueue();
@@ -8941,7 +8941,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       ];
       const handlers = makeHandlersWith(tam, {
         pendingMessageQueue: fakeQueue,
-        ensureWorkerSession: async () => outcomes.shift()!,
+        ensureTargetSession: async () => outcomes.shift()!,
       });
 
       const result = await handlers.send_message_to_task({
@@ -8950,6 +8950,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         message: 'door drain',
       });
       const parsed = JSON.parse(result.content[0].text);
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(parsed.success).toBe(true);
       expect(parsed.queued).toBe(true);
@@ -8971,7 +8972,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       const fakeQueue = makeFakePendingMessageQueue();
       const handlers = makeHandlersWith(tam, {
         pendingMessageQueue: fakeQueue,
-        ensureWorkerSession: async () => ({ kind: 'unresolved', reason: 'activation_timeout' }),
+        ensureTargetSession: async () => ({ kind: 'unresolved', reason: 'activation_timeout' }),
       });
 
       const result = await handlers.send_message_to_task({
@@ -8980,6 +8981,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         message: 'door still timed out',
       });
       const parsed = JSON.parse(result.content[0].text);
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(parsed.success).toBe(true);
       expect(parsed.queued).toBe(true);
@@ -8988,13 +8990,73 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(tam.subSessionInjects).toHaveLength(0);
     });
 
+    test('explicit @session target resolves through the door by the addressed session id', async () => {
+      const { task, exec } = await makeTaskWithCoderExecution('WF Door Session Exact', {
+        liveSession: 'coder-exact-session',
+      });
+      const tam = makeFakeTaskAgentManager(ctx);
+      const doorTargets: SessionTarget[] = [];
+      const handlers = makeHandlersWith(tam, {
+        ensureTargetSession: async (target) => {
+          doorTargets.push(target);
+          return { kind: 'resolved', sessionId: 'coder-exact-session', created: false };
+        },
+      });
+
+      const result = await handlers.send_message_to_task({
+        task_id: task.id,
+        target: '@session:coder-exact-session',
+        message: 'session exact',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(doorTargets).toEqual([{ kind: 'session', sessionId: 'coder-exact-session' }]);
+      expect(parsed.success).toBe(true);
+      expect(parsed.node_execution_id).toBe(exec.id);
+      expect(parsed.delivered_session_id).toBe('coder-exact-session');
+      expect(parsed.activated).toBe(false);
+      expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-exact-session');
+    });
+
+    test('explicit @session target with a dead addressed session recovers through activation', async () => {
+      const { task, exec } = await makeTaskWithCoderExecution('WF Door Session Dead', {
+        liveSession: 'coder-exact-dead',
+      });
+      const tam = makeFakeTaskAgentManager(ctx);
+      tam.deadSessionIds.add('coder-exact-dead');
+      const activateCalls: Array<[string, string]> = [];
+      const handlers = makeHandlersWith(tam, {
+        activateNode: async (runId, nodeId) => {
+          activateCalls.push([runId, nodeId]);
+          ctx.nodeExecutionRepo.update(exec.id, {
+            status: 'in_progress',
+            agentSessionId: 'coder-new',
+          });
+        },
+        ensureTargetSession: async () => ({ kind: 'unresolved', reason: 'not_found' }),
+      });
+
+      const result = await handlers.send_message_to_task({
+        task_id: task.id,
+        target: '@session:coder-exact-dead',
+        message: 'session dead',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.activated).toBe(true);
+      expect(parsed.delivered_session_id).toBe('coder-new');
+      expect(activateCalls).toHaveLength(1);
+      expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-new');
+    });
+
     test('reports deferred delivery without a pending queue on a queueable timeout', async () => {
       const { task } = await makeTaskWithCoderExecution('WF Door No Queue');
       const tam = makeFakeTaskAgentManager(ctx);
       const auditLogRepo = new McpAuditLogRepository(ctx.db);
       const handlers = makeHandlersWith(tam, {
         auditLogRepo,
-        ensureWorkerSession: async () => ({ kind: 'unresolved', reason: 'spawn_timeout' }),
+        ensureTargetSession: async () => ({ kind: 'unresolved', reason: 'spawn_timeout' }),
       });
 
       const result = await handlers.send_message_to_task({
@@ -9028,7 +9090,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       const handlers = makeHandlersWith(tam, {
         auditLogRepo,
         pendingMessageQueue: fakeQueue,
-        ensureWorkerSession: async () => ({ kind: 'unresolved', reason: 'activate_failed' }),
+        ensureTargetSession: async () => ({ kind: 'unresolved', reason: 'activate_failed' }),
       });
 
       const result = await handlers.send_message_to_task({
@@ -9065,7 +9127,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
             agentSessionId: 'coder-reopened-session',
           });
         },
-        ensureWorkerSession: async () => ({ kind: 'unresolved', reason: 'task_terminal' }),
+        ensureTargetSession: async () => ({ kind: 'unresolved', reason: 'task_terminal' }),
       });
 
       const result = await handlers.send_message_to_task({
@@ -9093,7 +9155,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       const { task } = await makeTaskWithCoderExecution('WF Door Terminal No Callback');
       const tam = makeFakeTaskAgentManager(ctx);
       const handlers = makeHandlersWith(tam, {
-        ensureWorkerSession: async () => ({ kind: 'unresolved', reason: 'task_terminal' }),
+        ensureTargetSession: async () => ({ kind: 'unresolved', reason: 'task_terminal' }),
       });
 
       const result = await handlers.send_message_to_task({
@@ -9123,7 +9185,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
             agentSessionId: 'coder-replacement-session',
           });
         },
-        ensureWorkerSession: async () => ({
+        ensureTargetSession: async () => ({
           kind: 'resolved',
           sessionId: 'coder-door-stale',
           created: false,
