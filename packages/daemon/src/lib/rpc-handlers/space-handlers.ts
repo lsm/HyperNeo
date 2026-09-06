@@ -5,7 +5,6 @@ import {
 } from '@hyperneo/shared';
 import type {
   Space,
-  SpaceCreateResult,
   SpaceAutonomyLevel,
   CreateSpaceParams,
   UpdateSpaceParams,
@@ -24,6 +23,7 @@ import type { SpaceWorkflowRunRepository } from '../../storage/repositories/spac
 import type { SessionManager } from '../session-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import { createSpace } from '../space/create-space-pipeline.ts';
 import { seedBuiltInWorkflows } from '../space/workflows/built-in-workflows.ts';
 import { Logger } from '../logger.ts';
 
@@ -159,93 +159,40 @@ export function setupSpaceHandlers(
 ): void {
   const longHorizonAgentRepo = options?.longHorizonAgentRepo;
   messageHub.onRequest('space.create', async (data) => {
-    const params = data as CreateSpaceParams;
-
-    if (!params.workspacePath) {
-      throw new Error('workspacePath is required');
-    }
-    if (!params.name || params.name.trim() === '') {
-      throw new Error('name is required');
-    }
-    if (
-      params.autonomyLevel !== undefined &&
-      !VALID_AUTONOMY_LEVELS.includes(params.autonomyLevel)
-    ) {
-      throw new Error(
-        `Invalid autonomyLevel: ${params.autonomyLevel}. Must be one of: ${VALID_AUTONOMY_LEVELS.join(', ')}`
-      );
-    }
-    if (params.maxConcurrentTasks !== undefined) {
-      params.maxConcurrentTasks = validateConcurrentLimit(params.maxConcurrentTasks);
-    }
-    if (params.config?.maxConcurrentTasks !== undefined) {
-      params.config.maxConcurrentTasks = validateConcurrentLimit(params.config.maxConcurrentTasks);
-    }
-    if (params.additionalWorkspaces) {
-      for (const [index, workspace] of params.additionalWorkspaces.entries()) {
-        if (typeof workspace?.path !== 'string' || workspace.path.trim() === '') {
-          throw new Error(`additionalWorkspaces[${index}].path is required`);
-        }
-      }
-    }
-
     if (!longHorizonAgentRepo) {
       throw new Error('longHorizonAgentRepo is required to create a space');
     }
 
-    const space = await spaceManager.createSpace(params);
-    const seedWarnings: string[] = [];
-    longHorizonAgentRepo.ensureCoordinator(space.id);
-
-    try {
-      const workflowSeedResult = seedBuiltInWorkflows(space.id, spaceWorkflowManager);
-      if (workflowSeedResult.errors.length > 0) {
-        const failedNames = workflowSeedResult.errors.map((e) => e.name).join(', ');
-        log.warn(
-          `Partial workflow seed failure for space ${space.id}: ${failedNames}`,
-          workflowSeedResult.errors
-        );
-        seedWarnings.push(`Failed to seed workflows: ${failedNames}`);
-      }
-    } catch (err) {
-      log.warn('Failed to seed built-in workflows for space', space.id, err);
-      seedWarnings.push('Failed to seed built-in workflows');
-    }
-
-    if (sessionManager) {
-      const spaceChatSessionId = `space:chat:${space.id}`;
-      try {
-        await sessionManager.createSession({
-          sessionId: spaceChatSessionId,
-          title: space.name,
-          workspacePath: space.workspacePath,
-          config: {
-            model: space.defaultModel,
-          },
-          sessionType: 'space_chat',
-          spaceId: space.id,
-        });
-        await spaceManager.addSession(space.id, spaceChatSessionId);
-        if (spaceRuntimeService) {
-          await spaceRuntimeService.setupSpaceAgentSession(space).catch((err) => {
-            log.warn(`Failed to provision space chat session for space ${space.id}:`, err);
+    return createSpace(
+      {
+        createSpaceRecord: (params) => spaceManager.createSpace(params),
+        ensureCoordinator: (spaceId) => longHorizonAgentRepo.ensureCoordinator(spaceId),
+        seedWorkflows: (spaceId) => seedBuiltInWorkflows(spaceId, spaceWorkflowManager),
+        ...(sessionManager
+          ? {
+              chat: {
+                createSession: (sessionParams) => sessionManager.createSession(sessionParams),
+                addSession: (spaceId, sessionId) => spaceManager.addSession(spaceId, sessionId),
+                ...(spaceRuntimeService
+                  ? {
+                      provisionRuntime: (space) =>
+                        spaceRuntimeService.setupSpaceAgentSession(space),
+                    }
+                  : {}),
+              },
+            }
+          : {}),
+        dispatchSpaceCreated: async (space) => {
+          await internalEventBus.publish('space.created', {
+            sessionId: 'global',
+            spaceId: space.id,
+            space,
           });
-        }
-      } catch (error) {
-        log.warn(`Failed to create space chat session for space ${space.id}:`, error);
-      }
-    }
-
-    internalEventBus
-      .publish('space.created', { sessionId: 'global', spaceId: space.id, space })
-      .catch((err) => {
-        log.warn('Failed to emit space.created:', err);
-      });
-
-    if (seedWarnings.length > 0) {
-      return { ...space, seedWarnings } satisfies SpaceCreateResult;
-    }
-    return space;
+        },
+        warn: (message, error) => log.warn(message, error),
+      },
+      data as CreateSpaceParams
+    );
   });
 
   messageHub.onRequest('space.list', async (data) => {

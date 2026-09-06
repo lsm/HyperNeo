@@ -124,15 +124,14 @@ export async function provisionChatSession(ctx: CreateSpaceCtx): Promise<CreateS
     await ctx.deps.chat.addSession(space.id, sessionId);
   } catch (error) {
     ctx.deps.warn(`Failed to create space chat session for space ${space.id}`, error);
-    return withWarning(ctx, 'Failed to create space chat session');
+    return ctx;
   }
   try {
     await ctx.deps.chat.provisionRuntime?.(space);
-    return ctx;
   } catch (error) {
     ctx.deps.warn(`Failed to provision space chat session for space ${space.id}`, error);
-    return withWarning(ctx, 'Failed to provision space chat session');
   }
+  return ctx;
 }
 
 export function publishSpaceCreated(ctx: CreateSpaceCtx): CreateSpaceCtx {

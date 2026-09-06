@@ -229,7 +229,7 @@ describe('createSpace pipeline stages', () => {
       expect(log.calls).toEqual([]);
     });
 
-    test('accumulates a creation warning and skips later chat effects', async () => {
+    test('logs a creation failure without warnings and skips later chat effects', async () => {
       const { deps, log } = makeDeps();
       if (!deps.chat) throw new Error('expected chat dependencies');
       deps.chat.createSession = async () => {
@@ -237,14 +237,14 @@ describe('createSpace pipeline stages', () => {
         throw new Error('failed');
       };
       const result = await provisionChatSession(makeCtx({ deps, space }));
-      expect(result.warnings).toEqual(['Failed to create space chat session']);
+      expect(result.warnings).toEqual([]);
       expect(log.calls).toEqual([
         'session-failed',
         'warn:Failed to create space chat session for space space-1',
       ]);
     });
 
-    test('accumulates a registration warning and skips runtime provisioning', async () => {
+    test('logs a registration failure without warnings and skips runtime provisioning', async () => {
       const { deps, log } = makeDeps();
       if (!deps.chat) throw new Error('expected chat dependencies');
       deps.chat.addSession = async () => {
@@ -252,7 +252,7 @@ describe('createSpace pipeline stages', () => {
         throw new Error('failed');
       };
       const result = await provisionChatSession(makeCtx({ deps, space }));
-      expect(result.warnings).toEqual(['Failed to create space chat session']);
+      expect(result.warnings).toEqual([]);
       expect(log.calls).toEqual([
         'session:space:chat:space-1',
         'add-failed',
@@ -260,7 +260,7 @@ describe('createSpace pipeline stages', () => {
       ]);
     });
 
-    test('accumulates a distinct runtime provisioning warning', async () => {
+    test('logs a runtime provisioning failure without warnings', async () => {
       const { deps, log } = makeDeps();
       if (!deps.chat) throw new Error('expected chat dependencies');
       deps.chat.provisionRuntime = async () => {
@@ -268,7 +268,7 @@ describe('createSpace pipeline stages', () => {
         throw new Error('failed');
       };
       const result = await provisionChatSession(makeCtx({ deps, space }));
-      expect(result.warnings).toEqual(['Failed to provision space chat session']);
+      expect(result.warnings).toEqual([]);
       expect(log.calls).toContain('warn:Failed to provision space chat session for space space-1');
     });
   });
@@ -361,7 +361,7 @@ describe('createSpace pipeline', () => {
     expect(log.calls).toEqual(['create:Test Space', 'coordinator-failed']);
   });
 
-  test('accumulates nonfatal warnings and still publishes', async () => {
+  test('accumulates seed warnings and still publishes', async () => {
     const { deps, log } = makeDeps({
       seedWorkflows: () => ({ errors: [{ name: 'Coding', error: 'failed' }] }),
     });
@@ -370,10 +370,7 @@ describe('createSpace pipeline', () => {
       throw new Error('runtime failed');
     };
     const result = await createSpace(deps, params);
-    expect(result.seedWarnings).toEqual([
-      'Failed to seed workflows: Coding',
-      'Failed to provision space chat session',
-    ]);
+    expect(result.seedWarnings).toEqual(['Failed to seed workflows: Coding']);
     expect(log.calls.at(-1)).toBe('publish:space-1');
   });
 });
