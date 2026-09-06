@@ -137,7 +137,9 @@ export function buildJobQueueSessionFifoSelection(
     : `json_extract(payload, ?)`;
   const sessionPartitionSql = `PARTITION BY lane_key, COALESCE(lane_key, rid)`;
   let sql = `WITH active_lanes AS (
-      SELECT rowid AS rid, status, created_at, ${sessionKeySql} AS lane_key
+      SELECT rowid AS rid, status, created_at,
+        COALESCE(json_extract(payload, '$.admissionRowid'), rowid) AS lane_order,
+        ${sessionKeySql} AS lane_key
         FROM job_queue
        WHERE queue = ? AND status IN ('pending', 'processing')
     ),
@@ -146,7 +148,7 @@ export function buildJobQueueSessionFifoSelection(
         SELECT rid,
                ROW_NUMBER() OVER (
                  ${sessionPartitionSql}
-                 ORDER BY created_at ASC, rid ASC
+                 ORDER BY created_at ASC, lane_order ASC
                ) AS rn,
                SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) OVER (
                  ${sessionPartitionSql}
@@ -168,7 +170,10 @@ export function buildJobQueueSessionFifoSelection(
       SELECT 1 FROM job_queue ahead
        WHERE ahead.queue = ? AND ahead.status IN ('pending', 'processing')
          AND json_extract(ahead.payload, ?) = ${candidateSessionSql}
-         AND ahead.created_at <= candidate.created_at
+         AND (ahead.created_at < candidate.created_at
+              OR (ahead.created_at = candidate.created_at
+                  AND COALESCE(json_extract(ahead.payload, '$.admissionRowid'), ahead.rowid)
+                    < COALESCE(json_extract(candidate.payload, '$.admissionRowid'), candidate.rowid)))
     )`;
     params.push(lane.queue, lane.sessionIdPath ?? '$.sessionId');
     if (!defaultSessionPath) params.push(sessionIdPath);

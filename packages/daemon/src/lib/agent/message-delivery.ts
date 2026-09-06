@@ -31,6 +31,7 @@ export type MessageDeliveryPayload = {
   released?: boolean;
   injectedMidTurn?: boolean;
   admittedAt?: number;
+  admissionRowid?: number;
 };
 
 export const MESSAGE_DELIVERY_MAX_RETRIES = (() => {
@@ -142,6 +143,9 @@ export function asMessageDeliveryPayload(
       ? { injectedMidTurn: true }
       : {}),
     ...(typeof payload.admittedAt === 'number' ? { admittedAt: payload.admittedAt } : {}),
+    ...(typeof payload.admissionRowid === 'number'
+      ? { admissionRowid: payload.admissionRowid }
+      : {}),
   };
 }
 

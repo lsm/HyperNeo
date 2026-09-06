@@ -697,4 +697,63 @@ describe('JobQueueRepository — dequeueSessionFifo waitsBehind cross-lane gate'
     expect(repo.getJob(delivery.id)?.status).toBe('pending');
     await processor.stop();
   });
+
+  function rowidOf(jobId: string): number {
+    const row = db.prepare(`SELECT rowid AS rid FROM job_queue WHERE id = ?`).get(jobId) as {
+      rid: number;
+    };
+    return row.rid;
+  }
+
+  it('breaks a created_at tie by payload admissionRowid, not insertion rowid', () => {
+    repo.enqueue({
+      queue: 'mailbox',
+      payload: { to: { kind: 'session', sessionId: 'sess-warm' } },
+    });
+    const direct = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a' },
+      createdAt: 5000,
+    });
+    const reserved = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a', admissionRowid: rowidOf(direct.id) - 1 },
+      createdAt: 5000,
+    });
+
+    const claimed = repo.dequeueSessionFifo('message_delivery', 5);
+
+    expect(claimed.map((job) => job.id)).toEqual([reserved.id]);
+    expect(repo.getJob(direct.id)?.status).toBe('pending');
+  });
+
+  it('a same-millisecond predecessor-lane entry admitted first still blocks the session', () => {
+    const entry = enqueueMailboxEntry('sess-a', { createdAt: 1000 });
+    const delivery = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a' },
+      createdAt: 1000,
+    });
+
+    expect(
+      repo.dequeueSessionFifo('message_delivery', 5, { waitsBehind: WAITS_BEHIND_MAILBOX })
+    ).toHaveLength(0);
+    expect(repo.getJob(entry.id)?.status).toBe('pending');
+    expect(repo.getJob(delivery.id)?.status).toBe('pending');
+  });
+
+  it('a same-millisecond predecessor-lane entry admitted later does not block', () => {
+    const delivery = repo.enqueue({
+      queue: 'message_delivery',
+      payload: { sessionId: 'sess-a' },
+      createdAt: 1000,
+    });
+    enqueueMailboxEntry('sess-a', { createdAt: 1000 });
+
+    const claimed = repo.dequeueSessionFifo('message_delivery', 5, {
+      waitsBehind: WAITS_BEHIND_MAILBOX,
+    });
+
+    expect(claimed.map((job) => job.id)).toEqual([delivery.id]);
+  });
 });

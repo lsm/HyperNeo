@@ -920,7 +920,10 @@ describe('cross-lane per-session ordering (mailbox vs direct message_delivery)',
       mailboxJob.claimToken
     );
     expect(dead?.status).toBe('dead');
-    expect(mailbox.sdkRows()).toHaveLength(0);
+    const entryRows = mailbox.db
+      .prepare(`SELECT COUNT(*) AS c FROM sdk_messages WHERE sdk_uuid = ?`)
+      .get(expectedMessageUuid(entry.id)) as { c: number };
+    expect(entryRows.c).toBe(0);
 
     const claimed = dequeueDelivery();
     expect(claimed.map((job) => job.payload.messageUuid)).toEqual(['chat-after-dead']);
@@ -942,5 +945,64 @@ describe('cross-lane per-session ordering (mailbox vs direct message_delivery)',
 
     const claimed = dequeueDelivery();
     expect(claimed.map((job) => job.payload.messageUuid)).toEqual(['other-session-prompt']);
+  });
+
+  test('a direct prompt sharing the entry admission millisecond cannot overtake it', async () => {
+    const handler = makeOrderingHandler();
+    const sameMs = Date.now() - 60_000;
+    const entry = makeEntry({ id: createUlid(sameMs), origin: 'space_agent' });
+    expect(enqueueMailboxEntry(mailbox.jobQueue, entry).kind).toBe('enqueued');
+    const backdate = mailbox.db.prepare(
+      `UPDATE job_queue SET created_at = ?
+         WHERE queue = ? AND json_extract(payload, ?) = ?`
+    );
+    backdate.run(sameMs, MAILBOX_LANE, '$.id', entry.id);
+
+    persistChatPrompt('chat-same-ms', 'a direct prompt in the same millisecond');
+    backdate.run(sameMs, MESSAGE_DELIVERY, '$.messageUuid', 'chat-same-ms');
+
+    expect(dequeueDelivery()).toHaveLength(0);
+
+    const mailboxJob = mailbox.jobQueue.dequeue(MAILBOX_LANE, 1)[0];
+    await handler(mailboxJob);
+    mailbox.jobQueue.complete(mailboxJob.id, {}, mailboxJob.claimToken);
+
+    const first = dequeueDelivery()[0];
+    expect(first.payload.messageUuid).toBe(expectedMessageUuid(entry.id));
+    expect(first.payload.admissionRowid).toBeGreaterThan(0);
+    mailbox.jobQueue.complete(first.id, {}, first.claimToken);
+
+    const second = dequeueDelivery()[0];
+    expect(second.payload.messageUuid).toBe('chat-same-ms');
+  });
+
+  test('a direct prompt inserted before a same-millisecond entry keeps its place', async () => {
+    const handler = makeOrderingHandler();
+    const sameMs = Date.now() - 60_000;
+    persistChatPrompt('chat-same-ms-first', 'a direct prompt first in the same millisecond');
+    mailbox.db
+      .prepare(
+        `UPDATE job_queue SET created_at = ? WHERE queue = ? AND json_extract(payload, '$.messageUuid') = ?`
+      )
+      .run(sameMs, MESSAGE_DELIVERY, 'chat-same-ms-first');
+
+    const entry = makeEntry({ id: createUlid(sameMs), origin: 'space_agent' });
+    expect(enqueueMailboxEntry(mailbox.jobQueue, entry).kind).toBe('enqueued');
+    mailbox.db
+      .prepare(
+        `UPDATE job_queue SET created_at = ? WHERE queue = ? AND json_extract(payload, '$.id') = ?`
+      )
+      .run(sameMs, MAILBOX_LANE, entry.id);
+
+    const first = dequeueDelivery()[0];
+    expect(first.payload.messageUuid).toBe('chat-same-ms-first');
+    mailbox.jobQueue.complete(first.id, {}, first.claimToken);
+
+    const mailboxJob = mailbox.jobQueue.dequeue(MAILBOX_LANE, 1)[0];
+    await handler(mailboxJob);
+    mailbox.jobQueue.complete(mailboxJob.id, {}, mailboxJob.claimToken);
+
+    const second = dequeueDelivery()[0];
+    expect(second.payload.messageUuid).toBe(expectedMessageUuid(entry.id));
   });
 });

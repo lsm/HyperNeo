@@ -1674,6 +1674,20 @@ describe('admission-stamped delivery enqueue (admittedAt)', () => {
     expect(before).toBeGreaterThan(1234);
   });
 
+  it('persistPrompt carries delivery.admissionRowid into the delivery payload', () => {
+    persistPrompt({
+      db: db as never,
+      sdkMessageRepo: sdkRepo,
+      jobQueue,
+      sessionId: SESSION,
+      message: userMessage('stamp-rowid'),
+      delivery: { origin: 'space_agent', admittedAt: 1234, admissionRowid: 7 },
+    });
+
+    const row = deliveryJobRow('stamp-rowid');
+    expect(JSON.parse(row.payload).admissionRowid).toBe(7);
+  });
+
   it('persistPrompt without admittedAt keeps created_at as the physical insert time', () => {
     const before = Date.now();
     persistPrompt({
