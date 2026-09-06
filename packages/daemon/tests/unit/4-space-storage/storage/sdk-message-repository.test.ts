@@ -538,6 +538,62 @@ describe('SDKMessageRepository', () => {
       expect(storedMessage('session-1', 'msg-wrong-type').type).toBe('assistant');
     });
 
+    it('rejects SDK replay rows instead of rewriting them into ordinary deliveries', () => {
+      insertDeliveryRow('session-1', 'msg-replay', {
+        type: 'user',
+        isReplay: true,
+        isSynthetic: true,
+        inputKind: 'task',
+        file_attachments: [{ path: 'tmp/replay.png' }],
+        message: { role: 'user', content: 'replay output' },
+      });
+
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-replay')).toBe(false);
+      expect(storedMessage('session-1', 'msg-replay')).toEqual({
+        type: 'user',
+        isReplay: true,
+        isSynthetic: true,
+        inputKind: 'task',
+        file_attachments: [{ path: 'tmp/replay.png' }],
+        message: { role: 'user', content: 'replay output' },
+      });
+    });
+
+    it('selects the first-inserted sibling when duplicate uuids share a timestamp', () => {
+      const same = new Date('2026-01-01T00:00:00Z').toISOString();
+      insertDeliveryRow(
+        'session-1',
+        'msg-tie',
+        {
+          type: 'user',
+          isSynthetic: true,
+          inputKind: 'task',
+          message: { role: 'user', content: 'first inserted' },
+        },
+        { rowId: 'tie-b', timestamp: same }
+      );
+      insertDeliveryRow(
+        'session-1',
+        'msg-tie',
+        {
+          type: 'user',
+          isSynthetic: true,
+          inputKind: 'task',
+          message: { role: 'user', content: 'second inserted' },
+        },
+        { rowId: 'tie-a', timestamp: same }
+      );
+
+      expect(repository.normalizeDeliveryMessageForMailbox('session-1', 'msg-tie')).toBe(true);
+      expect(storedMessageByRowId('tie-b').message).toEqual({
+        content: 'first inserted',
+      });
+      expect(storedMessageByRowId('tie-a').message).toEqual({
+        role: 'user',
+        content: 'second inserted',
+      });
+    });
+
     it('returns false without throwing for non-object sdk_message JSON', () => {
       insertDeliveryRow('session-1', 'msg-json-null', null);
       insertDeliveryRow('session-1', 'msg-json-array', [1, 2]);

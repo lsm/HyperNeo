@@ -508,6 +508,7 @@ function projectDeliveryMessageRow(ctx: NormalizeDeliveryMessageCtx): NormalizeD
   if (stored.type !== 'user') return ctx;
   const storedMessage = stored.message as { role?: unknown; content?: unknown } | undefined;
   if (storedMessage?.role !== 'user') return ctx;
+  if (stored.isReplay === true) return ctx;
   const synthetic = stored.isSynthetic === true;
   const storedInputKind = stored.inputKind;
   const inputKind: MessageInputKind =
@@ -1893,7 +1894,7 @@ export class SDKMessageRepository {
             .prepare(
               `SELECT id, sdk_message FROM sdk_messages
                 WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-                ORDER BY timestamp ASC LIMIT 1`
+                ORDER BY timestamp ASC, rowid ASC LIMIT 1`
             )
             .get(selectSessionId, selectUuid) as
             | { id: string; sdk_message: string }
@@ -2035,7 +2036,7 @@ export class SDKMessageRepository {
                     AND json_extract(payload, '$.messageUuid') = ?
                     AND status = 'processing'
                )
-             ORDER BY timestamp ASC LIMIT 1`
+             ORDER BY timestamp ASC, rowid ASC LIMIT 1`
         )
         .get(sessionId, uuid, ...acceptedFrom, sessionId, uuid) as
         | { id: string }
