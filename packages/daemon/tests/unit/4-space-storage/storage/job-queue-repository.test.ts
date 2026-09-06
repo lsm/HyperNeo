@@ -382,6 +382,51 @@ describe('JobQueueRepository', () => {
     });
   });
 
+  describe('listActiveByPayload', () => {
+    it('returns every active row matching nested payload fields', () => {
+      const matching = repository.enqueue({
+        queue: 'mailbox',
+        payload: { to: { kind: 'session', sessionId: 's1' }, messageUuid: 'u1' },
+      });
+      repository.enqueue({
+        queue: 'mailbox',
+        payload: { to: { kind: 'session', sessionId: 's2' }, messageUuid: 'u1' },
+      });
+      repository.enqueue({
+        queue: 'other',
+        payload: { to: { kind: 'session', sessionId: 's1' }, messageUuid: 'u1' },
+      });
+      const doomed = repository.enqueue({
+        queue: 'mailbox',
+        payload: { to: { kind: 'session', sessionId: 's1' }, messageUuid: 'u1' },
+      });
+      repository.markDeadIfActive(doomed.id, 'delivery failed');
+
+      const active = repository.listActiveByPayload('mailbox', {
+        'to.sessionId': 's1',
+        messageUuid: 'u1',
+      });
+
+      expect(active.map((job) => job.id)).toEqual([matching.id]);
+      expect(repository.listActiveByPayload('mailbox', { 'to.sessionId': 's9' })).toEqual([]);
+    });
+  });
+
+  describe('getLatestByPayload', () => {
+    it('returns the newest queue row matching payload fields across statuses', () => {
+      repository.enqueue({ queue: 'mailbox', payload: { id: 'entry-1', attempt: 1 } });
+      const newest = repository.enqueue({
+        queue: 'mailbox',
+        payload: { id: 'entry-1', attempt: 2 },
+      });
+      repository.enqueue({ queue: 'other', payload: { id: 'entry-1' } });
+      repository.markDeadIfActive(newest.id, 'delivery failed');
+
+      expect(repository.getLatestByPayload('mailbox', { id: 'entry-1' })?.id).toBe(newest.id);
+      expect(repository.getLatestByPayload('mailbox', { id: 'missing' })).toBeNull();
+    });
+  });
+
   describe('listJobs', () => {
     it('lists all jobs when no filter', () => {
       repository.enqueue({ queue: 'queue-a', payload: {} });
