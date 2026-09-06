@@ -136,17 +136,32 @@ describe('TaskAgentManager agent-activity listener', () => {
       db as unknown as Parameters<typeof PendingAgentMessageRepository.prototype.constructor>[0]
     );
     const manager2 = new TaskAgentManager({
-      db: { getDatabase: () => db },
+      db: {
+        getDatabase: () => db,
+        getJobQueueRepo: () => ({
+          enqueueUniquePending: () => ({ id: 'mailbox-job-1' }),
+        }),
+      },
       taskRepo: { getTask: () => null } as never,
       workflowRunRepo: { getRun: () => null } as never,
       nodeExecutionRepo,
       pendingMessageRepo: pendingRepo,
+      ensureTargetSession: async () => ({
+        kind: 'resolved',
+        sessionId: subSessionId,
+        created: false,
+      }),
       internalEventBus: bus,
     } as unknown as TaskAgentManagerConfig);
 
+    const taskRepo = new SpaceTaskRepository(
+      db as unknown as Parameters<typeof SpaceTaskRepository.prototype.constructor>[0]
+    );
+    const task = taskRepo.createTask({ spaceId, title: 'T2', description: '' });
     pendingRepo.enqueue({
       workflowRunId,
       spaceId,
+      taskId: task.id,
       sourceAgentName: 'reviewer',
       targetKind: 'node_agent',
       targetAgentName: 'coder',
@@ -154,10 +169,6 @@ describe('TaskAgentManager agent-activity listener', () => {
       workflowNodeId: 'node-1',
     });
     expect(nodeExecutionRepo.getById(executionId)!.lastActivityAt).toBeNull();
-
-    (
-      manager2 as unknown as { injectSubSessionMessage: () => Promise<string> }
-    ).injectSubSessionMessage = async () => 'flushed-msg-id';
 
     await manager2.flushPendingMessagesForTarget(workflowRunId, 'coder', subSessionId);
 

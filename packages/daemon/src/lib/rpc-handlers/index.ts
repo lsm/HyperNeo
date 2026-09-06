@@ -989,6 +989,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const spaceWorktreeManager = new SpaceWorktreeManager(deps.db.getDatabase());
 
   let taskAgentManager: TaskAgentManager;
+  let sessionResolutionDeps: ReturnType<typeof createDefaultSessionResolutionDeps>;
   const spaceAgentInjector = async (
     spaceId: string,
     message: string,
@@ -1004,14 +1005,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     const { sessionId, session } = await resolveSpaceAgentSession<AgentSession>(
       spaceId,
       replyToSessionId,
-      createDefaultSessionResolutionDeps({
-        sessionManager: deps.sessionManager,
-        taskAgentManager,
-        spaceRuntimeService,
-        nodeExecutionRepo,
-        taskRepo: spaceTaskRepo,
-        longHorizonAgentRepo,
-      }),
+      sessionResolutionDeps,
       (sessionId) => deps.sessionManager.getSessionAsync(sessionId)
     );
     const messageId = explicitMessageId ?? generateUUID();
@@ -1114,7 +1108,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   deps.sessionManager.setSpaceRuntimeMcpProvider(spaceRuntimeService);
   spaceRuntimeService.start();
 
-  const sessionResolutionDeps = createDefaultSessionResolutionDeps({
+  sessionResolutionDeps = createDefaultSessionResolutionDeps({
     sessionManager: deps.sessionManager,
     taskAgentManager,
     spaceRuntimeService,
@@ -1122,6 +1116,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     taskRepo: spaceTaskRepo,
     longHorizonAgentRepo,
   });
+  taskAgentManager.attachSessionEnsurer((target) => ensureSession(target, sessionResolutionDeps));
   setupSpaceTaskMessageHandlers(
     deps.messageHub,
     taskAgentManager,
