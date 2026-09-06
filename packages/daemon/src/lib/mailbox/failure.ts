@@ -106,37 +106,47 @@ export function persistFailedRowStage(ctx: MailboxFailureCtx): MailboxFailureCtx
   if (target === undefined || message === undefined || entry === null) return ctx;
   const synthetic = entry.origin !== 'chat';
   let conflict = false;
+  let ownershipKnown = false;
   try {
-    const outcome = withBusyRetry((): { failedId: string; uuidOwned: boolean } => {
+    const outcome = withBusyRetry((): { failedId?: string; uuidOwned: boolean } => {
       const siblings = ctx.deps.sdkMessageRepo.getStoredPromptsByUuid(
         target.sessionId,
         target.messageUuid
       );
+      ownershipKnown = true;
       if (siblings.some((stored) => !samePromptMessage(stored, message))) {
         conflict = true;
+        const receiptUuid = deterministicConflictUuid(entry.id);
+        const existingReceipt =
+          ctx.deps.sdkMessageRepo.findMessageIdByUuid?.(target.sessionId, receiptUuid) ?? null;
         const receipt: SDKUserMessage = {
           ...message,
-          uuid: deterministicConflictUuid(entry.id) as NonNullable<SDKUserMessage['uuid']>,
+          uuid: receiptUuid as NonNullable<SDKUserMessage['uuid']>,
         };
         return {
-          failedId: ctx.deps.saveFailed(
-            target.sessionId,
-            receipt,
-            synthetic ? 'system' : undefined
-          ),
+          failedId:
+            existingReceipt ??
+            ctx.deps.saveFailed(target.sessionId, receipt, synthetic ? 'system' : undefined),
           uuidOwned: false,
         };
       }
+      const failedRow = ctx.deps.sdkMessageRepo.getMessageByStatusAndUuid?.(
+        target.sessionId,
+        'failed',
+        target.messageUuid
+      );
       const failedId =
         ctx.deps.sdkMessageRepo.markDeliveryFailedByUuid(target.sessionId, target.messageUuid) ??
-        ctx.deps.sdkMessageRepo.findMessageIdByUuid?.(target.sessionId, target.messageUuid) ??
-        ctx.deps.saveFailed(target.sessionId, message, synthetic ? 'system' : undefined);
+        failedRow?.dbId ??
+        (siblings.length === 0
+          ? ctx.deps.saveFailed(target.sessionId, message, synthetic ? 'system' : undefined)
+          : undefined);
       return { failedId, uuidOwned: true };
     });
     return { ...ctx, failedId: outcome.failedId, uuidOwned: outcome.uuidOwned };
   } catch (error) {
     emitMaterializeFailure(target, entry.id, error);
-    return conflict ? { ...ctx, uuidOwned: false } : ctx;
+    return { ...ctx, uuidOwned: ownershipKnown && !conflict };
   }
 }
 

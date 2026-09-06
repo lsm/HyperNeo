@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
-import type { StructuredLogEvent } from '@hyperneo/shared';
+import type { MessageOrigin, StructuredLogEvent } from '@hyperneo/shared';
+import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
 import {
   clearStructuredLogSubscribers,
@@ -25,6 +26,7 @@ import {
 } from '../../../../src/lib/mailbox/failure';
 import { createUlid } from '../../../../src/lib/mailbox/ulid';
 import type { Job } from '../../../../src/storage/repositories/job-queue-repository';
+import type { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
 
 const SESSION_ID = 'sess-1';
@@ -307,6 +309,37 @@ describe('createMailboxDeadHandler', () => {
     mailbox.close();
   });
 
+  test('does not publish a consumed row as failed', async () => {
+    const mailbox = createMailboxTestDb();
+    mailbox.sdkMessageRepo.saveUserMessage(
+      SESSION_ID,
+      { ...message, uuid: 'consumed-uuid', session_id: SESSION_ID },
+      'consumed'
+    );
+    const entry = makeEntry({ origin: 'chat', messageUuid: 'consumed-uuid' });
+    const job = claimMailboxJob(mailbox, entry);
+    const publishFailed = mock(async () => {});
+    const settleSkipped = mock(async () => {});
+    const saveFailed = mock(() => 'should-not-happen');
+    const handler = createMailboxDeadHandler(() => {}, {
+      sdkMessageRepo: mailbox.sdkMessageRepo,
+      saveFailed,
+      publishFailed,
+      settleSkipped,
+    });
+    job.status = 'dead';
+    job.error = 'delivery failed';
+
+    handler(job);
+    await Promise.resolve();
+
+    expect(mailbox.sdkRows()[0].send_status).toBe('consumed');
+    expect(saveFailed).not.toHaveBeenCalled();
+    expect(publishFailed).not.toHaveBeenCalled();
+    expect(settleSkipped).toHaveBeenCalledWith(SESSION_ID, 'consumed-uuid');
+    mailbox.close();
+  });
+
   test('emits a structured error event instead of escaping when the chain throws', () => {
     const mailbox = createMailboxTestDb();
     const events: StructuredLogEvent[] = [];
@@ -457,6 +490,79 @@ describe('materializeMailboxFailure', () => {
     );
     expect(deterministicConflictUuid(entry.id)).not.toBe(derived);
     expect(mailbox.sdkRows()[0].send_status).toBe('enqueued');
+    mailbox.close();
+  });
+
+  test('skips settlement when the sibling lookup itself fails', () => {
+    const mailbox = createMailboxTestDb();
+    const events: StructuredLogEvent[] = [];
+    const unsubscribe = subscribeToStructuredLogs((event) => events.push(event));
+    const entry = makeEntry({ origin: 'chat', messageUuid: 'unread-uuid' });
+    const repo = Object.create(mailbox.sdkMessageRepo) as SDKMessageRepository;
+    repo.getStoredPromptsByUuid = () => {
+      throw new Error('read boom');
+    };
+    const settleSkipped = mock(async () => {});
+
+    materializeMailboxFailure(makeDeadJob(entry, 'delivery failed'), {
+      sdkMessageRepo: repo,
+      saveFailed: () => 'never',
+      settleSkipped,
+    });
+    unsubscribe();
+    clearStructuredLogSubscribers();
+
+    expect(
+      events.some((event) => event.module === 'hyperneo:daemon:mailbox:materialize-failure')
+    ).toBe(true);
+    expect(settleSkipped).not.toHaveBeenCalled();
+    mailbox.close();
+  });
+
+  test('reuses the deterministic conflict receipt on replay', async () => {
+    const mailbox = createMailboxTestDb();
+    const original: MailboxMessage = {
+      type: 'user',
+      message: { content: 'original content' },
+      parent_tool_use_id: null,
+    };
+    mailbox.sdkMessageRepo.saveUserMessage(
+      SESSION_ID,
+      { ...original, uuid: 'replay-uuid', session_id: SESSION_ID },
+      'enqueued'
+    );
+    const conflicting: MailboxMessage = {
+      type: 'user',
+      message: { content: 'conflicting content' },
+      parent_tool_use_id: null,
+    };
+    const entry = makeEntry({ origin: 'chat', messageUuid: 'replay-uuid', message: conflicting });
+    const publishFailed = mock(async () => {});
+    const saveFailed = mock((sessionId: string, msg: SDKUserMessage, origin?: MessageOrigin) =>
+      mailbox.sdkMessageRepo.saveUserMessage(sessionId, msg, 'failed', origin)
+    );
+    const deps = {
+      sdkMessageRepo: mailbox.sdkMessageRepo,
+      saveFailed,
+      publishFailed,
+    };
+
+    materializeMailboxFailure(makeDeadJob(entry, 'delivery failed'), deps);
+    await Promise.resolve();
+    const firstReceipt = mailbox
+      .sdkRows()
+      .find((row) => row.sdk_uuid === deterministicConflictUuid(entry.id));
+
+    materializeMailboxFailure(makeDeadJob(entry, 'delivery failed'), deps);
+    await Promise.resolve();
+
+    const receiptRows = mailbox
+      .sdkRows()
+      .filter((row) => row.sdk_uuid === deterministicConflictUuid(entry.id));
+    expect(firstReceipt).toBeDefined();
+    expect(saveFailed).toHaveBeenCalledTimes(1);
+    expect(receiptRows).toHaveLength(1);
+    expect(publishFailed).toHaveBeenNthCalledWith(2, SESSION_ID, firstReceipt?.id);
     mailbox.close();
   });
 
