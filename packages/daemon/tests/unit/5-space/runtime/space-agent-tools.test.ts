@@ -6676,6 +6676,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       sourceAgentName?: string;
       targetKind: 'node_agent' | 'space_agent';
       targetAgentName: string;
+      workflowNodeId?: string | null;
       message: string;
       idempotencyKey?: string | null;
     }>;
@@ -7489,6 +7490,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         sourceAgentName: 'space-agent',
         targetKind: 'node_agent',
         targetAgentName: 'reviewer',
+        workflowNodeId: wf.startNodeId,
         message: spaceAgentToNodeEnvelope(task, 'please review this PR', 'reviewer'),
       },
     ]);
@@ -7547,6 +7549,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
         sourceAgentName: 'task-agent',
         targetKind: 'node_agent',
         targetAgentName: 'reviewer',
+        workflowNodeId: wf.startNodeId,
         message: formatAgentMessage({
           fromLevel: 'task-agent',
           fromAgentName: 'task-agent',
@@ -8761,8 +8764,8 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
       expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-door-session');
     });
 
-    test('queues immediately when the door returns a queueable timeout', async () => {
-      const { run, task, exec } = await makeTaskWithCoderExecution('WF Door Queue');
+    test('queues immediately when the door times out activation without a row session', async () => {
+      const { wf, run, task, exec } = await makeTaskWithCoderExecution('WF Door Queue');
       const tam = makeFakeTaskAgentManager(ctx);
       const fakeQueue = makeFakePendingMessageQueue();
       const auditLogRepo = new McpAuditLogRepository(ctx.db);
@@ -8796,6 +8799,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
           sourceAgentName: 'space-agent',
           targetKind: 'node_agent',
           targetAgentName: 'coder',
+          workflowNodeId: wf.startNodeId,
           message: spaceAgentToNodeEnvelope(task, 'door queue', 'coder'),
         },
       ]);
@@ -8807,6 +8811,106 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
           queued_message_id: 'pending-message-0',
         }),
       ]);
+    });
+
+    test('delivers via the execution row when the door times out a slow restore', async () => {
+      const { task } = await makeTaskWithCoderExecution('WF Door Slow Restore', {
+        liveSession: 'coder-row-live',
+      });
+      const tam = makeFakeTaskAgentManager(ctx);
+      const fakeQueue = makeFakePendingMessageQueue();
+      const activateCalls: Array<[string, string]> = [];
+      const handlers = makeHandlersWith(tam, {
+        activateNode: async (runId, nodeId) => {
+          activateCalls.push([runId, nodeId]);
+        },
+        pendingMessageQueue: fakeQueue,
+        ensureWorkerSession: async () => ({ kind: 'unresolved', reason: 'activation_timeout' }),
+      });
+
+      const result = await handlers.send_message_to_task({
+        task_id: task.id,
+        node_id: 'coder',
+        message: 'door slow restore',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.activated).toBe(false);
+      expect(parsed.delivered_session_id).toBe('coder-row-live');
+      expect(parsed.sdk_message_id).toBe('sdk-message-0');
+      expect(activateCalls).toHaveLength(0);
+      expect(fakeQueue.enqueued).toHaveLength(0);
+    });
+
+    test('does not retry the execution-row session after a door-resolved session rejects injection', async () => {
+      const { task, exec } = await makeTaskWithCoderExecution('WF Door Wrong Row Retry', {
+        liveSession: 'coder-row-other',
+      });
+      const tam = makeFakeTaskAgentManager(ctx);
+      tam.deadSessionIds.add('coder-door-dead');
+      const activateCalls: Array<[string, string]> = [];
+      const handlers = makeHandlersWith(tam, {
+        activateNode: async () => {
+          activateCalls.push(['run', 'node']);
+          ctx.nodeExecutionRepo.update(exec.id, {
+            status: 'in_progress',
+            agentSessionId: 'coder-new',
+          });
+        },
+        ensureWorkerSession: async () => ({
+          kind: 'resolved',
+          sessionId: 'coder-door-dead',
+          created: false,
+        }),
+      });
+
+      const result = await handlers.send_message_to_task({
+        task_id: task.id,
+        node_id: 'coder',
+        message: 'door wrong row retry',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.activated).toBe(true);
+      expect(parsed.delivered_session_id).toBe('coder-new');
+      expect(activateCalls).toHaveLength(1);
+      expect(tam.subSessionInjects).toEqual([
+        {
+          sessionId: 'coder-new',
+          message: spaceAgentToNodeEnvelope(task, 'door wrong row retry', 'coder'),
+          isSyntheticMessage: true,
+          sdkMessageId: 'sdk-message-0',
+        },
+      ]);
+      expect(tam.subSessionInjects.some((r) => r.sessionId === 'coder-row-other')).toBe(false);
+    });
+
+    test('falls back to the execution row when session resolution is unavailable', async () => {
+      const { task } = await makeTaskWithCoderExecution('WF Door No Resolution', {
+        liveSession: 'coder-row-live',
+      });
+      const tam = makeFakeTaskAgentManager(ctx);
+      const handlers = makeHandlersWith(tam, {
+        activateNode: async () => {},
+        ensureWorkerSession: async () => ({
+          kind: 'unresolved',
+          reason: 'session_resolution_unavailable',
+        }),
+      });
+
+      const result = await handlers.send_message_to_task({
+        task_id: task.id,
+        node_id: 'coder',
+        message: 'door no resolution',
+      });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.success).toBe(true);
+      expect(parsed.activated).toBe(false);
+      expect(parsed.delivered_session_id).toBe('coder-row-live');
+      expect(tam.subSessionInjects[0]?.sessionId).toBe('coder-row-live');
     });
 
     test('reports deferred delivery without a pending queue on a queueable timeout', async () => {
