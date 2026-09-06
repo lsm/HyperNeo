@@ -985,8 +985,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         },
         isSessionArchived: (sessionId: string) =>
           reactiveDb?.db.getSession(sessionId)?.status === 'archived',
+        publishStatusChanged: (sessionId, dbId, status) => {
+          void internalEventBus
+            .publish('messages.statusChanged', { sessionId, messageIds: [dbId], status })
+            .catch(() => {});
+        },
       }),
-      { onDead: createMailboxDeadHandler(logError) }
+      {
+        dequeueMode: { kind: 'session-fifo', sessionIdPath: '$.to.sessionId' },
+        onDead: createMailboxDeadHandler(logError),
+      }
     );
 
     messageDeliveryProcessor.register(
