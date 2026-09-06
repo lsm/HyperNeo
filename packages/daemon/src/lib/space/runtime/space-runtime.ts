@@ -16,7 +16,6 @@ import {
   isChannelCyclic,
   isRateOrUsageLimited,
   isWorkflowRunSucceeded,
-  isWorkflowRunWaiting,
   MAX_SPACE_CONCURRENT_TASKS,
   MIN_SPACE_CONCURRENT_TASKS,
   resolveNodeAgents,
@@ -153,7 +152,12 @@ import {
 } from './workflow-node-execution-validation.ts';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine.ts';
 import { selectWorkflow } from './workflow-selector.ts';
-import { decideRunTickAdmission, selectTimedOutExecutions } from './run-tick-admission-gates.ts';
+import { selectTimedOutExecutions } from './run-tick-admission-gates.ts';
+import type {
+  SpaceWorkflowRunTickDeps,
+  StrandedExecutionRecoveryResult,
+} from './run-tick-contract.ts';
+import { runSpaceWorkflowRunTick } from './run-tick-pipeline.ts';
 import {
   resolveCompletionSummaries,
   isTaskAlreadyResolved,
@@ -6060,105 +6064,147 @@ export class SpaceRuntime {
   }
 
   private async processRunTick(runId: string): Promise<void> {
-    const run = this.config.workflowRunRepo.getRun(runId);
-    if (!run) return;
-    if (run.status === 'cancelled' || isWorkflowRunSucceeded(run.status)) {
-      this.clearAgentStuckStateForRun(runId);
-      return;
-    }
+    const deps: SpaceWorkflowRunTickDeps = {
+      getRun: (candidateRunId) => this.config.workflowRunRepo.getRun(candidateRunId),
+      clearAgentStuckStateForRun: (candidateRunId) =>
+        this.clearAgentStuckStateForRun(candidateRunId),
+      recoverBlockedRun: (candidateRunId, run) =>
+        this.attemptBlockedRunRecovery(candidateRunId, run),
+      loadRunContext: (candidateRunId, run) => this.loadRunContext(candidateRunId, run),
+      blockInvalidWorkflowRun: (candidateRunId, meta, canonicalTask) =>
+        this.blockInvalidWorkflowRun(candidateRunId, meta, canonicalTask),
+      pruneStaleNotifyDedupKeys: (canonicalTask) => this.pruneStaleNotifyDedupKeys(canonicalTask),
+      blockRunOnBlockedExecutions: (candidateRunId, meta, canonicalTask, blockedReason) =>
+        this.blockRunOnBlockedExecutions(candidateRunId, meta, canonicalTask, blockedReason),
+      getSpace: (spaceId) => this.config.spaceManager.getSpace(spaceId),
+      recoverStrandedExecutions: (
+        candidateRunId,
+        run,
+        context,
+        nodeExecutions,
+        runIsComplete,
+        space
+      ) =>
+        this.recoverStrandedExecutions(
+          candidateRunId,
+          run,
+          context,
+          nodeExecutions,
+          runIsComplete,
+          space
+        ),
+      settleIfComplete: (candidateRunId, runIsComplete, meta, canonicalTask) =>
+        this.settleIfComplete(candidateRunId, runIsComplete, meta, canonicalTask),
+      drainPendingNodeHandoffs: (candidateRunId, run, context) =>
+        this.drainPendingNodeHandoffs(candidateRunId, run, context),
+      promotePendingExecutionsWithLiveSessions: (candidateRunId, preTickPendingIds, tam) =>
+        this.promotePendingExecutionsWithLiveSessions(candidateRunId, preTickPendingIds, tam),
+      admitSpawnExecution: (candidateRunId, meta, canonicalTask, nodeExecutions, space) =>
+        this.admitSpawnExecution(candidateRunId, meta, canonicalTask, nodeExecutions, space),
+      spawnPendingExecutions: (
+        candidateRunId,
+        canonicalTask,
+        space,
+        meta,
+        run,
+        pendingExecutions,
+        tam,
+        blockedByCrash
+      ) =>
+        this.spawnPendingExecutions(
+          candidateRunId,
+          canonicalTask,
+          space,
+          meta,
+          run,
+          pendingExecutions,
+          tam,
+          blockedByCrash
+        ),
+      blockRunForSpawnFailure: (candidateRunId, meta, canonicalTask, failureReason, crashed) =>
+        this.blockRunForSpawnFailure(candidateRunId, meta, canonicalTask, failureReason, crashed),
+      casCanonicalTaskOpenToInProgress: (spaceId, canonicalTask) =>
+        this.casCanonicalTaskOpenToInProgress(spaceId, canonicalTask),
+    };
+    await runSpaceWorkflowRunTick(deps, runId);
+  }
 
-    if (isWorkflowRunWaiting(run.status)) {
-      await this.attemptBlockedRunRecovery(runId, run);
-      return;
-    }
-
-    const context = await this.loadRunContext(runId, run);
-    if (!context) return;
-    const { meta, loadNodeExecutions, resolveRunIsComplete } = context;
-    let canonicalTask = context.canonicalTask;
-
-    const admission = decideRunTickAdmission({
-      runStatus: run.status,
-      hasExecutorMeta: true,
-      runTaskCount: context.runTaskCount,
-      hasCanonicalTask: true,
-      hasEndNodeId: !!meta.workflow.endNodeId,
-      canonicalTaskStatus: canonicalTask.status,
-      executionCount: () => loadNodeExecutions().length,
-      runIsComplete: resolveRunIsComplete,
-      hasBlockedExecution: () =>
-        !resolveRunIsComplete() &&
-        loadNodeExecutions().some((execution) => execution.status === 'blocked'),
-      firstBlockedResult: () =>
-        loadNodeExecutions().find((execution) => execution.status === 'blocked')?.result ?? null,
-      availableTaskSlots: Number.MAX_SAFE_INTEGER,
-    });
-
-    if (admission.action === 'skip') return;
-
-    if (admission.action === 'blockInvalidWorkflow') {
-      await this.transitionRunStatusAndEmit(runId, 'blocked');
-      if (canonicalTask.status !== 'blocked') {
-        await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
-          status: 'blocked',
-          result: 'Workflow is missing endNodeId and cannot be executed safely.',
-          blockReason: 'workflow_invalid',
-          completedAt: null,
-        });
-      }
-      await this.safeNotify({
-        kind: 'workflow_run_blocked',
-        spaceId: meta.spaceId,
-        runId,
-        reason: 'Workflow is missing endNodeId',
-        timestamp: new Date().toISOString(),
+  private async blockInvalidWorkflowRun(
+    runId: string,
+    meta: ExecutorMeta,
+    canonicalTask: SpaceTask
+  ): Promise<void> {
+    await this.transitionRunStatusAndEmit(runId, 'blocked');
+    if (canonicalTask.status !== 'blocked') {
+      await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
+        status: 'blocked',
+        result: 'Workflow is missing endNodeId and cannot be executed safely.',
+        blockReason: 'workflow_invalid',
+        completedAt: null,
       });
-      return;
     }
+    await this.safeNotify({
+      kind: 'workflow_run_blocked',
+      spaceId: meta.spaceId,
+      runId,
+      reason: 'Workflow is missing endNodeId',
+      timestamp: new Date().toISOString(),
+    });
+  }
 
+  private pruneStaleNotifyDedupKeys(canonicalTask: SpaceTask): void {
     if (canonicalTask.status !== 'blocked') {
       this.notifiedTaskSet.delete(`${canonicalTask.id}:blocked`);
     }
     if (canonicalTask.status !== 'in_progress') {
       this.notifiedTaskSet.delete(`${canonicalTask.id}:timeout`);
     }
+  }
 
-    if (admission.action === 'blockOnBlockedExecutions') {
-      const blockedReason = admission.blockedReason;
-      const dedupKey = `${canonicalTask.id}:blocked`;
-      if (!this.notifiedTaskSet.has(dedupKey)) {
-        this.notifiedTaskSet.add(dedupKey);
-        await this.safeNotify({
-          kind: 'task_blocked',
-          spaceId: meta.spaceId,
-          taskId: canonicalTask.id,
-          reason: blockedReason,
-          timestamp: new Date().toISOString(),
-        });
-      }
-      await this.transitionRunStatusAndEmit(runId, 'blocked');
-      if (canonicalTask.status !== 'blocked') {
-        await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
-          status: 'blocked',
-          result: blockedReason,
-          blockReason: 'execution_failed',
-          completedAt: null,
-        });
-      }
+  private async blockRunOnBlockedExecutions(
+    runId: string,
+    meta: ExecutorMeta,
+    canonicalTask: SpaceTask,
+    blockedReason: string
+  ): Promise<void> {
+    const dedupKey = `${canonicalTask.id}:blocked`;
+    if (!this.notifiedTaskSet.has(dedupKey)) {
+      this.notifiedTaskSet.add(dedupKey);
       await this.safeNotify({
-        kind: 'workflow_run_blocked',
+        kind: 'task_blocked',
         spaceId: meta.spaceId,
-        runId,
-        reason: 'One or more tasks require attention',
+        taskId: canonicalTask.id,
+        reason: blockedReason,
         timestamp: new Date().toISOString(),
       });
-      return;
     }
+    await this.transitionRunStatusAndEmit(runId, 'blocked');
+    if (canonicalTask.status !== 'blocked') {
+      await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
+        status: 'blocked',
+        result: blockedReason,
+        blockReason: 'execution_failed',
+        completedAt: null,
+      });
+    }
+    await this.safeNotify({
+      kind: 'workflow_run_blocked',
+      spaceId: meta.spaceId,
+      runId,
+      reason: 'One or more tasks require attention',
+      timestamp: new Date().toISOString(),
+    });
+  }
 
-    let nodeExecutions = loadNodeExecutions();
-    const runIsComplete = resolveRunIsComplete();
-
-    const space = await this.config.spaceManager.getSpace(meta.spaceId);
+  private async recoverStrandedExecutions(
+    runId: string,
+    run: SpaceWorkflowRun,
+    context: RunTickContext,
+    nodeExecutions: NodeExecution[],
+    runIsComplete: boolean,
+    space: Space | null
+  ): Promise<StrandedExecutionRecoveryResult> {
+    const { meta, canonicalTask } = context;
 
     if (!runIsComplete) {
       const taskTimeoutMs = space?.config?.taskTimeoutMs;
@@ -6185,10 +6231,12 @@ export class SpaceRuntime {
       }
     }
 
-    if (canonicalTask.status === 'open' && this.getAvailableTaskSlots(space) <= 0) return;
+    if (canonicalTask.status === 'open' && this.getAvailableTaskSlots(space) <= 0) {
+      return { action: 'halted' };
+    }
 
     const tam = this.config.taskAgentManager;
-    if (!tam) return;
+    if (!tam) return { action: 'halted' };
     let blockedByCrash = false;
 
     const preTickPendingIds = new Set(
@@ -6244,7 +6292,7 @@ export class SpaceRuntime {
 
     if (blockedByCrash) {
       await this.blockRunForAgentCrash(runId, meta.spaceId, canonicalTask, nodeExecutions);
-      return;
+      return { action: 'halted' };
     }
 
     const aliveStuckOutcome = await this.handleAliveStuckExecutions(
@@ -6257,7 +6305,7 @@ export class SpaceRuntime {
       space
     );
     if (aliveStuckOutcome === 'restarted' || aliveStuckOutcome === 'blocked') {
-      return;
+      return { action: 'halted' };
     }
 
     const stoppedAfterWaitingRebind = await this.handleWaitingRebindExecutions(
@@ -6267,7 +6315,7 @@ export class SpaceRuntime {
       canonicalTask
     );
     if (stoppedAfterWaitingRebind) {
-      return;
+      return { action: 'halted' };
     }
     nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
@@ -6280,7 +6328,7 @@ export class SpaceRuntime {
       space
     );
     if (nonTerminalIdleOutcome === 'blocked') {
-      return;
+      return { action: 'halted' };
     }
     nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
@@ -6292,7 +6340,7 @@ export class SpaceRuntime {
       space
     );
     if (terminalErrorOutcome === 'blocked') {
-      return;
+      return { action: 'halted' };
     }
     nodeExecutions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
 
@@ -6311,21 +6359,29 @@ export class SpaceRuntime {
         space
       );
       if (stoppedAfterTerminalHandoffCleanup) {
-        return;
+        return { action: 'halted' };
       }
     }
 
-    if (space?.stopped) return;
+    if (space?.stopped) return { action: 'halted' };
 
-    if (await this.settleIfComplete(runId, runIsComplete, meta, canonicalTask)) return;
+    return { action: 'continue', tam, blockedByCrash, preTickPendingIds };
+  }
 
-    if (space?.paused || space?.stopped) return;
+  private async drainPendingNodeHandoffs(
+    runId: string,
+    run: SpaceWorkflowRun,
+    context: RunTickContext
+  ): Promise<'halted' | 'continue'> {
+    const { meta, canonicalTask } = context;
+    const space = await this.config.spaceManager.getSpace(meta.spaceId);
+    if (space?.paused || space?.stopped) return 'halted';
 
     const hasQueuedNodeHandoff =
       this.config.pendingMessageRepo
         ?.listPendingForRun(runId)
         .some((row) => row.targetKind === 'node_agent') ?? false;
-    if (!space && !hasQueuedNodeHandoff) return;
+    if (!space && !hasQueuedNodeHandoff) return 'halted';
 
     const stoppedAfterQueuedHandoffRepair = await this.repairQueuedWorkflowNodeHandoffs(
       runId,
@@ -6335,46 +6391,9 @@ export class SpaceRuntime {
       space
     );
     if (stoppedAfterQueuedHandoffRepair) {
-      return;
+      return 'halted';
     }
-
-    nodeExecutions = this.promotePendingExecutionsWithLiveSessions(runId, preTickPendingIds, tam);
-
-    const spawnOutcome = this.admitSpawnExecution(
-      runId,
-      meta,
-      canonicalTask,
-      nodeExecutions,
-      space
-    );
-    canonicalTask = spawnOutcome.canonicalTask;
-
-    if (spawnOutcome.spawnAdmission.action === 'spawn' && space) {
-      const spawned = await this.spawnPendingExecutions(
-        runId,
-        canonicalTask,
-        space,
-        meta,
-        run,
-        spawnOutcome.pendingExecutions,
-        tam,
-        blockedByCrash
-      );
-      if (
-        await this.blockRunForSpawnFailure(
-          runId,
-          meta,
-          canonicalTask,
-          spawned.permanentSpawnFailureReason,
-          spawned.blockedByCrash
-        )
-      ) {
-        return;
-      }
-      await this.casCanonicalTaskOpenToInProgress(meta.spaceId, canonicalTask);
-    }
-
-    return;
+    return 'continue';
   }
 
   private async loadRunContext(
