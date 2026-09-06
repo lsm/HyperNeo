@@ -57,11 +57,13 @@ import type { SessionManager } from '../../session-manager.ts';
 import { buildAgentSessionConfig } from '../../session-resolution/agent-session-config.ts';
 import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
 import type { SessionResolutionDeps } from '../../session-resolution/deps.ts';
+import { ensureSession } from '../../session-resolution/ensure-session.ts';
 import { resolveAgentDeliverySession } from '../../session-resolution/resolve-agent-delivery-session.ts';
 import {
   type ResolveAgentRecordDeps,
   resolveAgentRecord,
 } from '../../session-resolution/resolve-agent-record.ts';
+import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
 import { isSpaceActionsDispatcherEnabled } from '../actions/dispatcher-flag.ts';
 import {
   createSpaceActionsMcpServer,
@@ -1004,6 +1006,14 @@ export class SpaceRuntimeService {
     );
   }
 
+  ensureToolTargetSession(target: SessionTarget): Promise<EnsureSessionOutcome> {
+    const deps = this.createSessionResolutionDeps();
+    if (!deps) {
+      return Promise.resolve({ kind: 'unresolved', reason: 'session_resolution_unavailable' });
+    }
+    return ensureSession(target, deps);
+  }
+
   private async ensureLongTermAgentSession(actor: ActorRef) {
     const agentId = agentIdFromActorId(actor.actorId);
     if (!agentId) return null;
@@ -1233,6 +1243,7 @@ export class SpaceRuntimeService {
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
       internalEventBus: this.config.internalEventBus,
+      ensureTargetSession: (target) => this.ensureToolTargetSession(target),
       pendingMessageQueue: this.config.pendingMessageRepo,
       getSpaceAutonomyLevel: async (sid) => {
         const s = await this.config.spaceManager.getSpace(sid);
@@ -1838,6 +1849,7 @@ export class SpaceRuntimeService {
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
       internalEventBus: this.config.internalEventBus,
+      ensureTargetSession: (target) => this.ensureToolTargetSession(target),
       pendingMessageQueue: this.config.pendingMessageRepo,
       getSpaceAutonomyLevel: async (sid) => {
         const s = await spaceManagerForApproval.getSpace(sid);
@@ -2029,6 +2041,7 @@ export class SpaceRuntimeService {
       activateNode: async (runId, nodeId) => {
         await this.activateWorkflowNode(runId, nodeId);
       },
+      ensureTargetSession: (target) => this.ensureToolTargetSession(target),
       pendingMessageQueue: this.config.pendingMessageRepo,
       getSpaceAutonomyLevel: async (sid) => {
         const s = await spaceManagerForApproval.getSpace(sid);

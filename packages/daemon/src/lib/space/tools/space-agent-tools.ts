@@ -35,6 +35,7 @@ import type {
   TaskScheduleTriggerType,
 } from '@hyperneo/shared';
 import { parseAddress } from '../../../../../messaging/src/address.ts';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { z } from 'zod';
 import type { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
@@ -42,6 +43,7 @@ import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositor
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { AgentSession } from '../../agent/agent-session.ts';
+import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
 import type { SessionManager } from '../../session/session-manager.ts';
@@ -497,6 +499,28 @@ function describeTaskExecution(exec: NodeExecution): string {
   return `workflow node "${exec.agentName}" (${exec.id})`;
 }
 
+const DOOR_QUEUEABLE_UNRESOLVED_REASONS = new Set([
+  'post_approval_pending',
+  'restore_timeout',
+  'spawn_timeout',
+]);
+
+const DOOR_TIMED_OUT_UNRESOLVED_REASONS = new Set([
+  ...DOOR_QUEUEABLE_UNRESOLVED_REASONS,
+  'activation_timeout',
+]);
+
+type TaskWorkerDeliveryCtx = {
+  task: SpaceTask;
+  workflowRunId: string;
+  resolved: NodeExecution;
+  message: string;
+  sessionSelector?: string;
+  audit: (outcome: string, extra?: Record<string, unknown>) => void;
+  doorOutcome?: EnsureSessionOutcome;
+  result?: ToolResult;
+};
+
 function describeActor(actor: ActorRef): string {
   return `${actor.handle ?? actor.actorId} (${actor.actorId})`;
 }
@@ -529,6 +553,7 @@ export interface SpaceAgentToolsConfig {
   taskAgentManager?: TaskAgentManager;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   activateNode?: (runId: string, nodeId: string) => Promise<void>;
+  ensureTargetSession?: (target: SessionTarget) => Promise<EnsureSessionOutcome>;
   pendingMessageQueue?: PendingAgentMessageQueue;
   getSpaceAutonomyLevel?: (spaceId: string) => Promise<number>;
   myAgentName?: string;
@@ -616,6 +641,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     taskAgentManager,
     internalEventBus,
     activateNode,
+    ensureTargetSession,
     pendingMessageQueue,
     getSpaceAutonomyLevel,
     myAgentName,
@@ -643,6 +669,306 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     : mySessionId
       ? `@session:${mySessionId}`
       : normalizeReplyTargetHandle(outboundSenderName);
+
+  const requireTaskAgentManager = (): TaskAgentManager => {
+    if (!taskAgentManager) {
+      throw new Error('Task agent communication is not available in this context.');
+    }
+    return taskAgentManager;
+  };
+
+  const doorTargetFor = (ctx: TaskWorkerDeliveryCtx, waitCapMs?: number): SessionTarget => {
+    if (ctx.sessionSelector !== undefined) {
+      return { kind: 'session', sessionId: ctx.sessionSelector };
+    }
+    return {
+      kind: 'worker',
+      taskId: ctx.task.id,
+      agentName: ctx.resolved.agentName,
+      workflowNodeId: ctx.resolved.workflowNodeId,
+      ...(waitCapMs !== undefined ? { waitCapMs } : {}),
+    };
+  };
+
+  const nodeAgentEnvelopeFor = (ctx: TaskWorkerDeliveryCtx): string =>
+    formatAgentMessage({
+      fromLevel: outboundSenderLevel,
+      fromAgentName: outboundSenderDisplayName,
+      toLevel: 'node-agent',
+      body: ctx.message,
+      taskId: ctx.task.id,
+      taskNumber: ctx.task.taskNumber,
+      nodeId: ctx.resolved.agentName,
+      replyToSessionId: mySessionId,
+      replyTargetHandle: outboundReplyTargetHandle,
+    });
+
+  const nodeSessionDeliveredResult = (
+    ctx: TaskWorkerDeliveryCtx,
+    sessionId: string,
+    sdkMessageId: string,
+    activated: boolean
+  ): ToolResult => {
+    ctx.audit('delivered', {
+      target: 'node',
+      node_id: ctx.resolved.id,
+      agent_name: ctx.resolved.agentName,
+      node_execution_id: ctx.resolved.id,
+      delivered_session_id: sessionId,
+      sdk_message_id: sdkMessageId,
+    });
+    return jsonResult({
+      success: true,
+      task_id: ctx.task.id,
+      target: 'node',
+      node_execution_id: ctx.resolved.id,
+      agent_name: ctx.resolved.agentName,
+      delivered_session_id: sessionId,
+      sdk_message_id: sdkMessageId,
+      activated,
+    });
+  };
+
+  const tryInjectNodeSession = async (
+    ctx: TaskWorkerDeliveryCtx,
+    sessionId: string,
+    activated: boolean
+  ): Promise<ToolResult | undefined> => {
+    try {
+      const sdkMessageId = await requireTaskAgentManager().injectSubSessionMessage(
+        sessionId,
+        nodeAgentEnvelopeFor(ctx),
+        true
+      );
+      return nodeSessionDeliveredResult(ctx, sessionId, sdkMessageId, activated);
+    } catch {
+      return undefined;
+    }
+  };
+
+  const injectNodeSessionOrReport = async (
+    ctx: TaskWorkerDeliveryCtx,
+    sessionId: string,
+    activated: boolean
+  ): Promise<ToolResult> => {
+    try {
+      const sdkMessageId = await requireTaskAgentManager().injectSubSessionMessage(
+        sessionId,
+        nodeAgentEnvelopeFor(ctx),
+        true
+      );
+      return nodeSessionDeliveredResult(ctx, sessionId, sdkMessageId, activated);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      ctx.audit('error', {
+        target: 'node',
+        node_id: ctx.resolved.id,
+        agent_name: ctx.resolved.agentName,
+        reason: message,
+      });
+      return jsonResult({
+        success: false,
+        error: `Failed to inject message into node "${ctx.resolved.agentName}": ${message}`,
+      });
+    }
+  };
+
+  const queueForNodeActivation = (ctx: TaskWorkerDeliveryCtx): ToolResult => {
+    let queuedMessageId: string | null = null;
+    if (pendingMessageQueue) {
+      const { record } = pendingMessageQueue.enqueue({
+        workflowRunId: ctx.workflowRunId,
+        spaceId,
+        taskId: ctx.task.id,
+        sourceAgentName: outboundSenderName,
+        targetKind: 'node_agent',
+        targetAgentName: ctx.resolved.agentName,
+        workflowNodeId: ctx.resolved.workflowNodeId,
+        message: nodeAgentEnvelopeFor(ctx),
+      });
+      queuedMessageId = record.id;
+    }
+    ctx.audit(queuedMessageId !== null ? 'queued' : 'activated', {
+      target: 'node',
+      node_id: ctx.resolved.id,
+      agent_name: ctx.resolved.agentName,
+      node_execution_id: ctx.resolved.id,
+      ...(queuedMessageId !== null
+        ? { queued_message_id: queuedMessageId }
+        : { reason: 'pending_message_queue_unavailable' }),
+    });
+    return jsonResult({
+      success: true,
+      task_id: ctx.task.id,
+      target: 'node',
+      node_execution_id: ctx.resolved.id,
+      agent_name: ctx.resolved.agentName,
+      delivered_session_id: null,
+      sdk_message_id: null,
+      activated: true,
+      delivered: false,
+      queued: queuedMessageId !== null,
+      ...(queuedMessageId !== null ? { queued_message_id: queuedMessageId } : {}),
+      message:
+        queuedMessageId !== null
+          ? `Node "${ctx.resolved.agentName}" was activated and the message was queued; it will be delivered once the session spawns.`
+          : `Node "${ctx.resolved.agentName}" was activated but does not yet have a live session; ` +
+            `the message was not queued because no pending message queue is configured. Retry after the node starts.`,
+    });
+  };
+
+  const resolveWorkerDoorStage = async (
+    ctx: TaskWorkerDeliveryCtx
+  ): Promise<TaskWorkerDeliveryCtx> => {
+    if (!ensureTargetSession) return ctx;
+    return { ...ctx, doorOutcome: await ensureTargetSession(doorTargetFor(ctx, 0)) };
+  };
+
+  const routeWorkerDoorStage = async (
+    ctx: TaskWorkerDeliveryCtx
+  ): Promise<TaskWorkerDeliveryCtx> => {
+    const outcome = ctx.doorOutcome;
+    if (outcome === undefined) return ctx;
+    if (outcome.kind === 'resolved') {
+      const delivered = await tryInjectNodeSession(ctx, outcome.sessionId, outcome.created);
+      return delivered === undefined ? ctx : { ...ctx, result: delivered };
+    }
+    if (ctx.sessionSelector !== undefined) return ctx;
+    if (DOOR_QUEUEABLE_UNRESOLVED_REASONS.has(outcome.reason)) {
+      return { ...ctx, result: queueAndDrainNodeMessage(ctx) };
+    }
+    if (outcome.reason === 'activation_timeout' && ctx.resolved.agentSessionId === null) {
+      return { ...ctx, result: queueAndDrainNodeMessage(ctx) };
+    }
+    if (
+      outcome.reason !== 'task_terminal' &&
+      outcome.reason !== 'session_resolution_unavailable' &&
+      outcome.reason !== 'activation_timeout'
+    ) {
+      ctx.audit('error', {
+        target: 'node',
+        node_id: ctx.resolved.id,
+        agent_name: ctx.resolved.agentName,
+        reason: outcome.reason,
+      });
+      return {
+        ...ctx,
+        result: jsonResult({
+          success: false,
+          error: `Failed to activate node "${ctx.resolved.agentName}": ${outcome.reason}`,
+        }),
+      };
+    }
+    return ctx;
+  };
+
+  const injectExecutionRowSessionStage = async (
+    ctx: TaskWorkerDeliveryCtx
+  ): Promise<TaskWorkerDeliveryCtx> => {
+    if (ctx.doorOutcome?.kind === 'resolved') return ctx;
+    if (ctx.resolved.agentSessionId === null) return ctx;
+    const delivered = await tryInjectNodeSession(ctx, ctx.resolved.agentSessionId, false);
+    return delivered === undefined ? ctx : { ...ctx, result: delivered };
+  };
+
+  const activateNodeStage = async (ctx: TaskWorkerDeliveryCtx): Promise<TaskWorkerDeliveryCtx> => {
+    if (!activateNode) {
+      ctx.audit('failed', {
+        target: 'node',
+        node_id: ctx.resolved.id,
+        agent_name: ctx.resolved.agentName,
+        reason: 'activation_callback_missing',
+      });
+      return {
+        ...ctx,
+        result: jsonResult({
+          success: false,
+          error: `Node "${ctx.resolved.agentName}" has no live session and no activation callback is configured.`,
+        }),
+      };
+    }
+    try {
+      await activateNode(ctx.workflowRunId, ctx.resolved.workflowNodeId);
+      return ctx;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      ctx.audit('error', {
+        target: 'node',
+        node_id: ctx.resolved.id,
+        agent_name: ctx.resolved.agentName,
+        reason: message,
+      });
+      return {
+        ...ctx,
+        result: jsonResult({
+          success: false,
+          error: `Failed to activate node "${ctx.resolved.agentName}": ${message}`,
+        }),
+      };
+    }
+  };
+
+  const deliverRefreshedSessionStage = async (
+    ctx: TaskWorkerDeliveryCtx
+  ): Promise<TaskWorkerDeliveryCtx> => {
+    const refreshedExecution = nodeExecutionRepo.getById(ctx.resolved.id);
+    const sessionIdAfter = refreshedExecution?.agentSessionId ?? null;
+    if (sessionIdAfter === null) return ctx;
+    return { ...ctx, result: await injectNodeSessionOrReport(ctx, sessionIdAfter, true) };
+  };
+
+  const drainQueuedNodeMessageAfterDoorTimeout = (ctx: TaskWorkerDeliveryCtx): void => {
+    const outcome = ctx.doorOutcome;
+    if (!ensureTargetSession || !taskAgentManager || !pendingMessageQueue) return;
+    if (outcome?.kind !== 'unresolved' || !DOOR_TIMED_OUT_UNRESOLVED_REASONS.has(outcome.reason)) {
+      return;
+    }
+    void (async () => {
+      try {
+        const resolved = await ensureTargetSession(doorTargetFor(ctx));
+        if (resolved.kind !== 'resolved') return;
+        await taskAgentManager.flushPendingMessagesForTarget(
+          ctx.workflowRunId,
+          ctx.resolved.agentName,
+          resolved.sessionId,
+          ctx.resolved.workflowNodeId
+        );
+      } catch {}
+    })();
+  };
+
+  const queueAndDrainNodeMessage = (ctx: TaskWorkerDeliveryCtx): ToolResult => {
+    const result = queueForNodeActivation(ctx);
+    drainQueuedNodeMessageAfterDoorTimeout(ctx);
+    return result;
+  };
+
+  const queuePendingNodeMessageStage = (ctx: TaskWorkerDeliveryCtx): TaskWorkerDeliveryCtx => ({
+    ...ctx,
+    result: queueAndDrainNodeMessage(ctx),
+  });
+
+  const workerDeliverySettled = (ctx?: TaskWorkerDeliveryCtx): boolean =>
+    ctx !== undefined && ctx.result !== undefined;
+
+  const runDeliverTaskWorkerMessage = (
+    superpipe<{ settled: typeof workerDeliverySettled }>({
+      settled: workerDeliverySettled,
+    })('deliver-task-worker-message') as PipelineAPI
+  )
+    .input(['ctx'])
+    .pipe(resolveWorkerDoorStage, 'ctx', 'ctx')
+    .pipe('!settled', 'ctx')
+    .pipe(routeWorkerDoorStage, 'ctx', 'ctx')
+    .pipe('!settled', 'ctx')
+    .pipe(injectExecutionRowSessionStage, 'ctx', 'ctx')
+    .pipe('!settled', 'ctx')
+    .pipe(activateNodeStage, 'ctx', 'ctx')
+    .pipe('!settled', 'ctx')
+    .pipe(deliverRefreshedSessionStage, 'ctx', 'ctx')
+    .pipe('!settled', 'ctx')
+    .pipe(queuePendingNodeMessageStage, 'ctx', 'ctx')
+    .endAsync('ctx') as (ctx: TaskWorkerDeliveryCtx) => Promise<TaskWorkerDeliveryCtx>;
 
   function requireGoalService() {
     if (!config.goalService) throw new Error('Goal management not available');
@@ -2549,6 +2875,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       );
       let resolved: NodeExecution | null = null;
       let routedTarget = args.node_id ?? null;
+      let sessionTargetSelector: string | undefined;
 
       const trimmedTarget = args.target?.trim() ?? '';
       if (trimmedTarget) {
@@ -2740,6 +3067,9 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         } else if (address.kind === 'session') {
           resolved =
             allExecutions.find((exec) => exec.agentSessionId === address.sessionId) ?? null;
+          if (resolved) {
+            sessionTargetSelector = address.sessionId;
+          }
         } else {
           audit('failed', { target: genericTarget, reason: 'generic_target_not_routable' });
           return jsonResult({
@@ -2793,175 +3123,15 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         replyRoutingRegistry.set(task.id, mySessionId, resolved.agentName);
       }
 
-      if (resolved.agentSessionId) {
-        try {
-          const sdkMessageId = await taskAgentManager.injectSubSessionMessage(
-            resolved.agentSessionId,
-            formatAgentMessage({
-              fromLevel: outboundSenderLevel,
-              fromAgentName: outboundSenderDisplayName,
-              toLevel: 'node-agent',
-              body: args.message,
-              taskId: task.id,
-              taskNumber: task.taskNumber,
-              nodeId: resolved.agentName,
-              replyToSessionId: mySessionId,
-              replyTargetHandle: outboundReplyTargetHandle,
-            }),
-            true
-          );
-          audit('delivered', {
-            target: 'node',
-            node_id: resolved.id,
-            agent_name: resolved.agentName,
-            node_execution_id: resolved.id,
-            delivered_session_id: resolved.agentSessionId,
-            sdk_message_id: sdkMessageId,
-          });
-          return jsonResult({
-            success: true,
-            task_id: task.id,
-            target: 'node',
-            node_execution_id: resolved.id,
-            agent_name: resolved.agentName,
-            delivered_session_id: resolved.agentSessionId,
-            sdk_message_id: sdkMessageId,
-            activated: false,
-          });
-        } catch {}
-      }
-
-      if (!activateNode) {
-        audit('failed', {
-          target: 'node',
-          node_id: resolved.id,
-          agent_name: resolved.agentName,
-          reason: 'activation_callback_missing',
-        });
-        return jsonResult({
-          success: false,
-          error: `Node "${resolved.agentName}" has no live session and no activation callback is configured.`,
-        });
-      }
-      try {
-        await activateNode(task.workflowRunId, resolved.workflowNodeId);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        audit('error', {
-          target: 'node',
-          node_id: resolved.id,
-          agent_name: resolved.agentName,
-          reason: message,
-        });
-        return jsonResult({
-          success: false,
-          error: `Failed to activate node "${resolved.agentName}": ${message}`,
-        });
-      }
-
-      const refreshedExecution = nodeExecutionRepo.getById(resolved.id);
-      const sessionIdAfter = refreshedExecution?.agentSessionId ?? null;
-      if (sessionIdAfter) {
-        try {
-          const sdkMessageId = await taskAgentManager.injectSubSessionMessage(
-            sessionIdAfter,
-            formatAgentMessage({
-              fromLevel: outboundSenderLevel,
-              fromAgentName: outboundSenderDisplayName,
-              toLevel: 'node-agent',
-              body: args.message,
-              taskId: task.id,
-              taskNumber: task.taskNumber,
-              nodeId: resolved.agentName,
-              replyToSessionId: mySessionId,
-              replyTargetHandle: outboundReplyTargetHandle,
-            }),
-            true
-          );
-          audit('delivered', {
-            target: 'node',
-            node_id: resolved.id,
-            agent_name: resolved.agentName,
-            node_execution_id: resolved.id,
-            delivered_session_id: sessionIdAfter,
-            sdk_message_id: sdkMessageId,
-          });
-          return jsonResult({
-            success: true,
-            task_id: task.id,
-            target: 'node',
-            node_execution_id: resolved.id,
-            agent_name: resolved.agentName,
-            delivered_session_id: sessionIdAfter,
-            sdk_message_id: sdkMessageId,
-            activated: true,
-          });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          audit('error', {
-            target: 'node',
-            node_id: resolved.id,
-            agent_name: resolved.agentName,
-            reason: message,
-          });
-          return jsonResult({
-            success: false,
-            error: `Failed to inject message into node "${resolved.agentName}": ${message}`,
-          });
-        }
-      }
-
-      let queuedMessageId: string | null = null;
-      if (pendingMessageQueue) {
-        const { record } = pendingMessageQueue.enqueue({
-          workflowRunId: task.workflowRunId,
-          spaceId,
-          taskId: task.id,
-          sourceAgentName: outboundSenderName,
-          targetKind: 'node_agent',
-          targetAgentName: resolved.agentName,
-          message: formatAgentMessage({
-            fromLevel: outboundSenderLevel,
-            fromAgentName: outboundSenderDisplayName,
-            toLevel: 'node-agent',
-            body: args.message,
-            taskId: task.id,
-            taskNumber: task.taskNumber,
-            nodeId: resolved.agentName,
-            replyToSessionId: mySessionId,
-            replyTargetHandle: outboundReplyTargetHandle,
-          }),
-        });
-        queuedMessageId = record.id;
-      }
-
-      audit(queuedMessageId !== null ? 'queued' : 'activated', {
-        target: 'node',
-        node_id: resolved.id,
-        agent_name: resolved.agentName,
-        node_execution_id: resolved.id,
-        ...(queuedMessageId !== null
-          ? { queued_message_id: queuedMessageId }
-          : { reason: 'pending_message_queue_unavailable' }),
+      const delivered = await runDeliverTaskWorkerMessage({
+        task,
+        workflowRunId: task.workflowRunId,
+        resolved,
+        message: args.message,
+        ...(sessionTargetSelector ? { sessionSelector: sessionTargetSelector } : {}),
+        audit,
       });
-      return jsonResult({
-        success: true,
-        task_id: task.id,
-        target: 'node',
-        node_execution_id: resolved.id,
-        agent_name: resolved.agentName,
-        delivered_session_id: null,
-        sdk_message_id: null,
-        activated: true,
-        delivered: false,
-        queued: queuedMessageId !== null,
-        ...(queuedMessageId !== null ? { queued_message_id: queuedMessageId } : {}),
-        message:
-          queuedMessageId !== null
-            ? `Node "${resolved.agentName}" was activated and the message was queued; it will be delivered once the session spawns.`
-            : `Node "${resolved.agentName}" was activated but does not yet have a live session; ` +
-              `the message was not queued because no pending message queue is configured. Retry after the node starts.`,
-      });
+      return delivered.result!;
     },
 
     async list_task_members(args: { task_id: string }): Promise<ToolResult> {
