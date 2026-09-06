@@ -4596,10 +4596,6 @@ export class TaskAgentManager {
       }
     }
 
-    if (outcome.reopenFailedDelivery) {
-      await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
-    }
-
     try {
       if (!isBusy) {
         const clearSuppressedByPendingWork =
@@ -4646,6 +4642,9 @@ export class TaskAgentManager {
           (backlogReplayFailed || !replay.success || this.clearStillBlocked(session))
         ) {
           if (existing) {
+            if (existing.sendStatus === 'failed') {
+              await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
+            }
             const flippedDbId = await flipDeliveryRowToDeferred(deliveryRows, sessionId, messageId);
             return flippedDbId ?? messageId;
           }
@@ -4661,13 +4660,17 @@ export class TaskAgentManager {
       }
 
       return deliverInjectedMessage(
-        { ...deliveryRows, jobQueue: this.config.db.getJobQueueRepo() },
+        {
+          ...deliveryRows,
+          db: this.config.db.getDatabase(),
+          sdkMessageRepo: this.config.db.getSDKMessageRepo(),
+          jobQueue: this.config.db.getJobQueueRepo(),
+        },
         {
           session,
           sessionId,
           messageId,
           sdkUserMessage,
-          rowExists: !!existing,
           origin,
           boundaryOwner: boundaryOwner ?? undefined,
         }
@@ -4683,14 +4686,10 @@ export class TaskAgentManager {
         this.publishMessageStatusChanged(sessionId, dbId, status),
       saveUserMessage: (sessionId, message, sendStatus, origin) =>
         this.config.db.saveUserMessage(sessionId, message, sendStatus, origin),
-      getDeliverySendStatus: (sessionId, uuid) =>
-        this.config.db.getSDKMessageRepo().getDeliveryContent(sessionId, uuid)?.sendStatus,
       reopenDeliveryByUuid: (sessionId, uuid) =>
         this.config.db.getSDKMessageRepo().reopenDeliveryByUuid(sessionId, uuid),
       markDeliveryDeferredByUuid: (sessionId, uuid) =>
         this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, uuid),
-      markDeliveryFailedByUuid: (sessionId, uuid) =>
-        this.config.db.getSDKMessageRepo().markDeliveryFailedByUuid(sessionId, uuid),
     };
   }
 

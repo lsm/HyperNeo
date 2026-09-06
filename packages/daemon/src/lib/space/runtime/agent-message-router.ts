@@ -220,7 +220,11 @@ export class AgentMessageRouter {
         if (outcome.state === 'failed') {
           return { state: 'failed', sessionId: outcome.sessionId, messageId, error: outcome.error };
         }
-        return outcome;
+        return {
+          state: 'queued',
+          sessionId: outcome.sessionId,
+          messageId: outcome.messageId,
+        };
       }
       if (this.config.messageInjector) {
         await this.config.messageInjector(target.sessionId, message);
@@ -236,7 +240,11 @@ export class AgentMessageRouter {
       if (outcome.state === 'failed') {
         return { state: 'failed', sessionId: outcome.sessionId, messageId, error: outcome.error };
       }
-      return outcome;
+      return {
+        state: 'queued',
+        sessionId: outcome.sessionId,
+        messageId: outcome.messageId,
+      };
     }
     if (target.kind === 'worker' && sessionIdHint && this.config.messageInjector) {
       await this.config.messageInjector(sessionIdHint, message);
