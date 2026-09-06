@@ -481,6 +481,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     config.db.getSDKMessageRepo = () => ({
       getDeliveryContent: () =>
         lockMailboxConsumed ? { content: 'x', sendStatus: 'consumed' } : null,
+      hasConsumedDeliverySibling: () => false,
       getDeliveryMessageIdsByUuids: () => ['db-id'],
       reopenDeliveryByUuid: () => null,
       markDeliveryFailedByUuid: () => null,
@@ -549,6 +550,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     config.db.getSDKMessageRepo = () => ({
       getDeliveryContent: () =>
         deadlockMailboxConsumed ? { content: 'x', sendStatus: 'consumed' } : null,
+      hasConsumedDeliverySibling: () => false,
       getDeliveryMessageIdsByUuids: () => (mailboxMessageUuid ? [mailboxMessageUuid] : []),
       reopenDeliveryByUuid: () => null,
       markDeliveryFailedByUuid: () => null,
