@@ -539,17 +539,25 @@ function mailboxDeliverySenderExpr(textExpr: string, replyBlockExpr: string): st
     THEN SUBSTR(${replyEchoLine}, 1, LENGTH(${replyEchoLine}) - 1)
     ELSE ${replyEchoLine} END`;
   const replyTaskVerb = `INSTR(${replyBlock}, 'send_message_to_task')`;
+  const strippedFirst = `TRIM(SUBSTR(${nameRaw}, 1, ${firstMarker} - 1))`;
+  const strippedSecond = `TRIM(SUBSTR(${nameRaw}, 1, ${secondMarker} - 1))`;
+  const atEchoMatchesLabelledName = `(
+            (${firstMarker} > 0 AND ${isTaskSuffix(firstSegment)} AND ${strippedFirst} = ${replyEcho})
+            OR (${secondMarkerRelative} > 0 AND ${isTaskSuffix(secondSegment)} AND ${strippedSecond} = ${replyEcho})
+          )`;
   return `CASE
       WHEN ${textExpr} LIKE '─── Message from %' THEN
         CASE
           WHEN ${replyBlockPresent} AND ${replyEchoStart} > 0 AND ${replyEcho} NOT LIKE '@%'
             THEN ${replyEcho}
+          WHEN ${replyBlockPresent} AND ${replyEchoStart} > 0 AND ${atEchoMatchesLabelledName}
+            THEN ${replyEcho}
           WHEN ${replyBlockPresent} AND ${replyEchoStart} > 0
             THEN TRIM(${nameRaw})
           WHEN ${replyBlockPresent} AND ${replyTaskVerb} > 0 AND ${firstMarker} > 0 AND ${isTaskSuffix(firstSegment)}
-            THEN TRIM(SUBSTR(${nameRaw}, 1, ${firstMarker} - 1))
+            THEN ${strippedFirst}
           WHEN ${replyBlockPresent} AND ${replyTaskVerb} > 0 AND ${secondMarkerRelative} > 0 AND ${isTaskSuffix(secondSegment)}
-            THEN TRIM(SUBSTR(${nameRaw}, 1, ${secondMarker} - 1))
+            THEN ${strippedSecond}
           ELSE TRIM(${nameRaw})
         END
       ELSE NULL
