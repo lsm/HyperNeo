@@ -1,9 +1,13 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
+import type {
+  EnsureSessionOutcome,
+  SessionTarget,
+} from '../../../../src/lib/session-resolution/target.ts';
 import { formatAgentMessage } from '../../../../src/lib/space/agent-message-envelope';
-import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager';
+import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository';
 import type { PendingAgentMessageRecord } from '../../../../src/storage/repositories/pending-agent-message-repository';
 import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository';
@@ -19,6 +23,7 @@ const AGENT_NAME = 'coder';
 const SESSION_ID = 'sub-session-coder';
 const ORPHAN_SESSION_ID = 'sub-session-orphan';
 const WORKFLOW_ID = 'wf-drain';
+const TASK_ID = 'task-drain';
 
 interface SpyRepo {
   repo: PendingAgentMessageRepository;
@@ -76,6 +81,42 @@ function spyPendingRepo(repo: PendingAgentMessageRepository): SpyRepo {
   return { repo, spy, calls, retentionArgs, expireArgs, listCalls };
 }
 
+interface DeliveryCall {
+  workflowRunId: string;
+  args: {
+    target: Record<string, unknown>;
+    message: string;
+    messageId: string;
+    inputKind: string;
+    origin: string;
+  };
+}
+
+interface DeliveryFake {
+  calls: DeliveryCall[];
+  deliver: ReturnType<typeof mock>;
+  failMessageIds: Set<string>;
+}
+
+function makeDeliveryFake(
+  resolveSession: (target: Record<string, unknown>) => string
+): DeliveryFake {
+  const calls: DeliveryCall[] = [];
+  const failMessageIds = new Set<string>();
+  const deliver = mock(async (workflowRunId: string, args: DeliveryCall['args']) => {
+    calls.push({ workflowRunId, args: { ...args, target: { ...args.target } } });
+    if (failMessageIds.has(args.messageId)) {
+      return { state: 'failed' as const, messageId: args.messageId, error: 'delivery lane down' };
+    }
+    return {
+      state: 'delivered' as const,
+      sessionId: resolveSession(args.target),
+      messageId: args.messageId,
+    };
+  });
+  return { calls, deliver, failMessageIds };
+}
+
 interface EnqueueOverrides {
   sourceAgentName?: string;
   targetKind?: 'node_agent' | 'space_agent';
@@ -84,12 +125,16 @@ interface EnqueueOverrides {
   workflowNodeId?: string | null;
   taskId?: string | null;
   deliveryMode?: 'immediate' | 'defer';
+  idempotencyKey?: string | null;
+  ttlMs?: number;
+  maxAttempts?: number;
 }
 
 interface RealDbHarness {
   manager: TaskAgentManager;
   spyRepo: SpyRepo;
-  injectMock: ReturnType<typeof mock>;
+  delivery: DeliveryFake;
+  ensureTargetSession: ReturnType<typeof mock>;
   publish: ReturnType<typeof mock>;
   db: Database;
   runId: string;
@@ -98,7 +143,9 @@ interface RealDbHarness {
   enqueue: (overrides?: EnqueueOverrides) => PendingAgentMessageRecord;
 }
 
-function makeRealDbHarness(): RealDbHarness {
+function makeRealDbHarness(
+  options: { ensureImpl?: (target: SessionTarget) => Promise<EnsureSessionOutcome> } = {}
+): RealDbHarness {
   const db = new Database(':memory:');
   createSpaceTables(db);
   const spaceRepo = new SpaceRepository(
@@ -135,7 +182,11 @@ function makeRealDbHarness(): RealDbHarness {
     )
   );
   const publish = mock(async (_event: string, _payload: unknown) => {});
-  const injectMock = mock(async (...args: unknown[]) => (args[6] as string) ?? 'injected');
+  const delivery = makeDeliveryFake(() => SESSION_ID);
+  const ensureTargetSession = mock(
+    options.ensureImpl ??
+      (async () => ({ kind: 'resolved', sessionId: SESSION_ID, created: false }))
+  );
   const workflow = { nodes: [{ id: NODE_ID, name: NODE_NAME }] };
 
   const manager = new TaskAgentManager({
@@ -144,22 +195,20 @@ function makeRealDbHarness(): RealDbHarness {
     workflowRunRepo: runRepo,
     nodeExecutionRepo,
     pendingMessageRepo: spyRepo.spy,
+    ensureTargetSession,
+    agentMessageDelivery: delivery.deliver,
     internalEventBus: { subscribe: mock(() => () => {}), publish },
     spaceWorkflowManager: {
       getWorkflow: () => workflow,
       getWorkflowForRun: () => workflow,
     },
   } as unknown as TaskAgentManagerConfig);
-  (
-    manager as unknown as {
-      injectSubSessionMessage: (...args: unknown[]) => Promise<string>;
-    }
-  ).injectSubSessionMessage = injectMock;
 
   return {
     manager,
     spyRepo,
-    injectMock,
+    delivery,
+    ensureTargetSession,
     publish,
     db,
     runId: run.id,
@@ -169,6 +218,7 @@ function makeRealDbHarness(): RealDbHarness {
       spyRepo.repo.enqueue({
         workflowRunId: run.id,
         spaceId: space.id,
+        taskId: TASK_ID,
         sourceAgentName: 'reviewer',
         targetKind: 'node_agent',
         targetAgentName: AGENT_NAME,
@@ -216,8 +266,17 @@ function makeMockRepoManager(
     executionPresent?: boolean;
     provenance?: { workflowRunId: string; agentName: string; nodeId?: string };
   } = {}
-): { manager: TaskAgentManager; injectMock: ReturnType<typeof mock> } {
-  const injectMock = mock(async (...args: unknown[]) => (args[6] as string) ?? 'injected');
+): {
+  manager: TaskAgentManager;
+  delivery: DeliveryFake;
+  ensureTargetSession: ReturnType<typeof mock>;
+} {
+  const delivery = makeDeliveryFake(() => SESSION_ID);
+  const ensureTargetSession = mock(async () => ({
+    kind: 'resolved',
+    sessionId: SESSION_ID,
+    created: false,
+  }));
   const execution = {
     id: 'exec-mock',
     workflowRunId: 'run-mock',
@@ -246,17 +305,15 @@ function makeMockRepoManager(
       getById: mock(() => null),
       touchLastActivity: mock(() => {}),
     },
+    taskRepo: { getTask: mock(() => null), listByWorkflowRun: mock(() => [{ id: 'task-mock' }]) },
     workflowRunRepo: { getRun: mock(() => ({ workflowId: WORKFLOW_ID })) },
     spaceWorkflowManager: { getWorkflow: () => workflow, getWorkflowForRun: () => workflow },
     pendingMessageRepo: repo,
+    ensureTargetSession,
+    agentMessageDelivery: delivery.deliver,
     internalEventBus: { subscribe: mock(() => () => {}), publish: mock(async () => {}) },
   } as unknown as TaskAgentManagerConfig);
-  (
-    manager as unknown as {
-      injectSubSessionMessage: (...args: unknown[]) => Promise<string>;
-    }
-  ).injectSubSessionMessage = injectMock;
-  return { manager, injectMock };
+  return { manager, delivery, ensureTargetSession };
 }
 
 describe('flushPendingMessagesForTarget — drain admission', () => {
@@ -274,8 +331,8 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
-    expect(h.injectMock).toHaveBeenCalledTimes(1);
-    expect(h.injectMock.mock.calls[0][1] as string).toContain('agent note');
+    expect(h.delivery.calls).toHaveLength(1);
+    expect(h.delivery.calls[0].args.message).toContain('agent note');
     expect(h.spyRepo.repo.getById(agentRow.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(spaceRow.id)?.status).toBe('pending');
   });
@@ -293,7 +350,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
       [AGENT_NAME, NODE_ID],
       [`${NODE_NAME}/${AGENT_NAME}`, NODE_ID],
     ]);
-    expect(h.injectMock).toHaveBeenCalledTimes(1);
+    expect(h.delivery.calls).toHaveLength(1);
     expect(h.spyRepo.repo.getById(aliasRow.id)?.status).toBe('delivered');
   });
 
@@ -307,7 +364,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
     expect(h.spyRepo.repo.getById(sameNode.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(runScoped.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(otherNode.id)?.status).toBe('pending');
-    expect(h.injectMock).toHaveBeenCalledTimes(2);
+    expect(h.delivery.calls).toHaveLength(2);
   });
 
   it('executionless drain lists run-scoped only and admits just workflowNodeId-null rows', async () => {
@@ -325,7 +382,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
     expect(h.spyRepo.repo.getById(runScoped.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(nodeScoped.id)?.status).toBe('pending');
     expect(h.spyRepo.repo.getById(aliasRow.id)?.status).toBe('pending');
-    expect(h.injectMock).toHaveBeenCalledTimes(1);
+    expect(h.delivery.calls).toHaveLength(1);
   });
 
   it('executionless drain uses matching session provenance to admit node-scoped rows', async () => {
@@ -338,7 +395,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
       markDelivered: mock(() => {}),
       markAttemptFailed: mock(() => null),
     };
-    const { manager, injectMock } = makeMockRepoManager(repo, {
+    const { manager, delivery } = makeMockRepoManager(repo, {
       executionPresent: false,
       provenance: { workflowRunId: 'run-mock', agentName: AGENT_NAME, nodeId: NODE_ID },
     });
@@ -346,7 +403,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
     await manager.flushPendingMessagesForTarget('run-mock', AGENT_NAME, SESSION_ID);
 
     expect(repo.listPendingForTarget).toHaveBeenCalledWith('run-mock', AGENT_NAME, NODE_ID);
-    expect(injectMock.mock.calls.map((call: unknown[]) => call[6])).toEqual(['row-node']);
+    expect(delivery.calls.map((call) => call.args.messageId)).toEqual(['row-node']);
     expect(repo.markDelivered).toHaveBeenCalledWith('row-node', SESSION_ID);
   });
 
@@ -360,7 +417,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
       markDelivered: mock(() => {}),
       markAttemptFailed: mock(() => null),
     };
-    const { manager, injectMock } = makeMockRepoManager(repo, {
+    const { manager, delivery } = makeMockRepoManager(repo, {
       executionPresent: false,
       provenance: { workflowRunId: 'run-mock', agentName: AGENT_NAME },
     });
@@ -368,7 +425,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
     await manager.flushPendingMessagesForTarget('run-mock', AGENT_NAME, SESSION_ID, NODE_ID);
 
     expect(repo.listPendingForTarget).toHaveBeenCalledWith('run-mock', AGENT_NAME, NODE_ID);
-    expect(injectMock.mock.calls.map((call: unknown[]) => call[6])).toEqual(['row-node']);
+    expect(delivery.calls.map((call) => call.args.messageId)).toEqual(['row-node']);
     expect(repo.markDelivered).toHaveBeenCalledWith('row-node', SESSION_ID);
   });
 
@@ -381,7 +438,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
       markDelivered: mock(() => {}),
       markAttemptFailed: mock(() => null),
     };
-    const { manager, injectMock } = makeMockRepoManager(repo, {
+    const { manager, delivery } = makeMockRepoManager(repo, {
       executionPresent: false,
       provenance: { workflowRunId: 'run-other', agentName: AGENT_NAME, nodeId: NODE_ID },
     });
@@ -389,7 +446,7 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
     await manager.flushPendingMessagesForTarget('run-mock', AGENT_NAME, SESSION_ID);
 
     expect(repo.listPendingForTarget).toHaveBeenCalledWith('run-mock', AGENT_NAME);
-    expect(injectMock).not.toHaveBeenCalled();
+    expect(delivery.calls).toHaveLength(0);
     expect(repo.markDelivered).not.toHaveBeenCalled();
   });
 
@@ -402,11 +459,11 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
       markDelivered: mock(() => {}),
       markAttemptFailed: mock(() => null),
     };
-    const { manager, injectMock } = makeMockRepoManager(repo);
+    const { manager, delivery } = makeMockRepoManager(repo);
 
     await manager.flushPendingMessagesForTarget(row.workflowRunId, AGENT_NAME, SESSION_ID);
 
-    expect(injectMock).toHaveBeenCalledTimes(1);
+    expect(delivery.calls).toHaveLength(1);
     expect(repo.markDelivered).toHaveBeenCalledTimes(1);
     expect(repo.markDelivered).toHaveBeenCalledWith('row-dup', SESSION_ID);
   });
@@ -429,12 +486,15 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
       markDelivered: mock(() => {}),
       markAttemptFailed: mock(() => null),
     };
-    const { manager, injectMock } = makeMockRepoManager(repo);
+    const { manager, delivery } = makeMockRepoManager(repo);
 
     await manager.flushPendingMessagesForTarget('run-mock', AGENT_NAME, SESSION_ID);
 
-    const drained = injectMock.mock.calls.map((call: unknown[]) => call[6]);
-    expect(drained).toEqual(['row-alias', 'row-mid', 'row-late']);
+    expect(delivery.calls.map((call) => call.args.messageId)).toEqual([
+      'row-alias',
+      'row-mid',
+      'row-late',
+    ]);
   });
 
   it('runs retention and expiry against the run before listing', async () => {
@@ -448,16 +508,230 @@ describe('flushPendingMessagesForTarget — drain admission', () => {
     expect(h.spyRepo.calls[2]).toMatch(/^list:/);
   });
 
-  it('returns early without injecting when no pending rows match', async () => {
+  it('returns early without handing off when no pending rows match', async () => {
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
-    expect(h.injectMock).not.toHaveBeenCalled();
+    expect(h.delivery.calls).toHaveLength(0);
     expect(h.spyRepo.calls).toEqual([
       'enforceRetention',
       'expireStale',
       `list:${AGENT_NAME}@${NODE_ID}`,
       `list:${NODE_NAME}/${AGENT_NAME}@${NODE_ID}`,
     ]);
+  });
+
+  it('returns early without listing when no session ensurer is configured', async () => {
+    const harness = makeRealDbHarness();
+    (harness.manager as unknown as { config: TaskAgentManagerConfig }).config.ensureTargetSession =
+      undefined;
+    const row = harness.enqueue({ message: 'no ensurer' });
+    try {
+      await harness.manager.flushPendingMessagesForTarget(harness.runId, AGENT_NAME, SESSION_ID);
+
+      expect(harness.spyRepo.calls).toEqual([]);
+      expect(harness.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+      expect(harness.delivery.calls).toHaveLength(0);
+    } finally {
+      harness.db.close();
+    }
+  });
+});
+
+describe('flushPendingMessagesForTarget — door resolution and handoff', () => {
+  let h: RealDbHarness;
+  beforeEach(() => {
+    h = makeRealDbHarness();
+  });
+  afterEach(() => {
+    h.db.close();
+  });
+
+  it('resolves each drained row through a worker-kind ensureSession target', async () => {
+    const nodeRow = h.enqueue({ workflowNodeId: NODE_ID, message: 'node scoped' });
+    const runRow = h.enqueue({ workflowNodeId: null, message: 'run scoped' });
+
+    await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
+
+    expect(h.ensureTargetSession.mock.calls.map((call: unknown[]) => call[0])).toEqual([
+      { kind: 'worker', taskId: TASK_ID, agentName: AGENT_NAME, workflowNodeId: NODE_ID },
+      { kind: 'worker', taskId: TASK_ID, agentName: AGENT_NAME, workflowNodeId: NODE_ID },
+    ]);
+    expect(h.delivery.calls.map((call) => call.args.target)).toEqual([
+      { kind: 'worker', taskId: TASK_ID, agentName: AGENT_NAME, workflowNodeId: NODE_ID },
+      { kind: 'worker', taskId: TASK_ID, agentName: AGENT_NAME, workflowNodeId: NODE_ID },
+    ]);
+    expect(h.spyRepo.repo.getById(nodeRow.id)?.status).toBe('delivered');
+    expect(h.spyRepo.repo.getById(runRow.id)?.status).toBe('delivered');
+  });
+
+  it('pins run-scoped rows to the execution being flushed when the agent spans nodes', async () => {
+    h.enqueue({ workflowNodeId: null, message: 'run scoped' });
+    const siblingNode = new NodeExecutionRepository(
+      h.db as unknown as Parameters<typeof NodeExecutionRepository.prototype.constructor>[0]
+    ).create({
+      workflowRunId: h.runId,
+      workflowNodeId: 'node-review',
+      agentName: AGENT_NAME,
+      agentSessionId: 'sub-session-coder-review',
+      status: 'in_progress',
+    });
+    expect(siblingNode.id).toBeTruthy();
+
+    await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
+
+    expect(h.ensureTargetSession).toHaveBeenCalledTimes(1);
+    expect(h.ensureTargetSession).toHaveBeenCalledWith({
+      kind: 'worker',
+      taskId: TASK_ID,
+      agentName: AGENT_NAME,
+      workflowNodeId: NODE_ID,
+    });
+  });
+
+  it('falls back to the run-latest task when a row carries no taskId', async () => {
+    const row = h.enqueue({ taskId: null, message: 'no task on row' });
+    const taskRepo = new SpaceTaskRepository(
+      h.db as unknown as Parameters<typeof SpaceTaskRepository.prototype.constructor>[0]
+    );
+    const task = taskRepo.createTask({
+      spaceId: h.spaceId,
+      title: 'T',
+      workflowRunId: h.runId,
+    } as Parameters<typeof taskRepo.createTask>[0]);
+
+    await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
+
+    expect(h.ensureTargetSession).toHaveBeenCalledWith({
+      kind: 'worker',
+      taskId: task.id,
+      agentName: AGENT_NAME,
+      workflowNodeId: NODE_ID,
+    });
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
+  });
+
+  it('delivers taskless recovery rows to the known session when no task resolves', async () => {
+    const row = h.enqueue({ taskId: null, message: 'orphan recovery row' });
+
+    await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
+
+    expect(h.ensureTargetSession).toHaveBeenCalledWith({ kind: 'session', sessionId: SESSION_ID });
+    expect(h.delivery.calls[0].args.target).toEqual({ kind: 'session', sessionId: SESSION_ID });
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
+  });
+
+  it('charges an attempt and skips taskless recovery rows when the run is cancelled', async () => {
+    const row = h.enqueue({ taskId: null, message: 'recovery after cancel' });
+    h.db
+      .prepare('UPDATE space_workflow_runs SET status = ? WHERE id = ?')
+      .run('cancelled', h.runId);
+
+    await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
+
+    expect(h.delivery.calls).toHaveLength(0);
+    const record = h.spyRepo.repo.getById(row.id);
+    expect(record?.status).toBe('pending');
+    expect(record?.lastError).toBe('task/run is terminal (cancelled)');
+  });
+
+  it('scopes the delivery messageId to the pending record id', async () => {
+    const keyedRow = h.enqueue({
+      idempotencyKey: 'human:task-7:coder:node-build:cli-42',
+      message: 'keyed note',
+    });
+    const unkeyedRow = h.enqueue({ message: 'unkeyed note' });
+
+    await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
+
+    expect(h.delivery.calls.map((call) => call.args.messageId)).toEqual([
+      keyedRow.id,
+      unkeyedRow.id,
+    ]);
+  });
+
+  it('migrates a row exactly once across a simulated double drain', async () => {
+    const row = h.enqueue({
+      idempotencyKey: 'human:task-7:coder:node-build:cli-42',
+      message: 'migrate once',
+    });
+
+    await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
+    await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
+
+    expect(h.delivery.calls).toHaveLength(1);
+    expect(h.delivery.calls[0].args.messageId).toBe(row.id);
+  });
+
+  it('delivers a re-enqueued row under its own uuid instead of the consumed key', async () => {
+    const key = 'human:task-7:coder:node-build:cli-43';
+    h.enqueue({ idempotencyKey: key, message: 'repeated send' });
+
+    await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
+    const resent = h.enqueue({ idempotencyKey: key, message: 'repeated send' });
+
+    await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
+
+    expect(h.delivery.calls).toHaveLength(2);
+    expect(h.delivery.calls[1].args.messageId).toBe(resent.id);
+    expect(h.delivery.calls[0].args.messageId).not.toBe(h.delivery.calls[1].args.messageId);
+    expect(h.spyRepo.repo.getById(resent.id)?.status).toBe('delivered');
+  });
+
+  it('charges an attempt and keeps the row pending when the door cannot resolve', async () => {
+    const harness = makeRealDbHarness({
+      ensureImpl: async () => ({ kind: 'unresolved', reason: 'activation_timeout' }),
+    });
+    const row = harness.enqueue({ message: 'door blocked' });
+    try {
+      await harness.manager.flushPendingMessagesForTarget(harness.runId, AGENT_NAME, SESSION_ID);
+
+      expect(harness.delivery.calls).toHaveLength(0);
+      const record = harness.spyRepo.repo.getById(row.id);
+      expect(record?.status).toBe('pending');
+      expect(record?.attempts).toBe(1);
+      expect(record?.lastError).toBe('session resolution: activation_timeout');
+    } finally {
+      harness.db.close();
+    }
+  });
+
+  it('retries a door-blocked row on the next drain pass', async () => {
+    let doorOpen = false;
+    const harness = makeRealDbHarness({
+      ensureImpl: async () =>
+        doorOpen
+          ? { kind: 'resolved', sessionId: SESSION_ID, created: false }
+          : { kind: 'unresolved', reason: 'activation_timeout' },
+    });
+    const row = harness.enqueue({ message: 'retry me' });
+    try {
+      await harness.manager.flushPendingMessagesForTarget(harness.runId, AGENT_NAME, SESSION_ID);
+      expect(harness.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+
+      doorOpen = true;
+      await harness.manager.flushPendingMessagesForTarget(harness.runId, AGENT_NAME, SESSION_ID);
+
+      expect(harness.delivery.calls).toHaveLength(1);
+      expect(harness.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
+    } finally {
+      harness.db.close();
+    }
+  });
+
+  it('charges an attempt and keeps the row pending when routed delivery fails', async () => {
+    const row = h.enqueue({
+      idempotencyKey: 'human:task-7:coder:node-build:cli-44',
+      message: 'lane rejects',
+    });
+    h.delivery.failMessageIds.add(row.id);
+
+    await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
+
+    expect(h.delivery.calls).toHaveLength(1);
+    const record = h.spyRepo.repo.getById(row.id);
+    expect(record?.status).toBe('pending');
+    expect(record?.attempts).toBe(1);
+    expect(record?.lastError).toBe('routed delivery failed: delivery lane down');
   });
 });
 
@@ -481,10 +755,15 @@ describe('flushPendingMessagesForTarget — envelope formatting', () => {
       ...(row.taskId != null ? { taskId: row.taskId } : {}),
     });
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
-    expect(h.injectMock).toHaveBeenCalledTimes(1);
-    expect(h.injectMock.mock.calls[0][0]).toBe(SESSION_ID);
+    expect(h.delivery.calls).toHaveLength(1);
+    expect(h.delivery.calls[0].args.target).toEqual({
+      kind: 'worker',
+      taskId: row.taskId ?? TASK_ID,
+      agentName: AGENT_NAME,
+      workflowNodeId: NODE_ID,
+    });
     expect(h.spyRepo.repo.getById(record.id)?.status).toBe('delivered');
-    return h.injectMock.mock.calls[0][1] as string;
+    return h.delivery.calls[0].args.message;
   }
 
   it('formats a peer node-agent source through formatAgentMessage', async () => {
@@ -618,8 +897,8 @@ describe('flushPendingMessagesForTarget — per-row outcomes', () => {
     });
   });
 
-  it('passes isSynthetic, deliveryMode, and the row id through to the inject', async () => {
-    const syntheticRow = h.enqueue({
+  it('stamps human rows with the chat origin and agent rows with space_inject', async () => {
+    const agentRow = h.enqueue({
       sourceAgentName: 'reviewer',
       message: 'agent note',
       deliveryMode: 'defer',
@@ -628,44 +907,30 @@ describe('flushPendingMessagesForTarget — per-row outcomes', () => {
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
-    expect(h.injectMock.mock.calls[0]).toEqual([
-      SESSION_ID,
-      expect.stringContaining('agent note'),
-      true,
-      undefined,
-      'defer',
-      undefined,
-      syntheticRow.id,
-    ]);
-    expect(h.injectMock.mock.calls[1]).toEqual([
-      SESSION_ID,
-      '[Message from human]: human note',
-      false,
-      undefined,
-      undefined,
-      undefined,
-      humanRow.id,
-    ]);
+    expect(h.delivery.calls[0].args).toMatchObject({
+      origin: 'space_inject',
+      inputKind: 'task',
+      messageId: agentRow.id,
+    });
+    expect(h.delivery.calls[0].args.message).toContain('agent note');
+    expect(h.delivery.calls[1].args).toMatchObject({
+      origin: 'chat',
+      inputKind: 'human',
+      messageId: humanRow.id,
+    });
+    expect(h.delivery.calls[1].args.message).toBe('[Message from human]: human note');
   });
 
   it('marks the attempt failed and continues draining the remaining rows', async () => {
     const failingRow = h.enqueue({ message: 'fails first' });
     const laterRow = h.enqueue({ message: 'still drains' });
-    (
-      h.manager as unknown as {
-        injectSubSessionMessage: (...args: unknown[]) => Promise<string>;
-      }
-    ).injectSubSessionMessage = mock(async (...args: unknown[]) => {
-      if (args[6] === failingRow.id) throw new Error('inject exploded');
-      return 'ok';
-    });
+    h.delivery.failMessageIds.add(failingRow.idempotencyKey ?? failingRow.id);
 
     await h.manager.flushPendingMessagesForTarget(h.runId, AGENT_NAME, SESSION_ID);
 
     const failed = h.spyRepo.repo.getById(failingRow.id);
     expect(failed?.status).toBe('pending');
     expect(failed?.attempts).toBe(1);
-    expect(failed?.lastError).toBe('inject exploded');
     expect(h.spyRepo.calls).toContain(`attemptFailed:${failingRow.id}`);
     expect(h.spyRepo.repo.getById(laterRow.id)?.status).toBe('delivered');
   });
@@ -674,7 +939,8 @@ describe('flushPendingMessagesForTarget — per-row outcomes', () => {
 interface SpaceAgentHarness {
   manager: TaskAgentManager;
   spyRepo: SpyRepo;
-  injector: ReturnType<typeof mock>;
+  delivery: DeliveryFake;
+  ensureTargetSession: ReturnType<typeof mock>;
   publish: ReturnType<typeof mock>;
   db: Database;
   runId: string;
@@ -684,14 +950,10 @@ interface SpaceAgentHarness {
 
 function makeSpaceAgentHarness(
   options: {
-    withInjector?: boolean;
-    injectorImpl?: (
-      spaceId: string,
-      message: string,
-      replyTo: string | null,
-      rowId: string
-    ) => Promise<{ state: 'delivered' | 'queued' | 'failed'; messageId: string; error?: string }>;
+    withEnsurer?: boolean;
+    ensureImpl?: (target: SessionTarget) => Promise<EnsureSessionOutcome>;
     registry?: { get: (taskId: string) => string | null };
+    retryDelayMs?: number;
   } = {}
 ): SpaceAgentHarness {
   const db = new Database(':memory:');
@@ -717,20 +979,30 @@ function makeSpaceAgentHarness(
     )
   );
   const publish = mock(async (_event: string, _payload: unknown) => {});
-  const injector = mock(
-    options.injectorImpl ??
-      (async (_spaceId: string, _message: string, _replyTo: string | null, rowId: string) => ({
-        state: 'delivered',
-        messageId: rowId,
-      }))
+  const spaceIdRef = { id: space.id };
+  const coordinatorSession = `space:agent:${spaceIdRef.id}:coordinator`;
+  const delivery = makeDeliveryFake((target) =>
+    target.kind === 'agent'
+      ? coordinatorSession
+      : ((target.sessionId as string) ?? coordinatorSession)
+  );
+  const ensureTargetSession = mock(
+    options.ensureImpl ??
+      (async (target: SessionTarget) =>
+        target.kind === 'agent'
+          ? { kind: 'resolved', sessionId: coordinatorSession, created: false }
+          : { kind: 'resolved', sessionId: target.sessionId, created: false })
   );
 
   const config: Record<string, unknown> = {
     db: { getDatabase: () => db },
     pendingMessageRepo: spyRepo.spy,
+    ensureTargetSession,
+    agentMessageDelivery: delivery.deliver,
+    spaceAgentRetryDelayMs: options.retryDelayMs ?? 10,
     internalEventBus: { subscribe: mock(() => () => {}), publish },
   };
-  if (options.withInjector !== false) config.spaceAgentInjector = injector;
+  if (options.withEnsurer === false) config.ensureTargetSession = undefined;
   if (options.registry) config.replyRoutingRegistry = options.registry;
 
   const manager = new TaskAgentManager(config as unknown as TaskAgentManagerConfig);
@@ -738,7 +1010,8 @@ function makeSpaceAgentHarness(
   return {
     manager,
     spyRepo,
-    injector,
+    delivery,
+    ensureTargetSession,
     publish,
     db,
     runId: run.id,
@@ -763,10 +1036,10 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
   const dbByTest: Database[] = [];
 
-  it('returns silently without listing when no injector is configured', async () => {
-    const h = makeSpaceAgentHarness({ withInjector: false });
+  it('returns silently without listing when no session ensurer is configured', async () => {
+    const h = makeSpaceAgentHarness({ withEnsurer: false });
     dbByTest.push(h.db);
-    const row = h.enqueue({ message: 'no injector' });
+    const row = h.enqueue({ message: 'no ensurer' });
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
@@ -774,17 +1047,12 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
   });
 
-  it('defers pending-row expiry while an SDK delivery is still active', async () => {
-    const h = makeSpaceAgentHarness({
-      injectorImpl: async (_spaceId, _message, _replyTo, rowId) => ({
-        state: 'queued',
-        messageId: rowId,
-        sessionId: `space:chat:stub`,
-      }),
-    });
+  it('excludes rows still owned by a legacy SDK delivery from re-delivery and retention', async () => {
+    const h = makeSpaceAgentHarness();
     dbByTest.push(h.db);
     const row = h.enqueue({ message: 'still in flight' });
     (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getDatabase: () => h.db,
       getSDKMessageRepo: () => ({
         getDeliveryContent: (_sessionId: string, uuid: string) =>
           uuid === row.id ? { content: 'x', sendStatus: 'enqueued' } : null,
@@ -793,8 +1061,118 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.spyRepo.calls).toContain(`defer:${row.id}`);
+    expect(h.delivery.calls).toHaveLength(0);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+    expect(h.spyRepo.calls).toContain(`defer:${row.id}`);
+    expect(h.spyRepo.retentionArgs[0]?.[0]).toMatchObject({ excludeIds: [row.id] });
+  });
+
+  it('retries rows whose legacy SDK delivery already failed instead of stranding them', async () => {
+    const h = makeSpaceAgentHarness();
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'legacy delivery failed' });
+    (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getDatabase: () => h.db,
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, uuid: string) =>
+          uuid === row.id ? { content: 'x', sendStatus: 'failed' } : null,
+      }),
+    };
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.delivery.calls).toHaveLength(1);
+    expect(h.delivery.calls[0].args.messageId).toBe(row.id);
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
+  });
+
+  it('keeps watching legacy in-flight rows and hands them off once the delivery fails', async () => {
+    const h = makeSpaceAgentHarness({ retryDelayMs: 10 });
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'legacy delivery in flight then fails' });
+    let legacyStatus = 'enqueued';
+    (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getDatabase: () => h.db,
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, uuid: string) =>
+          uuid === row.id ? { content: 'x', sendStatus: legacyStatus } : null,
+      }),
+    };
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.delivery.calls).toHaveLength(0);
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+
+    legacyStatus = 'failed';
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(h.delivery.calls).toHaveLength(1);
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
+  });
+
+  it('keeps watching legacy in-flight rows and settles them once consumed', async () => {
+    const h = makeSpaceAgentHarness({ retryDelayMs: 10 });
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'legacy delivery in flight then consumed' });
+    let legacyStatus = 'submitted';
+    (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getDatabase: () => h.db,
+      getSDKMessageRepo: () => ({
+        getDeliveryContent: (_sessionId: string, uuid: string) =>
+          uuid === row.id ? { content: 'x', sendStatus: legacyStatus } : null,
+      }),
+    };
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+
+    legacyStatus = 'consumed';
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(h.delivery.calls).toHaveLength(0);
+    const record = h.spyRepo.repo.getById(row.id);
+    expect(record?.status).toBe('delivered');
+    expect(record?.deliveredSessionId).toBe(`space:chat:${h.spaceId}`);
+  });
+
+  it('schedules a failure-driven re-drain that delivers once the door recovers', async () => {
+    let doorOpen = false;
+    const h = makeSpaceAgentHarness({
+      retryDelayMs: 10,
+      ensureImpl: async () =>
+        doorOpen
+          ? { kind: 'resolved', sessionId: `space:agent:${h.spaceId}:coordinator`, created: false }
+          : { kind: 'unresolved', reason: 'ensure_failed' },
+    });
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'transient door failure' });
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.delivery.calls).toHaveLength(0);
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
+
+    doorOpen = true;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(h.delivery.calls).toHaveLength(1);
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
+  });
+
+  it('does not arm a re-drain when the drain fully succeeds', async () => {
+    const h = makeSpaceAgentHarness();
+    dbByTest.push(h.db);
+    const row = h.enqueue({ message: 'delivered first try' });
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.delivery.calls).toHaveLength(1);
+    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
+    const timers = (h.manager as unknown as { spaceAgentRetryTimers: Map<string, unknown> })
+      .spaceAgentRetryTimers;
+    expect(timers.size).toBe(0);
   });
 
   it('settles reply-routed rows against their reply session and falls back to the chat session', async () => {
@@ -816,6 +1194,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     });
     const fallbackRow = h.enqueue({ message: 'plain', taskId: 'task-gone' });
     (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getDatabase: () => h.db,
       getSDKMessageRepo: () => ({
         getDeliveryContent: (sessionId: string, uuid: string) => {
           if (uuid === footerRow.id && sessionId === 'footer-session') {
@@ -831,7 +1210,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.injector).not.toHaveBeenCalled();
+    expect(h.delivery.calls).toHaveLength(0);
     expect(h.spyRepo.repo.getById(footerRow.id)?.deliveredSessionId).toBe('footer-session');
     expect(h.spyRepo.repo.getById(fallbackRow.id)?.deliveredSessionId).toBe(
       `space:chat:${h.spaceId}`
@@ -845,6 +1224,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
     dbByTest.push(h.db);
     const row = h.enqueue({ message: 'consumed while the daemon was down' });
     (h.manager as unknown as { config: Record<string, unknown> }).config.db = {
+      getDatabase: () => h.db,
       getSDKMessageRepo: () => ({
         getDeliveryContent: (_sessionId: string, uuid: string) =>
           uuid === row.id ? { content: 'x', sendStatus: 'consumed' } : null,
@@ -853,37 +1233,13 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.injector).not.toHaveBeenCalled();
+    expect(h.delivery.calls).toHaveLength(0);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(row.id)?.deliveredSessionId).toBe(`space:chat:${h.spaceId}`);
     const deliveredAt = h.spyRepo.calls.indexOf(`delivered:${row.id}`);
     const expiredAt = h.spyRepo.calls.indexOf('expireStale');
     expect(deliveredAt).toBeGreaterThanOrEqual(0);
     expect(expiredAt).toBeGreaterThan(deliveredAt);
-  });
-
-  it('keeps a queued space-agent row pending and settles it from delayed consumption', async () => {
-    let settleQueuedRow: (() => void) | null = null;
-    const h = makeSpaceAgentHarness({
-      injectorImpl: async (_spaceId, _message, _replyTo, rowId, options) => {
-        settleQueuedRow = options?.onConsumed ?? null;
-        return { state: 'queued', messageId: rowId };
-      },
-    });
-    dbByTest.push(h.db);
-    const row = h.enqueue({ message: 'queued while coordinator idle' });
-
-    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
-
-    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('pending');
-    expect(h.spyRepo.calls).not.toContain(`delivered:${row.id}`);
-    expect(settleQueuedRow).not.toBeNull();
-
-    settleQueuedRow?.();
-
-    expect(h.spyRepo.repo.getById(row.id)?.status).toBe('delivered');
-    expect(h.spyRepo.repo.getById(row.id)?.deliveredSessionId).toBe(`space:chat:${h.spaceId}`);
-    expect(h.spyRepo.calls).toContain(`delivered:${row.id}`);
   });
 
   it('drains only space_agent rows targeted at the space agent', async () => {
@@ -894,7 +1250,8 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.injector).toHaveBeenCalledTimes(1);
+    expect(h.delivery.calls).toHaveLength(1);
+    expect(h.delivery.calls[0].args.message).toContain('space row');
     expect(h.spyRepo.repo.getById(spaceRow.id)?.status).toBe('delivered');
     expect(h.spyRepo.repo.getById(nodeRow.id)?.status).toBe('pending');
   });
@@ -906,11 +1263,11 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.injector).toHaveBeenCalledTimes(1);
+    expect(h.delivery.calls).toHaveLength(1);
     expect(h.spyRepo.repo.getById(nodeScoped.id)?.status).toBe('delivered');
   });
 
-  it('marks rows delivered to the space-chat session id and emits the delivery event', async () => {
+  it('marks rows delivered to the door-resolved coordinator session and emits the delivery event', async () => {
     const h = makeSpaceAgentHarness();
     dbByTest.push(h.db);
     const row = h.enqueue({ message: 'chat row' });
@@ -919,8 +1276,13 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     const record = h.spyRepo.repo.getById(row.id);
     expect(record?.status).toBe('delivered');
-    expect(record?.deliveredSessionId).toBe(`space:chat:${h.spaceId}`);
-    expect(h.injector.mock.calls[0][0]).toBe(h.spaceId);
+    expect(record?.deliveredSessionId).toBe(`space:agent:${h.spaceId}:coordinator`);
+    expect(h.delivery.calls[0].args.target).toEqual({
+      kind: 'agent',
+      spaceId: h.spaceId,
+      agentId: 'coordinator',
+    });
+    expect(h.delivery.calls[0].args.origin).toBe('space_agent');
     const events = h.publish.mock.calls.filter(
       (call: unknown[]) => call[0] === 'space.pendingMessage.delivered'
     );
@@ -932,11 +1294,11 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
       targetAgentName: 'space-agent',
       targetKind: 'space_agent',
       messageId: row.id,
-      deliveredSessionId: `space:chat:${h.spaceId}`,
+      deliveredSessionId: `space:agent:${h.spaceId}:coordinator`,
     });
   });
 
-  it('resolves reply-to from the envelope footer first, then the registry, else null', async () => {
+  it('resolves reply-to from the envelope footer first, then the registry, else the coordinator', async () => {
     const registry = {
       get: mock((taskId: string) => (taskId === 'task-9' ? 'registry-session' : null)),
     };
@@ -958,12 +1320,57 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.injector.mock.calls.map((call: unknown[]) => call[2])).toEqual([
-      'footer-session',
-      'registry-session',
-      null,
+    expect(h.ensureTargetSession.mock.calls.map((call: unknown[]) => call[0])).toEqual([
+      { kind: 'session', sessionId: 'footer-session' },
+      { kind: 'session', sessionId: 'registry-session' },
+      { kind: 'agent', spaceId: h.spaceId, agentId: 'coordinator' },
     ]);
     expect(registry.get.mock.calls.map((call: unknown[]) => call[0])).toEqual(['task-9', 'task-9']);
+  });
+
+  it('falls back to the coordinator agent target when a reply session is gone', async () => {
+    let coordinator = '';
+    const h = makeSpaceAgentHarness({
+      ensureImpl: async (target: SessionTarget) =>
+        target.kind === 'agent'
+          ? { kind: 'resolved', sessionId: coordinator, created: true }
+          : { kind: 'unresolved', reason: 'not_found' },
+    });
+    coordinator = `space:agent:${h.spaceId}:coordinator`;
+    dbByTest.push(h.db);
+    h.delivery.deliver.mockImplementation(
+      async (_runId: string, args: { target: { kind: string }; messageId: string }) =>
+        args.target.kind === 'session'
+          ? { state: 'not_found' as const, messageId: args.messageId, error: 'not_found' }
+          : { state: 'delivered' as const, sessionId: coordinator, messageId: args.messageId }
+    );
+    const row = h.enqueue({
+      message: formatAgentMessage({
+        fromLevel: 'node-agent',
+        fromAgentName: 'reviewer',
+        toLevel: 'space-agent',
+        body: 'reply session vanished',
+        taskId: 'task-a',
+        replyToSessionId: 'gone-session',
+      }),
+      taskId: 'task-a',
+    });
+
+    await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
+
+    expect(h.ensureTargetSession.mock.calls.map((call: unknown[]) => call[0])).toEqual([
+      { kind: 'session', sessionId: 'gone-session' },
+      { kind: 'agent', spaceId: h.spaceId, agentId: 'coordinator' },
+    ]);
+    expect(
+      h.delivery.deliver.mock.calls.map(
+        (call: unknown[]) => (call[1] as { target: unknown }).target
+      )
+    ).toEqual([
+      { kind: 'session', sessionId: 'gone-session' },
+      { kind: 'agent', spaceId: h.spaceId, agentId: 'coordinator' },
+    ]);
+    expect(h.spyRepo.calls).toContain(`delivered:${row.id}`);
   });
 
   it('formats plain rows for the space-agent level and passes enveloped rows through', async () => {
@@ -981,7 +1388,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    const formatted = h.injector.mock.calls[0][1] as string;
+    const formatted = h.delivery.calls[0].args.message;
     expect(formatted).toBe(
       formatAgentMessage({
         fromLevel: 'node-agent',
@@ -992,26 +1399,21 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
       })
     );
     expect(formatted).toContain('send_message_to_task with task_id="task-7"');
-    expect(h.injector.mock.calls[1][1]).toBe(enveloped);
+    expect(h.delivery.calls[1].args.message).toBe(enveloped);
   });
 
-  it('marks the attempt failed and continues when the injector rejects', async () => {
-    const h = makeSpaceAgentHarness({
-      injectorImpl: async (_spaceId, message, _replyTo, rowId) => {
-        if (message.includes('fails first')) throw new Error('injector down');
-        return { state: 'delivered', messageId: rowId };
-      },
-    });
+  it('charges an attempt and continues when routed delivery fails', async () => {
+    const h = makeSpaceAgentHarness();
     dbByTest.push(h.db);
     const failingRow = h.enqueue({ message: 'fails first' });
     const laterRow = h.enqueue({ message: 'still drains' });
+    h.delivery.failMessageIds.add(failingRow.idempotencyKey ?? failingRow.id);
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
     const failed = h.spyRepo.repo.getById(failingRow.id);
     expect(failed?.status).toBe('pending');
     expect(failed?.attempts).toBe(1);
-    expect(failed?.lastError).toBe('injector down');
     expect(h.spyRepo.repo.getById(laterRow.id)?.status).toBe('delivered');
   });
 
@@ -1023,7 +1425,7 @@ describe('flushPendingMessagesForSpaceAgent — space-agent drain', () => {
 
     await h.manager.flushPendingMessagesForSpaceAgent(h.spaceId, h.runId);
 
-    expect(h.injector).not.toHaveBeenCalled();
+    expect(h.delivery.calls).toHaveLength(0);
     expect(h.spyRepo.repo.getById(row.id)?.status).toBe('failed');
     expect(h.spyRepo.repo.getById(row.id)?.lastError).toBe('historical failure');
   });
@@ -1146,138 +1548,5 @@ describe('injectSubSessionMessageWithOrigin — terminal guard', () => {
     await expect(
       manager.injectRuntimeRecoveryMessage(GUARD_SESSION_ID, 'recovery nag')
     ).rejects.toThrow('task/run is terminal (done)');
-  });
-});
-
-describe('pending drain through the v2 injection shell', () => {
-  const V2_SESSION_ID = 'sub-session-v2';
-  const V2_RUN_ID = 'run-v2';
-  const V2_NODE_ID = 'node-coder';
-
-  function makeV2Harness(deliveryContent: { sendStatus: string }): {
-    manager: TaskAgentManager;
-    saveUserMessage: ReturnType<typeof mock>;
-    jobQueueEnqueue: ReturnType<typeof mock>;
-    reopenDeliveryByUuid: ReturnType<typeof mock>;
-    markDeliveryDeferredByUuid: ReturnType<typeof mock>;
-    markDelivered: ReturnType<typeof mock>;
-    replayMock: ReturnType<typeof mock>;
-  } {
-    const saveUserMessage = mock(() => 'db-id');
-    const jobQueueEnqueue = mock(
-      (args: { payload?: { sessionId?: string; messageUuid?: string } }) => {
-        const uuid = args?.payload?.messageUuid;
-        if (uuid) signalDeliveryConsumed(args!.payload!.sessionId!, uuid);
-        return { id: 'job-1' };
-      }
-    );
-    const reopenDeliveryByUuid = mock(() => 'db-reopened');
-    const markDeliveryDeferredByUuid = mock(() => null);
-    const replayMock = mock(async () => ({ success: true, messageCount: 0 }));
-    const execution = {
-      id: 'exec-v2',
-      workflowRunId: V2_RUN_ID,
-      workflowNodeId: V2_NODE_ID,
-      agentName: AGENT_NAME,
-      agentSessionId: V2_SESSION_ID,
-      status: 'in_progress',
-      createdAt: 1,
-      updatedAt: 1,
-    };
-    const workflow = {
-      nodes: [{ id: V2_NODE_ID, name: 'Build', agents: [{ agentId: 'Coder', name: AGENT_NAME }] }],
-    };
-    const row = makeRecord({
-      id: 'row-v2',
-      workflowRunId: V2_RUN_ID,
-      workflowNodeId: V2_NODE_ID,
-      message: 'queued v2 note',
-    });
-    const pendingRepo = {
-      enforceRetention: mock(() => 0),
-      expireStale: mock(() => 0),
-      listPendingForTarget: mock(() => [row]),
-      markDelivered: mock(() => {}),
-      markAttemptFailed: mock(() => null),
-    };
-    const session = {
-      session: { id: V2_SESSION_ID, sdkSessionId: 'prior-sdk' },
-      getProcessingState: () => ({ status: 'idle' }),
-      handleQueryTrigger: replayMock,
-      ensureQueryStarted: mock(async () => ({ started: false })),
-      clearConversationContext: mock(async () => {}),
-      messageQueue: { enqueueWithId: mock(async () => {}), size: () => 0 },
-    } as unknown as AgentSession;
-
-    const manager = new TaskAgentManager({
-      db: {
-        getDatabase: () => ({}),
-        saveUserMessage,
-        getUserMessageIdsByStatus: mock(() => []),
-        getSDKMessageRepo: () => ({
-          getDeliveryContent: () => deliveryContent,
-          reopenDeliveryByUuid,
-          markDeliveryDeferredByUuid,
-          markDeliveryFailedByUuid: mock(() => null),
-        }),
-        getJobQueueRepo: () => ({
-          activeDeliveryMessageUuids: () => new Set<string>(),
-          enqueue: jobQueueEnqueue,
-        }),
-      },
-      internalEventBus: { subscribe: mock(() => () => {}), publish: mock(async () => {}) },
-      nodeExecutionRepo: {
-        getByAgentSessionId: mock(() => execution),
-        listByAgentSessionId: mock(() => [execution]),
-        getById: mock(() => null),
-        touchLastActivity: mock(() => {}),
-      },
-      workflowRunRepo: { getRun: mock(() => ({ workflowId: WORKFLOW_ID })) },
-      taskRepo: {
-        getTask: mock(() => null),
-        listByWorkflowRunIncludingArchived: mock(() => []),
-      },
-      spaceWorkflowManager: { getWorkflow: () => workflow, getWorkflowForRun: () => workflow },
-      pendingMessageRepo: pendingRepo,
-    } as unknown as TaskAgentManagerConfig);
-    (manager as unknown as { agentSessionIndex: Map<string, AgentSession> }).agentSessionIndex.set(
-      V2_SESSION_ID,
-      session
-    );
-    return {
-      manager,
-      saveUserMessage,
-      jobQueueEnqueue,
-      reopenDeliveryByUuid,
-      markDeliveryDeferredByUuid,
-      markDelivered: pendingRepo.markDelivered,
-      replayMock,
-    };
-  }
-
-  it('a drain retry over a failed delivery row reopens it and re-enqueues without a duplicate row', async () => {
-    const h = makeV2Harness({ sendStatus: 'failed' });
-
-    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
-
-    expect(h.reopenDeliveryByUuid).toHaveBeenCalledWith(V2_SESSION_ID, 'row-v2');
-    expect(h.saveUserMessage).not.toHaveBeenCalled();
-    expect(h.jobQueueEnqueue).toHaveBeenCalledTimes(1);
-    expect(
-      (h.jobQueueEnqueue.mock.calls[0][0] as { payload?: { messageUuid?: string } }).payload
-        ?.messageUuid
-    ).toBe('row-v2');
-    expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
-  });
-
-  it('a drain retry over a consumed delivery row is a noop yet still marks the pending row delivered', async () => {
-    const h = makeV2Harness({ sendStatus: 'consumed' });
-
-    await h.manager.flushPendingMessagesForTarget(V2_RUN_ID, AGENT_NAME, V2_SESSION_ID);
-
-    expect(h.saveUserMessage).not.toHaveBeenCalled();
-    expect(h.jobQueueEnqueue).not.toHaveBeenCalled();
-    expect(h.replayMock).not.toHaveBeenCalled();
-    expect(h.markDelivered).toHaveBeenCalledWith('row-v2', V2_SESSION_ID);
   });
 });

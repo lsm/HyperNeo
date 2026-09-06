@@ -3,6 +3,7 @@ import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import type { UUID } from 'crypto';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { ClearConversationCancelledError, type AgentSession } from '../../agent/agent-session.ts';
+import type { MessageDeliveryOrigin } from '../../agent/message-delivery.ts';
 import {
   acquireContextClearBoundary,
   type ContextClearBoundaryOwner,
@@ -50,6 +51,9 @@ export interface AgentMessageDeliveryArgs {
   target: SessionTarget;
   message: string;
   messageId: string;
+  inputKind?: MessageInputKind;
+  origin?: MessageDeliveryOrigin;
+  deliveryMode?: 'immediate' | 'defer';
 }
 
 export interface AgentMessageDeliveryPlan {
@@ -74,15 +78,16 @@ export interface LockedAgentMessageDeliveryCtx
 function buildSyntheticDeliveryMessage(
   sessionId: string,
   messageId: string,
-  text: string
+  text: string,
+  inputKind: MessageInputKind = 'task'
 ): SDKUserMessage & { isSynthetic: boolean; inputKind: MessageInputKind } {
   return {
     type: 'user' as const,
     uuid: messageId as UUID,
     session_id: sessionId,
     parent_tool_use_id: null,
-    isSynthetic: true,
-    inputKind: 'task',
+    isSynthetic: inputKind !== 'human',
+    inputKind,
     message: {
       role: 'user' as const,
       content: [{ type: 'text' as const, text }],
@@ -200,19 +205,21 @@ export function planDeliveryAdmission(
   const sessionId = ctx.resolution.sessionId;
   const status = ctx.session.getProcessingState().status;
   const task = target.kind === 'worker' ? deps.taskRepo.getTask(target.taskId) : null;
-  const shouldDefer =
-    status === 'rate_limit_cooldown' ||
-    (task !== null && deps.isRateOrUsageLimited(task.status ?? '')) ||
-    deps.hasHeldDeliveryBacklog(sessionId, ctx.messageId);
   const isBusy =
     status === 'processing' ||
     status === 'queued' ||
     status === 'waiting_for_input' ||
     status === 'interrupted' ||
     status === 'rate_limit_cooldown';
+  const shouldDefer =
+    status === 'rate_limit_cooldown' ||
+    (task !== null && deps.isRateOrUsageLimited(task.status ?? '')) ||
+    deps.hasHeldDeliveryBacklog(sessionId, ctx.messageId) ||
+    (ctx.deliveryMode === 'defer' && isBusy);
   const shouldClear =
     !shouldDefer &&
     !isBusy &&
+    (ctx.inputKind === undefined || ctx.inputKind === 'task') &&
     Boolean(ctx.session.session.sdkSessionId) &&
     deps.slotResetsContext(sessionId) &&
     !deps.hasActiveDeliveryJob(sessionId) &&
@@ -247,14 +254,19 @@ export async function handoffDeliveryToMailbox(
   if (ctx.outcome) return ctx;
   const sessionId = ctx.resolution.sessionId;
   const shouldDefer = ctx.plan?.shouldDefer === true;
-  const message = buildSyntheticDeliveryMessage(sessionId, ctx.messageId, ctx.message);
+  const message = buildSyntheticDeliveryMessage(
+    sessionId,
+    ctx.messageId,
+    ctx.message,
+    ctx.inputKind
+  );
   try {
     const outcome = await ctx.deps.handoffToMailbox({
       target: {
         sessionId,
         messageId: ctx.messageId,
         message,
-        origin: 'space_agent',
+        origin: ctx.origin ?? 'space_agent',
         ...(shouldDefer ? { defer: true } : {}),
       },
       ...(shouldDefer ? {} : { stateManager: ctx.session.stateManager }),

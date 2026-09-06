@@ -4,6 +4,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import {
   activatePrompts,
   ensurePrompt,
+  holdDeliveryJobs,
   retryPrompt,
   verifyPromptContent,
 } from '../../agent/message-delivery-outbox.ts';
@@ -97,6 +98,16 @@ export async function retryFailedPromptIntoMailbox(
       return resolveDeliverableHandoff(deps, target);
     }
     return null;
+  }
+  if (target.defer) {
+    holdDeliveryJobs(deps.db, target.sessionId, target.messageId);
+    const flipped = deps.sdkMessageRepo.markDeliveryDeferredByUuid(
+      target.sessionId,
+      target.messageId
+    );
+    if (flipped) {
+      return { dbId: flipped, changed: true };
+    }
   }
   return { dbId: retried.dbId, changed: true };
 }

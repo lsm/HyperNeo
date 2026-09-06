@@ -216,6 +216,73 @@ describe('deliverAgentMessageToTarget', () => {
     expect(live.clearMock).not.toHaveBeenCalled();
   });
 
+  it('defers a requested defer mode while the session is busy', async () => {
+    const live = makeSession({ status: 'processing' });
+    const { deps, handoffCalls } = makeDeps({
+      getSessionAsync: async () => live.session,
+    });
+    await deliverAgentMessageToTarget({
+      deps,
+      target: WORKER_TARGET,
+      message: 'defer me',
+      messageId: 'msg-10',
+      deliveryMode: 'defer',
+    });
+    expect(handoffCalls[0].target.defer).toBe(true);
+  });
+
+  it('delivers immediately when defer is requested but the session is idle', async () => {
+    const live = makeSession({ status: 'idle' });
+    const { deps, handoffCalls } = makeDeps({
+      getSessionAsync: async () => live.session,
+    });
+    await deliverAgentMessageToTarget({
+      deps,
+      target: WORKER_TARGET,
+      message: 'defer me when busy',
+      messageId: 'msg-11',
+      deliveryMode: 'defer',
+    });
+    expect(handoffCalls[0].target.defer).toBeUndefined();
+  });
+
+  it('keeps conversation context for human input on a resetContextPerTurn slot', async () => {
+    const live = makeSession({ status: 'idle' });
+    const { deps } = makeDeps({
+      getSessionAsync: async () => live.session,
+      slotResetsContext: () => true,
+    });
+    await deliverAgentMessageToTarget({
+      deps,
+      target: WORKER_TARGET,
+      message: 'human follow-up',
+      messageId: 'msg-12',
+      inputKind: 'human',
+    });
+    expect(live.clearMock).not.toHaveBeenCalled();
+  });
+
+  it('marks human messages non-synthetic at the mailbox and task input synthetic', async () => {
+    const { deps, handoffCalls } = makeDeps();
+    await deliverAgentMessageToTarget({
+      deps,
+      target: WORKER_TARGET,
+      message: 'human words',
+      messageId: 'msg-13',
+      inputKind: 'human',
+    });
+    await deliverAgentMessageToTarget({
+      deps,
+      target: WORKER_TARGET,
+      message: 'task words',
+      messageId: 'msg-14',
+    });
+    expect(handoffCalls[0].target.message.isSynthetic).toBe(false);
+    expect(handoffCalls[0].target.message.inputKind).toBe('human');
+    expect(handoffCalls[1].target.message.isSynthetic).toBe(true);
+    expect(handoffCalls[1].target.message.inputKind).toBe('task');
+  });
+
   it('propagates a stale mailbox handoff as a delivery error', async () => {
     const { deps } = makeDeps({
       handoffToMailbox: async () => ({ state: 'stale' as const }),

@@ -49,6 +49,7 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import { CleanupState, type SessionManager } from '../../session-manager.ts';
+import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
 import type { SkillsManager } from '../../skills-manager.ts';
 import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
 import type { NodeAgentTemplateSource } from './spawn-slot-resolution.ts';
@@ -138,6 +139,11 @@ import {
 import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
 import { derivePendingQueueTargetNames } from './pending-drain-gates.ts';
 import {
+  drainPendingRowOntoMailbox,
+  type PendingDrainHandoffDeps,
+  type PendingDrainRoutedDeliveryArgs,
+} from './pending-drain-handoff.ts';
+import {
   formatPendingRowForNodeAgent,
   formatPendingRowForSpaceAgent,
   isHumanPendingSource,
@@ -147,11 +153,11 @@ import {
   deliverAgentMessageToTarget,
   type AgentMessageDeliveryDeps,
 } from './agent-message-delivery-pipeline.ts';
+import type { AgentMessageDeliveryOutcome } from './agent-message-router.ts';
 import { handoffPromptToMailbox } from './prompt-mailbox-handoff.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import { decideRestoredWorkerAdmission } from './restored-worker-admission-decision-pipeline.ts';
 import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
-import { SpaceAgentLateSettlements } from './space-agent-message-delivery.ts';
 import {
   collectActiveSpaceDeliveryIds,
   runSpaceAgentPendingDrain,
@@ -195,6 +201,8 @@ import {
 const log = new Logger('task-agent-manager');
 
 const WORKFLOW_ESCALATION_TARGET = 'space-agent';
+
+const SPACE_AGENT_RETRY_DELAY_MS = 30_000;
 
 export function isWorkflowTerminalNode(
   workflow: SpaceWorkflow | null | undefined,
@@ -269,6 +277,12 @@ export interface TaskAgentManagerConfig {
   artifactProfile?: WorkflowArtifactProfile;
   pendingMessageRepo?: PendingAgentMessageRepository;
   toolContinuationRepo?: ToolContinuationRecoveryRepository;
+  ensureTargetSession?: (target: SessionTarget) => Promise<EnsureSessionOutcome>;
+  spaceAgentRetryDelayMs?: number;
+  agentMessageDelivery?: (
+    workflowRunId: string,
+    args: PendingDrainRoutedDeliveryArgs
+  ) => Promise<AgentMessageDeliveryOutcome>;
   spaceAgentInjector?: (
     spaceId: string,
     message: string,
@@ -344,10 +358,7 @@ export function resolvePostApprovalRouteNodeId(
   return workflow.nodes.find((n) => n.agents.some((a) => a.name === targetAgent))?.id;
 }
 
-const SPACE_AGENT_RETRY_DELAY_MS = 30_000;
-
 export class TaskAgentManager {
-  private readonly lateSettlements = new SpaceAgentLateSettlements();
   private readonly spaceAgentRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly spaceAgentDrainsInFlight = new Set<string>();
   private readonly spaceAgentDrainRerunQueued = new Set<string>();
@@ -355,6 +366,10 @@ export class TaskAgentManager {
 
   attachToolContinuationRepo(repo: ToolContinuationRecoveryRepository): void {
     this.config.toolContinuationRepo = repo;
+  }
+
+  attachSessionEnsurer(ensure: (target: SessionTarget) => Promise<EnsureSessionOutcome>): void {
+    this.config.ensureTargetSession = ensure;
   }
 
   private subSessions = new Map<string, Map<string, AgentSession>>();
@@ -1462,6 +1477,13 @@ export class TaskAgentManager {
   ): Promise<void> {
     const repo = this.config.pendingMessageRepo;
     if (!repo) return;
+    const handoffDeps = this.pendingDrainHandoffDeps(workflowRunId);
+    if (!handoffDeps) {
+      log.warn(
+        `TaskAgentManager: pending drain for agent=${targetAgentName} skipped — no session ensurer configured`
+      );
+      return;
+    }
 
     const activeDeliveryIds = this.activeSpaceDeliveryIdsForRun(workflowRunId);
     repo.enforceRetention({ runId: workflowRunId, excludeIds: activeDeliveryIds });
@@ -1507,30 +1529,67 @@ export class TaskAgentManager {
       `TaskAgentManager: flushing ${drain.rows.length} pending message(s) for agent=${targetAgentName} session=${sessionId}`
     );
 
+    let fallbackTaskId: string | null | undefined;
     for (const row of drain.rows) {
-      const isSyntheticMessage = !isHumanPendingSource(row.sourceAgentName);
-      const message = formatPendingRowForNodeAgent(row, targetAgentName);
-      try {
-        await this.injectSubSessionMessage(
-          sessionId,
-          message,
-          isSyntheticMessage,
-          undefined,
-          row.deliveryMode ?? undefined,
-          undefined,
-          row.id
-        );
-        this.recordActivityForSession(sessionId);
-        repo.markDelivered(row.id, sessionId);
-        this.emitPendingDelivered(row.id, sessionId, row);
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
+      if (row.taskId == null && fallbackTaskId === undefined) {
+        fallbackTaskId = this.config.taskRepo?.listByWorkflowRun(workflowRunId).at(-1)?.id ?? null;
+      }
+      const taskId = row.taskId ?? fallbackTaskId;
+      if (taskId == null) {
+        const terminalStatus = this.resolveTerminalInjectionStatus(workflowRunId, undefined);
+        if (terminalStatus) {
+          const reason = `task/run is terminal (${terminalStatus})`;
+          repo.markAttemptFailed(row.id, reason);
+          log.warn(`TaskAgentManager: pending recovery message ${row.id} skipped — ${reason}`);
+          continue;
+        }
+      }
+      const outcome = await drainPendingRowOntoMailbox({
+        deps: handoffDeps,
+        row,
+        target:
+          taskId == null
+            ? { kind: 'session', sessionId }
+            : {
+                kind: 'worker',
+                taskId,
+                agentName: targetAgentName,
+                workflowNodeId: row.workflowNodeId ?? drainWorkflowNodeId ?? undefined,
+              },
+        message: formatPendingRowForNodeAgent(row, targetAgentName),
+        origin: isHumanPendingSource(row.sourceAgentName) ? 'chat' : 'space_inject',
+      });
+      if (outcome.action !== 'delivered') {
         log.warn(
-          `TaskAgentManager: pending message ${row.id} delivery to ${sessionId} failed: ${errMsg}`
+          `TaskAgentManager: pending message ${row.id} delivery for agent=${targetAgentName} not delivered (${outcome.action}: ${outcome.reason ?? 'no reason'})`
         );
-        repo.markAttemptFailed(row.id, errMsg);
       }
     }
+  }
+
+  private pendingDrainHandoffDeps(workflowRunId: string): PendingDrainHandoffDeps | null {
+    const repo = this.config.pendingMessageRepo;
+    const ensureTargetSession = this.config.ensureTargetSession;
+    if (!repo || !ensureTargetSession) return null;
+    const agentMessageDelivery = this.config.agentMessageDelivery;
+    const deliverRoutedMessage: PendingDrainHandoffDeps['deliverRoutedMessage'] = (args) =>
+      agentMessageDelivery
+        ? agentMessageDelivery(workflowRunId, args)
+        : deliverAgentMessageToTarget({
+            deps: this.agentMessageDeliveryDeps(workflowRunId),
+            ...args,
+          });
+    return {
+      ensureTargetSession,
+      deliverRoutedMessage,
+      markDelivered: (id, deliveredSessionId) => repo.markDelivered(id, deliveredSessionId),
+      markFailed: (id, error) => repo.markFailed(id, error),
+      markAttemptFailed: (id, error) => repo.markAttemptFailed(id, error),
+      onDelivered: (row, deliveredSessionId) => {
+        this.recordActivityForSession(deliveredSessionId);
+        this.emitPendingDelivered(row.id, deliveredSessionId, row);
+      },
+    };
   }
 
   async tryResumeNodeAgentSession(
@@ -1563,8 +1622,7 @@ export class TaskAgentManager {
 
   async flushPendingMessagesForSpaceAgent(spaceId: string, workflowRunId: string): Promise<void> {
     const repo = this.config.pendingMessageRepo;
-    const inject = this.config.spaceAgentInjector;
-    if (!repo || !inject) return;
+    if (!repo || !this.config.ensureTargetSession) return;
     if (this.spaceAgentDrainsInFlight.has(workflowRunId)) {
       this.spaceAgentDrainRerunQueued.add(workflowRunId);
       return;
@@ -1583,12 +1641,14 @@ export class TaskAgentManager {
 
   private async flushSpaceAgentDrainLocked(spaceId: string, workflowRunId: string): Promise<void> {
     const repo = this.config.pendingMessageRepo;
-    const inject = this.config.spaceAgentInjector;
-    if (!repo || !inject) return;
+    const handoffDeps = this.pendingDrainHandoffDeps(workflowRunId);
+    if (!repo || !handoffDeps) return;
 
     const spaceChatSessionId = `space:chat:${spaceId}`;
+    const coordinatorTarget: SessionTarget = { kind: 'agent', spaceId, agentId: 'coordinator' };
     const resolveReplySession = (row: PendingAgentMessageRecord): string | null =>
       this.resolveSpaceAgentReplySession(row);
+    let retryableRows = 0;
     const drainDeps: SpaceAgentPendingDrainDeps = {
       repo,
       resolveReplySession,
@@ -1596,70 +1656,43 @@ export class TaskAgentManager {
         this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, messageId)?.sendStatus,
       onSettled: (row, deliveredSessionId) =>
         this.emitPendingDelivered(row.id, deliveredSessionId, row),
-      onFailed: () => this.scheduleSpaceAgentReconciliation(spaceId, workflowRunId),
-      watchActiveDelivery: (row) => {
-        const replyToSession = this.resolveSpaceAgentReplySession(row);
-        const candidates =
-          replyToSession && replyToSession !== spaceChatSessionId
-            ? [replyToSession, spaceChatSessionId]
-            : [spaceChatSessionId];
-        const probe = (sessionId: string) =>
-          this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, row.id)?.sendStatus;
-        const handles: import('./space-agent-message-delivery.ts').SpaceAgentLateSettlementHandle[] =
-          [];
-        let done = false;
-        const stopWatchers = () => {
-          done = true;
-          for (const handle of handles) handle.cancel();
-        };
-        const settleFrom = (settledSessionId: string) => {
-          if (done) return;
-          done = true;
-          stopWatchers();
-          if (repo.getById(row.id)?.status !== 'pending') return;
-          repo.markDelivered(row.id, settledSessionId);
-          this.emitPendingDelivered(row.id, settledSessionId, row);
-        };
-        const scheduleReconciliation = () => {
-          this.scheduleSpaceAgentReconciliation(spaceId, workflowRunId);
-        };
-        const onWatcherFailed = () => {
-          if (done) return;
-          done = true;
-          stopWatchers();
-          scheduleReconciliation();
-        };
-        for (const sessionId of candidates) {
-          handles.push(
-            this.lateSettlements.arm({
-              sessionId,
-              messageId: row.id,
-              onConsumed: (settledSessionId) => {
-                settleFrom(settledSessionId);
-                scheduleReconciliation();
-              },
-              onFailed: onWatcherFailed,
-              getSendStatus: () => probe(sessionId),
-            })
+      deliverRow: async (row) => {
+        const replyTo = resolveReplySession(row);
+        const target: SessionTarget = replyTo
+          ? { kind: 'session', sessionId: replyTo }
+          : coordinatorTarget;
+        const outcome = await drainPendingRowOntoMailbox({
+          deps: replyTo
+            ? {
+                ...handoffDeps,
+                ensureTargetSession: async (sessionTarget) => {
+                  const resolved = await handoffDeps.ensureTargetSession(sessionTarget);
+                  if (resolved.kind === 'unresolved' && resolved.reason === 'not_found') {
+                    return handoffDeps.ensureTargetSession(coordinatorTarget);
+                  }
+                  return resolved;
+                },
+                deliverRoutedMessage: async (args) => {
+                  const first = await handoffDeps.deliverRoutedMessage(args);
+                  if (first.state === 'not_found') {
+                    return handoffDeps.deliverRoutedMessage({ ...args, target: coordinatorTarget });
+                  }
+                  return first;
+                },
+              }
+            : handoffDeps,
+          row,
+          target,
+          message: formatPendingRowForSpaceAgent(row),
+          origin: 'space_agent',
+        });
+        if (outcome.action === 'retry') retryableRows += 1;
+        if (outcome.action !== 'delivered') {
+          log.warn(
+            `TaskAgentManager: Space Agent pending message ${row.id} not delivered ` +
+              `(${outcome.action}: ${outcome.reason ?? 'no reason'})`
           );
         }
-        for (const sessionId of candidates) {
-          if (probe(sessionId) === 'consumed') {
-            settleFrom(sessionId);
-            return;
-          }
-        }
-      },
-      deliverRow: async (row) => {
-        await this.deliverSpaceAgentPendingRow({
-          repo,
-          inject,
-          spaceId,
-          workflowRunId,
-          spaceChatSessionId,
-          resolveReplySession,
-          row,
-        });
       },
     };
 
@@ -1667,6 +1700,9 @@ export class TaskAgentManager {
       workflowRunId,
       spaceChatSessionId,
     });
+    if (retryableRows > 0 || drainOutcome.activeDeliveryIds.length > 0) {
+      this.scheduleSpaceAgentRetry(spaceId, workflowRunId);
+    }
     if (drainOutcome.action === 'skip') return;
 
     log.info(
@@ -1674,86 +1710,14 @@ export class TaskAgentManager {
     );
   }
 
-  private async deliverSpaceAgentPendingRow(args: {
-    repo: SpaceAgentPendingDrainDeps['repo'];
-    inject: NonNullable<TaskAgentManagerConfig['spaceAgentInjector']>;
-    spaceId: string;
-    workflowRunId: string;
-    spaceChatSessionId: string;
-    resolveReplySession: (row: PendingAgentMessageRecord) => string | null;
-    row: PendingAgentMessageRecord;
-  }): Promise<void> {
-    const { repo, inject, spaceId, workflowRunId, spaceChatSessionId, resolveReplySession, row } =
-      args;
-    const current = repo.getById(row.id);
-    if (!current || current.status !== 'pending' || current.expiresAt <= Date.now()) return;
-    if (current.attempts >= current.maxAttempts) {
-      repo.markFailed(row.id, `space-agent delivery attempts exhausted (${current.maxAttempts})`);
-      return;
-    }
-    const message = formatPendingRowForSpaceAgent(row);
-    const replyTo = resolveReplySession(row);
-    const deliveredSessionId = replyTo || spaceChatSessionId;
-    const settleDelivered = (settledSessionId?: string): void => {
-      const targetSessionId = settledSessionId ?? deliveredSessionId;
-      if (repo.getById(row.id)?.status !== 'pending') return;
-      repo.markDelivered(row.id, targetSessionId);
-      this.emitPendingDelivered(row.id, targetSessionId, row);
-    };
-    const scheduleReconciliation = () => {
-      this.scheduleSpaceAgentReconciliation(spaceId, workflowRunId);
-    };
-    repo.recordDeliveryAttempt(row.id, null);
-    repo.deferExpiration([row.id]);
-    try {
-      const outcome = await inject(spaceId, message, replyTo, row.id, {
-        onConsumed: settleDelivered,
-        onLateFailure: scheduleReconciliation,
-        lateSettlement: this.lateSettlements,
-        disposeSignal: this.lateSettlements.disposeSignal(),
-      });
-      if (outcome.state === 'delivered') {
-        settleDelivered(outcome.sessionId);
-        return;
-      }
-      repo.deferExpiration([row.id]);
-      if (outcome.state === 'failed' && (repo.getById(row.id)?.attempts ?? 0) >= row.maxAttempts) {
-        repo.markFailed(row.id, `space-agent delivery attempts exhausted (${row.maxAttempts})`);
-      }
-      if (outcome.state === 'failed') {
-        scheduleReconciliation();
-        log.warn(
-          `TaskAgentManager: Space Agent delivery for ${row.id} failed: ${outcome.error}; ` +
-            `scheduled reconciliation to charge and retry the attempt`
-        );
-      } else {
-        log.info(
-          `TaskAgentManager: Space Agent delivery for ${row.id} queued pending consumption ` +
-            `by ${spaceChatSessionId}; the pending row settles when consumption completes`
-        );
-      }
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      repo.recordDeliveryError(row.id, errMsg);
-      repo.deferExpiration([row.id]);
-      const latest = repo.getById(row.id);
-      if ((latest?.attempts ?? 0) >= (latest?.maxAttempts ?? Infinity)) {
-        repo.markFailed(row.id, `space-agent delivery attempts exhausted (${latest?.maxAttempts})`);
-      } else {
-        scheduleReconciliation();
-      }
-      log.warn(`TaskAgentManager: Space Agent delivery for ${row.id} failed: ${errMsg}`);
-    }
-  }
-
-  private scheduleSpaceAgentReconciliation(spaceId: string, workflowRunId: string): void {
+  private scheduleSpaceAgentRetry(spaceId: string, workflowRunId: string): void {
     if (this.disposed) return;
     const key = `${spaceId}\0${workflowRunId}`;
     if (this.spaceAgentRetryTimers.has(key)) return;
     const timer = setTimeout(() => {
       this.spaceAgentRetryTimers.delete(key);
       void this.flushPendingMessagesForSpaceAgent(spaceId, workflowRunId).catch(() => {});
-    }, SPACE_AGENT_RETRY_DELAY_MS);
+    }, this.config.spaceAgentRetryDelayMs ?? SPACE_AGENT_RETRY_DELAY_MS);
     this.spaceAgentRetryTimers.set(key, timer);
   }
 
@@ -3337,7 +3301,6 @@ export class TaskAgentManager {
 
   async cleanupAll(): Promise<void> {
     this.disposed = true;
-    this.lateSettlements.dispose();
     for (const [, timer] of this.spaceAgentRetryTimers) clearTimeout(timer);
     this.spaceAgentRetryTimers.clear();
     clearAllRetryableHookActionTimers();

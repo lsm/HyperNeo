@@ -339,6 +339,42 @@ describe('retryFailedPromptIntoMailbox', () => {
     expect(deliveryJobCount(h, 'msg-retry-1')).toBe(1);
   });
 
+  it('normalizes a missing legacy inputKind instead of failing content verification', async () => {
+    const h = makeHarness();
+    const dbId = seedEnqueuedRow(h, 'msg-retry-legacy', 'legacy body');
+    h.db.prepare('UPDATE sdk_messages SET sdk_message = ? WHERE id = ?').run(
+      JSON.stringify({
+        type: 'user',
+        uuid: 'msg-retry-legacy',
+        message: { role: 'user', content: [{ type: 'text', text: 'legacy body' }] },
+      }),
+      dbId
+    );
+    markRowStatus(h, dbId, 'failed');
+    const outcome = await retryFailedPromptIntoMailbox(h.deps, {
+      ...targetFor({
+        ...userMessage('msg-retry-legacy', 'legacy body'),
+        isSynthetic: true,
+        inputKind: 'task',
+      } as never),
+      defer: false,
+    });
+    expect(outcome).toEqual({ dbId, changed: true });
+    expect(sendStatus(h, 'msg-retry-legacy')).toBe('enqueued');
+  });
+
+  it('flips a retried row back to deferred when the target requests a hold', async () => {
+    const h = makeHarness();
+    const dbId = seedEnqueuedRow(h, 'msg-retry-defer');
+    markRowStatus(h, dbId, 'failed');
+    const outcome = await retryFailedPromptIntoMailbox(h.deps, {
+      ...targetFor(userMessage('msg-retry-defer')),
+      defer: true,
+    });
+    expect(outcome).toEqual({ dbId, changed: true });
+    expect(sendStatus(h, 'msg-retry-defer')).toBe('deferred');
+  });
+
   it('settles as deliverable without a new job when consumption evidence exists', async () => {
     const h = makeHarness();
     const dbId = seedEnqueuedRow(h, 'msg-retry-2');

@@ -2,11 +2,9 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
 import type { PendingAgentMessageRecord } from '../../../storage/repositories/pending-agent-message-repository.ts';
 
-const LATE_DEAD_LETTER_ERROR = 'space-agent delivery dead-lettered';
-
 export type SpaceAgentPendingDrainOutcome =
-  | { action: 'skip' }
-  | { action: 'drain'; rows: PendingAgentMessageRecord[] };
+  | { action: 'skip'; activeDeliveryIds: string[] }
+  | { action: 'drain'; rows: PendingAgentMessageRecord[]; activeDeliveryIds: string[] };
 
 export interface SpaceAgentPendingDrainDeps {
   repo: {
@@ -14,8 +12,6 @@ export interface SpaceAgentPendingDrainDeps {
     listByRunAndStatus?(workflowRunId: string, status: string): PendingAgentMessageRecord[];
     getById(id: string): PendingAgentMessageRecord | null | undefined;
     markDelivered(id: string, sessionId: string): void;
-    recordDeliveryAttempt(id: string, error: string | null): PendingAgentMessageRecord | null;
-    recordDeliveryError(id: string, error: string | null): void;
     markAttemptFailed(id: string, error: string): PendingAgentMessageRecord | null;
     markFailed(id: string, error: string): unknown;
     deferExpiration(ids: string[], ttlMs?: number): void;
@@ -25,8 +21,6 @@ export interface SpaceAgentPendingDrainDeps {
   resolveReplySession(row: PendingAgentMessageRecord): string | null;
   probeDeliveryStatus(sessionId: string, messageId: string): string | undefined;
   onSettled(row: PendingAgentMessageRecord, deliveredSessionId: string): void;
-  watchActiveDelivery?(row: PendingAgentMessageRecord): void;
-  onFailed?(row: PendingAgentMessageRecord): void;
   deliverRow(row: PendingAgentMessageRecord): Promise<void>;
 }
 
@@ -39,8 +33,6 @@ interface SpaceAgentPendingDrainCtx extends SpaceAgentPendingDrainInput {
   deps: SpaceAgentPendingDrainDeps;
   listedRows?: PendingAgentMessageRecord[];
   activeDeliveryIds?: string[];
-  excludedDeliveryIds?: string[];
-  pendingRetryIds?: string[];
   pendingRows?: PendingAgentMessageRecord[];
 }
 
@@ -51,99 +43,54 @@ function listRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
   };
 }
 
-function reconcileRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
-  const settledIds = new Set<string>();
+function replyCandidates(ctx: SpaceAgentPendingDrainCtx, row: PendingAgentMessageRecord): string[] {
+  const replyTo = ctx.deps.resolveReplySession(row);
+  return replyTo && replyTo !== ctx.spaceChatSessionId
+    ? [replyTo, ctx.spaceChatSessionId]
+    : [ctx.spaceChatSessionId];
+}
+
+function settleConsumedRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
   const activeDeliveryIds: string[] = [];
-  const excludedDeliveryIds: string[] = [];
-  const pendingRetryIds: string[] = [];
   for (const row of ctx.listedRows ?? []) {
-    if (settledIds.has(row.id)) continue;
-    const replyTo = ctx.deps.resolveReplySession(row);
-    const candidates =
-      replyTo && replyTo !== ctx.spaceChatSessionId
-        ? [replyTo, ctx.spaceChatSessionId]
-        : [ctx.spaceChatSessionId];
     let consumedAt: string | null = null;
-    let activeSeen = false;
-    let failedAt: string | null = null;
-    for (const sessionId of candidates) {
+    let ownedByLegacyDelivery = false;
+    for (const sessionId of replyCandidates(ctx, row)) {
       const sendStatus = ctx.deps.probeDeliveryStatus(sessionId, row.id);
       if (sendStatus === 'consumed') {
         consumedAt = sessionId;
         break;
       }
-      if (sendStatus === 'enqueued' || sendStatus === 'submitted') activeSeen = true;
-      if (sendStatus === 'failed') failedAt = sessionId;
+      if (sendStatus === 'enqueued' || sendStatus === 'submitted') {
+        ownedByLegacyDelivery = true;
+      }
     }
     if (consumedAt) {
       if (ctx.deps.repo.getById(row.id)?.status === 'pending') {
         ctx.deps.repo.markDelivered(row.id, consumedAt);
         ctx.deps.onSettled(row, consumedAt);
       }
-      settledIds.add(row.id);
       continue;
     }
-    if (activeSeen) {
-      if (!activeDeliveryIds.includes(row.id)) activeDeliveryIds.push(row.id);
-      ctx.deps.watchActiveDelivery?.(row);
-      continue;
-    }
-    if (failedAt) {
-      if (row.lastError === LATE_DEAD_LETTER_ERROR) {
-        if (!pendingRetryIds.includes(row.id)) pendingRetryIds.push(row.id);
-        continue;
-      }
-      if (row.attempts >= row.maxAttempts) {
-        ctx.deps.repo.markFailed(row.id, LATE_DEAD_LETTER_ERROR);
-        settledIds.add(row.id);
-        continue;
-      }
-      if (row.attempts === 0) {
-        const updated = ctx.deps.repo.markAttemptFailed(row.id, LATE_DEAD_LETTER_ERROR);
-        if (updated?.status !== 'pending') {
-          settledIds.add(row.id);
-          continue;
-        }
-      } else {
-        ctx.deps.repo.recordDeliveryError(row.id, LATE_DEAD_LETTER_ERROR);
-      }
-      if (!excludedDeliveryIds.includes(row.id)) excludedDeliveryIds.push(row.id);
-      ctx.deps.onFailed?.(row);
-      settledIds.add(row.id);
-      continue;
+    if (ownedByLegacyDelivery && !activeDeliveryIds.includes(row.id)) {
+      activeDeliveryIds.push(row.id);
     }
   }
-  return { ...ctx, activeDeliveryIds, excludedDeliveryIds, pendingRetryIds };
-}
-
-function deferActiveDeliveries(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
-  const protectedDeliveryIds = [
-    ...(ctx.activeDeliveryIds ?? []),
-    ...(ctx.excludedDeliveryIds ?? []),
-    ...(ctx.pendingRetryIds ?? []),
-  ];
-  if (protectedDeliveryIds.length > 0) {
-    ctx.deps.repo.deferExpiration(protectedDeliveryIds);
-  }
-  return ctx;
+  return { ...ctx, activeDeliveryIds };
 }
 
 function runRetention(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
-  const excludeIds = [
-    ...(ctx.activeDeliveryIds ?? []),
-    ...(ctx.excludedDeliveryIds ?? []),
-    ...(ctx.pendingRetryIds ?? []),
-  ];
+  const excludeIds = [...(ctx.activeDeliveryIds ?? [])];
+  if (excludeIds.length > 0) {
+    ctx.deps.repo.deferExpiration(excludeIds);
+  }
   ctx.deps.repo.enforceRetention({ runId: ctx.workflowRunId, excludeIds });
   ctx.deps.repo.expireStale(ctx.workflowRunId, excludeIds);
   return ctx;
 }
 
 function listAdmissibleRows(ctx: SpaceAgentPendingDrainCtx): SpaceAgentPendingDrainCtx {
-  const inadmissible = new Set([
-    ...(ctx.activeDeliveryIds ?? []),
-    ...(ctx.excludedDeliveryIds ?? []),
-  ]);
+  const inadmissible = new Set(ctx.activeDeliveryIds ?? []);
   return {
     ...ctx,
     pendingRows: ctx.deps.repo
@@ -177,8 +124,7 @@ async function deliverAdmittedRows(
 const run = (superpipe({})('space-agent-pending-drain') as PipelineAPI)
   .input(['ctx'])
   .pipe(listRows, 'ctx', 'ctx')
-  .pipe(reconcileRows, 'ctx', 'ctx')
-  .pipe(deferActiveDeliveries, 'ctx', 'ctx')
+  .pipe(settleConsumedRows, 'ctx', 'ctx')
   .pipe(runRetention, 'ctx', 'ctx')
   .pipe(listAdmissibleRows, 'ctx', 'ctx')
   .pipe(admitDrain, 'ctx', 'ctx')
@@ -190,7 +136,11 @@ export async function runSpaceAgentPendingDrain(
   input: SpaceAgentPendingDrainInput
 ): Promise<SpaceAgentPendingDrainOutcome> {
   const ctx = await run({ ...input, deps });
-  return { action: 'drain', rows: ctx.pendingRows ?? [] };
+  return {
+    action: 'drain',
+    rows: ctx.pendingRows ?? [],
+    activeDeliveryIds: ctx.activeDeliveryIds ?? [],
+  };
 }
 
 export function collectActiveSpaceDeliveryIds(args: {
