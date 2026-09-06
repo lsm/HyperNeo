@@ -1416,6 +1416,20 @@ describe('prompt content verification (verifyPromptContent)', () => {
     ).toThrow(PromptContentConflictError);
   });
 
+  it('accepts a legacy stored shape whose nested message carries role', () => {
+    seedRow('verify-legacy-role', 'original');
+    db.prepare(`UPDATE sdk_messages SET sdk_message = json_set(sdk_message, '$.message.role', json('user'))
+        WHERE session_id = ? AND sdk_uuid = ?`).run(SESSION, 'verify-legacy-role');
+    expect(() =>
+      verifyPromptContent({
+        db: db as never,
+        sessionId: SESSION,
+        messageUuid: 'verify-legacy-role',
+        message: userMessage('verify-legacy-role', 'original'),
+      })
+    ).not.toThrow();
+  });
+
   it('types the conflict ensurePrompt raises so producers can classify it', () => {
     seedRow('verify-ensure', 'original');
     expect(() =>

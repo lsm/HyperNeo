@@ -601,6 +601,14 @@ export class PromptContentConflictError extends Error {
   }
 }
 
+export function normalizeLegacyPromptRole(message: SDKMessage): SDKMessage {
+  if (message?.type !== 'user') return message;
+  const nested = message.message as Record<string, unknown> | undefined;
+  if (nested == null || typeof nested !== 'object' || !('role' in nested)) return message;
+  const { role: _role, ...rest } = nested;
+  return { ...message, message: rest } as SDKMessage;
+}
+
 export function verifyPromptContent(args: {
   db: BunDatabase;
   sessionId: string;
@@ -615,7 +623,10 @@ export function verifyPromptContent(args: {
     .all(args.sessionId, args.messageUuid) as Array<{ sdkMessage: string }>;
   for (const row of rows) {
     const stored = JSON.parse(row.sdkMessage) as SDKMessage;
-    if (canonicalJson(stored) !== canonicalJson(args.message)) {
+    if (
+      canonicalJson(normalizeLegacyPromptRole(stored)) !==
+      canonicalJson(normalizeLegacyPromptRole(args.message))
+    ) {
       throw new PromptContentConflictError(
         `prompt handoff: message ${args.messageUuid} in session ${args.sessionId} ` +
           'already exists with different content'
@@ -629,7 +640,10 @@ function checkPromptContent(ctx: EnsurePromptCtx): EnsurePromptSettledCtx {
     return { ...ctx, created: true, ensureStatus: ctx.hold === 'manual' ? 'deferred' : 'enqueued' };
   }
   const stored = JSON.parse(ctx.existing.sdkMessage) as SDKMessage;
-  if (canonicalJson(stored) !== canonicalJson(ctx.message)) {
+  if (
+    canonicalJson(normalizeLegacyPromptRole(stored)) !==
+    canonicalJson(normalizeLegacyPromptRole(ctx.message))
+  ) {
     throw new PromptContentConflictError(
       `ensurePrompt: message ${ctx.messageUuid} in session ${ctx.sessionId} ` +
         'already exists with different content'
