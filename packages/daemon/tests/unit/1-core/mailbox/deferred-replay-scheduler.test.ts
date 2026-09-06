@@ -155,6 +155,87 @@ describe('createMailboxDeferredReplayScheduler', () => {
     expect(publish).toHaveBeenCalledWith(SESSION_ID);
   });
 
+  test('normalizes a stale interrupted state instead of parking forever', async () => {
+    const publish = mock(async () => {});
+    const deps = makeDeps(publish);
+    let status = 'interrupted';
+    deps.sessionManager = {
+      getCachedSession: () =>
+        ({
+          getSessionData: () => ({ config: { queryMode: 'immediate' } }),
+          getProcessingState: () => ({ status }),
+          normalizeStaleInterruptedState: async () => {
+            status = 'idle';
+          },
+          stateManager: {
+            waitForIdleTransition: () => ({
+              promise: new Promise<void>(() => {}),
+              cancel: () => {},
+            }),
+          },
+        }) as never,
+    };
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(20);
+
+    expect(publish).toHaveBeenCalledWith(SESSION_ID);
+  });
+
+  test('parks while the session is in rate-limit cooldown', async () => {
+    const publish = mock(async () => {});
+    const deps = makeDeps(publish);
+    let status = 'rate_limit_cooldown';
+    let resolveIdle: (() => void) | undefined;
+    deps.sessionManager = {
+      getCachedSession: () =>
+        ({
+          getSessionData: () => ({ config: { queryMode: 'immediate' } }),
+          getProcessingState: () => ({ status }),
+          stateManager: {
+            waitForIdleTransition: () => ({
+              promise: new Promise<void>((resolve) => {
+                resolveIdle = resolve;
+              }),
+              cancel: () => {},
+            }),
+          },
+        }) as never,
+    };
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(20);
+    expect(publish).not.toHaveBeenCalled();
+
+    status = 'idle';
+    resolveIdle?.();
+    await flush(20);
+    expect(publish).toHaveBeenCalledWith(SESSION_ID);
+  });
+
+  test('retries when query.trigger delivers to no subscribers', async () => {
+    let zeroDelivered = 1;
+    const publish = mock(async () => {
+      if (zeroDelivered > 0) {
+        zeroDelivered -= 1;
+        return { delivered: 0, failures: [] };
+      }
+      return { delivered: 1, failures: [] };
+    });
+    const deps = makeDeps(async () => {
+      await publish();
+    });
+    deps.retryBackoffBaseMs = 5;
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(60);
+
+    expect(publish).toHaveBeenCalledTimes(2);
+  });
+
   test('parked sessions do not consume publication slots', async () => {
     const published: string[] = [];
     const waiters: Array<{ sessionId: string; resolve: () => void }> = [];

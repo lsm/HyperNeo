@@ -251,7 +251,11 @@ export class MessagePersistence {
       }
 
       if (shouldDispatchToQuery) {
-        await agentSession.stateManager.setQueuedIfIdle(messageId).catch(() => {});
+        const mailboxActive = this.jobQueue.activeMailboxMessageUuids(sessionId);
+        const deliveryActive = this.jobQueue.activeDeliveryMessageUuids(sessionId);
+        if (mailboxActive.has(messageId) || deliveryActive.has(messageId)) {
+          await agentSession.stateManager.setQueuedIfIdle(messageId).catch(() => {});
+        }
       }
 
       await this.internalEventBus

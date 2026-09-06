@@ -25,6 +25,9 @@ describe('MessagePersistence', () => {
 
   let saveUserMessageSpy: ReturnType<typeof mock>;
   let enqueueUniquePendingSpy: ReturnType<typeof mock>;
+  let activeMailboxUuidsSpy: ReturnType<typeof mock>;
+  let activeDeliveryUuidsSpy: ReturnType<typeof mock>;
+  let lastHandedOffUuid: string | null;
   let mockJobQueue: JobQueueRepository;
   let internalEventBusPublishSpy: ReturnType<typeof mock>;
   let processingStateSpy: ReturnType<typeof mock>;
@@ -78,9 +81,18 @@ describe('MessagePersistence', () => {
       getSession: dbGetSessionSpy,
     } as unknown as Database;
 
-    enqueueUniquePendingSpy = mock(() => 'mailbox-job-1');
+    enqueueUniquePendingSpy = mock((params: { payload?: { messageUuid?: string } }) => {
+      lastHandedOffUuid = params?.payload?.messageUuid ?? null;
+      return 'mailbox-job-1';
+    });
+    activeMailboxUuidsSpy = mock(
+      () => new Set<string>(lastHandedOffUuid ? [lastHandedOffUuid] : [])
+    );
+    activeDeliveryUuidsSpy = mock(() => new Set<string>());
     mockJobQueue = {
       enqueueUniquePending: enqueueUniquePendingSpy,
+      activeMailboxMessageUuids: activeMailboxUuidsSpy,
+      activeDeliveryMessageUuids: activeDeliveryUuidsSpy,
     } as unknown as JobQueueRepository;
 
     internalEventBusPublishSpy = mock(async () => {});
@@ -469,6 +481,20 @@ describe('MessagePersistence', () => {
     expect(enqueueUniquePendingSpy).toHaveBeenCalled();
     expect(mockAgentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
     expect(internalEventBusPublishSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not claim queued ownership when cancellation already removed the handoff', async () => {
+    activeMailboxUuidsSpy.mockImplementation(() => new Set<string>());
+    activeDeliveryUuidsSpy.mockImplementation(() => new Set<string>());
+
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-raced',
+      content: 'cancelled mid-send',
+    });
+
+    expect(enqueueUniquePendingSpy).toHaveBeenCalled();
+    expect(mockAgentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
   });
 
   it('does not downgrade a busy session from processing to queued', async () => {

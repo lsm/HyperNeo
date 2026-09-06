@@ -26,7 +26,8 @@ function isBusyStatus(status: string): boolean {
     status === 'processing' ||
     status === 'queued' ||
     status === 'waiting_for_input' ||
-    status === 'interrupted'
+    status === 'interrupted' ||
+    status === 'rate_limit_cooldown'
   );
 }
 
@@ -88,6 +89,14 @@ export function createMailboxDeferredReplayScheduler(
       }
       let status = session.getProcessingState().status;
       while (isBusyStatus(status)) {
+        if (status === 'interrupted') {
+          await session.normalizeStaleInterruptedState?.();
+          const normalized = session.getProcessingState().status;
+          if (normalized !== 'interrupted') {
+            status = normalized;
+            continue;
+          }
+        }
         emitReplayEvent('idle_wait_registered', { sessionId, status });
         active.delete(sessionId);
         parkedForIdle = true;
@@ -108,7 +117,11 @@ export function createMailboxDeferredReplayScheduler(
         status = session.getProcessingState().status;
         emitReplayEvent('idle_wait_resolved', { sessionId, status });
       }
-      await deps.internalEventBus.publish('query.trigger', { sessionId });
+      const published = await deps.internalEventBus.publish('query.trigger', { sessionId });
+      if (published != null && published.delivered < 1) {
+        emitReplayEvent('no_subscribers', { sessionId });
+        throw new Error('query.trigger delivered to no subscribers');
+      }
       emitReplayEvent('published', { sessionId });
       attempts.delete(sessionId);
       tracked.delete(sessionId);

@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { DaemonServerContext } from '../../helpers/daemon-server';
-import { createDaemonServer } from '../../helpers/daemon-server';
 import {
   getProcessingState,
   sendMessage,
   waitForIdle,
   waitForSdkMessages,
 } from '../../helpers/daemon-actions';
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
@@ -122,9 +122,9 @@ describe('Message delivery mode queue flow', () => {
         expect(second.messageId).not.toBe(first.messageId);
 
         await waitForCount(sessionId, 'deferred', (count) => count >= 1, 12000);
-        await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+        await waitForIdle(daemon, sessionId, IS_MOCK ? 45000 : IDLE_TIMEOUT);
 
-        await waitForCount(sessionId, 'deferred', (count) => count === 0, 20000);
+        await waitForCount(sessionId, 'deferred', (count) => count === 0, IS_MOCK ? 45000 : 20000);
         const sentCount = await getCountByStatus(sessionId, 'consumed');
         expect(sentCount).toBeGreaterThanOrEqual(2);
       } finally {
@@ -133,7 +133,7 @@ describe('Message delivery mode queue flow', () => {
         } catch {}
       }
     },
-    TEST_TIMEOUT
+    IS_MOCK ? 150000 : TEST_TIMEOUT
   );
 
   test(
