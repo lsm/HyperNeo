@@ -40,7 +40,8 @@ export interface AgentMessageRouterConfig {
   deliverToTarget?: (
     target: SessionTarget,
     message: string,
-    messageId: string
+    messageId: string,
+    sessionIdHint?: string
   ) => Promise<AgentMessageDeliveryOutcome>;
   messageInjector?: (sessionId: string, message: string) => Promise<void>;
   channelRouter?: ChannelRouter;
@@ -206,27 +207,42 @@ export class AgentMessageRouter {
     messageId: string,
     sessionIdHint?: string
   ): Promise<AgentMessageDeliveryOutcome> {
-    if (this.config.deliverToTarget) return this.config.deliverToTarget(target, message, messageId);
-    const sessionId = target.kind === 'session' ? target.sessionId : sessionIdHint;
-    if (sessionId && this.config.messageInjector) {
-      await this.config.messageInjector(sessionId, message);
-      return { state: 'delivered', sessionId, messageId };
+    if (this.config.deliverToTarget) {
+      return this.config.deliverToTarget(target, message, messageId, sessionIdHint);
     }
-    const outcome =
-      target.kind === 'session' && this.config.spaceAgentInjector && this.config.spaceId
-        ? await this.config.spaceAgentInjector(this.config.spaceId, message, target.sessionId)
-        : target.kind === 'agent' && this.config.spaceAgentInjector
-          ? await this.config.spaceAgentInjector(
-              target.spaceId,
-              message,
-              target.agentId === 'coordinator' ? null : undefined
-            )
-          : null;
-    if (!outcome) throw new Error(`No delivery door configured for ${target.kind} target`);
-    if (outcome.state === 'failed') {
-      return { state: 'failed', sessionId: outcome.sessionId, messageId, error: outcome.error };
+    if (target.kind === 'session') {
+      if (this.config.spaceAgentInjector && this.config.spaceId) {
+        const outcome = await this.config.spaceAgentInjector(
+          this.config.spaceId,
+          message,
+          target.sessionId
+        );
+        if (outcome.state === 'failed') {
+          return { state: 'failed', sessionId: outcome.sessionId, messageId, error: outcome.error };
+        }
+        return outcome;
+      }
+      if (this.config.messageInjector) {
+        await this.config.messageInjector(target.sessionId, message);
+        return { state: 'delivered', sessionId: target.sessionId, messageId };
+      }
     }
-    return outcome;
+    if (target.kind === 'agent' && this.config.spaceAgentInjector) {
+      const outcome = await this.config.spaceAgentInjector(
+        target.spaceId,
+        message,
+        target.agentId === 'coordinator' ? null : undefined
+      );
+      if (outcome.state === 'failed') {
+        return { state: 'failed', sessionId: outcome.sessionId, messageId, error: outcome.error };
+      }
+      return outcome;
+    }
+    if (target.kind === 'worker' && sessionIdHint && this.config.messageInjector) {
+      await this.config.messageInjector(sessionIdHint, message);
+      return { state: 'delivered', sessionId: sessionIdHint, messageId };
+    }
+    throw new Error(`No delivery door configured for ${target.kind} target`);
   }
 
   private async deliverSpaceAgentWithFallback(
@@ -393,7 +409,10 @@ export class AgentMessageRouter {
             generateUUID()
           );
           if (outcome.state === 'delivered') {
-            delivered.push({ agentName: 'space-agent', sessionId: outcome.sessionId });
+            delivered.push({
+              agentName: 'space-agent',
+              sessionId: outcome.sessionId ?? `space:chat:${spaceId!}`,
+            });
           } else if (outcome.state === 'queued') {
             queued.push({ agentName: 'space-agent', messageId: outcome.messageId });
           } else if (outcome.state === 'failed') {
@@ -423,7 +442,10 @@ export class AgentMessageRouter {
             envelopedMessage
           );
           if (outcome.state === 'delivered') {
-            delivered.push({ agentName: 'space-agent', sessionId: outcome.sessionId });
+            delivered.push({
+              agentName: 'space-agent',
+              sessionId: outcome.sessionId ?? decision.sessionId,
+            });
           } else if (outcome.state === 'queued') {
             queued.push({ agentName: 'space-agent', messageId: outcome.messageId });
           } else if (outcome.state === 'failed') {
@@ -832,7 +854,7 @@ export class AgentMessageRouter {
             envelopedMessage
           );
           if (outcome.state === 'delivered') {
-            delivered.push({ agentName, sessionId: outcome.sessionId });
+            delivered.push({ agentName, sessionId: outcome.sessionId ?? expectedSessionId });
           } else if (outcome.state === 'queued') {
             queued.push({ agentName, messageId: outcome.messageId });
           } else if (outcome.state === 'failed') {

@@ -142,21 +142,24 @@ function makeRouter(
   const deliverToTarget: NonNullable<AgentMessageRouterConfig['deliverToTarget']> = async (
     target,
     message,
-    messageId
+    messageId,
+    sessionIdHint
   ) => {
     const sessionId =
       target.kind === 'session'
         ? target.sessionId
         : target.kind === 'agent'
           ? `space:chat:${target.spaceId}`
-          : (ctx.nodeExecutionRepo
+          : (sessionIdHint ??
+            ctx.nodeExecutionRepo
               .listByWorkflowRun(workflowRunId)
               .find(
                 (execution) =>
                   execution.agentName === target.agentName &&
                   (target.workflowNodeId === undefined ||
                     execution.workflowNodeId === target.workflowNodeId)
-              )?.agentSessionId ?? '');
+              )?.agentSessionId ??
+            '');
     injected.push({ sessionId, message });
     return { state: 'delivered', sessionId, messageId };
   };
