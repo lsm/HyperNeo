@@ -1128,6 +1128,7 @@ describe('SpaceRuntimeService', () => {
       ).mockImplementation(async () => sessionId);
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
         .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(createdSession)
         .mockResolvedValueOnce(createdSession);
       const inboxRepo = { enqueue: mock(() => ({ record: { id: 'queued-1' }, deduped: false })) };
@@ -1204,6 +1205,7 @@ describe('SpaceRuntimeService', () => {
       ).mockImplementation(async () => longTermAgentSessionId(mockSpace.id, 'agent-1'));
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
         .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(createdSession)
         .mockResolvedValueOnce(createdSession);
       const spaceManager = createMockSpaceManager(mockSpace);
@@ -1264,6 +1266,7 @@ describe('SpaceRuntimeService', () => {
         sessionManager.createSession as Mock<typeof sessionManager.createSession>
       ).mockImplementation(async () => sessionId);
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(createdSession)
         .mockResolvedValueOnce(createdSession);
@@ -1331,6 +1334,7 @@ describe('SpaceRuntimeService', () => {
         sessionManager.createSession as Mock<typeof sessionManager.createSession>
       ).mockImplementation(async () => sessionId);
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(createdSession)
         .mockResolvedValueOnce(createdSession);
@@ -1595,6 +1599,7 @@ describe('SpaceRuntimeService', () => {
       ).mockImplementation(async () => sessionId);
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
         .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(createdSession)
         .mockResolvedValueOnce(createdSession);
       const longHorizonAgentRepo = {
@@ -1660,6 +1665,7 @@ describe('SpaceRuntimeService', () => {
       ).mockImplementation(async () => sessionId);
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
         .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(createdSession)
         .mockResolvedValueOnce(createdSession);
       const longHorizonAgentRepo = {
@@ -1723,6 +1729,7 @@ describe('SpaceRuntimeService', () => {
         sessionManager.createSession as Mock<typeof sessionManager.createSession>
       ).mockImplementation(async () => sessionId);
       (sessionManager.getSessionAsync as Mock<typeof sessionManager.getSessionAsync>)
+        .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(createdSession)
         .mockResolvedValueOnce(createdSession);
@@ -2104,6 +2111,7 @@ describe('SpaceRuntimeService', () => {
         getById: mock(() =>
           buildLongHorizonAgent({ id: 'coordinator-alt', handle: 'coordinator' })
         ),
+        listBySpaceId: mock(() => []),
         update: mock(() => {}),
       } as unknown as SpaceRuntimeServiceConfig['longHorizonAgentRepo'];
       const goalService = {
@@ -2123,6 +2131,9 @@ describe('SpaceRuntimeService', () => {
         sessionManager,
         enableGoalOutcomeWake: true,
         reactiveDb: mailbox.reactiveDb,
+        spaceWorkflowManager: {
+          listWorkflows: mock(() => []),
+        } as unknown as SpaceWorkflowManager,
         longHorizonAgentRepo,
         goalService,
         outcomeNotificationRepo,
@@ -4152,7 +4163,7 @@ describe('ensureLongTermAgentSession — id→session routing table', () => {
         lookupIds.push(sessionId);
         const count = (lookupCounts.get(sessionId) ?? 0) + 1;
         lookupCounts.set(sessionId, count);
-        if (sessionId.startsWith('space:agent:') && count === 1) return null;
+        if (sessionId.startsWith('space:agent:') && count <= 2) return null;
         return sessionMock;
       }),
       createSession: mock(async (opts: { sessionId?: string; title?: string }) => {
