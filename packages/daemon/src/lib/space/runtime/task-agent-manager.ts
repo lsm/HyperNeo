@@ -1106,7 +1106,6 @@ export class TaskAgentManager {
           spawnState.dispatcherActionNames
         );
         const recoveryNote = this.restartRecoveryKickoffNotes.get(request.execution.id);
-        if (recoveryNote) this.restartRecoveryKickoffNotes.delete(request.execution.id);
         const kickoffBase = recoveryNote ? `${initialMessage}\n\n${recoveryNote}` : initialMessage;
         return runtimeContract ? `${kickoffBase}\n\n${runtimeContract}` : kickoffBase;
       },
@@ -1118,6 +1117,8 @@ export class TaskAgentManager {
         await this.withSessionInjectLock(spawned.session.id, () =>
           this.injectMessageIntoSession(spawned, message)
         );
+        const injectedExecution = this.resolveNodeExecutionForSubSession(sessionId);
+        if (injectedExecution) this.restartRecoveryKickoffNotes.delete(injectedExecution.id);
       },
       activateSpawnedSessionPoolAssignment: (executionId, sessionId) => {
         activateModelPoolReservation(this.modelPoolAssignments, { id: executionId }, sessionId);

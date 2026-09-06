@@ -523,8 +523,13 @@ export class AgentMessageRouter {
           notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
         };
       }
-      const matchesTargetNode = (peer: { agentName: string; nodeName?: string }) =>
-        peer.agentName === agentName && (!hasNodeNameMap || peer.nodeName === nodeName);
+      const matchesTargetNode = (peer: {
+        agentName: string;
+        nodeName?: string;
+        workflowNodeId?: string;
+      }) =>
+        peer.agentName === agentName &&
+        (!hasNodeNameMap || peer.nodeName === nodeName || peer.workflowNodeId === nodeName);
       if (!peers.some(matchesTargetNode) && activateTargetSession) {
         try {
           const targetWorkflowNodeId = hasNodeNameMap

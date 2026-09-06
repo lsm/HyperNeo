@@ -45,6 +45,7 @@ import { runMigration231 } from './m231-clear-resolved-workflow-slot-agent-ids.t
 import { runMigration232 } from './m232-drop-legacy-space-agents.ts';
 import { runMigration233 } from './m233-retire-pristine-seeded-worker-agents.ts';
 import { runMigration234 } from './m234-drop-space-agent-inbox-messages.ts';
+import { runMigration235 } from './m235-expire-legacy-pending-agent-messages.ts';
 import {
   findPendingMigrationSpaceReclaims,
   type MigrationSpaceReclaimRequest,
@@ -532,6 +533,8 @@ export function runMigrations(
   run(migrationMarkerKey(233), () => runMigration233(db));
 
   run(migrationMarkerKey(234), () => runMigration234(db));
+
+  run(migrationMarkerKey(235), () => runMigration235(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

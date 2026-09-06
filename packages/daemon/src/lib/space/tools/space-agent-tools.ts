@@ -768,7 +768,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       reason: 'no_live_session_after_activation',
     });
     return jsonResult({
-      success: true,
+      success: false,
       task_id: ctx.task.id,
       target: 'node',
       node_execution_id: ctx.resolved.id,
@@ -777,7 +777,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       sdk_message_id: null,
       activated: true,
       delivered: false,
-      message:
+      error:
         `Node "${ctx.resolved.agentName}" was activated but does not yet have a live session; ` +
         `the message was not delivered. Retry after the node starts.`,
     });
