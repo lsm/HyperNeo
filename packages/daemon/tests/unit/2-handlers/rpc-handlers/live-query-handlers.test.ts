@@ -1039,6 +1039,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
         workflowRunId,
         workflowNodeId: 'node-reviewer',
         agentName: 'reviewer',
+        agentId: 'agent-reviewer',
         agentSessionId: nodeSessionId,
         status: 'in_progress',
       });
@@ -1084,6 +1085,7 @@ describe('NAMED_QUERY_REGISTRY', () => {
       expect((delivery.from as Record<string, unknown>).label).toBe('coder');
       expect((delivery.from as Record<string, unknown>).kind).toBe('worker');
       expect((delivery.target as Record<string, unknown>).label).toBe('reviewer');
+      expect((delivery.target as Record<string, unknown>).kind).toBe('worker');
       expect((delivery.target as Record<string, unknown>).sessionId).toBe(nodeSessionId);
     });
 
@@ -2313,8 +2315,8 @@ describe('NAMED_QUERY_REGISTRY', () => {
         payload: envelopeHandoffPayload('u-run-queued', 'coder', 'run-scoped handoff body'),
       });
       db.prepare(
-        `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at)
-         VALUES (?, 'message_delivery', 'pending', ?, 1, 8, ?, ?)`
+        `INSERT INTO job_queue (id, queue, status, payload, retry_count, max_retries, run_at, created_at, started_at)
+         VALUES (?, 'message_delivery', 'processing', ?, 1, 8, ?, ?, ?)`
       ).run(
         'job-run-delivery-retry',
         JSON.stringify({
@@ -2322,8 +2324,9 @@ describe('NAMED_QUERY_REGISTRY', () => {
           messageUuid: 'u-run-queued',
           origin: 'space_agent',
         }),
-        now + 7000,
-        now
+        now,
+        now,
+        now + 7000
       );
 
       const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byWorkflowRun')!;

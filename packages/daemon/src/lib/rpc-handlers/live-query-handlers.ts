@@ -535,13 +535,13 @@ function deliveryRetryingCtes(sessionFilterSql: string): string {
     json_extract(jq.payload, '$.sessionId') AS session_id,
     json_extract(jq.payload, '$.messageUuid') AS message_uuid,
     jq.retry_count,
-    jq.run_at
+    jq.started_at
   FROM job_queue jq
   WHERE jq.queue = 'message_delivery'
     AND jq.status IN ('pending', 'processing')${sessionFilter}
 ),
 delivery_retrying AS MATERIALIZED (
-  SELECT message_uuid, session_id, MAX(retry_count) > 0 AS retrying, MAX(run_at) AS retry_run_at
+  SELECT message_uuid, session_id, MAX(retry_count) > 0 AS retrying, MAX(started_at) AS retry_started_at
   FROM delivery_active_jobs
   WHERE message_uuid IS NOT NULL
   GROUP BY message_uuid, session_id
@@ -863,7 +863,10 @@ delivery_rows AS (
       'role', COALESCE(NULLIF(sender, ''), 'runtime')
     ) AS fromActor,
     json_object(
-      'kind', CASE WHEN agent_id IS NOT NULL THEN 'agent' ELSE 'worker' END,
+      'kind', CASE
+        WHEN session_type IS NULL OR session_type IN ('worker', 'space_task_agent') THEN 'worker'
+        ELSE 'agent'
+      END,
       'label', target_label,
       'role', target_role,
       'sessionId', session_id
@@ -899,7 +902,7 @@ delivery_rows AS (
       tt.workflow_run_id AS workflowRunId,
       tsm.id AS eventRef,
       ${mailboxDeliverySenderExpr(mailboxDeliveryTextExpr('tsm.sdk_message'))} AS sender,
-      COALESCE(ne.agent_id, tsm.provenance_agent_id) AS agent_id,
+      s_kind.type AS session_type,
       COALESCE(
         sa.display_name, ne.agent_name, tsm.provenance_agent_name,
         CASE WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent' ELSE 'agent' END
@@ -910,8 +913,8 @@ delivery_rows AS (
       SUBSTR(${mailboxDeliveryTextExpr('tsm.sdk_message')}, 1, 500) AS summary,
       dje.error AS error,
       CASE
-        WHEN adr.retrying AND tsm.send_status NOT IN ('consumed', 'failed') AND adr.retry_run_at IS NOT NULL
-          THEN adr.retry_run_at
+        WHEN adr.retrying AND tsm.send_status NOT IN ('consumed', 'failed') AND adr.retry_started_at IS NOT NULL
+          THEN adr.retry_started_at
         WHEN tsm.send_status = 'failed' AND dje.error_settled_at IS NOT NULL
           THEN dje.error_settled_at
         WHEN tsm.send_status = 'consumed' AND djs.settled_at IS NOT NULL
@@ -1092,7 +1095,10 @@ delivery_rows AS (
       'role', COALESCE(NULLIF(sender, ''), 'runtime')
     ) AS fromActor,
     json_object(
-      'kind', CASE WHEN agent_id IS NOT NULL THEN 'agent' ELSE 'worker' END,
+      'kind', CASE
+        WHEN session_type IS NULL OR session_type IN ('worker', 'space_task_agent') THEN 'worker'
+        ELSE 'agent'
+      END,
       'label', target_label,
       'role', target_role,
       'sessionId', session_id
@@ -1128,7 +1134,7 @@ delivery_rows AS (
       dt.workflow_run_id AS workflowRunId,
       dt.message_id AS eventRef,
       ${mailboxDeliverySenderExpr(mailboxDeliveryTextExpr('dt.sdk_message'))} AS sender,
-      COALESCE(dse.agent_id, dsess.provenance_agent_id) AS agent_id,
+      dsess.session_type AS session_type,
       COALESCE(
         sa.display_name, dse.agent_name, dsess.provenance_agent_name,
         CASE WHEN dsess.session_type = 'space_task_agent' THEN 'Task Agent' ELSE 'agent' END
@@ -1139,8 +1145,8 @@ delivery_rows AS (
       SUBSTR(${mailboxDeliveryTextExpr('dt.sdk_message')}, 1, 500) AS summary,
       dje.error AS error,
       CASE
-        WHEN adr.retrying AND dt.send_status NOT IN ('consumed', 'failed') AND adr.retry_run_at IS NOT NULL
-          THEN adr.retry_run_at
+        WHEN adr.retrying AND dt.send_status NOT IN ('consumed', 'failed') AND adr.retry_started_at IS NOT NULL
+          THEN adr.retry_started_at
         WHEN dt.send_status = 'failed' AND dje.error_settled_at IS NOT NULL
           THEN dje.error_settled_at
         WHEN dt.send_status = 'consumed' AND djs.settled_at IS NOT NULL
