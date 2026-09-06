@@ -1401,7 +1401,6 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
       workflowNodeId: 'node-prior',
       status: 'in_progress',
     });
-    const flushed: Array<{ runId: string; agentName: string; sessionId: string }> = [];
     const tam = new TaskAgentManager({
       db: { getDatabase: () => new BunDatabase(':memory:') },
       sessionManager: { registerSession: () => {}, getCachedSession: () => undefined },
@@ -1418,17 +1417,6 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
       },
       spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
     } as unknown as TaskAgentManagerConfig);
-    (
-      tam as unknown as {
-        flushPendingMessagesForTarget: (
-          runId: string,
-          agentName: string,
-          sessionId: string
-        ) => Promise<void>;
-      }
-    ).flushPendingMessagesForTarget = async (runId, agentName, sessionId) => {
-      flushed.push({ runId, agentName, sessionId });
-    };
     seedLiveSession(tam);
     stubReusePathHelpers(tam);
 
@@ -1440,7 +1428,6 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
     });
 
     expect(actual).toBe(REVIEWER_SESSION_ID);
-    expect(flushed).toEqual([]);
   });
 
   test('deferFreshExecutionBind leaves the fresh target row to the guarded outer bind and drains nothing pre-commit (PR #2770 review)', async () => {
@@ -1451,18 +1438,6 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
       startedAt: null,
     });
     const { tam, updates } = makeRecordingManager([pendingExec]);
-    const flushed: Array<{ runId: string; agentName: string; sessionId: string }> = [];
-    (
-      tam as unknown as {
-        flushPendingMessagesForTarget: (
-          runId: string,
-          agentName: string,
-          sessionId: string
-        ) => Promise<void>;
-      }
-    ).flushPendingMessagesForTarget = async (runId, agentName, sessionId) => {
-      flushed.push({ runId, agentName, sessionId });
-    };
 
     const actual = await tam.createSubSession(TASK_ID, 'deferred-id', minimalInit(), {
       agentId: 'agent-reviewer',
@@ -1476,7 +1451,6 @@ describe('createSubSession — reuse hard-constraint binding details (spawn seam
     expect(updates.find((u) => u.id === 'exec-deferred')).toBeUndefined();
     expect(pendingExec.status).toBe('pending');
     expect(pendingExec.agentSessionId).toBeNull();
-    expect(flushed).toEqual([]);
   });
 
   test('fresh create binds the new session to the matching pending execution through the bindable-status CAS', async () => {

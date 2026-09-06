@@ -13,10 +13,6 @@ import {
   DEAD_LOOP_WINDOW_MS,
 } from '../../../../src/storage/repositories/channel-cycle-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
-import {
-  DEFAULT_PENDING_MESSAGE_RETENTION_MS,
-  PendingAgentMessageRepository,
-} from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -882,18 +878,14 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         status: 'in_progress',
       });
       seedExec(run.id, STEP_A, 'Coding', 'idle');
-      const pendingRepo = new PendingAgentMessageRepository(db);
 
-      await makeRuntime({ pendingMessageRepo: pendingRepo }).recoverStalledRuns();
+      await makeRuntime().recoverStalledRuns();
 
       const reviewer = findExec(run.id, STEP_B);
       expect(reviewer.status).toBe('pending');
       expect(reviewer.agentSessionId).toBeNull();
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
       expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
-      expect(pendingRepo.listPendingForTarget(run.id, 'Review')[0].message).toContain(
-        'Daemon restart recovery'
-      );
     });
 
     test('coder idle and reviewer idle from previous cycle → reviewer resets to pending', async () => {
@@ -926,17 +918,13 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         'end_turn'
       );
 
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
+      await makeRuntime().recoverStalledRuns();
 
       const reviewer = nodeExecutionRepo.getById(previousReviewer.id)!;
       expect(reviewer.status).toBe('pending');
       expect(reviewer.agentSessionId).toBe('dead-review-session');
       expect(reviewer.result).toBeNull();
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-      const pending = new PendingAgentMessageRepository(db).listPendingForTarget(run.id, 'Review');
-      expect(pending[0].message).toContain("Review node's previous session ended");
     });
 
     test('coder cancelled and reviewer never created → run blocked', async () => {
@@ -960,136 +948,11 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       });
       seedExec(run.id, STEP_A, 'Coding', 'cancelled');
 
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
+      await makeRuntime().recoverStalledRuns();
 
       expect(findExec(run.id, STEP_B)).toBeUndefined();
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
       expect(taskRepo.getTask(task.id)?.blockReason).toBe('execution_failed');
-    });
-
-    test('expired queued handoff does not cause stalled-run recovery to skip', async () => {
-      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
-        { id: STEP_A, name: 'Coding', agentId: AGENT },
-        { id: STEP_B, name: 'Review', agentId: AGENT },
-      ]);
-      const run = workflowRunRepo.createRun({
-        spaceId: SPACE_ID,
-        workflowId: workflow.id,
-        title: 'Expired queued handoff recovery',
-      });
-      workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      const task = taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Expired queued handoff recovery',
-        description: '',
-        workflowRunId: run.id,
-        workflowNodeId: STEP_A,
-        status: 'in_progress',
-      });
-      seedExec(run.id, STEP_A, 'Coding', 'idle');
-      const pendingRepo = new PendingAgentMessageRepository(db);
-      const { record } = pendingRepo.enqueue({
-        workflowRunId: run.id,
-        spaceId: SPACE_ID,
-        taskId: task.id,
-        sourceAgentName: 'Coding',
-        targetKind: 'node_agent',
-        targetAgentName: 'Review',
-        message: 'stale review request',
-      });
-      db.prepare('UPDATE pending_agent_messages SET created_at = ? WHERE id = ?').run(
-        Date.now() - DEFAULT_PENDING_MESSAGE_RETENTION_MS - 1,
-        record.id
-      );
-
-      await makeRuntime({
-        pendingMessageRepo: pendingRepo,
-      }).recoverStalledRuns();
-
-      expect(pendingRepo.getById(record.id)?.status).toBe('expired');
-      expect(findExec(run.id, STEP_B).status).toBe('pending');
-      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
-      expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
-    });
-
-    test('coder idle with queued handoff and reviewer never created → tick repair creates and spawns reviewer', async () => {
-      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
-        { id: STEP_A, name: 'Coding', agentId: AGENT },
-        { id: STEP_B, name: 'Review', agentId: AGENT },
-      ]);
-      const run = workflowRunRepo.createRun({
-        spaceId: SPACE_ID,
-        workflowId: workflow.id,
-        title: 'Queued handoff repair',
-      });
-      workflowRunRepo.transitionStatus(run.id, 'in_progress');
-      const task = taskRepo.createTask({
-        spaceId: SPACE_ID,
-        title: 'Queued handoff repair',
-        description: '',
-        workflowRunId: run.id,
-        workflowNodeId: STEP_A,
-        status: 'in_progress',
-      });
-      seedExec(run.id, STEP_A, 'Coding', 'idle');
-      const pendingRepo = new PendingAgentMessageRepository(db);
-      pendingRepo.enqueue({
-        workflowRunId: run.id,
-        spaceId: SPACE_ID,
-        taskId: task.id,
-        sourceAgentName: 'Coding',
-        targetKind: 'node_agent',
-        targetAgentName: 'Review',
-        message: 'please review',
-      });
-      const live = new Set<string>();
-      const tam = {
-        rehydrate: async () => {},
-        isSessionAlive: (sessionId: string) => live.has(sessionId),
-        isSessionInMemory: (sessionId: string) => live.has(sessionId),
-        getAgentSessionById: () => null,
-        isExecutionSpawning: () => false,
-        tryResumeNodeAgentSession: async () => {},
-        spawnWorkflowNodeAgentForExecution: async (
-          _task: unknown,
-          _space: unknown,
-          _workflow: unknown,
-          _run: unknown,
-          execution: { id: string }
-        ) => {
-          const sessionId = `session:${execution.id}`;
-          live.add(sessionId);
-          nodeExecutionRepo.update(execution.id, {
-            status: 'in_progress',
-            agentSessionId: sessionId,
-            startedAt: Date.now(),
-            completedAt: null,
-          });
-          return sessionId;
-        },
-        flushPendingMessagesForTarget: async (
-          runId: string,
-          agentName: string,
-          sessionId: string
-        ) => {
-          for (const row of pendingRepo.listPendingForTarget(runId, agentName))
-            pendingRepo.markDelivered(row.id, sessionId);
-        },
-        cancelBySessionId: () => {},
-        interruptBySessionId: async () => {},
-      };
-
-      await makeRuntime({
-        pendingMessageRepo: pendingRepo,
-        taskAgentManager: tam as any,
-      }).executeTick();
-
-      const reviewer = findExec(run.id, STEP_B);
-      expect(reviewer.status).toBe('in_progress');
-      expect(reviewer.agentSessionId).toBe(`session:${reviewer.id}`);
-      expect(pendingRepo.listAllForRun(run.id)[0].status).toBe('delivered');
     });
 
     test('coder idle and reviewer cancelled from prior activation → reviewer resets pending', async () => {
@@ -1117,9 +980,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         result: 'review cancelled during restart',
       });
 
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
+      await makeRuntime().recoverStalledRuns();
 
       const reviewer = nodeExecutionRepo.getById(cancelledReviewer.id)!;
       expect(reviewer.status).toBe('pending');
@@ -1151,9 +1012,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const plan = seedExec(run.id, STEP_A, 'Plan', 'idle');
       const code = seedExec(run.id, STEP_B, 'Code', 'idle');
 
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
+      await makeRuntime().recoverStalledRuns();
 
       expect(nodeExecutionRepo.getById(plan.id)?.status).toBe('idle');
       expect(nodeExecutionRepo.getById(code.id)?.status).toBe('idle');
@@ -1192,9 +1051,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       });
       const coder = seedExec(run.id, STEP_A, 'coder', 'idle');
 
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
+      await makeRuntime().recoverStalledRuns();
 
       expect(nodeExecutionRepo.getById(coder.id)?.status).toBe('idle');
       expect(findExec(run.id, STEP_B).status).toBe('pending');
@@ -1243,9 +1100,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         'end_turn'
       );
 
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
+      await makeRuntime().recoverStalledRuns();
 
       const reviewExecutions = nodeExecutionRepo.listByNode(run.id, STEP_B);
       expect(nodeExecutionRepo.getById(reviewerA.id)?.status).toBe('pending');
@@ -1300,9 +1155,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         'end_turn'
       );
 
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
+      await makeRuntime().recoverStalledRuns();
 
       expect(nodeExecutionRepo.getById(coder.id)?.status).toBe('idle');
       expect(nodeExecutionRepo.getById(docs.id)?.status).toBe('idle');
@@ -1359,9 +1212,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
         'end_turn'
       );
 
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
+      await makeRuntime().recoverStalledRuns();
 
       expect(nodeExecutionRepo.getById(coder.id)?.status).toBe('idle');
       expect(nodeExecutionRepo.getById(docs.id)?.status).toBe('idle');
@@ -1408,9 +1259,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const now = Date.now();
       for (let i = 0; i < 15; i++) cycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
 
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
+      await makeRuntime().recoverStalledRuns();
 
       expect(findExec(run.id, STEP_A)).toBeUndefined();
       expect(findExec(run.id, STEP_B).status).toBe('idle');
@@ -1458,9 +1307,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       const now = Date.now();
       for (let i = 0; i < 14; i++) cycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
 
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
+      await makeRuntime().recoverStalledRuns();
 
       expect(findExec(run.id, STEP_A)).toBeDefined();
       expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(15);
@@ -1503,9 +1350,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       for (let i = 0; i < 5; i++) cycleRepo.recordCycleEvent(run.id, 1, now - i * 1000);
       expect(cycleRepo.countRecentCycleEvents(run.id, 1)).toBe(5);
 
-      const runtime = makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      });
+      const runtime = makeRuntime();
 
       await runtime.cancelWorkflowRun(SPACE_ID, run.id);
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('cancelled');
@@ -1601,9 +1446,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       cycleRepo.recordCycleEvent(run.id, 1, now - 1000);
       cycleRepo.recordCycleEvent(run.id, 1, now - DEAD_LOOP_WINDOW_MS - 60_000);
 
-      const runtime = makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      });
+      const runtime = makeRuntime();
       await runtime.cancelWorkflowRun(SPACE_ID, run.id);
 
       runtime.pruneExpiredCycleEvents(now);
@@ -1985,7 +1828,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
             'Workflow node deleted-node no longer exists in workflow definition'
           );
         },
-        flushPendingMessagesForTarget: async () => {},
         cancelBySessionId: () => {},
         interruptBySessionId: async () => {},
       };
@@ -2056,7 +1898,6 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
           });
           return `session:${execution.id}`;
         },
-        flushPendingMessagesForTarget: async () => {},
         cancelBySessionId: () => {},
         interruptBySessionId: async () => {},
       };
@@ -2315,9 +2156,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(STALE_AGENT);
       const { run, task } = seedStaleRun(STEP_A, STEP_B, workflow.id);
 
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
+      await makeRuntime().recoverStalledRuns();
 
       const blockedRun = workflowRunRepo.getRun(run.id)!;
       const blockedTask = taskRepo.getTask(task.id)!;
@@ -2367,9 +2206,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       });
       seedExec(goodRun.id, 'good-a', 'Plan', 'idle');
 
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
+      await makeRuntime().recoverStalledRuns();
 
       expect(workflowRunRepo.getRun(staleCtx.run.id)?.status).toBe('blocked');
       expect(findExec(staleCtx.run.id, 'stale-b')).toBeUndefined();
@@ -2386,7 +2223,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       db.prepare(`DELETE FROM space_long_horizon_agents WHERE id = ?`).run(STALE_AGENT);
       const { run } = seedStaleRun(STEP_A, STEP_B, workflow.id);
 
-      const rt = makeRuntime({ pendingMessageRepo: new PendingAgentMessageRepository(db) });
+      const rt = makeRuntime();
       await rt.recoverStalledRuns();
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('blocked');
 
@@ -2405,9 +2242,7 @@ describe('SpaceRuntime — recoverStalledRuns()', () => {
       ]);
       const { run } = seedStaleRun(STEP_A, STEP_B, workflow.id);
 
-      await makeRuntime({
-        pendingMessageRepo: new PendingAgentMessageRepository(db),
-      }).recoverStalledRuns();
+      await makeRuntime().recoverStalledRuns();
 
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
       expect(findExec(run.id, STEP_B).status).toBe('pending');

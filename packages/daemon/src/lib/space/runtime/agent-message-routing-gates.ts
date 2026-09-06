@@ -174,40 +174,11 @@ export function promoteQueuedSpaceAgentResult(result: AgentMessageResult): Agent
   return result;
 }
 
-export interface DeclaredOrActivatedInput {
-  activatedTargets: ReadonlySet<string>;
-  declaredAgentNames: ReadonlySet<string> | string[];
-  permittedTargets: string[];
-  resolveNodeName: (slotOrNode: string) => string;
-}
+export type NodeTargetDeliveryDecision = 'deliverToSpaceAgent' | 'injectLiveSessions' | 'notFound';
 
-export type NodeTargetDeliveryDecision =
-  | 'deliverToSpaceAgent'
-  | 'injectLiveSessions'
-  | 'queueForActivation'
-  | 'activatedWithoutQueue'
-  | 'notFound';
-
-export interface NodeTargetDeliverySnapshot extends DeclaredOrActivatedInput {
+export interface NodeTargetDeliverySnapshot {
   isSpaceAgent: boolean;
   hasLiveSessions: boolean;
-  queueCapable: boolean;
-}
-
-export function isDeclaredOrActivatedTarget(
-  agentName: string,
-  input: DeclaredOrActivatedInput
-): boolean {
-  return (
-    input.activatedTargets.has(agentName) ||
-    new Set(input.declaredAgentNames).has(agentName) ||
-    input.permittedTargets.some(
-      (n) =>
-        n === agentName ||
-        input.resolveNodeName(n) === agentName ||
-        n === input.resolveNodeName(agentName)
-    )
-  );
 }
 
 export function decideNodeTargetDelivery(
@@ -216,10 +187,6 @@ export function decideNodeTargetDelivery(
 ): NodeTargetDeliveryDecision {
   if (snapshot.isSpaceAgent) return 'deliverToSpaceAgent';
   if (snapshot.hasLiveSessions) return 'injectLiveSessions';
-  if (isDeclaredOrActivatedTarget(agentName, snapshot) && snapshot.queueCapable) {
-    return 'queueForActivation';
-  }
-  if (snapshot.activatedTargets.has(agentName)) return 'activatedWithoutQueue';
   return 'notFound';
 }
 

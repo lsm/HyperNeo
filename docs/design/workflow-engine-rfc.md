@@ -81,7 +81,7 @@ We keep the existing vocabulary where correct (a rename would violate incrementa
 | **Attempt** | (implicit crash-retry-with-counting) | New, append-only (§6.4). |
 | **Activation** | `ChannelRouter.activateNode` | A channel-directed `send_message` or gate-open activates a downstream node — and can reopen a finished run (below). |
 | **Gate / Channel / Approval** | `Gate`+`gate_data`+`gate_open_state`; `WorkflowChannel`; `requiredLevel`/`completionAutonomyLevel` | Unchanged. |
-| **Delivery** | `pending_agent_messages` (inbox) + `AgentMessageRouter` | Durable only for **inactive** targets today; live targets bypass the inbox (§6.1). |
+| **Delivery** | session mailbox outbox (`sdk_messages` user rows) + `AgentMessageRouter` | Delivery is session-addressed; inactive targets report not-found at send time. |
 | **Timer** | `task_schedules` (new-run cron/at) + `GatePoll` (repeat eval) + hook retry | **No in-run pause/resume** primitive today (§3.5). |
 | **Connector** | `connectors/` registry | Read-only validators/hooks only today; **imperative connector-action steps are a new primitive** (§5). |
 | **Task** | `space_tasks` | User-facing unit; 1:1 with a run. Sole completion source of truth. **archivedAt is the only tombstone.** |

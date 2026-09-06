@@ -7,7 +7,6 @@ import {
   decideNodeTargetDelivery,
   foldAgentMessageResult,
   type GenericAddressRoutingConfig,
-  isDeclaredOrActivatedTarget,
   type NodeTargetDeliverySnapshot,
   type ResolveNodeAgentTargetsInput,
   resolveNodeAgentTargets,
@@ -367,94 +366,9 @@ function makeSnapshot(
   return {
     isSpaceAgent: false,
     hasLiveSessions: false,
-    queueCapable: true,
-    activatedTargets: new Set<string>(),
-    declaredAgentNames: new Set<string>(),
-    permittedTargets: [],
-    resolveNodeName: buildNodeNameResolver(buildSlotToNodeMap()),
     ...overrides,
   };
 }
-
-describe('isDeclaredOrActivatedTarget', () => {
-  test('activated targets count without any other declaration', () => {
-    expect(
-      isDeclaredOrActivatedTarget(
-        'reviewer',
-        makeSnapshot({ activatedTargets: new Set(['reviewer']) })
-      )
-    ).toBe(true);
-  });
-
-  test('declared agent names count without activation', () => {
-    expect(
-      isDeclaredOrActivatedTarget('reviewer', {
-        activatedTargets: new Set<string>(),
-        declaredAgentNames: new Set(['reviewer']),
-        permittedTargets: [],
-        resolveNodeName: buildNodeNameResolver(buildSlotToNodeMap()),
-      })
-    ).toBe(true);
-  });
-
-  test('accepts declared agent names as an array', () => {
-    expect(
-      isDeclaredOrActivatedTarget('reviewer', {
-        activatedTargets: new Set<string>(),
-        declaredAgentNames: ['reviewer'],
-        permittedTargets: [],
-        resolveNodeName: buildNodeNameResolver(buildSlotToNodeMap()),
-      })
-    ).toBe(true);
-  });
-
-  test('matches a permitted target equal to the agent name', () => {
-    expect(
-      isDeclaredOrActivatedTarget(
-        'reviewer',
-        makeSnapshot({ permittedTargets: ['reviewer', 'qa'] })
-      )
-    ).toBe(true);
-  });
-
-  test('matches when a permitted slot resolves to the agent-named node', () => {
-    expect(
-      isDeclaredOrActivatedTarget(
-        'reviewer',
-        makeSnapshot({
-          permittedTargets: ['critic'],
-          resolveNodeName: buildNodeNameResolver(buildSlotToNodeMap({ reviewer: ['critic'] })),
-        })
-      )
-    ).toBe(true);
-  });
-
-  test('matches when the agent slot resolves to a permitted node', () => {
-    expect(
-      isDeclaredOrActivatedTarget(
-        'reviewer',
-        makeSnapshot({
-          permittedTargets: ['Review'],
-          resolveNodeName: buildNodeNameResolver(buildSlotToNodeMap({ Review: ['reviewer'] })),
-        })
-      )
-    ).toBe(true);
-  });
-
-  test('returns false when no source declares the agent', () => {
-    expect(
-      isDeclaredOrActivatedTarget(
-        'ghost',
-        makeSnapshot({
-          activatedTargets: new Set(['other']),
-          declaredAgentNames: new Set(['other']),
-          permittedTargets: ['qa'],
-          resolveNodeName: buildNodeNameResolver(buildSlotToNodeMap({ Review: ['reviewer'] })),
-        })
-      )
-    ).toBe(false);
-  });
-});
 
 describe('decideNodeTargetDelivery', () => {
   test('routes space-agent to the space-agent injector before any session lookup', () => {
@@ -472,56 +386,8 @@ describe('decideNodeTargetDelivery', () => {
     );
   });
 
-  test('queues declared agents without live sessions when queueing is available', () => {
-    expect(
-      decideNodeTargetDelivery(
-        'reviewer',
-        makeSnapshot({ declaredAgentNames: new Set(['reviewer']) })
-      )
-    ).toBe('queueForActivation');
-  });
-
-  test('queues topology-declared agents resolved through the node-name resolver', () => {
-    expect(
-      decideNodeTargetDelivery(
-        'reviewer',
-        makeSnapshot({
-          permittedTargets: ['Review'],
-          resolveNodeName: buildNodeNameResolver(buildSlotToNodeMap({ Review: ['reviewer'] })),
-        })
-      )
-    ).toBe('queueForActivation');
-  });
-
-  test('prefers queueing over the activated-without-queue warning when both apply', () => {
-    expect(
-      decideNodeTargetDelivery(
-        'reviewer',
-        makeSnapshot({ activatedTargets: new Set(['reviewer']) })
-      )
-    ).toBe('queueForActivation');
-  });
-
-  test('warns for activated agents when queueing is unavailable', () => {
-    expect(
-      decideNodeTargetDelivery(
-        'reviewer',
-        makeSnapshot({ activatedTargets: new Set(['reviewer']), queueCapable: false })
-      )
-    ).toBe('activatedWithoutQueue');
-  });
-
-  test('reports not-found for declared agents when queueing is unavailable', () => {
-    expect(
-      decideNodeTargetDelivery(
-        'reviewer',
-        makeSnapshot({ declaredAgentNames: new Set(['reviewer']), queueCapable: false })
-      )
-    ).toBe('notFound');
-  });
-
-  test('reports not-found for agents no source declares even when queueing is available', () => {
-    expect(decideNodeTargetDelivery('ghost', makeSnapshot())).toBe('notFound');
+  test('reports not-found for agents without live sessions', () => {
+    expect(decideNodeTargetDelivery('reviewer', makeSnapshot())).toBe('notFound');
   });
 });
 

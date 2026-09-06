@@ -59,7 +59,6 @@ function makeDb(): BunDatabase {
       completed_at INTEGER,
       updated_at INTEGER NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS pending_agent_messages (id TEXT PRIMARY KEY);
   `);
   return db;
 }
@@ -359,15 +358,6 @@ describe('TaskAgentManager post-approval worker identity resolution', () => {
     insertTask(db, { status: 'approved', postApprovalSessionId: null, approvedAt: 10 });
     insertWorkerSession(db, { sessionId: staleSessionId, createdAt: 5, lastActiveAt: 9 });
     insertTaskInput(db, staleSessionId, { timestamp: 9 });
-    expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
-  });
-
-  it('rejects a consumed pending-queue input before kickoff injection', () => {
-    const sessionId = postApprovalSessionId('queue-drain');
-    insertTask(db, { status: 'approved', postApprovalSessionId: null, approvedAt: 10 });
-    insertWorkerSession(db, { sessionId, createdAt: 10, lastActiveAt: 11 });
-    insertTaskInput(db, sessionId, { timestamp: 11 });
-    db.prepare('INSERT INTO pending_agent_messages (id) VALUES (?)').run(`input-${sessionId}`);
     expect(tam.getPostApprovalWorkerSession(TASK_ID)).toBeNull();
   });
 

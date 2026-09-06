@@ -31,7 +31,6 @@ import {
 } from '../../../storage/repositories/channel-cycle-repository.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
-import type { PendingAgentMessageRepository } from '../../../storage/repositories/pending-agent-message-repository.ts';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
@@ -214,7 +213,6 @@ export interface SpaceRuntimeConfig {
   artifactRepo?: WorkflowRunArtifactRepository;
   artifactProfile?: WorkflowArtifactProfile;
   sdkMessageRepo?: SDKMessageRepository;
-  pendingMessageRepo?: PendingAgentMessageRepository;
   onTaskUpdated?: (payload: {
     spaceId: string;
     task: SpaceTask;
@@ -3976,9 +3974,6 @@ export class SpaceRuntime {
     const preTxRunId = preTxTask?.workflowRunId;
     const preTxRun = preTxRunId ? this.config.workflowRunRepo.getRun(preTxRunId) : null;
     if (preTxRunId && preTxTask.spaceId === spaceId && preTxRun?.spaceId === spaceId) {
-      if (this.config.pendingMessageRepo) {
-        this.config.pendingMessageRepo.clearTerminalForRun(preTxRunId);
-      }
       this.blockedRetryCounts.delete(preTxRunId);
       for (const key of this.nonTerminalIdleStates.keys()) {
         if (key.startsWith(preTxRunId + ':')) {
@@ -4902,17 +4897,7 @@ export class SpaceRuntime {
     }
     const space = await this.config.spaceManager.getSpace(run.spaceId);
     if (executions.length === 0) return 'skipped';
-
-    const pendingMessageRepo = this.config.pendingMessageRepo;
-    pendingMessageRepo?.enforceRetention({
-      runId: run.id,
-      excludeIds: this.config.taskAgentManager?.activeSpaceDeliveryIdsForRun?.(run.id) ?? [],
-    });
-    const hasQueuedNodeHandoff =
-      pendingMessageRepo
-        ?.listPendingForRun(run.id)
-        .some((row) => row.targetKind === 'node_agent') ?? false;
-    if (hasDriveableExecution(executions) || hasQueuedNodeHandoff) return 'skipped';
+    if (hasDriveableExecution(executions)) return 'skipped';
 
     const tasks = this.config.taskRepo.listByWorkflowRun(run.id);
     const canonicalTask = this.pickCanonicalTaskForRun(run, tasks);
@@ -5170,7 +5155,6 @@ export class SpaceRuntime {
         }
 
         let activatedForTarget = false;
-        let resetExistingTarget = false;
         for (const agentEntry of resolveNodeAgents(targetNode)) {
           const existing = this.config.nodeExecutionRepo
             .listByNode(run.id, targetNode.id)
@@ -5184,7 +5168,6 @@ export class SpaceRuntime {
                 completedAt: null,
               });
               activatedForTarget = true;
-              resetExistingTarget = true;
             }
             continue;
           }
@@ -5200,12 +5183,6 @@ export class SpaceRuntime {
         if (activatedForTarget) {
           createdOrReset.push(targetNode.name);
           activatedOnChannel = true;
-          this.enqueueRestartRecoveryMessage(
-            run,
-            sourceExecution.agentName,
-            targetNode,
-            resetExistingTarget
-          );
         }
       }
       if (activatedOnChannel) {
@@ -5359,34 +5336,6 @@ export class SpaceRuntime {
       resolvedTargets.add(targetNode?.name ?? rawTarget);
     }
     return [...resolvedTargets];
-  }
-
-  private enqueueRestartRecoveryMessage(
-    run: SpaceWorkflowRun,
-    lastAgentName: string,
-    targetNode: SpaceWorkflow['nodes'][number],
-    resetExistingTarget: boolean
-  ): void {
-    const repo = this.config.pendingMessageRepo;
-    if (!repo) return;
-    const tasks = this.config.taskRepo.listByWorkflowRun(run.id);
-    const task = this.pickCanonicalTaskForRun(run, tasks);
-    const message = resetExistingTarget
-      ? `[Daemon restart recovery] The ${targetNode.name} node's previous session ended before completing the workflow. Please check the PR and review status, then continue.`
-      : `[Daemon restart recovery] The previous agent (${lastAgentName}) completed but the handoff message was not delivered. Please check the PR and review status, then continue.`;
-    for (const agentEntry of resolveNodeAgents(targetNode)) {
-      repo.enqueue({
-        workflowRunId: run.id,
-        spaceId: run.spaceId,
-        taskId: task?.id ?? null,
-        sourceAgentName: lastAgentName,
-        targetKind: 'node_agent',
-        targetAgentName: agentEntry.name,
-        workflowNodeId: targetNode.id,
-        message,
-        idempotencyKey: `daemon-restart-recovery:${targetNode.id}:${agentEntry.name}`,
-      });
-    }
   }
 
   private async processCompletedTasks(failedSpaceIds = new Set<string>()): Promise<void> {
@@ -6054,8 +6003,8 @@ export class SpaceRuntime {
         ),
       settleIfComplete: (candidateRunId, runIsComplete, meta, canonicalTask) =>
         this.settleIfComplete(candidateRunId, runIsComplete, meta, canonicalTask),
-      drainPendingNodeHandoffs: (candidateRunId, run, context) =>
-        this.drainPendingNodeHandoffs(candidateRunId, run, context),
+      haltTickForInactiveSpace: (candidateRunId, run, context) =>
+        this.haltTickForInactiveSpace(candidateRunId, run, context),
       promotePendingExecutionsWithLiveSessions: (candidateRunId, preTickPendingIds, tam) =>
         this.promotePendingExecutionsWithLiveSessions(candidateRunId, preTickPendingIds, tam),
       admitSpawnExecution: (candidateRunId, meta, canonicalTask, nodeExecutions, space) =>
@@ -6311,53 +6260,18 @@ export class SpaceRuntime {
 
     this.detectSilentStallForAttention(runId, canonicalTask, space);
 
-    if (
-      canonicalTask.status === 'done' ||
-      canonicalTask.status === 'cancelled' ||
-      canonicalTask.status === 'archived'
-    ) {
-      const stoppedAfterTerminalHandoffCleanup = await this.repairQueuedWorkflowNodeHandoffs(
-        runId,
-        run,
-        meta,
-        canonicalTask,
-        space
-      );
-      if (stoppedAfterTerminalHandoffCleanup) {
-        return { action: 'halted' };
-      }
-    }
-
     if (space?.stopped) return { action: 'halted' };
 
     return { action: 'continue', tam, blockedByCrash, preTickPendingIds };
   }
 
-  private async drainPendingNodeHandoffs(
+  private async haltTickForInactiveSpace(
     runId: string,
     run: SpaceWorkflowRun,
     context: RunTickContext
   ): Promise<'halted' | 'continue'> {
-    const { meta, canonicalTask } = context;
-    const space = await this.config.spaceManager.getSpace(meta.spaceId);
-    if (space?.paused || space?.stopped) return 'halted';
-
-    const hasQueuedNodeHandoff =
-      this.config.pendingMessageRepo
-        ?.listPendingForRun(runId)
-        .some((row) => row.targetKind === 'node_agent') ?? false;
-    if (!space && !hasQueuedNodeHandoff) return 'halted';
-
-    const stoppedAfterQueuedHandoffRepair = await this.repairQueuedWorkflowNodeHandoffs(
-      runId,
-      run,
-      meta,
-      canonicalTask,
-      space
-    );
-    if (stoppedAfterQueuedHandoffRepair) {
-      return 'halted';
-    }
+    const space = await this.config.spaceManager.getSpace(context.meta.spaceId);
+    if (!space || space.paused || space.stopped) return 'halted';
     return 'continue';
   }
 
@@ -6691,349 +6605,6 @@ export class SpaceRuntime {
     return true;
   }
 
-  private async repairQueuedWorkflowNodeHandoffs(
-    runId: string,
-    run: SpaceWorkflowRun,
-    meta: ExecutorMeta,
-    canonicalTask: SpaceTask,
-    space: Space | null
-  ): Promise<boolean> {
-    const repo = this.config.pendingMessageRepo;
-    const tam = this.config.taskAgentManager;
-    if (!repo || !tam) return false;
-
-    repo.expireStale(runId, tam.activeSpaceDeliveryIdsForRun?.(runId) ?? []);
-    const pending = repo.listPendingForRun(runId).filter((row) => row.targetKind === 'node_agent');
-    const isTerminalTask =
-      canonicalTask.status === 'done' ||
-      canonicalTask.status === 'cancelled' ||
-      canonicalTask.status === 'archived';
-
-    if (isTerminalTask) {
-      const expiredNodeHandoffs = repo
-        .listByRunAndStatus(runId, 'expired')
-        .filter((row) => row.targetKind === 'node_agent');
-      const reason = `Queued workflow handoff cannot be delivered because task ${canonicalTask.id} is terminal (${canonicalTask.status})`;
-      for (const row of pending) repo.markFailed(row.id, reason);
-      if (pending.length > 0 || expiredNodeHandoffs.length > 0) {
-        log.warn(
-          `SpaceRuntime: ignored ${pending.length + expiredNodeHandoffs.length} queued handoff(s) for terminal task: ${reason}`
-        );
-      }
-      return false;
-    }
-
-    if (pending.length === 0) {
-      const expiredNodeHandoffs = repo
-        .listByRunAndStatus(runId, 'expired')
-        .filter((row) => row.targetKind === 'node_agent');
-      if (expiredNodeHandoffs.length > 0) {
-        const first = expiredNodeHandoffs[0];
-        const reason = `Queued workflow handoff to ${first.targetAgentName} expired before delivery after ${first.attempts} attempt(s)`;
-        await this.blockRunForQueuedHandoffFailure(runId, meta.spaceId, canonicalTask, reason);
-        return true;
-      }
-      return false;
-    }
-
-    if (!space) {
-      let blockedReason: string | null = null;
-      const reason = `Cannot activate queued handoff target: space ${meta.spaceId} not found`;
-      for (const row of pending) {
-        const updated = repo.markAttemptFailed(row.id, reason);
-        if (updated?.status === 'failed') {
-          blockedReason = `Queued workflow handoff to ${updated.targetAgentName} failed after ${updated.attempts} attempt(s): ${reason}`;
-        }
-      }
-      if (blockedReason) {
-        await this.blockRunForQueuedHandoffFailure(
-          runId,
-          meta.spaceId,
-          canonicalTask,
-          blockedReason
-        );
-        return true;
-      }
-      return false;
-    }
-
-    let blockedReason: string | null = null;
-    const groups = new Map<string, Map<string, typeof pending>>();
-    for (const row of pending) {
-      const nodeId = row.workflowNodeId ?? '';
-      let nodeMap = groups.get(row.targetAgentName);
-      if (!nodeMap) {
-        nodeMap = new Map();
-        groups.set(row.targetAgentName, nodeMap);
-      }
-      let rows = nodeMap.get(nodeId);
-      if (!rows) {
-        rows = [];
-        nodeMap.set(nodeId, rows);
-      }
-      rows.push(row);
-    }
-    const recordBlockedFlushFailure = (
-      targetAgentName: string,
-      rowsForCurrentAttempt: typeof pending
-    ): void => {
-      const targetRows = [
-        ...rowsForCurrentAttempt,
-        ...pending.filter((row) => row.targetAgentName === targetAgentName),
-      ];
-      const first = targetRows
-        .map((row) => repo.getById(row.id))
-        .find((row) => row?.status === 'failed');
-      if (!first) return;
-      blockedReason = `Queued workflow handoff to ${targetAgentName} failed after ${first.attempts} attempt(s): ${first.lastError ?? 'delivery failed'}`;
-    };
-
-    const attemptedLegacyIds = new Set<string>();
-    for (const [targetAgentName, nodeMap] of groups) {
-      for (const [workflowNodeIdRaw, rowsForTarget] of nodeMap) {
-        const workflowNodeId = workflowNodeIdRaw || undefined;
-        try {
-          const remainingForGroup = repo
-            .listPendingForRun(runId)
-            .filter(
-              (row) =>
-                row.targetAgentName === targetAgentName &&
-                (row.workflowNodeId ?? '') === workflowNodeIdRaw &&
-                (row.workflowNodeId || !attemptedLegacyIds.has(row.id))
-            );
-          if (remainingForGroup.length === 0) continue;
-
-          const rescopedTarget = this.resolveQueuedHandoffTarget(
-            meta.workflow,
-            targetAgentName,
-            workflowNodeId
-          );
-          if (
-            rescopedTarget &&
-            (targetAgentName !== rescopedTarget.agentName ||
-              (workflowNodeId ?? null) !== rescopedTarget.nodeId)
-          ) {
-            for (const row of remainingForGroup) {
-              repo.rescopeTarget(row.id, rescopedTarget.agentName, rescopedTarget.nodeId);
-            }
-          }
-
-          let execution = this.resolveQueuedHandoffExecution(
-            runId,
-            meta.workflow,
-            targetAgentName,
-            workflowNodeId
-          );
-
-          if (!execution) {
-            if (!rescopedTarget) {
-              throw new Error(
-                `Queued workflow handoff target "${targetAgentName}" is not declared in workflow "${meta.workflow.id}"`
-              );
-            }
-            execution = this.createNodeExecutionOrIgnore({
-              workflowRunId: runId,
-              workflowNodeId: rescopedTarget.nodeId,
-              agentName: rescopedTarget.agentName,
-              agentId: rescopedTarget.agentId,
-              status: 'pending',
-            });
-          }
-
-          if (execution.status === 'waiting_rebind') {
-            continue;
-          }
-
-          await tam.tryResumeNodeAgentSession(
-            runId,
-            execution.agentName,
-            execution.workflowNodeId ?? undefined
-          );
-          execution = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
-          if (execution.status === 'waiting_rebind') {
-            continue;
-          }
-
-          if (execution.agentSessionId && tam.isSessionInMemory(execution.agentSessionId)) {
-            await tam.flushPendingMessagesForTarget(
-              runId,
-              execution.agentName,
-              execution.agentSessionId
-            );
-            recordBlockedFlushFailure(targetAgentName, rowsForTarget);
-            for (const row of pending) {
-              if (row.targetAgentName === targetAgentName && !row.workflowNodeId) {
-                attemptedLegacyIds.add(row.id);
-              }
-            }
-            continue;
-          }
-
-          if (execution.agentSessionId && !tam.isSessionInMemory(execution.agentSessionId)) {
-            this.resetWorkflowNodeExecutionForSpawnRetry(
-              runId,
-              execution,
-              'queued handoff execution referenced a dead session before spawn',
-              execution.agentSessionId
-            );
-            execution = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
-            if (execution.status === 'blocked') {
-              blockedReason = execution.result ?? 'Queued workflow handoff target failed to spawn';
-              continue;
-            }
-          }
-
-          if (execution.status === 'blocked') {
-            this.config.nodeExecutionRepo.update(execution.id, {
-              status: 'pending',
-              result: null,
-              completedAt: null,
-            });
-            execution = this.config.nodeExecutionRepo.getById(execution.id) ?? execution;
-          }
-
-          if (tam.isExecutionSpawning(execution.id)) {
-            continue;
-          }
-
-          const sessionId = await tam.spawnWorkflowNodeAgentForExecution(
-            canonicalTask,
-            space,
-            meta.workflow,
-            run,
-            execution,
-            { kickoff: true }
-          );
-          this.tryRequeuePendingDeliveries(this.pausedSpaceIds, runId);
-          await tam.flushPendingMessagesForTarget(runId, execution.agentName, sessionId);
-          recordBlockedFlushFailure(targetAgentName, rowsForTarget);
-          for (const row of pending) {
-            if (row.targetAgentName === targetAgentName && !row.workflowNodeId) {
-              attemptedLegacyIds.add(row.id);
-            }
-          }
-        } catch (err) {
-          if (isSpawnSupersededError(err)) {
-            log.info(
-              `SpaceRuntime: queued handoff spawn for target ${targetAgentName} superseded at ${err.stage ?? 'unknown'} — concurrent writer moved a guarded row; skipping for this pass`
-            );
-            continue;
-          }
-          const errMsg = err instanceof Error ? err.message : String(err);
-          if (isPermanentSpawnError(err)) {
-            log.warn(
-              `SpaceRuntime: queued workflow handoff target ${targetAgentName} has permanent spawn failure: ${errMsg}`
-            );
-          } else {
-            log.warn(
-              `SpaceRuntime: queued workflow handoff repair failed for target ${targetAgentName}: ${errMsg}`
-            );
-          }
-          const maybeExecution = this.resolveQueuedHandoffExecution(
-            runId,
-            meta.workflow,
-            targetAgentName,
-            workflowNodeId
-          );
-          if (maybeExecution) this.cancelExecutionForPermanentSpawnError(maybeExecution, err);
-          for (const row of rowsForTarget) {
-            const updated = repo.markAttemptFailed(row.id, errMsg);
-            if (updated?.status === 'failed') {
-              blockedReason = `Queued workflow handoff to ${targetAgentName} failed after ${updated.attempts} attempt(s): ${errMsg}`;
-            }
-          }
-          for (const row of pending) {
-            if (row.targetAgentName === targetAgentName && !row.workflowNodeId) {
-              attemptedLegacyIds.add(row.id);
-            }
-          }
-        }
-      }
-    }
-
-    if (blockedReason) {
-      await this.blockRunForQueuedHandoffFailure(runId, meta.spaceId, canonicalTask, blockedReason);
-      return true;
-    }
-
-    return false;
-  }
-
-  private resolveQueuedHandoffExecution(
-    runId: string,
-    workflow: SpaceWorkflow,
-    targetAgentName: string,
-    workflowNodeId?: string
-  ): NodeExecution | undefined {
-    const resolved = this.resolveQueuedHandoffTarget(workflow, targetAgentName, workflowNodeId);
-    if (resolved) {
-      const nodeExecution = this.config.nodeExecutionRepo
-        .listByNode(runId, resolved.nodeId)
-        .filter((candidate) => candidate.agentName === resolved.agentName)
-        .at(-1);
-      if (nodeExecution) return nodeExecution;
-    }
-
-    return this.config.nodeExecutionRepo
-      .listByWorkflowRun(runId)
-      .filter(
-        (candidate) =>
-          candidate.agentName === targetAgentName &&
-          (!workflowNodeId || candidate.workflowNodeId === workflowNodeId)
-      )
-      .at(-1);
-  }
-
-  private resolveQueuedHandoffTarget(
-    workflow: SpaceWorkflow,
-    targetAgentName: string,
-    workflowNodeId?: string
-  ): { nodeId: string; agentName: string; agentId: string | null } | null {
-    if (!workflowNodeId && targetAgentName.includes('/')) {
-      for (const node of workflow.nodes) {
-        const exact = resolveNodeAgents(node).find((slot) => slot.name === targetAgentName);
-        if (exact)
-          return { nodeId: node.id, agentName: exact.name, agentId: this.slotAgentId(exact) };
-      }
-    }
-    for (const node of workflow.nodes) {
-      if (workflowNodeId != null && node.id !== workflowNodeId) continue;
-      const slots = resolveNodeAgents(node);
-
-      if (workflowNodeId != null) {
-        const direct = slots.find((slot) => slot.name === targetAgentName);
-        if (direct)
-          return { nodeId: node.id, agentName: direct.name, agentId: this.slotAgentId(direct) };
-        continue;
-      }
-
-      let nodeFormMatched = false;
-      for (const nodeForm of [node.name, node.id]) {
-        const prefix = `${nodeForm}/`;
-        if (!targetAgentName.startsWith(prefix)) continue;
-        nodeFormMatched = true;
-        const direct = slots.find((slot) => slot.name === targetAgentName.slice(prefix.length));
-        if (direct)
-          return { nodeId: node.id, agentName: direct.name, agentId: this.slotAgentId(direct) };
-      }
-      if (nodeFormMatched) continue;
-
-      const nodeNameMatch = node.name === targetAgentName || node.id === targetAgentName;
-      const direct = slots.find(
-        (slot) => slot.name === targetAgentName || (nodeNameMatch && slot.name === node.name)
-      );
-      if (direct)
-        return { nodeId: node.id, agentName: direct.name, agentId: this.slotAgentId(direct) };
-      if (nodeNameMatch && slots[0]) {
-        return { nodeId: node.id, agentName: slots[0].name, agentId: this.slotAgentId(slots[0]) };
-      }
-      if (nodeNameMatch) {
-        return { nodeId: node.id, agentName: targetAgentName, agentId: null };
-      }
-    }
-    return null;
-  }
-
   private async blockRunForAgentCrash(
     runId: string,
     spaceId: string,
@@ -7068,28 +6639,6 @@ export class SpaceRuntime {
       spaceId,
       runId,
       reason: 'One or more tasks require attention',
-      timestamp: new Date().toISOString(),
-    });
-  }
-
-  private async blockRunForQueuedHandoffFailure(
-    runId: string,
-    spaceId: string,
-    canonicalTask: SpaceTask,
-    reason: string
-  ): Promise<void> {
-    await this.transitionRunStatusAndEmit(runId, 'blocked');
-    await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
-      status: 'blocked',
-      result: reason,
-      blockReason: 'execution_failed',
-      completedAt: null,
-    });
-    await this.safeNotify({
-      kind: 'workflow_run_blocked',
-      spaceId,
-      runId,
-      reason,
       timestamp: new Date().toISOString(),
     });
   }
@@ -7506,12 +7055,6 @@ export class SpaceRuntime {
     ) {
       return;
     }
-
-    const hasQueuedNodeHandoff =
-      this.config.pendingMessageRepo
-        ?.listPendingForRun(runId)
-        .some((row) => row.targetKind === 'node_agent') ?? false;
-    if (hasQueuedNodeHandoff) return;
 
     const executions = this.config.nodeExecutionRepo.listByWorkflowRun(runId);
     if (executions.length === 0) return;

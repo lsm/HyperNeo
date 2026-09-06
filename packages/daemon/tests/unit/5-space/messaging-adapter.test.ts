@@ -3,14 +3,11 @@ import { Database } from '../../../src/storage/sqlite-compat';
 import {
   SpaceDeliveryFacade,
   SpaceMessageResolver,
-  pendingMessageToDeliveryRecords,
-  pendingMessageToMessageRecord,
   translateLegacyNodeTargets,
   translateTaskMessageTarget,
 } from '../../../src/lib/space/messaging-adapter';
 import { SpaceActorRegistryAdapter } from '../../../src/lib/space/actor-registry';
 import { NodeExecutionRepository } from '../../../src/storage/repositories/node-execution-repository';
-import { PendingAgentMessageRepository } from '../../../src/storage/repositories/pending-agent-message-repository';
 import { SessionRepository } from '../../../src/storage/repositories/session-repository';
 import { SpaceLongHorizonAgentRepository } from '../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
@@ -28,7 +25,6 @@ describe('Space messaging adapter', () => {
   let workflowRepo: SpaceWorkflowRepository;
   let workflowRunRepo: SpaceWorkflowRunRepository;
   let nodeExecutionRepo: NodeExecutionRepository;
-  let pendingMessageRepo: PendingAgentMessageRepository;
   let registry: SpaceActorRegistryAdapter;
   let spaceId: string;
   let runId: string;
@@ -44,7 +40,6 @@ describe('Space messaging adapter', () => {
     workflowRepo = new SpaceWorkflowRepository(db);
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     nodeExecutionRepo = new NodeExecutionRepository(db);
-    pendingMessageRepo = new PendingAgentMessageRepository(db);
     registry = new SpaceActorRegistryAdapter({
       spaceRepo,
       sessionRepo,
@@ -52,7 +47,6 @@ describe('Space messaging adapter', () => {
       workflowRepo,
       workflowRunRepo,
       nodeExecutionRepo,
-      pendingMessageRepo,
     });
 
     const space = spaceRepo.createSpace({
@@ -811,182 +805,5 @@ describe('Space messaging adapter', () => {
     expect(new Set(result.deliveries.map((delivery) => delivery.deliveryId)).size).toBe(
       result.deliveries.length
     );
-  });
-
-  it('maps pending_agent_messages rows into message and delivery facade records', () => {
-    const pending = pendingMessageRepo.enqueue({
-      workflowRunId: runId,
-      spaceId,
-      taskId: 'task-1',
-      sourceAgentName: 'coder',
-      targetKind: 'node_agent',
-      targetAgentName: 'reviewer',
-      message: 'queued review',
-      idempotencyKey: 'idem-1',
-    }).record;
-
-    const actors = registry.listActors(spaceId);
-    const mappedMessage = pendingMessageToMessageRecord(pending, actors);
-    const deliveries = pendingMessageToDeliveryRecords(pending, actors);
-
-    expect(mappedMessage).toMatchObject({
-      messageId: `msg_legacy_${pending.id}`,
-      spaceId,
-      targets: ['reviewer'],
-      body: 'queued review',
-      workflowRunId: runId,
-      taskId: 'task-1',
-      idempotencyKey: 'idem-1',
-    });
-    expect(deliveries.map((delivery) => delivery.targetActorId)).toEqual([
-      `worker:${encodeURIComponent(runId)}:node-qa:reviewer`,
-      `worker:${encodeURIComponent(runId)}:node-review:reviewer`,
-    ]);
-    expect(deliveries.every((delivery) => delivery.state === 'queued')).toBe(true);
-  });
-
-  it('includes unspawned declared slots in pending legacy fan-out', () => {
-    nodeExecutionRepo.delete(
-      nodeExecutionRepo
-        .listByWorkflowRun(runId)
-        .find(
-          (execution) =>
-            execution.workflowNodeId === 'node-review' && execution.agentName === 'reviewer'
-        )!.id
-    );
-    const pending = pendingMessageRepo.enqueue({
-      workflowRunId: runId,
-      spaceId,
-      taskId: 'task-1',
-      sourceAgentName: 'coder',
-      targetKind: 'node_agent',
-      targetAgentName: 'reviewer',
-      message: 'queued review',
-    }).record;
-
-    const actors = registry.listActors(spaceId);
-    const workflow = workflowRepo.getWorkflow(workflowRunRepo.getRun(runId)!.workflowId)!;
-    const deliveries = pendingMessageToDeliveryRecords(pending, actors, workflow);
-
-    expect(deliveries.map((delivery) => delivery.targetActorId)).toEqual([
-      `worker:${encodeURIComponent(runId)}:node-qa:reviewer`,
-      `worker:${encodeURIComponent(runId)}:node-review:reviewer`,
-    ]);
-    expect(deliveries.every((delivery) => delivery.state === 'queued')).toBe(true);
-  });
-
-  it('maps legacy senders and terminal deliveries without inventing actors', () => {
-    const observerExecution = nodeExecutionRepo
-      .listByWorkflowRun(runId)
-      .find(
-        (execution) =>
-          execution.workflowNodeId === 'node-review' && execution.agentName === 'observer'
-      )!;
-    nodeExecutionRepo.updateStatus(observerExecution.id, 'cancelled');
-    const actors = registry.listActors(spaceId);
-    const queued = pendingMessageRepo.enqueue({
-      workflowRunId: runId,
-      spaceId,
-      taskId: 'task-1',
-      sourceAgentName: 'coder',
-      targetKind: 'node_agent',
-      targetAgentName: 'reviewer',
-      message: 'queued review',
-    }).record;
-    const archivedSender = pendingMessageToMessageRecord(
-      {
-        ...queued,
-        sourceAgentName: 'observer',
-        targetAgentName: 'reviewer',
-      },
-      actors
-    );
-    expect(archivedSender.senderActorId).toBe(
-      `worker:${encodeURIComponent(runId)}:node-review:observer`
-    );
-
-    const mappedWorkerSender = pendingMessageToMessageRecord(queued, actors);
-    expect(mappedWorkerSender.senderActorId).toBe(
-      `worker:${encodeURIComponent(runId)}:node-coding:coder`
-    );
-
-    const coordinator = pendingMessageToMessageRecord(
-      { ...queued, sourceAgentName: 'coordinator' },
-      actors
-    );
-    expect(coordinator.senderActorId).toBe(`agent:coordinator:${spaceId}`);
-
-    nodeExecutionRepo.updateStatus(
-      nodeExecutionRepo
-        .listByWorkflowRun(runId)
-        .find(
-          (execution) =>
-            execution.workflowNodeId === 'node-review' && execution.agentName === 'reviewer'
-        )!.id,
-      'cancelled'
-    );
-    const actorsWithArchivedReviewer = registry.listActors(spaceId);
-    const delivered = {
-      ...queued,
-      targetAgentName: 'observer',
-      status: 'delivered' as const,
-      deliveredSessionId: 'observer',
-      deliveredAt: Date.now(),
-    };
-    expect(pendingMessageToDeliveryRecords(delivered, actorsWithArchivedReviewer)).toEqual([
-      expect.objectContaining({
-        targetActorId: `worker:${encodeURIComponent(runId)}:node-review:observer`,
-        state: 'delivered',
-      }),
-    ]);
-
-    const failed = { ...queued, status: 'failed' as const };
-    expect(pendingMessageToDeliveryRecords(failed, actors)).toEqual([
-      expect.objectContaining({ targetActorId: undefined, state: 'failed' }),
-    ]);
-  });
-
-  it('preserves terminal coordinator delivery targets', () => {
-    sessionRepo.createSession({
-      id: `space:chat:${spaceId}`,
-      title: 'Space chat',
-      workspacePath: '/workspace/project',
-      createdAt: new Date().toISOString(),
-      lastActiveAt: new Date().toISOString(),
-      status: 'archived',
-      config: {},
-      metadata: {
-        messageCount: 0,
-        totalTokens: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        totalCost: 0,
-        toolCallCount: 0,
-      },
-      type: 'space_chat',
-      context: { spaceId },
-    });
-    const actors = registry.listActors(spaceId);
-    const queued = pendingMessageRepo.enqueue({
-      workflowRunId: runId,
-      spaceId,
-      sourceAgentName: 'coder',
-      targetKind: 'space_agent',
-      targetAgentName: 'coordinator',
-      message: 'terminal escalation',
-    }).record;
-    const delivered = {
-      ...queued,
-      status: 'delivered' as const,
-      deliveredSessionId: `space:chat:${spaceId}`,
-      deliveredAt: Date.now(),
-    };
-
-    expect(pendingMessageToDeliveryRecords(delivered, actors)).toEqual([
-      expect.objectContaining({
-        targetActorId: `agent:coordinator:${spaceId}`,
-        state: 'delivered',
-      }),
-    ]);
   });
 });

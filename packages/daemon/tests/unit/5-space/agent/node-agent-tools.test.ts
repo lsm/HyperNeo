@@ -12,7 +12,6 @@ import {
 } from '../../../../src/lib/space/tools/node-agent-tools.ts';
 import { AgentMessageRouter } from '../../../../src/lib/space/runtime/agent-message-router.ts';
 import { ChannelResolver } from '../../../../src/lib/space/runtime/channel-resolver.ts';
-import { PendingAgentMessageRepository } from '../../../../src/storage/repositories/pending-agent-message-repository.ts';
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
 import type { ExternalEvent } from '../../../../src/lib/external-events/types.ts';
@@ -2477,7 +2476,7 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
     ctx.db.close();
   });
 
-  test('queues message for declared-but-inactive agent when pendingMessageRepo provided', async () => {
+  test('reports no live session for a declared-but-inactive agent', async () => {
     const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
 
     const nodeExecutionRepo = ctx.nodeExecutionRepo;
@@ -2488,7 +2487,6 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
       status: 'pending',
     });
 
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
     const agentMessageRouter = new AgentMessageRouter({
       nodeExecutionRepo,
       workflowRunId: isolatedRunId,
@@ -2496,7 +2494,6 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
       messageInjector: async () => {
         throw new Error('Should not be called — reviewer has no session');
       },
-      pendingMessageRepo,
       spaceId: ctx.spaceId,
       taskId: null,
     });
@@ -2514,63 +2511,11 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
     const data = JSON.parse(result.content[0].text);
 
     expect(data.success).toBe(false);
-    expect(data.queued).toBeDefined();
-    expect(data.queued).toHaveLength(1);
-    expect(data.queued[0].agentName).toBe('reviewer');
+    expect(data.notFoundAgentNames).toEqual(['reviewer']);
     expect(data.delivered ?? []).toHaveLength(0);
-
-    const pending = pendingMessageRepo.listPendingForTarget(isolatedRunId, 'reviewer');
-    expect(pending).toHaveLength(1);
-    expect(pending[0].sourceAgentName).toBe('coder');
-    expect(pending[0].message).toBe(nodeToNodeEnvelope('coder', 'code is ready for review'));
-    expect(pending[0].targetKind).toBe('node_agent');
   });
 
-  test('queues message with data appendix for declared-but-inactive agent', async () => {
-    const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
-
-    const nodeExecutionRepo = ctx.nodeExecutionRepo;
-    nodeExecutionRepo.createOrIgnore({
-      workflowRunId: isolatedRunId,
-      workflowNodeId: 'node-review',
-      agentName: 'reviewer',
-      status: 'pending',
-    });
-
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
-    const agentMessageRouter = new AgentMessageRouter({
-      nodeExecutionRepo,
-      workflowRunId: isolatedRunId,
-      workflowChannels: [{ id: 'ch-coder-reviewer', from: 'coder', to: 'reviewer' }],
-      messageInjector: async () => {},
-      pendingMessageRepo,
-      spaceId: ctx.spaceId,
-      taskId: null,
-    });
-
-    const config = makeConfig(ctx, {
-      workflowRunId: isolatedRunId,
-      channelResolver: makeResolver([{ id: 'ch-coder-reviewer', from: 'coder', to: 'reviewer' }]),
-      agentMessageRouter,
-    });
-    const handlers = createNodeAgentToolHandlers(config);
-    const result = await handlers.send_message({
-      target: 'reviewer',
-      message: 'please review my PR',
-      data: { pr_url: 'https://github.com/example/repo/pull/1' },
-    });
-    const data = JSON.parse(result.content[0].text);
-
-    expect(data.success).toBe(false);
-    expect(data.queued).toHaveLength(1);
-
-    const pending = pendingMessageRepo.listPendingForTarget(isolatedRunId, 'reviewer');
-    expect(pending).toHaveLength(1);
-    expect(pending[0].message).toContain('please review my PR');
-    expect(pending[0].message).toContain('pr_url');
-  });
-
-  test('delivers immediately when target has an active session, queues when it does not', async () => {
+  test('delivers to the live session and reports the inactive agent as not found', async () => {
     const isolatedRunId = makeFreshRunId(ctx.db, ctx.spaceId);
 
     const nodeExecutionRepo = ctx.nodeExecutionRepo;
@@ -2590,7 +2535,6 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
       status: 'pending',
     });
 
-    const pendingMessageRepo = new PendingAgentMessageRepository(ctx.db);
     const injectedSessions: string[] = [];
     const agentMessageRouter = new AgentMessageRouter({
       nodeExecutionRepo,
@@ -2602,7 +2546,6 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
       messageInjector: async (sid) => {
         injectedSessions.push(sid);
       },
-      pendingMessageRepo,
       spaceId: ctx.spaceId,
       taskId: null,
     });
@@ -2623,15 +2566,11 @@ describe('node-agent-tools: send_message — queue-when-inactive', () => {
     });
     const data = JSON.parse(result.content[0].text);
 
-    expect(data.success).toBe(true);
+    expect(data.success).toBe('partial');
     expect(data.delivered).toHaveLength(1);
     expect(data.delivered[0].agentName).toBe('reviewer');
     expect(injectedSessions).toContain('session-reviewer-live');
-
-    expect(data.queued).toHaveLength(1);
-    expect(data.queued[0].agentName).toBe('security');
-    const securityPending = pendingMessageRepo.listPendingForTarget(isolatedRunId, 'security');
-    expect(securityPending).toHaveLength(1);
+    expect(data.notFoundAgentNames).toEqual(['security']);
   });
 });
 

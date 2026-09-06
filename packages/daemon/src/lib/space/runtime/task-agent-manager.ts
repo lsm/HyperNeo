@@ -35,10 +35,6 @@ import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { AppMcpServerRepository } from '../../../storage/repositories/app-mcp-server-repository.ts';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
-import type {
-  PendingAgentMessageRecord,
-  PendingAgentMessageRepository,
-} from '../../../storage/repositories/pending-agent-message-repository.ts';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
@@ -49,7 +45,6 @@ import type { WorkflowRunArtifactRepository } from '../../../storage/repositorie
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { validateImageSizes } from '../../session/message-persistence.ts';
 import { CleanupState, type SessionManager } from '../../session-manager.ts';
-import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
 import type { SkillsManager } from '../../skills-manager.ts';
 import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
 import type { NodeAgentTemplateSource } from './spawn-slot-resolution.ts';
@@ -104,7 +99,6 @@ import {
   createSpaceActionsMcpServer,
   type SpaceActionsMcpServer,
 } from '../actions/space-actions-server.ts';
-import { extractReplyToSessionId } from '../agent-message-envelope.ts';
 import {
   buildCustomAgentTaskMessage,
   DEFAULT_CUSTOM_AGENT_MODEL,
@@ -135,33 +129,15 @@ import {
   reopenFailedDeliveryRow,
   settleDeliveryRowStatus,
 } from './injection-delivery-steps.ts';
-import { decidePendingDrainAdmission } from './pending-drain-decision-pipeline.ts';
-import { derivePendingQueueTargetNames } from './pending-drain-gates.ts';
-import {
-  drainPendingRowOntoMailbox,
-  type PendingDrainHandoffDeps,
-  type PendingDrainRoutedDeliveryArgs,
-} from './pending-drain-handoff.ts';
-import {
-  formatPendingRowForNodeAgent,
-  formatPendingRowForSpaceAgent,
-  isHumanPendingSource,
-} from './pending-envelope.ts';
 import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
 import {
   deliverAgentMessageToTarget,
   type AgentMessageDeliveryDeps,
 } from './agent-message-delivery-pipeline.ts';
-import type { AgentMessageDeliveryOutcome } from './agent-message-router.ts';
 import { handoffPromptToMailbox } from './prompt-mailbox-handoff.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import { decideRestoredWorkerAdmission } from './restored-worker-admission-decision-pipeline.ts';
 import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
-import {
-  collectActiveSpaceDeliveryIds,
-  runSpaceAgentPendingDrain,
-  type SpaceAgentPendingDrainDeps,
-} from './space-agent-pending-drain.ts';
 import {
   isSpawnFlowReusedSession,
   isSpawnFlowWaitConcurrent,
@@ -200,8 +176,6 @@ import {
 const log = new Logger('task-agent-manager');
 
 const WORKFLOW_ESCALATION_TARGET = 'space-agent';
-
-const SPACE_AGENT_RETRY_DELAY_MS = 30_000;
 
 export function isWorkflowTerminalNode(
   workflow: SpaceWorkflow | null | undefined,
@@ -274,14 +248,7 @@ export interface TaskAgentManagerConfig {
   dbPath?: string;
   artifactRepo?: WorkflowRunArtifactRepository;
   artifactProfile?: WorkflowArtifactProfile;
-  pendingMessageRepo?: PendingAgentMessageRepository;
   toolContinuationRepo?: ToolContinuationRecoveryRepository;
-  ensureTargetSession?: (target: SessionTarget) => Promise<EnsureSessionOutcome>;
-  spaceAgentRetryDelayMs?: number;
-  agentMessageDelivery?: (
-    workflowRunId: string,
-    args: PendingDrainRoutedDeliveryArgs
-  ) => Promise<AgentMessageDeliveryOutcome>;
   spaceAgentInjector?: (
     spaceId: string,
     message: string,
@@ -358,17 +325,10 @@ export function resolvePostApprovalRouteNodeId(
 }
 
 export class TaskAgentManager {
-  private readonly spaceAgentRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly spaceAgentDrainsInFlight = new Set<string>();
-  private readonly spaceAgentDrainRerunQueued = new Set<string>();
   private disposed = false;
 
   attachToolContinuationRepo(repo: ToolContinuationRecoveryRepository): void {
     this.config.toolContinuationRepo = repo;
-  }
-
-  attachSessionEnsurer(ensure: (target: SessionTarget) => Promise<EnsureSessionOutcome>): void {
-    this.config.ensureTargetSession = ensure;
   }
 
   private subSessions = new Map<string, Map<string, AgentSession>>();
@@ -1068,15 +1028,6 @@ export class TaskAgentManager {
         }
         return outcome;
       },
-      flushPendingMessagesForTarget: (workflowRunId, agentName, sessionId) => {
-        void this.flushPendingMessagesForTarget(workflowRunId, agentName, sessionId).catch(
-          (err) => {
-            log.warn(
-              `TaskAgentManager: flushPendingMessagesForTarget failed for ${agentName} (session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
-            );
-          }
-        );
-      },
       attachNodeAgent: async (request) => {
         const spawned = this.getSubSession(request.sessionId);
         if (!spawned) {
@@ -1345,19 +1296,6 @@ export class TaskAgentManager {
               await this.mcpSelfHeal(target, missing);
             };
 
-            if (!memberInfo.deferFreshExecutionBind) {
-              const runId = parentTask.workflowRunId;
-              void this.flushPendingMessagesForTarget(
-                runId,
-                memberInfo.agentName,
-                existingSessionId
-              ).catch((err) => {
-                log.warn(
-                  `TaskAgentManager: flushPendingMessagesForTarget failed for ${memberInfo.agentName} (session ${existingSessionId}): ${err instanceof Error ? err.message : String(err)}`
-                );
-              });
-            }
-
             return existingSessionId;
           }
         }
@@ -1450,145 +1388,8 @@ export class TaskAgentManager {
 
     await subSession.startStreamingQuery();
 
-    if (memberInfo?.agentName && !memberInfo.deferFreshExecutionBind) {
-      const parentTask = this.config.taskRepo.getTask(taskId);
-      const runId = parentTask?.workflowRunId;
-      if (runId) {
-        void this.flushPendingMessagesForTarget(runId, memberInfo.agentName, sessionId).catch(
-          (err) => {
-            log.warn(
-              `TaskAgentManager: flushPendingMessagesForTarget failed for ${memberInfo.agentName} (session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
-            );
-          }
-        );
-      }
-    }
-
     log.info(`TaskAgentManager: created sub-session ${sessionId} for task ${taskId}`);
     return sessionId;
-  }
-
-  async flushPendingMessagesForTarget(
-    workflowRunId: string,
-    targetAgentName: string,
-    sessionId: string,
-    workflowNodeId?: string
-  ): Promise<void> {
-    const repo = this.config.pendingMessageRepo;
-    if (!repo) return;
-    const handoffDeps = this.pendingDrainHandoffDeps(workflowRunId);
-    if (!handoffDeps) {
-      log.warn(
-        `TaskAgentManager: pending drain for agent=${targetAgentName} skipped — no session ensurer configured`
-      );
-      return;
-    }
-
-    const activeDeliveryIds = this.activeSpaceDeliveryIdsForRun(workflowRunId);
-    repo.enforceRetention({ runId: workflowRunId, excludeIds: activeDeliveryIds });
-    repo.expireStale(workflowRunId, activeDeliveryIds);
-
-    const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
-    const provenance = execution ? null : this.readProvenanceFromSessionRow(sessionId);
-    const provenanceMatches =
-      provenance?.workflowRunId === workflowRunId && provenance.agentName === targetAgentName;
-    const task =
-      !execution && !provenanceMatches
-        ? (this.config.taskRepo?.listByWorkflowRun(workflowRunId).at(-1) ?? null)
-        : null;
-    const postApproval = task ? this.readPostApprovalWorkerIdentity(task.id, sessionId) : null;
-    const trustedWorkflowNodeId = provenanceMatches
-      ? (provenance.nodeId ?? workflowNodeId ?? null)
-      : postApproval?.agentName === targetAgentName
-        ? (postApproval.nodeId ?? workflowNodeId ?? null)
-        : null;
-    const drainWorkflowNodeId = execution?.workflowNodeId ?? trustedWorkflowNodeId;
-    const workflowNodeName = drainWorkflowNodeId
-      ? this.workflowNodeNameForRun(workflowRunId, drainWorkflowNodeId)
-      : null;
-    const drain = decidePendingDrainAdmission({
-      listings: derivePendingQueueTargetNames(targetAgentName, workflowNodeName).map(
-        (targetName) => ({
-          targetName,
-          rows:
-            drainWorkflowNodeId != null
-              ? repo.listPendingForTarget(workflowRunId, targetName, drainWorkflowNodeId)
-              : repo.listPendingForTarget(workflowRunId, targetName),
-        })
-      ),
-      admission: {
-        executionPresent: !!execution,
-        trustedWorkflowNodeId,
-        targetKind: 'node_agent',
-      },
-    });
-    if (drain.action === 'skip') return;
-
-    log.info(
-      `TaskAgentManager: flushing ${drain.rows.length} pending message(s) for agent=${targetAgentName} session=${sessionId}`
-    );
-
-    let fallbackTaskId: string | null | undefined;
-    for (const row of drain.rows) {
-      if (row.taskId == null && fallbackTaskId === undefined) {
-        fallbackTaskId = this.config.taskRepo?.listByWorkflowRun(workflowRunId).at(-1)?.id ?? null;
-      }
-      const taskId = row.taskId ?? fallbackTaskId;
-      if (taskId == null) {
-        const terminalStatus = this.resolveTerminalInjectionStatus(workflowRunId, undefined);
-        if (terminalStatus) {
-          const reason = `task/run is terminal (${terminalStatus})`;
-          repo.markAttemptFailed(row.id, reason);
-          log.warn(`TaskAgentManager: pending recovery message ${row.id} skipped — ${reason}`);
-          continue;
-        }
-      }
-      const outcome = await drainPendingRowOntoMailbox({
-        deps: handoffDeps,
-        row,
-        target:
-          taskId == null
-            ? { kind: 'session', sessionId }
-            : {
-                kind: 'worker',
-                taskId,
-                agentName: targetAgentName,
-                workflowNodeId: row.workflowNodeId ?? drainWorkflowNodeId ?? undefined,
-              },
-        message: formatPendingRowForNodeAgent(row, targetAgentName),
-        origin: isHumanPendingSource(row.sourceAgentName) ? 'chat' : 'space_inject',
-      });
-      if (outcome.action !== 'delivered') {
-        log.warn(
-          `TaskAgentManager: pending message ${row.id} delivery for agent=${targetAgentName} not delivered (${outcome.action}: ${outcome.reason ?? 'no reason'})`
-        );
-      }
-    }
-  }
-
-  private pendingDrainHandoffDeps(workflowRunId: string): PendingDrainHandoffDeps | null {
-    const repo = this.config.pendingMessageRepo;
-    const ensureTargetSession = this.config.ensureTargetSession;
-    if (!repo || !ensureTargetSession) return null;
-    const agentMessageDelivery = this.config.agentMessageDelivery;
-    const deliverRoutedMessage: PendingDrainHandoffDeps['deliverRoutedMessage'] = (args) =>
-      agentMessageDelivery
-        ? agentMessageDelivery(workflowRunId, args)
-        : deliverAgentMessageToTarget({
-            deps: this.agentMessageDeliveryDeps(workflowRunId),
-            ...args,
-          });
-    return {
-      ensureTargetSession,
-      deliverRoutedMessage,
-      markDelivered: (id, deliveredSessionId) => repo.markDelivered(id, deliveredSessionId),
-      markFailed: (id, error) => repo.markFailed(id, error),
-      markAttemptFailed: (id, error) => repo.markAttemptFailed(id, error),
-      onDelivered: (row, deliveredSessionId) => {
-        this.recordActivityForSession(deliveredSessionId);
-        this.emitPendingDelivered(row.id, deliveredSessionId, row);
-      },
-    };
   }
 
   async tryResumeNodeAgentSession(
@@ -1596,9 +1397,6 @@ export class TaskAgentManager {
     agentName: string,
     workflowNodeId?: string
   ): Promise<void> {
-    const repo = this.config.pendingMessageRepo;
-    if (!repo) return;
-
     const executions = this.config.nodeExecutionRepo.listByWorkflowRun(workflowRunId);
     const exec = executions
       .filter(
@@ -1610,154 +1408,9 @@ export class TaskAgentManager {
       .at(-1);
     if (!exec?.agentSessionId) return;
 
-    const sessionId = exec.agentSessionId;
-
-    if (this.agentSessionIndex.has(sessionId)) {
-      await this.flushPendingMessagesForTarget(workflowRunId, agentName, sessionId);
-    } else {
-      await this.rehydrateSubSession(sessionId);
+    if (!this.agentSessionIndex.has(exec.agentSessionId)) {
+      await this.rehydrateSubSession(exec.agentSessionId);
     }
-  }
-
-  async flushPendingMessagesForSpaceAgent(spaceId: string, workflowRunId: string): Promise<void> {
-    const repo = this.config.pendingMessageRepo;
-    if (!repo || !this.config.ensureTargetSession) return;
-    if (this.spaceAgentDrainsInFlight.has(workflowRunId)) {
-      this.spaceAgentDrainRerunQueued.add(workflowRunId);
-      return;
-    }
-    this.spaceAgentDrainsInFlight.add(workflowRunId);
-    try {
-      do {
-        this.spaceAgentDrainRerunQueued.delete(workflowRunId);
-        await this.flushSpaceAgentDrainLocked(spaceId, workflowRunId);
-      } while (this.spaceAgentDrainRerunQueued.has(workflowRunId));
-    } finally {
-      this.spaceAgentDrainsInFlight.delete(workflowRunId);
-      this.spaceAgentDrainRerunQueued.delete(workflowRunId);
-    }
-  }
-
-  private async flushSpaceAgentDrainLocked(spaceId: string, workflowRunId: string): Promise<void> {
-    const repo = this.config.pendingMessageRepo;
-    const handoffDeps = this.pendingDrainHandoffDeps(workflowRunId);
-    if (!repo || !handoffDeps) return;
-
-    const spaceChatSessionId = `space:chat:${spaceId}`;
-    const coordinatorTarget: SessionTarget = { kind: 'agent', spaceId, agentId: 'coordinator' };
-    const resolveReplySession = (row: PendingAgentMessageRecord): string | null =>
-      this.resolveSpaceAgentReplySession(row);
-    let retryableRows = 0;
-    const drainDeps: SpaceAgentPendingDrainDeps = {
-      repo,
-      resolveReplySession,
-      probeDeliveryStatus: (sessionId, messageId) =>
-        this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, messageId)?.sendStatus,
-      onSettled: (row, deliveredSessionId) =>
-        this.emitPendingDelivered(row.id, deliveredSessionId, row),
-      deliverRow: async (row) => {
-        const replyTo = resolveReplySession(row);
-        const target: SessionTarget = replyTo
-          ? { kind: 'session', sessionId: replyTo }
-          : coordinatorTarget;
-        const outcome = await drainPendingRowOntoMailbox({
-          deps: replyTo
-            ? {
-                ...handoffDeps,
-                ensureTargetSession: async (sessionTarget) => {
-                  const resolved = await handoffDeps.ensureTargetSession(sessionTarget);
-                  if (resolved.kind === 'unresolved' && resolved.reason === 'not_found') {
-                    return handoffDeps.ensureTargetSession(coordinatorTarget);
-                  }
-                  return resolved;
-                },
-                deliverRoutedMessage: async (args) => {
-                  const first = await handoffDeps.deliverRoutedMessage(args);
-                  if (first.state === 'not_found') {
-                    return handoffDeps.deliverRoutedMessage({ ...args, target: coordinatorTarget });
-                  }
-                  return first;
-                },
-              }
-            : handoffDeps,
-          row,
-          target,
-          message: formatPendingRowForSpaceAgent(row),
-          origin: 'space_agent',
-        });
-        if (outcome.action === 'retry') retryableRows += 1;
-        if (outcome.action !== 'delivered') {
-          log.warn(
-            `TaskAgentManager: Space Agent pending message ${row.id} not delivered ` +
-              `(${outcome.action}: ${outcome.reason ?? 'no reason'})`
-          );
-        }
-      },
-    };
-
-    const drainOutcome = await runSpaceAgentPendingDrain(drainDeps, {
-      workflowRunId,
-      spaceChatSessionId,
-    });
-    if (retryableRows > 0 || drainOutcome.activeDeliveryIds.length > 0) {
-      this.scheduleSpaceAgentRetry(spaceId, workflowRunId);
-    }
-    if (drainOutcome.action === 'skip') return;
-
-    log.info(
-      `TaskAgentManager: flushing ${drainOutcome.rows.length} pending message(s) for Space Agent session=${spaceChatSessionId}`
-    );
-  }
-
-  private scheduleSpaceAgentRetry(spaceId: string, workflowRunId: string): void {
-    if (this.disposed) return;
-    const key = `${spaceId}\0${workflowRunId}`;
-    if (this.spaceAgentRetryTimers.has(key)) return;
-    const timer = setTimeout(() => {
-      this.spaceAgentRetryTimers.delete(key);
-      void this.flushPendingMessagesForSpaceAgent(spaceId, workflowRunId).catch(() => {});
-    }, this.config.spaceAgentRetryDelayMs ?? SPACE_AGENT_RETRY_DELAY_MS);
-    this.spaceAgentRetryTimers.set(key, timer);
-  }
-
-  activeSpaceDeliveryIdsForRun(workflowRunId: string): string[] {
-    const repo = this.config.pendingMessageRepo;
-    if (!repo) return [];
-    return collectActiveSpaceDeliveryIds({
-      repo,
-      workflowRunId,
-      spaceChatSessionId: `space:chat:${this.config.workflowRunRepo?.getRun?.(workflowRunId)?.spaceId ?? ''}`,
-      resolveReplySession: (row) => this.resolveSpaceAgentReplySession(row),
-      probeDeliveryStatus: (sessionId, messageId) =>
-        this.config.db.getSDKMessageRepo?.()?.getDeliveryContent(sessionId, messageId)?.sendStatus,
-    });
-  }
-
-  private resolveSpaceAgentReplySession(row: PendingAgentMessageRecord): string | null {
-    const message = formatPendingRowForSpaceAgent(row);
-    const registry = this.config.replyRoutingRegistry;
-    return (
-      extractReplyToSessionId(message) ?? (registry && row.taskId ? registry.get(row.taskId) : null)
-    );
-  }
-
-  private emitPendingDelivered(
-    messageId: string,
-    sessionId: string,
-    row: { spaceId: string; workflowRunId: string; targetAgentName: string; targetKind: string }
-  ): void {
-    if (!this.config.internalEventBus) return;
-    void this.config.internalEventBus
-      .publish('space.pendingMessage.delivered', {
-        sessionId: 'global',
-        spaceId: row.spaceId,
-        workflowRunId: row.workflowRunId,
-        targetAgentName: row.targetAgentName,
-        targetKind: row.targetKind,
-        messageId,
-        deliveredSessionId: sessionId,
-      })
-      .catch(() => {});
   }
 
   async injectSubSessionMessage(
@@ -2299,7 +1952,6 @@ export class TaskAgentManager {
         `SELECT 1 FROM sdk_messages
           WHERE session_id = ? AND task_id = ? AND message_type = 'user'
             AND consumed_seq IS NOT NULL AND timestamp >= ?
-            AND NOT EXISTS (SELECT 1 FROM pending_agent_messages p WHERE p.id = sdk_messages.sdk_uuid)
             AND json_valid(sdk_message)
             AND json_extract(sdk_message, '$.type') = 'user'
             AND (
@@ -2625,22 +2277,6 @@ export class TaskAgentManager {
         await this.config.sessionManager.unregisterSession(sessionId).catch(() => {});
       }
       throw err;
-    }
-    if (
-      options.startQuery !== false &&
-      options.replayPendingMessages !== false &&
-      (await this.restoredWorkerStartAdmitted(agentSession, taskId))
-    ) {
-      void this.flushPendingMessagesForTarget(
-        task.workflowRunId,
-        agentName,
-        sessionId,
-        nodeId
-      ).catch((err) => {
-        log.warn(
-          `restorePostApprovalWorkerSession: flushPendingMessagesForTarget failed for ${agentName} (session ${sessionId}): ${err instanceof Error ? err.message : String(err)}`
-        );
-      });
     }
 
     log.info(
@@ -3300,8 +2936,6 @@ export class TaskAgentManager {
 
   async cleanupAll(): Promise<void> {
     this.disposed = true;
-    for (const [, timer] of this.spaceAgentRetryTimers) clearTimeout(timer);
-    this.spaceAgentRetryTimers.clear();
     clearAllRetryableHookActionTimers();
     for (const executionId of this.concurrentSpawnWaiters.keys()) {
       this.settleConcurrentSpawnWaiters(executionId, { status: 'failed' });
@@ -4303,22 +3937,6 @@ export class TaskAgentManager {
       throw err;
     }
 
-    if (
-      options.startQuery !== false &&
-      options.replayPendingMessages !== false &&
-      (await this.restoredWorkerStartAdmitted(agentSession, taskId))
-    ) {
-      void this.flushPendingMessagesForTarget(
-        workflowRunId,
-        execution.agentName,
-        subSessionId
-      ).catch((err) => {
-        log.warn(
-          `TaskAgentManager.rehydrateSubSession: flushPendingMessagesForTarget failed for ${execution.agentName} (session ${subSessionId}): ${err instanceof Error ? err.message : String(err)}`
-        );
-      });
-    }
-
     log.info(
       `TaskAgentManager.rehydrateSubSession: rehydrated sub-session ${subSessionId} for task ${taskId} (node ${execution.workflowNodeId})`
     );
@@ -5189,7 +4807,6 @@ export class TaskAgentManager {
       workflowNodeNameById: Object.fromEntries(
         (workflow?.nodes ?? []).map((node) => [node.id, node.name])
       ),
-      pendingMessageRepo: this.config.pendingMessageRepo,
       messageResolver: this.config.messageResolverFactory?.(spaceId, {
         workflowRunId,
         nodeId: workflowNodeId,
@@ -5199,32 +4816,6 @@ export class TaskAgentManager {
       spaceId,
       taskId,
       taskNumber: this.config.taskRepo.getTask(taskId)?.taskNumber ?? null,
-      onMessageQueued: (targetAgentName, queuedWorkflowNodeId) => {
-        void this.tryResumeNodeAgentSession(
-          workflowRunId,
-          targetAgentName,
-          queuedWorkflowNodeId
-        ).catch((err) => {
-          log.warn(
-            `AgentMessageRouter.onMessageQueued: tryResumeNodeAgentSession failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
-          );
-        });
-        const declaredAgentNames = this.getWorkflowDeclaredAgentNamesForTask(taskId);
-        if (declaredAgentNames.includes(targetAgentName)) {
-          log.info(
-            `agent-message-router.onMessageQueued: lazy-activated peer ${targetAgentName} for task ${taskId}`
-          );
-          void this.ensureWorkflowNodeActivationForAgent(taskId, targetAgentName, {
-            reopenReason: `node-agent send_message to lazily activate "${targetAgentName}"`,
-            reopenBy: `agent:${agentName}`,
-            workflowNodeId: queuedWorkflowNodeId,
-          }).catch((err) => {
-            log.warn(
-              `AgentMessageRouter.onMessageQueued: ensureWorkflowNodeActivationForAgent failed for "${targetAgentName}": ${err instanceof Error ? err.message : String(err)}`
-            );
-          });
-        }
-      },
     });
 
     const agentNameAliases = execution

@@ -9,7 +9,6 @@ import type {
 import {
   type ChannelCycleResetter,
   type NodeExecutionLookup,
-  type PendingAgentMessageQueue,
   parseMentions,
   type SessionEnsurer,
   setupSpaceTaskMessageHandlers,
@@ -550,9 +549,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
             agentSessionId: null,
           },
         ]);
-        const pendingMessageQueue = {
-          enqueue: mock(() => ({ record: { id: 'pending-1' }, deduped: false })),
-        };
         setupSpaceTaskMessageHandlers(
           hub,
           taskAgentManager,
@@ -561,7 +557,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
           nodeExecutionRepo,
           undefined,
           undefined,
-          pendingMessageQueue,
           async () => ({ kind: 'unresolved', reason: 'activation_timeout' })
         );
 
@@ -575,7 +570,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
           })
         ).rejects.toThrow(/images.*starting|starting.*images/i);
 
-        expect(pendingMessageQueue.enqueue).not.toHaveBeenCalled();
         expect(injectSubSession).not.toHaveBeenCalled();
       });
     });
@@ -731,61 +725,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
           })
         ).rejects.toThrow('Invalid deliveryMode');
       });
-
-      it('persists deliveryMode:"defer" on the pending row when the target is not live yet', async () => {
-        const mh = createMockMessageHub();
-        hub = mh.hub;
-        handlers = mh.handlers;
-        const enqueued: Array<{ targetAgentName: string; deliveryMode?: string }> = [];
-        taskAgentManager = {
-          ...createMockTaskAgentManager(null, mockTaskWithWorkflowRun),
-          injectSubSessionMessage: mock(async () => {}),
-        };
-        db = createMockDatabase(mockTaskWithWorkflowRun);
-        internalEventBus = {
-          publish: mock(async () => ({ delivered: 0, failures: [] })),
-          publishAsync: mock(() => {}),
-        } as unknown as InternalEventBus<DaemonInternalEventMap>;
-        setupSpaceTaskMessageHandlers(
-          hub,
-          taskAgentManager,
-          db,
-          internalEventBus,
-          makeNodeExecutionRepo([
-            {
-              id: 'exec-coder',
-              workflowNodeId: 'node-1',
-              agentName: 'Coder',
-              agentSessionId: null,
-            },
-          ]),
-          undefined,
-          undefined,
-          {
-            enqueue: mock((input: { targetAgentName: string; deliveryMode?: string }) => {
-              enqueued.push({
-                targetAgentName: input.targetAgentName,
-                deliveryMode: input.deliveryMode,
-              });
-              return { record: { id: 'pending-1' }, deduped: false };
-            }),
-          },
-          async () => ({ kind: 'unresolved', reason: 'activation_timeout' })
-        );
-
-        const result = (await call('space.task.sendMessage', {
-          spaceId: 'space-1',
-          taskId: 'task-1',
-          message: 'for after spawn',
-          target: { kind: 'node_agent', agentName: 'Coder' },
-          deliveryMode: 'defer',
-        })) as { queued?: boolean };
-
-        expect(result.queued).toBe(true);
-        expect(enqueued).toHaveLength(1);
-        expect(enqueued[0].targetAgentName).toBe('Coder');
-        expect(enqueued[0].deliveryMode).toBe('defer');
-      });
     });
 
     describe('post-approval worker routing', () => {
@@ -826,20 +765,15 @@ describe('setupSpaceTaskMessageHandlers', () => {
           publish: mock(async () => ({ delivered: 0, failures: [] })),
           publishAsync: mock(() => {}),
         } as unknown as InternalEventBus<DaemonInternalEventMap>;
-        const pendingMessageQueue = opts.withQueue
-          ? { enqueue: mock(() => ({ record: { id: 'pending-1' }, deduped: false })) }
-          : undefined;
         setupSpaceTaskMessageHandlers(
           hub,
           taskAgentManager,
           db,
           internalEventBus,
           makeNodeExecutionRepo([]),
-          undefined,
-          undefined,
-          pendingMessageQueue
+          undefined
         );
-        return { injectSubSession, pendingMessageQueue };
+        return { injectSubSession };
       }
 
       it('routes a merger reply (agentName target) directly to the post-approval session', async () => {
@@ -895,10 +829,9 @@ describe('setupSpaceTaskMessageHandlers', () => {
 
       it('restores the worker when it is not in memory, then delivers the reply', async () => {
         let callCount = 0;
-        const { injectSubSession, pendingMessageQueue } = setupPostApproval({
+        const { injectSubSession } = setupPostApproval({
           postApproval: { sessionId: mergerSessionId, agentName: 'merger' },
           restoreResult: mergerSessionId,
-          withQueue: true,
           injectImpl: async () => {
             callCount += 1;
             if (callCount === 1) throw new Error(`Sub-session not found: ${mergerSessionId}`);
@@ -915,7 +848,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         expect(res).toEqual({ ok: true, routedTo: ['merger'] });
         expect(injectSubSession).toHaveBeenCalledTimes(2);
         expect(injectSubSession.mock.calls[1][0]).toBe(mergerSessionId);
-        expect(pendingMessageQueue!.enqueue).not.toHaveBeenCalled();
       });
 
       it('fails honestly when the worker cannot be restored', async () => {
@@ -938,10 +870,9 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
 
       it('rethrows non-rehydrate inject errors (e.g. terminal task) instead of restoring', async () => {
-        const { pendingMessageQueue } = setupPostApproval({
+        setupPostApproval({
           postApproval: { sessionId: mergerSessionId, agentName: 'merger' },
           restoreResult: mergerSessionId,
-          withQueue: true,
           injectImpl: async () => {
             throw new Error('Cannot inject message to session — task/run is terminal (cancelled)');
           },
@@ -955,7 +886,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
             target: { kind: 'node_agent', agentName: 'merger' },
           })
         ).rejects.toThrow('terminal');
-        expect(pendingMessageQueue!.enqueue).not.toHaveBeenCalled();
       });
 
       it('does not match the worker by name when an execution id disambiguates the target', async () => {
@@ -1423,7 +1353,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       }>;
       declared?: string[];
       postApproval?: { sessionId: string; agentName: string; nodeId?: string | null } | null;
-      pendingMessageQueue?: PendingAgentMessageQueue;
       outcomes: Array<Awaited<ReturnType<SessionEnsurer>>>;
     }) {
       const mh = createMockMessageHub();
@@ -1459,7 +1388,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         makeNodeExecutionRepo(opts.executions),
         undefined,
         undefined,
-        opts.pendingMessageQueue,
         ensureTargetSession
       );
       return { targets, injectSubSessionMessage };
@@ -1616,13 +1544,11 @@ describe('setupSpaceTaskMessageHandlers', () => {
       );
     });
 
-    it('rejects permanent activation failures instead of queueing explicit sends', async () => {
-      const enqueue = mock(() => ({ record: { id: 'pending-1' }, deduped: false }));
+    it('rejects permanent activation failures for explicit sends', async () => {
       const { targets, injectSubSessionMessage } = setupWithResolver({
         executions: [],
         declared: ['Reviewer'],
         outcomes: [{ kind: 'unresolved', reason: 'activate_failed' }],
-        pendingMessageQueue: { enqueue },
       });
 
       await expect(
@@ -1647,7 +1573,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
           waitCapMs: 0,
         },
       ]);
-      expect(enqueue).not.toHaveBeenCalled();
       expect(injectSubSessionMessage).not.toHaveBeenCalled();
     });
 
@@ -1745,7 +1670,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         status?: string;
       }>;
       activateNode?: (runId: string, nodeId: string) => Promise<void>;
-      includeQueue?: boolean;
     }) {
       const mh = createMockMessageHub();
       hub = mh.hub;
@@ -1769,31 +1693,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
           })
         : undefined;
 
-      const enqueueCalls: Array<{
-        targetAgentName: string;
-        message: string;
-        sourceAgentName?: string | null;
-      }> = [];
-      let pendingQueue: { enqueue: ReturnType<typeof mock> } | undefined;
-      if (opts.includeQueue ?? true) {
-        pendingQueue = {
-          enqueue: mock(
-            (input: {
-              targetAgentName: string;
-              message: string;
-              sourceAgentName?: string | null;
-            }) => {
-              enqueueCalls.push({
-                targetAgentName: input.targetAgentName,
-                message: input.message,
-                sourceAgentName: input.sourceAgentName,
-              });
-              return { record: { id: `pending-\${enqueueCalls.length}` }, deduped: false };
-            }
-          ),
-        };
-      }
-
       const nodeExecutionRepo = makeNodeExecutionRepo(opts.nodeExecAgents);
 
       setupSpaceTaskMessageHandlers(
@@ -1803,14 +1702,12 @@ describe('setupSpaceTaskMessageHandlers', () => {
         internalEventBus,
         nodeExecutionRepo,
         undefined,
-        mockActivateNode,
-        pendingQueue as Parameters<typeof setupSpaceTaskMessageHandlers>[7]
+        mockActivateNode
       );
 
       return {
         injectSubSession,
         nodeExecCalls,
-        enqueueCalls,
         activateNode: mockActivateNode,
       };
     }
@@ -2179,7 +2076,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(result).toMatchObject({
         ok: true,
         delivered: false,
-        queued: true,
+        activated: true,
       });
     });
 
@@ -2289,41 +2186,7 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(injectSubSession).not.toHaveBeenCalled();
     });
 
-    it('delivered:false + queued:true when session not available and queue is present', async () => {
-      const { enqueueCalls, injectSubSession } = setupWithActivation({
-        nodeExecAgents: [
-          {
-            id: 'exec-reviewer',
-            workflowNodeId: 'node-rev',
-            agentName: 'Reviewer',
-            agentSessionId: null,
-          },
-        ],
-        activateNode: async () => {},
-      });
-
-      const result = await call('space.task.sendMessage', {
-        spaceId: 'space-1',
-        taskId: 'task-1',
-        message: 'Queue this',
-        target: { kind: 'node_agent', agentName: 'Reviewer' },
-      });
-
-      expect(result).toMatchObject({
-        ok: true,
-        routedTo: ['Reviewer'],
-        delivered: false,
-        queued: true,
-        activated: true,
-      });
-      expect(enqueueCalls).toHaveLength(1);
-      expect(enqueueCalls[0].targetAgentName).toBe('Reviewer');
-      expect(enqueueCalls[0].message).toBe('Queue this');
-      expect(enqueueCalls[0].sourceAgentName).toBe('human');
-      expect(injectSubSession).not.toHaveBeenCalled();
-    });
-
-    it('delivered:false without queued when no pendingMessageQueue', async () => {
+    it('delivered:false when the session is not available', async () => {
       const mh = createMockMessageHub();
       hub = mh.hub;
       handlers = mh.handlers;
@@ -2732,7 +2595,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         declared?: string[];
         resolutionOutcome?: Awaited<ReturnType<SessionEnsurer>>;
         liveSession?: { session: { id: string } } | null;
-        includeQueue?: boolean;
       } = {}
     ) {
       const mh = createMockMessageHub();
@@ -2746,11 +2608,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
       );
 
       const injectCalls: Array<{ sessionId: string; message: string }> = [];
-      const enqueueCalls: Array<{
-        targetAgentName: string;
-        message: string;
-        sourceAgentName?: string | null;
-      }> = [];
 
       const localTaskAgentManager: TaskAgentManagerInterface = {
         ...createMockTaskAgentManager(null, opts.task ?? mockTaskWithRun),
@@ -2769,26 +2626,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         publishAsync: mock(() => {}),
       } as unknown as InternalEventBus<DaemonInternalEventMap>;
 
-      let pendingQueue: ReturnType<typeof mock> | undefined;
-      let pendingMessageQueue: undefined | { enqueue: typeof pendingQueue };
-      if (opts.includeQueue ?? true) {
-        pendingQueue = mock(
-          (input: {
-            targetAgentName: string;
-            message: string;
-            sourceAgentName?: string | null;
-          }) => {
-            enqueueCalls.push({
-              targetAgentName: input.targetAgentName,
-              message: input.message,
-              sourceAgentName: input.sourceAgentName,
-            });
-            return { record: { id: `pending-${enqueueCalls.length}` }, deduped: false };
-          }
-        );
-        pendingMessageQueue = { enqueue: pendingQueue };
-      }
-
       setupSpaceTaskMessageHandlers(
         mh.hub,
         localTaskAgentManager,
@@ -2797,7 +2634,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         undefined,
         undefined,
         undefined,
-        pendingMessageQueue as Parameters<typeof setupSpaceTaskMessageHandlers>[7],
         ensureTargetSession
       );
 
@@ -2806,7 +2642,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         taskAgentManager: localTaskAgentManager,
         resolutionCalls,
         injectCalls,
-        enqueueCalls,
         internalEventBus: localInternalEventBus,
       };
     }
@@ -2875,7 +2710,6 @@ describe('setupSpaceTaskMessageHandlers', () => {
         handlers: h,
         resolutionCalls,
         injectCalls,
-        enqueueCalls,
       } = setupActivate({
         resolutionOutcome: { kind: 'resolved', sessionId: 'sess-live-reviewer', created: false },
         liveSession: { session: { id: 'sess-live-reviewer' } },
@@ -2900,25 +2734,14 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(result).toMatchObject({
         sessionId: 'sess-live-reviewer',
         activated: false,
-        queued: true,
-        queuedMessageId: 'pending-1',
       });
-      expect(injectCalls).toHaveLength(0);
-      expect(enqueueCalls).toEqual([
-        {
-          targetAgentName: 'reviewer',
-          message: 'hi reviewer',
-          sourceAgentName: 'human',
-        },
+      expect(injectCalls).toEqual([
+        { sessionId: 'sess-live-reviewer', message: '[Message from human]: hi reviewer' },
       ]);
     });
 
     it('throws when ensureSession reports activation failure', async () => {
-      const {
-        handlers: h,
-        resolutionCalls,
-        enqueueCalls,
-      } = setupActivate({
+      const { handlers: h, resolutionCalls } = setupActivate({
         resolutionOutcome: { kind: 'unresolved', reason: 'activate_failed' },
       });
       await expect(
@@ -2939,11 +2762,10 @@ describe('setupSpaceTaskMessageHandlers', () => {
         reopenBy: 'web-client',
         waitCapMs: 0,
       });
-      expect(enqueueCalls).toHaveLength(1);
     });
 
-    it('queues after zero-wait activation when the worker session is unresolved', async () => {
-      const { handlers: h, resolutionCalls, injectCalls, enqueueCalls } = setupActivate();
+    it('reports activation without a session when zero-wait activation is unresolved', async () => {
+      const { handlers: h, resolutionCalls, injectCalls } = setupActivate();
       const result = (await (h.get('space.task.activateNodeAgent') as RequestHandler)({
         spaceId: 'space-1',
         taskId: 'task-1',
@@ -2954,9 +2776,8 @@ describe('setupSpaceTaskMessageHandlers', () => {
       expect(result).toMatchObject({
         sessionId: null,
         activated: true,
-        queued: true,
-        queuedMessageId: 'pending-1',
       });
+      expect((result as { queued?: boolean }).queued).toBeUndefined();
       expect(resolutionCalls).toEqual([
         {
           kind: 'worker',
@@ -2968,26 +2789,17 @@ describe('setupSpaceTaskMessageHandlers', () => {
         },
       ]);
       expect(injectCalls).toHaveLength(0);
-      expect(enqueueCalls).toEqual([
-        {
-          targetAgentName: 'reviewer',
-          message: 'wake up reviewer',
-          sourceAgentName: 'human',
-        },
-      ]);
     });
 
-    it('skips queueing when zero-wait activation has no message', async () => {
-      const { handlers: h, resolutionCalls, enqueueCalls } = setupActivate();
+    it('activates without injecting when no message is provided', async () => {
+      const { handlers: h, resolutionCalls } = setupActivate();
       const result = (await (h.get('space.task.activateNodeAgent') as RequestHandler)({
         spaceId: 'space-1',
         taskId: 'task-1',
         agentName: 'reviewer',
       })) as Record<string, unknown>;
 
-      expect(result).toMatchObject({ sessionId: null, activated: true, queued: false });
-      expect(result.queuedMessageId).toBeUndefined();
-      expect(enqueueCalls).toHaveLength(0);
+      expect(result).toMatchObject({ sessionId: null, activated: true });
       expect(resolutionCalls).toHaveLength(1);
     });
 

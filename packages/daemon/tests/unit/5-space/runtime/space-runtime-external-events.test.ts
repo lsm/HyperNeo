@@ -151,8 +151,6 @@ class MockTaskAgentManager {
     return true;
   }
 
-  async flushPendingMessagesForTarget(): Promise<void> {}
-
   async activateTargetSessionsForMessage(
     taskId: string,
     workflowRunId: string,
