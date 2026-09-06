@@ -1860,26 +1860,6 @@ export class SDKMessageRepository {
     }
   }
 
-  getConsumedSiblingContent(sessionId: string, uuid: string): string | MessageContent[] | null {
-    const row = this.db
-      .prepare(
-        `SELECT sdk_message FROM sdk_messages
-          WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-            AND (consumed_seq IS NOT NULL OR COALESCE(send_status, 'consumed') = 'consumed')
-          ORDER BY timestamp DESC, rowid DESC LIMIT 1`
-      )
-      .get(sessionId, uuid) as { sdk_message: string } | null | undefined;
-    if (row === null || row === undefined) return null;
-    try {
-      const parsed = JSON.parse(row.sdk_message) as {
-        message?: { content?: string | MessageContent[] };
-      };
-      return parsed.message?.content ?? null;
-    } catch {
-      return null;
-    }
-  }
-
   getDeliveryContent(
     sessionId: string,
     uuid: string
@@ -2041,34 +2021,6 @@ export class SDKMessageRepository {
 
   markDeliveryFailedByUuid(sessionId: string, uuid: string): string | null {
     return this.markDeliveryTransitionByUuid(sessionId, uuid, 'fail');
-  }
-
-  failDeliveryUnlessProcessing(sessionId: string, uuid: string): string | null {
-    const { acceptedFrom, target } = deliveryTransitionRule('fail');
-    const txn = this.db.transaction(() => {
-      const row = this.db
-        .prepare(
-          `SELECT id FROM sdk_messages
-             WHERE session_id = ? AND message_type = 'user' AND sdk_uuid = ?
-               AND send_status IN (${acceptedFrom.map(() => '?').join(', ')})
-               AND NOT EXISTS (
-                 SELECT 1 FROM job_queue
-                  WHERE queue = 'message_delivery'
-                    AND json_extract(payload, '$.sessionId') = ?
-                    AND json_extract(payload, '$.messageUuid') = ?
-                    AND status = 'processing'
-               )
-             ORDER BY timestamp ASC, rowid ASC LIMIT 1`
-        )
-        .get(sessionId, uuid, ...acceptedFrom, sessionId, uuid) as
-        | { id: string }
-        | null
-        | undefined;
-      if (row === null || row === undefined) return null;
-      this.updateMessageStatus([row.id], target);
-      return row.id;
-    }, 'immediate');
-    return withBusyRetry(() => txn());
   }
 
   findMessageIdByUuid(sessionId: string, uuid: string): string | null {
