@@ -88,12 +88,16 @@ import {
   DEFAULT_AGENT_STUCK_NAG_GRACE_MS,
   DEFAULT_SILENT_STALL_ATTENTION_THRESHOLD_MS,
   DEFAULT_TOOL_USE_ACTIVE_TTL_MS,
-  MAX_AGENT_STUCK_NAGS,
-  MAX_AGENT_STUCK_RESTARTS,
   MAX_BLOCKED_RUN_RETRIES,
   MAX_TASK_AGENT_CRASH_RETRIES,
   MAX_TERMINAL_ERROR_CONTINUE_RETRIES,
 } from './constants.ts';
+import {
+  createAgentStuckRecoveryState,
+  decideStuckLadderAction,
+  observeExecutionProgress,
+  type AgentStuckRecoveryState,
+} from './anti-stuck/stuck-ladder-gates.ts';
 import {
   DEFAULT_EXTERNAL_EVENT_QUEUE_TTL_MS,
   evaluateRequeueTaskLifecycle,
@@ -371,20 +375,6 @@ interface DigestPullTriggerState {
   idleTimer: Timer | null;
   safetyTimer: Timer | null;
   countTimer: Timer | null;
-}
-
-interface AgentStuckRecoveryState {
-  nagCount: number;
-  restartCount: number;
-  lastAction: 'nag' | 'restart' | 'blocked' | null;
-  lastActionAt: number | null;
-  lastObservedMessageId: string | null;
-  lastObservedMessageAt: number | null;
-  lastObservedProgressMessageId: string | null;
-  lastObservedProgressMessageAt: number | null;
-  lastRuntimeNagMessageId: string | null;
-  lastSessionId: string | null;
-  pendingRestartNotice: string | null;
 }
 
 interface NonTerminalIdleState {
@@ -5425,19 +5415,7 @@ export class SpaceRuntime {
     const key = this.makeAgentStuckKey(runId, execution.id);
     const existing = this.agentStuckRecovery.get(key);
     if (existing) return existing;
-    const created: AgentStuckRecoveryState = {
-      nagCount: 0,
-      restartCount: 0,
-      lastAction: null,
-      lastActionAt: null,
-      lastObservedMessageId: null,
-      lastObservedMessageAt: null,
-      lastObservedProgressMessageId: null,
-      lastObservedProgressMessageAt: null,
-      lastRuntimeNagMessageId: null,
-      lastSessionId: execution.agentSessionId,
-      pendingRestartNotice: null,
-    };
+    const created = createAgentStuckRecoveryState(execution.agentSessionId);
     this.agentStuckRecovery.set(key, created);
     return created;
   }
@@ -5811,44 +5789,14 @@ export class SpaceRuntime {
 
       const lastMessage = this.getSdkMessageRepo().getLastSDKMessage(execution.agentSessionId);
       const classification = classifyLastMessageForIdleAgent(lastMessage);
-      const state = this.getAgentStuckState(runId, execution);
-      const isRuntimeNagMessage =
-        lastMessage?.type === 'user' && lastMessage.dbId === state.lastRuntimeNagMessageId;
-      const progressMessage = lastMessage && !isRuntimeNagMessage ? lastMessage : null;
-      const progressSignals = [execution.lastActivityAt, progressMessage?.timestamp].filter(
-        (t): t is number => typeof t === 'number'
-      );
-      const observedAt =
-        progressSignals.length > 0
-          ? Math.max(...progressSignals)
-          : (execution.startedAt ?? state.lastActionAt ?? now);
+      let state = this.getAgentStuckState(runId, execution);
       const thresholdMs = this.getAgentNoProgressThresholdMs(workflow, execution);
-
-      if (state.lastSessionId !== execution.agentSessionId) {
-        state.lastSessionId = execution.agentSessionId;
-        state.lastObservedMessageId = lastMessage?.dbId ?? null;
-        state.lastObservedMessageAt = lastMessage?.timestamp ?? null;
-        state.lastObservedProgressMessageId = progressMessage?.dbId ?? null;
-        state.lastObservedProgressMessageAt = progressMessage?.timestamp ?? null;
-        state.lastRuntimeNagMessageId = null;
-        state.lastAction = null;
-        state.lastActionAt = null;
-        state.nagCount = 0;
-        state.restartCount = 0;
-        state.pendingRestartNotice = null;
-      } else if (state.lastObservedMessageId !== (lastMessage?.dbId ?? null)) {
-        state.lastObservedMessageId = lastMessage?.dbId ?? null;
-        state.lastObservedMessageAt = lastMessage?.timestamp ?? null;
-        if (progressMessage && state.lastObservedProgressMessageId !== progressMessage.dbId) {
-          state.lastObservedProgressMessageId = progressMessage.dbId;
-          state.lastObservedProgressMessageAt = progressMessage.timestamp;
-          state.lastAction = null;
-          state.lastActionAt = null;
-          state.nagCount = 0;
-          state.restartCount = 0;
-          state.pendingRestartNotice = null;
-        }
+      const observation = observeExecutionProgress(state, execution, lastMessage, now);
+      if (observation.state !== state) {
+        this.agentStuckRecovery.set(this.makeAgentStuckKey(runId, execution.id), observation.state);
+        state = observation.state;
       }
+      const observedAt = observation.observedAt;
 
       if (classification.terminal) {
         this.clearAgentStuckState(runId, execution.id);
@@ -5859,9 +5807,11 @@ export class SpaceRuntime {
         continue;
       }
 
-      if (now - observedAt <= thresholdMs) continue;
+      const ladder = decideStuckLadderAction({ now, observedAt, thresholdMs, nagGraceMs, state });
 
-      if (state.nagCount < MAX_AGENT_STUCK_NAGS) {
+      if (ladder.action === 'within_threshold') continue;
+
+      if (ladder.action === 'nag') {
         const nagMessageId = await tam.injectRuntimeRecoveryMessage(
           execution.agentSessionId,
           this.buildRuntimeNagMessage(runId, execution, observedAt, classification.reason)
@@ -5877,18 +5827,16 @@ export class SpaceRuntime {
         continue;
       }
 
-      if (state.lastAction === 'nag' && state.lastActionAt !== null) {
-        const elapsedSinceNag = now - state.lastActionAt;
-        if (elapsedSinceNag < nagGraceMs) {
-          log.debug(
-            `SpaceRuntime: delaying restart for stuck agent execution ${execution.id}; ` +
-              `runtime nag grace has ${nagGraceMs - elapsedSinceNag}ms remaining`
-          );
-          continue;
-        }
+      if (ladder.action === 'wait_nag_grace') {
+        const elapsedSinceNag = now - state.lastActionAt!;
+        log.debug(
+          `SpaceRuntime: delaying restart for stuck agent execution ${execution.id}; ` +
+            `runtime nag grace has ${nagGraceMs - elapsedSinceNag}ms remaining`
+        );
+        continue;
       }
 
-      if (state.restartCount < MAX_AGENT_STUCK_RESTARTS) {
+      if (ladder.action === 'restart') {
         await tam.restartStuckSubSession(execution.agentSessionId);
         state.restartCount += 1;
         state.lastAction = 'restart';
