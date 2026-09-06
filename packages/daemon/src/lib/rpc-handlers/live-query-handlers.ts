@@ -594,7 +594,6 @@ session_node_exec AS (
 task_sdk_messages AS MATERIALIZED (
   SELECT
     sm.*,
-    sm.rowid AS ins_rowid,
     COALESCE(sm.sdk_uuid, sm.id) AS resolved_sdk_uuid,
     -- Post-approval worker sessions (e.g. the merger) carry no
     -- node_executions row, so the session_node_exec LEFT JOIN downstream
@@ -805,28 +804,17 @@ sdk_rows AS (
 ${deliveryRetryStateCtes(`AND json_extract(jq.payload, '$.sessionId') IN (
     SELECT session_id FROM sdk_messages WHERE task_id = (SELECT id FROM target_task)
   )`)},
-delivery_user_rank AS MATERIALIZED (
-  SELECT
-    sm.id AS id,
-    ROW_NUMBER() OVER (
-      PARTITION BY sm.session_id
-      ORDER BY sm.timestamp ASC, sm.ins_rowid ASC
-    ) AS user_rank
-  FROM task_sdk_messages sm
-  WHERE sm.message_type = 'user'
-    AND sm.send_status IS NOT NULL
-),
 -- Delivery rows project the mailbox delivery lifecycle from the session outbox
--- (sdk_messages user rows) rather than the legacy pending_agent_messages queue:
--- outbox-persisted synthetic non-initial user rows are routed deliveries, and
--- send_status carries the lifecycle (enqueued/deferred/submitted → queued,
--- consumed → delivered, failed → failed). A non-NULL send_status plus a NULL
--- parent_tool_use_id is the outbox evidence: SDK-emitted user echoes (tool
--- results) are also stamped isSynthetic but persist without a send status.
--- A session's FIRST outbox row is its initial brief, never a delivery, so it
--- is excluded. The sender chip comes from the agent-message envelope header
--- when present; runtime injections (wakes, recovery, nags) fall back to the
--- Runtime actor.
+-- (sdk_messages user rows) rather than the legacy pending_agent_messages queue,
+-- and send_status carries the lifecycle (enqueued/deferred/submitted → queued,
+-- consumed → delivered, failed → failed). Three pieces of outbox evidence gate
+-- a row in: a non-NULL send_status and a NULL parent_tool_use_id (SDK-emitted
+-- user echoes like tool results are also stamped isSynthetic but persist
+-- without a send status), and an agent-message envelope header — every routed
+-- agent-to-agent delivery is wrapped by formatAgentMessage (router, tools,
+-- drain), while session briefs and kickoff prompts (including kickoffs
+-- injected into reused sessions) and runtime injections (wakes, recovery,
+-- nags) are never enveloped. The parsed envelope sender becomes the from chip.
 delivery_rows AS (
   SELECT
     id,
@@ -839,8 +827,8 @@ delivery_rows AS (
     eventRef,
     json_object(
       'kind', CASE WHEN sender IS NULL THEN 'system' ELSE 'worker' END,
-      'label', COALESCE(sender, 'Runtime'),
-      'role', COALESCE(sender, 'runtime')
+      'label', COALESCE(NULLIF(sender, ''), 'Runtime'),
+      'role', COALESCE(NULLIF(sender, ''), 'runtime')
     ) AS fromActor,
     json_object(
       'kind', CASE WHEN agent_id IS NOT NULL THEN 'agent' ELSE 'worker' END,
@@ -892,7 +880,6 @@ delivery_rows AS (
       CAST(ROUND((julianday(tsm.timestamp) - 2440587.5) * 86400000) AS INTEGER) AS createdAt
     FROM target_task tt
     JOIN task_sdk_messages tsm ON tsm.task_id = tt.id
-    JOIN delivery_user_rank dur ON dur.id = tsm.id AND dur.user_rank > 1
     LEFT JOIN delivery_retrying adr
       ON adr.message_uuid = tsm.resolved_sdk_uuid
      AND adr.session_id = tsm.session_id
@@ -910,8 +897,10 @@ delivery_rows AS (
     WHERE tsm.message_type = 'user'
       AND json_valid(tsm.sdk_message)
       AND COALESCE(CAST(json_extract(tsm.sdk_message, '$.isSynthetic') AS INTEGER), 0) = 1
+      AND tsm.send_status IS NOT NULL
       AND tsm.parent_tool_use_id IS NULL
   )
+  WHERE sender IS NOT NULL
 ),
 github_rows AS (
   SELECT
@@ -992,23 +981,13 @@ delivery_targets AS MATERIALIZED (
     sm.sdk_message AS sdk_message,
     COALESCE(sm.sdk_uuid, sm.id) AS resolved_uuid,
     sm.send_status AS send_status,
-    sm.timestamp AS timestamp,
-    sm.rowid AS ins_rowid
+    sm.timestamp AS timestamp
   FROM space_tasks st
   JOIN sdk_messages sm ON sm.task_id = st.id
   WHERE st.workflow_run_id = ?
     AND sm.message_type = 'user'
     AND sm.send_status IS NOT NULL
     AND sm.parent_tool_use_id IS NULL
-),
-delivery_user_rank AS MATERIALIZED (
-  SELECT
-    message_id,
-    ROW_NUMBER() OVER (
-      PARTITION BY session_id
-      ORDER BY timestamp ASC, ins_rowid ASC
-    ) AS user_rank
-  FROM delivery_targets
 ),
 delivery_session_exec AS (
   SELECT
@@ -1046,9 +1025,10 @@ ${deliveryRetryStateCtes(`AND json_extract(jq.payload, '$.sessionId') IN (
     SELECT session_id FROM delivery_targets
   )`)},
 -- Same mailbox delivery projection as the task timeline, scoped to the run's
--- tasks through sdk_messages.task_id; outbox-persisted synthetic non-initial
--- user rows (send_status non-NULL, no parent tool use) are the routed
--- deliveries that used to surface from pending_agent_messages.
+-- tasks through sdk_messages.task_id; outbox-persisted synthetic user rows
+-- (send_status non-NULL, no parent tool use) carrying an agent-message
+-- envelope are the routed deliveries that used to surface from
+-- pending_agent_messages.
 delivery_rows AS (
   SELECT
     id,
@@ -1061,8 +1041,8 @@ delivery_rows AS (
     eventRef,
     json_object(
       'kind', CASE WHEN sender IS NULL THEN 'system' ELSE 'worker' END,
-      'label', COALESCE(sender, 'Runtime'),
-      'role', COALESCE(sender, 'runtime')
+      'label', COALESCE(NULLIF(sender, ''), 'Runtime'),
+      'role', COALESCE(NULLIF(sender, ''), 'runtime')
     ) AS fromActor,
     json_object(
       'kind', CASE WHEN agent_id IS NOT NULL THEN 'agent' ELSE 'worker' END,
@@ -1113,7 +1093,6 @@ delivery_rows AS (
       dje.error AS error,
       CAST(ROUND((julianday(dt.timestamp) - 2440587.5) * 86400000) AS INTEGER) AS createdAt
     FROM delivery_targets dt
-    JOIN delivery_user_rank dur ON dur.message_id = dt.message_id AND dur.user_rank > 1
     LEFT JOIN delivery_session_exec dse
       ON dse.session_id = dt.session_id
      AND dse.rn = 1
@@ -1130,6 +1109,7 @@ delivery_rows AS (
     WHERE json_valid(dt.sdk_message)
       AND COALESCE(CAST(json_extract(dt.sdk_message, '$.isSynthetic') AS INTEGER), 0) = 1
   )
+  WHERE sender IS NOT NULL
 ),
 artifact_rows AS (
   SELECT

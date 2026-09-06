@@ -1194,6 +1194,67 @@ describe('NAMED_QUERY_REGISTRY', () => {
       ).toEqual(['delivery:sdk-a-handoff']);
     });
 
+    test('actorMessages.byTask excludes kickoff prompts injected into reused sessions', () => {
+      const workflowRunId = 'wr-actor-kickoff-reuse';
+      const nodeSessionId = 'session-actor-kickoff-reuse';
+      const taskId = insertSpaceTask({
+        id: 'actor-kickoff-reuse',
+        workflowRunId,
+        status: 'in_progress',
+      });
+      insertSession(nodeSessionId, 'worker', '{}');
+      insertNodeExecution({
+        id: 'ne-actor-kickoff-reuse',
+        workflowRunId,
+        workflowNodeId: 'node-reviewer',
+        agentName: 'reviewer',
+        agentSessionId: nodeSessionId,
+        status: 'in_progress',
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-reuse-brief',
+        sessionId: nodeSessionId,
+        timestampMs: now + 1000,
+        sendStatus: 'consumed',
+        payload: {
+          type: 'user',
+          isSynthetic: true,
+          inputKind: 'task',
+          message: { role: 'user', content: [{ type: 'text', text: 'You are the reviewer.' }] },
+        },
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-reuse-handoff',
+        sessionId: nodeSessionId,
+        timestampMs: now + 2000,
+        sendStatus: 'consumed',
+        sdkUuid: 'u-reuse-handoff',
+        payload: envelopeHandoffPayload('u-reuse-handoff', 'coder', 'real handoff'),
+      });
+      insertOutboxUserMessage({
+        id: 'sdk-reuse-kickoff',
+        sessionId: nodeSessionId,
+        timestampMs: now + 3000,
+        sendStatus: 'consumed',
+        payload: {
+          type: 'user',
+          isSynthetic: true,
+          inputKind: 'task',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'Post-approval kickoff for the reused session.' }],
+          },
+        },
+      });
+
+      const entry = NAMED_QUERY_REGISTRY.get('actorMessages.byTask')!;
+      const rows = db.prepare(entry.sql).all(taskId) as Record<string, unknown>[];
+
+      expect(
+        rows.filter((row) => String(row.id).startsWith('delivery:')).map((row) => row.id)
+      ).toEqual(['delivery:sdk-reuse-handoff']);
+    });
+
     test('actorMessages.byTask maps queued and failed outbox rows onto the delivery lifecycle', () => {
       const workflowRunId = 'wr-actor-lifecycle';
       const nodeSessionId = 'session-actor-lifecycle';
