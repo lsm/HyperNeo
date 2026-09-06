@@ -1,11 +1,13 @@
+import { createHash } from 'node:crypto';
 import type { MessageOrigin } from '@hyperneo/shared';
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import type { SDKMessage, SDKUserMessage } from '@hyperneo/shared/sdk';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { withBusyRetry } from '../../storage/busy-retry.ts';
 import type { Job } from '../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
+import { canonicalJson, normalizePromptForComparison } from '../agent/prompt-comparison.ts';
 import { emitStructuredLogEvent } from '../logger.ts';
-import { type MailboxEntry, type MailboxMessageContent, parseMailboxEntry } from './entry.ts';
+import { type MailboxEntry, parseMailboxEntry } from './entry.ts';
 
 export interface MailboxFailureDeps {
   sdkMessageRepo: SDKMessageRepository;
@@ -26,6 +28,7 @@ export interface MailboxFailureCtx {
   target?: SessionFailureTarget;
   message?: SDKUserMessage;
   failedId?: string;
+  uuidOwned?: boolean;
 }
 
 function emitMaterializeFailure(
@@ -49,9 +52,17 @@ function emitMaterializeFailure(
   } catch {}
 }
 
+export function deterministicMailboxUuid(entryId: string): string {
+  const digest = createHash('sha256').update(entryId).digest('hex');
+  return `mbox-${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
+}
+
 export function sessionFailureTarget(entry: MailboxEntry | null): SessionFailureTarget | null {
-  if (entry?.to.kind !== 'session' || entry.messageUuid === undefined) return null;
-  return { sessionId: entry.to.sessionId, messageUuid: entry.messageUuid };
+  if (entry?.to.kind !== 'session') return null;
+  return {
+    sessionId: entry.to.sessionId,
+    messageUuid: entry.messageUuid ?? deterministicMailboxUuid(entry.id),
+  };
 }
 
 export function parseFailureEntryStage(ctx: MailboxFailureCtx): MailboxFailureCtx {
@@ -77,37 +88,48 @@ export function buildFailureMessageStage(ctx: MailboxFailureCtx): MailboxFailure
   return { ...ctx, message };
 }
 
-function sameFailureContent(
-  stored: MailboxMessageContent | null,
-  incoming: MailboxMessageContent | undefined
-): boolean {
-  if (stored === null || incoming === undefined) return false;
-  return JSON.stringify(stored) === JSON.stringify(incoming);
+function samePromptMessage(stored: SDKMessage, incoming: SDKUserMessage): boolean {
+  return (
+    canonicalJson(normalizePromptForComparison(stored)) ===
+    canonicalJson(normalizePromptForComparison(incoming))
+  );
 }
 
 export function persistFailedRowStage(ctx: MailboxFailureCtx): MailboxFailureCtx {
   const target = ctx.target;
   const message = ctx.message;
-  if (target === undefined || message === undefined) return ctx;
-  const synthetic = ctx.entry?.origin !== 'chat';
+  const entry = ctx.entry;
+  if (target === undefined || message === undefined || entry === null) return ctx;
+  const synthetic = entry.origin !== 'chat';
   try {
-    const failedId = withBusyRetry(() => {
-      const existing = ctx.deps.sdkMessageRepo.getDeliveryContent(
+    const outcome = withBusyRetry((): { failedId: string; uuidOwned: boolean } => {
+      const stored = ctx.deps.sdkMessageRepo.getStoredPromptByUuid(
         target.sessionId,
         target.messageUuid
       );
-      if (existing !== null && !sameFailureContent(existing.content, message.message?.content)) {
-        return ctx.deps.saveFailed(target.sessionId, message, synthetic ? 'system' : undefined);
+      if (stored !== null && !samePromptMessage(stored, message)) {
+        const receipt: SDKUserMessage = {
+          ...message,
+          uuid: deterministicMailboxUuid(entry.id) as NonNullable<SDKUserMessage['uuid']>,
+        };
+        return {
+          failedId: ctx.deps.saveFailed(
+            target.sessionId,
+            receipt,
+            synthetic ? 'system' : undefined
+          ),
+          uuidOwned: false,
+        };
       }
-      return (
+      const failedId =
         ctx.deps.sdkMessageRepo.markDeliveryFailedByUuid(target.sessionId, target.messageUuid) ??
         ctx.deps.sdkMessageRepo.findMessageIdByUuid?.(target.sessionId, target.messageUuid) ??
-        ctx.deps.saveFailed(target.sessionId, message, synthetic ? 'system' : undefined)
-      );
+        ctx.deps.saveFailed(target.sessionId, message, synthetic ? 'system' : undefined);
+      return { failedId, uuidOwned: true };
     });
-    return { ...ctx, failedId };
+    return { ...ctx, failedId: outcome.failedId, uuidOwned: outcome.uuidOwned };
   } catch (error) {
-    emitMaterializeFailure(target, ctx.entry?.id ?? 'unknown', error);
+    emitMaterializeFailure(target, entry.id, error);
     return ctx;
   }
 }
@@ -125,7 +147,9 @@ export function notifyFailureObserversStage(ctx: MailboxFailureCtx): MailboxFail
   if (failedId !== undefined) {
     detachFailureCallback(() => ctx.deps.publishFailed?.(target.sessionId, failedId));
   }
-  detachFailureCallback(() => ctx.deps.settleSkipped?.(target.sessionId, target.messageUuid));
+  if (ctx.uuidOwned !== false) {
+    detachFailureCallback(() => ctx.deps.settleSkipped?.(target.sessionId, target.messageUuid));
+  }
   return ctx;
 }
 

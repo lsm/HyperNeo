@@ -15,6 +15,7 @@ import {
 import {
   buildFailureMessageStage,
   createMailboxDeadHandler,
+  deterministicMailboxUuid,
   type MailboxFailureCtx,
   type MailboxFailureDeps,
   materializeMailboxFailure,
@@ -190,11 +191,13 @@ describe('createMailboxDeadHandler', () => {
     const entry = makeEntry({ origin: 'chat', messageUuid: 'reused-uuid', message: conflicting });
     const job = claimMailboxJob(mailbox, entry);
     const publishFailed = mock(async () => {});
+    const settleSkipped = mock(async () => {});
     const saveFailed = mock(() => 'receipt-row');
     const handler = createMailboxDeadHandler(() => {}, {
       sdkMessageRepo: mailbox.sdkMessageRepo,
       saveFailed,
       publishFailed,
+      settleSkipped,
     });
     job.status = 'dead';
     job.error = 'delivery failed';
@@ -206,6 +209,56 @@ describe('createMailboxDeadHandler', () => {
     expect(row.sdk_uuid).toBe('reused-uuid');
     expect(row.send_status).toBe('enqueued');
     expect(saveFailed).toHaveBeenCalledTimes(1);
+    expect(saveFailed).toHaveBeenCalledWith(
+      SESSION_ID,
+      expect.objectContaining({ uuid: deterministicMailboxUuid(entry.id) }),
+      undefined
+    );
+    expect(publishFailed).toHaveBeenCalledWith(SESSION_ID, 'receipt-row');
+    expect(settleSkipped).not.toHaveBeenCalled();
+    mailbox.close();
+  });
+
+  test('preserves the original row when the full message differs beyond content', async () => {
+    const mailbox = createMailboxTestDb();
+    const human: MailboxMessage = {
+      type: 'user',
+      message: { content: 'same words' },
+      parent_tool_use_id: null,
+      inputKind: 'human',
+    };
+    mailbox.sdkMessageRepo.saveUserMessage(
+      SESSION_ID,
+      { ...human, uuid: 'shared-uuid', session_id: SESSION_ID },
+      'enqueued'
+    );
+    const system: MailboxMessage = {
+      type: 'user',
+      message: { content: 'same words' },
+      parent_tool_use_id: null,
+      inputKind: 'system',
+    };
+    const entry = makeEntry({ origin: 'chat', messageUuid: 'shared-uuid', message: system });
+    const job = claimMailboxJob(mailbox, entry);
+    const publishFailed = mock(async () => {});
+    const settleSkipped = mock(async () => {});
+    const saveFailed = mock(() => 'receipt-row');
+    const handler = createMailboxDeadHandler(() => {}, {
+      sdkMessageRepo: mailbox.sdkMessageRepo,
+      saveFailed,
+      publishFailed,
+      settleSkipped,
+    });
+    job.status = 'dead';
+    job.error = 'delivery failed';
+
+    handler(job);
+    await Promise.resolve();
+
+    const row = mailbox.sdkRows()[0];
+    expect(row.send_status).toBe('enqueued');
+    expect(saveFailed).toHaveBeenCalledTimes(1);
+    expect(settleSkipped).not.toHaveBeenCalled();
     expect(publishFailed).toHaveBeenCalledWith(SESSION_ID, 'receipt-row');
     mailbox.close();
   });
@@ -264,16 +317,50 @@ describe('materializeMailboxFailure', () => {
     expect(saveFailed).not.toHaveBeenCalled();
   });
 
-  test('skips session entries admitted without a message uuid', () => {
-    const saveFailed = mock(() => 'should-not-happen');
+  test('targets unseeded session entries with the deterministic uuid', () => {
+    const mailbox = createMailboxTestDb();
+    const saveFailed = mock(() => 'derived-row');
     const entry = makeEntry();
 
     materializeMailboxFailure(makeDeadJob(entry, 'delivery failed'), {
-      sdkMessageRepo: {} as MailboxFailureDeps['sdkMessageRepo'],
+      sdkMessageRepo: mailbox.sdkMessageRepo,
       saveFailed,
     });
 
+    expect(saveFailed).toHaveBeenCalledWith(
+      SESSION_ID,
+      expect.objectContaining({ uuid: deterministicMailboxUuid(entry.id) }),
+      undefined
+    );
+    mailbox.close();
+  });
+
+  test('fails the deferred row of an unseeded entry via the derived uuid', async () => {
+    const mailbox = createMailboxTestDb();
+    const entry = makeEntry({ origin: 'chat' });
+    const derived = deterministicMailboxUuid(entry.id);
+    mailbox.sdkMessageRepo.saveUserMessage(
+      SESSION_ID,
+      { ...message, uuid: derived, session_id: SESSION_ID },
+      'deferred'
+    );
+    const job = claimMailboxJob(mailbox, entry);
+    const publishFailed = mock(async () => {});
+    const saveFailed = mock(() => 'should-not-happen');
+
+    materializeMailboxFailure(job, {
+      sdkMessageRepo: mailbox.sdkMessageRepo,
+      saveFailed,
+      publishFailed,
+    });
+    await Promise.resolve();
+
+    const row = mailbox.sdkRows()[0];
+    expect(row.sdk_uuid).toBe(derived);
+    expect(row.send_status).toBe('failed');
     expect(saveFailed).not.toHaveBeenCalled();
+    expect(publishFailed).toHaveBeenCalledWith(SESSION_ID, row.id);
+    mailbox.close();
   });
 
   test('keeps the no-throw contract when publishFailed throws synchronously', async () => {
@@ -302,10 +389,15 @@ describe('materializeMailboxFailure', () => {
 });
 
 describe('failure pipeline stages', () => {
-  test('sessionFailureTarget targets only session entries admitted with a message uuid', () => {
+  test('sessionFailureTarget targets session entries with the admitted or derived uuid', () => {
     expect(sessionFailureTarget(makeEntry({ messageUuid: 'uuid-1' }))).toEqual({
       sessionId: SESSION_ID,
       messageUuid: 'uuid-1',
+    });
+    const unseeded = makeEntry();
+    expect(sessionFailureTarget(unseeded)).toEqual({
+      sessionId: SESSION_ID,
+      messageUuid: deterministicMailboxUuid(unseeded.id),
     });
     expect(
       sessionFailureTarget(
@@ -315,7 +407,6 @@ describe('failure pipeline stages', () => {
         })
       )
     ).toBeNull();
-    expect(sessionFailureTarget(makeEntry())).toBeNull();
     expect(sessionFailureTarget(null)).toBeNull();
   });
 
@@ -384,5 +475,24 @@ describe('failure pipeline stages', () => {
 
     expect(publishFailed).not.toHaveBeenCalled();
     expect(settleSkipped).toHaveBeenCalledWith(SESSION_ID, 'uuid-9');
+  });
+
+  test('skips settlement when the uuid belongs to another message', async () => {
+    const publishFailed = mock(async () => {});
+    const settleSkipped = mock(async () => {});
+    const ctx: MailboxFailureCtx = {
+      job: makeDeadJob({}, null),
+      deps: stubDeps({ publishFailed, settleSkipped }),
+      entry: null,
+      target: { sessionId: SESSION_ID, messageUuid: 'uuid-2' },
+      failedId: 'row-2',
+      uuidOwned: false,
+    };
+
+    notifyFailureObserversStage(ctx);
+    await Promise.resolve();
+
+    expect(publishFailed).toHaveBeenCalledWith(SESSION_ID, 'row-2');
+    expect(settleSkipped).not.toHaveBeenCalled();
   });
 });
