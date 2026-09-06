@@ -247,54 +247,6 @@ export function deliveryConsumptionTimeoutOrDefault(timeoutMs?: number): number 
   return 30_000;
 }
 
-export async function awaitDeliveryConsumption(args: {
-  sessionId: string;
-  messageUuid: string;
-  deliver: () => Promise<void>;
-  terminalizeOnTimeout?: () => void;
-  timeoutMs?: number;
-  getSendStatus?: () => string | null | undefined;
-}): Promise<void> {
-  const consumed = waitForDeliveryConsumption(args.sessionId, args.messageUuid);
-  let consumptionTimeout: ReturnType<typeof setTimeout> | undefined;
-  let statusPoll: ReturnType<typeof setInterval> | undefined;
-  const alreadyConsumed = new Promise<void>((resolve) => {
-    if (!args.getSendStatus) return;
-    const check = () => {
-      try {
-        if (args.getSendStatus!() !== 'consumed') return;
-        if (statusPoll) clearInterval(statusPoll);
-        resolve();
-      } catch {
-        if (statusPoll) clearInterval(statusPoll);
-      }
-    };
-    statusPoll = setInterval(check, MESSAGE_DELIVERY_PARK_MS);
-    check();
-  });
-  try {
-    await args.deliver();
-    const consumptionTimeoutMs = deliveryConsumptionTimeoutOrDefault(args.timeoutMs);
-    await Promise.race([
-      consumed.promise,
-      alreadyConsumed,
-      new Promise<void>((_, reject) => {
-        consumptionTimeout = setTimeout(
-          () => reject(new Error('delivery not consumed within timeout')),
-          consumptionTimeoutMs
-        );
-      }),
-    ]);
-  } catch (err) {
-    args.terminalizeOnTimeout?.();
-    throw err;
-  } finally {
-    if (consumptionTimeout) clearTimeout(consumptionTimeout);
-    if (statusPoll) clearInterval(statusPoll);
-    consumed.cancel();
-  }
-}
-
 const sessionLocks = new Map<string, Promise<unknown>>();
 
 export function throwIfDeliveryAborted(signal?: AbortSignal): void {
@@ -817,38 +769,4 @@ export async function withSessionOperationLock<T>(
       void ctx.prev.finally(ctx.release);
     }
   }
-}
-
-export async function deliverAndMarkQueued(args: {
-  jobQueue: JobQueueRepository;
-  stateManager?: {
-    setQueuedIfIdle(messageId: string): Promise<boolean>;
-    getState(): { status: string };
-  };
-  sessionId: string;
-  messageUuid: string;
-  origin: MessageDeliveryOrigin;
-  onEnqueueFailure?: () => void;
-  signal?: AbortSignal;
-}): Promise<void> {
-  await withSessionLock(
-    args.sessionId,
-    async () => {
-      try {
-        deliverMessage(args.jobQueue, args.sessionId, args.messageUuid, {
-          origin: args.origin,
-          parentToolUseId: null,
-        });
-      } catch (err) {
-        args.onEnqueueFailure?.();
-        throw err;
-      }
-      if (args.stateManager) {
-        try {
-          await args.stateManager.setQueuedIfIdle(args.messageUuid);
-        } catch {}
-      }
-    },
-    args.signal
-  );
 }
