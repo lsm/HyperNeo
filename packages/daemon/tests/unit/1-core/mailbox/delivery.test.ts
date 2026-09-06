@@ -14,7 +14,10 @@ import {
   type MailboxMessage,
 } from '../../../../src/lib/mailbox/entry';
 import { createUlid } from '../../../../src/lib/mailbox/ulid';
-import { persistAndEnqueueDelivery } from '../../../../src/lib/agent/message-delivery-outbox';
+import {
+  ensurePrompt,
+  persistAndEnqueueDelivery,
+} from '../../../../src/lib/agent/message-delivery-outbox';
 import { DeadLetterImmediatelyError } from '../../../../src/storage/job-queue-processor';
 import type {
   Job,
@@ -554,6 +557,41 @@ describe('createMailboxDeliveryHandler', () => {
       const rows = mailbox.sdkRows();
       expect(rows).toHaveLength(1);
       expect(publishDeferredStatus).toHaveBeenCalledWith(SESSION_ID, rows[0].id);
+    });
+
+    test('a materialize-only replay cancels a legacy held delivery job minted by the old path', async () => {
+      const { handler } = makeHandler();
+      const messageUuid = '00000000-0000-4000-8000-000000000005';
+      ensurePrompt({
+        sessionId: SESSION_ID,
+        message: {
+          type: 'user',
+          uuid: messageUuid,
+          session_id: SESSION_ID,
+          parent_tool_use_id: null,
+          message: { role: 'user', content: 'hello from the mailbox' },
+          isSynthetic: true,
+        },
+        origin: 'system',
+        hold: 'manual',
+        delivery: { origin: 'space_agent', parentToolUseId: null },
+        db: mailbox.db as never,
+        sdkMessageRepo: mailbox.sdkMessageRepo,
+        jobQueue: mailbox.jobQueue,
+      });
+      expect(mailbox.sdkRows()[0].send_status).toBe('deferred');
+      expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)).toHaveLength(1);
+
+      const job = claimMailboxJob(
+        mailbox,
+        makeEntry({ origin: 'space_agent', messageUuid, deliveryMode: 'defer' })
+      );
+      const result = await handler(job);
+
+      expect(result).toMatchObject({ terminal: 'delivered', sessionId: SESSION_ID });
+      expect(mailbox.sdkRows()).toHaveLength(1);
+      expect(mailbox.sdkRows()[0].send_status).toBe('deferred');
+      expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)).toHaveLength(0);
     });
 
     test('defer preserves the provenance law — system origin and synthetic stamp', async () => {

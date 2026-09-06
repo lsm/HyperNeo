@@ -695,6 +695,7 @@ function applyEnsurePrompt(ctx: EnsurePromptSettledCtx): EnsurePromptAppliedCtx 
       const ensureStatus = fresh.sendStatus;
       const released = ensureStatus !== 'deferred';
       if (ctx.materializeOnly === true) {
+        ctx.jobQueue.cancelHeldDeliveryJob(ctx.sessionId, ctx.messageUuid);
         return { dbId: fresh.dbId, activated: false, released, countsTowardsBadge: false };
       }
       if (
