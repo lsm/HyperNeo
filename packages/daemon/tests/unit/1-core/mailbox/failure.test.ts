@@ -15,6 +15,7 @@ import {
 import {
   buildFailureMessageStage,
   createMailboxDeadHandler,
+  deterministicConflictUuid,
   deterministicMailboxUuid,
   type MailboxFailureCtx,
   type MailboxFailureDeps,
@@ -211,7 +212,7 @@ describe('createMailboxDeadHandler', () => {
     expect(saveFailed).toHaveBeenCalledTimes(1);
     expect(saveFailed).toHaveBeenCalledWith(
       SESSION_ID,
-      expect.objectContaining({ uuid: deterministicMailboxUuid(entry.id) }),
+      expect.objectContaining({ uuid: deterministicConflictUuid(entry.id) }),
       undefined
     );
     expect(publishFailed).toHaveBeenCalledWith(SESSION_ID, 'receipt-row');
@@ -421,6 +422,40 @@ describe('materializeMailboxFailure', () => {
       events.some((candidate) => candidate.module === 'hyperneo:daemon:mailbox:materialize-failure')
     ).toBe(true);
     expect(settleSkipped).not.toHaveBeenCalled();
+    expect(mailbox.sdkRows()[0].send_status).toBe('enqueued');
+    mailbox.close();
+  });
+
+  test('gives an unseeded conflict receipt a distinct uuid', () => {
+    const mailbox = createMailboxTestDb();
+    const entry = makeEntry();
+    const derived = deterministicMailboxUuid(entry.id);
+    const other: MailboxMessage = {
+      type: 'user',
+      message: { content: 'not the same content' },
+      parent_tool_use_id: null,
+    };
+    mailbox.sdkMessageRepo.saveUserMessage(
+      SESSION_ID,
+      { ...other, uuid: derived, session_id: SESSION_ID },
+      'enqueued'
+    );
+    const saveFailed = mock(() => 'receipt-row');
+
+    materializeMailboxFailure(makeDeadJob(entry, 'delivery failed'), {
+      sdkMessageRepo: mailbox.sdkMessageRepo,
+      saveFailed,
+    });
+
+    expect(saveFailed).toHaveBeenCalledWith(
+      SESSION_ID,
+      expect.objectContaining({
+        uuid: deterministicConflictUuid(entry.id),
+        isSynthetic: true,
+      }),
+      'system'
+    );
+    expect(deterministicConflictUuid(entry.id)).not.toBe(derived);
     expect(mailbox.sdkRows()[0].send_status).toBe('enqueued');
     mailbox.close();
   });

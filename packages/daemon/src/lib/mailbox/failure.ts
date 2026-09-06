@@ -57,6 +57,10 @@ export function deterministicMailboxUuid(entryId: string): string {
   return `mbox-${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
 }
 
+export function deterministicConflictUuid(entryId: string): string {
+  return deterministicMailboxUuid(`${entryId}:conflict`);
+}
+
 export function sessionFailureTarget(entry: MailboxEntry | null): SessionFailureTarget | null {
   if (entry?.to.kind !== 'session') return null;
   return {
@@ -112,7 +116,7 @@ export function persistFailedRowStage(ctx: MailboxFailureCtx): MailboxFailureCtx
         conflict = true;
         const receipt: SDKUserMessage = {
           ...message,
-          uuid: deterministicMailboxUuid(entry.id) as NonNullable<SDKUserMessage['uuid']>,
+          uuid: deterministicConflictUuid(entry.id) as NonNullable<SDKUserMessage['uuid']>,
         };
         return {
           failedId: ctx.deps.saveFailed(
