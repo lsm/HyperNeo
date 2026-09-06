@@ -298,7 +298,7 @@ describe('Space messaging adapter', () => {
     ]);
   });
 
-  it('queues inactive actor deliveries via activation callback', async () => {
+  it('delivers inactive actor deliveries via activation callback', async () => {
     const resolver = new SpaceMessageResolver(
       { actorRegistry: registry, workflowRepo, workflowRunRepo },
       { spaceId }
@@ -323,9 +323,35 @@ describe('Space messaging adapter', () => {
     expect(result.deliveries[0]).toMatchObject({
       targetActorId: `agent:coordinator:${spaceId}`,
       targetRef: '@coordinator',
-      state: 'queued',
-      deliveryId: 'delivery_inbox-1',
+      state: 'delivered',
+      deliveredSessionId: 'inbox-1',
     });
+  });
+
+  it('fails inactive actor deliveries when the activation callback delivers no session', async () => {
+    const resolver = new SpaceMessageResolver(
+      { actorRegistry: registry, workflowRepo, workflowRunRepo },
+      { spaceId }
+    );
+    const facade = new SpaceDeliveryFacade({
+      resolver,
+      queueForActivation: async () => null,
+    });
+
+    const result = await facade.routeMessage({
+      ...message,
+      workflowRunId: undefined,
+      targets: ['@coordinator'],
+    });
+
+    expect(result.deliveries).toHaveLength(1);
+    expect(result.deliveries[0]).toMatchObject({
+      targetActorId: `agent:coordinator:${spaceId}`,
+      targetRef: '@coordinator',
+      state: 'failed',
+      lastError: 'Activation delivery returned no delivered session',
+    });
+    expect(result.deliveries[0].deliveredSessionId).toBeUndefined();
   });
 
   it('writes queued deliveries for inactive actors and failed rows for unresolved targets', async () => {

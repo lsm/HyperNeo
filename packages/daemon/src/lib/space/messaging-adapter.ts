@@ -476,8 +476,16 @@ export class SpaceDeliveryFacade {
         }
       } else if (target.actor.status === 'inactive' && this.config.queueForActivation) {
         try {
-          const messageId = await this.config.queueForActivation(target.actor, message);
-          if (messageId) delivery.deliveryId = `delivery_${messageId}`;
+          const deliveredSessionId = await this.config.queueForActivation(target.actor, message);
+          if (deliveredSessionId) {
+            delivery.state = 'delivered';
+            delivery.deliveredAt = Date.now();
+            delivery.deliveredSessionId = deliveredSessionId;
+          } else {
+            delivery.state = 'failed';
+            delivery.attemptCount += 1;
+            delivery.lastError = 'Activation delivery returned no delivered session';
+          }
         } catch (error) {
           delivery.state = 'failed';
           delivery.attemptCount += 1;
