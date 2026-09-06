@@ -578,6 +578,11 @@ function deliveryReplyTailCte(args: {
   FROM delivery_reply_tail
   WHERE sep_at > 0
     AND INSTR(SUBSTR(reply_text, sep_at + 14), '─── Reply ───') > 0
+),
+delivery_reply_last AS (
+  SELECT message_id, sep_at, reply_text
+  FROM delivery_reply_tail
+  WHERE INSTR(SUBSTR(reply_text, sep_at + 14), '─── Reply ───') = 0
 )`;
 }
 
@@ -984,7 +989,7 @@ delivery_rows AS (
       END AS createdAt
     FROM target_task tt
     JOIN task_sdk_messages tsm ON tsm.task_id = tt.id
-    LEFT JOIN delivery_reply_tail drt ON drt.message_id = tsm.id
+    LEFT JOIN delivery_reply_last drt ON drt.message_id = tsm.id
     LEFT JOIN delivery_retrying adr
       ON adr.message_uuid = tsm.resolved_sdk_uuid
      AND adr.session_id = tsm.session_id
@@ -1225,7 +1230,7 @@ delivery_rows AS (
         ELSE CAST(ROUND((julianday(dt.timestamp) - 2440587.5) * 86400000) AS INTEGER)
       END AS createdAt
     FROM delivery_targets dt
-    LEFT JOIN delivery_reply_tail drt ON drt.message_id = dt.message_id
+    LEFT JOIN delivery_reply_last drt ON drt.message_id = dt.message_id
     LEFT JOIN delivery_session_exec dse
       ON dse.session_id = dt.session_id
      AND dse.rn = 1

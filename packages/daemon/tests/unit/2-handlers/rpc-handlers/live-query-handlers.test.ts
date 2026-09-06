@@ -1256,6 +1256,10 @@ describe('NAMED_QUERY_REGISTRY', () => {
       const mapped = entry.mapRow ? rows.map(entry.mapRow) : rows;
       const byId = new Map(mapped.map((row) => [row.id as string, row]));
 
+      const deliveryIds = mapped
+        .map((row) => row.id as string)
+        .filter((id) => id.startsWith('delivery:'));
+      expect(new Set(deliveryIds).size).toBe(deliveryIds.length);
       expect((byId.get('delivery:sdk-sender-marker')!.from as Record<string, unknown>).label).toBe(
         'reviewer (task #2)'
       );
