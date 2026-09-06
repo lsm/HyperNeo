@@ -3822,8 +3822,19 @@ export class SpaceRuntime {
         this.redispatchRetainedExternalEvents();
       }
 
-      await this.attachStandaloneTasksToWorkflows();
-      await this.processCompletedTasks();
+      let activationError: unknown = null;
+      const failedActivationSpaceIds = new Set<string>();
+      try {
+        await this.processCompletedTasks(failedActivationSpaceIds);
+      } catch (err) {
+        activationError = err;
+      }
+      try {
+        await this.attachStandaloneTasksToWorkflows(failedActivationSpaceIds);
+      } catch (err) {
+        if (activationError === null) activationError = err;
+      }
+      if (activationError !== null) throw activationError;
       await this.cleanupTerminalExecutors();
       await this.reconcileTerminalRunsWithoutExecutors();
       await this.checkStandaloneTasks();
@@ -5390,13 +5401,15 @@ export class SpaceRuntime {
     }
   }
 
-  private async processCompletedTasks(): Promise<void> {
+  private async processCompletedTasks(failedSpaceIds = new Set<string>()): Promise<void> {
     let firstError: unknown = null;
 
     for (const [runId] of this.executors) {
       try {
         await this.processRunTick(runId);
       } catch (err) {
+        const spaceId = this.executorMeta.get(runId)?.spaceId;
+        if (spaceId) failedSpaceIds.add(spaceId);
         if (firstError === null) firstError = err;
       }
     }
@@ -6123,8 +6136,9 @@ export class SpaceRuntime {
         ),
       blockRunForSpawnFailure: (candidateRunId, meta, canonicalTask, failureReason, crashed) =>
         this.blockRunForSpawnFailure(candidateRunId, meta, canonicalTask, failureReason, crashed),
-      casCanonicalTaskOpenToInProgress: (spaceId, canonicalTask) =>
-        this.casCanonicalTaskOpenToInProgress(spaceId, canonicalTask),
+      ensureCanonicalTaskInProgress: (spaceId, canonicalTask) =>
+        this.ensureCanonicalTaskInProgress(spaceId, canonicalTask),
+      getAvailableTaskSlots: (space) => this.getAvailableTaskSlots(space),
     };
     await runSpaceWorkflowRunTick(deps, runId);
   }
@@ -6231,10 +6245,6 @@ export class SpaceRuntime {
       }
     }
 
-    if (canonicalTask.status === 'open' && this.getAvailableTaskSlots(space) <= 0) {
-      return { action: 'halted' };
-    }
-
     const tam = this.config.taskAgentManager;
     if (!tam) return { action: 'halted' };
     let blockedByCrash = false;
@@ -6247,6 +6257,15 @@ export class SpaceRuntime {
 
     if (!space?.stopped) {
       for (const execution of nodeExecutions) {
+        if (execution.status === 'in_progress' && !execution.agentSessionId) {
+          this.config.nodeExecutionRepo.update(execution.id, {
+            status: 'pending',
+            result: null,
+            startedAt: null,
+            completedAt: null,
+          });
+          continue;
+        }
         if (
           !execution.agentSessionId ||
           (execution.status !== 'in_progress' && execution.status !== 'pending')
@@ -6623,25 +6642,57 @@ export class SpaceRuntime {
     return false;
   }
 
-  private async casCanonicalTaskOpenToInProgress(
+  private async ensureCanonicalTaskInProgress(
     spaceId: string,
     canonicalTask: SpaceTask
-  ): Promise<void> {
-    if (canonicalTask.status === 'open') {
-      const outcome = this.config.taskRepo.casStatus(canonicalTask.id, ['open'], 'in_progress');
-      if (outcome === 'won') {
-        const nowTs = Date.now();
-        await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
-          startedAt: canonicalTask.startedAt ?? nowTs,
+  ): Promise<SpaceTask | null> {
+    if (canonicalTask.status !== 'open' && canonicalTask.status !== 'blocked') return canonicalTask;
+    this.config.reactiveDb?.beginTransaction();
+    let updated: SpaceTask | null;
+    let promoted = false;
+    try {
+      updated = this.config.db.transaction(() => {
+        const outcome = this.config.taskRepo.casStatus(
+          canonicalTask.id,
+          canonicalTask.status,
+          'in_progress'
+        );
+        if (outcome === 'superseded') return this.config.taskRepo.getTask(canonicalTask.id);
+        promoted = true;
+        const result = this.config.taskRepo.updateTask(canonicalTask.id, {
+          startedAt: canonicalTask.startedAt ?? Date.now(),
           completedAt: null,
           pendingCheckpointType: null,
+          ...(canonicalTask.status === 'blocked'
+            ? {
+                result: null,
+                blockReason: null,
+                reportedStatus: null,
+                reportedSummary: null,
+                approvalSource: null,
+                approvalReason: null,
+                approvedAt: null,
+                postApprovalSessionId: null,
+                postApprovalStartedAt: null,
+                postApprovalBlockedReason: null,
+                postApprovalSourceNodeId: null,
+              }
+            : {}),
         });
-      } else {
-        log.info(
-          `SpaceRuntime: skipping trailing open→in_progress for task ${canonicalTask.id} — status moved concurrently during the spawn pass`
-        );
-      }
+        if (canonicalTask.status === 'blocked') {
+          this.config.goalService?.supersedeOutcomeNotificationsForTask(canonicalTask.id);
+        }
+        return result;
+      })();
+      this.config.reactiveDb?.commitTransaction();
+    } catch (err) {
+      this.config.reactiveDb?.abortTransaction();
+      throw err;
     }
+    if (promoted && updated) {
+      await this.safeOnTaskUpdated(spaceId, updated, { fromStatus: canonicalTask.status });
+    }
+    return updated;
   }
 
   private async blockRunForPermanentSpawnFailure(
@@ -7960,45 +8011,9 @@ export class SpaceRuntime {
             (this.config.taskAgentManager?.isSessionInMemory(execution.agentSessionId) ?? false) &&
             !this.isFailedSessionBinding(execution.agentSessionId)
         );
-
-      let taskPromoted = false;
-      if (canonicalTask.status === 'blocked') {
-        await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
-          status: 'in_progress',
-          completedAt: null,
-        });
-        taskPromoted = true;
-      } else if (
-        canonicalTask.status === 'open' &&
-        hasLiveExecutionBinding &&
-        this.config.taskRepo.casStatus(canonicalTask.id, ['open'], 'in_progress') === 'won'
-      ) {
-        await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, {
-          startedAt: canonicalTask.startedAt ?? Date.now(),
-          completedAt: null,
-        });
-        taskPromoted = true;
-      } else if (canonicalTask.status === 'open' && hasLiveExecutionBinding) {
-        const concurrentStatus = this.config.taskRepo.getTask(canonicalTask.id)?.status;
-        if (concurrentStatus === 'in_progress') {
-          taskPromoted = true;
-          log.info(
-            `SpaceRuntime: task ${canonicalTask.id} in run ${runId} was concurrently promoted ` +
-              `to in_progress during recovery; keeping the shared recovery result`
-          );
-        } else {
-          log.info(
-            `SpaceRuntime: skipping task recovery promotion for task ${canonicalTask.id} in run ${runId}; ` +
-              `task status moved concurrently — keeping the concurrent status`
-          );
-          await this.revertRepairedRunToBlocked(
-            runId,
-            meta.spaceId,
-            blockedExecutions,
-            runSnapshot
-          );
-          return;
-        }
+      const taskPromoted = canonicalTask.status === 'blocked' || hasLiveExecutionBinding;
+      if (taskPromoted) {
+        await this.ensureCanonicalTaskInProgress(meta.spaceId, canonicalTask);
       }
 
       const freshTaskStatus = this.config.taskRepo.getTask(canonicalTask.id)?.status;
@@ -8385,10 +8400,13 @@ export class SpaceRuntime {
     });
   }
 
-  private async attachStandaloneTasksToWorkflows(): Promise<void> {
+  private async attachStandaloneTasksToWorkflows(
+    excludedSpaceIds = new Set<string>()
+  ): Promise<void> {
     const spaces = await this.listActiveSpaces();
 
     for (const space of spaces) {
+      if (excludedSpaceIds.has(space.id)) continue;
       const workflows = this.config.spaceWorkflowManager
         .listWorkflows(space.id)
         .filter((w) => !w.disabled);
