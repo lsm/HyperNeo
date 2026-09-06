@@ -149,7 +149,8 @@ describe('createMailboxDeliveryHandler', () => {
 
   function makeHandler(
     getSession: (sessionId: string) => Promise<object | null> = async () => ({ ok: true }),
-    isSessionArchived: (sessionId: string) => boolean = () => false
+    isSessionArchived: (sessionId: string) => boolean = () => false,
+    publishStatusChanged?: (sessionId: string, dbId: string, status: 'enqueued') => void
   ) {
     let sessionCalls = 0;
     let archivedCalls = 0;
@@ -165,6 +166,7 @@ describe('createMailboxDeliveryHandler', () => {
         archivedCalls += 1;
         return isSessionArchived(sessionId);
       },
+      ...(publishStatusChanged ? { publishStatusChanged } : {}),
     });
     return { handler, sessionCalls: () => sessionCalls, archivedCalls: () => archivedCalls };
   }
@@ -660,6 +662,66 @@ describe('createMailboxDeliveryHandler', () => {
       expect(rows[0].sdk_uuid).toBe(messageUuid);
       expect(JSON.parse(rows[0].sdk_message).uuid).toBe(messageUuid);
       expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)).toHaveLength(1);
+    });
+
+    test('an immediate retry reopens a failed prompt without minting another row', async () => {
+      const published: Array<[string, string, string]> = [];
+      const { handler } = makeHandler(undefined, undefined, (sessionId, dbId, status) => {
+        published.push([sessionId, dbId, status]);
+      });
+      const messageUuid = '00000000-0000-4000-8000-000000000002';
+      const firstJob = claimMailboxJob(mailbox, makeEntry({ origin: 'recovery', messageUuid }));
+
+      await handler(firstJob);
+      const rowId = mailbox.sdkRows()[0].id;
+      mailbox.sdkMessageRepo.updateMessageStatus([rowId], 'failed');
+      for (const job of mailbox.jobsByQueue(MESSAGE_DELIVERY)) {
+        mailbox.jobQueue.markDeadIfActive(job.id, 'delivery failed');
+      }
+
+      const retryJob = claimMailboxJob(mailbox, makeEntry({ origin: 'recovery', messageUuid }));
+      const result = await handler(retryJob);
+
+      expect(result).toMatchObject({ terminal: 'delivered', sessionId: SESSION_ID });
+      expect(mailbox.sdkRows()).toHaveLength(1);
+      expect(mailbox.sdkRows()[0].send_status).toBe('enqueued');
+      expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)).toHaveLength(1);
+      expect(
+        mailbox.jobsByQueue(MESSAGE_DELIVERY).filter((job) => job.status === 'pending')
+      ).toHaveLength(1);
+      expect(published).toEqual([
+        [SESSION_ID, rowId, 'enqueued'],
+        [SESSION_ID, rowId, 'enqueued'],
+      ]);
+    });
+
+    test('an immediate entry activates a deferred prompt and releases its delivery job', async () => {
+      const published: Array<[string, string, string]> = [];
+      const { handler } = makeHandler(undefined, undefined, (sessionId, dbId, status) => {
+        published.push([sessionId, dbId, status]);
+      });
+      const messageUuid = '00000000-0000-4000-8000-000000000003';
+      const heldJob = claimMailboxJob(
+        mailbox,
+        makeEntry({ origin: 'space_agent', messageUuid, deliveryMode: 'defer' })
+      );
+
+      await handler(heldJob);
+      const rowId = mailbox.sdkRows()[0].id;
+      expect(mailbox.sdkRows()[0].send_status).toBe('deferred');
+      expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)[0].released).toBe(false);
+
+      const immediateJob = claimMailboxJob(
+        mailbox,
+        makeEntry({ origin: 'space_agent', messageUuid })
+      );
+      const result = await handler(immediateJob);
+
+      expect(result).toMatchObject({ terminal: 'delivered', sessionId: SESSION_ID });
+      expect(mailbox.sdkRows()).toHaveLength(1);
+      expect(mailbox.sdkRows()[0].send_status).toBe('enqueued');
+      expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)[0].released).toBe(true);
+      expect(published).toEqual([[SESSION_ID, rowId, 'enqueued']]);
     });
 
     test('a reclaim re-run converges on the single content row instead of minting another', async () => {
