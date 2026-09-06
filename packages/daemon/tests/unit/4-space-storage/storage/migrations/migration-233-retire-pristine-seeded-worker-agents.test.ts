@@ -243,14 +243,9 @@ describe('migration 233: retire pristine seeded worker agents', () => {
     db.close();
   });
 
-  test('keeps pristine workers with pending inbox messages or watchdog state', () => {
+  test('keeps pristine workers with watchdog state', () => {
     const { db, repo, idsByName } = createDb();
     runMigration213(db);
-    db.prepare(
-      `INSERT INTO space_agent_inbox_messages (
-         id, space_id, target_agent_id, source_actor_id, message, status, expires_at, created_at
-       ) VALUES ('inbox-1', 'space-1', ?, 'coordinator', 'Hello', 'pending', 2, 1)`
-    ).run(idsByName.get('Coder')!);
     db.prepare(
       `INSERT INTO space_agent_inactivity_config (
          id, space_id, agent_id, enabled, config_revision, created_at, updated_at
@@ -259,7 +254,7 @@ describe('migration 233: retire pristine seeded worker agents', () => {
 
     runMigration233(db);
 
-    expect(remaining(repo)).toEqual(['Coder', 'General']);
+    expect(remaining(repo)).toEqual(['General']);
     db.close();
   });
 });

@@ -62,7 +62,6 @@ export const HELPER_SCHEMA_TABLES = [
   'session_counters',
   'sessions',
   'space_agent_core_memory',
-  'space_agent_inbox_messages',
   'memory_vectors',
   'space_agent_memory',
   'space_agent_memory_fts',
