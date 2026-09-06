@@ -10,6 +10,7 @@ export interface PendingDrainRoutedDeliveryArgs {
   messageId: string;
   inputKind: 'human' | 'task';
   origin: MessageDeliveryOrigin;
+  deliveryMode?: 'immediate' | 'defer';
 }
 
 export interface PendingDrainHandoffDeps {
@@ -80,6 +81,7 @@ async function deliverStage(ctx: PendingDrainHandoffCtx): Promise<PendingDrainHa
     messageId: pendingDrainMessageUuid(ctx.row),
     inputKind: ctx.row.sourceAgentName === 'human' ? 'human' : 'task',
     origin: ctx.origin,
+    ...(ctx.row.deliveryMode ? { deliveryMode: ctx.row.deliveryMode } : {}),
   });
   return { ...ctx, delivery };
 }

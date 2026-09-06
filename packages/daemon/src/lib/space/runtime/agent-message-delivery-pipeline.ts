@@ -53,6 +53,7 @@ export interface AgentMessageDeliveryArgs {
   messageId: string;
   inputKind?: MessageInputKind;
   origin?: MessageDeliveryOrigin;
+  deliveryMode?: 'immediate' | 'defer';
 }
 
 export interface AgentMessageDeliveryPlan {
@@ -85,7 +86,7 @@ function buildSyntheticDeliveryMessage(
     uuid: messageId as UUID,
     session_id: sessionId,
     parent_tool_use_id: null,
-    isSynthetic: true,
+    isSynthetic: inputKind !== 'human',
     inputKind,
     message: {
       role: 'user' as const,
@@ -204,19 +205,21 @@ export function planDeliveryAdmission(
   const sessionId = ctx.resolution.sessionId;
   const status = ctx.session.getProcessingState().status;
   const task = target.kind === 'worker' ? deps.taskRepo.getTask(target.taskId) : null;
-  const shouldDefer =
-    status === 'rate_limit_cooldown' ||
-    (task !== null && deps.isRateOrUsageLimited(task.status ?? '')) ||
-    deps.hasHeldDeliveryBacklog(sessionId, ctx.messageId);
   const isBusy =
     status === 'processing' ||
     status === 'queued' ||
     status === 'waiting_for_input' ||
     status === 'interrupted' ||
     status === 'rate_limit_cooldown';
+  const shouldDefer =
+    status === 'rate_limit_cooldown' ||
+    (task !== null && deps.isRateOrUsageLimited(task.status ?? '')) ||
+    deps.hasHeldDeliveryBacklog(sessionId, ctx.messageId) ||
+    (ctx.deliveryMode === 'defer' && isBusy);
   const shouldClear =
     !shouldDefer &&
     !isBusy &&
+    (ctx.inputKind === undefined || ctx.inputKind === 'task') &&
     Boolean(ctx.session.session.sdkSessionId) &&
     deps.slotResetsContext(sessionId) &&
     !deps.hasActiveDeliveryJob(sessionId) &&

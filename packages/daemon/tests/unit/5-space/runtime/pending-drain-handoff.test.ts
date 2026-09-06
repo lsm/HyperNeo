@@ -90,6 +90,7 @@ describe('drainPendingRowOntoMailbox', () => {
     const row = makeRow({
       idempotencyKey: 'human:task-1:coder:node-1:cli-9',
       sourceAgentName: 'human',
+      deliveryMode: 'defer',
     });
 
     await drainPendingRowOntoMailbox({
@@ -106,6 +107,7 @@ describe('drainPendingRowOntoMailbox', () => {
       messageId: 'human:task-1:coder:node-1:cli-9',
       inputKind: 'human',
       origin: 'chat',
+      deliveryMode: 'defer',
     });
   });
 
