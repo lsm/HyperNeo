@@ -364,6 +364,7 @@ export class JobQueueProcessor {
     this.activeHandlers++;
     const reg = this.handlers.get(job.queue);
     const scope = scopeFromJob(job);
+    if (scope) this.notifyChange(scope);
     const controller = new AbortController();
     const record = this.trackInFlightClaim(job, controller, exempt ? 'exempt' : 'capped');
     this.emitLifecycle('slot_acquired', job, record.slotClass, { stage: record.stage });

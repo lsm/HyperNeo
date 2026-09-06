@@ -505,8 +505,190 @@ const WORKER_SHUTDOWN_TAIL_FILTER_SQL = `AND (
       )
     )`;
 
+function mailboxDeliveryTextExpr(sdkMessageExpr: string): string {
+  return `CASE
+      WHEN json_valid(${sdkMessageExpr}) AND json_type(${sdkMessageExpr}, '$.message.content[0].type') = 'text'
+        THEN json_extract(${sdkMessageExpr}, '$.message.content[0].text')
+      WHEN json_valid(${sdkMessageExpr}) AND json_type(${sdkMessageExpr}, '$.message.content[1].type') = 'text'
+        THEN json_extract(${sdkMessageExpr}, '$.message.content[1].text')
+      ELSE NULL
+    END`;
+}
+
+function mailboxDeliveryNameRawExpr(textExpr: string): string {
+  const rest = `SUBSTR(${textExpr}, 18)`;
+  return `SUBSTR(${rest}, 1, COALESCE(
+      NULLIF(INSTR(${rest}, ' ───\n\n') - 1, -1),
+      COALESCE(NULLIF(INSTR(${rest}, ' ───') - 1, -1), LENGTH(${textExpr}) - 17)
+    ))`;
+}
+
+function mailboxDeliverySenderExpr(
+  textExpr: string,
+  replyBlockExpr: string,
+  taskStrippedExpr: string
+): string {
+  const nameRaw = mailboxDeliveryNameRawExpr(textExpr);
+  const replyBlock = replyBlockExpr;
+  const replyBlockPresent = `LENGTH(${replyBlock}) > 0`;
+  const replyEchoStart = `INSTR(${replyBlock}, 'send_message with target "')`;
+  const replyEchoAt = `${replyEchoStart} + 26`;
+  const replyEchoRest = `SUBSTR(${replyBlock}, ${replyEchoAt})`;
+  const replyEchoLineLen = `INSTR(${replyEchoRest} || char(10), char(10)) - 1`;
+  const replyEchoLine = `SUBSTR(${replyEchoRest}, 1, ${replyEchoLineLen})`;
+  const replyEcho = `CASE WHEN ${replyEchoLine} LIKE '%"'
+    THEN SUBSTR(${replyEchoLine}, 1, LENGTH(${replyEchoLine}) - 1)
+    ELSE ${replyEchoLine} END`;
+  const replyTaskVerb = `INSTR(${replyBlock}, 'send_message_to_task')`;
+  const taskStripped = `TRIM(${taskStrippedExpr})`;
+  return `CASE
+      WHEN ${textExpr} LIKE '─── Message from %' THEN
+        CASE
+          WHEN ${replyBlockPresent} AND ${replyEchoStart} > 0 AND ${replyEcho} NOT LIKE '@%'
+            THEN ${replyEcho}
+          WHEN ${replyBlockPresent} AND ${replyEchoStart} > 0 AND ${taskStripped} = ${replyEcho}
+            THEN ${replyEcho}
+          WHEN ${replyBlockPresent} AND ${replyEchoStart} > 0
+            THEN TRIM(${nameRaw})
+          WHEN ${replyBlockPresent} AND ${replyTaskVerb} > 0 AND ${taskStripped} IS NOT NULL
+            THEN ${taskStripped}
+          ELSE TRIM(${nameRaw})
+        END
+      ELSE NULL
+    END`;
+}
+
+function deliveryReplyTailCte(args: {
+  relation: string;
+  idColumn: string;
+  textExpr: string;
+  filterSql?: string;
+}): string {
+  return `delivery_reply_tail (
+  message_id,
+  sep_at,
+  reply_text
+) AS (
+  SELECT ${args.idColumn} AS message_id,
+    INSTR(${args.textExpr}, '─── Reply ───') AS sep_at,
+    ${args.textExpr} AS reply_text
+  FROM ${args.relation}${args.filterSql ? `\n  WHERE ${args.filterSql}` : ''}
+  UNION ALL
+  SELECT message_id,
+    sep_at + 13 + INSTR(SUBSTR(reply_text, sep_at + 14), '─── Reply ───'),
+    reply_text
+  FROM delivery_reply_tail
+  WHERE sep_at > 0
+    AND INSTR(SUBSTR(reply_text, sep_at + 14), '─── Reply ───') > 0
+),
+delivery_reply_last AS (
+  SELECT message_id, sep_at, reply_text
+  FROM delivery_reply_tail
+  WHERE INSTR(SUBSTR(reply_text, sep_at + 14), '─── Reply ───') = 0
+)`;
+}
+
+function deliveryNameMarkerCte(args: {
+  relation: string;
+  idColumn: string;
+  textExpr: string;
+  filterSql?: string;
+}): string {
+  const nameRaw = mailboxDeliveryNameRawExpr(args.textExpr);
+  return `delivery_name_marker (
+  message_id,
+  marker_at,
+  name_text
+) AS (
+  SELECT ${args.idColumn} AS message_id,
+    INSTR(${nameRaw}, ' (task #') AS marker_at,
+    ${nameRaw} AS name_text
+  FROM ${args.relation}${args.filterSql ? `\n  WHERE ${args.filterSql}` : ''}
+  UNION ALL
+  SELECT message_id,
+    marker_at + 8 + INSTR(SUBSTR(name_text, marker_at + 9), ' (task #'),
+    name_text
+  FROM delivery_name_marker
+  WHERE marker_at > 0
+    AND INSTR(SUBSTR(name_text, marker_at + 9), ' (task #') > 0
+),
+delivery_name_last AS (
+  SELECT message_id, marker_at, name_text
+  FROM delivery_name_marker
+  WHERE INSTR(SUBSTR(name_text, marker_at + 9), ' (task #') = 0
+)`;
+}
+
+const deliveryTaskStrippedExpr = `CASE
+  WHEN dtm.marker_at > 0
+    AND SUBSTR(dtm.name_text, dtm.marker_at) IS NOT NULL
+    AND SUBSTR(SUBSTR(dtm.name_text, dtm.marker_at), 9) = CAST(SUBSTR(SUBSTR(dtm.name_text, dtm.marker_at), 9) AS INTEGER) || ')'
+    THEN SUBSTR(dtm.name_text, 1, dtm.marker_at - 1)
+  ELSE NULL
+END`;
+
+function deliveryRetryingCtes(sessionFilterSql: string): string {
+  const sessionFilter = sessionFilterSql.length > 0 ? `\n    ${sessionFilterSql}` : '';
+  return `delivery_active_jobs AS MATERIALIZED (
+  SELECT
+    json_extract(jq.payload, '$.sessionId') AS session_id,
+    json_extract(jq.payload, '$.messageUuid') AS message_uuid,
+    jq.retry_count,
+    jq.started_at
+  FROM job_queue jq
+  WHERE jq.queue = 'message_delivery'
+    AND jq.status IN ('pending', 'processing')${sessionFilter}
+),
+delivery_retrying AS MATERIALIZED (
+  SELECT message_uuid, session_id, MAX(retry_count) > 0 AS retrying, MAX(started_at) AS retry_started_at
+  FROM delivery_active_jobs
+  WHERE message_uuid IS NOT NULL
+  GROUP BY message_uuid, session_id
+)`;
+}
+
+function deliveryJobErrorsCte(sessionFilterSql: string): string {
+  const sessionFilter = sessionFilterSql.length > 0 ? `\n    ${sessionFilterSql}` : '';
+  return `delivery_job_errors AS MATERIALIZED (
+  SELECT
+    json_extract(jq.payload, '$.sessionId') AS session_id,
+    json_extract(jq.payload, '$.messageUuid') AS message_uuid,
+    jq.error AS error,
+    jq.completed_at AS error_settled_at,
+    ROW_NUMBER() OVER (
+      PARTITION BY json_extract(jq.payload, '$.sessionId'), json_extract(jq.payload, '$.messageUuid')
+      ORDER BY jq.created_at DESC, jq.rowid DESC
+    ) AS rn
+  FROM job_queue jq
+  WHERE jq.queue = 'message_delivery'${sessionFilter}
+)`;
+}
+
+function deliveryJobSettledCte(sessionFilterSql: string): string {
+  const sessionFilter = sessionFilterSql.length > 0 ? `\n    ${sessionFilterSql}` : '';
+  return `delivery_settled_jobs AS MATERIALIZED (
+  SELECT
+    json_extract(jq.payload, '$.sessionId') AS session_id,
+    json_extract(jq.payload, '$.messageUuid') AS message_uuid,
+    jq.completed_at AS settled_at,
+    ROW_NUMBER() OVER (
+      PARTITION BY json_extract(jq.payload, '$.sessionId'), json_extract(jq.payload, '$.messageUuid')
+      ORDER BY jq.created_at DESC, jq.rowid DESC
+    ) AS rn
+  FROM job_queue jq
+  WHERE jq.queue = 'message_delivery'
+    AND jq.status = 'completed'
+    AND jq.completed_at IS NOT NULL${sessionFilter}
+)`;
+}
+
+function deliveryRetryStateCtes(sessionFilterSql: string): string {
+  return `${deliveryRetryingCtes(sessionFilterSql)},
+${deliveryJobErrorsCte(sessionFilterSql)}`;
+}
+
 const ACTOR_MESSAGES_BY_TASK_SQL = `
-WITH target_task AS (
+WITH RECURSIVE target_task AS (
   SELECT * FROM space_tasks WHERE id = ?
 ),
 session_node_exec AS (
@@ -745,27 +927,145 @@ sdk_rows AS (
     )
     ${WORKER_SHUTDOWN_TAIL_FILTER_SQL}
 ),
-pending_rows AS (
+${deliveryRetryStateCtes(`AND json_extract(jq.payload, '$.sessionId') IN (
+    SELECT session_id FROM sdk_messages WHERE task_id = (SELECT id FROM target_task)
+  )`)},
+${deliveryJobSettledCte(`AND json_extract(jq.payload, '$.sessionId') IN (
+    SELECT session_id FROM sdk_messages WHERE task_id = (SELECT id FROM target_task)
+  )`)},
+${deliveryReplyTailCte({
+  relation: 'task_sdk_messages tsm',
+  idColumn: 'tsm.id',
+  textExpr: mailboxDeliveryTextExpr('tsm.sdk_message'),
+  filterSql:
+    "tsm.message_type = 'user' AND tsm.send_status IS NOT NULL AND tsm.parent_tool_use_id IS NULL",
+})},
+${deliveryNameMarkerCte({
+  relation: 'task_sdk_messages tsm',
+  idColumn: 'tsm.id',
+  textExpr: mailboxDeliveryTextExpr('tsm.sdk_message'),
+  filterSql:
+    "tsm.message_type = 'user' AND tsm.send_status IS NOT NULL AND tsm.parent_tool_use_id IS NULL",
+})},
+-- Delivery rows project the mailbox delivery lifecycle from the session outbox
+-- (sdk_messages user rows) rather than the legacy pending_agent_messages queue,
+-- and send_status carries the lifecycle (enqueued/deferred/submitted → queued,
+-- consumed → delivered, failed → failed). Three pieces of outbox evidence gate
+-- a row in: a non-NULL send_status and a NULL parent_tool_use_id (SDK-emitted
+-- user echoes like tool results are also stamped isSynthetic but persist
+-- without a send status), and an agent-message envelope header — every routed
+-- agent-to-agent delivery is wrapped by formatAgentMessage (router, tools,
+-- drain), while session briefs and kickoff prompts (including kickoffs
+-- injected into reused sessions) and runtime injections (wakes, recovery,
+-- nags) are never enveloped. The parsed envelope sender becomes the from chip.
+delivery_rows AS (
   SELECT
-    'delivery:' || pm.id AS id,
+    id,
     'task_timeline' AS scope,
-    'handoff' AS eventKind,
-    tt.id AS taskId,
-    tt.title AS taskTitle,
-    pm.workflow_run_id AS workflowRunId,
+    eventKind,
+    taskId,
+    taskTitle,
+    workflowRunId,
     NULL AS messageId,
-    pm.id AS eventRef,
-    json_object('kind', 'worker', 'label', pm.source_agent_name, 'role', pm.source_agent_name) AS fromActor,
-    json_object('kind', CASE WHEN pm.target_kind = 'space_agent' THEN 'agent' ELSE 'worker' END, 'label', pm.target_agent_name, 'role', pm.target_agent_name, 'sessionId', pm.delivered_session_id) AS targetActor,
-    CASE WHEN pm.status = 'pending' THEN 'queued' ELSE 'direct' END AS targetResolution,
-    CASE WHEN pm.status = 'pending' THEN 'queued' ELSE pm.status END AS deliveryState,
-    CASE WHEN pm.status = 'pending' THEN 'Queued delivery' WHEN pm.status = 'delivered' THEN 'Delivered message' WHEN pm.status = 'expired' THEN 'Expired delivery' ELSE 'Failed delivery' END AS title,
-    pm.message AS summary,
-    pm.last_error AS details,
-    CASE WHEN pm.status IN ('failed', 'expired') THEN 'error' WHEN pm.status = 'delivered' THEN 'success' ELSE 'info' END AS severity,
-    COALESCE(pm.last_attempt_at, pm.delivered_at, pm.created_at) AS createdAt
-  FROM target_task tt
-  JOIN pending_agent_messages pm ON pm.task_id = tt.id
+    eventRef,
+    json_object(
+      'kind', CASE WHEN sender IS NULL THEN 'system' ELSE 'worker' END,
+      'label', COALESCE(NULLIF(sender, ''), 'Runtime'),
+      'role', COALESCE(NULLIF(sender, ''), 'runtime')
+    ) AS fromActor,
+    json_object(
+      'kind', CASE
+        WHEN session_type IS NULL OR session_type IN ('worker', 'space_task_agent') THEN 'worker'
+        ELSE 'agent'
+      END,
+      'label', target_label,
+      'role', target_role,
+      'sessionId', session_id
+    ) AS targetActor,
+    CASE WHEN send_status IN ('consumed', 'failed') THEN 'direct' ELSE 'queued' END AS targetResolution,
+    CASE
+      WHEN send_status = 'failed' THEN 'failed'
+      WHEN send_status = 'consumed' THEN 'delivered'
+      ELSE 'queued'
+    END AS deliveryState,
+    CASE
+      WHEN send_status = 'failed' THEN 'Failed delivery'
+      WHEN send_status = 'consumed' THEN 'Delivered message'
+      ELSE 'Queued delivery'
+    END AS title,
+    summary,
+    error AS details,
+    CASE
+      WHEN send_status = 'failed' THEN 'error'
+      WHEN send_status = 'consumed' THEN 'success'
+      ELSE 'info'
+    END AS severity,
+    createdAt
+  FROM (
+    SELECT
+      'delivery:' || tsm.id AS id,
+      CASE
+        WHEN adr.retrying AND tsm.send_status NOT IN ('consumed', 'failed') THEN 'retry'
+        ELSE 'handoff'
+      END AS eventKind,
+      tt.id AS taskId,
+      tt.title AS taskTitle,
+      tt.workflow_run_id AS workflowRunId,
+      tsm.id AS eventRef,
+      ${mailboxDeliverySenderExpr(
+        mailboxDeliveryTextExpr('tsm.sdk_message'),
+        `CASE WHEN drt.sep_at > 0 THEN SUBSTR(drt.reply_text, drt.sep_at) ELSE '' END`,
+        deliveryTaskStrippedExpr
+      )} AS sender,
+      s_kind.type AS session_type,
+      COALESCE(
+        sa.display_name, ne.agent_name, tsm.provenance_agent_name,
+        CASE WHEN s_kind.type = 'space_task_agent' THEN 'Task Agent' ELSE 'agent' END
+      ) AS target_label,
+      COALESCE(ne.agent_name, tsm.provenance_agent_name, '') AS target_role,
+      tsm.session_id AS session_id,
+      tsm.send_status AS send_status,
+      SUBSTR(${mailboxDeliveryTextExpr('tsm.sdk_message')}, 1, 500) AS summary,
+      dje.error AS error,
+      CASE
+        WHEN adr.retrying AND tsm.send_status NOT IN ('consumed', 'failed') AND adr.retry_started_at IS NOT NULL
+          THEN adr.retry_started_at
+        WHEN tsm.send_status = 'failed' AND dje.error_settled_at IS NOT NULL
+          THEN dje.error_settled_at
+        WHEN tsm.send_status = 'consumed' AND djs.settled_at IS NOT NULL
+          THEN djs.settled_at
+        ELSE CAST(ROUND((julianday(tsm.timestamp) - 2440587.5) * 86400000) AS INTEGER)
+      END AS createdAt
+    FROM target_task tt
+    JOIN task_sdk_messages tsm ON tsm.task_id = tt.id
+    LEFT JOIN delivery_reply_last drt ON drt.message_id = tsm.id
+    LEFT JOIN delivery_name_last dtm ON dtm.message_id = tsm.id
+    LEFT JOIN delivery_retrying adr
+      ON adr.message_uuid = tsm.resolved_sdk_uuid
+     AND adr.session_id = tsm.session_id
+    LEFT JOIN delivery_job_errors dje
+      ON dje.session_id = tsm.session_id
+     AND dje.message_uuid = tsm.resolved_sdk_uuid
+     AND dje.rn = 1
+     AND tsm.send_status != 'consumed'
+    LEFT JOIN delivery_settled_jobs djs
+      ON djs.session_id = tsm.session_id
+     AND djs.message_uuid = tsm.resolved_sdk_uuid
+     AND djs.rn = 1
+    LEFT JOIN session_node_exec ne
+      ON ne.workflow_run_id = tt.workflow_run_id
+     AND ne.agent_session_id = tsm.session_id
+     AND ne.rn = 1
+    LEFT JOIN sessions s_kind ON s_kind.id = tsm.session_id
+    LEFT JOIN space_long_horizon_agents sa
+      ON sa.id = COALESCE(ne.agent_id, tsm.provenance_agent_id)
+    WHERE tsm.message_type = 'user'
+      AND json_valid(tsm.sdk_message)
+      AND COALESCE(CAST(json_extract(tsm.sdk_message, '$.isSynthetic') AS INTEGER), 0) = 1
+      AND tsm.send_status IS NOT NULL
+      AND tsm.parent_tool_use_id IS NULL
+  )
+  WHERE sender IS NOT NULL
 ),
 github_rows AS (
   SELECT
@@ -791,13 +1091,13 @@ github_rows AS (
   WHERE ge.state IN ('routed', 'delivered', 'failed')
 )
 SELECT * FROM sdk_rows
-UNION ALL SELECT * FROM pending_rows
+UNION ALL SELECT * FROM delivery_rows
 UNION ALL SELECT * FROM github_rows
 ORDER BY createdAt ASC, id ASC
 `.trim();
 
 const ACTOR_MESSAGES_BY_WORKFLOW_RUN_SQL = `
-WITH node_status_events AS (
+WITH RECURSIVE node_status_events AS (
   SELECT 'in_progress' AS status, 'handoff' AS eventKind, 'Node handoff' AS title, 0 AS rank
   UNION ALL SELECT 'idle', 'status', 'Node completed', 1
   UNION ALL SELECT 'done', 'status', 'Node completed', 1
@@ -836,28 +1136,180 @@ node_rows AS (
   LEFT JOIN space_long_horizon_agents sa ON sa.id = ne.agent_id
   WHERE ne.workflow_run_id = ?
 ),
+delivery_targets AS MATERIALIZED (
+  SELECT
+    st.id AS task_id,
+    st.title AS task_title,
+    st.workflow_run_id AS workflow_run_id,
+    sm.id AS message_id,
+    sm.session_id AS session_id,
+    sm.sdk_message AS sdk_message,
+    COALESCE(sm.sdk_uuid, sm.id) AS resolved_uuid,
+    sm.send_status AS send_status,
+    sm.timestamp AS timestamp
+  FROM space_tasks st
+  JOIN sdk_messages sm ON sm.task_id = st.id
+  WHERE st.workflow_run_id = ?
+    AND sm.message_type = 'user'
+    AND sm.send_status IS NOT NULL
+    AND sm.parent_tool_use_id IS NULL
+),
+delivery_session_exec AS (
+  SELECT
+    ne.agent_session_id AS session_id,
+    ne.agent_id AS agent_id,
+    ne.agent_name AS agent_name,
+    ROW_NUMBER() OVER (
+      PARTITION BY ne.agent_session_id
+      ORDER BY
+        CASE ne.status
+          WHEN 'in_progress' THEN 0
+          WHEN 'waiting_rebind' THEN 1
+          WHEN 'blocked' THEN 2
+          WHEN 'pending' THEN 3
+          ELSE 4
+        END,
+        ne.updated_at DESC,
+        ne.created_at DESC,
+        ne.id DESC
+    ) AS rn
+  FROM node_executions ne
+  WHERE ne.agent_session_id IN (SELECT session_id FROM delivery_targets)
+),
+delivery_sessions AS (
+  SELECT
+    dt.session_id AS session_id,
+    s.type AS session_type,
+    json_extract(s.metadata, '$.promptProvenance.agentName') AS provenance_agent_name,
+    json_extract(s.metadata, '$.promptProvenance.agentId') AS provenance_agent_id
+  FROM delivery_targets dt
+  LEFT JOIN sessions s ON s.id = dt.session_id
+  GROUP BY dt.session_id
+),
+${deliveryRetryStateCtes(`AND json_extract(jq.payload, '$.sessionId') IN (
+    SELECT session_id FROM delivery_targets
+  )`)},
+${deliveryJobSettledCte(`AND json_extract(jq.payload, '$.sessionId') IN (
+    SELECT session_id FROM delivery_targets
+  )`)},
+${deliveryReplyTailCte({
+  relation: 'delivery_targets dtd',
+  idColumn: 'dtd.message_id',
+  textExpr: mailboxDeliveryTextExpr('dtd.sdk_message'),
+})},
+${deliveryNameMarkerCte({
+  relation: 'delivery_targets dtn',
+  idColumn: 'dtn.message_id',
+  textExpr: mailboxDeliveryTextExpr('dtn.sdk_message'),
+})},
+-- Same mailbox delivery projection as the task timeline, scoped to the run's
+-- tasks through sdk_messages.task_id; outbox-persisted synthetic user rows
+-- (send_status non-NULL, no parent tool use) carrying an agent-message
+-- envelope are the routed deliveries that used to surface from
+-- pending_agent_messages.
 delivery_rows AS (
   SELECT
-    'delivery:' || pm.id AS id,
+    id,
     'workflow_log' AS scope,
-    CASE WHEN pm.attempts > 0 AND pm.status = 'pending' THEN 'retry' ELSE 'handoff' END AS eventKind,
-    pm.task_id AS taskId,
-    st.title AS taskTitle,
-    pm.workflow_run_id AS workflowRunId,
+    eventKind,
+    taskId,
+    taskTitle,
+    workflowRunId,
     NULL AS messageId,
-    pm.id AS eventRef,
-    json_object('kind', 'worker', 'label', pm.source_agent_name, 'role', pm.source_agent_name) AS fromActor,
-    json_object('kind', CASE WHEN pm.target_kind = 'space_agent' THEN 'agent' ELSE 'worker' END, 'label', pm.target_agent_name, 'role', pm.target_agent_name, 'sessionId', pm.delivered_session_id) AS targetActor,
-    CASE WHEN pm.status = 'pending' THEN 'queued' ELSE 'direct' END AS targetResolution,
-    CASE WHEN pm.status = 'pending' THEN 'queued' ELSE pm.status END AS deliveryState,
-    CASE WHEN pm.status = 'pending' THEN 'Queued delivery' WHEN pm.status = 'delivered' THEN 'Delivered message' WHEN pm.status = 'expired' THEN 'Expired delivery' ELSE 'Failed delivery' END AS title,
-    pm.message AS summary,
-    pm.last_error AS details,
-    CASE WHEN pm.status IN ('failed', 'expired') THEN 'error' WHEN pm.status = 'delivered' THEN 'success' ELSE 'info' END AS severity,
-    COALESCE(pm.last_attempt_at, pm.delivered_at, pm.created_at) AS createdAt
-  FROM pending_agent_messages pm
-  LEFT JOIN space_tasks st ON st.id = pm.task_id
-  WHERE pm.workflow_run_id = ?
+    eventRef,
+    json_object(
+      'kind', CASE WHEN sender IS NULL THEN 'system' ELSE 'worker' END,
+      'label', COALESCE(NULLIF(sender, ''), 'Runtime'),
+      'role', COALESCE(NULLIF(sender, ''), 'runtime')
+    ) AS fromActor,
+    json_object(
+      'kind', CASE
+        WHEN session_type IS NULL OR session_type IN ('worker', 'space_task_agent') THEN 'worker'
+        ELSE 'agent'
+      END,
+      'label', target_label,
+      'role', target_role,
+      'sessionId', session_id
+    ) AS targetActor,
+    CASE WHEN send_status IN ('consumed', 'failed') THEN 'direct' ELSE 'queued' END AS targetResolution,
+    CASE
+      WHEN send_status = 'failed' THEN 'failed'
+      WHEN send_status = 'consumed' THEN 'delivered'
+      ELSE 'queued'
+    END AS deliveryState,
+    CASE
+      WHEN send_status = 'failed' THEN 'Failed delivery'
+      WHEN send_status = 'consumed' THEN 'Delivered message'
+      ELSE 'Queued delivery'
+    END AS title,
+    summary,
+    error AS details,
+    CASE
+      WHEN send_status = 'failed' THEN 'error'
+      WHEN send_status = 'consumed' THEN 'success'
+      ELSE 'info'
+    END AS severity,
+    createdAt
+  FROM (
+    SELECT
+      'delivery:' || dt.message_id AS id,
+      CASE
+        WHEN adr.retrying AND dt.send_status NOT IN ('consumed', 'failed') THEN 'retry'
+        ELSE 'handoff'
+      END AS eventKind,
+      dt.task_id AS taskId,
+      dt.task_title AS taskTitle,
+      dt.workflow_run_id AS workflowRunId,
+      dt.message_id AS eventRef,
+      ${mailboxDeliverySenderExpr(
+        mailboxDeliveryTextExpr('dt.sdk_message'),
+        `CASE WHEN drt.sep_at > 0 THEN SUBSTR(drt.reply_text, drt.sep_at) ELSE '' END`,
+        deliveryTaskStrippedExpr
+      )} AS sender,
+      dsess.session_type AS session_type,
+      COALESCE(
+        sa.display_name, dse.agent_name, dsess.provenance_agent_name,
+        CASE WHEN dsess.session_type = 'space_task_agent' THEN 'Task Agent' ELSE 'agent' END
+      ) AS target_label,
+      COALESCE(dse.agent_name, dsess.provenance_agent_name, '') AS target_role,
+      dt.session_id AS session_id,
+      dt.send_status AS send_status,
+      SUBSTR(${mailboxDeliveryTextExpr('dt.sdk_message')}, 1, 500) AS summary,
+      dje.error AS error,
+      CASE
+        WHEN adr.retrying AND dt.send_status NOT IN ('consumed', 'failed') AND adr.retry_started_at IS NOT NULL
+          THEN adr.retry_started_at
+        WHEN dt.send_status = 'failed' AND dje.error_settled_at IS NOT NULL
+          THEN dje.error_settled_at
+        WHEN dt.send_status = 'consumed' AND djs.settled_at IS NOT NULL
+          THEN djs.settled_at
+        ELSE CAST(ROUND((julianday(dt.timestamp) - 2440587.5) * 86400000) AS INTEGER)
+      END AS createdAt
+    FROM delivery_targets dt
+    LEFT JOIN delivery_reply_last drt ON drt.message_id = dt.message_id
+    LEFT JOIN delivery_name_last dtm ON dtm.message_id = dt.message_id
+    LEFT JOIN delivery_session_exec dse
+      ON dse.session_id = dt.session_id
+     AND dse.rn = 1
+    LEFT JOIN delivery_sessions dsess ON dsess.session_id = dt.session_id
+    LEFT JOIN space_long_horizon_agents sa
+      ON sa.id = COALESCE(dse.agent_id, dsess.provenance_agent_id)
+    LEFT JOIN delivery_retrying adr
+      ON adr.message_uuid = dt.resolved_uuid
+     AND adr.session_id = dt.session_id
+    LEFT JOIN delivery_job_errors dje
+      ON dje.session_id = dt.session_id
+     AND dje.message_uuid = dt.resolved_uuid
+     AND dje.rn = 1
+     AND dt.send_status != 'consumed'
+    LEFT JOIN delivery_settled_jobs djs
+      ON djs.session_id = dt.session_id
+     AND djs.message_uuid = dt.resolved_uuid
+     AND djs.rn = 1
+    WHERE json_valid(dt.sdk_message)
+      AND COALESCE(CAST(json_extract(dt.sdk_message, '$.isSynthetic') AS INTEGER), 0) = 1
+  )
+  WHERE sender IS NOT NULL
 ),
 artifact_rows AS (
   SELECT
@@ -1042,6 +1494,9 @@ lifecycle AS (
     tt.archived_at
   FROM target_task tt WHERE tt.archived_at IS NOT NULL
 ),
+${deliveryJobErrorsCte(`AND json_extract(jq.payload, '$.sessionId') IN (
+    SELECT session_id FROM sdk_messages WHERE task_id = (SELECT id FROM target_task)
+  )`)},
 instruction_candidates AS (
   SELECT
     'instruction:' || tsm.id AS id,
@@ -1065,13 +1520,21 @@ instruction_candidates AS (
     'Human' AS sourceLabel,
     'human' AS sourceKind,
     NULL AS sourceId,
-    CAST((julianday(tsm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
+    CASE
+      WHEN tsm.send_status = 'failed' AND dje.error_settled_at IS NOT NULL
+        THEN dje.error_settled_at
+      ELSE CAST(ROUND((julianday(tsm.timestamp) - 2440587.5) * 86400000) AS INTEGER)
+    END AS createdAt
   FROM target_task tt
   JOIN task_sdk_messages tsm ON tsm.task_id = tt.id
   -- The sdk_message BLOB is re-fetched by primary key only for rows that
   -- reach this candidate stage; task_sdk_messages deliberately excludes it
   -- so materialization never reads every message's overflow pages (#2660).
   JOIN sdk_messages msg ON msg.id = tsm.id
+  LEFT JOIN delivery_job_errors dje
+    ON dje.session_id = tsm.session_id
+   AND dje.message_uuid = tsm.resolved_sdk_uuid
+   AND dje.rn = 1
   LEFT JOIN sdk_replacement_status srs ON srs.id = tsm.id
   WHERE tsm.message_type = 'user'
     -- A human instruction is any non-synthetic user message. The task-panel
@@ -1292,24 +1755,51 @@ artifact_rows AS (
   FROM target_task tt
   JOIN workflow_run_artifacts wra ON wra.run_id = tt.workflow_run_id
 ),
-pending_instruction_rows AS (
+queued_instruction_candidates AS (
   SELECT
-    'pending:' || pm.id AS id,
+    'queued:' || msg.id AS id,
     tt.id AS taskId,
     'instruction' AS category,
-    CASE WHEN pm.status = 'pending' THEN 'info' ELSE 'danger' END AS tone,
-    CASE WHEN pm.status = 'pending' THEN 'Instruction queued' ELSE 'Instruction failed to deliver' END AS title,
-    SUBSTR(COALESCE(pm.message, ''), 1, 500) AS body,
+    'info' AS tone,
+    'Instruction queued' AS title,
+    SUBSTR(
+      CASE
+        WHEN json_valid(msg.sdk_message) AND json_type(msg.sdk_message, '$.message.content') = 'text'
+          THEN json_extract(msg.sdk_message, '$.message.content')
+        WHEN json_valid(msg.sdk_message) AND json_type(msg.sdk_message, '$.message.content') = 'array' THEN (
+          SELECT GROUP_CONCAT(json_extract(je.value, '$.text'), ' ')
+          FROM json_each(json_extract(msg.sdk_message, '$.message.content')) je
+          WHERE json_extract(je.value, '$.type') = 'text'
+            AND COALESCE(json_extract(je.value, '$.text'), '') != ''
+        )
+        ELSE ''
+      END,
+    1, 500) AS body,
     'Human' AS sourceLabel,
     'human' AS sourceKind,
     NULL AS sourceId,
-    COALESCE(pm.last_attempt_at, pm.created_at) AS createdAt
+    CAST((julianday(tsm.timestamp) - 2440587.5) * 86400000 AS INTEGER) AS createdAt
   FROM target_task tt
-  JOIN pending_agent_messages pm ON pm.task_id = tt.id
-  -- A human instruction targeted at an agent that hasn't started is queued here
-  -- (source_agent_name='human'); surface pending + failed/expired states. Once
-  -- delivered, the flushed sdk_messages row covers it, so exclude 'delivered'.
-  WHERE pm.source_agent_name = 'human' AND pm.status IN ('pending', 'failed', 'expired')
+  JOIN task_sdk_messages tsm ON tsm.task_id = tt.id
+  JOIN sdk_messages msg ON msg.id = tsm.id
+  LEFT JOIN sdk_replacement_status srs ON srs.id = tsm.id
+  WHERE tsm.message_type = 'user'
+    -- A human instruction is a non-synthetic user message (same discriminator
+    -- as instruction_candidates below). While it sits in the session outbox
+    -- (send_status enqueued/deferred/submitted) it has not been consumed yet,
+    -- so instruction_candidates excludes it and this row surfaces the queued
+    -- state. Failure is covered by instruction_candidates' failed arm once the
+    -- delivery row settles as failed.
+    AND COALESCE(tsm.origin, '') != 'system'
+    AND json_valid(msg.sdk_message)
+    AND COALESCE(CAST(json_extract(msg.sdk_message, '$.isSynthetic') AS INTEGER), 0) = 0
+    AND srs.replacementStatus IS NULL
+    AND COALESCE(tsm.send_status, 'consumed') IN ('enqueued', 'deferred', 'submitted')
+),
+queued_instruction_rows AS (
+  SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt
+  FROM queued_instruction_candidates
+  WHERE body IS NOT NULL AND body != ''
 ),
 github_rows AS (
   SELECT
@@ -1362,7 +1852,7 @@ SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceI
 FROM (
   SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM lifecycle
   UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM instruction_rows
-  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM pending_instruction_rows
+  UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM queued_instruction_rows
   UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM answer_rows
   UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM retry_rows
   UNION ALL SELECT id, taskId, category, tone, title, body, sourceLabel, sourceKind, sourceId, createdAt FROM artifact_rows
