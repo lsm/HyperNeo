@@ -39,6 +39,7 @@ function makeDeps(overrides: Partial<AgentMessageDeliveryDeps> = {}) {
       ],
     },
     resolveTerminalStatus: () => null,
+    isPostApprovalWorker: () => false,
     ensureSession: async () => ({ kind: 'resolved' as const, sessionId: 'sess-1', created: false }),
     getSessionAsync: async () => makeSession().session,
     withSessionInjectLock: (_sessionId, fn) => fn(),
@@ -120,6 +121,22 @@ describe('deliverAgentMessageToTarget', () => {
         messageId: 'msg-4',
       })
     ).toEqual({ state: 'not_found', messageId: 'msg-4', error: 'no live session' });
+  });
+
+  it('accepts a provenance-backed post-approval worker without a node execution row', async () => {
+    const { deps, handoffCalls } = makeDeps({
+      nodeExecutionRepo: { listByWorkflowRun: () => [] },
+      isPostApprovalWorker: (_taskId, agentName, sessionId) =>
+        agentName === 'reviewer' && sessionId === 'sess-1',
+    });
+    const outcome = await deliverAgentMessageToTarget({
+      deps,
+      target: WORKER_TARGET,
+      message: 'merge blocked',
+      messageId: 'msg-pa',
+    });
+    expect(outcome).toEqual({ state: 'delivered', sessionId: 'sess-1', messageId: 'msg-pa' });
+    expect(handoffCalls).toHaveLength(1);
   });
 
   it('fails delivery when the task or run is terminal', async () => {

@@ -5084,15 +5084,23 @@ export class TaskAgentManager {
   }
 
   private agentMessageDeliveryDeps(workflowRunId: string): AgentMessageDeliveryDeps {
-    const longHorizonAgentRepo = this.config.longHorizonAgentRepo;
-    if (!longHorizonAgentRepo) {
-      throw new Error('Long-horizon agent repository unavailable');
-    }
+    const longHorizonAgentRepo =
+      this.config.longHorizonAgentRepo ??
+      ({
+        getCoordinator: () => {
+          throw new Error('Long-horizon agent repository unavailable');
+        },
+      } as unknown as SpaceLongHorizonAgentRepository);
     return {
       workflowRunId,
       taskRepo: this.config.taskRepo,
       nodeExecutionRepo: this.config.nodeExecutionRepo,
       resolveTerminalStatus: (runId, taskId) => this.resolveTerminalInjectionStatus(runId, taskId),
+      isPostApprovalWorker: (taskId, agentName, sessionId) => {
+        const task = this.config.taskRepo.getTask(taskId);
+        if (!task || task.postApprovalSessionId !== sessionId) return false;
+        return this.legacyWorkflowRouteAgentName(task) === agentName;
+      },
       ensureSession: (target) =>
         ensureSession(
           target,

@@ -27,6 +27,7 @@ export interface AgentMessageDeliveryDeps {
     }>;
   };
   resolveTerminalStatus(runId: string, taskId?: string): string | null;
+  isPostApprovalWorker(taskId: string, agentName: string, sessionId: string): boolean;
   ensureSession(target: SessionTarget): Promise<EnsureSessionOutcome>;
   getSessionAsync(sessionId: string): Promise<AgentSession | null>;
   withSessionInjectLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T>;
@@ -169,7 +170,8 @@ export function revalidateRoutedWorker(
   const sessionId = ctx.resolution.sessionId;
   const task = deps.taskRepo.getTask(target.taskId);
   const execution = findWorkerExecution(deps, target, sessionId);
-  if (task?.workflowRunId !== deps.workflowRunId || !execution) {
+  const postApprovalWorker = deps.isPostApprovalWorker(target.taskId, target.agentName, sessionId);
+  if (task?.workflowRunId !== deps.workflowRunId || (!execution && !postApprovalWorker)) {
     return {
       ...ctx,
       outcome: { state: 'not_found', messageId: ctx.messageId, error: 'workflow run changed' },
