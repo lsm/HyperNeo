@@ -1,6 +1,9 @@
 import { describe, expect, it, mock } from 'bun:test';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
-import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
+import {
+  signalDeliveryConsumed,
+  withSessionLock,
+} from '../../../../src/lib/agent/message-delivery';
 import {
   PromptContentConflictError,
   persistPrompt,
@@ -376,6 +379,44 @@ describe('deliverSpaceAgentMessage', () => {
       .run(MESSAGE_ID);
 
     expect(probe()).toBe('failed');
+    h.db.close();
+  });
+
+  it('rechecks settlement while awaiting admission and settles without waking', async () => {
+    const h = makeHarness();
+    const persisted = persistPrompt({
+      db: h.db,
+      sdkMessageRepo: h.sdkRepo,
+      jobQueue: h.jobQueue,
+      sessionId: SESSION_ID,
+      message: userMessage('late consumption'),
+      delivery: { origin: 'space_agent' },
+    });
+    h.completeDeliveryJobs(SESSION_ID, MESSAGE_ID);
+    let releaseLock!: () => void;
+    const blocker = withSessionLock(
+      SESSION_ID,
+      () =>
+        new Promise<void>((resolve) => {
+          releaseLock = resolve;
+        })
+    );
+    const onConsumed = mock(() => {});
+
+    const delivery = deliverSpaceAgentMessage(
+      { ...h.deps, onConsumed },
+      h.input('late consumption')
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    h.sdkRepo.updateMessageStatus([persisted.dbMessageId], 'consumed');
+    releaseLock();
+    const outcome = await delivery;
+
+    expect(outcome.state).toBe('accepted');
+    expect(onConsumed).toHaveBeenCalledWith(SESSION_ID);
+    expect(pendingMailboxJobCount(h, MESSAGE_ID)).toBe(0);
+    expect(h.setQueuedIfIdle).not.toHaveBeenCalled();
+    await blocker;
     h.db.close();
   });
 });
