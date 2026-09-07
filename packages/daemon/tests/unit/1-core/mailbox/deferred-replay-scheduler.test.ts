@@ -530,6 +530,39 @@ describe('createMailboxDeferredReplayScheduler', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
+  test('waits for terminal-idle settlement before publishing', async () => {
+    const publish = mock(async () => {});
+    const deps = makeDeps(publish);
+    let settling = true;
+    let resolveIdle: (() => void) | undefined;
+    deps.sessionManager = {
+      getCachedSession: () =>
+        ({
+          getSessionData: () => ({ config: { queryMode: 'immediate' }, status: 'active' }),
+          getProcessingState: () => ({ status: 'idle' }),
+          stateManager: {
+            isTerminalIdleInFlight: () => settling,
+            waitForIdleTransition: () => ({
+              promise: new Promise<void>((resolve) => {
+                resolveIdle = resolve;
+              }),
+              cancel: () => {},
+            }),
+          },
+        }) as never,
+    };
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(10);
+    expect(publish).not.toHaveBeenCalled();
+
+    settling = false;
+    resolveIdle?.();
+    await flush(20);
+    expect(publish).toHaveBeenCalledWith(SESSION_ID);
+  });
+
   test('rechecks manual mode before publication after a park', async () => {
     const publish = mock(async () => {});
     const deps = makeDeps(publish);

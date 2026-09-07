@@ -67,10 +67,16 @@ export function createMailboxDeferredReplayScheduler(
   const parkedWaiters = new Map<string, () => void>();
 
   const pump = (): void => {
+    let admitted = 0;
     for (const sessionId of ready) {
       if (active.size >= MAX_ACTIVE_PUBLICATIONS) break;
+      if (admitted >= MAX_ACTIVE_PUBLICATIONS) {
+        setImmediate(pump);
+        return;
+      }
       ready.delete(sessionId);
       active.add(sessionId);
+      admitted += 1;
       void runSession(sessionId);
     }
   };
@@ -108,7 +114,7 @@ export function createMailboxDeferredReplayScheduler(
         return;
       }
       let status = session.getProcessingState().status;
-      while (isBusyStatus(status)) {
+      while (isBusyStatus(status) || session.stateManager.isTerminalIdleInFlight?.()) {
         if (status === 'interrupted') {
           await session.normalizeStaleInterruptedState?.();
           const normalizedSession = deps.sessionManager?.getCachedSession(sessionId);
