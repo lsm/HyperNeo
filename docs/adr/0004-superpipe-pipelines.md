@@ -29,6 +29,10 @@ delivery, stop, recovery, ingestion — composes as ONE superpipe pipeline named
 for the operation (`deliverMessage`, `spawnWorkflowNodeAgent`), whose stages
 freely mix pure decisions, transforms, and effects. Do not pre-classify a flow
 as decision vs staged vs transform; do not split one path across pipelines.
+The one-pipeline rule governs paths whose spine is composition; a path whose
+spine is a resource-owning loop composes as the decide-owning hybrid (below) —
+pipelines at its decision points, loop and effects in the owning shell — and
+that hybrid is the path's composition, not a split of it.
 
 Most business logic decomposes this way, and that is the argument for the
 style, not a nice-to-have: each stage is a named unit with declared inputs and
@@ -49,9 +53,11 @@ cannot see composition, precedence, or effect-order regressions.
    does not need — the wrong abstraction. New work composes direct pipelines
    only; do not add combinator call sites. Existing call sites stay put and
    migrate slice-by-slice in the slices that touch them. The blueprints under
-   `docs/superpipe-migration-plans/` predate this deprecation; where their
-   rows call for new `decisionRun`/`stagedRun` implementations, compose direct
-   pipelines instead — updating those plans is its own docs slice (Roadmap).
+   `docs/superpipe-migration-plans/` and the pilot-chain proposal
+   `docs/agent-layer-superpipe-pilot-proposal.md` predate this deprecation;
+   where their steps call for new `decisionRun`/`stagedRun` implementations,
+   compose direct pipelines instead — updating those documents is its own
+   docs slice (Roadmap).
 2. **Stages.** A stage is a function in the named pipeline. Pure decision and
    transform stages are preferred wherever no await or write is needed; effect
    stages are normal where the path needs them. `!dep` halts the run
@@ -72,9 +78,11 @@ cannot see composition, precedence, or effect-order regressions.
    otherwise coupled to background timers) keep their decide-equivalent stages
    synchronous and pin the microtask profile in tests; the sync executor
    preserves event-loop interleaving exactly. Elsewhere async is fine.
-5. **Resources stay in classes.** `AbortController`s, timers, subscriptions,
-   query objects, handles — pipelines receive values and declare outcomes;
-   the owning class executes lifecycle.
+5. **Resources stay in the owning shell.** `AbortController`s, timers,
+   subscriptions, query objects, handles — pipelines receive values and
+   declare outcomes; the owning shell — a class, or an encapsulated
+   factory/module scope such as `createMailboxDeferredReplayScheduler` —
+   executes lifecycle.
 6. **Cancellation is requirement-driven.** `withSignal` is wired when a real
    cancellation requirement appears, not to exercise the feature.
 7. **Testing.** Pin behavior before refactoring (parity/characterization
@@ -213,9 +221,10 @@ pinned by that slice's characterization tests. The full design record is
 
 ## Roadmap (open items)
 
-- Update the `docs/superpipe-migration-plans/` blueprints onto direct
-  pipelines; until then their combinator rows are superseded by the
-  2026-09-07 deprecation (Decision 1).
+- Update the `docs/superpipe-migration-plans/` blueprints and the
+  `docs/agent-layer-superpipe-pilot-proposal.md` pilot-chain proposal onto
+  direct pipelines; until then their combinator prescriptions are superseded
+  by the 2026-09-07 deprecation (Decision 1).
 - Migrate existing `decisionRun`/`stagedRun` call sites onto direct pipelines,
   slice-by-slice in the slices that touch them (deprecation recorded
   2026-09-07); no new combinator call sites in the meantime. Each migration
