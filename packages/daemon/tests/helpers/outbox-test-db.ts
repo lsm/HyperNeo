@@ -2,6 +2,7 @@ import { Database } from '../../src/storage/sqlite-compat';
 import { SDKMessageRepository } from '../../src/storage/repositories/sdk-message-repository';
 import { JobQueueRepository } from '../../src/storage/repositories/job-queue-repository';
 import { MESSAGE_DELIVERY } from '../../src/lib/job-queue-constants';
+import { MAILBOX_LANE } from '../../src/lib/mailbox/enqueue';
 
 export interface OutboxTestDb {
   db: Database;
@@ -11,6 +12,7 @@ export interface OutboxTestDb {
   userRowIdByUuid(sessionId: string, uuid: string): string | null;
   sendStatus(sessionId: string, uuid: string): string | null | undefined;
   pendingDeliveryJobCount(sessionId: string, uuid?: string): number;
+  pendingMailboxJobCount(sessionId: string, uuid?: string): number;
   completeDeliveryJobs(sessionId: string, uuid: string): void;
   breakingEnqueue(): JobQueueRepository;
 }
@@ -101,6 +103,21 @@ export function createOutboxTestDb(): OutboxTestDb {
               AND status IN ('pending', 'processing')`
         )
         .get(...(uuid ? [MESSAGE_DELIVERY, sessionId, uuid] : [MESSAGE_DELIVERY, sessionId])) as {
+        n: number;
+      };
+      return row.n;
+    },
+    pendingMailboxJobCount(sessionId: string, uuid?: string): number {
+      const row = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM job_queue
+            WHERE queue = ?
+              AND json_extract(payload, '$.to.kind') = 'session'
+              AND json_extract(payload, '$.to.sessionId') = ?
+              ${uuid ? "AND json_extract(payload, '$.messageUuid') = ?" : ''}
+              AND status IN ('pending', 'processing')`
+        )
+        .get(...(uuid ? [MAILBOX_LANE, sessionId, uuid] : [MAILBOX_LANE, sessionId])) as {
         n: number;
       };
       return row.n;

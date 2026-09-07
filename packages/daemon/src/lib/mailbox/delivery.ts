@@ -97,7 +97,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
     if (Date.now() - decodeUlidTimestamp(entry.id) > entry.policy.ttlMs) {
       throw new DeadLetterImmediatelyError('mailbox: entry expired (ttl)');
     }
-    const synthetic = entry.origin !== 'chat';
+    const synthetic = entry.origin !== 'chat' && entry.message.inputKind !== 'human';
     const admittedAt = decodeUlidTimestamp(entry.id);
     const admissionRowid = readAdmissionRowid(deps.db, job.id);
     const message: SDKUserMessage & { referenceMetadata?: ReferenceMetadata } = {

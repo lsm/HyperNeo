@@ -85,6 +85,8 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 import { Logger } from '../../logger.ts';
+import { renderAddress } from '../../mailbox/address.ts';
+import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager.ts';
 import {
   buildExecutionBaseSessionId,
@@ -135,7 +137,6 @@ import {
   deliverAgentMessageToTarget,
   type AgentMessageDeliveryDeps,
 } from './agent-message-delivery-pipeline.ts';
-import { handoffPromptToMailbox } from './prompt-mailbox-handoff.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import { decideRestoredWorkerAdmission } from './restored-worker-admission-decision-pipeline.ts';
 import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
@@ -4294,26 +4295,29 @@ export class TaskAgentManager {
         }
       }
 
+      const jobQueue = this.config.db.getJobQueueRepo();
       const handoff = await handoffPromptToMailbox({
-        deps: {
-          db: this.config.db.getDatabase(),
-          sdkMessageRepo: this.config.db.getSDKMessageRepo(),
-          jobQueue: this.config.db.getJobQueueRepo(),
+        to: renderAddress({ kind: 'session', sessionId }),
+        message: {
+          type: 'user',
+          parent_tool_use_id: null,
+          message: { role: 'user', content: sdkContent },
+          inputKind,
         },
-        target: {
-          sessionId,
-          messageId,
-          message: sdkUserMessage,
-          origin: 'space_inject',
-          messageOrigin: origin,
-        },
-        stateManager: session.stateManager,
-        publishStatusChanged: deliveryRows.publishStatusChanged,
+        origin: 'space_inject',
+        messageUuid: messageId,
+        jobQueue,
       });
-      if (handoff.state === 'stale') {
-        throw new Error('Mailbox handoff became stale');
+      if (handoff.kind === 'rejected') {
+        throw new Error(`Mailbox handoff rejected: ${handoff.reason}`);
       }
-      return handoff.dbId;
+      if (
+        jobQueue.activeMailboxMessageUuids(sessionId).has(messageId) ||
+        jobQueue.activeDeliveryMessageUuids(sessionId).has(messageId)
+      ) {
+        await session.stateManager.setQueuedIfIdle(messageId).catch(() => {});
+      }
+      return messageId;
     } finally {
       boundaryOwner?.release();
     }
@@ -4726,14 +4730,8 @@ export class TaskAgentManager {
       handoffToMailbox: (args) =>
         handoffPromptToMailbox({
           ...args,
-          deps: {
-            db: this.config.db.getDatabase(),
-            sdkMessageRepo: this.config.db.getSDKMessageRepo(),
-            jobQueue: this.config.db.getJobQueueRepo(),
-          },
+          jobQueue: this.config.db.getJobQueueRepo(),
         }),
-      publishStatusChanged: (sessionId, dbId, status) =>
-        this.publishMessageStatusChanged(sessionId, dbId, status),
       recordActivity: (sessionId) => this.recordActivityForSession(sessionId),
     };
   }

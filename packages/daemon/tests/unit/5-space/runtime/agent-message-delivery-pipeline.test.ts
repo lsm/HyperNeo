@@ -1,11 +1,11 @@
 import { describe, expect, it, mock } from 'bun:test';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
+import type { MailboxHandoffArgs } from '../../../../src/lib/mailbox/handoff.ts';
 import type { SessionTarget } from '../../../../src/lib/session-resolution/target.ts';
 import {
   deliverAgentMessageToTarget,
   type AgentMessageDeliveryDeps,
 } from '../../../../src/lib/space/runtime/agent-message-delivery-pipeline.ts';
-import type { MailboxHandoffArgs } from '../../../../src/lib/space/runtime/prompt-mailbox-handoff.ts';
 
 const WORKER_TARGET: SessionTarget = {
   kind: 'worker',
@@ -16,17 +16,18 @@ const WORKER_TARGET: SessionTarget = {
 
 function makeSession(opts: { status?: string; sdkSessionId?: string | null } = {}) {
   const clearMock = mock(async () => {});
+  const setQueuedIfIdle = mock(async () => true);
   const stub = {
     session: { id: 'sess-1', sdkSessionId: opts.sdkSessionId ?? 'sdk-prior' },
     getProcessingState: () => ({ status: opts.status ?? 'idle' }),
     clearConversationContext: clearMock,
-    stateManager: { setQueuedIfIdle: mock(async () => true) },
+    stateManager: { setQueuedIfIdle },
   };
-  return { session: stub as unknown as AgentSession, clearMock };
+  return { session: stub as unknown as AgentSession, clearMock, setQueuedIfIdle };
 }
 
 function makeDeps(overrides: Partial<AgentMessageDeliveryDeps> = {}) {
-  const handoffCalls: MailboxHandoffArgs[] = [];
+  const handoffCalls: Omit<MailboxHandoffArgs, 'jobQueue'>[] = [];
   const activities: string[] = [];
   const deps: AgentMessageDeliveryDeps = {
     workflowRunId: 'run-1',
@@ -50,9 +51,8 @@ function makeDeps(overrides: Partial<AgentMessageDeliveryDeps> = {}) {
     hasHeldDeliveryBacklog: () => false,
     handoffToMailbox: async (args) => {
       handoffCalls.push(args);
-      return { state: 'enqueued' as const, dbId: 'db-1', changed: true, advanced: true };
+      return { kind: 'enqueued' as const, id: 'mbox-1' };
     },
-    publishStatusChanged: async () => {},
     recordActivity: (sessionId) => activities.push(sessionId),
     ...overrides,
   };
@@ -61,7 +61,10 @@ function makeDeps(overrides: Partial<AgentMessageDeliveryDeps> = {}) {
 
 describe('deliverAgentMessageToTarget', () => {
   it('delivers through the mailbox door and reports the resolved session', async () => {
-    const { deps, handoffCalls, activities } = makeDeps();
+    const live = makeSession();
+    const { deps, handoffCalls, activities } = makeDeps({
+      getSessionAsync: async () => live.session,
+    });
     const outcome = await deliverAgentMessageToTarget({
       deps,
       target: WORKER_TARGET,
@@ -70,7 +73,11 @@ describe('deliverAgentMessageToTarget', () => {
     });
     expect(outcome).toEqual({ state: 'delivered', sessionId: 'sess-1', messageId: 'msg-1' });
     expect(handoffCalls).toHaveLength(1);
-    expect(handoffCalls[0].target.defer).toBeUndefined();
+    expect(handoffCalls[0].to).toBe('session:sess-1');
+    expect(handoffCalls[0].deliveryMode).toBeUndefined();
+    expect(handoffCalls[0].messageUuid).toBe('msg-1');
+    expect(handoffCalls[0].origin).toBe('space_agent');
+    expect(live.setQueuedIfIdle).toHaveBeenCalledTimes(1);
     expect(activities).toEqual(['sess-1']);
   });
 
@@ -158,10 +165,12 @@ describe('deliverAgentMessageToTarget', () => {
   });
 
   it('defers admission while the parent task is rate limited', async () => {
+    const live = makeSession();
     const { deps, handoffCalls } = makeDeps({
       taskRepo: {
         getTask: () => ({ id: 'task-1', workflowRunId: 'run-1', status: 'rate_limited' }),
       },
+      getSessionAsync: async () => live.session,
     });
     await deliverAgentMessageToTarget({
       deps,
@@ -169,8 +178,8 @@ describe('deliverAgentMessageToTarget', () => {
       message: 'x',
       messageId: 'msg-6',
     });
-    expect(handoffCalls[0].target.defer).toBe(true);
-    expect(handoffCalls[0].stateManager).toBeUndefined();
+    expect(handoffCalls[0].deliveryMode).toBe('defer');
+    expect(live.setQueuedIfIdle).not.toHaveBeenCalled();
   });
 
   it('defers admission behind an unconsumed held backlog', async () => {
@@ -183,7 +192,7 @@ describe('deliverAgentMessageToTarget', () => {
       message: 'x',
       messageId: 'msg-7',
     });
-    expect(handoffCalls[0].target.defer).toBe(true);
+    expect(handoffCalls[0].deliveryMode).toBe('defer');
   });
 
   it('clears prior context for an idle resetContextPerTurn slot before handoff', async () => {
@@ -228,7 +237,7 @@ describe('deliverAgentMessageToTarget', () => {
       messageId: 'msg-10',
       deliveryMode: 'defer',
     });
-    expect(handoffCalls[0].target.defer).toBe(true);
+    expect(handoffCalls[0].deliveryMode).toBe('defer');
   });
 
   it('delivers immediately when defer is requested but the session is idle', async () => {
@@ -243,7 +252,7 @@ describe('deliverAgentMessageToTarget', () => {
       messageId: 'msg-11',
       deliveryMode: 'defer',
     });
-    expect(handoffCalls[0].target.defer).toBeUndefined();
+    expect(handoffCalls[0].deliveryMode).toBeUndefined();
   });
 
   it('keeps conversation context for human input on a resetContextPerTurn slot', async () => {
@@ -262,7 +271,7 @@ describe('deliverAgentMessageToTarget', () => {
     expect(live.clearMock).not.toHaveBeenCalled();
   });
 
-  it('marks human messages non-synthetic at the mailbox and task input synthetic', async () => {
+  it('carries human and task input provenance through the mailbox message', async () => {
     const { deps, handoffCalls } = makeDeps();
     await deliverAgentMessageToTarget({
       deps,
@@ -277,15 +286,16 @@ describe('deliverAgentMessageToTarget', () => {
       message: 'task words',
       messageId: 'msg-14',
     });
-    expect(handoffCalls[0].target.message.isSynthetic).toBe(false);
-    expect(handoffCalls[0].target.message.inputKind).toBe('human');
-    expect(handoffCalls[1].target.message.isSynthetic).toBe(true);
-    expect(handoffCalls[1].target.message.inputKind).toBe('task');
+    expect(handoffCalls[0].message.inputKind).toBe('human');
+    expect(handoffCalls[0].message.message.content).toEqual([
+      { type: 'text', text: 'human words' },
+    ]);
+    expect(handoffCalls[1].message.inputKind).toBe('task');
   });
 
-  it('propagates a stale mailbox handoff as a delivery error', async () => {
+  it('propagates a rejected mailbox handoff as a delivery error', async () => {
     const { deps } = makeDeps({
-      handoffToMailbox: async () => ({ state: 'stale' as const }),
+      handoffToMailbox: async () => ({ kind: 'rejected' as const, reason: 'entry malformed' }),
     });
     await expect(
       deliverAgentMessageToTarget({
@@ -294,6 +304,6 @@ describe('deliverAgentMessageToTarget', () => {
         message: 'x',
         messageId: 'msg-10',
       })
-    ).rejects.toThrow('Mailbox handoff became stale');
+    ).rejects.toThrow('Mailbox handoff rejected: entry malformed');
   });
 });

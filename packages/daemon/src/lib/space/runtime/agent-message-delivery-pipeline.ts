@@ -9,9 +9,10 @@ import {
   type ContextClearBoundaryOwner,
 } from '../../agent/message-delivery.ts';
 import { Logger } from '../../logger.ts';
+import { renderAddress } from '../../mailbox/address.ts';
+import type { MailboxHandoffArgs, MailboxHandoffOutcome } from '../../mailbox/handoff.ts';
 import type { EnsureSessionOutcome, SessionTarget } from '../../session-resolution/target.ts';
 import type { AgentMessageDeliveryOutcome } from './agent-message-router.ts';
-import type { MailboxHandoffArgs, MailboxHandoffOutcome } from './prompt-mailbox-handoff.ts';
 
 const log = new Logger('agent-message-delivery');
 
@@ -37,12 +38,7 @@ export interface AgentMessageDeliveryDeps {
   hasActiveDeliveryJob(sessionId: string): boolean;
   hasUnconsumedDeliveredWork(sessionId: string, excludeMessageId?: string): boolean;
   hasHeldDeliveryBacklog(sessionId: string, excludeMessageId?: string): boolean;
-  handoffToMailbox(args: Omit<MailboxHandoffArgs, 'deps'>): Promise<MailboxHandoffOutcome>;
-  publishStatusChanged(
-    sessionId: string,
-    dbId: string,
-    status: 'enqueued' | 'deferred'
-  ): Promise<void>;
+  handoffToMailbox(args: Omit<MailboxHandoffArgs, 'jobQueue'>): Promise<MailboxHandoffOutcome>;
   recordActivity(sessionId: string): void;
 }
 
@@ -254,7 +250,7 @@ export async function handoffDeliveryToMailbox(
   if (ctx.outcome) return ctx;
   const sessionId = ctx.resolution.sessionId;
   const shouldDefer = ctx.plan?.shouldDefer === true;
-  const message = buildSyntheticDeliveryMessage(
+  const synthetic = buildSyntheticDeliveryMessage(
     sessionId,
     ctx.messageId,
     ctx.message,
@@ -262,18 +258,22 @@ export async function handoffDeliveryToMailbox(
   );
   try {
     const outcome = await ctx.deps.handoffToMailbox({
-      target: {
-        sessionId,
-        messageId: ctx.messageId,
-        message,
-        origin: ctx.origin ?? 'space_agent',
-        ...(shouldDefer ? { defer: true } : {}),
+      to: renderAddress({ kind: 'session', sessionId }),
+      message: {
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: synthetic.message.content },
+        inputKind: synthetic.inputKind,
       },
-      ...(shouldDefer ? {} : { stateManager: ctx.session.stateManager }),
-      publishStatusChanged: ctx.deps.publishStatusChanged,
+      origin: ctx.origin ?? 'space_agent',
+      ...(shouldDefer ? { deliveryMode: 'defer' as const } : {}),
+      messageUuid: ctx.messageId,
     });
-    if (outcome.state === 'stale') {
-      throw new Error('Mailbox handoff became stale');
+    if (outcome.kind === 'rejected') {
+      throw new Error(`Mailbox handoff rejected: ${outcome.reason}`);
+    }
+    if (!shouldDefer) {
+      await ctx.session.stateManager.setQueuedIfIdle(ctx.messageId).catch(() => {});
     }
     ctx.deps.recordActivity(sessionId);
     return { ...ctx, outcome: { state: 'delivered', sessionId, messageId: ctx.messageId } };

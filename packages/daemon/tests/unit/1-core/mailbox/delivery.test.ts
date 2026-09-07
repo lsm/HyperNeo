@@ -504,6 +504,45 @@ describe('createMailboxDeliveryHandler', () => {
       }
     });
 
+    test('a human inputKind keeps the row non-synthetic with null origin; task stays synthetic', async () => {
+      const messageUuid = '00000000-0000-4000-8000-0000000000ff';
+      for (const inputKind of ['human', 'task'] as const) {
+        mailbox.close();
+        mailbox = createMailboxTestDb();
+        const { handler } = makeHandler();
+        const entry = makeEntry({
+          origin: 'space_inject',
+          messageUuid,
+          message: {
+            type: 'user',
+            message: { content: 'panel words' },
+            parent_tool_use_id: null,
+            inputKind,
+          },
+        });
+        const job = claimMailboxJob(mailbox, entry);
+
+        await handler(job);
+
+        const rows = mailbox.sdkRows();
+        expect(rows).toHaveLength(1);
+        const stored = JSON.parse(rows[0].sdk_message) as {
+          isSynthetic?: boolean;
+          inputKind?: string;
+        };
+        expect(stored.inputKind).toBe(inputKind);
+        if (inputKind === 'human') {
+          expect(rows[0].origin).toBeNull();
+          expect(stored.isSynthetic).toBeUndefined();
+          expect(humanPredicate(mailbox, SESSION_ID, messageUuid)).toBe(true);
+        } else {
+          expect(rows[0].origin).toBe('system');
+          expect(stored.isSynthetic).toBe(true);
+          expect(humanPredicate(mailbox, SESSION_ID, messageUuid)).toBe(false);
+        }
+      }
+    });
+
     test('an unrecognized origin is delivery-mapped to space_inject and stamped synthetic', async () => {
       const { handler } = makeHandler();
       const entry = makeEntry({ origin: 'some_future_origin' });

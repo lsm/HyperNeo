@@ -94,7 +94,7 @@ export function buildFailureMessageStage(ctx: MailboxFailureCtx): MailboxFailure
   const target = ctx.target;
   const entry = ctx.entry;
   if (target === undefined || entry === null) return ctx;
-  const synthetic = entry.origin !== 'chat';
+  const synthetic = entry.origin !== 'chat' && entry.message.inputKind !== 'human';
   const message: SDKUserMessage = {
     ...entry.message,
     uuid: target.messageUuid as NonNullable<SDKUserMessage['uuid']>,
@@ -116,7 +116,7 @@ export function persistFailedRowStage(ctx: MailboxFailureCtx): MailboxFailureCtx
   const message = ctx.message;
   const entry = ctx.entry;
   if (target === undefined || message === undefined || entry === null) return ctx;
-  const synthetic = entry.origin !== 'chat';
+  const synthetic = entry.origin !== 'chat' && entry.message.inputKind !== 'human';
   let ownershipKnown = false;
   try {
     const outcome = withBusyRetry((): { failedId?: string; uuidOwned: boolean } => {

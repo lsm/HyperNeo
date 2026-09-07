@@ -95,6 +95,7 @@ function makeFakeAgentSession(
     getProcessingState: () => ({ status: 'idle' }),
     isQueryActiveOrStarting: () => false,
     getSDKMessageCount: () => 0,
+    stateManager: { setQueuedIfIdle: async () => true },
     replayPendingMessagesForImmediateMode: async () => {
       state.calls.push('replayPendingMessagesForImmediateMode');
     },
@@ -538,15 +539,15 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       (() => fake.agentSession) as unknown as typeof AgentSession.restore
     );
 
-    const dbId = await tam.injectSubSessionMessage(
+    const messageId = await tam.injectSubSessionMessage(
       SUB_SESSION_ID,
       '─── Message from coder ───',
       true
     );
 
-    expect(typeof dbId).toBe('string');
-    expect(outbox.userRowCount(SUB_SESSION_ID)).toBe(1);
-    expect(outbox.pendingDeliveryJobCount(SUB_SESSION_ID)).toBe(1);
+    expect(typeof messageId).toBe('string');
+    expect(outbox.pendingMailboxJobCount(SUB_SESSION_ID, messageId)).toBe(1);
+    expect(outbox.userRowCount(SUB_SESSION_ID)).toBe(0);
   });
 
   test('task.workspacePath outranks the stale session workspace and syncs the restored session (WS10)', async () => {

@@ -6720,8 +6720,9 @@ export class SpaceRuntime {
       };
       this.nonTerminalIdleStates.set(key, state);
 
+      const lastMessageSdkUuid = lastMessage?.type === 'user' ? (lastMessage.uuid ?? null) : null;
       const isRuntimeNudgeMessage =
-        lastMessage?.type === 'user' && lastMessage.dbId === state.lastRuntimeNudgeMessageId;
+        lastMessageSdkUuid !== null && lastMessageSdkUuid === state.lastRuntimeNudgeMessageId;
       const progressMessage = lastMessage && !isRuntimeNudgeMessage ? lastMessage : null;
       if (state.lastSessionId !== sessionId) {
         state.lastSessionId = sessionId;
