@@ -39,6 +39,7 @@ export interface InterruptHandlerContext {
   onInterruptRequested?(): void;
 
   attemptTokens?: QueryAttemptRegistry;
+  suppressDeferredReplay?(sessionId: string): void;
 }
 
 export class InterruptHandler {
@@ -76,6 +77,10 @@ export class InterruptHandler {
         stateAtEntry.status !== 'idle' && stateAtEntry.status !== 'interrupted';
       if (teardownRequiredAtEntry) {
         this.ctx.attemptTokens?.invalidateCurrent();
+      }
+
+      if (opts?.skipDeferredReplay === true) {
+        this.ctx.suppressDeferredReplay?.(session.id);
       }
 
       if (!opts?.preserveDeliveryJobs) {

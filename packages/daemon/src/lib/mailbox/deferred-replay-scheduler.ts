@@ -33,16 +33,19 @@ function isBusyStatus(status: string): boolean {
   );
 }
 
-function isUnavailableStatus(status: string): boolean {
-  return (
-    status === 'ended' ||
-    status === 'archived' ||
-    status === 'pending_worktree_choice' ||
-    status === 'paused'
-  );
+function isTerminalUnavailableStatus(status: string): boolean {
+  return status === 'ended' || status === 'archived';
 }
 
-export type ReplaySkipReason = 'no_cached_session' | 'manual_mode' | 'session_unavailable';
+function isTransientUnavailableStatus(status: string): boolean {
+  return status === 'pending_worktree_choice' || status === 'paused';
+}
+
+export type ReplaySkipReason =
+  | 'no_cached_session'
+  | 'manual_mode'
+  | 'session_inactive'
+  | 'session_unavailable';
 
 export function gateSessionPresent(
   session: AgentSession | null
@@ -61,7 +64,11 @@ export function gateQueryMode(
 export function gateLifecycleStatus(
   session: AgentSession
 ): { value: AgentSession } | { reason: ReplaySkipReason } {
-  if (isUnavailableStatus(session.getSessionData().status ?? '')) {
+  const status = session.getSessionData().status ?? '';
+  if (isTransientUnavailableStatus(status)) {
+    return { reason: 'session_inactive' };
+  }
+  if (isTerminalUnavailableStatus(status)) {
     return { reason: 'session_unavailable' };
   }
   return { value: session };
@@ -146,13 +153,30 @@ export function createMailboxDeferredReplayScheduler(
     cleanup(sessionId);
   };
 
-  const admitSession = (sessionId: string, fetched: AgentSession | null): AgentSession | null => {
+  const admissionRetryDelayMs = (sessionId: string, reason: ReplaySkipReason): number => {
+    const count = (attempts.get(sessionId) ?? 0) + 1;
+    attempts.set(sessionId, count);
+    const delay = Math.min(retryBackoffBaseMs * 2 ** (count - 1), retryBackoffCapMs);
+    emitReplayEvent('admission_retry_scheduled', {
+      sessionId,
+      reason,
+      attempt: count,
+      retryDelayMs: delay,
+    });
+    return delay;
+  };
+
+  const admitSession = (
+    sessionId: string,
+    fetched: AgentSession | null
+  ): { session: AgentSession | null; retryDelayMs: number | null } => {
     const admission = decideReplayAdmission(fetched);
-    if (typeof admission === 'string') {
-      skipReplay(sessionId, admission);
-      return null;
+    if (typeof admission !== 'string') return { session: admission, retryDelayMs: null };
+    if (admission === 'session_inactive') {
+      return { session: null, retryDelayMs: admissionRetryDelayMs(sessionId, admission) };
     }
-    return admission;
+    skipReplay(sessionId, admission);
+    return { session: null, retryDelayMs: null };
   };
 
   const runSession = async (sessionId: string): Promise<void> => {
@@ -160,10 +184,12 @@ export function createMailboxDeferredReplayScheduler(
     let parkedForIdle = false;
     try {
       if (exitIfCancelled(sessionId, 'cancelled_before_run')) return;
-      let session = admitSession(
+      const initialAdmission = admitSession(
         sessionId,
         deps.sessionManager?.getCachedSession(sessionId) ?? null
       );
+      retryDelayMs = initialAdmission.retryDelayMs;
+      let session = initialAdmission.session;
       if (session == null) return;
       let status = session.getProcessingState().status;
       while (isBusyStatus(status) || session.stateManager.isTerminalIdleInFlight?.()) {
@@ -213,7 +239,9 @@ export function createMailboxDeferredReplayScheduler(
         emitReplayEvent('idle_wait_resolved', { sessionId, status });
       }
       if (exitIfCancelled(sessionId, 'cancelled_before_publish')) return;
-      session = admitSession(sessionId, session);
+      const finalAdmission = admitSession(sessionId, session);
+      retryDelayMs = finalAdmission.retryDelayMs;
+      session = finalAdmission.session;
       if (session == null) return;
       const published = await deps.internalEventBus.publish('query.trigger', { sessionId });
       if (published != null && published.delivered < 1) {
