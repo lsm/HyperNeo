@@ -1,6 +1,10 @@
 import { describe, expect, mock, test } from 'bun:test';
 import {
   createMailboxDeferredReplayScheduler,
+  decideReplayAdmission,
+  gateLifecycleStatus,
+  gateQueryMode,
+  gateSessionPresent,
   type MailboxDeferredReplaySchedulerDeps,
 } from '../../../../src/lib/mailbox/deferred-replay-scheduler';
 
@@ -961,5 +965,48 @@ describe('createMailboxDeferredReplayScheduler', () => {
     await flush(30);
 
     expect(publish).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('decideReplayAdmission', () => {
+  const asSession = (queryMode: string, status?: string) =>
+    ({ getSessionData: () => ({ config: { queryMode }, status }) }) as never;
+
+  test('admits an active immediate-mode session unchanged', () => {
+    const session = asSession('immediate', 'active');
+    expect(decideReplayAdmission(session)).toBe(session);
+  });
+
+  test('early-returns the skip reason for each rejection', () => {
+    expect(decideReplayAdmission(null)).toBe('no_cached_session');
+    expect(decideReplayAdmission(asSession('manual', 'active'))).toBe('manual_mode');
+    expect(decideReplayAdmission(asSession('immediate', 'ended'))).toBe('session_unavailable');
+    expect(decideReplayAdmission(asSession('immediate', 'archived'))).toBe('session_unavailable');
+    expect(decideReplayAdmission(asSession('immediate', 'paused'))).toBe('session_unavailable');
+    expect(decideReplayAdmission(asSession('immediate', 'pending_worktree_choice'))).toBe(
+      'session_unavailable'
+    );
+  });
+
+  test('treats a missing lifecycle status as admissible', () => {
+    const session = asSession('immediate');
+    expect(decideReplayAdmission(session)).toBe(session);
+  });
+});
+
+describe('replay admission gates', () => {
+  const asSession = (queryMode: string, status?: string) =>
+    ({ getSessionData: () => ({ config: { queryMode }, status }) }) as never;
+
+  test('return reason arms on rejection and value arms on pass', () => {
+    const session = asSession('immediate', 'active');
+    expect(gateSessionPresent(null)).toEqual({ reason: 'no_cached_session' });
+    expect(gateSessionPresent(session)).toEqual({ value: session });
+    expect(gateQueryMode(asSession('manual', 'active'))).toEqual({ reason: 'manual_mode' });
+    expect(gateQueryMode(session)).toEqual({ value: session });
+    expect(gateLifecycleStatus(asSession('immediate', 'paused'))).toEqual({
+      reason: 'session_unavailable',
+    });
+    expect(gateLifecycleStatus(session)).toEqual({ value: session });
   });
 });

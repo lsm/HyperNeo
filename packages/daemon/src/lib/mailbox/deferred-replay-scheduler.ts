@@ -1,3 +1,5 @@
+import superpipe, { type PipelineAPI } from 'superpipe';
+import type { AgentSession } from '../agent/agent-session.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { emitStructuredLogEvent } from '../logger.ts';
 import type { SessionManager } from '../session-manager.ts';
@@ -39,6 +41,40 @@ function isUnavailableStatus(status: string): boolean {
     status === 'paused'
   );
 }
+
+export type ReplaySkipReason = 'no_cached_session' | 'manual_mode' | 'session_unavailable';
+
+export function gateSessionPresent(
+  session: AgentSession | null
+): { value: AgentSession } | { reason: ReplaySkipReason } {
+  if (session == null) return { reason: 'no_cached_session' };
+  return { value: session };
+}
+
+export function gateQueryMode(
+  session: AgentSession
+): { value: AgentSession } | { reason: ReplaySkipReason } {
+  if (session.getSessionData().config.queryMode === 'manual') return { reason: 'manual_mode' };
+  return { value: session };
+}
+
+export function gateLifecycleStatus(
+  session: AgentSession
+): { value: AgentSession } | { reason: ReplaySkipReason } {
+  if (isUnavailableStatus(session.getSessionData().status ?? '')) {
+    return { reason: 'session_unavailable' };
+  }
+  return { value: session };
+}
+
+export const decideReplayAdmission = (
+  superpipe({})('mailbox-deferred-replay-admission') as PipelineAPI
+)
+  .input(['session'])
+  .pipe(gateSessionPresent, 'session', 'result:admission')
+  .pipe(gateQueryMode, 'admission', 'result:admission')
+  .pipe(gateLifecycleStatus, 'admission', 'result:admission')
+  .end('admission') as (session: AgentSession | null) => AgentSession | ReplaySkipReason;
 
 export interface MailboxDeferredReplaySchedulerDeps {
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
@@ -98,55 +134,56 @@ export function createMailboxDeferredReplayScheduler(
     attempts.delete(sessionId);
   };
 
+  const exitIfCancelled = (sessionId: string, event: string): boolean => {
+    if (!cancelled.has(sessionId)) return false;
+    emitReplayEvent(event, { sessionId });
+    cleanup(sessionId);
+    return true;
+  };
+
+  const skipReplay = (sessionId: string, reason: ReplaySkipReason): void => {
+    emitReplayEvent('skipped', { sessionId, reason });
+    cleanup(sessionId);
+  };
+
+  const admitSession = (sessionId: string, fetched: AgentSession | null): AgentSession | null => {
+    const admission = decideReplayAdmission(fetched);
+    if (typeof admission === 'string') {
+      skipReplay(sessionId, admission);
+      return null;
+    }
+    return admission;
+  };
+
   const runSession = async (sessionId: string): Promise<void> => {
     let retryDelayMs: number | null = null;
     let parkedForIdle = false;
     try {
-      if (cancelled.has(sessionId)) {
-        emitReplayEvent('cancelled_before_run', { sessionId });
-        cleanup(sessionId);
-        return;
-      }
-      let session = deps.sessionManager?.getCachedSession(sessionId);
-      if (!session) {
-        emitReplayEvent('skipped', { sessionId, reason: 'no_cached_session' });
-        cleanup(sessionId);
-        return;
-      }
-      if (session.getSessionData().config.queryMode === 'manual') {
-        emitReplayEvent('skipped', { sessionId, reason: 'manual_mode' });
-        cleanup(sessionId);
-        return;
-      }
-      if (isUnavailableStatus(session.getSessionData().status)) {
-        emitReplayEvent('skipped', { sessionId, reason: 'session_unavailable' });
-        cleanup(sessionId);
-        return;
-      }
+      if (exitIfCancelled(sessionId, 'cancelled_before_run')) return;
+      let session = admitSession(
+        sessionId,
+        deps.sessionManager?.getCachedSession(sessionId) ?? null
+      );
+      if (session == null) return;
       let status = session.getProcessingState().status;
       while (isBusyStatus(status) || session.stateManager.isTerminalIdleInFlight?.()) {
         if (status === 'interrupted') {
           await session.normalizeStaleInterruptedState?.();
-          const normalizedSession = deps.sessionManager?.getCachedSession(sessionId);
-          if (!normalizedSession) {
-            emitReplayEvent('skipped', { sessionId, reason: 'no_cached_session' });
-            cleanup(sessionId);
+          const normalized = deps.sessionManager?.getCachedSession(sessionId) ?? null;
+          if (normalized == null) {
+            skipReplay(sessionId, 'no_cached_session');
             return;
           }
-          if (normalizedSession !== session) {
-            session = normalizedSession;
+          if (normalized !== session) {
+            session = normalized;
             emitReplayEvent('session_replaced', { sessionId });
           }
-          const normalized = session.getProcessingState().status;
-          if (normalized !== 'interrupted') {
-            status = normalized;
+          const normalizedStatus = session.getProcessingState().status;
+          if (normalizedStatus !== 'interrupted') {
+            status = normalizedStatus;
             continue;
           }
-          if (cancelled.has(sessionId)) {
-            emitReplayEvent('cancelled_before_park', { sessionId });
-            cleanup(sessionId);
-            return;
-          }
+          if (exitIfCancelled(sessionId, 'cancelled_before_park')) return;
         }
         emitReplayEvent('idle_wait_registered', { sessionId, status });
         active.delete(sessionId);
@@ -157,20 +194,15 @@ export function createMailboxDeferredReplayScheduler(
         await waiter.promise;
         parkedWaiters.delete(sessionId);
         parkedForIdle = false;
-        if (cancelled.has(sessionId)) {
-          emitReplayEvent('cancelled_after_idle_wait', { sessionId });
-          cleanup(sessionId);
-          return;
-        }
+        if (exitIfCancelled(sessionId, 'cancelled_after_idle_wait')) return;
         if (active.size >= MAX_ACTIVE_PUBLICATIONS) {
           ready.add(sessionId);
           return;
         }
         active.add(sessionId);
-        const current = deps.sessionManager?.getCachedSession(sessionId);
-        if (!current) {
-          emitReplayEvent('skipped', { sessionId, reason: 'no_cached_session' });
-          cleanup(sessionId);
+        const current = deps.sessionManager?.getCachedSession(sessionId) ?? null;
+        if (current == null) {
+          skipReplay(sessionId, 'no_cached_session');
           return;
         }
         if (current !== session) {
@@ -180,21 +212,9 @@ export function createMailboxDeferredReplayScheduler(
         status = session.getProcessingState().status;
         emitReplayEvent('idle_wait_resolved', { sessionId, status });
       }
-      if (cancelled.has(sessionId)) {
-        emitReplayEvent('cancelled_before_publish', { sessionId });
-        cleanup(sessionId);
-        return;
-      }
-      if (isUnavailableStatus(session.getSessionData().status)) {
-        emitReplayEvent('skipped', { sessionId, reason: 'session_unavailable' });
-        cleanup(sessionId);
-        return;
-      }
-      if (session.getSessionData().config.queryMode === 'manual') {
-        emitReplayEvent('skipped', { sessionId, reason: 'manual_mode' });
-        cleanup(sessionId);
-        return;
-      }
+      if (exitIfCancelled(sessionId, 'cancelled_before_publish')) return;
+      session = admitSession(sessionId, session);
+      if (session == null) return;
       const published = await deps.internalEventBus.publish('query.trigger', { sessionId });
       if (published != null && published.delivered < 1) {
         emitReplayEvent('no_subscribers', { sessionId });
