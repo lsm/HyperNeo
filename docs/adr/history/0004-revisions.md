@@ -432,6 +432,8 @@ or more decision points in a shell is a pipeline candidate even inside an
 otherwise-excluded module — the duplication is the signal, and the copies have
 usually already drifted by the time you notice them), and the decomposability
 emphasis (most business logic decomposes this way: per-stage and per-gate
-tests replace monolithic scenario pinning; PR #3804's admission gates went
-from two hand-copied clusters to one pipeline with table-driven gate tests).
+tests spare new code monolithic scenario pinning, while existing parity pins
+and scenario suites stay in force through migrations; PR #3804's admission
+gates went from two hand-copied clusters to one pipeline with table-driven
+gate tests).
 

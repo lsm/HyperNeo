@@ -32,11 +32,14 @@ as decision vs staged vs transform; do not split one path across pipelines.
 
 Most business logic decomposes this way, and that is the argument for the
 style, not a nice-to-have: each stage is a named unit with declared inputs and
-outputs, per-stage and per-gate unit tests replace monolithic scenario
+outputs, per-stage and per-gate unit tests spare new code monolithic scenario
 pinning, and reasoning about the whole path reduces to reading one composition
 site where every `.pipe` line shows the dataflow. PR #3804's admission gates
 went from two hand-copied gate clusters to one named pipeline with
-table-driven gate tests.
+table-driven gate tests. Stage tests supplement, never replace,
+characterization coverage: during a migration the parity pins and
+pre-existing scenario suites stay in force (Decision 7) — isolated stage tests
+cannot see composition, precedence, or effect-order regressions.
 
 1. **Compose directly.** Superpipe may be imported anywhere a pipeline fits;
    there is no import boundary. `decisionRun`
@@ -45,7 +48,10 @@ table-driven gate tests.
    pre-classify flows into decision-vs-staged categories the direct-pipe style
    does not need — the wrong abstraction. New work composes direct pipelines
    only; do not add combinator call sites. Existing call sites stay put and
-   migrate slice-by-slice in the slices that touch them.
+   migrate slice-by-slice in the slices that touch them. The blueprints under
+   `docs/superpipe-migration-plans/` predate this deprecation; where their
+   rows call for new `decisionRun`/`stagedRun` implementations, compose direct
+   pipelines instead — updating those plans is its own docs slice (Roadmap).
 2. **Stages.** A stage is a function in the named pipeline. Pure decision and
    transform stages are preferred wherever no await or write is needed; effect
    stages are normal where the path needs them. `!dep` halts the run
@@ -88,7 +94,9 @@ one own arm — `{ value }` binds `<name>` and the run continues; `{ reason }`
 binds `<name>` and resolves the run without starting the remaining stages. For
 a typed business early exit, the `reason` arm is the preferred idiom over
 hand-rolled halt flags or ctx-threaded boolean predicates; `!dep` remains
-valid for data-dependent dependency halts.
+valid for data-dependent dependency halts. This cascade is the canonical shape
+for typed business rejection, not a mandate on every gate — boolean `!dep`
+validation gates (P3) stay valid where no rejection taxonomy is wanted.
 
 The canonical rejection cascade — reference implementation
 `decideReplayAdmission` in
@@ -98,7 +106,12 @@ The canonical rejection cascade — reference implementation
   pure function taking the admitted value and returning
   `{ value: X } | { reason: Literal }`. The reason-literal union is the skip
   taxonomy, owned by the module. The first `reason` arm resolves the run;
-  gate order is precedence, visible in the composition.
+  gate order is precedence, visible in the composition. The `X` and reason
+  domains must be disjoint: `.end(<name>)` unwraps both arms into one
+  `X | Reason` output, so an `X` that can itself carry a reason literal (a
+  bare `string`, say) collapses the union and hides rejection from the
+  caller — where the types would overlap, prefix the reason literals or
+  return a tagged outcome instead.
 - **Named dependencies and inputs, not a ctx object.** Each
   `.pipe(gate, 'in', 'result:admission')` line shows what flows in and out at
   the composition site; the dataflow is auditable without reading stage
@@ -198,6 +211,9 @@ pinned by that slice's characterization tests. The full design record is
 
 ## Roadmap (open items)
 
+- Update the `docs/superpipe-migration-plans/` blueprints onto direct
+  pipelines; until then their combinator rows are superseded by the
+  2026-09-07 deprecation (Decision 1).
 - Migrate existing `decisionRun`/`stagedRun` call sites onto direct pipelines,
   slice-by-slice in the slices that touch them (deprecation recorded
   2026-09-07); no new combinator call sites in the meantime. Each migration
