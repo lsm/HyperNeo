@@ -511,6 +511,25 @@ describe('createMailboxDeferredReplayScheduler', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
+  test('skips replay for paused sessions', async () => {
+    const publish = mock(async () => {});
+    const deps = makeDeps(publish);
+    deps.sessionManager = {
+      getCachedSession: () =>
+        ({
+          getSessionData: () => ({ config: { queryMode: 'immediate' }, status: 'paused' }),
+          getProcessingState: () => ({ status: 'idle' }),
+          stateManager: {},
+        }) as never,
+    };
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(20);
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   test('rechecks manual mode before publication after a park', async () => {
     const publish = mock(async () => {});
     const deps = makeDeps(publish);

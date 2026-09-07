@@ -32,7 +32,12 @@ function isBusyStatus(status: string): boolean {
 }
 
 function isUnavailableStatus(status: string): boolean {
-  return status === 'ended' || status === 'archived' || status === 'pending_worktree_choice';
+  return (
+    status === 'ended' ||
+    status === 'archived' ||
+    status === 'pending_worktree_choice' ||
+    status === 'paused'
+  );
 }
 
 export interface MailboxDeferredReplaySchedulerDeps {
