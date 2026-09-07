@@ -91,6 +91,7 @@ export interface ActivatePromptsArgs {
   admittedAt?: number;
   admissionRowid?: number;
   publishStatusChanged?: OutboxStatusPublisher;
+  claimValid?: () => boolean;
 }
 
 export interface ActivatedPromptEntry {
@@ -115,6 +116,7 @@ export interface RetryPromptArgs {
   admittedAt?: number;
   admissionRowid?: number;
   publishStatusChanged?: OutboxStatusPublisher;
+  claimValid?: () => boolean;
 }
 
 export interface RetryPromptResult {
@@ -832,6 +834,7 @@ function normalizeActivateUuids(ctx: ActivatePromptsArgs): ActivatePromptsCtx {
 function commitActivatePrompts(ctx: ActivatePromptsCtx): ActivatePromptsCommittedCtx {
   const activated: ActivatedPromptEntry[] = [];
   const txn = ctx.db.transaction(() => {
+    if (ctx.claimValid?.() === false) return;
     const rowByIdStmt = ctx.db.prepare(ACTIVATE_PROMPT_ROW_BY_ID_SQL);
     const rowByUuidStmt = ctx.db.prepare(ACTIVATE_PROMPT_ROW_BY_UUID_SQL);
     ctx.uuids.forEach((messageUuid, index) => {
@@ -898,6 +901,7 @@ function validateRetryPromptUuid(ctx: RetryPromptArgs): RetryPromptCtx {
 function commitRetryPrompt(ctx: RetryPromptCtx): RetryPromptCtx {
   const retried = withBusyRetry(() =>
     ctx.db.transaction(() => {
+      if (ctx.claimValid?.() === false) return null;
       const rows = (
         ctx.dbId !== undefined
           ? ctx.db
