@@ -149,6 +149,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         db: deps.db,
         sdkMessageRepo: deps.sdkMessageRepo,
         jobQueue: deps.jobQueue,
+        claimValid: () => deps.jobQueue.isClaimCurrent(job.id, job.claimToken),
       });
       if (retried) publish(retried.dbId);
     } else if (existing?.sendStatus === 'deferred' && entry.deliveryMode !== 'defer') {
@@ -160,6 +161,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         origin: mapOrigin(entry.origin),
         admittedAt,
         ...(admissionRowid !== undefined ? { admissionRowid } : {}),
+        claimValid: () => deps.jobQueue.isClaimCurrent(job.id, job.claimToken),
       });
       if (activated[0]) publish(activated[0].dbId);
     }
