@@ -110,8 +110,10 @@ The canonical rejection cascade — reference implementation
   domains must be disjoint: `.end(<name>)` unwraps both arms into one
   `X | Reason` output, so an `X` that can itself carry a reason literal (a
   bare `string`, say) collapses the union and hides rejection from the
-  caller — where the types would overlap, prefix the reason literals or
-  return a tagged outcome instead.
+  caller — where the types would overlap, brand or restrict the success
+  domain, or return a tagged outcome. Prefixing the reason literals is not a
+  remedy: a prefixed literal is still assignable to the overlapped success
+  type, so the union still collapses.
 - **Named dependencies and inputs, not a ctx object.** Each
   `.pipe(gate, 'in', 'result:admission')` line shows what flows in and out at
   the composition site; the dataflow is auditable without reading stage
