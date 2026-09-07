@@ -1861,7 +1861,10 @@ describe('SessionManager', () => {
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);
       const cancel = mock(() => ['pending-turn', 'pending-steer']);
       const markFailed = mock((_sessionId: string, uuid: string) => `db-${uuid}`);
-      mockDb.getJobQueueRepo = mock(() => ({ cancelForSessionWithMessages: cancel }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        cancelForSessionWithMessages: cancel,
+        cancelMailboxForSession: mock(() => []),
+      }));
       mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid: markFailed }));
 
       const oldSession = sessionManager.getSession('test-id')!;
@@ -1878,6 +1881,35 @@ describe('SessionManager', () => {
         status: 'failed',
       });
       expect(freshSession.getProcessingState().status).toBe('idle');
+    });
+
+    it('reset without restart fails materialized deferred rows that have no delivery job', async () => {
+      const persistedSession = makePersistedSession();
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);
+      const cancel = mock(() => [] as string[]);
+      const markFailed = mock((_sessionId: string, uuid: string) => `db-${uuid}`);
+      mockDb.getJobQueueRepo = mock(() => ({
+        cancelForSessionWithMessages: cancel,
+        cancelMailboxForSession: mock(() => []),
+      }));
+      mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid: markFailed }));
+      mockDb.getUserMessageIdsByStatus = mock(() => [
+        { dbId: 'row-1', uuid: 'deferred-no-job', timestamp: 1 },
+        { dbId: 'row-2', uuid: undefined, timestamp: 2 },
+      ]);
+
+      const oldSession = sessionManager.getSession('test-id')!;
+      const result = await oldSession.resetQuery({ restartQuery: false, hardReset: true });
+
+      expect(result).toEqual({ success: true });
+      expect(markFailed).toHaveBeenCalledWith('test-id', 'deferred-no-job');
+      expect(mockInternalEventBus.publish).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'test-id',
+        messageIds: ['db-deferred-no-job'],
+        status: 'failed',
+      });
+
+      await sessionManager.interruptInMemorySession('test-id');
     });
 
     it('replaces the cached AgentSession instance without recreating the DB row', async () => {

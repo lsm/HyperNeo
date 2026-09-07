@@ -1121,7 +1121,10 @@ describe('SessionLifecycle', () => {
         return ['msg-uuid-1'];
       });
       const markFailedSpy = mock(() => null);
-      mockDb.getJobQueueRepo = mock(() => ({ cancelForSessionWithMessages: cancelSpy }));
+      mockDb.getJobQueueRepo = mock(() => ({
+        cancelForSessionWithMessages: cancelSpy,
+        cancelMailboxForSession: mock(() => []),
+      }));
       mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid: markFailedSpy }));
       (mockDb.deleteSession as ReturnType<typeof mock>).mockImplementation(() => {
         order.push('db-delete');
@@ -1146,6 +1149,7 @@ describe('SessionLifecycle', () => {
       });
       mockDb.getJobQueueRepo = mock(() => ({
         cancelForSessionWithMessages: mock(() => ['msg-uuid-1', 'msg-uuid-2']),
+        cancelMailboxForSession: mock(() => []),
       }));
       mockDb.getSDKMessageRepo = mock(() => ({
         markDeliveryFailedByUuid: mock((_sessionId: string, uuid: string) => `db-${uuid}`),
@@ -1212,6 +1216,7 @@ describe('SessionLifecycle', () => {
       });
       mockDb.getJobQueueRepo = mock(() => ({
         cancelForSessionWithMessages: mock(() => ['msg-uuid-1', 'msg-uuid-2']),
+        cancelMailboxForSession: mock(() => []),
       }));
       mockDb.getSDKMessageRepo = mock(() => ({
         markDeliveryFailedByUuid: mock((_sessionId: string, uuid: string) => `db-${uuid}`),
@@ -1222,6 +1227,33 @@ describe('SessionLifecycle', () => {
       expect(mockInternalEventBus.publish).toHaveBeenCalledWith('messages.statusChanged', {
         sessionId: 'archive-id',
         messageIds: ['db-msg-uuid-1', 'db-msg-uuid-2'],
+        status: 'failed',
+      });
+    });
+
+    it('should fail materialized deferred rows that have no delivery job', async () => {
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue({
+        id: 'archive-id',
+        workspacePath: '/test',
+        metadata: {},
+      });
+      mockDb.getJobQueueRepo = mock(() => ({
+        cancelForSessionWithMessages: mock(() => []),
+        cancelMailboxForSession: mock(() => []),
+      }));
+      const markFailed = mock((_sessionId: string, uuid: string) => `db-${uuid}`);
+      mockDb.getSDKMessageRepo = mock(() => ({ markDeliveryFailedByUuid: markFailed }));
+      mockDb.getUserMessageIdsByStatus = mock(() => [
+        { dbId: 'row-1', uuid: 'deferred-no-job', timestamp: 1 },
+        { dbId: 'row-2', uuid: undefined, timestamp: 2 },
+      ]);
+
+      await lifecycle.archiveResources('archive-id', 'ui_session_archive');
+
+      expect(markFailed).toHaveBeenCalledWith('archive-id', 'deferred-no-job');
+      expect(mockInternalEventBus.publish).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'archive-id',
+        messageIds: ['db-deferred-no-job'],
         status: 'failed',
       });
     });
