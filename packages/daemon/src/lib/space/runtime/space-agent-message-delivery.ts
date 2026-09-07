@@ -11,10 +11,11 @@ import {
   PromptContentConflictError,
   verifyPromptContent,
 } from '../../agent/message-delivery-outbox.ts';
+import { renderAddress } from '../../mailbox/address.ts';
+import { handoffPromptToMailbox, type MailboxHandoffOutcome } from '../../mailbox/handoff.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
-import { handoffPromptToMailbox, type MailboxHandoffOutcome } from './prompt-mailbox-handoff.ts';
 
 const log = new Logger('space-agent-delivery');
 
@@ -143,11 +144,7 @@ export interface SpaceAgentDeliveryDeps {
   db: BunDatabase;
   sdkMessageRepo: SDKMessageRepository;
   jobQueue: JobQueueRepository;
-  publishStatusChanged(
-    sessionId: string,
-    dbId: string,
-    status: 'enqueued' | 'deferred' | 'failed'
-  ): Promise<void>;
+  publishStatusChanged(sessionId: string, dbId: string, status: 'failed'): Promise<void>;
   stateManager?: { setQueuedIfIdle(messageId: string): Promise<boolean> };
   onConsumed?: (settledSessionId: string) => void;
   onLateFailure?: () => void;
@@ -203,41 +200,57 @@ function shortCircuitConsumed(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx
 }
 
 async function enqueuePrompt(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeliveryCtx> {
+  verifyPromptContent({
+    db: ctx.deps.db,
+    sessionId: ctx.sessionId,
+    messageUuid: ctx.messageId,
+    message: ctx.sdkUserMessage,
+  });
   const handoff = await handoffPromptToMailbox({
-    deps: {
-      db: ctx.deps.db,
-      sdkMessageRepo: ctx.deps.sdkMessageRepo,
-      jobQueue: ctx.deps.jobQueue,
+    to: renderAddress({ kind: 'session', sessionId: ctx.sessionId }),
+    message: {
+      type: 'user',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: ctx.sdkUserMessage.message.content },
+      ...(ctx.sdkUserMessage.priority !== undefined
+        ? { priority: ctx.sdkUserMessage.priority }
+        : {}),
     },
-    target: {
-      sessionId: ctx.sessionId,
-      messageId: ctx.messageId,
-      message: ctx.sdkUserMessage,
-      origin: ctx.origin ?? 'space_agent',
-    },
-    stateManager: ctx.deps.stateManager,
-    publishStatusChanged: ctx.deps.publishStatusChanged,
+    origin: ctx.origin ?? 'space_agent',
+    messageUuid: ctx.messageId,
+    jobQueue: ctx.deps.jobQueue,
   });
   return { ...ctx, handoff };
 }
 
-function acceptOutcome(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx {
+async function markQueuedIfIdle(ctx: SpaceAgentDeliveryCtx): Promise<void> {
+  const stateManager = ctx.deps.stateManager;
+  if (!stateManager) return;
+  const pending =
+    ctx.deps.jobQueue.activeMailboxMessageUuids(ctx.sessionId).has(ctx.messageId) ||
+    ctx.deps.jobQueue.activeDeliveryMessageUuids(ctx.sessionId).has(ctx.messageId);
+  if (!pending) return;
+  try {
+    await stateManager.setQueuedIfIdle(ctx.messageId);
+  } catch {}
+}
+
+async function acceptOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeliveryCtx> {
   const { sessionId, messageId } = ctx;
   const handoff = ctx.handoff ?? null;
-  if (handoff === null || handoff.state === 'stale') {
+  if (handoff === null || handoff.kind === 'rejected') {
     return {
       ...ctx,
       outcome: {
         state: 'failed',
         messageId,
         sessionId,
-        error: 'prompt handoff went stale before reaching the mailbox',
+        error: handoff === null ? 'mailbox handoff ended without an outcome' : handoff.reason,
       },
     };
   }
-  if (handoff.state === 'settled') {
-    notifyConsumed(ctx);
-  } else if (ctx.deps.onConsumed && ctx.deps.lateSettlement) {
+  await markQueuedIfIdle(ctx);
+  if (ctx.deps.onConsumed && ctx.deps.lateSettlement) {
     ctx.deps.lateSettlement.arm({
       sessionId,
       messageId,
