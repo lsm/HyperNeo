@@ -255,7 +255,7 @@ export function createMailboxDeferredReplayScheduler(
             retryTimers.delete(sessionId);
             dirty.delete(sessionId);
             ready.add(sessionId);
-            pump();
+            schedulePump();
           }, delay);
           retryTimers.set(sessionId, timer);
         }
