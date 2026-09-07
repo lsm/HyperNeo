@@ -55,6 +55,7 @@ export function createMailboxDeferredReplayScheduler(
   const cancelled = new Set<string>();
   const attempts = new Map<string, number>();
   const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const parkedWaiters = new Map<string, () => void>();
 
   const pump = (): void => {
     while (active.size < MAX_ACTIVE_PUBLICATIONS && ready.length > 0) {
@@ -100,8 +101,12 @@ export function createMailboxDeferredReplayScheduler(
         }
         emitReplayEvent('idle_wait_registered', { sessionId, status });
         active.delete(sessionId);
+        const waiter = session.stateManager.waitForIdleTransition();
+        parkedWaiters.set(sessionId, waiter.cancel);
         parkedForIdle = true;
-        await session.stateManager.waitForIdleTransition().promise;
+        pump();
+        await waiter.promise;
+        parkedWaiters.delete(sessionId);
         parkedForIdle = false;
         if (cancelled.has(sessionId)) {
           emitReplayEvent('cancelled_after_idle_wait', { sessionId });
@@ -169,13 +174,20 @@ export function createMailboxDeferredReplayScheduler(
       pump();
       if (retryDelayMs !== null) {
         const delay = retryDelayMs;
-        const timer = setTimeout(() => {
-          retryTimers.delete(sessionId);
+        if (cancelled.has(sessionId)) {
+          cancelled.delete(sessionId);
+          tracked.delete(sessionId);
           dirty.delete(sessionId);
-          if (!ready.includes(sessionId)) ready.push(sessionId);
-          pump();
-        }, delay);
-        retryTimers.set(sessionId, timer);
+          attempts.delete(sessionId);
+        } else {
+          const timer = setTimeout(() => {
+            retryTimers.delete(sessionId);
+            dirty.delete(sessionId);
+            if (!ready.includes(sessionId)) ready.push(sessionId);
+            pump();
+          }, delay);
+          retryTimers.set(sessionId, timer);
+        }
       }
     }
   };
@@ -213,6 +225,8 @@ export function createMailboxDeferredReplayScheduler(
         attempts.delete(sessionId);
         return;
       }
+      const waiterCancel = parkedWaiters.get(sessionId);
+      if (waiterCancel != null) waiterCancel();
       cancelled.add(sessionId);
     },
   };

@@ -354,6 +354,101 @@ describe('createMailboxDeferredReplayScheduler', () => {
     expect(published).toEqual([]);
   });
 
+  test('cancel wakes a parked replay and releases its idle waiter', async () => {
+    const publish = mock(async () => {});
+    const deps = makeDeps(publish);
+    let status = 'waiting_for_input';
+    deps.sessionManager = {
+      getCachedSession: () =>
+        ({
+          getSessionData: () => ({ config: { queryMode: 'immediate' } }),
+          getProcessingState: () => ({ status }),
+          stateManager: {
+            waitForIdleTransition: () => {
+              let settle: () => void = () => {};
+              const promise = new Promise<void>((resolve) => {
+                settle = resolve;
+              });
+              return { promise, cancel: () => settle() };
+            },
+          },
+        }) as never,
+    };
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(10);
+    scheduler.cancel(SESSION_ID);
+    await flush(20);
+    expect(publish).not.toHaveBeenCalled();
+
+    status = 'idle';
+    scheduler.schedule(SESSION_ID);
+    await flush(20);
+
+    expect(publish).toHaveBeenCalledTimes(1);
+  });
+
+  test('cancel during a pending failed publication installs no retry timer', async () => {
+    let releasePublish: (() => void) | undefined;
+    const publish = mock(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          releasePublish = () => reject(new Error('transient'));
+        })
+    );
+    const deps = makeDeps(() => publish());
+    deps.retryBackoffBaseMs = 20;
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(10);
+    expect(publish).toHaveBeenCalledTimes(1);
+    scheduler.cancel(SESSION_ID);
+    releasePublish?.();
+    await flush(120);
+
+    expect(publish).toHaveBeenCalledTimes(1);
+  });
+
+  test('pumps the queue immediately when a replay parks', async () => {
+    const published: string[] = [];
+    const waiters: Array<{ sessionId: string; resolve: () => void }> = [];
+    const statuses = new Map<string, string>();
+    const deps: MailboxDeferredReplaySchedulerDeps = {
+      internalEventBus: {
+        publish: mock(async (_event: string, data: { sessionId: string }) => {
+          published.push(data.sessionId);
+        }),
+      } as never,
+      sessionManager: {
+        getCachedSession: (sessionId: string) => {
+          statuses.set(sessionId, statuses.get(sessionId) ?? 'waiting_for_input');
+          return {
+            getSessionData: () => ({ config: { queryMode: 'immediate' } }),
+            getProcessingState: () => ({ status: statuses.get(sessionId) ?? 'waiting_for_input' }),
+            stateManager: {
+              waitForIdleTransition: () => ({
+                promise: new Promise<void>((resolve) => {
+                  waiters.push({ sessionId, resolve });
+                }),
+                cancel: () => {},
+              }),
+            },
+          } as never;
+        },
+      },
+    };
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    for (let i = 1; i <= 8; i += 1) scheduler.schedule(`parked-${i}`);
+    scheduler.schedule('idle-9');
+    await flush(30);
+
+    expect(waiters).toHaveLength(8);
+    expect(published).toEqual(['idle-9']);
+  });
+
   test('retries when query.trigger delivers to no subscribers', async () => {
     let zeroDelivered = 1;
     const publish = mock(async () => {
