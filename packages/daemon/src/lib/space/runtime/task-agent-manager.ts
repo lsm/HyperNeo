@@ -88,6 +88,7 @@ import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 import { Logger } from '../../logger.ts';
 import { renderAddress } from '../../mailbox/address.ts';
 import { assertNoPendingMailboxContentConflict } from '../../mailbox/enqueue.ts';
+import type { MailboxMessage } from '../../mailbox/entry.ts';
 import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager.ts';
 import {
@@ -4299,21 +4300,22 @@ export class TaskAgentManager {
       }
 
       const jobQueue = this.config.db.getJobQueueRepo();
+      const mailboxMessage: MailboxMessage = {
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: sdkContent },
+        inputKind,
+      };
       verifyPromptContent({
         db: this.config.db.getDatabase(),
         sessionId,
         messageUuid: messageId,
         message: sdkUserMessage,
       });
-      assertNoPendingMailboxContentConflict(jobQueue, sessionId, messageId, sdkContent);
+      assertNoPendingMailboxContentConflict(jobQueue, sessionId, messageId, mailboxMessage);
       const handoff = await handoffPromptToMailbox({
         to: renderAddress({ kind: 'session', sessionId }),
-        message: {
-          type: 'user',
-          parent_tool_use_id: null,
-          message: { role: 'user', content: sdkContent },
-          inputKind,
-        },
+        message: mailboxMessage,
         origin: 'space_inject',
         messageUuid: messageId,
         jobQueue,
@@ -4772,7 +4774,12 @@ export class TaskAgentManager {
           this.config.db.getJobQueueRepo(),
           sessionId,
           messageId,
-          message.message.content
+          {
+            type: 'user',
+            parent_tool_use_id: null,
+            message: { role: 'user', content: message.message.content },
+            ...(message.inputKind !== undefined ? { inputKind: message.inputKind } : {}),
+          }
         );
       },
       handoffToMailbox: (args) =>

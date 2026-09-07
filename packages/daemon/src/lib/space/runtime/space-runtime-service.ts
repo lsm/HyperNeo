@@ -49,7 +49,12 @@ import {
   assertNoPendingMailboxContentConflict,
   enqueueMailboxEntry,
 } from '../../mailbox/enqueue.ts';
-import { createMailboxEntry, type MailboxEntry, toMailboxMessage } from '../../mailbox/entry.ts';
+import {
+  createMailboxEntry,
+  type MailboxEntry,
+  toMailboxMessage,
+  type MailboxMessage,
+} from '../../mailbox/entry.ts';
 import type { SessionManager } from '../../session-manager.ts';
 import { buildAgentSessionConfig } from '../../session-resolution/agent-session-config.ts';
 import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
@@ -597,7 +602,7 @@ export class SpaceRuntimeService {
       messageUuid: id,
       message: persistedMessage,
     });
-    this.assertNoPendingMailboxContentConflict(sessionId, id, projected.message.message.content);
+    this.assertNoPendingMailboxContentConflict(sessionId, id, projected.message);
     const outcome = enqueueMailboxEntry(jobQueue, entry);
     return outcome.kind === 'enqueued'
       ? { state: 'accepted', mailboxEntryId: outcome.id }
@@ -607,11 +612,11 @@ export class SpaceRuntimeService {
   private assertNoPendingMailboxContentConflict(
     sessionId: string,
     messageUuid: string,
-    content: unknown
+    message: MailboxMessage
   ): void {
     const jobQueue = this.config.reactiveDb?.db.getJobQueueRepo();
     if (!jobQueue) return;
-    assertNoPendingMailboxContentConflict(jobQueue, sessionId, messageUuid, content);
+    assertNoPendingMailboxContentConflict(jobQueue, sessionId, messageUuid, message);
   }
 
   private async refreshLongHorizonAgentSessionConfig(

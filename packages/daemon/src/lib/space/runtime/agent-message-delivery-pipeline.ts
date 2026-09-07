@@ -40,7 +40,11 @@ export interface AgentMessageDeliveryDeps {
   hasHeldDeliveryBacklog(sessionId: string, excludeMessageId?: string): boolean;
   hasSettledDelivery(sessionId: string, messageId: string): boolean;
   mailboxDeliveryPending(sessionId: string, messageId: string): boolean;
-  verifyDeliveryContent(sessionId: string, messageId: string, message: SDKUserMessage): void;
+  verifyDeliveryContent(
+    sessionId: string,
+    messageId: string,
+    message: SDKUserMessage & { inputKind?: MessageInputKind }
+  ): void;
   handoffToMailbox(args: Omit<MailboxHandoffArgs, 'jobQueue'>): Promise<MailboxHandoffOutcome>;
   recordActivity(sessionId: string): void;
 }

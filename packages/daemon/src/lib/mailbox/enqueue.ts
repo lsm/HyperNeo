@@ -1,6 +1,11 @@
-import { PromptContentConflictError } from '../agent/message-delivery-outbox.ts';
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import {
+  canonicalJson,
+  normalizePromptForComparison,
+  PromptContentConflictError,
+} from '../agent/prompt-comparison.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
-import type { MailboxEntry } from './entry.ts';
+import { toMailboxMessage, type MailboxEntry, type MailboxMessage } from './entry.ts';
 
 export const MAILBOX_LANE = 'mailbox';
 
@@ -12,18 +17,26 @@ export function assertNoPendingMailboxContentConflict(
   jobQueue: JobQueueRepository,
   sessionId: string,
   messageUuid: string,
-  content: unknown
+  message: MailboxMessage
 ): void {
+  const projected = toMailboxMessage(message);
+  if ('reason' in projected) return;
+  const incoming = canonicalJson(
+    normalizePromptForComparison(projected.message as unknown as SDKMessage)
+  );
   for (const job of jobQueue.listActiveByPayload(MAILBOX_LANE, {
     'to.sessionId': sessionId,
     messageUuid,
   })) {
-    const pending = (
-      (job.payload as Record<string, unknown>).message as
-        | { message?: { content?: unknown } }
-        | undefined
-    )?.message?.content;
-    if (JSON.stringify(pending) !== JSON.stringify(content)) {
+    const pending = (job.payload as Record<string, unknown>).message as MailboxMessage | undefined;
+    if (pending === undefined) continue;
+    const pendingProjected = toMailboxMessage(pending);
+    if ('reason' in pendingProjected) continue;
+    if (
+      canonicalJson(
+        normalizePromptForComparison(pendingProjected.message as unknown as SDKMessage)
+      ) !== incoming
+    ) {
       throw new PromptContentConflictError(
         `prompt handoff: message ${messageUuid} in session ${sessionId} ` +
           'already exists with different content'

@@ -1,5 +1,12 @@
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 
+export class PromptContentConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PromptContentConflictError';
+  }
+}
+
 export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
   if (value !== null && typeof value === 'object') {
