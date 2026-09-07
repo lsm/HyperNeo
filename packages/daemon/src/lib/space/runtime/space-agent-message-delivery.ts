@@ -12,9 +12,9 @@ import {
   PromptContentConflictError,
   verifyPromptContent,
 } from '../../agent/message-delivery-outbox.ts';
-import { renderAddress } from '../../mailbox/address.ts';
-import { MAILBOX_LANE } from '../../mailbox/enqueue.ts';
-import { handoffPromptToMailbox, type MailboxHandoffOutcome } from '../../mailbox/handoff.ts';
+import { createMailboxEntry, type MailboxEntry } from '../../mailbox/entry.ts';
+import { enqueueMailboxEntry, MAILBOX_LANE } from '../../mailbox/enqueue.ts';
+import type { MailboxHandoffOutcome } from '../../mailbox/handoff.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
@@ -253,23 +253,34 @@ function assertNoConflictingPendingAdmission(ctx: SpaceAgentDeliveryCtx): void {
   }
 }
 
-async function enqueuePrompt(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeliveryCtx> {
-  verifyPromptContent({
-    db: ctx.deps.db,
-    sessionId: ctx.sessionId,
-    messageUuid: ctx.messageId,
-    message: ctx.sdkUserMessage,
-  });
-  const handoff = await withSessionLock(ctx.sessionId, async () => {
-    assertNoConflictingPendingAdmission(ctx);
-    return handoffPromptToMailbox({
-      to: renderAddress({ kind: 'session', sessionId: ctx.sessionId }),
+function admitMailboxPrompt(ctx: SpaceAgentDeliveryCtx): MailboxHandoffOutcome {
+  let entry: MailboxEntry;
+  try {
+    entry = createMailboxEntry({
+      to: { kind: 'session', sessionId: ctx.sessionId },
       message: projectMailboxPrompt(ctx),
       origin: ctx.origin ?? 'space_agent',
       messageUuid: ctx.messageId,
-      jobQueue: ctx.deps.jobQueue,
     });
-  });
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    return { kind: 'rejected', reason: error.message };
+  }
+  const admit = ctx.deps.db.transaction(() => {
+    verifyPromptContent({
+      db: ctx.deps.db,
+      sessionId: ctx.sessionId,
+      messageUuid: ctx.messageId,
+      message: ctx.sdkUserMessage,
+    });
+    assertNoConflictingPendingAdmission(ctx);
+    return enqueueMailboxEntry(ctx.deps.jobQueue, entry);
+  }, 'immediate');
+  return admit();
+}
+
+async function enqueuePrompt(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeliveryCtx> {
+  const handoff = await withSessionLock(ctx.sessionId, async () => admitMailboxPrompt(ctx));
   return { ...ctx, handoff };
 }
 
