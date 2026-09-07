@@ -24,7 +24,7 @@ export type MailboxMessageContent = string | MessageContent[];
 
 export type MailboxMessage = {
   type: 'user';
-  message: { content: MailboxMessageContent };
+  message: { role?: 'user'; content: MailboxMessageContent };
   parent_tool_use_id: null;
   priority?: 'now' | 'next' | 'later';
   inputKind?: MessageInputKind;
@@ -120,7 +120,7 @@ export function toMailboxMessage(message: MailboxMessage): MailboxMessageProject
     return { reason: 'message.inputKind must be one of "task", "human", "system"' };
   }
   const content = message.message?.content;
-  let projected: { content: MailboxMessageContent } | null = null;
+  let projected: { role?: 'user'; content: MailboxMessageContent } | null = null;
   if (typeof content === 'string') {
     projected = content.length > 0 ? { content } : null;
   } else if (Array.isArray(content)) {
@@ -133,6 +133,7 @@ export function toMailboxMessage(message: MailboxMessage): MailboxMessageProject
     projected = blocks.length > 0 ? { content: blocks } : null;
   }
   if (projected === null) return { reason: MAILBOX_CONTENT_REASON };
+  if (message.message?.role === 'user') projected.role = 'user';
   const referenceMetadata =
     message.referenceMetadata === undefined
       ? undefined
