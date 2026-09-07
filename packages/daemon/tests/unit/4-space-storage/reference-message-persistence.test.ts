@@ -259,6 +259,8 @@ describe('MessagePersistence with ReferenceResolver', () => {
     enqueueUniquePendingSpy = mock(() => 'mailbox-job-1');
     mockJobQueue = {
       enqueueUniquePending: enqueueUniquePendingSpy,
+      activeMailboxMessageUuids: mock(() => new Set<string>()),
+      activeDeliveryMessageUuids: mock(() => new Set<string>()),
     } as unknown as JobQueueRepository;
   });
 
