@@ -167,6 +167,9 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       const deferredDbId = deps.sdkMessageRepo.findMessageIdByUuid(target, messageUuid);
       if (deferredDbId !== null) {
         await deps.publishDeferredStatus(target, deferredDbId);
+        if (!deps.jobQueue.isClaimCurrent(job.id, job.claimToken)) {
+          return { outcome: 'stale_attempt' };
+        }
       }
     }
     if (deps.isSessionArchived(target)) {
