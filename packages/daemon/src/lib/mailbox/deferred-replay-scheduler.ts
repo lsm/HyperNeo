@@ -93,6 +93,17 @@ export function createMailboxDeferredReplayScheduler(
       while (isBusyStatus(status)) {
         if (status === 'interrupted') {
           await session.normalizeStaleInterruptedState?.();
+          const normalizedSession = deps.sessionManager?.getCachedSession(sessionId);
+          if (!normalizedSession) {
+            emitReplayEvent('skipped', { sessionId, reason: 'no_cached_session' });
+            tracked.delete(sessionId);
+            dirty.delete(sessionId);
+            return;
+          }
+          if (normalizedSession !== session) {
+            session = normalizedSession;
+            emitReplayEvent('session_replaced', { sessionId });
+          }
           const normalized = session.getProcessingState().status;
           if (normalized !== 'interrupted') {
             status = normalized;
@@ -104,7 +115,7 @@ export function createMailboxDeferredReplayScheduler(
         const waiter = session.stateManager.waitForIdleTransition();
         parkedWaiters.set(sessionId, waiter.cancel);
         parkedForIdle = true;
-        pump();
+        setImmediate(pump);
         await waiter.promise;
         parkedWaiters.delete(sessionId);
         parkedForIdle = false;

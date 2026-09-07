@@ -312,6 +312,70 @@ describe('createMailboxDeferredReplayScheduler', () => {
     expect(published).toEqual([SESSION_ID]);
   });
 
+  test('revalidates the session after interrupt normalization', async () => {
+    const published: string[] = [];
+    let firstStatus = 'interrupted';
+    let secondStatus = 'processing';
+    let resolveNormalize: (() => void) | undefined;
+    let resolveSecond: (() => void) | undefined;
+    let useSecond = false;
+    const makeReplacement = () =>
+      ({
+        getSessionData: () => ({ config: { queryMode: 'immediate' } }),
+        getProcessingState: () => ({ status: secondStatus }),
+        stateManager: {
+          waitForIdleTransition: () => ({
+            promise: new Promise<void>((resolve) => {
+              resolveSecond = resolve;
+            }),
+            cancel: () => {},
+          }),
+        },
+      }) as never;
+    const deps: MailboxDeferredReplaySchedulerDeps = {
+      internalEventBus: {
+        publish: mock(async (_event: string, data: { sessionId: string }) => {
+          published.push(data.sessionId);
+        }),
+      } as never,
+      sessionManager: {
+        getCachedSession: () =>
+          useSecond
+            ? makeReplacement()
+            : ({
+                getSessionData: () => ({ config: { queryMode: 'immediate' } }),
+                getProcessingState: () => ({ status: firstStatus }),
+                normalizeStaleInterruptedState: () =>
+                  new Promise<void>((resolve) => {
+                    resolveNormalize = resolve;
+                  }),
+                stateManager: {
+                  waitForIdleTransition: () => ({
+                    promise: new Promise<void>(() => {}),
+                    cancel: () => {},
+                  }),
+                },
+              } as never),
+      },
+    };
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(10);
+
+    useSecond = true;
+    firstStatus = 'idle';
+    resolveNormalize?.();
+    await flush(10);
+    expect(published).toEqual([]);
+    expect(resolveSecond).toBeDefined();
+
+    secondStatus = 'idle';
+    resolveSecond?.();
+    await flush(10);
+    expect(published).toEqual([SESSION_ID]);
+  });
+
   test('skips publication when the cached session vanishes during a park', async () => {
     const published: string[] = [];
     let status = 'processing';
@@ -423,10 +487,13 @@ describe('createMailboxDeferredReplayScheduler', () => {
       } as never,
       sessionManager: {
         getCachedSession: (sessionId: string) => {
-          statuses.set(sessionId, statuses.get(sessionId) ?? 'waiting_for_input');
+          const initial = sessionId === 'idle-9' ? 'idle' : 'waiting_for_input';
+          statuses.set(sessionId, statuses.get(sessionId) ?? initial);
           return {
             getSessionData: () => ({ config: { queryMode: 'immediate' } }),
-            getProcessingState: () => ({ status: statuses.get(sessionId) ?? 'waiting_for_input' }),
+            getProcessingState: () => ({
+              status: statuses.get(sessionId) ?? 'waiting_for_input',
+            }),
             stateManager: {
               waitForIdleTransition: () => ({
                 promise: new Promise<void>((resolve) => {
