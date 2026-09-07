@@ -5,7 +5,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 
 const execAsync = promisify(exec);
 
-export const MAX_WORKSPACES_PER_SPACE = 8;
+export const MAX_WORKSPACES_PER_SPACE = 128;
 
 export type WorkspaceClaimSource = 'space_primary_path' | 'registered_workspace';
 

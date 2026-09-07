@@ -214,11 +214,17 @@ describe('SpaceCreateDialog', () => {
     fireEvent.submit(form!);
 
     await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledWith('space.create', {
-        workspacePath: '/projects/my-app',
-        name: 'my-app',
-        description: undefined,
-      });
+      expect(mockRequest).toHaveBeenCalledWith(
+        'space.create',
+        {
+          workspacePath: '/projects/my-app',
+          name: 'my-app',
+          description: undefined,
+        },
+        {
+          timeout: 10000,
+        }
+      );
     });
   });
 
@@ -292,7 +298,10 @@ describe('SpaceCreateDialog', () => {
         'space.create',
         expect.objectContaining({
           description: 'My project description',
-        })
+        }),
+        {
+          timeout: 10000,
+        }
       );
     });
   });
@@ -345,15 +354,51 @@ describe('SpaceCreateDialog', () => {
     fireEvent.submit(form!);
 
     await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledWith('space.create', {
-        workspacePath: '/projects/my-app',
-        name: 'my-app',
-        description: undefined,
-        additionalWorkspaces: [
-          { path: '/projects/shared-lib', label: 'Shared lib' },
-          { path: '/projects/tools' },
-        ],
+      expect(mockRequest).toHaveBeenCalledWith(
+        'space.create',
+        {
+          workspacePath: '/projects/my-app',
+          name: 'my-app',
+          description: undefined,
+          additionalWorkspaces: [
+            { path: '/projects/shared-lib', label: 'Shared lib' },
+            { path: '/projects/tools' },
+          ],
+        },
+        {
+          timeout: 12000,
+        }
+      );
+    });
+  });
+
+  it('scales the space.create timeout with the number of additional workspaces', async () => {
+    mockGetHubIfConnected.mockReturnValue({ request: mockRequest });
+    mockRequest.mockResolvedValue(SPACE_MOCK);
+
+    const { getByText, getByPlaceholderText, getAllByPlaceholderText, getByRole } = render(
+      <SpaceCreateDialog isOpen={true} onClose={onClose} />
+    );
+
+    fireEvent.input(getByPlaceholderText('/Users/you/projects/my-app'), {
+      target: { value: '/projects/my-app' },
+    });
+    for (let i = 0; i < 3; i++) {
+      fireEvent.click(getByText('+ Add workspace'));
+      fireEvent.input(getAllByPlaceholderText('/Users/you/projects/other-repo')[i], {
+        target: { value: `/projects/repo-${i}` },
       });
+    }
+
+    const form = getByRole('dialog').querySelector('form');
+    fireEvent.submit(form!);
+
+    await waitFor(() => {
+      expect(mockRequest).toHaveBeenCalledWith(
+        'space.create',
+        expect.objectContaining({ additionalWorkspaces: expect.anything() }),
+        { timeout: 13000 }
+      );
     });
   });
 
@@ -374,11 +419,17 @@ describe('SpaceCreateDialog', () => {
     fireEvent.submit(form!);
 
     await waitFor(() => {
-      expect(mockRequest).toHaveBeenCalledWith('space.create', {
-        workspacePath: '/projects/my-app',
-        name: 'my-app',
-        description: undefined,
-      });
+      expect(mockRequest).toHaveBeenCalledWith(
+        'space.create',
+        {
+          workspacePath: '/projects/my-app',
+          name: 'my-app',
+          description: undefined,
+        },
+        {
+          timeout: 10000,
+        }
+      );
     });
   });
 
@@ -484,11 +535,11 @@ describe('SpaceCreateDialog', () => {
       <SpaceCreateDialog isOpen={true} onClose={onClose} />
     );
 
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 128; i++) {
       fireEvent.click(getByText('+ Add workspace'));
     }
 
-    expect(getAllByPlaceholderText('/Users/you/projects/other-repo')).toHaveLength(7);
+    expect(getAllByPlaceholderText('/Users/you/projects/other-repo')).toHaveLength(127);
     expect((getByText('+ Add workspace') as HTMLButtonElement).disabled).toBe(true);
   });
 });
