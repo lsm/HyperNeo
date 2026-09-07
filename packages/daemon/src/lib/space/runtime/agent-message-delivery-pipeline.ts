@@ -38,6 +38,7 @@ export interface AgentMessageDeliveryDeps {
   hasActiveDeliveryJob(sessionId: string): boolean;
   hasUnconsumedDeliveredWork(sessionId: string, excludeMessageId?: string): boolean;
   hasHeldDeliveryBacklog(sessionId: string, excludeMessageId?: string): boolean;
+  hasSettledDelivery(sessionId: string, messageId: string): boolean;
   handoffToMailbox(args: Omit<MailboxHandoffArgs, 'jobQueue'>): Promise<MailboxHandoffOutcome>;
   recordActivity(sessionId: string): void;
 }
@@ -272,7 +273,7 @@ export async function handoffDeliveryToMailbox(
     if (outcome.kind === 'rejected') {
       throw new Error(`Mailbox handoff rejected: ${outcome.reason}`);
     }
-    if (!shouldDefer) {
+    if (!shouldDefer && !ctx.deps.hasSettledDelivery(sessionId, ctx.messageId)) {
       await ctx.session.stateManager.setQueuedIfIdle(ctx.messageId).catch(() => {});
     }
     ctx.deps.recordActivity(sessionId);

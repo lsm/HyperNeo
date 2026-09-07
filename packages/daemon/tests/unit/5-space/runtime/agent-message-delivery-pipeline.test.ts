@@ -49,6 +49,7 @@ function makeDeps(overrides: Partial<AgentMessageDeliveryDeps> = {}) {
     hasActiveDeliveryJob: () => false,
     hasUnconsumedDeliveredWork: () => false,
     hasHeldDeliveryBacklog: () => false,
+    hasSettledDelivery: () => false,
     handoffToMailbox: async (args) => {
       handoffCalls.push(args);
       return { kind: 'enqueued' as const, id: 'mbox-1' };
@@ -162,6 +163,23 @@ describe('deliverAgentMessageToTarget', () => {
       messageId: 'msg-5',
       error: 'task/run is terminal (cancelled)',
     });
+  });
+
+  it('does not queue an idle session for a settled duplicate delivery', async () => {
+    const live = makeSession();
+    const { deps, handoffCalls } = makeDeps({
+      getSessionAsync: async () => live.session,
+      hasSettledDelivery: () => true,
+    });
+    const outcome = await deliverAgentMessageToTarget({
+      deps,
+      target: WORKER_TARGET,
+      message: 'same message again',
+      messageId: 'msg-15',
+    });
+    expect(outcome).toEqual({ state: 'delivered', sessionId: 'sess-1', messageId: 'msg-15' });
+    expect(handoffCalls).toHaveLength(1);
+    expect(live.setQueuedIfIdle).not.toHaveBeenCalled();
   });
 
   it('defers admission while the parent task is rate limited', async () => {

@@ -4727,6 +4727,13 @@ export class TaskAgentManager {
         this.hasUnconsumedDeliveredWork(sessionId, messageId),
       hasHeldDeliveryBacklog: (sessionId, messageId) =>
         this.hasHeldDeliveryBacklog(sessionId, messageId),
+      hasSettledDelivery: (sessionId, messageId) => {
+        const sdkMessageRepo = this.config.db.getSDKMessageRepo();
+        return (
+          sdkMessageRepo.hasConsumptionEvidence(sessionId, messageId) ||
+          sdkMessageRepo.getSettledDeliveryMessageId(sessionId, messageId) !== null
+        );
+      },
       handoffToMailbox: (args) =>
         handoffPromptToMailbox({
           ...args,
