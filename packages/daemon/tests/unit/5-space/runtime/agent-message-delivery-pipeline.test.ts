@@ -50,6 +50,7 @@ function makeDeps(overrides: Partial<AgentMessageDeliveryDeps> = {}) {
     hasUnconsumedDeliveredWork: () => false,
     hasHeldDeliveryBacklog: () => false,
     hasSettledDelivery: () => false,
+    mailboxDeliveryPending: () => true,
     verifyDeliveryContent: () => {},
     handoffToMailbox: async (args) => {
       handoffCalls.push(args);
@@ -180,6 +181,22 @@ describe('deliverAgentMessageToTarget', () => {
     });
     expect(outcome).toEqual({ state: 'delivered', sessionId: 'sess-1', messageId: 'msg-15' });
     expect(handoffCalls).toHaveLength(1);
+    expect(live.setQueuedIfIdle).not.toHaveBeenCalled();
+  });
+
+  it('does not queue an idle session once the mailbox entry has terminated', async () => {
+    const live = makeSession();
+    const { deps } = makeDeps({
+      getSessionAsync: async () => live.session,
+      mailboxDeliveryPending: () => false,
+    });
+    const outcome = await deliverAgentMessageToTarget({
+      deps,
+      target: WORKER_TARGET,
+      message: 'dead-lettered race',
+      messageId: 'msg-17',
+    });
+    expect(outcome).toEqual({ state: 'delivered', sessionId: 'sess-1', messageId: 'msg-17' });
     expect(live.setQueuedIfIdle).not.toHaveBeenCalled();
   });
 

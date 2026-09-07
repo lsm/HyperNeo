@@ -164,7 +164,12 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         claimValid: () => deps.jobQueue.isClaimCurrent(job.id, job.claimToken),
       });
       if (activated[0]) publish(activated[0].dbId);
-    } else if (existing?.sendStatus === 'failed' && entry.deliveryMode === 'defer') {
+    } else if (
+      entry.deliveryMode === 'defer' &&
+      existing?.sendStatus === 'failed' &&
+      !deps.sdkMessageRepo.hasConsumptionEvidence(target, messageUuid) &&
+      deps.sdkMessageRepo.getSettledDeliveryMessageId(target, messageUuid) === null
+    ) {
       deps.sdkMessageRepo.reopenDeliveryByUuid(target, messageUuid);
       deps.sdkMessageRepo.markDeliveryDeferredByUuid(target, messageUuid);
     }

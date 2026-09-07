@@ -4749,6 +4749,13 @@ export class TaskAgentManager {
           sdkMessageRepo.getSettledDeliveryMessageId(sessionId, messageId) !== null
         );
       },
+      mailboxDeliveryPending: (sessionId, messageId) => {
+        const jobQueue = this.config.db.getJobQueueRepo();
+        return (
+          jobQueue.activeMailboxMessageUuids(sessionId).has(messageId) ||
+          jobQueue.activeDeliveryMessageUuids(sessionId).has(messageId)
+        );
+      },
       verifyDeliveryContent: (sessionId, messageId, message) =>
         verifyPromptContent({
           db: this.config.db.getDatabase(),
