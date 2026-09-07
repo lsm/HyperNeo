@@ -39,6 +39,7 @@ export interface AgentMessageDeliveryDeps {
   hasUnconsumedDeliveredWork(sessionId: string, excludeMessageId?: string): boolean;
   hasHeldDeliveryBacklog(sessionId: string, excludeMessageId?: string): boolean;
   hasSettledDelivery(sessionId: string, messageId: string): boolean;
+  verifyDeliveryContent(sessionId: string, messageId: string, message: SDKUserMessage): void;
   handoffToMailbox(args: Omit<MailboxHandoffArgs, 'jobQueue'>): Promise<MailboxHandoffOutcome>;
   recordActivity(sessionId: string): void;
 }
@@ -258,6 +259,7 @@ export async function handoffDeliveryToMailbox(
     ctx.inputKind
   );
   try {
+    ctx.deps.verifyDeliveryContent(sessionId, ctx.messageId, synthetic);
     const outcome = await ctx.deps.handoffToMailbox({
       to: renderAddress({ kind: 'session', sessionId }),
       message: {

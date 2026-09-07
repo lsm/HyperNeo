@@ -3,7 +3,10 @@ import type { SDKMessage } from '@hyperneo/shared/sdk';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session.ts';
 import { ClearConversationCancelledError } from '../../../../src/lib/agent/agent-session.ts';
 import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
-import { persistPrompt } from '../../../../src/lib/agent/message-delivery-outbox';
+import {
+  persistPrompt,
+  PromptContentConflictError,
+} from '../../../../src/lib/agent/message-delivery-outbox';
 import {
   QueryModeHandler,
   type QueryModeHandlerContext,
@@ -272,7 +275,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     expect(outbox.pendingDeliveryJobCount(SESSION_ID, 'msg-failed-retry')).toBe(0);
   });
 
-  it('a failed-row retry with conflicting content defers conflict detection to the lane', async () => {
+  it('a failed-row retry with conflicting content rejects before the mailbox handoff', async () => {
     const outbox = createOutboxTestDb();
     const dbId = seedDeliveryRow(outbox, 'msg-conflict-retry', 'original body');
     outbox.completeDeliveryJobs(SESSION_ID, 'msg-conflict-retry');
@@ -280,21 +283,22 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     const { manager, session } = makeManager({ outbox });
     indexSession(manager, liveSession(session));
 
-    const returned = await manager.injectSubSessionMessage(
-      SESSION_ID,
-      'conflicting body',
-      true,
-      undefined,
-      'immediate',
-      undefined,
-      'msg-conflict-retry'
-    );
+    await expect(
+      manager.injectSubSessionMessage(
+        SESSION_ID,
+        'conflicting body',
+        true,
+        undefined,
+        'immediate',
+        undefined,
+        'msg-conflict-retry'
+      )
+    ).rejects.toBeInstanceOf(PromptContentConflictError);
 
-    expect(returned).toBe('msg-conflict-retry');
     expect(outbox.sendStatus(SESSION_ID, 'msg-conflict-retry')).toBe('failed');
     expect(outbox.userRowCount(SESSION_ID)).toBe(1);
     expect(outbox.pendingDeliveryJobCount(SESSION_ID, 'msg-conflict-retry')).toBe(0);
-    expect(outbox.pendingMailboxJobCount(SESSION_ID, 'msg-conflict-retry')).toBe(1);
+    expect(outbox.pendingMailboxJobCount(SESSION_ID, 'msg-conflict-retry')).toBe(0);
   });
 
   it('a cancelled clear during a FAILED-row retry aborts before reopening the row', async () => {

@@ -29,6 +29,7 @@ import {
   type ContextClearBoundaryOwner,
   withSessionOperationLock,
 } from '../../../lib/agent/message-delivery.ts';
+import { verifyPromptContent } from '../../../lib/agent/message-delivery-outbox.ts';
 import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
 import { readRestartRecoveryNote } from './restart-recovery-note.ts';
 import type { Database } from '../../../storage/database.ts';
@@ -4296,6 +4297,12 @@ export class TaskAgentManager {
         }
       }
 
+      verifyPromptContent({
+        db: this.config.db.getDatabase(),
+        sessionId,
+        messageUuid: messageId,
+        message: sdkUserMessage,
+      });
       const jobQueue = this.config.db.getJobQueueRepo();
       const handoff = await handoffPromptToMailbox({
         to: renderAddress({ kind: 'session', sessionId }),
@@ -4742,6 +4749,13 @@ export class TaskAgentManager {
           sdkMessageRepo.getSettledDeliveryMessageId(sessionId, messageId) !== null
         );
       },
+      verifyDeliveryContent: (sessionId, messageId, message) =>
+        verifyPromptContent({
+          db: this.config.db.getDatabase(),
+          sessionId,
+          messageUuid: messageId,
+          message,
+        }),
       handoffToMailbox: (args) =>
         handoffPromptToMailbox({
           ...args,

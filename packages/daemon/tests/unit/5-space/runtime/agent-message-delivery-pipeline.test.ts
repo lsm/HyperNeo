@@ -50,6 +50,7 @@ function makeDeps(overrides: Partial<AgentMessageDeliveryDeps> = {}) {
     hasUnconsumedDeliveredWork: () => false,
     hasHeldDeliveryBacklog: () => false,
     hasSettledDelivery: () => false,
+    verifyDeliveryContent: () => {},
     handoffToMailbox: async (args) => {
       handoffCalls.push(args);
       return { kind: 'enqueued' as const, id: 'mbox-1' };
@@ -323,5 +324,26 @@ describe('deliverAgentMessageToTarget', () => {
         messageId: 'msg-10',
       })
     ).rejects.toThrow('Mailbox handoff rejected: entry malformed');
+  });
+
+  it('rejects a conflicting redelivery before the mailbox handoff or queued marking', async () => {
+    const live = makeSession();
+    const conflict = new Error('prompt handoff: message exists with different content');
+    const { deps, handoffCalls } = makeDeps({
+      getSessionAsync: async () => live.session,
+      verifyDeliveryContent: () => {
+        throw conflict;
+      },
+    });
+    await expect(
+      deliverAgentMessageToTarget({
+        deps,
+        target: WORKER_TARGET,
+        message: 'different body',
+        messageId: 'msg-16',
+      })
+    ).rejects.toThrow('prompt handoff: message exists with different content');
+    expect(handoffCalls).toHaveLength(0);
+    expect(live.setQueuedIfIdle).not.toHaveBeenCalled();
   });
 });
