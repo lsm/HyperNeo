@@ -903,7 +903,9 @@ describe('createMailboxDeliveryHandler', () => {
       expect(result).toMatchObject({ terminal: 'delivered', sessionId: SESSION_ID });
       expect(mailbox.sdkRows()).toHaveLength(1);
       expect(mailbox.sdkRows()[0].send_status).toBe('deferred');
-      expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)).toHaveLength(0);
+      expect(
+        mailbox.jobsByQueue(MESSAGE_DELIVERY).filter((job) => job.status === 'pending')
+      ).toHaveLength(0);
     });
 
     test('a synchronous publisher throw never fails an already-delivered entry', async () => {
