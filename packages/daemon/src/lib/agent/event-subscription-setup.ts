@@ -113,7 +113,10 @@ export class EventSubscriptionSetup {
     const unsubQueryTrigger = internalEventBus.subscribe(
       'query.trigger',
       async () => {
-        await queryModeHandler.replayPendingMessagesForAutomaticTurnEnd();
+        const replayed = await queryModeHandler.replayPendingMessagesForAutomaticTurnEnd();
+        if (!replayed) {
+          throw new Error('query.trigger: automatic replay did not complete');
+        }
       },
       { sessionId, subscriberName: 'EventSubscriptionSetup.queryTrigger' }
     );

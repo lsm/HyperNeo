@@ -246,6 +246,27 @@ describe('InterruptHandler', () => {
       expect(setInterruptedSpy).not.toHaveBeenCalled();
     });
 
+    it('suppresses deferred replay even when delivery jobs are preserved', async () => {
+      const suppressDeferredReplay = mock(() => {});
+      handler = createHandler({ suppressDeferredReplay });
+
+      await handler.handleInterrupt({ preserveDeliveryJobs: true, skipDeferredReplay: true });
+
+      expect(suppressDeferredReplay).toHaveBeenCalledWith('test-session-id');
+      expect(cancelForSessionSpy).not.toHaveBeenCalled();
+    });
+
+    it('suppresses deferred replay on the already-idle early return', async () => {
+      getStateSpy.mockReturnValue({ status: 'idle' });
+      const suppressDeferredReplay = mock(() => {});
+      handler = createHandler({ suppressDeferredReplay });
+
+      await handler.handleInterrupt({ skipDeferredReplay: true });
+
+      expect(suppressDeferredReplay).toHaveBeenCalledWith('test-session-id');
+      expect(setInterruptedSpy).not.toHaveBeenCalled();
+    });
+
     it('should skip interrupt if already interrupted', async () => {
       getStateSpy.mockReturnValue({ status: 'interrupted' });
       handler = createHandler();

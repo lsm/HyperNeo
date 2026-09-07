@@ -493,16 +493,14 @@ describe('createMailboxDeferredReplayScheduler', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
-  test('skips replay for sessions pending a worktree choice', async () => {
+  test('retries replay for sessions pending a worktree choice until they become active', async () => {
     const publish = mock(async () => {});
     const deps = makeDeps(publish);
+    let dataStatus = 'pending_worktree_choice';
     deps.sessionManager = {
       getCachedSession: () =>
         ({
-          getSessionData: () => ({
-            config: { queryMode: 'immediate' },
-            status: 'pending_worktree_choice',
-          }),
+          getSessionData: () => ({ config: { queryMode: 'immediate' }, status: dataStatus }),
           getProcessingState: () => ({ status: 'idle' }),
           stateManager: {},
         }) as never,
@@ -513,15 +511,21 @@ describe('createMailboxDeferredReplayScheduler', () => {
     await flush(20);
 
     expect(publish).not.toHaveBeenCalled();
+
+    dataStatus = 'active';
+    await flush(120);
+
+    expect(publish).toHaveBeenCalledWith(SESSION_ID);
   });
 
-  test('skips replay for paused sessions', async () => {
+  test('retries replay for paused sessions without publishing until they resume', async () => {
     const publish = mock(async () => {});
     const deps = makeDeps(publish);
+    let dataStatus = 'paused';
     deps.sessionManager = {
       getCachedSession: () =>
         ({
-          getSessionData: () => ({ config: { queryMode: 'immediate' }, status: 'paused' }),
+          getSessionData: () => ({ config: { queryMode: 'immediate' }, status: dataStatus }),
           getProcessingState: () => ({ status: 'idle' }),
           stateManager: {},
         }) as never,
@@ -532,6 +536,11 @@ describe('createMailboxDeferredReplayScheduler', () => {
     await flush(20);
 
     expect(publish).not.toHaveBeenCalled();
+
+    dataStatus = 'active';
+    await flush(120);
+
+    expect(publish).toHaveBeenCalledWith(SESSION_ID);
   });
 
   test('waits for terminal-idle settlement before publishing', async () => {
@@ -982,9 +991,9 @@ describe('decideReplayAdmission', () => {
     expect(decideReplayAdmission(asSession('manual', 'active'))).toBe('manual_mode');
     expect(decideReplayAdmission(asSession('immediate', 'ended'))).toBe('session_unavailable');
     expect(decideReplayAdmission(asSession('immediate', 'archived'))).toBe('session_unavailable');
-    expect(decideReplayAdmission(asSession('immediate', 'paused'))).toBe('session_unavailable');
+    expect(decideReplayAdmission(asSession('immediate', 'paused'))).toBe('session_inactive');
     expect(decideReplayAdmission(asSession('immediate', 'pending_worktree_choice'))).toBe(
-      'session_unavailable'
+      'session_inactive'
     );
   });
 
@@ -1005,6 +1014,9 @@ describe('replay admission gates', () => {
     expect(gateQueryMode(asSession('manual', 'active'))).toEqual({ reason: 'manual_mode' });
     expect(gateQueryMode(session)).toEqual({ value: session });
     expect(gateLifecycleStatus(asSession('immediate', 'paused'))).toEqual({
+      reason: 'session_inactive',
+    });
+    expect(gateLifecycleStatus(asSession('immediate', 'archived'))).toEqual({
       reason: 'session_unavailable',
     });
     expect(gateLifecycleStatus(session)).toEqual({ value: session });

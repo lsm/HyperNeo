@@ -77,6 +77,7 @@ export class SessionManager {
   private toolsConfigManager: ToolsConfigManager;
   private messagePersistence: MessagePersistence;
   private spaceRuntimeMcpProvider?: SpaceRuntimeMcpProvider;
+  private mailboxDeferredReplaySuppressor?: (sessionId: string) => void;
   private workflowMcpProvisioning = new Map<
     string,
     { session: AgentSession; promise: Promise<void> }
@@ -172,6 +173,10 @@ export class SessionManager {
           await reattachWorkflowMcpServers(target, missing);
         };
       }
+    }
+    if (this.mailboxDeferredReplaySuppressor) {
+      const suppressor = this.mailboxDeferredReplaySuppressor;
+      agentSession.suppressDeferredReplay = (sessionId) => suppressor(sessionId);
     }
     return agentSession;
   }
@@ -458,6 +463,13 @@ export class SessionManager {
     this.spaceRuntimeMcpProvider = provider;
   }
 
+  setMailboxDeferredReplaySuppressor(suppressor: (sessionId: string) => void): void {
+    this.mailboxDeferredReplaySuppressor = suppressor;
+    for (const session of this.getCachedSessions()) {
+      session.suppressDeferredReplay = (sessionId) => suppressor(sessionId);
+    }
+  }
+
   private isWorkflowSubSession(session: AgentSession): boolean {
     return isWorkflowSubSessionIdentity(session.getSessionData().id);
   }
@@ -592,6 +604,10 @@ export class SessionManager {
   }
 
   registerSession(agentSession: AgentSession): void {
+    if (this.mailboxDeferredReplaySuppressor) {
+      const suppressor = this.mailboxDeferredReplaySuppressor;
+      agentSession.suppressDeferredReplay = (sessionId) => suppressor(sessionId);
+    }
     this.sessionCache.set(agentSession.getSessionData().id, agentSession);
   }
 
