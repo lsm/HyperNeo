@@ -275,6 +275,71 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     expect(outbox.pendingDeliveryJobCount(SESSION_ID, 'msg-failed-retry')).toBe(0);
   });
 
+  it('a settled-then-failed row does not queue the idle session on an immediate retry', async () => {
+    const outbox = createOutboxTestDb();
+    const dbId = seedDeliveryRow(outbox, 'msg-settled-failed', '─── Message from coder ───');
+    outbox.completeDeliveryJobs(SESSION_ID, 'msg-settled-failed');
+    outbox.db
+      .prepare(`UPDATE sdk_messages SET send_status = 'failed', consumed_seq = 1 WHERE id = ?`)
+      .run(dbId);
+    const { manager, session } = makeManager({ outbox });
+    const setQueuedIfIdle = mock(async () => true);
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
+      stateManager: { setQueuedIfIdle },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    const returned = await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true,
+      undefined,
+      'immediate',
+      undefined,
+      'msg-settled-failed'
+    );
+
+    expect(returned).toBe('msg-settled-failed');
+    expect(outbox.pendingMailboxJobCount(SESSION_ID, 'msg-settled-failed')).toBe(1);
+    expect(setQueuedIfIdle).not.toHaveBeenCalled();
+  });
+
+  it('a second inject reusing a pending uuid with different content rejects before enqueue', async () => {
+    const outbox = createOutboxTestDb();
+    const { manager, session } = makeManager({ outbox });
+    indexSession(manager, liveSession(session));
+
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      'first body',
+      true,
+      undefined,
+      'immediate',
+      undefined,
+      'msg-pending-reuse'
+    );
+    expect(outbox.pendingMailboxJobCount(SESSION_ID, 'msg-pending-reuse')).toBe(1);
+
+    await expect(
+      manager.injectSubSessionMessage(
+        SESSION_ID,
+        'second body',
+        true,
+        undefined,
+        'immediate',
+        undefined,
+        'msg-pending-reuse'
+      )
+    ).rejects.toBeInstanceOf(PromptContentConflictError);
+    expect(outbox.pendingMailboxJobCount(SESSION_ID, 'msg-pending-reuse')).toBe(1);
+  });
+
   it('a failed-row retry with conflicting content rejects before the mailbox handoff', async () => {
     const outbox = createOutboxTestDb();
     const dbId = seedDeliveryRow(outbox, 'msg-conflict-retry', 'original body');

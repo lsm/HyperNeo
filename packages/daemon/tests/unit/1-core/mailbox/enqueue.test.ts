@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { enqueueMailboxEntry, MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
+import {
+  assertNoPendingMailboxContentConflict,
+  enqueueMailboxEntry,
+  MAILBOX_LANE,
+} from '../../../../src/lib/mailbox/enqueue';
+import { PromptContentConflictError } from '../../../../src/lib/agent/message-delivery-outbox';
 import {
   DEFAULT_MAILBOX_ENTRY_POLICY,
   type MailboxEntry,
@@ -288,5 +293,49 @@ describe('enqueueMailboxEntry', () => {
       expect(firstClaim).toHaveLength(1);
       expect(firstClaim[0].payload.id).toBe(high.id);
     });
+  });
+});
+
+describe('assertNoPendingMailboxContentConflict', () => {
+  let mailbox: MailboxTestDb;
+
+  beforeEach(() => {
+    mailbox = createMailboxTestDb();
+  });
+
+  afterEach(() => {
+    mailbox.close();
+  });
+
+  test('passes when no active admission holds the uuid', () => {
+    expect(() =>
+      assertNoPendingMailboxContentConflict(mailbox.jobQueue, 'sess-1', 'uuid-free', [
+        { type: 'text', text: 'fresh' },
+      ])
+    ).not.toThrow();
+  });
+
+  test('passes when the active admission carries the same content', () => {
+    enqueueMailboxEntry(mailbox.jobQueue, makeEntry({ message }));
+    expect(() =>
+      assertNoPendingMailboxContentConflict(mailbox.jobQueue, 'sess-1', 'uuid-1', 'hello')
+    ).not.toThrow();
+  });
+
+  test('throws a prompt content conflict when the active admission differs', () => {
+    enqueueMailboxEntry(mailbox.jobQueue, makeEntry({ message }));
+    expect(() =>
+      assertNoPendingMailboxContentConflict(mailbox.jobQueue, 'sess-1', 'uuid-1', 'different')
+    ).toThrow(PromptContentConflictError);
+  });
+
+  test('ignores admissions for another session or uuid', () => {
+    enqueueMailboxEntry(mailbox.jobQueue, makeEntry({ message }));
+    expect(() =>
+      assertNoPendingMailboxContentConflict(mailbox.jobQueue, 'sess-2', 'uuid-1', 'different')
+    ).not.toThrow();
+    expect(() =>
+      assertNoPendingMailboxContentConflict(mailbox.jobQueue, 'sess-1', 'uuid-2', 'different')
+    ).not.toThrow();
   });
 });

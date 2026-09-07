@@ -1,3 +1,4 @@
+import { PromptContentConflictError } from '../agent/message-delivery-outbox.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { MailboxEntry } from './entry.ts';
 
@@ -6,6 +7,30 @@ export const MAILBOX_LANE = 'mailbox';
 export type MailboxEnqueueOutcome =
   | { kind: 'enqueued'; id: string }
   | { kind: 'rejected'; reason: string };
+
+export function assertNoPendingMailboxContentConflict(
+  jobQueue: JobQueueRepository,
+  sessionId: string,
+  messageUuid: string,
+  content: unknown
+): void {
+  for (const job of jobQueue.listActiveByPayload(MAILBOX_LANE, {
+    'to.sessionId': sessionId,
+    messageUuid,
+  })) {
+    const pending = (
+      (job.payload as Record<string, unknown>).message as
+        | { message?: { content?: unknown } }
+        | undefined
+    )?.message?.content;
+    if (JSON.stringify(pending) !== JSON.stringify(content)) {
+      throw new PromptContentConflictError(
+        `prompt handoff: message ${messageUuid} in session ${sessionId} ` +
+          'already exists with different content'
+      );
+    }
+  }
+}
 
 export function enqueueMailboxEntry(
   jobQueue: JobQueueRepository,

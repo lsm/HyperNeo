@@ -87,6 +87,7 @@ import { WorkflowHookStateRepository } from '../../../storage/repositories/workf
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 import { Logger } from '../../logger.ts';
 import { renderAddress } from '../../mailbox/address.ts';
+import { assertNoPendingMailboxContentConflict } from '../../mailbox/enqueue.ts';
 import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager.ts';
 import {
@@ -4297,13 +4298,14 @@ export class TaskAgentManager {
         }
       }
 
+      const jobQueue = this.config.db.getJobQueueRepo();
       verifyPromptContent({
         db: this.config.db.getDatabase(),
         sessionId,
         messageUuid: messageId,
         message: sdkUserMessage,
       });
-      const jobQueue = this.config.db.getJobQueueRepo();
+      assertNoPendingMailboxContentConflict(jobQueue, sessionId, messageId, sdkContent);
       const handoff = await handoffPromptToMailbox({
         to: renderAddress({ kind: 'session', sessionId }),
         message: {
@@ -4320,8 +4322,9 @@ export class TaskAgentManager {
         throw new Error(`Mailbox handoff rejected: ${handoff.reason}`);
       }
       if (
-        jobQueue.activeMailboxMessageUuids(sessionId).has(messageId) ||
-        jobQueue.activeDeliveryMessageUuids(sessionId).has(messageId)
+        !this.hasSettledDelivery(sessionId, messageId) &&
+        (jobQueue.activeMailboxMessageUuids(sessionId).has(messageId) ||
+          jobQueue.activeDeliveryMessageUuids(sessionId).has(messageId))
       ) {
         await session.stateManager.setQueuedIfIdle(messageId).catch(() => {});
       }
@@ -4422,6 +4425,14 @@ export class TaskAgentManager {
     if (!parentTaskId) return false;
     const task = this.config.taskRepo.getTask(parentTaskId);
     return task !== null && isRateOrUsageLimited(task.status ?? '');
+  }
+
+  private hasSettledDelivery(sessionId: string, messageId: string): boolean {
+    const sdkMessageRepo = this.config.db.getSDKMessageRepo();
+    return (
+      sdkMessageRepo.hasConsumptionEvidence(sessionId, messageId) ||
+      sdkMessageRepo.getSettledDeliveryMessageId(sessionId, messageId) !== null
+    );
   }
 
   private static readonly REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS = ['node-agent'] as const;
@@ -4742,13 +4753,7 @@ export class TaskAgentManager {
         this.hasUnconsumedDeliveredWork(sessionId, messageId),
       hasHeldDeliveryBacklog: (sessionId, messageId) =>
         this.hasHeldDeliveryBacklog(sessionId, messageId),
-      hasSettledDelivery: (sessionId, messageId) => {
-        const sdkMessageRepo = this.config.db.getSDKMessageRepo();
-        return (
-          sdkMessageRepo.hasConsumptionEvidence(sessionId, messageId) ||
-          sdkMessageRepo.getSettledDeliveryMessageId(sessionId, messageId) !== null
-        );
-      },
+      hasSettledDelivery: (sessionId, messageId) => this.hasSettledDelivery(sessionId, messageId),
       mailboxDeliveryPending: (sessionId, messageId) => {
         const jobQueue = this.config.db.getJobQueueRepo();
         return (
@@ -4756,13 +4761,20 @@ export class TaskAgentManager {
           jobQueue.activeDeliveryMessageUuids(sessionId).has(messageId)
         );
       },
-      verifyDeliveryContent: (sessionId, messageId, message) =>
+      verifyDeliveryContent: (sessionId, messageId, message) => {
         verifyPromptContent({
           db: this.config.db.getDatabase(),
           sessionId,
           messageUuid: messageId,
           message,
-        }),
+        });
+        assertNoPendingMailboxContentConflict(
+          this.config.db.getJobQueueRepo(),
+          sessionId,
+          messageId,
+          message.message.content
+        );
+      },
       handoffToMailbox: (args) =>
         handoffPromptToMailbox({
           ...args,
