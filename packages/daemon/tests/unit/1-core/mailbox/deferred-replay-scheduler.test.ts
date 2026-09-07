@@ -488,6 +488,62 @@ describe('createMailboxDeferredReplayScheduler', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
+  test('skips replay for sessions pending a worktree choice', async () => {
+    const publish = mock(async () => {});
+    const deps = makeDeps(publish);
+    deps.sessionManager = {
+      getCachedSession: () =>
+        ({
+          getSessionData: () => ({
+            config: { queryMode: 'immediate' },
+            status: 'pending_worktree_choice',
+          }),
+          getProcessingState: () => ({ status: 'idle' }),
+          stateManager: {},
+        }) as never,
+    };
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(20);
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  test('rechecks manual mode before publication after a park', async () => {
+    const publish = mock(async () => {});
+    const deps = makeDeps(publish);
+    let status = 'processing';
+    let queryMode = 'immediate';
+    let resolveIdle: (() => void) | undefined;
+    deps.sessionManager = {
+      getCachedSession: () =>
+        ({
+          getSessionData: () => ({ config: { queryMode }, status: 'active' }),
+          getProcessingState: () => ({ status }),
+          stateManager: {
+            waitForIdleTransition: () => ({
+              promise: new Promise<void>((resolve) => {
+                resolveIdle = resolve;
+              }),
+              cancel: () => {},
+            }),
+          },
+        }) as never,
+    };
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(10);
+
+    queryMode = 'manual';
+    status = 'idle';
+    resolveIdle?.();
+    await flush(20);
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   test('skips publication when the cached session vanishes during a park', async () => {
     const published: string[] = [];
     let status = 'processing';

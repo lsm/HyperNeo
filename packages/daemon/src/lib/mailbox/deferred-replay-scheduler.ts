@@ -32,7 +32,7 @@ function isBusyStatus(status: string): boolean {
 }
 
 function isUnavailableStatus(status: string): boolean {
-  return status === 'ended' || status === 'archived';
+  return status === 'ended' || status === 'archived' || status === 'pending_worktree_choice';
 }
 
 export interface MailboxDeferredReplaySchedulerDeps {
@@ -54,6 +54,7 @@ export function createMailboxDeferredReplayScheduler(
   const retryBackoffCapMs = deps.retryBackoffCapMs ?? RETRY_BACKOFF_CAP_MS;
   const active = new Set<string>();
   const ready: string[] = [];
+  const readySet = new Set<string>();
   const tracked = new Set<string>();
   const dirty = new Set<string>();
   const cancelled = new Set<string>();
@@ -61,9 +62,17 @@ export function createMailboxDeferredReplayScheduler(
   const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const parkedWaiters = new Map<string, () => void>();
 
+  const enqueueReady = (sessionId: string): void => {
+    if (readySet.has(sessionId)) return;
+    readySet.add(sessionId);
+    ready.push(sessionId);
+  };
+
   const pump = (): void => {
     while (active.size < MAX_ACTIVE_PUBLICATIONS && ready.length > 0) {
-      const sessionId = ready.shift()!;
+      const sessionId = ready.shift();
+      if (sessionId == null) break;
+      readySet.delete(sessionId);
       active.add(sessionId);
       void runSession(sessionId);
     }
@@ -141,7 +150,7 @@ export function createMailboxDeferredReplayScheduler(
           return;
         }
         if (active.size >= MAX_ACTIVE_PUBLICATIONS) {
-          ready.push(sessionId);
+          enqueueReady(sessionId);
           return;
         }
         active.add(sessionId);
@@ -168,6 +177,11 @@ export function createMailboxDeferredReplayScheduler(
         cleanup(sessionId);
         return;
       }
+      if (session.getSessionData().config.queryMode === 'manual') {
+        emitReplayEvent('skipped', { sessionId, reason: 'manual_mode' });
+        cleanup(sessionId);
+        return;
+      }
       const published = await deps.internalEventBus.publish('query.trigger', { sessionId });
       if (published != null && published.delivered < 1) {
         emitReplayEvent('no_subscribers', { sessionId });
@@ -182,7 +196,7 @@ export function createMailboxDeferredReplayScheduler(
         return;
       }
       if (dirty.delete(sessionId)) {
-        ready.push(sessionId);
+        enqueueReady(sessionId);
         tracked.add(sessionId);
         setImmediate(pump);
       }
@@ -207,7 +221,7 @@ export function createMailboxDeferredReplayScheduler(
           const timer = setTimeout(() => {
             retryTimers.delete(sessionId);
             dirty.delete(sessionId);
-            if (!ready.includes(sessionId)) ready.push(sessionId);
+            enqueueReady(sessionId);
             pump();
           }, delay);
           retryTimers.set(sessionId, timer);
@@ -226,7 +240,7 @@ export function createMailboxDeferredReplayScheduler(
       tracked.add(sessionId);
       attempts.delete(sessionId);
       cancelled.delete(sessionId);
-      ready.push(sessionId);
+      enqueueReady(sessionId);
       setImmediate(pump);
     },
     cancel(sessionId: string): void {
@@ -234,6 +248,7 @@ export function createMailboxDeferredReplayScheduler(
       const index = ready.indexOf(sessionId);
       if (index >= 0) {
         ready.splice(index, 1);
+        readySet.delete(sessionId);
         cleanup(sessionId);
         return;
       }
