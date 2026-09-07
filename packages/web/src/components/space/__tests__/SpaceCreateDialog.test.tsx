@@ -484,11 +484,11 @@ describe('SpaceCreateDialog', () => {
       <SpaceCreateDialog isOpen={true} onClose={onClose} />
     );
 
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 128; i++) {
       fireEvent.click(getByText('+ Add workspace'));
     }
 
-    expect(getAllByPlaceholderText('/Users/you/projects/other-repo')).toHaveLength(7);
+    expect(getAllByPlaceholderText('/Users/you/projects/other-repo')).toHaveLength(127);
     expect((getByText('+ Add workspace') as HTMLButtonElement).disabled).toBe(true);
   });
 });

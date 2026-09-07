@@ -78,9 +78,9 @@ returns a typed verdict instead of throwing. Gates run in order; the first failu
    git root, so nesting means one registered repo lives inside another's tree and ownership
    of edits and checkpoints becomes ambiguous. Nesting across different spaces is
    deliberately allowed: exclusivity is enforced per exact path above, not per disk subtree.
-5. **Per-space cap** — at most `MAX_WORKSPACES_PER_SPACE` (8) workspaces per space. The
+5. **Per-space cap** — at most `MAX_WORKSPACES_PER_SPACE` (128) workspaces per space. The
    snapshot counts distinct paths for the space, so the primary counts toward the cap —
-   which is why the web create dialog allows at most 7 additional workspaces.
+   which is why the web create dialog allows at most 127 additional workspaces.
 
 Snapshot contract: `claims` must cover every `spaces.workspace_path` across all spaces
 (archived ones included) plus every `space_workspaces` row; `workspaceCountForSpace` is that

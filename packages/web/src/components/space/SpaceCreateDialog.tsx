@@ -20,7 +20,7 @@ interface ExtraWorkspaceRow {
   label: string;
 }
 
-const MAX_ADDITIONAL_WORKSPACES = 7;
+const MAX_ADDITIONAL_WORKSPACES = 127;
 
 let extraWorkspaceRowSeq = 0;
 

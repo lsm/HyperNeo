@@ -245,11 +245,11 @@ describe('registerWorkspace', () => {
   });
 
   test('rejects when the per-space cap is reached', async () => {
-    const rows = Array.from({ length: 7 }, (_, i) => row(SPACE_A, `/w${i}`, `w${i}`));
+    const rows = Array.from({ length: 127 }, (_, i) => row(SPACE_A, `/w${i}`, `w${i}`));
     const { manager } = newManager({ workspaces: new FakeWorkspaces(rows) });
     const err = await registrationError(manager, '/new-repo');
     expect(err.reason).toBe('workspace_cap_reached');
-    expect(err.verdict.limit).toBe(8);
+    expect(err.verdict.limit).toBe(128);
   });
 
   test('propagates insert failures untouched', async () => {
