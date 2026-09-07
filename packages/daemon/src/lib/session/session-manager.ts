@@ -604,6 +604,10 @@ export class SessionManager {
   }
 
   registerSession(agentSession: AgentSession): void {
+    if (this.mailboxDeferredReplaySuppressor) {
+      const suppressor = this.mailboxDeferredReplaySuppressor;
+      agentSession.suppressDeferredReplay = (sessionId) => suppressor(sessionId);
+    }
     this.sessionCache.set(agentSession.getSessionData().id, agentSession);
   }
 

@@ -999,6 +999,50 @@ describe('SessionManager', () => {
       expect(mockDb.getSession).not.toHaveBeenCalled();
     });
 
+    it('registerSession stamps the deferred-replay suppressor when installed', async () => {
+      const mockSession: Session = {
+        id: 'room:1:task:2:suppress',
+        title: 'Room Session',
+        workspacePath: '/test',
+        status: 'active',
+        config: {},
+        metadata: {},
+      };
+      const fakeAgentSession = {
+        getSessionData: mock(() => mockSession),
+        cleanup: mock(async () => {}),
+      } as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
+      const suppressor = mock(() => {});
+      sessionManager.setMailboxDeferredReplaySuppressor(suppressor);
+
+      sessionManager.registerSession(fakeAgentSession);
+
+      fakeAgentSession.suppressDeferredReplay?.('room:1:task:2:suppress');
+      expect(suppressor).toHaveBeenCalledWith('room:1:task:2:suppress');
+    });
+
+    it('setMailboxDeferredReplaySuppressor retrofits already-cached sessions', async () => {
+      const mockSession: Session = {
+        id: 'room:1:task:2:retrofit',
+        title: 'Room Session',
+        workspacePath: '/test',
+        status: 'active',
+        config: {},
+        metadata: {},
+      };
+      const fakeAgentSession = {
+        getSessionData: mock(() => mockSession),
+        cleanup: mock(async () => {}),
+      } as unknown as import('../../../../src/lib/agent/agent-session').AgentSession;
+      sessionManager.registerSession(fakeAgentSession);
+
+      const suppressor = mock(() => {});
+      sessionManager.setMailboxDeferredReplaySuppressor(suppressor);
+
+      fakeAgentSession.suppressDeferredReplay?.('room:1:task:2:retrofit');
+      expect(suppressor).toHaveBeenCalledWith('room:1:task:2:retrofit');
+    });
+
     it('unregisterSession removes session from cache', async () => {
       const mockSession: Session = {
         id: 'room:1:task:2:xyz',
