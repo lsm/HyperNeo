@@ -236,6 +236,23 @@ describe('deliverSpaceAgentMessage', () => {
     h.db.close();
   });
 
+  it('rejects a pending retry whose priority differs', async () => {
+    const h = makeHarness();
+    const withPriority = (priority: 'now' | 'next') => ({
+      sessionId: SESSION_ID,
+      messageId: MESSAGE_ID,
+      sdkUserMessage: { ...userMessage('same payload'), priority },
+    });
+
+    await deliverSpaceAgentMessage(h.deps, withPriority('now'));
+
+    await expect(deliverSpaceAgentMessage(h.deps, withPriority('next'))).rejects.toBeInstanceOf(
+      PromptContentConflictError
+    );
+    expect(pendingMailboxJobCount(h, MESSAGE_ID)).toBe(1);
+    h.db.close();
+  });
+
   it('short-circuits consumption evidence on a failed row without waking the session', async () => {
     const h = makeHarness();
     const persisted = persistPrompt({

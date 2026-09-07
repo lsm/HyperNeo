@@ -206,21 +206,47 @@ function shortCircuitConsumed(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx
   };
 }
 
+function projectMailboxPrompt(ctx: SpaceAgentDeliveryCtx) {
+  return {
+    type: 'user' as const,
+    parent_tool_use_id: null,
+    message: { role: 'user' as const, content: ctx.sdkUserMessage.message.content },
+    ...(ctx.sdkUserMessage.priority !== undefined ? { priority: ctx.sdkUserMessage.priority } : {}),
+  };
+}
+
+type PendingAdmissionMessage = {
+  message?: { role?: unknown; content?: unknown };
+  priority?: unknown;
+  inputKind?: unknown;
+  referenceMetadata?: unknown;
+};
+
+function admissionIdentity(value: PendingAdmissionMessage | undefined): string {
+  return JSON.stringify([
+    value?.message?.role ?? null,
+    value?.message?.content ?? null,
+    value?.priority ?? null,
+    value?.inputKind ?? null,
+    value?.referenceMetadata ?? null,
+  ]);
+}
+
 function assertNoConflictingPendingAdmission(ctx: SpaceAgentDeliveryCtx): void {
   const pending = ctx.deps.jobQueue.listActiveByPayload(MAILBOX_LANE, {
     messageUuid: ctx.messageId,
   });
-  const content = JSON.stringify(ctx.sdkUserMessage.message.content);
+  const ours = admissionIdentity(projectMailboxPrompt(ctx));
   for (const job of pending) {
     const entry = job.payload as {
       to?: { kind?: string; sessionId?: string };
-      message?: { message?: { content?: unknown } };
+      message?: PendingAdmissionMessage;
     };
     if (entry?.to?.kind !== 'session' || entry.to.sessionId !== ctx.sessionId) continue;
-    if (JSON.stringify(entry.message?.message?.content) !== content) {
+    if (admissionIdentity(entry.message) !== ours) {
       throw new PromptContentConflictError(
         `prompt handoff: message ${ctx.messageId} in session ${ctx.sessionId} ` +
-          'is already pending in the mailbox with different content'
+          'is already pending in the mailbox with a different prompt'
       );
     }
   }
@@ -236,14 +262,7 @@ async function enqueuePrompt(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeli
   assertNoConflictingPendingAdmission(ctx);
   const handoff = await handoffPromptToMailbox({
     to: renderAddress({ kind: 'session', sessionId: ctx.sessionId }),
-    message: {
-      type: 'user',
-      parent_tool_use_id: null,
-      message: { role: 'user', content: ctx.sdkUserMessage.message.content },
-      ...(ctx.sdkUserMessage.priority !== undefined
-        ? { priority: ctx.sdkUserMessage.priority }
-        : {}),
-    },
+    message: projectMailboxPrompt(ctx),
     origin: ctx.origin ?? 'space_agent',
     messageUuid: ctx.messageId,
     jobQueue: ctx.deps.jobQueue,
