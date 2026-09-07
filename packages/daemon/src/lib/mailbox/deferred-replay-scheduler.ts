@@ -66,12 +66,22 @@ export function createMailboxDeferredReplayScheduler(
   const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const parkedWaiters = new Map<string, () => void>();
 
+  let pumpScheduled = false;
+  const schedulePump = (): void => {
+    if (pumpScheduled) return;
+    pumpScheduled = true;
+    setImmediate(() => {
+      pumpScheduled = false;
+      pump();
+    });
+  };
+
   const pump = (): void => {
     let admitted = 0;
     for (const sessionId of ready) {
       if (active.size >= MAX_ACTIVE_PUBLICATIONS) break;
       if (admitted >= MAX_ACTIVE_PUBLICATIONS) {
-        setImmediate(pump);
+        schedulePump();
         return;
       }
       ready.delete(sessionId);
@@ -143,7 +153,7 @@ export function createMailboxDeferredReplayScheduler(
         const waiter = session.stateManager.waitForIdleTransition();
         parkedWaiters.set(sessionId, waiter.cancel);
         parkedForIdle = true;
-        setImmediate(pump);
+        schedulePump();
         await waiter.promise;
         parkedWaiters.delete(sessionId);
         parkedForIdle = false;
@@ -201,7 +211,7 @@ export function createMailboxDeferredReplayScheduler(
       if (dirty.delete(sessionId)) {
         ready.add(sessionId);
         tracked.add(sessionId);
-        setImmediate(pump);
+        schedulePump();
       }
     } catch (error) {
       const count = (attempts.get(sessionId) ?? 0) + 1;
@@ -215,7 +225,7 @@ export function createMailboxDeferredReplayScheduler(
       });
     } finally {
       if (!parkedForIdle) active.delete(sessionId);
-      setImmediate(pump);
+      schedulePump();
       if (retryDelayMs !== null) {
         const delay = retryDelayMs;
         if (cancelled.has(sessionId)) {
@@ -244,7 +254,7 @@ export function createMailboxDeferredReplayScheduler(
       attempts.delete(sessionId);
       cancelled.delete(sessionId);
       ready.add(sessionId);
-      setImmediate(pump);
+      schedulePump();
     },
     cancel(sessionId: string): void {
       if (!tracked.has(sessionId)) return;
