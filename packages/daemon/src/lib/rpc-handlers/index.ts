@@ -942,7 +942,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.sessionManager,
     deps.internalEventBus,
     deps.spaceManager,
-    spaceRuntimeService
+    spaceRuntimeService,
+    { ensureSession: (target) => ensureSession(target, sessionResolutionDeps) }
   );
 
   setupSpaceTaskHandlers(

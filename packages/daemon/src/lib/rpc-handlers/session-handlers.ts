@@ -46,6 +46,7 @@ import type { SessionManager } from '../session-manager.ts';
 import { isSpaceActionsDispatcherEnabled } from '../space/actions/dispatcher-flag.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
+import type { EnsureSessionOutcome, SessionTarget } from '../session-resolution/target.ts';
 
 const log = new Logger('session-handlers');
 
@@ -120,12 +121,17 @@ function extractMessageText(content: unknown): string {
     .join('\n');
 }
 
+export interface SessionHandlerDeps {
+  ensureSession(target: SessionTarget): Promise<EnsureSessionOutcome>;
+}
+
 export function setupSessionHandlers(
   messageHub: MessageHub,
   sessionManager: SessionManager,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   spaceManager: SpaceManager,
-  spaceRuntimeService?: SpaceRuntimeService
+  spaceRuntimeService?: SpaceRuntimeService,
+  deps?: SessionHandlerDeps
 ): void {
   messageHub.onRequest('session.create', async (data) => {
     const req = data as CreateSessionRequest;
@@ -585,15 +591,15 @@ export function setupSessionHandlers(
       validateImageSizes(images);
     }
 
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
-    if (!agentSession) {
+    const outcome = await deps?.ensureSession({ kind: 'session', sessionId: targetSessionId });
+    if (outcome?.kind !== 'resolved') {
       throw new Error('Session not found');
     }
 
     const messageId = generateUUID();
 
     await sessionManager.sendUserMessage({
-      sessionId: targetSessionId,
+      sessionId: outcome.sessionId,
       messageId,
       content,
       images,

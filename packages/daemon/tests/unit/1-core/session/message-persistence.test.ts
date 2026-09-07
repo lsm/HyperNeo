@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { MessageHub, Session } from '@hyperneo/shared';
+import type { Session } from '@hyperneo/shared';
 import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
 import {
   MAX_IMAGE_BASE64_SIZE,
@@ -8,11 +8,11 @@ import {
 } from '../../../../src/lib/session/message-persistence';
 import type { SessionCache } from '../../../../src/lib/session/session-cache';
 import type { Database } from '../../../../src/storage/database';
+import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 
 describe('MessagePersistence', () => {
   let mockSessionCache: SessionCache;
   let mockDb: Database;
-  let mockMessageHub: MessageHub;
   let mockInternalEventBus: InternalEventBus<any>;
   let persistence: MessagePersistence;
   let mockSession: Session;
@@ -24,7 +24,11 @@ describe('MessagePersistence', () => {
   };
 
   let saveUserMessageSpy: ReturnType<typeof mock>;
-  let messageHubEventSpy: ReturnType<typeof mock>;
+  let enqueueUniquePendingSpy: ReturnType<typeof mock>;
+  let activeMailboxUuidsSpy: ReturnType<typeof mock>;
+  let activeDeliveryUuidsSpy: ReturnType<typeof mock>;
+  let lastHandedOffUuid: string | null;
+  let mockJobQueue: JobQueueRepository;
   let internalEventBusPublishSpy: ReturnType<typeof mock>;
   let processingStateSpy: ReturnType<typeof mock>;
   let dbGetSessionSpy: ReturnType<typeof mock>;
@@ -77,13 +81,19 @@ describe('MessagePersistence', () => {
       getSession: dbGetSessionSpy,
     } as unknown as Database;
 
-    messageHubEventSpy = mock(async () => {});
-    mockMessageHub = {
-      event: messageHubEventSpy,
-      onRequest: mock((_method: string, _handler: Function) => () => {}),
-      query: mock(async () => ({})),
-      command: mock(async () => {}),
-    } as unknown as MessageHub;
+    enqueueUniquePendingSpy = mock((params: { payload?: { messageUuid?: string } }) => {
+      lastHandedOffUuid = params?.payload?.messageUuid ?? null;
+      return 'mailbox-job-1';
+    });
+    activeMailboxUuidsSpy = mock(
+      () => new Set<string>(lastHandedOffUuid ? [lastHandedOffUuid] : [])
+    );
+    activeDeliveryUuidsSpy = mock(() => new Set<string>());
+    mockJobQueue = {
+      enqueueUniquePending: enqueueUniquePendingSpy,
+      activeMailboxMessageUuids: activeMailboxUuidsSpy,
+      activeDeliveryMessageUuids: activeDeliveryUuidsSpy,
+    } as unknown as JobQueueRepository;
 
     internalEventBusPublishSpy = mock(async () => {});
     mockInternalEventBus = {
@@ -95,8 +105,8 @@ describe('MessagePersistence', () => {
     persistence = new MessagePersistence(
       mockSessionCache,
       mockDb,
-      mockMessageHub,
-      mockInternalEventBus
+      mockInternalEventBus,
+      mockJobQueue
     );
   });
 
@@ -108,24 +118,33 @@ describe('MessagePersistence', () => {
     });
   };
 
-  it('persists idle immediate as enqueued and defers dispatch to the durable handler', async () => {
+  const mailboxPayload = (): Record<string, unknown> =>
+    enqueueUniquePendingSpy.mock.calls[0]?.[0]?.payload as Record<string, unknown>;
+
+  it('hands idle immediate to the mailbox and defers dispatch to its lane', async () => {
     await persistence.persist({
       sessionId: 'test-session-id',
       messageId: 'msg-1',
       content: 'hello idle',
     });
 
-    expect(saveUserMessageSpy).toHaveBeenCalledWith(
-      'test-session-id',
-      expect.objectContaining({ uuid: 'msg-1', type: 'user' }),
-      'enqueued',
-      undefined
+    expect(mailboxPayload()).toEqual(
+      expect.objectContaining({
+        to: { kind: 'session', sessionId: 'test-session-id' },
+        origin: 'chat',
+        messageUuid: 'msg-1',
+        deliveryMode: 'immediate',
+        message: expect.objectContaining({
+          message: { role: 'user', content: [{ type: 'text', text: 'hello idle' }] },
+        }),
+      })
     );
-    expect(messageHubEventSpy).not.toHaveBeenCalled();
+    expect(saveUserMessageSpy).not.toHaveBeenCalled();
     expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
+    expect(mockAgentSession.stateManager.setQueuedIfIdle).toHaveBeenCalledWith('msg-1');
     expect(internalEventBusPublishSpy).toHaveBeenCalledWith('messages.statusChanged', {
       sessionId: 'test-session-id',
-      messageIds: ['db-msg-1'],
+      messageIds: ['msg-1'],
       status: 'enqueued',
     });
     expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
@@ -135,7 +154,7 @@ describe('MessagePersistence', () => {
         messageId: 'msg-1',
         sendStatus: 'enqueued',
         deliveryMode: 'immediate',
-        skipQueryStart: false,
+        skipQueryStart: true,
       })
     );
   });
@@ -271,11 +290,8 @@ describe('MessagePersistence', () => {
       content: 'hello busy',
     });
 
-    expect(saveUserMessageSpy).toHaveBeenCalledWith(
-      'test-session-id',
-      expect.objectContaining({ uuid: 'msg-2', type: 'user' }),
-      'enqueued',
-      undefined
+    expect(mailboxPayload()).toEqual(
+      expect.objectContaining({ messageUuid: 'msg-2', deliveryMode: 'immediate' })
     );
     expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
     expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
@@ -284,7 +300,7 @@ describe('MessagePersistence', () => {
         messageId: 'msg-2',
         sendStatus: 'enqueued',
         deliveryMode: 'immediate',
-        skipQueryStart: false,
+        skipQueryStart: true,
       })
     );
   });
@@ -299,12 +315,15 @@ describe('MessagePersistence', () => {
       deliveryMode: 'defer',
     });
 
-    expect(saveUserMessageSpy).toHaveBeenCalledWith(
-      'test-session-id',
-      expect.objectContaining({ uuid: 'msg-3', type: 'user' }),
-      'deferred',
-      undefined
+    expect(mailboxPayload()).toEqual(
+      expect.objectContaining({ messageUuid: 'msg-3', deliveryMode: 'defer' })
     );
+    expect(mockAgentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
+    expect(internalEventBusPublishSpy).toHaveBeenCalledWith('messages.statusChanged', {
+      sessionId: 'test-session-id',
+      messageIds: ['msg-3'],
+      status: 'deferred',
+    });
     expect(internalEventBusPublishSpy).not.toHaveBeenCalledWith(
       'message.persisted',
       expect.objectContaining({ messageId: 'msg-3' })
@@ -322,11 +341,8 @@ describe('MessagePersistence', () => {
       deliveryMode: 'defer',
     });
 
-    expect(saveUserMessageSpy).toHaveBeenCalledWith(
-      'test-session-id',
-      expect.objectContaining({ uuid: 'msg-4', type: 'user' }),
-      'enqueued',
-      undefined
+    expect(mailboxPayload()).toEqual(
+      expect.objectContaining({ messageUuid: 'msg-4', deliveryMode: 'immediate' })
     );
     expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
     expect(internalEventBusPublishSpy).toHaveBeenCalledWith(
@@ -335,7 +351,84 @@ describe('MessagePersistence', () => {
         messageId: 'msg-4',
         sendStatus: 'enqueued',
         deliveryMode: 'immediate',
-        skipQueryStart: false,
+        skipQueryStart: true,
+      })
+    );
+  });
+
+  it('forces manual-mode messages into a held mailbox entry', async () => {
+    mockAgentSession.getSessionData.mockReturnValue({
+      ...mockSession,
+      config: { ...mockSession.config, queryMode: 'manual' },
+    });
+
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-manual',
+      content: 'hold this',
+    });
+
+    expect(mailboxPayload()).toEqual(
+      expect.objectContaining({ messageUuid: 'msg-manual', deliveryMode: 'defer' })
+    );
+    expect(mockAgentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
+    expect(internalEventBusPublishSpy).not.toHaveBeenCalledWith(
+      'message.persisted',
+      expect.objectContaining({ messageId: 'msg-manual' })
+    );
+  });
+
+  it('passes images through the seeded chat mailbox payload', async () => {
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-image',
+      content: 'inspect this',
+      images: [{ media_type: 'image/png', data: 'AAAA' }],
+    });
+
+    expect(mailboxPayload()).toEqual(
+      expect.objectContaining({
+        origin: 'chat',
+        messageUuid: 'msg-image',
+        message: expect.objectContaining({
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+              },
+              { type: 'text', text: 'inspect this' },
+            ],
+          },
+        }),
+      })
+    );
+  });
+
+  it('drops the empty text block when sending images only', async () => {
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-image-only',
+      content: '',
+      images: [{ media_type: 'image/png', data: 'AAAA' }],
+    });
+
+    expect(mailboxPayload()).toEqual(
+      expect.objectContaining({
+        origin: 'chat',
+        messageUuid: 'msg-image-only',
+        message: expect.objectContaining({
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+              },
+            ],
+          },
+        }),
       })
     );
   });
@@ -352,8 +445,56 @@ describe('MessagePersistence', () => {
     ).rejects.toThrow('Session test-session-id is archived');
 
     expect(mockSessionCache.getAsync).not.toHaveBeenCalled();
+    expect(enqueueUniquePendingSpy).not.toHaveBeenCalled();
     expect(saveUserMessageSpy).not.toHaveBeenCalled();
     expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('does not publish acceptance when mailbox handoff is rejected', async () => {
+    enqueueUniquePendingSpy.mockImplementation(() => {
+      throw new Error('queue unavailable');
+    });
+
+    await expect(
+      persistence.persist({
+        sessionId: 'test-session-id',
+        messageId: 'msg-rejected',
+        content: 'do not accept',
+      })
+    ).rejects.toThrow('Mailbox handoff rejected: internal: queue unavailable');
+
+    expect(mockAgentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
+    expect(internalEventBusPublishSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a send whose session was deleted before the handoff settled', async () => {
+    mockDb.getSession = mock(() => undefined) as never;
+
+    await expect(
+      persistence.persist({
+        sessionId: 'test-session-id',
+        messageId: 'msg-deleted',
+        content: 'session vanished mid-send',
+      })
+    ).rejects.toThrow('Session test-session-id no longer exists');
+
+    expect(enqueueUniquePendingSpy).toHaveBeenCalled();
+    expect(mockAgentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
+    expect(internalEventBusPublishSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not claim queued ownership when cancellation already removed the handoff', async () => {
+    activeMailboxUuidsSpy.mockImplementation(() => new Set<string>());
+    activeDeliveryUuidsSpy.mockImplementation(() => new Set<string>());
+
+    await persistence.persist({
+      sessionId: 'test-session-id',
+      messageId: 'msg-raced',
+      content: 'cancelled mid-send',
+    });
+
+    expect(enqueueUniquePendingSpy).toHaveBeenCalled();
+    expect(mockAgentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
   });
 
   it('does not downgrade a busy session from processing to queued', async () => {
@@ -365,7 +506,7 @@ describe('MessagePersistence', () => {
       content: 'durable steer',
     });
 
-    expect(mockAgentSession.stateManager.setQueuedIfIdle).not.toHaveBeenCalled();
+    expect(mockAgentSession.stateManager.setQueuedIfIdle).toHaveBeenCalledWith('msg-busy');
     expect(mockAgentSession.startQueryAndEnqueue).not.toHaveBeenCalled();
   });
 
@@ -374,8 +515,8 @@ describe('MessagePersistence', () => {
     persistence = new MessagePersistence(
       mockSessionCache,
       mockDb,
-      mockMessageHub,
       mockInternalEventBus,
+      mockJobQueue,
       undefined,
       resolveSession
     );
@@ -395,8 +536,8 @@ describe('MessagePersistence', () => {
     persistence = new MessagePersistence(
       mockSessionCache,
       mockDb,
-      mockMessageHub,
       mockInternalEventBus,
+      mockJobQueue,
       undefined,
       resolveSession
     );

@@ -127,8 +127,8 @@ export class SessionManager {
     this.messagePersistence = new MessagePersistence(
       this.sessionCache,
       db,
-      messageHub,
       internalEventBus,
+      this.jobQueue,
       referenceResolver,
       (sessionId) => this.getSessionForMessagePersistence(sessionId)
     );
@@ -642,6 +642,7 @@ export class SessionManager {
       content: message,
       deliveryMode: opts?.deliveryMode,
       origin: opts?.origin,
+      mailboxOrigin: 'space_inject',
     });
   }
 

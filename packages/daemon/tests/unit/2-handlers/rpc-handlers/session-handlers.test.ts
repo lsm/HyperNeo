@@ -1940,6 +1940,71 @@ describe('Session RPC Handlers — session.clearInputDraftIf', () => {
   });
 });
 
+describe('Session RPC Handlers — message.send', () => {
+  async function setup(
+    outcome:
+      | { kind: 'resolved'; sessionId: string; created: boolean }
+      | { kind: 'unresolved'; reason: string }
+  ) {
+    const messageHubData = createMockMessageHub();
+    const sendUserMessage = mock(async () => {});
+    const ensureSession = mock(async () => outcome);
+    const sessionManager = { sendUserMessage } as unknown as SessionManager;
+    const { setupSessionHandlers } = await import(
+      '../../../../src/lib/rpc-handlers/session-handlers'
+    );
+    setupSessionHandlers(
+      messageHubData.hub,
+      sessionManager,
+      createMockInternalEventBus(),
+      {} as SpaceManager,
+      undefined,
+      { ensureSession }
+    );
+    return {
+      handler: messageHubData.handlers.get('message.send')!,
+      sendUserMessage,
+      ensureSession,
+    };
+  }
+
+  it('resolves the session target and preserves the daemon UUID handoff', async () => {
+    const { handler, sendUserMessage, ensureSession } = await setup({
+      kind: 'resolved',
+      sessionId: 'rehydrated-session',
+      created: false,
+    });
+    const images = [{ media_type: 'image/png' as const, data: 'AAAA' }];
+
+    const result = (await handler(
+      { sessionId: 'requested-session', content: 'hello', images, deliveryMode: 'defer' },
+      {}
+    )) as { messageId: string };
+
+    expect(ensureSession).toHaveBeenCalledWith({
+      kind: 'session',
+      sessionId: 'requested-session',
+    });
+    expect(sendUserMessage).toHaveBeenCalledWith({
+      sessionId: 'rehydrated-session',
+      messageId: result.messageId,
+      content: 'hello',
+      images,
+      deliveryMode: 'defer',
+    });
+    expect(result.messageId).toBeString();
+  });
+
+  it('rejects unresolved sessions before message persistence', async () => {
+    const { handler, sendUserMessage } = await setup({ kind: 'unresolved', reason: 'not_found' });
+
+    await expect(handler({ sessionId: 'missing', content: 'hello' }, {})).rejects.toThrow(
+      'Session not found'
+    );
+    expect(sendUserMessage).not.toHaveBeenCalled();
+  });
+});
+
 describe('Session RPC Handlers — session.retryNowAfterRateLimit', () => {
   it('provisions without starting before firing a manual cooldown retry', async () => {
     const retryNowAfterRateLimit = mock(async () => true);

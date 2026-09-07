@@ -689,6 +689,24 @@ export class JobQueueRepository {
     return out;
   }
 
+  activeMailboxMessageUuids(sessionId: string): Set<string> {
+    const rows = this.db
+      .prepare(
+        `SELECT json_extract(payload, '$.messageUuid') AS uuid
+           FROM job_queue
+          WHERE queue = 'mailbox'
+            AND json_extract(payload, '$.to.kind') = 'session'
+            AND json_extract(payload, '$.to.sessionId') = ?
+            AND status IN ('pending', 'processing')`
+      )
+      .all(sessionId) as Array<{ uuid: string | null }>;
+    const out = new Set<string>();
+    for (const r of rows) {
+      if (typeof r.uuid === 'string' && r.uuid.length > 0) out.add(r.uuid);
+    }
+    return out;
+  }
+
   cancelHeldDeliveryJob(sessionId: string, messageUuid: string): boolean {
     const result = withBusyRetry(() =>
       this.db
