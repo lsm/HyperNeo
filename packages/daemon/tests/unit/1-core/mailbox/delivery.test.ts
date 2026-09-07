@@ -882,6 +882,30 @@ describe('createMailboxDeliveryHandler', () => {
       expect(published).toEqual([[SESSION_ID, rowId, 'enqueued']]);
     });
 
+    test('a defer entry flips a failed prompt to deferred instead of stranding it', async () => {
+      const { handler } = makeHandler();
+      const messageUuid = '00000000-0000-4000-8000-000000000005';
+      const firstJob = claimMailboxJob(mailbox, makeEntry({ origin: 'space_agent', messageUuid }));
+
+      await handler(firstJob);
+      const rowId = mailbox.sdkRows()[0].id;
+      mailbox.sdkMessageRepo.updateMessageStatus([rowId], 'failed');
+      for (const job of mailbox.jobsByQueue(MESSAGE_DELIVERY)) {
+        mailbox.jobQueue.markDeadIfActive(job.id, 'delivery failed');
+      }
+
+      const deferJob = claimMailboxJob(
+        mailbox,
+        makeEntry({ origin: 'space_agent', messageUuid, deliveryMode: 'defer' })
+      );
+      const result = await handler(deferJob);
+
+      expect(result).toMatchObject({ terminal: 'delivered', sessionId: SESSION_ID });
+      expect(mailbox.sdkRows()).toHaveLength(1);
+      expect(mailbox.sdkRows()[0].send_status).toBe('deferred');
+      expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)).toHaveLength(0);
+    });
+
     test('a synchronous publisher throw never fails an already-delivered entry', async () => {
       const { handler } = makeHandler(undefined, undefined, () => {
         throw new Error('listener exploded');

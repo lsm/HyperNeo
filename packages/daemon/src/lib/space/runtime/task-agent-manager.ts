@@ -4201,7 +4201,7 @@ export class TaskAgentManager {
       if (existing && existing.sendStatus !== 'deferred') {
         this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
       }
-      const deferredDbId = await settleDeliveryRowStatus(deliveryRows, {
+      await settleDeliveryRowStatus(deliveryRows, {
         sessionId,
         message: sdkUserMessage,
         messageId,
@@ -4209,7 +4209,7 @@ export class TaskAgentManager {
         status: 'deferred',
         origin,
       });
-      return deferredDbId;
+      return messageId;
     }
     let boundaryOwner: ContextClearBoundaryOwner | null = null;
     if (
@@ -4281,10 +4281,10 @@ export class TaskAgentManager {
             if (existing.sendStatus === 'failed') {
               await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
             }
-            const flippedDbId = await flipDeliveryRowToDeferred(deliveryRows, sessionId, messageId);
-            return flippedDbId ?? messageId;
+            await flipDeliveryRowToDeferred(deliveryRows, sessionId, messageId);
+            return messageId;
           }
-          return settleDeliveryRowStatus(deliveryRows, {
+          await settleDeliveryRowStatus(deliveryRows, {
             sessionId,
             message: sdkUserMessage,
             messageId,
@@ -4292,6 +4292,7 @@ export class TaskAgentManager {
             status: 'deferred',
             origin,
           });
+          return messageId;
         }
       }
 
@@ -4407,6 +4408,13 @@ export class TaskAgentManager {
       }
     }
     return null;
+  }
+
+  isSessionHeldByTaskRateLimit(subSessionId: string): boolean {
+    const parentTaskId = this.findParentTaskIdForSubSession(subSessionId);
+    if (!parentTaskId) return false;
+    const task = this.config.taskRepo.getTask(parentTaskId);
+    return task !== null && isRateOrUsageLimited(task.status ?? '');
   }
 
   private static readonly REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS = ['node-agent'] as const;

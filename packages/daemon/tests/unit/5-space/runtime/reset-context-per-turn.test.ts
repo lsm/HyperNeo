@@ -526,7 +526,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     } as unknown as AgentSession;
     indexSession(manager, live);
 
-    const dbId = await manager.injectSubSessionMessage(
+    const returned = await manager.injectSubSessionMessage(
       SESSION_ID,
       'queue for next turn',
       false,
@@ -534,7 +534,8 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       'defer'
     );
 
-    expect(dbId).toBe('db-id');
+    expect(returned).not.toBe('db-id');
+    expect(typeof returned).toBe('string');
     expect(session.saveUserMessage).toHaveBeenCalledTimes(1);
     expect(session.saveUserMessage.mock.calls[0][2]).toBe('deferred');
     expect(session.enqueueMock).not.toHaveBeenCalled();
