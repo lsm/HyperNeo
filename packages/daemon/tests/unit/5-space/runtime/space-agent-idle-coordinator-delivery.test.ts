@@ -100,6 +100,8 @@ const { AgentMessageRouter } = await import(
 const { createMessageDeliveryHandler } = await import(
   '../../../../src/lib/job-handlers/message-delivery.handler'
 );
+const { createMailboxDeliveryHandler } = await import('../../../../src/lib/mailbox/delivery');
+const { MAILBOX_LANE } = await import('../../../../src/lib/mailbox/enqueue');
 const { MESSAGE_DELIVERY } = await import('../../../../src/lib/job-queue-constants');
 const { JobQueueProcessor } = await import('../../../../src/storage/job-queue-processor');
 
@@ -205,6 +207,16 @@ async function makeIdleCoordinatorHarness(): Promise<IdleCoordinatorHarness> {
     maxConcurrent: 4,
     staleThresholdMs: 5 * 60 * 1000,
   });
+  processor.register(
+    MAILBOX_LANE,
+    createMailboxDeliveryHandler({
+      jobQueue,
+      db: db.getDatabase(),
+      sdkMessageRepo: db.getSDKMessageRepo(),
+      getSession: async () => agentSession,
+      isSessionArchived: () => false,
+    })
+  );
   processor.register(
     MESSAGE_DELIVERY,
     createMessageDeliveryHandler({
@@ -345,9 +357,11 @@ describe('idle coordinator message consumption (issue #2963)', () => {
         messageId: 'msg-queued-1',
         sessionId: SESSION_ID,
       });
-      expect(
-        db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-queued-1')?.sendStatus
-      ).toBe('enqueued');
+      await waitFor(
+        () =>
+          db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, 'msg-queued-1')?.sendStatus ===
+          'enqueued'
+      );
 
       await waitFor(() => spawnedQueries.length > 0);
       await admitPromptMessage(spawnedQueries[0], 'msg-queued-1');
@@ -390,9 +404,11 @@ describe('idle coordinator message consumption (issue #2963)', () => {
       expect(result.queued?.[0].agentName).toBe('space-agent');
       const queuedMessageId = result.queued?.[0].messageId as string;
       expect(typeof queuedMessageId).toBe('string');
-      expect(
-        db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, queuedMessageId)?.sendStatus
-      ).toBe('enqueued');
+      await waitFor(
+        () =>
+          db.getSDKMessageRepo().getDeliveryContent(SESSION_ID, queuedMessageId)?.sendStatus ===
+          'enqueued'
+      );
 
       await waitFor(() => spawnedQueries.length > 0);
       await admitPromptMessage(spawnedQueries[0], queuedMessageId);

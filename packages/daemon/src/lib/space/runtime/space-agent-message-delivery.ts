@@ -5,16 +5,19 @@ import {
   MESSAGE_DELIVERY_PARK_MS,
   signalDeliveryConsumed,
   waitForDeliveryConsumption,
+  withSessionLock,
   type MessageDeliveryOrigin,
 } from '../../agent/message-delivery.ts';
 import {
   PromptContentConflictError,
   verifyPromptContent,
 } from '../../agent/message-delivery-outbox.ts';
+import { createMailboxEntry, type MailboxEntry } from '../../mailbox/entry.ts';
+import { enqueueMailboxEntry, MAILBOX_LANE } from '../../mailbox/enqueue.ts';
+import type { MailboxHandoffOutcome } from '../../mailbox/handoff.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
-import { handoffPromptToMailbox, type MailboxHandoffOutcome } from './prompt-mailbox-handoff.ts';
 
 const log = new Logger('space-agent-delivery');
 
@@ -143,11 +146,7 @@ export interface SpaceAgentDeliveryDeps {
   db: BunDatabase;
   sdkMessageRepo: SDKMessageRepository;
   jobQueue: JobQueueRepository;
-  publishStatusChanged(
-    sessionId: string,
-    dbId: string,
-    status: 'enqueued' | 'deferred' | 'failed'
-  ): Promise<void>;
+  publishStatusChanged(sessionId: string, dbId: string, status: 'failed'): Promise<void>;
   stateManager?: { setQueuedIfIdle(messageId: string): Promise<boolean> };
   onConsumed?: (settledSessionId: string) => void;
   onLateFailure?: () => void;
@@ -164,7 +163,7 @@ export interface SpaceAgentDeliveryInput {
 interface SpaceAgentDeliveryCtx extends SpaceAgentDeliveryInput {
   deps: SpaceAgentDeliveryDeps;
   existing?: { sendStatus: string } | null;
-  handoff?: MailboxHandoffOutcome;
+  handoff?: SpaceAgentMailboxAdmission;
   outcome?: SpaceAgentInjectionOutcome;
 }
 
@@ -187,8 +186,17 @@ function notifyConsumed(ctx: SpaceAgentDeliveryCtx): void {
   }
 }
 
+function hasSettledDeliveryRow(
+  sdkMessageRepo: SDKMessageRepository,
+  sessionId: string,
+  messageId: string
+): boolean {
+  if (sdkMessageRepo.hasConsumptionEvidence(sessionId, messageId)) return true;
+  return sdkMessageRepo.getSettledDeliveryMessageId(sessionId, messageId) !== null;
+}
+
 function shortCircuitConsumed(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx {
-  if (ctx.existing?.sendStatus !== 'consumed') return ctx;
+  if (!hasSettledDeliveryRow(ctx.deps.sdkMessageRepo, ctx.sessionId, ctx.messageId)) return ctx;
   verifyPromptContent({
     db: ctx.deps.db,
     sessionId: ctx.sessionId,
@@ -202,49 +210,139 @@ function shortCircuitConsumed(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx
   };
 }
 
-async function enqueuePrompt(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeliveryCtx> {
-  const handoff = await handoffPromptToMailbox({
-    deps: {
-      db: ctx.deps.db,
-      sdkMessageRepo: ctx.deps.sdkMessageRepo,
-      jobQueue: ctx.deps.jobQueue,
-    },
-    target: {
-      sessionId: ctx.sessionId,
-      messageId: ctx.messageId,
-      message: ctx.sdkUserMessage,
-      origin: ctx.origin ?? 'space_agent',
-    },
-    stateManager: ctx.deps.stateManager,
-    publishStatusChanged: ctx.deps.publishStatusChanged,
+function projectMailboxPrompt(ctx: SpaceAgentDeliveryCtx) {
+  return {
+    type: 'user' as const,
+    parent_tool_use_id: null,
+    message: { role: 'user' as const, content: ctx.sdkUserMessage.message.content },
+    ...(ctx.sdkUserMessage.priority !== undefined ? { priority: ctx.sdkUserMessage.priority } : {}),
+  };
+}
+
+type PendingAdmissionMessage = {
+  message?: { role?: unknown; content?: unknown };
+  priority?: unknown;
+  inputKind?: unknown;
+  referenceMetadata?: unknown;
+};
+
+function admissionIdentity(value: PendingAdmissionMessage | undefined): string {
+  return JSON.stringify([
+    value?.message?.role ?? null,
+    value?.message?.content ?? null,
+    value?.priority ?? null,
+    value?.inputKind ?? null,
+    value?.referenceMetadata ?? null,
+  ]);
+}
+
+function listSessionMailboxAdmissions(
+  jobQueue: JobQueueRepository,
+  sessionId: string,
+  messageUuid: string
+) {
+  return jobQueue.listActiveByPayload(MAILBOX_LANE, { messageUuid }).filter((job) => {
+    const to = (job.payload as { to?: { kind?: string; sessionId?: string } })?.to;
+    return to?.kind === 'session' && to?.sessionId === sessionId;
   });
+}
+
+function assertNoConflictingPendingAdmission(ctx: SpaceAgentDeliveryCtx): void {
+  const ours = admissionIdentity(projectMailboxPrompt(ctx));
+  for (const job of listSessionMailboxAdmissions(ctx.deps.jobQueue, ctx.sessionId, ctx.messageId)) {
+    const entry = job.payload as { message?: PendingAdmissionMessage };
+    if (admissionIdentity(entry.message) !== ours) {
+      throw new PromptContentConflictError(
+        `prompt handoff: message ${ctx.messageId} in session ${ctx.sessionId} ` +
+          'is already pending in the mailbox with a different prompt'
+      );
+    }
+  }
+}
+
+type SpaceAgentMailboxAdmission = MailboxHandoffOutcome | { kind: 'settled' };
+
+function admitMailboxPrompt(ctx: SpaceAgentDeliveryCtx): SpaceAgentMailboxAdmission {
+  let entry: MailboxEntry;
+  try {
+    entry = createMailboxEntry({
+      to: { kind: 'session', sessionId: ctx.sessionId },
+      message: projectMailboxPrompt(ctx),
+      origin: ctx.origin ?? 'space_agent',
+      messageUuid: ctx.messageId,
+    });
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    return { kind: 'rejected', reason: error.message };
+  }
+  const admit = ctx.deps.db.transaction(() => {
+    verifyPromptContent({
+      db: ctx.deps.db,
+      sessionId: ctx.sessionId,
+      messageUuid: ctx.messageId,
+      message: ctx.sdkUserMessage,
+    });
+    if (hasSettledDeliveryRow(ctx.deps.sdkMessageRepo, ctx.sessionId, ctx.messageId)) {
+      return { kind: 'settled' } as const;
+    }
+    assertNoConflictingPendingAdmission(ctx);
+    return enqueueMailboxEntry(ctx.deps.jobQueue, entry);
+  }, 'immediate');
+  return admit();
+}
+
+async function enqueuePrompt(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeliveryCtx> {
+  const handoff = await withSessionLock(ctx.sessionId, async () => admitMailboxPrompt(ctx));
   return { ...ctx, handoff };
 }
 
-function acceptOutcome(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx {
+async function markQueuedIfIdle(ctx: SpaceAgentDeliveryCtx): Promise<void> {
+  const stateManager = ctx.deps.stateManager;
+  if (!stateManager) return;
+  if (hasSettledDeliveryRow(ctx.deps.sdkMessageRepo, ctx.sessionId, ctx.messageId)) return;
+  const pending =
+    ctx.deps.jobQueue.activeMailboxMessageUuids(ctx.sessionId).has(ctx.messageId) ||
+    ctx.deps.jobQueue.activeDeliveryMessageUuids(ctx.sessionId).has(ctx.messageId);
+  if (!pending) return;
+  try {
+    await stateManager.setQueuedIfIdle(ctx.messageId);
+  } catch {}
+}
+
+async function acceptOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeliveryCtx> {
   const { sessionId, messageId } = ctx;
   const handoff = ctx.handoff ?? null;
-  if (handoff === null || handoff.state === 'stale') {
+  if (handoff === null || handoff.kind === 'rejected') {
     return {
       ...ctx,
       outcome: {
         state: 'failed',
         messageId,
         sessionId,
-        error: 'prompt handoff went stale before reaching the mailbox',
+        error: handoff === null ? 'mailbox handoff ended without an outcome' : handoff.reason,
       },
     };
   }
-  if (handoff.state === 'settled') {
+  if (handoff.kind === 'settled') {
     notifyConsumed(ctx);
-  } else if (ctx.deps.onConsumed && ctx.deps.lateSettlement) {
+    return { ...ctx, outcome: { state: 'accepted', messageId, sessionId } };
+  }
+  await markQueuedIfIdle(ctx);
+  if (ctx.deps.onConsumed && ctx.deps.lateSettlement) {
+    const retryingFailedRow = ctx.existing?.sendStatus === 'failed';
     ctx.deps.lateSettlement.arm({
       sessionId,
       messageId,
       onConsumed: ctx.deps.onConsumed,
       onFailed: ctx.deps.onLateFailure,
-      getSendStatus: () =>
-        ctx.deps.sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus,
+      getSendStatus: () => {
+        const status = ctx.deps.sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus;
+        if (status !== 'failed' || !retryingFailedRow) return status;
+        const inFlight =
+          listSessionMailboxAdmissions(ctx.deps.jobQueue, sessionId, messageId).length > 0 ||
+          ctx.deps.jobQueue.activeDeliveryMessageUuids(sessionId).has(messageId);
+        return inFlight ? undefined : status;
+      },
     });
   }
   return { ...ctx, outcome: { state: 'accepted', messageId, sessionId } };
