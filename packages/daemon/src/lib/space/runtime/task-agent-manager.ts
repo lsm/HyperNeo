@@ -4312,7 +4312,13 @@ export class TaskAgentManager {
         messageUuid: messageId,
         message: sdkUserMessage,
       });
-      assertNoPendingMailboxContentConflict(jobQueue, sessionId, messageId, mailboxMessage);
+      assertNoPendingMailboxContentConflict(
+        jobQueue,
+        sessionId,
+        messageId,
+        mailboxMessage,
+        'space_inject'
+      );
       const handoff = await handoffPromptToMailbox({
         to: renderAddress({ kind: 'session', sessionId }),
         message: mailboxMessage,
@@ -4763,7 +4769,7 @@ export class TaskAgentManager {
           jobQueue.activeDeliveryMessageUuids(sessionId).has(messageId)
         );
       },
-      verifyDeliveryContent: (sessionId, messageId, message) => {
+      verifyDeliveryContent: (sessionId, messageId, message, origin) => {
         verifyPromptContent({
           db: this.config.db.getDatabase(),
           sessionId,
@@ -4779,7 +4785,8 @@ export class TaskAgentManager {
             parent_tool_use_id: null,
             message: { role: 'user', content: message.message.content },
             ...(message.inputKind !== undefined ? { inputKind: message.inputKind } : {}),
-          }
+          },
+          origin
         );
       },
       handoffToMailbox: (args) =>

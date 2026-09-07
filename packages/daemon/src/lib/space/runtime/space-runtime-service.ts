@@ -602,7 +602,7 @@ export class SpaceRuntimeService {
       messageUuid: id,
       message: persistedMessage,
     });
-    this.assertNoPendingMailboxContentConflict(sessionId, id, projected.message);
+    this.assertNoPendingMailboxContentConflict(sessionId, id, projected.message, 'long_term_agent');
     const outcome = enqueueMailboxEntry(jobQueue, entry);
     return outcome.kind === 'enqueued'
       ? { state: 'accepted', mailboxEntryId: outcome.id }
@@ -612,11 +612,12 @@ export class SpaceRuntimeService {
   private assertNoPendingMailboxContentConflict(
     sessionId: string,
     messageUuid: string,
-    message: MailboxMessage
+    message: MailboxMessage,
+    origin: string
   ): void {
     const jobQueue = this.config.reactiveDb?.db.getJobQueueRepo();
     if (!jobQueue) return;
-    assertNoPendingMailboxContentConflict(jobQueue, sessionId, messageUuid, message);
+    assertNoPendingMailboxContentConflict(jobQueue, sessionId, messageUuid, message, origin);
   }
 
   private async refreshLongHorizonAgentSessionConfig(

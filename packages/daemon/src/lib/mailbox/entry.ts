@@ -155,6 +155,10 @@ export function toMailboxMessage(message: MailboxMessage): MailboxMessageProject
 
 export type MailboxProjection<T> = { value: T } | { reason: string };
 
+export function mailboxMessageIsSynthetic(origin: string, message: MailboxMessage): boolean {
+  return origin !== 'chat' && message.inputKind !== 'human';
+}
+
 export function toMailboxPolicy(
   partial: Partial<MailboxEntryPolicy> | undefined
 ): MailboxProjection<MailboxEntryPolicy> {

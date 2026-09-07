@@ -1465,6 +1465,7 @@ describe('SpaceRuntimeService', () => {
         payload: {
           id: 'pending-entry-1',
           to: { kind: 'session', sessionId },
+          origin: 'long_term_agent',
           messageUuid: nagKey,
           message: {
             type: 'user',

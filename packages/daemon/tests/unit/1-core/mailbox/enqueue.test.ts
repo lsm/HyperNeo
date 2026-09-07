@@ -23,6 +23,7 @@ const message: MailboxMessage = {
 function makeEntry(overrides?: {
   id?: string;
   to?: MailboxEntry['to'];
+  origin?: string;
   policy?: Partial<MailboxEntryPolicy>;
   message?: MailboxMessage;
   messageUuid?: string;
@@ -30,7 +31,7 @@ function makeEntry(overrides?: {
   return {
     id: overrides?.id ?? createUlid(),
     to: overrides?.to ?? { kind: 'session', sessionId: 'sess-1' },
-    origin: 'test',
+    origin: overrides?.origin ?? 'test',
     message: overrides?.message ?? message,
     ...(overrides?.messageUuid !== undefined ? { messageUuid: overrides.messageUuid } : {}),
     status: 'enqueued',
@@ -311,29 +312,41 @@ describe('assertNoPendingMailboxContentConflict', () => {
 
   test('passes when no active admission holds the uuid', () => {
     expect(() =>
-      assertNoPendingMailboxContentConflict(mailbox.jobQueue, 'sess-1', 'uuid-free', {
-        type: 'user',
-        parent_tool_use_id: null,
-        message: { content: 'fresh' },
-      })
+      assertNoPendingMailboxContentConflict(
+        mailbox.jobQueue,
+        'sess-1',
+        'uuid-free',
+        {
+          type: 'user',
+          parent_tool_use_id: null,
+          message: { content: 'fresh' },
+        },
+        'space_inject'
+      )
     ).not.toThrow();
   });
 
   test('passes when the active admission carries the same message', () => {
     enqueueMailboxEntry(mailbox.jobQueue, makeEntry({ message, messageUuid: 'uuid-1' }));
     expect(() =>
-      assertNoPendingMailboxContentConflict(mailbox.jobQueue, 'sess-1', 'uuid-1', message)
+      assertNoPendingMailboxContentConflict(mailbox.jobQueue, 'sess-1', 'uuid-1', message, 'test')
     ).not.toThrow();
   });
 
   test('throws a prompt content conflict when the active admission differs', () => {
     enqueueMailboxEntry(mailbox.jobQueue, makeEntry({ message, messageUuid: 'uuid-1' }));
     expect(() =>
-      assertNoPendingMailboxContentConflict(mailbox.jobQueue, 'sess-1', 'uuid-1', {
-        type: 'user',
-        parent_tool_use_id: null,
-        message: { content: 'different' },
-      })
+      assertNoPendingMailboxContentConflict(
+        mailbox.jobQueue,
+        'sess-1',
+        'uuid-1',
+        {
+          type: 'user',
+          parent_tool_use_id: null,
+          message: { content: 'different' },
+        },
+        'test'
+      )
     ).toThrow(PromptContentConflictError);
   });
 
@@ -346,16 +359,47 @@ describe('assertNoPendingMailboxContentConflict', () => {
       })
     );
     expect(() =>
-      assertNoPendingMailboxContentConflict(mailbox.jobQueue, 'sess-1', 'uuid-1', {
-        ...message,
-        inputKind: 'task',
-      })
+      assertNoPendingMailboxContentConflict(
+        mailbox.jobQueue,
+        'sess-1',
+        'uuid-1',
+        { ...message, inputKind: 'task' },
+        'space_inject'
+      )
     ).toThrow(PromptContentConflictError);
     expect(() =>
-      assertNoPendingMailboxContentConflict(mailbox.jobQueue, 'sess-1', 'uuid-1', {
-        ...message,
-        inputKind: 'human',
-      })
+      assertNoPendingMailboxContentConflict(
+        mailbox.jobQueue,
+        'sess-1',
+        'uuid-1',
+        { ...message, inputKind: 'human' },
+        'space_inject'
+      )
+    ).not.toThrow();
+  });
+
+  test('rejects identical bodies across chat and non-chat origins', () => {
+    enqueueMailboxEntry(
+      mailbox.jobQueue,
+      makeEntry({ message, messageUuid: 'uuid-1', origin: 'chat' })
+    );
+    expect(() =>
+      assertNoPendingMailboxContentConflict(
+        mailbox.jobQueue,
+        'sess-1',
+        'uuid-1',
+        { ...message, inputKind: 'task' },
+        'space_agent'
+      )
+    ).toThrow(PromptContentConflictError);
+    expect(() =>
+      assertNoPendingMailboxContentConflict(
+        mailbox.jobQueue,
+        'sess-1',
+        'uuid-1',
+        { ...message, inputKind: 'task' },
+        'chat'
+      )
     ).not.toThrow();
   });
 
@@ -367,10 +411,10 @@ describe('assertNoPendingMailboxContentConflict', () => {
       message: { content: 'different' },
     };
     expect(() =>
-      assertNoPendingMailboxContentConflict(mailbox.jobQueue, 'sess-2', 'uuid-1', different)
+      assertNoPendingMailboxContentConflict(mailbox.jobQueue, 'sess-2', 'uuid-1', different, 'test')
     ).not.toThrow();
     expect(() =>
-      assertNoPendingMailboxContentConflict(mailbox.jobQueue, 'sess-1', 'uuid-2', different)
+      assertNoPendingMailboxContentConflict(mailbox.jobQueue, 'sess-1', 'uuid-2', different, 'test')
     ).not.toThrow();
   });
 });

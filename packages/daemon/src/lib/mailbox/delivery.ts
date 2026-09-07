@@ -12,7 +12,7 @@ import {
   type PromptHold,
   retryPrompt,
 } from '../agent/message-delivery-outbox.ts';
-import { parseMailboxEntry } from './entry.ts';
+import { mailboxMessageIsSynthetic, parseMailboxEntry } from './entry.ts';
 import { type MailboxSettlement, settleMailboxEntry } from './settlement.ts';
 import { decodeUlidTimestamp } from './ulid.ts';
 
@@ -97,7 +97,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
     if (Date.now() - decodeUlidTimestamp(entry.id) > entry.policy.ttlMs) {
       throw new DeadLetterImmediatelyError('mailbox: entry expired (ttl)');
     }
-    const synthetic = entry.origin !== 'chat' && entry.message.inputKind !== 'human';
+    const synthetic = mailboxMessageIsSynthetic(entry.origin, entry.message);
     const admittedAt = decodeUlidTimestamp(entry.id);
     const admissionRowid = readAdmissionRowid(deps.db, job.id);
     const message: SDKUserMessage & { referenceMetadata?: ReferenceMetadata } = {

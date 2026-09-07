@@ -5,7 +5,12 @@ import {
   PromptContentConflictError,
 } from '../agent/prompt-comparison.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
-import { toMailboxMessage, type MailboxEntry, type MailboxMessage } from './entry.ts';
+import {
+  mailboxMessageIsSynthetic,
+  toMailboxMessage,
+  type MailboxEntry,
+  type MailboxMessage,
+} from './entry.ts';
 
 export const MAILBOX_LANE = 'mailbox';
 
@@ -13,30 +18,38 @@ export type MailboxEnqueueOutcome =
   | { kind: 'enqueued'; id: string }
   | { kind: 'rejected'; reason: string };
 
+function materializedComparisonKey(message: MailboxMessage, origin: string): string | null {
+  const projected = toMailboxMessage(message);
+  if ('reason' in projected) return null;
+  const synthetic = mailboxMessageIsSynthetic(origin, projected.message);
+  return canonicalJson(
+    normalizePromptForComparison({
+      ...projected.message,
+      ...(synthetic ? { isSynthetic: true } : {}),
+    } as unknown as SDKMessage)
+  );
+}
+
 export function assertNoPendingMailboxContentConflict(
   jobQueue: JobQueueRepository,
   sessionId: string,
   messageUuid: string,
-  message: MailboxMessage
+  message: MailboxMessage,
+  origin: string
 ): void {
-  const projected = toMailboxMessage(message);
-  if ('reason' in projected) return;
-  const incoming = canonicalJson(
-    normalizePromptForComparison(projected.message as unknown as SDKMessage)
-  );
+  const incoming = materializedComparisonKey(message, origin);
+  if (incoming === null) return;
   for (const job of jobQueue.listActiveByPayload(MAILBOX_LANE, {
     'to.sessionId': sessionId,
     messageUuid,
   })) {
-    const pending = (job.payload as Record<string, unknown>).message as MailboxMessage | undefined;
+    const payload = job.payload as Record<string, unknown>;
+    if (typeof payload.origin !== 'string') continue;
+    const pending = payload.message as MailboxMessage | undefined;
     if (pending === undefined) continue;
-    const pendingProjected = toMailboxMessage(pending);
-    if ('reason' in pendingProjected) continue;
-    if (
-      canonicalJson(
-        normalizePromptForComparison(pendingProjected.message as unknown as SDKMessage)
-      ) !== incoming
-    ) {
+    const pendingKey = materializedComparisonKey(pending, payload.origin);
+    if (pendingKey === null) continue;
+    if (pendingKey !== incoming) {
       throw new PromptContentConflictError(
         `prompt handoff: message ${messageUuid} in session ${sessionId} ` +
           'already exists with different content'

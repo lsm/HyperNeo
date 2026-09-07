@@ -43,7 +43,8 @@ export interface AgentMessageDeliveryDeps {
   verifyDeliveryContent(
     sessionId: string,
     messageId: string,
-    message: SDKUserMessage & { inputKind?: MessageInputKind }
+    message: SDKUserMessage & { inputKind?: MessageInputKind },
+    origin: MessageDeliveryOrigin
   ): void;
   handoffToMailbox(args: Omit<MailboxHandoffArgs, 'jobQueue'>): Promise<MailboxHandoffOutcome>;
   recordActivity(sessionId: string): void;
@@ -264,7 +265,12 @@ export async function handoffDeliveryToMailbox(
     ctx.inputKind
   );
   try {
-    ctx.deps.verifyDeliveryContent(sessionId, ctx.messageId, synthetic);
+    ctx.deps.verifyDeliveryContent(
+      sessionId,
+      ctx.messageId,
+      synthetic,
+      ctx.origin ?? 'space_agent'
+    );
     const outcome = await ctx.deps.handoffToMailbox({
       to: renderAddress({ kind: 'session', sessionId }),
       message: {
