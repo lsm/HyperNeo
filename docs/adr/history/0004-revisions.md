@@ -394,3 +394,46 @@ become `superseded` outcomes — so Phase 0 carries its own characterization pin
 Per #2670's acceptance criteria, the caveats this ADR records must narrow as
 phases land, never expand.
 
+---
+
+## Revision 2026-09-07 — decide-owning hybrid, result-arm gates, combinator deprecation
+
+Recorded against the normative ADR (`docs/adr/0004-superpipe-pipelines.md`)
+after PR #3804 (mailbox deferred-replay scheduler, W6-S4/8), whose 16-cycle
+review surfaced three gaps in the 2026-08-25 text:
+
+1. **Exclusions rescoped to ownership, not module.** "As a state machine" and
+   "As a resource owner" had been read as module-level prohibitions — a
+   reviewer-proposed gate extraction inside the resource-owning scheduler was
+   wrongly rejected citing them. The exclusions bar a pipeline from owning the
+   loop, state, or resources; a shell that owns them still consults pipelines
+   at its decision points. The composition is named the **decide-owning
+   hybrid** and added to the taxonomy as P9 — P9 rather than P8 because the
+   retired record's taxonomy below already assigns P8 to staged orchestration,
+   and an identifier must not change meaning between the retired and current
+   taxonomies.
+2. **Canonical gate shape documented.** The 0.18 `result:` early-return arms
+   were documented as a mechanism but not as a composition style, so older
+   ctx-threading + flag-predicate-halt pipelines remained the de-facto
+   template. The ADR now documents the rejection cascade: gate stages sharing
+   one `result:<name>` output, each returning
+   `{ value: X } | { reason: Literal }`; named dependencies and inputs instead
+   of ctx-object threading (each `.pipe` line shows the dataflow); all-sync
+   stages yielding a sync callable. Reference implementation:
+   `decideReplayAdmission` in
+   `packages/daemon/src/lib/mailbox/deferred-replay-scheduler.ts`.
+3. **`decisionRun` and `stagedRun` deprecated.** Both pre-classify flows into
+   decision-vs-staged categories the direct-pipe style does not need — the
+   wrong abstraction. New work composes direct pipelines only; existing call
+   sites migrate slice-by-slice in the slices that touch them.
+
+Also added: the extraction-trigger heuristic (a gate cluster repeated at two
+or more decision points in a shell is a pipeline candidate even inside an
+otherwise-excluded module — the duplication is the signal, and the copies have
+usually already drifted by the time you notice them), and the decomposability
+emphasis (most business logic decomposes this way: per-stage and per-gate
+tests spare new code monolithic scenario pinning, while existing parity pins
+and scenario suites stay in force through migrations; PR #3804's admission
+gates went from two hand-copied clusters to one pipeline with table-driven
+gate tests).
+

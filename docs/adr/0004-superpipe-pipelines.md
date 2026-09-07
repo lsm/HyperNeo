@@ -2,8 +2,10 @@
 
 ## Status
 
-Accepted — 2026-08-20. Revised 2026-08-25 (current): direct superpipe
-composition, one pipeline per business path, no combinator pre-categorization.
+Accepted — 2026-08-20. Revised 2026-08-25: direct superpipe composition, one
+pipeline per business path, no combinator pre-categorization. Revised
+2026-09-07 (current): canonical `result:`-arm gate shape with named
+dependencies, the decide-owning hybrid, `decisionRun`/`stagedRun` deprecated.
 Revision history and retired framing: `docs/adr/history/0004-revisions.md`.
 Pilot/validation records: `docs/adr/history/0004-pilots.md`. Those files are
 reference only; this ADR is the normative document.
@@ -27,14 +29,36 @@ delivery, stop, recovery, ingestion — composes as ONE superpipe pipeline named
 for the operation (`deliverMessage`, `spawnWorkflowNodeAgent`), whose stages
 freely mix pure decisions, transforms, and effects. Do not pre-classify a flow
 as decision vs staged vs transform; do not split one path across pipelines.
+The one-pipeline rule governs paths whose spine is composition; a path whose
+spine is a resource-owning loop composes as the decide-owning hybrid (below) —
+pipelines at its decision points, loop and effects in the owning shell — and
+that hybrid is the path's composition, not a split of it.
+
+Most business logic decomposes this way, and that is the argument for the
+style, not a nice-to-have: each stage is a named unit with declared inputs and
+outputs, per-stage and per-gate unit tests spare new code monolithic scenario
+pinning, and reasoning about the whole path reduces to reading one composition
+site where every `.pipe` line shows the dataflow. PR #3804's admission gates
+went from two hand-copied gate clusters to one named pipeline with
+table-driven gate tests. Stage tests supplement, never replace,
+characterization coverage: during a migration the parity pins and
+pre-existing scenario suites stay in force (Decision 7) — isolated stage tests
+cannot see composition, precedence, or effect-order regressions.
 
 1. **Compose directly.** Superpipe may be imported anywhere a pipeline fits;
-   there is no import boundary. The existing `decisionRun`
+   there is no import boundary. `decisionRun`
    (`lib/space/runtime/decision-pipeline.ts`) and `stagedRun`
-   (`lib/space/runtime/staged-run.ts`) combinators remain usable where they
-   fit, including their existing call sites, but nothing routes through a
-   combinator by requirement. Extract a NEW combinator only after ≈3 direct
-   uses reveal a recurring shape; never design one ahead of use.
+   (`lib/space/runtime/staged-run.ts`) are **deprecated** (2026-09-07): both
+   pre-classify flows into decision-vs-staged categories the direct-pipe style
+   does not need — the wrong abstraction. New work composes direct pipelines
+   only; do not add combinator call sites. Existing call sites stay put and
+   migrate slice-by-slice in the slices that touch them. Any pre-2026-09-07
+   document — the `docs/superpipe-migration-plans/` blueprints, the
+   `docs/agent-layer-superpipe-pilot-proposal.md` pilot chain, the
+   `docs/reports/` surveys — whose steps prescribe new
+   `decisionRun`/`stagedRun` implementations is superseded by this
+   deprecation: compose direct pipelines instead. Updating those documents is
+   its own docs slice (Roadmap).
 2. **Stages.** A stage is a function in the named pipeline. Pure decision and
    transform stages are preferred wherever no await or write is needed; effect
    stages are normal where the path needs them. `!dep` halts the run
@@ -55,44 +79,133 @@ as decision vs staged vs transform; do not split one path across pipelines.
    otherwise coupled to background timers) keep their decide-equivalent stages
    synchronous and pin the microtask profile in tests; the sync executor
    preserves event-loop interleaving exactly. Elsewhere async is fine.
-5. **Resources stay in classes.** `AbortController`s, timers, subscriptions,
-   query objects, handles — pipelines receive values and declare outcomes;
-   the owning class executes lifecycle.
+5. **Resources stay in the owning shell.** `AbortController`s, timers,
+   subscriptions, query objects, handles — pipelines receive values and
+   declare outcomes; the owning shell — a class, or an encapsulated
+   factory/module scope such as `createMailboxDeferredReplayScheduler` —
+   executes lifecycle.
 6. **Cancellation is requirement-driven.** `withSignal` is wired when a real
    cancellation requirement appears, not to exercise the feature.
 7. **Testing.** Pin behavior before refactoring (parity/characterization
    tests), cover decision tables and stage precedence in unit tests, and keep
-   pre-existing scenario suites passing unchanged as the parity proof.
+   pre-existing scenario suites passing unchanged as the parity proof. A gate
+   pipeline additionally gets table-driven per-gate tests: each gate is a
+   named pure function over declared inputs, so its decision table tests
+   without the runtime, the shell, or the other gates.
 8. **Hot paths stay inline.** Pipeline overhead is ~2-2.6 µs/decision vs ~75 ns
    for an if-cascade (benchmark: `packages/daemon/scripts/benchmark/decision-pipeline.ts`).
    Awaited boundaries are fine; tight per-token/per-event loops are not.
 
-### Early return (superpipe ≥ 0.18.0)
+### Canonical gate shape: one shared `result:` output (superpipe ≥ 0.18.0)
 
 Superpipe 0.18.0 adds opt-in `result:<name>` outputs: a stage returns exactly
 one own arm — `{ value }` binds `<name>` and the run continues; `{ reason }`
 binds `<name>` and resolves the run without starting the remaining stages. For
 a typed business early exit, the `reason` arm is the preferred idiom over
-hand-rolled halt flags; `!dep` remains valid for data-dependent dependency
-halts. Adoption is per-pipeline in the slices that touch them — no prescription
-changes for in-flight work.
+hand-rolled halt flags or ctx-threaded boolean predicates; `!dep` remains
+valid for data-dependent dependency halts. This cascade is the canonical shape
+for typed business rejection, not a mandate on every gate — boolean `!dep`
+validation gates (P3) stay valid where no rejection taxonomy is wanted.
+
+The canonical rejection cascade — reference implementation
+`decideReplayAdmission` in
+`packages/daemon/src/lib/mailbox/deferred-replay-scheduler.ts` (PR #3804):
+
+- **Gates share one `result:<name>` output.** Each gate is a named, exported,
+  pure function taking the admitted value and returning
+  `{ value: X } | { reason: Literal }`. The reason-literal union is the skip
+  taxonomy, owned by the module. The first `reason` arm resolves the run;
+  gate order is precedence, visible in the composition. The `X` and reason
+  domains must be disjoint: `.end(<name>)` unwraps both arms into one
+  `X | Reason` output, so an `X` that can itself carry a reason literal (a
+  bare `string`, say) collapses the union and hides rejection from the
+  caller — where the types would overlap, brand or restrict the success
+  domain, or return a tagged outcome. Prefixing the reason literals is not a
+  remedy: a prefixed literal is still assignable to the overlapped success
+  type, so the union still collapses.
+- **Named dependencies and inputs, not a ctx object.** Each
+  `.pipe(gate, 'in', 'result:admission')` line shows what flows in and out at
+  the composition site; the dataflow is auditable without reading stage
+  bodies. A threaded ctx object hides it and is discouraged for new pipelines.
+- **All-sync stages yield a sync callable.** A pipeline whose stages never
+  await ends with `.end(...)` and is invoked synchronously — no `await` at the
+  call site, no microtask boundary (Decision 4).
+
+```ts
+export type ReplaySkipReason =
+  | 'no_cached_session'
+  | 'manual_mode'
+  | 'session_unavailable';
+
+export function gateSessionPresent(
+  session: AgentSession | null
+): { value: AgentSession } | { reason: ReplaySkipReason } {
+  if (session == null) return { reason: 'no_cached_session' };
+  return { value: session };
+}
+
+export const decideReplayAdmission = (
+  superpipe({})('mailbox-deferred-replay-admission') as PipelineAPI
+)
+  .input(['session'])
+  .pipe(gateSessionPresent, 'session', 'result:admission')
+  .pipe(gateQueryMode, 'admission', 'result:admission')
+  .pipe(gateLifecycleStatus, 'admission', 'result:admission')
+  .end('admission') as (
+  session: AgentSession | null
+) => AgentSession | ReplaySkipReason;
+```
+
+### The decide-owning hybrid
+
+The exclusions below bar a pipeline from **owning** the loop, the state, or
+the resources — never from the decision points a loop consults. The recurring
+composition is the **decide-owning hybrid**: gates as a `result:` pipeline
+(above), loop and resources in the owning shell. The shell owns the iteration,
+the waiters, the timers, the retry/backoff state, and the tracking sets; at
+each decision point it calls the pipeline synchronously and routes on
+`value | reason`. PR #3804's scheduler is the shape: an imperative
+resource-owning shell (`createMailboxDeferredReplayScheduler`) whose
+busy-wait/park/retry loop consults `decideReplayAdmission` at admission and
+again immediately before publish.
+
+**Extraction trigger.** A gate cluster repeated at two or more decision points
+in a shell is a pipeline candidate even inside an otherwise-excluded module.
+The duplication is the signal — and the copies have usually already drifted by
+the time you notice them. One extracted pipeline replaces the copies with one
+name, one precedence order, and one table-driven test.
 
 ### Where superpipe must not be used
 
-- **As a state machine or unbounded fold.** State lives in the runtime/DB; a
-  pipeline decides one step. A pipeline may be a per-event reducer body, never
-  the loop.
+These exclusions are about **ownership, not module membership**: a module that
+owns a loop, state, or resources still consults pipelines at its decision
+points — the decide-owning hybrid above. What is barred is the pipeline being
+the owner.
+
+- **As a state machine, unbounded fold, or the loop.** State lives in the
+  runtime/DB; a pipeline decides one step. A pipeline may be a per-event
+  reducer body or a shell's admission gate, never the loop itself.
 - **As an owner of atomicity.** See Decision 3.
-- **As a resource owner.** See Decision 5.
+- **As an owner of resources or lifecycle.** See Decision 5. The owning shell
+  keeps timers, waiters, subscriptions, and handles; the pipeline receives
+  values and declares outcomes.
 - **On hot inner loops.** See Decision 8.
 
-### Guidance inherited from the combinators (optional, not gates)
+### Effect-stage disciplines (optional, not gates)
 
-For race-prone effect stages, `stagedRun`'s disciplines remain good practice:
-declare the state keys a stage reads and writes, re-gather between write and
-read, treat correlated multi-row transitions as one primitive or a compensation
-chain, and unwind compensations in reverse on failure. The full design record
-is `docs/adr/history/0004-revisions.md`.
+For race-prone effect stages, the retired `stagedRun`'s disciplines remain
+good practice: declare the state keys a stage reads and writes, re-gather
+between write and read, treat correlated multi-row transitions as one
+primitive or a compensation chain, and unwind compensations in reverse on
+failure. Named dependencies carry the *visibility* half — every
+`.pipe(fn, 'in', 'out')` line shows the dataflow, which is why ctx-object
+threading is discouraged for new pipelines — but none of `stagedRun`'s
+*enforcement*: the interpreter's stale-read validation and reverse-compensation
+unwinding die with the combinator. A migrated flow must re-establish them by
+hand — atomicity through repository primitives (Decision 3), staleness through
+explicit re-gather stages, compensation through the primitives' own guards —
+pinned by that slice's characterization tests. The full design record is
+`docs/adr/history/0004-revisions.md`.
 
 ## Pattern taxonomy (vocabulary, not categories to choose between)
 
@@ -100,14 +213,26 @@ is `docs/adr/history/0004-revisions.md`.
 | --- | --- |
 | P1 pure sync transform | `pipe → end`, early exit via `!dep` |
 | P2 awaitable flow | async stages, `endAsync` |
-| P3 guard/validation gate | boolean `!dep` halts |
+| P3 guard/validation gate | boolean `!dep` halts, or the canonical `result:` cascade |
 | P4 optional stages | `?dep` skips when undefined |
 | P6 per-event reducer | pipeline as reducer body, never the loop |
 | P7 functional sandwich | read → plan → apply |
+| P9 decide-owning hybrid | `result:`-arm gate pipeline consulted by a resource-owning shell at its decision points |
 | Mixed business path | decisions + transforms + effects in one pipeline (the default) |
 
 ## Roadmap (open items)
 
+- Update pre-deprecation documents that still prescribe combinator call
+  sites — the `docs/superpipe-migration-plans/` blueprints, the
+  `docs/agent-layer-superpipe-pilot-proposal.md` pilot chain, the
+  `docs/reports/` surveys — onto direct pipelines; until then those
+  prescriptions are superseded by the 2026-09-07 deprecation (Decision 1).
+- Migrate existing `decisionRun`/`stagedRun` call sites onto direct pipelines,
+  slice-by-slice in the slices that touch them (deprecation recorded
+  2026-09-07); no new combinator call sites in the meantime. Each migration
+  re-establishes the retired interpreter's guarantees — stale-read re-gathers,
+  reverse compensation — through repository primitives and the slice's tests,
+  never by assumption.
 - Recovery handlers as one direct pipeline each: `repairQueuedWorkflowNodeHandoffs`
   first, then the four `handle*Executions` handlers, then top-level
   `processRunTick` composition.
@@ -123,7 +248,10 @@ is `docs/adr/history/0004-revisions.md`.
 
 ## References
 
-- Combinator modules: `packages/daemon/src/lib/space/runtime/{decision-pipeline,staged-run}.ts`
+- Reference implementation (canonical gate shape, decide-owning hybrid):
+  `decideReplayAdmission` in
+  `packages/daemon/src/lib/mailbox/deferred-replay-scheduler.ts` (PR #3804)
+- Combinator modules (deprecated): `packages/daemon/src/lib/space/runtime/{decision-pipeline,staged-run}.ts`
 - Benchmark: `packages/daemon/scripts/benchmark/decision-pipeline.ts`
 - History: `docs/adr/history/0004-revisions.md` (revisions, retired framing),
   `docs/adr/history/0004-pilots.md` (pilot records, completion log)
