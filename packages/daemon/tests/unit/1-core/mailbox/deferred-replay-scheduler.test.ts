@@ -376,6 +376,65 @@ describe('createMailboxDeferredReplayScheduler', () => {
     expect(published).toEqual([SESSION_ID]);
   });
 
+  test('cancel during normalization that stays busy skips the idle waiter', async () => {
+    const publish = mock(async () => {});
+    const deps = makeDeps(publish);
+    let status = 'interrupted';
+    let resolveNormalize: (() => void) | undefined;
+    let waiterCalls = 0;
+    deps.sessionManager = {
+      getCachedSession: () =>
+        ({
+          getSessionData: () => ({ config: { queryMode: 'immediate' } }),
+          getProcessingState: () => ({ status }),
+          normalizeStaleInterruptedState: () =>
+            new Promise<void>((resolve) => {
+              resolveNormalize = resolve;
+            }),
+          stateManager: {
+            waitForIdleTransition: () => {
+              waiterCalls += 1;
+              return { promise: new Promise<void>(() => {}), cancel: () => {} };
+            },
+          },
+        }) as never,
+    };
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(10);
+    scheduler.cancel(SESSION_ID);
+    resolveNormalize?.();
+    await flush(20);
+
+    expect(waiterCalls).toBe(0);
+    expect(publish).not.toHaveBeenCalled();
+
+    status = 'idle';
+    scheduler.schedule(SESSION_ID);
+    await flush(20);
+    expect(publish).toHaveBeenCalledTimes(1);
+  });
+
+  test('drains a large burst of uncached sessions without recursion', async () => {
+    const publish = mock(async () => {});
+    const deps = makeDeps(publish);
+    let fetches = 0;
+    deps.sessionManager = {
+      getCachedSession: () => {
+        fetches += 1;
+        return null;
+      },
+    };
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    const ids = Array.from({ length: 20_000 }, (_, i) => `gone-${i}`);
+    for (const id of ids) scheduler.schedule(id);
+    await flush(500);
+
+    expect(fetches).toBe(20_000);
+  });
+
   test('skips publication when the cached session vanishes during a park', async () => {
     const published: string[] = [];
     let status = 'processing';

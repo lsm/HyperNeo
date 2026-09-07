@@ -65,28 +65,31 @@ export function createMailboxDeferredReplayScheduler(
     }
   };
 
+  const cleanup = (sessionId: string): void => {
+    tracked.delete(sessionId);
+    dirty.delete(sessionId);
+    cancelled.delete(sessionId);
+    attempts.delete(sessionId);
+  };
+
   const runSession = async (sessionId: string): Promise<void> => {
     let retryDelayMs: number | null = null;
     let parkedForIdle = false;
     try {
       if (cancelled.has(sessionId)) {
         emitReplayEvent('cancelled_before_run', { sessionId });
-        cancelled.delete(sessionId);
-        tracked.delete(sessionId);
-        dirty.delete(sessionId);
+        cleanup(sessionId);
         return;
       }
       let session = deps.sessionManager?.getCachedSession(sessionId);
       if (!session) {
         emitReplayEvent('skipped', { sessionId, reason: 'no_cached_session' });
-        tracked.delete(sessionId);
-        dirty.delete(sessionId);
+        cleanup(sessionId);
         return;
       }
       if (session.getSessionData().config.queryMode === 'manual') {
         emitReplayEvent('skipped', { sessionId, reason: 'manual_mode' });
-        tracked.delete(sessionId);
-        dirty.delete(sessionId);
+        cleanup(sessionId);
         return;
       }
       let status = session.getProcessingState().status;
@@ -96,8 +99,7 @@ export function createMailboxDeferredReplayScheduler(
           const normalizedSession = deps.sessionManager?.getCachedSession(sessionId);
           if (!normalizedSession) {
             emitReplayEvent('skipped', { sessionId, reason: 'no_cached_session' });
-            tracked.delete(sessionId);
-            dirty.delete(sessionId);
+            cleanup(sessionId);
             return;
           }
           if (normalizedSession !== session) {
@@ -108,6 +110,11 @@ export function createMailboxDeferredReplayScheduler(
           if (normalized !== 'interrupted') {
             status = normalized;
             continue;
+          }
+          if (cancelled.has(sessionId)) {
+            emitReplayEvent('cancelled_before_park', { sessionId });
+            cleanup(sessionId);
+            return;
           }
         }
         emitReplayEvent('idle_wait_registered', { sessionId, status });
@@ -121,9 +128,7 @@ export function createMailboxDeferredReplayScheduler(
         parkedForIdle = false;
         if (cancelled.has(sessionId)) {
           emitReplayEvent('cancelled_after_idle_wait', { sessionId });
-          cancelled.delete(sessionId);
-          tracked.delete(sessionId);
-          dirty.delete(sessionId);
+          cleanup(sessionId);
           return;
         }
         if (active.size >= MAX_ACTIVE_PUBLICATIONS) {
@@ -134,8 +139,7 @@ export function createMailboxDeferredReplayScheduler(
         const current = deps.sessionManager?.getCachedSession(sessionId);
         if (!current) {
           emitReplayEvent('skipped', { sessionId, reason: 'no_cached_session' });
-          tracked.delete(sessionId);
-          dirty.delete(sessionId);
+          cleanup(sessionId);
           return;
         }
         if (current !== session) {
@@ -147,9 +151,7 @@ export function createMailboxDeferredReplayScheduler(
       }
       if (cancelled.has(sessionId)) {
         emitReplayEvent('cancelled_before_publish', { sessionId });
-        cancelled.delete(sessionId);
-        tracked.delete(sessionId);
-        dirty.delete(sessionId);
+        cleanup(sessionId);
         return;
       }
       const published = await deps.internalEventBus.publish('query.trigger', { sessionId });
@@ -182,14 +184,11 @@ export function createMailboxDeferredReplayScheduler(
       });
     } finally {
       if (!parkedForIdle) active.delete(sessionId);
-      pump();
+      setImmediate(pump);
       if (retryDelayMs !== null) {
         const delay = retryDelayMs;
         if (cancelled.has(sessionId)) {
-          cancelled.delete(sessionId);
-          tracked.delete(sessionId);
-          dirty.delete(sessionId);
-          attempts.delete(sessionId);
+          cleanup(sessionId);
         } else {
           const timer = setTimeout(() => {
             retryTimers.delete(sessionId);
@@ -221,19 +220,14 @@ export function createMailboxDeferredReplayScheduler(
       const index = ready.indexOf(sessionId);
       if (index >= 0) {
         ready.splice(index, 1);
-        tracked.delete(sessionId);
-        dirty.delete(sessionId);
-        cancelled.delete(sessionId);
+        cleanup(sessionId);
         return;
       }
       const timer = retryTimers.get(sessionId);
       if (timer != null) {
         clearTimeout(timer);
         retryTimers.delete(sessionId);
-        cancelled.delete(sessionId);
-        tracked.delete(sessionId);
-        dirty.delete(sessionId);
-        attempts.delete(sessionId);
+        cleanup(sessionId);
         return;
       }
       const waiterCancel = parkedWaiters.get(sessionId);
