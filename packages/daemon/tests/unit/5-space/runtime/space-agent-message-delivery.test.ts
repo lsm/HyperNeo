@@ -253,6 +253,25 @@ describe('deliverSpaceAgentMessage', () => {
     h.db.close();
   });
 
+  it('serializes concurrent same-uuid admissions so only one prompt is accepted', async () => {
+    const h = makeHarness();
+
+    const results = await Promise.allSettled([
+      deliverSpaceAgentMessage(h.deps, h.input('concurrent one')),
+      deliverSpaceAgentMessage(h.deps, h.input('concurrent two')),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(
+      PromptContentConflictError
+    );
+    expect(pendingMailboxJobCount(h, MESSAGE_ID)).toBe(1);
+    h.db.close();
+  });
+
   it('short-circuits consumption evidence on a failed row without waking the session', async () => {
     const h = makeHarness();
     const persisted = persistPrompt({

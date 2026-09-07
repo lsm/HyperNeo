@@ -5,6 +5,7 @@ import {
   MESSAGE_DELIVERY_PARK_MS,
   signalDeliveryConsumed,
   waitForDeliveryConsumption,
+  withSessionLock,
   type MessageDeliveryOrigin,
 } from '../../agent/message-delivery.ts';
 import {
@@ -259,13 +260,15 @@ async function enqueuePrompt(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeli
     messageUuid: ctx.messageId,
     message: ctx.sdkUserMessage,
   });
-  assertNoConflictingPendingAdmission(ctx);
-  const handoff = await handoffPromptToMailbox({
-    to: renderAddress({ kind: 'session', sessionId: ctx.sessionId }),
-    message: projectMailboxPrompt(ctx),
-    origin: ctx.origin ?? 'space_agent',
-    messageUuid: ctx.messageId,
-    jobQueue: ctx.deps.jobQueue,
+  const handoff = await withSessionLock(ctx.sessionId, async () => {
+    assertNoConflictingPendingAdmission(ctx);
+    return handoffPromptToMailbox({
+      to: renderAddress({ kind: 'session', sessionId: ctx.sessionId }),
+      message: projectMailboxPrompt(ctx),
+      origin: ctx.origin ?? 'space_agent',
+      messageUuid: ctx.messageId,
+      jobQueue: ctx.deps.jobQueue,
+    });
   });
   return { ...ctx, handoff };
 }
