@@ -341,6 +341,8 @@ export class AgentSession
 
   onMissingMemberSpaceMcpServers?: (sessionId: string, missing: string[]) => Promise<void>;
 
+  suppressDeferredReplay?: (sessionId: string) => void;
+
   slotResetsContext?: () => boolean;
 
   renderPendingDigest?: (

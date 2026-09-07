@@ -155,7 +155,9 @@ describe('createMailboxDeliveryHandler', () => {
     getSession: (sessionId: string) => Promise<object | null> = async () => ({ ok: true }),
     isSessionArchived: (sessionId: string) => boolean = () => false,
     publishStatusChanged?: (sessionId: string, dbId: string, status: 'enqueued') => void,
-    publishDeferredStatus?: (sessionId: string, dbMessageId: string) => Promise<void>
+    publishFailed?: (sessionId: string, dbMessageId: string) => Promise<void>,
+    publishDeferredStatus?: (sessionId: string, dbMessageId: string) => Promise<void>,
+    scheduleDeferredReplay?: (sessionId: string) => void | Promise<void>
   ) {
     let sessionCalls = 0;
     let archivedCalls = 0;
@@ -172,7 +174,9 @@ describe('createMailboxDeliveryHandler', () => {
         return isSessionArchived(sessionId);
       },
       ...(publishStatusChanged ? { publishStatusChanged } : {}),
-      ...(publishDeferredStatus ? { publishDeferredStatus } : {}),
+      publishFailed,
+      publishDeferredStatus,
+      ...(scheduleDeferredReplay ? { scheduleDeferredReplay } : {}),
     });
     return { handler, sessionCalls: () => sessionCalls, archivedCalls: () => archivedCalls };
   }
@@ -303,6 +307,28 @@ describe('createMailboxDeliveryHandler', () => {
       expect(mailbox.sdkRows()).toHaveLength(0);
       expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(0);
       expect(mailbox.rows()[0].retry_count).toBe(0);
+    });
+
+    test('marks a seeded row failed when archival wins the content-write race', async () => {
+      let checks = 0;
+      const publishFailed = mock(async () => {});
+      const { handler } = makeHandler(
+        undefined,
+        () => {
+          checks += 1;
+          return checks === 3;
+        },
+        undefined,
+        publishFailed
+      );
+      const entry = makeEntry({ messageUuid: 'seeded-message' });
+      const job = claimMailboxJob(mailbox, entry);
+
+      await expect(handler(job)).rejects.toThrow('mailbox: target session archived');
+
+      const row = mailbox.sdkRows()[0];
+      expect(row.send_status).toBe('failed');
+      expect(publishFailed).toHaveBeenCalledWith(SESSION_ID, row.id);
     });
   });
 
@@ -541,12 +567,49 @@ describe('createMailboxDeliveryHandler', () => {
       expect(completed?.result).toEqual(result);
     });
 
+    test('defer schedules catch-up replay after materialization', async () => {
+      const scheduleDeferredReplay = mock(async () => {});
+      const { handler } = makeHandler(
+        async () => ({ ok: true }),
+        () => false,
+        undefined,
+        async () => {},
+        async () => {},
+        scheduleDeferredReplay
+      );
+      const entry = makeEntry({ origin: 'chat', deliveryMode: 'defer' });
+      const job = claimMailboxJob(mailbox, entry);
+
+      await handler(job);
+
+      expect(scheduleDeferredReplay).toHaveBeenCalledWith(SESSION_ID);
+    });
+
+    test('immediate does not schedule deferred catch-up replay', async () => {
+      const scheduleDeferredReplay = mock(async () => {});
+      const { handler } = makeHandler(
+        async () => ({ ok: true }),
+        () => false,
+        undefined,
+        async () => {},
+        async () => {},
+        scheduleDeferredReplay
+      );
+      const entry = makeEntry({ origin: 'chat', deliveryMode: 'immediate' });
+      const job = claimMailboxJob(mailbox, entry);
+
+      await handler(job);
+
+      expect(scheduleDeferredReplay).not.toHaveBeenCalled();
+    });
+
     test('defer publishes a deferred status after the SDK row is materialized', async () => {
       const publishDeferredStatus = mock(async () => {});
       const { handler } = makeHandler(
         async () => ({ ok: true }),
         () => false,
         undefined,
+        async () => {},
         publishDeferredStatus
       );
       const entry = makeEntry({ origin: 'chat', deliveryMode: 'defer' });

@@ -63,7 +63,7 @@ describe('EventSubscriptionSetup', () => {
     mockQueryModeHandler = {
       handleQueryTrigger: mock(async () => ({ success: true, messageCount: 1 })),
       replayPendingMessagesForImmediateMode: mock(async () => {}),
-      replayPendingMessagesForAutomaticTurnEnd: mock(async () => {}),
+      replayPendingMessagesForAutomaticTurnEnd: mock(async () => true),
       sendEnqueuedMessagesOnTurnEnd: mock(async () => {}),
     } as unknown as QueryModeHandler;
 
@@ -411,6 +411,19 @@ describe('EventSubscriptionSetup', () => {
 
         expect(mockQueryModeHandler.replayPendingMessagesForAutomaticTurnEnd).toHaveBeenCalled();
         expect(mockQueryModeHandler.handleQueryTrigger).not.toHaveBeenCalled();
+      });
+
+      it('rejects when the guarded replay reports an unsuccessful outcome', async () => {
+        (
+          mockQueryModeHandler.replayPendingMessagesForAutomaticTurnEnd as ReturnType<typeof mock>
+        ).mockImplementation(async () => false);
+        setup.setup();
+
+        const callback = registeredCallbacks.get('query.trigger')!;
+
+        await expect(callback({ sessionId: 'test-session-id' })).rejects.toThrow(
+          'query.trigger: automatic replay did not complete'
+        );
       });
     });
   });

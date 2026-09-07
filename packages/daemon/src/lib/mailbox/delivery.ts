@@ -25,7 +25,9 @@ export interface MailboxDeliveryDeps {
   getSession(sessionId: string): Promise<object | null>;
   isSessionArchived(sessionId: string): boolean;
   publishStatusChanged?(sessionId: string, dbId: string, status: 'enqueued'): void | Promise<void>;
+  publishFailed?(sessionId: string, dbMessageId: string): Promise<void>;
   publishDeferredStatus?(sessionId: string, dbMessageId: string): Promise<void>;
+  scheduleDeferredReplay?(sessionId: string): void | Promise<void>;
 }
 
 export function createMailboxDeadHandler(logError: (message: string) => void) {
@@ -166,6 +168,16 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       if (deferredDbId !== null) {
         await deps.publishDeferredStatus(target, deferredDbId);
       }
+    }
+    if (deps.isSessionArchived(target)) {
+      const failedId = deps.sdkMessageRepo.markDeliveryFailedByUuid(target, messageUuid);
+      if (failedId !== null) {
+        await deps.publishFailed?.(target, failedId);
+      }
+      throw new DeadLetterImmediatelyError('mailbox: target session archived');
+    }
+    if (entry.deliveryMode === 'defer' && deps.scheduleDeferredReplay) {
+      await deps.scheduleDeferredReplay(target);
     }
     return { ...settleMailboxEntry(entry, 'delivered', Date.now()) };
   };
