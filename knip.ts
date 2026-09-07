@@ -71,6 +71,7 @@ const config: KnipConfig = {
     'packages/daemon/src/lib/space/artifact-git-ops.ts': ['exports'],
     'packages/daemon/src/lib/space/managers/node-execution-manager.ts': ['exports'],
     'packages/daemon/src/lib/mailbox/bridge.ts': ['exports'],
+    'packages/daemon/src/lib/mailbox/deferred-replay-scheduler.ts': ['exports'],
     'packages/daemon/src/lib/mailbox/delivery.ts': ['exports'],
     'packages/daemon/src/lib/mailbox/enqueue.ts': ['exports'],
     'packages/daemon/src/lib/mailbox/handoff.ts': ['exports'],
