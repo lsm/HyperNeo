@@ -408,7 +408,10 @@ review surfaced three gaps in the 2026-08-25 text:
    wrongly rejected citing them. The exclusions bar a pipeline from owning the
    loop, state, or resources; a shell that owns them still consults pipelines
    at its decision points. The composition is named the **decide-owning
-   hybrid** and added to the taxonomy as P8.
+   hybrid** and added to the taxonomy as P9 — P9 rather than P8 because the
+   retired record's taxonomy below already assigns P8 to staged orchestration,
+   and an identifier must not change meaning between the retired and current
+   taxonomies.
 2. **Canonical gate shape documented.** The 0.18 `result:` early-return arms
    were documented as a mechanism but not as a composition style, so older
    ctx-threading + flag-predicate-halt pipelines remained the de-facto

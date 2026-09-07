@@ -173,10 +173,15 @@ For race-prone effect stages, the retired `stagedRun`'s disciplines remain
 good practice: declare the state keys a stage reads and writes, re-gather
 between write and read, treat correlated multi-row transitions as one
 primitive or a compensation chain, and unwind compensations in reverse on
-failure. In a direct pipeline the declaration is the named-dependency list
-itself — every `.pipe(fn, 'in', 'out')` line is declared dataflow, which is
-why ctx-object threading is discouraged for new pipelines. The full design
-record is `docs/adr/history/0004-revisions.md`.
+failure. Named dependencies carry the *visibility* half — every
+`.pipe(fn, 'in', 'out')` line shows the dataflow, which is why ctx-object
+threading is discouraged for new pipelines — but none of `stagedRun`'s
+*enforcement*: the interpreter's stale-read validation and reverse-compensation
+unwinding die with the combinator. A migrated flow must re-establish them by
+hand — atomicity through repository primitives (Decision 3), staleness through
+explicit re-gather stages, compensation through the primitives' own guards —
+pinned by that slice's characterization tests. The full design record is
+`docs/adr/history/0004-revisions.md`.
 
 ## Pattern taxonomy (vocabulary, not categories to choose between)
 
@@ -188,14 +193,17 @@ record is `docs/adr/history/0004-revisions.md`.
 | P4 optional stages | `?dep` skips when undefined |
 | P6 per-event reducer | pipeline as reducer body, never the loop |
 | P7 functional sandwich | read → plan → apply |
-| P8 decide-owning hybrid | `result:`-arm gate pipeline consulted by a resource-owning shell at its decision points |
+| P9 decide-owning hybrid | `result:`-arm gate pipeline consulted by a resource-owning shell at its decision points |
 | Mixed business path | decisions + transforms + effects in one pipeline (the default) |
 
 ## Roadmap (open items)
 
 - Migrate existing `decisionRun`/`stagedRun` call sites onto direct pipelines,
   slice-by-slice in the slices that touch them (deprecation recorded
-  2026-09-07); no new combinator call sites in the meantime.
+  2026-09-07); no new combinator call sites in the meantime. Each migration
+  re-establishes the retired interpreter's guarantees — stale-read re-gathers,
+  reverse compensation — through repository primitives and the slice's tests,
+  never by assumption.
 - Recovery handlers as one direct pipeline each: `repairQueuedWorkflowNodeHandoffs`
   first, then the four `handle*Executions` handlers, then top-level
   `processRunTick` composition.
