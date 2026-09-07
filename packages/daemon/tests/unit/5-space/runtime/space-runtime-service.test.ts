@@ -1466,7 +1466,11 @@ describe('SpaceRuntimeService', () => {
           id: 'pending-entry-1',
           to: { kind: 'session', sessionId },
           messageUuid: nagKey,
-          message: { message: { content: [{ type: 'text', text: 'Different nag content.' }] } },
+          message: {
+            type: 'user',
+            parent_tool_use_id: null,
+            message: { content: [{ type: 'text', text: 'Different nag content.' }] },
+          },
         },
       });
       const svc = buildLhDeliveryService(sessionId, mailbox);
