@@ -1,12 +1,16 @@
 import { describe, expect, it, mock } from 'bun:test';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import { signalDeliveryConsumed } from '../../../../src/lib/agent/message-delivery';
 import {
   PromptContentConflictError,
   persistPrompt,
 } from '../../../../src/lib/agent/message-delivery-outbox';
 import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery';
 import { MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
-import { deliverSpaceAgentMessage } from '../../../../src/lib/space/runtime/space-agent-message-delivery';
+import {
+  deliverSpaceAgentMessage,
+  SpaceAgentLateSettlements,
+} from '../../../../src/lib/space/runtime/space-agent-message-delivery';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import { createOutboxTestDb, type OutboxTestDb } from '../../../helpers/outbox-test-db';
 
@@ -206,6 +210,96 @@ describe('deliverSpaceAgentMessage', () => {
     expect(pendingMailboxJobCount(h, MESSAGE_ID)).toBe(0);
     expect(h.setQueuedIfIdle).not.toHaveBeenCalled();
     expect(h.publishStatusChanged).not.toHaveBeenCalled();
+    h.db.close();
+  });
+
+  it('rejects a conflicting pending admission before the mailbox processor runs', async () => {
+    const h = makeHarness();
+
+    const first = await deliverSpaceAgentMessage(h.deps, h.input('first payload'));
+    expect(first.state).toBe('accepted');
+
+    await expect(
+      deliverSpaceAgentMessage(h.deps, h.input('second payload'))
+    ).rejects.toBeInstanceOf(PromptContentConflictError);
+    expect(pendingMailboxJobCount(h, MESSAGE_ID)).toBe(1);
+    h.db.close();
+  });
+
+  it('accepts an idempotent same-content retry while the first admission is pending', async () => {
+    const h = makeHarness();
+
+    await deliverSpaceAgentMessage(h.deps, h.input('same payload'));
+    const retry = await deliverSpaceAgentMessage(h.deps, h.input('same payload'));
+
+    expect(retry).toEqual({ state: 'accepted', messageId: MESSAGE_ID, sessionId: SESSION_ID });
+    h.db.close();
+  });
+
+  it('short-circuits consumption evidence on a failed row without waking the session', async () => {
+    const h = makeHarness();
+    const persisted = persistPrompt({
+      db: h.db,
+      sdkMessageRepo: h.sdkRepo,
+      jobQueue: h.jobQueue,
+      sessionId: SESSION_ID,
+      message: userMessage('evidence backed'),
+      delivery: { origin: 'space_agent' },
+    });
+    h.completeDeliveryJobs(SESSION_ID, MESSAGE_ID);
+    h.sdkRepo.updateMessageStatus([persisted.dbMessageId], 'failed');
+    h.db
+      .prepare('UPDATE sdk_messages SET consumed_seq = 1 WHERE session_id = ? AND sdk_uuid = ?')
+      .run(SESSION_ID, MESSAGE_ID);
+    const onConsumed = mock(() => {});
+
+    const outcome = await deliverSpaceAgentMessage(
+      { ...h.deps, onConsumed },
+      h.input('evidence backed')
+    );
+
+    expect(outcome.state).toBe('accepted');
+    expect(onConsumed).toHaveBeenCalledWith(SESSION_ID);
+    expect(pendingMailboxJobCount(h, MESSAGE_ID)).toBe(0);
+    expect(h.setQueuedIfIdle).not.toHaveBeenCalled();
+    h.db.close();
+  });
+
+  it('does not fire late failure while a failed row awaits mailbox retry admission', async () => {
+    const h = makeHarness();
+    const persisted = persistPrompt({
+      db: h.db,
+      sdkMessageRepo: h.sdkRepo,
+      jobQueue: h.jobQueue,
+      sessionId: SESSION_ID,
+      message: userMessage('retry me'),
+      delivery: { origin: 'space_agent' },
+    });
+    h.completeDeliveryJobs(SESSION_ID, MESSAGE_ID);
+    h.sdkRepo.updateMessageStatus([persisted.dbMessageId], 'failed');
+    const lateSettlements = new SpaceAgentLateSettlements();
+    let consumed = false;
+    const onLateFailure = mock(() => {});
+
+    const outcome = await deliverSpaceAgentMessage(
+      {
+        ...h.deps,
+        onConsumed: () => {
+          consumed = true;
+        },
+        onLateFailure,
+        lateSettlement: lateSettlements,
+      },
+      h.input('retry me')
+    );
+
+    expect(outcome.state).toBe('accepted');
+    expect(onLateFailure).not.toHaveBeenCalled();
+
+    signalDeliveryConsumed(SESSION_ID, MESSAGE_ID);
+    await waitFor(() => consumed);
+    expect(onLateFailure).not.toHaveBeenCalled();
+    lateSettlements.dispose();
     h.db.close();
   });
 });

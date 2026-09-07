@@ -12,6 +12,7 @@ import {
   verifyPromptContent,
 } from '../../agent/message-delivery-outbox.ts';
 import { renderAddress } from '../../mailbox/address.ts';
+import { MAILBOX_LANE } from '../../mailbox/enqueue.ts';
 import { handoffPromptToMailbox, type MailboxHandoffOutcome } from '../../mailbox/handoff.ts';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
@@ -184,8 +185,14 @@ function notifyConsumed(ctx: SpaceAgentDeliveryCtx): void {
   }
 }
 
+function hasSettledDeliveryRow(ctx: SpaceAgentDeliveryCtx): boolean {
+  if (ctx.existing?.sendStatus === 'consumed') return true;
+  if (ctx.deps.sdkMessageRepo.hasConsumptionEvidence(ctx.sessionId, ctx.messageId)) return true;
+  return ctx.deps.sdkMessageRepo.getSettledDeliveryMessageId(ctx.sessionId, ctx.messageId) !== null;
+}
+
 function shortCircuitConsumed(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx {
-  if (ctx.existing?.sendStatus !== 'consumed') return ctx;
+  if (!hasSettledDeliveryRow(ctx)) return ctx;
   verifyPromptContent({
     db: ctx.deps.db,
     sessionId: ctx.sessionId,
@@ -199,6 +206,26 @@ function shortCircuitConsumed(ctx: SpaceAgentDeliveryCtx): SpaceAgentDeliveryCtx
   };
 }
 
+function assertNoConflictingPendingAdmission(ctx: SpaceAgentDeliveryCtx): void {
+  const pending = ctx.deps.jobQueue.listActiveByPayload(MAILBOX_LANE, {
+    messageUuid: ctx.messageId,
+  });
+  const content = JSON.stringify(ctx.sdkUserMessage.message.content);
+  for (const job of pending) {
+    const entry = job.payload as {
+      to?: { kind?: string; sessionId?: string };
+      message?: { message?: { content?: unknown } };
+    };
+    if (entry?.to?.kind !== 'session' || entry.to.sessionId !== ctx.sessionId) continue;
+    if (JSON.stringify(entry.message?.message?.content) !== content) {
+      throw new PromptContentConflictError(
+        `prompt handoff: message ${ctx.messageId} in session ${ctx.sessionId} ` +
+          'is already pending in the mailbox with different content'
+      );
+    }
+  }
+}
+
 async function enqueuePrompt(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeliveryCtx> {
   verifyPromptContent({
     db: ctx.deps.db,
@@ -206,6 +233,7 @@ async function enqueuePrompt(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeli
     messageUuid: ctx.messageId,
     message: ctx.sdkUserMessage,
   });
+  assertNoConflictingPendingAdmission(ctx);
   const handoff = await handoffPromptToMailbox({
     to: renderAddress({ kind: 'session', sessionId: ctx.sessionId }),
     message: {
@@ -251,13 +279,18 @@ async function acceptOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeli
   }
   await markQueuedIfIdle(ctx);
   if (ctx.deps.onConsumed && ctx.deps.lateSettlement) {
+    let deliveryAdmitted = ctx.existing?.sendStatus !== 'failed';
     ctx.deps.lateSettlement.arm({
       sessionId,
       messageId,
       onConsumed: ctx.deps.onConsumed,
       onFailed: ctx.deps.onLateFailure,
-      getSendStatus: () =>
-        ctx.deps.sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus,
+      getSendStatus: () => {
+        const status = ctx.deps.sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus;
+        if (status === 'failed' && !deliveryAdmitted) return undefined;
+        if (status != null && status !== 'failed') deliveryAdmitted = true;
+        return status;
+      },
     });
   }
   return { ...ctx, outcome: { state: 'accepted', messageId, sessionId } };
