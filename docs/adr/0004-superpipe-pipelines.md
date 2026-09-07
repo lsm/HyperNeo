@@ -52,12 +52,13 @@ cannot see composition, precedence, or effect-order regressions.
    pre-classify flows into decision-vs-staged categories the direct-pipe style
    does not need — the wrong abstraction. New work composes direct pipelines
    only; do not add combinator call sites. Existing call sites stay put and
-   migrate slice-by-slice in the slices that touch them. The blueprints under
-   `docs/superpipe-migration-plans/` and the pilot-chain proposal
-   `docs/agent-layer-superpipe-pilot-proposal.md` predate this deprecation;
-   where their steps call for new `decisionRun`/`stagedRun` implementations,
-   compose direct pipelines instead — updating those documents is its own
-   docs slice (Roadmap).
+   migrate slice-by-slice in the slices that touch them. Any pre-2026-09-07
+   document — the `docs/superpipe-migration-plans/` blueprints, the
+   `docs/agent-layer-superpipe-pilot-proposal.md` pilot chain, the
+   `docs/reports/` surveys — whose steps prescribe new
+   `decisionRun`/`stagedRun` implementations is superseded by this
+   deprecation: compose direct pipelines instead. Updating those documents is
+   its own docs slice (Roadmap).
 2. **Stages.** A stage is a function in the named pipeline. Pure decision and
    transform stages are preferred wherever no await or write is needed; effect
    stages are normal where the path needs them. `!dep` halts the run
@@ -221,10 +222,11 @@ pinned by that slice's characterization tests. The full design record is
 
 ## Roadmap (open items)
 
-- Update the `docs/superpipe-migration-plans/` blueprints and the
-  `docs/agent-layer-superpipe-pilot-proposal.md` pilot-chain proposal onto
-  direct pipelines; until then their combinator prescriptions are superseded
-  by the 2026-09-07 deprecation (Decision 1).
+- Update pre-deprecation documents that still prescribe combinator call
+  sites — the `docs/superpipe-migration-plans/` blueprints, the
+  `docs/agent-layer-superpipe-pilot-proposal.md` pilot chain, the
+  `docs/reports/` surveys — onto direct pipelines; until then those
+  prescriptions are superseded by the 2026-09-07 deprecation (Decision 1).
 - Migrate existing `decisionRun`/`stagedRun` call sites onto direct pipelines,
   slice-by-slice in the slices that touch them (deprecation recorded
   2026-09-07); no new combinator call sites in the meantime. Each migration
