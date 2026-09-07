@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { createHash } from 'node:crypto';
+import {
+  ensurePrompt,
+  persistAndEnqueueDelivery,
+} from '../../../../src/lib/agent/message-delivery-outbox';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
+import { materializeMailboxFailuresForSession } from '../../../../src/lib/mailbox/cancellation';
 import {
   createMailboxDeadHandler,
   createMailboxDeliveryHandler,
@@ -14,10 +19,6 @@ import {
   type MailboxMessage,
 } from '../../../../src/lib/mailbox/entry';
 import { createUlid } from '../../../../src/lib/mailbox/ulid';
-import {
-  ensurePrompt,
-  persistAndEnqueueDelivery,
-} from '../../../../src/lib/agent/message-delivery-outbox';
 import { DeadLetterImmediatelyError } from '../../../../src/storage/job-queue-processor';
 import type {
   Job,
@@ -920,6 +921,112 @@ describe('createMailboxDeliveryHandler', () => {
 
       expect(mailbox.sdkRows()).toHaveLength(0);
       expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(0);
+    });
+
+    describe('deferred replay re-arm', () => {
+      function makeBlockedPublish() {
+        let releasePublish: (() => void) | undefined;
+        const publishDeferredStatus = mock(
+          (_sessionId: string, _dbMessageId: string) =>
+            new Promise<void>((resolve) => {
+              releasePublish = resolve;
+            })
+        );
+        return { publishDeferredStatus, release: () => releasePublish?.() };
+      }
+
+      test('a skipDeferredReplay interrupt deleting the defer job mid-publish settles stale without re-arming replay', async () => {
+        const scheduleDeferredReplay = mock(async () => {});
+        const blocked = makeBlockedPublish();
+        const { handler } = makeHandler(
+          async () => ({ ok: true }),
+          () => false,
+          undefined,
+          async () => {},
+          blocked.publishDeferredStatus,
+          scheduleDeferredReplay
+        );
+        const entry = makeEntry({ origin: 'chat', deliveryMode: 'defer' });
+        const job = claimMailboxJob(mailbox, entry);
+
+        const pending = handler(job);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(blocked.publishDeferredStatus).toHaveBeenCalledTimes(1);
+        expect(mailbox.sdkRows()[0].send_status).toBe('deferred');
+
+        mailbox.jobQueue.cancelMailboxForSession(SESSION_ID);
+        mailbox.sdkMessageRepo.markDeliveryFailedByUuid(SESSION_ID, expectedMessageUuid(entry.id));
+        blocked.release();
+
+        await expect(pending).resolves.toEqual({ outcome: 'stale_attempt' });
+        expect(scheduleDeferredReplay).not.toHaveBeenCalled();
+        expect(mailbox.sdkRows()[0].send_status).toBe('failed');
+        expect(mailbox.jobsByQueue(MAILBOX_LANE)).toHaveLength(0);
+      });
+
+      test('a non-restarting reset through the cancellation pipeline settles stale without re-arming replay', async () => {
+        const scheduleDeferredReplay = mock(async () => {});
+        const blocked = makeBlockedPublish();
+        const { handler } = makeHandler(
+          async () => ({ ok: true }),
+          () => false,
+          undefined,
+          async () => {},
+          blocked.publishDeferredStatus,
+          scheduleDeferredReplay
+        );
+        const entry = makeEntry({ origin: 'space_agent', deliveryMode: 'defer' });
+        const job = claimMailboxJob(mailbox, entry);
+
+        const pending = handler(job);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(blocked.publishDeferredStatus).toHaveBeenCalledTimes(1);
+
+        const cancelled = materializeMailboxFailuresForSession(SESSION_ID, {
+          db: {
+            getJobQueueRepo: () => mailbox.jobQueue,
+            getSDKMessageRepo: () => mailbox.sdkMessageRepo,
+            saveUserMessage: () => null,
+          } as never,
+          internalEventBus: { publish: async () => ({ delivered: 1 }) } as never,
+        });
+        blocked.release();
+
+        expect(cancelled).toEqual([expectedMessageUuid(entry.id)]);
+        await expect(pending).resolves.toEqual({ outcome: 'stale_attempt' });
+        expect(scheduleDeferredReplay).not.toHaveBeenCalled();
+        expect(mailbox.sdkRows()[0].send_status).toBe('failed');
+        expect(mailbox.jobsByQueue(MAILBOX_LANE)).toHaveLength(0);
+      });
+
+      test('a claim-current handler still re-arms replay across the deferred-status publish', async () => {
+        const scheduleDeferredReplay = mock(async () => {});
+        const blocked = makeBlockedPublish();
+        const { handler } = makeHandler(
+          async () => ({ ok: true }),
+          () => false,
+          undefined,
+          async () => {},
+          blocked.publishDeferredStatus,
+          scheduleDeferredReplay
+        );
+        const entry = makeEntry({ origin: 'chat', deliveryMode: 'defer' });
+        const job = claimMailboxJob(mailbox, entry);
+
+        const pending = handler(job);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        blocked.release();
+
+        await expect(pending).resolves.toEqual({
+          entryId: entry.id,
+          sessionId: SESSION_ID,
+          terminal: 'delivered',
+          reason: null,
+          settledAt: expect.any(Number),
+        });
+        expect(scheduleDeferredReplay).toHaveBeenCalledTimes(1);
+        expect(scheduleDeferredReplay).toHaveBeenCalledWith(SESSION_ID);
+      });
     });
   });
 });
