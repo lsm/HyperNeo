@@ -70,6 +70,7 @@ describe('createMailboxDeferredReplayScheduler', () => {
     expect(observed).toBeGreaterThan(5);
     await flush(30);
     expect(publish.mock.calls.length).toBeGreaterThan(observed);
+    scheduler.cancel(SESSION_ID);
   });
 
   test('does not publish for manual mode sessions', async () => {
