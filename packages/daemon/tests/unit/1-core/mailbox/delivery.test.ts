@@ -504,6 +504,45 @@ describe('createMailboxDeliveryHandler', () => {
       }
     });
 
+    test('a human inputKind keeps the row non-synthetic with null origin; task stays synthetic', async () => {
+      const messageUuid = '00000000-0000-4000-8000-0000000000ff';
+      for (const inputKind of ['human', 'task'] as const) {
+        mailbox.close();
+        mailbox = createMailboxTestDb();
+        const { handler } = makeHandler();
+        const entry = makeEntry({
+          origin: 'space_inject',
+          messageUuid,
+          message: {
+            type: 'user',
+            message: { content: 'panel words' },
+            parent_tool_use_id: null,
+            inputKind,
+          },
+        });
+        const job = claimMailboxJob(mailbox, entry);
+
+        await handler(job);
+
+        const rows = mailbox.sdkRows();
+        expect(rows).toHaveLength(1);
+        const stored = JSON.parse(rows[0].sdk_message) as {
+          isSynthetic?: boolean;
+          inputKind?: string;
+        };
+        expect(stored.inputKind).toBe(inputKind);
+        if (inputKind === 'human') {
+          expect(rows[0].origin).toBeNull();
+          expect(stored.isSynthetic).toBeUndefined();
+          expect(humanPredicate(mailbox, SESSION_ID, messageUuid)).toBe(true);
+        } else {
+          expect(rows[0].origin).toBe('system');
+          expect(stored.isSynthetic).toBe(true);
+          expect(humanPredicate(mailbox, SESSION_ID, messageUuid)).toBe(false);
+        }
+      }
+    });
+
     test('an unrecognized origin is delivery-mapped to space_inject and stamped synthetic', async () => {
       const { handler } = makeHandler();
       const entry = makeEntry({ origin: 'some_future_origin' });
@@ -841,6 +880,57 @@ describe('createMailboxDeliveryHandler', () => {
       expect(mailbox.sdkRows()[0].send_status).toBe('enqueued');
       expect(deliveryPayloads(mailbox, SESSION_ID, messageUuid)[0].released).toBe(true);
       expect(published).toEqual([[SESSION_ID, rowId, 'enqueued']]);
+    });
+
+    test('a defer entry flips a failed prompt to deferred instead of stranding it', async () => {
+      const { handler } = makeHandler();
+      const messageUuid = '00000000-0000-4000-8000-000000000005';
+      const firstJob = claimMailboxJob(mailbox, makeEntry({ origin: 'space_agent', messageUuid }));
+
+      await handler(firstJob);
+      const rowId = mailbox.sdkRows()[0].id;
+      mailbox.sdkMessageRepo.updateMessageStatus([rowId], 'failed');
+      for (const job of mailbox.jobsByQueue(MESSAGE_DELIVERY)) {
+        mailbox.jobQueue.markDeadIfActive(job.id, 'delivery failed');
+      }
+
+      const deferJob = claimMailboxJob(
+        mailbox,
+        makeEntry({ origin: 'space_agent', messageUuid, deliveryMode: 'defer' })
+      );
+      const result = await handler(deferJob);
+
+      expect(result).toMatchObject({ terminal: 'delivered', sessionId: SESSION_ID });
+      expect(mailbox.sdkRows()).toHaveLength(1);
+      expect(mailbox.sdkRows()[0].send_status).toBe('deferred');
+      expect(
+        mailbox.jobsByQueue(MESSAGE_DELIVERY).filter((job) => job.status === 'pending')
+      ).toHaveLength(0);
+    });
+
+    test('a defer entry leaves a consumed-then-failed row settled instead of replaying it', async () => {
+      const { handler } = makeHandler();
+      const messageUuid = '00000000-0000-4000-8000-000000000006';
+      const firstJob = claimMailboxJob(mailbox, makeEntry({ origin: 'space_agent', messageUuid }));
+
+      await handler(firstJob);
+      const rowId = mailbox.sdkRows()[0].id;
+      mailbox.db
+        .prepare(`UPDATE sdk_messages SET send_status = 'failed', consumed_seq = 1 WHERE id = ?`)
+        .run(rowId);
+      for (const job of mailbox.jobsByQueue(MESSAGE_DELIVERY)) {
+        mailbox.jobQueue.markDeadIfActive(job.id, 'delivery failed');
+      }
+
+      const deferJob = claimMailboxJob(
+        mailbox,
+        makeEntry({ origin: 'space_agent', messageUuid, deliveryMode: 'defer' })
+      );
+      const result = await handler(deferJob);
+
+      expect(result).toMatchObject({ terminal: 'delivered', sessionId: SESSION_ID });
+      expect(mailbox.sdkRows()).toHaveLength(1);
+      expect(mailbox.sdkRows()[0].send_status).toBe('failed');
     });
 
     test('a synchronous publisher throw never fails an already-delivered entry', async () => {

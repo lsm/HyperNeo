@@ -102,7 +102,7 @@ const runMailboxHandoff = (
   .error(crashHandler, ['error'])
   .endAsync('outcome') as (...args: unknown[]) => Promise<MailboxHandoffOutcome>;
 
-export function handoffPromptToMailbox(args: {
+export interface MailboxHandoffArgs {
   to: string;
   message: MailboxMessage;
   origin: string;
@@ -110,7 +110,9 @@ export function handoffPromptToMailbox(args: {
   deliveryMode?: MailboxDeliveryMode;
   messageUuid?: string;
   jobQueue: JobQueueRepository;
-}): Promise<MailboxHandoffOutcome> {
+}
+
+export function handoffPromptToMailbox(args: MailboxHandoffArgs): Promise<MailboxHandoffOutcome> {
   return runMailboxHandoff(
     args.to,
     args.message,

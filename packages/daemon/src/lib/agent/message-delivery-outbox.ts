@@ -21,7 +21,11 @@ import {
   type MessageDeliveryOrigin,
   type MessageDeliveryPayload,
 } from './message-delivery.ts';
-import { canonicalJson, normalizePromptForComparison } from './prompt-comparison.ts';
+import {
+  canonicalJson,
+  normalizePromptForComparison,
+  PromptContentConflictError,
+} from './prompt-comparison.ts';
 
 export type PromptHold = 'immediate' | 'manual';
 
@@ -599,12 +603,7 @@ function lookupPromptRow(ctx: PromptValidatedCtx & PersistPromptArgs): EnsurePro
   return { ...ctx, existing: row ?? null };
 }
 
-export class PromptContentConflictError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'PromptContentConflictError';
-  }
-}
+export { PromptContentConflictError };
 
 export function verifyPromptContent(args: {
   db: BunDatabase;

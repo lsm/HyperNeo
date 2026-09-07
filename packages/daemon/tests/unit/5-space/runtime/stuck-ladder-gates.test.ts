@@ -14,11 +14,14 @@ const NOW = 10_000;
 const THRESHOLD_MS = 15 * 60 * 1000;
 const NAG_GRACE_MS = 2 * 60 * 1000;
 
-function makeMessage(overrides: { type?: string; dbId?: string; timestamp?: number } = {}) {
+function makeMessage(
+  overrides: { type?: string; dbId?: string; uuid?: string; timestamp?: number } = {}
+) {
   return {
     type: overrides.type ?? 'assistant',
     dbId: overrides.dbId ?? 'msg-1',
     timestamp: overrides.timestamp ?? 5_000,
+    ...(overrides.uuid !== undefined ? { uuid: overrides.uuid } : {}),
   };
 }
 
@@ -143,14 +146,19 @@ describe('observeExecutionProgress', () => {
     expect(state).toEqual(snapshot);
   });
 
-  test('the runtime nag message is tracked but never counts as progress', () => {
+  test('the runtime nag message is tracked by sdk uuid and never counts as progress', () => {
     const state = spentState({
       lastObservedMessageId: 'msg-old',
       lastObservedProgressMessageId: 'msg-progress',
-      lastRuntimeNagMessageId: 'msg-nag',
+      lastRuntimeNagMessageId: 'uuid-nag',
     });
     const snapshot = { ...state };
-    const nag = makeMessage({ type: 'user', dbId: 'msg-nag', timestamp: 8_000 });
+    const nag = makeMessage({
+      type: 'user',
+      dbId: 'db-nag-row',
+      uuid: 'uuid-nag',
+      timestamp: 8_000,
+    });
     const result = observeExecutionProgress(
       state,
       { agentSessionId: 'session-1', lastActivityAt: null, startedAt: 1_000 },
@@ -159,13 +167,36 @@ describe('observeExecutionProgress', () => {
     );
     expect(result.observedAt).toBe(1_000);
     expect(result.state).not.toBe(state);
-    expect(result.state.lastObservedMessageId).toBe('msg-nag');
+    expect(result.state.lastObservedMessageId).toBe('db-nag-row');
     expect(result.state.lastObservedMessageAt).toBe(8_000);
     expect(result.state.lastObservedProgressMessageId).toBe('msg-progress');
     expect(result.state.nagCount).toBe(MAX_AGENT_STUCK_NAGS);
     expect(result.state.restartCount).toBe(MAX_AGENT_STUCK_RESTARTS);
     expect(result.state.lastAction).toBe('restart');
     expect(state).toEqual(snapshot);
+  });
+
+  test('a user message whose dbId matches the stored nag id is not mistaken for the nag', () => {
+    const state = spentState({
+      lastObservedMessageId: 'msg-old',
+      lastObservedProgressMessageId: 'msg-progress',
+      lastRuntimeNagMessageId: 'uuid-nag',
+    });
+    const lookalike = makeMessage({
+      type: 'user',
+      dbId: 'uuid-nag',
+      uuid: 'uuid-other',
+      timestamp: 8_000,
+    });
+    const result = observeExecutionProgress(
+      state,
+      { agentSessionId: 'session-1', lastActivityAt: null, startedAt: 1_000 },
+      lookalike,
+      NOW
+    );
+    expect(result.observedAt).toBe(8_000);
+    expect(result.state.lastObservedProgressMessageId).toBe('uuid-nag');
+    expect(result.state.nagCount).toBe(0);
   });
 
   test('an unchanged last message returns the input state by reference', () => {

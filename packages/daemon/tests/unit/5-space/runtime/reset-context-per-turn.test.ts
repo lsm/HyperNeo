@@ -195,6 +195,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       handleQueryTrigger: session.replayMock,
       clearConversationContext: session.clearMock,
       messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
+      stateManager: { setQueuedIfIdle: mock(async () => true) },
     } as unknown as AgentSession;
   }
 
@@ -222,20 +223,21 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     return dbMessageId;
   }
 
-  it('first inject persists the row and enqueues a durable job', async () => {
+  it('first inject enqueues a durable mailbox entry the lane materializes', async () => {
     const outbox = createOutboxTestDb();
     const { manager, session } = makeManager({ outbox });
     indexSession(manager, liveSession(session));
 
-    const dbId = await manager.injectSubSessionMessage(
+    const messageId = await manager.injectSubSessionMessage(
       SESSION_ID,
       '─── Message from coder ───',
       true
     );
 
-    expect(typeof dbId).toBe('string');
-    expect(outbox.userRowCount(SESSION_ID)).toBe(1);
-    expect(outbox.pendingDeliveryJobCount(SESSION_ID)).toBe(1);
+    expect(typeof messageId).toBe('string');
+    expect(outbox.pendingMailboxJobCount(SESSION_ID, messageId)).toBe(1);
+    expect(outbox.userRowCount(SESSION_ID)).toBe(0);
+    expect(outbox.pendingDeliveryJobCount(SESSION_ID)).toBe(0);
   });
 
   it('a retry finding an existing CONSUMED row does not re-persist or re-enqueue (no re-drive)', async () => {
@@ -248,7 +250,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     expect(session.jobQueueEnqueue).not.toHaveBeenCalled();
   });
 
-  it('a retry finding an existing FAILED row retries it through the mailbox without a duplicate row', async () => {
+  it('a retry finding an existing FAILED row rides the mailbox lane without minting a duplicate row', async () => {
     const outbox = createOutboxTestDb();
     const dbId = seedDeliveryRow(outbox, 'msg-failed-retry', '─── Message from coder ───');
     outbox.completeDeliveryJobs(SESSION_ID, 'msg-failed-retry');
@@ -266,13 +268,79 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       'msg-failed-retry'
     );
 
-    expect(returned).toBe(dbId);
-    expect(outbox.sendStatus(SESSION_ID, 'msg-failed-retry')).toBe('enqueued');
+    expect(returned).toBe('msg-failed-retry');
+    expect(outbox.pendingMailboxJobCount(SESSION_ID, 'msg-failed-retry')).toBe(1);
+    expect(outbox.sendStatus(SESSION_ID, 'msg-failed-retry')).toBe('failed');
     expect(outbox.userRowCount(SESSION_ID)).toBe(1);
-    expect(outbox.pendingDeliveryJobCount(SESSION_ID, 'msg-failed-retry')).toBe(1);
+    expect(outbox.pendingDeliveryJobCount(SESSION_ID, 'msg-failed-retry')).toBe(0);
   });
 
-  it('a failed-row retry with conflicting content rejects and leaves the row failed with no delivery job', async () => {
+  it('a settled-then-failed row does not queue the idle session on an immediate retry', async () => {
+    const outbox = createOutboxTestDb();
+    const dbId = seedDeliveryRow(outbox, 'msg-settled-failed', '─── Message from coder ───');
+    outbox.completeDeliveryJobs(SESSION_ID, 'msg-settled-failed');
+    outbox.db
+      .prepare(`UPDATE sdk_messages SET send_status = 'failed', consumed_seq = 1 WHERE id = ?`)
+      .run(dbId);
+    const { manager, session } = makeManager({ outbox });
+    const setQueuedIfIdle = mock(async () => true);
+    const live = {
+      session: { id: SESSION_ID, sdkSessionId: 'prior-sdk-session' },
+      getProcessingState: () => ({ status: 'idle' }),
+      ensureQueryStarted: session.ensureStartedMock,
+      handleQueryTrigger: session.replayMock,
+      clearConversationContext: session.clearMock,
+      messageQueue: { enqueueWithId: session.enqueueMock, size: () => 0 },
+      stateManager: { setQueuedIfIdle },
+    } as unknown as AgentSession;
+    indexSession(manager, live);
+
+    const returned = await manager.injectSubSessionMessage(
+      SESSION_ID,
+      '─── Message from coder ───',
+      true,
+      undefined,
+      'immediate',
+      undefined,
+      'msg-settled-failed'
+    );
+
+    expect(returned).toBe('msg-settled-failed');
+    expect(outbox.pendingMailboxJobCount(SESSION_ID, 'msg-settled-failed')).toBe(1);
+    expect(setQueuedIfIdle).not.toHaveBeenCalled();
+  });
+
+  it('a second inject reusing a pending uuid with different content rejects before enqueue', async () => {
+    const outbox = createOutboxTestDb();
+    const { manager, session } = makeManager({ outbox });
+    indexSession(manager, liveSession(session));
+
+    await manager.injectSubSessionMessage(
+      SESSION_ID,
+      'first body',
+      true,
+      undefined,
+      'immediate',
+      undefined,
+      'msg-pending-reuse'
+    );
+    expect(outbox.pendingMailboxJobCount(SESSION_ID, 'msg-pending-reuse')).toBe(1);
+
+    await expect(
+      manager.injectSubSessionMessage(
+        SESSION_ID,
+        'second body',
+        true,
+        undefined,
+        'immediate',
+        undefined,
+        'msg-pending-reuse'
+      )
+    ).rejects.toBeInstanceOf(PromptContentConflictError);
+    expect(outbox.pendingMailboxJobCount(SESSION_ID, 'msg-pending-reuse')).toBe(1);
+  });
+
+  it('a failed-row retry with conflicting content rejects before the mailbox handoff', async () => {
     const outbox = createOutboxTestDb();
     const dbId = seedDeliveryRow(outbox, 'msg-conflict-retry', 'original body');
     outbox.completeDeliveryJobs(SESSION_ID, 'msg-conflict-retry');
@@ -295,6 +363,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     expect(outbox.sendStatus(SESSION_ID, 'msg-conflict-retry')).toBe('failed');
     expect(outbox.userRowCount(SESSION_ID)).toBe(1);
     expect(outbox.pendingDeliveryJobCount(SESSION_ID, 'msg-conflict-retry')).toBe(0);
+    expect(outbox.pendingMailboxJobCount(SESSION_ID, 'msg-conflict-retry')).toBe(0);
   });
 
   it('a cancelled clear during a FAILED-row retry aborts before reopening the row', async () => {
@@ -427,22 +496,19 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     });
   });
 
-  it('a fresh enqueued injection publishes messages.statusChanged', async () => {
+  it('a fresh injection leaves status publishing to the mailbox lane', async () => {
     const outbox = createOutboxTestDb();
     const { manager, session } = makeManager({ outbox });
     indexSession(manager, liveSession(session));
 
-    const dbId = await manager.injectSubSessionMessage(
+    const messageId = await manager.injectSubSessionMessage(
       SESSION_ID,
       '─── Message from coder ───',
       true
     );
 
-    expect(session.publishStatusChanged).toHaveBeenCalledWith('messages.statusChanged', {
-      sessionId: SESSION_ID,
-      messageIds: [dbId],
-      status: 'enqueued',
-    });
+    expect(session.publishStatusChanged).not.toHaveBeenCalled();
+    expect(outbox.pendingMailboxJobCount(SESSION_ID, messageId)).toBe(1);
   });
 
   it('a failed-row retry publishes reopen and deferred status changes', async () => {
@@ -529,7 +595,7 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
     } as unknown as AgentSession;
     indexSession(manager, live);
 
-    const dbId = await manager.injectSubSessionMessage(
+    const returned = await manager.injectSubSessionMessage(
       SESSION_ID,
       'queue for next turn',
       false,
@@ -537,7 +603,8 @@ describe('injectMessageIntoSession — v2 idempotent persist (Codex P1)', () => 
       'defer'
     );
 
-    expect(dbId).toBe('db-id');
+    expect(returned).not.toBe('db-id');
+    expect(typeof returned).toBe('string');
     expect(session.saveUserMessage).toHaveBeenCalledTimes(1);
     expect(session.saveUserMessage.mock.calls[0][2]).toBe('deferred');
     expect(session.enqueueMock).not.toHaveBeenCalled();

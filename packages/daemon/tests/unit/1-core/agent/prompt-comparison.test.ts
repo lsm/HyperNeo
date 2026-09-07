@@ -74,6 +74,26 @@ describe('prompt-comparison', () => {
       expect(normalized.inputKind).toBe('resume');
     });
 
+    it('treats an explicit isSynthetic false as equivalent to the absent flag', () => {
+      expect(canonicalJson(normalizePromptForComparison(userMessage({ isSynthetic: false })))).toBe(
+        canonicalJson(normalizePromptForComparison(userMessage()))
+      );
+    });
+
+    it('keeps isSynthetic true distinct from the absent flag', () => {
+      expect(
+        canonicalJson(normalizePromptForComparison(userMessage({ isSynthetic: true })))
+      ).not.toBe(canonicalJson(normalizePromptForComparison(userMessage())));
+    });
+
+    it('drops both inputKind task and isSynthetic false together', () => {
+      const normalized = normalizePromptForComparison(
+        userMessage({ inputKind: 'task', isSynthetic: false })
+      ) as SDKMessage & { inputKind?: string; isSynthetic?: boolean };
+      expect(normalized.inputKind).toBeUndefined();
+      expect(normalized.isSynthetic).toBeUndefined();
+    });
+
     it('applies role normalization to messages without inputKind', () => {
       const normalized = normalizePromptForComparison(userMessage());
       expect((normalized.message as Record<string, unknown>).role).toBeUndefined();

@@ -956,6 +956,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     const mailboxDeferredReplayScheduler = createMailboxDeferredReplayScheduler({
       internalEventBus,
       sessionManager,
+      isSessionHeldByTaskLimit: (sessionId) =>
+        taskAgentManager?.isSessionHeldByTaskRateLimit(sessionId) ?? false,
     });
     sessionManager?.setMailboxDeferredReplaySuppressor((sessionId) =>
       mailboxDeferredReplayScheduler.cancel(sessionId)

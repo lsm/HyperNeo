@@ -151,6 +151,47 @@ describe('createMailboxDeadHandler', () => {
     mailbox.close();
   });
 
+  test('a human inputKind failure row keeps null origin; task stays system+synthetic', async () => {
+    for (const inputKind of ['human', 'task'] as const) {
+      const mailbox = createMailboxTestDb();
+      const entry = makeEntry({
+        origin: 'space_inject',
+        messageUuid: `dead-${inputKind}`,
+        message: {
+          type: 'user',
+          message: { content: 'panel words' },
+          parent_tool_use_id: null,
+          inputKind,
+        },
+      });
+      const job = claimMailboxJob(mailbox, entry);
+      const handler = createMailboxDeadHandler(() => {}, {
+        sdkMessageRepo: mailbox.sdkMessageRepo,
+        saveFailed: (sessionId, message, origin) =>
+          mailbox.sdkMessageRepo.saveUserMessage(sessionId, message, 'failed', origin),
+      });
+      job.status = 'dead';
+      job.error = 'mailbox: target session archived';
+
+      handler(job);
+      await Promise.resolve();
+
+      const row = mailbox.sdkRows()[0];
+      expect(row.sdk_uuid).toBe(`dead-${inputKind}`);
+      expect(row.send_status).toBe('failed');
+      const stored = JSON.parse(row.sdk_message) as { isSynthetic?: boolean; inputKind?: string };
+      expect(stored.inputKind).toBe(inputKind);
+      if (inputKind === 'human') {
+        expect(row.origin).toBeNull();
+        expect(stored.isSynthetic).toBeUndefined();
+      } else {
+        expect(row.origin).toBe('system');
+        expect(stored.isSynthetic).toBe(true);
+      }
+      mailbox.close();
+    }
+  });
+
   test('reuses the existing failed row when delivery dies after marking the row failed', async () => {
     const mailbox = createMailboxTestDb();
     const entry = makeEntry({ origin: 'chat', messageUuid: 'archived-then-failed' });

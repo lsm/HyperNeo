@@ -45,7 +45,8 @@ export type ReplaySkipReason =
   | 'no_cached_session'
   | 'manual_mode'
   | 'session_inactive'
-  | 'session_unavailable';
+  | 'session_unavailable'
+  | 'task_rate_limited';
 
 export function gateSessionPresent(
   session: AgentSession | null
@@ -86,6 +87,7 @@ export const decideReplayAdmission = (
 export interface MailboxDeferredReplaySchedulerDeps {
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   sessionManager: Pick<SessionManager, 'getCachedSession'> | null;
+  isSessionHeldByTaskLimit?: (sessionId: string) => boolean;
   retryBackoffBaseMs?: number;
   retryBackoffCapMs?: number;
 }
@@ -170,6 +172,12 @@ export function createMailboxDeferredReplayScheduler(
     sessionId: string,
     fetched: AgentSession | null
   ): { session: AgentSession | null; retryDelayMs: number | null } => {
+    if (deps.isSessionHeldByTaskLimit?.(sessionId) === true) {
+      return {
+        session: null,
+        retryDelayMs: admissionRetryDelayMs(sessionId, 'task_rate_limited'),
+      };
+    }
     const admission = decideReplayAdmission(fetched);
     if (typeof admission !== 'string') return { session: admission, retryDelayMs: null };
     if (admission === 'session_inactive') {

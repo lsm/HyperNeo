@@ -14,7 +14,6 @@ import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
 import type { AgentMemoryRepository } from '../../../storage/repositories/agent-memory-repository.ts';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
-import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type { SessionRepository } from '../../../storage/repositories/session-repository.ts';
@@ -46,8 +45,16 @@ import {
 import type { DaemonCommandMap, InternalCommandBus } from '../../internal-command-bus.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../../internal-event-bus.ts';
 import { Logger } from '../../logger.ts';
-import { enqueueMailboxEntry, MAILBOX_LANE } from '../../mailbox/enqueue.ts';
-import { createMailboxEntry, type MailboxEntry, toMailboxMessage } from '../../mailbox/entry.ts';
+import {
+  assertNoPendingMailboxContentConflict,
+  enqueueMailboxEntry,
+} from '../../mailbox/enqueue.ts';
+import {
+  createMailboxEntry,
+  type MailboxEntry,
+  toMailboxMessage,
+  type MailboxMessage,
+} from '../../mailbox/entry.ts';
 import type { SessionManager } from '../../session-manager.ts';
 import { buildAgentSessionConfig } from '../../session-resolution/agent-session-config.ts';
 import { createDefaultSessionResolutionDeps } from '../../session-resolution/default-deps.ts';
@@ -595,7 +602,7 @@ export class SpaceRuntimeService {
       messageUuid: id,
       message: persistedMessage,
     });
-    this.assertNoPendingMailboxContentConflict(sessionId, id, projected.message.message.content);
+    this.assertNoPendingMailboxContentConflict(sessionId, id, projected.message, 'long_term_agent');
     const outcome = enqueueMailboxEntry(jobQueue, entry);
     return outcome.kind === 'enqueued'
       ? { state: 'accepted', mailboxEntryId: outcome.id }
@@ -605,31 +612,12 @@ export class SpaceRuntimeService {
   private assertNoPendingMailboxContentConflict(
     sessionId: string,
     messageUuid: string,
-    content: unknown
+    message: MailboxMessage,
+    origin: string
   ): void {
-    for (const job of this.listActiveMailboxAdmissions(sessionId, messageUuid)) {
-      const payload = job.payload as Record<string, unknown>;
-      const pending = (payload.message as { message?: { content?: unknown } } | undefined)?.message
-        ?.content;
-      if (JSON.stringify(pending) !== JSON.stringify(content)) {
-        throw new PromptContentConflictError(
-          `prompt handoff: message ${messageUuid} in session ${sessionId} ` +
-            'already exists with different content'
-        );
-      }
-    }
-  }
-
-  private listActiveMailboxAdmissions(
-    sessionId: string,
-    messageUuid: string
-  ): ReturnType<JobQueueRepository['listActiveByPayload']> {
     const jobQueue = this.config.reactiveDb?.db.getJobQueueRepo();
-    if (!jobQueue) return [];
-    return jobQueue.listActiveByPayload(MAILBOX_LANE, {
-      'to.sessionId': sessionId,
-      messageUuid,
-    });
+    if (!jobQueue) return;
+    assertNoPendingMailboxContentConflict(jobQueue, sessionId, messageUuid, message, origin);
   }
 
   private async refreshLongHorizonAgentSessionConfig(

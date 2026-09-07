@@ -24,6 +24,7 @@ export interface StuckLadderMessageSnapshot {
   type: string;
   dbId: string;
   timestamp: number;
+  uuid?: string;
 }
 
 export function createAgentStuckRecoveryState(
@@ -58,7 +59,7 @@ export function observeExecutionProgress(
   const isRuntimeNagMessage =
     lastMessage !== null &&
     lastMessage.type === 'user' &&
-    lastMessage.dbId === state.lastRuntimeNagMessageId;
+    lastMessage.uuid === state.lastRuntimeNagMessageId;
   const progressMessage = lastMessage !== null && !isRuntimeNagMessage ? lastMessage : null;
   const progressSignals = [execution.lastActivityAt, progressMessage?.timestamp].filter(
     (t): t is number => typeof t === 'number'

@@ -1,5 +1,12 @@
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 
+export class PromptContentConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PromptContentConflictError';
+  }
+}
+
 export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
   if (value !== null && typeof value === 'object') {
@@ -22,9 +29,15 @@ export function normalizeLegacyPromptRole(message: SDKMessage): SDKMessage {
 
 export function normalizePromptForComparison(message: SDKMessage): SDKMessage {
   const roleNormalized = normalizeLegacyPromptRole(message);
-  const withKind = roleNormalized as SDKMessage & { inputKind?: string };
-  if (withKind.inputKind !== 'task') return roleNormalized;
-  const normalized = { ...roleNormalized } as SDKMessage & { inputKind?: string };
-  delete normalized.inputKind;
+  const typed = roleNormalized as SDKMessage & { inputKind?: string; isSynthetic?: boolean };
+  const dropInputKind = typed.inputKind === 'task';
+  const dropSynthetic = typed.isSynthetic === false;
+  if (!dropInputKind && !dropSynthetic) return roleNormalized;
+  const normalized = { ...roleNormalized } as SDKMessage & {
+    inputKind?: string;
+    isSynthetic?: boolean;
+  };
+  if (dropInputKind) delete normalized.inputKind;
+  if (dropSynthetic) delete normalized.isSynthetic;
   return normalized;
 }

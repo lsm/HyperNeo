@@ -29,6 +29,7 @@ import {
   type ContextClearBoundaryOwner,
   withSessionOperationLock,
 } from '../../../lib/agent/message-delivery.ts';
+import { verifyPromptContent } from '../../../lib/agent/message-delivery-outbox.ts';
 import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
 import { readRestartRecoveryNote } from './restart-recovery-note.ts';
 import type { Database } from '../../../storage/database.ts';
@@ -85,6 +86,10 @@ import type { NodeExecutionRepository } from '../../../storage/repositories/node
 import { WorkflowHookStateRepository } from '../../../storage/repositories/workflow-hook-state-repository.ts';
 import { validateGlobPattern } from '../../external-events/topic-validator.ts';
 import { Logger } from '../../logger.ts';
+import { renderAddress } from '../../mailbox/address.ts';
+import { assertNoPendingMailboxContentConflict } from '../../mailbox/enqueue.ts';
+import type { MailboxMessage } from '../../mailbox/entry.ts';
+import { handoffPromptToMailbox } from '../../mailbox/handoff.ts';
 import { sanitizeAssistantUsageInSDKSessionFile } from '../../sdk-session-file-manager.ts';
 import {
   buildExecutionBaseSessionId,
@@ -135,7 +140,6 @@ import {
   deliverAgentMessageToTarget,
   type AgentMessageDeliveryDeps,
 } from './agent-message-delivery-pipeline.ts';
-import { handoffPromptToMailbox } from './prompt-mailbox-handoff.ts';
 import type { ReplyRoutingRegistry } from './reply-routing-registry.ts';
 import { decideRestoredWorkerAdmission } from './restored-worker-admission-decision-pipeline.ts';
 import { isCanonicalTaskTerminalForSpawn } from './run-spawn-decisions.ts';
@@ -4200,7 +4204,7 @@ export class TaskAgentManager {
       if (existing && existing.sendStatus !== 'deferred') {
         this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
       }
-      const deferredDbId = await settleDeliveryRowStatus(deliveryRows, {
+      await settleDeliveryRowStatus(deliveryRows, {
         sessionId,
         message: sdkUserMessage,
         messageId,
@@ -4208,7 +4212,7 @@ export class TaskAgentManager {
         status: 'deferred',
         origin,
       });
-      return deferredDbId;
+      return messageId;
     }
     let boundaryOwner: ContextClearBoundaryOwner | null = null;
     if (
@@ -4280,10 +4284,10 @@ export class TaskAgentManager {
             if (existing.sendStatus === 'failed') {
               await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
             }
-            const flippedDbId = await flipDeliveryRowToDeferred(deliveryRows, sessionId, messageId);
-            return flippedDbId ?? messageId;
+            await flipDeliveryRowToDeferred(deliveryRows, sessionId, messageId);
+            return messageId;
           }
-          return settleDeliveryRowStatus(deliveryRows, {
+          await settleDeliveryRowStatus(deliveryRows, {
             sessionId,
             message: sdkUserMessage,
             messageId,
@@ -4291,29 +4295,48 @@ export class TaskAgentManager {
             status: 'deferred',
             origin,
           });
+          return messageId;
         }
       }
 
-      const handoff = await handoffPromptToMailbox({
-        deps: {
-          db: this.config.db.getDatabase(),
-          sdkMessageRepo: this.config.db.getSDKMessageRepo(),
-          jobQueue: this.config.db.getJobQueueRepo(),
-        },
-        target: {
-          sessionId,
-          messageId,
-          message: sdkUserMessage,
-          origin: 'space_inject',
-          messageOrigin: origin,
-        },
-        stateManager: session.stateManager,
-        publishStatusChanged: deliveryRows.publishStatusChanged,
+      const jobQueue = this.config.db.getJobQueueRepo();
+      const mailboxMessage: MailboxMessage = {
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: sdkContent },
+        inputKind,
+      };
+      verifyPromptContent({
+        db: this.config.db.getDatabase(),
+        sessionId,
+        messageUuid: messageId,
+        message: sdkUserMessage,
       });
-      if (handoff.state === 'stale') {
-        throw new Error('Mailbox handoff became stale');
+      assertNoPendingMailboxContentConflict(
+        jobQueue,
+        sessionId,
+        messageId,
+        mailboxMessage,
+        'space_inject'
+      );
+      const handoff = await handoffPromptToMailbox({
+        to: renderAddress({ kind: 'session', sessionId }),
+        message: mailboxMessage,
+        origin: 'space_inject',
+        messageUuid: messageId,
+        jobQueue,
+      });
+      if (handoff.kind === 'rejected') {
+        throw new Error(`Mailbox handoff rejected: ${handoff.reason}`);
       }
-      return handoff.dbId;
+      if (
+        !this.hasSettledDelivery(sessionId, messageId) &&
+        (jobQueue.activeMailboxMessageUuids(sessionId).has(messageId) ||
+          jobQueue.activeDeliveryMessageUuids(sessionId).has(messageId))
+      ) {
+        await session.stateManager.setQueuedIfIdle(messageId).catch(() => {});
+      }
+      return messageId;
     } finally {
       boundaryOwner?.release();
     }
@@ -4403,6 +4426,21 @@ export class TaskAgentManager {
       }
     }
     return null;
+  }
+
+  isSessionHeldByTaskRateLimit(subSessionId: string): boolean {
+    const parentTaskId = this.findParentTaskIdForSubSession(subSessionId);
+    if (!parentTaskId) return false;
+    const task = this.config.taskRepo.getTask(parentTaskId);
+    return task !== null && isRateOrUsageLimited(task.status ?? '');
+  }
+
+  private hasSettledDelivery(sessionId: string, messageId: string): boolean {
+    const sdkMessageRepo = this.config.db.getSDKMessageRepo();
+    return (
+      sdkMessageRepo.hasConsumptionEvidence(sessionId, messageId) ||
+      sdkMessageRepo.getSettledDeliveryMessageId(sessionId, messageId) !== null
+    );
   }
 
   private static readonly REQUIRED_WORKFLOW_SUBSESSION_MCP_SERVERS = ['node-agent'] as const;
@@ -4723,17 +4761,39 @@ export class TaskAgentManager {
         this.hasUnconsumedDeliveredWork(sessionId, messageId),
       hasHeldDeliveryBacklog: (sessionId, messageId) =>
         this.hasHeldDeliveryBacklog(sessionId, messageId),
+      hasSettledDelivery: (sessionId, messageId) => this.hasSettledDelivery(sessionId, messageId),
+      mailboxDeliveryPending: (sessionId, messageId) => {
+        const jobQueue = this.config.db.getJobQueueRepo();
+        return (
+          jobQueue.activeMailboxMessageUuids(sessionId).has(messageId) ||
+          jobQueue.activeDeliveryMessageUuids(sessionId).has(messageId)
+        );
+      },
+      verifyDeliveryContent: (sessionId, messageId, message, origin) => {
+        verifyPromptContent({
+          db: this.config.db.getDatabase(),
+          sessionId,
+          messageUuid: messageId,
+          message,
+        });
+        assertNoPendingMailboxContentConflict(
+          this.config.db.getJobQueueRepo(),
+          sessionId,
+          messageId,
+          {
+            type: 'user',
+            parent_tool_use_id: null,
+            message: { role: 'user', content: message.message.content },
+            ...(message.inputKind !== undefined ? { inputKind: message.inputKind } : {}),
+          },
+          origin
+        );
+      },
       handoffToMailbox: (args) =>
         handoffPromptToMailbox({
           ...args,
-          deps: {
-            db: this.config.db.getDatabase(),
-            sdkMessageRepo: this.config.db.getSDKMessageRepo(),
-            jobQueue: this.config.db.getJobQueueRepo(),
-          },
+          jobQueue: this.config.db.getJobQueueRepo(),
         }),
-      publishStatusChanged: (sessionId, dbId, status) =>
-        this.publishMessageStatusChanged(sessionId, dbId, status),
       recordActivity: (sessionId) => this.recordActivityForSession(sessionId),
     };
   }

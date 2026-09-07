@@ -96,6 +96,25 @@ describe('createMailboxDeferredReplayScheduler', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
+  test('holds replay behind a task-wide rate limit and publishes once it lifts', async () => {
+    const publish = mock(async () => {});
+    const deps = makeDeps(publish);
+    let taskLimited = true;
+    deps.isSessionHeldByTaskLimit = () => taskLimited;
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(30);
+
+    expect(publish).not.toHaveBeenCalled();
+
+    taskLimited = false;
+    await flush(80);
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    scheduler.cancel(SESSION_ID);
+  });
+
   test('waits through waiting_for_input before publishing', async () => {
     const publish = mock(async () => {});
     const deps = makeDeps(publish);

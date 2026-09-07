@@ -1,11 +1,62 @@
+import type { SDKMessage } from '@hyperneo/shared/sdk';
+import {
+  canonicalJson,
+  normalizePromptForComparison,
+  PromptContentConflictError,
+} from '../agent/prompt-comparison.ts';
 import type { JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
-import type { MailboxEntry } from './entry.ts';
+import {
+  mailboxMessageIsSynthetic,
+  toMailboxMessage,
+  type MailboxEntry,
+  type MailboxMessage,
+} from './entry.ts';
 
 export const MAILBOX_LANE = 'mailbox';
 
 export type MailboxEnqueueOutcome =
   | { kind: 'enqueued'; id: string }
   | { kind: 'rejected'; reason: string };
+
+function materializedComparisonKey(message: MailboxMessage, origin: string): string | null {
+  const projected = toMailboxMessage(message);
+  if ('reason' in projected) return null;
+  const synthetic = mailboxMessageIsSynthetic(origin, projected.message);
+  return canonicalJson(
+    normalizePromptForComparison({
+      ...projected.message,
+      ...(synthetic ? { isSynthetic: true } : {}),
+    } as unknown as SDKMessage)
+  );
+}
+
+export function assertNoPendingMailboxContentConflict(
+  jobQueue: JobQueueRepository,
+  sessionId: string,
+  messageUuid: string,
+  message: MailboxMessage,
+  origin: string
+): void {
+  const incoming = materializedComparisonKey(message, origin);
+  if (incoming === null) return;
+  for (const job of jobQueue.listActiveByPayload(MAILBOX_LANE, {
+    'to.sessionId': sessionId,
+    messageUuid,
+  })) {
+    const payload = job.payload as Record<string, unknown>;
+    if (typeof payload.origin !== 'string') continue;
+    const pending = payload.message as MailboxMessage | undefined;
+    if (pending === undefined) continue;
+    const pendingKey = materializedComparisonKey(pending, payload.origin);
+    if (pendingKey === null) continue;
+    if (pendingKey !== incoming) {
+      throw new PromptContentConflictError(
+        `prompt handoff: message ${messageUuid} in session ${sessionId} ` +
+          'already exists with different content'
+      );
+    }
+  }
+}
 
 export function enqueueMailboxEntry(
   jobQueue: JobQueueRepository,
