@@ -53,8 +53,7 @@ export function createMailboxDeferredReplayScheduler(
   const retryBackoffBaseMs = deps.retryBackoffBaseMs ?? RETRY_BACKOFF_BASE_MS;
   const retryBackoffCapMs = deps.retryBackoffCapMs ?? RETRY_BACKOFF_CAP_MS;
   const active = new Set<string>();
-  const ready: string[] = [];
-  const readySet = new Set<string>();
+  const ready = new Set<string>();
   const tracked = new Set<string>();
   const dirty = new Set<string>();
   const cancelled = new Set<string>();
@@ -62,17 +61,10 @@ export function createMailboxDeferredReplayScheduler(
   const retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const parkedWaiters = new Map<string, () => void>();
 
-  const enqueueReady = (sessionId: string): void => {
-    if (readySet.has(sessionId)) return;
-    readySet.add(sessionId);
-    ready.push(sessionId);
-  };
-
   const pump = (): void => {
-    while (active.size < MAX_ACTIVE_PUBLICATIONS && ready.length > 0) {
-      const sessionId = ready.shift();
-      if (sessionId == null) break;
-      readySet.delete(sessionId);
+    for (const sessionId of ready) {
+      if (active.size >= MAX_ACTIVE_PUBLICATIONS) break;
+      ready.delete(sessionId);
       active.add(sessionId);
       void runSession(sessionId);
     }
@@ -150,7 +142,7 @@ export function createMailboxDeferredReplayScheduler(
           return;
         }
         if (active.size >= MAX_ACTIVE_PUBLICATIONS) {
-          enqueueReady(sessionId);
+          ready.add(sessionId);
           return;
         }
         active.add(sessionId);
@@ -196,7 +188,7 @@ export function createMailboxDeferredReplayScheduler(
         return;
       }
       if (dirty.delete(sessionId)) {
-        enqueueReady(sessionId);
+        ready.add(sessionId);
         tracked.add(sessionId);
         setImmediate(pump);
       }
@@ -221,7 +213,7 @@ export function createMailboxDeferredReplayScheduler(
           const timer = setTimeout(() => {
             retryTimers.delete(sessionId);
             dirty.delete(sessionId);
-            enqueueReady(sessionId);
+            ready.add(sessionId);
             pump();
           }, delay);
           retryTimers.set(sessionId, timer);
@@ -240,15 +232,12 @@ export function createMailboxDeferredReplayScheduler(
       tracked.add(sessionId);
       attempts.delete(sessionId);
       cancelled.delete(sessionId);
-      enqueueReady(sessionId);
+      ready.add(sessionId);
       setImmediate(pump);
     },
     cancel(sessionId: string): void {
       if (!tracked.has(sessionId)) return;
-      const index = ready.indexOf(sessionId);
-      if (index >= 0) {
-        ready.splice(index, 1);
-        readySet.delete(sessionId);
+      if (ready.delete(sessionId)) {
         cleanup(sessionId);
         return;
       }
