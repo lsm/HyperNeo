@@ -110,7 +110,10 @@ describe('InterruptHandler', () => {
     cancelForSessionSpy = mock(() => [] as string[]);
     markFailedSpy = mock(() => null);
     mockDb = {
-      getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
+      getJobQueueRepo: mock(() => ({
+        cancelForSessionWithMessages: cancelForSessionSpy,
+        cancelMailboxForSession: mock(() => []),
+      })),
       getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
       getUserMessageIdsByStatus: mock(() => []),
       notifyChange: mock(() => {}),
@@ -267,6 +270,37 @@ describe('InterruptHandler', () => {
       expect(setInterruptedSpy).not.toHaveBeenCalled();
     });
 
+    it('fails materialized deferred rows when suppressing replay without preserving jobs', async () => {
+      (mockDb.getUserMessageIdsByStatus as ReturnType<typeof mock>).mockImplementation(
+        (_sessionId: string, status: string) =>
+          status === 'deferred' ? [{ dbId: 'row-1', uuid: 'deferred-materialized' }] : []
+      );
+      markFailedSpy.mockImplementation((_sessionId: string, uuid: string) => `db-${uuid}`);
+      handler = createHandler();
+
+      await handler.handleInterrupt({ skipDeferredReplay: true });
+
+      expect(markFailedSpy).toHaveBeenCalledWith('test-session-id', 'deferred-materialized');
+      expect(busPublishSpy).toHaveBeenCalledWith('messages.statusChanged', {
+        sessionId: 'test-session-id',
+        messageIds: ['db-deferred-materialized'],
+        status: 'failed',
+      });
+    });
+
+    it('keeps materialized deferred rows replayable on a plain interrupt', async () => {
+      (mockDb.getUserMessageIdsByStatus as ReturnType<typeof mock>).mockImplementation(
+        (_sessionId: string, status: string) =>
+          status === 'deferred' ? [{ dbId: 'row-1', uuid: 'deferred-materialized' }] : []
+      );
+      markFailedSpy.mockImplementation((_sessionId: string, uuid: string) => `db-${uuid}`);
+      handler = createHandler();
+
+      await handler.handleInterrupt();
+
+      expect(markFailedSpy).not.toHaveBeenCalledWith('test-session-id', 'deferred-materialized');
+    });
+
     it('should skip interrupt if already interrupted', async () => {
       getStateSpy.mockReturnValue({ status: 'interrupted' });
       handler = createHandler();
@@ -337,7 +371,10 @@ describe('InterruptHandler', () => {
     it('cancels ALL durable deliveries before anything else (#3743968030/#3744105273)', async () => {
       cancelForSessionSpy = mock(() => ['turn-uuid', 'steer-uuid']);
       mockDb = {
-        getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
+        getJobQueueRepo: mock(() => ({
+          cancelForSessionWithMessages: cancelForSessionSpy,
+          cancelMailboxForSession: mock(() => []),
+        })),
         getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
       } as unknown as InterruptHandlerContext['db'];
       const callOrder: string[] = [];
@@ -362,7 +399,10 @@ describe('InterruptHandler', () => {
       const notifySpy = mock(() => {});
       cancelForSessionSpy = mock(() => ['turn-uuid']);
       mockDb = {
-        getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
+        getJobQueueRepo: mock(() => ({
+          cancelForSessionWithMessages: cancelForSessionSpy,
+          cancelMailboxForSession: mock(() => []),
+        })),
         getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
         notifyChange: notifySpy,
       } as unknown as InterruptHandlerContext['db'];
@@ -378,7 +418,10 @@ describe('InterruptHandler', () => {
       getStateSpy.mockReturnValue({ status: 'idle', phase: 'idle' });
       cancelForSessionSpy = mock(() => ['pre-claim-uuid']);
       mockDb = {
-        getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
+        getJobQueueRepo: mock(() => ({
+          cancelForSessionWithMessages: cancelForSessionSpy,
+          cancelMailboxForSession: mock(() => []),
+        })),
         getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
       } as unknown as InterruptHandlerContext['db'];
       handler = createHandler({ db: mockDb });
@@ -396,7 +439,10 @@ describe('InterruptHandler', () => {
         status === 'enqueued' ? [orphan] : []
       );
       mockDb = {
-        getJobQueueRepo: mock(() => ({ cancelForSessionWithMessages: cancelForSessionSpy })),
+        getJobQueueRepo: mock(() => ({
+          cancelForSessionWithMessages: cancelForSessionSpy,
+          cancelMailboxForSession: mock(() => []),
+        })),
         getSDKMessageRepo: mock(() => ({ markDeliveryFailedByUuid: markFailedSpy })),
         getUserMessageIdsByStatus: getUserMessageIdsByStatusSpy,
       } as unknown as InterruptHandlerContext['db'];
