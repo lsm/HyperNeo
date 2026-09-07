@@ -7,7 +7,7 @@ import {
 const SESSION_ID = 'sess-1';
 
 function makeDeps(
-  publish: (sessionId: string) => Promise<void>
+  publish: (sessionId: string) => Promise<unknown>
 ): MailboxDeferredReplaySchedulerDeps {
   return {
     internalEventBus: { publish: mock((_event: string, _data: unknown) => publish(SESSION_ID)) },
@@ -224,9 +224,7 @@ describe('createMailboxDeferredReplayScheduler', () => {
       }
       return { delivered: 1, failures: [] };
     });
-    const deps = makeDeps(async () => {
-      await publish();
-    });
+    const deps = makeDeps(() => publish());
     deps.retryBackoffBaseMs = 5;
     const scheduler = createMailboxDeferredReplayScheduler(deps);
 
