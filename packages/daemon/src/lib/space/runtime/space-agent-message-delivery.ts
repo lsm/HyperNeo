@@ -233,17 +233,21 @@ function admissionIdentity(value: PendingAdmissionMessage | undefined): string {
   ]);
 }
 
-function assertNoConflictingPendingAdmission(ctx: SpaceAgentDeliveryCtx): void {
-  const pending = ctx.deps.jobQueue.listActiveByPayload(MAILBOX_LANE, {
-    messageUuid: ctx.messageId,
+function listSessionMailboxAdmissions(
+  jobQueue: JobQueueRepository,
+  sessionId: string,
+  messageUuid: string
+) {
+  return jobQueue.listActiveByPayload(MAILBOX_LANE, { messageUuid }).filter((job) => {
+    const to = (job.payload as { to?: { kind?: string; sessionId?: string } })?.to;
+    return to?.kind === 'session' && to?.sessionId === sessionId;
   });
+}
+
+function assertNoConflictingPendingAdmission(ctx: SpaceAgentDeliveryCtx): void {
   const ours = admissionIdentity(projectMailboxPrompt(ctx));
-  for (const job of pending) {
-    const entry = job.payload as {
-      to?: { kind?: string; sessionId?: string };
-      message?: PendingAdmissionMessage;
-    };
-    if (entry?.to?.kind !== 'session' || entry.to.sessionId !== ctx.sessionId) continue;
+  for (const job of listSessionMailboxAdmissions(ctx.deps.jobQueue, ctx.sessionId, ctx.messageId)) {
+    const entry = job.payload as { message?: PendingAdmissionMessage };
     if (admissionIdentity(entry.message) !== ours) {
       throw new PromptContentConflictError(
         `prompt handoff: message ${ctx.messageId} in session ${ctx.sessionId} ` +
@@ -312,7 +316,7 @@ async function acceptOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeli
   }
   await markQueuedIfIdle(ctx);
   if (ctx.deps.onConsumed && ctx.deps.lateSettlement) {
-    let deliveryAdmitted = ctx.existing?.sendStatus !== 'failed';
+    const retryingFailedRow = ctx.existing?.sendStatus === 'failed';
     ctx.deps.lateSettlement.arm({
       sessionId,
       messageId,
@@ -320,9 +324,11 @@ async function acceptOutcome(ctx: SpaceAgentDeliveryCtx): Promise<SpaceAgentDeli
       onFailed: ctx.deps.onLateFailure,
       getSendStatus: () => {
         const status = ctx.deps.sdkMessageRepo.getDeliveryContent(sessionId, messageId)?.sendStatus;
-        if (status === 'failed' && !deliveryAdmitted) return undefined;
-        if (status != null && status !== 'failed') deliveryAdmitted = true;
-        return status;
+        if (status !== 'failed' || !retryingFailedRow) return status;
+        const inFlight =
+          listSessionMailboxAdmissions(ctx.deps.jobQueue, sessionId, messageId).length > 0 ||
+          ctx.deps.jobQueue.activeDeliveryMessageUuids(sessionId).has(messageId);
+        return inFlight ? undefined : status;
       },
     });
   }

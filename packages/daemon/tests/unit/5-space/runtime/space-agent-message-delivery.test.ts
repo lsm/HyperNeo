@@ -9,6 +9,7 @@ import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delive
 import { MAILBOX_LANE } from '../../../../src/lib/mailbox/enqueue';
 import {
   deliverSpaceAgentMessage,
+  type LateSettlementRequest,
   SpaceAgentLateSettlements,
 } from '../../../../src/lib/space/runtime/space-agent-message-delivery';
 import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
@@ -336,6 +337,45 @@ describe('deliverSpaceAgentMessage', () => {
     await waitFor(() => consumed);
     expect(onLateFailure).not.toHaveBeenCalled();
     lateSettlements.dispose();
+    h.db.close();
+  });
+
+  it('treats a retried row as terminally failed once no mailbox or delivery work remains', async () => {
+    const h = makeHarness();
+    const persisted = persistPrompt({
+      db: h.db,
+      sdkMessageRepo: h.sdkRepo,
+      jobQueue: h.jobQueue,
+      sessionId: SESSION_ID,
+      message: userMessage('stale retry'),
+      delivery: { origin: 'space_agent' },
+    });
+    h.completeDeliveryJobs(SESSION_ID, MESSAGE_ID);
+    h.sdkRepo.updateMessageStatus([persisted.dbMessageId], 'failed');
+    let probe: () => string | null | undefined = () => undefined;
+    const lateSettlement = {
+      arm: (request: LateSettlementRequest) => {
+        probe = () => request.getSendStatus?.();
+        return { cancel: () => {} };
+      },
+    };
+
+    const outcome = await deliverSpaceAgentMessage(
+      { ...h.deps, onConsumed: () => {}, lateSettlement },
+      h.input('stale retry')
+    );
+
+    expect(outcome.state).toBe('accepted');
+    expect(probe()).toBeUndefined();
+
+    h.db
+      .prepare(
+        `UPDATE job_queue SET status = 'completed'
+          WHERE json_extract(payload, '$.messageUuid') = ?`
+      )
+      .run(MESSAGE_ID);
+
+    expect(probe()).toBe('failed');
     h.db.close();
   });
 });
