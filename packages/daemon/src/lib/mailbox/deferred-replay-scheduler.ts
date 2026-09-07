@@ -31,6 +31,10 @@ function isBusyStatus(status: string): boolean {
   );
 }
 
+function isUnavailableStatus(status: string): boolean {
+  return status === 'ended' || status === 'archived';
+}
+
 export interface MailboxDeferredReplaySchedulerDeps {
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   sessionManager: Pick<SessionManager, 'getCachedSession'> | null;
@@ -89,6 +93,11 @@ export function createMailboxDeferredReplayScheduler(
       }
       if (session.getSessionData().config.queryMode === 'manual') {
         emitReplayEvent('skipped', { sessionId, reason: 'manual_mode' });
+        cleanup(sessionId);
+        return;
+      }
+      if (isUnavailableStatus(session.getSessionData().status)) {
+        emitReplayEvent('skipped', { sessionId, reason: 'session_unavailable' });
         cleanup(sessionId);
         return;
       }
@@ -151,6 +160,11 @@ export function createMailboxDeferredReplayScheduler(
       }
       if (cancelled.has(sessionId)) {
         emitReplayEvent('cancelled_before_publish', { sessionId });
+        cleanup(sessionId);
+        return;
+      }
+      if (isUnavailableStatus(session.getSessionData().status)) {
+        emitReplayEvent('skipped', { sessionId, reason: 'session_unavailable' });
         cleanup(sessionId);
         return;
       }
