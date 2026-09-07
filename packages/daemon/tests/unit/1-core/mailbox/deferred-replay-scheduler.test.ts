@@ -215,6 +215,145 @@ describe('createMailboxDeferredReplayScheduler', () => {
     expect(publish).toHaveBeenCalledWith(SESSION_ID);
   });
 
+  test('cancel during interrupt normalization prevents publication', async () => {
+    const publish = mock(async () => {});
+    const deps = makeDeps(publish);
+    let status = 'interrupted';
+    let resolveNormalize: (() => void) | undefined;
+    deps.sessionManager = {
+      getCachedSession: () =>
+        ({
+          getSessionData: () => ({ config: { queryMode: 'immediate' } }),
+          getProcessingState: () => ({ status }),
+          normalizeStaleInterruptedState: () =>
+            new Promise<void>((resolve) => {
+              resolveNormalize = resolve;
+            }),
+          stateManager: {
+            waitForIdleTransition: () => ({
+              promise: new Promise<void>(() => {}),
+              cancel: () => {},
+            }),
+          },
+        }) as never,
+    };
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(10);
+    scheduler.cancel(SESSION_ID);
+
+    status = 'idle';
+    resolveNormalize?.();
+    await flush(20);
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  test('reparks on the replacement session after a hard reset', async () => {
+    const published: string[] = [];
+    let firstStatus = 'processing';
+    let secondStatus = 'processing';
+    let resolveFirst: (() => void) | undefined;
+    let resolveSecond: (() => void) | undefined;
+    let useSecond = false;
+    const makeSession = (status: () => string, park: (resolve: () => void) => void) =>
+      ({
+        getSessionData: () => ({ config: { queryMode: 'immediate' } }),
+        getProcessingState: () => ({ status: status() }),
+        stateManager: {
+          waitForIdleTransition: () => ({
+            promise: new Promise<void>((resolve) => {
+              park(resolve);
+            }),
+            cancel: () => {},
+          }),
+        },
+      }) as never;
+    const deps: MailboxDeferredReplaySchedulerDeps = {
+      internalEventBus: {
+        publish: mock(async (_event: string, data: { sessionId: string }) => {
+          published.push(data.sessionId);
+        }),
+      } as never,
+      sessionManager: {
+        getCachedSession: () =>
+          useSecond
+            ? makeSession(
+                () => secondStatus,
+                (resolve) => {
+                  resolveSecond = resolve;
+                }
+              )
+            : makeSession(
+                () => firstStatus,
+                (resolve) => {
+                  resolveFirst = resolve;
+                }
+              ),
+      },
+    };
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(10);
+    expect(resolveFirst).toBeDefined();
+
+    useSecond = true;
+    firstStatus = 'idle';
+    resolveFirst?.();
+    await flush(10);
+    expect(published).toEqual([]);
+    expect(resolveSecond).toBeDefined();
+
+    secondStatus = 'idle';
+    resolveSecond?.();
+    await flush(10);
+    expect(published).toEqual([SESSION_ID]);
+  });
+
+  test('skips publication when the cached session vanishes during a park', async () => {
+    const published: string[] = [];
+    let status = 'processing';
+    let resolveIdle: (() => void) | undefined;
+    let cached = true;
+    const deps: MailboxDeferredReplaySchedulerDeps = {
+      internalEventBus: {
+        publish: mock(async (_event: string, data: { sessionId: string }) => {
+          published.push(data.sessionId);
+        }),
+      } as never,
+      sessionManager: {
+        getCachedSession: () => {
+          if (!cached) return null;
+          return {
+            getSessionData: () => ({ config: { queryMode: 'immediate' } }),
+            getProcessingState: () => ({ status }),
+            stateManager: {
+              waitForIdleTransition: () => ({
+                promise: new Promise<void>((resolve) => {
+                  resolveIdle = resolve;
+                }),
+                cancel: () => {},
+              }),
+            },
+          } as never;
+        },
+      },
+    };
+    const scheduler = createMailboxDeferredReplayScheduler(deps);
+
+    scheduler.schedule(SESSION_ID);
+    await flush(10);
+
+    cached = false;
+    status = 'idle';
+    resolveIdle?.();
+    await flush(20);
+
+    expect(published).toEqual([]);
+  });
+
   test('retries when query.trigger delivers to no subscribers', async () => {
     let zeroDelivered = 1;
     const publish = mock(async () => {
