@@ -21,6 +21,8 @@ interface ExtraWorkspaceRow {
 }
 
 const MAX_ADDITIONAL_WORKSPACES = 127;
+const SPACE_CREATE_TIMEOUT_MS = 10000;
+const PER_WORKSPACE_TIMEOUT_MS = 1000;
 
 let extraWorkspaceRowSeq = 0;
 
@@ -116,12 +118,19 @@ export function SpaceCreateDialog({ isOpen, onClose }: SpaceCreateDialogProps) {
           ...(row.label.trim() ? { label: row.label.trim() } : {}),
         }));
 
-      const space = await hub.request<Space>('space.create', {
-        workspacePath: workspacePath.trim(),
-        name: name.trim() || basenameFromPath(workspacePath.trim()),
-        description: description.trim() || undefined,
-        ...(additionalWorkspaces.length > 0 ? { additionalWorkspaces } : {}),
-      });
+      const createTimeoutMs =
+        SPACE_CREATE_TIMEOUT_MS + additionalWorkspaces.length * PER_WORKSPACE_TIMEOUT_MS;
+
+      const space = await hub.request<Space>(
+        'space.create',
+        {
+          workspacePath: workspacePath.trim(),
+          name: name.trim() || basenameFromPath(workspacePath.trim()),
+          description: description.trim() || undefined,
+          ...(additionalWorkspaces.length > 0 ? { additionalWorkspaces } : {}),
+        },
+        { timeout: createTimeoutMs }
+      );
 
       if (!space) {
         throw new Error('Server returned no data');
