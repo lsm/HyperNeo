@@ -15,6 +15,8 @@ function makeDb(): BunDatabase {
   insertSpace.run('space-1', '/tmp/space-1', 'Space 1', 'space-1');
   insertSpace.run('space-2', '/tmp/space-2', 'Space 2', 'space-2');
   insertSpace.run('space-3', '/tmp/space-3', 'Space 3', 'space-3');
+  insertSpace.run('space-4', '/tmp/space-4', 'Space 4', 'space-4');
+  insertSpace.run('space-5', '/tmp/space-5', 'Space 5', 'space-5');
   const insertAgent = db.prepare(
     `INSERT INTO space_long_horizon_agents (
 			id, space_id, handle, display_name, template_key, status, session_id,
@@ -58,15 +60,53 @@ function makeDb(): BunDatabase {
     'active',
     null
   );
+  insertAgent.run(
+    'agent-coord-4',
+    'space-4',
+    'coordinator',
+    'My Coordinator',
+    'coordinator.default',
+    'active',
+    'space:chat:space-4'
+  );
+  insertAgent.run(
+    '0f1e2d3c-4b5a-6978-8976-a5b4c3d2e1f0',
+    'space-5',
+    'space-manager',
+    'Long Id Holder',
+    null,
+    'active',
+    null
+  );
+  insertAgent.run(
+    'agent-squatter-5',
+    'space-5',
+    'space-manager-migrated-0f1e2d3c-4b5a-6978-8976-a5b4c3d2e1f0',
+    'Long Id Squatter',
+    null,
+    'active',
+    null
+  );
+  insertAgent.run(
+    'agent-coord-5',
+    'space-5',
+    'coordinator',
+    'Coordinator',
+    'coordinator.default',
+    'active',
+    'space:chat:space-5'
+  );
   return db;
 }
 
+function rowById(db: BunDatabase, id: string): { handle: string; display_name: string } {
+  return db
+    .prepare(`SELECT handle, display_name FROM space_long_horizon_agents WHERE id = ?`)
+    .get(id) as { handle: string; display_name: string };
+}
+
 function handleById(db: BunDatabase, id: string): string {
-  return (
-    db.prepare(`SELECT handle FROM space_long_horizon_agents WHERE id = ?`).get(id) as {
-      handle: string;
-    }
-  ).handle;
+  return rowById(db, id).handle;
 }
 
 describe('Migration 240: rename coordinator handle to space-manager', () => {
@@ -97,6 +137,27 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
     expect(repo.getCoordinator('space-1')?.id).toBe('agent-coord-1');
     expect(repo.getCoordinatorRecord('space-1')?.id).toBe('agent-coord-1');
     expect(repo.getCoordinator('space-3')?.id).toBe('agent-coord-3');
+    db.close();
+  });
+
+  test('keeps collision-generated replacement handles within the slug limit', () => {
+    const db = makeDb();
+    runMigration236(db);
+
+    const relocated = handleById(db, '0f1e2d3c-4b5a-6978-8976-a5b4c3d2e1f0');
+    expect(relocated.startsWith('space-manager-migrated-')).toBe(true);
+    expect(relocated).not.toBe('space-manager-migrated-0f1e2d3c-4b5a-6978-8976-a5b4c3d2e1f0');
+    expect(relocated.length).toBeLessThanOrEqual(60);
+    expect(handleById(db, 'agent-coord-5')).toBe('space-manager');
+    db.close();
+  });
+
+  test('restamps pristine coordinator display names and preserves customized ones', () => {
+    const db = makeDb();
+    runMigration236(db);
+
+    expect(rowById(db, 'agent-coord-1').display_name).toBe('Space Manager');
+    expect(rowById(db, 'agent-coord-4').display_name).toBe('My Coordinator');
     db.close();
   });
 

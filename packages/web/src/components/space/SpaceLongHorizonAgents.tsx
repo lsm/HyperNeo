@@ -1089,7 +1089,11 @@ export function SpaceLongHorizonAgents({
   const others = agents.filter((a) => !isCoordinator(a) && a.status !== 'archived');
   const sortedAgents = coordinator ? [coordinator, ...others] : others;
   const selectedAgent = selectedHandle
-    ? (agents.find((agent) => agent.handle === selectedHandle) ?? null)
+    ? (agents.find(
+        (agent) =>
+          agent.handle === selectedHandle ||
+          (isCoordinator(agent) && selectedHandle === 'coordinator')
+      ) ?? null)
     : null;
   const existingHandles = new Set(agents.map((a) => a.handle));
   const existingNames = new Set(agents.map((a) => a.displayName));
