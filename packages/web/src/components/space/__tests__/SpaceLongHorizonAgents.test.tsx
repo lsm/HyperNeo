@@ -1854,6 +1854,34 @@ describe('SpaceLongHorizonAgents', () => {
     expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
   });
 
+  it('admits a new open after a superseded request without waiting for it to settle', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+    let resolveFirst: (sessionId: string) => void = () => {};
+    mockEnsureAgentSession.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveFirst = resolve;
+        })
+    );
+
+    const { getByText, getByLabelText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+    fireEvent.click(getByLabelText('Edit Research Long Horizon'));
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+
+    await waitFor(() => {
+      expect(mockNavigateToSpaceSession).toHaveBeenCalledWith(
+        'space-1',
+        'space:agent:space-1:lh-1'
+      );
+    });
+
+    resolveFirst('space:agent:space-1:lh-1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledTimes(1);
+  });
+
   it('invalidates a pending open when a pane dialog opens', async () => {
     mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
     let resolveEnsure: (sessionId: string) => void = () => {};

@@ -953,7 +953,6 @@ function AgentCard({
     : (agent.sessionId ?? derivedSessionId);
   const hasSession = !!agent.sessionId || coordinator;
 
-  const [opening, setOpening] = useState(false);
   const openSeqRef = useRef(0);
 
   const invalidatePendingOpen = () => {
@@ -965,16 +964,11 @@ function AgentCard({
   useEffect(() => () => invalidatePendingOpen(), []);
 
   const openSession = async () => {
-    if (opening || !sessionId) return;
-    setOpening(true);
-    try {
-      await runOpenAgentSession(agent, navigationSpaceId, (openSeq) => {
-        openSeqRef.current = openSeq;
-        recordOpenSeq(openSeq);
-      });
-    } finally {
-      setOpening(false);
-    }
+    if (!sessionId) return;
+    await runOpenAgentSession(agent, navigationSpaceId, (openSeq) => {
+      openSeqRef.current = openSeq;
+      recordOpenSeq(openSeq);
+    });
   };
 
   return (
