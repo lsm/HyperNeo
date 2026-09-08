@@ -1150,7 +1150,9 @@ export class TaskAgentManager {
         if (prevExec?.agentSessionId && !memberInfo.freshSessionOnly) {
           const existing =
             this.agentSessionIndex.get(prevExec.agentSessionId) ??
-            (await this.rehydrateSubSession(prevExec.agentSessionId));
+            (await this.rehydrateSubSession(prevExec.agentSessionId, undefined, {
+              startQuery: false,
+            }));
           if (existing) {
             const existingSessionId = prevExec.agentSessionId;
             log.info(
@@ -1423,7 +1425,7 @@ export class TaskAgentManager {
     if (!exec?.agentSessionId) return;
 
     if (!this.agentSessionIndex.has(exec.agentSessionId)) {
-      await this.rehydrateSubSession(exec.agentSessionId);
+      await this.rehydrateSubSession(exec.agentSessionId, undefined, { startQuery: false });
     }
   }
 
@@ -1498,7 +1500,7 @@ export class TaskAgentManager {
         if (session) return session;
       }
 
-      return await this.rehydrateSubSession(subSessionId);
+      return await this.rehydrateSubSession(subSessionId, undefined, { startQuery: false });
     };
 
     const target = await resolveSessionTarget();
@@ -1643,7 +1645,7 @@ export class TaskAgentManager {
     const cached = this.agentSessionIndex.get(exec.agentSessionId);
     if (cached) return cached;
 
-    return this.rehydrateSubSession(exec.agentSessionId);
+    return this.rehydrateSubSession(exec.agentSessionId, undefined, { startQuery: false });
   }
 
   async getAgentNamesForTask(taskId: string): Promise<string[]> {
@@ -3690,14 +3692,11 @@ export class TaskAgentManager {
         if (space === null || space.paused || space.stopped || space.status === 'archived') {
           return null;
         }
-        const restoreOptions = this.readPersistedRateLimitCooldown(sessionId)
-          ? { startQuery: false }
-          : {};
         const restoredId = await this.restorePostApprovalWorkerSession(
           taskId,
           sessionId,
           undefined,
-          restoreOptions
+          { startQuery: false }
         );
         if (restoredId === null) return null;
         const restored = this.getSubSession(restoredId) ?? null;
@@ -3706,7 +3705,7 @@ export class TaskAgentManager {
         return restoredStatus === 'ended' || restoredStatus === 'archived' ? null : restored;
       }
     }
-    return this.rehydrateSubSession(sessionId);
+    return this.rehydrateSubSession(sessionId, undefined, { startQuery: false });
   }
 
   private findTaskIdByRoutingPointer(sessionId: string): string | null {

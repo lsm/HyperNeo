@@ -253,7 +253,26 @@ describe('TaskAgentManager rehydrateSubSessionById post-approval routing and adm
 
       expect(restorePostApprovalWorkerSession).toHaveBeenCalledTimes(recorded ? 1 : 0);
       expect(rehydrateSubSession).toHaveBeenCalledTimes(recorded ? 0 : 1);
+      if (recorded) {
+        expect(restorePostApprovalWorkerSession).toHaveBeenCalledWith(TASK_ID, target, undefined, {
+          startQuery: false,
+        });
+      } else {
+        expect(rehydrateSubSession).toHaveBeenCalledWith(target, undefined, {
+          startQuery: false,
+        });
+      }
     }
+  });
+
+  it('rehydrates an execution target without starting a query before delivery', async () => {
+    const { manager, rehydrateSubSession } = makeManager({ taskStatus: 'in_progress' });
+
+    await manager.rehydrateSubSessionById(EXEC_SESSION_ID);
+
+    expect(rehydrateSubSession).toHaveBeenCalledWith(EXEC_SESSION_ID, undefined, {
+      startQuery: false,
+    });
   });
 
   it('rejects restores for terminal tasks or inactive spaces', async () => {
@@ -290,9 +309,8 @@ describe('TaskAgentManager rehydrateSubSessionById post-approval routing and adm
     }
   });
 
-  it('restores under a persisted rate-limit cooldown without starting a query', async () => {
+  it('restores a resolved post-approval target without starting an empty query', async () => {
     const { manager, restorePostApprovalWorkerSession } = makeManager({
-      cooldown: true,
       taskStatus: 'approved',
       postApprovalSessionId: SESSION_ID,
       restoreResult: SESSION_ID,
@@ -329,6 +347,34 @@ describe('TaskAgentManager rehydrateSubSessionById post-approval routing and adm
       await expect(manager.rehydrateSubSessionById(SESSION_ID)).resolves.toBeNull();
       expect(restorePostApprovalWorkerSession).toHaveBeenCalledTimes(1);
     }
+  });
+});
+
+describe('TaskAgentManager on-demand worker resume', () => {
+  it('attaches the prior execution session without starting an empty query', async () => {
+    const rehydrateSubSession = mock(async () => null);
+    const manager = Object.create(TaskAgentManager.prototype) as TaskAgentManager;
+    Object.defineProperty(manager, 'config', {
+      value: {
+        nodeExecutionRepo: {
+          listByWorkflowRun: () => [
+            {
+              agentName: 'coder',
+              agentSessionId: EXEC_SESSION_ID,
+              workflowNodeId: 'node-1',
+            },
+          ],
+        },
+      },
+    });
+    Object.defineProperty(manager, 'agentSessionIndex', { value: new Map() });
+    Object.defineProperty(manager, 'rehydrateSubSession', { value: rehydrateSubSession });
+
+    await manager.tryResumeNodeAgentSession('run-1', 'coder', 'node-1');
+
+    expect(rehydrateSubSession).toHaveBeenCalledWith(EXEC_SESSION_ID, undefined, {
+      startQuery: false,
+    });
   });
 });
 
