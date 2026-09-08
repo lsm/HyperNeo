@@ -28,7 +28,7 @@ type BuiltInTemplateSource = () => SpaceAgentTemplate[];
 const MIN_AUTONOMY: SpaceAgentAutonomyLevel = 1;
 const MAX_AUTONOMY: SpaceAgentAutonomyLevel = 5;
 const MAX_LABELS = 8;
-const NON_PRINTABLE = /[\p{Cc}\p{Cf}\p{Cn}\p{Cs}\p{Zl}\p{Zp}]/u;
+const NON_PRINTABLE = /[\p{Cc}\p{Cf}\p{Cn}\p{Co}\p{Cs}\p{Zl}\p{Zp}]/u;
 
 export interface CreateTemplateCtx {
   repo: SpaceAgentTemplateRepository;
@@ -134,11 +134,11 @@ function normalizeTemplateLabels(labels: string[] | null | undefined): {
     if (typeof label !== 'string') {
       return { labels: [], error: 'Template labels must be strings' };
     }
-    const trimmed = label.trim();
+    const trimmed = label.trim().normalize('NFC');
     if (trimmed === '') {
       return { labels: [], error: 'Template labels cannot be blank' };
     }
-    if (NON_PRINTABLE.test(label)) {
+    if (NON_PRINTABLE.test(trimmed)) {
       return { labels: [], error: 'Template labels must contain only printable characters' };
     }
     if (normalized.includes(trimmed)) continue;

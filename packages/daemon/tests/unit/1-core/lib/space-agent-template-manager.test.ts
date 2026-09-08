@@ -258,6 +258,7 @@ describe('SpaceAgentTemplateManager', () => {
         'lone\uD800pair',
         'non\uFDD0char',
         'plane\uFFFFend',
+        'private\uE000use',
       ]) {
         const result = await manager.create({ ...fullParams(), labels: [label] });
         expect(result.ok, label).toBe(false);
@@ -273,6 +274,17 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('array');
+    });
+
+    test('deduplicates canonically equivalent labels via NFC', async () => {
+      const result = await manager.create({
+        ...fullParams(),
+        labels: ['caf\u00E9', 'cafe\u0301'],
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value.labels).toEqual(['caf\u00E9']);
     });
 
     test('rejects a large unique-label payload without quadratic scanning', async () => {
