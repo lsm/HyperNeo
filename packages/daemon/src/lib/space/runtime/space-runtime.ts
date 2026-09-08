@@ -691,7 +691,12 @@ export class SpaceRuntime {
 
   private postApprovalRecoveryBypass = new Map<
     string,
-    { generation: number; revive: boolean; adopt: boolean }
+    {
+      generation: number;
+      revive: boolean;
+      revivePointer: string | null;
+      adopt: boolean;
+    }
   >();
 
   private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
@@ -7946,6 +7951,18 @@ export class SpaceRuntime {
     }
   }
 
+  private hasLeasedPostApprovalClaim(task: SpaceTask): boolean {
+    const now = Date.now();
+    for (const token of this.postApprovalDispatchClaims.get(task.id) ?? []) {
+      if (token.approvedAt !== task.approvedAt) continue;
+      if (now - token.claimedAt < POST_APPROVAL_DISPATCH_CLAIM_LEASE_MS) {
+        return true;
+      }
+      token.fenced = true;
+    }
+    return false;
+  }
+
   private isUnrecordedApprovalDispatchStale(task: SpaceTask): boolean {
     if (task.postApprovalSessionId !== null || task.postApprovalBlockedReason) return false;
     const claimCheckNow = Date.now();
@@ -7987,7 +8004,10 @@ export class SpaceRuntime {
     const orphanRoute = orphanWorkflow
       ? selectFirstDispatchablePostApprovalRoute(orphanWorkflow)
       : null;
-    if (!orphanRoute) return false;
+    if (!orphanRoute) {
+      await manager.stopSessionsVerified([orphan.sessionId]).catch(() => undefined);
+      return false;
+    }
     if (
       manager.isSessionOnPostApprovalRoute &&
       !manager.isSessionOnPostApprovalRoute({
@@ -7998,6 +8018,7 @@ export class SpaceRuntime {
         workflowRunId: task.workflowRunId ?? null,
       })
     ) {
+      await manager.stopSessionsVerified([orphan.sessionId]).catch(() => undefined);
       return false;
     }
     if (this.postApprovalShutdownFenceTripped(manager, generation)) return true;
@@ -8034,7 +8055,10 @@ export class SpaceRuntime {
       { requireSucceededRun: true }
     );
     if (recorded !== 'won') {
-      manager.cancelBySessionId(restoredId);
+      const winner = this.config.taskRepo.getTask(task.id)?.postApprovalSessionId ?? null;
+      if (winner !== restoredId) {
+        manager.cancelBySessionId(restoredId);
+      }
       return false;
     }
     log.info(
@@ -8219,7 +8243,10 @@ export class SpaceRuntime {
             this.postApprovalRecoveryBypass.delete(task.id);
             bypass = undefined;
           }
-          if (dispatchDead && !bypass?.revive) {
+          const reviveBypassed =
+            !!bypass?.revive && bypass?.revivePointer === (task.postApprovalSessionId ?? null);
+          if (this.hasLeasedPostApprovalClaim(task)) continue;
+          if (dispatchDead && !reviveBypassed) {
             const revivePromise = this.reviveRecordedPostApprovalWorker(manager, task, generation);
             const reviveMarker = { generation };
             this.postApprovalRecoveryInFlight.set(task.id, reviveMarker);
@@ -8244,12 +8271,14 @@ export class SpaceRuntime {
                   const existing = this.postApprovalRecoveryBypass.get(task.id) ?? {
                     generation,
                     revive: false,
+                    revivePointer: null,
                     adopt: false,
                   };
                   this.postApprovalRecoveryBypass.set(task.id, {
                     ...existing,
                     generation,
                     revive: true,
+                    revivePointer: task.postApprovalSessionId ?? null,
                   });
                 }
               })
@@ -8266,7 +8295,13 @@ export class SpaceRuntime {
                 `SpaceRuntime: post-approval worker revival for task ${task.id} did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while it runs single-flight fenced`
               );
               const freshTimeout = this.config.taskRepo.getTask(task.id);
-              if (freshTimeout?.status === 'approved' && !freshTimeout.postApprovalBlockedReason) {
+              if (
+                freshTimeout?.status === 'approved' &&
+                !freshTimeout.postApprovalBlockedReason &&
+                freshTimeout.approvedAt === task.approvedAt &&
+                (freshTimeout.postApprovalSessionId ?? null) ===
+                  (task.postApprovalSessionId ?? null)
+              ) {
                 this.config.taskRepo.updateTask(task.id, {
                   postApprovalBlockedReason:
                     'post-approval worker revival timed out; settlement still pending',
@@ -8303,6 +8338,7 @@ export class SpaceRuntime {
                   const existing = this.postApprovalRecoveryBypass.get(task.id) ?? {
                     generation,
                     revive: false,
+                    revivePointer: null,
                     adopt: false,
                   };
                   this.postApprovalRecoveryBypass.set(task.id, {
@@ -8325,7 +8361,13 @@ export class SpaceRuntime {
                 `SpaceRuntime: post-approval orphan adoption for task ${task.id} did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while it runs single-flight fenced`
               );
               const freshTimeout = this.config.taskRepo.getTask(task.id);
-              if (freshTimeout?.status === 'approved' && !freshTimeout.postApprovalBlockedReason) {
+              if (
+                freshTimeout?.status === 'approved' &&
+                !freshTimeout.postApprovalBlockedReason &&
+                freshTimeout.approvedAt === task.approvedAt &&
+                (freshTimeout.postApprovalSessionId ?? null) ===
+                  (task.postApprovalSessionId ?? null)
+              ) {
                 this.config.taskRepo.updateTask(task.id, {
                   postApprovalBlockedReason:
                     'post-approval worker adoption timed out; settlement still pending',
@@ -8337,6 +8379,7 @@ export class SpaceRuntime {
             }
             if (adopted) continue;
           }
+          this.postApprovalRecoveryBypass.delete(task.id);
           retries.push(
             this.retryPostApprovalDispatch(task.id).then(
               () => this.publishPostApprovalRecoveryUpdate(task),
