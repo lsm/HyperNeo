@@ -490,6 +490,23 @@ describe('spawnWorkflowNodeAgentForExecution — admission table', () => {
     expect(h.updates).toEqual([]);
   });
 
+  test('a task flipping blocked during workspace resolution fences the spawn (#3823)', async () => {
+    const gate = deferred<{ path: string }>();
+    const h = makeSpawnHarness({ kickoff: false, worktreeGate: gate.promise });
+    let flipped = false;
+    (h.tam.config as unknown as { taskRepo: { getTask: () => SpaceTask } }).taskRepo.getTask = () =>
+      makeTask(flipped ? 'blocked' : 'in_progress');
+
+    const pending = h.spawn();
+    flipped = true;
+    gate.resolve({ path: '/tmp/wt-flip' });
+
+    await expect(pending).rejects.toBeInstanceOf(TransientSpawnError);
+    expect(h.order).toEqual([]);
+    expect(h.cancels).toEqual([]);
+    expect(h.casCalls).toEqual([]);
+  });
+
   test('usage_limited task is a transient spawn rejection', async () => {
     const h = makeSpawnHarness({ taskStatus: 'usage_limited' });
 

@@ -290,6 +290,27 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers', 'restartQuery']);
   });
 
+  test('a task flipping blocked while admission is in flight denies the restored-worker start (#3823)', async () => {
+    const { tam } = makeManager();
+    const task = (
+      tam.config as unknown as { taskRepo: { getTask: () => { status: string } } }
+    ).taskRepo.getTask();
+    let taskReads = 0;
+    (tam.config as unknown as { taskRepo: { getTask: () => object } }).taskRepo.getTask = () => {
+      taskReads += 1;
+      return { ...task, status: taskReads === 1 ? 'in_progress' : 'blocked' };
+    };
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => fake.agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    const rehydrated = await rehydrateOf(tam)(SUB_SESSION_ID);
+
+    expect(rehydrated).toBe(fake.agentSession);
+    expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers']);
+  });
+
   test('concurrent rehydrates of the same sub-session share one restored instance', async () => {
     const { tam } = makeManager();
     let releaseStart: (() => void) | null = null;

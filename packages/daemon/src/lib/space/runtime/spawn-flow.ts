@@ -272,8 +272,7 @@ export function runSpawnExecutionFlow(
         ],
         writes: ['isSpawning'],
         run: async (view) => {
-          const spawnTask = deps.getFreshTask(view.task.id) ?? view.freshTask ?? view.task;
-          validateTaskAllowsSpawn(spawnTask);
+          const spawnTask = view.freshTask ?? view.task;
           deps.reserveExecution(view.execution.id);
           if (spawnTask.workflowRunId !== view.workflowRun.id) {
             deps.releaseExecution(view.execution.id);
@@ -283,6 +282,7 @@ export function runSpawnExecutionFlow(
           }
           const sessionId = deps.resolveSpawnSessionId(view.space, spawnTask, view.execution);
           const workspacePath = await deps.resolveWorkspacePath(spawnTask, view.space);
+          validateTaskAllowsSpawn(deps.getFreshTask(view.task.id) ?? spawnTask);
           const slotResolution = view.slotResolution!;
           attempt.task = spawnTask;
           attempt.workspacePath = workspacePath;

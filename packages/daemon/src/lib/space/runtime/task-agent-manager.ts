@@ -2059,6 +2059,14 @@ export class TaskAgentManager {
           resolved !== null && this.hasQueuedRetryableHookAction(resolved.workflowRunId, resolved)
         );
       },
+    }).then((admitted) => {
+      if (!admitted) return false;
+      const freshTask = this.config.taskRepo.getTask(taskId);
+      return (
+        !!freshTask &&
+        !isCanonicalTaskTerminalForSpawn(freshTask.status) &&
+        freshTask.status !== 'blocked'
+      );
     });
   }
 
