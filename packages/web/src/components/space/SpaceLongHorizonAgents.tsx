@@ -628,6 +628,28 @@ function TemplateEditor({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [extraToolDraft, setExtraToolDraft] = useState('');
+  const extraTools = toolsSelection.tools.filter(
+    (tool) => !(KNOWN_TOOLS as readonly string[]).includes(tool)
+  );
+
+  const removeExtraTool = (tool: string) => {
+    setToolsSelection((selection) => {
+      const tools = selection.tools.filter((t) => t !== tool);
+      return { tools, toolsOverridden: tools.length > 0 };
+    });
+  };
+
+  const addExtraTool = () => {
+    const entry = extraToolDraft.trim();
+    if (!entry) return;
+    setToolsSelection((selection) =>
+      selection.tools.includes(entry)
+        ? selection
+        : { tools: [...selection.tools, entry], toolsOverridden: true }
+    );
+    setExtraToolDraft('');
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -786,6 +808,50 @@ function TemplateEditor({
             toolsOverridden={toolsSelection.toolsOverridden}
             onChange={setToolsSelection}
           />
+          <div data-testid="lh-template-extra-tools" class="mt-3">
+            {extraTools.length > 0 && (
+              <>
+                <p class="mb-1.5 text-xs text-fg-muted">
+                  Scoped or custom tool entries on this template:
+                </p>
+                <div class="mb-2 flex flex-wrap gap-1.5">
+                  {extraTools.map((tool) => (
+                    <span
+                      key={tool}
+                      class="flex items-center gap-1 rounded-lg border border-line bg-surface-overlay/90 px-2.5 py-1 text-xs text-fg-soft"
+                    >
+                      <span class="font-mono">{tool}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeExtraTool(tool)}
+                        aria-label={`Remove ${tool}`}
+                        class="rounded p-0.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </>
+            )}
+            <div class="flex items-center gap-2">
+              <input
+                type="text"
+                value={extraToolDraft}
+                onInput={(e) => setExtraToolDraft((e.target as HTMLInputElement).value)}
+                class="w-full rounded-xl border border-line bg-surface-overlay/90 px-3 py-2 text-xs text-fg placeholder:text-fg-faint shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-colors focus:border-warning/45 focus:outline-none focus:ring-2 focus:ring-warning/10"
+                placeholder="Add scoped tool entry, e.g. Bash(gh pr view:*)"
+                data-testid="lh-template-extra-tool-input"
+              />
+              <button
+                type="button"
+                onClick={addExtraTool}
+                class="flex-shrink-0 rounded-xl border border-line px-3 py-2 text-xs text-fg-soft transition-colors hover:border-line-strong hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/60"
+              >
+                Add
+              </button>
+            </div>
+          </div>
           <div>
             <label class="mb-2 block text-sm font-medium text-fg-soft">Setting sources</label>
             <SettingSourcesEditor value={settingSources} onChange={setSettingSources} />
@@ -1007,17 +1073,12 @@ function TemplateCard({
       </span>
     ) : null;
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onClick}
-      onKeyDown={(e) => {
-        if (e.target !== e.currentTarget) return;
-        if (e.key === 'Enter' || e.key === ' ') onClick();
-      }}
-      class="group min-h-28 cursor-pointer rounded-xl border border-line bg-surface-overlay/85 px-4 py-4 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all hover:-translate-y-0.5 hover:border-blue-400/30 hover:bg-surface-raised/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-    >
-      <div class="flex items-center justify-between gap-2">
+    <div class="group flex min-h-28 items-start gap-2 rounded-xl border border-line bg-surface-overlay/85 px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all hover:-translate-y-0.5 hover:border-blue-400/30 hover:bg-surface-raised/95">
+      <button
+        type="button"
+        onClick={onClick}
+        class="min-w-0 flex-1 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+      >
         <div class="flex min-w-0 flex-wrap items-center gap-2">
           <span class="text-sm font-semibold tracking-tight text-fg">{template.displayName}</span>
           {!isUserTemplate && (
@@ -1026,67 +1087,63 @@ function TemplateCard({
             </span>
           )}
         </div>
-        {isUserTemplate ? (
-          <div class="flex flex-shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
-            {addedCountBadge}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit();
-              }}
-              class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-fg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-              title="Edit template"
-              aria-label={`Edit template ${template.displayName}`}
-            >
-              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-              class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
-              title="Delete template"
-              aria-label={`Delete template ${template.displayName}`}
-            >
-              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width={2}
-                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                />
-              </svg>
-            </button>
-          </div>
-        ) : (
-          (addedCountBadge ?? (
-            <svg
-              class="w-3.5 h-3.5 flex-shrink-0 text-fg-muted"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
+        <p class="mt-1.5 line-clamp-2 text-sm leading-relaxed text-fg-soft">
+          {template.description}
+        </p>
+      </button>
+      {isUserTemplate ? (
+        <div class="flex flex-shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
+          {addedCountBadge}
+          <button
+            type="button"
+            onClick={onEdit}
+            class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-fg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+            title="Edit template"
+            aria-label={`Edit template ${template.displayName}`}
+          >
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
                 stroke-linecap="round"
                 stroke-linejoin="round"
                 stroke-width={2}
-                d="M12 4v16m8-8H4"
+                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
               />
             </svg>
-          ))
-        )}
-      </div>
-      <p class="mt-1.5 line-clamp-2 text-sm leading-relaxed text-fg-soft">{template.description}</p>
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
+            title="Delete template"
+            aria-label={`Delete template ${template.displayName}`}
+          >
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={2}
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+              />
+            </svg>
+          </button>
+        </div>
+      ) : (
+        (addedCountBadge ?? (
+          <svg
+            class="w-3.5 h-3.5 flex-shrink-0 text-fg-muted"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width={2}
+              d="M12 4v16m8-8H4"
+            />
+          </svg>
+        ))
+      )}
     </div>
   );
 }
@@ -1104,10 +1161,12 @@ export function SpaceLongHorizonAgents({
   const agents = spaceStore.agents.value;
   const templates = spaceStore.agentTemplates.value;
   const userTemplateKeys = spaceStore.userTemplateKeys.value;
+  const workflows = spaceStore.workflowDetails.value;
   const loading = !spaceStore.configDataLoaded.value;
 
   useEffect(() => {
     spaceStore.ensureConfigData().catch(() => {});
+    spaceStore.ensureWorkflowDetails().catch(() => {});
   }, [spaceId]);
 
   const [reminderCounts, setReminderCounts] = useState<Record<string, number>>({});
@@ -1175,6 +1234,14 @@ export function SpaceLongHorizonAgents({
 
   const handleTemplateDeleteConfirm = async () => {
     if (!deletingTemplate) return;
+    const referencingWorkflows = templateWorkflowRefs.get(deletingTemplate.key) ?? [];
+    if (referencingWorkflows.length > 0) {
+      setDeleteTemplateError(
+        `Cannot delete template "${deletingTemplate.displayName}" - it is referenced by workflow slots` +
+          referencingWorkflows.map((n) => ` (Workflow: ${n})`).join('')
+      );
+      return;
+    }
     setDeletingTemplateBusy(true);
     setDeleteTemplateError(null);
     try {
@@ -1219,6 +1286,18 @@ export function SpaceLongHorizonAgents({
       agent.templateKey,
       (templateInstanceCounts.get(agent.templateKey) ?? 0) + 1
     );
+  }
+
+  const templateWorkflowRefs = new Map<string, string[]>();
+  for (const workflow of workflows) {
+    for (const node of workflow.nodes) {
+      for (const slot of node.agents) {
+        if (!slot.templateKey) continue;
+        const names = templateWorkflowRefs.get(slot.templateKey) ?? [];
+        if (!names.includes(workflow.name)) names.push(workflow.name);
+        templateWorkflowRefs.set(slot.templateKey, names);
+      }
+    }
   }
 
   const templateGroups = groupTemplatesByLabel(templates);

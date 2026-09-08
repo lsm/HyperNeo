@@ -2472,7 +2472,15 @@ class SpaceStore {
     if (!hub) throw new Error('Not connected');
 
     await hub.request('spaceAgent.deleteTemplate', { key });
-    await this.refreshTemplateLibrary(hub);
+    this.agentTemplates.value = this.agentTemplates.value.filter((t) => t.key !== key);
+    this.userTemplateKeys.value = new Set(
+      [...this.userTemplateKeys.value].filter((existing) => existing !== key)
+    );
+    try {
+      await this.refreshTemplateLibrary(hub);
+    } catch (err) {
+      logger.error('Failed to refresh template library after delete:', err);
+    }
   }
 
   private upsertAgentTemplate(template: SpaceAgentTemplate): void {

@@ -8,8 +8,10 @@ const {
   mockAgents,
   mockTemplates,
   mockUserTemplateKeys,
+  mockWorkflowDetails,
   mockConfigDataLoaded,
   mockEnsureConfigData,
+  mockEnsureWorkflowDetails,
   mockListAgentReminderCounts,
   mockCreateAgent,
   mockCreateTemplate,
@@ -26,8 +28,10 @@ const {
     mockAgents: makeSignal<SpaceLongHorizonAgent[]>([]),
     mockTemplates: makeSignal([]),
     mockUserTemplateKeys: makeSignal<Set<string>>(new Set()),
+    mockWorkflowDetails: makeSignal([]),
     mockConfigDataLoaded: makeSignal(true),
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
+    mockEnsureWorkflowDetails: vi.fn().mockResolvedValue(undefined),
     mockListAgentReminderCounts: vi.fn().mockResolvedValue({}),
     mockCreateAgent: vi.fn().mockResolvedValue(undefined),
     mockCreateTemplate: vi.fn().mockResolvedValue(undefined),
@@ -45,8 +49,10 @@ vi.mock('../../../lib/space-store', () => ({
       agents: mockAgents,
       agentTemplates: mockTemplates,
       userTemplateKeys: mockUserTemplateKeys,
+      workflowDetails: mockWorkflowDetails,
       configDataLoaded: mockConfigDataLoaded,
       ensureConfigData: mockEnsureConfigData,
+      ensureWorkflowDetails: mockEnsureWorkflowDetails,
       listAgentReminderCounts: mockListAgentReminderCounts,
       createAgent: mockCreateAgent,
       createTemplate: mockCreateTemplate,
@@ -209,8 +215,10 @@ describe('SpaceLongHorizonAgents', () => {
     mockAgents.value = [];
     mockTemplates.value = [];
     mockUserTemplateKeys.value = new Set();
+    mockWorkflowDetails.value = [];
     mockConfigDataLoaded.value = true;
     mockEnsureConfigData.mockClear();
+    mockEnsureWorkflowDetails.mockClear();
     mockListAgentReminderCounts.mockClear();
     mockCreateAgent.mockClear();
     mockCreateTemplate.mockClear();
@@ -357,6 +365,32 @@ describe('SpaceLongHorizonAgents', () => {
     await waitFor(() => expect(queryByRole('button', { name: 'Save changes' })).toBeNull());
   });
 
+  it('shows scoped tool entries in the template editor and persists their removal', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        key: 'scribe',
+        handle: 'scribe',
+        displayName: 'Scribe',
+        toolPermissions: { tools: ['Read', 'Bash(gh pr view:*)'] },
+      }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+
+    expect(getByText('Bash(gh pr view:*)')).toBeTruthy();
+    fireEvent.click(getByRole('button', { name: 'Remove Bash(gh pr view:*)' }));
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTemplate).toHaveBeenCalledWith(
+      'scribe',
+      expect.objectContaining({ tools: ['Read'] })
+    );
+  });
+
   it('deletes a user template after confirmation', async () => {
     mockTemplates.value = [makeTemplate({ key: 'scribe', displayName: 'Scribe' })];
     mockUserTemplateKeys.value = new Set(['scribe']);
@@ -374,12 +408,22 @@ describe('SpaceLongHorizonAgents', () => {
     await waitFor(() => expect(queryByTestId('confirm-modal')).toBeNull());
   });
 
-  it('surfaces the daemon reference-guard error and keeps the confirm dialog open', async () => {
+  it('blocks deleting a template referenced by workflow slots with a readable error', async () => {
     mockTemplates.value = [makeTemplate({ key: 'scribe', displayName: 'Scribe' })];
     mockUserTemplateKeys.value = new Set(['scribe']);
-    mockDeleteTemplate.mockRejectedValueOnce(
-      new Error('Cannot delete template "scribe" - it is referenced by workflow nodes (Release)')
-    );
+    mockWorkflowDetails.value = [
+      {
+        id: 'wf-1',
+        name: 'Release',
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Ship',
+            agents: [{ agentId: '', templateKey: 'scribe', name: 'Scribe' }],
+          },
+        ],
+      },
+    ];
 
     const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
@@ -388,8 +432,25 @@ describe('SpaceLongHorizonAgents', () => {
 
     await waitFor(() =>
       expect(getByTestId('confirm-modal-error').textContent).toBe(
-        'Cannot delete template "scribe" - it is referenced by workflow nodes (Release)'
+        'Cannot delete template "Scribe" - it is referenced by workflow slots (Workflow: Release)'
       )
+    );
+    expect(mockDeleteTemplate).not.toHaveBeenCalled();
+    expect(getByTestId('confirm-modal')).toBeTruthy();
+  });
+
+  it('surfaces the daemon RPC error and keeps the confirm dialog open', async () => {
+    mockTemplates.value = [makeTemplate({ key: 'scribe', displayName: 'Scribe' })];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+    mockDeleteTemplate.mockRejectedValueOnce(new Error('Template not found: scribe'));
+
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Delete template Scribe' }));
+    fireEvent.click(getByTestId('confirm-delete-template'));
+
+    await waitFor(() =>
+      expect(getByTestId('confirm-modal-error').textContent).toBe('Template not found: scribe')
     );
     expect(getByTestId('confirm-modal')).toBeTruthy();
   });
@@ -1236,7 +1297,7 @@ describe('SpaceLongHorizonAgents', () => {
     mockTemplates.value = [makeTemplate()];
     const { getByText, getByDisplayValue } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
-    fireEvent.click(getByText('Validates product quality.').closest('[role="button"]')!);
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
 
     expect(getByDisplayValue('QA Engineer 2')).toBeTruthy();
   });
@@ -1245,7 +1306,7 @@ describe('SpaceLongHorizonAgents', () => {
     mockTemplates.value = [makeTemplate()];
     const { getByText, getByDisplayValue } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
-    fireEvent.click(getByText('Validates product quality.').closest('[role="button"]')!);
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
 
     expect(getByDisplayValue('QA Engineer')).toBeTruthy();
     expect(getByDisplayValue('qa')).toBeTruthy();
@@ -1256,7 +1317,7 @@ describe('SpaceLongHorizonAgents', () => {
     mockTemplates.value = [makeTemplate({ settingSources: ['user'] })];
     const { getByText, getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
-    fireEvent.click(getByText('Validates product quality.').closest('[role="button"]')!);
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
     expect(settingSourceCheckbox('user').checked).toBe(true);
     expect(settingSourceCheckbox('project').checked).toBe(false);
     expect(settingSourceCheckbox('local').checked).toBe(false);
@@ -1271,7 +1332,7 @@ describe('SpaceLongHorizonAgents', () => {
     mockTemplates.value = [makeTemplate()];
     const { getByText, getByDisplayValue } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
-    fireEvent.click(getByText('Validates product quality.').closest('[role="button"]')!);
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
 
     expect(getByDisplayValue('qa-2')).toBeTruthy();
   });
@@ -1280,7 +1341,7 @@ describe('SpaceLongHorizonAgents', () => {
     mockTemplates.value = [makeTemplate({ suggestedAutonomyLevel: 3 })];
     const { getByText, getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
-    fireEvent.click(getByText('Validates product quality.').closest('[role="button"]')!);
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
     fireEvent.click(getByRole('button', { name: 'Create agent' }));
 
     await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
@@ -1308,7 +1369,7 @@ describe('SpaceLongHorizonAgents', () => {
     ];
     const { getByText, getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
-    fireEvent.click(getByText('Validates product quality.').closest('[role="button"]')!);
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
     fireEvent.click(getByRole('button', { name: 'Create agent' }));
 
     await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
@@ -1334,7 +1395,7 @@ describe('SpaceLongHorizonAgents', () => {
       <SpaceLongHorizonAgents spaceId="space-1" />
     );
 
-    fireEvent.click(getByText('Validates product quality.').closest('[role="button"]')!);
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
     expect(getByTestId('agent-model-pool')).toBeTruthy();
     fireEvent.click(getByRole('button', { name: 'Create agent' }));
 
@@ -1357,7 +1418,7 @@ describe('SpaceLongHorizonAgents', () => {
       <SpaceLongHorizonAgents spaceId="space-1" />
     );
 
-    fireEvent.click(getByText('Validates product quality.').closest('[role="button"]')!);
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
 
     expect(chipInput(container, 'Read').checked).toBe(true);
     expect(chipInput(container, 'Read').disabled).toBe(false);
@@ -1389,7 +1450,7 @@ describe('SpaceLongHorizonAgents', () => {
     mockTemplates.value = [makeTemplate({ suggestedEventSubscriptions, reminderDefaults })];
     const { getByText, getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
-    fireEvent.click(getByText('Validates product quality.').closest('[role="button"]')!);
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
     fireEvent.click(getByRole('button', { name: 'Create agent' }));
 
     await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));

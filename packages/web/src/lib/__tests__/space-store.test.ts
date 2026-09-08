@@ -3332,6 +3332,19 @@ describe('SpaceStore — template CRUD methods', () => {
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['first']);
   });
 
+  it('deleteTemplate() removes the cached entry even when the follow-up refresh fails', async () => {
+    templateListResult = [makeAgentTemplate({ key: 'scribe' })];
+    await spaceStore.fetchTemplates();
+    mockHub.request
+      .mockResolvedValueOnce({ success: true })
+      .mockRejectedValueOnce(new Error('refresh failed'));
+
+    await expect(spaceStore.deleteTemplate('scribe')).resolves.toBeUndefined();
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual([]);
+    expect(spaceStore.userTemplateKeys.value.has('scribe')).toBe(false);
+  });
+
   it('deleteTemplate() propagates RPC errors and keeps the cached list', async () => {
     templateListResult = [makeAgentTemplate({ key: 'scribe' })];
     await spaceStore.fetchTemplates();
