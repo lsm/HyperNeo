@@ -131,7 +131,7 @@ vi.mock('../../ui/ConfirmModal', () => ({
 }));
 
 import { toast } from '../../../lib/toast';
-import { currentSpaceSessionIdSignal } from '../../../lib/signals';
+import { currentSpaceIdSignal, currentSpaceSessionIdSignal } from '../../../lib/signals';
 import { SpaceLongHorizonAgents } from '../SpaceLongHorizonAgents';
 
 function makeLongHorizonAgent(
@@ -213,7 +213,9 @@ describe('SpaceLongHorizonAgents', () => {
     mockNavigateToSpaceSession.mockClear();
     mockEnsureAgentSession.mockClear();
     mockEnsureAgentSession.mockResolvedValue('space:agent:space-1:lh-1');
+    vi.mocked(toast.error).mockClear();
     currentSpaceSessionIdSignal.value = null;
+    currentSpaceIdSignal.value = null;
   });
 
   afterEach(() => {
@@ -1691,6 +1693,63 @@ describe('SpaceLongHorizonAgents', () => {
 
     pending[0]('space:agent:space-1:lh-1');
     await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not navigate back when the route moves to another space mid-ensure', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+    let resolveEnsure: (sessionId: string) => void = () => {};
+    mockEnsureAgentSession.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveEnsure = resolve;
+        })
+    );
+
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+    currentSpaceIdSignal.value = 'space-other';
+
+    resolveEnsure('space:agent:space-1:lh-1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
+  });
+
+  it('suppresses failure toasts from superseded card opens', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({ sessionId: null }),
+      makeLongHorizonAgent({
+        id: 'lh-2',
+        handle: 'second',
+        displayName: 'Second Agent',
+        sessionId: null,
+      }),
+    ];
+    const settle: Array<{
+      resolve: (sessionId: string) => void;
+      reject: (err: Error) => void;
+    }> = [];
+    mockEnsureAgentSession.mockImplementation(
+      () =>
+        new Promise<string>((resolve, reject) => {
+          settle.push({ resolve, reject });
+        })
+    );
+
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+    fireEvent.click(getByText('Second Agent').closest('[role="button"]')!);
+
+    settle[1].resolve('space:agent:space-1:lh-2');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'space:agent:space-1:lh-2');
+
+    settle[0].reject(new Error('first failed'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(toast.error).not.toHaveBeenCalled();
     expect(mockNavigateToSpaceSession).toHaveBeenCalledTimes(1);
   });
 

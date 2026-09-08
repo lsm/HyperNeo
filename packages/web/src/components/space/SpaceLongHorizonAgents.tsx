@@ -13,6 +13,8 @@ import { navigateToSpaceSession } from '../../lib/router';
 import { buildLongHorizonAgentSessionId } from '../../lib/space-agent-session';
 import { spaceStore } from '../../lib/space-store';
 import {
+  currentSpaceCanonicalIdSignal,
+  currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
   currentSpaceTaskIdSignal,
   currentSpaceViewModeSignal,
@@ -848,22 +850,25 @@ function AgentCard({
     }
     setOpening(true);
     const routeAtOpen = {
+      space: currentSpaceIdSignal.value,
+      canonical: currentSpaceCanonicalIdSignal.value,
       session: currentSpaceSessionIdSignal.value,
       view: currentSpaceViewModeSignal.value,
       task: currentSpaceTaskIdSignal.value,
     };
+    const routeUnchanged = () =>
+      currentSpaceIdSignal.value === routeAtOpen.space &&
+      currentSpaceCanonicalIdSignal.value === routeAtOpen.canonical &&
+      currentSpaceSessionIdSignal.value === routeAtOpen.session &&
+      currentSpaceViewModeSignal.value === routeAtOpen.view &&
+      currentSpaceTaskIdSignal.value === routeAtOpen.task;
     try {
       const ensured = await spaceStore.ensureAgentSession(agent.id);
-      if (openSeq !== latestAgentCardOpenSeq) return;
-      if (
-        currentSpaceSessionIdSignal.value !== routeAtOpen.session ||
-        currentSpaceViewModeSignal.value !== routeAtOpen.view ||
-        currentSpaceTaskIdSignal.value !== routeAtOpen.task
-      ) {
-        return;
+      if (openSeq === latestAgentCardOpenSeq && routeUnchanged()) {
+        navigateToSpaceSession(navigationSpaceId, ensured);
       }
-      navigateToSpaceSession(navigationSpaceId, ensured);
     } catch (err) {
+      if (openSeq !== latestAgentCardOpenSeq) return;
       toast.error(err instanceof Error ? err.message : 'Failed to open agent session');
     } finally {
       setOpening(false);
