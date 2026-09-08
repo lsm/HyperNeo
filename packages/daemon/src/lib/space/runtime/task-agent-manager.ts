@@ -1952,7 +1952,7 @@ export class TaskAgentManager {
         )
         .all(task.id) as Array<{ id: string }>;
       return rows.find((row) => {
-        if (this.hasPendingPostApprovalKickoffJob(row.id)) return true;
+        if (this.hasPendingPostApprovalKickoffJob(row.id, approvedAt)) return true;
         if (!sdkMessageRepo.hasConsumedTaskInputForSession(row.id, task.id)) return false;
         return this.hasConsumedTaskInputSince(row.id, task.id, approvedAt);
       })?.id;
@@ -2014,13 +2014,17 @@ export class TaskAgentManager {
     );
   }
 
-  private hasPendingPostApprovalKickoffJob(sessionId: string): boolean {
+  private hasPendingPostApprovalKickoffJob(sessionId: string, approvedAt: number | null): boolean {
     const marker = POST_APPROVAL_COMPLETION_INSTRUCTIONS.split('\n')[0] ?? '';
     try {
       const jobs = this.config.db
         .getJobQueueRepo()
         .listActiveByPayload(MAILBOX_LANE, { 'to.sessionId': sessionId });
-      return jobs.some((job) => JSON.stringify(job.payload ?? {}).includes(marker));
+      return jobs.some(
+        (job) =>
+          (approvedAt === null || job.createdAt >= approvedAt) &&
+          JSON.stringify(job.payload ?? {}).includes(marker)
+      );
     } catch {
       return false;
     }
@@ -5531,19 +5535,30 @@ export class TaskAgentManager {
             throw err;
           }
         }
-        if (
-          task.approvedAt !== null &&
-          this.hasConsumedPostApprovalKickoffSince(existing.session.id, taskId, task.approvedAt)
-        ) {
+        const kickoffAlreadyDelivered =
+          (task.approvedAt !== null &&
+            this.hasConsumedPostApprovalKickoffSince(
+              existing.session.id,
+              taskId,
+              task.approvedAt
+            )) ||
+          this.hasPendingPostApprovalKickoffJob(existing.session.id, task.approvedAt ?? null);
+        if (kickoffAlreadyDelivered) {
           log.info(
             `TaskAgentManager.spawnPostApprovalSubSession: skipping kickoff inject to live session ` +
-              `${existingSessionId} — this approval generation's post-approval kickoff was already consumed`
+              `${existingSessionId} — this approval generation's post-approval kickoff was already delivered`
           );
-          if (
-            !existing.isQueryActiveOrStarting() &&
-            (await this.restoredWorkerStartAdmitted(existing, taskId))
-          ) {
-            await existing.startStreamingQuery();
+          if (!existing.isQueryActiveOrStarting()) {
+            if (await this.restoredWorkerStartAdmitted(existing, taskId)) {
+              await existing.startStreamingQuery();
+            }
+            if (!existing.isQueryActiveOrStarting()) {
+              throw new Error(
+                `spawnPostApprovalSubSession: reused session ${existingSessionId} already holds ` +
+                  `this approval generation's kickoff but its query could not be admitted; refusing ` +
+                  `to record an idle post-approval worker`
+              );
+            }
           }
           return;
         }

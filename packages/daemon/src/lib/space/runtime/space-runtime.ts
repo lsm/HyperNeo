@@ -2733,8 +2733,14 @@ export class SpaceRuntime {
       log.warn(`retryPostApprovalDispatch: ${reason}`);
       return { mode: 'skipped', reason };
     }
-    return this.postApprovalRetryQueue.run(taskId, () =>
-      runPostApprovalRetry({
+    const retryGeneration = this.runtimeGeneration;
+    return this.postApprovalRetryQueue.run(taskId, async () => {
+      if (retryGeneration !== this.runtimeGeneration || this.isStopped) {
+        const reason = `post-approval retry for task ${taskId} discarded; the runtime generation changed while it was queued`;
+        log.warn(`retryPostApprovalDispatch: ${reason}`);
+        return { mode: 'skipped' as const, reason };
+      }
+      return runPostApprovalRetry({
         taskId,
         taskRepo: this.config.taskRepo,
         workflowRunRepo: this.config.workflowRunRepo,
@@ -2753,8 +2759,8 @@ export class SpaceRuntime {
               requireSucceededRun: true,
             }
           ),
-      })
-    );
+      });
+    });
   }
 
   private getPostApprovalRouter(): PostApprovalRouter | null {
@@ -2779,7 +2785,7 @@ export class SpaceRuntime {
         spawnPostApprovalSubSession: (args) => manager.spawnPostApprovalSubSession(args),
       },
       livenessProbe: {
-        isSessionAlive: (sessionId) => manager.isSessionAlive(sessionId),
+        isSessionAlive: (sessionId) => this.postApprovalWorkerLive(manager, sessionId),
       },
       validateRecordedPointer: (args) => manager.isSessionOnPostApprovalRoute(args),
       cancelSpawnedWorker: (sessionId) => manager.cancelBySessionId(sessionId),
@@ -7994,6 +8000,7 @@ export class SpaceRuntime {
       );
     }
     if (
+      this.postApprovalShutdownFenceTripped(manager, generation) ||
       !resumedId ||
       !(
         manager.isSessionAlive(orphan.sessionId) &&
