@@ -302,7 +302,7 @@ export function setupSpaceTaskMessageHandlers(
     deliveryMode?: 'immediate' | 'defer',
     messageId?: string
   ): Promise<void> {
-    const inject = taskAgentManager.injectSubSessionMessage;
+    const inject = taskAgentManager.injectSubSessionMessage?.bind(taskAgentManager);
     if (!inject) throw new Error('Workflow agent targeting is unavailable on this daemon.');
     const deliver = async (targetSessionId: string): Promise<string | void> =>
       messageId === undefined
