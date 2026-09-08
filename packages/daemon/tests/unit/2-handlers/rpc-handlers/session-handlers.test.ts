@@ -785,6 +785,46 @@ describe('Session RPC Handlers — models.list', () => {
       expect(archiveResourcesMock).toHaveBeenCalledWith('sess-1', 'ui_session_archive');
       expect(removeSessionMock).toHaveBeenCalledWith('space-1', 'sess-1');
     });
+
+    it('clears the agent stamp for the archived session', async () => {
+      const clearStamp = mock(async () => {});
+      const runtimeService = {
+        clearAgentStampForSession: clearStamp,
+      } as unknown as Parameters<
+        typeof import('../../../../src/lib/rpc-handlers/session-handlers').setupSessionHandlers
+      >[4];
+      const archiveResources = mock(async () => undefined);
+      const sessionManager = {
+        getSessionFromDB: mock(() => ({
+          id: 'sess-1',
+          status: 'active',
+          context: { spaceId: 'space-1', roomId: 'room-1' },
+        })),
+        archiveSessionResources: archiveResources,
+      } as unknown as SessionManager;
+      const spaceManager = {
+        removeSession: mock(async () => ({ id: 'space-1', sessionIds: [] })),
+      } as unknown as SpaceManager;
+      const { setupSessionHandlers } = await import(
+        '../../../../src/lib/rpc-handlers/session-handlers'
+      );
+      const localHub = createMockMessageHub();
+      setupSessionHandlers(
+        localHub.hub,
+        sessionManager,
+        createMockInternalEventBus(),
+        spaceManager,
+        runtimeService
+      );
+
+      const handler = localHub.handlers.get('session.archive');
+      const result = (await handler!({ sessionId: 'sess-1', confirmed: true }, {})) as {
+        success: boolean;
+      };
+
+      expect(result.success).toBe(true);
+      expect(clearStamp).toHaveBeenCalledWith('sess-1');
+    });
   });
 
   describe('Session RPC Handlers — session.messages.promotePending (v2)', () => {

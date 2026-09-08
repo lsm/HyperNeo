@@ -51,6 +51,7 @@ import { SessionRepository } from '../../../../src/storage/repositories/session-
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
 import {
   coordinatorLongHorizonAgentId,
+  coordinatorSessionId,
   SpaceLongHorizonAgentRepository,
 } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
@@ -4444,6 +4445,125 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
         }),
       })
     );
+    expect(stampedSession.mergeRuntimeMcpServers).toHaveBeenCalled();
+  });
+
+  test('routes coordinator session refresh through the coordinator setup', async () => {
+    const db = makeTestDb();
+    seedEnsureSpace(db);
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    const coordinatorId = coordinatorLongHorizonAgentId(ENSURE_SPACE_ID);
+    repo.create({
+      id: coordinatorId,
+      spaceId: ENSURE_SPACE_ID,
+      handle: 'coordinator',
+      sessionId: coordinatorSessionId(ENSURE_SPACE_ID),
+    });
+    const longHorizonSession = {
+      mergeRuntimeMcpServers: mock(() => {}),
+      updateConfig: mock(async () => {}),
+      resetQuery: mock(async () => ({ success: true })),
+      restart: mock(async () => {}),
+      getSessionData: mock(() => ({ id: 'other', status: 'active', metadata: {}, config: {} })),
+    } as unknown as AgentSession;
+    const sessionManager = {
+      getSessionAsync: mock(async () => longHorizonSession),
+    } as unknown as SessionManager;
+    const svc = new SpaceRuntimeService(
+      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
+    );
+    const setupSpy = mock(async () => {});
+    (svc as unknown as { setupSpaceAgentSession: () => Promise<void> }).setupSpaceAgentSession =
+      setupSpy;
+
+    await svc.refreshLongHorizonAgentSession(ENSURE_SPACE_ID, coordinatorId);
+
+    expect(setupSpy).toHaveBeenCalled();
+    expect(longHorizonSession.updateConfig).not.toHaveBeenCalled();
+  });
+
+  test('clearAgentStampForSession clears the matching stamp and publishes', async () => {
+    const db = makeTestDb();
+    seedEnsureSpace(db);
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    const stampedSessionId = longTermAgentSessionId(ENSURE_SPACE_ID, 'lh-clear');
+    repo.create({
+      id: 'lh-clear',
+      spaceId: ENSURE_SPACE_ID,
+      handle: 'researcher',
+      sessionId: stampedSessionId,
+    });
+    const publish = mock(async () => ({ delivered: 0, failures: [] }));
+    const internalEventBus = {
+      subscribe: mock(() => () => {}),
+      publish,
+      publishAsync: mock(() => {}),
+    } as unknown as SpaceRuntimeServiceConfig['internalEventBus'];
+    const svc = new SpaceRuntimeService({
+      ...buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), {
+        getSessionAsync: mock(async () => null),
+      } as unknown as SessionManager),
+      internalEventBus,
+    });
+
+    await svc.clearAgentStampForSession(stampedSessionId);
+
+    expect(repo.getById('lh-clear')?.sessionId).toBeNull();
+    expect(publish).toHaveBeenCalledWith(
+      'spaceAgent.updated',
+      expect.objectContaining({
+        spaceId: ENSURE_SPACE_ID,
+        agent: expect.objectContaining({ id: 'lh-clear', sessionId: null }),
+      })
+    );
+  });
+
+  test('archives the provisional session when initialization throws', async () => {
+    const db = makeTestDb();
+    seedEnsureSpace(db);
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    repo.create({ id: 'lh-ensure-10', spaceId: ENSURE_SPACE_ID, handle: 'researcher' });
+    const agentSessionId = longTermAgentSessionId(ENSURE_SPACE_ID, 'lh-ensure-10');
+    const createdSession = {
+      mergeRuntimeMcpServers: mock(() => {
+        throw new Error('attach failed');
+      }),
+      updateConfig: mock(async () => {}),
+      resetQuery: mock(async () => ({ success: true })),
+      restart: mock(async () => {}),
+      getSessionData: mock(() => ({
+        id: agentSessionId,
+        status: 'active',
+        metadata: {},
+        config: {},
+      })),
+    } as unknown as AgentSession;
+    let live: AgentSession | null = null;
+    let resolveCreate: () => void = () => {};
+    const updateSession = mock(async () => {});
+    const sessionManager = {
+      getSessionAsync: mock(async () => live),
+      createSession: mock(async () => {
+        await new Promise<void>((resolve) => {
+          resolveCreate = resolve;
+        });
+        live = createdSession;
+        return agentSessionId;
+      }),
+      updateSession,
+    } as unknown as SessionManager;
+    const svc = new SpaceRuntimeService(
+      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
+    );
+
+    const ensured = svc.ensureAgentSession(ENSURE_SPACE_ID, 'lh-ensure-10');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    resolveCreate();
+    const result = await ensured;
+
+    expect(result).toBeNull();
+    expect(updateSession).toHaveBeenCalledWith(agentSessionId, { status: 'archived' });
+    expect(repo.getById('lh-ensure-10')?.sessionId).toBeNull();
   });
 
   test('aborts unstamped when the space pauses during provisioning', async () => {

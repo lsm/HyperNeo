@@ -1148,6 +1148,9 @@ export function setupSpaceAgentHandlers(
       if (!agentId) throw new Error('agentId is required');
       const result = await reapplyTemplateService.reapplyTemplate(agentId);
       if (!result.ok) throw new Error(result.error);
+      if (result.value.sessionId) {
+        await runtimeService?.refreshLongHorizonAgentSession(result.value.spaceId, result.value.id);
+      }
       return { agent: result.value };
     });
   }

@@ -2119,6 +2119,44 @@ describe('Space Agent RPC Handlers', () => {
       expect(result.agent.id).toBe(created.agent.id);
     });
 
+    it('refreshes the stamped session after reapplying a template', async () => {
+      const runtimeService = createRuntimeServiceMock();
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        workflowRepo,
+        runtimeService,
+        new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db))
+      );
+      const templateRepo = new SpaceAgentTemplateRepository(db);
+      templateRepo.create({
+        key: 'stamped-reapply.custom',
+        handle: 'stamped-reapply',
+        displayName: 'Stamped Reapply',
+        instructions: 'Reapplied instructions.',
+        suggestedAutonomyLevel: 2,
+      });
+      const created = await call<{ agent: { id: string } }>(
+        freshHub.handlers,
+        'spaceAgent.create',
+        { spaceId: 'space-1', name: 'Stamped Agent', templateName: 'stamped-reapply.custom' }
+      );
+      longHorizonRepo.update(created.agent.id, {
+        sessionId: `space:agent:space-1:${created.agent.id}`,
+      });
+
+      await call(freshHub.handlers, 'spaceAgent.reapplyTemplate', { agentId: created.agent.id });
+
+      expect(runtimeService.refreshLongHorizonAgentSession).toHaveBeenCalledWith(
+        'space-1',
+        created.agent.id
+      );
+    });
+
     it('clears the long-term session provider when the template removes the provider', async () => {
       const templateRepo = new SpaceAgentTemplateRepository(db);
       templateRepo.create({

@@ -553,6 +553,7 @@ export function setupSessionHandlers(
           .catch(() => {});
       } catch {}
     }
+    await spaceRuntimeService?.clearAgentStampForSession(targetSessionId);
 
     const archivedPayload = {
       sessionId: targetSessionId,
