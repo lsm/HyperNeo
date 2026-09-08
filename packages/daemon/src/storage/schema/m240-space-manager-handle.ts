@@ -77,12 +77,16 @@ export function runMigration240(db: BunDatabase): void {
       rehandle.run(handle, now, holder.id);
       used.add(handle);
     }
-    db.prepare(
-      `UPDATE space_long_horizon_agents SET handle = ?, updated_at = ? WHERE handle = 'coordinator'`
-    ).run(SPACE_MANAGER_HANDLE, now);
     const agents = db
       .prepare(`SELECT id, space_id, handle, display_name FROM space_long_horizon_agents`)
       .all() as AgentRow[];
+    const originalHandles = new Map(agents.map((row) => [row.id, row.handle]));
+    const legacyHandleIds = new Set(
+      agents.filter((row) => row.handle === 'coordinator').map((row) => row.id)
+    );
+    db.prepare(
+      `UPDATE space_long_horizon_agents SET handle = ?, updated_at = ? WHERE handle = 'coordinator'`
+    ).run(SPACE_MANAGER_HANDLE, now);
     const bySpace = new Map<string, AgentRow[]>();
     for (const row of agents) {
       const spaceRows = bySpace.get(row.space_id) ?? [];
@@ -94,10 +98,14 @@ export function runMigration240(db: BunDatabase): void {
     );
     for (const row of agents) {
       if (row.display_name !== 'Coordinator') continue;
-      if (row.id !== `space-lh-agent:coordinator:${row.space_id}`) continue;
+      const wasLegacy = legacyHandleIds.has(row.id);
+      const isDeterministic = row.id === `space-lh-agent:coordinator:${row.space_id}`;
+      if (!wasLegacy && !isDeterministic) continue;
       const collides = (bySpace.get(row.space_id) ?? []).some(
         (other) =>
-          other.id !== row.id && normalizeDisplayName(other.display_name) === 'space manager'
+          other.id !== row.id &&
+          (!wasLegacy || originalHandles.get(other.id) !== 'coordinator') &&
+          normalizeDisplayName(other.display_name) === 'space manager'
       );
       if (!collides) restamp.run('Space Manager', now, row.id);
     }
