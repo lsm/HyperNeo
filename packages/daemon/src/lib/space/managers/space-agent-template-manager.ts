@@ -61,7 +61,7 @@ export interface DeleteTemplateCtx {
   deleted?: boolean;
 }
 
-function getBuiltInSpaceAgentTemplates(): SpaceAgentTemplate[] {
+export function getBuiltInSpaceAgentTemplates(): SpaceAgentTemplate[] {
   return getLongHorizonAgentTemplates().map((template) => {
     const presetTools = template.toolPermissions.tools;
     return {

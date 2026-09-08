@@ -44,6 +44,7 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentInactivityConfigRepository } from '../../../../src/storage/repositories/space-agent-inactivity-repository.ts';
+import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository.ts';
 import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
@@ -2265,7 +2266,16 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(handles).not.toContain('coordinator');
   });
 
-  test('list_agent_templates exposes built-in templates except the reserved coordinator', async () => {
+  test('list_agent_templates merges built-in and user templates with labels and builtin flag', async () => {
+    new SpaceAgentTemplateRepository(ctx.db).create({
+      key: 'user.release-notes',
+      handle: 'release-notes',
+      displayName: 'Release Notes',
+      description: 'Drafts release notes from merged PRs',
+      instructions: 'Draft release notes.',
+      suggestedAutonomyLevel: 2,
+      labels: ['docs'],
+    });
     const handlers = makeHandlers(ctx);
     const listed = JSON.parse((await handlers.list_agent_templates()).content[0].text);
     expect(listed.success).toBe(true);
@@ -2274,12 +2284,39 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       (t: { template_name: string }) => t.template_name
     );
     expect(lhKeys).toContain('worker.research');
+    expect(lhKeys).toContain('user.release-notes');
     expect(lhKeys).not.toContain('coordinator.default');
     const research = listed.long_horizon_templates.find(
       (t: { template_name: string }) => t.template_name === 'worker.research'
     );
     expect(research.handle).toBe('research');
     expect(research.suggested_autonomy_level).toBe(1);
+    expect(research.builtin).toBe(true);
+    expect(research.labels).toEqual(['workflow-worker']);
+    const releaseNotes = listed.long_horizon_templates.find(
+      (t: { template_name: string }) => t.template_name === 'user.release-notes'
+    );
+    expect(releaseNotes.handle).toBe('release-notes');
+    expect(releaseNotes.builtin).toBe(false);
+    expect(releaseNotes.labels).toEqual(['docs']);
+  });
+
+  test('list_agent_templates falls back to built-in templates without database access', async () => {
+    new SpaceAgentTemplateRepository(ctx.db).create({
+      key: 'user.release-notes',
+      handle: 'release-notes',
+      displayName: 'Release Notes',
+      instructions: 'Draft release notes.',
+    });
+    const handlers = makeHandlers(ctx, { db: undefined });
+    const listed = JSON.parse((await handlers.list_agent_templates()).content[0].text);
+    expect(listed.success).toBe(true);
+    const lhKeys = listed.long_horizon_templates.map(
+      (t: { template_name: string }) => t.template_name
+    );
+    expect(lhKeys).toContain('worker.research');
+    expect(lhKeys).not.toContain('user.release-notes');
+    expect(listed.long_horizon_templates.every((t: { builtin: boolean }) => t.builtin)).toBe(true);
   });
 
   test('create_agent_from_template resolves LH templates by key and rejects missing templates', async () => {
