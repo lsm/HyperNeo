@@ -60,7 +60,6 @@ export function runMigration240(db: BunDatabase): void {
                   SELECT 1 FROM space_long_horizon_agents other
                    WHERE other.space_id = space_long_horizon_agents.space_id
                      AND other.handle != 'coordinator'
-                     AND other.status != 'archived'
                      AND lower(trim(other.display_name)) = 'space manager'
                 ) THEN 'Space Manager' ELSE display_name END,
               updated_at = ?

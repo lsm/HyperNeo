@@ -145,6 +145,24 @@ function makeDb(): BunDatabase {
     'space:chat:space-8'
   );
   insertAgent.run('agent-holder-8', 'space-8', 'space-manager', 'Holder', null, 'active', null);
+  insertAgent.run(
+    'agent-archived-named-9',
+    'space-9',
+    'archived-named',
+    'Space Manager',
+    null,
+    'archived',
+    null
+  );
+  insertAgent.run(
+    'agent-coord-9',
+    'space-9',
+    'coordinator',
+    'Coordinator',
+    'coordinator.default',
+    'active',
+    'space:chat:space-9'
+  );
   return db;
 }
 
@@ -220,6 +238,16 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
     db.close();
   });
 
+  test('skips the restamp when an archived custom agent owns the name', () => {
+    const db = makeDb();
+    runMigration238(db);
+
+    expect(rowById(db, 'agent-coord-9').handle).toBe('space-manager');
+    expect(rowById(db, 'agent-coord-9').display_name).toBe('Coordinator');
+    expect(rowById(db, 'agent-archived-named-9').display_name).toBe('Space Manager');
+    db.close();
+  });
+
   test('relocates holders when the coordinator row was pre-lock renamed', () => {
     const db = makeDb();
     runMigration238(db);
@@ -266,22 +294,22 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
     const db = makeDb();
     db.prepare(
       `INSERT INTO spaces (id, workspace_path, name, slug, created_at, updated_at)
-				VALUES ('space-9', '/tmp/space-9', 'Space 9', 'space-9', 1, 1)`
+				VALUES ('space-10', '/tmp/space-10', 'Space 10', 'space-10', 1, 1)`
     ).run();
     db.prepare(
       `INSERT INTO space_long_horizon_agents (
 					id, space_id, handle, display_name, template_key, status, session_id,
 					instructions, created_at, updated_at
-				) VALUES ('space-lh-agent:coordinator:space-9', 'space-9', 'coordinator', 'Coordinator', 'coordinator.default', 'active', 'space:chat:space-9', '', 1, 1)`
+				) VALUES ('space-lh-agent:coordinator:space-10', 'space-10', 'coordinator', 'Coordinator', 'coordinator.default', 'active', 'space:chat:space-10', '', 1, 1)`
     ).run();
     runMigration238(db);
-    expect(handleById(db, 'space-lh-agent:coordinator:space-9')).toBe('space-manager');
+    expect(handleById(db, 'space-lh-agent:coordinator:space-10')).toBe('space-manager');
 
     runMigration238(db);
     runMigration238(db);
 
-    expect(handleById(db, 'space-lh-agent:coordinator:space-9')).toBe('space-manager');
-    expect(rowById(db, 'space-lh-agent:coordinator:space-9').display_name).toBe('Space Manager');
+    expect(handleById(db, 'space-lh-agent:coordinator:space-10')).toBe('space-manager');
+    expect(rowById(db, 'space-lh-agent:coordinator:space-10').display_name).toBe('Space Manager');
     db.close();
   });
 });
