@@ -2102,7 +2102,7 @@ export class TaskAgentManager {
       const indexed = this.agentSessionIndex.get(identity.sessionId);
       if (indexed && (indexed === suppliedSession || !suppliedSession)) {
         const shouldReplayPendingMessages =
-          options.replayPendingMessages ?? (options.startQuery !== false);
+          options.replayPendingMessages ?? options.startQuery !== false;
         if (
           options.startQuery !== false &&
           !indexed.isQueryActiveOrStarting() &&
@@ -2281,7 +2281,7 @@ export class TaskAgentManager {
     if (createdNow) this.config.sessionManager.registerSession(agentSession);
 
     const shouldReplayPendingMessages =
-      options.replayPendingMessages ?? (options.startQuery !== false);
+      options.replayPendingMessages ?? options.startQuery !== false;
     try {
       this.sanitizeSDKSessionTranscriptForRehydration(agentSession, workspacePath);
       if (agentSession.getSessionData().status === 'archived') {
@@ -3742,7 +3742,7 @@ export class TaskAgentManager {
       const indexed = this.agentSessionIndex.get(subSessionId);
       if (indexed && (indexed === suppliedSession || !suppliedSession)) {
         const shouldReplayPendingMessages =
-          options.replayPendingMessages ?? (options.startQuery !== false);
+          options.replayPendingMessages ?? options.startQuery !== false;
         const taskId = taskIdFromSubSessionIdentity(subSessionId);
         if (
           options.startQuery !== false &&
@@ -3988,7 +3988,7 @@ export class TaskAgentManager {
     }
 
     const shouldReplayPendingMessages =
-      options.replayPendingMessages ?? (options.startQuery !== false);
+      options.replayPendingMessages ?? options.startQuery !== false;
     try {
       if (
         options.startQuery !== false &&
