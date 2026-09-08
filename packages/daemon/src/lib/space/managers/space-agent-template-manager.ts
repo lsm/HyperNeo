@@ -28,7 +28,7 @@ type BuiltInTemplateSource = () => SpaceAgentTemplate[];
 const MIN_AUTONOMY: SpaceAgentAutonomyLevel = 1;
 const MAX_AUTONOMY: SpaceAgentAutonomyLevel = 5;
 const MAX_LABELS = 8;
-const NON_PRINTABLE = /\p{Cc}/u;
+const NON_PRINTABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 
 export interface CreateTemplateCtx {
   repo: SpaceAgentTemplateRepository;
@@ -126,6 +126,9 @@ function normalizeTemplateLabels(labels: string[] | null | undefined): {
   error: string | null;
 } {
   if (labels === undefined || labels === null) return { labels: [], error: null };
+  if (!Array.isArray(labels)) {
+    return { labels: [], error: 'Template labels must be an array of strings' };
+  }
   const normalized: string[] = [];
   for (const label of labels) {
     if (typeof label !== 'string') {

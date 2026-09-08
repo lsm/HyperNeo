@@ -6,6 +6,11 @@ import { runMigration227 } from '../../../../../src/storage/schema/m227-space-ag
 import { runMigration236 } from '../../../../../src/storage/schema/m236-space-agent-template-labels.ts';
 import { SpaceAgentTemplateRepository } from '../../../../../src/storage/repositories/space-agent-template-repository.ts';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
+import {
+  createSpaceAgentSchema,
+  insertSpace,
+  insertWorkflow,
+} from '../../../helpers/space-agent-schema.ts';
 
 interface ColumnRow {
   name: string;
@@ -69,6 +74,52 @@ describe('migration 236: space_agent_templates labels column', () => {
     expect(created.labels).toEqual([]);
     const updated = repo.update('registered.custom', { labels: ['release'] });
     expect(updated?.labels).toEqual(['release']);
+    db.close();
+  });
+
+  test('precedes template-writing migrations on the upgrade path (m228 ordering)', () => {
+    const db = new BunDatabase(':memory:');
+    createSpaceAgentSchema(db);
+    insertSpace(db);
+    runMigration225(db);
+    runMigration226(db);
+    runMigration227(db);
+    db.prepare(
+      `INSERT INTO space_long_horizon_agents (
+         id, space_id, handle, display_name, template_key, status, session_id, instructions,
+         autonomy_level, model, thinking_level, provider, setting_sources,
+         tool_permissions_json, description, model_pool, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, NULL, 'active', NULL, ?, NULL, NULL, NULL, NULL, NULL, '{}', NULL, NULL, 1000, 1000)`
+    ).run('agent-upgrade', 'space-1', 'researcher', 'Researcher', 'Upgrade contract');
+    insertWorkflow(db, 'wf-upgrade', 'space-1', 'Upgrade Flow');
+    db.prepare(
+      `INSERT INTO space_workflow_nodes (id, workflow_id, name, description, config, created_at, updated_at)
+       VALUES (?, ?, ?, '', ?, 1000, 1000)`
+    ).run(
+      'node-upgrade',
+      'wf-upgrade',
+      'node-upgrade',
+      JSON.stringify({ agents: [{ agentId: 'agent-upgrade', name: 'researcher' }] })
+    );
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS migration_markers (
+        key TEXT PRIMARY KEY,
+        applied_at INTEGER NOT NULL
+      )
+    `);
+    const mark = db.prepare(
+      `INSERT OR IGNORE INTO migration_markers (key, applied_at) VALUES (?, 1000)`
+    );
+    for (let version = 1; version <= 235; version++) {
+      if (version === 228) continue;
+      mark.run(`migration_${String(version).padStart(3, '0')}`);
+    }
+
+    runMigrations(db, () => {});
+
+    const repo = new SpaceAgentTemplateRepository(db);
+    const template = repo.getByKey('migrated.agent.agent-upgrade');
+    expect(template?.labels).toEqual([]);
     db.close();
   });
 });

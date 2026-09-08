@@ -523,6 +523,8 @@ export function runMigrations(
 
   run(migrationMarkerKey(227), () => runMigration227(db));
 
+  run(migrationMarkerKey(236), () => runMigration236(db));
+
   run(migrationMarkerKey(228), () => runMigration228(db));
 
   run(migrationMarkerKey(229), () => runMigration229(db));

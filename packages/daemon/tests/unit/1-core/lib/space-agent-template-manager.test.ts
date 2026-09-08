@@ -250,6 +250,24 @@ describe('SpaceAgentTemplateManager', () => {
       if (!result.ok) expect(result.error).toContain('printable');
     });
 
+    test('rejects invisible formatting characters in labels', async () => {
+      for (const label of ['zero\u200Bwidth', 'bi\u202Edi', 'line\u2028sep']) {
+        const result = await manager.create({ ...fullParams(), labels: [label] });
+        expect(result.ok, label).toBe(false);
+        if (!result.ok) expect(result.error).toContain('printable');
+      }
+    });
+
+    test('rejects a non-array labels payload', async () => {
+      const result = await manager.create({
+        ...fullParams(),
+        labels: 'ops' as unknown as string[],
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('array');
+    });
+
     test('rejects more than eight labels after dedupe', async () => {
       const result = await manager.create({
         ...fullParams(),
