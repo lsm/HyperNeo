@@ -299,13 +299,22 @@ describe('SpaceAgentTemplateManager', () => {
       if (!result.ok) expect(result.error).toContain('limited to 64 characters');
     });
 
-    test('rejects a large unique-label payload without quadratic scanning', async () => {
+    test('rejects oversized label arrays before iterating', async () => {
       const labels = Array.from({ length: 20_000 }, (_, i) => `label-${i}`);
 
       const result = await manager.create({ ...fullParams(), labels });
 
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error).toContain('limited to 8');
+      if (!result.ok) expect(result.error).toContain('limited to 64 entries');
+    });
+
+    test('rejects duplicate-heavy label arrays before iterating', async () => {
+      const labels = Array.from({ length: 100_000 }, () => 'duplicate');
+
+      const result = await manager.create({ ...fullParams(), labels });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('limited to 64 entries');
     });
 
     test('rejects more than eight labels after dedupe', async () => {

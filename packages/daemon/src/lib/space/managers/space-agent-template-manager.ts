@@ -29,6 +29,7 @@ const MIN_AUTONOMY: SpaceAgentAutonomyLevel = 1;
 const MAX_AUTONOMY: SpaceAgentAutonomyLevel = 5;
 const MAX_LABELS = 8;
 const MAX_LABEL_LENGTH = 64;
+const MAX_LABEL_ENTRIES = 64;
 const NON_PRINTABLE = /[\p{Cc}\p{Cf}\p{Cn}\p{Co}\p{Cs}\p{Zl}\p{Zp}]/u;
 const DEFAULT_IGNORABLE =
   /[\u034F\u115F\u1160\u17B4\u17B5\u180B-\u180D\u180F\u3164\uFE00-\uFE0F\uFFA0\u{E0100}-\u{E01EF}]/u;
@@ -131,6 +132,12 @@ function normalizeTemplateLabels(labels: string[] | null | undefined): {
   if (labels === undefined || labels === null) return { labels: [], error: null };
   if (!Array.isArray(labels)) {
     return { labels: [], error: 'Template labels must be an array of strings' };
+  }
+  if (labels.length > MAX_LABEL_ENTRIES) {
+    return {
+      labels: [],
+      error: `Template label arrays are limited to ${MAX_LABEL_ENTRIES} entries`,
+    };
   }
   const normalized: string[] = [];
   for (const label of labels) {
