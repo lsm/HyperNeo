@@ -2555,11 +2555,15 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
   test('create_agent_from_template instantiates stored user templates (ATC-24)', async () => {
     new SpaceAgentTemplateRepository(ctx.db).create({
       key: 'watcher.sre',
-      handle: 'sre-watchdog',
+      handle: 'ops',
       displayName: 'SRE Watchdog',
       description: 'Watches alert queues',
       instructions: 'Own the alert queue.',
       suggestedAutonomyLevel: 3,
+      model: 'kimi-k2',
+      provider: 'moonshot',
+      thinkingLevel: 'think8k',
+      settingSources: ['user'],
       tools: ['Read', 'Bash(kubectl:*)'],
       labels: ['custom'],
     });
@@ -2571,27 +2575,58 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(created.success).toBe(true);
     expect(created.agent.templateKey).toBe('watcher.sre');
     expect(created.agent.displayName).toBe('SRE Watchdog');
-    expect(created.agent.handle).toBe('sre-watchdog');
+    expect(created.agent.handle).toBe('ops');
     expect(created.agent.instructions).toBe('Own the alert queue.');
+    expect(created.agent.description).toBe('Watches alert queues');
     expect(created.agent.autonomyLevel).toBe(3);
+    expect(created.agent.model).toBe('kimi-k2');
+    expect(created.agent.provider).toBe('moonshot');
+    expect(created.agent.thinkingLevel).toBe('think8k');
+    expect(created.agent.settingSources).toEqual(['user']);
     expect(created.agent.toolPermissions).toEqual({ tools: ['Read', 'Bash(kubectl:*)'] });
     expect(created.seeded_subscriptions).toEqual([]);
     expect(created.skipped_subscriptions).toEqual([]);
     expect(created.seeded_reminders).toEqual([]);
     expect(created.skipped_reminders).toEqual([]);
 
-    const named = JSON.parse(
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'sonnet',
+              name: 'Claude Sonnet',
+              alias: 'default',
+              provider: 'anthropic',
+              family: 'sonnet',
+              contextWindow: 200000,
+              description: 'Best balance of speed and intelligence',
+              releaseDate: '2025-01-01',
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+    const overridden = JSON.parse(
       (
         await handlers.create_agent_from_template({
           template_name: 'watcher.sre',
           name: 'Night Watch',
+          model: 'sonnet',
+          provider: 'anthropic',
         })
       ).content[0].text
     );
-    expect(named.success).toBe(true);
-    expect(named.agent.displayName).toBe('Night Watch');
-    expect(named.agent.handle).toBe('night-watch');
-    expect(named.agent.instructions).toBe('Own the alert queue.');
+    expect(overridden.success).toBe(true);
+    expect(overridden.agent.displayName).toBe('Night Watch');
+    expect(overridden.agent.handle).toBe('night-watch');
+    expect(overridden.agent.model).toBe('sonnet');
+    expect(overridden.agent.provider).toBe('anthropic');
+    expect(overridden.agent.thinkingLevel).toBe('think8k');
+    expect(overridden.agent.settingSources).toEqual(['user']);
+    expect(overridden.agent.instructions).toBe('Own the alert queue.');
 
     const upper = JSON.parse(
       (await handlers.create_agent_from_template({ template_name: 'WATCHER.SRE' })).content[0].text

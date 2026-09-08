@@ -80,7 +80,10 @@ import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import type { SpaceRuntime } from '../runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../runtime/task-agent-manager.ts';
 import { mapPostApprovalDispatchWarning } from '../runtime/post-approval-router.ts';
-import { spaceAgentTemplateToNodeSource } from '../runtime/spawn-slot-resolution.ts';
+import {
+  spaceAgentTemplateToNodeSource,
+  type NodeAgentTemplateSource,
+} from '../runtime/spawn-slot-resolution.ts';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
 import { decideGoalOwnershipMutationAdmission } from '../goals/goal-ownership-gates.ts';
 import {
@@ -674,6 +677,32 @@ const runListAgentTemplates = (superpipe()('list-agent-templates') as PipelineAP
   .pipe(dropReservedFallbackHandles, 'library', 'filteredLibrary')
   .pipe(projectAgentTemplateEntries, 'filteredLibrary', 'entries')
   .end('entries') as (db: BunDatabase | undefined) => AgentTemplateListEntry[];
+
+function resolveBuiltinAgentTemplate(templateName: string): NodeAgentTemplateSource | null {
+  const builtIn = getLongHorizonAgentTemplates().find(
+    (candidate) => candidate.key.toLowerCase() === templateName.toLowerCase()
+  ) as NodeAgentTemplateSource | undefined;
+  return builtIn ?? null;
+}
+
+function resolveStoredAgentTemplate(
+  db: BunDatabase | undefined,
+  templateName: string,
+  builtIn: NodeAgentTemplateSource | null
+): NodeAgentTemplateSource | null {
+  if (builtIn) return builtIn;
+  const stored = db ? new SpaceAgentTemplateRepository(db).getByKey(templateName) : null;
+  return stored ? spaceAgentTemplateToNodeSource(stored) : null;
+}
+
+const runResolveAgentTemplateSource = (superpipe()('resolve-agent-template-source') as PipelineAPI)
+  .input(['templateName', 'db'])
+  .pipe(resolveBuiltinAgentTemplate, 'templateName', 'builtIn')
+  .pipe(resolveStoredAgentTemplate, ['db', 'templateName', 'builtIn'], 'template')
+  .end('template') as (
+  templateName: string,
+  db: BunDatabase | undefined
+) => NodeAgentTemplateSource | null;
 
 export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   const uniqueAgentDisplayName = (base: string): string => {
@@ -1833,16 +1862,7 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         return jsonResult({ success: false, error: 'template_name is required' });
       }
 
-      const builtInTemplate = getLongHorizonAgentTemplates().find(
-        (candidate) => candidate.key.toLowerCase() === templateName.toLowerCase()
-      );
-      const storedTemplate = builtInTemplate
-        ? null
-        : config.db
-          ? new SpaceAgentTemplateRepository(config.db).getByKey(templateName)
-          : null;
-      const lhTemplate: SpaceLongHorizonAgentTemplate | null =
-        builtInTemplate ?? (storedTemplate ? spaceAgentTemplateToNodeSource(storedTemplate) : null);
+      const lhTemplate = runResolveAgentTemplateSource(templateName, config.db);
       if (lhTemplate) {
         if (isReservedAgentHandle(lhTemplate.handle)) {
           return jsonResult({
@@ -1859,8 +1879,10 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
           return jsonResult({ success: false, error: 'Agent name cannot be empty' });
         }
         try {
-          if (args.model) {
-            const modelError = await validateLongHorizonModel(args.model, args.provider);
+          const effectiveModel = args.model ?? lhTemplate.model ?? null;
+          const effectiveProvider = args.provider ?? lhTemplate.provider ?? null;
+          if (effectiveModel && (args.model !== undefined || args.provider !== undefined)) {
+            const modelError = await validateLongHorizonModel(effectiveModel, effectiveProvider);
             if (modelError) return jsonResult({ success: false, error: modelError });
           }
           const repo = requireLongHorizonAgentRepo();
@@ -1874,14 +1896,19 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             : uniqueAgentDisplayName(lhTemplate.displayName);
           const agent = repo.create({
             spaceId,
-            handle: uniqueLongHorizonAgentHandle(templateDisplayName),
+            handle: uniqueLongHorizonAgentHandle(
+              nameOverride ? templateDisplayName : lhTemplate.handle
+            ),
             displayName: templateDisplayName,
             templateKey: lhTemplate.key,
+            description: lhTemplate.description,
             instructions: lhTemplate.instructions,
             autonomyLevel,
-            model: args.model ?? null,
-            provider: args.provider ?? null,
-            thinkingLevel: args.thinking_level ?? null,
+            model: effectiveModel,
+            provider: effectiveProvider,
+            thinkingLevel: args.thinking_level ?? lhTemplate.thinkingLevel ?? null,
+            settingSources: lhTemplate.settingSources ?? null,
+            modelPool: lhTemplate.modelPool ?? undefined,
             toolPermissions: lhTemplate.toolPermissions,
           });
           const subscriptions = seedLongHorizonTemplateSubscriptions(
@@ -4630,7 +4657,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'create_agent_from_template',
-        'Create a long-horizon Space agent from a built-in template key (worker.research, worker.qa, ...). Templates carrying suggested event subscriptions and reminders seed them on create. Call list_agent_templates to discover available templates.',
+        'Create a long-horizon Space agent from a template key: built-in templates (worker.research, worker.qa, ...) resolve first, then user-created templates stored in this space. Templates carrying suggested event subscriptions and reminders seed them on create. Call list_agent_templates to discover available templates.',
         CreateAgentFromTemplateSchema.shape,
         (args) => handlers.create_agent_from_template(args)
       ),
