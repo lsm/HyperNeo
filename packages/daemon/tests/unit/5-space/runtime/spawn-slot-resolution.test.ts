@@ -306,6 +306,45 @@ function makeAgent(overrides: Partial<SpaceLongHorizonAgent> = {}): SpaceLongHor
 }
 
 describe('resolveNodeAgentConfig: template source', () => {
+  test('builds the full synthetic template agent record (ATC-1 pin)', () => {
+    const config = resolveNodeAgentConfig(
+      makeTemplate({
+        model: 'template-model',
+        provider: 'anthropic',
+        thinkingLevel: 'think8k',
+        settingSources: ['project'],
+        toolPermissions: { tools: ['Read', 'Bash'] },
+      }),
+      { name: 'coder' },
+      []
+    );
+
+    expect(config).toEqual({
+      agent: {
+        id: 'template:coder.default',
+        spaceId: '',
+        handle: 'coder',
+        displayName: 'coder',
+        templateKey: 'coder.default',
+        status: 'active',
+        sessionId: null,
+        instructions: 'Template base contract',
+        autonomyLevel: null,
+        model: 'template-model',
+        thinkingLevel: 'think8k',
+        provider: 'anthropic',
+        settingSources: ['project'],
+        toolPermissions: { tools: ['Read', 'Bash'] },
+        description: 'Writes the assigned work.',
+        modelPool: undefined,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      source: 'template',
+      templateKey: 'coder.default',
+    });
+  });
+
   test('builds an ephemeral spawn config from template fields', () => {
     const config = resolveNodeAgentConfig(
       makeTemplate({ toolPermissions: { tools: ['Read', 'Bash'] } }),

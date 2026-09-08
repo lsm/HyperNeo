@@ -1,0 +1,598 @@
+import { describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
+import { PRESET_CODER_PROMPT, REVIEWER_SYSTEM_CONTRACT } from '@hyperneo/prompts';
+import type {
+  NodeExecution,
+  Space,
+  SpaceAgentTemplate,
+  SpaceLongHorizonAgent,
+  SpaceTask,
+  SpaceWorkflow,
+  SpaceWorkflowRun,
+  WorkflowNode,
+  WorkflowNodeAgent,
+} from '@hyperneo/shared';
+import type { AgentSession, AgentSessionInit } from '../../../../src/lib/agent/agent-session.ts';
+import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
+import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
+import type {
+  NodeAgentSpawnConfig,
+  NodeAgentTemplateSource,
+} from '../../../../src/lib/space/runtime/spawn-slot-resolution.ts';
+import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
+
+const TASK_ID = 'task-3832';
+const RUN_ID = 'run-3832';
+const SPACE_ID = 'space-3832';
+const NODE_ID = 'node-coder';
+const SPAWNED_SESSION_ID = 'spawned-session-3832';
+
+function makeExecution(agentName: string): NodeExecution {
+  return {
+    id: 'exec-3832',
+    workflowRunId: RUN_ID,
+    workflowNodeId: NODE_ID,
+    agentName,
+    agentId: null,
+    agentSessionId: null,
+    status: 'pending',
+    result: null,
+    data: null,
+    createdAt: 1,
+    startedAt: null,
+    completedAt: null,
+    updatedAt: 1,
+    lastActivityAt: null,
+  };
+}
+
+function makeTask(): SpaceTask {
+  return {
+    id: TASK_ID,
+    spaceId: SPACE_ID,
+    workflowRunId: RUN_ID,
+    title: 'Pin template resolution',
+    description: 'Characterize the template resolution and spawn payload',
+    taskNumber: 3832,
+    status: 'in_progress',
+  } as unknown as SpaceTask;
+}
+
+function makeTemplateWorkflowNode(slot: Partial<WorkflowNodeAgent> = {}): WorkflowNode {
+  const agentName = slot.name ?? 'coder';
+  return {
+    id: NODE_ID,
+    name: agentName,
+    agents: [
+      {
+        agentId: '',
+        templateKey: 'worker.coder',
+        name: agentName,
+        ...slot,
+      },
+    ],
+  } as unknown as WorkflowNode;
+}
+
+function makeWorkflow(node: WorkflowNode): SpaceWorkflow {
+  return {
+    id: 'wf-3832',
+    spaceId: SPACE_ID,
+    name: 'Coding',
+    nodes: [node, { id: 'node-reviewer', name: 'reviewer', agents: [] }],
+    channels: [],
+    startNodeId: node.id,
+    endNodeId: 'node-reviewer',
+  } as unknown as SpaceWorkflow;
+}
+
+function makeStoredTemplate(overrides: Partial<SpaceAgentTemplate> = {}): SpaceAgentTemplate {
+  return {
+    key: 'custom.stored',
+    handle: 'stored-agent',
+    displayName: 'Stored Agent',
+    description: 'A stored space agent template.',
+    instructions: 'Stored template instructions',
+    suggestedAutonomyLevel: 2,
+    model: 'stored-model',
+    provider: 'openrouter',
+    modelPool: null,
+    thinkingLevel: 'think8k',
+    settingSources: ['project'],
+    tools: ['Read', 'Grep'],
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  };
+}
+
+function makeRegistryAgent(overrides: Partial<SpaceLongHorizonAgent> = {}): SpaceLongHorizonAgent {
+  return {
+    id: 'agent-registry-1',
+    spaceId: SPACE_ID,
+    handle: 'registry-agent',
+    displayName: 'Registry Agent',
+    templateKey: null,
+    status: 'active',
+    sessionId: null,
+    instructions: 'Registry agent instructions',
+    autonomyLevel: null,
+    model: null,
+    thinkingLevel: null,
+    provider: null,
+    settingSources: null,
+    toolPermissions: {},
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides,
+  };
+}
+
+interface TemplateResolutionHarness {
+  tam: TaskAgentManager;
+  templateRepoCalls: string[];
+  internals: {
+    resolveNodeTemplateSource: (key: string) => NodeAgentTemplateSource | null;
+    resolveSlotSpawnConfig: (
+      spaceId: string,
+      slot: WorkflowNodeAgent
+    ) => NodeAgentSpawnConfig | null;
+  };
+}
+
+function makeTemplateResolutionHarness(
+  options: { storedTemplates?: SpaceAgentTemplate[]; registryAgents?: SpaceLongHorizonAgent[] } = {}
+): TemplateResolutionHarness {
+  const templateRepoCalls: string[] = [];
+  const stored = new Map((options.storedTemplates ?? []).map((t) => [t.key, t]));
+  const registryAgents = options.registryAgents ?? [];
+
+  const tam = new TaskAgentManager({
+    db: { getDatabase: () => new BunDatabase(':memory:'), getSession: () => null },
+    sessionManager: { registerSession: () => {}, getSession: () => undefined },
+    internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+    taskRepo: {},
+    nodeExecutionRepo: {},
+    spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+    longHorizonAgentRepo: {
+      getById: (id: string) => registryAgents.find((agent) => agent.id === id) ?? null,
+    },
+    templateRepo: {
+      getByKey: (key: string) => {
+        templateRepoCalls.push(key);
+        return stored.get(key) ?? null;
+      },
+    },
+  } as unknown as TaskAgentManagerConfig);
+
+  return {
+    tam,
+    templateRepoCalls,
+    internals: tam as unknown as TemplateResolutionHarness['internals'],
+  };
+}
+
+describe('resolveNodeTemplateSource ordering (ATC-1 pin)', () => {
+  test('resolves a code built-in worker template without consulting the template repo', () => {
+    const h = makeTemplateResolutionHarness({
+      storedTemplates: [makeStoredTemplate({ key: 'worker.coder' })],
+    });
+
+    const source = h.internals.resolveNodeTemplateSource('worker.coder');
+
+    expect(source?.key).toBe('worker.coder');
+    expect(source?.handle).toBe('coder');
+    expect(source?.instructions).toBe(PRESET_CODER_PROMPT);
+    expect(h.templateRepoCalls).toEqual([]);
+  });
+
+  test('resolves a code built-in family template without consulting the template repo', () => {
+    const h = makeTemplateResolutionHarness({
+      storedTemplates: [makeStoredTemplate({ key: 'coordinator.default' })],
+    });
+
+    const source = h.internals.resolveNodeTemplateSource('coordinator.default');
+
+    expect(source?.key).toBe('coordinator.default');
+    expect(source?.handle).toBe('coordinator');
+    expect(h.templateRepoCalls).toEqual([]);
+  });
+
+  test('falls back to templateRepo.getByKey for a stored template and maps it to a node source', () => {
+    const h = makeTemplateResolutionHarness({
+      storedTemplates: [makeStoredTemplate()],
+    });
+
+    const source = h.internals.resolveNodeTemplateSource('custom.stored');
+
+    expect(h.templateRepoCalls).toEqual(['custom.stored']);
+    expect(source?.key).toBe('custom.stored');
+    expect(source?.instructions).toBe('Stored template instructions');
+    expect(source?.model).toBe('stored-model');
+    expect(source?.provider).toBe('openrouter');
+    expect(source?.thinkingLevel).toBe('think8k');
+    expect(source?.toolPermissions).toEqual({ tools: ['Read', 'Grep'] });
+    expect(source?.suggestedEventSubscriptions).toEqual([]);
+    expect(source?.reminderDefaults).toEqual([]);
+    expect(source?.ownershipPatterns).toEqual([]);
+  });
+
+  test('the code built-in wins when a stored template shadows a built-in key', () => {
+    const h = makeTemplateResolutionHarness({
+      storedTemplates: [makeStoredTemplate({ key: 'worker.coder' })],
+    });
+
+    const source = h.internals.resolveNodeTemplateSource('worker.coder');
+
+    expect(source?.instructions).toBe(PRESET_CODER_PROMPT);
+    expect(source?.instructions).not.toBe('Stored template instructions');
+    expect(h.templateRepoCalls).toEqual([]);
+  });
+
+  test('returns null for an unknown key after one repo lookup', () => {
+    const h = makeTemplateResolutionHarness();
+
+    expect(h.internals.resolveNodeTemplateSource('missing.template')).toBeNull();
+    expect(h.templateRepoCalls).toEqual(['missing.template']);
+  });
+});
+
+describe('resolveSlotSpawnConfig branch selection (ATC-1 pin)', () => {
+  test('templateKey branch: spawns an ephemeral template agent for a built-in worker key', () => {
+    const h = makeTemplateResolutionHarness();
+
+    const config = h.internals.resolveSlotSpawnConfig(SPACE_ID, {
+      agentId: '',
+      templateKey: 'worker.coder',
+      name: 'coder',
+    });
+
+    expect(config?.source).toBe('template');
+    expect(config?.templateKey).toBe('worker.coder');
+    expect(config?.agent.id).toBe('template:worker.coder');
+    expect(config?.agent.displayName).toBe('coder');
+    expect(config?.agent.instructions).toBe(PRESET_CODER_PROMPT);
+  });
+
+  test('templateKey branch: trims surrounding whitespace before resolving', () => {
+    const h = makeTemplateResolutionHarness();
+
+    const config = h.internals.resolveSlotSpawnConfig(SPACE_ID, {
+      agentId: '',
+      templateKey: '  worker.coder  ',
+      name: 'coder',
+    });
+
+    expect(config?.source).toBe('template');
+    expect(config?.templateKey).toBe('worker.coder');
+  });
+
+  test('templateKey branch: slot model and thinking level override the template fields', () => {
+    const h = makeTemplateResolutionHarness();
+
+    const config = h.internals.resolveSlotSpawnConfig(SPACE_ID, {
+      agentId: '',
+      templateKey: 'worker.coder',
+      name: 'coder',
+      model: 'slot-model',
+      thinkingLevel: 'think32k',
+    });
+
+    expect(config?.agent.model).toBe('slot-model');
+    expect(config?.agent.thinkingLevel).toBe('think32k');
+  });
+
+  test('templateKey branch: a stored template key spawns from the repo copy', () => {
+    const h = makeTemplateResolutionHarness({
+      storedTemplates: [makeStoredTemplate()],
+    });
+
+    const config = h.internals.resolveSlotSpawnConfig(SPACE_ID, {
+      agentId: '',
+      templateKey: 'custom.stored',
+      name: 'stored',
+    });
+
+    expect(config?.source).toBe('template');
+    expect(config?.agent.id).toBe('template:custom.stored');
+    expect(config?.agent.instructions).toBe('Stored template instructions');
+    expect(config?.agent.model).toBe('stored-model');
+    expect(config?.agent.toolPermissions).toEqual({ tools: ['Read', 'Grep'] });
+  });
+
+  test('an unresolvable templateKey with no agentId yields null', () => {
+    const h = makeTemplateResolutionHarness();
+
+    const config = h.internals.resolveSlotSpawnConfig(SPACE_ID, {
+      agentId: '',
+      templateKey: 'missing.template',
+      name: 'coder',
+    });
+
+    expect(config).toBeNull();
+  });
+
+  test('a whitespace-only templateKey is not treated as a template branch entry', () => {
+    const h = makeTemplateResolutionHarness();
+
+    const config = h.internals.resolveSlotSpawnConfig(SPACE_ID, {
+      agentId: '',
+      templateKey: '   ',
+      name: 'coder',
+    });
+
+    expect(config).toBeNull();
+    expect(h.templateRepoCalls).toEqual([]);
+  });
+
+  test('agentId fallback branch (current behavior): resolves a runnable registry agent by id', () => {
+    const h = makeTemplateResolutionHarness({
+      registryAgents: [makeRegistryAgent()],
+    });
+
+    const config = h.internals.resolveSlotSpawnConfig(SPACE_ID, {
+      agentId: 'agent-registry-1',
+      name: 'coder',
+    });
+
+    expect(config?.source).toBe('agent');
+    expect(config?.agent.id).toBe('agent-registry-1');
+    expect(config?.agent.displayName).toBe('coder');
+    expect(config?.templateKey).toBeNull();
+  });
+
+  test('agentId fallback branch (current behavior): null for an agent that is not in the registry', () => {
+    const h = makeTemplateResolutionHarness({
+      registryAgents: [makeRegistryAgent()],
+    });
+
+    expect(
+      h.internals.resolveSlotSpawnConfig(SPACE_ID, {
+        agentId: 'agent-elsewhere',
+        name: 'coder',
+      })
+    ).toBeNull();
+  });
+});
+
+interface CapturedMemberInfo {
+  agentId: string;
+  agentName: string;
+  nodeId: string | undefined;
+  deferFreshExecutionBind?: boolean;
+  freshSessionOnly?: boolean;
+}
+
+interface SpawnPayloadHarness {
+  spawn: () => Promise<string>;
+  capturedInit: () => AgentSessionInit | undefined;
+  capturedMemberInfo: () => CapturedMemberInfo | undefined;
+  capturedKickoff: () => string | undefined;
+}
+
+function makeSpawnPayloadHarness(workflow: SpaceWorkflow, agentName: string): SpawnPayloadHarness {
+  const execution = makeExecution(agentName);
+  const dbRow: NodeExecution = { ...execution };
+  let capturedInit: AgentSessionInit | undefined;
+  let capturedMemberInfo: CapturedMemberInfo | undefined;
+  let capturedKickoff: string | undefined;
+
+  const tam = new TaskAgentManager({
+    db: { getDatabase: () => new BunDatabase(':memory:'), getSession: () => null },
+    sessionManager: { registerSession: () => {}, getSession: () => undefined },
+    internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
+    taskRepo: {
+      getTask: (id: string) => (id === TASK_ID ? makeTask() : undefined),
+      reserveSpawnForTick: () => 'won' as const,
+      releaseSpawnReservation: () => {},
+    },
+    nodeExecutionRepo: {
+      getById: (id: string) => (id === execution.id ? dbRow : undefined),
+      listByWorkflowRun: () => [dbRow],
+      listByNode: () => [dbRow],
+      update: (id: string, patch: Record<string, unknown>) => {
+        if (id === execution.id) Object.assign(dbRow, patch);
+        return { ...dbRow };
+      },
+      casExecutionStatus: (
+        id: string,
+        expected: readonly string[],
+        next: string,
+        payload?: { agentSessionId?: string | null }
+      ) => {
+        if (id !== execution.id || !expected.includes(dbRow.status)) return 'superseded' as const;
+        dbRow.status = next as NodeExecution['status'];
+        if (payload?.agentSessionId !== undefined) dbRow.agentSessionId = payload.agentSessionId;
+        return 'won' as const;
+      },
+    },
+    spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+    longHorizonAgentRepo: { getById: () => null },
+  } as unknown as TaskAgentManagerConfig);
+
+  const internal = tam as unknown as {
+    createSubSession: (
+      taskId: string,
+      sessionId: string,
+      init: AgentSessionInit,
+      memberInfo: CapturedMemberInfo
+    ) => Promise<string>;
+    getSubSession: (id: string) => AgentSession | undefined;
+    ensureNodeAgentAttached: () => Promise<void>;
+    registerCompletionCallback: () => void;
+    injectMessageIntoSession: (session: AgentSession, message: string) => Promise<string>;
+    buildNodeAgentMcpServersForSession: () => Record<string, unknown>;
+    withSessionInjectLock: <T>(sessionId: string, fn: () => Promise<T>) => Promise<T>;
+  };
+  internal.createSubSession = async (_taskId, _sessionId, init, memberInfo) => {
+    capturedInit = init;
+    capturedMemberInfo = memberInfo;
+    return SPAWNED_SESSION_ID;
+  };
+  internal.getSubSession = (id: string) =>
+    id === SPAWNED_SESSION_ID ? ({ session: { id } } as unknown as AgentSession) : undefined;
+  internal.ensureNodeAgentAttached = async () => {};
+  internal.registerCompletionCallback = () => {};
+  internal.injectMessageIntoSession = async (_session, message) => {
+    capturedKickoff = message;
+    return 'msg-id';
+  };
+  internal.buildNodeAgentMcpServersForSession = () => ({});
+
+  const task = makeTask();
+  const space = { id: SPACE_ID, workspacePath: '/tmp/ws' } as unknown as Space;
+  const workflowRun = {
+    id: RUN_ID,
+    workflowId: 'wf-3832',
+    status: 'in_progress',
+  } as unknown as SpaceWorkflowRun;
+
+  return {
+    spawn: () =>
+      tam.spawnWorkflowNodeAgentForExecution(task, space, workflow, workflowRun, execution, {}),
+    capturedInit: () => capturedInit,
+    capturedMemberInfo: () => capturedMemberInfo,
+    capturedKickoff: () => capturedKickoff,
+  };
+}
+
+describe('worker-template spawn payload (ATC-1 pin, feeds slice 7 lock semantics)', () => {
+  test('a worker.coder template slot resolves the preset coder prompt and config at spawn time', async () => {
+    const h = makeSpawnPayloadHarness(makeWorkflow(makeTemplateWorkflowNode()), 'coder');
+
+    await h.spawn();
+
+    const init = h.capturedInit();
+    expect(init).toBeDefined();
+    expect(init?.systemPrompt).toEqual({
+      type: 'preset',
+      preset: 'claude_code',
+      append: PRESET_CODER_PROMPT,
+    });
+    expect(init?.type).toBe('worker');
+    expect(init?.title).toBe('Task #3832: Pin template resolution — Coder');
+    expect(init?.model).toBe('claude-sonnet-4-6');
+    expect(init?.provider).toBe('anthropic');
+    expect(init?.thinkingLevel).toBeUndefined();
+    expect(init?.context).toEqual({ spaceId: SPACE_ID, taskId: TASK_ID });
+    expect(init?.workspacePath).toBe('/tmp/ws');
+    expect(init?.mcpServers).toEqual({});
+    expect(init?.settingSources).toBeUndefined();
+    expect(init?.allowedTools).toBeUndefined();
+    expect(init?.disallowedTools).toBeUndefined();
+    expect(init?.skillOverrides).toBeUndefined();
+    expect(init?.toolGuards).toBeUndefined();
+    expect(init?.features).toEqual({
+      rewind: false,
+      worktree: false,
+      coordinator: false,
+      archive: false,
+      sessionInfo: false,
+    });
+    expect(Object.keys(init?.agents ?? {})).toEqual(['general-purpose']);
+
+    const provenance = init?.promptProvenance;
+    expect(provenance?.source).toBe('space_agent_custom_prompt');
+    expect(provenance?.hash).toBe(createHash('sha256').update(PRESET_CODER_PROMPT).digest('hex'));
+    expect(provenance?.agentId).toBe('worker.coder');
+    expect(provenance?.agentName).toBe('coder');
+    expect(provenance?.workflowRunId).toBe(RUN_ID);
+    expect(provenance?.workflowId).toBe('wf-3832');
+    expect(provenance?.nodeId).toBe(NODE_ID);
+    expect(provenance?.nodeName).toBe('coder');
+  });
+
+  test('the spawned session is registered under the synthetic template agent id', async () => {
+    const h = makeSpawnPayloadHarness(makeWorkflow(makeTemplateWorkflowNode()), 'coder');
+
+    await h.spawn();
+
+    expect(h.capturedMemberInfo()).toEqual({
+      agentId: 'template:worker.coder',
+      agentName: 'coder',
+      nodeId: NODE_ID,
+      deferFreshExecutionBind: true,
+      freshSessionOnly: true,
+    });
+  });
+
+  test('a worker.coder kickoff message carries the task, runtime location, and role sections', async () => {
+    const h = makeSpawnPayloadHarness(makeWorkflow(makeTemplateWorkflowNode()), 'coder');
+
+    await h.spawn();
+
+    const message = h.capturedKickoff();
+    expect(message).toBeDefined();
+    expect(message?.startsWith('## Your Task #3832\n\n**Title:** Pin template resolution\n')).toBe(
+      true
+    );
+    expect(message).toContain(
+      '**Description:** Characterize the template resolution and spawn payload'
+    );
+    expect(message).toContain('## Runtime Location\n\n- Worktree: /tmp/ws');
+    expect(message).toContain(
+      '## Your Role in This Workflow\n\n- Workflow: Coding\n- Node: coder\n- Peers: reviewer'
+    );
+    expect(message).toContain(
+      '## Runtime Execution Contract\nNode: "coder" (node-coder)\nAgent: "coder"'
+    );
+  });
+
+  test('a worker.reviewer template slot derives scoped tool permissions from the template tools', async () => {
+    const h = makeSpawnPayloadHarness(
+      makeWorkflow(makeTemplateWorkflowNode({ templateKey: 'worker.reviewer', name: 'reviewer' })),
+      'reviewer'
+    );
+
+    await h.spawn();
+
+    const init = h.capturedInit();
+    expect(init?.systemPrompt).toEqual({
+      type: 'preset',
+      preset: 'claude_code',
+      append: REVIEWER_SYSTEM_CONTRACT,
+    });
+    expect(init?.promptProvenance?.agentId).toBe('worker.reviewer');
+    expect(init?.promptProvenance?.hash).toBe(
+      createHash('sha256').update(REVIEWER_SYSTEM_CONTRACT).digest('hex')
+    );
+    expect(init?.allowedTools).toEqual([
+      'Task',
+      'TaskOutput',
+      'TaskStop',
+      'Bash(gh pr view:*)',
+      'Bash(gh pr diff:*)',
+      'Bash(gh pr checks:*)',
+      'Bash(gh api graphql:*)',
+      'Bash(gh api repos:*)',
+      'Bash(jq:*)',
+      'Bash(mktemp:*)',
+      'Bash(echo:*)',
+      'Bash(cat:*)',
+      'Bash(test:*)',
+      'Bash(head:*)',
+      'Bash(tr:*)',
+      'Bash(base64:*)',
+      'Bash(exit:*)',
+    ]);
+    expect(init?.disallowedTools).toEqual(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+  });
+
+  test('a slot model override re-points the spawn model and inferred provider', async () => {
+    const h = makeSpawnPayloadHarness(
+      makeWorkflow(
+        makeTemplateWorkflowNode({ model: 'moonshot-custom', thinkingLevel: 'think8k' })
+      ),
+      'coder'
+    );
+
+    await h.spawn();
+
+    const init = h.capturedInit();
+    expect(init?.model).toBe('moonshot-custom');
+    expect(init?.provider).toBe('kimi');
+    expect(init?.thinkingLevel).toBe('think8k');
+  });
+});

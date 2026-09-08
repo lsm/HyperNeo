@@ -3,6 +3,7 @@ import { execSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { REVIEWER_SYSTEM_CONTRACT } from '@hyperneo/prompts';
 import type { ModelInfo, SpaceTask, SpaceTaskStatus, SpaceWorkflow } from '@hyperneo/shared';
 import { z } from 'zod';
 import { ExternalEventStore } from '../../../../src/lib/external-events/external-event-store.ts';
@@ -2295,6 +2296,58 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(uncapped.success).toBe(true);
     expect(uncapped.agent.autonomyLevel).toBe(2);
+  });
+
+  test('creates an agent from a worker preset template by copying instructions and tools, seeding nothing (ATC-1 pin)', async () => {
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'sonnet',
+              name: 'Claude Sonnet',
+              alias: 'default',
+              provider: 'anthropic',
+              family: 'sonnet',
+              contextWindow: 200000,
+              description: 'Best balance of speed and intelligence',
+              releaseDate: '2025-01-01',
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+    const handlers = makeHandlers(ctx);
+    const result = JSON.parse(
+      (
+        await handlers.create_agent_from_template({
+          template_name: 'worker.reviewer',
+          model: 'sonnet',
+          thinking_level: 'think8k',
+        })
+      ).content[0].text
+    );
+    expect(result.success).toBe(true);
+
+    const template = getLongHorizonAgentTemplate('worker.reviewer');
+    expect(template?.instructions).toBe(REVIEWER_SYSTEM_CONTRACT);
+    expect(result.agent.templateKey).toBe('worker.reviewer');
+    expect(result.agent.handle).toBe('reviewer');
+    expect(result.agent.autonomyLevel).toBe(1);
+    expect(result.agent.instructions).toBe(template?.instructions);
+    expect(result.agent.toolPermissions).toEqual(template?.toolPermissions);
+    expect(Array.isArray(result.agent.toolPermissions.tools)).toBe(true);
+    expect(result.agent.toolPermissions.tools).toContain('Read');
+    expect(result.agent.toolPermissions.tools).toContain('Bash(gh pr view:*)');
+    expect(result.agent.model).toBe('sonnet');
+    expect(result.agent.thinkingLevel).toBe('think8k');
+
+    expect(result.seeded_subscriptions).toEqual([]);
+    expect(result.skipped_subscriptions).toEqual([]);
+    expect(result.seeded_reminders).toEqual([]);
+    expect(result.skipped_reminders).toEqual([]);
   });
 
   test('rejects the reserved coordinator singleton instead of creating a duplicate', async () => {

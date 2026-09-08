@@ -232,6 +232,48 @@ describe('Space Agent RPC Handlers', () => {
       }
     });
 
+    it('returns exactly the current 14 built-in templates (ATC-1 pin)', async () => {
+      const result = await call<{ templates: Array<{ key: string; handle: string }> }>(
+        hubData.handlers,
+        'spaceAgent.listBuiltInTemplates',
+        { spaceId: 'space-1' }
+      );
+
+      expect(result.templates).toHaveLength(14);
+      expect(result.templates.map((template) => template.key)).toEqual([
+        'coordinator.default',
+        'product-quality-manager.default',
+        'release-manager.default',
+        'security-auditor.default',
+        'marketing.default',
+        'sales.default',
+        'research.default',
+        'family-ops-chores.default',
+        'worker.coder',
+        'worker.general',
+        'worker.planner',
+        'worker.research',
+        'worker.reviewer',
+        'worker.qa',
+      ]);
+      expect(result.templates.map((template) => template.handle)).toEqual([
+        'coordinator',
+        'product-quality-manager',
+        'release-manager',
+        'security-auditor',
+        'marketing',
+        'sales',
+        'research',
+        'family-ops-chores',
+        'coder',
+        'general',
+        'planner',
+        'research',
+        'reviewer',
+        'qa',
+      ]);
+    });
+
     it('throws when spaceId is missing', async () => {
       await expect(call(hubData.handlers, 'spaceAgent.listBuiltInTemplates', {})).rejects.toThrow(
         'spaceId is required'
