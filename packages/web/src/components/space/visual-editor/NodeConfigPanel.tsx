@@ -16,8 +16,8 @@ import { ChannelRelationConfigPanel } from './ChannelRelationConfigPanel';
 import { HookEditorPanel } from './HookEditorPanel';
 import { WorkflowModelSelect } from './WorkflowModelSelect';
 
-function isCoordinatorTemplate(template: SpaceLongHorizonAgentTemplate): boolean {
-  return template.handle === 'coordinator';
+function isLongHorizonTemplate(template: SpaceLongHorizonAgentTemplate): boolean {
+  return template.labels?.includes('long-horizon') ?? false;
 }
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
@@ -320,7 +320,7 @@ function AgentsSection({
     [singleSlot, step, onUpdate]
   );
 
-  const availableTemplates = agentTemplates;
+  const availableTemplates = agentTemplates.filter((t) => !isLongHorizonTemplate(t));
 
   const thinkingSelectOptions = THINKING_LEVEL_OPTIONS.map((option) => (
     <option key={option.value || 'inherit'} value={option.value}>
@@ -376,9 +376,7 @@ function AgentsSection({
               };
 
               const secondaryTemplate =
-                agentTemplates.find(
-                  (t) => t.key !== primaryTemplateKey && !isCoordinatorTemplate(t)
-                ) ??
+                availableTemplates.find((t) => t.key !== primaryTemplateKey) ??
                 agentTemplates.find((t) => t.key !== primaryTemplateKey) ??
                 agentTemplates[0];
               const secondarySlot: WorkflowNodeAgent = {
@@ -414,7 +412,7 @@ function AgentsSection({
           class="w-full text-xs bg-surface-raised border border-line-strong rounded px-2 py-1.5 text-fg-soft focus:outline-none focus:border-accent"
         >
           <option value="">— Select agent —</option>
-          {agentTemplates.map((t) => (
+          {availableTemplates.map((t) => (
             <option key={t.key} value={t.key}>
               {t.displayName}
             </option>
@@ -591,7 +589,7 @@ function AgentsSection({
                   class="w-full text-xs bg-surface border border-line rounded px-2 py-1 text-fg-soft focus:outline-none focus:border-accent"
                 >
                   <option value="">— Select agent —</option>
-                  {agentTemplates.map((template) => (
+                  {availableTemplates.map((template) => (
                     <option key={template.key} value={template.key}>
                       {template.displayName}
                     </option>

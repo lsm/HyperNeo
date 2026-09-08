@@ -102,7 +102,8 @@ function makeAgent(id: string, name: string, _role = 'coder'): SpaceLongHorizonA
 function makeTemplate(
   key: string,
   displayName: string,
-  handle: string
+  handle: string,
+  labels?: string[]
 ): SpaceLongHorizonAgentTemplate {
   return {
     key,
@@ -115,6 +116,7 @@ function makeTemplate(
     reminderDefaults: [],
     ownershipPatterns: [],
     toolPermissions: {},
+    ...(labels ? { labels } : {}),
   };
 }
 
@@ -133,9 +135,10 @@ const defaultAgents: SpaceLongHorizonAgent[] = [
 ];
 
 const defaultAgentTemplates: SpaceLongHorizonAgentTemplate[] = [
-  makeTemplate('planner-v1', 'Planner', 'planner'),
-  makeTemplate('coder-v1', 'Coder', 'coder'),
-  makeTemplate('coordinator-v1', 'Coordinator', 'coordinator'),
+  makeTemplate('planner-v1', 'Planner', 'planner', ['workflow-worker']),
+  makeTemplate('coder-v1', 'Coder', 'coder', ['workflow-worker']),
+  makeTemplate('coordinator-v1', 'Coordinator', 'coordinator', ['long-horizon']),
+  makeTemplate('task-manager.default', 'Task Manager', 'task-manager', ['long-horizon']),
 ];
 
 function makeProps(overrides: Partial<NodeConfigPanelProps> = {}): NodeConfigPanelProps {
@@ -759,6 +762,27 @@ describe('NodeConfigPanel', () => {
       expect(updatedStep.agents[0].agentId).toBe('');
       expect(updatedStep.agents[1].templateKey).not.toBe('coordinator-v1');
       expect(updatedStep.agents[1].agentId).toBe('');
+    });
+
+    it('never offers long-horizon templates as workflow slot options (ATC-4)', () => {
+      const onUpdate = vi.fn();
+      const { getByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            step: makeStep({ agentId: '', templateKey: 'planner-v1' }),
+            onUpdate,
+          })}
+        />
+      );
+
+      fireEvent.click(getByTestId('add-agent-button'));
+
+      const slotSelect = getByTestId('agent-slot-select') as HTMLSelectElement;
+      const optionValues = [...slotSelect.options].map((option) => option.value);
+      expect(optionValues).toContain('planner-v1');
+      expect(optionValues).toContain('coder-v1');
+      expect(optionValues).not.toContain('coordinator-v1');
+      expect(optionValues).not.toContain('task-manager.default');
     });
 
     it('shows agents list in multi-agent mode', () => {
