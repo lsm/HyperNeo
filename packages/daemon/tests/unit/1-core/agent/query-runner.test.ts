@@ -6564,76 +6564,47 @@ describe('QueryRunner', () => {
       expect(handleErrorSpy).toHaveBeenCalled();
     }, 15000);
 
-    for (const row of [
-      {
-        name: 'emits a still-working nudge notice with no retry claim',
-        compactionOutstanding: false,
-        expected: 'large context / compaction can take a few minutes',
-      },
-      {
-        name: 'nudge notice says compacting while an internal compaction is outstanding',
-        compactionOutstanding: true,
-        expected: 'compacting',
-      },
-    ]) {
-      it(row.name, async () => {
-        buildSpy
-          .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
-          .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'));
-        queryFactory = hangingStartupTimeoutQuery;
-        mockSession.workspacePath = undefined;
+    it('keeps the 60-second startup nudge internal instead of writing a transcript message', async () => {
+      buildSpy
+        .mockResolvedValueOnce({ model: 'claude-sonnet-4-20250514', mcpServers: {} })
+        .mockRejectedValueOnce(new Error('SDK startup timeout - query aborted'));
+      queryFactory = hangingStartupTimeoutQuery;
+      mockSession.workspacePath = undefined;
 
-        const ctx = createContext({
-          messageQueue: {
-            ...mockMessageQueue,
-            hasOutstandingInternalCompaction: mock(() => row.compactionOutstanding),
-          } as unknown as MessageQueue,
-        });
-        runner = new QueryRunner(ctx);
-        (
-          runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
-        )._consumedUserMessages = new Map([
-          [1, [{ uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] }]],
-        ]);
+      const ctx = createContext();
+      runner = new QueryRunner(ctx);
+      (
+        runner as unknown as { _consumedUserMessages: Map<number, unknown[]> }
+      )._consumedUserMessages = new Map([
+        [1, [{ uuid: 'kickoff-uuid', content: [{ type: 'text' as const, text: 'K' }] }]],
+      ]);
 
-        const savedInactivityTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
-        process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '60001';
+      const savedInactivityTimeout = process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+      process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = '60001';
 
-        jest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-        try {
-          runner.start();
-          let spins = 0;
-          while (ctx.startupTimeoutTimer === null && spins < 100) {
-            await flushMicrotasks();
-            spins++;
-          }
-          jest.advanceTimersByTime(60_000);
-          spins = 0;
-          while (saveSDKMessageSpy.mock.calls.length === 0 && spins < 100) {
-            await flushMicrotasks();
-            spins++;
-          }
-          const nudgeText = saveSDKMessageSpy.mock.calls
-            .map(
-              (call) =>
-                (call[1] as { message?: { content?: Array<{ text?: string }> } })?.message
-                  ?.content?.[0]?.text
-            )
-            .find((text) => typeof text === 'string' && text.includes('Still working'));
-          expect(nudgeText).toContain(row.expected);
-          expect(nudgeText).not.toContain('Retrying');
-          jest.advanceTimersByTime(1);
-          await ctx.queryPromise?.catch(() => {});
-        } finally {
-          jest.useRealTimers();
-          if (savedInactivityTimeout === undefined) {
-            delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
-          } else {
-            process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = savedInactivityTimeout;
-          }
+      jest.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        runner.start();
+        let spins = 0;
+        while (ctx.startupTimeoutTimer === null && spins < 100) {
+          await flushMicrotasks();
+          spins++;
         }
-      }, 15000);
-    }
+        const savedBeforeNudge = saveSDKMessageSpy.mock.calls.length;
+        jest.advanceTimersByTime(60_000);
+        await flushMicrotasks();
+        expect(saveSDKMessageSpy.mock.calls.length).toBe(savedBeforeNudge);
+        jest.advanceTimersByTime(1);
+        await ctx.queryPromise?.catch(() => {});
+      } finally {
+        jest.useRealTimers();
+        if (savedInactivityTimeout === undefined) {
+          delete process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS;
+        } else {
+          process.env.HYPERNEO_SDK_START_INACTIVITY_TIMEOUT_MS = savedInactivityTimeout;
+        }
+      }
+    }, 15000);
 
     it('emits a failed-to-start retry notice when the SDK process exits before any first message', async () => {
       sizeSpy.mockReturnValue(1);

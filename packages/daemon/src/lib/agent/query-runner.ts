@@ -1019,17 +1019,6 @@ export class QueryRunner {
         }
       });
 
-      const startupNudgeNotice = (elapsedMs: number): string => {
-        const elapsedSec = Math.round(elapsedMs / 1000);
-        if (messageQueue.hasOutstandingInternalCompaction()) {
-          return `⚠️ Still working — compacting (no response after ${elapsedSec}s)…`;
-        }
-        return (
-          `⚠️ Still working — large context / compaction can take a few minutes ` +
-          `(no response after ${elapsedSec}s)…`
-        );
-      };
-
       const logStartupTimeout = (elapsedMs: number): void => {
         const isRootWorkspace = !session.worktree;
         const workspaceDesc = isRootWorkspace
@@ -1100,7 +1089,7 @@ export class QueryRunner {
           if (winner.kind === 'nudge') {
             nudgeSent = true;
             clearTimeout(nudgeTimeout);
-            const outcome = await runStartupWatch(
+            await runStartupWatch(
               { nudgeThresholdMs, inactivityBackstopMs },
               {
                 messages: startupWatchMessages,
@@ -1109,18 +1098,6 @@ export class QueryRunner {
                 inactivity: { elapsedMs: nudgeThresholdMs, lastActivityAt: null },
               }
             );
-            if (outcome.action === 'nudge-slow') {
-              try {
-                await this.displayErrorAsAssistantMessage(startupNudgeNotice(nudgeThresholdMs), {
-                  markAsError: false,
-                });
-              } catch (err) {
-                logger.warn(
-                  `Failed to display slow-start notice for session ${session.id}: ` +
-                    `${err instanceof Error ? err.message : String(err)}`
-                );
-              }
-            }
             continue;
           }
 
@@ -1272,17 +1249,6 @@ export class QueryRunner {
             } else if (messageOutcome.action === 'nudge-slow') {
               nudgeSent = true;
               clearTimeout(nudgeTimeout);
-              try {
-                await this.displayErrorAsAssistantMessage(
-                  startupNudgeNotice(messageOutcome.inactivity?.elapsedMs ?? elapsed),
-                  { markAsError: false }
-                );
-              } catch (err) {
-                logger.warn(
-                  `Failed to display slow-start notice for session ${session.id}: ` +
-                    `${err instanceof Error ? err.message : String(err)}`
-                );
-              }
             } else if (
               messageOutcome.action === 'abort-backstop' ||
               messageOutcome.action === 'retry-dead'
