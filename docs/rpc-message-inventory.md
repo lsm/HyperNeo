@@ -113,7 +113,7 @@ Only the four `StateProjectionService` broadcasts (and its own delta path) carry
 
 | event | payload | channel | emitted at | web consumers |
 |---|---|---|---|---|
-| `state.system` | `SystemState` + `version` (version, claudeSDKVersion, defaultModel, maxSessions, storageLocation, auth, health, apiConnection, credentialStore) | `global` | :449 | global-store.ts:74 |
+| `state.system` | `SystemState` with its string `version` (daemon release, state-projection-service.ts:306) **overwritten by the numeric per-channel counter** at broadcast time (:447) — the emitted payload's top-level `version` is that counter and the release string is absent | `global` | :449 | global-store.ts:74 |
 | `state.settings` | `SettingsState` + `version` (sanitized `GlobalSettings`) | `global` | :458 | global-store.ts:79, 153 |
 | `state.session` | `SessionState` + `version` (sessionInfo, agentState, commandsData, error, revision, daemonEpoch) | `session:${id}` | :473 (cache fallback :496) | state.ts:66, session-store.ts:264, useSessionQuestionState.ts:59, useTargetSessionContext.ts:202 |
 | `state.sdkMessages` | `SDKMessagesState` + `version` (latest 100 `ChatMessage[]`, hasMore) | `session:${id}` | :513 | state.ts:74 (constant-indirect pull via `StateChannel.fetchSnapshot`) |
@@ -137,8 +137,8 @@ Only the four `StateProjectionService` broadcasts (and its own delta path) carry
 | `space.workflowRun.updated` | `{ sessionId, spaceId, runId, run? }` | `global` | space-store.ts:775 |
 | `space.hookState.updated` | `{ sessionId, spaceId, runId, hookId, hookState }` | `global` | use-run-hook-states.ts:110 |
 | `space.artifactCache.updated` | `{ sessionId, spaceId, runId, … }` | `global` | TaskArtifactsPanel.tsx:388 |
-| `space.workflowRun.cyclesReset` | `{ sessionId, spaceId, runId, … }` | `global` | — |
-| `space.workflowRun.deadLoop` | `{ sessionId, spaceId, runId, … }` | `global` | — |
+| `space.workflowRun.cyclesReset` | `{ sessionId, runId, reason, taskId, rowsReset }` (no `spaceId`; sole publication in space-task-message-handlers.ts:232) | `global` | — |
+| `space.workflowRun.deadLoop` | `{ spaceId, runId, fromAgent, toTarget, channelIndex, recentCount, threshold, windowMs, reason, timestamp }` (`SpaceWorkflowRunDeadLoopEvent`, internal-event-bus.ts:356) | `global` | — |
 | `spaceAgent.created` | `{ sessionId, spaceId, agent: SpaceLongHorizonAgent }` | `space:${spaceId}` | space-store.ts:794 |
 | `spaceAgent.updated` | `{ sessionId, spaceId, agent }` | `space:${spaceId}` | space-store.ts:805 |
 | `spaceAgent.deleted` | `{ sessionId, spaceId, agentId }` | `space:${spaceId}` | space-store.ts:816 |
@@ -148,7 +148,7 @@ Only the four `StateProjectionService` broadcasts (and its own delta path) carry
 | `spaceWorkflow.deleted` | `{ sessionId, spaceId, workflowId }` | `global` | space-store.ts:894 |
 | `context.updated` | `ContextInfo` (transformed) | `session:${sessionId}` | session-store.ts:296, useTargetSessionContext.ts:208 |
 
-The bridge also wires internal events that trigger **state broadcasts** instead of client events: `context.updated`, `api.connection`, `auth.changed`, `commands.updated`, `session.error`, `session.errorClear` (client-event-bridge.ts:193–209).
+The bridge also wires internal events to trigger **state broadcasts** alongside or instead of client events: `context.updated` does both (client event per the table above **and** a `state.session` broadcast), while `api.connection`, `auth.changed`, `commands.updated`, `session.error`, `session.errorClear` only trigger broadcasts (client-event-bridge.ts:193–209).
 
 ### 4.4 LiveQuery protocol events
 
@@ -157,8 +157,8 @@ Emitted per-subscription by the LiveQuery engine (`live-query-handlers.ts:4611�
 | event | payload | web consumers |
 |---|---|---|
 | `liveQuery.snapshot` | `LiveQuerySnapshotEvent` `{ subscriptionId, rows, version, metadata? }` | 10 stores/hooks (see §5) |
-| `liveQuery.delta` | `LiveQueryDeltaEvent` `{ subscriptionId, added?, removed?, updated?, version, metadata? }` | same |
-| `liveQuery.error` | `{ subscriptionId, code, message, phase }` (e.g. `MESSAGE_TOO_LARGE`) | same |
+| `liveQuery.delta` | `LiveQueryDeltaEvent` `{ subscriptionId, added?, removed?, updated?, version, metadata? }` | same 10 |
+| `liveQuery.error` | `{ subscriptionId, code, message, phase }` (e.g. `MESSAGE_TOO_LARGE`) | only 5 of the 10: session-store.ts:370, app-mcp-store.ts:69, useActorMessageProjections.ts:166, useGroupMessages.ts:310, useSpaceTaskMessages.ts:278 — the other five consumers have no error subscription and can silently retain stale state after an oversized update |
 
 ### 4.5 Daemon-internal only (never reach clients)
 
@@ -172,11 +172,11 @@ Emitted per-subscription by the LiveQuery engine (`live-query-handlers.ts:4611�
 
 ## 5. LiveQuery
 
-Pull-based subscriptions over two RPC methods, pushed via the §4.4 events. The web never polls: each store opens a subscription with a client-generated `subscriptionId`, then applies snapshot/delta.
+Pull-based subscriptions over two RPC methods, pushed via the §4.4 events. The web never polls: each store registers its event listeners, then opens a subscription with a client-generated `subscriptionId`. **Ordering caveat:** the engine invokes its initial callback synchronously inside the subscribe handler (`storage/live-query.ts:253`), so the `liveQuery.snapshot` event is emitted *before* the `{ ok: true }` response is constructed — a client must register its event listener before issuing the request, or it will permanently miss the initial snapshot.
 
 | method | request | response |
 |---|---|---|
-| `liveQuery.subscribe` | `LiveQuerySubscribeRequest` `{ queryName, params?: unknown[], subscriptionId }` | `LiveQuerySubscribeResponse` `{ ok: true }`; snapshot follows as an event |
+| `liveQuery.subscribe` | `LiveQuerySubscribeRequest` `{ queryName, params?: unknown[], subscriptionId }` | `LiveQuerySubscribeResponse` `{ ok: true }`; the initial `liveQuery.snapshot` is emitted **before** this response (see ordering caveat above) |
 | `liveQuery.unsubscribe` | `LiveQueryUnsubscribeRequest` `{ subscriptionId }` | `LiveQueryUnsubscribeResponse` `{ ok: true }`; handle disposed |
 
 Named queries (`NAMED_QUERY_REGISTRY`, `live-query-handlers.ts:4166`):
@@ -233,7 +233,7 @@ All rows are **kind: request** (client `REQ` → server `RSP`; errors return as 
 | session.coordinator.switch | packages/daemon/src/lib/rpc-handlers/session-handlers.ts:686 | inline `{ sessionId: string; coordinatorMode: boolean }` | inline `{ success: boolean; coordinatorMode: boolean; error? }` | throws `Session not found`; restarts query if active | api-helpers.ts |
 | session.create | packages/daemon/src/lib/rpc-handlers/session-handlers.ts:136 | `CreateSessionRequest` (shared/src/api.ts:64): `workspacePath?; initialTools?: string[]; config?: Partial<SessionConfig>; worktreeBaseBranch?; worktreeMode?; title?; roomId?; spaceId?; createdBy?: 'human'` | `CreateSessionResponse` (api.ts:74): `{ sessionId: string; session?: Session }` | throws on worktreeMode not `worktree\|direct` | api-helpers.ts |
 | session.delete | packages/daemon/src/lib/rpc-handlers/session-handlers.ts:481 | inline `{ sessionId: string }` | inline `{ success: true }` | — (idempotent resource teardown) | api-helpers.ts |
-| session.export | packages/daemon/src/lib/rpc-handlers/message-handlers.ts:187 | inline `{ sessionId: string; format?: 'markdown' \| 'json' }` (default `markdown`) | inline `{ markdown: string }` or `{ session: Session; messages: SDKMessage[] }` (json) | throws `Session not found` | useSessionActions.ts |
+| session.export | packages/daemon/src/lib/rpc-handlers/message-handlers.ts:187 | inline `{ sessionId: string; format?: 'markdown' \| 'json' }` (default `markdown`) | inline `{ markdown: string }` or `{ session: Session; messages: ChatMessage[] }` (json — **unfiltered**: may include `HyperNeoActionMessage` entries; only the markdown branch filters to pure `SDKMessage[]`) | throws `Session not found` | useSessionActions.ts |
 | session.get | packages/daemon/src/lib/rpc-handlers/session-handlers.ts:295 | inline `{ sessionId: string }` | matches `GetSessionResponse` (shared/src/api.ts:106): `{ session: Session; activeTools: string[]; context: { files: string[]; workingDirectory: string \| null } }` | throws `Session not found` | useInputDraft.ts |
 | session.getSkillMcpServers | packages/daemon/src/lib/rpc-handlers/session-handlers.ts:336 | inline `{ sessionId: string }` | inline `{ servers }` (from `optionsBuilder.getSkillMcpServers()`) | throws `Session not found: <id>` | — |
 | session.list | packages/daemon/src/lib/rpc-handlers/session-handlers.ts:285 | inline `{ status?: string; includeArchived?: boolean }` | `ListSessionsResponse` (api.ts:100): `{ sessions: Session[] }` | — | api-helpers.ts |
@@ -588,7 +588,7 @@ All rows are **kind: request** (client `REQ` → server `RSP`; errors return as 
 
 | method | handler | request | response | gates | web consumers |
 |---|---|---|---|---|---|
-| liveQuery.subscribe | packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts:4426 | `LiveQuerySubscribeRequest` (shared): `queryName: string; params?: unknown[]; subscriptionId: string` | `LiveQuerySubscribeResponse` (shared): `{ ok: true }` (snapshot follows as an event) | requires WebSocket `clientId`; query must exist in registry; param count must match; per-query scope validation (see §5) | useActorMessageProjections.ts,useGroupMessages.ts,useSpaceTaskMessages.ts,useTaskMilestones.ts,app-mcp-store.ts,global-store.ts,session-store.ts,skills-store.ts,space-mcp-store.ts,space-store.ts |
+| liveQuery.subscribe | packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts:4426 | `LiveQuerySubscribeRequest` (shared): `queryName: string; params?: unknown[]; subscriptionId: string` | `LiveQuerySubscribeResponse` (shared): `{ ok: true }`; the initial `liveQuery.snapshot` is emitted synchronously **before** this response — register listeners first (see §5) | requires WebSocket `clientId`; query must exist in registry; param count must match; per-query scope validation (see §5) | useActorMessageProjections.ts,useGroupMessages.ts,useSpaceTaskMessages.ts,useTaskMilestones.ts,app-mcp-store.ts,global-store.ts,session-store.ts,skills-store.ts,space-mcp-store.ts,space-store.ts |
 | liveQuery.unsubscribe | packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts:4702 | `LiveQueryUnsubscribeRequest` (shared): `subscriptionId: string` | `LiveQueryUnsubscribeResponse` (shared): `{ ok: true }` (handle disposed) | requires WebSocket `clientId` | useActorMessageProjections.ts,useGroupMessages.ts,useSpaceTaskMessages.ts,useTaskMilestones.ts,app-mcp-store.ts,global-store.ts,session-store.ts,skills-store.ts,space-mcp-store.ts,space-store.ts |
 
 ### System & test (5)
@@ -597,7 +597,7 @@ All rows are **kind: request** (client `REQ` → server `RSP`; errors return as 
 |---|---|---|---|---|---|
 | system.config | packages/daemon/src/lib/rpc-handlers/system-handlers.ts:70 | — | `DaemonConfig` (shared): `version, claudeSDKVersion, defaultModel, maxSessions, storageLocation, authMethod, authStatus` | — | — |
 | system.health | packages/daemon/src/lib/rpc-handlers/system-handlers.ts:57 | — | `HealthStatus` (shared): `status: 'ok', version, uptime, sessions: {active, total}` | — | connection-manager.ts |
-| test.broadcastDelta | packages/daemon/src/lib/rpc-handlers/test-handlers.ts:33 | inline `{ sessionId: string; channel: string; data: unknown }` | — (void; emits arbitrary event `channel` with `data` on `session:${sessionId}`) | — | — |
+| test.broadcastDelta | packages/daemon/src/lib/rpc-handlers/test-handlers.ts:33 | inline `{ sessionId: string; channel: string; data: unknown }` | `{ acknowledged: true }` (handler returns undefined; the hub normalizes undefined results — message-hub.ts:408); emits arbitrary event `channel` with `data` on `session:${sessionId}` | — | — |
 | test.echo | packages/daemon/src/lib/rpc-handlers/system-handlers.ts:86 | inline `{ message?: string }` (default `'echo'`) | inline `{ echoed: string }`; also emits `test.echo` event on `global` | — | — |
 | test.injectSDKMessage | packages/daemon/src/lib/rpc-handlers/test-handlers.ts:6 | inline `{ sessionId: string; message: SDKMessage }` | inline `{ success: true; uuid }`; persists to DB and emits `state.sdkMessages.delta` on `session:${sessionId}` | — | — |
 
