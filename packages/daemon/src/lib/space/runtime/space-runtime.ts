@@ -1946,12 +1946,17 @@ export class SpaceRuntime {
 
   async renderPendingDigestForSession(
     sessionId: string,
-    taskId?: string
+    taskId?: string,
+    options?: { waitForReconciliation?: boolean }
   ): Promise<RenderPendingDigestOutcome | null> {
     if (this.isStopped) return null;
     for (;;) {
       const gate = this.currentReconciliation;
       if (!gate || gate.settled) break;
+      if (options?.waitForReconciliation === false) {
+        this.scheduleTurnEndDigestRetry(sessionId, taskId);
+        return null;
+      }
       await gate.promise;
       if (this.isStopped) return null;
     }
