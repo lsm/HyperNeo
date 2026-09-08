@@ -635,6 +635,7 @@ export class SpaceRuntimeService {
     session: AgentSession,
     config: Partial<Session['config']>
   ): Promise<void> {
+    if (['ended', 'archived'].includes(session.getSessionData().status)) return;
     const currentConfig = session.getSessionData().config;
     const updates: Partial<Session['config']> = {
       model: config.model,
@@ -694,7 +695,24 @@ export class SpaceRuntimeService {
     return session;
   }
 
+  private longHorizonEnsureQueues = new Map<string, Promise<unknown>>();
+
   private async ensureLongHorizonAgentSession(spaceId: string, agentId: string) {
+    const sessionId = longTermAgentSessionId(spaceId, agentId);
+    const prior = this.longHorizonEnsureQueues.get(sessionId) ?? Promise.resolve();
+    const run = prior.then(
+      () => this.ensureLongHorizonAgentSessionUnserialized(spaceId, agentId),
+      () => this.ensureLongHorizonAgentSessionUnserialized(spaceId, agentId)
+    );
+    this.longHorizonEnsureQueues.set(sessionId, run);
+    return run.finally(() => {
+      if (this.longHorizonEnsureQueues.get(sessionId) === run) {
+        this.longHorizonEnsureQueues.delete(sessionId);
+      }
+    });
+  }
+
+  private async ensureLongHorizonAgentSessionUnserialized(spaceId: string, agentId: string) {
     const sessionManager = this.config.sessionManager;
     const repo = this.config.longHorizonAgentRepo;
     if (!sessionManager || !repo) return null;
@@ -708,6 +726,7 @@ export class SpaceRuntimeService {
       await sessionManager.updateSession(sessionId, { status: 'active' });
       session = await sessionManager.getSessionAsync(sessionId);
       if (!session || ['ended', 'archived'].includes(session.getSessionData().status)) return null;
+      await this.config.spaceManager.addSession(spaceId, sessionId);
     }
     const currentConfig = session?.getSessionData().config;
     const config = await buildAgentSessionConfig({ agent }, space, currentConfig);
@@ -730,7 +749,6 @@ export class SpaceRuntimeService {
       session = session ?? (await sessionManager.getSessionAsync(sessionId));
       if (!session) return null;
       if (['ended', 'archived'].includes(session.getSessionData().status)) return null;
-      await this.config.spaceManager.addSession(space.id, sessionId);
     } else {
       await this.refreshLongHorizonAgentSessionConfig(session, config);
     }
@@ -741,6 +759,9 @@ export class SpaceRuntimeService {
       return null;
     };
     try {
+      if (createdHere) {
+        await this.config.spaceManager.addSession(space.id, sessionId);
+      }
       let applied: SpaceLongHorizonAgent | null = createdHere ? null : agent;
       let appliedSpace = space;
       let converged = false;

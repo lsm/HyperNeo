@@ -4251,15 +4251,151 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
       getSessionAsync: mock(async () => archivedSession),
       updateSession,
     } as unknown as SessionManager;
-    const svc = new SpaceRuntimeService(
-      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
-    );
+    const addSession = mock(async () => {});
+    const spaceManager = {
+      getSpace: mock(async () => makeEnsureSpace()),
+      addSession,
+    } as unknown as SpaceManager;
+    const svc = new SpaceRuntimeService(buildEnsureConfig(db, repo, spaceManager, sessionManager));
 
     const ensured = await svc.ensureAgentSession(ENSURE_SPACE_ID, 'lh-revive-1');
 
     expect(ensured).not.toBeNull();
     expect(updateSession).toHaveBeenCalledWith(agentSessionId, { status: 'active' });
+    expect(addSession).toHaveBeenCalledWith(ENSURE_SPACE_ID, agentSessionId);
     expect(repo.getById('lh-revive-1')?.sessionId).toBe(agentSessionId);
+  });
+
+  test('skips the session config refresh when the session archives mid-refresh', async () => {
+    const db = makeTestDb();
+    seedEnsureSpace(db);
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    const stampedSessionId = longTermAgentSessionId(ENSURE_SPACE_ID, 'lh-late-archive');
+    repo.create({
+      id: 'lh-late-archive',
+      spaceId: ENSURE_SPACE_ID,
+      handle: 'researcher',
+      sessionId: stampedSessionId,
+    });
+    let statusReads = 0;
+    const stampedSession = {
+      mergeRuntimeMcpServers: mock(() => {}),
+      updateConfig: mock(async () => {}),
+      resetQuery: mock(async () => ({ success: true })),
+      restart: mock(async () => {}),
+      getSessionData: mock(() => {
+        statusReads++;
+        return {
+          id: stampedSessionId,
+          status: statusReads > 1 ? 'archived' : 'active',
+          metadata: {},
+          config: {},
+        };
+      }),
+    } as unknown as AgentSession;
+    const sessionManager = {
+      getSessionAsync: mock(async () => stampedSession),
+    } as unknown as SessionManager;
+    const svc = new SpaceRuntimeService(
+      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
+    );
+
+    await svc.refreshLongHorizonAgentSession(ENSURE_SPACE_ID, 'lh-late-archive');
+
+    expect(stampedSession.updateConfig).not.toHaveBeenCalled();
+    expect(stampedSession.restart).not.toHaveBeenCalled();
+  });
+
+  test('archives the provisional session when space registration fails', async () => {
+    const db = makeTestDb();
+    seedEnsureSpace(db);
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    repo.create({ id: 'lh-regfail-1', spaceId: ENSURE_SPACE_ID, handle: 'researcher' });
+    const agentSessionId = longTermAgentSessionId(ENSURE_SPACE_ID, 'lh-regfail-1');
+    const createdSession = {
+      mergeRuntimeMcpServers: mock(() => {}),
+      updateConfig: mock(async () => {}),
+      resetQuery: mock(async () => ({ success: true })),
+      restart: mock(async () => {}),
+      getSessionData: mock(() => ({
+        id: agentSessionId,
+        status: 'active',
+        metadata: {},
+        config: {},
+      })),
+    } as unknown as AgentSession;
+    let live: AgentSession | null = null;
+    const updateSession = mock(async () => {});
+    const sessionManager = {
+      getSessionAsync: mock(async () => live),
+      createSession: mock(async () => {
+        live = createdSession;
+        return agentSessionId;
+      }),
+      updateSession,
+    } as unknown as SessionManager;
+    const spaceManager = {
+      getSpace: mock(async () => makeEnsureSpace()),
+      addSession: mock(async () => {
+        throw new Error('space gone');
+      }),
+    } as unknown as SpaceManager;
+    const svc = new SpaceRuntimeService(buildEnsureConfig(db, repo, spaceManager, sessionManager));
+
+    const ensured = await svc.ensureAgentSession(ENSURE_SPACE_ID, 'lh-regfail-1');
+
+    expect(ensured).toBeNull();
+    expect(updateSession).toHaveBeenCalledWith(agentSessionId, { status: 'archived' });
+    expect(repo.getById('lh-regfail-1')?.sessionId).toBeNull();
+  });
+
+  test('coalesces concurrent ensures for the same agent session', async () => {
+    const db = makeTestDb();
+    seedEnsureSpace(db);
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    repo.create({ id: 'lh-coalesce-1', spaceId: ENSURE_SPACE_ID, handle: 'researcher' });
+    const agentSessionId = longTermAgentSessionId(ENSURE_SPACE_ID, 'lh-coalesce-1');
+    const createdSession = {
+      mergeRuntimeMcpServers: mock(() => {}),
+      updateConfig: mock(async () => {}),
+      resetQuery: mock(async () => ({ success: true })),
+      restart: mock(async () => {}),
+      getSessionData: mock(() => ({
+        id: agentSessionId,
+        status: 'active',
+        metadata: {},
+        config: {},
+      })),
+    } as unknown as AgentSession;
+    let live: AgentSession | null = null;
+    let resolveCreate: () => void = () => {};
+    const sessionManager = {
+      getSessionAsync: mock(async () => live),
+      createSession: mock(async () => {
+        await new Promise<void>((resolve) => {
+          resolveCreate = resolve;
+        });
+        live = createdSession;
+        return agentSessionId;
+      }),
+    } as unknown as SessionManager;
+    const svc = new SpaceRuntimeService(
+      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
+    );
+
+    const first = svc.ensureAgentSession(ENSURE_SPACE_ID, 'lh-coalesce-1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = svc.ensureAgentSession(ENSURE_SPACE_ID, 'lh-coalesce-1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sessionManager.createSession).toHaveBeenCalledTimes(1);
+
+    resolveCreate();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult).not.toBeNull();
+    expect(secondResult).not.toBeNull();
+    expect(repo.getById('lh-coalesce-1')?.sessionId).toBe(agentSessionId);
   });
 
   test('serializes concurrent stamped-session refreshes per agent', async () => {
