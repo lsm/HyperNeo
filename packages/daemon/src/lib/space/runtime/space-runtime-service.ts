@@ -728,23 +728,40 @@ export class SpaceRuntimeService {
       await this.refreshLongHorizonAgentSessionConfig(session, config);
     }
     let applied = agent;
+    let appliedSpace = space;
     let converged = false;
     for (let attempt = 0; attempt < 3; attempt++) {
+      const latestSpace = await this.config.spaceManager.getSpace(spaceId);
+      if (
+        !latestSpace ||
+        latestSpace.paused ||
+        latestSpace.stopped ||
+        latestSpace.status === 'archived'
+      ) {
+        return null;
+      }
       const latest = repo.getById(agentId);
       if (!latest || latest.status !== 'active') return null;
-      if (agentSessionConfigSignature(latest) === agentSessionConfigSignature(applied)) {
+      if (
+        agentSessionConfigSignature(latest) === agentSessionConfigSignature(applied) &&
+        spaceInheritanceSignature(latestSpace) === spaceInheritanceSignature(appliedSpace)
+      ) {
+        applied = latest;
+        appliedSpace = latestSpace;
         converged = true;
         break;
       }
       const refreshedConfig = await buildAgentSessionConfig(
         { agent: latest },
-        space,
+        latestSpace,
         session.getSessionData().config
       );
       await this.refreshLongHorizonAgentSessionConfig(session, refreshedConfig);
       applied = latest;
+      appliedSpace = latestSpace;
     }
     if (!converged) return null;
+    if (['ended', 'archived'].includes(session.getSessionData().status)) return null;
     const currentMetadata = session.getSessionData().metadata;
     this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
       metadata: {
@@ -759,22 +776,13 @@ export class SpaceRuntimeService {
     });
     this.attachLongTermAgentMcpServers(
       session,
-      space,
+      appliedSpace,
       applied.displayName,
       sessionId,
       null,
       agentId,
       [`@${applied.handle}`]
     );
-    const currentSpace = await this.config.spaceManager.getSpace(spaceId);
-    if (
-      !currentSpace ||
-      currentSpace.paused ||
-      currentSpace.stopped ||
-      currentSpace.status === 'archived'
-    ) {
-      return null;
-    }
     if (applied.sessionId !== sessionId) {
       const updated = repo.update(applied.id, { sessionId });
       if (updated) {
@@ -2116,6 +2124,13 @@ function agentSessionConfigSignature(agent: SpaceLongHorizonAgent): string {
     agent.toolPermissions,
     agent.modelPool,
   ]);
+}
+
+function spaceInheritanceSignature(space: {
+  defaultModel?: string | null;
+  settingSources?: unknown;
+}): string {
+  return JSON.stringify([space.defaultModel ?? null, space.settingSources ?? null]);
 }
 
 function generateRuntimeMessageId(): string {

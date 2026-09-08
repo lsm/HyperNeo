@@ -4402,6 +4402,101 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
     expect(repo.getById('lh-ensure-6')?.sessionId).toBeNull();
   });
 
+  test('rebuilds inherited config when the space default model changes mid-ensure', async () => {
+    const db = makeTestDb();
+    seedEnsureSpace(db);
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    repo.create({ id: 'lh-ensure-7', spaceId: ENSURE_SPACE_ID, handle: 'researcher' });
+    const agentSessionId = longTermAgentSessionId(ENSURE_SPACE_ID, 'lh-ensure-7');
+    const space = makeEnsureSpace();
+    const spaceManager = {
+      getSpace: mock(async () => space),
+      addSession: mock(async () => {}),
+    } as unknown as SpaceManager;
+    const createdSession = {
+      mergeRuntimeMcpServers: mock(() => {}),
+      updateConfig: mock(async () => {}),
+      resetQuery: mock(async () => ({ success: true })),
+      restart: mock(async () => {}),
+      getSessionData: mock(() => ({
+        id: agentSessionId,
+        status: 'active',
+        metadata: {},
+        config: {},
+      })),
+    } as unknown as AgentSession;
+    let live: AgentSession | null = null;
+    let resolveCreate: () => void = () => {};
+    const sessionManager = {
+      getSessionAsync: mock(async () => live),
+      createSession: mock(async () => {
+        await new Promise<void>((resolve) => {
+          resolveCreate = resolve;
+        });
+        live = createdSession;
+        return agentSessionId;
+      }),
+    } as unknown as SessionManager;
+    const svc = new SpaceRuntimeService(buildEnsureConfig(db, repo, spaceManager, sessionManager));
+
+    const ensured = svc.ensureAgentSession(ENSURE_SPACE_ID, 'lh-ensure-7');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    space.defaultModel = 'claude-opus-5';
+    resolveCreate();
+    const result = await ensured;
+
+    expect(result).not.toBeNull();
+    expect(repo.getById('lh-ensure-7')?.sessionId).toBe(agentSessionId);
+    expect(createdSession.updateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'claude-opus-5' })
+    );
+  });
+
+  test('aborts unstamped when the session archives mid-ensure', async () => {
+    const db = makeTestDb();
+    seedEnsureSpace(db);
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    repo.create({ id: 'lh-ensure-8', spaceId: ENSURE_SPACE_ID, handle: 'researcher' });
+    const agentSessionId = longTermAgentSessionId(ENSURE_SPACE_ID, 'lh-ensure-8');
+    const sessionState = { status: 'active' };
+    const createdSession = {
+      mergeRuntimeMcpServers: mock(() => {}),
+      updateConfig: mock(async () => {}),
+      resetQuery: mock(async () => ({ success: true })),
+      restart: mock(async () => {}),
+      getSessionData: mock(() => ({
+        id: agentSessionId,
+        status: sessionState.status,
+        metadata: {},
+        config: {},
+      })),
+    } as unknown as AgentSession;
+    let live: AgentSession | null = null;
+    let resolveCreate: () => void = () => {};
+    const sessionManager = {
+      getSessionAsync: mock(async () => live),
+      createSession: mock(async () => {
+        await new Promise<void>((resolve) => {
+          resolveCreate = resolve;
+        });
+        live = createdSession;
+        return agentSessionId;
+      }),
+    } as unknown as SessionManager;
+    const svc = new SpaceRuntimeService(
+      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
+    );
+
+    const ensured = svc.ensureAgentSession(ENSURE_SPACE_ID, 'lh-ensure-8');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    sessionState.status = 'archived';
+    resolveCreate();
+    const result = await ensured;
+
+    expect(result).toBeNull();
+    expect(repo.getById('lh-ensure-8')?.sessionId).toBeNull();
+  });
+
   test('leaves the session unstamped when edits keep landing past the refresh bound', async () => {
     const db = makeTestDb();
     seedEnsureSpace(db);
