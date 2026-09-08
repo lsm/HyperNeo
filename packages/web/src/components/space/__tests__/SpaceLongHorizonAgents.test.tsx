@@ -170,6 +170,8 @@ function makeTemplate(overrides: Record<string, unknown> = {}) {
     description: 'Validates product quality.',
     instructions: 'Test the product.',
     suggestedAutonomyLevel: 2,
+    suggestedEventSubscriptions: [],
+    reminderDefaults: [],
     ...overrides,
   };
 }
