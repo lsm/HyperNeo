@@ -66,9 +66,12 @@ describe('long-horizon agent templates', () => {
     expect(taskManager?.suggestedEventSubscriptions).toEqual([]);
     expect(taskManager?.instructions).toContain('Triage');
     expect(taskManager?.instructions).toContain('send_message_to_task');
+    expect(taskManager?.instructions).toContain('mark it `blocked`');
     expect(taskManager?.instructions).toContain('next slices');
     expect(taskManager?.instructions).toContain('no routing powers');
     expect(taskManager?.instructions).not.toContain('reassign_task');
+    expect(taskManager?.instructions).not.toContain('send_session_message');
+    expect(taskManager?.instructions).not.toContain('escalate to the space manager');
   });
 
   test('defines instructions, autonomy, subscriptions, reminders, and ownership patterns', () => {
