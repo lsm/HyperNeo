@@ -312,7 +312,8 @@ describe('Space Agent RPC Handlers', () => {
       }>(hubData.handlers, 'spaceAgent.listTemplates', {});
 
       expect(Array.isArray(result.templates)).toBe(true);
-      expect(result.templates.map((template) => template.key)).toContain('coordinator.default');
+      expect(result.templates.map((template) => template.key)).toContain('worker.coder');
+      expect(result.templates.map((template) => template.key)).not.toContain('coordinator.default');
       for (const template of result.templates) {
         expect(typeof template.createdAt).toBe('number');
         expect(template.model).toBe(null);
@@ -334,28 +335,8 @@ describe('Space Agent RPC Handlers', () => {
 
       const keys = result.templates.map((template) => template.key);
       expect(keys).toContain('review.custom');
-      expect(keys).toContain('coordinator.default');
-    });
-
-    it('carries subscription and reminder defaults on built-in templates', async () => {
-      const result = await call<{
-        templates: Array<{
-          key: string;
-          suggestedEventSubscriptions?: Array<{ source: string; topic: string }>;
-          reminderDefaults?: Array<{ title: string; cronExpression: string | null }>;
-        }>;
-      }>(hubData.handlers, 'spaceAgent.listTemplates', {});
-
-      const coordinator = result.templates.find(
-        (template) => template.key === 'coordinator.default'
-      );
-      expect(coordinator?.suggestedEventSubscriptions?.length).toBeGreaterThan(0);
-      expect(coordinator?.suggestedEventSubscriptions?.[0]).toMatchObject({
-        source: 'space',
-        topic: 'task.*',
-      });
-      expect(coordinator?.reminderDefaults?.length).toBeGreaterThan(0);
-      expect(coordinator?.reminderDefaults?.[0].cronExpression).toBe('0 9 * * 1');
+      expect(keys).toContain('worker.coder');
+      expect(keys).not.toContain('coordinator.default');
     });
   });
 
