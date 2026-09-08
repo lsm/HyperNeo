@@ -976,14 +976,11 @@ class SpaceStore {
     spaceId: string
   ): Promise<void> {
     try {
-      const result = await hub.request<{ templates: SpaceLongHorizonAgentTemplate[] }>(
-        'spaceAgent.listBuiltInTemplates',
-        {
-          spaceId,
-        }
+      const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
+        'spaceAgent.listTemplates'
       );
       if (this.spaceId.value !== spaceId) return;
-      this.agentTemplates.value = result?.templates ?? [];
+      this.agentTemplates.value = (result?.templates ?? []).map(toPaneAgentTemplate);
     } catch (err) {
       logger.error('Failed to fetch agent templates:', err);
       if (this.spaceId.value === spaceId) this.agentTemplates.value = [];

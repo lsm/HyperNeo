@@ -929,6 +929,30 @@ function AgentCard({
   );
 }
 
+interface AgentTemplateGroup {
+  key: 'workflow-worker' | 'long-horizon' | 'custom';
+  title: string;
+  templates: SpaceLongHorizonAgentTemplate[];
+}
+
+function groupTemplatesByLabel(templates: SpaceLongHorizonAgentTemplate[]): AgentTemplateGroup[] {
+  const workflowWorkers: SpaceLongHorizonAgentTemplate[] = [];
+  const longHorizon: SpaceLongHorizonAgentTemplate[] = [];
+  const custom: SpaceLongHorizonAgentTemplate[] = [];
+  for (const template of templates) {
+    const labels = template.labels ?? [];
+    if (labels.includes('workflow-worker')) workflowWorkers.push(template);
+    else if (labels.includes('long-horizon')) longHorizon.push(template);
+    else custom.push(template);
+  }
+  const groups: AgentTemplateGroup[] = [
+    { key: 'workflow-worker', title: 'Workflow workers', templates: workflowWorkers },
+    { key: 'long-horizon', title: 'Long-horizon', templates: longHorizon },
+    { key: 'custom', title: 'Custom', templates: custom },
+  ];
+  return groups.filter((group) => group.templates.length > 0);
+}
+
 function TemplateCard({
   template,
   addedCount,
@@ -1077,6 +1101,8 @@ export function SpaceLongHorizonAgents({
     );
   }
 
+  const templateGroups = groupTemplatesByLabel(templates);
+
   if (loading) {
     return (
       <div class="flex-1 flex items-center justify-center">
@@ -1212,18 +1238,27 @@ export function SpaceLongHorizonAgents({
               New Template
             </button>
           </div>
-          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {templates.map((t) => (
-              <TemplateCard
-                key={t.key}
-                template={t}
-                addedCount={templateInstanceCounts.get(t.key) ?? 0}
-                onClick={() => {
-                  setSelectedTemplate(t);
-                  setEditingAgent(null);
-                  setShowEditor(true);
-                }}
-              />
+          <div class="space-y-5">
+            {templateGroups.map((group) => (
+              <div key={group.key} data-testid={`agent-template-group-${group.key}`}>
+                <h4 class="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-fg-muted">
+                  {group.title} · {group.templates.length}
+                </h4>
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {group.templates.map((t) => (
+                    <TemplateCard
+                      key={t.key}
+                      template={t}
+                      addedCount={templateInstanceCounts.get(t.key) ?? 0}
+                      onClick={() => {
+                        setSelectedTemplate(t);
+                        setEditingAgent(null);
+                        setShowEditor(true);
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </section>

@@ -243,6 +243,45 @@ describe('SpaceLongHorizonAgents', () => {
     expect(getByText('QA Engineer')).toBeTruthy();
   });
 
+  it('groups templates by label with an unlabeled custom bucket', () => {
+    mockTemplates.value = [
+      makeTemplate({ key: 'worker.swe', displayName: 'SWE Worker', labels: ['workflow-worker'] }),
+      makeTemplate({
+        key: 'task-manager.default',
+        displayName: 'Task Manager',
+        labels: ['long-horizon'],
+      }),
+      makeTemplate({ key: 'scribe', displayName: 'Scribe' }),
+    ];
+
+    const { getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    expect(getByTestId('agent-template-count').textContent).toBe('3');
+    const workers = getByTestId('agent-template-group-workflow-worker');
+    const longHorizon = getByTestId('agent-template-group-long-horizon');
+    const custom = getByTestId('agent-template-group-custom');
+    expect(within(workers).getByText('SWE Worker')).toBeTruthy();
+    expect(within(longHorizon).getByText('Task Manager')).toBeTruthy();
+    expect(within(custom).getByText('Scribe')).toBeTruthy();
+    expect(
+      workers.compareDocumentPosition(longHorizon) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      longHorizon.compareDocumentPosition(custom) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it('hides template groups that have no templates', () => {
+    mockTemplates.value = [makeTemplate({ key: 'scribe', displayName: 'Scribe' })];
+
+    const { getByTestId, queryByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    expect(getByTestId('agent-template-group-custom')).toBeTruthy();
+    expect(queryByTestId('agent-template-group-workflow-worker')).toBeNull();
+    expect(queryByTestId('agent-template-group-long-horizon')).toBeNull();
+    expect(getByTestId('agent-template-count').textContent).toBe('1');
+  });
+
   it('opens a dedicated template editor from New Template', () => {
     mockTemplates.value = [
       {
