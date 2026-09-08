@@ -26,7 +26,6 @@ export const SPAWN_RESERVABLE_TASK_STATUSES: readonly SpaceTaskStatus[] = [
   'in_progress',
   'review',
   'approved',
-  'blocked',
 ];
 
 export class PermanentSpawnError extends Error {
@@ -205,6 +204,11 @@ export function validateTaskAllowsSpawn(task: SpaceTask): void {
   if (task.status === 'archived' || task.status === 'cancelled') {
     throw new PermanentSpawnError(
       `Task ${task.id} is ${task.status}; workflow node execution cannot be spawned`
+    );
+  }
+  if (task.status === 'blocked') {
+    throw new TransientSpawnError(
+      `Task ${task.id} is blocked; deferring spawn until the task is revived`
     );
   }
   if (isRateOrUsageLimited(task.status)) {

@@ -23,6 +23,7 @@ const ALL_STATUSES: SpaceTaskStatus[] = [
 const STATUS_DECISIONS: Partial<Record<SpaceTaskStatus, SpawnExecutionAdmissionDecision>> = {
   archived: { action: 'reject_permanent', reason: 'task_archived' },
   cancelled: { action: 'reject_permanent', reason: 'task_cancelled' },
+  blocked: { action: 'reject_transient', reason: 'task_blocked' },
   rate_limited: { action: 'reject_transient', reason: 'task_rate_or_usage_limited' },
   usage_limited: { action: 'reject_transient', reason: 'task_rate_or_usage_limited' },
 };
@@ -96,6 +97,13 @@ describe('decideSpawnExecutionAdmission — decision table over task status and 
     expect(decide({ taskStatus: 'usage_limited' })).toEqual({
       action: 'reject_transient',
       reason: 'task_rate_or_usage_limited',
+    });
+  });
+
+  test('blocked mirrors the validateTaskAllowsSpawn transient arm non-destructively (#3823)', () => {
+    expect(decide({ taskStatus: 'blocked' })).toEqual({
+      action: 'reject_transient',
+      reason: 'task_blocked',
     });
   });
 

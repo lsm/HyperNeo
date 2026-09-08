@@ -589,6 +589,26 @@ describe('spaceWorkflowRunTick stages', () => {
     ]);
   });
 
+  test('ensureCanonicalTaskInProgress leaves a blocked canonical task blocked (#3823)', async () => {
+    const deps = makeDeps({
+      context: makeContext({
+        canonicalTaskStatus: 'blocked',
+        executions: [makeExecution('in_progress')],
+      }),
+    });
+    const result = await ensureCanonicalTaskInProgress({
+      runId: RUN_ID,
+      deps,
+      context: deps.context,
+      space: deps.space,
+      nodeExecutions: [makeExecution('in_progress')],
+    });
+    expect(result).toMatchObject({
+      value: { context: { canonicalTask: { status: 'blocked' } } },
+    });
+    expect(deps.calls).toEqual(['getAvailableTaskSlots']);
+  });
+
   test('blockRunForSpawnFailure stays inside the spawn branch', async () => {
     const deps = makeDeps();
     const spawned = { blockedByCrash: false, permanentSpawnFailureReason: null };

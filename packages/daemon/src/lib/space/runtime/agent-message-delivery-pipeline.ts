@@ -217,7 +217,8 @@ export function planDeliveryAdmission(
     status === 'rate_limit_cooldown';
   const shouldDefer =
     status === 'rate_limit_cooldown' ||
-    (task !== null && deps.isRateOrUsageLimited(task.status ?? '')) ||
+    (task !== null &&
+      (deps.isRateOrUsageLimited(task.status ?? '') || task.status === 'blocked')) ||
     deps.hasHeldDeliveryBacklog(sessionId, ctx.messageId) ||
     (ctx.deliveryMode === 'defer' && isBusy);
   const shouldClear =
@@ -257,7 +258,10 @@ export async function handoffDeliveryToMailbox(
 ): Promise<LockedAgentMessageDeliveryCtx> {
   if (ctx.outcome) return ctx;
   const sessionId = ctx.resolution.sessionId;
-  const shouldDefer = ctx.plan?.shouldDefer === true;
+  let shouldDefer = ctx.plan?.shouldDefer === true;
+  if (!shouldDefer && ctx.target.kind === 'worker') {
+    shouldDefer = ctx.deps.taskRepo.getTask(ctx.target.taskId)?.status === 'blocked';
+  }
   const synthetic = buildSyntheticDeliveryMessage(
     sessionId,
     ctx.messageId,

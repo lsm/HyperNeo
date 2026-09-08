@@ -52,6 +52,12 @@ export function applyTaskGate(ctx: RestoredWorkerAdmissionCtx): RestoredWorkerAd
     : continued(ctx);
 }
 
+export function applyBlockedTaskGate(
+  ctx: RestoredWorkerAdmissionCtx
+): RestoredWorkerAdmissionResult {
+  return readLazyInput(ctx.task)?.status === 'blocked' ? decided(false) : continued(ctx);
+}
+
 export function applyWorkflowRunGate(
   ctx: RestoredWorkerAdmissionCtx
 ): RestoredWorkerAdmissionResult {
@@ -115,6 +121,7 @@ const restoredWorkerAdmissionRun = (superpipe()('restored-worker-start-admission
   .pipe(applyManualQueryModeGate, 'ctx', 'result:decision')
   .pipe(applyDaemonCleanupGate, 'ctx', 'result:decision')
   .pipe(applyTaskGate, 'ctx', 'result:decision')
+  .pipe(applyBlockedTaskGate, 'ctx', 'result:decision')
   .pipe(applyWorkflowRunGate, 'ctx', 'result:decision')
   .pipe(applySpaceLookupGate, 'ctx', 'result:decision')
   .pipe(applySessionStatusGate, 'ctx', 'result:decision')

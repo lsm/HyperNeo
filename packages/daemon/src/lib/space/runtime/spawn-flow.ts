@@ -11,7 +11,10 @@ import { readRestartRecoveryNote } from './restart-recovery-note.ts';
 import { decideSpawnExecutionAdmissionViaPipeline } from './spawn-admission-decision-pipeline.ts';
 import type { WorkflowNodeSlotResolution } from './spawn-slot-resolution.ts';
 import { type StagedRunOutcome, stagedRun } from './staged-run.ts';
-import { validateExecutionAgainstWorkflow } from './workflow-node-execution-validation.ts';
+import {
+  validateExecutionAgainstWorkflow,
+  validateTaskAllowsSpawn,
+} from './workflow-node-execution-validation.ts';
 
 export interface IndexedSessionInspection {
   sessionId: string | null;
@@ -269,8 +272,8 @@ export function runSpawnExecutionFlow(
         ],
         writes: ['isSpawning'],
         run: async (view) => {
-          deps.reserveExecution(view.execution.id);
           const spawnTask = view.freshTask ?? view.task;
+          deps.reserveExecution(view.execution.id);
           if (spawnTask.workflowRunId !== view.workflowRun.id) {
             deps.releaseExecution(view.execution.id);
             throw new Error(
@@ -279,6 +282,7 @@ export function runSpawnExecutionFlow(
           }
           const sessionId = deps.resolveSpawnSessionId(view.space, spawnTask, view.execution);
           const workspacePath = await deps.resolveWorkspacePath(spawnTask, view.space);
+          validateTaskAllowsSpawn(deps.getFreshTask(view.task.id) ?? spawnTask);
           const slotResolution = view.slotResolution!;
           attempt.task = spawnTask;
           attempt.workspacePath = workspacePath;

@@ -59,6 +59,9 @@ describe('spawn admission decisionRun gates', () => {
     expect(applyTaskStatusGate(undecided({ ...BASE, taskStatus: 'cancelled' }))).toEqual({
       reason: { action: 'reject_permanent', reason: 'task_cancelled' },
     });
+    expect(applyTaskStatusGate(undecided({ ...BASE, taskStatus: 'blocked' }))).toEqual({
+      reason: { action: 'reject_transient', reason: 'task_blocked' },
+    });
     expect(applyTaskStatusGate(undecided({ ...BASE, taskStatus: 'rate_limited' }))).toEqual({
       reason: { action: 'reject_transient', reason: 'task_rate_or_usage_limited' },
     });

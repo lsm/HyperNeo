@@ -5715,6 +5715,8 @@ export class SpaceRuntime {
     space?: Space | null
   ): Promise<'none' | 'restarted' | 'blocked'> {
     if (space?.paused || space?.stopped) return 'none';
+    const freshTask = this.config.taskRepo.getTask(canonicalTask.id) ?? canonicalTask;
+    if (freshTask.status === 'blocked') return 'none';
 
     const nagGraceMs = this.config.agentStuckNagGraceMs ?? DEFAULT_AGENT_STUCK_NAG_GRACE_MS;
     const now = Date.now();
@@ -6154,7 +6156,9 @@ export class SpaceRuntime {
         .map((execution) => execution.id)
     );
 
-    if (!space?.stopped) {
+    const canonicalTaskBlocked =
+      this.config.taskRepo.getTask(canonicalTask.id)?.status === 'blocked';
+    if (!space?.stopped && !canonicalTaskBlocked) {
       for (const execution of nodeExecutions) {
         if (execution.status === 'in_progress' && !execution.agentSessionId) {
           this.config.nodeExecutionRepo.update(execution.id, {
@@ -6357,6 +6361,9 @@ export class SpaceRuntime {
         completedAt: null,
       });
     }
+    if (promotable.length > 0) {
+      this.resumeParkedWorkersForRevivedRun(runId, tam);
+    }
     return this.config.nodeExecutionRepo.listByWorkflowRun(runId);
   }
 
@@ -6383,6 +6390,7 @@ export class SpaceRuntime {
     if (spawnAdmission.action === 'skipSpawn') {
       if (
         spawnAdmission.reason === 'canonical_task_terminal' ||
+        spawnAdmission.reason === 'task_blocked' ||
         spawnAdmission.reason === 'parked_awaiting_approval'
       ) {
         log.info(
@@ -6668,6 +6676,7 @@ export class SpaceRuntime {
     ) {
       return 'none';
     }
+    if (this.config.taskRepo.getTask(canonicalTask.id)?.status === 'blocked') return 'none';
 
     let preservedAny = false;
     const idleExecutions = this.config.nodeExecutionRepo
@@ -7294,6 +7303,7 @@ export class SpaceRuntime {
       .listByWorkflowRun(runId)
       .filter((execution) => execution.status === 'waiting_rebind');
     if (waitingExecutions.length === 0) return false;
+    if (this.config.taskRepo.getTask(canonicalTask.id)?.status === 'blocked') return false;
 
     const recoveryStates = waitingExecutions.map((execution) => {
       const data = parseNodeExecutionData(execution.data);
@@ -7403,7 +7413,7 @@ export class SpaceRuntime {
       if (run.status !== 'in_progress') {
         await this.transitionRunStatusAndEmit(run.id, 'in_progress');
       }
-      if (canonicalTask.status === 'blocked' || canonicalTask.status === 'open') {
+      if (canonicalTask.status === 'open') {
         await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
           status: 'in_progress',
           completedAt: null,
@@ -7442,6 +7452,30 @@ export class SpaceRuntime {
         completedAt: null,
         ...(bindingAlive ? {} : { agentSessionId: null }),
       });
+    }
+  }
+
+  private resumeParkedWorkersForRevivedRun(runId: string, tam?: TaskAgentManager): void {
+    if (!tam || typeof tam.prepareSubSessionForWorkflowResume !== 'function') return;
+    for (const execution of this.config.nodeExecutionRepo.listByWorkflowRun(runId)) {
+      if (
+        !execution.agentSessionId ||
+        (execution.status !== 'pending' &&
+          execution.status !== 'in_progress' &&
+          execution.status !== 'waiting_rebind') ||
+        !tam.isSessionInMemory(execution.agentSessionId)
+      ) {
+        continue;
+      }
+      void tam
+        .prepareSubSessionForWorkflowResume(execution.agentSessionId)
+        .catch((err: unknown) => {
+          log.warn(
+            `SpaceRuntime: failed to resume parked worker ${execution.agentSessionId} for revived run ${runId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        });
     }
   }
 
@@ -7540,6 +7574,7 @@ export class SpaceRuntime {
         `SpaceRuntime: auto-retrying blocked run ${runId} ` +
           `(attempt ${effectiveRetryCount + 1}/${MAX_BLOCKED_RUN_RETRIES})`
       );
+      this.resumeParkedWorkersForRevivedRun(runId, this.config.taskAgentManager);
     } else {
       await this.safeNotify({
         kind: 'workflow_run_needs_attention',

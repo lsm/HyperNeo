@@ -31,6 +31,7 @@ import {
 } from '../../../lib/agent/message-delivery.ts';
 import { verifyPromptContent } from '../../../lib/agent/message-delivery-outbox.ts';
 import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
+import { activatePrompts } from '../../../lib/agent/message-delivery-outbox.ts';
 import { readRestartRecoveryNote } from './restart-recovery-note.ts';
 import type { Database } from '../../../storage/database.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
@@ -2059,6 +2060,14 @@ export class TaskAgentManager {
           resolved !== null && this.hasQueuedRetryableHookAction(resolved.workflowRunId, resolved)
         );
       },
+    }).then((admitted) => {
+      if (!admitted) return false;
+      const freshTask = this.config.taskRepo.getTask(taskId);
+      return (
+        !!freshTask &&
+        !isCanonicalTaskTerminalForSpawn(freshTask.status) &&
+        freshTask.status !== 'blocked'
+      );
     });
   }
 
@@ -2707,7 +2716,47 @@ export class TaskAgentManager {
     const session = this.getAgentSessionById(sessionId);
     if (!session) return false;
     await this.mcpSelfHeal(session, ['node-agent']);
+    await this.startRestoredWorkerForResume(session);
     return true;
+  }
+
+  private async startRestoredWorkerForResume(session: AgentSession): Promise<void> {
+    const sessionId = session.getSessionData().id;
+    const taskId = taskIdFromSubSessionIdentity(sessionId);
+    if (taskId === null) return;
+    if (
+      !session.isQueryActiveOrStarting() &&
+      (await this.restoredWorkerStartAdmitted(session, taskId))
+    ) {
+      await session.startStreamingQuery();
+    }
+    if (
+      await this.restoredWorkerStartAdmitted(session, taskId, {
+        settleReplayProvisioning: true,
+      })
+    ) {
+      if (session.getSessionData().config?.queryMode !== 'manual') {
+        await this.activateDeferredPromptsForResume(sessionId);
+      }
+      await this.replayPendingMessagesAfterRuntimeProvisioning(session);
+    }
+  }
+
+  private async activateDeferredPromptsForResume(sessionId: string): Promise<void> {
+    const { messages } = this.config.db.getUserMessagesByStatus(sessionId, 'deferred');
+    if (messages.length === 0) return;
+    await activatePrompts({
+      db: this.config.db.getDatabase(),
+      jobQueue: this.config.db.getJobQueueRepo(),
+      sessionId,
+      messageUuids: messages.map((message) => String(message.uuid)),
+      dbIds: messages.map((message) => message.dbId),
+      origin: 'recovery',
+      publishStatusChanged: (messageIds, status) =>
+        this.config.internalEventBus
+          .publish('messages.statusChanged', { sessionId, messageIds, status })
+          .catch(() => {}),
+    });
   }
 
   async resumeRateLimitedSubSession(sessionId: string): Promise<'retried' | 'respawned' | 'noop'> {
@@ -4178,13 +4227,15 @@ export class TaskAgentManager {
     const inRateLimitCooldown = state.status === 'rate_limit_cooldown';
     const parentTaskId = this.findParentTaskIdForSubSession(sessionId);
     const parentTask = parentTaskId ? this.config.taskRepo.getTask(parentTaskId) : null;
-    const parentLimited = parentTask ? isRateOrUsageLimited(parentTask.status) : false;
+    const parentDefersDelivery = parentTask
+      ? isRateOrUsageLimited(parentTask.status) || parentTask.status === 'blocked'
+      : false;
     const outcome = decideInjectDelivery({
       existingSendStatus: existing?.sendStatus ?? null,
       deliveryMode,
       isBusy,
       inRateLimitCooldown,
-      parentTaskLimited: parentLimited,
+      parentTaskLimited: parentDefersDelivery,
       inputKind,
       hasPriorContext: !!session.session.sdkSessionId,
       slotResetsContext: this.slotResetsContextForSession(sessionId),
@@ -4193,6 +4244,25 @@ export class TaskAgentManager {
     });
 
     const deliveryRows = this.injectDeliveryRowDeps();
+    const settleAsDeferredForBlockedParent = async (): Promise<boolean> => {
+      if (!parentTaskId) return false;
+      if (this.config.taskRepo.getTask(parentTaskId)?.status !== 'blocked') return false;
+      if (existing?.sendStatus === 'failed') {
+        await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
+      }
+      if (existing && existing.sendStatus !== 'deferred') {
+        this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
+      }
+      await settleDeliveryRowStatus(deliveryRows, {
+        sessionId,
+        message: sdkUserMessage,
+        messageId,
+        rowExists: !!existing,
+        status: 'deferred',
+        origin,
+      });
+      return true;
+    };
 
     if (outcome.decision.action === 'noop') {
       return messageId;
@@ -4236,6 +4306,7 @@ export class TaskAgentManager {
     }
 
     try {
+      if (await settleAsDeferredForBlockedParent()) return messageId;
       if (!isBusy) {
         const clearSuppressedByPendingWork =
           outcome.decision.action === 'deliver_without_clear' &&
@@ -4262,6 +4333,7 @@ export class TaskAgentManager {
           clearedUpstream = replayed.clearedContext;
           backlogReplayFailed = replayed.replayFailed;
         }
+        if (await settleAsDeferredForBlockedParent()) return messageId;
         const replay = await session.handleQueryTrigger({
           deliverIndividually: true,
           excludeMessageUuid: messageId,
@@ -4300,6 +4372,7 @@ export class TaskAgentManager {
       }
 
       const jobQueue = this.config.db.getJobQueueRepo();
+      if (await settleAsDeferredForBlockedParent()) return messageId;
       const mailboxMessage: MailboxMessage = {
         type: 'user',
         parent_tool_use_id: null,

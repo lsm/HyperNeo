@@ -218,6 +218,24 @@ describe('deliverAgentMessageToTarget', () => {
     expect(live.setQueuedIfIdle).not.toHaveBeenCalled();
   });
 
+  it('defers admission while the parent task is blocked (#3823)', async () => {
+    const live = makeSession();
+    const { deps, handoffCalls } = makeDeps({
+      taskRepo: {
+        getTask: () => ({ id: 'task-1', workflowRunId: 'run-1', status: 'blocked' }),
+      },
+      getSessionAsync: async () => live.session,
+    });
+    await deliverAgentMessageToTarget({
+      deps,
+      target: WORKER_TARGET,
+      message: 'peer nudge',
+      messageId: 'msg-6-blocked',
+    });
+    expect(handoffCalls[0].deliveryMode).toBe('defer');
+    expect(live.setQueuedIfIdle).not.toHaveBeenCalled();
+  });
+
   it('defers admission behind an unconsumed held backlog', async () => {
     const { deps, handoffCalls } = makeDeps({
       hasHeldDeliveryBacklog: () => true,
@@ -229,6 +247,35 @@ describe('deliverAgentMessageToTarget', () => {
       messageId: 'msg-7',
     });
     expect(handoffCalls[0].deliveryMode).toBe('defer');
+  });
+
+  it('defers the handoff when the task flips blocked during the context reset (#3823)', async () => {
+    let blocked = false;
+    const live = makeSession();
+    (
+      live.session as unknown as { clearConversationContext: () => Promise<void> }
+    ).clearConversationContext = mock(async () => {
+      blocked = true;
+    });
+    const { deps, handoffCalls } = makeDeps({
+      getSessionAsync: async () => live.session,
+      slotResetsContext: () => true,
+      taskRepo: {
+        getTask: () => ({
+          id: 'task-1',
+          workflowRunId: 'run-1',
+          status: blocked ? 'blocked' : 'in_progress',
+        }),
+      },
+    });
+    await deliverAgentMessageToTarget({
+      deps,
+      target: WORKER_TARGET,
+      message: 'x',
+      messageId: 'msg-flip-blocked',
+    });
+    expect(handoffCalls[0].deliveryMode).toBe('defer');
+    expect(live.setQueuedIfIdle).not.toHaveBeenCalled();
   });
 
   it('clears prior context for an idle resetContextPerTurn slot before handoff', async () => {

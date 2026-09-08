@@ -31,6 +31,9 @@ export function applyTaskStatusGate(ctx: SpawnAdmissionCtx): SpawnAdmissionResul
   if (ctx.taskStatus === 'cancelled') {
     return decided({ action: 'reject_permanent', reason: 'task_cancelled' });
   }
+  if (ctx.taskStatus === 'blocked') {
+    return decided({ action: 'reject_transient', reason: 'task_blocked' });
+  }
   if (isRateOrUsageLimited(ctx.taskStatus)) {
     return decided({ action: 'reject_transient', reason: 'task_rate_or_usage_limited' });
   }
