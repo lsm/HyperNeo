@@ -34,6 +34,17 @@ export const TERMINAL_RUN_RECONCILE_SETTLED_TASK_STATUSES: readonly SpaceTaskSta
   'stopped',
 ];
 
+const CANCELLED_RUN_RECONCILE_SETTLEABLE_TASK_STATUSES: readonly SpaceTaskStatus[] = [
+  'open',
+  'in_progress',
+  'review',
+  'approved',
+  'blocked',
+  'rate_limited',
+  'usage_limited',
+  'stopped',
+];
+
 export class SpaceWorkflowRunRepository {
   constructor(private db: BunDatabase) {}
 
@@ -176,23 +187,24 @@ export class SpaceWorkflowRunRepository {
   }
 
   listTerminalRunsNeedingTaskReconciliation(spaceId: string): SpaceWorkflowRun[] {
-    const settled = TERMINAL_RUN_RECONCILE_SETTLED_TASK_STATUSES.map(() => '?').join(', ');
+    const settleable = CANCELLED_RUN_RECONCILE_SETTLEABLE_TASK_STATUSES.map(() => '?').join(', ');
     const stmt = this.db.prepare(
       `SELECT run.* FROM space_workflow_runs run
        WHERE run.space_id = ?
          AND run.status IN ('done', 'cancelled')
          AND (
-           EXISTS (
-             SELECT 1 FROM space_tasks t
-              WHERE t.workflow_run_id = run.id
-                AND t.status NOT IN (${settled}, 'archived')
+           (
+             run.status = 'done'
+             AND EXISTS (
+               SELECT 1 FROM space_tasks t
+                WHERE t.workflow_run_id = run.id AND t.status = 'in_progress'
+             )
            )
            OR (
              run.status = 'cancelled'
              AND EXISTS (
                SELECT 1 FROM space_tasks t
-                WHERE t.workflow_run_id = run.id
-                  AND t.status NOT IN ('cancelled', 'archived')
+                WHERE t.workflow_run_id = run.id AND t.status IN (${settleable})
              )
            )
            OR (
@@ -222,10 +234,10 @@ export class SpaceWorkflowRunRepository {
                       SELECT 1 FROM workflow_run_artifacts a
                        WHERE a.run_id = run.id
                          AND a.artifact_type = 'decision'
-                         AND a.updated_at > (
-                           SELECT MAX(t3.updated_at) FROM space_tasks t3
-                            WHERE t3.workflow_run_id = run.id AND t3.status != 'archived'
-                         )
+                         AND json_valid(a.data)
+                         AND COALESCE(json_extract(a.data, '$.kind'), '') = ''
+                         AND json_type(a.data, '$.summary') = 'text'
+                         AND TRIM(CAST(json_extract(a.data, '$.summary') AS TEXT)) != ''
                     )
                     OR EXISTS (
                       SELECT 1 FROM node_executions e
@@ -240,10 +252,26 @@ export class SpaceWorkflowRunRepository {
                   )
              )
            )
+           OR (
+             run.status = 'done'
+             AND EXISTS (
+               SELECT 1 FROM workflow_run_artifacts a
+                WHERE a.run_id = run.id
+                  AND a.artifact_type = 'decision'
+                  AND json_valid(a.data)
+                  AND COALESCE(json_extract(a.data, '$.kind'), '') = ''
+                  AND json_type(a.data, '$.summary') = 'text'
+                  AND TRIM(CAST(json_extract(a.data, '$.summary') AS TEXT)) != ''
+                  AND a.updated_at > (
+                    SELECT MAX(t3.updated_at) FROM space_tasks t3
+                     WHERE t3.workflow_run_id = run.id AND t3.status != 'archived'
+                  )
+             )
+           )
          )
        ORDER BY run.created_at DESC`
     );
-    const rows = stmt.all(spaceId, ...TERMINAL_RUN_RECONCILE_SETTLED_TASK_STATUSES) as Record<
+    const rows = stmt.all(spaceId, ...CANCELLED_RUN_RECONCILE_SETTLEABLE_TASK_STATUSES) as Record<
       string,
       unknown
     >[];
