@@ -50,6 +50,16 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
 
 export const WORKER_TEMPLATE_KEY_PREFIX = 'worker.';
 
+export const RETIRED_LONG_HORIZON_TEMPLATE_KEYS = [
+  'product-quality-manager.default',
+  'release-manager.default',
+  'security-auditor.default',
+  'marketing.default',
+  'sales.default',
+  'research.default',
+  'family-ops-chores.default',
+] as const;
+
 const WORKER_TEMPLATE_LABELS = ['workflow-worker'];
 const LONG_HORIZON_TEMPLATE_LABELS = ['long-horizon'];
 

@@ -180,6 +180,13 @@ describe('SpaceAgentTemplateManager', () => {
       if (!result.ok) expect(result.error).toContain('key');
     });
 
+    test('rejects reusing a retired built-in key (ATC-3)', async () => {
+      const result = await manager.create({ ...fullParams(), key: 'marketing.default' });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('retired');
+    });
+
     test('rejects an invalid handle', async () => {
       const result = await manager.create({ ...fullParams(), handle: 'Bad Handle!' });
 
