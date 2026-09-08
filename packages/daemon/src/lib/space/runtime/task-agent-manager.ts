@@ -1952,7 +1952,7 @@ export class TaskAgentManager {
         )
         .all(task.id) as Array<{ id: string }>;
       return rows.find((row) => {
-        if (this.hasPendingPostApprovalKickoffJob(row.id, approvedAt)) return true;
+        if (this.hasDurablePostApprovalKickoff(row.id, task.id, approvedAt)) return true;
         if (!sdkMessageRepo.hasConsumedTaskInputForSession(row.id, task.id)) return false;
         return this.hasConsumedTaskInputSince(row.id, task.id, approvedAt);
       })?.id;
@@ -2043,7 +2043,8 @@ export class TaskAgentManager {
         .prepare(
           `SELECT 1 FROM sdk_messages
             WHERE session_id = ? AND task_id = ? AND message_type = 'user'
-              AND consumed_seq IS NOT NULL AND timestamp >= ?
+              AND (consumed_seq IS NOT NULL OR send_status IN ('enqueued', 'deferred'))
+              AND timestamp >= ?
               AND json_valid(sdk_message)
               AND json_extract(sdk_message, '$.type') = 'user'
               AND sdk_message LIKE ? ESCAPE '\\' COLLATE NOCASE
@@ -2054,6 +2055,20 @@ export class TaskAgentManager {
     } catch {
       return false;
     }
+  }
+
+  private hasDurablePostApprovalKickoff(
+    sessionId: string,
+    taskId: string,
+    approvedAt: number | null
+  ): boolean {
+    if (
+      approvedAt !== null &&
+      this.hasConsumedPostApprovalKickoffSince(sessionId, taskId, approvedAt)
+    ) {
+      return true;
+    }
+    return this.hasPendingPostApprovalKickoffJob(sessionId, approvedAt);
   }
 
   private readPersistedRateLimitCooldown(sessionId: string): { retryAt: number } | null {
@@ -5535,21 +5550,28 @@ export class TaskAgentManager {
             throw err;
           }
         }
-        const kickoffAlreadyDelivered =
-          (task.approvedAt !== null &&
-            this.hasConsumedPostApprovalKickoffSince(
-              existing.session.id,
-              taskId,
-              task.approvedAt
-            )) ||
-          this.hasPendingPostApprovalKickoffJob(existing.session.id, task.approvedAt ?? null);
+        const kickoffAlreadyDelivered = this.hasDurablePostApprovalKickoff(
+          existing.session.id,
+          taskId,
+          task.approvedAt ?? null
+        );
         if (kickoffAlreadyDelivered) {
           log.info(
             `TaskAgentManager.spawnPostApprovalSubSession: skipping kickoff inject to live session ` +
               `${existingSessionId} — this approval generation's post-approval kickoff was already delivered`
           );
           if (!existing.isQueryActiveOrStarting()) {
-            if (await this.restoredWorkerStartAdmitted(existing, taskId)) {
+            let resumeAdmitted = false;
+            try {
+              await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, {
+                expectedApprovedAt: task.approvedAt ?? null,
+                expectedWorkflowRunId: task.workflowRunId ?? null,
+              });
+              resumeAdmitted = true;
+            } catch {
+              resumeAdmitted = false;
+            }
+            if (resumeAdmitted) {
               await existing.startStreamingQuery();
             }
             if (!existing.isQueryActiveOrStarting()) {
