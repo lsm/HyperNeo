@@ -185,6 +185,7 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
       expect(fixture.restoreMock).toHaveBeenCalledTimes(1);
       expect(fixture.restoreMock).toHaveBeenCalledWith(SUB_SESSION_ID, undefined, {
         startQuery: false,
+        replayPendingMessages: false,
       });
     });
   });
