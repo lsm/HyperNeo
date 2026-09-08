@@ -43,10 +43,14 @@ function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
   return agent.handle === 'coordinator';
 }
 
-function agentToolsList(agent: SpaceLongHorizonAgent): string[] {
-  const tools = agent.toolPermissions?.tools;
+function toolPermissionsToolsList(owner: { toolPermissions: Record<string, unknown> }): string[] {
+  const tools = owner.toolPermissions?.tools;
   if (!Array.isArray(tools)) return [];
   return tools.filter((tool): tool is string => typeof tool === 'string');
+}
+
+function agentToolsList(agent: SpaceLongHorizonAgent): string[] {
+  return toolPermissionsToolsList(agent);
 }
 
 function agentInitials(name: string): string {
@@ -179,6 +183,12 @@ async function agentSavePersistStage(ctx: AgentSaveCtx): Promise<AgentSaveCtx> {
     thinkingLevel: (form.thinkingLevel || null) as ThinkingLevel | null,
     settingSources: form.settingSources,
     ...(parsedTools.length > 0 ? { tools: parsedTools } : {}),
+    ...(ctx.template?.suggestedEventSubscriptions.length
+      ? { suggestedEventSubscriptions: ctx.template.suggestedEventSubscriptions }
+      : {}),
+    ...(ctx.template?.reminderDefaults.length
+      ? { reminderDefaults: ctx.template.reminderDefaults }
+      : {}),
     modelPool: activeModelPool ?? undefined,
   });
   return ctx;
@@ -293,10 +303,11 @@ function AgentEditor({
   const [thinkingLevel, setThinkingLevel] = useState<'' | ThinkingLevel>(
     agent?.thinkingLevel ?? template?.thinkingLevel ?? ''
   );
+  const templateTools = template ? toolPermissionsToolsList(template) : [];
   const [toolsSelection, setToolsSelection] = useState<ToolsSelection>(
     agent
       ? { tools: agentToolsList(agent), toolsOverridden: agentToolsList(agent).length > 0 }
-      : { tools: [], toolsOverridden: false }
+      : { tools: templateTools, toolsOverridden: templateTools.length > 0 }
   );
   const [settingSources, setSettingSources] = useState<SettingSource[] | null>(
     agent?.settingSources ?? template?.settingSources ?? null

@@ -5,6 +5,7 @@ import type {
   SpaceGoal,
   SpaceGoalEvent,
   SpaceLongHorizonAgent,
+  SpaceLongHorizonAgentTemplateReminderDefault,
   SpaceTask,
   SpaceTaskActivityMember,
   SpaceWorkflow,
@@ -3167,6 +3168,34 @@ describe('SpaceStore — template CRUD methods', () => {
     expect(reviewer.reminderDefaults).toEqual([]);
     expect(reviewer.ownershipPatterns).toEqual([]);
     expect(reviewer.toolPermissions).toEqual({});
+  });
+
+  it('fetchTemplates() preserves template tools, subscriptions, and reminders in the pane shape', async () => {
+    const suggestedEventSubscriptions = [{ source: 'github', topic: 'pull_request.*', filter: {} }];
+    const reminderDefaults: SpaceLongHorizonAgentTemplateReminderDefault[] = [
+      {
+        title: 'Review plan',
+        body: 'Review goals.',
+        triggerType: 'cron',
+        cronExpression: '0 9 * * 1',
+        timezone: 'UTC',
+      },
+    ];
+    templateListResult = [
+      makeAgentTemplate({
+        key: 'reviewer',
+        tools: ['Read', 'Bash(gh pr view:*)'],
+        suggestedEventSubscriptions,
+        reminderDefaults,
+      }),
+    ];
+
+    await spaceStore.fetchTemplates();
+
+    const reviewer = spaceStore.agentTemplates.value[0];
+    expect(reviewer.toolPermissions).toEqual({ tools: ['Read', 'Bash(gh pr view:*)'] });
+    expect(reviewer.suggestedEventSubscriptions).toEqual(suggestedEventSubscriptions);
+    expect(reviewer.reminderDefaults).toEqual(reminderDefaults);
   });
 
   it('fetchTemplates() keeps the cached list when the RPC fails', async () => {

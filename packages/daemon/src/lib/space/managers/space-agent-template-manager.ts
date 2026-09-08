@@ -63,6 +63,8 @@ function getBuiltInSpaceAgentTemplates(): SpaceAgentTemplate[] {
       description: template.description,
       instructions: template.instructions,
       suggestedAutonomyLevel: template.suggestedAutonomyLevel,
+      suggestedEventSubscriptions: template.suggestedEventSubscriptions,
+      reminderDefaults: template.reminderDefaults,
       model: null,
       provider: null,
       modelPool: null,

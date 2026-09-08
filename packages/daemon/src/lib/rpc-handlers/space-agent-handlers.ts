@@ -5,6 +5,8 @@ import type {
   SettingSource,
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentEventSubscriptionStatus,
+  SpaceLongHorizonAgentTemplateEventSubscription,
+  SpaceLongHorizonAgentTemplateReminderDefault,
   SpaceAgentPromotionDraft,
   ThinkingLevel,
   UpdateSpaceAgentTemplateParams,
@@ -43,6 +45,7 @@ import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import { getNextRunAt, isValidCronExpression } from '../space/schedule/cron-utils.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit, validateSlug } from '../space/slug.ts';
+import { validateTemplateReminder } from '../space/tools/space-agent-tools.ts';
 
 const PROMOTION_MESSAGE_LIMIT = 24;
 const PROMOTION_CONTEXT_CHAR_LIMIT = 6000;
@@ -82,6 +85,8 @@ interface UnifiedAgentCreateInput {
   settingSources?: SettingSource[] | null;
   toolPermissions?: Record<string, unknown>;
   tools?: string[];
+  suggestedEventSubscriptions?: SpaceLongHorizonAgentTemplateEventSubscription[];
+  reminderDefaults?: SpaceLongHorizonAgentTemplateReminderDefault[];
   status?: string;
   description?: string;
   modelPool?: AgentModelPoolEntry[];
@@ -450,7 +455,60 @@ async function createValidateConfigStage(
     const poolError = await validateAgentModelPool(params.modelPool);
     if (poolError) throw new Error(poolError);
   }
+  for (const reminder of params.reminderDefaults ?? []) {
+    const reminderCheck = validateTemplateReminder(reminder);
+    if (!reminderCheck.ok) throw new Error(reminderCheck.reason);
+    if (reminder.triggerType !== 'cron') {
+      throw new Error('reminderDefaults only supports triggerType "cron"');
+    }
+    const timezone = reminder.timezone ?? 'UTC';
+    if (getNextRunAt(reminder.cronExpression ?? '', timezone) === null) {
+      throw new Error(`Invalid timezone or cron expression for reminder: ${timezone}`);
+    }
+  }
   return ctx;
+}
+
+function seedUnifiedAgentSubscriptions(
+  ctx: CreateUnifiedAgentCtx,
+  agent: SpaceLongHorizonAgent
+): void {
+  for (const subscription of ctx.params.suggestedEventSubscriptions ?? []) {
+    try {
+      validateLongHorizonSubscriptionPattern(subscription.source, subscription.topic);
+    } catch {
+      continue;
+    }
+    const stored = ctx.repo.upsertSubscription({
+      spaceId: agent.spaceId,
+      agentId: agent.id,
+      source: subscription.source,
+      topic: subscription.topic,
+      filter: subscription.filter ?? {},
+      status: 'active',
+    });
+    const refresh = ctx.runtimeService?.refreshLongHorizonSubscription(agent.spaceId, stored.id);
+    if (refresh && !refresh.success) ctx.repo.deleteSubscription(stored.id);
+  }
+}
+
+function seedUnifiedAgentReminders(ctx: CreateUnifiedAgentCtx, agent: SpaceLongHorizonAgent): void {
+  for (const reminder of ctx.params.reminderDefaults ?? []) {
+    ctx.repo.createReminder({
+      spaceId: agent.spaceId,
+      agentId: agent.id,
+      title: reminder.title,
+      body: reminder.body,
+      triggerType: reminder.triggerType,
+      cronExpression: reminder.cronExpression,
+      timezone: reminder.timezone,
+      nextRunAt:
+        reminder.triggerType === 'cron' && reminder.cronExpression
+          ? getNextRunAt(reminder.cronExpression, reminder.timezone ?? 'UTC')
+          : null,
+      status: 'active',
+    });
+  }
 }
 
 function createPersistStage(ctx: CreateUnifiedAgentCtx): CreateUnifiedAgentCtx {
@@ -472,6 +530,8 @@ function createPersistStage(ctx: CreateUnifiedAgentCtx): CreateUnifiedAgentCtx {
     description: params.description,
     modelPool: params.modelPool,
   });
+  seedUnifiedAgentSubscriptions(ctx, agent);
+  seedUnifiedAgentReminders(ctx, agent);
   return { ...ctx, agent };
 }
 
