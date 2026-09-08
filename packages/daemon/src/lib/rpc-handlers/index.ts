@@ -29,7 +29,6 @@ import { registerCustomEndpointHandlers } from './custom-endpoint-handlers.ts';
 import { registerVoiceHandlers } from './voice-handlers.ts';
 import { setupProviderHandlers } from './provider-handlers.ts';
 import { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
-import { setupConfigHandlers } from './config-handlers.ts';
 import { setupTestHandlers } from './test-handlers.ts';
 import { setupRewindHandlers } from './rewind-handlers.ts';
 import type { GitHubService } from '../github/github-service.ts';
@@ -364,7 +363,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     internalEventBus: deps.internalEventBus,
   });
 
-  setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.internalEventBus);
   setupTestHandlers(deps.messageHub, deps.reactiveDb.db);
   setupRewindHandlers(deps.messageHub, deps.sessionManager, deps.internalEventBus);
 

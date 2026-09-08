@@ -23,7 +23,6 @@ export type {
   AgentModel,
   AgentsConfig,
   ClaudeCodePreset,
-  ConfigUpdateResult,
   EnvironmentSettings,
   McpHttpServerConfig,
   McpServerConfig,

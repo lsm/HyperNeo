@@ -267,10 +267,6 @@
       "maxLines": 833,
       "followUp": "M7 agent runtime boundary split"
     },
-    "packages/daemon/src/lib/rpc-handlers/config-handlers.ts": {
-      "maxLines": 823,
-      "followUp": "M2/M4 fabric bridge split"
-    },
     "packages/daemon/src/lib/space/agents/custom-agent.ts": {
       "maxLines": 820,
       "followUp": "M10 cleanup split when touched"
@@ -442,10 +438,6 @@
     "packages/daemon/src/lib/space/runtime/gate-features.ts": {
       "maxLines": 628,
       "followUp": "M9 runtime component extraction"
-    },
-    "packages/daemon/src/lib/config-validators.ts": {
-      "maxLines": 622,
-      "followUp": "M10 cleanup split when touched"
     },
     "packages/web/src/components/GitPanel.tsx": {
       "maxLines": 610,

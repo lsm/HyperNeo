@@ -418,9 +418,6 @@ Target queries:
 | `mcp.registry.errors.list` | Application-level MCP registry validation errors for warning badges. |
 | `tools.globalConfig.get` | Global tool configuration read model for settings modals. |
 | `usage.calculate` | Historical usage aggregate for settings analytics. |
-| `config.model.get` | Compatibility read for current model configuration. |
-| `config.keyFamily.get` | Compatibility read for one legacy config key family. |
-| `config.getAll` | Compatibility read for all legacy config key families. |
 | `settings.global.get` | Compatibility read for global settings hydration. |
 | `settings.session.get` | Compatibility read for session-scoped settings hydration. |
 | `settings.fileOnly.read` | Compatibility read for local/file-only settings. |
@@ -457,18 +454,21 @@ Compatibility mappings:
 - `settings.global.get`, `settings.session.get`, `settings.fileOnly.read`, and
   `settings.mcp.listFromSources` remain compatibility aliases for effective config/settings read models until
   settings callers migrate to `config.effective.preview` or contribution-specific registry reads.
-- `config.model.get`, `config.getAll`, and the per-key family reads remain compatibility aliases for model,
-  full-config, and settings-panel hydration; they read the same effective source chain as the target config
-  resolver and must not be removed before callers migrate. The per-key reads include
-  `config.systemPrompt.get`, `config.tools.get`, `config.permissions.get`, `config.agents.get`,
-  `config.sandbox.get`, `config.betas.get`, `config.outputFormat.get`, `config.mcp.get`, and
-  `config.env.get`.
+- `config.model.get`, `config.getAll`, and the per-key family reads (`config.systemPrompt.get`,
+  `config.tools.get`, `config.permissions.get`, `config.agents.get`, `config.sandbox.get`,
+  `config.betas.get`, `config.outputFormat.get`, `config.mcp.get`, `config.env.get`) were removed in
+  PR #3885 (2026-09-08): the dead-surface audit (#3824) and full `git log -S` history found zero web call
+  sites — settings panels hydrate via the `state.settings`/`state.session` push model and edit through
+  `session.update`, so the "until callers migrate" condition held with no callers to migrate. If the
+  target config resolver lands with read consumers, they should call the target read commands directly
+  rather than reintroducing per-key aliases.
 - `config.model.update`, `config.systemPrompt.update`, `config.tools.update`, `config.agents.update`,
   `config.sandbox.update`, `config.mcp.update`, `config.outputFormat.update`, `config.betas.update`,
-  `config.env.update`, and `config.permissions.update` map to `config.value.set` or
-  `config.values.patch` for the corresponding key family.
-- `config.updateBulk` remains a compatibility alias for `config.values.patch`; it must preserve the
-  current bulk settings save semantics until callers move to scoped patch requests.
+  `config.env.update`, and `config.permissions.update` were removed alongside the reads in PR #3885 for
+  the same zero-caller reason; the mapping to `config.value.set`/`config.values.patch` remains the target
+  for any future per-key write surface.
+- `config.updateBulk` was removed with the rest of the `config.*` family in PR #3885; if bulk settings
+  edits return, they should use scoped `config.values.patch` requests.
 - `tools.save` maps to `config.values.patch` at session scope.
 - `globalTools.getConfig` maps to `tools.globalConfig.get` or `config.effective.preview` at global tools
   scope so ToolsModal can hydrate saved global tool settings before writing changes.
@@ -481,9 +481,9 @@ Compatibility mappings:
   MCP server settings.
 - `mcp.registry.listErrors` remains a compatibility alias for `mcp.registry.errors.list` so settings
   warning badges and the MCP registry RPC suite can keep surfacing invalid entries during cleanup.
-- `config.mcp.addServer` and `config.mcp.removeServer` remain compatibility aliases over the MCP
-  registry create/delete commands; the bridge must keep these shortcut mutations until the online config
-  RPC suite and settings callers use `mcp.registry.*` directly.
+- `config.mcp.addServer` and `config.mcp.removeServer` were removed in PR #3885 together with the online
+  config RPC suite that was their last exerciser; the settings surface manages MCP servers through
+  `mcp.registry.*` directly.
 - `mcp.enablement.setOverride` and `mcp.enablement.clearOverride` remain compatibility aliases for
   session and Space tool enablement overrides; they write scoped config rows and trigger the same
   effective-preview invalidation as other MCP config changes.
