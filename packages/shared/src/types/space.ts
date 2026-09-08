@@ -50,6 +50,7 @@ export interface SpaceLongHorizonAgentTemplate {
   modelPool?: AgentModelPoolEntry[] | null;
   thinkingLevel?: ThinkingLevel | null;
   settingSources?: SettingSource[] | null;
+  labels?: string[];
 }
 
 export interface SpaceLongHorizonAgent {
@@ -124,6 +125,7 @@ export interface SpaceAgentTemplate {
   thinkingLevel: ThinkingLevel | null;
   settingSources: SettingSource[] | null;
   tools: string[] | null;
+  labels: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -141,6 +143,7 @@ export interface CreateSpaceAgentTemplateParams {
   thinkingLevel?: ThinkingLevel | null;
   settingSources?: SettingSource[] | null;
   tools?: string[] | null;
+  labels?: string[] | null;
 }
 
 export interface UpdateSpaceAgentTemplateParams {
@@ -155,6 +158,7 @@ export interface UpdateSpaceAgentTemplateParams {
   thinkingLevel?: ThinkingLevel | null;
   settingSources?: SettingSource[] | null;
   tools?: string[] | null;
+  labels?: string[] | null;
 }
 
 export interface SpaceLongHorizonAgentGoal {

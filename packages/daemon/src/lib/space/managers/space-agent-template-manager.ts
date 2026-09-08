@@ -27,6 +27,8 @@ type BuiltInTemplateSource = () => SpaceAgentTemplate[];
 
 const MIN_AUTONOMY: SpaceAgentAutonomyLevel = 1;
 const MAX_AUTONOMY: SpaceAgentAutonomyLevel = 5;
+const MAX_LABELS = 8;
+const NON_PRINTABLE = /\p{Cc}/u;
 
 export interface CreateTemplateCtx {
   repo: SpaceAgentTemplateRepository;
@@ -73,6 +75,7 @@ function getBuiltInSpaceAgentTemplates(): SpaceAgentTemplate[] {
       tools: Array.isArray(presetTools)
         ? presetTools.filter((tool): tool is string => typeof tool === 'string')
         : null,
+      labels: template.labels ?? [],
       createdAt: 0,
       updatedAt: 0,
     };
@@ -116,6 +119,31 @@ function validateDisplayName(displayName: string | undefined | null): string | n
 function validateToolsChoice(tools: string[] | null | undefined): string | null {
   if (tools === undefined || tools === null) return null;
   return validateSpaceAgentTools(tools);
+}
+
+function normalizeTemplateLabels(labels: string[] | null | undefined): {
+  labels: string[];
+  error: string | null;
+} {
+  if (labels === undefined || labels === null) return { labels: [], error: null };
+  const normalized: string[] = [];
+  for (const label of labels) {
+    if (typeof label !== 'string') {
+      return { labels: [], error: 'Template labels must be strings' };
+    }
+    const trimmed = label.trim();
+    if (trimmed === '') {
+      return { labels: [], error: 'Template labels cannot be blank' };
+    }
+    if (NON_PRINTABLE.test(label)) {
+      return { labels: [], error: 'Template labels must contain only printable characters' };
+    }
+    if (!normalized.includes(trimmed)) normalized.push(trimmed);
+  }
+  if (normalized.length > MAX_LABELS) {
+    return { labels: [], error: `Template labels are limited to ${MAX_LABELS} entries` };
+  }
+  return { labels: normalized, error: null };
 }
 
 async function validateModelChoice(
@@ -179,6 +207,12 @@ function createValidateTools(ctx: CreateTemplateCtx): CreateTemplateCtx {
   return ctx;
 }
 
+function createValidateLabels(ctx: CreateTemplateCtx): CreateTemplateCtx {
+  const { labels, error } = normalizeTemplateLabels(ctx.params.labels);
+  if (error) return { ...ctx, error };
+  return { ...ctx, params: { ...ctx.params, labels } };
+}
+
 async function createValidateModel(ctx: CreateTemplateCtx): Promise<CreateTemplateCtx> {
   const error = await validateModelChoice(ctx.params.model, ctx.params.provider);
   if (error) return { ...ctx, error };
@@ -238,6 +272,13 @@ function updateValidateTools(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
   return ctx;
 }
 
+function updateValidateLabels(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
+  if (ctx.params.labels === undefined) return ctx;
+  const { labels, error } = normalizeTemplateLabels(ctx.params.labels);
+  if (error) return { ...ctx, error };
+  return { ...ctx, params: { ...ctx.params, labels } };
+}
+
 async function updateValidateModel(ctx: UpdateTemplateCtx): Promise<UpdateTemplateCtx> {
   if (ctx.existing === undefined) return ctx;
   if (ctx.params.model === undefined && ctx.params.provider === undefined) return ctx;
@@ -292,6 +333,8 @@ export const runCreateTemplate = (templatePipeline('create-space-agent-template'
   .pipe('!hasError', 'ctx')
   .pipe(createValidateTools, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
+  .pipe(createValidateLabels, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
   .pipe(createValidateModel, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
   .pipe(createValidateModelPool, 'ctx', 'ctx')
@@ -312,6 +355,8 @@ export const runUpdateTemplate = (templatePipeline('update-space-agent-template'
   .pipe(updateValidateAutonomy, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
   .pipe(updateValidateTools, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(updateValidateLabels, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
   .pipe(updateValidateModel, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')

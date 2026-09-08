@@ -102,6 +102,7 @@ function makeStoredTemplate(overrides: Partial<SpaceAgentTemplate> = {}): SpaceA
     thinkingLevel: 'think8k',
     settingSources: ['project'],
     tools: ['Read', 'Grep'],
+    labels: [],
     createdAt: 1,
     updatedAt: 1,
     ...overrides,

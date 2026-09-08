@@ -178,6 +178,7 @@ function makeAgentTemplate(overrides: Partial<SpaceAgentTemplate> = {}): SpaceAg
     thinkingLevel: null,
     settingSources: null,
     tools: null,
+    labels: [],
     createdAt: 1,
     updatedAt: 1,
     ...overrides,

@@ -22,9 +22,9 @@ export class SpaceAgentTemplateRepository {
       .prepare(
         `INSERT INTO space_agent_templates (
 						key, handle, display_name, description, instructions, suggested_autonomy_level,
-						model, provider, model_pool, thinking_level, setting_sources, tools,
+						model, provider, model_pool, thinking_level, setting_sources, tools, labels,
 						created_at, updated_at, version
-					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         params.key,
@@ -39,6 +39,7 @@ export class SpaceAgentTemplateRepository {
         params.thinkingLevel ?? null,
         params.settingSources === undefined ? null : JSON.stringify(params.settingSources),
         encodeJsonArray(params.tools),
+        encodeJsonArray(params.labels),
         now,
         now,
         version
@@ -123,6 +124,10 @@ export class SpaceAgentTemplateRepository {
       fields.push('tools = ?');
       values.push(encodeJsonArray(params.tools));
     }
+    if (params.labels !== undefined) {
+      fields.push('labels = ?');
+      values.push(encodeJsonArray(params.labels));
+    }
 
     if (fields.length === 0) return this.getByKey(key);
 
@@ -174,6 +179,7 @@ function rowToTemplate(row: Record<string, unknown>): SpaceAgentTemplate {
     thinkingLevel: (row.thinking_level as ThinkingLevel | null) ?? null,
     settingSources: decodeJsonArray<SettingSource>(row.setting_sources),
     tools: decodeJsonArray<string>(row.tools),
+    labels: decodeJsonArray<string>(row.labels) ?? [],
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number,
   };

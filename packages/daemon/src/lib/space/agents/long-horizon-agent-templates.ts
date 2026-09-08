@@ -355,6 +355,9 @@ const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
 
 export const WORKER_TEMPLATE_KEY_PREFIX = 'worker.';
 
+const WORKER_TEMPLATE_LABELS = ['workflow-worker'];
+const LONG_HORIZON_TEMPLATE_LABELS = ['long-horizon'];
+
 export function workerTemplateKey(handle: string): string {
   return `${WORKER_TEMPLATE_KEY_PREFIX}${handle}`;
 }
@@ -375,7 +378,14 @@ function workerPresetTemplates(): SpaceLongHorizonAgentTemplate[] {
 }
 
 export function getLongHorizonAgentTemplates(): SpaceLongHorizonAgentTemplate[] {
-  return structuredClone([...LONG_HORIZON_AGENT_TEMPLATES, ...workerPresetTemplates()]);
+  return structuredClone([...LONG_HORIZON_AGENT_TEMPLATES, ...workerPresetTemplates()]).map(
+    (template) => ({
+      ...template,
+      labels: template.key.startsWith(WORKER_TEMPLATE_KEY_PREFIX)
+        ? [...WORKER_TEMPLATE_LABELS]
+        : [...LONG_HORIZON_TEMPLATE_LABELS],
+    })
+  );
 }
 
 export function getLongHorizonAgentTemplate(

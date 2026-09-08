@@ -3,6 +3,7 @@ import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compa
 import { runMigration225 } from '../../../../../src/storage/schema/m225-space-agent-templates.ts';
 import { runMigration226 } from '../../../../../src/storage/schema/m226-space-agent-templates-version.ts';
 import { runMigration227 } from '../../../../../src/storage/schema/m227-space-agent-template-version-seq.ts';
+import { runMigration236 } from '../../../../../src/storage/schema/m236-space-agent-template-labels.ts';
 import { runMigration231 } from '../../../../../src/storage/schema/m231-clear-resolved-workflow-slot-agent-ids.ts';
 import { computeDefinitionVersion } from '../../../../../src/lib/space/workflows/definition-version.ts';
 import { SpaceAgentTemplateRepository } from '../../../../../src/storage/repositories/space-agent-template-repository.ts';
@@ -57,6 +58,7 @@ function createMigrationDb(): BunDatabase {
   runMigration225(db);
   runMigration226(db);
   runMigration227(db);
+  runMigration236(db);
   return db;
 }
 

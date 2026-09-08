@@ -21,6 +21,7 @@ import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/reposit
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
+import { runMigration236 } from '../../../../src/storage/schema/m236-space-agent-template-labels';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
@@ -38,6 +39,7 @@ const BUILT_INS: SpaceAgentTemplate[] = [
     thinkingLevel: null,
     settingSources: null,
     tools: null,
+    labels: [],
     createdAt: 0,
     updatedAt: 0,
   },
@@ -73,6 +75,7 @@ describe('SpaceAgentTemplateReapplyService', () => {
     createSpaceAgentTemplatesTable(db);
     runMigration226(db);
     runMigration227(db);
+    runMigration236(db);
     db.prepare(
       `INSERT INTO spaces (
 				id, slug, workspace_path, name, description, background_context, instructions,

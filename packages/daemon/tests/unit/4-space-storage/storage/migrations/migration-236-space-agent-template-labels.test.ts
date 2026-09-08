@@ -4,7 +4,7 @@ import { runMigration225 } from '../../../../../src/storage/schema/m225-space-ag
 import { runMigration226 } from '../../../../../src/storage/schema/m226-space-agent-templates-version.ts';
 import { runMigration227 } from '../../../../../src/storage/schema/m227-space-agent-template-version-seq.ts';
 import { runMigration236 } from '../../../../../src/storage/schema/m236-space-agent-template-labels.ts';
-import { SpaceAgentTemplateRepository } from '../../../../../src/storage/repositories/space-agent-template-repository';
+import { SpaceAgentTemplateRepository } from '../../../../../src/storage/repositories/space-agent-template-repository.ts';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 
 interface ColumnRow {
@@ -18,36 +18,30 @@ function columnNames(db: BunDatabase, tableName: string): string[] {
     .map((row) => (row as ColumnRow).name);
 }
 
-describe('migration 226: space_agent_templates version column', () => {
-  test('adds the version column to a pre-existing table and backfills default 1', () => {
+describe('migration 236: space_agent_templates labels column', () => {
+  test('adds the labels column to a pre-existing table and reads it back as empty', () => {
     const db = new BunDatabase(':memory:');
     runMigration225(db);
+    runMigration226(db);
+    runMigration227(db);
 
-    const before = columnNames(db, 'space_agent_templates');
-    expect(before).not.toContain('version');
+    expect(columnNames(db, 'space_agent_templates')).not.toContain('labels');
 
     db.prepare(
       `INSERT INTO space_agent_templates (key, handle, display_name, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?)`
     ).run('pre.custom', 'pre', 'Pre', 1000, 1000);
 
-    runMigration226(db);
-    runMigration227(db);
     runMigration236(db);
 
-    const after = columnNames(db, 'space_agent_templates');
-    expect(after).toContain('version');
+    expect(columnNames(db, 'space_agent_templates')).toContain('labels');
 
     const repo = new SpaceAgentTemplateRepository(db);
-    const created = repo.create({ key: 'post.custom', handle: 'post' });
-    const existing = repo.getByKeyWithVersion('pre.custom');
-    expect(created.key).toBe('post.custom');
-    expect(existing?.version).toBe(1);
-    expect(repo.getByKeyWithVersion('post.custom')?.version).toBe(1);
-
-    const updated = repo.casUpdate('pre.custom', { displayName: 'Updated' }, existing!.version);
-    expect(updated).not.toBeNull();
-    expect(repo.getByKeyWithVersion('pre.custom')?.version).toBe(2);
+    expect(repo.getByKey('pre.custom')?.labels).toEqual([]);
+    const created = repo.create({ key: 'post.custom', handle: 'post', labels: ['quality'] });
+    expect(created.labels).toEqual(['quality']);
+    expect(repo.getByKey('post.custom')?.labels).toEqual(['quality']);
+    db.close();
   });
 
   test('is idempotent when run twice', () => {
@@ -56,19 +50,13 @@ describe('migration 226: space_agent_templates version column', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration236(db);
-    runMigration226(db);
-    runMigration227(db);
     runMigration236(db);
 
     const repo = new SpaceAgentTemplateRepository(db);
     repo.create({ key: 'idempotent.custom', handle: 'idempotent' });
 
-    expect(repo.getByKey('idempotent.custom')).toEqual(
-      expect.objectContaining({
-        key: 'idempotent.custom',
-        handle: 'idempotent',
-      })
-    );
+    expect(repo.getByKey('idempotent.custom')?.labels).toEqual([]);
+    db.close();
   });
 
   test('runs as part of the registered migration sequence', () => {
@@ -78,9 +66,9 @@ describe('migration 226: space_agent_templates version column', () => {
     const repo = new SpaceAgentTemplateRepository(db);
     const created = repo.create({ key: 'registered.custom', handle: 'registered' });
 
-    expect(created.key).toBe('registered.custom');
-    expect(repo.getByKeyWithVersion('registered.custom')?.version).toBe(1);
-    expect(repo.casUpdate('registered.custom', { displayName: 'Updated' }, 1)).not.toBeNull();
+    expect(created.labels).toEqual([]);
+    const updated = repo.update('registered.custom', { labels: ['release'] });
+    expect(updated?.labels).toEqual(['release']);
     db.close();
   });
 });

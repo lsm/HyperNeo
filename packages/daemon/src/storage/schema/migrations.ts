@@ -48,6 +48,7 @@ import { runMigration234 } from './m234-drop-space-agent-inbox-messages.ts';
 import { runMigration235 } from './m235-expire-legacy-pending-agent-messages.ts';
 import { runMigration236 } from './m236-deferred-message-partial-index.ts';
 import { runMigration237 } from './m237-task-reconcile-watermark.ts';
+import { runMigration236 } from './m236-space-agent-template-labels.ts';
 import {
   findPendingMigrationSpaceReclaims,
   type MigrationSpaceReclaimRequest,
