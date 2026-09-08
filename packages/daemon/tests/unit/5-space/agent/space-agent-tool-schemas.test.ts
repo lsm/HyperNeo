@@ -354,6 +354,7 @@ const LIFECYCLE_TOOL_NAMES: SpaceAgentLifecycleToolName[] = [
   'get_agent',
   'create_agent',
   'create_agent_from_template',
+  'create_agent_template',
   'list_agent_templates',
   'update_agent',
   'pause_agent',
@@ -408,11 +409,11 @@ const FORGE_TOOL_NAMES: SpaceForgeToolName[] = [
 ];
 
 describe('conditional family tool schema maps', () => {
-  test('SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS contains exactly the 17 agent-lifecycle tools', () => {
+  test('SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS contains exactly the 18 agent-lifecycle tools', () => {
     expect(Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS).sort()).toEqual(
       [...LIFECYCLE_TOOL_NAMES].sort()
     );
-    expect(Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS)).toHaveLength(17);
+    expect(Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS)).toHaveLength(18);
   });
 
   test('SPACE_GOAL_TOOL_SCHEMAS contains exactly the 9 goal tools', () => {
@@ -517,6 +518,59 @@ const LIFECYCLE_PINS: FamilySafeParsePin[] = [
       },
     ],
     rejects: [{}, { name: 'My Coder' }],
+  },
+  {
+    tool: 'create_agent_template',
+    accepts: [
+      {
+        input: {
+          key: 'reviewer.custom',
+          handle: 'reviewer',
+          display_name: 'Reviewer',
+          description: 'Reviews code',
+          instructions: 'You review code.',
+          labels: ['workflow-worker'],
+          suggested_autonomy_level: 3,
+          model: 'glm-5.3',
+          provider: 'zai',
+          model_pool: [{ model: 'glm-5.3', maxConcurrent: 2, weight: 1 }],
+          thinking_level: 'think16k',
+          setting_sources: ['user', 'project'],
+          tools: ['read_file'],
+          from_agent_id: 'a1',
+        },
+        data: {
+          key: 'reviewer.custom',
+          handle: 'reviewer',
+          display_name: 'Reviewer',
+          description: 'Reviews code',
+          instructions: 'You review code.',
+          labels: ['workflow-worker'],
+          suggested_autonomy_level: 3,
+          model: 'glm-5.3',
+          provider: 'zai',
+          model_pool: [{ model: 'glm-5.3', maxConcurrent: 2, weight: 1 }],
+          thinking_level: 'think16k',
+          setting_sources: ['user', 'project'],
+          tools: ['read_file'],
+          from_agent_id: 'a1',
+        },
+      },
+      {
+        input: { key: 'k', handle: 'h', model: null, tools: null },
+        data: { key: 'k', handle: 'h', model: null, tools: null },
+      },
+    ],
+    rejects: [
+      {},
+      { handle: 'h' },
+      { key: 'k' },
+      { key: '', handle: 'h' },
+      { key: 'k', handle: 'h', suggested_autonomy_level: 6 },
+      { key: 'k', handle: 'h', thinking_level: 'think64k' },
+      { key: 'k', handle: 'h', setting_sources: ['bogus'] },
+      { key: 'k', handle: 'h', model_pool: [{ model: 'm', maxConcurrent: 0, weight: 1 }] },
+    ],
   },
   {
     tool: 'list_agent_templates',

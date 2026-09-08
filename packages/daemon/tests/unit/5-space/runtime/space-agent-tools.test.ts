@@ -19,6 +19,7 @@ import { EvolutionEpisodeService } from '../../../../src/lib/space/evolution-epi
 import { EvolutionScopeService } from '../../../../src/lib/space/evolution-scope-service.ts';
 import { SpaceGoalService } from '../../../../src/lib/space/goals/goal-service.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { SpaceAgentTemplateManager } from '../../../../src/lib/space/managers/space-agent-template-manager.ts';
 import { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
@@ -44,6 +45,7 @@ import { JobQueueRepository } from '../../../../src/storage/repositories/job-que
 import { McpAuditLogRepository } from '../../../../src/storage/repositories/mcp-audit-log-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceAgentInactivityConfigRepository } from '../../../../src/storage/repositories/space-agent-inactivity-repository.ts';
+import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository.ts';
 import { SpaceGoalEventRepository } from '../../../../src/storage/repositories/space-goal-event-repository.ts';
 import { SpaceGoalOutcomeNotificationRepository } from '../../../../src/storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../../../src/storage/repositories/space-goal-repository.ts';
@@ -511,6 +513,7 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
     expect(names).toContain('create_agent');
     expect(names).toContain('assign_agent_to_goal');
     expect(names).toContain('create_agent_reminder');
+    expect(names).toContain('create_agent_template');
     expect(() =>
       expectToolInputParses(server, 'update_agent', {
         agent_id: 'agent-1',
@@ -693,7 +696,7 @@ describe('createSpaceAgentMcpServer — agent/goal/Forge tool schema extraction 
     });
   }
 
-  test('db-configured server registers exactly the base tools plus the 17 lifecycle tools', () => {
+  test('db-configured server registers exactly the base tools plus the 18 lifecycle tools', () => {
     const server = makeServer({ db: ctx.db });
     expect(getRegisteredToolNames(server).sort()).toEqual(
       [
@@ -701,7 +704,7 @@ describe('createSpaceAgentMcpServer — agent/goal/Forge tool schema extraction 
         ...Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS),
       ].sort()
     );
-    expect(getRegisteredToolNames(server)).toHaveLength(41);
+    expect(getRegisteredToolNames(server)).toHaveLength(42);
   });
 
   test('goal-configured server registers exactly the base tools plus the 9 goal tools', () => {
@@ -767,6 +770,20 @@ describe('createSpaceAgentMcpServer — agent/goal/Forge tool schema extraction 
       ['lifecycle', 'update_agent', { agent_id: 'a1', status: 'disabled', tools: null }],
       ['lifecycle', 'update_agent', { agent_id: 'a1', setting_sources: ['bogus'] }],
       ['lifecycle', 'create_agent_reminder', { agent_id: 'a1', message: '', remind_at: 1 }],
+      [
+        'lifecycle',
+        'create_agent_template',
+        { key: 'k', handle: 'h', suggested_autonomy_level: 6 },
+      ],
+      [
+        'lifecycle',
+        'create_agent_template',
+        {
+          key: 'k',
+          handle: 'h',
+          model_pool: [{ model: 'm', maxConcurrent: 2, weight: 1 }],
+        },
+      ],
       ['lifecycle', 'list_agent_reminders', { agent_id: 'a1', status: 'done' }],
       ['lifecycle', 'subscribe_agent_event', { agent_id: 'a1', topic_pattern: 't/*' }],
       ['goal', 'list_goals', { status: 'completed' }],
@@ -811,6 +828,145 @@ describe('createSpaceAgentMcpServer — agent/goal/Forge tool schema extraction 
         expect(registeredResult.data).toEqual(extractedResult.data);
       }
     }
+  });
+});
+
+describe('createSpaceAgentToolHandlers — create_agent_template', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  function makeTemplateHandlers() {
+    return makeHandlers(ctx, {
+      templateManager: new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(ctx.db)),
+    });
+  }
+
+  test('creates and persists a user template', async () => {
+    const handlers = makeTemplateHandlers();
+    const result = parseResult(
+      await handlers.create_agent_template({
+        key: 'reviewer.custom',
+        handle: 'reviewer',
+        display_name: 'Reviewer',
+        instructions: 'You review code.',
+        labels: ['workflow-worker'],
+        suggested_autonomy_level: 3,
+        tools: ['Read', 'Bash'],
+      })
+    );
+    expect(result.success).toBe(true);
+    const template = result.template as Record<string, unknown>;
+    expect(template.key).toBe('reviewer.custom');
+    expect(template.handle).toBe('reviewer');
+    expect(template.displayName).toBe('Reviewer');
+    expect(template.labels).toEqual(['workflow-worker']);
+    expect(template.suggestedAutonomyLevel).toBe(3);
+    expect(template.tools).toEqual(['Read', 'Bash']);
+    const stored = new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom');
+    expect(stored?.instructions).toBe('You review code.');
+  });
+
+  test('rejects a key reserved for a built-in template', async () => {
+    const handlers = makeTemplateHandlers();
+    const result = parseResult(
+      await handlers.create_agent_template({ key: 'marketing.default', handle: 'marketer' })
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('reserved');
+  });
+
+  test('rejects a duplicate template key', async () => {
+    const handlers = makeTemplateHandlers();
+    const first = await handlers.create_agent_template({ key: 'qa.custom', handle: 'qa' });
+    expect(parseResult(first).success).toBe(true);
+    const second = parseResult(
+      await handlers.create_agent_template({ key: 'qa.custom', handle: 'qa-two' })
+    );
+    expect(second.success).toBe(false);
+    expect(second.error).toContain('already exists');
+  });
+
+  test('reports unavailable template management without a templateManager', async () => {
+    const handlers = makeHandlers(ctx);
+    const result = parseResult(await handlers.create_agent_template({ key: 'k', handle: 'h' }));
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Agent template management not available');
+  });
+
+  test('derives defaults from from_agent_id with caller fields overriding', async () => {
+    const agent = ctx.longHorizonAgentRepo.create({
+      spaceId: ctx.spaceId,
+      handle: 'qa-agent',
+      displayName: 'QA Agent',
+      description: 'QA work',
+      instructions: 'You test things.',
+      autonomyLevel: 3,
+      model: 'glm-5.3',
+      provider: 'zai',
+      thinkingLevel: 'think8k',
+      toolPermissions: { tools: ['Read', 'Grep'] },
+    });
+    const handlers = makeTemplateHandlers();
+    const result = parseResult(
+      await handlers.create_agent_template({
+        key: 'qa.custom',
+        handle: 'qa',
+        from_agent_id: agent.id,
+        instructions: 'Override prompt.',
+        labels: ['long-horizon'],
+      })
+    );
+    expect(result.success).toBe(true);
+    const template = result.template as Record<string, unknown>;
+    expect(template.instructions).toBe('Override prompt.');
+    expect(template.displayName).toBe('QA Agent');
+    expect(template.description).toBe('QA work');
+    expect(template.model).toBe('glm-5.3');
+    expect(template.provider).toBe('zai');
+    expect(template.thinkingLevel).toBe('think8k');
+    expect(template.suggestedAutonomyLevel).toBe(3);
+    expect(template.tools).toEqual(['Read', 'Grep']);
+    expect(template.labels).toEqual(['long-horizon']);
+  });
+
+  test('derives a safe minimal prompt when the source agent has empty instructions', async () => {
+    const agent = ctx.longHorizonAgentRepo.create({
+      spaceId: ctx.spaceId,
+      handle: 'empty-agent',
+      displayName: 'Empty Agent',
+      instructions: '',
+    });
+    const handlers = makeTemplateHandlers();
+    const result = parseResult(
+      await handlers.create_agent_template({
+        key: 'empty.custom',
+        handle: 'empty',
+        from_agent_id: agent.id,
+      })
+    );
+    expect(result.success).toBe(true);
+    const template = result.template as Record<string, unknown>;
+    expect(template.instructions).toBe(
+      'You are Empty Agent. Carry out the tasks assigned to you in this Space.'
+    );
+  });
+
+  test('rejects from_agent_id that is not a long-horizon agent in this space', async () => {
+    const handlers = makeTemplateHandlers();
+    const result = parseResult(
+      await handlers.create_agent_template({
+        key: 'k',
+        handle: 'h',
+        from_agent_id: 'agent-coder-1',
+      })
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Long-horizon agent not found: agent-coder-1');
   });
 });
 

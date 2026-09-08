@@ -21,6 +21,7 @@ import {
   CreateAgentFromTemplateSchema,
   CreateAgentReminderSchema,
   CreateAgentSchema,
+  CreateAgentTemplateSchema,
   CreateForgeEpisodeSchema,
   CreateForgeScopeFromGoalSchema,
   CreateForgeScopeSchema,
@@ -263,6 +264,18 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       paramsDoc: 'template_name, name?, model?, provider?, thinking_level?',
       paramsSchema: CreateAgentFromTemplateSchema,
       handler: (args) => handlers.create_agent_from_template(args),
+    }),
+    defineAction({
+      name: 'create_agent_template',
+      family: 'agents',
+      safetyClass: 'mutate',
+      description:
+        'Create a reusable agent template (prompt, model settings, tool allowlist, labels, suggested autonomy); optional from_agent_id derives defaults from an existing agent; returns the created template.',
+      paramsDoc:
+        'key, handle, display_name?, description?, instructions?, labels?, suggested_autonomy_level?, model?, provider?, model_pool?, thinking_level?, setting_sources?, tools?, from_agent_id?',
+      paramsSchema: CreateAgentTemplateSchema,
+      auditRedactKeys: ['instructions', 'description'],
+      handler: (args) => handlers.create_agent_template(args),
     }),
     defineAction({
       name: 'list_agent_templates',

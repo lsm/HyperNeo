@@ -134,6 +134,7 @@ const EXPECTED_BASE: Array<[string, string, string]> = [
   ['get_agent', 'agents', 'read'],
   ['create_agent', 'agents', 'mutate'],
   ['create_agent_from_template', 'agents', 'mutate'],
+  ['create_agent_template', 'agents', 'mutate'],
   ['list_agent_templates', 'agents', 'read'],
   ['update_agent', 'agents', 'mutate'],
   ['pause_agent', 'agents', 'mutate'],

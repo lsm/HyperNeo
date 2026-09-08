@@ -9,7 +9,9 @@ import {
   KNOWN_TOOLS,
 } from '@hyperneo/shared';
 import type {
+  AgentModelPoolEntry,
   CreateEvolutionEpisodeParams,
+  CreateSpaceAgentTemplateParams,
   EvolutionEpisodeStatus,
   EvolutionLessonStatus,
   EvolutionPolicy,
@@ -54,6 +56,7 @@ import {
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import { formatAgentMessage } from '../agent-message-envelope.ts';
 import { getLongHorizonAgentTemplates } from '../agents/long-horizon-agent-templates.ts';
+import { deriveAgentTemplate } from '../agents/template-derivation.ts';
 import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils.ts';
 import { mergeEvolutionPolicy } from '../evolution-scope-service.ts';
 import { validateGoalAutomationSelfNagPolicy } from '../goals/evolution-policy-validation.ts';
@@ -112,6 +115,7 @@ import {
   CreateAgentFromTemplateSchema,
   CreateAgentReminderSchema,
   CreateAgentSchema,
+  CreateAgentTemplateSchema,
   CreateForgeEpisodeSchema,
   CreateForgeScopeFromGoalSchema,
   CreateForgeScopeSchema,
@@ -344,6 +348,13 @@ async function validateLongHorizonModel(
   return info ? null : `Unrecognized model: "${model}"`;
 }
 
+function longHorizonAgentTools(agent: SpaceLongHorizonAgent): string[] | null {
+  const declared = agent.toolPermissions?.tools;
+  return Array.isArray(declared)
+    ? declared.filter((toolName): toolName is string => typeof toolName === 'string')
+    : null;
+}
+
 function compactLongHorizonAgent(agent: {
   id: string;
   handle: string;
@@ -573,6 +584,7 @@ export interface SpaceAgentToolsConfig {
   inactivityConfigRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityConfigRepository;
   inactivityClaimRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityClaimRepository;
   inactivityRunNow?: (spaceId: string, agentId: string) => Promise<void>;
+  templateManager?: import('../managers/space-agent-template-manager.ts').SpaceAgentTemplateManager;
 }
 
 export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
@@ -1208,6 +1220,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     return config.longHorizonAgentRepo;
   }
 
+  function requireTemplateManager() {
+    if (!config.templateManager) throw new Error('Agent template management not available');
+    return config.templateManager;
+  }
+
   function resolveCreateGoalOwnerId(explicitOwnerAgentId?: string | null): string | null {
     if (typeof explicitOwnerAgentId === 'string' && explicitOwnerAgentId.length > 0) {
       requireLongHorizonAgentInSpace(explicitOwnerAgentId);
@@ -1801,6 +1818,54 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         success: false,
         error: `Agent template not found: ${args.template_name}. Call list_agent_templates to discover available templates.`,
       });
+    },
+
+    async create_agent_template(args: {
+      key: string;
+      handle: string;
+      display_name?: string;
+      description?: string;
+      instructions?: string;
+      labels?: string[];
+      suggested_autonomy_level?: SpaceAgentAutonomyLevel;
+      model?: string | null;
+      provider?: string | null;
+      model_pool?: AgentModelPoolEntry[] | null;
+      thinking_level?: SpaceLongHorizonAgent['thinkingLevel'] | null;
+      setting_sources?: SpaceLongHorizonAgent['settingSources'] | null;
+      tools?: string[] | null;
+      from_agent_id?: string;
+    }): Promise<ToolResult> {
+      try {
+        const { key, handle, from_agent_id, ...overrides } = args;
+        let params: CreateSpaceAgentTemplateParams = { key, handle };
+        if (from_agent_id !== undefined) {
+          const agent = requireLongHorizonAgentInSpace(from_agent_id);
+          params = deriveAgentTemplate(
+            {
+              displayName: agent.displayName,
+              handle: agent.handle,
+              description: agent.description ?? null,
+              instructions: agent.instructions,
+              model: agent.model,
+              provider: agent.provider,
+              thinkingLevel: agent.thinkingLevel,
+              settingSources: agent.settingSources,
+              tools: longHorizonAgentTools(agent),
+              modelPool: agent.modelPool ?? null,
+              autonomyLevel: agent.autonomyLevel,
+            },
+            { key }
+          );
+        }
+        const result = await requireTemplateManager().create({ ...params, ...overrides });
+        if (!result.ok) return jsonResult({ success: false, error: result.error });
+        logAudit('create_agent_template', { key: args.key, from_agent_id: args.from_agent_id });
+        return jsonResult({ success: true, template: result.value });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
     },
 
     async list_agent_templates(): Promise<ToolResult> {
@@ -4475,6 +4540,12 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         'Create a long-horizon Space agent from a built-in template key (worker.research, worker.qa, ...). Templates carrying suggested event subscriptions and reminders seed them on create. Call list_agent_templates to discover available templates.',
         CreateAgentFromTemplateSchema.shape,
         (args) => handlers.create_agent_from_template(args)
+      ),
+      tool(
+        'create_agent_template',
+        'Create a reusable agent template in this Space: handle, prompt, model/provider/model_pool/thinking_level/setting_sources, tool allowlist, labels, and a suggested autonomy level. Pass from_agent_id to derive defaults from an existing long-horizon agent in this space; caller-supplied fields override the derived ones.',
+        CreateAgentTemplateSchema.shape,
+        (args) => handlers.create_agent_template(args)
       ),
       tool(
         'list_agent_templates',
