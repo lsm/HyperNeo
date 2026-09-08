@@ -3823,13 +3823,13 @@ export class SpaceRuntime {
       } catch (err) {
         activationError = err;
       }
+      await this.reconcileStalledPostApprovalTasks();
       try {
         await this.attachStandaloneTasksToWorkflows(failedActivationSpaceIds);
       } catch (err) {
         if (activationError === null) activationError = err;
       }
       if (activationError !== null) throw activationError;
-      this.reconcileStalledPostApprovalTasks();
       await this.cleanupTerminalExecutors();
       await this.reconcileTerminalRunsWithoutExecutors();
       await this.checkStandaloneTasks();
@@ -7843,17 +7843,18 @@ export class SpaceRuntime {
     }
   }
 
-  private reconcileStalledPostApprovalTasks(): void {
+  private async reconcileStalledPostApprovalTasks(): Promise<void> {
     const manager = this.config.taskAgentManager;
     if (!manager) return;
-    void (async () => {
-      const now = Date.now();
+    const generation = this.runtimeGeneration;
+    const now = Date.now();
+    const retries: Array<Promise<void>> = [];
+    const approvedTaskIds = new Set<string>();
+    try {
       for (const space of await this.listActiveSpaces()) {
-        for (const task of this.config.taskRepo.listBySpace(space.id, true)) {
-          if (task.status !== 'approved') {
-            this.postApprovalReconcileNextAttempt.delete(task.id);
-            continue;
-          }
+        if (generation !== this.runtimeGeneration || this.isStopped) return;
+        for (const task of this.config.taskRepo.listByStatus(space.id, 'approved')) {
+          approvedTaskIds.add(task.id);
           const dispatchDead =
             !!task.postApprovalSessionId && !manager.isSessionAlive(task.postApprovalSessionId);
           if (!dispatchDead && !task.postApprovalBlockedReason) continue;
@@ -7863,18 +7864,28 @@ export class SpaceRuntime {
             task.id,
             now + POST_APPROVAL_RECONCILE_RETRY_MS
           );
-          this.retryPostApprovalDispatch(task.id).catch((err: unknown) => {
-            log.warn(
-              `SpaceRuntime: post-approval restart reconcile failed for task ${task.id}: ${formatCommandError(err)}`
-            );
-          });
+          retries.push(
+            this.retryPostApprovalDispatch(task.id).then(
+              () => undefined,
+              (err: unknown) => {
+                log.warn(
+                  `SpaceRuntime: post-approval restart reconcile failed for task ${task.id}: ${formatCommandError(err)}`
+                );
+              }
+            )
+          );
         }
       }
-    })().catch((err: unknown) => {
+    } catch (err) {
       log.warn(
         `SpaceRuntime: post-approval restart reconcile scan failed: ${formatCommandError(err)}`
       );
-    });
+      return;
+    }
+    for (const taskId of this.postApprovalReconcileNextAttempt.keys()) {
+      if (!approvedTaskIds.has(taskId)) this.postApprovalReconcileNextAttempt.delete(taskId);
+    }
+    await Promise.all(retries);
   }
 
   private async checkStandaloneTasks(): Promise<void> {
@@ -7961,6 +7972,7 @@ export class SpaceRuntime {
   private approvedTaskOccupiesSlot(task: SpaceTask): boolean {
     if (task.status !== 'approved') return false;
     if (!task.postApprovalSessionId) return true;
+    if (this.postApprovalReconcileNextAttempt.has(task.id)) return true;
     const manager = this.config.taskAgentManager;
     return manager ? manager.isSessionAlive(task.postApprovalSessionId) : true;
   }

@@ -81,7 +81,10 @@ function buildLinearWorkflow(
   });
 }
 
-function makeTaskAgentManagerMock(aliveSessionIds: Set<string>) {
+function makeTaskAgentManagerMock(
+  aliveSessionIds: Set<string>,
+  onSpawnPostApproval?: (sessionId: string) => void
+) {
   return {
     isSessionAlive: (sessionId: string) => aliveSessionIds.has(sessionId),
     isSessionInMemory: (sessionId: string) => aliveSessionIds.has(sessionId),
@@ -89,7 +92,12 @@ function makeTaskAgentManagerMock(aliveSessionIds: Set<string>) {
     isSessionOnPostApprovalRoute: () => false,
     cancelBySessionId: () => {},
     spawnPostApprovalSubSession: async () => {
-      throw new Error('unexpected post-approval spawn in this suite');
+      if (!onSpawnPostApproval) {
+        throw new Error('unexpected post-approval spawn in this suite');
+      }
+      const sessionId = 'session:replacement-post-approval';
+      onSpawnPostApproval(sessionId);
+      return { sessionId };
     },
     isSpawning: () => false,
     isTaskAgentAlive: () => false,
@@ -150,7 +158,10 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
     } catch {}
   });
 
-  function makeRuntime(aliveSessionIds: Set<string> = new Set()): SpaceRuntime {
+  function makeRuntime(
+    aliveSessionIds: Set<string> = new Set(),
+    onSpawnPostApproval?: (sessionId: string) => void
+  ): SpaceRuntime {
     return new SpaceRuntime({
       db,
       spaceManager,
@@ -160,11 +171,15 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
       taskRepo,
       nodeExecutionRepo,
       sdkMessageRepo,
-      taskAgentManager: makeTaskAgentManagerMock(aliveSessionIds) as never,
+      taskAgentManager: makeTaskAgentManagerMock(aliveSessionIds, onSpawnPostApproval) as never,
     } as SpaceRuntimeConfig);
   }
 
-  function seedApprovedPriorTask(workflow: SpaceWorkflow, runStatus: 'done' | 'in_progress') {
+  function seedApprovedPriorTask(
+    workflow: SpaceWorkflow,
+    runStatus: 'done' | 'in_progress',
+    pointer: string | null = 'session:dead-post-approval'
+  ) {
     const run = workflowRunRepo.createRun({
       spaceId: SPACE_ID,
       workflowId: workflow.id,
@@ -183,7 +198,7 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
     });
     taskRepo.updateTask(task.id, {
       approvedAt: Date.now() - 60_000,
-      postApprovalSessionId: 'session:dead-post-approval',
+      postApprovalSessionId: pointer,
     });
     return { run, task };
   }
@@ -211,6 +226,57 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
     const priorSettled = await waitFor(() => taskRepo.getTask(prior.id)?.status === 'done');
     expect(priorSettled).toBe(true);
     expect(taskRepo.getTask(prior.id)?.postApprovalSessionId ?? null).toBeNull();
+  });
+
+  test('replaced post-approval worker keeps holding the slot until the recovered task settles', async () => {
+    const workflow = workflowManager.createWorkflow({
+      spaceId: SPACE_ID,
+      name: `WF-3821-route-${Date.now()}-${Math.random()}`,
+      description: 'Test',
+      nodes: [
+        {
+          id: STEP_A,
+          name: 'Code',
+          agentId: AGENT,
+          postApproval: { targetAgent: 'Code', instructions: 'Run the merge procedure' },
+        },
+      ],
+      transitions: [],
+      startNodeId: STEP_A,
+      rules: [],
+      tags: [],
+      completionAutonomyLevel: 3,
+    });
+    const { task: prior } = seedApprovedPriorTask(workflow, 'done');
+    const open = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Queued task',
+      description: '',
+      status: 'open',
+      preferredWorkflowId: workflow.id,
+    });
+
+    const alive = new Set<string>();
+    const replacements: string[] = [];
+    const rt = makeRuntime(alive, (sessionId) => {
+      replacements.push(sessionId);
+      alive.add(sessionId);
+    });
+    await rt.executeTick();
+
+    expect(replacements).toEqual(['session:replacement-post-approval']);
+    expect(taskRepo.getTask(prior.id)?.status).toBe('approved');
+    expect(taskRepo.getTask(prior.id)?.postApprovalSessionId).toBe(
+      'session:replacement-post-approval'
+    );
+    expect(taskRepo.getTask(open.id)?.status).toBe('open');
+    expect(taskRepo.getTask(open.id)?.workflowRunId ?? null).toBeNull();
+
+    taskRepo.updateTask(prior.id, { status: 'done', completedAt: Date.now() });
+    await rt.executeTick();
+
+    expect(taskRepo.getTask(open.id)?.status).toBe('in_progress');
+    expect(taskRepo.getTask(open.id)?.workflowRunId).not.toBeNull();
   });
 
   test('approved task with a live post-approval worker keeps deferring standalone admission', async () => {
