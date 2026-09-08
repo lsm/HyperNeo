@@ -233,21 +233,23 @@ describe('Space Agent RPC Handlers', () => {
       }
     });
 
-    it('returns exactly the current 4 built-in templates (ATC-1/ATC-3 pin)', async () => {
+    it('returns exactly the current 5 built-in templates (ATC-1/ATC-3/ATC-4 pin)', async () => {
       const result = await call<{ templates: Array<{ key: string; handle: string }> }>(
         hubData.handlers,
         'spaceAgent.listBuiltInTemplates',
         { spaceId: 'space-1' }
       );
 
-      expect(result.templates).toHaveLength(4);
+      expect(result.templates).toHaveLength(5);
       expect(result.templates.map((template) => template.key)).toEqual([
+        'task-manager.default',
         'worker.coder',
         'worker.research',
         'worker.reviewer',
         'worker.qa',
       ]);
       expect(result.templates.map((template) => template.handle)).toEqual([
+        'task-manager',
         'coder',
         'research',
         'reviewer',
