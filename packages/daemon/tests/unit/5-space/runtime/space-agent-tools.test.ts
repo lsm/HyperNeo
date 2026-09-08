@@ -2705,6 +2705,149 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(blank.success).toBe(false);
     expect(blank.error).toBe('template_name is required');
   });
+
+  test('create_agent_from_template instantiates stored user templates (ATC-24)', async () => {
+    new SpaceAgentTemplateRepository(ctx.db).create({
+      key: 'watcher.sre',
+      handle: 'ops',
+      displayName: 'SRE Watchdog',
+      description: 'Watches alert queues',
+      instructions: 'Own the alert queue.',
+      suggestedAutonomyLevel: 3,
+      model: 'kimi-k2',
+      provider: 'moonshot',
+      thinkingLevel: 'think8k',
+      settingSources: ['user'],
+      tools: ['Read', 'Bash(kubectl:*)'],
+      labels: ['custom'],
+    });
+
+    const handlers = makeHandlers(ctx);
+    const created = JSON.parse(
+      (await handlers.create_agent_from_template({ template_name: 'watcher.sre' })).content[0].text
+    );
+    expect(created.success).toBe(true);
+    expect(created.agent.templateKey).toBe('watcher.sre');
+    expect(created.agent.displayName).toBe('SRE Watchdog');
+    expect(created.agent.handle).toBe('ops');
+    expect(created.agent.instructions).toBe('Own the alert queue.');
+    expect(created.agent.description).toBe('Watches alert queues');
+    expect(created.agent.autonomyLevel).toBe(3);
+    expect(created.agent.model).toBe('kimi-k2');
+    expect(created.agent.provider).toBe('moonshot');
+    expect(created.agent.thinkingLevel).toBe('think8k');
+    expect(created.agent.settingSources).toEqual(['user']);
+    expect(created.agent.toolPermissions).toEqual({ tools: ['Read', 'Bash(kubectl:*)'] });
+    expect(created.seeded_subscriptions).toEqual([]);
+    expect(created.skipped_subscriptions).toEqual([]);
+    expect(created.seeded_reminders).toEqual([]);
+    expect(created.skipped_reminders).toEqual([]);
+
+    setModelsCache(
+      new Map([
+        [
+          'global',
+          [
+            {
+              id: 'sonnet',
+              name: 'Claude Sonnet',
+              alias: 'default',
+              provider: 'anthropic',
+              family: 'sonnet',
+              contextWindow: 200000,
+              description: 'Best balance of speed and intelligence',
+              releaseDate: '2025-01-01',
+              available: true,
+            },
+          ],
+        ],
+      ])
+    );
+    const overridden = JSON.parse(
+      (
+        await handlers.create_agent_from_template({
+          template_name: 'watcher.sre',
+          name: 'Night Watch',
+          model: 'sonnet',
+          provider: 'anthropic',
+        })
+      ).content[0].text
+    );
+    expect(overridden.success).toBe(true);
+    expect(overridden.agent.displayName).toBe('Night Watch');
+    expect(overridden.agent.handle).toBe('night-watch');
+    expect(overridden.agent.model).toBe('sonnet');
+    expect(overridden.agent.provider).toBe('anthropic');
+    expect(overridden.agent.thinkingLevel).toBe('think8k');
+    expect(overridden.agent.settingSources).toEqual(['user']);
+    expect(overridden.agent.instructions).toBe('Own the alert queue.');
+
+    const upper = JSON.parse(
+      (await handlers.create_agent_from_template({ template_name: 'WATCHER.SRE' })).content[0].text
+    );
+    expect(upper.success).toBe(false);
+    expect(upper.error).toContain('Agent template not found');
+  });
+
+  test('create_agent_from_template prefers built-ins over stored rows sharing a key (ATC-24)', async () => {
+    new SpaceAgentTemplateRepository(ctx.db).create({
+      key: 'worker.research',
+      handle: 'research-shadow',
+      displayName: 'Research Shadow',
+      instructions: 'Shadow instructions.',
+    });
+
+    const handlers = makeHandlers(ctx);
+    const result = JSON.parse(
+      (await handlers.create_agent_from_template({ template_name: 'worker.research' })).content[0]
+        .text
+    );
+    expect(result.success).toBe(true);
+    const template = getLongHorizonAgentTemplate('worker.research');
+    expect(result.agent.templateKey).toBe('worker.research');
+    expect(result.agent.handle).toBe('research');
+    expect(result.agent.instructions).toBe(template?.instructions);
+    expect(result.agent.instructions).not.toBe('Shadow instructions.');
+
+    new SpaceAgentTemplateRepository(ctx.db).create({
+      key: 'WORKER.QA',
+      handle: 'qa-shadow',
+      displayName: 'QA Shadow',
+      instructions: 'Uppercase shadow instructions.',
+    });
+    const caseColliding = JSON.parse(
+      (await handlers.create_agent_from_template({ template_name: 'WORKER.QA' })).content[0].text
+    );
+    expect(caseColliding.success).toBe(true);
+    expect(caseColliding.agent.templateKey).toBe('WORKER.QA');
+    expect(caseColliding.agent.handle).toBe('qa-shadow');
+    expect(caseColliding.agent.instructions).toBe('Uppercase shadow instructions.');
+
+    const builtinByCase = JSON.parse(
+      (await handlers.create_agent_from_template({ template_name: 'worker.qa' })).content[0].text
+    );
+    expect(builtinByCase.success).toBe(true);
+    expect(builtinByCase.agent.templateKey).toBe('worker.qa');
+    expect(builtinByCase.agent.instructions).not.toBe('Uppercase shadow instructions.');
+  });
+
+  test('create_agent_from_template rejects user templates bearing a reserved handle (ATC-24)', async () => {
+    new SpaceAgentTemplateRepository(ctx.db).create({
+      key: 'coordinator.clone',
+      handle: 'coordinator',
+      displayName: 'Coordinator Clone',
+      instructions: 'Duplicate manager.',
+    });
+
+    const handlers = makeHandlers(ctx);
+    const result = JSON.parse(
+      (await handlers.create_agent_from_template({ template_name: 'coordinator.clone' })).content[0]
+        .text
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('reserved');
+    expect(result.error).toContain('coordinator');
+  });
 });
 
 describe('createSpaceAgentToolHandlers — goal tools', () => {
