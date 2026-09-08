@@ -1829,6 +1829,27 @@ describe('SpaceLongHorizonAgents', () => {
     expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
   });
 
+  it('invalidates a pending open when a nested card action is chosen', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+    let resolveEnsure: (sessionId: string) => void = () => {};
+    mockEnsureAgentSession.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveEnsure = resolve;
+        })
+    );
+
+    const { getByText, getByLabelText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+    fireEvent.click(getByLabelText('Edit Research Long Horizon'));
+
+    resolveEnsure('space:agent:space-1:lh-1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
+  });
+
   it('invalidates a pending open when the agent-detail handle changes', async () => {
     mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
     let resolveEnsure: (sessionId: string) => void = () => {};

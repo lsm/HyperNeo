@@ -949,14 +949,13 @@ function AgentCard({
   const [opening, setOpening] = useState(false);
   const openSeqRef = useRef(0);
 
-  useEffect(
-    () => () => {
-      if (openSeqRef.current !== 0 && openSeqRef.current === latestAgentCardOpenSeq) {
-        latestAgentCardOpenSeq++;
-      }
-    },
-    []
-  );
+  const invalidatePendingOpen = () => {
+    if (openSeqRef.current !== 0 && openSeqRef.current === latestAgentCardOpenSeq) {
+      latestAgentCardOpenSeq++;
+    }
+  };
+
+  useEffect(() => () => invalidatePendingOpen(), []);
 
   const openSession = async () => {
     if (opening || !sessionId) return;
@@ -1040,6 +1039,7 @@ function AgentCard({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
+              invalidatePendingOpen();
               onEdit();
             }}
             class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-fg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
@@ -1060,6 +1060,7 @@ function AgentCard({
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
+                invalidatePendingOpen();
                 onDelete();
               }}
               class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
