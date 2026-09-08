@@ -95,6 +95,14 @@ export function workerTemplateKey(handle: string): string {
   return `${WORKER_TEMPLATE_KEY_PREFIX}${handle}`;
 }
 
+const LEGACY_WORKER_TEMPLATE_KEYS: Record<string, string> = {
+  'worker.coder': 'worker.swe',
+};
+
+export function normalizeLegacyWorkerTemplateKey(key: string): string {
+  return LEGACY_WORKER_TEMPLATE_KEYS[key] ?? key;
+}
+
 function workerPresetTemplates(): SpaceLongHorizonAgentTemplate[] {
   return getPresetAgentTemplates().map((preset) => ({
     key: workerTemplateKey(preset.handle),

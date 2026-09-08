@@ -16,13 +16,48 @@ function insertNodeWithSlots(
   db: BunDatabase,
   nodeId: string,
   workflowId: string,
-  slots: unknown[]
+  slots: unknown[],
+  postApproval?: { targetAgent: string }
 ): void {
   const now = Date.now();
   db.prepare(
     `INSERT INTO space_workflow_nodes (id, workflow_id, name, description, config, created_at, updated_at)
      VALUES (?, ?, ?, '', ?, ?, ?)`
-  ).run(nodeId, workflowId, nodeId, JSON.stringify({ agents: slots }), now, now);
+  ).run(nodeId, workflowId, nodeId, JSON.stringify({ agents: slots, postApproval }), now, now);
+}
+
+function readNodeConfig(db: BunDatabase, nodeId: string): Record<string, unknown> {
+  const row = db.prepare(`SELECT config FROM space_workflow_nodes WHERE id = ?`).get(nodeId) as {
+    config: string;
+  };
+  return JSON.parse(row.config) as Record<string, unknown>;
+}
+
+function setWorkflowPostApproval(db: BunDatabase, workflowId: string, targetAgent: string): void {
+  db.prepare(`UPDATE space_workflows SET post_approval = ? WHERE id = ?`).run(
+    JSON.stringify({ targetAgent, instructions: 'merge the PR' }),
+    workflowId
+  );
+}
+
+function readWorkflowPostApprovalTarget(db: BunDatabase, workflowId: string): string | null {
+  const row = db
+    .prepare(`SELECT post_approval FROM space_workflows WHERE id = ?`)
+    .get(workflowId) as { post_approval: string | null };
+  if (!row.post_approval) return null;
+  return (JSON.parse(row.post_approval) as { targetAgent?: string }).targetAgent ?? null;
+}
+
+function insertStoredTemplate(db: BunDatabase, key: string): void {
+  db.prepare(`INSERT INTO space_agent_templates (key, updated_at) VALUES (?, 1)`).run(key);
+}
+
+function storedTemplateKeys(db: BunDatabase): string[] {
+  return (
+    db.prepare(`SELECT key FROM space_agent_templates ORDER BY key ASC`).all() as Array<{
+      key: string;
+    }>
+  ).map((row) => row.key);
 }
 
 function readSlots(db: BunDatabase, nodeId: string): unknown[] {
@@ -136,6 +171,18 @@ function createMigrationDb(): BunDatabase {
       updated_at INTEGER NOT NULL
     )
   `);
+  db.exec(`
+    CREATE TABLE space_agent_templates (
+      key TEXT PRIMARY KEY,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE TABLE space_agent_template_version_seq (
+      key TEXT PRIMARY KEY,
+      next_version INTEGER NOT NULL
+    )
+  `);
   return db;
 }
 
@@ -189,6 +236,122 @@ describe('migration 239 — rename worker.coder slot templateKey to worker.swe',
     expect(readAgentTemplateKey(db, 'agent-swe')).toBe('worker.swe');
     expect(readAgentTemplateKey(db, 'agent-qa')).toBe('worker.qa');
     expect(readAgentTemplateKey(db, 'agent-none')).toBe('coordinator.default');
+    db.close();
+  });
+
+  test('rewrites template-key post-approval targets in live nodes and workflow rows', () => {
+    const db = createMigrationDb();
+    insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
+    insertNodeWithSlots(
+      db,
+      'node-1',
+      'wf-1',
+      [{ agentId: '', templateKey: 'worker.coder', name: 'coder' }],
+      { targetAgent: 'worker.coder' }
+    );
+    insertNodeWithSlots(
+      db,
+      'node-2',
+      'wf-1',
+      [{ agentId: '', templateKey: 'worker.reviewer', name: 'reviewer' }],
+      { targetAgent: 'reviewer' }
+    );
+    setWorkflowPostApproval(db, 'wf-1', 'worker.coder');
+
+    runMigration239(db);
+
+    expect((readNodeConfig(db, 'node-1').postApproval as { targetAgent: string }).targetAgent).toBe(
+      'worker.swe'
+    );
+    expect((readNodeConfig(db, 'node-2').postApproval as { targetAgent: string }).targetAgent).toBe(
+      'reviewer'
+    );
+    expect(readWorkflowPostApprovalTarget(db, 'wf-1')).toBe('worker.swe');
+    db.close();
+  });
+
+  test('rewrites post-approval targets inside pinned run definitions', () => {
+    const db = createMigrationDb();
+    insertWorkflow(db, 'wf-pin', 'space-1', 'Pinned Flow');
+    const workflow = pinnedWorkflow([{ agentId: '', templateKey: 'worker.coder', name: 'coder' }]);
+    (workflow.nodes as Array<Record<string, unknown>>)[0].postApproval = {
+      targetAgent: 'worker.coder',
+      instructions: 'merge the PR',
+    };
+    workflow.postApproval = { targetAgent: 'worker.coder', instructions: 'merge the PR' };
+    insertPinnedRun(db, {
+      runId: 'run-1',
+      workflowId: 'wf-pin',
+      spaceId: 'space-1',
+      workflow,
+    });
+
+    runMigration239(db);
+
+    const newHash = readRunVersion(db, 'run-1');
+    const payload = readVersionPayload(db, 'wf-pin', newHash ?? '') as {
+      nodes: Array<{ postApproval: { targetAgent: string } }>;
+      postApproval: { targetAgent: string };
+    };
+    expect(payload.nodes[0].postApproval.targetAgent).toBe('worker.swe');
+    expect(payload.postApproval.targetAgent).toBe('worker.swe');
+    db.close();
+  });
+
+  test('relocates a conflicting stored worker.swe template and its references', () => {
+    const db = createMigrationDb();
+    insertStoredTemplate(db, 'worker.swe');
+    db.prepare(
+      `INSERT INTO space_agent_template_version_seq (key, next_version) VALUES ('worker.swe', 3)`
+    ).run();
+    insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
+    insertNodeWithSlots(db, 'node-1', 'wf-1', [
+      { agentId: '', templateKey: 'worker.swe', name: 'custom' },
+      { agentId: '', templateKey: 'worker.coder', name: 'coder' },
+    ]);
+    insertNodeWithSlots(
+      db,
+      'node-2',
+      'wf-1',
+      [{ agentId: '', templateKey: 'worker.swe', name: 'custom-2' }],
+      { targetAgent: 'worker.swe' }
+    );
+    insertAgentRow(db, { id: 'agent-custom', spaceId: 'space-1', templateKey: 'worker.swe' });
+
+    runMigration239(db);
+
+    expect(storedTemplateKeys(db)).toEqual(['worker.swe.migrated']);
+    expect(
+      (
+        db
+          .prepare(`SELECT next_version FROM space_agent_template_version_seq WHERE key = ?`)
+          .get('worker.swe.migrated') as { next_version: number }
+      ).next_version
+    ).toBe(3);
+    expect(
+      db.prepare(`SELECT 1 FROM space_agent_template_version_seq WHERE key = 'worker.swe'`).get()
+    ).toBeUndefined();
+    expect(readSlots(db, 'node-1')).toEqual([
+      { agentId: '', templateKey: 'worker.swe.migrated', name: 'custom' },
+      { agentId: '', templateKey: 'worker.swe', name: 'coder' },
+    ]);
+    expect((readNodeConfig(db, 'node-2').postApproval as { targetAgent: string }).targetAgent).toBe(
+      'worker.swe.migrated'
+    );
+    expect(readAgentTemplateKey(db, 'agent-custom')).toBe('worker.swe.migrated');
+    db.close();
+  });
+
+  test('keeps stored templates without the conflicting key untouched', () => {
+    const db = createMigrationDb();
+    insertStoredTemplate(db, 'worker.qa');
+    db.prepare(
+      `INSERT INTO space_agent_template_version_seq (key, next_version) VALUES ('worker.qa', 2)`
+    ).run();
+
+    runMigration239(db);
+
+    expect(storedTemplateKeys(db)).toEqual(['worker.qa']);
     db.close();
   });
 

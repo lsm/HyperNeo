@@ -1,4 +1,5 @@
 import type { SpaceWorkflow } from '@hyperneo/shared';
+import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates.ts';
 import {
   computeDefinitionVersion,
   verifyDefinitionVersion,
@@ -18,6 +19,7 @@ interface NodeRow {
 interface WorkflowRow {
   id: string;
   space_id: string;
+  post_approval: string | null;
 }
 
 interface RunRow {
@@ -47,24 +49,88 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function rewriteSlotTemplateKey(slot: Record<string, unknown>): boolean {
+function relocatedKey(key: string): string | null {
+  if (key === OLD_TEMPLATE_KEY) return NEW_TEMPLATE_KEY;
+  return null;
+}
+
+function rewriteSlotTemplateKey(
+  slot: Record<string, unknown>,
+  storedRelocation: string | null
+): boolean {
   if (typeof slot.templateKey !== 'string') return false;
-  if (slot.templateKey.trim() !== OLD_TEMPLATE_KEY) return false;
-  slot.templateKey = NEW_TEMPLATE_KEY;
+  const key = slot.templateKey.trim();
+  const target =
+    relocatedKey(key) ?? (storedRelocation && key === NEW_TEMPLATE_KEY ? storedRelocation : null);
+  if (!target) return false;
+  slot.templateKey = target;
   return true;
 }
 
-function rewriteRecordAgentSlots(record: Record<string, unknown>): boolean {
-  if (!Array.isArray(record.agents)) return false;
+function rewriteTargetAgent(
+  postApproval: Record<string, unknown>,
+  storedRelocation: string | null
+): boolean {
+  if (typeof postApproval.targetAgent !== 'string') return false;
+  const target = postApproval.targetAgent.trim();
+  const replacement =
+    relocatedKey(target) ??
+    (storedRelocation && target === NEW_TEMPLATE_KEY ? storedRelocation : null);
+  if (!replacement) return false;
+  postApproval.targetAgent = replacement;
+  return true;
+}
+
+function rewriteRecordAgentSlots(
+  record: Record<string, unknown>,
+  storedRelocation: string | null
+): boolean {
   let dirty = false;
+  const postApproval = asRecord(record.postApproval);
+  if (postApproval && rewriteTargetAgent(postApproval, storedRelocation)) dirty = true;
+  if (!Array.isArray(record.agents)) return dirty;
   for (const raw of record.agents) {
     const slot = asRecord(raw);
-    if (slot && rewriteSlotTemplateKey(slot)) dirty = true;
+    if (slot && rewriteSlotTemplateKey(slot, storedRelocation)) dirty = true;
   }
   return dirty;
 }
 
-function renameLiveNodeTemplateKeys(db: BunDatabase, now: number): void {
+function relocateConflictingStoredTemplate(db: BunDatabase, now: number): string | null {
+  if (!tableExists(db, 'space_agent_templates')) return null;
+  const stored = db
+    .prepare(`SELECT 1 FROM space_agent_templates WHERE key = ?`)
+    .get(NEW_TEMPLATE_KEY);
+  if (!stored) return null;
+
+  let target = `${NEW_TEMPLATE_KEY}.migrated`;
+  let suffix = 2;
+  while (
+    db.prepare(`SELECT 1 FROM space_agent_templates WHERE key = ?`).get(target) ||
+    getLongHorizonAgentTemplate(target)
+  ) {
+    target = `${NEW_TEMPLATE_KEY}.migrated-${suffix++}`;
+  }
+
+  db.prepare(`UPDATE space_agent_templates SET key = ?, updated_at = ? WHERE key = ?`).run(
+    target,
+    now,
+    NEW_TEMPLATE_KEY
+  );
+  if (tableExists(db, 'space_agent_template_version_seq')) {
+    db.prepare(`UPDATE OR REPLACE space_agent_template_version_seq SET key = ? WHERE key = ?`).run(
+      target,
+      NEW_TEMPLATE_KEY
+    );
+  }
+  return target;
+}
+
+function renameLiveNodeTemplateKeys(
+  db: BunDatabase,
+  storedRelocation: string | null,
+  now: number
+): void {
   const nodes = db
     .prepare(`SELECT id, workflow_id, config FROM space_workflow_nodes ORDER BY rowid ASC`)
     .all() as NodeRow[];
@@ -74,12 +140,35 @@ function renameLiveNodeTemplateKeys(db: BunDatabase, now: number): void {
   for (const node of nodes) {
     const parsed = asRecord(parseJson(node.config));
     if (!parsed) continue;
-    if (!rewriteRecordAgentSlots(parsed)) continue;
+    if (!rewriteRecordAgentSlots(parsed, storedRelocation)) continue;
     updateNode.run(JSON.stringify(parsed), now, node.id);
   }
 }
 
-function renamePinnedRunDefinitionTemplateKeys(db: BunDatabase, now: number): void {
+function renameWorkflowPostApprovalTargets(
+  db: BunDatabase,
+  storedRelocation: string | null,
+  now: number
+): void {
+  const workflows = db
+    .prepare(`SELECT id, post_approval FROM space_workflows`)
+    .all() as WorkflowRow[];
+  const updateWorkflow = db.prepare(
+    `UPDATE space_workflows SET post_approval = ?, updated_at = ? WHERE id = ?`
+  );
+  for (const workflow of workflows) {
+    const parsed = asRecord(parseJson(workflow.post_approval));
+    if (!parsed) continue;
+    if (!rewriteTargetAgent(parsed, storedRelocation)) continue;
+    updateWorkflow.run(JSON.stringify(parsed), now, workflow.id);
+  }
+}
+
+function renamePinnedRunDefinitionTemplateKeys(
+  db: BunDatabase,
+  storedRelocation: string | null,
+  now: number
+): void {
   if (!tableExists(db, 'space_workflow_runs')) return;
   if (!tableExists(db, 'space_workflow_definition_versions')) return;
 
@@ -111,10 +200,10 @@ function renamePinnedRunDefinitionTemplateKeys(db: BunDatabase, now: number): vo
     const workflow = asRecord(parseJson(version.payload));
     if (!workflow || !Array.isArray(workflow.nodes)) continue;
 
-    let dirty = false;
+    let dirty = rewriteRecordAgentSlots(workflow, storedRelocation);
     for (const rawNode of workflow.nodes) {
       const node = asRecord(rawNode);
-      if (node && rewriteRecordAgentSlots(node)) dirty = true;
+      if (node && rewriteRecordAgentSlots(node, storedRelocation)) dirty = true;
     }
     if (!dirty) continue;
 
@@ -133,8 +222,17 @@ function renamePinnedRunDefinitionTemplateKeys(db: BunDatabase, now: number): vo
   }
 }
 
-function renameAgentRowTemplateKeys(db: BunDatabase, now: number): void {
+function renameAgentRowTemplateKeys(
+  db: BunDatabase,
+  storedRelocation: string | null,
+  now: number
+): void {
   if (!tableExists(db, 'space_long_horizon_agents')) return;
+  if (storedRelocation) {
+    db.prepare(
+      `UPDATE space_long_horizon_agents SET template_key = ?, updated_at = ? WHERE template_key = ?`
+    ).run(storedRelocation, now, NEW_TEMPLATE_KEY);
+  }
   db.prepare(
     `UPDATE space_long_horizon_agents SET template_key = ?, updated_at = ? WHERE template_key = ?`
   ).run(NEW_TEMPLATE_KEY, now, OLD_TEMPLATE_KEY);
@@ -145,9 +243,11 @@ export function runMigration239(db: BunDatabase): void {
   const now = Date.now();
   db.exec('BEGIN');
   try {
-    renameLiveNodeTemplateKeys(db, now);
-    renamePinnedRunDefinitionTemplateKeys(db, now);
-    renameAgentRowTemplateKeys(db, now);
+    const storedRelocation = relocateConflictingStoredTemplate(db, now);
+    renameLiveNodeTemplateKeys(db, storedRelocation, now);
+    renameWorkflowPostApprovalTargets(db, storedRelocation, now);
+    renamePinnedRunDefinitionTemplateKeys(db, storedRelocation, now);
+    renameAgentRowTemplateKeys(db, storedRelocation, now);
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
