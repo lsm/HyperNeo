@@ -4472,13 +4472,13 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'create_agent_from_template',
-        'Create a long-horizon Space agent from a built-in long-horizon template key (marketing.default, security-auditor.default, ...). Long-horizon templates seed their suggested event subscriptions and reminders. Call list_agent_templates to discover available templates.',
+        'Create a long-horizon Space agent from a built-in template key (worker.research, worker.qa, ...). Templates carrying suggested event subscriptions and reminders seed them on create. Call list_agent_templates to discover available templates.',
         CreateAgentFromTemplateSchema.shape,
         (args) => handlers.create_agent_from_template(args)
       ),
       tool(
         'list_agent_templates',
-        'List the built-in long-horizon agent templates available to create_agent_from_template (marketing.default, security-auditor.default, ...).',
+        'List the built-in agent templates available to create_agent_from_template (worker.research, worker.qa, ...).',
         ListAgentTemplatesSchema.shape,
         () => handlers.list_agent_templates()
       ),

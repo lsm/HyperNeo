@@ -346,9 +346,7 @@ export const CreateAgentSchema = z.object({
 });
 
 export const CreateAgentFromTemplateSchema = z.object({
-  template_name: z
-    .string()
-    .describe('Long-horizon template key (marketing.default, security-auditor.default, ...)'),
+  template_name: z.string().describe('Built-in template key (worker.research, worker.qa, ...)'),
   name: z
     .string()
     .optional()

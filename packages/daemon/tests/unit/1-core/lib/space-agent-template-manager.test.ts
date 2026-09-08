@@ -128,6 +128,24 @@ describe('SpaceAgentTemplateManager', () => {
       const bIndex = keys.indexOf('b.custom');
       expect(aIndex).toBeLessThan(bIndex);
     });
+
+    test('hides reserved built-ins but keeps custom templates with reserved handles (ATC-3)', () => {
+      const withReserved = new SpaceAgentTemplateManager(repo, () => [
+        ...BUILT_INS,
+        { ...BUILT_INS[0], key: 'coordinator.default', handle: 'coordinator' },
+      ]);
+      repo.create({
+        key: 'custom.coordinator',
+        handle: 'coordinator',
+        displayName: 'Custom Coord',
+      });
+
+      const keys = withReserved.list().map((template) => template.key);
+
+      expect(keys).not.toContain('coordinator.default');
+      expect(keys).toContain('custom.coordinator');
+      expect(withReserved.getByKey('coordinator.default')?.key).toBe('coordinator.default');
+    });
   });
 
   describe('create', () => {
@@ -160,6 +178,13 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('key');
+    });
+
+    test('rejects reusing a retired built-in key (ATC-3)', async () => {
+      const result = await manager.create({ ...fullParams(), key: 'marketing.default' });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('retired');
     });
 
     test('rejects an invalid handle', async () => {

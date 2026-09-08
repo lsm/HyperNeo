@@ -733,7 +733,7 @@ describe('createSpaceRegistryEntries — handler wiring', () => {
         },
         {
           name: 'create_agent_from_template',
-          params: { template_name: 'research.default' },
+          params: { template_name: 'worker.research' },
           success: true,
         },
         { name: 'list_agent_templates', params: {}, success: true },

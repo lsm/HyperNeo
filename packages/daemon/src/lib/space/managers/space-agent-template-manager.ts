@@ -11,9 +11,11 @@ import type {
   SpaceAgentTemplateRepository,
 } from '../../../storage/repositories/space-agent-template-repository.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
+import { isReservedAgentHandle } from '../agent-handle.ts';
 import {
   getLongHorizonAgentTemplate,
   getLongHorizonAgentTemplates,
+  RETIRED_LONG_HORIZON_TEMPLATE_KEYS,
 } from '../agents/long-horizon-agent-templates.ts';
 import { validateSlug } from '../slug.ts';
 import type { SpaceAgentResult } from '../agents/agent-validation.ts';
@@ -92,6 +94,9 @@ function validateTemplateKey(key: string): string | null {
   }
   if (key === MIGRATED_WORKER_TEMPLATE_KEY) {
     return `Template key "${key}" is reserved`;
+  }
+  if ((RETIRED_LONG_HORIZON_TEMPLATE_KEYS as readonly string[]).includes(key)) {
+    return `Template key "${key}" is retired and cannot be reused`;
   }
   if (getLongHorizonAgentTemplate(key)) {
     return `Template key "${key}" is reserved for a built-in agent template`;
@@ -424,7 +429,10 @@ export class SpaceAgentTemplateManager {
 
   list(): SpaceAgentTemplate[] {
     const byKey = new Map<string, SpaceAgentTemplate>();
-    for (const template of this.builtIns()) byKey.set(template.key, template);
+    for (const template of this.builtIns()) {
+      if (isReservedAgentHandle(template.handle)) continue;
+      byKey.set(template.key, template);
+    }
     for (const template of this.repo.list()) {
       if (!byKey.has(template.key)) byKey.set(template.key, template);
     }

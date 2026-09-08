@@ -227,44 +227,27 @@ describe('Space Agent RPC Handlers', () => {
 
       expect(Array.isArray(result.templates)).toBe(true);
       expect(result.templates.length).toBeGreaterThan(0);
-      expect(result.templates.map((template) => template.key)).toContain('coordinator.default');
       for (const template of result.templates) {
         expect(template.displayName.length).toBeGreaterThan(0);
         expect(template.instructions.length).toBeGreaterThan(0);
       }
     });
 
-    it('returns exactly the current 12 built-in templates (ATC-1 pin)', async () => {
+    it('returns exactly the current 4 built-in templates (ATC-1/ATC-3 pin)', async () => {
       const result = await call<{ templates: Array<{ key: string; handle: string }> }>(
         hubData.handlers,
         'spaceAgent.listBuiltInTemplates',
         { spaceId: 'space-1' }
       );
 
-      expect(result.templates).toHaveLength(12);
+      expect(result.templates).toHaveLength(4);
       expect(result.templates.map((template) => template.key)).toEqual([
-        'coordinator.default',
-        'product-quality-manager.default',
-        'release-manager.default',
-        'security-auditor.default',
-        'marketing.default',
-        'sales.default',
-        'research.default',
-        'family-ops-chores.default',
         'worker.coder',
         'worker.research',
         'worker.reviewer',
         'worker.qa',
       ]);
       expect(result.templates.map((template) => template.handle)).toEqual([
-        'coordinator',
-        'product-quality-manager',
-        'release-manager',
-        'security-auditor',
-        'marketing',
-        'sales',
-        'research',
-        'family-ops-chores',
         'coder',
         'research',
         'reviewer',
@@ -287,6 +270,17 @@ describe('Space Agent RPC Handlers', () => {
           expect(template.labels).toEqual(['long-horizon']);
         }
       }
+    });
+
+    it('omits the reserved coordinator card (ATC-3)', async () => {
+      const result = await call<{ templates: Array<{ key: string; handle: string }> }>(
+        hubData.handlers,
+        'spaceAgent.listBuiltInTemplates',
+        { spaceId: 'space-1' }
+      );
+
+      expect(result.templates.map((template) => template.key)).not.toContain('coordinator.default');
+      expect(result.templates.map((template) => template.handle)).not.toContain('coordinator');
     });
 
     it('throws when spaceId is missing', async () => {
@@ -318,7 +312,8 @@ describe('Space Agent RPC Handlers', () => {
       }>(hubData.handlers, 'spaceAgent.listTemplates', {});
 
       expect(Array.isArray(result.templates)).toBe(true);
-      expect(result.templates.map((template) => template.key)).toContain('coordinator.default');
+      expect(result.templates.map((template) => template.key)).toContain('worker.coder');
+      expect(result.templates.map((template) => template.key)).not.toContain('coordinator.default');
       for (const template of result.templates) {
         expect(typeof template.createdAt).toBe('number');
         expect(template.model).toBe(null);
@@ -340,28 +335,8 @@ describe('Space Agent RPC Handlers', () => {
 
       const keys = result.templates.map((template) => template.key);
       expect(keys).toContain('review.custom');
-      expect(keys).toContain('coordinator.default');
-    });
-
-    it('carries subscription and reminder defaults on built-in templates', async () => {
-      const result = await call<{
-        templates: Array<{
-          key: string;
-          suggestedEventSubscriptions?: Array<{ source: string; topic: string }>;
-          reminderDefaults?: Array<{ title: string; cronExpression: string | null }>;
-        }>;
-      }>(hubData.handlers, 'spaceAgent.listTemplates', {});
-
-      const coordinator = result.templates.find(
-        (template) => template.key === 'coordinator.default'
-      );
-      expect(coordinator?.suggestedEventSubscriptions?.length).toBeGreaterThan(0);
-      expect(coordinator?.suggestedEventSubscriptions?.[0]).toMatchObject({
-        source: 'space',
-        topic: 'task.*',
-      });
-      expect(coordinator?.reminderDefaults?.length).toBeGreaterThan(0);
-      expect(coordinator?.reminderDefaults?.[0].cronExpression).toBe('0 9 * * 1');
+      expect(keys).toContain('worker.coder');
+      expect(keys).not.toContain('coordinator.default');
     });
   });
 
