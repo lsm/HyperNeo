@@ -5566,6 +5566,7 @@ export class TaskAgentManager {
               await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, {
                 expectedApprovedAt: task.approvedAt ?? null,
                 expectedWorkflowRunId: task.workflowRunId ?? null,
+                expectedRuntimeGeneration: admission.expectedRuntimeGeneration,
               });
               resumeAdmitted = true;
             } catch {
