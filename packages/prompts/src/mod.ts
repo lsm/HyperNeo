@@ -3,22 +3,7 @@
 import mdagentsLongHorizonCoordinator from './agents/long-horizon/coordinator.md' with {
   type: 'text',
 };
-import mdagentsLongHorizonFamilyOpsChores from './agents/long-horizon/family-ops-chores.md' with {
-  type: 'text',
-};
-import mdagentsLongHorizonMarketing from './agents/long-horizon/marketing.md' with { type: 'text' };
 import mdagentsLongHorizonOwnerReviewContract from './agents/long-horizon/owner-review-contract.md' with {
-  type: 'text',
-};
-import mdagentsLongHorizonProductQualityManager from './agents/long-horizon/product-quality-manager.md' with {
-  type: 'text',
-};
-import mdagentsLongHorizonReleaseManager from './agents/long-horizon/release-manager.md' with {
-  type: 'text',
-};
-import mdagentsLongHorizonResearch from './agents/long-horizon/research.md' with { type: 'text' };
-import mdagentsLongHorizonSales from './agents/long-horizon/sales.md' with { type: 'text' };
-import mdagentsLongHorizonSecurityAuditor from './agents/long-horizon/security-auditor.md' with {
   type: 'text',
 };
 import mdagentsLongHorizonSchedulingGuardrail from './agents/long-horizon-scheduling-guardrail.md' with {
@@ -149,14 +134,7 @@ import mdworkflowsReviewOnlyReviewPrompt from './workflows/review-only/review-pr
 const registry: Record<string, string> = {
   'agents/long-horizon-scheduling-guardrail.md': mdagentsLongHorizonSchedulingGuardrail,
   'agents/long-horizon/coordinator.md': mdagentsLongHorizonCoordinator,
-  'agents/long-horizon/family-ops-chores.md': mdagentsLongHorizonFamilyOpsChores,
-  'agents/long-horizon/marketing.md': mdagentsLongHorizonMarketing,
   'agents/long-horizon/owner-review-contract.md': mdagentsLongHorizonOwnerReviewContract,
-  'agents/long-horizon/product-quality-manager.md': mdagentsLongHorizonProductQualityManager,
-  'agents/long-horizon/release-manager.md': mdagentsLongHorizonReleaseManager,
-  'agents/long-horizon/research.md': mdagentsLongHorizonResearch,
-  'agents/long-horizon/sales.md': mdagentsLongHorizonSales,
-  'agents/long-horizon/security-auditor.md': mdagentsLongHorizonSecurityAuditor,
   'agents/non-delegating-general.md': mdagentsNonDelegatingGeneral,
   'agents/presets/coder.md': mdagentsPresetsCoder,
   'agents/presets/general.md': mdagentsPresetsGeneral,
@@ -225,14 +203,7 @@ const registry: Record<string, string> = {
 export const {
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
   LH_COORDINATOR_INSTRUCTIONS,
-  LH_FAMILY_OPS_CHORES_INSTRUCTIONS,
-  LH_MARKETING_INSTRUCTIONS,
   LONG_HORIZON_OWNER_REVIEW_CONTRACT,
-  LH_PRODUCT_QUALITY_MANAGER_INSTRUCTIONS,
-  LH_RELEASE_MANAGER_INSTRUCTIONS,
-  LH_RESEARCH_INSTRUCTIONS,
-  LH_SALES_INSTRUCTIONS,
-  LH_SECURITY_AUDITOR_INSTRUCTIONS,
   NON_DELEGATING_GENERAL_PROMPT,
   PRESET_CODER_PROMPT,
   PRESET_GENERAL_PROMPT,

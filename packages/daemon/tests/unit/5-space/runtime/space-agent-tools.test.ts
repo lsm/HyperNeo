@@ -1592,7 +1592,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     const lhNameTemplate = JSON.parse(
       (
         await handlers.create_agent_from_template({
-          template_name: 'research.default',
+          template_name: 'worker.research',
         })
       ).content[0].text
     );
@@ -1602,18 +1602,18 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     const templated = JSON.parse(
       (
         await handlers.create_agent_from_template({
-          template_name: 'research.default',
+          template_name: 'worker.research',
           name: 'Research Copy',
         })
       ).content[0].text
     );
     expect(templated.success).toBe(true);
-    expect(templated.agent.templateKey).toBe('research.default');
+    expect(templated.agent.templateKey).toBe('worker.research');
     expect(templated.agent.handle).toBe('research-copy');
     const templatedNameCollision = JSON.parse(
       (
         await handlers.create_agent_from_template({
-          template_name: 'research.default',
+          template_name: 'worker.research',
           name: 'Coder',
         })
       ).content[0].text
@@ -1623,7 +1623,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     const duplicateTemplate = JSON.parse(
       (
         await handlers.create_agent_from_template({
-          template_name: 'research.default',
+          template_name: 'worker.research',
           name: 'Research Copy',
         })
       ).content[0].text
@@ -1634,7 +1634,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     const blankTemplateName = JSON.parse(
       (
         await handlers.create_agent_from_template({
-          template_name: 'research.default',
+          template_name: 'worker.research',
           name: '  ',
         })
       ).content[0].text
@@ -1743,7 +1743,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     const invalidTemplate = JSON.parse(
       (
         await handlers.create_agent_from_template({
-          template_name: 'research.default',
+          template_name: 'worker.research',
           model: 'not-a-model',
         })
       ).content[0].text
@@ -2143,112 +2143,36 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(subscription.error).toBe('Long-horizon agent management not available');
   });
 
-  test('creates a long-horizon agent from a long-horizon template and seeds subscriptions/reminders', async () => {
+  test('creates an agent from a worker template without seeding subscriptions/reminders (ATC-3)', async () => {
     const handlers = makeHandlers(ctx);
     const result = JSON.parse(
-      (await handlers.create_agent_from_template({ template_name: 'marketing.default' })).content[0]
+      (await handlers.create_agent_from_template({ template_name: 'worker.research' })).content[0]
         .text
     );
     expect(result.success).toBe(true);
     const agent = result.agent;
     expect(agent.status).toBe('active');
-    expect(agent.templateKey).toBe('marketing.default');
-    expect(agent.handle).toBe('marketing');
-    expect(agent.autonomyLevel).toBe(2);
+    expect(agent.templateKey).toBe('worker.research');
+    expect(agent.handle).toBe('research');
+    expect(agent.autonomyLevel).toBe(1);
 
-    const template = getLongHorizonAgentTemplate('marketing.default');
+    const template = getLongHorizonAgentTemplate('worker.research');
     expect(agent.instructions).toBe(template?.instructions);
     expect(agent.toolPermissions).toEqual(template?.toolPermissions);
 
-    expect(result.seeded_subscriptions.map((s: { topic: string }) => s.topic)).toEqual([
-      'goal.done',
-    ]);
+    expect(result.seeded_subscriptions).toEqual([]);
+    expect(result.skipped_subscriptions).toEqual([]);
+    expect(result.seeded_reminders).toEqual([]);
+    expect(result.skipped_reminders).toEqual([]);
     const subscriptions = JSON.parse(
       (await handlers.list_agent_event_subscriptions({ agent_id: agent.id })).content[0].text
     );
-    expect(subscriptions.subscriptions.map((s: { topic: string }) => s.topic)).toEqual([
-      'goal.done',
-    ]);
-    const live = ctx.runtime['topicTrie'].lookup('space/goal.done');
-    expect(
-      live.some(
-        (target: { kind: string; agentId?: string }) =>
-          target.kind === 'long_horizon_agent' && target.agentId === agent.id
-      )
-    ).toBe(true);
-
-    expect(result.skipped_subscriptions).toEqual([
-      expect.objectContaining({ source: 'github', topic: 'release.published' }),
-    ]);
-    expect(result.skipped_subscriptions[0].reason).toContain('release');
-
-    expect(result.seeded_reminders).toEqual([{ title: 'Review marketing opportunities' }]);
-    expect(result.skipped_reminders).toEqual([]);
+    expect(subscriptions.subscriptions).toEqual([]);
     const reminders = JSON.parse(
       (await handlers.list_agent_reminders({ agent_id: agent.id, status: 'active' })).content[0]
         .text
     );
-    expect(reminders.reminders).toHaveLength(1);
-    expect(reminders.reminders[0].triggerType).toBe('cron');
-    expect(reminders.reminders[0].cronExpression).toBe('0 15 * * 1');
-    expect(reminders.reminders[0].remind_at).toBeGreaterThan(Date.now());
-  });
-
-  test('reminder seeding is best-effort: a thrown insert does not abort the create', async () => {
-    const handlers = makeHandlers(ctx);
-    const repo = ctx.longHorizonAgentRepo;
-    const originalCreateReminder = repo.createReminder;
-    repo.createReminder = () => {
-      throw new Error('reminder store down');
-    };
-    try {
-      const result = JSON.parse(
-        (await handlers.create_agent_from_template({ template_name: 'marketing.default' }))
-          .content[0].text
-      );
-      expect(result.success).toBe(true);
-      expect(result.agent.templateKey).toBe('marketing.default');
-      expect(result.seeded_subscriptions.map((s: { topic: string }) => s.topic)).toEqual([
-        'goal.done',
-      ]);
-      expect(result.seeded_reminders).toEqual([]);
-      expect(result.skipped_reminders).toEqual([
-        { title: 'Review marketing opportunities', reason: 'reminder store down' },
-      ]);
-    } finally {
-      repo.createReminder = originalCreateReminder;
-    }
-  });
-
-  test('subscription seeding is best-effort: a thrown insert does not abort the create', async () => {
-    const handlers = makeHandlers(ctx);
-    const repo = ctx.longHorizonAgentRepo;
-    const originalUpsertSubscription = repo.upsertSubscription;
-    repo.upsertSubscription = () => {
-      throw new Error('subscription store down');
-    };
-    try {
-      const result = JSON.parse(
-        (await handlers.create_agent_from_template({ template_name: 'marketing.default' }))
-          .content[0].text
-      );
-      expect(result.success).toBe(true);
-      expect(result.agent.templateKey).toBe('marketing.default');
-      expect(result.seeded_subscriptions).toEqual([]);
-      const skippedSources = result.skipped_subscriptions.map((s: { source: string }) => s.source);
-      expect([...skippedSources].sort()).toEqual(['github', 'space']);
-      for (const skipped of result.skipped_subscriptions) {
-        expect(skipped.reason).toBe('subscription store down');
-      }
-      expect(result.seeded_reminders).toEqual([{ title: 'Review marketing opportunities' }]);
-      const reminders = JSON.parse(
-        (await handlers.list_agent_reminders({ agent_id: result.agent.id, status: 'active' }))
-          .content[0].text
-      );
-      expect(reminders.reminders).toHaveLength(1);
-    } finally {
-      repo.upsertSubscription = originalUpsertSubscription;
-    }
+    expect(reminders.reminders).toEqual([]);
   });
 
   test('validateTemplateReminder skips invalid or missing cron expressions', () => {
@@ -2272,30 +2196,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(
       validateTemplateReminder({ ...base, triggerType: 'at' as const, cronExpression: null })
     ).toEqual({ ok: true });
-  });
-
-  test('caps LH template autonomy at the calling agent ceiling', async () => {
-    const caller = ctx.longHorizonAgentRepo.create({
-      spaceId: ctx.spaceId,
-      handle: 'level-one-caller',
-      displayName: 'Level One Caller',
-      autonomyLevel: 1,
-    });
-    const cappedHandlers = makeHandlers(ctx, { myAgentId: caller.id });
-    const capped = JSON.parse(
-      (await cappedHandlers.create_agent_from_template({ template_name: 'marketing.default' }))
-        .content[0].text
-    );
-    expect(capped.success).toBe(true);
-    expect(capped.agent.templateKey).toBe('marketing.default');
-    expect(capped.agent.autonomyLevel).toBe(1);
-
-    const uncapped = JSON.parse(
-      (await makeHandlers(ctx).create_agent_from_template({ template_name: 'marketing.default' }))
-        .content[0].text
-    );
-    expect(uncapped.success).toBe(true);
-    expect(uncapped.agent.autonomyLevel).toBe(2);
   });
 
   test('creates an agent from a worker preset template by copying instructions and tools, seeding nothing (ATC-1 pin)', async () => {
@@ -2365,32 +2265,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(handles).not.toContain('coordinator');
   });
 
-  test('skips unknown-source template subscriptions gracefully instead of failing', async () => {
-    const handlers = makeHandlers(ctx);
-    const result = JSON.parse(
-      (await handlers.create_agent_from_template({ template_name: 'sales.default' })).content[0]
-        .text
-    );
-    expect(result.success).toBe(true);
-    expect(result.seeded_subscriptions).toEqual([]);
-    const skippedSources = result.skipped_subscriptions.map((s: { source: string }) => s.source);
-    expect([...skippedSources].sort()).toEqual(['calendar', 'crm']);
-    for (const skipped of result.skipped_subscriptions) {
-      expect(typeof skipped.reason).toBe('string');
-      expect(skipped.reason.length).toBeGreaterThan(0);
-    }
-    expect(result.agent.status).toBe('active');
-    expect(result.agent.templateKey).toBe('sales.default');
-    expect(result.agent.handle).toBe('sales');
-    expect(result.agent.autonomyLevel).toBe(2);
-    expect(result.seeded_reminders).toEqual([{ title: 'Review sales follow-ups' }]);
-    const stored = JSON.parse(
-      (await handlers.list_agent_event_subscriptions({ agent_id: result.agent.id })).content[0].text
-    );
-    expect(stored.subscriptions).toEqual([]);
-  });
-
-  test('list_agent_templates exposes long-horizon templates only', async () => {
+  test('list_agent_templates exposes built-in templates except the reserved coordinator', async () => {
     const handlers = makeHandlers(ctx);
     const listed = JSON.parse((await handlers.list_agent_templates()).content[0].text);
     expect(listed.success).toBe(true);
@@ -2398,27 +2273,26 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     const lhKeys = listed.long_horizon_templates.map(
       (t: { template_name: string }) => t.template_name
     );
-    expect(lhKeys).toContain('marketing.default');
-    expect(lhKeys).toContain('security-auditor.default');
+    expect(lhKeys).toContain('worker.research');
     expect(lhKeys).not.toContain('coordinator.default');
-    const marketing = listed.long_horizon_templates.find(
-      (t: { template_name: string }) => t.template_name === 'marketing.default'
+    const research = listed.long_horizon_templates.find(
+      (t: { template_name: string }) => t.template_name === 'worker.research'
     );
-    expect(marketing.handle).toBe('marketing');
-    expect(marketing.suggested_autonomy_level).toBe(2);
+    expect(research.handle).toBe('research');
+    expect(research.suggested_autonomy_level).toBe(1);
   });
 
   test('create_agent_from_template resolves LH templates by key and rejects missing templates', async () => {
     const handlers = makeHandlers(ctx);
 
     const lh = JSON.parse(
-      (await handlers.create_agent_from_template({ template_name: 'RESEARCH.DEFAULT' })).content[0]
+      (await handlers.create_agent_from_template({ template_name: 'WORKER.RESEARCH' })).content[0]
         .text
     );
     expect(lh.success).toBe(true);
-    expect(lh.agent.templateKey).toBe('research.default');
+    expect(lh.agent.templateKey).toBe('worker.research');
     expect(lh.agent.handle).toBe('research');
-    expect(lh.seeded_reminders).toEqual([{ title: 'Weekly research digest' }]);
+    expect(lh.seeded_reminders).toEqual([]);
 
     const missing = JSON.parse(
       (await handlers.create_agent_from_template({ template_name: 'nope.default' })).content[0].text

@@ -20,6 +20,7 @@ import {
   coordinatorLongHorizonAgentId,
   type SpaceLongHorizonAgentRepository,
 } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import { isReservedAgentHandle } from '../space/agent-handle.ts';
 import { composeLongHorizonSubscriptionPattern } from '../external-events/long-horizon-subscription-pattern.ts';
 import { validateGlobPattern, validateSource } from '../external-events/topic-validator.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -777,7 +778,11 @@ export function registerUnifiedSpaceAgentMethods(
     if (!params.spaceId) throw new Error('spaceId is required');
     const space = await deps.spaceManager.getSpace(params.spaceId);
     if (!space) throw new Error(`Space not found: ${params.spaceId}`);
-    return { templates: getLongHorizonAgentTemplates() };
+    return {
+      templates: getLongHorizonAgentTemplates().filter(
+        (template) => !isReservedAgentHandle(template.handle)
+      ),
+    };
   });
 
   if (templateManager) {

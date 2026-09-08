@@ -11,29 +11,11 @@ function getLongHorizonFamilyTemplates() {
 }
 
 describe('long-horizon agent templates', () => {
-  test('exports built-in templates for common evergreen roles', () => {
+  test('keeps only the coordinator as a non-worker built-in template (ATC-3)', () => {
     const templates = getLongHorizonFamilyTemplates();
 
-    expect(templates.map((template) => template.key)).toEqual([
-      'coordinator.default',
-      'product-quality-manager.default',
-      'release-manager.default',
-      'security-auditor.default',
-      'marketing.default',
-      'sales.default',
-      'research.default',
-      'family-ops-chores.default',
-    ]);
-    expect(templates.map((template) => template.displayName)).toEqual([
-      'Coordinator',
-      'Product Quality Manager',
-      'Release Manager',
-      'Security Auditor',
-      'Marketing',
-      'Sales',
-      'Research',
-      'Family Ops/Chores',
-    ]);
+    expect(templates.map((template) => template.key)).toEqual(['coordinator.default']);
+    expect(templates.map((template) => template.displayName)).toEqual(['Coordinator']);
   });
 
   test('registers the worker presets as code built-ins under the worker namespace', () => {
@@ -82,36 +64,12 @@ describe('long-horizon agent templates', () => {
     }
   });
 
-  test('marks human-confirmation roles with low autonomy', () => {
-    const templates = getLongHorizonAgentTemplates();
-    const securityAuditor = templates.find(
-      (template) => template.key === 'security-auditor.default'
-    );
-    const familyOps = templates.find((template) => template.key === 'family-ops-chores.default');
-
-    expect(securityAuditor?.suggestedAutonomyLevel).toBe(1);
-    expect(familyOps?.suggestedAutonomyLevel).toBe(1);
-    expect(securityAuditor?.instructions).toContain('escalate high-risk issues');
-    expect(familyOps?.instructions).toContain(
-      'avoid making commitments without human confirmation'
-    );
-  });
-
   test('coordinator teaches the fallback-reviewer duty (MC5-B2)', () => {
     const coordinator = getLongHorizonAgentTemplates().find(
       (template) => template.key === 'coordinator.default'
     );
     expect(coordinator?.instructions).toContain('fallback reviewer');
     expect(coordinator?.instructions).toContain('review_goal_outcome');
-  });
-
-  test('marketing is the first ownership-loop dogfood profile (MC5-B2)', () => {
-    const marketing = getLongHorizonAgentTemplates().find(
-      (template) => template.key === 'marketing.default'
-    );
-    expect(marketing?.instructions).toContain('trigger_goal_task');
-    expect(marketing?.instructions).toContain('review_goal_outcome');
-    expect(marketing?.instructions).toContain('follow-up tasks');
   });
 
   test('returns cloned template data', () => {

@@ -1374,14 +1374,9 @@ describe('Space long-horizon agent handlers', () => {
         spaceId: 'space-1',
       });
 
-      expect(result.templates).toHaveLength(12);
-      expect(result.templates.map((template) => template.key)).toContain('coordinator.default');
+      expect(result.templates).toHaveLength(4);
+      expect(result.templates.map((template) => template.key)).not.toContain('coordinator.default');
       expect(result.templates.map((template) => template.key)).toContain('worker.coder');
-      for (const template of result.templates.filter((t) => !t.key.startsWith('worker.'))) {
-        expect(template.suggestedEventSubscriptions.length).toBeGreaterThan(0);
-        expect(template.reminderDefaults.length).toBeGreaterThan(0);
-        expect(template.ownershipPatterns.length).toBeGreaterThan(0);
-      }
     });
 
     it('throws when spaceId is missing', async () => {
