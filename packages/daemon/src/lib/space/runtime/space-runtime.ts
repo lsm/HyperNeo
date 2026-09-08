@@ -2810,7 +2810,7 @@ export class SpaceRuntime {
     }
     const dispatchRuntimeGeneration = this.runtimeGeneration;
     const claimTask = this.config.taskRepo.getTask(taskId);
-    const claimToken = {
+    const claimToken: { generation: number; approvedAt: number | null } = {
       generation: dispatchRuntimeGeneration,
       approvedAt: claimTask?.approvedAt ?? null,
     };
@@ -2823,7 +2823,8 @@ export class SpaceRuntime {
         approvalSource,
         contextExtras,
         options,
-        dispatchRuntimeGeneration
+        dispatchRuntimeGeneration,
+        claimToken
       );
     } finally {
       const outstanding = this.postApprovalDispatchClaims.get(taskId);
@@ -2845,7 +2846,8 @@ export class SpaceRuntime {
       expectedApprovedAt?: number | null;
       requireSucceededRun?: boolean;
     },
-    dispatchRuntimeGeneration: number
+    dispatchRuntimeGeneration: number,
+    claimToken: { generation: number; approvedAt: number | null }
   ): Promise<PostApprovalRouteResult> {
     const router = this.getPostApprovalRouter();
     if (!router) {
@@ -2932,6 +2934,7 @@ export class SpaceRuntime {
         approvalSource,
         approvalReason: resolvedApprovalReason,
       });
+      claimToken.approvedAt = approvedTask.approvedAt ?? null;
       await this.safeOnTaskUpdated(spaceId, approvedTask);
       log.info(
         `task.status-transition: taskId=${taskId} from=${current.status} to=approved source=${approvalSource}`
@@ -8036,8 +8039,8 @@ export class SpaceRuntime {
       ? (this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null)
       : null;
     const route = workflow ? selectFirstDispatchablePostApprovalRoute(workflow) : null;
+    if (!route) return 'replace';
     if (
-      route &&
       manager.isSessionOnPostApprovalRoute &&
       !manager.isSessionOnPostApprovalRoute({
         sessionId: task.postApprovalSessionId,

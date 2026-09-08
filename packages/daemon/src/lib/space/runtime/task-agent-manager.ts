@@ -137,6 +137,7 @@ import {
   settleDeliveryRowStatus,
 } from './injection-delivery-steps.ts';
 import { POST_APPROVAL_COMPLETION_INSTRUCTIONS } from '@hyperneo/prompts';
+import { MAILBOX_LANE } from '../../mailbox/enqueue.ts';
 import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
 import {
   deliverAgentMessageToTarget,
@@ -1951,6 +1952,7 @@ export class TaskAgentManager {
         )
         .all(task.id) as Array<{ id: string }>;
       return rows.find((row) => {
+        if (this.hasPendingPostApprovalKickoffJob(row.id)) return true;
         if (!sdkMessageRepo.hasConsumedTaskInputForSession(row.id, task.id)) return false;
         return this.hasConsumedTaskInputSince(row.id, task.id, approvedAt);
       })?.id;
@@ -2010,6 +2012,18 @@ export class TaskAgentManager {
       task.approvedAt === expected.approvedAt &&
       (task.workflowRunId ?? null) === expected.workflowRunId
     );
+  }
+
+  private hasPendingPostApprovalKickoffJob(sessionId: string): boolean {
+    const marker = POST_APPROVAL_COMPLETION_INSTRUCTIONS.split('\n')[0] ?? '';
+    try {
+      const jobs = this.config.db
+        .getJobQueueRepo()
+        .listActiveByPayload(MAILBOX_LANE, { 'to.sessionId': sessionId });
+      return jobs.some((job) => JSON.stringify(job.payload ?? {}).includes(marker));
+    } catch {
+      return false;
+    }
   }
 
   private hasConsumedPostApprovalKickoffSince(
@@ -2152,18 +2166,18 @@ export class TaskAgentManager {
           options.replayPendingMessages ?? options.startQuery !== false;
         if (
           options.startQuery !== false &&
-          this.approvalGenerationMatches(taskId, options.expectedApproval) &&
           !indexed.isQueryActiveOrStarting() &&
-          (await this.restoredWorkerStartAdmitted(indexed, taskId))
+          (await this.restoredWorkerStartAdmitted(indexed, taskId)) &&
+          this.approvalGenerationMatches(taskId, options.expectedApproval)
         ) {
           await indexed.startStreamingQuery();
         }
         if (
           shouldReplayPendingMessages &&
-          this.approvalGenerationMatches(taskId, options.expectedApproval) &&
           (await this.restoredWorkerStartAdmitted(indexed, taskId, {
             settleReplayProvisioning: true,
-          }))
+          })) &&
+          this.approvalGenerationMatches(taskId, options.expectedApproval)
         ) {
           const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
           options.onReplaySettled?.(replayed);
@@ -2342,17 +2356,17 @@ export class TaskAgentManager {
       }
       if (
         options.startQuery !== false &&
-        this.approvalGenerationMatches(taskId, options.expectedApproval) &&
-        (await this.restoredWorkerStartAdmitted(agentSession, taskId))
+        (await this.restoredWorkerStartAdmitted(agentSession, taskId)) &&
+        this.approvalGenerationMatches(taskId, options.expectedApproval)
       ) {
         await agentSession.startStreamingQuery();
       }
       if (
         shouldReplayPendingMessages &&
-        this.approvalGenerationMatches(taskId, options.expectedApproval) &&
         (await this.restoredWorkerStartAdmitted(agentSession, taskId, {
           settleReplayProvisioning: true,
-        }))
+        })) &&
+        this.approvalGenerationMatches(taskId, options.expectedApproval)
       ) {
         const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
         options.onReplaySettled?.(replayed);
@@ -5525,6 +5539,12 @@ export class TaskAgentManager {
             `TaskAgentManager.spawnPostApprovalSubSession: skipping kickoff inject to live session ` +
               `${existingSessionId} — this approval generation's post-approval kickoff was already consumed`
           );
+          if (
+            !existing.isQueryActiveOrStarting() &&
+            (await this.restoredWorkerStartAdmitted(existing, taskId))
+          ) {
+            await existing.startStreamingQuery();
+          }
           return;
         }
         await this.injectMessageIntoSession(existing, kickoffMessage);
