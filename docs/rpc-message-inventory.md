@@ -5,7 +5,7 @@
 Sources of truth (all paths relative to repo root):
 
 - Protocol: `packages/shared/src/message-hub/protocol.ts`, `types.ts`, `message-hub.ts`
-- Handlers: `packages/daemon/src/lib/rpc-handlers/` (37 of 40 files carry registrations, 296 total), `packages/daemon/src/lib/state-projection-service.ts` (7), `packages/daemon/src/lib/external-events/github/github-event-extension.ts` (16)
+- Handlers: `packages/daemon/src/lib/rpc-handlers/` (37 of 40 files carry registrations, 297 total), `packages/daemon/src/lib/state-projection-service.ts` (7), `packages/daemon/src/lib/external-events/github/github-event-extension.ts` (15)
 - Event emission: `messageHub.event(...)` call sites in `packages/daemon/src/` plus the internal-bus→client bridge `packages/daemon/src/lib/client-event-bridge.ts`
 - LiveQuery: `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`
 - Client call sites: `hub.request(...)` / `callIfConnected(...)` across `packages/web/src/` (301 call sites, 215 distinct literal method strings)
@@ -16,9 +16,9 @@ Sources of truth (all paths relative to repo root):
 
 | Surface | Count | Consumed by web | Dead |
 |---|---|---|---|
-| RPC methods (REQ→RSP) | **319** | 217 (214 literal + 1 constant-indirect + 2 dynamic) | 102 (§7) |
+| RPC methods (REQ→RSP) | **319** | 222 (214 literal + 2 constant-indirect + 6 dynamic) | 97 (§7) |
 | Protocol-level methods (`channel.join`/`channel.leave`) | 2 | 2 (`joinRoom`/`leaveRoom`) | 0 |
-| Event names emitted to clients | **41** | 31 | 10 emitted-but-unsubscribed (§4.6) |
+| Event names emitted to clients | **42** | 31 | 11 emitted-but-unsubscribed (§4.6) |
 | Subscribed-but-never-emitted events | 1 | — | `session.retryAttempt` (§4.6) |
 | LiveQuery named queries | **17** | 16 | 1 (`workflowRunArtifacts.byRun`, §5) |
 | LiveQuery protocol events | 3 | 3 | 0 |
@@ -89,31 +89,32 @@ Three emission paths reach the client wire:
 2. **State projection broadcasts** — `StateProjectionService.broadcast*()` emits versioned state snapshots.
 3. **ClientEventBridge** — internal daemon bus events mapped to client events in `packages/daemon/src/lib/client-event-bridge.ts` (payload shapes from `DaemonInternalEventMap`, `internal-event-bus.ts:461`).
 
-### 4.1 Session-lifecycle events (direct emission)
+### 4.1 Direct emission (connection & session lifecycle)
 
 | event | payload | channel | emitted at | web consumers |
 |---|---|---|---|---|
+| `connection.established` | `{ message: 'WebSocket connection established', protocol: 'MessageHub', version: '1.0.0' }` | direct socket send to the new client on connect (not channel-routed) | routes/setup-websocket.ts:64 | — |
 | `session.updated` | varies per site: full updated `Session`, or patch `{...updates, sessionId, roomId}` / `{model}` / config patches | `session:${id}` | session-handlers.ts:248, 277, 400, 442, 471, 562, 676, 712, 752, 781 | — |
 | `session.voiceLanded` | `{ sessionId }` | `session:${id}` | session-handlers.ts:449 | useInputDraft.ts:201 |
 | `session.interrupted` | `{}` | `session:${id}` | agent/interrupt-handler.ts:233 | — |
 | `session.model-switching` | `{ from, to }` | `session:${id}` | agent/model-switch-handler.ts:188 | — |
-| `session.model-switched` | `{ from, to, success? }` | `session:${id}` | agent/model-switch-handler.ts:315 | — |
+| `session.model-switched` | `{ from, to, modelInfo: object \| null }` — emitted only after a successful switch; there is no `success` field | `session:${id}` | agent/model-switch-handler.ts:314 | — |
 | `session.reset` | `{ message }` | `session:${id}` | session/session-manager.ts:332, agent/query-lifecycle-manager.ts:405 | — |
-| `session.deleted` | `{ sessionId, reason: 'deleted' }` | `global` | session/session-lifecycle.ts:784 (+ bridge copy) | session-store.ts:329 |
+| `session.deleted` | two deliveries with different payloads: direct emission `{ sessionId, reason: 'deleted' }`, then the bridged copy `{ sessionId }` only (the bridge transform drops `reason`) | `global` (both) | session/session-lifecycle.ts:784 (direct) + client-event-bridge.ts `session.deleted` mapping | session-store.ts:329 |
 | `sdk.message.updated` | `{ sessionId, messageUuid }` | `session:${id}` | rpc-handlers/message-handlers.ts:108 | — |
 | `test.echo` | `{ echo }` | `global` | rpc-handlers/system-handlers.ts:90 | — |
 
 ### 4.2 State projection broadcasts (`state-projection-service.ts`)
 
-Every broadcast carries a monotonically increasing `version` for stale-drop detection; the web's `StateChannel` wrapper (`packages/web/src/lib/state-channel.ts`) pairs each full channel with a `${channel}.delta` variant.
+Only the four `StateProjectionService` broadcasts (and its own delta path) carry a monotonically increasing `version` for stale-drop detection. **The direct `state.sdkMessages.delta` emissions listed in the last row are unversioned** — they send `{ added, timestamp }` with no `version`, and no cross-emitter ordering guarantee; consumers must not assume every delta carries one. The web's `StateChannel` wrapper (`packages/web/src/lib/state-channel.ts`) pairs each full channel with a `${channel}.delta` variant.
 
 | event | payload | channel | emitted at | web consumers |
 |---|---|---|---|---|
 | `state.system` | `SystemState` + `version` (version, claudeSDKVersion, defaultModel, maxSessions, storageLocation, auth, health, apiConnection, credentialStore) | `global` | :449 | global-store.ts:74 |
 | `state.settings` | `SettingsState` + `version` (sanitized `GlobalSettings`) | `global` | :458 | global-store.ts:79, 153 |
 | `state.session` | `SessionState` + `version` (sessionInfo, agentState, commandsData, error, revision, daemonEpoch) | `session:${id}` | :473 (cache fallback :496) | state.ts:66, session-store.ts:264, useSessionQuestionState.ts:59, useTargetSessionContext.ts:202 |
-| `state.sdkMessages` | `SDKMessagesState` + `version` (latest 100 `ChatMessage[]`, hasMore) | `session:${id}` | :513 | state.ts:74 |
-| `state.sdkMessages.delta` | `SDKMessagesUpdate` + `version` (`added?: ChatMessage[]`, timestamp) | `session:${id}` | :522; also sdk-message-handler.ts (6 sites), query-runner.ts:2463, query-lifecycle-manager.ts:448, acp-query-runner.ts:1817, session-handlers.ts:1410/1419, test-handlers.ts:20 | state.ts:74 (delta channel) |
+| `state.sdkMessages` | `SDKMessagesState` + `version` (latest 100 `ChatMessage[]`, hasMore) | `session:${id}` | :513 | state.ts:74 (constant-indirect pull via `StateChannel.fetchSnapshot`) |
+| `state.sdkMessages.delta` | two variants: versioned `SDKMessagesUpdate` + `version` from `StateProjectionService` only; unversioned `{ added?: ChatMessage[], timestamp }` from all other emitters | `session:${id}` | versioned: :522; unversioned: sdk-message-handler.ts (6 sites), query-runner.ts:2463, query-lifecycle-manager.ts:448, acp-query-runner.ts:1817, session-handlers.ts:1410/1419, test-handlers.ts:20 | state.ts:74 (delta channel) |
 
 ### 4.3 ClientEventBridge (internal bus → client, `client-event-bridge.ts`)
 
@@ -162,7 +163,7 @@ Emitted per-subscription by the LiveQuery engine (`live-query-handlers.ts:4611�
 
 ### 4.6 Dead event surface
 
-**Emitted but never subscribed by web (10):** `session.updated`, `session.interrupted`, `session.model-switching`, `session.model-switched`, `session.reset`, `sdk.message.updated`, `session.created`, `test.echo` (test-only), `space.workflowRun.cyclesReset`, `space.workflowRun.deadLoop`.
+**Emitted but never subscribed by web (11):** `connection.established`, `session.updated`, `session.interrupted`, `session.model-switching`, `session.model-switched`, `session.reset`, `sdk.message.updated`, `session.created`, `test.echo` (test-only), `space.workflowRun.cyclesReset`, `space.workflowRun.deadLoop`.
 
 **Subscribed but never emitted (1):** `session.retryAttempt` — `session-store.ts:306` subscribes, but the daemon only publishes it to the internal bus (`sdk-message-handler.ts:921`); no bridge mapping exists, so the handler can never fire.
 
@@ -425,8 +426,8 @@ All rows are **kind: request** (client `REQ` → server `RSP`; errors return as 
 | spaceGoal.getOwner | packages/daemon/src/lib/rpc-handlers/space-goal-handlers.ts:147 | inline `{ spaceId: string, goalId: string }` | inline `{ owner: SpaceGoalOwnerResolution }` (packages/shared/src/types/space.ts:174) | space must exist; goal must exist in space | space-store.ts |
 | spaceGoal.list | packages/daemon/src/lib/rpc-handlers/space-goal-handlers.ts:66 | `SpaceGoalListParams` shape (packages/shared/src/types/space.ts:546): `spaceId: string, status?: SpaceGoalStatus, includeArchived?: boolean, label?: string, search?: string` | inline `{ goals: SpaceGoal[] }` (packages/shared/src/types/space.ts:474) | `spaceId` required; space must exist | space-store.ts |
 | spaceGoal.listEvents | packages/daemon/src/lib/rpc-handlers/space-goal-handlers.ts:134 | inline `{ spaceId, goalId: string, limit?: number, before?: number, beforeId?: string }` (= `SpaceGoalEventListParams`, packages/shared/src/types/space.ts:468, + ids) | inline `{ events: SpaceGoalEvent[] }` (packages/shared/src/types/space.ts:439) | space must exist; goal must exist in space | space-store.ts |
-| spaceGoal.pause | packages/daemon/src/lib/rpc-handlers/space-goal-handlers.ts:113 | inline `{ spaceId: string, goalId: string }` | inline `{ goal: SpaceGoal }` | space must exist; goal must exist in space; service throws `Goal not found` on update | — |
-| spaceGoal.resume | packages/daemon/src/lib/rpc-handlers/space-goal-handlers.ts:120 | inline `{ spaceId: string, goalId: string }` | inline `{ goal: SpaceGoal }` | space must exist; goal must exist in space; service throws `Goal not found` on update | — |
+| spaceGoal.pause | packages/daemon/src/lib/rpc-handlers/space-goal-handlers.ts:113 | inline `{ spaceId: string, goalId: string }` | inline `{ goal: SpaceGoal }` | space must exist; goal must exist in space; service throws `Goal not found` on update | space-store.ts (via `runGoalAction(method)` pass-through) |
+| spaceGoal.resume | packages/daemon/src/lib/rpc-handlers/space-goal-handlers.ts:120 | inline `{ spaceId: string, goalId: string }` | inline `{ goal: SpaceGoal }` | space must exist; goal must exist in space; service throws `Goal not found` on update | space-store.ts (via `runGoalAction(method)` pass-through) |
 | spaceGoal.unassignOwner | packages/daemon/src/lib/rpc-handlers/space-goal-handlers.ts:164 | inline `{ spaceId: string, goalId: string }` | inline `{ owner: SpaceGoalOwnerResolution }` (packages/shared/src/types/space.ts:174) | space must exist; goal must exist in space; owner-mutation admission: caller session must be `space:`-scoped | space-store.ts |
 | spaceGoal.update | packages/daemon/src/lib/rpc-handlers/space-goal-handlers.ts:84 | inline `{ spaceId, goalId: string } & PublicSpaceGoalUpdateParams` (packages/daemon/src/lib/space/goals/goal-service.ts:35, Pick of `UpdateSpaceGoalParams`): `title?, description?, status?, type?, priority?, labels?, metrics?, …, workspacePath?` | inline `{ goal: SpaceGoal }` (packages/shared/src/types/space.ts:474) | space must exist; goal must exist in space; workspacePath resolved/validated | space-store.ts |
 | spaceTask.approvePendingCompletion | packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts:655 | inline `{ spaceId: string, taskId: string, approved: boolean, reason?: string \| null }` | `SpaceTask` (packages/shared/src/types/space.ts:593: `id, spaceId, taskNumber, title, status, priority, result, workflowRunId…`) | ids required; `approved` must be boolean; space + task must exist; task `pendingCheckpointType === 'task_completion'` and status `'review'`; approve path requires spaceRuntimeService | space-store.ts |
@@ -492,10 +493,10 @@ All rows are **kind: request** (client `REQ` → server `RSP`; errors return as 
 | spaceWorkflowRun.approveHook | packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts:708 | inline `{ runId: string; hookId: string; approved: boolean; reason?: string }` | inline `{ hookState: WorkflowHookStateSnapshot }` — shared/src/types/space.ts:1016 (runId, hookId, version, localState, lastResult?, retryCount, nextRetryAt?, voteMaps…) | runId/hookId/approved required; run must exist; run status must not be done/cancelled/pending; hook-state version conflict rejected | PendingHookBanner.tsx,space-store.ts |
 | spaceWorkflowRun.cancel | packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts:330 | inline `{ id: string }` | inline `{ success: boolean }` | id required; run must exist; cannot cancel a 'done' run (already-cancelled returns success idempotently) | space-store.ts |
 | spaceWorkflowRun.get | packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts:230 | inline `{ id: string; spaceId?: string }` | inline `{ run: SpaceWorkflowRun }` — shared/src/types/space.ts:831 (id, spaceId, workflowId, definitionVersion, title, description?, status, failureReason?…) | id required; run must exist; spaceId (if given) must match | — |
-| spaceWorkflowRun.getCommitFileDiff | packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts:600 | inline `{ runId: string; taskId?: string; commitSha: string; filePath: string }` | inline `{ diff: string; additions: number; deletions: number; filePath: string; truncated: boolean; originalSize: number }` (cached hit adds cached/syncedAt) | runId required; commitSha must match /^[0-9a-f]{4,64}$/i; filePath required, relative only (no '..', not absolute); run must exist; worktree path must resolve | — |
+| spaceWorkflowRun.getCommitFileDiff | packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts:600 | inline `{ runId: string; taskId?: string; commitSha: string; filePath: string }` | inline `{ diff: string; additions: number; deletions: number; filePath: string; truncated: boolean; originalSize: number }` (cached hit adds cached/syncedAt) | runId required; commitSha must match /^[0-9a-f]{4,64}$/i; filePath required, relative only (no '..', not absolute); run must exist; worktree path must resolve | FileDiffView.tsx (dynamic `rpcName` ternary :120) |
 | spaceWorkflowRun.getCommitFiles | packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts:541 | inline `{ runId: string; taskId?: string; commitSha: string }` | inline `{ files: FileDiffStat[] }` — FileDiffStat in daemon/src/lib/space/artifact-git-ops.ts:7 (path, additions, deletions); cached hit adds cached/syncedAt | runId required; commitSha sha-validated; run must exist; worktree path must resolve | TaskArtifactsPanel.tsx |
 | spaceWorkflowRun.getCommits | packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts:478 | inline `{ runId: string; taskId?: string }` | inline `{ commits: CommitInfo[]; baseRef: string\|null; isGitRepo: boolean; repoUrl: string\|null }` — CommitInfo in daemon/src/lib/space/artifact-git-ops.ts:19 (sha, message, author, timestamp, additions, deletions, fileCount) | runId required; run must exist; worktree path must resolve | TaskArtifactsPanel.tsx |
-| spaceWorkflowRun.getFileDiff | packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts:407 | inline `{ runId: string; filePath: string; taskId?: string }` | inline `{ diff: string; additions: number; deletions: number; filePath: string; truncated: boolean; originalSize: number }` (diff capped at FILE_DIFF_SIZE_LIMIT_BYTES; cached hit adds cached/syncedAt/status) | runId + filePath required; filePath must be relative within worktree; run must exist; worktree path must resolve | — |
+| spaceWorkflowRun.getFileDiff | packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts:407 | inline `{ runId: string; filePath: string; taskId?: string }` | inline `{ diff: string; additions: number; deletions: number; filePath: string; truncated: boolean; originalSize: number }` (diff capped at FILE_DIFF_SIZE_LIMIT_BYTES; cached hit adds cached/syncedAt/status) | runId + filePath required; filePath must be relative within worktree; run must exist; worktree path must resolve | FileDiffView.tsx (dynamic `rpcName` ternary :120) |
 | spaceWorkflowRun.getGateArtifacts | packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts:350 | inline `{ runId: string; taskId?: string }` | inline `{ files: FileDiffStat[]; totalAdditions: number; totalDeletions: number; worktreePath: string; isGitRepo: boolean }` (DiffSummary spread — daemon/src/lib/space/artifact-git-ops.ts:13; cached hit adds cached/syncedAt/status) | runId required; run must exist; worktree/workspace path must resolve | TaskArtifactsPanel.tsx |
 | spaceWorkflowRun.list | packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts:214 | inline `{ spaceId: string; status?: WorkflowRunStatus }` — WorkflowRunStatus shared/src/types/space.ts:829 | inline `{ runs: SpaceWorkflowRun[] }` (shared/src/types/space.ts:831) | spaceId required; space must exist | — |
 | spaceWorkflowRun.listArtifacts | packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts:676 | inline `{ runId: string; nodeId?: string; artifactType?: string }` | inline `{ artifacts: WorkflowRunArtifact[] }` — shared/src/types/space.ts:1345 (id, runId, nodeId, artifactType, artifactKey, data, createdAt, updatedAt) | runId required; run must exist | space-store.ts |
@@ -573,7 +574,7 @@ All rows are **kind: request** (client `REQ` → server `RSP`; errors return as 
 | method | handler | request | response | gates | web consumers |
 |---|---|---|---|---|---|
 | state.global.snapshot | packages/daemon/src/lib/state-projection-service.ts:247 | — | `GlobalStateSnapshot` (shared/src/state-types.ts:154): `sessions: SessionsState; system: SystemState; settings: SettingsState; meta: StateChannelMeta` | — | global-store.ts (constant-indirect: `STATE_CHANNELS.GLOBAL_SNAPSHOT`) |
-| state.sdkMessages | packages/daemon/src/lib/state-projection-service.ts:273 | inline `{ sessionId: string; since?: number }` | `SDKMessagesState` (state-types.ts:141): `sdkMessages: ChatMessage[]; hasMore: boolean; timestamp` (latest 100) | throws `Session not found` unless `room:`/`conv:` w/ db (repo fallback) | — |
+| state.sdkMessages | packages/daemon/src/lib/state-projection-service.ts:273 | inline `{ sessionId: string; since?: number }` | `SDKMessagesState` (state-types.ts:141): `sdkMessages: ChatMessage[]; hasMore: boolean; timestamp` (latest 100) | throws `Session not found` unless `room:`/`conv:` w/ db (repo fallback) | state.ts:74 (constant-indirect via `StateChannel.fetchSnapshot`) |
 | state.session | packages/daemon/src/lib/state-projection-service.ts:268 | inline `{ sessionId: string }` | `SessionState` (state-types.ts:125): `sessionInfo: SessionInfo \| null; agentState: AgentProcessingState; commandsData: CommandsData; error: SessionError \| null; timestamp; revision?; daemonEpoch?` | throws `Session not found` unless id starts `room:`/`conv:` (idle stub returned) | useSessionQuestionState.ts,useTargetSessionContext.ts,session-store.ts |
 | state.session.snapshot | packages/daemon/src/lib/state-projection-service.ts:251 | inline `{ sessionId: string }` | `SessionStateSnapshot` (state-types.ts:161): `session: SessionState; sdkMessages: SDKMessagesState; meta: StateChannelMeta` | delegates to session/sdkMessages getters (their gates apply) | — |
 | state.sessions | packages/daemon/src/lib/state-projection-service.ts:260 | — | `SessionsState` (state-types.ts:7): `sessions: SessionInfo[]; hasArchivedSessions: boolean; timestamp` | — (archived hidden unless `showArchived` setting) | — |
@@ -599,35 +600,40 @@ All rows are **kind: request** (client `REQ` → server `RSP`; errors return as 
 
 ## 7. Registered-but-unconsumed methods (dead surface)
 
-102 of the 319 registered RPC methods have no call site in `packages/web/src/` (searched `hub.request(...)`, `request(...)`, and `callIfConnected(...)` including multiline/generic-typed forms, plus `STATE_CHANNELS` constant-indirected calls and the one known dynamic call site). Grouped by family, with the most likely explanation where one exists:
+97 of the 319 registered RPC methods have no call site in `packages/web/src/` (searched `hub.request(...)`, `request(...)`, and `callIfConnected(...)` including multiline/generic-typed forms, plus the `STATE_CHANNELS` constant-indirected calls and the dynamic method-name sites listed below). Grouped by family, with the most likely explanation where one exists:
 
 | Family | Unconsumed methods | Notes |
 |---|---|---|
 | `config.*` (24) | `getAll`, `updateBulk`, `agents.get/update`, `betas.get/update`, `env.get/update`, `mcp.get/addServer/removeServer/update`, `model.get/update`, `outputFormat.get/update`, `permissions.get/update`, `sandbox.get/update`, `systemPrompt.get/update`, `tools.get/update` | full per-key session-config surface; the web edits session config via `session.update` / `tools.save` instead |
 | `evolution.*` (11) | `scope.createFromGoal`, `scope.resolveForGoal`, `evidence.create`, `evidence.attachTask`, `evidence.attachWorkflowRun`, `evidence.addMetricSnapshot`, `episode.create`, `episode.list`, `timeline.list`, `task.lessons.select`, `taskProposal.list` | Forge scope surface; agents reach this functionality through MCP tools that call the services directly, not through the hub — these 11 have no web caller |
-| `spaceWorkflowRun.*` (7) | `start`, `list`, `get`, `resume`, `markFailed`, `getCommitFileDiff`, `getFileDiff` | `start` is an e2e/test entry point (runs start via task dispatch in normal use); list/get superseded by `space.overview` + push updates |
 | `settings.*` (7) | `global.get`, `global.save`, `session.get`, `session.update`, `fileOnly.read`, `mcp.listFromSources`, `mcp.refreshImports` | web reads settings via `state.settings` push instead of pull; `settings.session.*` pair is a server-side stub |
 | `session.*` (5) | `query.trigger`, `restart`, `validate`, `getSkillMcpServers`, `messages.countByStatus` | `query.trigger`/`restart` are daemon-internal escape hatches; `validate` superseded by error events |
 | `mcp.*` (5) | `listServers`, `registry.get`, `registry.listErrors`, `enablement.list`, `enablement.clearScope` | registry list/errors superseded by `mcpServers.global` LiveQuery; enablement list by `mcpEnablement.bySpace` |
 | `space.*` (5) | `list`, `get`, `setConcurrentLimit`, `updateSlug`, `mcp.list` | `space.list`/`get` superseded by `space.listWithTasks`/`space.overview` |
+| `spaceWorkflowRun.*` (5) | `start`, `list`, `get`, `resume`, `markFailed` | `start` is an e2e/test entry point (runs start via task dispatch in normal use); list/get superseded by `space.overview` + push updates |
 | `test.*` (3) | `echo`, `broadcastDelta`, `injectSDKMessage` | test-only handlers (registered unconditionally) |
 | `providers.*` (3) | `get`, `healthCheck`, `refreshDiscovery` | `providers.list` + per-provider `test` cover the UI paths |
 | `file.*` (3) | `list`, `read`, `tree` | the web reads files through session message flows, not the generic file RPCs |
-| `state.*` (5) | `session.snapshot`, `sessions`, `settings`, `system`, `sdkMessages` | pull fallbacks; the event broadcasts (§4.2) cover them (`state.session` and `state.global.snapshot` pulls ARE used) |
+| `state.*` (4) | `session.snapshot`, `sessions`, `settings`, `system` | pull fallbacks; the event broadcasts (§4.2) cover them (`state.session`, `state.sdkMessages` and `state.global.snapshot` pulls ARE used) |
 | `nodeExecution.*` (2) | `create`, `update` | dev-only registrations (`NODE_ENV !== 'production'`); daemon writes executions internally |
 | `sdk.*` (2) | `scan`, `cleanup` | SDK session-file maintenance; no UI surface |
 | `spaceAgent.*` (2) | `get`, `listReminders` | detail flows read from `spaceAgent.list` results |
-| `spaceGoal.*` (2) | `pause`, `resume` | goals change state via `spaceGoal.update` |
 | `skill.*` (2) | `get`, `list` | superseded by `skills.list` LiveQuery push |
 | `daemonConfig.*` (2) | `get`, `update` | daemon behavior config; no settings UI yet |
 | singles (12) | `agent.getState`, `agentMemory.search`, `commands.list`, `fileindex.rescan`, `globalTools.saveConfig`, `messageDelivery.diagnostics`, `models.clearCache`, `rewind.previewSelective`, `system.config`, `taskSchedule.update`, `worktree.cleanup`, `spaceExport.agents` | assorted diagnostics/maintenance entry points |
 
-Nuances:
+Nuances — methods consumed **indirectly** (not visible to a literal-string scan; not counted as dead):
 
-- `space.github.enable`/`space.github.disable` are **consumed dynamically** (ternary argument at `SpaceExternalEventsSettings.tsx:325`) and are therefore NOT counted in the 102.
-- `state.global.snapshot` is consumed constant-indirectly (`global-store.ts:89,190` request `STATE_CHANNELS.GLOBAL_SNAPSHOT` on reconnect) — also not counted.
+- `space.github.enable`/`space.github.disable` — dynamic ternary argument at `SpaceExternalEventsSettings.tsx:325`.
+- `spaceGoal.pause`/`spaceGoal.resume` — method name passed through `runGoalAction(method, …)` (`space-store.ts:2732,2736`).
+- `spaceWorkflowRun.getCommitFileDiff`/`spaceWorkflowRun.getFileDiff` — selected into `rpcName` by ternary at `FileDiffView.tsx:120`.
+- `state.global.snapshot` — constant-indirect (`global-store.ts:89,190` request `STATE_CHANNELS.GLOBAL_SNAPSHOT` on reconnect).
+- `state.sdkMessages` — constant-indirect pull via `StateChannel.fetchSnapshot()` constructed with `STATE_CHANNELS.SESSION_SDK_MESSAGES` (`state.ts:74`, `state-channel.ts:223`).
+
+Other notes:
+
 - `spaceWorkflowRun.start` and `state.system` are exercised by Playwright e2e tests only (`packages/e2e/tests/`).
 - `agentMemory.*` methods are also exposed to Space agents as MCP tools, but those tools call the repository directly (`space/tools/agent-memory-tools.ts`) — the RPC surface itself is web-only, and `agentMemory.search` is its one dead member.
 
-**Methodology caveat:** "consumed" means a static call site in the web package. Dynamically-computed method names other than the github ternary noted above would be invisible to this scan; none were found by manual review of the `request(` wrapper signatures (`useMessageHub.ts`).
+**Methodology caveat:** "consumed" means a static call site in the web package, including the constant-indirected and dynamic sites enumerated above. Other dynamically-computed method names would be invisible to this scan; the known wrapper signatures (`useMessageHub.ts`) and the `runGoalAction`-style pass-throughs were reviewed manually.
 
