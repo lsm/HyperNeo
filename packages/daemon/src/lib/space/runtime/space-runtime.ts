@@ -8251,7 +8251,11 @@ export class SpaceRuntime {
 
   private async clearRecoveryTimeout(task: SpaceTask, blockedReason: string): Promise<void> {
     const settled = this.config.taskRepo.getTask(task.id);
-    if (settled?.status === 'approved' && settled.postApprovalBlockedReason === blockedReason) {
+    if (
+      settled?.status === 'approved' &&
+      settled.approvedAt === task.approvedAt &&
+      settled.postApprovalBlockedReason === blockedReason
+    ) {
       this.config.taskRepo.updateTask(task.id, { postApprovalBlockedReason: null });
       const cleared = this.config.taskRepo.getTask(task.id);
       if (cleared) await this.safeOnTaskUpdated(task.spaceId, cleared);
