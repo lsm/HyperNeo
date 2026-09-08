@@ -5599,6 +5599,7 @@ export class TaskAgentManager {
           await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, admission);
           await this.injectMessageIntoSession(spawned, kickoffMessage);
         });
+        await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, admission);
       } catch (err) {
         this.cancelBySessionId(actualSessionId);
         throw err;
