@@ -84,61 +84,56 @@ function spaceRouteUnchanged(at: SpaceRouteSnapshot): boolean {
   );
 }
 
-interface OpenAgentSessionCtx {
-  agent: SpaceLongHorizonAgent;
-  navigationSpaceId: string;
-  openSeq: number;
-  routeAtOpen: SpaceRouteSnapshot | null;
-  ensuredSessionId: string | null;
-  markOpenSeq: (openSeq: number) => void;
-}
-
-export function openRouteStage(ctx: OpenAgentSessionCtx): {
-  ctx: OpenAgentSessionCtx;
-  openHalt: string | undefined;
-} {
+export function openRouteStage(
+  agent: SpaceLongHorizonAgent,
+  navigationSpaceId: string,
+  markOpenSeq: (openSeq: number) => void
+): { openSeq: number; routeAtOpen: SpaceRouteSnapshot | null; openHalt: string | undefined } {
   const openSeq = ++latestAgentCardOpenSeq;
-  ctx.markOpenSeq(openSeq);
-  if (ctx.agent.sessionId) {
-    navigateToSpaceSession(ctx.navigationSpaceId, ctx.agent.sessionId);
-    return { ctx: { ...ctx, openSeq }, openHalt: 'opened_direct' };
+  markOpenSeq(openSeq);
+  if (agent.sessionId) {
+    navigateToSpaceSession(navigationSpaceId, agent.sessionId);
+    return { openSeq, routeAtOpen: null, openHalt: 'opened_direct' };
   }
-  return { ctx: { ...ctx, openSeq, routeAtOpen: snapshotSpaceRoute() }, openHalt: undefined };
+  return { openSeq, routeAtOpen: snapshotSpaceRoute(), openHalt: undefined };
 }
 
-export async function openProvisionStage(ctx: OpenAgentSessionCtx): Promise<{
-  ctx: OpenAgentSessionCtx;
-  openHalt: string | undefined;
-}> {
+export async function openProvisionStage(
+  agent: SpaceLongHorizonAgent,
+  openSeq: number,
+  routeAtOpen: SpaceRouteSnapshot | null
+): Promise<{ ensuredSessionId: string | null; openHalt: string | undefined }> {
   try {
-    const ensuredSessionId = await spaceStore.ensureAgentSession(ctx.agent.id);
-    return { ctx: { ...ctx, ensuredSessionId }, openHalt: undefined };
+    const ensuredSessionId = await spaceStore.ensureAgentSession(agent.id);
+    return { ensuredSessionId, openHalt: undefined };
   } catch (err) {
-    if (ctx.openSeq === latestAgentCardOpenSeq && spaceRouteUnchangedOrUnknown(ctx)) {
+    if (
+      openSeq === latestAgentCardOpenSeq &&
+      routeAtOpen !== null &&
+      spaceRouteUnchanged(routeAtOpen)
+    ) {
       toast.error(err instanceof Error ? err.message : 'Failed to open agent session');
     }
-    return { ctx, openHalt: 'ensure_failed' };
+    return { ensuredSessionId: null, openHalt: 'ensure_failed' };
   }
 }
 
-function spaceRouteUnchangedOrUnknown(ctx: OpenAgentSessionCtx): boolean {
-  return ctx.routeAtOpen !== null && spaceRouteUnchanged(ctx.routeAtOpen);
+export function openFreshnessStage(
+  openSeq: number,
+  routeAtOpen: SpaceRouteSnapshot | null
+): string | undefined {
+  if (openSeq !== latestAgentCardOpenSeq) return 'superseded';
+  if (routeAtOpen === null || !spaceRouteUnchanged(routeAtOpen)) return 'route_changed';
+  return undefined;
 }
 
-export function openFreshnessStage(ctx: OpenAgentSessionCtx): {
-  ctx: OpenAgentSessionCtx;
-  openHalt: string | undefined;
-} {
-  if (ctx.openSeq !== latestAgentCardOpenSeq) return { ctx, openHalt: 'superseded' };
-  if (!spaceRouteUnchangedOrUnknown(ctx)) return { ctx, openHalt: 'route_changed' };
-  return { ctx, openHalt: undefined };
-}
-
-export function openNavigateStage(ctx: OpenAgentSessionCtx): OpenAgentSessionCtx {
-  if (ctx.ensuredSessionId) {
-    navigateToSpaceSession(ctx.navigationSpaceId, ctx.ensuredSessionId);
-  }
-  return ctx;
+export function openNavigateStage(
+  navigationSpaceId: string,
+  ensuredSessionId: string | null
+): string | null {
+  if (!ensuredSessionId) return null;
+  navigateToSpaceSession(navigationSpaceId, ensuredSessionId);
+  return ensuredSessionId;
 }
 
 const runOpenAgentSession = (
@@ -146,15 +141,23 @@ const runOpenAgentSession = (
     'open-agent-session'
   ) as PipelineAPI
 )
-  .input(['ctx'])
-  .pipe(openRouteStage, 'ctx', ['ctx', 'openHalt'])
+  .input(['agent', 'navigationSpaceId', 'markOpenSeq'])
+  .pipe(
+    openRouteStage,
+    ['agent', 'navigationSpaceId', 'markOpenSeq'],
+    ['openSeq', 'routeAtOpen', 'openHalt']
+  )
   .pipe('!ensureHalted', 'openHalt')
-  .pipe(openProvisionStage, 'ctx', ['ctx', 'openHalt'])
+  .pipe(openProvisionStage, ['agent', 'openSeq', 'routeAtOpen'], ['ensuredSessionId', 'openHalt'])
   .pipe('!ensureHalted', 'openHalt')
-  .pipe(openFreshnessStage, 'ctx', ['ctx', 'openHalt'])
+  .pipe(openFreshnessStage, ['openSeq', 'routeAtOpen'], 'openHalt')
   .pipe('!ensureHalted', 'openHalt')
-  .pipe(openNavigateStage, 'ctx', 'ctx')
-  .endAsync('ctx') as (ctx: OpenAgentSessionCtx) => Promise<OpenAgentSessionCtx>;
+  .pipe(openNavigateStage, ['navigationSpaceId', 'ensuredSessionId'], 'navigatedTo')
+  .endAsync('navigatedTo') as (input: {
+  agent: SpaceLongHorizonAgent;
+  navigationSpaceId: string;
+  markOpenSeq: (openSeq: number) => void;
+}) => Promise<string | null>;
 
 function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
   return COORDINATOR_AGENT_HANDLES.has(agent.handle);
@@ -941,11 +944,13 @@ function AgentCard({
     archived: 'bg-fill-strong',
   };
 
+  const derivedSessionId =
+    agent.status === 'active' && provisioningAvailable
+      ? buildLongHorizonAgentSessionId(spaceId, agent.id)
+      : null;
   const sessionId = coordinator
     ? (agent.sessionId ?? `space:chat:${spaceId}`)
-    : agent.status === 'active' && provisioningAvailable
-      ? (agent.sessionId ?? buildLongHorizonAgentSessionId(spaceId, agent.id))
-      : null;
+    : (agent.sessionId ?? derivedSessionId);
   const hasSession = !!agent.sessionId || coordinator;
 
   const [opening, setOpening] = useState(false);
@@ -966,9 +971,6 @@ function AgentCard({
       await runOpenAgentSession({
         agent,
         navigationSpaceId,
-        openSeq: 0,
-        routeAtOpen: null,
-        ensuredSessionId: null,
         markOpenSeq: (openSeq) => {
           openSeqRef.current = openSeq;
           recordOpenSeq(openSeq);

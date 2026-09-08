@@ -1888,6 +1888,18 @@ describe('SpaceLongHorizonAgents', () => {
     expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
   });
 
+  it('keeps persisted sessions openable while the space is paused', () => {
+    mockAgents.value = [makeLongHorizonAgent()];
+    mockRuntimeState.value = 'paused';
+
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'session-research');
+    expect(mockEnsureAgentSession).not.toHaveBeenCalled();
+  });
+
   it('invalidates a pending open when the agent-detail handle changes', async () => {
     mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
     let resolveEnsure: (sessionId: string) => void = () => {};
@@ -1919,53 +1931,49 @@ describe('SpaceLongHorizonAgents', () => {
       handle: null,
     };
 
-    function makeOpenCtx(overrides: Partial<Record<string, unknown>> = {}) {
-      return {
-        agent: makeLongHorizonAgent({ sessionId: null }),
-        navigationSpaceId: 'space-1',
-        openSeq: 0,
-        routeAtOpen: null,
-        ensuredSessionId: null,
-        markOpenSeq: vi.fn(),
-        ...overrides,
-      };
-    }
-
     it('route stage navigates directly for stamped agents', () => {
-      const ctx = makeOpenCtx({ agent: makeLongHorizonAgent() });
-      const out = openRouteStage(ctx);
+      const markOpenSeq = vi.fn();
+      const out = openRouteStage(makeLongHorizonAgent(), 'space-1', markOpenSeq);
 
       expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'session-research');
       expect(out.openHalt).toBe('opened_direct');
-      expect(out.ctx.routeAtOpen).toBeNull();
-      expect(ctx.markOpenSeq).toHaveBeenCalledWith(out.ctx.openSeq);
+      expect(out.routeAtOpen).toBeNull();
+      expect(markOpenSeq).toHaveBeenCalledWith(out.openSeq);
     });
 
     it('route stage snapshots the route for unstamped agents', () => {
-      const out = openRouteStage(makeOpenCtx());
+      const out = openRouteStage(makeLongHorizonAgent({ sessionId: null }), 'space-1', vi.fn());
 
       expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
       expect(out.openHalt).toBeUndefined();
-      expect(out.ctx.routeAtOpen).toEqual(NULL_ROUTE);
-      expect(out.ctx.openSeq).toBeGreaterThan(0);
+      expect(out.routeAtOpen).toEqual(NULL_ROUTE);
+      expect(out.openSeq).toBeGreaterThan(0);
     });
 
     it('provision stage records the ensured id when fresh', async () => {
       mockEnsureAgentSession.mockResolvedValueOnce('space:agent:space-1:lh-1');
-      const routed = openRouteStage(makeOpenCtx());
+      const routed = openRouteStage(makeLongHorizonAgent({ sessionId: null }), 'space-1', vi.fn());
 
-      const out = await openProvisionStage(routed.ctx);
+      const out = await openProvisionStage(
+        makeLongHorizonAgent({ sessionId: null }),
+        routed.openSeq,
+        routed.routeAtOpen
+      );
 
-      expect(out.ctx.ensuredSessionId).toBe('space:agent:space-1:lh-1');
+      expect(out.ensuredSessionId).toBe('space:agent:space-1:lh-1');
       expect(out.openHalt).toBeUndefined();
       expect(toast.error).not.toHaveBeenCalled();
     });
 
     it('provision stage toasts the current request on an unchanged route', async () => {
       mockEnsureAgentSession.mockRejectedValueOnce(new Error('boom'));
-      const routed = openRouteStage(makeOpenCtx());
+      const routed = openRouteStage(makeLongHorizonAgent({ sessionId: null }), 'space-1', vi.fn());
 
-      const out = await openProvisionStage(routed.ctx);
+      const out = await openProvisionStage(
+        makeLongHorizonAgent({ sessionId: null }),
+        routed.openSeq,
+        routed.routeAtOpen
+      );
 
       expect(out.openHalt).toBe('ensure_failed');
       expect(toast.error).toHaveBeenCalledWith('boom');
@@ -1973,37 +1981,60 @@ describe('SpaceLongHorizonAgents', () => {
 
     it('provision stage stays silent for superseded or rerouted requests', async () => {
       mockEnsureAgentSession.mockRejectedValueOnce(new Error('boom'));
-      const superseded = openRouteStage(makeOpenCtx());
-      openRouteStage(makeOpenCtx());
-      await openProvisionStage(superseded.ctx);
+      const superseded = openRouteStage(
+        makeLongHorizonAgent({ sessionId: null }),
+        'space-1',
+        vi.fn()
+      );
+      openRouteStage(makeLongHorizonAgent({ sessionId: null }), 'space-1', vi.fn());
+      await openProvisionStage(
+        makeLongHorizonAgent({ sessionId: null }),
+        superseded.openSeq,
+        superseded.routeAtOpen
+      );
       expect(toast.error).not.toHaveBeenCalled();
 
       mockEnsureAgentSession.mockRejectedValueOnce(new Error('boom'));
-      const rerouted = openRouteStage(makeOpenCtx());
+      const rerouted = openRouteStage(
+        makeLongHorizonAgent({ sessionId: null }),
+        'space-1',
+        vi.fn()
+      );
       currentSpaceViewModeSignal.value = 'tasks';
-      await openProvisionStage(rerouted.ctx);
+      await openProvisionStage(
+        makeLongHorizonAgent({ sessionId: null }),
+        rerouted.openSeq,
+        rerouted.routeAtOpen
+      );
       expect(toast.error).not.toHaveBeenCalled();
     });
 
     it('freshness stage halts superseded and rerouted requests', () => {
-      const superseded = openRouteStage(makeOpenCtx());
-      openRouteStage(makeOpenCtx());
-      expect(openFreshnessStage(superseded.ctx).openHalt).toBe('superseded');
+      const superseded = openRouteStage(
+        makeLongHorizonAgent({ sessionId: null }),
+        'space-1',
+        vi.fn()
+      );
+      openRouteStage(makeLongHorizonAgent({ sessionId: null }), 'space-1', vi.fn());
+      expect(openFreshnessStage(superseded.openSeq, superseded.routeAtOpen)).toBe('superseded');
 
-      const rerouted = openRouteStage(makeOpenCtx());
+      const rerouted = openRouteStage(
+        makeLongHorizonAgent({ sessionId: null }),
+        'space-1',
+        vi.fn()
+      );
       currentSpaceIdSignal.value = 'space-other';
-      expect(openFreshnessStage(rerouted.ctx).openHalt).toBe('route_changed');
+      expect(openFreshnessStage(rerouted.openSeq, rerouted.routeAtOpen)).toBe('route_changed');
     });
 
     it('freshness stage admits fresh requests and the navigate stage routes them', () => {
-      const routed = openRouteStage(makeOpenCtx());
-      const ensured = { ...routed.ctx, ensuredSessionId: 'ensured-1' };
+      const routed = openRouteStage(makeLongHorizonAgent({ sessionId: null }), 'space-1', vi.fn());
 
-      expect(openFreshnessStage(ensured).openHalt).toBeUndefined();
-      openNavigateStage(ensured);
+      expect(openFreshnessStage(routed.openSeq, routed.routeAtOpen)).toBeUndefined();
+      openNavigateStage('space-1', 'ensured-1');
       expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'ensured-1');
 
-      openNavigateStage(routed.ctx);
+      openNavigateStage('space-1', null);
       expect(mockNavigateToSpaceSession).toHaveBeenCalledTimes(1);
     });
   });

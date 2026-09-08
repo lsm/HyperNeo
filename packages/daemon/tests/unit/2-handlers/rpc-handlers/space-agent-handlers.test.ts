@@ -1358,37 +1358,24 @@ describe('Space Agent RPC Handlers', () => {
   });
 
   describe('ensure-agent-session-rpc stages', () => {
-    function makeStageCtx(overrides: Record<string, unknown> = {}): any {
-      return {
-        params: {},
-        spaceId: '',
-        agentId: '',
-        sessionId: '',
-        spaceManager: spaceManagerData.spaceManager,
-        repo: longHorizonRepo,
-        runtimeService: createRuntimeServiceMock(),
-        ...overrides,
-      };
-    }
-
     it('validate stage lifts params and rejects missing fields', () => {
-      expect(() => ensureSessionValidateStage(makeStageCtx())).toThrow('spaceId is required');
-      expect(() =>
-        ensureSessionValidateStage(makeStageCtx({ params: { spaceId: 'space-1' } }))
-      ).toThrow('agentId is required');
-      const ctx = ensureSessionValidateStage(
-        makeStageCtx({ params: { spaceId: 'space-1', agentId: 'lh-1' } })
+      expect(() => ensureSessionValidateStage({})).toThrow('spaceId is required');
+      expect(() => ensureSessionValidateStage({ spaceId: 'space-1' })).toThrow(
+        'agentId is required'
       );
-      expect(ctx.spaceId).toBe('space-1');
-      expect(ctx.agentId).toBe('lh-1');
+      expect(ensureSessionValidateStage({ spaceId: 'space-1', agentId: 'lh-1' })).toEqual({
+        spaceId: 'space-1',
+        agentId: 'lh-1',
+      });
     });
 
     it('admit-space stage rejects unknown spaces and passes known ones', async () => {
       await expect(
-        ensureSessionAdmitSpaceStage(makeStageCtx({ spaceId: 'missing-space' }))
+        ensureSessionAdmitSpaceStage(spaceManagerData.spaceManager, 'missing-space')
       ).rejects.toThrow('Space not found: missing-space');
-      const ctx = await ensureSessionAdmitSpaceStage(makeStageCtx({ spaceId: 'space-1' }));
-      expect(ctx.spaceId).toBe('space-1');
+      await expect(
+        ensureSessionAdmitSpaceStage(spaceManagerData.spaceManager, 'space-1')
+      ).resolves.toBeDefined();
     });
 
     it('resolve-target stage derives the session id per target shape', () => {
@@ -1399,24 +1386,21 @@ describe('Space Agent RPC Handlers', () => {
         handle: 'coordinator',
       });
 
+      expect(ensureSessionResolveTargetStage(longHorizonRepo, 'space-1', 'lh-stage-1')).toBe(
+        'space:agent:space-1:lh-stage-1'
+      );
+      expect(ensureSessionResolveTargetStage(longHorizonRepo, 'space-1', 'coordinator')).toBe(
+        'space:chat:space-1'
+      );
       expect(
-        ensureSessionResolveTargetStage(makeStageCtx({ spaceId: 'space-1', agentId: 'lh-stage-1' }))
-          .sessionId
-      ).toBe('space:agent:space-1:lh-stage-1');
-      expect(
-        ensureSessionResolveTargetStage(
-          makeStageCtx({ spaceId: 'space-1', agentId: 'coordinator' })
-        ).sessionId
+        ensureSessionResolveTargetStage(longHorizonRepo, 'space-1', 'coordinator:space-1')
       ).toBe('space:chat:space-1');
       expect(
         ensureSessionResolveTargetStage(
-          makeStageCtx({ spaceId: 'space-1', agentId: 'coordinator:space-1' })
-        ).sessionId
-      ).toBe('space:chat:space-1');
-      expect(
-        ensureSessionResolveTargetStage(
-          makeStageCtx({ spaceId: 'space-1', agentId: coordinatorLongHorizonAgentId('space-1') })
-        ).sessionId
+          longHorizonRepo,
+          'space-1',
+          coordinatorLongHorizonAgentId('space-1')
+        )
       ).toBe('space:chat:space-1');
     });
 
@@ -1424,37 +1408,28 @@ describe('Space Agent RPC Handlers', () => {
       longHorizonRepo.create({ id: 'lh-stage-1', spaceId: 'space-1', handle: 'researcher' });
 
       expect(() =>
-        ensureSessionResolveTargetStage(
-          makeStageCtx({ spaceId: 'space-1', agentId: 'never-created' })
-        )
+        ensureSessionResolveTargetStage(longHorizonRepo, 'space-1', 'never-created')
       ).toThrow('Agent not found: never-created');
       expect(() =>
-        ensureSessionResolveTargetStage(
-          makeStageCtx({ spaceId: 'space-other', agentId: 'lh-stage-1' })
-        )
+        ensureSessionResolveTargetStage(longHorizonRepo, 'space-other', 'lh-stage-1')
       ).toThrow('Agent not found: lh-stage-1');
     });
 
     it('provision stage rejects missing runtime, failed ensure, and passes results', async () => {
-      await expect(
-        ensureSessionProvisionStage(
-          makeStageCtx({ spaceId: 'space-1', agentId: 'lh-1', runtimeService: undefined })
-        )
-      ).rejects.toThrow('Agent runtime unavailable');
+      await expect(ensureSessionProvisionStage(undefined, 'space-1', 'lh-1')).rejects.toThrow(
+        'Agent runtime unavailable'
+      );
 
       const failed = createRuntimeServiceMock();
       failed.ensureAgentSession.mockResolvedValueOnce(null);
-      await expect(
-        ensureSessionProvisionStage(
-          makeStageCtx({ spaceId: 'space-1', agentId: 'lh-1', runtimeService: failed })
-        )
-      ).rejects.toThrow('Agent session unavailable: lh-1');
+      await expect(ensureSessionProvisionStage(failed, 'space-1', 'lh-1')).rejects.toThrow(
+        'Agent session unavailable: lh-1'
+      );
 
       const runtimeService = createRuntimeServiceMock();
-      const ctx = await ensureSessionProvisionStage(
-        makeStageCtx({ spaceId: 'space-1', agentId: 'lh-1', runtimeService })
+      await expect(ensureSessionProvisionStage(runtimeService, 'space-1', 'lh-1')).resolves.toEqual(
+        { ensured: true }
       );
-      expect(ctx.sessionId).toBe('');
       expect(runtimeService.ensureAgentSession).toHaveBeenCalledWith('space-1', 'lh-1');
     });
   });

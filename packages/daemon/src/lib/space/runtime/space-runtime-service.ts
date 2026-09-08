@@ -727,29 +727,8 @@ export class SpaceRuntimeService {
     } else {
       await this.refreshLongHorizonAgentSessionConfig(session, config);
     }
-    const currentMetadata = session.getSessionData().metadata;
-    this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
-      metadata: {
-        ...currentMetadata,
-        promptProvenance: {
-          source: agent.templateKey ?? 'long_horizon_agent',
-          hash: agent.id,
-          agentId: agent.id,
-          agentName: agent.displayName,
-        },
-      },
-    });
-    this.attachLongTermAgentMcpServers(
-      session,
-      space,
-      agent.displayName,
-      sessionId,
-      null,
-      agentId,
-      [`@${agent.handle}`]
-    );
-    const latest = repo.getById(agentId);
-    if (latest && agentSessionConfigSignature(latest) !== agentSessionConfigSignature(agent)) {
+    const latest = repo.getById(agentId) ?? agent;
+    if (agentSessionConfigSignature(latest) !== agentSessionConfigSignature(agent)) {
       const refreshedConfig = await buildAgentSessionConfig(
         { agent: latest },
         space,
@@ -757,8 +736,29 @@ export class SpaceRuntimeService {
       );
       await this.refreshLongHorizonAgentSessionConfig(session, refreshedConfig);
     }
-    if (agent.sessionId !== sessionId) {
-      const updated = repo.update(agent.id, { sessionId });
+    const currentMetadata = session.getSessionData().metadata;
+    this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
+      metadata: {
+        ...currentMetadata,
+        promptProvenance: {
+          source: latest.templateKey ?? 'long_horizon_agent',
+          hash: latest.id,
+          agentId: latest.id,
+          agentName: latest.displayName,
+        },
+      },
+    });
+    this.attachLongTermAgentMcpServers(
+      session,
+      space,
+      latest.displayName,
+      sessionId,
+      null,
+      agentId,
+      [`@${latest.handle}`]
+    );
+    if (latest.sessionId !== sessionId) {
+      const updated = repo.update(latest.id, { sessionId });
       if (updated) {
         await publishUnifiedAgentUpdated(this.config.internalEventBus, updated);
       }
