@@ -8027,7 +8027,8 @@ export class SpaceRuntime {
         );
         await this.annotateRecoveryTimeout(
           task,
-          'post-approval orphan rejected but could not be stopped; re-dispatch deferred'
+          'post-approval orphan rejected but could not be stopped; re-dispatch deferred',
+          generation
         );
         return true;
       }
@@ -8049,7 +8050,8 @@ export class SpaceRuntime {
         );
         await this.annotateRecoveryTimeout(
           task,
-          'post-approval orphan rejected but could not be stopped; re-dispatch deferred'
+          'post-approval orphan rejected but could not be stopped; re-dispatch deferred',
+          generation
         );
         return true;
       }
@@ -8189,7 +8191,24 @@ export class SpaceRuntime {
           }
         )) ?? null;
     } catch {
-      await manager.stopSessionsVerified([task.postApprovalSessionId]).catch(() => undefined);
+      let stopConfirmed = false;
+      try {
+        const results = await manager.stopSessionsVerified([task.postApprovalSessionId]);
+        stopConfirmed = results[0]?.stopped === true;
+      } catch {
+        stopConfirmed = false;
+      }
+      if (!stopConfirmed) {
+        log.warn(
+          `SpaceRuntime: failed post-approval revival for task ${task.id} could not stop session ${task.postApprovalSessionId}; deferring replacement`
+        );
+        await this.annotateRecoveryTimeout(
+          task,
+          'post-approval revival failed and the worker could not be stopped; replacement deferred',
+          generation
+        );
+        return 'skip';
+      }
       restoredId = null;
     }
     if (this.postApprovalShutdownFenceTripped(manager, generation)) {
@@ -8261,7 +8280,13 @@ export class SpaceRuntime {
     return entry;
   }
 
-  private async annotateRecoveryTimeout(task: SpaceTask, blockedReason: string): Promise<void> {
+  private readonly postApprovalTimeoutAnnotation = new Map<string, number>();
+
+  private async annotateRecoveryTimeout(
+    task: SpaceTask,
+    blockedReason: string,
+    generation: number
+  ): Promise<void> {
     const fresh = this.config.taskRepo.getTask(task.id);
     if (
       fresh?.status === 'approved' &&
@@ -8270,12 +8295,18 @@ export class SpaceRuntime {
       (fresh.postApprovalSessionId ?? null) === (task.postApprovalSessionId ?? null)
     ) {
       this.config.taskRepo.updateTask(task.id, { postApprovalBlockedReason: blockedReason });
+      this.postApprovalTimeoutAnnotation.set(task.id, generation);
       const blocked = this.config.taskRepo.getTask(task.id);
       if (blocked) await this.safeOnTaskUpdated(task.spaceId, blocked);
     }
   }
 
-  private async clearRecoveryTimeout(task: SpaceTask, blockedReason: string): Promise<void> {
+  private async clearRecoveryTimeout(
+    task: SpaceTask,
+    blockedReason: string,
+    generation: number
+  ): Promise<void> {
+    if (this.postApprovalTimeoutAnnotation.get(task.id) !== generation) return;
     const settled = this.config.taskRepo.getTask(task.id);
     if (
       settled?.status === 'approved' &&
@@ -8283,6 +8314,7 @@ export class SpaceRuntime {
       settled.postApprovalBlockedReason === blockedReason
     ) {
       this.config.taskRepo.updateTask(task.id, { postApprovalBlockedReason: null });
+      this.postApprovalTimeoutAnnotation.delete(task.id);
       const cleared = this.config.taskRepo.getTask(task.id);
       if (cleared) await this.safeOnTaskUpdated(task.spaceId, cleared);
     }
@@ -8302,11 +8334,12 @@ export class SpaceRuntime {
         if (outcome === 'revived') {
           await this.clearRecoveryTimeout(
             task,
-            'post-approval worker revival timed out; settlement still pending'
+            'post-approval worker revival timed out; settlement still pending',
+            generation
           );
         }
-        if (outcome === 'replace') {
-          const existing = this.currentPostApprovalBypass(task.id, generation) ?? {
+        if (outcome === 'replace' && generation === this.runtimeGeneration) {
+          const existing = this.postApprovalRecoveryBypass.get(task.id) ?? {
             generation,
             revive: false,
             revivePointer: null,
@@ -8334,7 +8367,8 @@ export class SpaceRuntime {
       );
       await this.annotateRecoveryTimeout(
         task,
-        'post-approval worker revival timed out; settlement still pending'
+        'post-approval worker revival timed out; settlement still pending',
+        generation
       );
       return 'timeout';
     }
@@ -8355,11 +8389,12 @@ export class SpaceRuntime {
         if (outcome === true) {
           await this.clearRecoveryTimeout(
             task,
-            'post-approval worker adoption timed out; settlement still pending'
+            'post-approval worker adoption timed out; settlement still pending',
+            generation
           );
         }
-        if (outcome === false) {
-          const existing = this.currentPostApprovalBypass(task.id, generation) ?? {
+        if (outcome === false && generation === this.runtimeGeneration) {
+          const existing = this.postApprovalRecoveryBypass.get(task.id) ?? {
             generation,
             revive: false,
             revivePointer: null,
@@ -8386,7 +8421,8 @@ export class SpaceRuntime {
       );
       await this.annotateRecoveryTimeout(
         task,
-        'post-approval worker adoption timed out; settlement still pending'
+        'post-approval worker adoption timed out; settlement still pending',
+        generation
       );
       return 'timeout';
     }
@@ -8398,6 +8434,7 @@ export class SpaceRuntime {
     if (!manager) return;
     const generation = this.runtimeGeneration;
     const now = Date.now();
+    const scanDeadline = now + POST_APPROVAL_RECOVERY_AWAIT_MS;
     const retries: Array<Promise<void>> = [];
     const approvedTaskIds = new Set<string>();
     try {
@@ -8405,6 +8442,7 @@ export class SpaceRuntime {
         if (generation !== this.runtimeGeneration || this.isStopped) return;
         for (const task of this.config.taskRepo.listByStatus(space.id, 'approved')) {
           approvedTaskIds.add(task.id);
+          if (Date.now() > scanDeadline) continue;
           const admission = await runPostApprovalRecoveryAdmission({
             task,
             generation,

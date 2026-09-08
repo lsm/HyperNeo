@@ -137,6 +137,7 @@ import {
   settleDeliveryRowStatus,
 } from './injection-delivery-steps.ts';
 import { POST_APPROVAL_COMPLETION_INSTRUCTIONS } from '@hyperneo/prompts';
+import { runDurableKickoffReuseAdmission } from './durable-kickoff-reuse-admission.ts';
 import { MAILBOX_LANE } from '../../mailbox/enqueue.ts';
 import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
 import {
@@ -5576,41 +5577,38 @@ export class TaskAgentManager {
             throw err;
           }
         }
-        const kickoffAlreadyDelivered = this.hasDurablePostApprovalKickoff(
-          existing.session.id,
-          taskId,
-          task.approvedAt ?? null
-        );
-        if (kickoffAlreadyDelivered) {
+        const kickoffReuse = await runDurableKickoffReuseAdmission({
+          task,
+          sessionId: existing.session.id,
+          hasDurableKickoff: (owner, sessionId) =>
+            this.hasDurablePostApprovalKickoff(sessionId, owner.id, owner.approvedAt ?? null),
+          isQueryActive: (sessionId) => {
+            const session = this.getSubSession(sessionId);
+            return session ? session.isQueryActiveOrStarting() : false;
+          },
+          admitResume: async (owner) => {
+            await this.assertPostApprovalSpawnAdmissible(spaceId, owner.id, {
+              expectedApprovedAt: owner.approvedAt ?? null,
+              expectedWorkflowRunId: owner.workflowRunId ?? null,
+              expectedRuntimeGeneration: admission.expectedRuntimeGeneration,
+            });
+          },
+          startQuery: async (sessionId) => {
+            const session = this.getSubSession(sessionId);
+            if (session) await session.startStreamingQuery();
+          },
+        });
+        if ('value' in kickoffReuse && kickoffReuse.value.action === 'refuse') {
+          throw new Error(`spawnPostApprovalSubSession: ${kickoffReuse.value.reason}`);
+        }
+        if ('reason' in kickoffReuse) {
           log.info(
             `TaskAgentManager.spawnPostApprovalSubSession: skipping kickoff inject to live session ` +
-              `${existingSessionId} — this approval generation's post-approval kickoff was already delivered`
+              `${existingSessionId} — this approval generation's post-approval kickoff was already delivered (${kickoffReuse.reason})`
           );
-          if (!existing.isQueryActiveOrStarting()) {
-            let resumeAdmitted = false;
-            try {
-              await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, {
-                expectedApprovedAt: task.approvedAt ?? null,
-                expectedWorkflowRunId: task.workflowRunId ?? null,
-                expectedRuntimeGeneration: admission.expectedRuntimeGeneration,
-              });
-              resumeAdmitted = true;
-            } catch {
-              resumeAdmitted = false;
-            }
-            if (resumeAdmitted) {
-              await existing.startStreamingQuery();
-            }
-            if (!existing.isQueryActiveOrStarting()) {
-              throw new Error(
-                `spawnPostApprovalSubSession: reused session ${existingSessionId} already holds ` +
-                  `this approval generation's kickoff but its query could not be admitted; refusing ` +
-                  `to record an idle post-approval worker`
-              );
-            }
-          }
           return;
         }
+        await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, admission);
         await this.injectMessageIntoSession(existing, kickoffMessage);
       });
       log.info(

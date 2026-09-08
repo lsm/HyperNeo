@@ -152,7 +152,8 @@ function makeTaskAgentManagerMock(options: TamMockOptions = {}) {
     isExecutionSpawning: () => false,
     isDisposed: () => adoption?.disposed === true,
     hasPendingRateLimitCooldown: () => false,
-    stopSessionsVerified: async () => [],
+    stopSessionsVerified: async (sessionIds: string[]) =>
+      sessionIds.map((sessionId) => ({ sessionId, stopped: true })),
     isSessionQueryActiveOrStarting: (sessionId: string) => queryActiveIds.has(sessionId),
     setRuntimeRef: (ref: { stop: () => Promise<void> }) => {
       runtimeRef = ref;
