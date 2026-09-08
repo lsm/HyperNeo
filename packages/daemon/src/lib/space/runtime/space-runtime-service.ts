@@ -728,9 +728,14 @@ export class SpaceRuntimeService {
       await this.refreshLongHorizonAgentSessionConfig(session, config);
     }
     let applied = agent;
+    let converged = false;
     for (let attempt = 0; attempt < 3; attempt++) {
-      const latest = repo.getById(agentId) ?? applied;
-      if (agentSessionConfigSignature(latest) === agentSessionConfigSignature(applied)) break;
+      const latest = repo.getById(agentId);
+      if (!latest || latest.status !== 'active') return null;
+      if (agentSessionConfigSignature(latest) === agentSessionConfigSignature(applied)) {
+        converged = true;
+        break;
+      }
       const refreshedConfig = await buildAgentSessionConfig(
         { agent: latest },
         space,
@@ -739,6 +744,7 @@ export class SpaceRuntimeService {
       await this.refreshLongHorizonAgentSessionConfig(session, refreshedConfig);
       applied = latest;
     }
+    if (!converged) return null;
     const currentMetadata = session.getSessionData().metadata;
     this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
       metadata: {
