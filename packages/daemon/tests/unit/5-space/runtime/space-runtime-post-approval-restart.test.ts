@@ -85,8 +85,14 @@ interface TamMockOptions {
   alive?: Set<string>;
   spawnImpl?: () => Promise<{ sessionId: string }>;
   onSpawnExecution?: () => void;
-  adoption?: { orphanSessionId: string; disposed?: boolean; stopDuringRestore?: boolean };
+  adoption?: {
+    orphanSessionId: string;
+    disposed?: boolean;
+    stopDuringRestore?: boolean;
+    failResume?: boolean;
+  };
   revivable?: string[];
+  terminalRestoreIds?: string[];
 }
 
 function makeTaskAgentManagerMock(options: TamMockOptions = {}) {
@@ -127,6 +133,12 @@ function makeTaskAgentManagerMock(options: TamMockOptions = {}) {
         void runtimeRef.stop();
       }
       restoreCalls.push({ sessionId, deferredStart: restoreOptions?.startQuery === false });
+      if (options.terminalRestoreIds?.includes(sessionId)) return sessionId;
+      if (adoption?.failResume && restoreOptions?.startQuery !== false) {
+        aliveSessionIds.delete(sessionId);
+        return sessionId;
+      }
+      aliveSessionIds.add(sessionId);
       return sessionId;
     },
     isSpawning: () => false,
@@ -584,6 +596,73 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
     expect(restoreCalls.map((call) => call.sessionId)).toEqual(['session:dead-post-approval']);
     expect(taskRepo.getTask(prior.id)?.status).toBe('approved');
     expect(taskRepo.getTask(prior.id)?.postApprovalSessionId).toBe('session:dead-post-approval');
+  });
+
+  test('recorded worker that restores as terminal is replaced', async () => {
+    const workflow = buildRouteWorkflow();
+    const { task: prior } = seedApprovedPriorTask(workflow, 'done');
+
+    const spawned: string[] = [];
+    const { runtime: rt, restoreCalls } = makeRuntime({
+      spawnImpl: async () => {
+        spawned.push('session:replacement-post-approval');
+        return { sessionId: 'session:replacement-post-approval' };
+      },
+      revivable: ['session:dead-post-approval'],
+      terminalRestoreIds: ['session:dead-post-approval'],
+    });
+
+    await rt.executeTick();
+
+    expect(restoreCalls.map((call) => call.sessionId)).toEqual(['session:dead-post-approval']);
+    expect(spawned).toEqual(['session:replacement-post-approval']);
+    expect(taskRepo.getTask(prior.id)?.postApprovalSessionId).toBe(
+      'session:replacement-post-approval'
+    );
+  });
+
+  test('recorded worker is not revived while its run has not succeeded', async () => {
+    const workflow = buildRouteWorkflow();
+    const { task: prior } = seedApprovedPriorTask(workflow, 'in_progress');
+
+    const spawned: string[] = [];
+    const { runtime: rt, restoreCalls } = makeRuntime({
+      spawnImpl: async () => {
+        spawned.push('session:replacement-post-approval');
+        return { sessionId: 'session:replacement-post-approval' };
+      },
+      revivable: ['session:dead-post-approval'],
+    });
+
+    await rt.executeTick();
+
+    expect(restoreCalls).toEqual([]);
+    expect(spawned).toEqual([]);
+    expect(taskRepo.getTask(prior.id)?.status).toBe('approved');
+    expect(taskRepo.getTask(prior.id)?.postApprovalSessionId).toBe('session:dead-post-approval');
+  });
+
+  test('adoption whose worker cannot be resumed records a retryable blocked reason', async () => {
+    const workflow = buildRouteWorkflow();
+    const { task: prior } = seedApprovedPriorTask(workflow, 'done', null);
+    taskRepo.updateTask(prior.id, { approvedAt: Date.now() - 5 * 60_000 });
+
+    const spawned: string[] = [];
+    const { runtime: rt } = makeRuntime({
+      spawnImpl: async () => {
+        spawned.push('session:replacement-post-approval');
+        return { sessionId: 'session:replacement-post-approval' };
+      },
+      adoption: { orphanSessionId: 'session:durable-orphan', failResume: true },
+    });
+
+    await rt.executeTick();
+
+    expect(spawned).toEqual([]);
+    const after = taskRepo.getTask(prior.id)!;
+    expect(after.status).toBe('approved');
+    expect(after.postApprovalSessionId ?? null).toBeNull();
+    expect(after.postApprovalBlockedReason).toContain('could not be resumed');
   });
 
   test('a dispatch that outlives a stop/start cycle cannot release the next cycle claim', async () => {

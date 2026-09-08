@@ -7937,7 +7937,7 @@ export class SpaceRuntime {
       if (restoredId) manager.cancelBySessionId(restoredId);
       return true;
     }
-    if (!restoredId) return false;
+    if (!restoredId || !manager.isSessionAlive(restoredId)) return false;
     const recorded = this.config.taskRepo.casPostApprovalRouting(
       task.id,
       {
@@ -7955,12 +7955,36 @@ export class SpaceRuntime {
     log.info(
       `SpaceRuntime: adopted durable post-approval worker ${orphan.sessionId} for task ${task.id} instead of redispatching`
     );
+    let resumedId: string | null = null;
     try {
-      await manager.restorePostApprovalWorkerSession?.(task.id, orphan.sessionId, undefined, {});
+      resumedId =
+        (await manager.restorePostApprovalWorkerSession?.(
+          task.id,
+          orphan.sessionId,
+          undefined,
+          {}
+        )) ?? null;
     } catch (err) {
       log.warn(
         `SpaceRuntime: failed to resume adopted post-approval worker ${orphan.sessionId} for task ${task.id}: ${formatCommandError(err)}`
       );
+    }
+    if (!resumedId || !manager.isSessionAlive(orphan.sessionId)) {
+      const fresh = this.config.taskRepo.getTask(task.id);
+      if (
+        fresh &&
+        fresh.status === 'approved' &&
+        fresh.approvedAt === task.approvedAt &&
+        fresh.postApprovalSessionId === orphan.sessionId
+      ) {
+        this.config.taskRepo.updateTask(task.id, {
+          postApprovalSessionId: null,
+          postApprovalBlockedReason: `post-approval worker ${orphan.sessionId} was adopted but could not be resumed; re-dispatch required`,
+        });
+        const blocked = this.config.taskRepo.getTask(task.id);
+        if (blocked) await this.safeOnTaskUpdated(task.spaceId, blocked);
+      }
+      return true;
     }
     const adopted = this.config.taskRepo.getTask(task.id);
     if (adopted) await this.safeOnTaskUpdated(task.spaceId, adopted);
@@ -7974,6 +7998,8 @@ export class SpaceRuntime {
   ): Promise<'revived' | 'skip' | 'replace'> {
     if (!task.postApprovalSessionId) return 'replace';
     if (this.postApprovalShutdownFenceTripped(manager, generation)) return 'skip';
+    const run = task.workflowRunId ? this.config.workflowRunRepo.getRun(task.workflowRunId) : null;
+    if (!run || !isWorkflowRunSucceeded(run.status)) return 'replace';
     let restoredId: string | null = null;
     try {
       restoredId =
@@ -7990,7 +8016,7 @@ export class SpaceRuntime {
       if (restoredId) manager.cancelBySessionId(restoredId);
       return 'skip';
     }
-    if (!restoredId) return 'replace';
+    if (!restoredId || !manager.isSessionAlive(restoredId)) return 'replace';
     log.info(
       `SpaceRuntime: resumed recorded post-approval worker ${restoredId} for task ${task.id} instead of replacing it`
     );
