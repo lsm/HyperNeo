@@ -67,6 +67,8 @@ describe('long-horizon agent templates', () => {
     expect(taskManager?.instructions).toContain('Triage');
     expect(taskManager?.instructions).toContain('send_message_to_task');
     expect(taskManager?.instructions).toContain('mark it `blocked`');
+    expect(taskManager?.instructions).toContain('not awaiting review');
+    expect(taskManager?.instructions).toContain('Tasks waiting in review are not yours to move');
     expect(taskManager?.instructions).toContain('next slices');
     expect(taskManager?.instructions).toContain('no routing powers');
     expect(taskManager?.instructions).not.toContain('reassign_task');
