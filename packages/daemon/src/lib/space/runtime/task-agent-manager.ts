@@ -3481,9 +3481,15 @@ export class TaskAgentManager {
       if (this.agentSessionIndex.has(subSessionId)) continue;
 
       try {
-        const rehydrateOptions = this.readPersistedRateLimitCooldown(subSessionId)
-          ? { startQuery: false }
-          : {};
+        const hasReplayableWork =
+          this.hasUnconsumedDeliveredWork(subSessionId) ||
+          this.hasActiveDeliveryJob(subSessionId) ||
+          (this.config.toolContinuationRepo?.listPendingInboxForSession(subSessionId).length ?? 0) >
+            0;
+        const rehydrateOptions =
+          this.readPersistedRateLimitCooldown(subSessionId) || !hasReplayableWork
+            ? { startQuery: false }
+            : {};
         await this.rehydrateSubSession(subSessionId, undefined, rehydrateOptions);
       } catch (err) {
         log.warn(

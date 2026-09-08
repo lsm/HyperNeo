@@ -697,8 +697,13 @@ describe('TaskAgentManager restored rate-limit cooldown lookup', () => {
   });
 });
 
-describe('TaskAgentManager startup rehydration cooldowns', () => {
-  function makeStartupManager(input: { cooldown?: boolean }) {
+describe('TaskAgentManager startup rehydration admission', () => {
+  function makeStartupManager(input: {
+    activeDelivery?: boolean;
+    cooldown?: boolean;
+    pendingMessage?: boolean;
+    pendingToolContinuation?: boolean;
+  }) {
     const rehydrateSubSession = mock(async () => null);
     const manager = Object.create(TaskAgentManager.prototype) as TaskAgentManager;
     Object.defineProperty(manager, 'config', {
@@ -714,9 +719,18 @@ describe('TaskAgentManager startup rehydration cooldowns', () => {
             },
           ],
         },
+        toolContinuationRepo: {
+          listPendingInboxForSession: () => (input.pendingToolContinuation ? [{}] : []),
+        },
       },
     });
     Object.defineProperty(manager, 'agentSessionIndex', { value: new Map() });
+    Object.defineProperty(manager, 'hasActiveDeliveryJob', {
+      value: () => input.activeDelivery ?? false,
+    });
+    Object.defineProperty(manager, 'hasUnconsumedDeliveredWork', {
+      value: () => input.pendingMessage ?? false,
+    });
     Object.defineProperty(manager, 'hasQueuedRetryableHookAction', {
       value: () => false,
     });
@@ -732,7 +746,10 @@ describe('TaskAgentManager startup rehydration cooldowns', () => {
   }
 
   it('rehydrates a cooling-down worker without starting its query at startup', async () => {
-    const { manager, rehydrateSubSession } = makeStartupManager({ cooldown: true });
+    const { manager, rehydrateSubSession } = makeStartupManager({
+      cooldown: true,
+      pendingMessage: true,
+    });
     const run = (
       manager as unknown as {
         rehydrateSubSessionsForRun: (runId: string) => Promise<void>;
@@ -748,7 +765,7 @@ describe('TaskAgentManager startup rehydration cooldowns', () => {
     );
   });
 
-  it('rehydrates workers with default options outside cooldowns at startup', async () => {
+  it('rehydrates an idle worker without starting its query at startup', async () => {
     const { manager, rehydrateSubSession } = makeStartupManager({});
     const run = (
       manager as unknown as {
@@ -761,9 +778,32 @@ describe('TaskAgentManager startup rehydration cooldowns', () => {
     expect(rehydrateSubSession).toHaveBeenCalledWith(
       'space:space-1:task:task-1:exec:e1',
       undefined,
-      {}
+      { startQuery: false }
     );
   });
+
+  for (const [name, input] of [
+    ['pending message', { pendingMessage: true }],
+    ['active delivery job', { activeDelivery: true }],
+    ['pending tool continuation', { pendingToolContinuation: true }],
+  ] as const) {
+    it(`starts recovery for a worker with a ${name}`, async () => {
+      const { manager, rehydrateSubSession } = makeStartupManager(input);
+      const run = (
+        manager as unknown as {
+          rehydrateSubSessionsForRun: (runId: string) => Promise<void>;
+        }
+      ).rehydrateSubSessionsForRun.bind(manager);
+
+      await run('run-1');
+
+      expect(rehydrateSubSession).toHaveBeenCalledWith(
+        'space:space-1:task:task-1:exec:e1',
+        undefined,
+        {}
+      );
+    });
+  }
 });
 
 describe('TaskAgentManager indexed rehydrate revalidation', () => {
