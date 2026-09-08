@@ -131,6 +131,7 @@ vi.mock('../../ui/ConfirmModal', () => ({
 }));
 
 import { toast } from '../../../lib/toast';
+import { currentSpaceSessionIdSignal } from '../../../lib/signals';
 import { SpaceLongHorizonAgents } from '../SpaceLongHorizonAgents';
 
 function makeLongHorizonAgent(
@@ -212,6 +213,7 @@ describe('SpaceLongHorizonAgents', () => {
     mockNavigateToSpaceSession.mockClear();
     mockEnsureAgentSession.mockClear();
     mockEnsureAgentSession.mockResolvedValue('space:agent:space-1:lh-1');
+    currentSpaceSessionIdSignal.value = null;
   });
 
   afterEach(() => {
@@ -1531,7 +1533,7 @@ describe('SpaceLongHorizonAgents', () => {
     expect(mockEnsureAgentSession).not.toHaveBeenCalled();
   });
 
-  it('shows session presence on instance cards', () => {
+  it('shows session presence separately from clickability on instance cards', () => {
     mockAgents.value = [
       makeLongHorizonAgent(),
       makeLongHorizonAgent({
@@ -1541,6 +1543,13 @@ describe('SpaceLongHorizonAgents', () => {
         status: 'paused',
         sessionId: null,
       }),
+      makeLongHorizonAgent({
+        id: 'lh-3',
+        handle: 'frozen',
+        displayName: 'Frozen Agent',
+        status: 'paused',
+        sessionId: 'session-frozen',
+      }),
     ];
 
     const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
@@ -1549,6 +1558,9 @@ describe('SpaceLongHorizonAgents', () => {
     expect(liveCard?.textContent).toContain('Session');
     expect(getByText('Draft Agent').closest('[role="button"]')).toBeNull();
     expect(getByText('No session')).toBeTruthy();
+    const frozenCard = getByText('Frozen Agent').closest('div.min-h-32');
+    expect(frozenCard?.textContent).toContain('Session');
+    expect(frozenCard?.getAttribute('role')).toBeNull();
   });
 
   it('ensures then opens the deterministic session for an active sessionless instance', async () => {
@@ -1600,6 +1612,53 @@ describe('SpaceLongHorizonAgents', () => {
     expect(queryByText('Gone Agent')).toBeNull();
     expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
     expect(mockEnsureAgentSession).not.toHaveBeenCalled();
+  });
+
+  it('opens on card keystrokes but ignores keystrokes from nested card actions', () => {
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+
+    const { getByText, getByLabelText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.keyDown(getByLabelText('Edit Research Long Horizon'), { key: 'Enter' });
+
+    expect(mockEnsureAgentSession).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(getByText('Research Long Horizon').closest('[role="button"]')!, {
+      key: 'Enter',
+    });
+
+    expect(mockEnsureAgentSession).toHaveBeenCalledWith('lh-1');
+  });
+
+  it('does not hijack a newer navigation when a slow ensure completes late', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({ sessionId: null }),
+      makeLongHorizonAgent({
+        id: 'lh-2',
+        handle: 'ready',
+        displayName: 'Ready Agent',
+        sessionId: 'session-ready',
+      }),
+    ];
+    let resolveEnsure: (sessionId: string) => void = () => {};
+    mockEnsureAgentSession.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveEnsure = resolve;
+        })
+    );
+
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+    fireEvent.click(getByText('Ready Agent').closest('[role="button"]')!);
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'session-ready');
+    currentSpaceSessionIdSignal.value = 'session-ready';
+
+    resolveEnsure('space:agent:space-1:lh-1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledTimes(1);
   });
 
   it('treats the space chat as the coordinator session', async () => {

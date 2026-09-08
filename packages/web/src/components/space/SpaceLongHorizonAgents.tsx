@@ -12,6 +12,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { navigateToSpaceSession } from '../../lib/router';
 import { buildLongHorizonAgentSessionId } from '../../lib/space-agent-session';
 import { spaceStore } from '../../lib/space-store';
+import { currentSpaceSessionIdSignal } from '../../lib/signals';
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
@@ -828,6 +829,7 @@ function AgentCard({
     : agent.status === 'active'
       ? (agent.sessionId ?? buildLongHorizonAgentSessionId(spaceId, agent.id))
       : null;
+  const hasSession = !!agent.sessionId || coordinator;
 
   const [opening, setOpening] = useState(false);
 
@@ -838,9 +840,12 @@ function AgentCard({
       return;
     }
     setOpening(true);
+    const routeSessionAtOpen = currentSpaceSessionIdSignal.value;
     try {
       const ensured = await spaceStore.ensureAgentSession(agent.id);
-      navigateToSpaceSession(navigationSpaceId, ensured);
+      if (currentSpaceSessionIdSignal.value === routeSessionAtOpen) {
+        navigateToSpaceSession(navigationSpaceId, ensured);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to open agent session');
     } finally {
@@ -856,6 +861,7 @@ function AgentCard({
       onKeyDown={
         sessionId
           ? (e) => {
+              if (e.target !== e.currentTarget) return;
               if (e.key === 'Enter' || e.key === ' ') void openSession();
             }
           : undefined
@@ -884,7 +890,7 @@ function AgentCard({
               />
               <span>{agent.status}</span>
               <span>·</span>
-              <span>{sessionId ? 'Session' : 'No session'}</span>
+              <span>{hasSession ? 'Session' : 'No session'}</span>
               {agent.autonomyLevel && (
                 <>
                   <span>·</span>
