@@ -470,6 +470,7 @@ describe('SpaceStore — space selection', () => {
     const calledMethods = mockHub.request.mock.calls.map((c: unknown[]) => c[0]);
     expect(calledMethods).not.toContain('spaceAgent.list');
     expect(calledMethods).not.toContain('spaceAgent.listBuiltInTemplates');
+    expect(calledMethods).not.toContain('spaceAgent.listTemplates');
     expect(calledMethods).not.toContain('spaceWorkflow.list');
     expect(calledMethods).not.toContain('spaceWorkflow.listBuiltInTemplates');
     expect(calledMethods).not.toContain('nodeExecution.list');
@@ -481,14 +482,29 @@ describe('SpaceStore — space selection', () => {
 
     await spaceStore.ensureConfigData();
     expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.list', { spaceId: 'space-1' });
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listBuiltInTemplates', {
-      spaceId: 'space-1',
-    });
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listTemplates');
     expect(mockHub.request).toHaveBeenCalledWith('spaceWorkflow.list', { spaceId: 'space-1' });
     expect(mockHub.request).toHaveBeenCalledWith('spaceWorkflow.listBuiltInTemplates', {
       spaceId: 'space-1',
     });
     expect(spaceStore.configDataLoaded.value).toBe(true);
+  });
+
+  it('ensureConfigData() loads the merged template library so custom templates survive reload', async () => {
+    await spaceStore.selectSpace('space-1');
+    mockHub.request.mockClear();
+    templateListResult = [
+      makeAgentTemplate({ key: 'worker.swe', labels: ['workflow-worker'] }),
+      makeAgentTemplate({ key: 'scribe', displayName: 'Scribe' }),
+    ];
+
+    await spaceStore.ensureConfigData();
+
+    const calledMethods = mockHub.request.mock.calls.map((c: unknown[]) => c[0]);
+    expect(calledMethods).not.toContain('spaceAgent.listBuiltInTemplates');
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['worker.swe', 'scribe']);
+    expect(spaceStore.agentTemplates.value[1].displayName).toBe('Scribe');
+    expect(spaceStore.agentTemplates.value[1].labels).toEqual([]);
   });
 
   it('ensureConfigData() is idempotent — second call is a no-op', async () => {
