@@ -472,6 +472,24 @@ describe('spawnWorkflowNodeAgentForExecution — admission table', () => {
     expect(h.order).toEqual([]);
   });
 
+  test('a task flipping blocked after admission fences the spawn before session creation (#3823)', async () => {
+    const h = makeSpawnHarness({ kickoff: false });
+    let taskReads = 0;
+    (h.tam.config as unknown as { taskRepo: { getTask: () => SpaceTask } }).taskRepo.getTask =
+      () => {
+        taskReads += 1;
+        return makeTask(taskReads === 1 ? 'in_progress' : 'blocked');
+      };
+
+    await expect(h.spawn()).rejects.toBeInstanceOf(TransientSpawnError);
+    await expect(h.spawn()).rejects.toThrow('Task task-1237 is blocked');
+
+    expect(h.order).toEqual([]);
+    expect(h.cancels).toEqual([]);
+    expect(h.casCalls).toEqual([]);
+    expect(h.updates).toEqual([]);
+  });
+
   test('usage_limited task is a transient spawn rejection', async () => {
     const h = makeSpawnHarness({ taskStatus: 'usage_limited' });
 

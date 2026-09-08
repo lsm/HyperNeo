@@ -11,7 +11,10 @@ import { readRestartRecoveryNote } from './restart-recovery-note.ts';
 import { decideSpawnExecutionAdmissionViaPipeline } from './spawn-admission-decision-pipeline.ts';
 import type { WorkflowNodeSlotResolution } from './spawn-slot-resolution.ts';
 import { type StagedRunOutcome, stagedRun } from './staged-run.ts';
-import { validateExecutionAgainstWorkflow } from './workflow-node-execution-validation.ts';
+import {
+  validateExecutionAgainstWorkflow,
+  validateTaskAllowsSpawn,
+} from './workflow-node-execution-validation.ts';
 
 export interface IndexedSessionInspection {
   sessionId: string | null;
@@ -269,8 +272,9 @@ export function runSpawnExecutionFlow(
         ],
         writes: ['isSpawning'],
         run: async (view) => {
+          const spawnTask = deps.getFreshTask(view.task.id) ?? view.freshTask ?? view.task;
+          validateTaskAllowsSpawn(spawnTask);
           deps.reserveExecution(view.execution.id);
-          const spawnTask = view.freshTask ?? view.task;
           if (spawnTask.workflowRunId !== view.workflowRun.id) {
             deps.releaseExecution(view.execution.id);
             throw new Error(

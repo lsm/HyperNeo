@@ -26,7 +26,6 @@ export const SPAWN_RESERVABLE_TASK_STATUSES: readonly SpaceTaskStatus[] = [
   'in_progress',
   'review',
   'approved',
-  'blocked',
 ];
 
 export class PermanentSpawnError extends Error {
