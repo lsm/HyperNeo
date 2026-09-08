@@ -1883,6 +1883,34 @@ describe('SpaceLongHorizonAgents', () => {
     expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
   });
 
+  it('does not cancel the active open when an unrelated card unmounts', async () => {
+    const second = makeLongHorizonAgent({
+      id: 'lh-2',
+      handle: 'second',
+      displayName: 'Second Agent',
+      sessionId: null,
+    });
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: null }), second];
+    let resolveEnsure: (sessionId: string) => void = () => {};
+    mockEnsureAgentSession.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveEnsure = resolve;
+        })
+    );
+
+    const { getByText, rerender } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Second Agent').closest('[role="button"]')!);
+    mockAgents.value = [second];
+    rerender(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    resolveEnsure('space:agent:space-1:lh-2');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'space:agent:space-1:lh-2');
+  });
+
   it('admits a new open after a superseded request without waiting for it to settle', async () => {
     mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
     let resolveFirst: (sessionId: string) => void = () => {};

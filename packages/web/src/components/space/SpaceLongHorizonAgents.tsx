@@ -955,11 +955,23 @@ function AgentCard({
     : (agent.sessionId ?? derivedSessionId);
   const hasSession = !!agent.sessionId || coordinator;
 
-  useEffect(() => () => invalidateOpen(), []);
+  const openSeqRef = useRef(0);
+
+  useEffect(
+    () => () => {
+      if (openSeqRef.current !== 0 && openSeqRef.current === latestAgentCardOpenSeq) {
+        latestAgentCardOpenSeq++;
+      }
+    },
+    []
+  );
 
   const openSession = async () => {
     if (!sessionId) return;
-    await runOpenAgentSession(agent, navigationSpaceId, recordOpenSeq);
+    await runOpenAgentSession(agent, navigationSpaceId, (openSeq) => {
+      openSeqRef.current = openSeq;
+      recordOpenSeq(openSeq);
+    });
   };
 
   return (

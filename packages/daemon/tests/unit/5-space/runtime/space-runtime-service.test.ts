@@ -4355,6 +4355,97 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
     expect(repo.getById('lh-ensure-4')?.sessionId).toBeNull();
   });
 
+  test('archives the provisional session when late admission aborts', async () => {
+    const db = makeTestDb();
+    seedEnsureSpace(db);
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    repo.create({ id: 'lh-ensure-9', spaceId: ENSURE_SPACE_ID, handle: 'researcher' });
+    const agentSessionId = longTermAgentSessionId(ENSURE_SPACE_ID, 'lh-ensure-9');
+    const createdSession = {
+      mergeRuntimeMcpServers: mock(() => {}),
+      updateConfig: mock(async () => {}),
+      resetQuery: mock(async () => ({ success: true })),
+      restart: mock(async () => {}),
+      getSessionData: mock(() => ({
+        id: agentSessionId,
+        status: 'active',
+        metadata: {},
+        config: {},
+      })),
+    } as unknown as AgentSession;
+    let live: AgentSession | null = null;
+    let resolveCreate: () => void = () => {};
+    const updateSession = mock(async () => {});
+    const sessionManager = {
+      getSessionAsync: mock(async () => live),
+      createSession: mock(async () => {
+        await new Promise<void>((resolve) => {
+          resolveCreate = resolve;
+        });
+        live = createdSession;
+        return agentSessionId;
+      }),
+      updateSession,
+    } as unknown as SessionManager;
+    const svc = new SpaceRuntimeService(
+      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
+    );
+
+    const ensured = svc.ensureAgentSession(ENSURE_SPACE_ID, 'lh-ensure-9');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    repo.delete('lh-ensure-9');
+    resolveCreate();
+    const result = await ensured;
+
+    expect(result).toBeNull();
+    expect(updateSession).toHaveBeenCalledWith(agentSessionId, { status: 'archived' });
+  });
+
+  test('refreshLongHorizonAgentSession applies saved edits to the stamped session', async () => {
+    const db = makeTestDb();
+    seedEnsureSpace(db);
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    const stampedSessionId = longTermAgentSessionId(ENSURE_SPACE_ID, 'lh-rf-1');
+    repo.create({
+      id: 'lh-rf-1',
+      spaceId: ENSURE_SPACE_ID,
+      handle: 'researcher',
+      instructions: 'Old instructions',
+      sessionId: stampedSessionId,
+    });
+    const stampedSession = {
+      mergeRuntimeMcpServers: mock(() => {}),
+      updateConfig: mock(async () => {}),
+      resetQuery: mock(async () => ({ success: true })),
+      restart: mock(async () => {}),
+      getSessionData: mock(() => ({
+        id: stampedSessionId,
+        status: 'active',
+        metadata: {},
+        config: {},
+      })),
+    } as unknown as AgentSession;
+    const sessionManager = {
+      getSessionAsync: mock(async (id: string) =>
+        id === stampedSessionId ? stampedSession : null
+      ),
+    } as unknown as SessionManager;
+    const svc = new SpaceRuntimeService(
+      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
+    );
+
+    repo.update('lh-rf-1', { instructions: 'Newly saved instructions' });
+    await svc.refreshLongHorizonAgentSession(ENSURE_SPACE_ID, 'lh-rf-1');
+
+    expect(stampedSession.updateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: expect.objectContaining({
+          append: expect.stringContaining('Newly saved instructions'),
+        }),
+      })
+    );
+  });
+
   test('aborts unstamped when the space pauses during provisioning', async () => {
     const db = makeTestDb();
     seedEnsureSpace(db);

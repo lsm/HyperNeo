@@ -62,6 +62,7 @@ type UnifiedSpaceAgentRuntimeService = Pick<
   | 'removeLongHorizonSubscription'
   | 'clearLongTermAgentSessionProvider'
   | 'ensureAgentSession'
+  | 'refreshLongHorizonAgentSession'
 >;
 
 interface UnifiedSpaceAgentMethodDeps {
@@ -905,6 +906,9 @@ export function registerUnifiedSpaceAgentMethods(
       unifiedAfter: null,
       agent: null,
     });
+    if (ctx.agent?.sessionId) {
+      await ctx.runtimeService?.refreshLongHorizonAgentSession(ctx.agent.spaceId, ctx.agent.id);
+    }
     return { agent: ctx.agent };
   });
 

@@ -707,6 +707,7 @@ export class SpaceRuntimeService {
     if (['ended', 'archived'].includes(session?.getSessionData().status ?? '')) return null;
     const currentConfig = session?.getSessionData().config;
     const config = await buildAgentSessionConfig({ agent }, space, currentConfig);
+    let createdHere = false;
     if (!session) {
       try {
         await sessionManager.createSession({
@@ -717,6 +718,7 @@ export class SpaceRuntimeService {
           worktreeMode: 'direct',
           config,
         });
+        createdHere = true;
       } catch (err) {
         session = await sessionManager.getSessionAsync(sessionId);
         if (!session) throw err;
@@ -727,6 +729,12 @@ export class SpaceRuntimeService {
     } else {
       await this.refreshLongHorizonAgentSessionConfig(session, config);
     }
+    const abortProvisional = async (): Promise<null> => {
+      if (createdHere) {
+        await sessionManager.updateSession(sessionId, { status: 'archived' }).catch(() => {});
+      }
+      return null;
+    };
     let applied = agent;
     let appliedSpace = space;
     let converged = false;
@@ -738,10 +746,10 @@ export class SpaceRuntimeService {
         latestSpace.stopped ||
         latestSpace.status === 'archived'
       ) {
-        return null;
+        return abortProvisional();
       }
       const latest = repo.getById(agentId);
-      if (!latest || latest.status !== 'active') return null;
+      if (!latest || latest.status !== 'active') return abortProvisional();
       if (
         agentSessionConfigSignature(latest) === agentSessionConfigSignature(applied) &&
         spaceInheritanceSignature(latestSpace) === spaceInheritanceSignature(appliedSpace)
@@ -760,8 +768,10 @@ export class SpaceRuntimeService {
       applied = latest;
       appliedSpace = latestSpace;
     }
-    if (!converged) return null;
-    if (['ended', 'archived'].includes(session.getSessionData().status)) return null;
+    if (!converged) return abortProvisional();
+    if (['ended', 'archived'].includes(session.getSessionData().status)) {
+      return abortProvisional();
+    }
     const currentMetadata = session.getSessionData().metadata;
     this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
       metadata: {
@@ -824,6 +834,20 @@ export class SpaceRuntimeService {
       return Promise.resolve({ kind: 'unresolved', reason: 'session_resolution_unavailable' });
     }
     return ensureSession(target, deps);
+  }
+
+  async refreshLongHorizonAgentSession(spaceId: string, agentId: string): Promise<void> {
+    const sessionManager = this.config.sessionManager;
+    const repo = this.config.longHorizonAgentRepo;
+    if (!sessionManager || !repo) return;
+    const agent = repo.getById(agentId);
+    if (!agent || agent.spaceId !== spaceId || !agent.sessionId) return;
+    const session = await sessionManager.getSessionAsync(agent.sessionId);
+    if (!session || ['ended', 'archived'].includes(session.getSessionData().status)) return;
+    const space = await this.config.spaceManager.getSpace(spaceId);
+    if (!space) return;
+    const config = await buildAgentSessionConfig({ agent }, space, session.getSessionData().config);
+    await this.refreshLongHorizonAgentSessionConfig(session, config);
   }
 
   async ensureAgentSession(spaceId: string, agentId: string): Promise<EnsuredSession | null> {

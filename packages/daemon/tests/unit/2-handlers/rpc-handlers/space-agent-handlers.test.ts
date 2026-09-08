@@ -167,6 +167,7 @@ function createRuntimeServiceMock(): {
   removeLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
   clearLongTermAgentSessionProvider: ReturnType<typeof mock>;
   ensureAgentSession: ReturnType<typeof mock>;
+  refreshLongHorizonAgentSession: ReturnType<typeof mock>;
 } {
   return {
     refreshLongHorizonAgentSubscriptions: mock(() => ({ success: true })),
@@ -175,6 +176,7 @@ function createRuntimeServiceMock(): {
     removeLongHorizonAgentSubscriptions: mock(() => {}),
     clearLongTermAgentSessionProvider: mock(async () => {}),
     ensureAgentSession: mock(async () => ({ getSessionData: () => ({ status: 'active' }) })),
+    refreshLongHorizonAgentSession: mock(async () => {}),
   };
 }
 
@@ -1605,6 +1607,36 @@ describe('Space Agent RPC Handlers', () => {
           tools: ['NotARealTool'],
         })
       ).rejects.toThrow('Unknown tool: "NotARealTool"');
+    });
+
+    it('refreshes the stamped session after updating an agent', async () => {
+      const runtimeService = createRuntimeServiceMock();
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        workflowRepo,
+        runtimeService
+      );
+      longHorizonRepo.create({
+        id: 'lh-stamped',
+        spaceId: 'space-1',
+        handle: 'stamped',
+        sessionId: 'space:agent:space-1:lh-stamped',
+      });
+
+      await call(freshHub.handlers, 'spaceAgent.update', {
+        id: 'lh-stamped',
+        instructions: 'Newly saved instructions',
+      });
+
+      expect(runtimeService.refreshLongHorizonAgentSession).toHaveBeenCalledWith(
+        'space-1',
+        'lh-stamped'
+      );
     });
 
     it('routes mirror-row updates through the unified table', async () => {
