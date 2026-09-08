@@ -21,6 +21,7 @@ function makeDb(): BunDatabase {
   insertSpace.run('space-7', '/tmp/space-7', 'Space 7', 'space-7');
   insertSpace.run('space-8', '/tmp/space-8', 'Space 8', 'space-8');
   insertSpace.run('space-9', '/tmp/space-9', 'Space 9', 'space-9');
+  insertSpace.run('space-11', '/tmp/space-11', 'Space 11', 'space-11');
   const insertAgent = db.prepare(
     `INSERT INTO space_long_horizon_agents (
 			id, space_id, handle, display_name, template_key, status, session_id,
@@ -164,6 +165,24 @@ function makeDb(): BunDatabase {
     'active',
     'space:chat:space-9'
   );
+  insertAgent.run(
+    'agent-archived-coordinator-11',
+    'space-11',
+    'coordinator',
+    'Old Duplicate',
+    null,
+    'archived',
+    null
+  );
+  insertAgent.run(
+    'agent-coord-11',
+    'space-11',
+    'coordinator',
+    'Coordinator',
+    'coordinator.default',
+    'active',
+    'space:chat:space-11'
+  );
   return db;
 }
 
@@ -256,6 +275,7 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
     const holder = handleById(db, 'agent-holder-8');
     expect(holder.startsWith('space-manager-migrated-')).toBe(true);
     expect(handleById(db, 'space-lh-agent:coordinator:space-8')).toBe('renamed-prelock');
+    expect(rowById(db, 'space-lh-agent:coordinator:space-8').display_name).toBe('Space Manager');
 
     const repo = new SpaceLongHorizonAgentRepository(db);
     const healed = repo.ensureCoordinator('space-8');
@@ -276,6 +296,22 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
       db
         .prepare(`UPDATE space_long_horizon_agents SET status = 'active' WHERE id = ?`)
         .run('agent-archived-6')
+    ).not.toThrow();
+    db.close();
+  });
+
+  test('relocates archived duplicate coordinator rows instead of renaming them', () => {
+    const db = makeDb();
+    runMigration238(db);
+
+    expect(handleById(db, 'agent-coord-11')).toBe('space-manager');
+    const relocated = handleById(db, 'agent-archived-coordinator-11');
+    expect(relocated.startsWith('space-manager-migrated-')).toBe(true);
+    expect(relocated).not.toBe('space-manager');
+    expect(() =>
+      db
+        .prepare(`UPDATE space_long_horizon_agents SET status = 'active' WHERE id = ?`)
+        .run('agent-archived-coordinator-11')
     ).not.toThrow();
     db.close();
   });

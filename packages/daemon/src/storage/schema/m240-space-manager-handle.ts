@@ -23,13 +23,19 @@ export function runMigration240(db: BunDatabase): void {
   const holders = db
     .prepare(
       `SELECT id, space_id FROM space_long_horizon_agents
-        WHERE handle = ?
+        WHERE (
+          handle = ?
           AND id != 'space-lh-agent:coordinator:' || space_id
           AND space_id IN (
             SELECT space_id FROM space_long_horizon_agents
              WHERE handle = 'coordinator'
                 OR id = 'space-lh-agent:coordinator:' || space_id
-          )`
+          )
+        ) OR (
+          handle = 'coordinator'
+          AND status = 'archived'
+          AND id != 'space-lh-agent:coordinator:' || space_id
+        )`
     )
     .all(SPACE_MANAGER_HANDLE) as AgentIdRow[];
   db.exec('BEGIN');
@@ -65,6 +71,20 @@ export function runMigration240(db: BunDatabase): void {
               updated_at = ?
         WHERE handle = 'coordinator'`
     ).run(SPACE_MANAGER_HANDLE, now);
+    db.prepare(
+      `UPDATE space_long_horizon_agents
+          SET display_name = CASE
+                WHEN NOT EXISTS (
+                  SELECT 1 FROM space_long_horizon_agents other
+                   WHERE other.space_id = space_long_horizon_agents.space_id
+                     AND other.id != space_long_horizon_agents.id
+                     AND lower(trim(other.display_name)) = 'space manager'
+                ) THEN 'Space Manager' ELSE display_name END,
+              updated_at = ?
+        WHERE id = 'space-lh-agent:coordinator:' || space_id
+          AND handle != 'coordinator'
+          AND display_name = 'Coordinator'`
+    ).run(now);
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
