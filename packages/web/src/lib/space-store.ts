@@ -259,6 +259,8 @@ class SpaceStore {
 
   readonly agentTemplates = signal<SpaceLongHorizonAgentTemplate[]>([]);
 
+  readonly userTemplateKeys = signal<ReadonlySet<string>>(new Set());
+
   readonly workflows = signal<SpaceWorkflowSummary[]>([]);
 
   readonly workflowDetails = signal<SpaceWorkflow[]>([]);
@@ -980,10 +982,10 @@ class SpaceStore {
         'spaceAgent.listTemplates'
       );
       if (this.spaceId.value !== spaceId) return;
-      this.agentTemplates.value = (result?.templates ?? []).map(toPaneAgentTemplate);
+      this.applyTemplateLibrary(result?.templates ?? []);
     } catch (err) {
       logger.error('Failed to fetch agent templates:', err);
-      if (this.spaceId.value === spaceId) this.agentTemplates.value = [];
+      if (this.spaceId.value === spaceId) this.applyTemplateLibrary([]);
     }
   }
 
@@ -2427,7 +2429,14 @@ class SpaceStore {
     const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
       'spaceAgent.listTemplates'
     );
-    this.agentTemplates.value = (result?.templates ?? []).map(toPaneAgentTemplate);
+    this.applyTemplateLibrary(result?.templates ?? []);
+  }
+
+  private applyTemplateLibrary(templates: SpaceAgentTemplate[]): void {
+    this.agentTemplates.value = templates.map(toPaneAgentTemplate);
+    this.userTemplateKeys.value = new Set(
+      templates.filter((template) => template.createdAt > 0).map((template) => template.key)
+    );
   }
 
   async createTemplate(params: CreateSpaceAgentTemplateParams): Promise<SpaceAgentTemplate> {
@@ -2468,6 +2477,7 @@ class SpaceStore {
 
   private upsertAgentTemplate(template: SpaceAgentTemplate): void {
     const mapped = toPaneAgentTemplate(template);
+    this.userTemplateKeys.value = new Set([...this.userTemplateKeys.value, template.key]);
     const current = this.agentTemplates.value;
     const index = current.findIndex((existing) => existing.key === mapped.key);
     if (index === -1) {

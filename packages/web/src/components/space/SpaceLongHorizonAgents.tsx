@@ -219,6 +219,7 @@ interface TemplateSaveForm {
 }
 
 interface TemplateSaveCtx {
+  template: SpaceLongHorizonAgentTemplate | null;
   form: TemplateSaveForm;
 }
 
@@ -230,27 +231,32 @@ function templateSaveValidateStage(ctx: TemplateSaveCtx): TemplateSaveCtx {
 }
 
 async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateSaveCtx> {
-  const effectiveModel = ctx.form.modelMode === 'single' ? ctx.form.model : '';
-  const effectiveProvider = effectiveModel ? ctx.form.provider : null;
-  const cleanedModelPool = ctx.form.modelPool
+  const { form } = ctx;
+  const effectiveModel = form.modelMode === 'single' ? form.model : '';
+  const effectiveProvider = effectiveModel ? form.provider : null;
+  const cleanedModelPool = form.modelPool
     .map((entry) => ({ ...entry, model: entry.model.trim() }))
     .filter((entry) => entry.model.length > 0);
   const activeModelPool =
-    ctx.form.modelMode === 'pool' && cleanedModelPool.length > 0 ? cleanedModelPool : null;
-  await spaceStore.createTemplate({
-    key: ctx.form.key.trim(),
-    handle: ctx.form.handle.trim(),
-    displayName: ctx.form.displayName.trim(),
-    description: ctx.form.description.trim(),
-    instructions: ctx.form.instructions.trim(),
-    suggestedAutonomyLevel: ctx.form.suggestedAutonomyLevel as SpaceAgentAutonomyLevel,
-    tools: ctx.form.tools,
+    form.modelMode === 'pool' && cleanedModelPool.length > 0 ? cleanedModelPool : null;
+  const fields = {
+    handle: form.handle.trim(),
+    displayName: form.displayName.trim(),
+    description: form.description.trim(),
+    instructions: form.instructions.trim(),
+    suggestedAutonomyLevel: form.suggestedAutonomyLevel as SpaceAgentAutonomyLevel,
+    tools: form.tools,
     model: effectiveModel || null,
     provider: effectiveProvider,
     modelPool: activeModelPool,
-    thinkingLevel: ctx.form.thinkingLevel,
-    settingSources: ctx.form.settingSources,
-  });
+    thinkingLevel: form.thinkingLevel,
+    settingSources: form.settingSources,
+  };
+  if (ctx.template) {
+    await spaceStore.updateTemplate(ctx.template.key, fields);
+    return ctx;
+  }
+  await spaceStore.createTemplate({ key: form.key.trim(), ...fields });
   return ctx;
 }
 
@@ -587,33 +593,48 @@ function AgentEditor({
   );
 }
 
-function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
-  const [displayName, setDisplayName] = useState('');
-  const [key, setKey] = useState('');
-  const [handle, setHandle] = useState('');
-  const [description, setDescription] = useState('');
-  const [instructions, setInstructions] = useState('');
-  const [autonomyLevel, setAutonomyLevel] = useState(2);
+function TemplateEditor({
+  template,
+  onSaved,
+  onCancel,
+}: {
+  template: SpaceLongHorizonAgentTemplate | null;
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const isEdit = !!template;
+  const templateTools = template ? toolPermissionsToolsList(template) : [];
+  const [displayName, setDisplayName] = useState(template?.displayName ?? '');
+  const [key, setKey] = useState(template?.key ?? '');
+  const [handle, setHandle] = useState(template?.handle ?? '');
+  const [description, setDescription] = useState(template?.description ?? '');
+  const [instructions, setInstructions] = useState(template?.instructions ?? '');
+  const [autonomyLevel, setAutonomyLevel] = useState<number>(template?.suggestedAutonomyLevel ?? 2);
   const [toolsSelection, setToolsSelection] = useState<ToolsSelection>({
-    tools: [],
-    toolsOverridden: false,
+    tools: templateTools,
+    toolsOverridden: templateTools.length > 0,
   });
   const [modelFields, setModelFields] = useState<TemplateModelFieldsValue>({
-    model: null,
-    provider: null,
-    thinkingLevel: null,
+    model: template?.model ?? null,
+    provider: template?.provider ?? null,
+    thinkingLevel: template?.thinkingLevel ?? null,
   });
-  const [settingSources, setSettingSources] = useState<SettingSource[] | null>(null);
-  const [modelPool, setModelPool] = useState<AgentModelPoolEntry[]>([]);
-  const [modelMode, setModelMode] = useState<ModelPoolEditorMode>('single');
+  const [settingSources, setSettingSources] = useState<SettingSource[] | null>(
+    template?.settingSources ?? null
+  );
+  const [modelPool, setModelPool] = useState<AgentModelPoolEntry[]>(template?.modelPool ?? []);
+  const [modelMode, setModelMode] = useState<ModelPoolEditorMode>(
+    (template?.modelPool ?? []).length > 0 ? 'pool' : 'single'
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleCreate = async () => {
+  const handleSave = async () => {
     setSaving(true);
     setError(null);
     try {
       await runTemplateSave({
+        template,
         form: {
           displayName,
           key,
@@ -630,9 +651,9 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
           settingSources,
         },
       });
-      onCreated();
+      onSaved();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create template');
+      setError(err instanceof Error ? err.message : 'Failed to save template');
     } finally {
       setSaving(false);
     }
@@ -646,9 +667,13 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
       <div class="relative isolate max-h-[calc(100dvh-1rem)] w-full max-w-2xl overflow-hidden rounded-t-3xl border border-line bg-surface/95 shadow-[inset_0_1px_0_rgba(255,255,255,0.1),0_28px_90px_rgba(0,0,0,0.55)] before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:bg-[radial-gradient(circle_at_4%_0%,rgba(145,77,108,0.22),transparent_34%),radial-gradient(circle_at_100%_6%,rgba(42,94,125,0.18),transparent_38%)] sm:rounded-3xl">
         <div class="flex items-start justify-between border-b border-line px-5 py-5 sm:px-7">
           <div>
-            <p class="text-xl font-semibold tracking-tight text-fg">New template</p>
+            <p class="text-xl font-semibold tracking-tight text-fg">
+              {isEdit ? 'Edit template' : 'New template'}
+            </p>
             <p class="mt-1 text-sm text-fg-muted">
-              Create a reusable role preset for agents in this space.
+              {isEdit
+                ? 'Update this reusable role preset for agents in this space.'
+                : 'Create a reusable role preset for agents in this space.'}
             </p>
           </div>
           <button
@@ -682,8 +707,9 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
               <label class="mb-2 block text-sm font-medium text-fg-soft">Template key</label>
               <input
                 value={key}
+                disabled={isEdit}
                 onInput={(e) => setKey((e.target as HTMLInputElement).value)}
-                class={fieldClass}
+                class={`${fieldClass} disabled:opacity-50`}
                 placeholder="e.g. release-readiness.custom"
               />
             </div>
@@ -783,11 +809,17 @@ function TemplateEditor({ onCreated, onCancel }: { onCreated: () => void; onCanc
           </Button>
           <Button
             size="md"
-            onClick={handleCreate}
+            onClick={handleSave}
             disabled={saving}
             class="rounded-xl bg-warning px-6 font-semibold text-on-warning"
           >
-            {saving ? 'Creating…' : 'Create template'}
+            {saving
+              ? isEdit
+                ? 'Saving…'
+                : 'Creating…'
+              : isEdit
+                ? 'Save changes'
+                : 'Create template'}
           </Button>
         </div>
       </div>
@@ -956,42 +988,106 @@ function groupTemplatesByLabel(templates: SpaceLongHorizonAgentTemplate[]): Agen
 function TemplateCard({
   template,
   addedCount,
+  isUserTemplate,
   onClick,
+  onEdit,
+  onDelete,
 }: {
   template: SpaceLongHorizonAgentTemplate;
   addedCount: number;
+  isUserTemplate: boolean;
   onClick: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
 }) {
+  const addedCountBadge =
+    addedCount > 0 ? (
+      <span class="flex-shrink-0 rounded bg-fill-soft px-1.5 py-0.5 text-xs text-fg-muted">
+        ×{addedCount}
+      </span>
+    ) : null;
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      class="group min-h-28 rounded-xl border border-line bg-surface-overlay/85 px-4 py-4 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all hover:-translate-y-0.5 hover:border-blue-400/30 hover:bg-surface-raised/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') onClick();
+      }}
+      class="group min-h-28 cursor-pointer rounded-xl border border-line bg-surface-overlay/85 px-4 py-4 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all hover:-translate-y-0.5 hover:border-blue-400/30 hover:bg-surface-raised/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
     >
       <div class="flex items-center justify-between gap-2">
-        <span class="text-sm font-semibold tracking-tight text-fg">{template.displayName}</span>
-        {addedCount > 0 ? (
-          <span class="flex-shrink-0 rounded bg-fill-soft px-1.5 py-0.5 text-xs text-fg-muted">
-            ×{addedCount}
-          </span>
+        <div class="flex min-w-0 flex-wrap items-center gap-2">
+          <span class="text-sm font-semibold tracking-tight text-fg">{template.displayName}</span>
+          {!isUserTemplate && (
+            <span class="flex-shrink-0 rounded-full border border-line bg-fill-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-fg-muted">
+              Built-in
+            </span>
+          )}
+        </div>
+        {isUserTemplate ? (
+          <div class="flex flex-shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
+            {addedCountBadge}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit();
+              }}
+              class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-fg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+              title="Edit template"
+              aria-label={`Edit template ${template.displayName}`}
+            >
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={2}
+                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
+              title="Delete template"
+              aria-label={`Delete template ${template.displayName}`}
+            >
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width={2}
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                />
+              </svg>
+            </button>
+          </div>
         ) : (
-          <svg
-            class="w-3.5 h-3.5 flex-shrink-0 text-fg-muted"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width={2}
-              d="M12 4v16m8-8H4"
-            />
-          </svg>
+          (addedCountBadge ?? (
+            <svg
+              class="w-3.5 h-3.5 flex-shrink-0 text-fg-muted"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width={2}
+                d="M12 4v16m8-8H4"
+              />
+            </svg>
+          ))
         )}
       </div>
       <p class="mt-1.5 line-clamp-2 text-sm leading-relaxed text-fg-soft">{template.description}</p>
-    </button>
+    </div>
   );
 }
 
@@ -1007,6 +1103,7 @@ export function SpaceLongHorizonAgents({
   const routeSpaceId = navigationSpaceId ?? spaceId;
   const agents = spaceStore.agents.value;
   const templates = spaceStore.agentTemplates.value;
+  const userTemplateKeys = spaceStore.userTemplateKeys.value;
   const loading = !spaceStore.configDataLoaded.value;
 
   useEffect(() => {
@@ -1020,6 +1117,14 @@ export function SpaceLongHorizonAgents({
   const [editingAgent, setEditingAgent] = useState<SpaceLongHorizonAgent | null>(null);
   const [showEditor, setShowEditor] = useState(false);
   const [showTemplateEditor, setShowTemplateEditor] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<SpaceLongHorizonAgentTemplate | null>(
+    null
+  );
+  const [deletingTemplate, setDeletingTemplate] = useState<SpaceLongHorizonAgentTemplate | null>(
+    null
+  );
+  const [deletingTemplateBusy, setDeletingTemplateBusy] = useState(false);
+  const [deleteTemplateError, setDeleteTemplateError] = useState<string | null>(null);
   const [deletingAgent, setDeletingAgent] = useState<SpaceLongHorizonAgent | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -1065,6 +1170,21 @@ export function SpaceLongHorizonAgents({
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete agent');
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleTemplateDeleteConfirm = async () => {
+    if (!deletingTemplate) return;
+    setDeletingTemplateBusy(true);
+    setDeleteTemplateError(null);
+    try {
+      await spaceStore.deleteTemplate(deletingTemplate.key);
+      toast.success(`"${deletingTemplate.displayName}" deleted`);
+      setDeletingTemplate(null);
+    } catch (err) {
+      setDeleteTemplateError(err instanceof Error ? err.message : 'Failed to delete template');
+    } finally {
+      setDeletingTemplateBusy(false);
     }
   };
 
@@ -1232,7 +1352,10 @@ export function SpaceLongHorizonAgents({
             </div>
             <button
               type="button"
-              onClick={() => setShowTemplateEditor(true)}
+              onClick={() => {
+                setEditingTemplate(null);
+                setShowTemplateEditor(true);
+              }}
               class="text-xs font-medium text-accent-soft/85 underline-offset-4 transition-colors hover:text-accent-soft hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
             >
               New Template
@@ -1250,10 +1373,19 @@ export function SpaceLongHorizonAgents({
                       key={t.key}
                       template={t}
                       addedCount={templateInstanceCounts.get(t.key) ?? 0}
+                      isUserTemplate={userTemplateKeys.has(t.key)}
                       onClick={() => {
                         setSelectedTemplate(t);
                         setEditingAgent(null);
                         setShowEditor(true);
+                      }}
+                      onEdit={() => {
+                        setEditingTemplate(t);
+                        setShowTemplateEditor(true);
+                      }}
+                      onDelete={() => {
+                        setDeletingTemplate(t);
+                        setDeleteTemplateError(null);
                       }}
                     />
                   ))}
@@ -1317,8 +1449,33 @@ export function SpaceLongHorizonAgents({
 
       {showTemplateEditor && (
         <TemplateEditor
-          onCreated={() => setShowTemplateEditor(false)}
-          onCancel={() => setShowTemplateEditor(false)}
+          template={editingTemplate}
+          onSaved={() => {
+            setShowTemplateEditor(false);
+            setEditingTemplate(null);
+          }}
+          onCancel={() => {
+            setShowTemplateEditor(false);
+            setEditingTemplate(null);
+          }}
+        />
+      )}
+
+      {deletingTemplate && (
+        <ConfirmModal
+          isOpen
+          onClose={() => {
+            setDeletingTemplate(null);
+            setDeleteTemplateError(null);
+          }}
+          onConfirm={handleTemplateDeleteConfirm}
+          title="Delete Template"
+          message={`Delete template "${deletingTemplate.displayName}"? This cannot be undone.`}
+          confirmText="Delete"
+          confirmButtonVariant="danger"
+          isLoading={deletingTemplateBusy}
+          error={deleteTemplateError}
+          confirmTestId="confirm-delete-template"
         />
       )}
 

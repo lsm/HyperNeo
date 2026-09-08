@@ -3257,6 +3257,30 @@ describe('SpaceStore — template CRUD methods', () => {
     expect(spaceStore.agentTemplates.value[0].handle).toBe('scribe-agent');
   });
 
+  it('fetchTemplates() marks only persisted templates as user templates', async () => {
+    templateListResult = [
+      makeAgentTemplate({ key: 'worker.swe', createdAt: 0, updatedAt: 0 }),
+      makeAgentTemplate({ key: 'scribe', createdAt: 2 }),
+    ];
+
+    await spaceStore.fetchTemplates();
+
+    expect(spaceStore.userTemplateKeys.value.has('worker.swe')).toBe(false);
+    expect(spaceStore.userTemplateKeys.value.has('scribe')).toBe(true);
+  });
+
+  it('createTemplate() and deleteTemplate() keep userTemplateKeys in sync', async () => {
+    templateListResult = [makeAgentTemplate({ key: 'worker.swe', createdAt: 0, updatedAt: 0 })];
+    await spaceStore.fetchTemplates();
+
+    await spaceStore.createTemplate({ key: 'scribe', handle: 'scribe-agent' });
+    expect(spaceStore.userTemplateKeys.value.has('scribe')).toBe(true);
+
+    templateListResult = [makeAgentTemplate({ key: 'worker.swe', createdAt: 0, updatedAt: 0 })];
+    await spaceStore.deleteTemplate('scribe');
+    expect(spaceStore.userTemplateKeys.value.has('scribe')).toBe(false);
+  });
+
   it('updateTemplate() replaces the existing entry in place', async () => {
     templateListResult = [
       makeAgentTemplate({ key: 'first', createdAt: 0 }),
