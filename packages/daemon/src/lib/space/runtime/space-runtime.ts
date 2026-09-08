@@ -676,6 +676,8 @@ export class SpaceRuntime {
 
   private postApprovalReconcileScanHealthy = false;
 
+  private postApprovalDispatchClaims = new Set<string>();
+
   private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
 
   private nonTerminalIdleStates = new Map<string, NonTerminalIdleState>();
@@ -2715,6 +2717,10 @@ export class SpaceRuntime {
     manager.attachToolContinuationRepo?.(this.toolContinuationRepo);
   }
 
+  getCurrentRuntimeGeneration(): number {
+    return this.runtimeGeneration;
+  }
+
   private postApprovalRouter: PostApprovalRouter | null = null;
   private readonly postApprovalRetryQueue = new TaskScopedRetrySerializer();
 
@@ -2732,6 +2738,7 @@ export class SpaceRuntime {
         workflowRunRepo: this.config.workflowRunRepo,
         spaceManager: this.config.spaceManager,
         isSessionAlive: (sessionId) => manager.isSessionAlive(sessionId),
+        isUnrecordedApprovalStale: (task) => this.isUnrecordedApprovalDispatchStale(task),
         dispatch: (id, approvalSource, dispatchOptions) =>
           this.dispatchPostApproval(
             id,
@@ -2792,6 +2799,30 @@ export class SpaceRuntime {
       expectedApprovedAt?: number | null;
       requireSucceededRun?: boolean;
     } = {}
+  ): Promise<PostApprovalRouteResult> {
+    if (this.isStopped) {
+      const reason = `SpaceRuntime is stopped; refusing post-approval dispatch for task=${taskId}`;
+      log.warn(`dispatchPostApproval: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
+    this.postApprovalDispatchClaims.add(taskId);
+    try {
+      return await this.dispatchPostApprovalClaimed(taskId, approvalSource, contextExtras, options);
+    } finally {
+      this.postApprovalDispatchClaims.delete(taskId);
+    }
+  }
+
+  private async dispatchPostApprovalClaimed(
+    taskId: string,
+    approvalSource: SpaceApprovalSource,
+    contextExtras: Omit<PostApprovalRouteContext, 'approvalSource'>,
+    options: {
+      requireAlreadyApproved?: boolean;
+      expectedWorkflowRunId?: string | null;
+      expectedApprovedAt?: number | null;
+      requireSucceededRun?: boolean;
+    }
   ): Promise<PostApprovalRouteResult> {
     const router = this.getPostApprovalRouter();
     if (!router) {
@@ -2919,11 +2950,13 @@ export class SpaceRuntime {
       ...(approvalAuthorityName ? { approval_authority: approvalAuthorityName } : {}),
     };
     let routeResult: PostApprovalRouteResult;
+    const dispatchRuntimeGeneration = this.runtimeGeneration;
     try {
       routeResult = await router.route(approvedTask, workflow, routeContext, {
         requireSucceededRun: options.requireSucceededRun,
         expectedApprovedAt: options.expectedApprovedAt,
         expectedWorkflowRunId: options.expectedWorkflowRunId,
+        expectedRuntimeGeneration: dispatchRuntimeGeneration,
       });
     } finally {
       const latest = this.config.taskRepo.getTask(taskId);
@@ -3668,6 +3701,7 @@ export class SpaceRuntime {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
     }
+    this.postApprovalDispatchClaims.clear();
     this.settleCurrentReconciliation(false);
     this.retainedEventRedispatchPending = false;
     this.unsubscribeExternalEventPublished?.();
@@ -7847,6 +7881,15 @@ export class SpaceRuntime {
     }
   }
 
+  private isUnrecordedApprovalDispatchStale(task: SpaceTask): boolean {
+    if (task.postApprovalSessionId !== null || task.postApprovalBlockedReason) return false;
+    if (this.postApprovalDispatchClaims.has(task.id)) return false;
+    return (
+      task.approvedAt !== null &&
+      Date.now() - task.approvedAt > POST_APPROVAL_UNRECORDED_DISPATCH_GRACE_MS
+    );
+  }
+
   private async reconcileStalledPostApprovalTasks(): Promise<void> {
     const manager = this.config.taskAgentManager;
     if (!manager) return;
@@ -7862,11 +7905,7 @@ export class SpaceRuntime {
           approvedTaskIds.add(task.id);
           const dispatchDead =
             !!task.postApprovalSessionId && !manager.isSessionAlive(task.postApprovalSessionId);
-          const unrecordedStale =
-            !task.postApprovalSessionId &&
-            !task.postApprovalBlockedReason &&
-            task.approvedAt !== null &&
-            now - task.approvedAt > POST_APPROVAL_UNRECORDED_DISPATCH_GRACE_MS;
+          const unrecordedStale = this.isUnrecordedApprovalDispatchStale(task);
           if (!dispatchDead && !task.postApprovalBlockedReason && !unrecordedStale) continue;
           const nextAttempt = this.postApprovalReconcileNextAttempt.get(task.id);
           if (nextAttempt !== undefined && nextAttempt > now) continue;
@@ -7874,21 +7913,8 @@ export class SpaceRuntime {
             task.id,
             now + POST_APPROVAL_RECONCILE_RETRY_MS
           );
-          const dispatch = unrecordedStale
-            ? this.dispatchPostApproval(
-                task.id,
-                task.approvalSource ?? 'agent',
-                {},
-                {
-                  requireAlreadyApproved: true,
-                  expectedWorkflowRunId: task.workflowRunId ?? null,
-                  expectedApprovedAt: task.approvedAt ?? null,
-                  requireSucceededRun: true,
-                }
-              )
-            : this.retryPostApprovalDispatch(task.id);
           retries.push(
-            dispatch.then(
+            this.retryPostApprovalDispatch(task.id).then(
               () => undefined,
               (err: unknown) => {
                 log.warn(

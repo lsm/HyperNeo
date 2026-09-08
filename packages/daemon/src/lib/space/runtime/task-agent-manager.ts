@@ -5348,12 +5348,14 @@ export class TaskAgentManager {
     requireSucceededRun?: boolean;
     expectedApprovedAt?: number | null;
     expectedWorkflowRunId?: string | null;
+    expectedRuntimeGeneration?: number;
   }): Promise<{ sessionId: string }> {
     const { task, workflow, targetAgent, kickoffMessage } = args;
     const admission = {
       requireSucceededRun: args.requireSucceededRun,
       expectedApprovedAt: args.expectedApprovedAt,
       expectedWorkflowRunId: args.expectedWorkflowRunId,
+      expectedRuntimeGeneration: args.expectedRuntimeGeneration,
     };
     const taskId = task.id;
     const spaceId = task.spaceId;
@@ -5611,8 +5613,19 @@ export class TaskAgentManager {
       requireSucceededRun?: boolean;
       expectedApprovedAt?: number | null;
       expectedWorkflowRunId?: string | null;
+      expectedRuntimeGeneration?: number;
     } = {}
   ): Promise<void> {
+    if (
+      options.expectedRuntimeGeneration !== undefined &&
+      this.config.spaceRuntimeService.getCurrentRuntimeGeneration() !==
+        options.expectedRuntimeGeneration
+    ) {
+      throw new SpawnSupersededError(
+        `post-approval-retry-${taskId}`,
+        'runtime-generation-changed-before-kickoff'
+      );
+    }
     const freshSpace = await this.config.spaceManager.getSpace(spaceId);
     if (
       !freshSpace ||

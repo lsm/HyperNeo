@@ -12,6 +12,7 @@ export interface PostApprovalRetryDeps {
   workflowRunRepo: { getRun(runId: string): SpaceWorkflowRun | null };
   spaceManager: { getSpace(spaceId: string): Promise<Space | null> };
   isSessionAlive?: (sessionId: string) => boolean;
+  isUnrecordedApprovalStale?: (task: SpaceTask) => boolean;
   dispatch: (
     taskId: string,
     approvalSource: NonNullable<SpaceTask['approvalSource']>,
@@ -42,12 +43,13 @@ export function applyRetryEligibility(ctx: PostApprovalRetryCtx): PostApprovalRe
   if (task.status !== 'approved') {
     return halted(ctx, `post-approval retry: task ${task.id} is ${task.status}, not approved`);
   }
-  if (
-    !task.postApprovalBlockedReason &&
-    (task.postApprovalSessionId == null ||
-      ctx.isSessionAlive == null ||
-      ctx.isSessionAlive(task.postApprovalSessionId))
-  ) {
+  const unrecordedDispatchStale =
+    task.postApprovalSessionId == null && (ctx.isUnrecordedApprovalStale?.(task) ?? false);
+  const recordedDispatchStale =
+    task.postApprovalSessionId != null &&
+    ctx.isSessionAlive != null &&
+    !ctx.isSessionAlive(task.postApprovalSessionId);
+  if (!task.postApprovalBlockedReason && !unrecordedDispatchStale && !recordedDispatchStale) {
     return halted(ctx, `post-approval retry: task ${task.id} has no blocked dispatch to retry`);
   }
   if (!task.workflowRunId) {

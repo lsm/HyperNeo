@@ -1134,6 +1134,10 @@ export class SpaceRuntimeService {
     );
   }
 
+  getCurrentRuntimeGeneration(): number {
+    return this.runtime.getCurrentRuntimeGeneration();
+  }
+
   start(): void {
     if (this.started) return;
     this.started = true;
