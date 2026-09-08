@@ -548,7 +548,7 @@ describe('Space Export/Import RPC Handlers', () => {
       } as never);
 
       await expect(call(handlers, 'spaceExport.workflows', { spaceId: SPACE_ID })).rejects.toThrow(
-        'coordinator is not exportable'
+        'space manager is not exportable'
       );
     });
 
@@ -630,7 +630,7 @@ describe('Space Export/Import RPC Handlers', () => {
         bundle: coordinatorBundle,
       });
       expect(
-        preview.validationErrors.some((e) => e.includes('reserved by the space coordinator'))
+        preview.validationErrors.some((e) => e.includes('reserved by the space manager'))
       ).toBe(true);
     });
 

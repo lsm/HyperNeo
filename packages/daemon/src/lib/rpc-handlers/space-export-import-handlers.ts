@@ -714,7 +714,7 @@ export function setupSpaceExportImportHandlers(
           id === coordinatorLongHorizonAgentId(params.spaceId) ||
           coordinatorByHandle?.id === id
         ) {
-          return `${id} (the space coordinator is not exportable)`;
+          return `${id} (the space manager is not exportable)`;
         }
         const lha = allSpaceAgents.find((a) => a.id === id);
         if (!lha) return `${id} (missing in this space)`;
@@ -900,7 +900,7 @@ export function setupSpaceExportImportHandlers(
       )
       .map(
         (a) =>
-          `Cannot import: agent name "${a.name}" is reserved by the space coordinator. ` +
+          `Cannot import: agent name "${a.name}" is reserved by the space manager. ` +
           `Rename the agent in the bundle and retry.`
       );
     validationErrors.push(...agentNameAmbiguities);
@@ -955,7 +955,7 @@ export function setupSpaceExportImportHandlers(
         );
         if (coordinatorCollision) {
           throw new Error(
-            `Cannot import: agent name "${coordinatorCollision.name}" is reserved by the space coordinator.`
+            `Cannot import: agent name "${coordinatorCollision.name}" is reserved by the space manager.`
           );
         }
         const existingAgentByName = new Map(existingAgents.map((a) => [nameKey(a.displayName), a]));
