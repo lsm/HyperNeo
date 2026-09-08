@@ -727,12 +727,6 @@ export class SpaceRuntimeService {
     } else {
       await this.refreshLongHorizonAgentSessionConfig(session, config);
     }
-    if (agent.sessionId !== sessionId) {
-      const updated = repo.update(agent.id, { sessionId });
-      if (updated) {
-        await publishUnifiedAgentUpdated(this.config.internalEventBus, updated);
-      }
-    }
     const currentMetadata = session.getSessionData().metadata;
     this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
       metadata: {
@@ -754,6 +748,12 @@ export class SpaceRuntimeService {
       agentId,
       [`@${agent.handle}`]
     );
+    if (agent.sessionId !== sessionId) {
+      const updated = repo.update(agent.id, { sessionId });
+      if (updated) {
+        await publishUnifiedAgentUpdated(this.config.internalEventBus, updated);
+      }
+    }
     return session;
   }
 

@@ -7,7 +7,7 @@ import {
   type ThinkingLevel,
   type AgentModelPoolEntry,
 } from '@hyperneo/shared';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { navigateToSpaceSession } from '../../lib/router';
 import { buildLongHorizonAgentSessionId } from '../../lib/space-agent-session';
@@ -51,6 +51,110 @@ const MIGRATED_WORKER_TEMPLATE_KEY = 'migration.legacy_space_agent';
 const COORDINATOR_AGENT_HANDLES = new Set(['coordinator', 'space-manager']);
 
 let latestAgentCardOpenSeq = 0;
+
+interface SpaceRouteSnapshot {
+  space: string | null;
+  canonical: string | null;
+  session: string | null;
+  view: string | null;
+  task: string | null;
+  handle: string | null;
+}
+
+function snapshotSpaceRoute(): SpaceRouteSnapshot {
+  return {
+    space: currentSpaceIdSignal.value,
+    canonical: currentSpaceCanonicalIdSignal.value,
+    session: currentSpaceSessionIdSignal.value,
+    view: currentSpaceViewModeSignal.value,
+    task: currentSpaceTaskIdSignal.value,
+    handle: currentSpaceAgentHandleSignal.value,
+  };
+}
+
+function spaceRouteUnchanged(at: SpaceRouteSnapshot): boolean {
+  const now = snapshotSpaceRoute();
+  return (
+    now.space === at.space &&
+    now.canonical === at.canonical &&
+    now.session === at.session &&
+    now.view === at.view &&
+    now.task === at.task &&
+    now.handle === at.handle
+  );
+}
+
+interface OpenAgentSessionCtx {
+  agent: SpaceLongHorizonAgent;
+  navigationSpaceId: string;
+  openSeq: number;
+  routeAtOpen: SpaceRouteSnapshot | null;
+  ensuredSessionId: string | null;
+  markOpenSeq: (openSeq: number) => void;
+}
+
+function openRouteStage(ctx: OpenAgentSessionCtx): {
+  ctx: OpenAgentSessionCtx;
+  openHalt: string | undefined;
+} {
+  const openSeq = ++latestAgentCardOpenSeq;
+  ctx.markOpenSeq(openSeq);
+  if (ctx.agent.sessionId) {
+    navigateToSpaceSession(ctx.navigationSpaceId, ctx.agent.sessionId);
+    return { ctx: { ...ctx, openSeq }, openHalt: 'opened_direct' };
+  }
+  return { ctx: { ...ctx, openSeq, routeAtOpen: snapshotSpaceRoute() }, openHalt: undefined };
+}
+
+async function openProvisionStage(ctx: OpenAgentSessionCtx): Promise<{
+  ctx: OpenAgentSessionCtx;
+  openHalt: string | undefined;
+}> {
+  try {
+    const ensuredSessionId = await spaceStore.ensureAgentSession(ctx.agent.id);
+    return { ctx: { ...ctx, ensuredSessionId }, openHalt: undefined };
+  } catch (err) {
+    if (ctx.openSeq === latestAgentCardOpenSeq && spaceRouteUnchangedOrUnknown(ctx)) {
+      toast.error(err instanceof Error ? err.message : 'Failed to open agent session');
+    }
+    return { ctx, openHalt: 'ensure_failed' };
+  }
+}
+
+function spaceRouteUnchangedOrUnknown(ctx: OpenAgentSessionCtx): boolean {
+  return ctx.routeAtOpen !== null && spaceRouteUnchanged(ctx.routeAtOpen);
+}
+
+function openFreshnessStage(ctx: OpenAgentSessionCtx): {
+  ctx: OpenAgentSessionCtx;
+  openHalt: string | undefined;
+} {
+  if (ctx.openSeq !== latestAgentCardOpenSeq) return { ctx, openHalt: 'superseded' };
+  if (!spaceRouteUnchangedOrUnknown(ctx)) return { ctx, openHalt: 'route_changed' };
+  return { ctx, openHalt: undefined };
+}
+
+function openNavigateStage(ctx: OpenAgentSessionCtx): OpenAgentSessionCtx {
+  if (ctx.ensuredSessionId) {
+    navigateToSpaceSession(ctx.navigationSpaceId, ctx.ensuredSessionId);
+  }
+  return ctx;
+}
+
+const runOpenAgentSession = (
+  superpipe({ ensureHalted: (halt?: string) => halt !== undefined })(
+    'open-agent-session'
+  ) as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(openRouteStage, 'ctx', ['ctx', 'openHalt'])
+  .pipe('!ensureHalted', 'openHalt')
+  .pipe(openProvisionStage, 'ctx', ['ctx', 'openHalt'])
+  .pipe('!ensureHalted', 'openHalt')
+  .pipe(openFreshnessStage, 'ctx', ['ctx', 'openHalt'])
+  .pipe('!ensureHalted', 'openHalt')
+  .pipe(openNavigateStage, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: OpenAgentSessionCtx) => Promise<OpenAgentSessionCtx>;
 
 function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
   return COORDINATOR_AGENT_HANDLES.has(agent.handle);
@@ -841,38 +945,31 @@ function AgentCard({
   const hasSession = !!agent.sessionId || coordinator;
 
   const [opening, setOpening] = useState(false);
+  const openSeqRef = useRef(0);
+
+  useEffect(
+    () => () => {
+      if (openSeqRef.current !== 0 && openSeqRef.current === latestAgentCardOpenSeq) {
+        latestAgentCardOpenSeq++;
+      }
+    },
+    []
+  );
 
   const openSession = async () => {
     if (opening || !sessionId) return;
-    const openSeq = ++latestAgentCardOpenSeq;
-    if (agent.sessionId) {
-      navigateToSpaceSession(navigationSpaceId, agent.sessionId);
-      return;
-    }
     setOpening(true);
-    const routeAtOpen = {
-      space: currentSpaceIdSignal.value,
-      canonical: currentSpaceCanonicalIdSignal.value,
-      session: currentSpaceSessionIdSignal.value,
-      view: currentSpaceViewModeSignal.value,
-      task: currentSpaceTaskIdSignal.value,
-      handle: currentSpaceAgentHandleSignal.value,
-    };
-    const routeUnchanged = () =>
-      currentSpaceIdSignal.value === routeAtOpen.space &&
-      currentSpaceCanonicalIdSignal.value === routeAtOpen.canonical &&
-      currentSpaceSessionIdSignal.value === routeAtOpen.session &&
-      currentSpaceViewModeSignal.value === routeAtOpen.view &&
-      currentSpaceTaskIdSignal.value === routeAtOpen.task &&
-      currentSpaceAgentHandleSignal.value === routeAtOpen.handle;
     try {
-      const ensured = await spaceStore.ensureAgentSession(agent.id);
-      if (openSeq === latestAgentCardOpenSeq && routeUnchanged()) {
-        navigateToSpaceSession(navigationSpaceId, ensured);
-      }
-    } catch (err) {
-      if (openSeq !== latestAgentCardOpenSeq || !routeUnchanged()) return;
-      toast.error(err instanceof Error ? err.message : 'Failed to open agent session');
+      await runOpenAgentSession({
+        agent,
+        navigationSpaceId,
+        openSeq: 0,
+        routeAtOpen: null,
+        ensuredSessionId: null,
+        markOpenSeq: (openSeq) => {
+          openSeqRef.current = openSeq;
+        },
+      });
     } finally {
       setOpening(false);
     }
