@@ -57,6 +57,20 @@ describe('Migration 236: deferred-message partial index', () => {
     expect(count.n).toBe(1);
   });
 
+  test('is a no-op on a fresh database where sdk_messages does not exist yet', () => {
+    const fresh = new BunDatabase(':memory:');
+    try {
+      runMigration236(fresh);
+
+      const count = fresh
+        .prepare(`SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'index' AND name = ?`)
+        .get('idx_sdk_messages_deferred_uuid') as { n: number };
+      expect(count.n).toBe(0);
+    } finally {
+      fresh.close();
+    }
+  });
+
   test('digest handoff debt scan resolves through the partial index', () => {
     runMigration236(db);
 
