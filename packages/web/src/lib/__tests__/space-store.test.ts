@@ -178,6 +178,7 @@ function makeAgentTemplate(overrides: Partial<SpaceAgentTemplate> = {}): SpaceAg
     thinkingLevel: null,
     settingSources: null,
     tools: null,
+    labels: [],
     createdAt: 1,
     updatedAt: 1,
     ...overrides,
@@ -3168,6 +3169,14 @@ describe('SpaceStore — template CRUD methods', () => {
     expect(reviewer.reminderDefaults).toEqual([]);
     expect(reviewer.ownershipPatterns).toEqual([]);
     expect(reviewer.toolPermissions).toEqual({});
+  });
+
+  it('fetchTemplates() preserves template labels in the pane shape', async () => {
+    templateListResult = [makeAgentTemplate({ key: 'labeled', labels: ['workflow-worker'] })];
+
+    await spaceStore.fetchTemplates();
+
+    expect(spaceStore.agentTemplates.value[0].labels).toEqual(['workflow-worker']);
   });
 
   it('fetchTemplates() preserves template tools, subscriptions, and reminders in the pane shape', async () => {

@@ -4,6 +4,7 @@ import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compa
 import { runMigration225 } from '../../../../../src/storage/schema/m225-space-agent-templates.ts';
 import { runMigration226 } from '../../../../../src/storage/schema/m226-space-agent-templates-version.ts';
 import { runMigration227 } from '../../../../../src/storage/schema/m227-space-agent-template-version-seq.ts';
+import { runMigration238 } from '../../../../../src/storage/schema/m238-space-agent-template-labels.ts';
 import { runMigration228 } from '../../../../../src/storage/schema/m228-migrate-workflow-agent-template-refs.ts';
 import { SpaceAgentTemplateRepository } from '../../../../../src/storage/repositories/space-agent-template-repository.ts';
 import {
@@ -91,6 +92,7 @@ function createMigrationDb(): BunDatabase {
   runMigration225(db);
   runMigration226(db);
   runMigration227(db);
+  runMigration238(db);
   return db;
 }
 
@@ -511,6 +513,7 @@ describe('migration 228: workflow agentId refs to templateKey', () => {
     runMigration225(db);
     runMigration226(db);
     runMigration227(db);
+    runMigration238(db);
 
     runMigration228(db);
 

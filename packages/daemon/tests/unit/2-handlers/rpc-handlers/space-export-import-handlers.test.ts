@@ -7,6 +7,7 @@ import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositori
 import { runMigration225 } from '../../../../src/storage/schema/m225-space-agent-templates';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
+import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
 import { createLongHorizonAgentTables } from '../../../../src/storage/schema/long-horizon-agents';
 import {
   SpaceWorkflowManager,
@@ -263,6 +264,7 @@ describe('Space Export/Import RPC Handlers', () => {
     runMigration225(db);
     runMigration226(db);
     runMigration227(db);
+    runMigration238(db);
     insertSpace(db, SPACE_ID, 'My Space');
     insertSpace(db, OTHER_SPACE_ID, 'Other Space');
 

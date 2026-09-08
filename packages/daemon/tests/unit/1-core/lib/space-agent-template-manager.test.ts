@@ -4,18 +4,19 @@ import type {
   ModelInfo,
   SpaceAgentTemplate,
 } from '@hyperneo/shared';
-import {
-  SpaceAgentTemplateManager,
-  runCreateTemplate,
-  runUpdateTemplate,
-  runDeleteTemplate,
-} from '../../../../src/lib/space/managers/space-agent-template-manager';
 import { setModelsCache } from '../../../../src/lib/model-service';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
+import {
+  runCreateTemplate,
+  runDeleteTemplate,
+  runUpdateTemplate,
+  SpaceAgentTemplateManager,
+} from '../../../../src/lib/space/managers/space-agent-template-manager';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
+import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const BUILT_INS: SpaceAgentTemplate[] = [
@@ -32,6 +33,7 @@ const BUILT_INS: SpaceAgentTemplate[] = [
     thinkingLevel: null,
     settingSources: null,
     tools: null,
+    labels: [],
     createdAt: 0,
     updatedAt: 0,
   },
@@ -78,6 +80,7 @@ describe('SpaceAgentTemplateManager', () => {
     createSpaceAgentTemplatesTable(db);
     runMigration226(db);
     runMigration227(db);
+    runMigration238(db);
     repo = new SpaceAgentTemplateRepository(db);
     manager = new SpaceAgentTemplateManager(repo, () => BUILT_INS);
     setModelsCache(new Map());
@@ -214,6 +217,135 @@ describe('SpaceAgentTemplateManager', () => {
       if (!result.ok) expect(result.error).toContain('display name');
     });
 
+    test('creates a template with trimmed and deduplicated labels', async () => {
+      const result = await manager.create({
+        ...fullParams(),
+        labels: [' release ', 'quality', 'release'],
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value.labels).toEqual(['release', 'quality']);
+    });
+
+    test('defaults labels to an empty array', async () => {
+      const result = await manager.create(fullParams());
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value.labels).toEqual([]);
+    });
+
+    test('rejects a blank label', async () => {
+      const result = await manager.create({ ...fullParams(), labels: ['quality', '   '] });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('blank');
+    });
+
+    test('rejects labels with non-printable characters', async () => {
+      const result = await manager.create({ ...fullParams(), labels: ['bad\u0007label'] });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('printable');
+    });
+
+    test('rejects invisible formatting characters in labels', async () => {
+      for (const label of [
+        'zero\u200Bwidth',
+        'bi\u202Edi',
+        'line\u2028sep',
+        'lone\uD800pair',
+        'non\uFDD0char',
+        'plane\uFFFFend',
+        'private\uE000use',
+        'variation\uFE0Fselector',
+        'hangul\u3164filler',
+      ]) {
+        const result = await manager.create({ ...fullParams(), labels: [label] });
+        expect(result.ok, label).toBe(false);
+        if (!result.ok) expect(result.error).toContain('printable');
+      }
+    });
+
+    test('rejects a non-array labels payload', async () => {
+      const result = await manager.create({
+        ...fullParams(),
+        labels: 'ops' as unknown as string[],
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('array');
+    });
+
+    test('deduplicates canonically equivalent labels via NFC', async () => {
+      const result = await manager.create({
+        ...fullParams(),
+        labels: ['caf\u00E9', 'cafe\u0301'],
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value.labels).toEqual(['caf\u00E9']);
+    });
+
+    test('rejects labels longer than 64 characters', async () => {
+      const result = await manager.create({
+        ...fullParams(),
+        labels: ['x'.repeat(65)],
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('limited to 64 characters');
+    });
+
+    test('rejects oversized label arrays before iterating', async () => {
+      const labels = Array.from({ length: 20_000 }, (_, i) => `label-${i}`);
+
+      const result = await manager.create({ ...fullParams(), labels });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('limited to 64 entries');
+    });
+
+    test('rejects duplicate-heavy label arrays before iterating', async () => {
+      const labels = Array.from({ length: 100_000 }, () => 'duplicate');
+
+      const result = await manager.create({ ...fullParams(), labels });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('limited to 64 entries');
+    });
+
+    test('rejects more than eight labels after dedupe', async () => {
+      const result = await manager.create({
+        ...fullParams(),
+        labels: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'a'],
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('limited to 8');
+    });
+
+    test('accepts up to eight labels', async () => {
+      const result = await manager.create({
+        ...fullParams(),
+        labels: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'a'],
+      });
+
+      expect(result.ok).toBe(true);
+    });
+
+    test('rejects non-string labels', async () => {
+      const result = await manager.create({
+        ...fullParams(),
+        labels: [1] as unknown as string[],
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('strings');
+    });
+
     test('rejects the reserved migration template key', async () => {
       const result = await manager.create({
         ...fullParams(),
@@ -331,6 +463,56 @@ describe('SpaceAgentTemplateManager', () => {
       if (!result.ok) throw new Error('expected ok');
       expect(result.value?.displayName).toBe('Updated');
       expect(result.value?.instructions).toBe('New instructions.');
+    });
+
+    test('updates labels with trimming and dedupe', async () => {
+      await manager.create({ ...fullParams(), labels: ['quality'] });
+
+      const result = await manager.update('release-readiness.custom', {
+        labels: [' infra ', 'infra', 'release'],
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value?.labels).toEqual(['infra', 'release']);
+    });
+
+    test('leaves labels untouched when omitted on update', async () => {
+      await manager.create({ ...fullParams(), labels: ['quality'] });
+
+      const result = await manager.update('release-readiness.custom', {
+        displayName: 'Renamed',
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value?.labels).toEqual(['quality']);
+    });
+
+    test('clears labels with an explicit empty array or null', async () => {
+      await manager.create({ ...fullParams(), labels: ['quality'] });
+
+      const emptied = await manager.update('release-readiness.custom', { labels: [] });
+      expect(emptied.ok).toBe(true);
+      if (!emptied.ok) throw new Error('expected ok');
+      expect(emptied.value?.labels).toEqual([]);
+
+      const refilled = await manager.update('release-readiness.custom', { labels: ['ops'] });
+      expect(refilled.ok).toBe(true);
+
+      const nulled = await manager.update('release-readiness.custom', { labels: null });
+      expect(nulled.ok).toBe(true);
+      if (!nulled.ok) throw new Error('expected ok');
+      expect(nulled.value?.labels).toEqual([]);
+    });
+
+    test('rejects a blank label on update', async () => {
+      await manager.create(fullParams());
+
+      const result = await manager.update('release-readiness.custom', { labels: [''] });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('blank');
     });
 
     test('returns an error for an unknown key', async () => {

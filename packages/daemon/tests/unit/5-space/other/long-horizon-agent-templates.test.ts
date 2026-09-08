@@ -61,6 +61,16 @@ describe('long-horizon agent templates', () => {
     expect(reviewer.toolPermissions.tools).toContain('Read');
   });
 
+  test('stamps labels on every built-in template (ATC-2)', () => {
+    for (const template of getLongHorizonAgentTemplates()) {
+      if (template.key.startsWith(WORKER_TEMPLATE_KEY_PREFIX)) {
+        expect(template.labels, template.key).toEqual(['workflow-worker']);
+      } else {
+        expect(template.labels, template.key).toEqual(['long-horizon']);
+      }
+    }
+  });
+
   test('defines instructions, autonomy, subscriptions, reminders, and ownership patterns', () => {
     for (const template of getLongHorizonFamilyTemplates()) {
       expect(template.handle).toMatch(/^[a-z0-9-]+$/);

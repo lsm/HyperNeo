@@ -7,6 +7,7 @@ import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositori
 import { runMigration225 } from '../../../../src/storage/schema/m225-space-agent-templates';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
+import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import type { SpaceAgentLookup } from '../../../../src/lib/space/managers/space-workflow-manager';
 import { createSpaceAgentSchema, insertSpace } from '../../helpers/space-agent-schema';
@@ -198,6 +199,7 @@ describe('SpaceWorkflowManager', () => {
       runMigration225(db);
       runMigration226(db);
       runMigration227(db);
+      runMigration238(db);
       const templateRepo = new SpaceAgentTemplateRepository(db);
       templateRepo.create({
         key: 'migrated.agent.agent-1',
@@ -227,6 +229,7 @@ describe('SpaceWorkflowManager', () => {
       runMigration225(db);
       runMigration226(db);
       runMigration227(db);
+      runMigration238(db);
       const managerWithTemplates = new SpaceWorkflowManager(
         repo,
         null,
@@ -253,6 +256,7 @@ describe('SpaceWorkflowManager', () => {
       runMigration225(db);
       runMigration226(db);
       runMigration227(db);
+      runMigration238(db);
       const lookup: SpaceAgentLookup = {
         getAgentById: (_spaceId, id) =>
           id === 'agent-1' ? { id: 'agent-1', name: 'Agent One' } : null,
@@ -284,6 +288,7 @@ describe('SpaceWorkflowManager', () => {
       runMigration225(db);
       runMigration226(db);
       runMigration227(db);
+      runMigration238(db);
       const lookup: SpaceAgentLookup = {
         getAgentById: () => null,
       };

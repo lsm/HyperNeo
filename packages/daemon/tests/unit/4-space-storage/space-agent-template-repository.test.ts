@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type {
+  AgentModelPoolEntry,
   CreateSpaceAgentTemplateParams,
   SpaceAgentAutonomyLevel,
   SpaceAgentTemplate,
-  AgentModelPoolEntry,
 } from '@hyperneo/shared';
 import { SpaceAgentTemplateRepository } from '../../../src/storage/repositories/space-agent-template-repository';
 import { createSpaceAgentTemplatesTable } from '../../../src/storage/schema/space-agent-templates';
 import { runMigration226 } from '../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../src/storage/schema/m227-space-agent-template-version-seq';
+import { runMigration238 } from '../../../src/storage/schema/m238-space-agent-template-labels';
 import { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 
 const MODEL_POOL: AgentModelPoolEntry[] = [
@@ -30,6 +31,7 @@ function fullParams(): CreateSpaceAgentTemplateParams {
     thinkingLevel: 'think16k',
     settingSources: ['user', 'project'],
     tools: ['Read', 'Grep', 'Glob'],
+    labels: ['quality', 'release'],
   };
 }
 
@@ -42,6 +44,7 @@ describe('SpaceAgentTemplateRepository', () => {
     createSpaceAgentTemplatesTable(db);
     runMigration226(db);
     runMigration227(db);
+    runMigration238(db);
     repo = new SpaceAgentTemplateRepository(db);
   });
 
@@ -61,6 +64,7 @@ describe('SpaceAgentTemplateRepository', () => {
       thinkingLevel: 'think16k',
       settingSources: ['user', 'project'],
       tools: ['Read', 'Grep', 'Glob'],
+      labels: ['quality', 'release'],
       createdAt: expect.any(Number),
       updatedAt: expect.any(Number),
     } satisfies SpaceAgentTemplate);
@@ -80,6 +84,7 @@ describe('SpaceAgentTemplateRepository', () => {
     expect(created.thinkingLevel).toBeNull();
     expect(created.settingSources).toBeNull();
     expect(created.tools).toBeNull();
+    expect(created.labels).toEqual([]);
   });
 
   test('create normalizes empty modelPool and tools to null but preserves empty settingSources', () => {
@@ -190,13 +195,28 @@ describe('SpaceAgentTemplateRepository', () => {
       settingSources: [],
       modelPool: [],
       tools: [],
+      labels: [],
     });
     expect(emptied!.settingSources).toEqual([]);
     expect(emptied!.modelPool).toBeNull();
     expect(emptied!.tools).toBeNull();
+    expect(emptied!.labels).toEqual([]);
 
     const inherited = repo.update('release-readiness.custom', { settingSources: null });
     expect(inherited!.settingSources).toBeNull();
+  });
+
+  test('update replaces and clears labels and leaves them untouched when omitted', () => {
+    repo.create(fullParams());
+
+    const replaced = repo.update('release-readiness.custom', { labels: ['infra'] });
+    expect(replaced!.labels).toEqual(['infra']);
+
+    const untouched = repo.update('release-readiness.custom', { handle: 'release-readiness-v2' });
+    expect(untouched!.labels).toEqual(['infra']);
+
+    const cleared = repo.update('release-readiness.custom', { labels: null });
+    expect(cleared!.labels).toEqual([]);
   });
 
   test('update with no fields returns the current row unchanged', () => {
