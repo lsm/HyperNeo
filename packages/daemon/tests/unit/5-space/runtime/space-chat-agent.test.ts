@@ -41,9 +41,9 @@ describe('buildSpaceChatSystemPrompt — basic structure', () => {
     expect(prompt.length).toBeGreaterThan(0);
   });
 
-  test('identifies agent as Space Agent coordinator', () => {
+  test('identifies agent as the Space Manager', () => {
     const prompt = buildSpaceChatSystemPrompt();
-    expect(prompt).toContain('Space Agent');
+    expect(prompt).toContain('Space Manager');
   });
 
   test('no context produces minimal prompt without errors', () => {
