@@ -3,6 +3,7 @@ import { generateUUID } from '@hyperneo/shared';
 import type {
   SpaceWorkflow,
   SpaceWorkflowRun,
+  SpaceTaskStatus,
   WorkflowRunStatus,
   CreateWorkflowRunParams,
   WorkflowRunFailureReason,
@@ -23,6 +24,26 @@ export interface UpdateWorkflowRunParams {
   startedAt?: number | null;
   completedAt?: number | null;
 }
+
+export const TERMINAL_RUN_RECONCILE_SETTLED_TASK_STATUSES: readonly SpaceTaskStatus[] = [
+  'done',
+  'review',
+  'cancelled',
+  'approved',
+  'blocked',
+  'stopped',
+];
+
+const CANCELLED_RUN_RECONCILE_SETTLEABLE_TASK_STATUSES: readonly SpaceTaskStatus[] = [
+  'open',
+  'in_progress',
+  'review',
+  'approved',
+  'blocked',
+  'rate_limited',
+  'usage_limited',
+  'stopped',
+];
 
 export class SpaceWorkflowRunRepository {
   constructor(private db: BunDatabase) {}
@@ -162,6 +183,96 @@ export class SpaceWorkflowRunRepository {
       `SELECT * FROM space_workflow_runs WHERE space_id = ? ORDER BY created_at DESC`
     );
     const rows = stmt.all(spaceId) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToRun(r));
+  }
+
+  listTerminalRunsNeedingTaskReconciliation(spaceId: string): SpaceWorkflowRun[] {
+    const settleable = CANCELLED_RUN_RECONCILE_SETTLEABLE_TASK_STATUSES.map(() => '?').join(', ');
+    const stmt = this.db.prepare(
+      `SELECT run.* FROM space_workflow_runs run
+       WHERE run.space_id = ?
+         AND run.status IN ('done', 'cancelled')
+         AND (
+           (
+             run.status = 'done'
+             AND EXISTS (
+               SELECT 1 FROM space_tasks t
+                WHERE t.workflow_run_id = run.id AND t.status = 'in_progress'
+             )
+           )
+           OR (
+             run.status = 'cancelled'
+             AND EXISTS (
+               SELECT 1 FROM space_tasks t
+                WHERE t.workflow_run_id = run.id AND t.status IN (${settleable})
+             )
+           )
+           OR (
+             SELECT COUNT(*) FROM space_tasks t
+              WHERE t.workflow_run_id = run.id AND t.status != 'archived'
+           ) > 1
+           OR (
+             run.status = 'done'
+             AND EXISTS (
+               SELECT 1 FROM space_tasks t
+                WHERE t.workflow_run_id = run.id AND t.status != 'archived'
+             )
+             AND EXISTS (
+               SELECT 1 FROM workflow_run_artifacts a
+                WHERE a.run_id = run.id
+                  AND a.artifact_type = 'decision'
+                  AND a.updated_at >= (
+                    SELECT COALESCE(MAX(t3.reconcile_checked_at), 0) FROM space_tasks t3
+                     WHERE t3.workflow_run_id = run.id AND t3.status != 'archived'
+                  )
+             )
+           )
+           OR (
+             run.status = 'done'
+             AND EXISTS (
+               SELECT 1 FROM space_tasks t
+                WHERE t.workflow_run_id = run.id
+                  AND t.status != 'archived'
+                  AND (
+                    COALESCE(TRIM(t.result), '') = ''
+                    OR COALESCE(TRIM(t.reported_summary), '') = ''
+                  )
+                  AND (
+                    t.updated_at >= (
+                      SELECT COALESCE(MAX(t3.reconcile_checked_at), 0) FROM space_tasks t3
+                       WHERE t3.workflow_run_id = run.id AND t3.status != 'archived'
+                    )
+                    OR EXISTS (
+                      SELECT 1 FROM space_tasks s
+                       WHERE s.workflow_run_id = run.id
+                         AND s.id != t.id
+                         AND s.status != 'archived'
+                         AND COALESCE(TRIM(s.result), '') != ''
+                         AND s.updated_at >= (
+                           SELECT COALESCE(MAX(t4.reconcile_checked_at), 0) FROM space_tasks t4
+                            WHERE t4.workflow_run_id = run.id AND t4.status != 'archived'
+                         )
+                    )
+                    OR EXISTS (
+                      SELECT 1 FROM node_executions e
+                       WHERE e.workflow_run_id = run.id
+                         AND e.status = 'idle'
+                         AND COALESCE(TRIM(e.result), '') != ''
+                         AND e.updated_at >= (
+                           SELECT COALESCE(MAX(t5.reconcile_checked_at), 0) FROM space_tasks t5
+                            WHERE t5.workflow_run_id = run.id AND t5.status != 'archived'
+                         )
+                    )
+                  )
+             )
+           )
+         )
+       ORDER BY run.created_at DESC`
+    );
+    const rows = stmt.all(spaceId, ...CANCELLED_RUN_RECONCILE_SETTLEABLE_TASK_STATUSES) as Record<
+      string,
+      unknown
+    >[];
     return rows.map((r) => this.rowToRun(r));
   }
 

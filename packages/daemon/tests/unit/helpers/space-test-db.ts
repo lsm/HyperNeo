@@ -277,6 +277,7 @@ export function createSpaceTables(db: BunDatabase): void {
 			completed_at INTEGER,
 			updated_at INTEGER NOT NULL,
 			terminal_generation INTEGER NOT NULL DEFAULT 0,
+			reconcile_checked_at INTEGER,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
 			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL
 		)
@@ -636,6 +637,8 @@ export function createSpaceTables(db: BunDatabase): void {
 		ON sdk_messages(session_id, message_subtype_norm, parent_tool_use_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status_timestamp
 		ON sdk_messages(session_id, send_status, timestamp)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_deferred_uuid
+		ON sdk_messages(sdk_uuid) WHERE send_status = 'deferred'`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_id
 		ON sdk_messages(task_id, timestamp)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_task_turn
