@@ -268,6 +268,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
     expect(fake.state.calls).toEqual([
       'mergeRuntimeMcpServers',
+      'restartQuery',
       'startStreamingQuery',
       'replayPendingMessagesForImmediateMode',
     ]);
@@ -286,7 +287,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
 
     await expect(tam.prepareSubSessionForWorkflowResume(SUB_SESSION_ID)).resolves.toBe(true);
 
-    expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers']);
+    expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers', 'restartQuery']);
   });
 
   test('concurrent rehydrates of the same sub-session share one restored instance', async () => {

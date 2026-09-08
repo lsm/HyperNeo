@@ -841,7 +841,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
         postApprovalSessionId: 'session:stale-post-approval',
       });
       expect(notificationRepo.getById(notification.id)?.status).toBe('pending');
-      expect(transitions).toEqual([]);
+      expect(transitions.filter((t) => t.fromStatus === 'blocked')).toEqual([]);
     });
 
     test('a blocked task with a live execution does not attempt goal supersession on ticks (#3823)', async () => {

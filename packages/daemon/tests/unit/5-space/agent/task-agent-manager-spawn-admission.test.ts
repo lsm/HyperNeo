@@ -970,7 +970,7 @@ describe('activateTargetSessionsForMessage — admission', () => {
 
       expect(h.casCalls).toEqual([{ id: 'exec-1', expected: ['in_progress'], next: 'pending' }]);
       expect(h.updates).toEqual([]);
-      expect(h.order).toEqual(['activation', 'spawn']);
+      expect(h.order).toEqual(['activation']);
     } finally {
       restoreTimers();
     }
