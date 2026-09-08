@@ -4663,7 +4663,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
       ),
       tool(
         'create_agent_from_template',
-        'Create a long-horizon Space agent from a template key: built-in templates (worker.research, worker.qa, ...) resolve first, then user-created templates stored in this space. Templates carrying suggested event subscriptions and reminders seed them on create. Call list_agent_templates to discover available templates.',
+        'Create a long-horizon Space agent from a template key. Resolution order: exact built-in key (worker.research, worker.qa, ...), then exact user-created template key stored in this space, then case-insensitive built-in match. Templates carrying suggested event subscriptions and reminders seed them on create. Call list_agent_templates to discover available templates.',
         CreateAgentFromTemplateSchema.shape,
         (args) => handlers.create_agent_from_template(args)
       ),
