@@ -4,6 +4,31 @@ All notable changes to HyperNeo will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-09-08
+
+91 commits since v0.40.0. Headline families: completion of the prompt-mailbox handoff migration across all delivery lanes, retirement of the legacy `space_agents` model in favor of agent templates, boot rehydration/ghost-session hardening, and Space run-tick/admission reconciliation fixes.
+
+### Added
+
+- **Mailbox delivery lanes**: Deferred-replay scheduler with defer holds, cancellation returning deleted payloads, failure materialization, and claim fences for retry/activate transactions; per-session ordering preserved across mailbox and direct prompt lanes; mailbox content extended for images and references; job-queue settlement queries and inject settlement pipeline for the mailbox lane; mailbox worker prompt lifecycle contracts.
+- **Agent templates**: `labels` field on agent templates with the Agents pane merged template library grouped by label; template form model-pool editor; tools, subscriptions, and reminders seeded when instantiating from a template; stored workflow slot references migrated to `templateKey`; template resolution and spawn characterization pins.
+- **Space runtime**: `createSpace` orchestration pipeline and `spaceWorkflowRunTick` pipeline with recovery pins; task status reconciled on every run activation; per-space workspace cap raised from 8 to 128; SDK lifecycle signal instrumentation; event-loop watchdog that kills wedged daemons and bounds hung shutdowns.
+- **Session resolution**: Agent delivery session resolver; `session_state_changed:idle` as the single turn-end authority.
+
+### Changed
+
+- **Mailbox handoff migration**: All prompt delivery lanes — space-agent injector (M-1), TAM inject + router delivery (M-2), chat `message.send`, external events, nag probes, goal wake, task messaging, and `send_message_to_task` — now resolve sessions through `ensureSession` and deliver via the mailbox handoff; the blocking `awaitDeliveryConsumption` chain and the old prompt-mailbox-handoff wrapper were deleted (D3).
+- **Boot rehydration**: Idle ghost sessions stay dormant on startup and ghost replay is deferred from startup; prompts deliver before on-demand worker resume; digest replay no longer blocks reconciliation.
+- **ADR 0004 revised**: Decide-owning hybrid and result-arm gates; `decisionRun`/`stagedRun` deprecated.
+
+### Fixed
+
+- Event-loop starvation on accumulated DB state; worker admission denied for blocked tasks; open tasks reconciled on blocked recovery; dead routed post-approval workers made replaceable; task-message inject bound to its manager; deferred-replay re-arm fenced against stale handler claims; inbox settlement and nag probes reconciled with mailbox admissions; legacy prompt shape tolerated in outbox content checks; Vite WS proxy derived from daemon URL; desktop daemon readiness polling.
+
+### Removed
+
+- Legacy `space_agents` and assignment tables (D6) with LiveQuery agent joins migrated to the unified agent model; `space_agent_inbox` queue path (D2) and `space_agent_inbox_messages` table (D3); pending-agent-message repository and flush paths; seeded worker presets as agents on space creation; unbound `worker.general`/`worker.planner` templates and seven long-horizon built-in templates; mailbox spawn and bridge stubs.
+
 ## [0.40.0] - 2026-09-05
 
 904 commits since v0.39.5. Headline families: mailbox ingestion redesign, session resolution and Space agent unification, agent templates, workflow/Space runtime hardening, and provider/model updates.

@@ -1,6 +1,6 @@
 [package]
 name = "hyperneo-desktop"
-version = "0.40.0"
+version = "0.41.0"
 description = "HyperNeo - AI Assistant Desktop App"
 authors = ["HyperNeo contributors"]
 license = "Apache-2.0"
