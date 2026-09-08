@@ -153,11 +153,11 @@ const runOpenAgentSession = (
   .pipe(openFreshnessStage, ['openSeq', 'routeAtOpen'], 'openHalt')
   .pipe('!ensureHalted', 'openHalt')
   .pipe(openNavigateStage, ['navigationSpaceId', 'ensuredSessionId'], 'navigatedTo')
-  .endAsync('navigatedTo') as (input: {
-  agent: SpaceLongHorizonAgent;
-  navigationSpaceId: string;
-  markOpenSeq: (openSeq: number) => void;
-}) => Promise<string | null>;
+  .endAsync('navigatedTo') as (
+  agent: SpaceLongHorizonAgent,
+  navigationSpaceId: string,
+  markOpenSeq: (openSeq: number) => void
+) => Promise<string | null>;
 
 function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
   return COORDINATOR_AGENT_HANDLES.has(agent.handle);
@@ -968,13 +968,9 @@ function AgentCard({
     if (opening || !sessionId) return;
     setOpening(true);
     try {
-      await runOpenAgentSession({
-        agent,
-        navigationSpaceId,
-        markOpenSeq: (openSeq) => {
-          openSeqRef.current = openSeq;
-          recordOpenSeq(openSeq);
-        },
+      await runOpenAgentSession(agent, navigationSpaceId, (openSeq) => {
+        openSeqRef.current = openSeq;
+        recordOpenSeq(openSeq);
       });
     } finally {
       setOpening(false);

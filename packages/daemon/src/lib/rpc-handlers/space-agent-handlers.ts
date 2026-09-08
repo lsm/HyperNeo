@@ -821,12 +821,12 @@ const runEnsureAgentSessionRpc = (superpipe({})('ensure-agent-session-rpc') as P
   .pipe(ensureSessionAdmitSpaceStage, ['spaceManager', 'spaceId'], 'space')
   .pipe(ensureSessionResolveTargetStage, ['repo', 'spaceId', 'agentId'], 'sessionId')
   .pipe(ensureSessionProvisionStage, ['runtimeService', 'spaceId', 'agentId'], 'ensured')
-  .endAsync('sessionId') as (input: {
-  params: { spaceId?: string; agentId?: string };
-  spaceManager: SpaceManager;
-  repo: Pick<SpaceLongHorizonAgentRepository, 'getById' | 'getCoordinator'>;
-  runtimeService?: UnifiedSpaceAgentRuntimeService;
-}) => Promise<string>;
+  .endAsync('sessionId') as (
+  params: { spaceId?: string; agentId?: string },
+  spaceManager: SpaceManager,
+  repo: Pick<SpaceLongHorizonAgentRepository, 'getById' | 'getCoordinator'>,
+  runtimeService?: UnifiedSpaceAgentRuntimeService
+) => Promise<string>;
 
 export function registerUnifiedSpaceAgentMethods(
   messageHub: MessageHub,
@@ -1159,12 +1159,12 @@ export function setupSpaceAgentHandlers(
   });
 
   messageHub.onRequest('spaceAgent.ensureSession', async (data) => {
-    const sessionId = await runEnsureAgentSessionRpc({
-      params: data as { spaceId?: string; agentId?: string },
-      spaceManager: deps.spaceManager,
-      repo: deps.repo,
-      runtimeService: deps.runtimeService,
-    });
+    const sessionId = await runEnsureAgentSessionRpc(
+      data as { spaceId?: string; agentId?: string },
+      deps.spaceManager,
+      deps.repo,
+      deps.runtimeService
+    );
     return { sessionId };
   });
 

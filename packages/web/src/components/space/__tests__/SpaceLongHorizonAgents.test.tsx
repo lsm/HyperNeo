@@ -1579,7 +1579,7 @@ describe('SpaceLongHorizonAgents', () => {
     expect(getByText('No session')).toBeTruthy();
     const frozenCard = getByText('Frozen Agent').closest('div.min-h-32');
     expect(frozenCard?.textContent).toContain('Session');
-    expect(frozenCard?.getAttribute('role')).toBeNull();
+    expect(frozenCard?.getAttribute('role')).toBe('button');
   });
 
   it('ensures then opens the deterministic session for an active sessionless instance', async () => {
