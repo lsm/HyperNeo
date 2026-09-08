@@ -103,6 +103,10 @@ export function normalizeLegacyWorkerTemplateKey(key: string): string {
   return LEGACY_WORKER_TEMPLATE_KEYS[key] ?? key;
 }
 
+export function isLegacyWorkerTemplateKey(key: string): boolean {
+  return key in LEGACY_WORKER_TEMPLATE_KEYS;
+}
+
 function workerPresetTemplates(): SpaceLongHorizonAgentTemplate[] {
   return getPresetAgentTemplates().map((preset) => ({
     key: workerTemplateKey(preset.handle),

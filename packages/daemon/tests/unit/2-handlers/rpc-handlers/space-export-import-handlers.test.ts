@@ -795,6 +795,7 @@ describe('Space Export/Import RPC Handlers', () => {
               {
                 agents: [{ templateKey: 'worker.coder', name: 'coder' }],
                 name: 'Coding',
+                postApproval: { targetAgent: 'worker.coder', instructions: 'merge the PR' },
               },
             ],
             startNode: 'Coding',
@@ -817,6 +818,7 @@ describe('Space Export/Import RPC Handlers', () => {
       const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
       expect(workflow.nodes[0].agents![0].templateKey).toBe('worker.swe');
       expect(workflow.nodes[0].agents![0].agentId).toBe('');
+      expect(workflow.nodes[0].postApproval?.targetAgent).toBe('worker.swe');
     });
 
     it('prefers the agent fallback over an unverifiable colliding stored template', async () => {

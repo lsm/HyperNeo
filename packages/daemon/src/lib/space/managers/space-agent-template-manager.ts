@@ -1,10 +1,10 @@
 import type {
+  AgentModelPoolEntry,
   CreateSpaceAgentTemplateParams,
   SpaceAgentAutonomyLevel,
   SpaceAgentTemplate,
   SpaceWorkflow,
   UpdateSpaceAgentTemplateParams,
-  AgentModelPoolEntry,
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type {
@@ -17,6 +17,7 @@ import { isReservedAgentHandle } from '../agent-handle.ts';
 import {
   getLongHorizonAgentTemplate,
   getLongHorizonAgentTemplates,
+  isLegacyWorkerTemplateKey,
   RETIRED_LONG_HORIZON_TEMPLATE_KEYS,
 } from '../agents/long-horizon-agent-templates.ts';
 import { validateSlug } from '../slug.ts';
@@ -26,6 +27,13 @@ import {
   validateAgentModelPool,
   validateSpaceAgentTools,
 } from '../agents/agent-validation.ts';
+import {
+  getLongHorizonAgentTemplate,
+  getLongHorizonAgentTemplates,
+  isLegacyWorkerTemplateKey,
+} from '../agents/long-horizon-agent-templates.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
+import { validateSlug } from '../slug.ts';
 
 type BuiltInTemplateSource = () => SpaceAgentTemplate[];
 
@@ -110,7 +118,7 @@ function validateTemplateKey(key: string): string | null {
   if ((RETIRED_LONG_HORIZON_TEMPLATE_KEYS as readonly string[]).includes(key)) {
     return `Template key "${key}" is retired and cannot be reused`;
   }
-  if (getLongHorizonAgentTemplate(key)) {
+  if (getLongHorizonAgentTemplate(key) || isLegacyWorkerTemplateKey(key)) {
     return `Template key "${key}" is reserved for a built-in agent template`;
   }
   return null;

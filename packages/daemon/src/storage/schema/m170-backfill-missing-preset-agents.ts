@@ -1,8 +1,8 @@
-import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { generateUUID } from '@hyperneo/shared';
-import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents.ts';
-import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash.ts';
 import { Logger } from '../../lib/logger.ts';
+import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash.ts';
+import { getPresetAgentTemplates } from '../../lib/space/agents/seed-agents.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 const log = new Logger('migration-170');
 
@@ -26,7 +26,9 @@ export function runMigration170(db: BunDatabase): void {
   if (!tableExists(db, 'spaces')) return;
   if (!tableExists(db, 'space_agents')) return;
 
-  const presets = getPresetAgentTemplates();
+  const presets = getPresetAgentTemplates().map((preset) =>
+    preset.handle === 'swe' ? { ...preset, name: 'Coder', handle: 'coder' } : preset
+  );
   if (presets.length === 0) return;
 
   const spaces = db.prepare(`SELECT id FROM spaces`).all() as SpaceRow[];

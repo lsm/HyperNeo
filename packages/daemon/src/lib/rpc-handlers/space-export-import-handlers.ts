@@ -176,6 +176,21 @@ function nameKey(name: string): string {
   return name.trim().toLowerCase();
 }
 
+function normalizeImportedPostApproval(
+  postApproval: WorkflowNodeInput['postApproval'],
+  agents: WorkflowNodeInput['agents']
+): WorkflowNodeInput['postApproval'] {
+  if (!postApproval || typeof postApproval.targetAgent !== 'string') return postApproval;
+  const target = postApproval.targetAgent.trim();
+  const normalized = normalizeLegacyWorkerTemplateKey(target);
+  if (normalized === target) return postApproval;
+  const occupied = (agents ?? []).some(
+    (entry) => entry.name === target || (entry.agentId !== '' && entry.agentId === target)
+  );
+  if (occupied) return postApproval;
+  return { ...postApproval, targetAgent: normalized };
+}
+
 function generateUniqueName(baseName: string, existingNames: Set<string>): string {
   const normalized = new Set([...existingNames].map((n) => nameKey(n)));
   if (!normalized.has(nameKey(baseName))) return baseName;
@@ -361,7 +376,7 @@ export function buildWorkflowCreateParams(
       id: nodeNameToId.get(exportedNode.name)!,
       name: exportedNode.name,
       agents,
-      postApproval: exportedNode.postApproval,
+      postApproval: normalizeImportedPostApproval(exportedNode.postApproval, agents),
     };
     if (exportedNode.transitions && exportedNode.transitions.length > 0) {
       node.transitions = exportedNode.transitions.map((t) => ({ ...t }));

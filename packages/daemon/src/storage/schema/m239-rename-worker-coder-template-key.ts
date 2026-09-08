@@ -28,6 +28,19 @@ interface RunRow {
   definition_version: string | null;
 }
 
+interface SlotView {
+  name: string;
+  agentId: string;
+  sourceKey: string;
+  renamingKey: string | null;
+}
+
+interface NodeRecord {
+  id: string;
+  record: Record<string, unknown>;
+  dirty: boolean;
+}
+
 function tableExists(db: BunDatabase, tableName: string): boolean {
   return !!db
     .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`)
@@ -49,51 +62,87 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function relocatedKey(key: string): string | null {
+function renamedKeyFor(key: string, storedRelocation: string | null): string | null {
   if (key === OLD_TEMPLATE_KEY) return NEW_TEMPLATE_KEY;
+  if (storedRelocation && key === NEW_TEMPLATE_KEY) return storedRelocation;
   return null;
 }
 
-function rewriteSlotTemplateKey(
-  slot: Record<string, unknown>,
-  storedRelocation: string | null
-): boolean {
-  if (typeof slot.templateKey !== 'string') return false;
-  const key = slot.templateKey.trim();
-  const target =
-    relocatedKey(key) ?? (storedRelocation && key === NEW_TEMPLATE_KEY ? storedRelocation : null);
-  if (!target) return false;
-  slot.templateKey = target;
-  return true;
+function slotView(slot: Record<string, unknown>, storedRelocation: string | null): SlotView {
+  const rawName = typeof slot.name === 'string' ? slot.name.trim() : '';
+  const agentId = typeof slot.agentId === 'string' ? slot.agentId.trim() : '';
+  const sourceKey = typeof slot.templateKey === 'string' ? slot.templateKey.trim() : '';
+  return {
+    name: rawName || agentId,
+    agentId,
+    sourceKey,
+    renamingKey: sourceKey ? renamedKeyFor(sourceKey, storedRelocation) : null,
+  };
 }
 
-function rewriteTargetAgent(
+function collectSlotViews(
+  nodes: ReadonlyArray<NodeRecord>,
+  storedRelocation: string | null
+): SlotView[] {
+  const views: SlotView[] = [];
+  for (const node of nodes) {
+    if (!Array.isArray(node.record.agents)) continue;
+    for (const raw of node.record.agents) {
+      const slot = asRecord(raw);
+      if (slot) views.push(slotView(slot, storedRelocation));
+    }
+  }
+  return views;
+}
+
+function targetEligibleForRewrite(target: string, slots: ReadonlyArray<SlotView>): boolean {
+  if (
+    slots.some((slot) => slot.name === target || (slot.agentId !== '' && slot.agentId === target))
+  ) {
+    return false;
+  }
+  return slots.some((slot) => slot.renamingKey !== null && slot.sourceKey === target);
+}
+
+function rewriteSlots(nodes: ReadonlyArray<NodeRecord>, storedRelocation: string | null): void {
+  for (const node of nodes) {
+    if (!Array.isArray(node.record.agents)) continue;
+    for (const raw of node.record.agents) {
+      const slot = asRecord(raw);
+      if (!slot || typeof slot.templateKey !== 'string') continue;
+      const target = renamedKeyFor(slot.templateKey.trim(), storedRelocation);
+      if (!target) continue;
+      slot.templateKey = target;
+      node.dirty = true;
+    }
+  }
+}
+
+function rewritePostApprovalTarget(
   postApproval: Record<string, unknown>,
+  slots: ReadonlyArray<SlotView>,
   storedRelocation: string | null
 ): boolean {
   if (typeof postApproval.targetAgent !== 'string') return false;
   const target = postApproval.targetAgent.trim();
-  const replacement =
-    relocatedKey(target) ??
-    (storedRelocation && target === NEW_TEMPLATE_KEY ? storedRelocation : null);
+  if (!targetEligibleForRewrite(target, slots)) return false;
+  const replacement = renamedKeyFor(target, storedRelocation);
   if (!replacement) return false;
   postApproval.targetAgent = replacement;
   return true;
 }
 
-function rewriteRecordAgentSlots(
-  record: Record<string, unknown>,
+function rewriteNodePostApprovals(
+  nodes: ReadonlyArray<NodeRecord>,
+  slots: ReadonlyArray<SlotView>,
   storedRelocation: string | null
-): boolean {
-  let dirty = false;
-  const postApproval = asRecord(record.postApproval);
-  if (postApproval && rewriteTargetAgent(postApproval, storedRelocation)) dirty = true;
-  if (!Array.isArray(record.agents)) return dirty;
-  for (const raw of record.agents) {
-    const slot = asRecord(raw);
-    if (slot && rewriteSlotTemplateKey(slot, storedRelocation)) dirty = true;
+): void {
+  for (const node of nodes) {
+    const postApproval = asRecord(node.record.postApproval);
+    if (postApproval && rewritePostApprovalTarget(postApproval, slots, storedRelocation)) {
+      node.dirty = true;
+    }
   }
-  return dirty;
 }
 
 function relocateConflictingStoredTemplate(db: BunDatabase, now: number): string | null {
@@ -107,6 +156,8 @@ function relocateConflictingStoredTemplate(db: BunDatabase, now: number): string
   let suffix = 2;
   while (
     db.prepare(`SELECT 1 FROM space_agent_templates WHERE key = ?`).get(target) ||
+    (tableExists(db, 'space_agent_template_version_seq') &&
+      db.prepare(`SELECT 1 FROM space_agent_template_version_seq WHERE key = ?`).get(target)) ||
     getLongHorizonAgentTemplate(target)
   ) {
     target = `${NEW_TEMPLATE_KEY}.migrated-${suffix++}`;
@@ -118,7 +169,7 @@ function relocateConflictingStoredTemplate(db: BunDatabase, now: number): string
     NEW_TEMPLATE_KEY
   );
   if (tableExists(db, 'space_agent_template_version_seq')) {
-    db.prepare(`UPDATE OR REPLACE space_agent_template_version_seq SET key = ? WHERE key = ?`).run(
+    db.prepare(`UPDATE space_agent_template_version_seq SET key = ? WHERE key = ?`).run(
       target,
       NEW_TEMPLATE_KEY
     );
@@ -126,7 +177,7 @@ function relocateConflictingStoredTemplate(db: BunDatabase, now: number): string
   return target;
 }
 
-function renameLiveNodeTemplateKeys(
+function renameLiveWorkflowRefs(
   db: BunDatabase,
   storedRelocation: string | null,
   now: number
@@ -134,33 +185,40 @@ function renameLiveNodeTemplateKeys(
   const nodes = db
     .prepare(`SELECT id, workflow_id, config FROM space_workflow_nodes ORDER BY rowid ASC`)
     .all() as NodeRow[];
+  const recordsByWorkflow = new Map<string, NodeRecord[]>();
+  for (const node of nodes) {
+    const record = asRecord(parseJson(node.config));
+    if (!record) continue;
+    const list = recordsByWorkflow.get(node.workflow_id) ?? [];
+    list.push({ id: node.id, record, dirty: false });
+    recordsByWorkflow.set(node.workflow_id, list);
+  }
+
   const updateNode = db.prepare(
     `UPDATE space_workflow_nodes SET config = ?, updated_at = ? WHERE id = ?`
   );
-  for (const node of nodes) {
-    const parsed = asRecord(parseJson(node.config));
-    if (!parsed) continue;
-    if (!rewriteRecordAgentSlots(parsed, storedRelocation)) continue;
-    updateNode.run(JSON.stringify(parsed), now, node.id);
-  }
-}
-
-function renameWorkflowPostApprovalTargets(
-  db: BunDatabase,
-  storedRelocation: string | null,
-  now: number
-): void {
-  const workflows = db
-    .prepare(`SELECT id, post_approval FROM space_workflows`)
-    .all() as WorkflowRow[];
   const updateWorkflow = db.prepare(
     `UPDATE space_workflows SET post_approval = ?, updated_at = ? WHERE id = ?`
   );
-  for (const workflow of workflows) {
-    const parsed = asRecord(parseJson(workflow.post_approval));
-    if (!parsed) continue;
-    if (!rewriteTargetAgent(parsed, storedRelocation)) continue;
-    updateWorkflow.run(JSON.stringify(parsed), now, workflow.id);
+
+  for (const [workflowId, nodeRecords] of recordsByWorkflow) {
+    const slots = collectSlotViews(nodeRecords, storedRelocation);
+    rewriteSlots(nodeRecords, storedRelocation);
+    rewriteNodePostApprovals(nodeRecords, slots, storedRelocation);
+    for (const nodeRecord of nodeRecords) {
+      if (!nodeRecord.dirty) continue;
+      updateNode.run(JSON.stringify(nodeRecord.record), now, nodeRecord.id);
+    }
+    const workflowRow = db
+      .prepare(`SELECT post_approval FROM space_workflows WHERE id = ?`)
+      .get(workflowId) as WorkflowRow | undefined;
+    const workflowPostApproval = asRecord(parseJson(workflowRow?.post_approval ?? null));
+    if (
+      workflowPostApproval &&
+      rewritePostApprovalTarget(workflowPostApproval, slots, storedRelocation)
+    ) {
+      updateWorkflow.run(JSON.stringify(workflowPostApproval), now, workflowId);
+    }
   }
 }
 
@@ -200,12 +258,19 @@ function renamePinnedRunDefinitionTemplateKeys(
     const workflow = asRecord(parseJson(version.payload));
     if (!workflow || !Array.isArray(workflow.nodes)) continue;
 
-    let dirty = rewriteRecordAgentSlots(workflow, storedRelocation);
-    for (const rawNode of workflow.nodes) {
-      const node = asRecord(rawNode);
-      if (node && rewriteRecordAgentSlots(node, storedRelocation)) dirty = true;
-    }
-    if (!dirty) continue;
+    const nodeRecords = workflow.nodes.map((raw) => {
+      const record = asRecord(raw);
+      return record ? { id: '', record, dirty: false } : null;
+    });
+    const present = nodeRecords.filter((entry): entry is NodeRecord => entry !== null);
+    const slots = collectSlotViews(present, storedRelocation);
+    rewriteSlots(present, storedRelocation);
+    rewriteNodePostApprovals(present, slots, storedRelocation);
+    const workflowPostApproval = asRecord(workflow.postApproval);
+    const workflowTargetDirty =
+      workflowPostApproval !== null &&
+      rewritePostApprovalTarget(workflowPostApproval, slots, storedRelocation);
+    if (!present.some((entry) => entry.dirty) && !workflowTargetDirty) continue;
 
     const { versionHash, payload: rewrittenPayload } = computeDefinitionVersion(
       workflow as unknown as SpaceWorkflow
@@ -244,8 +309,7 @@ export function runMigration239(db: BunDatabase): void {
   db.exec('BEGIN');
   try {
     const storedRelocation = relocateConflictingStoredTemplate(db, now);
-    renameLiveNodeTemplateKeys(db, storedRelocation, now);
-    renameWorkflowPostApprovalTargets(db, storedRelocation, now);
+    renameLiveWorkflowRefs(db, storedRelocation, now);
     renamePinnedRunDefinitionTemplateKeys(db, storedRelocation, now);
     renameAgentRowTemplateKeys(db, storedRelocation, now);
     db.exec('COMMIT');

@@ -398,7 +398,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('rejects keys reserved for code built-in templates', async () => {
-      for (const key of ['worker.swe', 'worker.reviewer', 'coordinator.default']) {
+      for (const key of ['worker.swe', 'worker.coder', 'worker.reviewer', 'coordinator.default']) {
         const result = await manager.create({ ...fullParams(), key });
         expect(result.ok, key).toBe(false);
         if (!result.ok) expect(result.error).toContain('reserved for a built-in agent template');

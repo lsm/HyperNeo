@@ -342,6 +342,58 @@ describe('migration 239 — rename worker.coder slot templateKey to worker.swe',
     db.close();
   });
 
+  test('preserves post-approval targets that match a slot name instead of a template key', () => {
+    const db = createMigrationDb();
+    insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
+    insertNodeWithSlots(
+      db,
+      'node-1',
+      'wf-1',
+      [{ agentId: '', templateKey: 'team.custom', name: 'worker.coder' }],
+      { targetAgent: 'worker.coder' }
+    );
+    setWorkflowPostApproval(db, 'wf-1', 'worker.coder');
+
+    runMigration239(db);
+
+    expect((readNodeConfig(db, 'node-1').postApproval as { targetAgent: string }).targetAgent).toBe(
+      'worker.coder'
+    );
+    expect(readWorkflowPostApprovalTarget(db, 'wf-1')).toBe('worker.coder');
+    expect(readSlots(db, 'node-1')).toEqual([
+      { agentId: '', templateKey: 'team.custom', name: 'worker.coder' },
+    ]);
+    db.close();
+  });
+
+  test('skips the relocation target when its version-seq key is still reserved', () => {
+    const db = createMigrationDb();
+    insertStoredTemplate(db, 'worker.swe');
+    db.prepare(
+      `INSERT INTO space_agent_template_version_seq (key, next_version) VALUES ('worker.swe', 3)`
+    ).run();
+    db.prepare(
+      `INSERT INTO space_agent_template_version_seq (key, next_version) VALUES ('worker.swe.migrated', 7)`
+    ).run();
+
+    runMigration239(db);
+
+    expect(storedTemplateKeys(db)).toEqual(['worker.swe.migrated-2']);
+    expect(
+      (
+        db
+          .prepare(`SELECT next_version FROM space_agent_template_version_seq WHERE key = ?`)
+          .get('worker.swe.migrated-2') as { next_version: number }
+      ).next_version
+    ).toBe(3);
+    expect(
+      db
+        .prepare(`SELECT next_version FROM space_agent_template_version_seq WHERE key = ?`)
+        .get('worker.swe.migrated')
+    ).toEqual({ next_version: 7 });
+    db.close();
+  });
+
   test('keeps stored templates without the conflicting key untouched', () => {
     const db = createMigrationDb();
     insertStoredTemplate(db, 'worker.qa');
