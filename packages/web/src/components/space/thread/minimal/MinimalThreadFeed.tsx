@@ -822,7 +822,7 @@ function extractSenderLabel(
     }
     if (o.kind === 'channel') return { label: o.server ?? 'Channel', isSynthetic: true };
     if (o.kind === 'task-notification') return { label: 'Task', isSynthetic: true };
-    if (o.kind === 'coordinator') return { label: 'Coordinator', isSynthetic: true };
+    if (o.kind === 'coordinator') return { label: 'Space Manager', isSynthetic: true };
   }
 
   if (isSynthetic && previousAgentLabel) {
