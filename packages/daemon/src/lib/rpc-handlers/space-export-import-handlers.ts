@@ -22,7 +22,9 @@ import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event
 import { Logger } from '../logger.ts';
 import {
   getLongHorizonAgentTemplate,
+  isRelocationMarkerLabel,
   normalizeLegacyWorkerTemplateKey,
+  RELOCATED_FROM_LABEL_PREFIX,
 } from '../space/agents/long-horizon-agent-templates.ts';
 import {
   publishUnifiedAgentCreated,
@@ -187,16 +189,20 @@ function parseStoredLabels(raw: unknown): string[] {
   }
 }
 
-function findRelocatedTemplateKey(db: BunDatabase, fromKey: string): string | null {
+function loadRelocatedTemplateIndex(db: BunDatabase): Map<string, string> {
   const rows = db.prepare(`SELECT key, labels FROM space_agent_templates`).all() as Array<{
     key: string;
     labels: string | null;
   }>;
-  const label = `relocated-from:${fromKey}`;
+  const index = new Map<string, string>();
   for (const row of rows) {
-    if (parseStoredLabels(row.labels).includes(label)) return row.key;
+    for (const label of parseStoredLabels(row.labels)) {
+      if (isRelocationMarkerLabel(label)) {
+        index.set(label.slice(RELOCATED_FROM_LABEL_PREFIX.length), row.key);
+      }
+    }
   }
-  return null;
+  return index;
 }
 
 function ambiguousTemplateReferenceError(
@@ -215,11 +221,13 @@ function ambiguousTemplateReferenceError(
 function normalizeImportedPostApproval(
   postApproval: WorkflowNodeInput['postApproval'],
   agents: WorkflowNodeInput['agents']
-): WorkflowNodeInput['postApproval'] {
-  if (!postApproval || typeof postApproval.targetAgent !== 'string') return postApproval;
+): { postApproval: WorkflowNodeInput['postApproval']; error: string | null } {
+  if (!postApproval || typeof postApproval.targetAgent !== 'string') {
+    return { postApproval, error: null };
+  }
   const target = postApproval.targetAgent.trim();
   const normalized = normalizeLegacyWorkerTemplateKey(target);
-  if (normalized === target) return postApproval;
+  if (normalized === target) return { postApproval, error: null };
   const entries = agents ?? [];
   const selectedIndex = entries.findIndex(
     (entry) =>
@@ -227,10 +235,24 @@ function normalizeImportedPostApproval(
       (entry.agentId !== '' && entry.agentId === target) ||
       entry.templateKey === normalized
   );
-  if (selectedIndex < 0) return postApproval;
+  if (selectedIndex < 0) return { postApproval, error: null };
   const selected = entries[selectedIndex];
-  if (selected.templateKey !== normalized || !selected.name) return postApproval;
-  return { ...postApproval, targetAgent: selected.name };
+  if (selected.templateKey !== normalized || !selected.name) {
+    return { postApproval, error: null };
+  }
+  const nameFirstMatch = entries.findIndex(
+    (entry) =>
+      entry.name === selected.name || (entry.agentId !== '' && entry.agentId === selected.name)
+  );
+  if (nameFirstMatch !== selectedIndex) {
+    return {
+      postApproval,
+      error:
+        `post-approval route "${target}" resolves to a slot whose name "${selected.name}" is ` +
+        `shadowed by an earlier slot; rename the slot in the bundle and retry`,
+    };
+  }
+  return { postApproval: { ...postApproval, targetAgent: selected.name }, error: null };
 }
 
 function generateUniqueName(baseName: string, existingNames: Set<string>): string {
@@ -374,7 +396,10 @@ export function buildWorkflowCreateParams(
             null)
           : null;
         if (getLongHorizonAgentTemplate(templateKey)) {
-          const relocatedKey = relocatedTemplateKey ? relocatedTemplateKey(templateKey) : null;
+          const relocatedKey =
+            rawTemplateKey === templateKey && relocatedTemplateKey
+              ? relocatedTemplateKey(templateKey)
+              : null;
           if (relocatedKey) {
             warnings.push(
               ambiguousTemplateReferenceError(exportedNode.name, templateKey, relocatedKey)
@@ -425,11 +450,13 @@ export function buildWorkflowCreateParams(
   });
   const flattenedAgents = builtAgents.flatMap(({ agents }) => agents);
   const nodes: WorkflowNodeInput[] = builtAgents.map(({ exportedNode, agents }) => {
+    const route = normalizeImportedPostApproval(exportedNode.postApproval, flattenedAgents);
+    if (route.error) warnings.push(`node "${exportedNode.name}": ${route.error}`);
     const node: WorkflowNodeInput = {
       id: nodeNameToId.get(exportedNode.name)!,
       name: exportedNode.name,
       agents,
-      postApproval: normalizeImportedPostApproval(exportedNode.postApproval, flattenedAgents),
+      postApproval: route.postApproval,
     };
     if (exportedNode.transitions && exportedNode.transitions.length > 0) {
       node.transitions = exportedNode.transitions.map((t) => ({ ...t }));
@@ -483,7 +510,10 @@ function validateWorkflowForPreview(
       const templateKey = rawTemplateKey ? normalizeLegacyWorkerTemplateKey(rawTemplateKey) : '';
       if (templateKey) {
         if (getLongHorizonAgentTemplate(templateKey)) {
-          const relocatedKey = relocatedTemplateKey ? relocatedTemplateKey(templateKey) : null;
+          const relocatedKey =
+            rawTemplateKey === templateKey && relocatedTemplateKey
+              ? relocatedTemplateKey(templateKey)
+              : null;
           if (relocatedKey) {
             errors.push(ambiguousTemplateReferenceError(node.name, templateKey, relocatedKey));
           }
@@ -586,8 +616,6 @@ export function setupSpaceExportImportHandlers(
 ): void {
   const templateRepo = new SpaceAgentTemplateRepository(db);
   const storedTemplateExists = (key: string): boolean => templateRepo.getByKey(key) != null;
-  const relocatedTemplateKey = (fromKey: string): string | null =>
-    findRelocatedTemplateKey(db, fromKey);
 
   messageHub.onRequest('spaceExport.agents', async (data) => {
     const params = data as { spaceId: string; agentIds?: string[] };
@@ -740,6 +768,9 @@ export function setupSpaceExportImportHandlers(
     const params = data as { bundle: unknown; spaceId: string };
     await requireSpace(spaceManager, params.spaceId);
 
+    const relocatedIndex = loadRelocatedTemplateIndex(db);
+    const relocatedTemplateKey = (fromKey: string): string | null =>
+      relocatedIndex.get(fromKey) ?? null;
     const validation = validateExportBundle(params.bundle);
     if (!validation.ok) {
       const result: ImportPreviewResult = {
@@ -843,6 +874,9 @@ export function setupSpaceExportImportHandlers(
     };
     await requireSpace(spaceManager, params.spaceId);
 
+    const relocatedIndex = loadRelocatedTemplateIndex(db);
+    const relocatedTemplateKey = (fromKey: string): string | null =>
+      relocatedIndex.get(fromKey) ?? null;
     const validation = validateExportBundle(params.bundle);
     if (!validation.ok) {
       throw new Error(`Invalid bundle: ${validation.error}`);

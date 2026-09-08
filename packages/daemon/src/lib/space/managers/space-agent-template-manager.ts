@@ -31,6 +31,7 @@ import {
   getLongHorizonAgentTemplate,
   getLongHorizonAgentTemplates,
   isLegacyWorkerTemplateKey,
+  isRelocationMarkerLabel,
 } from '../agents/long-horizon-agent-templates.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import { validateSlug } from '../slug.ts';
@@ -321,7 +322,12 @@ function updateValidateLabels(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
   if (ctx.params.labels === undefined) return ctx;
   const { labels, error } = normalizeTemplateLabels(ctx.params.labels);
   if (error) return { ...ctx, error };
-  return { ...ctx, params: { ...ctx.params, labels } };
+  const sticky = (ctx.existing?.labels ?? []).filter((label) => isRelocationMarkerLabel(label));
+  const merged = [...labels];
+  for (const label of sticky) {
+    if (!merged.includes(label)) merged.push(label);
+  }
+  return { ...ctx, params: { ...ctx.params, labels: merged } };
 }
 
 async function updateValidateModel(ctx: UpdateTemplateCtx): Promise<UpdateTemplateCtx> {

@@ -14,10 +14,10 @@ import {
   SpaceAgentTemplateManager,
 } from '../../../../src/lib/space/managers/space-agent-template-manager';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
-import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
+import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const BUILT_INS: SpaceAgentTemplate[] = [
@@ -492,6 +492,21 @@ describe('SpaceAgentTemplateManager', () => {
   });
 
   describe('update', () => {
+    test('preserves relocation marker labels through label edits', async () => {
+      await manager.create(fullParams());
+      db.prepare(
+        `UPDATE space_agent_templates SET labels = ? WHERE key = 'release-readiness.custom'`
+      ).run(JSON.stringify(['relocated-from:worker.swe', 'quality']));
+
+      const cleared = await manager.update('release-readiness.custom', {
+        labels: ['infra'],
+      });
+
+      expect(cleared.ok).toBe(true);
+      if (!cleared.ok) throw new Error('expected ok');
+      expect(cleared.value?.labels).toEqual(['infra', 'relocated-from:worker.swe']);
+    });
+
     test('updates a custom template', async () => {
       await manager.create(fullParams());
 

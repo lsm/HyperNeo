@@ -99,6 +99,12 @@ const LEGACY_WORKER_TEMPLATE_KEYS: Record<string, string> = {
   'worker.coder': 'worker.swe',
 };
 
+export const RELOCATED_FROM_LABEL_PREFIX = 'relocated-from:';
+
+export function isRelocationMarkerLabel(label: string): boolean {
+  return label.startsWith(RELOCATED_FROM_LABEL_PREFIX);
+}
+
 export function normalizeLegacyWorkerTemplateKey(key: string): string {
   return Object.hasOwn(LEGACY_WORKER_TEMPLATE_KEYS, key) ? LEGACY_WORKER_TEMPLATE_KEYS[key] : key;
 }

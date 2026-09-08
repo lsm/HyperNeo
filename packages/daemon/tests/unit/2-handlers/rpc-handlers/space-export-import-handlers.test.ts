@@ -780,6 +780,12 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it('normalizes the legacy worker.coder templateKey to worker.swe on import', async () => {
+      new SpaceAgentTemplateRepository(db).create({
+        key: 'worker.swe.migrated',
+        handle: 'legacy-swe',
+        displayName: 'Legacy SWE',
+        labels: ['relocated-from:worker.swe'],
+      });
       const bundle = {
         version: 5,
         type: 'bundle',
@@ -819,6 +825,40 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(workflow.nodes[0].agents![0].templateKey).toBe('worker.swe');
       expect(workflow.nodes[0].agents![0].agentId).toBe('');
       expect(workflow.nodes[0].postApproval?.targetAgent).toBe('coder');
+    });
+
+    it('rejects a legacy route whose resolved slot name is shadowed by an earlier slot', async () => {
+      const bundle = {
+        version: 5,
+        type: 'bundle',
+        name: 'Test Bundle',
+        exportedAt: 1000,
+        agents: [],
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Shadowed Pipe',
+            nodes: [
+              {
+                agents: [{ templateKey: 'team.other', name: 'impl' }],
+                name: 'Setup',
+              },
+              {
+                agents: [{ templateKey: 'worker.coder', name: 'impl' }],
+                name: 'Coding',
+                postApproval: { targetAgent: 'worker.coder', instructions: 'merge the PR' },
+              },
+            ],
+            startNode: 'Setup',
+            tags: [],
+          },
+        ],
+      };
+
+      await expect(
+        call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+      ).rejects.toThrow(/shadowed by an earlier slot/);
     });
 
     it('flags ambiguous worker.swe references using the actual relocated key', async () => {

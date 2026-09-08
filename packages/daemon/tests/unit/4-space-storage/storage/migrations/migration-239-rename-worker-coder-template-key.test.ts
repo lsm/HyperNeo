@@ -372,7 +372,7 @@ describe('migration 239 — rename worker.coder slot templateKey to worker.swe',
     runMigration239(db);
 
     expect((readNodeConfig(db, 'node-1').postApproval as { targetAgent: string }).targetAgent).toBe(
-      'impl'
+      'worker.coder'
     );
     expect(readWorkflowPostApprovalTarget(db, 'wf-1')).toBe('worker.coder');
     expect(readSlots(db, 'node-1')).toEqual([
@@ -426,6 +426,29 @@ describe('migration 239 — rename worker.coder slot templateKey to worker.swe',
       { agentId: '', templateKey: 'team.other', name: 'worker.swe' },
       { agentId: '', templateKey: 'worker.swe', name: 'impl' },
     ]);
+    db.close();
+  });
+
+  test('leaves a target unchanged when both the renamed key and the slot name are shadowed', () => {
+    const db = createMigrationDb();
+    insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
+    insertNodeWithSlots(
+      db,
+      'node-1',
+      'wf-1',
+      [
+        { agentId: '', templateKey: 'team.x', name: 'worker.swe' },
+        { agentId: '', templateKey: 'team.y', name: 'impl' },
+        { agentId: '', templateKey: 'worker.coder', name: 'impl' },
+      ],
+      { targetAgent: 'worker.coder' }
+    );
+
+    runMigration239(db);
+
+    expect((readNodeConfig(db, 'node-1').postApproval as { targetAgent: string }).targetAgent).toBe(
+      'worker.coder'
+    );
     db.close();
   });
 

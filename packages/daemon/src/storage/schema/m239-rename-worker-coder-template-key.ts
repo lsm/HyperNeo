@@ -1,5 +1,8 @@
 import type { SpaceWorkflow } from '@hyperneo/shared';
-import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates.ts';
+import {
+  getLongHorizonAgentTemplate,
+  RELOCATED_FROM_LABEL_PREFIX,
+} from '../../lib/space/agents/long-horizon-agent-templates.ts';
 import {
   computeDefinitionVersion,
   verifyDefinitionVersion,
@@ -9,7 +12,7 @@ import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 const OLD_TEMPLATE_KEY = 'worker.coder';
 const NEW_TEMPLATE_KEY = 'worker.swe';
-const RELOCATED_FROM_LABEL = `relocated-from:${NEW_TEMPLATE_KEY}`;
+const RELOCATED_FROM_LABEL = `${RELOCATED_FROM_LABEL_PREFIX}${NEW_TEMPLATE_KEY}`;
 
 interface NodeRow {
   id: string;
@@ -134,7 +137,11 @@ function rewritePostApprovalTarget(
     postApproval.targetAgent = replacement;
     return true;
   }
-  if (selected.name !== '' && selected.name !== target) {
+  if (
+    selected.name !== '' &&
+    selected.name !== target &&
+    slots.findIndex((slot) => slotMatchesTarget(slot, selected.name, true)) === selectedIndex
+  ) {
     postApproval.targetAgent = selected.name;
     return true;
   }
