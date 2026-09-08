@@ -312,6 +312,8 @@ function makeMockHub() {
       if (method === 'spaceAgent.promoteSession')
         return { agent: makeLongHorizonAgent('promoted-agent') };
       if (method === 'spaceAgent.update') return { agent: makeLongHorizonAgent('a1') };
+      if (method === 'spaceAgent.ensureSession')
+        return { sessionId: `space:agent:space-1:${params?.agentId}` };
       if (method === 'spaceAgent.reapplyTemplate')
         return { agent: makeLongHorizonAgent(params?.agentId as string) };
       if (method === 'spaceAgent.create') {
@@ -2028,6 +2030,22 @@ describe('SpaceStore — CRUD methods', () => {
     });
     expect(agent.id).toBe('a1');
     expect(spaceStore.agents.value.some((a) => a.id === 'a1')).toBe(true);
+  });
+
+  it('ensureAgentSession patches the cached agent with the returned sessionId', async () => {
+    await spaceStore.selectSpace('space-1');
+    await spaceStore.createAgent({ name: 'Provisioned' });
+
+    const sessionId = await spaceStore.ensureAgentSession('new-agent');
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.ensureSession', {
+      spaceId: 'space-1',
+      agentId: 'new-agent',
+    });
+    expect(sessionId).toBe('space:agent:space-1:new-agent');
+    expect(spaceStore.agents.value.find((a) => a.id === 'new-agent')?.sessionId).toBe(
+      'space:agent:space-1:new-agent'
+    );
   });
 
   it('reapplyAgentTemplate ignores the returned agent when the active space changes before the request resolves', async () => {

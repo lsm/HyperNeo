@@ -748,6 +748,15 @@ export class SpaceRuntimeService {
       agentId,
       [`@${agent.handle}`]
     );
+    const latest = repo.getById(agentId);
+    if (latest && agentSessionConfigSignature(latest) !== agentSessionConfigSignature(agent)) {
+      const refreshedConfig = await buildAgentSessionConfig(
+        { agent: latest },
+        space,
+        session.getSessionData().config
+      );
+      await this.refreshLongHorizonAgentSessionConfig(session, refreshedConfig);
+    }
     if (agent.sessionId !== sessionId) {
       const updated = repo.update(agent.id, { sessionId });
       if (updated) {
@@ -2074,6 +2083,21 @@ function agentIdFromActorId(actorId: string): string | null {
   } catch {
     return null;
   }
+}
+
+function agentSessionConfigSignature(agent: SpaceLongHorizonAgent): string {
+  return JSON.stringify([
+    agent.displayName,
+    agent.handle,
+    agent.templateKey,
+    agent.instructions,
+    agent.model,
+    agent.provider,
+    agent.thinkingLevel,
+    agent.settingSources,
+    agent.toolPermissions,
+    agent.modelPool,
+  ]);
 }
 
 function generateRuntimeMessageId(): string {
