@@ -37,7 +37,13 @@ function createDb(): {
   createSpaceTables(db);
   insertSpace(db);
   const repo = new SpaceLongHorizonAgentRepository(db);
+<<<<<<< HEAD
   const presets = [...getPresetAgentTemplates(), ...RETIRED_PRESET_MIRRORS];
+=======
+  const presets = getPresetAgentTemplates().map((preset) =>
+    preset.handle === 'swe' ? { ...preset, name: 'Coder', handle: 'coder' } : preset
+  );
+>>>>>>> 3c88f272e6 (fix(test): align pins with worker.swe rename (m196/m233 fixtures, golden map, agent-config, built-in workflow keys))
   const insertMirror = db.prepare(
     `INSERT INTO space_long_horizon_agents (
        id, space_id, handle, display_name, template_key, instructions,

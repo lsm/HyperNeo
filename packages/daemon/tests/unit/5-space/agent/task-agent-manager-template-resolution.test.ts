@@ -184,7 +184,7 @@ describe('resolveNodeTemplateSource ordering (ATC-1 pin)', () => {
     const source = h.internals.resolveNodeTemplateSource('worker.swe');
 
     expect(source?.key).toBe('worker.swe');
-    expect(source?.handle).toBe('coder');
+    expect(source?.handle).toBe('swe');
     expect(source?.instructions).toBe(PRESET_CODER_PROMPT);
     expect(h.templateRepoCalls).toEqual([]);
   });

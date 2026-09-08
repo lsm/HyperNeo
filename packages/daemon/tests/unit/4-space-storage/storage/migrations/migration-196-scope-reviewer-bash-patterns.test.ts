@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
-import { createLegacySpaceAgentTables } from '../../../helpers/space-agent-schema.ts';
 import { runMigrations } from '../../../../../src/storage/schema/index.ts';
 import {
   PRE_SCOPE_REVIEWER_DESCRIPTION,
@@ -10,6 +9,7 @@ import {
   runMigration196,
 } from '../../../../../src/storage/schema/m196-scope-reviewer-bash-patterns.ts';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
+import { createLegacySpaceAgentTables } from '../../../helpers/space-agent-schema.ts';
 
 interface AgentRow {
   id: string;
@@ -24,7 +24,7 @@ interface AgentRow {
 
 const PRESETS = getPresetAgentTemplates();
 const REVIEWER_PRESET = PRESETS.find((p) => p.name === 'Reviewer')!;
-const CODER_PRESET = PRESETS.find((p) => p.name === 'Coder')!;
+const SWE_PRESET = PRESETS.find((p) => p.name === 'SWE')!;
 
 function insertSpace(db: BunDatabase, id: string): void {
   const now = Date.now();
@@ -261,18 +261,18 @@ describe('migration 196 — reviewer scoped bash tool patterns', () => {
     insertAgent(db, {
       id: 'agent-coder',
       spaceId,
-      name: 'Coder',
-      handle: 'coder',
-      tools: CODER_PRESET.tools,
-      customPrompt: CODER_PRESET.customPrompt,
-      templateName: 'Coder',
-      templateHash: computeAgentTemplateHash(CODER_PRESET),
+      name: 'SWE',
+      handle: 'swe',
+      tools: SWE_PRESET.tools,
+      customPrompt: SWE_PRESET.customPrompt,
+      templateName: 'SWE',
+      templateHash: computeAgentTemplateHash(SWE_PRESET),
     });
 
     runMigration196(db);
 
     const row = getAgentRow('agent-coder');
-    expect(parseTools(row)).toEqual(CODER_PRESET.tools);
+    expect(parseTools(row)).toEqual(SWE_PRESET.tools);
   });
 
   test('safe no-op on empty space_agents', () => {

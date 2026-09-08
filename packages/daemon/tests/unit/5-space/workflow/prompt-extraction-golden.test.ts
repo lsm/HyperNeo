@@ -156,7 +156,13 @@ const VALUES: Record<string, string> = {
   LH_COORDINATOR_INSTRUCTIONS: lhInstructions.get('LH_COORDINATOR_INSTRUCTIONS')!,
   LONG_HORIZON_SCHEDULING_GUARDRAIL,
   NON_DELEGATING_GENERAL_PROMPT: NON_DELEGATING_GENERAL_AGENT.prompt,
+<<<<<<< HEAD
   PRESET_CODER_PROMPT: byPreset.get('coder')!,
+=======
+  PRESET_CODER_PROMPT: byPreset.get('swe')!,
+  PRESET_GENERAL_PROMPT: byPreset.get('general')!,
+  PRESET_PLANNER_PROMPT: byPreset.get('planner')!,
+>>>>>>> 3c88f272e6 (fix(test): align pins with worker.swe rename (m196/m233 fixtures, golden map, agent-config, built-in workflow keys))
   PRESET_RESEARCH_PROMPT: byPreset.get('research')!,
   COORDINATOR_PROMPT: COORDINATOR_AGENT.prompt,
   SUBAGENT_CODER_PROMPT: coderAgent.prompt,
