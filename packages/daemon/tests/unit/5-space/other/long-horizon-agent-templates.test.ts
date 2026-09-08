@@ -11,11 +11,17 @@ function getLongHorizonFamilyTemplates() {
 }
 
 describe('long-horizon agent templates', () => {
-  test('keeps only the coordinator as a non-worker built-in template (ATC-3)', () => {
+  test('keeps only the coordinator and task-manager as non-worker built-ins (ATC-3, ATC-4)', () => {
     const templates = getLongHorizonFamilyTemplates();
 
-    expect(templates.map((template) => template.key)).toEqual(['coordinator.default']);
-    expect(templates.map((template) => template.displayName)).toEqual(['Coordinator']);
+    expect(templates.map((template) => template.key)).toEqual([
+      'coordinator.default',
+      'task-manager.default',
+    ]);
+    expect(templates.map((template) => template.displayName)).toEqual([
+      'Coordinator',
+      'Task Manager',
+    ]);
   });
 
   test('registers the worker presets as code built-ins under the worker namespace', () => {
@@ -51,6 +57,20 @@ describe('long-horizon agent templates', () => {
     }
   });
 
+  test('task-manager tracks work without routing powers or subscriptions (ATC-4)', () => {
+    const taskManager = getLongHorizonAgentTemplates().find(
+      (template) => template.key === 'task-manager.default'
+    );
+
+    expect(taskManager?.suggestedAutonomyLevel).toBe(2);
+    expect(taskManager?.suggestedEventSubscriptions).toEqual([]);
+    expect(taskManager?.instructions).toContain('Triage');
+    expect(taskManager?.instructions).toContain('send_message_to_task');
+    expect(taskManager?.instructions).toContain('next slices');
+    expect(taskManager?.instructions).toContain('no routing powers');
+    expect(taskManager?.instructions).not.toContain('reassign_task');
+  });
+
   test('defines instructions, autonomy, subscriptions, reminders, and ownership patterns', () => {
     for (const template of getLongHorizonFamilyTemplates()) {
       expect(template.handle).toMatch(/^[a-z0-9-]+$/);
@@ -58,7 +78,9 @@ describe('long-horizon agent templates', () => {
       expect(template.instructions.length).toBeGreaterThan(80);
       expect(template.suggestedAutonomyLevel).toBeGreaterThanOrEqual(1);
       expect(template.suggestedAutonomyLevel).toBeLessThanOrEqual(5);
-      expect(template.suggestedEventSubscriptions.length).toBeGreaterThan(0);
+      if (template.key !== 'task-manager.default') {
+        expect(template.suggestedEventSubscriptions.length).toBeGreaterThan(0);
+      }
       expect(template.reminderDefaults.length).toBeGreaterThan(0);
       expect(template.ownershipPatterns.length).toBeGreaterThan(0);
     }
