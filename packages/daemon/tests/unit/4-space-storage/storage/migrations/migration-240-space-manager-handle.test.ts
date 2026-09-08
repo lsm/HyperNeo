@@ -23,6 +23,7 @@ function makeDb(): BunDatabase {
   insertSpace.run('space-9', '/tmp/space-9', 'Space 9', 'space-9');
   insertSpace.run('space-11', '/tmp/space-11', 'Space 11', 'space-11');
   insertSpace.run('space-13', '/tmp/space-13', 'Space 13', 'space-13');
+  insertSpace.run('space-14', '/tmp/space-14', 'Space 14', 'space-14');
   insertSpace.run('space-12', '/tmp/space-12', 'Space 12', 'space-12');
   const insertAgent = db.prepare(
     `INSERT INTO space_long_horizon_agents (
@@ -221,6 +222,24 @@ function makeDb(): BunDatabase {
     'active',
     'space:chat:space-13'
   );
+  insertAgent.run(
+    'space-lh-agent:coordinator:space-14',
+    'space-14',
+    'coordinator',
+    'Coordinator',
+    'coordinator.default',
+    'archived',
+    'space:chat:space-14'
+  );
+  insertAgent.run(
+    'agent-holder-14',
+    'space-14',
+    'coordinator',
+    'Coordinator',
+    null,
+    'active',
+    null
+  );
   return db;
 }
 
@@ -303,6 +322,21 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
     expect(rowById(db, 'agent-coord-9').handle).toBe('space-manager');
     expect(rowById(db, 'agent-coord-9').display_name).toBe('Coordinator');
     expect(rowById(db, 'agent-archived-named-9').display_name).toBe('Space Manager');
+    db.close();
+  });
+
+  test('keeps the archived deterministic manager over an active legacy impostor', () => {
+    const db = makeDb();
+    runMigration239(db);
+
+    const impostor = handleById(db, 'agent-holder-14');
+    expect(impostor.startsWith('space-manager-migrated-')).toBe(true);
+    expect(handleById(db, 'space-lh-agent:coordinator:space-14')).toBe('space-manager');
+    expect(() =>
+      db
+        .prepare(`UPDATE space_long_horizon_agents SET status = 'active' WHERE id = ?`)
+        .run('space-lh-agent:coordinator:space-14')
+    ).not.toThrow();
     db.close();
   });
 

@@ -51,7 +51,7 @@ export function runMigration240(db: BunDatabase): void {
               SELECT 1 FROM space_long_horizon_agents det
                WHERE det.space_id = space_long_horizon_agents.space_id
                  AND det.id = 'space-lh-agent:coordinator:' || space_id
-                 AND det.handle != 'coordinator'
+                 AND (det.handle != 'coordinator' OR det.status = 'archived')
             )
           )
         )`
