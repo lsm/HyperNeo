@@ -4206,13 +4206,15 @@ export class TaskAgentManager {
     const inRateLimitCooldown = state.status === 'rate_limit_cooldown';
     const parentTaskId = this.findParentTaskIdForSubSession(sessionId);
     const parentTask = parentTaskId ? this.config.taskRepo.getTask(parentTaskId) : null;
-    const parentLimited = parentTask ? isRateOrUsageLimited(parentTask.status) : false;
+    const parentDefersDelivery = parentTask
+      ? isRateOrUsageLimited(parentTask.status) || parentTask.status === 'blocked'
+      : false;
     const outcome = decideInjectDelivery({
       existingSendStatus: existing?.sendStatus ?? null,
       deliveryMode,
       isBusy,
       inRateLimitCooldown,
-      parentTaskLimited: parentLimited,
+      parentTaskLimited: parentDefersDelivery,
       inputKind,
       hasPriorContext: !!session.session.sdkSessionId,
       slotResetsContext: this.slotResetsContextForSession(sessionId),
