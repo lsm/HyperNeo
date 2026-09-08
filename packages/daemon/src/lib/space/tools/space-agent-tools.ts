@@ -80,6 +80,7 @@ import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import type { SpaceRuntime } from '../runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../runtime/task-agent-manager.ts';
 import { mapPostApprovalDispatchWarning } from '../runtime/post-approval-router.ts';
+import { spaceAgentTemplateToNodeSource } from '../runtime/spawn-slot-resolution.ts';
 import type { SpaceMcpSessionRole } from '../runtime/space-mcp-session-policy.ts';
 import { decideGoalOwnershipMutationAdmission } from '../goals/goal-ownership-gates.ts';
 import {
@@ -1832,9 +1833,16 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         return jsonResult({ success: false, error: 'template_name is required' });
       }
 
-      const lhTemplate = getLongHorizonAgentTemplates().find(
+      const builtInTemplate = getLongHorizonAgentTemplates().find(
         (candidate) => candidate.key.toLowerCase() === templateName.toLowerCase()
       );
+      const storedTemplate = builtInTemplate
+        ? null
+        : config.db
+          ? new SpaceAgentTemplateRepository(config.db).getByKey(templateName)
+          : null;
+      const lhTemplate: SpaceLongHorizonAgentTemplate | null =
+        builtInTemplate ?? (storedTemplate ? spaceAgentTemplateToNodeSource(storedTemplate) : null);
       if (lhTemplate) {
         if (isReservedAgentHandle(lhTemplate.handle)) {
           return jsonResult({
