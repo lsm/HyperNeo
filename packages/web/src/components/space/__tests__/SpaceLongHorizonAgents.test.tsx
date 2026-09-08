@@ -1854,6 +1854,35 @@ describe('SpaceLongHorizonAgents', () => {
     expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
   });
 
+  it("invalidates another card's pending open before showing card actions", async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({ sessionId: null }),
+      makeLongHorizonAgent({
+        id: 'lh-2',
+        handle: 'second',
+        displayName: 'Second Agent',
+        sessionId: null,
+      }),
+    ];
+    let resolveEnsure: (sessionId: string) => void = () => {};
+    mockEnsureAgentSession.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveEnsure = resolve;
+        })
+    );
+
+    const { getByText, getByLabelText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Second Agent').closest('[role="button"]')!);
+    fireEvent.click(getByLabelText('Edit Research Long Horizon'));
+
+    resolveEnsure('space:agent:space-1:lh-2');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
+  });
+
   it('admits a new open after a superseded request without waiting for it to settle', async () => {
     mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
     let resolveFirst: (sessionId: string) => void = () => {};

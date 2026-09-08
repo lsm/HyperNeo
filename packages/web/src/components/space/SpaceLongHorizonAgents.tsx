@@ -921,6 +921,7 @@ interface AgentCardProps {
   navigationSpaceId: string;
   reminderCount: number;
   provisioningAvailable: boolean;
+  invalidateOpen: () => void;
   recordOpenSeq: (openSeq: number) => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -932,6 +933,7 @@ function AgentCard({
   navigationSpaceId,
   reminderCount,
   provisioningAvailable,
+  invalidateOpen,
   recordOpenSeq,
   onEdit,
   onDelete,
@@ -953,22 +955,11 @@ function AgentCard({
     : (agent.sessionId ?? derivedSessionId);
   const hasSession = !!agent.sessionId || coordinator;
 
-  const openSeqRef = useRef(0);
-
-  const invalidatePendingOpen = () => {
-    if (openSeqRef.current !== 0 && openSeqRef.current === latestAgentCardOpenSeq) {
-      latestAgentCardOpenSeq++;
-    }
-  };
-
-  useEffect(() => () => invalidatePendingOpen(), []);
+  useEffect(() => () => invalidateOpen(), []);
 
   const openSession = async () => {
     if (!sessionId) return;
-    await runOpenAgentSession(agent, navigationSpaceId, (openSeq) => {
-      openSeqRef.current = openSeq;
-      recordOpenSeq(openSeq);
-    });
+    await runOpenAgentSession(agent, navigationSpaceId, recordOpenSeq);
   };
 
   return (
@@ -1033,7 +1024,7 @@ function AgentCard({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              invalidatePendingOpen();
+              invalidateOpen();
               onEdit();
             }}
             class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-fg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
@@ -1054,7 +1045,7 @@ function AgentCard({
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                invalidatePendingOpen();
+                invalidateOpen();
                 onDelete();
               }}
               class="rounded-md p-1.5 text-fg-faint transition-colors hover:bg-fill-soft hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
@@ -1462,6 +1453,7 @@ export function SpaceLongHorizonAgents({
                   navigationSpaceId={routeSpaceId}
                   reminderCount={reminderCounts[agent.id] ?? 0}
                   provisioningAvailable={provisioningAvailable}
+                  invalidateOpen={invalidatePanePendingOpen}
                   recordOpenSeq={(openSeq) => {
                     paneOpenSeqRef.current = openSeq;
                   }}
