@@ -23,14 +23,14 @@ export function runMigration240(db: BunDatabase): void {
   const holders = db
     .prepare(
       `SELECT id, space_id FROM space_long_horizon_agents
-        WHERE handle = ? AND status != 'archived'
+        WHERE handle = ?
           AND space_id IN (SELECT space_id FROM space_long_horizon_agents WHERE handle = 'coordinator')`
     )
     .all(SPACE_MANAGER_HANDLE) as AgentIdRow[];
   db.exec('BEGIN');
   try {
-    const activeHandles = db.prepare(
-      `SELECT handle FROM space_long_horizon_agents WHERE space_id = ? AND status != 'archived'`
+    const spaceHandles = db.prepare(
+      `SELECT handle FROM space_long_horizon_agents WHERE space_id = ?`
     );
     const rehandle = db.prepare(
       `UPDATE space_long_horizon_agents SET handle = ?, updated_at = ? WHERE id = ?`
@@ -39,7 +39,7 @@ export function runMigration240(db: BunDatabase): void {
     for (const holder of holders) {
       const used =
         usedBySpace.get(holder.space_id) ??
-        new Set((activeHandles.all(holder.space_id) as HandleRow[]).map((row) => row.handle));
+        new Set((spaceHandles.all(holder.space_id) as HandleRow[]).map((row) => row.handle));
       usedBySpace.set(holder.space_id, used);
       const handle = slugifyWithinLimit(`space-manager-migrated-${holder.id.replace(/:/g, '-')}`, [
         ...used,

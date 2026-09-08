@@ -17,6 +17,7 @@ function makeDb(): BunDatabase {
   insertSpace.run('space-3', '/tmp/space-3', 'Space 3', 'space-3');
   insertSpace.run('space-4', '/tmp/space-4', 'Space 4', 'space-4');
   insertSpace.run('space-5', '/tmp/space-5', 'Space 5', 'space-5');
+  insertSpace.run('space-6', '/tmp/space-6', 'Space 6', 'space-6');
   const insertAgent = db.prepare(
     `INSERT INTO space_long_horizon_agents (
 			id, space_id, handle, display_name, template_key, status, session_id,
@@ -96,6 +97,24 @@ function makeDb(): BunDatabase {
     'active',
     'space:chat:space-5'
   );
+  insertAgent.run(
+    'agent-archived-6',
+    'space-6',
+    'space-manager',
+    'Archived Holder',
+    null,
+    'archived',
+    null
+  );
+  insertAgent.run(
+    'agent-coord-6',
+    'space-6',
+    'coordinator',
+    'Coordinator',
+    'coordinator.default',
+    'active',
+    'space:chat:space-6'
+  );
   return db;
 }
 
@@ -158,6 +177,22 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
 
     expect(rowById(db, 'agent-coord-1').display_name).toBe('Space Manager');
     expect(rowById(db, 'agent-coord-4').display_name).toBe('My Coordinator');
+    db.close();
+  });
+
+  test('relocates archived space-manager holders so they stay restorable', () => {
+    const db = makeDb();
+    runMigration236(db);
+
+    expect(handleById(db, 'agent-coord-6')).toBe('space-manager');
+    const relocated = handleById(db, 'agent-archived-6');
+    expect(relocated.startsWith('space-manager-migrated-')).toBe(true);
+    expect(relocated).not.toBe('space-manager');
+    expect(() =>
+      db
+        .prepare(`UPDATE space_long_horizon_agents SET status = 'active' WHERE id = ?`)
+        .run('agent-archived-6')
+    ).not.toThrow();
     db.close();
   });
 
