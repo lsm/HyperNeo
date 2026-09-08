@@ -766,6 +766,15 @@ export class SpaceRuntimeService {
       agentId,
       [`@${applied.handle}`]
     );
+    const currentSpace = await this.config.spaceManager.getSpace(spaceId);
+    if (
+      !currentSpace ||
+      currentSpace.paused ||
+      currentSpace.stopped ||
+      currentSpace.status === 'archived'
+    ) {
+      return null;
+    }
     if (applied.sessionId !== sessionId) {
       const updated = repo.update(applied.id, { sessionId });
       if (updated) {
