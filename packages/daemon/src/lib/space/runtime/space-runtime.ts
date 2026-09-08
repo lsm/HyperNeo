@@ -3475,6 +3475,11 @@ export class SpaceRuntime {
   }
 
   private async reconcileTerminalRunTasks(run: SpaceWorkflowRun): Promise<void> {
+    await this.reconcileTerminalRunTasksUnchecked(run);
+    this.config.taskRepo.markReconcileCheckedAt(run.id, Date.now());
+  }
+
+  private async reconcileTerminalRunTasksUnchecked(run: SpaceWorkflowRun): Promise<void> {
     const runTasks = this.config.taskRepo.listByWorkflowRun(run.id);
     if (runTasks.length === 0) return;
 

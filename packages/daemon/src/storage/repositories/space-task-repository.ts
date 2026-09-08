@@ -802,6 +802,15 @@ export class SpaceTaskRepository {
     this.db.prepare(`UPDATE space_tasks SET spawn_reservation_token = NULL`).run();
   }
 
+  markReconcileCheckedAt(workflowRunId: string, checkedAt: number): void {
+    this.db
+      .prepare(
+        `UPDATE space_tasks SET reconcile_checked_at = ?
+          WHERE workflow_run_id = ? AND status != 'archived'`
+      )
+      .run(checkedAt, workflowRunId);
+  }
+
   archiveTask(id: string): SpaceTask | null {
     const now = Date.now();
     const stmt = this.db.prepare(

@@ -214,6 +214,18 @@ export class SpaceWorkflowRunRepository {
            OR (
              run.status = 'done'
              AND EXISTS (
+               SELECT 1 FROM workflow_run_artifacts a
+                WHERE a.run_id = run.id
+                  AND a.artifact_type = 'decision'
+                  AND a.updated_at > (
+                    SELECT COALESCE(MAX(t3.reconcile_checked_at), 0) FROM space_tasks t3
+                     WHERE t3.workflow_run_id = run.id AND t3.status != 'archived'
+                  )
+             )
+           )
+           OR (
+             run.status = 'done'
+             AND EXISTS (
                SELECT 1 FROM space_tasks t
                 WHERE t.workflow_run_id = run.id
                   AND t.status != 'archived'
@@ -222,22 +234,20 @@ export class SpaceWorkflowRunRepository {
                     OR COALESCE(TRIM(t.reported_summary), '') = ''
                   )
                   AND (
-                    COALESCE(TRIM(t.reported_summary), '') != ''
+                    t.updated_at > (
+                      SELECT COALESCE(MAX(t3.reconcile_checked_at), 0) FROM space_tasks t3
+                       WHERE t3.workflow_run_id = run.id AND t3.status != 'archived'
+                    )
                     OR EXISTS (
                       SELECT 1 FROM space_tasks s
                        WHERE s.workflow_run_id = run.id
                          AND s.id != t.id
                          AND s.status != 'archived'
                          AND COALESCE(TRIM(s.result), '') != ''
-                    )
-                    OR EXISTS (
-                      SELECT 1 FROM workflow_run_artifacts a
-                       WHERE a.run_id = run.id
-                         AND a.artifact_type = 'decision'
-                         AND json_valid(a.data)
-                         AND COALESCE(json_extract(a.data, '$.kind'), '') = ''
-                         AND json_type(a.data, '$.summary') = 'text'
-                         AND TRIM(CAST(json_extract(a.data, '$.summary') AS TEXT)) != ''
+                         AND s.updated_at > (
+                           SELECT COALESCE(MAX(t4.reconcile_checked_at), 0) FROM space_tasks t4
+                            WHERE t4.workflow_run_id = run.id AND t4.status != 'archived'
+                         )
                     )
                     OR EXISTS (
                       SELECT 1 FROM node_executions e
@@ -245,26 +255,10 @@ export class SpaceWorkflowRunRepository {
                          AND e.status = 'idle'
                          AND COALESCE(TRIM(e.result), '') != ''
                          AND e.updated_at > (
-                           SELECT MAX(t3.updated_at) FROM space_tasks t3
-                            WHERE t3.workflow_run_id = run.id AND t3.status != 'archived'
+                           SELECT COALESCE(MAX(t5.reconcile_checked_at), 0) FROM space_tasks t5
+                            WHERE t5.workflow_run_id = run.id AND t5.status != 'archived'
                          )
                     )
-                  )
-             )
-           )
-           OR (
-             run.status = 'done'
-             AND EXISTS (
-               SELECT 1 FROM workflow_run_artifacts a
-                WHERE a.run_id = run.id
-                  AND a.artifact_type = 'decision'
-                  AND json_valid(a.data)
-                  AND COALESCE(json_extract(a.data, '$.kind'), '') = ''
-                  AND json_type(a.data, '$.summary') = 'text'
-                  AND TRIM(CAST(json_extract(a.data, '$.summary') AS TEXT)) != ''
-                  AND a.updated_at > (
-                    SELECT MAX(t3.updated_at) FROM space_tasks t3
-                     WHERE t3.workflow_run_id = run.id AND t3.status != 'archived'
                   )
              )
            )

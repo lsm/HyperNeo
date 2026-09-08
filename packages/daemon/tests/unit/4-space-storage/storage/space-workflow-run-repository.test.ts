@@ -625,6 +625,7 @@ describe('SpaceWorkflowRunRepository.listTerminalRunsNeedingTaskReconciliation',
       result?: string | null;
       reportedSummary?: string | null;
       updatedAt?: number;
+      reconcileCheckedAt?: number;
     } = {}
   ): string {
     const id = `task-${runId.slice(0, 8)}-${taskNumber}`;
@@ -632,8 +633,8 @@ describe('SpaceWorkflowRunRepository.listTerminalRunsNeedingTaskReconciliation',
     const now = Date.now();
     db.prepare(
       `INSERT INTO space_tasks
-         (id, space_id, task_number, title, status, workflow_run_id, result, reported_summary, created_at, updated_at)
-       VALUES (?, ?, ?, 'Task', ?, ?, ?, ?, ?, ?)`
+         (id, space_id, task_number, title, status, workflow_run_id, result, reported_summary, created_at, updated_at, reconcile_checked_at)
+       VALUES (?, ?, ?, 'Task', ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       spaceId,
@@ -643,9 +644,17 @@ describe('SpaceWorkflowRunRepository.listTerminalRunsNeedingTaskReconciliation',
       opts.result ?? null,
       opts.reportedSummary ?? null,
       now,
-      opts.updatedAt ?? now
+      opts.updatedAt ?? now,
+      opts.reconcileCheckedAt ?? null
     );
     return id;
+  }
+
+  function markReconciled(runId: string, checkedAt: number): void {
+    db.prepare(`UPDATE space_tasks SET reconcile_checked_at = ? WHERE workflow_run_id = ?`).run(
+      checkedAt,
+      runId
+    );
   }
 
   function seedArtifact(
@@ -718,9 +727,9 @@ describe('SpaceWorkflowRunRepository.listTerminalRunsNeedingTaskReconciliation',
     expect(selectedRunIds()).toEqual([runId]);
   });
 
-  it('excludes a done run whose unsettled task status cannot reach approved', () => {
+  it('excludes a done run whose unsettled task status cannot reach approved after a clean pass', () => {
     const runId = seedRun('done');
-    seedTask(runId, { status: 'open' });
+    seedTask(runId, { status: 'open', updatedAt: 1_000, reconcileCheckedAt: 2_000 });
 
     expect(selectedRunIds()).toEqual([]);
   });
@@ -740,9 +749,13 @@ describe('SpaceWorkflowRunRepository.listTerminalRunsNeedingTaskReconciliation',
     expect(selectedRunIds()).toEqual([runId]);
   });
 
-  it('excludes a done run whose missing outcome has no fill source', () => {
+  it('selects a done run with a missing outcome once, then drops it after a clean reconcile pass', () => {
     const runId = seedRun('done');
-    seedTask(runId, { result: null, reportedSummary: null });
+    seedTask(runId, { result: null, reportedSummary: null, updatedAt: 1_000 });
+
+    expect(selectedRunIds()).toEqual([runId]);
+
+    markReconciled(runId, 2_000);
 
     expect(selectedRunIds()).toEqual([]);
   });
@@ -759,67 +772,87 @@ describe('SpaceWorkflowRunRepository.listTerminalRunsNeedingTaskReconciliation',
     expect(selectedRunIds()).toEqual([]);
   });
 
-  it('includes a done run whose missing result can fill from its reported summary', () => {
+  it('selects a done run whose missing result can fill from its reported summary until the pass runs', () => {
     const runId = seedRun('done');
-    seedTask(runId, { result: null, reportedSummary: 'summary' });
+    seedTask(runId, { result: null, reportedSummary: 'summary', updatedAt: 1_000 });
 
     expect(selectedRunIds()).toEqual([runId]);
+
+    markReconciled(runId, 2_000);
+
+    expect(selectedRunIds()).toEqual([]);
   });
 
-  it('includes a done run whose missing outcome can fill from a decision artifact regardless of age', () => {
+  it('selects a never-reconciled done run with an old decision artifact, then drops it after the pass', () => {
     const runId = seedRun('done');
     seedTask(runId, { result: null, reportedSummary: null, updatedAt: 2_000 });
     seedArtifact(runId, { updatedAt: 1_000 });
 
     expect(selectedRunIds()).toEqual([runId]);
-  });
 
-  it('excludes a done run whose decision artifact carries a kind the summarizer rejects', () => {
-    const runId = seedRun('done');
-    seedTask(runId, { result: null, reportedSummary: null, updatedAt: 1_000 });
-    seedArtifact(runId, { updatedAt: 2_000, data: '{"kind": "pr", "summary": "x"}' });
+    markReconciled(runId, 3_000);
 
     expect(selectedRunIds()).toEqual([]);
   });
 
-  it('excludes a done run whose decision artifact has a blank summary', () => {
+  it('excludes a done run whose decision artifact predates the last reconcile pass', () => {
     const runId = seedRun('done');
-    seedTask(runId, { result: null, reportedSummary: null, updatedAt: 1_000 });
-    seedArtifact(runId, { updatedAt: 2_000, data: '{"summary": "  "}' });
+    seedTask(runId, { result: null, reportedSummary: null, reconcileCheckedAt: 2_000 });
+    seedArtifact(runId, { updatedAt: 1_000 });
 
     expect(selectedRunIds()).toEqual([]);
   });
 
-  it('includes a done run with filled outcomes when a usable decision artifact is newer than the task', () => {
+  it('selects a done run while a decision artifact is newer than the last reconcile pass', () => {
     const runId = seedRun('done');
-    seedTask(runId, { result: 'outcome', reportedSummary: 'summary', updatedAt: 1_000 });
+    seedTask(runId, { result: null, reportedSummary: null, reconcileCheckedAt: 1_000 });
     seedArtifact(runId, { updatedAt: 2_000 });
 
     expect(selectedRunIds()).toEqual([runId]);
-  });
 
-  it('excludes a done run with filled outcomes when its decision artifact is not newer than the task', () => {
-    const runId = seedRun('done');
-    seedTask(runId, { result: 'outcome', reportedSummary: 'summary', updatedAt: 2_000 });
-    seedArtifact(runId, { updatedAt: 1_000 });
+    markReconciled(runId, 3_000);
 
     expect(selectedRunIds()).toEqual([]);
   });
 
-  it('includes a done run whose missing outcome can fill from a fresh idle execution result', () => {
+  it('selects a done run once when a decision artifact is re-saved unchanged after the pass', () => {
     const runId = seedRun('done');
-    seedTask(runId, { result: null, reportedSummary: null, updatedAt: 1_000 });
+    seedTask(runId, { result: 'outcome', reportedSummary: 'summary', reconcileCheckedAt: 1_000 });
+    seedArtifact(runId, { updatedAt: 2_000, data: '{"summary": "same"}' });
+
+    expect(selectedRunIds()).toEqual([runId]);
+
+    markReconciled(runId, 3_000);
+
+    expect(selectedRunIds()).toEqual([]);
+  });
+
+  it('selects a done run whose missing outcome can fill from an idle execution result newer than the pass', () => {
+    const runId = seedRun('done');
+    seedTask(runId, { result: null, reportedSummary: null, reconcileCheckedAt: 1_000 });
     seedExecution(runId, { status: 'idle', result: 'execution outcome', updatedAt: 2_000 });
 
     expect(selectedRunIds()).toEqual([runId]);
+
+    markReconciled(runId, 3_000);
+
+    expect(selectedRunIds()).toEqual([]);
   });
 
-  it('excludes a done run whose idle execution result predates the last task update', () => {
+  it('excludes a done run whose idle execution result predates the last reconcile pass', () => {
     const runId = seedRun('done');
-    seedTask(runId, { result: null, reportedSummary: null, updatedAt: 2_000 });
+    seedTask(runId, { result: null, reportedSummary: null, reconcileCheckedAt: 2_000 });
     seedExecution(runId, { status: 'idle', result: 'execution outcome', updatedAt: 1_000 });
 
     expect(selectedRunIds()).toEqual([]);
+  });
+
+  it('selects a done run whose missing outcome can fill from a sibling result newer than the pass', () => {
+    const runId = seedRun('done');
+    seedTask(runId, { result: null, reportedSummary: null, reconcileCheckedAt: 2_000 });
+    seedTask(runId, { result: 'sibling outcome', reportedSummary: null, updatedAt: 3_000 });
+
+    expect(selectedRunIds()).toEqual([runId]);
   });
 
   it('includes a cancelled run with a task that can transition to cancelled', () => {
