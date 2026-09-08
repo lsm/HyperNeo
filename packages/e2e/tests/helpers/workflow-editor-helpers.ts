@@ -37,7 +37,9 @@ export async function getDefaultAgentId(page: Page, spaceId: string): Promise<st
     const res = (await hub.request('spaceAgent.list', { spaceId: sid })) as {
       agents: Array<{ id: string; handle: string; displayName: string }>;
     };
-    const pickable = res.agents.filter((a) => a.handle !== 'coordinator');
+    const pickable = res.agents.filter(
+      (a) => a.handle !== 'coordinator' && a.handle !== 'space-manager'
+    );
     const agent = pickable.find((a) => a.displayName === 'Planner') ?? pickable[0] ?? res.agents[0];
     if (!agent) throw new Error('No agents found in space');
     return agent.id;

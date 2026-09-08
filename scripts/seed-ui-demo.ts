@@ -1194,7 +1194,7 @@ async function seedSpace(ws: WebSocket): Promise<{ spaceId: string; taskIds: str
       handle: string;
       displayName: string;
     }>
-  ).filter((a) => a.handle !== 'coordinator');
+  ).filter((a) => a.handle !== 'coordinator' && a.handle !== 'space-manager');
   const nodeAgent = (index: number) =>
     agents[index % Math.max(agents.length, 1)] ?? { id: 'unknown', displayName: 'Coder' };
   const first = nodeAgent(0);
