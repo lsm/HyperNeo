@@ -25,6 +25,7 @@ import type {
   SpaceLongHorizonAgent,
   SpaceLongHorizonAgentStatus,
   SpaceLongHorizonAgentTemplate,
+  SpaceAgentTemplate,
   SpaceTask,
   SpaceTaskPriority,
   UpdateSpaceTaskParams,
@@ -579,6 +580,58 @@ export interface SpaceAgentToolsConfig {
   inactivityClaimRepo?: import('../../../storage/repositories/space-agent-inactivity-repository.ts').SpaceAgentInactivityClaimRepository;
   inactivityRunNow?: (spaceId: string, agentId: string) => Promise<void>;
 }
+
+type AgentTemplateLibrary = {
+  source: 'merged-library' | 'builtin-fallback';
+  templates: SpaceAgentTemplate[];
+};
+
+type AgentTemplateListEntry = {
+  template_name: string;
+  handle: string;
+  display_name: string;
+  description: string;
+  suggested_autonomy_level: SpaceAgentAutonomyLevel;
+  labels: string[];
+  builtin: boolean;
+};
+
+function resolveAgentTemplateLibrary(db: BunDatabase | undefined): AgentTemplateLibrary {
+  return db
+    ? {
+        source: 'merged-library',
+        templates: new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db)).list(),
+      }
+    : { source: 'builtin-fallback', templates: getBuiltInSpaceAgentTemplates() };
+}
+
+function dropReservedFallbackHandles(library: AgentTemplateLibrary): AgentTemplateLibrary {
+  if (library.source === 'merged-library') return library;
+  return {
+    ...library,
+    templates: library.templates.filter((template) => !isReservedAgentHandle(template.handle)),
+  };
+}
+
+function projectAgentTemplateEntries(library: AgentTemplateLibrary): AgentTemplateListEntry[] {
+  const builtinKeys = new Set(getLongHorizonAgentTemplates().map((template) => template.key));
+  return library.templates.map((template) => ({
+    template_name: template.key,
+    handle: template.handle,
+    display_name: template.displayName,
+    description: template.description,
+    suggested_autonomy_level: template.suggestedAutonomyLevel,
+    labels: template.labels,
+    builtin: builtinKeys.has(template.key),
+  }));
+}
+
+const runListAgentTemplates = (superpipe()('list-agent-templates') as PipelineAPI)
+  .input(['db'])
+  .pipe(resolveAgentTemplateLibrary, 'db', 'library')
+  .pipe(dropReservedFallbackHandles, 'library', 'filteredLibrary')
+  .pipe(projectAgentTemplateEntries, 'filteredLibrary', 'entries')
+  .end('entries') as (db: BunDatabase | undefined) => AgentTemplateListEntry[];
 
 export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
   const uniqueAgentDisplayName = (base: string): string => {
@@ -1809,23 +1862,8 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     },
 
     async list_agent_templates(): Promise<ToolResult> {
-      const builtinKeys = new Set(getLongHorizonAgentTemplates().map((template) => template.key));
-      const templates = (
-        config.db
-          ? new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(config.db)).list()
-          : getBuiltInSpaceAgentTemplates()
-      )
-        .filter((template) => !isReservedAgentHandle(template.handle))
-        .map((template) => ({
-          template_name: template.key,
-          handle: template.handle,
-          display_name: template.displayName,
-          description: template.description,
-          suggested_autonomy_level: template.suggestedAutonomyLevel,
-          labels: template.labels,
-          builtin: builtinKeys.has(template.key),
-        }));
-      return jsonResult({ success: true, long_horizon_templates: templates });
+      const entries = runListAgentTemplates(config.db);
+      return jsonResult({ success: true, long_horizon_templates: entries });
     },
 
     async update_agent(

@@ -2267,7 +2267,8 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
   });
 
   test('list_agent_templates merges built-in and user templates with labels and builtin flag', async () => {
-    new SpaceAgentTemplateRepository(ctx.db).create({
+    const templateRepo = new SpaceAgentTemplateRepository(ctx.db);
+    templateRepo.create({
       key: 'user.release-notes',
       handle: 'release-notes',
       displayName: 'Release Notes',
@@ -2275,6 +2276,12 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       instructions: 'Draft release notes.',
       suggestedAutonomyLevel: 2,
       labels: ['docs'],
+    });
+    templateRepo.create({
+      key: 'custom.coordinator',
+      handle: 'coordinator',
+      displayName: 'Custom Coord',
+      instructions: 'Custom coordination duties.',
     });
     const handlers = makeHandlers(ctx);
     const listed = JSON.parse((await handlers.list_agent_templates()).content[0].text);
@@ -2285,6 +2292,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(lhKeys).toContain('worker.research');
     expect(lhKeys).toContain('user.release-notes');
+    expect(lhKeys).toContain('custom.coordinator');
     expect(lhKeys).not.toContain('coordinator.default');
     const research = listed.long_horizon_templates.find(
       (t: { template_name: string }) => t.template_name === 'worker.research'
@@ -2299,6 +2307,10 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(releaseNotes.handle).toBe('release-notes');
     expect(releaseNotes.builtin).toBe(false);
     expect(releaseNotes.labels).toEqual(['docs']);
+    const customCoordinator = listed.long_horizon_templates.find(
+      (t: { template_name: string }) => t.template_name === 'custom.coordinator'
+    );
+    expect(customCoordinator.builtin).toBe(false);
   });
 
   test('list_agent_templates falls back to built-in templates without database access', async () => {
@@ -2316,6 +2328,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(lhKeys).toContain('worker.research');
     expect(lhKeys).not.toContain('user.release-notes');
+    expect(lhKeys).not.toContain('coordinator.default');
     expect(listed.long_horizon_templates.every((t: { builtin: boolean }) => t.builtin)).toBe(true);
   });
 
