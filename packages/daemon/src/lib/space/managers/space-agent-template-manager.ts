@@ -28,7 +28,7 @@ type BuiltInTemplateSource = () => SpaceAgentTemplate[];
 const MIN_AUTONOMY: SpaceAgentAutonomyLevel = 1;
 const MAX_AUTONOMY: SpaceAgentAutonomyLevel = 5;
 const MAX_LABELS = 8;
-const NON_PRINTABLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u;
+const NON_PRINTABLE = /[\p{Cc}\p{Cf}\p{Cn}\p{Cs}\p{Zl}\p{Zp}]/u;
 
 export interface CreateTemplateCtx {
   repo: SpaceAgentTemplateRepository;
@@ -141,10 +141,11 @@ function normalizeTemplateLabels(labels: string[] | null | undefined): {
     if (NON_PRINTABLE.test(label)) {
       return { labels: [], error: 'Template labels must contain only printable characters' };
     }
-    if (!normalized.includes(trimmed)) normalized.push(trimmed);
-  }
-  if (normalized.length > MAX_LABELS) {
-    return { labels: [], error: `Template labels are limited to ${MAX_LABELS} entries` };
+    if (normalized.includes(trimmed)) continue;
+    if (normalized.length >= MAX_LABELS) {
+      return { labels: [], error: `Template labels are limited to ${MAX_LABELS} entries` };
+    }
+    normalized.push(trimmed);
   }
   return { labels: normalized, error: null };
 }

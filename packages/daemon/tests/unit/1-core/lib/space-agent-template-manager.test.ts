@@ -251,7 +251,14 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('rejects invisible formatting characters in labels', async () => {
-      for (const label of ['zero\u200Bwidth', 'bi\u202Edi', 'line\u2028sep', 'lone\uD800pair']) {
+      for (const label of [
+        'zero\u200Bwidth',
+        'bi\u202Edi',
+        'line\u2028sep',
+        'lone\uD800pair',
+        'non\uFDD0char',
+        'plane\uFFFFend',
+      ]) {
         const result = await manager.create({ ...fullParams(), labels: [label] });
         expect(result.ok, label).toBe(false);
         if (!result.ok) expect(result.error).toContain('printable');
@@ -266,6 +273,15 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('array');
+    });
+
+    test('rejects a large unique-label payload without quadratic scanning', async () => {
+      const labels = Array.from({ length: 20_000 }, (_, i) => `label-${i}`);
+
+      const result = await manager.create({ ...fullParams(), labels });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('limited to 8');
     });
 
     test('rejects more than eight labels after dedupe', async () => {
