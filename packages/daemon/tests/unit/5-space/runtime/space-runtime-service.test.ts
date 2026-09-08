@@ -4163,10 +4163,18 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
     const db = makeTestDb();
     seedEnsureSpace(db);
     const repo = new SpaceLongHorizonAgentRepository(db as never);
-    repo.create({ id: 'lh-ensure-1', spaceId: ENSURE_SPACE_ID, handle: 'researcher' });
+    repo.create({
+      id: 'lh-ensure-1',
+      spaceId: ENSURE_SPACE_ID,
+      handle: 'researcher',
+      instructions: 'Agent instructions',
+    });
     const agentSessionId = longTermAgentSessionId(ENSURE_SPACE_ID, 'lh-ensure-1');
     const createdSession = {
       mergeRuntimeMcpServers: mock(() => {}),
+      updateConfig: mock(async () => {}),
+      resetQuery: mock(async () => ({ success: true })),
+      restart: mock(async () => {}),
       getSessionData: mock(() => ({
         id: agentSessionId,
         status: 'active',
@@ -4182,6 +4190,11 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
         return agentSessionId;
       }),
     } as unknown as SessionManager;
+    const addSession = mock(async () => {});
+    const spaceManager = {
+      getSpace: mock(async () => makeEnsureSpace()),
+      addSession,
+    } as unknown as SpaceManager;
     const publish = mock(async () => ({ delivered: 0, failures: [] }));
     const internalEventBus = {
       subscribe: mock(() => () => {}),
@@ -4189,7 +4202,7 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
       publishAsync: mock(() => {}),
     } as unknown as SpaceRuntimeServiceConfig['internalEventBus'];
     const svc = new SpaceRuntimeService({
-      ...buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager),
+      ...buildEnsureConfig(db, repo, spaceManager, sessionManager),
       internalEventBus,
     });
 
@@ -4197,11 +4210,107 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
 
     expect(ensured).not.toBeNull();
     expect(repo.getById('lh-ensure-1')?.sessionId).toBe(agentSessionId);
+    expect(addSession).toHaveBeenCalledWith(ENSURE_SPACE_ID, agentSessionId);
+    expect(createdSession.updateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: expect.objectContaining({
+          append: expect.stringContaining('Agent instructions'),
+        }),
+      })
+    );
     expect(publish).toHaveBeenCalledWith('spaceAgent.updated', {
       sessionId: `space:${ENSURE_SPACE_ID}`,
       spaceId: ENSURE_SPACE_ID,
       agent: expect.objectContaining({ id: 'lh-ensure-1', sessionId: agentSessionId }),
     });
+  });
+
+  test('revives an archived deterministic session when the agent is re-opened', async () => {
+    const db = makeTestDb();
+    seedEnsureSpace(db);
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    repo.create({ id: 'lh-revive-1', spaceId: ENSURE_SPACE_ID, handle: 'researcher' });
+    const agentSessionId = longTermAgentSessionId(ENSURE_SPACE_ID, 'lh-revive-1');
+    const sessionState = { status: 'archived' };
+    const archivedSession = {
+      mergeRuntimeMcpServers: mock(() => {}),
+      updateConfig: mock(async () => {}),
+      resetQuery: mock(async () => ({ success: true })),
+      restart: mock(async () => {}),
+      getSessionData: mock(() => ({
+        id: agentSessionId,
+        status: sessionState.status,
+        metadata: {},
+        config: {},
+      })),
+    } as unknown as AgentSession;
+    const updateSession = mock(async () => {
+      sessionState.status = 'active';
+    });
+    const sessionManager = {
+      getSessionAsync: mock(async () => archivedSession),
+      updateSession,
+    } as unknown as SessionManager;
+    const svc = new SpaceRuntimeService(
+      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
+    );
+
+    const ensured = await svc.ensureAgentSession(ENSURE_SPACE_ID, 'lh-revive-1');
+
+    expect(ensured).not.toBeNull();
+    expect(updateSession).toHaveBeenCalledWith(agentSessionId, { status: 'active' });
+    expect(repo.getById('lh-revive-1')?.sessionId).toBe(agentSessionId);
+  });
+
+  test('serializes concurrent stamped-session refreshes per agent', async () => {
+    const db = makeTestDb();
+    seedEnsureSpace(db);
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    const stampedSessionId = longTermAgentSessionId(ENSURE_SPACE_ID, 'lh-serial-1');
+    repo.create({
+      id: 'lh-serial-1',
+      spaceId: ENSURE_SPACE_ID,
+      handle: 'researcher',
+      sessionId: stampedSessionId,
+    });
+    let resolveFirstUpdate: () => void = () => {};
+    const stampedSession = {
+      mergeRuntimeMcpServers: mock(() => {}),
+      updateConfig: mock(async () => {
+        if (stampedSession.updateConfig.mock.calls.length === 1) {
+          await new Promise<void>((resolve) => {
+            resolveFirstUpdate = resolve;
+          });
+        }
+      }),
+      resetQuery: mock(async () => ({ success: true })),
+      restart: mock(async () => {}),
+      getSessionData: mock(() => ({
+        id: stampedSessionId,
+        status: 'active',
+        metadata: {},
+        config: {},
+      })),
+    } as unknown as AgentSession & { updateConfig: ReturnType<typeof mock> };
+    const sessionManager = {
+      getSessionAsync: mock(async () => stampedSession),
+    } as unknown as SessionManager;
+    const svc = new SpaceRuntimeService(
+      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
+    );
+
+    const first = svc.refreshLongHorizonAgentSession(ENSURE_SPACE_ID, 'lh-serial-1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = svc.refreshLongHorizonAgentSession(ENSURE_SPACE_ID, 'lh-serial-1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(stampedSession.updateConfig).toHaveBeenCalledTimes(1);
+
+    resolveFirstUpdate();
+    await first;
+    await second;
+
+    expect(stampedSession.updateConfig).toHaveBeenCalledTimes(2);
   });
 
   test('applies edits committed during provisioning before stamping', async () => {
