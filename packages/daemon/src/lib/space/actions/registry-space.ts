@@ -282,7 +282,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       family: 'agents',
       safetyClass: 'read',
       description:
-        'List built-in long-horizon agent templates available to create_agent_from_template; returns template descriptors.',
+        'List the merged agent template library: built-in templates plus user-authored templates; entries carry labels and a builtin flag.',
       paramsDoc: 'none',
       paramsSchema: ListAgentTemplatesSchema,
       handler: () => handlers.list_agent_templates(),
