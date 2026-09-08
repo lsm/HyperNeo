@@ -305,8 +305,7 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
     const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
       { id: STEP_A, name: 'Code', agentId: AGENT },
     ]);
-    const { run, task: prior } = seedApprovedPriorTask(workflow, 'done');
-    taskRepo.updateTask(prior.id, { postApprovalSessionId: null });
+    const { run, task: prior } = seedApprovedPriorTask(workflow, 'done', null);
     const open = taskRepo.createTask({
       spaceId: SPACE_ID,
       title: 'Waiting task',
@@ -322,6 +321,66 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
     expect(taskRepo.getTask(open.id)?.status).toBe('open');
     expect(taskRepo.getTask(prior.id)?.status).toBe('approved');
     expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+  });
+
+  test('approval that crashed before recording a dispatch is recovered once past the grace window', async () => {
+    const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+      { id: STEP_A, name: 'Code', agentId: AGENT },
+    ]);
+    const { task: prior } = seedApprovedPriorTask(workflow, 'done', null);
+    taskRepo.updateTask(prior.id, { approvedAt: Date.now() - 5 * 60_000 });
+    const open = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Queued task',
+      description: '',
+      status: 'open',
+      preferredWorkflowId: workflow.id,
+    });
+
+    const rt = makeRuntime(new Set());
+    await rt.executeTick();
+
+    expect(taskRepo.getTask(prior.id)?.status).toBe('done');
+    expect(taskRepo.getTask(prior.id)?.postApprovalSessionId ?? null).toBeNull();
+    const attached = taskRepo.getTask(open.id)!;
+    expect(attached.status).toBe('in_progress');
+    expect(attached.workflowRunId).not.toBeNull();
+  });
+
+  test('transient reconcile scan failure keeps approved tasks counted against slots', async () => {
+    const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+      { id: STEP_A, name: 'Code', agentId: AGENT },
+    ]);
+    const { task: prior } = seedApprovedPriorTask(workflow, 'done');
+    const open = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Queued task',
+      description: '',
+      status: 'open',
+      preferredWorkflowId: workflow.id,
+    });
+
+    const faultyTaskRepo = Object.create(taskRepo) as SpaceTaskRepository;
+    faultyTaskRepo.listByStatus = () => {
+      throw new Error('transient scan failure');
+    };
+    const rt = new SpaceRuntime({
+      db,
+      spaceManager,
+      longHorizonAgentRepo: new SpaceLongHorizonAgentRepository(db),
+      spaceWorkflowManager: workflowManager,
+      workflowRunRepo,
+      taskRepo: faultyTaskRepo,
+      nodeExecutionRepo,
+      sdkMessageRepo,
+      taskAgentManager: makeTaskAgentManagerMock(new Set()) as never,
+    } as SpaceRuntimeConfig);
+
+    await expect(rt.executeTick()).resolves.toBeUndefined();
+
+    expect(taskRepo.getTask(prior.id)?.status).toBe('approved');
+    expect(taskRepo.getTask(open.id)?.status).toBe('open');
+    expect(taskRepo.getTask(open.id)?.workflowRunId ?? null).toBeNull();
   });
 
   test('blocked post-approval dispatch on a non-succeeded run defers admission without throwing', async () => {

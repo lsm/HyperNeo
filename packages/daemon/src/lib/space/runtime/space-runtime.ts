@@ -91,6 +91,7 @@ import {
   MAX_TASK_AGENT_CRASH_RETRIES,
   MAX_TERMINAL_ERROR_CONTINUE_RETRIES,
   POST_APPROVAL_RECONCILE_RETRY_MS,
+  POST_APPROVAL_UNRECORDED_DISPATCH_GRACE_MS,
 } from './constants.ts';
 import {
   createAgentStuckRecoveryState,
@@ -672,6 +673,8 @@ export class SpaceRuntime {
   private blockedRetryCounts = new Map<string, number>();
 
   private postApprovalReconcileNextAttempt = new Map<string, number>();
+
+  private postApprovalReconcileScanHealthy = false;
 
   private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
 
@@ -3824,6 +3827,7 @@ export class SpaceRuntime {
         activationError = err;
       }
       await this.reconcileStalledPostApprovalTasks();
+      if (generation !== this.runtimeGeneration || this.isStopped) return;
       try {
         await this.attachStandaloneTasksToWorkflows(failedActivationSpaceIds);
       } catch (err) {
@@ -7846,6 +7850,7 @@ export class SpaceRuntime {
   private async reconcileStalledPostApprovalTasks(): Promise<void> {
     const manager = this.config.taskAgentManager;
     if (!manager) return;
+    this.postApprovalReconcileScanHealthy = false;
     const generation = this.runtimeGeneration;
     const now = Date.now();
     const retries: Array<Promise<void>> = [];
@@ -7857,15 +7862,33 @@ export class SpaceRuntime {
           approvedTaskIds.add(task.id);
           const dispatchDead =
             !!task.postApprovalSessionId && !manager.isSessionAlive(task.postApprovalSessionId);
-          if (!dispatchDead && !task.postApprovalBlockedReason) continue;
+          const unrecordedStale =
+            !task.postApprovalSessionId &&
+            !task.postApprovalBlockedReason &&
+            task.approvedAt !== null &&
+            now - task.approvedAt > POST_APPROVAL_UNRECORDED_DISPATCH_GRACE_MS;
+          if (!dispatchDead && !task.postApprovalBlockedReason && !unrecordedStale) continue;
           const nextAttempt = this.postApprovalReconcileNextAttempt.get(task.id);
           if (nextAttempt !== undefined && nextAttempt > now) continue;
           this.postApprovalReconcileNextAttempt.set(
             task.id,
             now + POST_APPROVAL_RECONCILE_RETRY_MS
           );
+          const dispatch = unrecordedStale
+            ? this.dispatchPostApproval(
+                task.id,
+                task.approvalSource ?? 'agent',
+                {},
+                {
+                  requireAlreadyApproved: true,
+                  expectedWorkflowRunId: task.workflowRunId ?? null,
+                  expectedApprovedAt: task.approvedAt ?? null,
+                  requireSucceededRun: true,
+                }
+              )
+            : this.retryPostApprovalDispatch(task.id);
           retries.push(
-            this.retryPostApprovalDispatch(task.id).then(
+            dispatch.then(
               () => undefined,
               (err: unknown) => {
                 log.warn(
@@ -7885,6 +7908,7 @@ export class SpaceRuntime {
     for (const taskId of this.postApprovalReconcileNextAttempt.keys()) {
       if (!approvedTaskIds.has(taskId)) this.postApprovalReconcileNextAttempt.delete(taskId);
     }
+    this.postApprovalReconcileScanHealthy = true;
     await Promise.all(retries);
   }
 
@@ -7973,6 +7997,7 @@ export class SpaceRuntime {
     if (task.status !== 'approved') return false;
     if (!task.postApprovalSessionId) return true;
     if (this.postApprovalReconcileNextAttempt.has(task.id)) return true;
+    if (!this.postApprovalReconcileScanHealthy) return true;
     const manager = this.config.taskAgentManager;
     return manager ? manager.isSessionAlive(task.postApprovalSessionId) : true;
   }
