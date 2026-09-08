@@ -83,7 +83,8 @@ function buildLinearWorkflow(
 
 function makeTaskAgentManagerMock(
   aliveSessionIds: Set<string>,
-  spawnPostApprovalImpl?: () => Promise<{ sessionId: string }>
+  spawnPostApprovalImpl?: () => Promise<{ sessionId: string }>,
+  onSpawnExecution?: () => void
 ) {
   return {
     isSessionAlive: (sessionId: string) => aliveSessionIds.has(sessionId),
@@ -100,7 +101,10 @@ function makeTaskAgentManagerMock(
     isTaskAgentAlive: () => false,
     isExecutionSpawning: () => false,
     spawnWorkflowNodeAgent: async () => 'session:spawned',
-    spawnWorkflowNodeAgentForExecution: async () => 'session:spawned',
+    spawnWorkflowNodeAgentForExecution: async () => {
+      onSpawnExecution?.();
+      return 'session:spawned';
+    },
     rehydrate: async () => {},
     interruptBySessionId: async () => {},
     restartStuckSubSession: async () => {},
@@ -157,7 +161,8 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
 
   function makeRuntime(
     aliveSessionIds: Set<string> = new Set(),
-    spawnPostApprovalImpl?: () => Promise<{ sessionId: string }>
+    spawnPostApprovalImpl?: () => Promise<{ sessionId: string }>,
+    onSpawnExecution?: () => void
   ): SpaceRuntime {
     return new SpaceRuntime({
       db,
@@ -168,7 +173,11 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
       taskRepo,
       nodeExecutionRepo,
       sdkMessageRepo,
-      taskAgentManager: makeTaskAgentManagerMock(aliveSessionIds, spawnPostApprovalImpl) as never,
+      taskAgentManager: makeTaskAgentManagerMock(
+        aliveSessionIds,
+        spawnPostApprovalImpl,
+        onSpawnExecution
+      ) as never,
     } as SpaceRuntimeConfig);
   }
 
@@ -344,6 +353,54 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
     const result = await rt.dispatchPostApproval(prior.id, 'agent');
     expect(result).toMatchObject({ mode: 'skipped' });
     expect(taskRepo.getTask(prior.id)?.postApprovalSessionId).toBe('session:dead-post-approval');
+  });
+
+  test('run-tick slot admission defers while a dead post-approval worker awaits replacement', async () => {
+    const workflow = buildRouteWorkflow();
+    const { task: prior } = seedApprovedPriorTask(workflow, 'done');
+
+    const waitingRun = workflowRunRepo.createRun({
+      spaceId: SPACE_ID,
+      workflowId: workflow.id,
+      title: 'Waiting run',
+    });
+    workflowRunRepo.transitionStatus(waitingRun.id, 'in_progress');
+    const waitingTask = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Waiting canonical task',
+      description: '',
+      workflowRunId: waitingRun.id,
+      status: 'open',
+    });
+    nodeExecutionRepo.createOrIgnore({
+      workflowRunId: waitingRun.id,
+      workflowNodeId: STEP_A,
+      agentName: 'Code',
+      agentId: AGENT,
+      status: 'pending',
+    });
+
+    const alive = new Set<string>();
+    const replacements: string[] = [];
+    const executionSpawns: number[] = [];
+    const rt = makeRuntime(
+      alive,
+      async () => {
+        replacements.push('session:replacement-post-approval');
+        alive.add('session:replacement-post-approval');
+        return { sessionId: 'session:replacement-post-approval' };
+      },
+      () => executionSpawns.push(1)
+    );
+
+    await rt.executeTick();
+
+    expect(replacements).toEqual(['session:replacement-post-approval']);
+    expect(executionSpawns).toEqual([]);
+    expect(taskRepo.getTask(waitingTask.id)?.status).toBe('open');
+    expect(taskRepo.getTask(prior.id)?.postApprovalSessionId).toBe(
+      'session:replacement-post-approval'
+    );
   });
 
   test('approved task with a live post-approval worker keeps deferring standalone admission', async () => {

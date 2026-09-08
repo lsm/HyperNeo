@@ -2805,9 +2805,16 @@ export class SpaceRuntime {
       log.warn(`dispatchPostApproval: ${reason}`);
       return { mode: 'skipped', reason };
     }
+    const dispatchRuntimeGeneration = this.runtimeGeneration;
     this.postApprovalDispatchClaims.add(taskId);
     try {
-      return await this.dispatchPostApprovalClaimed(taskId, approvalSource, contextExtras, options);
+      return await this.dispatchPostApprovalClaimed(
+        taskId,
+        approvalSource,
+        contextExtras,
+        options,
+        dispatchRuntimeGeneration
+      );
     } finally {
       this.postApprovalDispatchClaims.delete(taskId);
     }
@@ -2822,7 +2829,8 @@ export class SpaceRuntime {
       expectedWorkflowRunId?: string | null;
       expectedApprovedAt?: number | null;
       requireSucceededRun?: boolean;
-    }
+    },
+    dispatchRuntimeGeneration: number
   ): Promise<PostApprovalRouteResult> {
     const router = this.getPostApprovalRouter();
     if (!router) {
@@ -2950,7 +2958,6 @@ export class SpaceRuntime {
       ...(approvalAuthorityName ? { approval_authority: approvalAuthorityName } : {}),
     };
     let routeResult: PostApprovalRouteResult;
-    const dispatchRuntimeGeneration = this.runtimeGeneration;
     try {
       routeResult = await router.route(approvedTask, workflow, routeContext, {
         requireSucceededRun: options.requireSucceededRun,
@@ -3855,13 +3862,13 @@ export class SpaceRuntime {
 
       let activationError: unknown = null;
       const failedActivationSpaceIds = new Set<string>();
+      await this.reconcileStalledPostApprovalTasks();
+      if (generation !== this.runtimeGeneration || this.isStopped) return;
       try {
         await this.processCompletedTasks(failedActivationSpaceIds);
       } catch (err) {
         activationError = err;
       }
-      await this.reconcileStalledPostApprovalTasks();
-      if (generation !== this.runtimeGeneration || this.isStopped) return;
       try {
         await this.attachStandaloneTasksToWorkflows(failedActivationSpaceIds);
       } catch (err) {
