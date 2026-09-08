@@ -535,7 +535,7 @@ describe('createSpaceRegistryEntries — conditional entries', () => {
       const entries = createSpaceRegistryEntries(ctx.config);
       expect(entries.filter((entry) => entry.family === 'agents')).toEqual([]);
       expect(entries.filter((entry) => entry.family === 'sessions')).toEqual([]);
-      expect(entries).toHaveLength(EXPECTED_ENTRIES.length - 25);
+      expect(entries).toHaveLength(EXPECTED_ENTRIES.length - 26);
       expect(entries.map((entry) => entry.name)).toContain('list_tasks');
     } finally {
       ctx.db.close();

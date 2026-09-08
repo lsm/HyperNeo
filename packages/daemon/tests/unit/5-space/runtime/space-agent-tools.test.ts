@@ -1299,7 +1299,11 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
     });
     workflowManager.updateWorkflow(workflow.id, {
       nodes: [
-        { id: workflow.nodes[0]?.id, name: 'Review', agents: [{ agentId: '', name: 'Reviewer' }] },
+        {
+          id: workflow.nodes[0]?.id,
+          name: 'Review',
+          agents: [{ agentId: 'agent-alt', name: 'Reviewer' }],
+        },
       ],
     });
 
