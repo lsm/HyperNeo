@@ -138,6 +138,7 @@ import {
   PostApprovalRouter,
   selectFirstDispatchablePostApprovalRoute,
 } from './post-approval-router.ts';
+import { runPostApprovalRecoveryAdmission } from './post-approval-recovery-admission.ts';
 import { runPostApprovalRetry, TaskScopedRetrySerializer } from './post-approval-retry.ts';
 import {
   buildPromptTooLongContinueNag,
@@ -2766,8 +2767,14 @@ export class SpaceRuntime {
         spaceManager: this.config.spaceManager,
         isSessionAlive: (sessionId) => this.postApprovalWorkerLive(manager, sessionId),
         isUnrecordedApprovalStale: (task) => this.isUnrecordedApprovalDispatchStale(task),
-        dispatch: (id, approvalSource, dispatchOptions) =>
-          this.dispatchPostApproval(
+        dispatch: (id, approvalSource, dispatchOptions) => {
+          if (retryGeneration !== this.runtimeGeneration || this.isStopped) {
+            return Promise.resolve({
+              mode: 'skipped' as const,
+              reason: `post-approval retry for task ${id} discarded; the runtime generation changed while its eligibility was awaited`,
+            });
+          }
+          return this.dispatchPostApproval(
             id,
             approvalSource,
             {},
@@ -2777,7 +2784,8 @@ export class SpaceRuntime {
               expectedApprovedAt: dispatchOptions?.expectedApprovedAt,
               requireSucceededRun: true,
             }
-          ),
+          );
+        },
       });
     });
   }
@@ -8213,6 +8221,148 @@ export class SpaceRuntime {
     }) as Promise<T | 'timeout'>;
   }
 
+  private currentPostApprovalBypass(
+    taskId: string,
+    generation: number
+  ):
+    | { generation: number; revive: boolean; revivePointer: string | null; adopt: boolean }
+    | undefined {
+    const entry = this.postApprovalRecoveryBypass.get(taskId);
+    if (entry && entry.generation !== generation) {
+      this.postApprovalRecoveryBypass.delete(taskId);
+      return undefined;
+    }
+    return entry;
+  }
+
+  private async annotateRecoveryTimeout(task: SpaceTask, blockedReason: string): Promise<void> {
+    const fresh = this.config.taskRepo.getTask(task.id);
+    if (
+      fresh?.status === 'approved' &&
+      !fresh.postApprovalBlockedReason &&
+      fresh.approvedAt === task.approvedAt &&
+      (fresh.postApprovalSessionId ?? null) === (task.postApprovalSessionId ?? null)
+    ) {
+      this.config.taskRepo.updateTask(task.id, { postApprovalBlockedReason: blockedReason });
+      const blocked = this.config.taskRepo.getTask(task.id);
+      if (blocked) await this.safeOnTaskUpdated(task.spaceId, blocked);
+    }
+  }
+
+  private async clearRecoveryTimeout(task: SpaceTask, blockedReason: string): Promise<void> {
+    const settled = this.config.taskRepo.getTask(task.id);
+    if (settled?.status === 'approved' && settled.postApprovalBlockedReason === blockedReason) {
+      this.config.taskRepo.updateTask(task.id, { postApprovalBlockedReason: null });
+      const cleared = this.config.taskRepo.getTask(task.id);
+      if (cleared) await this.safeOnTaskUpdated(task.spaceId, cleared);
+    }
+  }
+
+  private async recoverPostApprovalWorkerBounded(
+    manager: TaskAgentManager,
+    task: SpaceTask,
+    generation: number
+  ): Promise<'revived' | 'skip' | 'replace' | 'timeout'> {
+    const revivePromise = this.reviveRecordedPostApprovalWorker(manager, task, generation);
+    const marker = { generation };
+    this.postApprovalRecoveryInFlight.set(task.id, marker);
+    revivePromise
+      .catch(() => undefined)
+      .then(async (outcome) => {
+        if (outcome === 'revived') {
+          await this.clearRecoveryTimeout(
+            task,
+            'post-approval worker revival timed out; settlement still pending'
+          );
+        }
+        if (outcome === 'replace') {
+          const existing = this.currentPostApprovalBypass(task.id, generation) ?? {
+            generation,
+            revive: false,
+            revivePointer: null,
+            adopt: false,
+          };
+          this.postApprovalRecoveryBypass.set(task.id, {
+            ...existing,
+            generation,
+            revive: true,
+            revivePointer: task.postApprovalSessionId ?? null,
+          });
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.postApprovalRecoveryInFlight.get(task.id) === marker) {
+          this.postApprovalRecoveryInFlight.delete(task.id);
+        }
+      })
+      .catch(() => undefined);
+    const revive = await this.boundPostApprovalRecoveryAwait(revivePromise);
+    if (revive === 'timeout') {
+      log.warn(
+        `SpaceRuntime: post-approval worker revival for task ${task.id} did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while it runs single-flight fenced`
+      );
+      await this.annotateRecoveryTimeout(
+        task,
+        'post-approval worker revival timed out; settlement still pending'
+      );
+      return 'timeout';
+    }
+    return revive;
+  }
+
+  private async adoptPostApprovalOrphanBounded(
+    manager: TaskAgentManager,
+    task: SpaceTask,
+    generation: number
+  ): Promise<boolean | 'timeout'> {
+    const adoptPromise = this.adoptDurablePostApprovalOrphan(manager, task, generation);
+    const marker = { generation };
+    this.postApprovalRecoveryInFlight.set(task.id, marker);
+    adoptPromise
+      .catch(() => undefined)
+      .then(async (outcome) => {
+        if (outcome === true) {
+          await this.clearRecoveryTimeout(
+            task,
+            'post-approval worker adoption timed out; settlement still pending'
+          );
+        }
+        if (outcome === false) {
+          const existing = this.currentPostApprovalBypass(task.id, generation) ?? {
+            generation,
+            revive: false,
+            revivePointer: null,
+            adopt: false,
+          };
+          this.postApprovalRecoveryBypass.set(task.id, {
+            ...existing,
+            generation,
+            adopt: true,
+          });
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.postApprovalRecoveryInFlight.get(task.id) === marker) {
+          this.postApprovalRecoveryInFlight.delete(task.id);
+        }
+      })
+      .catch(() => undefined);
+    const adopted = await this.boundPostApprovalRecoveryAwait(adoptPromise);
+    if (adopted === 'timeout') {
+      log.warn(
+        `SpaceRuntime: post-approval orphan adoption for task ${task.id} did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while it runs single-flight fenced`
+      );
+      await this.annotateRecoveryTimeout(
+        task,
+        'post-approval worker adoption timed out; settlement still pending'
+      );
+      return 'timeout';
+    }
+    return adopted;
+  }
+
   private async reconcileStalledPostApprovalTasks(): Promise<void> {
     const manager = this.config.taskAgentManager;
     if (!manager) return;
@@ -8225,172 +8375,55 @@ export class SpaceRuntime {
         if (generation !== this.runtimeGeneration || this.isStopped) return;
         for (const task of this.config.taskRepo.listByStatus(space.id, 'approved')) {
           approvedTaskIds.add(task.id);
-          const dispatchDead =
-            !!task.postApprovalSessionId &&
-            !this.postApprovalWorkerLive(manager, task.postApprovalSessionId);
-          const unrecordedStale = this.isUnrecordedApprovalDispatchStale(task);
-          if (!dispatchDead && !task.postApprovalBlockedReason && !unrecordedStale) continue;
-          const nextAttempt = this.postApprovalReconcileNextAttempt.get(task.id);
-          if (nextAttempt !== undefined && nextAttempt > now) continue;
-          this.postApprovalReconcileNextAttempt.set(
-            task.id,
-            now + POST_APPROVAL_RECONCILE_RETRY_MS
-          );
-          const inFlightMarker = this.postApprovalRecoveryInFlight.get(task.id);
-          if (inFlightMarker && inFlightMarker.generation === generation) continue;
-          let bypass = this.postApprovalRecoveryBypass.get(task.id);
-          if (bypass && bypass.generation !== generation) {
-            this.postApprovalRecoveryBypass.delete(task.id);
-            bypass = undefined;
-          }
-          const reviveBypassed =
-            !!bypass?.revive && bypass?.revivePointer === (task.postApprovalSessionId ?? null);
-          if (this.hasLeasedPostApprovalClaim(task)) continue;
-          if (dispatchDead && !reviveBypassed) {
-            const revivePromise = this.reviveRecordedPostApprovalWorker(manager, task, generation);
-            const reviveMarker = { generation };
-            this.postApprovalRecoveryInFlight.set(task.id, reviveMarker);
-            revivePromise
-              .catch(() => undefined)
-              .then(async (outcome) => {
-                if (outcome === 'revived') {
-                  const settled = this.config.taskRepo.getTask(task.id);
-                  if (
-                    settled?.status === 'approved' &&
-                    settled.postApprovalBlockedReason ===
-                      'post-approval worker revival timed out; settlement still pending'
-                  ) {
-                    this.config.taskRepo.updateTask(task.id, {
-                      postApprovalBlockedReason: null,
-                    });
-                    const cleared = this.config.taskRepo.getTask(task.id);
-                    if (cleared) await this.safeOnTaskUpdated(task.spaceId, cleared);
-                  }
-                }
-                if (outcome === 'replace') {
-                  const existing = this.postApprovalRecoveryBypass.get(task.id) ?? {
-                    generation,
-                    revive: false,
-                    revivePointer: null,
-                    adopt: false,
-                  };
-                  this.postApprovalRecoveryBypass.set(task.id, {
-                    ...existing,
-                    generation,
-                    revive: true,
-                    revivePointer: task.postApprovalSessionId ?? null,
-                  });
-                }
-              })
-              .catch(() => undefined)
-              .finally(() => {
-                if (this.postApprovalRecoveryInFlight.get(task.id) === reviveMarker) {
-                  this.postApprovalRecoveryInFlight.delete(task.id);
-                }
-              })
-              .catch(() => undefined);
-            const revive = await this.boundPostApprovalRecoveryAwait(revivePromise);
-            if (revive === 'timeout') {
-              log.warn(
-                `SpaceRuntime: post-approval worker revival for task ${task.id} did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while it runs single-flight fenced`
+          const admission = await runPostApprovalRecoveryAdmission({
+            task,
+            generation,
+            now,
+            isDispatchDead: (candidate) =>
+              !!candidate.postApprovalSessionId &&
+              !this.postApprovalWorkerLive(manager, candidate.postApprovalSessionId),
+            isUnrecordedStale: (candidate) => this.isUnrecordedApprovalDispatchStale(candidate),
+            cadencePending: (taskId, at) => {
+              const nextAttempt = this.postApprovalReconcileNextAttempt.get(taskId);
+              return nextAttempt !== undefined && nextAttempt > at;
+            },
+            markCadence: (taskId, at) => {
+              this.postApprovalReconcileNextAttempt.set(
+                taskId,
+                at + POST_APPROVAL_RECONCILE_RETRY_MS
               );
-              const freshTimeout = this.config.taskRepo.getTask(task.id);
-              if (
-                freshTimeout?.status === 'approved' &&
-                !freshTimeout.postApprovalBlockedReason &&
-                freshTimeout.approvedAt === task.approvedAt &&
-                (freshTimeout.postApprovalSessionId ?? null) ===
-                  (task.postApprovalSessionId ?? null)
-              ) {
-                this.config.taskRepo.updateTask(task.id, {
-                  postApprovalBlockedReason:
-                    'post-approval worker revival timed out; settlement still pending',
-                });
-                const blockedTimeout = this.config.taskRepo.getTask(task.id);
-                if (blockedTimeout) await this.safeOnTaskUpdated(task.spaceId, blockedTimeout);
-              }
-              continue;
-            }
-            if (revive !== 'replace') continue;
-          }
-          if (!task.postApprovalSessionId && !bypass?.adopt) {
-            const adoptPromise = this.adoptDurablePostApprovalOrphan(manager, task, generation);
-            const adoptMarker = { generation };
-            this.postApprovalRecoveryInFlight.set(task.id, adoptMarker);
-            adoptPromise
-              .catch(() => undefined)
-              .then(async (outcome) => {
-                if (outcome === true) {
-                  const settled = this.config.taskRepo.getTask(task.id);
-                  if (
-                    settled?.status === 'approved' &&
-                    settled.postApprovalBlockedReason ===
-                      'post-approval worker adoption timed out; settlement still pending'
-                  ) {
-                    this.config.taskRepo.updateTask(task.id, {
-                      postApprovalBlockedReason: null,
-                    });
-                    const cleared = this.config.taskRepo.getTask(task.id);
-                    if (cleared) await this.safeOnTaskUpdated(task.spaceId, cleared);
-                  }
-                }
-                if (outcome === false) {
-                  const existing = this.postApprovalRecoveryBypass.get(task.id) ?? {
-                    generation,
-                    revive: false,
-                    revivePointer: null,
-                    adopt: false,
-                  };
-                  this.postApprovalRecoveryBypass.set(task.id, {
-                    ...existing,
-                    generation,
-                    adopt: true,
-                  });
-                }
-              })
-              .catch(() => undefined)
-              .finally(() => {
-                if (this.postApprovalRecoveryInFlight.get(task.id) === adoptMarker) {
-                  this.postApprovalRecoveryInFlight.delete(task.id);
-                }
-              })
-              .catch(() => undefined);
-            const adopted = await this.boundPostApprovalRecoveryAwait(adoptPromise);
-            if (adopted === 'timeout') {
-              log.warn(
-                `SpaceRuntime: post-approval orphan adoption for task ${task.id} did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while it runs single-flight fenced`
+            },
+            recoveryInFlight: (taskId, gen) =>
+              this.postApprovalRecoveryInFlight.get(taskId)?.generation === gen,
+            hasLeasedClaim: (candidate) => this.hasLeasedPostApprovalClaim(candidate),
+            isReviveBypassed: (candidate, gen) => {
+              const entry = this.currentPostApprovalBypass(candidate.id, gen);
+              return (
+                !!entry?.revive && entry.revivePointer === (candidate.postApprovalSessionId ?? null)
               );
-              const freshTimeout = this.config.taskRepo.getTask(task.id);
-              if (
-                freshTimeout?.status === 'approved' &&
-                !freshTimeout.postApprovalBlockedReason &&
-                freshTimeout.approvedAt === task.approvedAt &&
-                (freshTimeout.postApprovalSessionId ?? null) ===
-                  (task.postApprovalSessionId ?? null)
-              ) {
-                this.config.taskRepo.updateTask(task.id, {
-                  postApprovalBlockedReason:
-                    'post-approval worker adoption timed out; settlement still pending',
-                });
-                const blockedTimeout = this.config.taskRepo.getTask(task.id);
-                if (blockedTimeout) await this.safeOnTaskUpdated(task.spaceId, blockedTimeout);
-              }
-              continue;
-            }
-            if (adopted) continue;
+            },
+            adoptBypassed: (candidate, gen) =>
+              !!this.currentPostApprovalBypass(candidate.id, gen)?.adopt,
+            revive: (candidate, gen) =>
+              this.recoverPostApprovalWorkerBounded(manager, candidate, gen),
+            adopt: (candidate, gen) => this.adoptPostApprovalOrphanBounded(manager, candidate, gen),
+            clearBypass: (taskId) => {
+              this.postApprovalRecoveryBypass.delete(taskId);
+            },
+          });
+          if ('value' in admission) {
+            retries.push(
+              this.retryPostApprovalDispatch(task.id).then(
+                () => this.publishPostApprovalRecoveryUpdate(task),
+                (err: unknown) => {
+                  log.warn(
+                    `SpaceRuntime: post-approval restart reconcile failed for task ${task.id}: ${formatCommandError(err)}`
+                  );
+                  return this.publishPostApprovalRecoveryUpdate(task);
+                }
+              )
+            );
           }
-          this.postApprovalRecoveryBypass.delete(task.id);
-          retries.push(
-            this.retryPostApprovalDispatch(task.id).then(
-              () => this.publishPostApprovalRecoveryUpdate(task),
-              (err: unknown) => {
-                log.warn(
-                  `SpaceRuntime: post-approval restart reconcile failed for task ${task.id}: ${formatCommandError(err)}`
-                );
-                return this.publishPostApprovalRecoveryUpdate(task);
-              }
-            )
-          );
         }
       }
       for (const taskId of this.postApprovalReconcileNextAttempt.keys()) {
