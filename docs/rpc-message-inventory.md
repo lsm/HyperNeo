@@ -18,7 +18,7 @@ Sources of truth (all paths relative to repo root):
 |---|---|---|---|
 | RPC methods (REQ→RSP) | **319** | 222 (214 literal + 2 constant-indirect + 6 dynamic) | 97 (§7) |
 | Protocol-level methods (`channel.join`/`channel.leave`) | 2 | 2 (`joinRoom`/`leaveRoom`) | 0 |
-| Event names emitted to clients | **42** | 31 | 11 emitted-but-unsubscribed (§4.6) |
+| Event names emitted to clients | **42** statically named | 31 | 11 emitted-but-unsubscribed (§4.6); plus arbitrary names emittable via the `test.broadcastDelta` test RPC |
 | Subscribed-but-never-emitted events | 1 | — | `session.retryAttempt` (§4.6) |
 | LiveQuery named queries | **17** | 16 | 1 (`workflowRunArtifacts.byRun`, §5) |
 | LiveQuery protocol events | 3 | 3 | 0 |
@@ -29,7 +29,7 @@ Notable dead-surface findings (details in §7):
 
 - The entire `config.*` family (24 methods) is registered but never called by the web UI.
 - `spaceWorkflowRun.start` — the primary "start a run" entry point — has no web call site (runs are created via task dispatch; only e2e tests call it directly).
-- 6 directly-emitted session events (`session.updated` ×13 sites, `session.interrupted`, `session.model-switching`, `session.model-switched`, `session.reset`, `sdk.message.updated`) have zero web subscribers.
+- 6 directly-emitted session events (`session.updated` ×10 sites, `session.interrupted`, `session.model-switching`, `session.model-switched`, `session.reset`, `sdk.message.updated`) have zero web subscribers.
 
 ## 2. Wire protocol
 
@@ -45,7 +45,8 @@ Notable dead-surface findings (details in §7):
 | `requestId` | string? | RSP only — links response to request |
 | `error` / `errorCode` | string? | RSP error form |
 | `channel` | string? | wire channel (§3) |
-| `timestamp` / `version` | string | ISO time; protocol `1.0.0` |
+| `timestamp` | string | ISO time |
+| `version` | string? | protocol `1.0.0`; **optional** — omitted on PONG heartbeats (`MessageHub.handlePing`, `setup-websocket.ts` PONG path) |
 
 Rules enforced by `validateMethod` (protocol.ts:85): must contain `.`, no leading/trailing `.`, no `:`, charset `[a-zA-Z0-9._-]`. PING/PONG are exempt.
 
@@ -74,12 +75,12 @@ Wire strings (`packages/shared/src/message-hub/channels.ts:34`):
 |---|---|---|
 | `global` | broadcast to all clients | most bridge events, state broadcasts |
 | `session:${sessionId}` | one chat/agent session | session-lifecycle events, `state.session`, `state.sdkMessages` |
-| `room:${roomId}` | multi-session room | room message routing |
+| `room:${roomId}` | multi-session room | (declared; no current emitters) |
 | `space:${spaceId}` | one space | `spaceAgent.*`, `spaceGoal.ownerChanged` |
 | `workflowRun:${spaceId}:${workflowRunId}` | one workflow run | (declared; no current emitters) |
 | `task:${spaceId}:${taskId}` | one task | (declared; no current emitters) |
 
-Clients receive events only for channels they joined (plus `global`). `ClientEventGateway.publish()` (`client-event-gateway.ts:27`) converts `EventChannel` objects to these wire strings.
+Channel-routed events reach a client only if it joined the channel (plus `global`). **Directly addressed deliveries bypass channel membership entirely**: `connection.established` is sent straight to the new client's socket on connect, and the `liveQuery.*` events are pushed to the subscribing client via `router.sendToClient`. `ClientEventGateway.publish()` (`client-event-gateway.ts:27`) converts `EventChannel` objects to these wire strings.
 
 ## 4. Events (server → client)
 
@@ -88,6 +89,8 @@ Three emission paths reach the client wire:
 1. **Direct emission** — `messageHub.event(name, data, { channel })` at the call site.
 2. **State projection broadcasts** — `StateProjectionService.broadcast*()` emits versioned state snapshots.
 3. **ClientEventBridge** — internal daemon bus events mapped to client events in `packages/daemon/src/lib/client-event-bridge.ts` (payload shapes from `DaemonInternalEventMap`, `internal-event-bus.ts:461`).
+
+These three paths account for the 42 **statically named** events below. In addition, the test-only `test.broadcastDelta` RPC forwards its caller-controlled `channel` argument straight to `messageHub.event(...)`, so arbitrary event names can be emitted through it — the 42 is not an allowlist of every possible method string on the wire.
 
 ### 4.1 Direct emission (connection & session lifecycle)
 
@@ -106,7 +109,7 @@ Three emission paths reach the client wire:
 
 ### 4.2 State projection broadcasts (`state-projection-service.ts`)
 
-Only the four `StateProjectionService` broadcasts (and its own delta path) carry a monotonically increasing `version` for stale-drop detection. **The direct `state.sdkMessages.delta` emissions listed in the last row are unversioned** — they send `{ added, timestamp }` with no `version`, and no cross-emitter ordering guarantee; consumers must not assume every delta carries one. The web's `StateChannel` wrapper (`packages/web/src/lib/state-channel.ts`) pairs each full channel with a `${channel}.delta` variant.
+Only the four `StateProjectionService` broadcasts (and its own delta path) carry a monotonically increasing `version` from the service's per-channel counters. `version` on `state.sdkMessages.delta` is **optional and emitter-dependent**: the five `sdk-message-handler.ts` emissions other than line 543 add a `version` from that handler's own independent `sdkMessageDeltaVersion` counter (:151), while the rest send `{ added, timestamp }` with no `version`. Counters are not shared across emitters, so there is no cross-emitter ordering guarantee — consumers must treat `version` as optional on deltas. The web's `StateChannel` wrapper (`packages/web/src/lib/state-channel.ts`) pairs each full channel with a `${channel}.delta` variant.
 
 | event | payload | channel | emitted at | web consumers |
 |---|---|---|---|---|
@@ -114,7 +117,7 @@ Only the four `StateProjectionService` broadcasts (and its own delta path) carry
 | `state.settings` | `SettingsState` + `version` (sanitized `GlobalSettings`) | `global` | :458 | global-store.ts:79, 153 |
 | `state.session` | `SessionState` + `version` (sessionInfo, agentState, commandsData, error, revision, daemonEpoch) | `session:${id}` | :473 (cache fallback :496) | state.ts:66, session-store.ts:264, useSessionQuestionState.ts:59, useTargetSessionContext.ts:202 |
 | `state.sdkMessages` | `SDKMessagesState` + `version` (latest 100 `ChatMessage[]`, hasMore) | `session:${id}` | :513 | state.ts:74 (constant-indirect pull via `StateChannel.fetchSnapshot`) |
-| `state.sdkMessages.delta` | two variants: versioned `SDKMessagesUpdate` + `version` from `StateProjectionService` only; unversioned `{ added?: ChatMessage[], timestamp }` from all other emitters | `session:${id}` | versioned: :522; unversioned: sdk-message-handler.ts (6 sites), query-runner.ts:2463, query-lifecycle-manager.ts:448, acp-query-runner.ts:1817, session-handlers.ts:1410/1419, test-handlers.ts:20 | state.ts:74 (delta channel) |
+| `state.sdkMessages.delta` | `SDKMessagesUpdate` (`added?: ChatMessage[]`, timestamp) with **optional** `version`: versioned by `StateProjectionService` (:522, its own counter) and by 5 of the 6 `sdk-message-handler.ts` sites (independent `sdkMessageDeltaVersion` counter); unversioned at sdk-message-handler.ts:543, query-runner.ts:2463, query-lifecycle-manager.ts:448, acp-query-runner.ts:1817, session-handlers.ts:1410/1419, test-handlers.ts:20 | `session:${id}` | :522; sdk-message-handler.ts (6 sites), query-runner.ts:2463, query-lifecycle-manager.ts:448, acp-query-runner.ts:1817, session-handlers.ts:1410/1419, test-handlers.ts:20 | state.ts:74 (delta channel) |
 
 ### 4.3 ClientEventBridge (internal bus → client, `client-event-bridge.ts`)
 
@@ -173,15 +176,15 @@ Pull-based subscriptions over two RPC methods, pushed via the §4.4 events. The 
 
 | method | request | response |
 |---|---|---|
-| `liveQuery.subscribe` | `LiveQuerySubscribeRequest` `{ queryName, params?: unknown[], subscriptionId }` | ack; snapshot follows as event |
-| `liveQuery.unsubscribe` | `LiveQueryUnsubscribeRequest` `{ subscriptionId }` | ack; handle disposed |
+| `liveQuery.subscribe` | `LiveQuerySubscribeRequest` `{ queryName, params?: unknown[], subscriptionId }` | `LiveQuerySubscribeResponse` `{ ok: true }`; snapshot follows as an event |
+| `liveQuery.unsubscribe` | `LiveQueryUnsubscribeRequest` `{ subscriptionId }` | `LiveQueryUnsubscribeResponse` `{ ok: true }`; handle disposed |
 
 Named queries (`NAMED_QUERY_REGISTRY`, `live-query-handlers.ts:4166`):
 
 | query | params | scope validation on subscribe | web consumers |
 |---|---|---|---|
 | `messages.bySession` | `[sessionId, limit ≤ 200]` | session must exist; limit integer 1–200 | session-store.ts (5 sites) |
-| `sessions.list` | `[showArchived?]` | excluded types/room/space sessions filtered out of invalidation | global-store.ts, SessionsSidebar |
+| `sessions.list` | `[showArchived: 0\|1]` — one **required** positional flag (paramCount 1; no default is inserted, unlike the compact query); SQL tests `?1 = 1` | excluded types/room/space sessions filtered out of invalidation | global-store.ts, SessionsSidebar |
 | `sessionGroupMessages.byGroup` | `[groupId]` | group must exist; task-type groups must resolve task + room | useGroupMessages.ts |
 | `spaceTaskMessages.byTask` | `[taskId]` | task must exist in `space_tasks` | useSpaceTaskMessages.ts |
 | `spaceTaskMessages.byTask.compact` | `[taskId, limit ≤ 100]` (limit defaults to 100) | task must exist; limit integer 1–100 | useSpaceTaskMessages.ts |
@@ -585,8 +588,8 @@ All rows are **kind: request** (client `REQ` → server `RSP`; errors return as 
 
 | method | handler | request | response | gates | web consumers |
 |---|---|---|---|---|---|
-| liveQuery.subscribe | packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts:4426 | `LiveQuerySubscribeRequest` (shared): `queryName: string; params?: unknown[]; subscriptionId: string` | inline `{ subscriptionId, replaced?: boolean }` (implicit) | requires WebSocket `clientId`; query must exist in registry; param count must match; per-query scope validation (see §5) | useActorMessageProjections.ts,useGroupMessages.ts,useSpaceTaskMessages.ts,useTaskMilestones.ts,app-mcp-store.ts,global-store.ts,session-store.ts,skills-store.ts,space-mcp-store.ts,space-store.ts |
-| liveQuery.unsubscribe | packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts:4702 | `LiveQueryUnsubscribeRequest` (shared): `subscriptionId: string` | — (void; disposes handle) | requires WebSocket `clientId` | useActorMessageProjections.ts,useGroupMessages.ts,useSpaceTaskMessages.ts,useTaskMilestones.ts,app-mcp-store.ts,global-store.ts,session-store.ts,skills-store.ts,space-mcp-store.ts,space-store.ts |
+| liveQuery.subscribe | packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts:4426 | `LiveQuerySubscribeRequest` (shared): `queryName: string; params?: unknown[]; subscriptionId: string` | `LiveQuerySubscribeResponse` (shared): `{ ok: true }` (snapshot follows as an event) | requires WebSocket `clientId`; query must exist in registry; param count must match; per-query scope validation (see §5) | useActorMessageProjections.ts,useGroupMessages.ts,useSpaceTaskMessages.ts,useTaskMilestones.ts,app-mcp-store.ts,global-store.ts,session-store.ts,skills-store.ts,space-mcp-store.ts,space-store.ts |
+| liveQuery.unsubscribe | packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts:4702 | `LiveQueryUnsubscribeRequest` (shared): `subscriptionId: string` | `LiveQueryUnsubscribeResponse` (shared): `{ ok: true }` (handle disposed) | requires WebSocket `clientId` | useActorMessageProjections.ts,useGroupMessages.ts,useSpaceTaskMessages.ts,useTaskMilestones.ts,app-mcp-store.ts,global-store.ts,session-store.ts,skills-store.ts,space-mcp-store.ts,space-store.ts |
 
 ### System & test (5)
 
