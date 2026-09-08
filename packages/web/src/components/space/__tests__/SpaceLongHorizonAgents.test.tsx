@@ -131,7 +131,12 @@ vi.mock('../../ui/ConfirmModal', () => ({
 }));
 
 import { toast } from '../../../lib/toast';
-import { currentSpaceIdSignal, currentSpaceSessionIdSignal } from '../../../lib/signals';
+import {
+  currentSpaceAgentHandleSignal,
+  currentSpaceIdSignal,
+  currentSpaceSessionIdSignal,
+  currentSpaceViewModeSignal,
+} from '../../../lib/signals';
 import { SpaceLongHorizonAgents } from '../SpaceLongHorizonAgents';
 
 function makeLongHorizonAgent(
@@ -216,6 +221,8 @@ describe('SpaceLongHorizonAgents', () => {
     vi.mocked(toast.error).mockClear();
     currentSpaceSessionIdSignal.value = null;
     currentSpaceIdSignal.value = null;
+    currentSpaceViewModeSignal.value = null;
+    currentSpaceAgentHandleSignal.value = null;
   });
 
   afterEach(() => {
@@ -1751,6 +1758,48 @@ describe('SpaceLongHorizonAgents', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(toast.error).not.toHaveBeenCalled();
     expect(mockNavigateToSpaceSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('suppresses failure toasts once the route has moved on', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+    let rejectEnsure: (err: Error) => void = () => {};
+    mockEnsureAgentSession.mockImplementationOnce(
+      () =>
+        new Promise<string>((_, reject) => {
+          rejectEnsure = reject;
+        })
+    );
+
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+    currentSpaceViewModeSignal.value = 'tasks';
+
+    rejectEnsure(new Error('late failure'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it('does not navigate when the agent-detail handle changes mid-ensure', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+    let resolveEnsure: (sessionId: string) => void = () => {};
+    mockEnsureAgentSession.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveEnsure = resolve;
+        })
+    );
+
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+    currentSpaceAgentHandleSignal.value = 'other-agent';
+
+    resolveEnsure('space:agent:space-1:lh-1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
   });
 
   it('treats the space chat as the coordinator session', async () => {

@@ -775,7 +775,7 @@ interface EnsureAgentSessionCtx extends UnifiedSpaceAgentMethodDeps {
   sessionId: string;
 }
 
-function ensureSessionValidateStage(ctx: EnsureAgentSessionCtx): EnsureAgentSessionCtx {
+export function ensureSessionValidateStage(ctx: EnsureAgentSessionCtx): EnsureAgentSessionCtx {
   const spaceId = ctx.params.spaceId;
   const agentId = ctx.params.agentId;
   if (!spaceId) throw new Error('spaceId is required');
@@ -783,7 +783,7 @@ function ensureSessionValidateStage(ctx: EnsureAgentSessionCtx): EnsureAgentSess
   return { ...ctx, spaceId, agentId };
 }
 
-async function ensureSessionAdmitSpaceStage(
+export async function ensureSessionAdmitSpaceStage(
   ctx: EnsureAgentSessionCtx
 ): Promise<EnsureAgentSessionCtx> {
   const space = await ctx.spaceManager.getSpace(ctx.spaceId);
@@ -791,7 +791,7 @@ async function ensureSessionAdmitSpaceStage(
   return ctx;
 }
 
-function ensureSessionResolveTargetStage(ctx: EnsureAgentSessionCtx): EnsureAgentSessionCtx {
+export function ensureSessionResolveTargetStage(ctx: EnsureAgentSessionCtx): EnsureAgentSessionCtx {
   const { spaceId, agentId } = ctx;
   if (agentId === 'coordinator' || agentId === `coordinator:${spaceId}`) {
     return { ...ctx, sessionId: coordinatorSessionId(spaceId) };
@@ -805,7 +805,7 @@ function ensureSessionResolveTargetStage(ctx: EnsureAgentSessionCtx): EnsureAgen
   return { ...ctx, sessionId };
 }
 
-async function ensureSessionProvisionStage(
+export async function ensureSessionProvisionStage(
   ctx: EnsureAgentSessionCtx
 ): Promise<EnsureAgentSessionCtx> {
   if (!ctx.runtimeService) throw new Error('Agent runtime unavailable');

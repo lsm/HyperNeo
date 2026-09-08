@@ -13,6 +13,7 @@ import { navigateToSpaceSession } from '../../lib/router';
 import { buildLongHorizonAgentSessionId } from '../../lib/space-agent-session';
 import { spaceStore } from '../../lib/space-store';
 import {
+  currentSpaceAgentHandleSignal,
   currentSpaceCanonicalIdSignal,
   currentSpaceIdSignal,
   currentSpaceSessionIdSignal,
@@ -855,20 +856,22 @@ function AgentCard({
       session: currentSpaceSessionIdSignal.value,
       view: currentSpaceViewModeSignal.value,
       task: currentSpaceTaskIdSignal.value,
+      handle: currentSpaceAgentHandleSignal.value,
     };
     const routeUnchanged = () =>
       currentSpaceIdSignal.value === routeAtOpen.space &&
       currentSpaceCanonicalIdSignal.value === routeAtOpen.canonical &&
       currentSpaceSessionIdSignal.value === routeAtOpen.session &&
       currentSpaceViewModeSignal.value === routeAtOpen.view &&
-      currentSpaceTaskIdSignal.value === routeAtOpen.task;
+      currentSpaceTaskIdSignal.value === routeAtOpen.task &&
+      currentSpaceAgentHandleSignal.value === routeAtOpen.handle;
     try {
       const ensured = await spaceStore.ensureAgentSession(agent.id);
       if (openSeq === latestAgentCardOpenSeq && routeUnchanged()) {
         navigateToSpaceSession(navigationSpaceId, ensured);
       }
     } catch (err) {
-      if (openSeq !== latestAgentCardOpenSeq) return;
+      if (openSeq !== latestAgentCardOpenSeq || !routeUnchanged()) return;
       toast.error(err instanceof Error ? err.message : 'Failed to open agent session');
     } finally {
       setOpening(false);
