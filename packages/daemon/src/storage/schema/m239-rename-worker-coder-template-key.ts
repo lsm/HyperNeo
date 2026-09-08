@@ -35,7 +35,7 @@ interface RunRow {
 interface SlotView {
   name: string;
   agentId: string;
-  sourceKey: string;
+  rawKey: string;
   renamingKey: string | null;
 }
 
@@ -75,12 +75,13 @@ function renamedKeyFor(key: string, storedRelocation: string | null): string | n
 function slotView(slot: Record<string, unknown>, storedRelocation: string | null): SlotView {
   const name = typeof slot.name === 'string' ? slot.name : '';
   const agentId = typeof slot.agentId === 'string' ? slot.agentId : '';
-  const sourceKey = typeof slot.templateKey === 'string' ? slot.templateKey.trim() : '';
+  const rawKey = typeof slot.templateKey === 'string' ? slot.templateKey : '';
+  const normalizedKey = rawKey.trim();
   return {
     name: name !== '' ? name : agentId,
     agentId,
-    sourceKey,
-    renamingKey: sourceKey ? renamedKeyFor(sourceKey, storedRelocation) : null,
+    rawKey,
+    renamingKey: normalizedKey ? renamedKeyFor(normalizedKey, storedRelocation) : null,
   };
 }
 
@@ -102,7 +103,7 @@ function collectSlotViews(
 function slotMatchesTarget(slot: SlotView, target: string, keysRenamed: boolean): boolean {
   if (slot.name === target) return true;
   if (slot.agentId !== '' && slot.agentId === target) return true;
-  const key = keysRenamed && slot.renamingKey !== null ? slot.renamingKey : slot.sourceKey;
+  const key = keysRenamed && slot.renamingKey !== null ? slot.renamingKey : slot.rawKey;
   return key === target;
 }
 
@@ -132,7 +133,7 @@ function rewritePostApprovalTarget(
   const selectedIndex = slots.findIndex((slot) => slotMatchesTarget(slot, target, false));
   if (selectedIndex < 0) return false;
   const selected = slots[selectedIndex];
-  if (selected.renamingKey === null || selected.sourceKey !== target) return false;
+  if (selected.renamingKey === null || selected.rawKey !== target) return false;
   if (slots.findIndex((slot) => slotMatchesTarget(slot, replacement, true)) === selectedIndex) {
     postApproval.targetAgent = replacement;
     return true;
@@ -180,7 +181,9 @@ function sanitizeSpoofedRelocationLabels(db: BunDatabase, now: number): void {
   const update = db.prepare(
     `UPDATE space_agent_templates SET labels = ?, updated_at = ? WHERE key = ?`
   );
+  const relocationTargetPrefix = `${NEW_TEMPLATE_KEY}.migrated`;
   for (const row of rows) {
+    if (row.key.startsWith(relocationTargetPrefix)) continue;
     const labels = parseLabelArray(row.labels);
     const sanitized = labels.filter((label) => !label.startsWith(RELOCATED_FROM_LABEL_PREFIX));
     if (sanitized.length === labels.length) continue;

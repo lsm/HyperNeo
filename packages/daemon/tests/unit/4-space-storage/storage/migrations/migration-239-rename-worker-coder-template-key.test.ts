@@ -480,6 +480,44 @@ describe('migration 239 — rename worker.coder slot templateKey to worker.swe',
     db.close();
   });
 
+  test('selects routes by raw template keys so padded keys never capture them', () => {
+    const db = createMigrationDb();
+    insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
+    insertNodeWithSlots(
+      db,
+      'node-1',
+      'wf-1',
+      [
+        { agentId: '', templateKey: ' worker.coder ', name: 'padded' },
+        { agentId: '', templateKey: 'worker.coder', name: 'coder' },
+      ],
+      { targetAgent: 'worker.coder' }
+    );
+
+    runMigration239(db);
+
+    expect((readNodeConfig(db, 'node-1').postApproval as { targetAgent: string }).targetAgent).toBe(
+      'coder'
+    );
+    expect(readSlots(db, 'node-1')).toEqual([
+      { agentId: '', templateKey: 'worker.swe', name: 'padded' },
+      { agentId: '', templateKey: 'worker.swe', name: 'coder' },
+    ]);
+    db.close();
+  });
+
+  test('keeps the relocation marker when the migration re-runs', () => {
+    const db = createMigrationDb();
+    insertStoredTemplate(db, 'worker.swe');
+
+    runMigration239(db);
+    runMigration239(db);
+
+    expect(storedTemplateKeys(db)).toEqual(['worker.swe.migrated']);
+    expect(storedTemplateLabels(db, 'worker.swe.migrated')).toEqual(['relocated-from:worker.swe']);
+    db.close();
+  });
+
   test('strips pre-existing spoofed relocation labels from stored templates', () => {
     const db = createMigrationDb();
     insertStoredTemplate(db, 'team.x', ['relocated-from:worker.swe', 'quality']);
