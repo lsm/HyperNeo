@@ -2455,6 +2455,30 @@ describe('SpaceRuntime — tick loop correctness', () => {
       ]);
     });
 
+    test('a blocked task does not burn crash recovery for a dead-bound execution (#3823)', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: 'session:dead-bound',
+        startedAt: Date.now(),
+      });
+      taskRepo.updateTask(tasks[0].id, { status: 'blocked', blockReason: 'execution_failed' });
+
+      for (let i = 0; i < 3; i += 1) {
+        await rt.executeTick();
+      }
+
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('blocked');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('in_progress');
+    });
+
     test('auto-retry resumes parked workers preserved by blocked-run recovery (#3823)', async () => {
       const sessionId = 'session:auto-retry-parked';
       const prepared: string[] = [];

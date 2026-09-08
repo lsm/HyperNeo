@@ -258,7 +258,10 @@ export async function handoffDeliveryToMailbox(
 ): Promise<LockedAgentMessageDeliveryCtx> {
   if (ctx.outcome) return ctx;
   const sessionId = ctx.resolution.sessionId;
-  const shouldDefer = ctx.plan?.shouldDefer === true;
+  let shouldDefer = ctx.plan?.shouldDefer === true;
+  if (!shouldDefer && ctx.target.kind === 'worker') {
+    shouldDefer = ctx.deps.taskRepo.getTask(ctx.target.taskId)?.status === 'blocked';
+  }
   const synthetic = buildSyntheticDeliveryMessage(
     sessionId,
     ctx.messageId,

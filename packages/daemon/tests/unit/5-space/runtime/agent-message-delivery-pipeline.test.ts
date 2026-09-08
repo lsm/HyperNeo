@@ -249,6 +249,35 @@ describe('deliverAgentMessageToTarget', () => {
     expect(handoffCalls[0].deliveryMode).toBe('defer');
   });
 
+  it('defers the handoff when the task flips blocked during the context reset (#3823)', async () => {
+    let blocked = false;
+    const live = makeSession();
+    (
+      live.session as unknown as { clearConversationContext: () => Promise<void> }
+    ).clearConversationContext = mock(async () => {
+      blocked = true;
+    });
+    const { deps, handoffCalls } = makeDeps({
+      getSessionAsync: async () => live.session,
+      slotResetsContext: () => true,
+      taskRepo: {
+        getTask: () => ({
+          id: 'task-1',
+          workflowRunId: 'run-1',
+          status: blocked ? 'blocked' : 'in_progress',
+        }),
+      },
+    });
+    await deliverAgentMessageToTarget({
+      deps,
+      target: WORKER_TARGET,
+      message: 'x',
+      messageId: 'msg-flip-blocked',
+    });
+    expect(handoffCalls[0].deliveryMode).toBe('defer');
+    expect(live.setQueuedIfIdle).not.toHaveBeenCalled();
+  });
+
   it('clears prior context for an idle resetContextPerTurn slot before handoff', async () => {
     const live = makeSession({ status: 'idle' });
     const { deps } = makeDeps({

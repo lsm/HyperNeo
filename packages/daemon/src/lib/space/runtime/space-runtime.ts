@@ -6156,7 +6156,9 @@ export class SpaceRuntime {
         .map((execution) => execution.id)
     );
 
-    if (!space?.stopped) {
+    const canonicalTaskBlocked =
+      this.config.taskRepo.getTask(canonicalTask.id)?.status === 'blocked';
+    if (!space?.stopped && !canonicalTaskBlocked) {
       for (const execution of nodeExecutions) {
         if (execution.status === 'in_progress' && !execution.agentSessionId) {
           this.config.nodeExecutionRepo.update(execution.id, {
