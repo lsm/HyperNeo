@@ -722,11 +722,12 @@ export class SpaceRuntimeService {
     if (!space) return null;
     const sessionId = longTermAgentSessionId(spaceId, agentId);
     let session = await sessionManager.getSessionAsync(sessionId);
+    let revivedFrom: 'ended' | 'archived' | null = null;
     if (session && ['ended', 'archived'].includes(session.getSessionData().status)) {
+      revivedFrom = session.getSessionData().status as 'ended' | 'archived';
       await sessionManager.updateSession(sessionId, { status: 'active' });
       session = await sessionManager.getSessionAsync(sessionId);
       if (!session || ['ended', 'archived'].includes(session.getSessionData().status)) return null;
-      await this.config.spaceManager.addSession(spaceId, sessionId);
     }
     const currentConfig = session?.getSessionData().config;
     const config = await buildAgentSessionConfig({ agent }, space, currentConfig);
@@ -755,11 +756,13 @@ export class SpaceRuntimeService {
     const abortProvisional = async (): Promise<null> => {
       if (createdHere) {
         await sessionManager.updateSession(sessionId, { status: 'archived' }).catch(() => {});
+      } else if (revivedFrom) {
+        await sessionManager.updateSession(sessionId, { status: revivedFrom }).catch(() => {});
       }
       return null;
     };
     try {
-      if (createdHere) {
+      if (createdHere || revivedFrom) {
         await this.config.spaceManager.addSession(space.id, sessionId);
       }
       let applied: SpaceLongHorizonAgent | null = createdHere ? null : agent;
@@ -892,7 +895,9 @@ export class SpaceRuntimeService {
     const repo = this.config.longHorizonAgentRepo;
     if (!sessionManager || !repo) return;
     const agent = repo.getById(agentId);
-    if (!agent || agent.spaceId !== spaceId || !agent.sessionId) return;
+    if (!agent || agent.spaceId !== spaceId || !agent.sessionId || agent.status !== 'active') {
+      return;
+    }
     const space = await this.config.spaceManager.getSpace(spaceId);
     if (!space) return;
     if (agent.sessionId === coordinatorSessionId(spaceId)) {

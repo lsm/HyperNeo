@@ -754,6 +754,15 @@ async function updateApplyStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifi
   return { ...ctx, unifiedAfter: agent, agent };
 }
 
+async function updateRefreshSessionStage(
+  ctx: UpdateUnifiedAgentCtx
+): Promise<UpdateUnifiedAgentCtx> {
+  if (ctx.agent?.sessionId) {
+    await ctx.runtimeService?.refreshLongHorizonAgentSession(ctx.agent.spaceId, ctx.agent.id);
+  }
+  return ctx;
+}
+
 async function updatePublishStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
   if (ctx.unifiedAfter) {
     await publishUnifiedAgentUpdated(ctx.internalEventBus, ctx.unifiedAfter);
@@ -767,6 +776,7 @@ const runUpdateUnifiedSpaceAgent = (superpipe({})('update-unified-space-agent') 
   .pipe(updateValidateRequestStage, 'ctx', 'ctx')
   .pipe(updateAuthorizeStage, 'ctx', 'ctx')
   .pipe(updateApplyStage, 'ctx', 'ctx')
+  .pipe(updateRefreshSessionStage, 'ctx', 'ctx')
   .pipe(updatePublishStage, 'ctx', 'ctx')
   .endAsync('ctx') as (ctx: UpdateUnifiedAgentCtx) => Promise<UpdateUnifiedAgentCtx>;
 
@@ -906,9 +916,6 @@ export function registerUnifiedSpaceAgentMethods(
       unifiedAfter: null,
       agent: null,
     });
-    if (ctx.agent?.sessionId) {
-      await ctx.runtimeService?.refreshLongHorizonAgentSession(ctx.agent.spaceId, ctx.agent.id);
-    }
     return { agent: ctx.agent };
   });
 

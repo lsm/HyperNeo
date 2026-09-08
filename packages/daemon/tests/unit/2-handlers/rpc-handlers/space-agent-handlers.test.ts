@@ -1639,6 +1639,41 @@ describe('Space Agent RPC Handlers', () => {
       );
     });
 
+    it('delays the update event until the stamped-session refresh succeeds', async () => {
+      const runtimeService = createRuntimeServiceMock();
+      runtimeService.refreshLongHorizonAgentSession.mockRejectedValueOnce(
+        new Error('refresh failed')
+      );
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        workflowRepo,
+        runtimeService
+      );
+      longHorizonRepo.create({
+        id: 'lh-stamped-late',
+        spaceId: 'space-1',
+        handle: 'stamped-late',
+        sessionId: 'space:agent:space-1:lh-stamped-late',
+      });
+      daemonData.publishMock.mockClear();
+
+      await expect(
+        call(freshHub.handlers, 'spaceAgent.update', {
+          id: 'lh-stamped-late',
+          instructions: 'Newly saved instructions',
+        })
+      ).rejects.toThrow('refresh failed');
+
+      expect(
+        daemonData.publishMock.mock.calls.filter(([name]) => name === 'spaceAgent.updated')
+      ).toHaveLength(0);
+    });
+
     it('routes mirror-row updates through the unified table', async () => {
       const workerId = 'worker-original';
       seedWorkerMirror(db, {
