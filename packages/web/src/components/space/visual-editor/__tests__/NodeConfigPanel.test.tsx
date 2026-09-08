@@ -785,6 +785,25 @@ describe('NodeConfigPanel', () => {
       expect(optionValues).not.toContain('task-manager.default');
     });
 
+    it('keeps a legacy long-horizon slot selection visible as a disabled option (ATC-4)', () => {
+      const step = makeStep({
+        agentId: '',
+        agents: [
+          { agentId: '', templateKey: 'coordinator-v1', name: 'coordinator' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
+        ],
+      });
+      const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+
+      const coordinatorSelect = getAllByTestId('agent-slot-select')[0] as HTMLSelectElement;
+      expect(coordinatorSelect.value).toBe('coordinator-v1');
+      const legacyOption = [...coordinatorSelect.options].find(
+        (option) => option.value === 'coordinator-v1'
+      );
+      expect(legacyOption).toBeDefined();
+      expect(legacyOption?.disabled).toBe(true);
+    });
+
     it('shows agents list in multi-agent mode', () => {
       const step = makeStep({
         agentId: '',

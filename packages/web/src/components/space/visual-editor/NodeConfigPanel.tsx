@@ -418,7 +418,7 @@ function AgentsSection({
             </option>
           ))}
           {(() => {
-            if (!selectedSingleRef || agentTemplates.some((t) => t.key === selectedSingleRef)) {
+            if (!selectedSingleRef || availableTemplates.some((t) => t.key === selectedSingleRef)) {
               return null;
             }
             return (
@@ -595,7 +595,10 @@ function AgentsSection({
                     </option>
                   ))}
                   {(() => {
-                    if (!selectedSlotRef || agentTemplates.some((t) => t.key === selectedSlotRef)) {
+                    if (
+                      !selectedSlotRef ||
+                      availableTemplates.some((t) => t.key === selectedSlotRef)
+                    ) {
                       return null;
                     }
                     return (
