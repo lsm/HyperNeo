@@ -1222,6 +1222,87 @@ describe('Space Agent RPC Handlers', () => {
       expect(runtimeService.ensureAgentSession).toHaveBeenCalledWith('space-1', coordinatorId);
     });
 
+    it('maps the coordinator alias to the space chat session', async () => {
+      const runtimeService = createRuntimeServiceMock();
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        workflowRepo,
+        runtimeService
+      );
+      longHorizonRepo.create({
+        id: coordinatorLongHorizonAgentId('space-1'),
+        spaceId: 'space-1',
+        handle: 'coordinator',
+      });
+
+      const result = await call<{ sessionId: string }>(
+        freshHub.handlers,
+        'spaceAgent.ensureSession',
+        {
+          spaceId: 'space-1',
+          agentId: 'coordinator:space-1',
+        }
+      );
+
+      expect(result.sessionId).toBe('space:chat:space-1');
+      expect(runtimeService.ensureAgentSession).toHaveBeenCalledWith(
+        'space-1',
+        'coordinator:space-1'
+      );
+    });
+
+    it('maps the bare coordinator alias even before a coordinator record exists', async () => {
+      const runtimeService = createRuntimeServiceMock();
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        workflowRepo,
+        runtimeService
+      );
+
+      const result = await call<{ sessionId: string }>(
+        freshHub.handlers,
+        'spaceAgent.ensureSession',
+        {
+          spaceId: 'space-1',
+          agentId: 'coordinator',
+        }
+      );
+
+      expect(result.sessionId).toBe('space:chat:space-1');
+    });
+
+    it('rejects unknown agents before provisioning', async () => {
+      const runtimeService = createRuntimeServiceMock();
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        workflowRepo,
+        runtimeService
+      );
+
+      await expect(
+        call(freshHub.handlers, 'spaceAgent.ensureSession', {
+          spaceId: 'space-1',
+          agentId: 'never-created',
+        })
+      ).rejects.toThrow('Agent not found: never-created');
+      expect(runtimeService.ensureAgentSession).not.toHaveBeenCalled();
+    });
+
     it('rejects when the runtime cannot ensure the session', async () => {
       const runtimeService = createRuntimeServiceMock();
       runtimeService.ensureAgentSession.mockResolvedValueOnce(null);
@@ -1235,6 +1316,7 @@ describe('Space Agent RPC Handlers', () => {
         workflowRepo,
         runtimeService
       );
+      longHorizonRepo.create({ id: 'lh-ensure-1', spaceId: 'space-1', handle: 'researcher' });
 
       await expect(
         call(freshHub.handlers, 'spaceAgent.ensureSession', {

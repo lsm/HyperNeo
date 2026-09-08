@@ -12,7 +12,11 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { navigateToSpaceSession } from '../../lib/router';
 import { buildLongHorizonAgentSessionId } from '../../lib/space-agent-session';
 import { spaceStore } from '../../lib/space-store';
-import { currentSpaceSessionIdSignal } from '../../lib/signals';
+import {
+  currentSpaceSessionIdSignal,
+  currentSpaceTaskIdSignal,
+  currentSpaceViewModeSignal,
+} from '../../lib/signals';
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
@@ -42,6 +46,8 @@ const AUTONOMY_LABELS: Record<number, string> = {
 const MIGRATED_WORKER_TEMPLATE_KEY = 'migration.legacy_space_agent';
 
 const COORDINATOR_AGENT_HANDLES = new Set(['coordinator', 'space-manager']);
+
+let latestAgentCardOpenSeq = 0;
 
 function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
   return COORDINATOR_AGENT_HANDLES.has(agent.handle);
@@ -835,17 +841,28 @@ function AgentCard({
 
   const openSession = async () => {
     if (opening || !sessionId) return;
+    const openSeq = ++latestAgentCardOpenSeq;
     if (agent.sessionId) {
       navigateToSpaceSession(navigationSpaceId, agent.sessionId);
       return;
     }
     setOpening(true);
-    const routeSessionAtOpen = currentSpaceSessionIdSignal.value;
+    const routeAtOpen = {
+      session: currentSpaceSessionIdSignal.value,
+      view: currentSpaceViewModeSignal.value,
+      task: currentSpaceTaskIdSignal.value,
+    };
     try {
       const ensured = await spaceStore.ensureAgentSession(agent.id);
-      if (currentSpaceSessionIdSignal.value === routeSessionAtOpen) {
-        navigateToSpaceSession(navigationSpaceId, ensured);
+      if (openSeq !== latestAgentCardOpenSeq) return;
+      if (
+        currentSpaceSessionIdSignal.value !== routeAtOpen.session ||
+        currentSpaceViewModeSignal.value !== routeAtOpen.view ||
+        currentSpaceTaskIdSignal.value !== routeAtOpen.task
+      ) {
+        return;
       }
+      navigateToSpaceSession(navigationSpaceId, ensured);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to open agent session');
     } finally {

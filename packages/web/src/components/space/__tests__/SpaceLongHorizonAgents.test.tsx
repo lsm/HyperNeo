@@ -1661,6 +1661,39 @@ describe('SpaceLongHorizonAgents', () => {
     expect(mockNavigateToSpaceSession).toHaveBeenCalledTimes(1);
   });
 
+  it('lets the latest unstamped card click win regardless of resolution order', async () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({ sessionId: null }),
+      makeLongHorizonAgent({
+        id: 'lh-2',
+        handle: 'second',
+        displayName: 'Second Agent',
+        sessionId: null,
+      }),
+    ];
+    const pending: Array<(sessionId: string) => void> = [];
+    mockEnsureAgentSession.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          pending.push(resolve);
+        })
+    );
+
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+    fireEvent.click(getByText('Second Agent').closest('[role="button"]')!);
+
+    pending[1]('space:agent:space-1:lh-2');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledTimes(1);
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'space:agent:space-1:lh-2');
+
+    pending[0]('space:agent:space-1:lh-1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledTimes(1);
+  });
+
   it('treats the space chat as the coordinator session', async () => {
     mockAgents.value = [
       makeLongHorizonAgent({

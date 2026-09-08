@@ -18,13 +18,13 @@ import type { Database } from '../../storage/index.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import {
   coordinatorLongHorizonAgentId,
+  coordinatorSessionId,
   type SpaceLongHorizonAgentRepository,
 } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { isReservedAgentHandle } from '../space/agent-handle.ts';
 import { composeLongHorizonSubscriptionPattern } from '../external-events/long-horizon-subscription-pattern.ts';
 import { validateGlobPattern, validateSource } from '../external-events/topic-validator.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import { agentSessionIdOf } from '../session-resolution/target.ts';
 import {
   decideDefaultAgentUpdateAdmission,
   resolveIsDefaultAgent,
@@ -41,6 +41,7 @@ import {
   validateAgentModelPool,
   validateSpaceAgentTools,
 } from '../space/agents/agent-validation.ts';
+import { longTermAgentSessionId } from '../space/long-term-agent-session.ts';
 import { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
 import { SpaceAgentTemplateReapplyService } from '../space/managers/space-agent-template-reapply-service.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
@@ -767,6 +768,60 @@ const runUpdateUnifiedSpaceAgent = (superpipe({})('update-unified-space-agent') 
   .pipe(updatePublishStage, 'ctx', 'ctx')
   .endAsync('ctx') as (ctx: UpdateUnifiedAgentCtx) => Promise<UpdateUnifiedAgentCtx>;
 
+interface EnsureAgentSessionCtx extends UnifiedSpaceAgentMethodDeps {
+  params: { spaceId?: string; agentId?: string };
+  spaceId: string;
+  agentId: string;
+  sessionId: string;
+}
+
+function ensureSessionValidateStage(ctx: EnsureAgentSessionCtx): EnsureAgentSessionCtx {
+  const spaceId = ctx.params.spaceId;
+  const agentId = ctx.params.agentId;
+  if (!spaceId) throw new Error('spaceId is required');
+  if (!agentId) throw new Error('agentId is required');
+  return { ...ctx, spaceId, agentId };
+}
+
+async function ensureSessionAdmitSpaceStage(
+  ctx: EnsureAgentSessionCtx
+): Promise<EnsureAgentSessionCtx> {
+  const space = await ctx.spaceManager.getSpace(ctx.spaceId);
+  if (!space) throw new Error(`Space not found: ${ctx.spaceId}`);
+  return ctx;
+}
+
+function ensureSessionResolveTargetStage(ctx: EnsureAgentSessionCtx): EnsureAgentSessionCtx {
+  const { spaceId, agentId } = ctx;
+  if (agentId === 'coordinator' || agentId === `coordinator:${spaceId}`) {
+    return { ...ctx, sessionId: coordinatorSessionId(spaceId) };
+  }
+  const record = ctx.repo.getById(agentId);
+  if (!record || record.spaceId !== spaceId) throw new Error(`Agent not found: ${agentId}`);
+  const sessionId =
+    ctx.repo.getCoordinator(spaceId)?.id === record.id
+      ? coordinatorSessionId(spaceId)
+      : longTermAgentSessionId(spaceId, record.id);
+  return { ...ctx, sessionId };
+}
+
+async function ensureSessionProvisionStage(
+  ctx: EnsureAgentSessionCtx
+): Promise<EnsureAgentSessionCtx> {
+  if (!ctx.runtimeService) throw new Error('Agent runtime unavailable');
+  const ensured = await ctx.runtimeService.ensureAgentSession(ctx.spaceId, ctx.agentId);
+  if (!ensured) throw new Error(`Agent session unavailable: ${ctx.agentId}`);
+  return ctx;
+}
+
+const runEnsureAgentSessionRpc = (superpipe({})('ensure-agent-session-rpc') as PipelineAPI)
+  .input(['ctx'])
+  .pipe(ensureSessionValidateStage, 'ctx', 'ctx')
+  .pipe(ensureSessionAdmitSpaceStage, 'ctx', 'ctx')
+  .pipe(ensureSessionResolveTargetStage, 'ctx', 'ctx')
+  .pipe(ensureSessionProvisionStage, 'ctx', 'ctx')
+  .endAsync('ctx') as (ctx: EnsureAgentSessionCtx) => Promise<EnsureAgentSessionCtx>;
+
 export function registerUnifiedSpaceAgentMethods(
   messageHub: MessageHub,
   deps: UnifiedSpaceAgentMethodDeps
@@ -1098,24 +1153,14 @@ export function setupSpaceAgentHandlers(
   });
 
   messageHub.onRequest('spaceAgent.ensureSession', async (data) => {
-    const params = data as { spaceId: string; agentId: string };
-    if (!params.spaceId) throw new Error('spaceId is required');
-    if (!params.agentId) throw new Error('agentId is required');
-
-    const space = await spaceManager.getSpace(params.spaceId);
-    if (!space) throw new Error(`Space not found: ${params.spaceId}`);
-    if (!runtimeService) throw new Error('Agent runtime unavailable');
-
-    const ensured = await runtimeService.ensureAgentSession(params.spaceId, params.agentId);
-    if (!ensured) throw new Error(`Agent session unavailable: ${params.agentId}`);
-
-    return {
-      sessionId: agentSessionIdOf(
-        params.spaceId,
-        params.agentId,
-        longHorizonAgentRepo.getCoordinator(params.spaceId)?.id
-      ),
-    };
+    const ctx = await runEnsureAgentSessionRpc({
+      ...deps,
+      params: data as { spaceId?: string; agentId?: string },
+      spaceId: '',
+      agentId: '',
+      sessionId: '',
+    });
+    return { sessionId: ctx.sessionId };
   });
 
   messageHub.onRequest('spaceAgent.getPromotionDraft', async (data) => {
