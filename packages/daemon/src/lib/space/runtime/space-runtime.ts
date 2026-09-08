@@ -3019,6 +3019,7 @@ export class SpaceRuntime {
         expectedApprovedAt: options.expectedApprovedAt,
         expectedWorkflowRunId: options.expectedWorkflowRunId,
         expectedRuntimeGeneration: dispatchRuntimeGeneration,
+        claimFence: () => claimToken.fenced,
       });
     } finally {
       const latest = this.config.taskRepo.getTask(taskId);
@@ -8224,7 +8225,21 @@ export class SpaceRuntime {
             this.postApprovalRecoveryInFlight.set(task.id, reviveMarker);
             revivePromise
               .catch(() => undefined)
-              .then((outcome) => {
+              .then(async (outcome) => {
+                if (outcome === 'revived') {
+                  const settled = this.config.taskRepo.getTask(task.id);
+                  if (
+                    settled?.status === 'approved' &&
+                    settled.postApprovalBlockedReason ===
+                      'post-approval worker revival timed out; settlement still pending'
+                  ) {
+                    this.config.taskRepo.updateTask(task.id, {
+                      postApprovalBlockedReason: null,
+                    });
+                    const cleared = this.config.taskRepo.getTask(task.id);
+                    if (cleared) await this.safeOnTaskUpdated(task.spaceId, cleared);
+                  }
+                }
                 if (outcome === 'replace') {
                   const existing = this.postApprovalRecoveryBypass.get(task.id) ?? {
                     generation,
@@ -8250,6 +8265,15 @@ export class SpaceRuntime {
               log.warn(
                 `SpaceRuntime: post-approval worker revival for task ${task.id} did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while it runs single-flight fenced`
               );
+              const freshTimeout = this.config.taskRepo.getTask(task.id);
+              if (freshTimeout?.status === 'approved' && !freshTimeout.postApprovalBlockedReason) {
+                this.config.taskRepo.updateTask(task.id, {
+                  postApprovalBlockedReason:
+                    'post-approval worker revival timed out; settlement still pending',
+                });
+                const blockedTimeout = this.config.taskRepo.getTask(task.id);
+                if (blockedTimeout) await this.safeOnTaskUpdated(task.spaceId, blockedTimeout);
+              }
               continue;
             }
             if (revive !== 'replace') continue;

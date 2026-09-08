@@ -5472,6 +5472,7 @@ export class TaskAgentManager {
     expectedApprovedAt?: number | null;
     expectedWorkflowRunId?: string | null;
     expectedRuntimeGeneration?: number;
+    claimFence?: () => boolean;
   }): Promise<{ sessionId: string }> {
     const { task, workflow, targetAgent, kickoffMessage } = args;
     const admission = {
@@ -5479,6 +5480,7 @@ export class TaskAgentManager {
       expectedApprovedAt: args.expectedApprovedAt,
       expectedWorkflowRunId: args.expectedWorkflowRunId,
       expectedRuntimeGeneration: args.expectedRuntimeGeneration,
+      claimFence: args.claimFence,
     };
     const taskId = task.id;
     const spaceId = task.spaceId;
@@ -5773,6 +5775,7 @@ export class TaskAgentManager {
       expectedApprovedAt?: number | null;
       expectedWorkflowRunId?: string | null;
       expectedRuntimeGeneration?: number;
+      claimFence?: () => boolean;
     } = {}
   ): Promise<void> {
     const freshSpace = await this.config.spaceManager.getSpace(spaceId);
@@ -5789,6 +5792,12 @@ export class TaskAgentManager {
     if (this.disposed) {
       throw new Error(
         `TaskAgentManager is disposed; refusing post-approval spawn for task ${taskId}`
+      );
+    }
+    if (options.claimFence?.() === true) {
+      throw new SpawnSupersededError(
+        `post-approval-retry-${taskId}`,
+        'dispatch-claim-lease-expired'
       );
     }
     if (

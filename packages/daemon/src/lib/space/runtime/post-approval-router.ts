@@ -44,6 +44,7 @@ export interface PostApprovalSubSessionSpawner {
     expectedApprovedAt?: number | null;
     expectedWorkflowRunId?: string | null;
     expectedRuntimeGeneration?: number;
+    claimFence?: () => boolean;
   }): Promise<{ sessionId: string }>;
 }
 
@@ -209,6 +210,7 @@ export class PostApprovalRouter {
       expectedApprovedAt?: number | null;
       expectedWorkflowRunId?: string | null;
       expectedRuntimeGeneration?: number;
+      claimFence?: () => boolean;
     } = {}
   ): Promise<PostApprovalRouteResult> {
     if (task.status !== 'approved') {
@@ -370,6 +372,7 @@ export class PostApprovalRouter {
         expectedApprovedAt: routeOptions.expectedApprovedAt,
         expectedWorkflowRunId: routeOptions.expectedWorkflowRunId,
         expectedRuntimeGeneration: routeOptions.expectedRuntimeGeneration,
+        claimFence: routeOptions.claimFence,
       }));
     } catch (err) {
       if (isSpawnSupersededError(err)) {
