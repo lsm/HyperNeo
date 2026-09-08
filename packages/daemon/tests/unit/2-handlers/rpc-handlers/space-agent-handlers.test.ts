@@ -1373,7 +1373,7 @@ describe('Space Agent RPC Handlers', () => {
 
       await expect(
         call(hubData.handlers, 'spaceAgent.delete', { id: coordinator.id })
-      ).rejects.toThrow('The coordinator agent cannot be deleted');
+      ).rejects.toThrow('The Space Manager agent cannot be deleted');
       expect(longHorizonRepo.getById(coordinator.id)?.status).toBe('active');
     });
 

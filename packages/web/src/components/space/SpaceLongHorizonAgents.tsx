@@ -1135,8 +1135,8 @@ export function SpaceLongHorizonAgents({
               <span data-testid="configured-agent-count">{sortedAgents.length}</span>
             </h2>
             <p class="mt-1 text-sm leading-5 text-fg-soft">
-              Persistent Space actors — coordinators, workers, and custom roles — rehydrated by the
-              runtime and recalled across runs.
+              Persistent Space actors — the Space Manager, workers, and custom roles — rehydrated by
+              the runtime and recalled across runs.
             </p>
           </div>
           <button

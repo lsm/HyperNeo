@@ -601,7 +601,7 @@ function deleteAuthorizeStage(ctx: DeleteUnifiedAgentCtx): DeleteUnifiedAgentCtx
       ? agentId
       : (ctx.repo.getCoordinator(spaceId)?.id ?? null);
   if (coordinatorId === agentId) {
-    throw new Error('The coordinator agent cannot be deleted');
+    throw new Error('The Space Manager agent cannot be deleted');
   }
   return ctx;
 }
