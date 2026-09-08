@@ -3,6 +3,7 @@ import type {
   CreateSpaceAgentTemplateParams,
   ModelInfo,
   SpaceAgentTemplate,
+  SpaceWorkflow,
 } from '@hyperneo/shared';
 import { setModelsCache } from '../../../../src/lib/model-service';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
@@ -17,6 +18,7 @@ import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/s
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
+import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const BUILT_INS: SpaceAgentTemplate[] = [
@@ -67,6 +69,20 @@ function makeModelInfo(id: string, alias: string, provider = 'anthropic'): Model
     description: '',
     releaseDate: '2025-01-01',
     available: true,
+  };
+}
+
+function workflowNamed(name: string): SpaceWorkflow {
+  return {
+    id: `wf-${name}`,
+    spaceId: 'sp-1',
+    name,
+    nodes: [],
+    startNodeId: '',
+    tags: [],
+    createdAt: 0,
+    updatedAt: 0,
+    completionAutonomyLevel: 3,
   };
 }
 
@@ -894,7 +910,61 @@ describe('SpaceAgentTemplateManager', () => {
       const result = manager.delete('builtin.default');
 
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error).toContain('not found');
+      if (!result.ok) expect(result.error).toContain('cannot be deleted');
+    });
+
+    test('deletes with the matching CAS version', async () => {
+      await manager.create(fullParams());
+
+      const result = manager.delete('release-readiness.custom', 1);
+
+      expect(result.ok).toBe(true);
+      expect(manager.getByKey('release-readiness.custom')).toBeNull();
+    });
+
+    test('rejects a stale CAS version and reports the current one', async () => {
+      await manager.create(fullParams());
+      await manager.update('release-readiness.custom', { displayName: 'Updated' });
+
+      const result = manager.delete('release-readiness.custom', 1);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain('expected version 1');
+        expect(result.error).toContain('current version 2');
+      }
+      expect(manager.getByKey('release-readiness.custom')).not.toBeNull();
+    });
+
+    test('blocks deletion while a workflow references the template', async () => {
+      await manager.create(fullParams());
+      const guarded = new SpaceAgentTemplateManager(repo, () => BUILT_INS, {
+        getWorkflowsReferencingTemplate: (key) =>
+          key === 'release-readiness.custom'
+            ? [workflowNamed('Release Flow'), workflowNamed('Guard Flow')]
+            : [],
+      });
+
+      const result = guarded.delete('release-readiness.custom');
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain('Release Flow');
+        expect(result.error).toContain('Guard Flow');
+      }
+      expect(repo.getByKey('release-readiness.custom')).not.toBeNull();
+    });
+
+    test('deletes when the reference scan reports no referencing workflow', async () => {
+      await manager.create(fullParams());
+      const guarded = new SpaceAgentTemplateManager(repo, () => BUILT_INS, {
+        getWorkflowsReferencingTemplate: () => [],
+      });
+
+      const result = guarded.delete('release-readiness.custom');
+
+      expect(result.ok).toBe(true);
+      expect(repo.getByKey('release-readiness.custom')).toBeNull();
     });
   });
 
@@ -1004,6 +1074,38 @@ describe('SpaceAgentTemplateManager', () => {
       expect(ctx.error).toBeUndefined();
       expect(ctx.deleted).toBe(true);
       expect(repo.getByKey('release-readiness.custom')).toBeNull();
+    });
+
+    test('halts before delete on a stale expected version', async () => {
+      await manager.create(fullParams());
+      await manager.update('release-readiness.custom', { displayName: 'Updated' });
+
+      const ctx = runDeleteTemplate({
+        repo,
+        key: 'release-readiness.custom',
+        expectedVersion: 1,
+      });
+
+      expect(ctx.error).toContain('current version 2');
+      expect(ctx.deleted).toBeUndefined();
+      expect(repo.getByKey('release-readiness.custom')).not.toBeNull();
+    });
+
+    test('halts before delete when the reference scan finds a workflow', async () => {
+      await manager.create(fullParams());
+
+      const ctx = runDeleteTemplate({
+        repo,
+        key: 'release-readiness.custom',
+        workflowReferenceScan: {
+          getWorkflowsReferencingTemplate: () => [workflowNamed('Release Flow')],
+        },
+      });
+
+      expect(ctx.error).toContain('Release Flow');
+      expect(ctx.referencingWorkflows).toHaveLength(1);
+      expect(ctx.deleted).toBeUndefined();
+      expect(repo.getByKey('release-readiness.custom')).not.toBeNull();
     });
   });
 

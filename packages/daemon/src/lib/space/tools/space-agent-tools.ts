@@ -137,6 +137,7 @@ import {
   CreateScheduledTaskSchema,
   CreateStandaloneTaskSchema,
   CreateTaskFromForgeProposalSchema,
+  DeleteAgentTemplateSchema,
   DeleteScheduledTaskSchema,
   GetAgentSchema,
   GetExternalEventSchema,
@@ -643,6 +644,7 @@ type AgentTemplateListEntry = {
   suggested_autonomy_level: SpaceAgentAutonomyLevel;
   labels: string[];
   builtin: boolean;
+  version: number | null;
 };
 
 function resolveAgentTemplateLibrary(db: BunDatabase | undefined): AgentTemplateLibrary {
@@ -662,7 +664,19 @@ function dropReservedFallbackHandles(library: AgentTemplateLibrary): AgentTempla
   };
 }
 
-function projectAgentTemplateEntries(library: AgentTemplateLibrary): AgentTemplateListEntry[] {
+function resolveTemplateVersions(db: BunDatabase | undefined): Map<string, number> {
+  if (!db) return new Map();
+  return new Map(
+    new SpaceAgentTemplateRepository(db)
+      .listWithVersions()
+      .map((template) => [template.key, template.version])
+  );
+}
+
+function projectAgentTemplateEntries(
+  library: AgentTemplateLibrary,
+  versions: Map<string, number>
+): AgentTemplateListEntry[] {
   const builtinKeys = new Set(getLongHorizonAgentTemplates().map((template) => template.key));
   return library.templates.map((template) => ({
     template_name: template.key,
@@ -672,14 +686,16 @@ function projectAgentTemplateEntries(library: AgentTemplateLibrary): AgentTempla
     suggested_autonomy_level: template.suggestedAutonomyLevel,
     labels: template.labels,
     builtin: builtinKeys.has(template.key),
+    version: versions.get(template.key) ?? null,
   }));
 }
 
 const runListAgentTemplates = (superpipe()('list-agent-templates') as PipelineAPI)
   .input(['db'])
   .pipe(resolveAgentTemplateLibrary, 'db', 'library')
+  .pipe(resolveTemplateVersions, 'db', 'versions')
   .pipe(dropReservedFallbackHandles, 'library', 'filteredLibrary')
-  .pipe(projectAgentTemplateEntries, 'filteredLibrary', 'entries')
+  .pipe(projectAgentTemplateEntries, ['filteredLibrary', 'versions'], 'entries')
   .end('entries') as (db: BunDatabase | undefined) => AgentTemplateListEntry[];
 
 function resolveExactAgentTemplate(
@@ -2057,6 +2073,22 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
     async list_agent_templates(): Promise<ToolResult> {
       const entries = runListAgentTemplates(config.db);
       return jsonResult({ success: true, long_horizon_templates: entries });
+    },
+
+    async delete_agent_template(args: {
+      key: string;
+      expected_version?: number;
+    }): Promise<ToolResult> {
+      try {
+        await requireSessionWriteAutonomy('delete_agent_template');
+        const result = requireTemplateManager().delete(args.key, args.expected_version);
+        if (!result.ok) return jsonResult({ success: false, error: result.error });
+        logAudit('delete_agent_template', { key: args.key, version: args.expected_version });
+        return jsonResult({ success: true, deleted: args.key });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
     },
 
     async update_agent(
@@ -4736,6 +4768,13 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         'List the agent templates available in this space: built-in templates (worker.research, worker.qa, ...) plus user-authored templates. Each entry carries a labels array and a builtin flag.',
         ListAgentTemplatesSchema.shape,
         () => handlers.list_agent_templates()
+      ),
+
+      tool(
+        'delete_agent_template',
+        'Delete a user-authored agent template by key. Optional expected_version enables compare-and-swap (create/update results and list_agent_templates report the current version); the delete fails when the template changed since, and the error reports the current version. Built-in templates cannot be deleted. Deletion is blocked while any workflow slot references the template via templateKey — including definitions pinned by still-executable workflow runs — and the error lists the workflows to update or wait on.',
+        DeleteAgentTemplateSchema.shape,
+        (args) => handlers.delete_agent_template(args)
       ),
       tool(
         'update_agent',

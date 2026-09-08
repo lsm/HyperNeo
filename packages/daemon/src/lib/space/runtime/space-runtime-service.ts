@@ -27,7 +27,7 @@ import {
 import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository.ts';
-import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
+import { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
@@ -201,7 +201,9 @@ export class SpaceRuntimeService {
       : null;
     this.auditLogRepo = new McpAuditLogRepository(this.config.db);
     this.templateManager = new SpaceAgentTemplateManager(
-      new SpaceAgentTemplateRepository(this.config.db)
+      new SpaceAgentTemplateRepository(this.config.db),
+      undefined,
+      new SpaceWorkflowRepository(this.config.db)
     );
     this.queueHealthMetrics = config.queueHealthMetrics ?? new ExternalEventQueueMetrics();
     config.externalEventStore?.setDeliveryTerminalHook((event) =>

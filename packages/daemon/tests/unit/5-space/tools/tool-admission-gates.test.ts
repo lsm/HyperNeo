@@ -228,8 +228,9 @@ describe('decideAutonomyAdmission', () => {
 });
 
 describe('TOOL_AUTONOMY_REQUIREMENTS', () => {
-  test('seeds every session-write tool at SESSION_WRITE_AUTONOMY_LEVEL', () => {
+  test('seeds every gated tool at SESSION_WRITE_AUTONOMY_LEVEL', () => {
     expect(Object.keys(TOOL_AUTONOMY_REQUIREMENTS).sort()).toEqual([
+      'delete_agent_template',
       'interrupt_session',
       'send_session_message',
       'update_session_state',

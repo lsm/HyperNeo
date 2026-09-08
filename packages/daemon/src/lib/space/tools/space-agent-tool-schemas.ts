@@ -360,6 +360,21 @@ export const CreateAgentFromTemplateSchema = z.object({
 
 export const ListAgentTemplatesSchema = z.object({});
 
+export const DeleteAgentTemplateSchema = z.object({
+  key: z
+    .string()
+    .min(1)
+    .describe('Key of the user-authored template to delete; built-in keys are rejected'),
+  expected_version: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe(
+      'Version the caller last saw (from a create/update result or list_agent_templates); the delete fails when the stored version differs. Omit to delete unconditionally.'
+    ),
+});
+
 export const AgentModelPoolEntrySchema = z.object({
   model: z.string().min(1).describe('Model identifier'),
   provider: z.string().optional().describe('Provider identifier'),
@@ -540,6 +555,7 @@ export const SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS = {
   create_agent_template: CreateAgentTemplateSchema,
   update_agent_template: UpdateAgentTemplateSchema,
   list_agent_templates: ListAgentTemplatesSchema,
+  delete_agent_template: DeleteAgentTemplateSchema,
   update_agent: UpdateAgentSchema,
   pause_agent: PauseAgentSchema,
   archive_agent: ArchiveAgentSchema,

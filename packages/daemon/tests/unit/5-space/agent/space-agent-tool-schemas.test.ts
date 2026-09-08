@@ -357,6 +357,7 @@ const LIFECYCLE_TOOL_NAMES: SpaceAgentLifecycleToolName[] = [
   'create_agent_template',
   'update_agent_template',
   'list_agent_templates',
+  'delete_agent_template',
   'update_agent',
   'pause_agent',
   'archive_agent',
@@ -410,11 +411,11 @@ const FORGE_TOOL_NAMES: SpaceForgeToolName[] = [
 ];
 
 describe('conditional family tool schema maps', () => {
-  test('SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS contains exactly the 19 agent-lifecycle tools', () => {
+  test('SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS contains exactly the 20 agent-lifecycle tools', () => {
     expect(Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS).sort()).toEqual(
       [...LIFECYCLE_TOOL_NAMES].sort()
     );
-    expect(Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS)).toHaveLength(19);
+    expect(Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS)).toHaveLength(20);
   });
 
   test('SPACE_GOAL_TOOL_SCHEMAS contains exactly the 9 goal tools', () => {
@@ -626,6 +627,24 @@ const LIFECYCLE_PINS: FamilySafeParsePin[] = [
     tool: 'list_agent_templates',
     accepts: [{ input: {}, data: {} }],
     rejects: ['not-an-object'],
+  },
+  {
+    tool: 'delete_agent_template',
+    accepts: [
+      { input: { key: 'reviewer.custom' }, data: { key: 'reviewer.custom' } },
+      {
+        input: { key: 'reviewer.custom', expected_version: 3 },
+        data: { key: 'reviewer.custom', expected_version: 3 },
+      },
+    ],
+    rejects: [
+      {},
+      { key: '' },
+      { expected_version: 1 },
+      { key: 'k', expected_version: 0 },
+      { key: 'k', expected_version: 1.5 },
+      { key: 'k', expected_version: '2' },
+    ],
   },
   {
     tool: 'update_agent',

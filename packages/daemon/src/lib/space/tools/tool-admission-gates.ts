@@ -73,6 +73,7 @@ export const TOOL_AUTONOMY_REQUIREMENTS: Record<string, number> = {
   send_session_message: SESSION_WRITE_AUTONOMY_LEVEL,
   update_session_state: SESSION_WRITE_AUTONOMY_LEVEL,
   interrupt_session: SESSION_WRITE_AUTONOMY_LEVEL,
+  delete_agent_template: SESSION_WRITE_AUTONOMY_LEVEL,
 };
 
 export function getToolAutonomyRequirement(toolName: string): number | undefined {
