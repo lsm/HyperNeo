@@ -147,6 +147,18 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
           listByWorkflowRun: listExecutionsMock,
         },
       } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
+      (
+        manager as unknown as {
+          hasActiveDeliveryJob: () => boolean;
+          hasUnconsumedDeliveredWork: () => boolean;
+        }
+      ).hasActiveDeliveryJob = () => false;
+      (
+        manager as unknown as {
+          hasActiveDeliveryJob: () => boolean;
+          hasUnconsumedDeliveredWork: () => boolean;
+        }
+      ).hasUnconsumedDeliveredWork = () => false;
       (manager as unknown as { rehydrateSubSession: typeof restoreMock }).rehydrateSubSession =
         restoreMock;
       return { manager, restoreMock, listExecutionsMock };
@@ -171,7 +183,9 @@ describe('TaskAgentManager Runtime Execution Contract', () => {
       await fixture.manager.rehydrate();
 
       expect(fixture.restoreMock).toHaveBeenCalledTimes(1);
-      expect(fixture.restoreMock).toHaveBeenCalledWith(SUB_SESSION_ID, undefined, {});
+      expect(fixture.restoreMock).toHaveBeenCalledWith(SUB_SESSION_ID, undefined, {
+        startQuery: false,
+      });
     });
   });
 });
