@@ -829,16 +829,34 @@ function AgentCard({
       ? (agent.sessionId ?? buildLongHorizonAgentSessionId(spaceId, agent.id))
       : null;
 
+  const [opening, setOpening] = useState(false);
+
+  const openSession = async () => {
+    if (opening || !sessionId) return;
+    if (agent.sessionId) {
+      navigateToSpaceSession(navigationSpaceId, agent.sessionId);
+      return;
+    }
+    setOpening(true);
+    try {
+      const ensured = await spaceStore.ensureAgentSession(agent.id);
+      navigateToSpaceSession(navigationSpaceId, ensured);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to open agent session');
+    } finally {
+      setOpening(false);
+    }
+  };
+
   return (
     <div
       role={sessionId ? 'button' : undefined}
       tabIndex={sessionId ? 0 : undefined}
-      onClick={sessionId ? () => navigateToSpaceSession(navigationSpaceId, sessionId) : undefined}
+      onClick={sessionId ? () => void openSession() : undefined}
       onKeyDown={
         sessionId
           ? (e) => {
-              if (e.key === 'Enter' || e.key === ' ')
-                navigateToSpaceSession(navigationSpaceId, sessionId);
+              if (e.key === 'Enter' || e.key === ' ') void openSession();
             }
           : undefined
       }

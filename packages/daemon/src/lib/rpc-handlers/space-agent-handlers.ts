@@ -24,6 +24,7 @@ import { isReservedAgentHandle } from '../space/agent-handle.ts';
 import { composeLongHorizonSubscriptionPattern } from '../external-events/long-horizon-subscription-pattern.ts';
 import { validateGlobPattern, validateSource } from '../external-events/topic-validator.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { agentSessionIdOf } from '../session-resolution/target.ts';
 import {
   decideDefaultAgentUpdateAdmission,
   resolveIsDefaultAgent,
@@ -58,6 +59,7 @@ type UnifiedSpaceAgentRuntimeService = Pick<
   | 'refreshLongHorizonSubscription'
   | 'removeLongHorizonSubscription'
   | 'clearLongTermAgentSessionProvider'
+  | 'ensureAgentSession'
 >;
 
 interface UnifiedSpaceAgentMethodDeps {
@@ -1093,6 +1095,27 @@ export function setupSpaceAgentHandlers(
     if (!agent) throw new Error(`Agent not found: ${params.id}`);
 
     return { agent };
+  });
+
+  messageHub.onRequest('spaceAgent.ensureSession', async (data) => {
+    const params = data as { spaceId: string; agentId: string };
+    if (!params.spaceId) throw new Error('spaceId is required');
+    if (!params.agentId) throw new Error('agentId is required');
+
+    const space = await spaceManager.getSpace(params.spaceId);
+    if (!space) throw new Error(`Space not found: ${params.spaceId}`);
+    if (!runtimeService) throw new Error('Agent runtime unavailable');
+
+    const ensured = await runtimeService.ensureAgentSession(params.spaceId, params.agentId);
+    if (!ensured) throw new Error(`Agent session unavailable: ${params.agentId}`);
+
+    return {
+      sessionId: agentSessionIdOf(
+        params.spaceId,
+        params.agentId,
+        longHorizonAgentRepo.getCoordinator(params.spaceId)?.id
+      ),
+    };
   });
 
   messageHub.onRequest('spaceAgent.getPromotionDraft', async (data) => {

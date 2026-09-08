@@ -2410,6 +2410,20 @@ class SpaceStore {
     return agent;
   }
 
+  async ensureAgentSession(agentId: string): Promise<string> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) throw new Error('No space selected');
+
+    const hub = connectionManager.getHubIfConnected();
+    if (!hub) throw new Error('Not connected');
+
+    const { sessionId } = await hub.request<{ sessionId: string }>('spaceAgent.ensureSession', {
+      spaceId,
+      agentId,
+    });
+    return sessionId;
+  }
+
   async fetchTemplates(): Promise<void> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');

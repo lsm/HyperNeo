@@ -15,6 +15,7 @@ const {
   mockUpdateAgent,
   mockReapplyAgentTemplate,
   mockNavigateToSpaceSession,
+  mockEnsureAgentSession,
 } = vi.hoisted(() => {
   function makeSignal<T>(initial: T) {
     return { value: initial };
@@ -30,6 +31,7 @@ const {
     mockUpdateAgent: vi.fn().mockResolvedValue(undefined),
     mockReapplyAgentTemplate: vi.fn().mockResolvedValue({ displayName: 'Research Long Horizon' }),
     mockNavigateToSpaceSession: vi.fn(),
+    mockEnsureAgentSession: vi.fn().mockResolvedValue('space:agent:space-1:lh-1'),
   };
 });
 
@@ -45,6 +47,7 @@ vi.mock('../../../lib/space-store', () => ({
       createTemplate: mockCreateTemplate,
       updateAgent: mockUpdateAgent,
       reapplyAgentTemplate: mockReapplyAgentTemplate,
+      ensureAgentSession: mockEnsureAgentSession,
     };
   },
 }));
@@ -56,6 +59,7 @@ vi.mock('../../../lib/router', () => ({
 vi.mock('../../../lib/toast', () => ({
   toast: {
     success: vi.fn(),
+    error: vi.fn(),
   },
 }));
 
@@ -206,6 +210,8 @@ describe('SpaceLongHorizonAgents', () => {
     mockCreateTemplate.mockClear();
     mockUpdateAgent.mockClear();
     mockNavigateToSpaceSession.mockClear();
+    mockEnsureAgentSession.mockClear();
+    mockEnsureAgentSession.mockResolvedValue('space:agent:space-1:lh-1');
   });
 
   afterEach(() => {
@@ -1522,6 +1528,7 @@ describe('SpaceLongHorizonAgents', () => {
     fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
 
     expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-slug', 'session-research');
+    expect(mockEnsureAgentSession).not.toHaveBeenCalled();
   });
 
   it('shows session presence on instance cards', () => {
@@ -1544,17 +1551,37 @@ describe('SpaceLongHorizonAgents', () => {
     expect(getByText('No session')).toBeTruthy();
   });
 
-  it('opens the derived deterministic session for an active sessionless instance', () => {
+  it('ensures then opens the deterministic session for an active sessionless instance', async () => {
     mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
 
     const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
 
-    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'space:agent:space-1:lh-1');
+    await waitFor(() => {
+      expect(mockNavigateToSpaceSession).toHaveBeenCalledWith(
+        'space-1',
+        'space:agent:space-1:lh-1'
+      );
+    });
+    expect(mockEnsureAgentSession).toHaveBeenCalledWith('lh-1');
   });
 
-  it('keeps paused and archived instance cards inert', () => {
+  it('shows a toast instead of navigating when ensuring the session fails', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+    mockEnsureAgentSession.mockRejectedValueOnce(new Error('Agent session unavailable: lh-1'));
+
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Agent session unavailable: lh-1');
+    });
+    expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps paused instance cards inert and hides archived ones', () => {
     mockAgents.value = [
       makeLongHorizonAgent({ status: 'paused', sessionId: null }),
       makeLongHorizonAgent({
@@ -1566,15 +1593,16 @@ describe('SpaceLongHorizonAgents', () => {
       }),
     ];
 
-    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+    const { getByText, queryByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
     fireEvent.click(getByText('Research Long Horizon'));
-    fireEvent.click(getByText('Gone Agent'));
 
+    expect(queryByText('Gone Agent')).toBeNull();
     expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
+    expect(mockEnsureAgentSession).not.toHaveBeenCalled();
   });
 
-  it('treats the space chat as the coordinator session', () => {
+  it('treats the space chat as the coordinator session', async () => {
     mockAgents.value = [
       makeLongHorizonAgent({
         handle: 'coordinator',
@@ -1582,6 +1610,7 @@ describe('SpaceLongHorizonAgents', () => {
         sessionId: null,
       }),
     ];
+    mockEnsureAgentSession.mockResolvedValueOnce('space:chat:space-1');
 
     const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
@@ -1589,7 +1618,10 @@ describe('SpaceLongHorizonAgents', () => {
     expect(card.textContent).toContain('Session');
     fireEvent.click(card);
 
-    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'space:chat:space-1');
+    await waitFor(() => {
+      expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'space:chat:space-1');
+    });
+    expect(mockEnsureAgentSession).toHaveBeenCalledWith('lh-1');
   });
 
   it('loads active-reminder counts via a single batched RPC', async () => {

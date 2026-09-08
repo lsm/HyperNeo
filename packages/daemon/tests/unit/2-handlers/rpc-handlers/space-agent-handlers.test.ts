@@ -160,6 +160,7 @@ function createRuntimeServiceMock(): {
   removeLongHorizonSubscription: ReturnType<typeof mock>;
   removeLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
   clearLongTermAgentSessionProvider: ReturnType<typeof mock>;
+  ensureAgentSession: ReturnType<typeof mock>;
 } {
   return {
     refreshLongHorizonAgentSubscriptions: mock(() => ({ success: true })),
@@ -167,6 +168,7 @@ function createRuntimeServiceMock(): {
     removeLongHorizonSubscription: mock(() => {}),
     removeLongHorizonAgentSubscriptions: mock(() => {}),
     clearLongTermAgentSessionProvider: mock(async () => {}),
+    ensureAgentSession: mock(async () => ({ getSessionData: () => ({ status: 'active' }) })),
   };
 }
 
@@ -1153,6 +1155,117 @@ describe('Space Agent RPC Handlers', () => {
       await expect(
         call(hubData.handlers, 'spaceAgent.get', { id: 'nonexistent-id' })
       ).rejects.toThrow('Agent not found');
+    });
+  });
+
+  describe('spaceAgent.ensureSession', () => {
+    it('registers the handler', () => {
+      expect(hubData.handlers.has('spaceAgent.ensureSession')).toBe(true);
+    });
+
+    it('ensures the agent session and returns the deterministic id', async () => {
+      const runtimeService = createRuntimeServiceMock();
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        workflowRepo,
+        runtimeService
+      );
+      longHorizonRepo.create({ id: 'lh-ensure-1', spaceId: 'space-1', handle: 'researcher' });
+
+      const result = await call<{ sessionId: string }>(
+        freshHub.handlers,
+        'spaceAgent.ensureSession',
+        {
+          spaceId: 'space-1',
+          agentId: 'lh-ensure-1',
+        }
+      );
+
+      expect(result.sessionId).toBe('space:agent:space-1:lh-ensure-1');
+      expect(runtimeService.ensureAgentSession).toHaveBeenCalledWith('space-1', 'lh-ensure-1');
+    });
+
+    it('maps the coordinator agent to the space chat session', async () => {
+      const runtimeService = createRuntimeServiceMock();
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        workflowRepo,
+        runtimeService
+      );
+      const coordinatorId = coordinatorLongHorizonAgentId('space-1');
+      longHorizonRepo.create({
+        id: coordinatorId,
+        spaceId: 'space-1',
+        handle: 'coordinator',
+      });
+
+      const result = await call<{ sessionId: string }>(
+        freshHub.handlers,
+        'spaceAgent.ensureSession',
+        {
+          spaceId: 'space-1',
+          agentId: coordinatorId,
+        }
+      );
+
+      expect(result.sessionId).toBe('space:chat:space-1');
+      expect(runtimeService.ensureAgentSession).toHaveBeenCalledWith('space-1', coordinatorId);
+    });
+
+    it('rejects when the runtime cannot ensure the session', async () => {
+      const runtimeService = createRuntimeServiceMock();
+      runtimeService.ensureAgentSession.mockResolvedValueOnce(null);
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        workflowRepo,
+        runtimeService
+      );
+
+      await expect(
+        call(freshHub.handlers, 'spaceAgent.ensureSession', {
+          spaceId: 'space-1',
+          agentId: 'lh-ensure-1',
+        })
+      ).rejects.toThrow('Agent session unavailable: lh-ensure-1');
+    });
+
+    it('throws when spaceId is missing or the space is unknown', async () => {
+      const runtimeService = createRuntimeServiceMock();
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        workflowRepo,
+        runtimeService
+      );
+
+      await expect(
+        call(freshHub.handlers, 'spaceAgent.ensureSession', { agentId: 'lh-1' })
+      ).rejects.toThrow('spaceId is required');
+      await expect(
+        call(freshHub.handlers, 'spaceAgent.ensureSession', {
+          spaceId: 'missing-space',
+          agentId: 'lh-1',
+        })
+      ).rejects.toThrow('Space not found: missing-space');
     });
   });
 
