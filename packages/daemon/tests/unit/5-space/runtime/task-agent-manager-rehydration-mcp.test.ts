@@ -256,6 +256,39 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(registered.get(SUB_SESSION_ID)).toBe(fake.agentSession);
   });
 
+  test('preparing a live worker for workflow resume starts an idle restored query and replays (#3823)', async () => {
+    const { tam } = makeManager();
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> })
+      .agentSessionIndex;
+    index.set(SUB_SESSION_ID, fake.agentSession);
+
+    await expect(tam.prepareSubSessionForWorkflowResume(SUB_SESSION_ID)).resolves.toBe(true);
+
+    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(fake.state.calls).toEqual([
+      'mergeRuntimeMcpServers',
+      'startStreamingQuery',
+      'replayPendingMessagesForImmediateMode',
+    ]);
+  });
+
+  test('preparing a blocked task worker for resume keeps the query parked (#3823)', async () => {
+    const { tam } = makeManager();
+    const task = (
+      tam.config as unknown as { taskRepo: { getTask: () => { status: string } } }
+    ).taskRepo.getTask();
+    task.status = 'blocked';
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> })
+      .agentSessionIndex;
+    index.set(SUB_SESSION_ID, fake.agentSession);
+
+    await expect(tam.prepareSubSessionForWorkflowResume(SUB_SESSION_ID)).resolves.toBe(true);
+
+    expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers']);
+  });
+
   test('concurrent rehydrates of the same sub-session share one restored instance', async () => {
     const { tam } = makeManager();
     let releaseStart: (() => void) | null = null;

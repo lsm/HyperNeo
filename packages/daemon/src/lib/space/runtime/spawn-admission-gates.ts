@@ -7,7 +7,7 @@ export type SpawnExecutionPermanentRejectReason =
   | 'workflow_invalid'
   | 'slot_unresolvable';
 
-export type SpawnExecutionTransientRejectReason = 'task_rate_or_usage_limited';
+export type SpawnExecutionTransientRejectReason = 'task_rate_or_usage_limited' | 'task_blocked';
 
 export interface SpawnExecutionAdmissionInput {
   hasLiveIndexedSession: boolean;
@@ -34,6 +34,9 @@ export function decideSpawnExecutionAdmission(
   }
   if (input.taskStatus === 'cancelled') {
     return { action: 'reject_permanent', reason: 'task_cancelled' };
+  }
+  if (input.taskStatus === 'blocked') {
+    return { action: 'reject_transient', reason: 'task_blocked' };
   }
   if (isRateOrUsageLimited(input.taskStatus)) {
     return { action: 'reject_transient', reason: 'task_rate_or_usage_limited' };

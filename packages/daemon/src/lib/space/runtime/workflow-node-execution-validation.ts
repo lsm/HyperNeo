@@ -207,6 +207,11 @@ export function validateTaskAllowsSpawn(task: SpaceTask): void {
       `Task ${task.id} is ${task.status}; workflow node execution cannot be spawned`
     );
   }
+  if (task.status === 'blocked') {
+    throw new TransientSpawnError(
+      `Task ${task.id} is blocked; deferring spawn until the task is revived`
+    );
+  }
   if (isRateOrUsageLimited(task.status)) {
     throw new TransientSpawnError(
       `Task ${task.id} is ${task.status} (paused on a rate/usage cap); deferring spawn until the cap resets`

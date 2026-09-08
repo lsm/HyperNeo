@@ -453,6 +453,25 @@ describe('spawnWorkflowNodeAgentForExecution — admission table', () => {
     expect(h.order).toEqual([]);
   });
 
+  test('blocked task is a transient spawn rejection that cancels nothing (#3823)', async () => {
+    const h = makeSpawnHarness({ taskStatus: 'blocked' });
+
+    await expect(h.spawn()).rejects.toBeInstanceOf(TransientSpawnError);
+    await expect(h.spawn()).rejects.toThrow('Task task-1237 is blocked');
+    expect(h.order).toEqual([]);
+    expect(h.casCalls).toEqual([]);
+    expect(h.updates).toEqual([]);
+    expect(h.cancels).toEqual([]);
+    expect(h.reservations).toEqual([]);
+  });
+
+  test('fresh-task re-read is authoritative: repo blocked beats an in_progress caller snapshot (#3823)', async () => {
+    const h = makeSpawnHarness({ taskStatus: 'blocked', callerTask: makeTask('in_progress') });
+
+    await expect(h.spawn()).rejects.toBeInstanceOf(TransientSpawnError);
+    expect(h.order).toEqual([]);
+  });
+
   test('usage_limited task is a transient spawn rejection', async () => {
     const h = makeSpawnHarness({ taskStatus: 'usage_limited' });
 
@@ -932,6 +951,29 @@ describe('activateTargetSessionsForMessage — admission', () => {
     expect(result).toEqual([]);
     expect(h.updates).toEqual([]);
     expect(h.order).toEqual([]);
+  });
+
+  test('a blocked-task spawn rejection propagates without cancelling the reset execution (#3823)', async () => {
+    const h = makeActivateHarness({
+      executions: [makeExecution({ status: 'in_progress', agentSessionId: 'dead-session' })],
+      spawn: () =>
+        Promise.reject(
+          new TransientSpawnError(
+            'Task task-1237 is blocked; deferring spawn until the task is revived'
+          )
+        ),
+    });
+    const restoreTimers = fireActivationTimeoutImmediately();
+
+    try {
+      await expect(h.activate()).rejects.toBeInstanceOf(TransientSpawnError);
+
+      expect(h.casCalls).toEqual([{ id: 'exec-1', expected: ['in_progress'], next: 'pending' }]);
+      expect(h.updates).toEqual([]);
+      expect(h.order).toEqual(['activation', 'spawn']);
+    } finally {
+      restoreTimers();
+    }
   });
 
   test('a declared workflowNodeId proceeds through activation to spawn', async () => {

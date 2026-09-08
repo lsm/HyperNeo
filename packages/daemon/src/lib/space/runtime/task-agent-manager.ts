@@ -2707,7 +2707,27 @@ export class TaskAgentManager {
     const session = this.getAgentSessionById(sessionId);
     if (!session) return false;
     await this.mcpSelfHeal(session, ['node-agent']);
+    await this.startRestoredWorkerForResume(session);
     return true;
+  }
+
+  private async startRestoredWorkerForResume(session: AgentSession): Promise<void> {
+    const sessionId = session.getSessionData().id;
+    const taskId = taskIdFromSubSessionIdentity(sessionId);
+    if (taskId === null) return;
+    if (
+      !session.isQueryActiveOrStarting() &&
+      (await this.restoredWorkerStartAdmitted(session, taskId))
+    ) {
+      await session.startStreamingQuery();
+    }
+    if (
+      await this.restoredWorkerStartAdmitted(session, taskId, {
+        settleReplayProvisioning: true,
+      })
+    ) {
+      await this.replayPendingMessagesAfterRuntimeProvisioning(session);
+    }
   }
 
   async resumeRateLimitedSubSession(sessionId: string): Promise<'retried' | 'respawned' | 'noop'> {

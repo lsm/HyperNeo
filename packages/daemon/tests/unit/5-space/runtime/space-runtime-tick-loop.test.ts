@@ -770,7 +770,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       });
     });
 
-    test('blocked task activation supersedes its pending goal outcome', async () => {
+    test('a blocked task with a live execution stays blocked and keeps its pending goal outcome (#3823)', async () => {
       const sessionId = 'session:blocked-goal-reopen';
       const notificationRepo = new SpaceGoalOutcomeNotificationRepository(db);
       const goal = new SpaceGoalRepository(db).create({
@@ -834,24 +834,17 @@ describe('SpaceRuntime — tick loop correctness', () => {
       await processRunTick(rt, run.id);
 
       expect(taskRepo.getTask(task.id)).toMatchObject({
-        status: 'in_progress',
-        result: null,
-        blockReason: null,
-        reportedStatus: null,
-        reportedSummary: null,
-        approvalSource: null,
-        approvalReason: null,
-        approvedAt: null,
-        postApprovalSessionId: null,
-        postApprovalStartedAt: null,
-        postApprovalBlockedReason: null,
-        postApprovalSourceNodeId: null,
+        status: 'blocked',
+        result: 'Stale blocked result',
+        blockReason: 'execution_failed',
+        reportedSummary: 'Stale blocked summary',
+        postApprovalSessionId: 'session:stale-post-approval',
       });
-      expect(notificationRepo.getById(notification.id)?.status).toBe('superseded');
-      expect(transitions).toContainEqual({ taskId: task.id, fromStatus: 'blocked' });
+      expect(notificationRepo.getById(notification.id)?.status).toBe('pending');
+      expect(transitions).toEqual([]);
     });
 
-    test('blocked task activation rolls back when outcome supersession fails', async () => {
+    test('a blocked task with a live execution does not attempt goal supersession on ticks (#3823)', async () => {
       const sessionId = 'session:blocked-goal-rollback';
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
         isSessionInMemory: (candidate) => candidate === sessionId,
@@ -878,7 +871,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
       });
       taskRepo.updateTask(task.id, { status: 'blocked' });
 
-      await expect(processRunTick(rt, run.id)).rejects.toThrow('supersession failed');
+      await processRunTick(rt, run.id);
 
       expect(taskRepo.getTask(task.id)?.status).toBe('blocked');
     });
@@ -1375,6 +1368,45 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(
         nodeExecutionRepo.listByWorkflowRun(run.id).filter((e) => e.status === 'in_progress')
       ).toHaveLength(2);
+    });
+
+    test('skips nag and restart supervision for a blocked task with an idle restored worker (#3823)', async () => {
+      const nags: string[] = [];
+      const restarts: string[] = [];
+      const sessionId = 'session:blocked-idle-worker';
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionInMemory: () => true,
+        getAgentSessionById: () => processingState('idle'),
+        injectRuntimeRecoveryMessage: async (target: string) => {
+          nags.push(target);
+          return `runtime-nag:${target}`;
+        },
+        restartStuckSubSession: async (target: string) => {
+          restarts.push(target);
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: sessionId,
+        startedAt: Date.now() - 20 * 60_000,
+      });
+      saveAssistantMessage(sessionId, { minutesAgo: 20, toolUse: true });
+      taskRepo.updateTask(tasks[0].id, { status: 'blocked', blockReason: 'execution_failed' });
+
+      for (let i = 0; i < 3; i += 1) {
+        await rt.executeTick();
+      }
+
+      expect(nags).toEqual([]);
+      expect(restarts).toEqual([]);
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('blocked');
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('in_progress');
     });
 
     test('does not nag a DB-fallback-alive ghost session and resets it for spawn retry (#3109)', async () => {

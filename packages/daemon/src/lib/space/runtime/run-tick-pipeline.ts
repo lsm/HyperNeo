@@ -159,7 +159,7 @@ export async function ensureCanonicalTaskInProgress(ctx: RunTickCtx): Promise<Ti
       (execution) => execution.status === 'in_progress' || execution.status === 'waiting_rebind'
     );
   const canonicalTask =
-    active && (task.status === 'open' || task.status === 'blocked')
+    active && task.status === 'open'
       ? await ctx.deps.ensureCanonicalTaskInProgress(ctx.context!.meta.spaceId, task)
       : task;
   const next = canonicalTask ? { ...ctx, context: { ...ctx.context!, canonicalTask } } : ctx;

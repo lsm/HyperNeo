@@ -5715,6 +5715,7 @@ export class SpaceRuntime {
     space?: Space | null
   ): Promise<'none' | 'restarted' | 'blocked'> {
     if (space?.paused || space?.stopped) return 'none';
+    if (canonicalTask.status === 'blocked') return 'none';
 
     const nagGraceMs = this.config.agentStuckNagGraceMs ?? DEFAULT_AGENT_STUCK_NAG_GRACE_MS;
     const now = Date.now();
@@ -6669,6 +6670,7 @@ export class SpaceRuntime {
     ) {
       return 'none';
     }
+    if (canonicalTask.status === 'blocked') return 'none';
 
     let preservedAny = false;
     const idleExecutions = this.config.nodeExecutionRepo
