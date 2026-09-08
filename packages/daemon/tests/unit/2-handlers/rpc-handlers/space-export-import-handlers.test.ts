@@ -827,6 +827,40 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(workflow.nodes[0].postApproval?.targetAgent).toBe('coder');
     });
 
+    it('rejects a legacy route whose slot name matches an earlier slot template key', async () => {
+      const bundle = {
+        version: 5,
+        type: 'bundle',
+        name: 'Test Bundle',
+        exportedAt: 1000,
+        agents: [],
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Key Shadow Pipe',
+            nodes: [
+              {
+                agents: [{ templateKey: 'impl', name: 'setup' }],
+                name: 'Setup',
+              },
+              {
+                agents: [{ templateKey: 'worker.coder', name: 'impl' }],
+                name: 'Coding',
+                postApproval: { targetAgent: 'worker.coder', instructions: 'merge the PR' },
+              },
+            ],
+            startNode: 'Setup',
+            tags: [],
+          },
+        ],
+      };
+
+      await expect(
+        call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+      ).rejects.toThrow(/shadowed by an earlier slot/);
+    });
+
     it('resolves a legacy route to the original worker.coder slot, not a literal worker.swe slot', async () => {
       const bundle = {
         version: 5,

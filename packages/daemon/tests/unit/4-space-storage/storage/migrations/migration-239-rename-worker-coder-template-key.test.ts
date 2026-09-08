@@ -48,8 +48,11 @@ function readWorkflowPostApprovalTarget(db: BunDatabase, workflowId: string): st
   return (JSON.parse(row.post_approval) as { targetAgent?: string }).targetAgent ?? null;
 }
 
-function insertStoredTemplate(db: BunDatabase, key: string): void {
-  db.prepare(`INSERT INTO space_agent_templates (key, updated_at) VALUES (?, 1)`).run(key);
+function insertStoredTemplate(db: BunDatabase, key: string, labels?: string[]): void {
+  db.prepare(`INSERT INTO space_agent_templates (key, labels, updated_at) VALUES (?, ?, 1)`).run(
+    key,
+    labels ? JSON.stringify(labels) : null
+  );
 }
 
 function storedTemplateKeys(db: BunDatabase): string[] {
@@ -426,6 +429,42 @@ describe('migration 239 — rename worker.coder slot templateKey to worker.swe',
       { agentId: '', templateKey: 'team.other', name: 'worker.swe' },
       { agentId: '', templateKey: 'worker.swe', name: 'impl' },
     ]);
+    db.close();
+  });
+
+  test('matches slot names exactly, ignoring whitespace-only lookalikes', () => {
+    const db = createMigrationDb();
+    insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
+    insertNodeWithSlots(
+      db,
+      'node-1',
+      'wf-1',
+      [
+        { agentId: '', templateKey: 'team.x', name: 'worker.coder ' },
+        { agentId: '', templateKey: 'worker.coder', name: 'coder' },
+      ],
+      { targetAgent: 'worker.coder' }
+    );
+
+    runMigration239(db);
+
+    expect((readNodeConfig(db, 'node-1').postApproval as { targetAgent: string }).targetAgent).toBe(
+      'worker.swe'
+    );
+    expect(readSlots(db, 'node-1')).toEqual([
+      { agentId: '', templateKey: 'team.x', name: 'worker.coder ' },
+      { agentId: '', templateKey: 'worker.swe', name: 'coder' },
+    ]);
+    db.close();
+  });
+
+  test('strips pre-existing spoofed relocation labels from stored templates', () => {
+    const db = createMigrationDb();
+    insertStoredTemplate(db, 'team.x', ['relocated-from:worker.swe', 'quality']);
+
+    runMigration239(db);
+
+    expect(storedTemplateLabels(db, 'team.x')).toEqual(['quality']);
     db.close();
   });
 

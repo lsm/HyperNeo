@@ -73,11 +73,11 @@ function renamedKeyFor(key: string, storedRelocation: string | null): string | n
 }
 
 function slotView(slot: Record<string, unknown>, storedRelocation: string | null): SlotView {
-  const rawName = typeof slot.name === 'string' ? slot.name.trim() : '';
-  const agentId = typeof slot.agentId === 'string' ? slot.agentId.trim() : '';
+  const name = typeof slot.name === 'string' ? slot.name : '';
+  const agentId = typeof slot.agentId === 'string' ? slot.agentId : '';
   const sourceKey = typeof slot.templateKey === 'string' ? slot.templateKey.trim() : '';
   return {
-    name: rawName || agentId,
+    name: name !== '' ? name : agentId,
     agentId,
     sourceKey,
     renamingKey: sourceKey ? renamedKeyFor(sourceKey, storedRelocation) : null,
@@ -169,6 +169,22 @@ function parseLabelArray(raw: unknown): string[] {
     return parsed.filter((entry): entry is string => typeof entry === 'string');
   } catch {
     return [];
+  }
+}
+
+function sanitizeSpoofedRelocationLabels(db: BunDatabase, now: number): void {
+  const rows = db.prepare(`SELECT key, labels FROM space_agent_templates`).all() as Array<{
+    key: string;
+    labels: string | null;
+  }>;
+  const update = db.prepare(
+    `UPDATE space_agent_templates SET labels = ?, updated_at = ? WHERE key = ?`
+  );
+  for (const row of rows) {
+    const labels = parseLabelArray(row.labels);
+    const sanitized = labels.filter((label) => !label.startsWith(RELOCATED_FROM_LABEL_PREFIX));
+    if (sanitized.length === labels.length) continue;
+    update.run(JSON.stringify(sanitized), now, row.key);
   }
 }
 
@@ -335,6 +351,7 @@ export function runMigration239(db: BunDatabase): void {
   const now = Date.now();
   db.exec('BEGIN');
   try {
+    sanitizeSpoofedRelocationLabels(db, now);
     const storedRelocation = relocateConflictingStoredTemplate(db, now);
     renameLiveWorkflowRefs(db, storedRelocation, now);
     renamePinnedRunDefinitionTemplateKeys(db, storedRelocation, now);

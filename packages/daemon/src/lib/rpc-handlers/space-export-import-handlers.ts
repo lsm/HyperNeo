@@ -246,7 +246,9 @@ function normalizeImportedPostApproval(
   }
   const nameFirstMatch = slots.findIndex(
     ({ entry }) =>
-      entry.name === selected.name || (entry.agentId !== '' && entry.agentId === selected.name)
+      entry.name === selected.name ||
+      (entry.agentId !== '' && entry.agentId === selected.name) ||
+      entry.templateKey === selected.name
   );
   if (nameFirstMatch !== selectedIndex) {
     return {
