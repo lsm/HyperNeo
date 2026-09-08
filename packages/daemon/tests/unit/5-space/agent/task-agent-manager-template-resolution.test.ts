@@ -197,7 +197,7 @@ describe('resolveNodeTemplateSource ordering (ATC-1 pin)', () => {
     const source = h.internals.resolveNodeTemplateSource('coordinator.default');
 
     expect(source?.key).toBe('coordinator.default');
-    expect(source?.handle).toBe('coordinator');
+    expect(source?.handle).toBe('space-manager');
     expect(h.templateRepoCalls).toEqual([]);
   });
 
