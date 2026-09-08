@@ -851,7 +851,7 @@ function AgentCard({
               </span>
               {coordinator && (
                 <span class="flex-shrink-0 rounded-full border border-purple-400/20 bg-cat-purple/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cat-purple">
-                  Coordinator
+                  Space Manager
                 </span>
               )}
             </div>
@@ -1198,7 +1198,7 @@ export function SpaceLongHorizonAgents({
                   </p>
                 )}
                 <div class="mt-3 flex flex-wrap gap-2 text-xs text-fg-muted">
-                  {isCoordinator(selectedAgent) && <span>Coordinator</span>}
+                  {isCoordinator(selectedAgent) && <span>Space Manager</span>}
                   {selectedAgent.autonomyLevel && (
                     <span>
                       L{selectedAgent.autonomyLevel} {AUTONOMY_LABELS[selectedAgent.autonomyLevel]}

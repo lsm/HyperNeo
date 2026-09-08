@@ -49,6 +49,15 @@ function makeDb(): BunDatabase {
     'active',
     'space:chat:space-3'
   );
+  insertAgent.run(
+    'agent-squatter',
+    'space-3',
+    'space-manager-migrated-agent-manager-3',
+    'Squatter',
+    null,
+    'active',
+    null
+  );
   return db;
 }
 
@@ -70,11 +79,12 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
     db.close();
   });
 
-  test('relocates a pre-existing active space-manager holder instead of skipping the space', () => {
+  test('relocates a pre-existing active space-manager holder to a collision-free handle', () => {
     const db = makeDb();
     runMigration240(db);
 
-    expect(handleById(db, 'agent-manager-3')).toBe('space-manager-migrated-agent-manager-3');
+    expect(handleById(db, 'agent-manager-3')).toBe('space-manager-migrated-agent-manager-3-2');
+    expect(handleById(db, 'agent-squatter')).toBe('space-manager-migrated-agent-manager-3');
     expect(handleById(db, 'agent-coord-3')).toBe('space-manager');
     db.close();
   });
@@ -97,7 +107,7 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
 
     expect(handleById(db, 'agent-coord-1')).toBe('space-manager');
     expect(handleById(db, 'agent-coord-3')).toBe('space-manager');
-    expect(handleById(db, 'agent-manager-3')).toBe('space-manager-migrated-agent-manager-3');
+    expect(handleById(db, 'agent-manager-3')).toBe('space-manager-migrated-agent-manager-3-2');
     db.close();
   });
 });
