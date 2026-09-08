@@ -10,6 +10,7 @@ import {
 import { useEffect, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { navigateToSpaceSession } from '../../lib/router';
+import { buildLongHorizonAgentSessionId } from '../../lib/space-agent-session';
 import { spaceStore } from '../../lib/space-store';
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
@@ -822,7 +823,11 @@ function AgentCard({
     archived: 'bg-fill-strong',
   };
 
-  const sessionId = agent.sessionId ?? (coordinator ? `space:chat:${spaceId}` : null);
+  const sessionId = coordinator
+    ? (agent.sessionId ?? `space:chat:${spaceId}`)
+    : agent.status === 'active'
+      ? (agent.sessionId ?? buildLongHorizonAgentSessionId(spaceId, agent.id))
+      : null;
 
   return (
     <div

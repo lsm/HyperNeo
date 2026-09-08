@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  buildLongHorizonAgentSessionId,
   isCoordinatorSessionId,
   isLongHorizonAgentSessionId,
   parseLongHorizonAgentSessionId,
@@ -24,6 +25,19 @@ describe('isLongHorizonAgentSessionId', () => {
     expect(isLongHorizonAgentSessionId(`space:agent:${SPACE_ID}:agent-1`)).toBe(true);
     expect(isLongHorizonAgentSessionId(`space:chat:${SPACE_ID}`)).toBe(false);
     expect(isLongHorizonAgentSessionId(null)).toBe(false);
+  });
+});
+
+describe('buildLongHorizonAgentSessionId', () => {
+  it('builds the deterministic space:agent id', () => {
+    expect(buildLongHorizonAgentSessionId(SPACE_ID, 'agent-1')).toBe(
+      `space:agent:${SPACE_ID}:agent-1`
+    );
+  });
+
+  it('round-trips through the parser for ids with reserved characters', () => {
+    const id = buildLongHorizonAgentSessionId('sp/ace:1', 'a/b:c d');
+    expect(parseLongHorizonAgentSessionId(id)).toEqual({ spaceId: 'sp/ace:1', agentId: 'a/b:c d' });
   });
 });
 

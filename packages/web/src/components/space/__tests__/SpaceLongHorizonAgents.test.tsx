@@ -1531,6 +1531,7 @@ describe('SpaceLongHorizonAgents', () => {
         id: 'lh-2',
         handle: 'draft',
         displayName: 'Draft Agent',
+        status: 'paused',
         sessionId: null,
       }),
     ];
@@ -1543,12 +1544,32 @@ describe('SpaceLongHorizonAgents', () => {
     expect(getByText('No session')).toBeTruthy();
   });
 
-  it('keeps a sessionless instance card inert', () => {
+  it('opens the derived deterministic session for an active sessionless instance', () => {
     mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
 
     const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'space:agent:space-1:lh-1');
+  });
+
+  it('keeps paused and archived instance cards inert', () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({ status: 'paused', sessionId: null }),
+      makeLongHorizonAgent({
+        id: 'lh-2',
+        handle: 'gone',
+        displayName: 'Gone Agent',
+        status: 'archived',
+        sessionId: null,
+      }),
+    ];
+
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
     fireEvent.click(getByText('Research Long Horizon'));
+    fireEvent.click(getByText('Gone Agent'));
 
     expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
   });

@@ -14,6 +14,10 @@ export interface ParsedAgentSessionId {
   agentId: string;
 }
 
+export function buildLongHorizonAgentSessionId(spaceId: string, agentId: string): string {
+  return `space:agent:${encodeURIComponent(spaceId)}:${encodeURIComponent(agentId)}`;
+}
+
 export function parseLongHorizonAgentSessionId(
   sessionId: string | null | undefined
 ): ParsedAgentSessionId | null {

@@ -74,6 +74,7 @@ import { SpaceActorRegistryAdapter } from '../actor-registry.ts';
 import { resolveIsDefaultAgent } from '../agents/default-agent-policy.ts';
 import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../agents/long-horizon-agent-tools.ts';
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent.ts';
+import { publishUnifiedAgentUpdated } from '../agents/unified-agent-events.ts';
 import { unifiedAgentRecordExists } from '../agents/worker-long-horizon-mapper.ts';
 import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session.ts';
 import { SpaceAgentTemplateManager } from '../managers/space-agent-template-manager.ts';
@@ -727,7 +728,10 @@ export class SpaceRuntimeService {
       await this.refreshLongHorizonAgentSessionConfig(session, config);
     }
     if (agent.sessionId !== sessionId) {
-      repo.update(agent.id, { sessionId });
+      const updated = repo.update(agent.id, { sessionId });
+      if (updated) {
+        await publishUnifiedAgentUpdated(this.config.internalEventBus, updated);
+      }
     }
     const currentMetadata = session.getSessionData().metadata;
     this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {

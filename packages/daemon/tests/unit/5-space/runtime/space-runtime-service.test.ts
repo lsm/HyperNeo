@@ -4157,4 +4157,49 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
     expect(sessionManager.createSession).toHaveBeenCalledTimes(1);
     expect(repo.getById(coordinatorLongHorizonAgentId(ENSURE_SPACE_ID))?.status).toBe('active');
   });
+
+  test('stamping a long-horizon agent session publishes spaceAgent.updated', async () => {
+    const db = makeTestDb();
+    seedEnsureSpace(db);
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    repo.create({ id: 'lh-ensure-1', spaceId: ENSURE_SPACE_ID, handle: 'researcher' });
+    const agentSessionId = longTermAgentSessionId(ENSURE_SPACE_ID, 'lh-ensure-1');
+    const createdSession = {
+      mergeRuntimeMcpServers: mock(() => {}),
+      getSessionData: mock(() => ({
+        id: agentSessionId,
+        status: 'active',
+        metadata: {},
+        config: {},
+      })),
+    } as unknown as AgentSession;
+    let live: AgentSession | null = null;
+    const sessionManager = {
+      getSessionAsync: mock(async () => live),
+      createSession: mock(async () => {
+        live = createdSession;
+        return agentSessionId;
+      }),
+    } as unknown as SessionManager;
+    const publish = mock(async () => ({ delivered: 0, failures: [] }));
+    const internalEventBus = {
+      subscribe: mock(() => () => {}),
+      publish,
+      publishAsync: mock(() => {}),
+    } as unknown as SpaceRuntimeServiceConfig['internalEventBus'];
+    const svc = new SpaceRuntimeService({
+      ...buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager),
+      internalEventBus,
+    });
+
+    const ensured = await svc.ensureAgentSession(ENSURE_SPACE_ID, 'lh-ensure-1');
+
+    expect(ensured).not.toBeNull();
+    expect(repo.getById('lh-ensure-1')?.sessionId).toBe(agentSessionId);
+    expect(publish).toHaveBeenCalledWith('spaceAgent.updated', {
+      sessionId: `space:${ENSURE_SPACE_ID}`,
+      spaceId: ENSURE_SPACE_ID,
+      agent: expect.objectContaining({ id: 'lh-ensure-1', sessionId: agentSessionId }),
+    });
+  });
 });
