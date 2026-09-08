@@ -765,20 +765,20 @@ describe('NodeConfigPanel', () => {
     });
 
     it('never offers long-horizon templates as workflow slot options (ATC-4)', () => {
-      const onUpdate = vi.fn();
-      const { getByTestId } = render(
-        <NodeConfigPanel
-          {...makeProps({
-            step: makeStep({ agentId: '', templateKey: 'planner-v1' }),
-            onUpdate,
-          })}
-        />
+      const step = makeStep({
+        agentId: '',
+        agents: [
+          { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+          { agentId: '', templateKey: 'coder-v1', name: 'coder' },
+        ],
+      });
+      const { getAllByTestId } = render(<NodeConfigPanel {...makeProps({ step })} />);
+
+      const slotSelects = getAllByTestId('agent-slot-select') as HTMLSelectElement[];
+      expect(slotSelects.length).toBeGreaterThan(0);
+      const optionValues = slotSelects.flatMap((select) =>
+        [...select.options].map((option) => option.value)
       );
-
-      fireEvent.click(getByTestId('add-agent-button'));
-
-      const slotSelect = getByTestId('agent-slot-select') as HTMLSelectElement;
-      const optionValues = [...slotSelect.options].map((option) => option.value);
       expect(optionValues).toContain('planner-v1');
       expect(optionValues).toContain('coder-v1');
       expect(optionValues).not.toContain('coordinator-v1');
