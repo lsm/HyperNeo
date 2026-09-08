@@ -251,7 +251,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('rejects invisible formatting characters in labels', async () => {
-      for (const label of ['zero\u200Bwidth', 'bi\u202Edi', 'line\u2028sep']) {
+      for (const label of ['zero\u200Bwidth', 'bi\u202Edi', 'line\u2028sep', 'lone\uD800pair']) {
         const result = await manager.create({ ...fullParams(), labels: [label] });
         expect(result.ok, label).toBe(false);
         if (!result.ok) expect(result.error).toContain('printable');

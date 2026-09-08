@@ -107,6 +107,12 @@ describe('migration 236: space_agent_templates labels column', () => {
         applied_at INTEGER NOT NULL
       )
     `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS migration_space_reclaims (
+        migration_key TEXT PRIMARY KEY,
+        reclaimed_at INTEGER NOT NULL
+      )
+    `);
     const mark = db.prepare(
       `INSERT OR IGNORE INTO migration_markers (key, applied_at) VALUES (?, 1000)`
     );
