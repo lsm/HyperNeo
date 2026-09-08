@@ -90,6 +90,7 @@ import {
   MAX_BLOCKED_RUN_RETRIES,
   MAX_TASK_AGENT_CRASH_RETRIES,
   MAX_TERMINAL_ERROR_CONTINUE_RETRIES,
+  POST_APPROVAL_RECONCILE_RETRY_MS,
 } from './constants.ts';
 import {
   createAgentStuckRecoveryState,
@@ -669,6 +670,8 @@ export class SpaceRuntime {
   private taskCrashCounts = new Map<string, number>();
 
   private blockedRetryCounts = new Map<string, number>();
+
+  private postApprovalReconcileNextAttempt = new Map<string, number>();
 
   private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
 
@@ -3826,6 +3829,7 @@ export class SpaceRuntime {
         if (activationError === null) activationError = err;
       }
       if (activationError !== null) throw activationError;
+      this.reconcileStalledPostApprovalTasks();
       await this.cleanupTerminalExecutors();
       await this.reconcileTerminalRunsWithoutExecutors();
       await this.checkStandaloneTasks();
@@ -7839,6 +7843,40 @@ export class SpaceRuntime {
     }
   }
 
+  private reconcileStalledPostApprovalTasks(): void {
+    const manager = this.config.taskAgentManager;
+    if (!manager) return;
+    void (async () => {
+      const now = Date.now();
+      for (const space of await this.listActiveSpaces()) {
+        for (const task of this.config.taskRepo.listBySpace(space.id, true)) {
+          if (task.status !== 'approved') {
+            this.postApprovalReconcileNextAttempt.delete(task.id);
+            continue;
+          }
+          const dispatchDead =
+            !!task.postApprovalSessionId && !manager.isSessionAlive(task.postApprovalSessionId);
+          if (!dispatchDead && !task.postApprovalBlockedReason) continue;
+          const nextAttempt = this.postApprovalReconcileNextAttempt.get(task.id);
+          if (nextAttempt !== undefined && nextAttempt > now) continue;
+          this.postApprovalReconcileNextAttempt.set(
+            task.id,
+            now + POST_APPROVAL_RECONCILE_RETRY_MS
+          );
+          this.retryPostApprovalDispatch(task.id).catch((err: unknown) => {
+            log.warn(
+              `SpaceRuntime: post-approval restart reconcile failed for task ${task.id}: ${formatCommandError(err)}`
+            );
+          });
+        }
+      }
+    })().catch((err: unknown) => {
+      log.warn(
+        `SpaceRuntime: post-approval restart reconcile scan failed: ${formatCommandError(err)}`
+      );
+    });
+  }
+
   private async checkStandaloneTasks(): Promise<void> {
     const spaces = await this.listActiveSpaces();
 
@@ -7915,9 +7953,16 @@ export class SpaceRuntime {
       .filter(
         (task) =>
           task.status === 'in_progress' ||
-          task.status === 'approved' ||
+          this.approvedTaskOccupiesSlot(task) ||
           isRateOrUsageLimited(task.status)
       ).length;
+  }
+
+  private approvedTaskOccupiesSlot(task: SpaceTask): boolean {
+    if (task.status !== 'approved') return false;
+    if (!task.postApprovalSessionId) return true;
+    const manager = this.config.taskAgentManager;
+    return manager ? manager.isSessionAlive(task.postApprovalSessionId) : true;
   }
 
   private getAvailableTaskSlots(space: Space | null): number {

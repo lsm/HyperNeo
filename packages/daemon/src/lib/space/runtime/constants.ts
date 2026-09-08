@@ -19,3 +19,5 @@ export const MAX_BLOCKED_RUN_RETRIES = 1;
 export const MAX_NETWORK_RETRIES = 3;
 
 export const NETWORK_RETRY_DELAYS_MS: readonly number[] = [5_000, 10_000, 20_000] as const;
+
+export const POST_APPROVAL_RECONCILE_RETRY_MS = 30_000;
