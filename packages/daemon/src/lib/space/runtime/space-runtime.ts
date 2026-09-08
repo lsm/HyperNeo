@@ -36,6 +36,7 @@ import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositor
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
+import { TERMINAL_RUN_RECONCILE_SETTLED_TASK_STATUSES } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import { ToolContinuationRecoveryRepository } from '../../../storage/repositories/tool-continuation-recovery-repository.ts';
 import type { WorkflowRunArtifactRepository } from '../../../storage/repositories/workflow-run-artifact-repository.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
@@ -3510,14 +3511,7 @@ export class SpaceRuntime {
         freshSummary ?? existingResult ?? reportedSummary ?? summaryFromSibling ?? null;
       const nextReportedSummary = freshSummary ?? reportedSummary ?? summaryFromSibling ?? null;
 
-      if (
-        canonicalTask.status !== 'done' &&
-        canonicalTask.status !== 'review' &&
-        canonicalTask.status !== 'cancelled' &&
-        canonicalTask.status !== 'approved' &&
-        canonicalTask.status !== 'blocked' &&
-        canonicalTask.status !== 'stopped'
-      ) {
+      if (!TERMINAL_RUN_RECONCILE_SETTLED_TASK_STATUSES.includes(canonicalTask.status)) {
         const updates = this.buildTaskOutcomeUpdates(
           canonicalTask,
           nextResult,
@@ -3555,9 +3549,9 @@ export class SpaceRuntime {
   private async reconcileTerminalRunsWithoutExecutors(): Promise<void> {
     const spaces = await this.listActiveSpaces();
     for (const space of spaces) {
-      const finishedRuns = this.config.workflowRunRepo
-        .listBySpace(space.id)
-        .filter((run) => isWorkflowRunSucceeded(run.status) || run.status === 'cancelled');
+      const finishedRuns = this.config.workflowRunRepo.listTerminalRunsNeedingTaskReconciliation(
+        space.id
+      );
       for (const run of finishedRuns) {
         if (this.executors.has(run.id)) continue;
         await this.reconcileTerminalRunTasks(run);
