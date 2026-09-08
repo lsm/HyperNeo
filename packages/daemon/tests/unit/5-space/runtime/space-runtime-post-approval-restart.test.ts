@@ -84,7 +84,8 @@ function buildLinearWorkflow(
 function makeTaskAgentManagerMock(
   aliveSessionIds: Set<string>,
   spawnPostApprovalImpl?: () => Promise<{ sessionId: string }>,
-  onSpawnExecution?: () => void
+  onSpawnExecution?: () => void,
+  durableOrphanSessionId?: string
 ) {
   return {
     isSessionAlive: (sessionId: string) => aliveSessionIds.has(sessionId),
@@ -97,6 +98,12 @@ function makeTaskAgentManagerMock(
       (async () => {
         throw new Error('unexpected post-approval spawn in this suite');
       }),
+    getPostApprovalWorkerSession: durableOrphanSessionId
+      ? () => ({ sessionId: durableOrphanSessionId, agentName: 'Code', nodeId: null })
+      : undefined,
+    rehydrateSubSessionById: durableOrphanSessionId
+      ? async (sessionId: string) => ({ adopted: sessionId })
+      : undefined,
     isSpawning: () => false,
     isTaskAgentAlive: () => false,
     isExecutionSpawning: () => false,
@@ -162,7 +169,8 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
   function makeRuntime(
     aliveSessionIds: Set<string> = new Set(),
     spawnPostApprovalImpl?: () => Promise<{ sessionId: string }>,
-    onSpawnExecution?: () => void
+    onSpawnExecution?: () => void,
+    durableOrphanSessionId?: string
   ): SpaceRuntime {
     return new SpaceRuntime({
       db,
@@ -176,7 +184,8 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
       taskAgentManager: makeTaskAgentManagerMock(
         aliveSessionIds,
         spawnPostApprovalImpl,
-        onSpawnExecution
+        onSpawnExecution,
+        durableOrphanSessionId
       ) as never,
     } as SpaceRuntimeConfig);
   }
@@ -401,6 +410,30 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
     expect(taskRepo.getTask(prior.id)?.postApprovalSessionId).toBe(
       'session:replacement-post-approval'
     );
+  });
+
+  test('durable orphan kickoff is adopted instead of redispatched', async () => {
+    const workflow = buildRouteWorkflow();
+    const { task: prior } = seedApprovedPriorTask(workflow, 'done', null);
+    taskRepo.updateTask(prior.id, { approvedAt: Date.now() - 5 * 60_000 });
+
+    const spawned: string[] = [];
+    const rt = makeRuntime(
+      new Set(),
+      async () => {
+        spawned.push('session:replacement-post-approval');
+        return { sessionId: 'session:replacement-post-approval' };
+      },
+      undefined,
+      'session:durable-orphan'
+    );
+
+    await rt.executeTick();
+
+    expect(spawned).toEqual([]);
+    const after = taskRepo.getTask(prior.id)!;
+    expect(after.status).toBe('approved');
+    expect(after.postApprovalSessionId).toBe('session:durable-orphan');
   });
 
   test('approved task with a live post-approval worker keeps deferring standalone admission', async () => {

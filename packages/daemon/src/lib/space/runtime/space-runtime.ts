@@ -674,8 +674,6 @@ export class SpaceRuntime {
 
   private postApprovalReconcileNextAttempt = new Map<string, number>();
 
-  private postApprovalReconcileScanHealthy = false;
-
   private postApprovalDispatchClaims = new Set<string>();
 
   private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
@@ -7897,10 +7895,39 @@ export class SpaceRuntime {
     );
   }
 
+  private async adoptDurablePostApprovalOrphan(
+    manager: TaskAgentManager,
+    task: SpaceTask
+  ): Promise<boolean> {
+    const orphan = manager.getPostApprovalWorkerSession?.(task.id);
+    if (!orphan) return false;
+    let revived: unknown = null;
+    try {
+      revived = await manager.rehydrateSubSessionById(orphan.sessionId);
+    } catch {
+      revived = null;
+    }
+    if (!revived) return false;
+    const recorded = this.config.taskRepo.casPostApprovalRouting(
+      task.id,
+      {
+        workflowRunId: task.workflowRunId ?? null,
+        approvedAt: task.approvedAt ?? null,
+        priorPostApprovalSessionId: null,
+      },
+      { postApprovalSessionId: orphan.sessionId, postApprovalStartedAt: Date.now() },
+      { requireSucceededRun: true }
+    );
+    if (recorded !== 'won') return false;
+    log.info(
+      `SpaceRuntime: adopted durable post-approval worker ${orphan.sessionId} for task ${task.id} instead of redispatching`
+    );
+    return true;
+  }
+
   private async reconcileStalledPostApprovalTasks(): Promise<void> {
     const manager = this.config.taskAgentManager;
     if (!manager) return;
-    this.postApprovalReconcileScanHealthy = false;
     const generation = this.runtimeGeneration;
     const now = Date.now();
     const retries: Array<Promise<void>> = [];
@@ -7920,6 +7947,9 @@ export class SpaceRuntime {
             task.id,
             now + POST_APPROVAL_RECONCILE_RETRY_MS
           );
+          if (unrecordedStale && (await this.adoptDurablePostApprovalOrphan(manager, task))) {
+            continue;
+          }
           retries.push(
             this.retryPostApprovalDispatch(task.id).then(
               () => undefined,
@@ -7941,7 +7971,6 @@ export class SpaceRuntime {
     for (const taskId of this.postApprovalReconcileNextAttempt.keys()) {
       if (!approvedTaskIds.has(taskId)) this.postApprovalReconcileNextAttempt.delete(taskId);
     }
-    this.postApprovalReconcileScanHealthy = true;
     await Promise.all(retries);
   }
 
@@ -8021,18 +8050,9 @@ export class SpaceRuntime {
       .filter(
         (task) =>
           task.status === 'in_progress' ||
-          this.approvedTaskOccupiesSlot(task) ||
+          task.status === 'approved' ||
           isRateOrUsageLimited(task.status)
       ).length;
-  }
-
-  private approvedTaskOccupiesSlot(task: SpaceTask): boolean {
-    if (task.status !== 'approved') return false;
-    if (!task.postApprovalSessionId) return true;
-    if (this.postApprovalReconcileNextAttempt.has(task.id)) return true;
-    if (!this.postApprovalReconcileScanHealthy) return true;
-    const manager = this.config.taskAgentManager;
-    return manager ? manager.isSessionAlive(task.postApprovalSessionId) : true;
   }
 
   private getAvailableTaskSlots(space: Space | null): number {

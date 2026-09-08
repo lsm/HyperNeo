@@ -5626,6 +5626,11 @@ export class TaskAgentManager {
         'runtime-generation-changed-before-kickoff'
       );
     }
+    if (this.disposed) {
+      throw new Error(
+        `TaskAgentManager is disposed; refusing post-approval spawn for task ${taskId}`
+      );
+    }
     const freshSpace = await this.config.spaceManager.getSpace(spaceId);
     if (
       !freshSpace ||
