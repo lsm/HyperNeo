@@ -22,6 +22,7 @@ function makeDb(): BunDatabase {
   insertSpace.run('space-8', '/tmp/space-8', 'Space 8', 'space-8');
   insertSpace.run('space-9', '/tmp/space-9', 'Space 9', 'space-9');
   insertSpace.run('space-11', '/tmp/space-11', 'Space 11', 'space-11');
+  insertSpace.run('space-13', '/tmp/space-13', 'Space 13', 'space-13');
   insertSpace.run('space-12', '/tmp/space-12', 'Space 12', 'space-12');
   const insertAgent = db.prepare(
     `INSERT INTO space_long_horizon_agents (
@@ -202,6 +203,24 @@ function makeDb(): BunDatabase {
     'active',
     null
   );
+  insertAgent.run(
+    'agent-tab-named-13',
+    'space-13',
+    'tab-named',
+    'Space Manager\t',
+    null,
+    'active',
+    null
+  );
+  insertAgent.run(
+    'agent-coord-13',
+    'space-13',
+    'coordinator',
+    'Coordinator',
+    'coordinator.default',
+    'active',
+    'space:chat:space-13'
+  );
   return db;
 }
 
@@ -284,6 +303,16 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
     expect(rowById(db, 'agent-coord-9').handle).toBe('space-manager');
     expect(rowById(db, 'agent-coord-9').display_name).toBe('Coordinator');
     expect(rowById(db, 'agent-archived-named-9').display_name).toBe('Space Manager');
+    db.close();
+  });
+
+  test('collision check normalizes whitespace like the application', () => {
+    const db = makeDb();
+    runMigration239(db);
+
+    expect(rowById(db, 'agent-coord-13').handle).toBe('space-manager');
+    expect(rowById(db, 'agent-coord-13').display_name).toBe('Coordinator');
+    expect(rowById(db, 'agent-tab-named-13').display_name).toBe('Space Manager\t');
     db.close();
   });
 

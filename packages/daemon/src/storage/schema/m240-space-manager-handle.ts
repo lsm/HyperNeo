@@ -17,6 +17,17 @@ interface HandleRow {
   handle: string;
 }
 
+interface AgentRow {
+  id: string;
+  space_id: string;
+  handle: string;
+  display_name: string;
+}
+
+function normalizeDisplayName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 export function runMigration240(db: BunDatabase): void {
   if (!tableExists(db, 'space_long_horizon_agents')) return;
   const now = Date.now();
@@ -67,32 +78,29 @@ export function runMigration240(db: BunDatabase): void {
       used.add(handle);
     }
     db.prepare(
-      `UPDATE space_long_horizon_agents
-          SET handle = ?,
-              display_name = CASE
-                WHEN display_name = 'Coordinator' AND NOT EXISTS (
-                  SELECT 1 FROM space_long_horizon_agents other
-                   WHERE other.space_id = space_long_horizon_agents.space_id
-                     AND other.handle != 'coordinator'
-                     AND lower(trim(other.display_name)) = 'space manager'
-                ) THEN 'Space Manager' ELSE display_name END,
-              updated_at = ?
-        WHERE handle = 'coordinator'`
+      `UPDATE space_long_horizon_agents SET handle = ?, updated_at = ? WHERE handle = 'coordinator'`
     ).run(SPACE_MANAGER_HANDLE, now);
-    db.prepare(
-      `UPDATE space_long_horizon_agents
-          SET display_name = CASE
-                WHEN NOT EXISTS (
-                  SELECT 1 FROM space_long_horizon_agents other
-                   WHERE other.space_id = space_long_horizon_agents.space_id
-                     AND other.id != space_long_horizon_agents.id
-                     AND lower(trim(other.display_name)) = 'space manager'
-                ) THEN 'Space Manager' ELSE display_name END,
-              updated_at = ?
-        WHERE id = 'space-lh-agent:coordinator:' || space_id
-          AND handle != 'coordinator'
-          AND display_name = 'Coordinator'`
-    ).run(now);
+    const agents = db
+      .prepare(`SELECT id, space_id, handle, display_name FROM space_long_horizon_agents`)
+      .all() as AgentRow[];
+    const bySpace = new Map<string, AgentRow[]>();
+    for (const row of agents) {
+      const spaceRows = bySpace.get(row.space_id) ?? [];
+      spaceRows.push(row);
+      bySpace.set(row.space_id, spaceRows);
+    }
+    const restamp = db.prepare(
+      `UPDATE space_long_horizon_agents SET display_name = ?, updated_at = ? WHERE id = ?`
+    );
+    for (const row of agents) {
+      if (row.display_name !== 'Coordinator') continue;
+      if (row.id !== `space-lh-agent:coordinator:${row.space_id}`) continue;
+      const collides = (bySpace.get(row.space_id) ?? []).some(
+        (other) =>
+          other.id !== row.id && normalizeDisplayName(other.display_name) === 'space manager'
+      );
+      if (!collides) restamp.run('Space Manager', now, row.id);
+    }
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
