@@ -289,6 +289,16 @@ describe('SpaceAgentTemplateManager', () => {
       expect(result.value.labels).toEqual(['caf\u00E9']);
     });
 
+    test('rejects labels longer than 64 characters', async () => {
+      const result = await manager.create({
+        ...fullParams(),
+        labels: ['x'.repeat(65)],
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('limited to 64 characters');
+    });
+
     test('rejects a large unique-label payload without quadratic scanning', async () => {
       const labels = Array.from({ length: 20_000 }, (_, i) => `label-${i}`);
 
