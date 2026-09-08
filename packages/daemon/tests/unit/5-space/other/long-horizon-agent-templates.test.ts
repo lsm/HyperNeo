@@ -68,7 +68,10 @@ describe('long-horizon agent templates', () => {
     expect(taskManager?.instructions).toContain('send_message_to_task');
     expect(taskManager?.instructions).toContain('mark it `blocked`');
     expect(taskManager?.instructions).toContain('not awaiting review');
-    expect(taskManager?.instructions).toContain('statuses like `stopped` cannot take it');
+    expect(taskManager?.instructions).toContain('statuses like `stopped` cannot take it at all');
+    expect(taskManager?.instructions).toContain(
+      'rate- or usage-paused tasks gate it above level 2'
+    );
     expect(taskManager?.instructions).toContain('Tasks waiting in review are not yours to move');
     expect(taskManager?.instructions).toContain('next slices');
     expect(taskManager?.instructions).toContain('no routing powers');
