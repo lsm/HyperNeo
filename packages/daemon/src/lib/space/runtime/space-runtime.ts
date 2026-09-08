@@ -92,6 +92,7 @@ import {
   MAX_TERMINAL_ERROR_CONTINUE_RETRIES,
   POST_APPROVAL_RECONCILE_RETRY_MS,
   POST_APPROVAL_RECOVERY_AWAIT_MS,
+  POST_APPROVAL_DISPATCH_CLAIM_LEASE_MS,
   POST_APPROVAL_UNRECORDED_DISPATCH_GRACE_MS,
 } from './constants.ts';
 import {
@@ -678,10 +679,15 @@ export class SpaceRuntime {
 
   private postApprovalDispatchClaims = new Map<
     string,
-    Array<{ generation: number; approvedAt: number | null }>
+    Array<{ generation: number; approvedAt: number | null; claimedAt: number }>
   >();
 
   private postApprovalRecoveryInFlight = new Map<string, { generation: number }>();
+
+  private postApprovalRecoveryBypass = new Map<
+    string,
+    { generation: number; revive: boolean; adopt: boolean }
+  >();
 
   private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
 
@@ -2819,9 +2825,14 @@ export class SpaceRuntime {
     }
     const dispatchRuntimeGeneration = this.runtimeGeneration;
     const claimTask = this.config.taskRepo.getTask(taskId);
-    const claimToken: { generation: number; approvedAt: number | null } = {
+    const claimToken: {
+      generation: number;
+      approvedAt: number | null;
+      claimedAt: number;
+    } = {
       generation: dispatchRuntimeGeneration,
       approvedAt: claimTask?.approvedAt ?? null,
+      claimedAt: Date.now(),
     };
     const claimStack = this.postApprovalDispatchClaims.get(taskId) ?? [];
     claimStack.push(claimToken);
@@ -2856,7 +2867,7 @@ export class SpaceRuntime {
       requireSucceededRun?: boolean;
     },
     dispatchRuntimeGeneration: number,
-    claimToken: { generation: number; approvedAt: number | null }
+    claimToken: { generation: number; approvedAt: number | null; claimedAt: number }
   ): Promise<PostApprovalRouteResult> {
     const router = this.getPostApprovalRouter();
     if (!router) {
@@ -7919,9 +7930,12 @@ export class SpaceRuntime {
 
   private isUnrecordedApprovalDispatchStale(task: SpaceTask): boolean {
     if (task.postApprovalSessionId !== null || task.postApprovalBlockedReason) return false;
+    const claimCheckNow = Date.now();
     if (
       (this.postApprovalDispatchClaims.get(task.id) ?? []).some(
-        (token) => token.approvedAt === task.approvedAt
+        (token) =>
+          token.approvedAt === task.approvedAt &&
+          claimCheckNow - token.claimedAt < POST_APPROVAL_DISPATCH_CLAIM_LEASE_MS
       )
     ) {
       return false;
@@ -8184,11 +8198,30 @@ export class SpaceRuntime {
           );
           const inFlightMarker = this.postApprovalRecoveryInFlight.get(task.id);
           if (inFlightMarker && inFlightMarker.generation === generation) continue;
-          if (dispatchDead) {
+          const bypass = this.postApprovalRecoveryBypass.get(task.id);
+          if (bypass && bypass.generation !== generation) {
+            this.postApprovalRecoveryBypass.delete(task.id);
+          }
+          if (dispatchDead && !bypass?.revive) {
             const revivePromise = this.reviveRecordedPostApprovalWorker(manager, task, generation);
             const reviveMarker = { generation };
             this.postApprovalRecoveryInFlight.set(task.id, reviveMarker);
             revivePromise
+              .catch(() => undefined)
+              .then((outcome) => {
+                if (outcome === 'replace') {
+                  const existing = this.postApprovalRecoveryBypass.get(task.id) ?? {
+                    generation,
+                    revive: false,
+                    adopt: false,
+                  };
+                  this.postApprovalRecoveryBypass.set(task.id, {
+                    ...existing,
+                    generation,
+                    revive: true,
+                  });
+                }
+              })
               .catch(() => undefined)
               .finally(() => {
                 if (this.postApprovalRecoveryInFlight.get(task.id) === reviveMarker) {
@@ -8205,11 +8238,26 @@ export class SpaceRuntime {
             }
             if (revive !== 'replace') continue;
           }
-          if (!task.postApprovalSessionId) {
+          if (!task.postApprovalSessionId && !bypass?.adopt) {
             const adoptPromise = this.adoptDurablePostApprovalOrphan(manager, task, generation);
             const adoptMarker = { generation };
             this.postApprovalRecoveryInFlight.set(task.id, adoptMarker);
             adoptPromise
+              .catch(() => undefined)
+              .then((outcome) => {
+                if (outcome === false) {
+                  const existing = this.postApprovalRecoveryBypass.get(task.id) ?? {
+                    generation,
+                    revive: false,
+                    adopt: false,
+                  };
+                  this.postApprovalRecoveryBypass.set(task.id, {
+                    ...existing,
+                    generation,
+                    adopt: true,
+                  });
+                }
+              })
               .catch(() => undefined)
               .finally(() => {
                 if (this.postApprovalRecoveryInFlight.get(task.id) === adoptMarker) {
@@ -8241,6 +8289,9 @@ export class SpaceRuntime {
       }
       for (const taskId of this.postApprovalReconcileNextAttempt.keys()) {
         if (!approvedTaskIds.has(taskId)) this.postApprovalReconcileNextAttempt.delete(taskId);
+      }
+      for (const taskId of this.postApprovalRecoveryBypass.keys()) {
+        if (!approvedTaskIds.has(taskId)) this.postApprovalRecoveryBypass.delete(taskId);
       }
     } catch (err) {
       log.warn(
