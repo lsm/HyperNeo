@@ -1,6 +1,6 @@
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
-export function runMigration236(db: BunDatabase): void {
+export function runMigration238(db: BunDatabase): void {
   if (!tableExists(db, 'space_agent_templates')) return;
   if (tableHasColumn(db, 'space_agent_templates', 'labels')) return;
 

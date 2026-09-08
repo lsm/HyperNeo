@@ -27,7 +27,7 @@ import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
-import { runMigration236 } from '../../../../src/storage/schema/m236-space-agent-template-labels';
+import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
@@ -184,7 +184,7 @@ describe('Space Agent RPC Handlers', () => {
     createSpaceAgentTemplatesTable(db);
     runMigration226(db);
     runMigration227(db);
-    runMigration236(db);
+    runMigration238(db);
     insertSpace(db, 'space-1');
 
     longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);

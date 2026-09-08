@@ -9,7 +9,7 @@ import { SpaceAgentTemplateRepository } from '../../../src/storage/repositories/
 import { createSpaceAgentTemplatesTable } from '../../../src/storage/schema/space-agent-templates';
 import { runMigration226 } from '../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../src/storage/schema/m227-space-agent-template-version-seq';
-import { runMigration236 } from '../../../src/storage/schema/m236-space-agent-template-labels';
+import { runMigration238 } from '../../../src/storage/schema/m238-space-agent-template-labels';
 import { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 
 const MODEL_POOL: AgentModelPoolEntry[] = [
@@ -44,7 +44,7 @@ describe('SpaceAgentTemplateRepository', () => {
     createSpaceAgentTemplatesTable(db);
     runMigration226(db);
     runMigration227(db);
-    runMigration236(db);
+    runMigration238(db);
     repo = new SpaceAgentTemplateRepository(db);
   });
 

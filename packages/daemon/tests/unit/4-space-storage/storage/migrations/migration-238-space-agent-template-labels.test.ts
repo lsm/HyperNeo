@@ -3,7 +3,7 @@ import { runMigrations } from '../../../../../src/storage/schema/migrations.ts';
 import { runMigration225 } from '../../../../../src/storage/schema/m225-space-agent-templates.ts';
 import { runMigration226 } from '../../../../../src/storage/schema/m226-space-agent-templates-version.ts';
 import { runMigration227 } from '../../../../../src/storage/schema/m227-space-agent-template-version-seq.ts';
-import { runMigration236 } from '../../../../../src/storage/schema/m236-space-agent-template-labels.ts';
+import { runMigration238 } from '../../../../../src/storage/schema/m238-space-agent-template-labels.ts';
 import { SpaceAgentTemplateRepository } from '../../../../../src/storage/repositories/space-agent-template-repository.ts';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import {
@@ -23,7 +23,7 @@ function columnNames(db: BunDatabase, tableName: string): string[] {
     .map((row) => (row as ColumnRow).name);
 }
 
-describe('migration 236: space_agent_templates labels column', () => {
+describe('migration 238: space_agent_templates labels column', () => {
   test('adds the labels column to a pre-existing table and reads it back as empty', () => {
     const db = new BunDatabase(':memory:');
     runMigration225(db);
@@ -37,7 +37,7 @@ describe('migration 236: space_agent_templates labels column', () => {
        VALUES (?, ?, ?, ?, ?)`
     ).run('pre.custom', 'pre', 'Pre', 1000, 1000);
 
-    runMigration236(db);
+    runMigration238(db);
 
     expect(columnNames(db, 'space_agent_templates')).toContain('labels');
 
@@ -54,8 +54,8 @@ describe('migration 236: space_agent_templates labels column', () => {
     runMigration225(db);
     runMigration226(db);
     runMigration227(db);
-    runMigration236(db);
-    runMigration236(db);
+    runMigration238(db);
+    runMigration238(db);
 
     const repo = new SpaceAgentTemplateRepository(db);
     repo.create({ key: 'idempotent.custom', handle: 'idempotent' });
@@ -116,7 +116,7 @@ describe('migration 236: space_agent_templates labels column', () => {
     const mark = db.prepare(
       `INSERT OR IGNORE INTO migration_markers (key, applied_at) VALUES (?, 1000)`
     );
-    for (let version = 1; version <= 235; version++) {
+    for (let version = 1; version <= 237; version++) {
       if (version === 228) continue;
       mark.run(`migration_${String(version).padStart(3, '0')}`);
     }
