@@ -201,7 +201,7 @@ describe('Migration 172: re-backfill orphaned preset agent template tracking', (
     runMigration172(db);
 
     const row = readAgent(db, 'a-match')!;
-    const presetHash = computeAgentTemplateHash(coder);
+    const presetHash = computeAgentTemplateHash(swe);
     expect(row.template_hash).toBe(presetHash);
   });
 

@@ -330,7 +330,7 @@ describe('migration 239 — rename worker.coder slot templateKey to worker.swe',
     ).toBe(3);
     expect(
       db.prepare(`SELECT 1 FROM space_agent_template_version_seq WHERE key = 'worker.swe'`).get()
-    ).toBeUndefined();
+    ).toBeNull();
     expect(readSlots(db, 'node-1')).toEqual([
       { agentId: '', templateKey: 'worker.swe.migrated', name: 'custom' },
       { agentId: '', templateKey: 'worker.swe', name: 'coder' },
