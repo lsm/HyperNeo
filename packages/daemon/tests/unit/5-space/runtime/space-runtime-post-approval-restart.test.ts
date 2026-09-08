@@ -107,6 +107,7 @@ function makeTaskAgentManagerMock(
     isSpawning: () => false,
     isTaskAgentAlive: () => false,
     isExecutionSpawning: () => false,
+    isDisposed: () => false,
     spawnWorkflowNodeAgent: async () => 'session:spawned',
     spawnWorkflowNodeAgentForExecution: async () => {
       onSpawnExecution?.();

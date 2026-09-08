@@ -2537,6 +2537,10 @@ export class TaskAgentManager {
     return cached ? this.isAgentSessionAlive(cached) : false;
   }
 
+  isDisposed(): boolean {
+    return this.disposed;
+  }
+
   isSessionInMemory(sessionId: string): boolean {
     const indexed = this.agentSessionIndex.get(sessionId);
     return !!indexed && this.isAgentSessionAlive(indexed);
@@ -5616,6 +5620,7 @@ export class TaskAgentManager {
       expectedRuntimeGeneration?: number;
     } = {}
   ): Promise<void> {
+    const freshSpace = await this.config.spaceManager.getSpace(spaceId);
     if (
       options.expectedRuntimeGeneration !== undefined &&
       this.config.spaceRuntimeService.getCurrentRuntimeGeneration() !==
@@ -5631,7 +5636,6 @@ export class TaskAgentManager {
         `TaskAgentManager is disposed; refusing post-approval spawn for task ${taskId}`
       );
     }
-    const freshSpace = await this.config.spaceManager.getSpace(spaceId);
     if (
       !freshSpace ||
       freshSpace.paused ||

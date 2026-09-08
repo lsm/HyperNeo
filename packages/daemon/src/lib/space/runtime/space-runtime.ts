@@ -7897,7 +7897,8 @@ export class SpaceRuntime {
 
   private async adoptDurablePostApprovalOrphan(
     manager: TaskAgentManager,
-    task: SpaceTask
+    task: SpaceTask,
+    generation: number
   ): Promise<boolean> {
     const orphan = manager.getPostApprovalWorkerSession?.(task.id);
     if (!orphan) return false;
@@ -7906,6 +7907,16 @@ export class SpaceRuntime {
       revived = await manager.rehydrateSubSessionById(orphan.sessionId);
     } catch {
       revived = null;
+    }
+    if (
+      generation !== this.runtimeGeneration ||
+      this.isStopped ||
+      manager.isDisposed?.() === true
+    ) {
+      log.warn(
+        `SpaceRuntime: discarding post-approval orphan adoption for task ${task.id}; the runtime is stopping or the task agent manager is disposed`
+      );
+      return true;
     }
     if (!revived) return false;
     const recorded = this.config.taskRepo.casPostApprovalRouting(
@@ -7922,6 +7933,8 @@ export class SpaceRuntime {
     log.info(
       `SpaceRuntime: adopted durable post-approval worker ${orphan.sessionId} for task ${task.id} instead of redispatching`
     );
+    const adopted = this.config.taskRepo.getTask(task.id);
+    if (adopted) await this.safeOnTaskUpdated(task.spaceId, adopted);
     return true;
   }
 
@@ -7947,7 +7960,10 @@ export class SpaceRuntime {
             task.id,
             now + POST_APPROVAL_RECONCILE_RETRY_MS
           );
-          if (unrecordedStale && (await this.adoptDurablePostApprovalOrphan(manager, task))) {
+          if (
+            unrecordedStale &&
+            (await this.adoptDurablePostApprovalOrphan(manager, task, generation))
+          ) {
             continue;
           }
           retries.push(
@@ -7962,16 +7978,16 @@ export class SpaceRuntime {
           );
         }
       }
+      for (const taskId of this.postApprovalReconcileNextAttempt.keys()) {
+        if (!approvedTaskIds.has(taskId)) this.postApprovalReconcileNextAttempt.delete(taskId);
+      }
     } catch (err) {
       log.warn(
         `SpaceRuntime: post-approval restart reconcile scan failed: ${formatCommandError(err)}`
       );
-      return;
+    } finally {
+      await Promise.all(retries);
     }
-    for (const taskId of this.postApprovalReconcileNextAttempt.keys()) {
-      if (!approvedTaskIds.has(taskId)) this.postApprovalReconcileNextAttempt.delete(taskId);
-    }
-    await Promise.all(retries);
   }
 
   private async checkStandaloneTasks(): Promise<void> {
