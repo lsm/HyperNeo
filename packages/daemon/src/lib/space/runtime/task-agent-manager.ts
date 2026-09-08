@@ -31,6 +31,7 @@ import {
 } from '../../../lib/agent/message-delivery.ts';
 import { verifyPromptContent } from '../../../lib/agent/message-delivery-outbox.ts';
 import { decideInjectDelivery } from '../../../lib/agent/message-delivery-pipeline.ts';
+import { activatePrompts } from '../../../lib/agent/message-delivery-outbox.ts';
 import { readRestartRecoveryNote } from './restart-recovery-note.ts';
 import type { Database } from '../../../storage/database.ts';
 import type { ReactiveDatabase } from '../../../storage/reactive-database.ts';
@@ -2723,6 +2724,7 @@ export class TaskAgentManager {
     const sessionId = session.getSessionData().id;
     const taskId = taskIdFromSubSessionIdentity(sessionId);
     if (taskId === null) return;
+    await this.activateDeferredPromptsForResume(sessionId);
     if (
       !session.isQueryActiveOrStarting() &&
       (await this.restoredWorkerStartAdmitted(session, taskId))
@@ -2736,6 +2738,23 @@ export class TaskAgentManager {
     ) {
       await this.replayPendingMessagesAfterRuntimeProvisioning(session);
     }
+  }
+
+  private async activateDeferredPromptsForResume(sessionId: string): Promise<void> {
+    const { messages } = this.config.db.getUserMessagesByStatus(sessionId, 'deferred');
+    if (messages.length === 0) return;
+    await activatePrompts({
+      db: this.config.db.getDatabase(),
+      jobQueue: this.config.db.getJobQueueRepo(),
+      sessionId,
+      messageUuids: messages.map((message) => String(message.uuid)),
+      dbIds: messages.map((message) => message.dbId),
+      origin: 'recovery',
+      publishStatusChanged: (messageIds, status) =>
+        this.config.internalEventBus
+          .publish('messages.statusChanged', { sessionId, messageIds, status })
+          .catch(() => {}),
+    });
   }
 
   async resumeRateLimitedSubSession(sessionId: string): Promise<'retried' | 'respawned' | 'noop'> {

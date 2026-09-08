@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { SpaceWorkflow } from '@hyperneo/shared';
+import type { NodeExecution, SpaceTask, SpaceWorkflow } from '@hyperneo/shared';
 import type { DaemonInternalEventMap } from '../../../../src/lib/internal-event-bus.ts';
 import { InternalEventBus } from '../../../../src/lib/internal-event-bus.ts';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
@@ -1407,6 +1407,63 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(restarts).toEqual([]);
       expect(taskRepo.getTask(tasks[0].id)?.status).toBe('blocked');
       expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('in_progress');
+    });
+
+    test('stuck supervision re-reads the task and skips a blocked flip after the tick snapshot (#3823)', async () => {
+      const nags: string[] = [];
+      const restarts: string[] = [];
+      const sessionId = 'session:blocked-flip-during-tick';
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+        isSessionInMemory: () => true,
+        getAgentSessionById: () => processingState('idle'),
+        injectRuntimeRecoveryMessage: async (target: string) => {
+          nags.push(target);
+          return `runtime-nag:${target}`;
+        },
+        restartStuckSubSession: async (target: string) => {
+          restarts.push(target);
+        },
+      });
+      const rt = new SpaceRuntime(buildConfig(tam, { agentNoProgressThresholdMs: 60_000 }));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'in_progress',
+        agentSessionId: sessionId,
+        startedAt: Date.now() - 20 * 60_000,
+      });
+      saveAssistantMessage(sessionId, { minutesAgo: 20, toolUse: true });
+      const snapshot = taskRepo.getTask(tasks[0].id)!;
+      taskRepo.updateTask(tasks[0].id, { status: 'blocked', blockReason: 'execution_failed' });
+
+      const internals = rt as unknown as {
+        handleAliveStuckExecutions: (
+          runId: string,
+          spaceId: string,
+          canonicalTask: SpaceTask,
+          nodeExecutions: NodeExecution[],
+          tam: unknown,
+          workflow: SpaceWorkflow,
+          space?: unknown
+        ) => Promise<string>;
+      };
+      await expect(
+        internals.handleAliveStuckExecutions(
+          run.id,
+          SPACE_ID,
+          snapshot,
+          nodeExecutionRepo.listByWorkflowRun(run.id),
+          tam,
+          workflow,
+          { id: SPACE_ID }
+        )
+      ).resolves.toBe('none');
+
+      expect(nags).toEqual([]);
+      expect(restarts).toEqual([]);
     });
 
     test('does not nag a DB-fallback-alive ghost session and resets it for spawn retry (#3109)', async () => {
