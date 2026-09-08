@@ -30,7 +30,9 @@ describe('long-horizon agent templates', () => {
     );
 
     expect(workerTemplates.map((template) => template.key)).toEqual([
-      'worker.coder',
+      'worker.swe',
+      'worker.general',
+      'worker.planner',
       'worker.research',
       'worker.reviewer',
       'worker.qa',

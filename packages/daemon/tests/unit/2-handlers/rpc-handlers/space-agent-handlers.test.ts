@@ -243,14 +243,14 @@ describe('Space Agent RPC Handlers', () => {
       expect(result.templates).toHaveLength(5);
       expect(result.templates.map((template) => template.key)).toEqual([
         'task-manager.default',
-        'worker.coder',
+        'worker.swe',
         'worker.research',
         'worker.reviewer',
         'worker.qa',
       ]);
       expect(result.templates.map((template) => template.handle)).toEqual([
         'task-manager',
-        'coder',
+        'swe',
         'research',
         'reviewer',
         'qa',

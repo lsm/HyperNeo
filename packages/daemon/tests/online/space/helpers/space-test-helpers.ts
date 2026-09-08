@@ -229,7 +229,7 @@ export async function createTestSpace(daemon: DaemonServerContext): Promise<Test
       {
         id: 'coding-node',
         name: 'Coding',
-        agents: [{ agentId: '', name: 'coder', templateKey: 'worker.coder' }],
+        agents: [{ agentId: '', name: 'coder', templateKey: 'worker.swe' }],
       },
       {
         id: 'code-review-node',

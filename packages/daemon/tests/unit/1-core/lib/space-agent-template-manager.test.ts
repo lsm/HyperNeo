@@ -398,7 +398,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('rejects keys reserved for code built-in templates', async () => {
-      for (const key of ['worker.coder', 'worker.reviewer', 'coordinator.default']) {
+      for (const key of ['worker.swe', 'worker.reviewer', 'coordinator.default']) {
         const result = await manager.create({ ...fullParams(), key });
         expect(result.ok, key).toBe(false);
         if (!result.ok) expect(result.error).toContain('reserved for a built-in agent template');
@@ -1139,7 +1139,7 @@ describe('SpaceAgentTemplateManager', () => {
       expect(template?.tools).toContain('Bash(gh pr view:*)');
       expect(template?.tools).not.toContain('Bash');
 
-      const coder = defaultManager.getByKey('worker.coder');
+      const coder = defaultManager.getByKey('worker.swe');
       expect(coder?.tools).toBeNull();
     });
 

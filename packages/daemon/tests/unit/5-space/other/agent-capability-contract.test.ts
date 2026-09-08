@@ -68,15 +68,15 @@ describe('effective runtime capability vs declared profile (worker presets)', ()
     return DENIABLE_TOOLS.filter((t) => !denied.has(t));
   }
 
-  test('Coder declares an empty profile yet inherits every deniable tool at runtime', () => {
-    const profile = PRESET_AGENT_TOOLS.coder;
+  test('SWE declares an empty profile yet inherits every deniable tool at runtime', () => {
+    const profile = PRESET_AGENT_TOOLS.swe;
     expect(profile).toEqual([]);
     expect(effectiveDeniableTools(profile)).toEqual([...DENIABLE_TOOLS]);
   });
 
   test('every permissive preset inherits the full deniable set at runtime', () => {
     const permissive = {
-      coder: PRESET_AGENT_TOOLS.coder,
+      swe: PRESET_AGENT_TOOLS.swe,
       research: PRESET_AGENT_TOOLS.research,
     };
     for (const [name, profile] of Object.entries(permissive)) {

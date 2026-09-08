@@ -1,10 +1,10 @@
-import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import {
-  QA_SYSTEM_CONTRACT,
-  REVIEWER_SYSTEM_CONTRACT,
   PRESET_CODER_PROMPT,
   PRESET_RESEARCH_PROMPT,
+  QA_SYSTEM_CONTRACT,
+  REVIEWER_SYSTEM_CONTRACT,
 } from '@hyperneo/prompts';
+import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 
 export { LEGACY_REVIEWER_PROMPT } from '@hyperneo/prompts';
@@ -19,7 +19,7 @@ export const SUB_SESSION_FEATURES = {
 
 const PERMISSIVE_TOOLS: string[] = [];
 
-const CODER_TOOLS = PERMISSIVE_TOOLS;
+const SWE_TOOLS = PERMISSIVE_TOOLS;
 
 const RESEARCH_TOOLS = PERMISSIVE_TOOLS;
 
@@ -65,7 +65,7 @@ const QA_TOOLS: string[] = [
 ];
 
 export const PRESET_AGENT_TOOLS: Record<string, string[]> = {
-  coder: CODER_TOOLS,
+  swe: SWE_TOOLS,
   research: RESEARCH_TOOLS,
   reviewer: REVIEWER_TOOLS,
   qa: QA_TOOLS,
@@ -84,11 +84,11 @@ const REVIEWER_CUSTOM_PROMPT = REVIEWER_SYSTEM_CONTRACT;
 
 const PRESET_AGENTS: PresetDefinition[] = [
   {
-    name: 'Coder',
-    handle: 'coder',
+    name: 'SWE',
+    handle: 'swe',
     description:
       'Implementation worker. Writes code, runs tests, commits changes, and opens pull requests.',
-    tools: CODER_TOOLS,
+    tools: SWE_TOOLS,
     customPrompt: PRESET_CODER_PROMPT,
   },
   {

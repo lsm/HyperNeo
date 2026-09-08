@@ -36,7 +36,7 @@ async function createTestFixtures(daemon: DaemonServerContext): Promise<TestFixt
       {
         id: STEP_CODE_ID,
         name: 'Code Implementation',
-        agents: [{ agentId: '', name: 'Code Implementation', templateKey: 'worker.coder' }],
+        agents: [{ agentId: '', name: 'Code Implementation', templateKey: 'worker.swe' }],
       },
     ],
     transitions: [],

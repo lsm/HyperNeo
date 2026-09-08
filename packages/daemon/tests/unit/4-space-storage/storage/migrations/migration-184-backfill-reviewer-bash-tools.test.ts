@@ -29,7 +29,7 @@ interface AgentRow {
 
 const PRESETS = getPresetAgentTemplates();
 const REVIEWER_PRESET = PRESETS.find((p) => p.name === 'Reviewer')!;
-const CODER_PRESET = PRESETS.find((p) => p.name === 'Coder')!;
+const SWE_PRESET = PRESETS.find((p) => p.name === 'SWE')!;
 
 function insertSpace(db: BunDatabase, id: string): void {
   const now = Date.now();
@@ -321,18 +321,18 @@ describe('migration 184 — reviewer bash tool backfill', () => {
     insertAgent(db, {
       id: 'agent-coder',
       spaceId,
-      name: 'Coder',
-      handle: 'coder',
-      tools: CODER_PRESET.tools,
-      customPrompt: CODER_PRESET.customPrompt,
-      templateName: 'Coder',
-      templateHash: computeAgentTemplateHash(CODER_PRESET),
+      name: 'SWE',
+      handle: 'swe',
+      tools: SWE_PRESET.tools,
+      customPrompt: SWE_PRESET.customPrompt,
+      templateName: 'SWE',
+      templateHash: computeAgentTemplateHash(SWE_PRESET),
     });
 
     runMigration184(db);
 
     const row = getAgentRow('agent-coder');
-    expect(parseTools(row as unknown as AgentRow)).toEqual(CODER_PRESET.tools);
+    expect(parseTools(row as unknown as AgentRow)).toEqual(SWE_PRESET.tools);
   });
 
   test('safe no-op on empty space_agents', () => {

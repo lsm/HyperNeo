@@ -68,7 +68,7 @@ function makeTemplateWorkflowNode(slot: Partial<WorkflowNodeAgent> = {}): Workfl
     agents: [
       {
         agentId: '',
-        templateKey: 'worker.coder',
+        templateKey: 'worker.swe',
         name: agentName,
         ...slot,
       },
@@ -178,12 +178,12 @@ function makeTemplateResolutionHarness(
 describe('resolveNodeTemplateSource ordering (ATC-1 pin)', () => {
   test('resolves a code built-in worker template without consulting the template repo', () => {
     const h = makeTemplateResolutionHarness({
-      storedTemplates: [makeStoredTemplate({ key: 'worker.coder' })],
+      storedTemplates: [makeStoredTemplate({ key: 'worker.swe' })],
     });
 
-    const source = h.internals.resolveNodeTemplateSource('worker.coder');
+    const source = h.internals.resolveNodeTemplateSource('worker.swe');
 
-    expect(source?.key).toBe('worker.coder');
+    expect(source?.key).toBe('worker.swe');
     expect(source?.handle).toBe('coder');
     expect(source?.instructions).toBe(PRESET_CODER_PROMPT);
     expect(h.templateRepoCalls).toEqual([]);
@@ -222,10 +222,10 @@ describe('resolveNodeTemplateSource ordering (ATC-1 pin)', () => {
 
   test('the code built-in wins when a stored template shadows a built-in key', () => {
     const h = makeTemplateResolutionHarness({
-      storedTemplates: [makeStoredTemplate({ key: 'worker.coder' })],
+      storedTemplates: [makeStoredTemplate({ key: 'worker.swe' })],
     });
 
-    const source = h.internals.resolveNodeTemplateSource('worker.coder');
+    const source = h.internals.resolveNodeTemplateSource('worker.swe');
 
     expect(source?.instructions).toBe(PRESET_CODER_PROMPT);
     expect(source?.instructions).not.toBe('Stored template instructions');
@@ -246,13 +246,13 @@ describe('resolveSlotSpawnConfig branch selection (ATC-1 pin)', () => {
 
     const config = h.internals.resolveSlotSpawnConfig(SPACE_ID, {
       agentId: '',
-      templateKey: 'worker.coder',
+      templateKey: 'worker.swe',
       name: 'coder',
     });
 
     expect(config?.source).toBe('template');
-    expect(config?.templateKey).toBe('worker.coder');
-    expect(config?.agent.id).toBe('template:worker.coder');
+    expect(config?.templateKey).toBe('worker.swe');
+    expect(config?.agent.id).toBe('template:worker.swe');
     expect(config?.agent.displayName).toBe('coder');
     expect(config?.agent.instructions).toBe(PRESET_CODER_PROMPT);
   });
@@ -262,12 +262,12 @@ describe('resolveSlotSpawnConfig branch selection (ATC-1 pin)', () => {
 
     const config = h.internals.resolveSlotSpawnConfig(SPACE_ID, {
       agentId: '',
-      templateKey: '  worker.coder  ',
+      templateKey: '  worker.swe  ',
       name: 'coder',
     });
 
     expect(config?.source).toBe('template');
-    expect(config?.templateKey).toBe('worker.coder');
+    expect(config?.templateKey).toBe('worker.swe');
   });
 
   test('templateKey branch: slot model and thinking level override the template fields', () => {
@@ -275,7 +275,7 @@ describe('resolveSlotSpawnConfig branch selection (ATC-1 pin)', () => {
 
     const config = h.internals.resolveSlotSpawnConfig(SPACE_ID, {
       agentId: '',
-      templateKey: 'worker.coder',
+      templateKey: 'worker.swe',
       name: 'coder',
       model: 'slot-model',
       thinkingLevel: 'think32k',
@@ -460,7 +460,7 @@ function makeSpawnPayloadHarness(workflow: SpaceWorkflow, agentName: string): Sp
 }
 
 describe('worker-template spawn payload (ATC-1 pin, feeds slice 7 lock semantics)', () => {
-  test('a worker.coder template slot resolves the preset coder prompt and config at spawn time', async () => {
+  test('a worker.swe template slot resolves the preset coder prompt and config at spawn time', async () => {
     const h = makeSpawnPayloadHarness(makeWorkflow(makeTemplateWorkflowNode()), 'coder');
 
     await h.spawn();
@@ -497,7 +497,7 @@ describe('worker-template spawn payload (ATC-1 pin, feeds slice 7 lock semantics
     const provenance = init?.promptProvenance;
     expect(provenance?.source).toBe('space_agent_custom_prompt');
     expect(provenance?.hash).toBe(createHash('sha256').update(PRESET_CODER_PROMPT).digest('hex'));
-    expect(provenance?.agentId).toBe('worker.coder');
+    expect(provenance?.agentId).toBe('worker.swe');
     expect(provenance?.agentName).toBe('coder');
     expect(provenance?.workflowRunId).toBe(RUN_ID);
     expect(provenance?.workflowId).toBe('wf-3832');
@@ -511,7 +511,7 @@ describe('worker-template spawn payload (ATC-1 pin, feeds slice 7 lock semantics
     await h.spawn();
 
     expect(h.capturedMemberInfo()).toEqual({
-      agentId: 'template:worker.coder',
+      agentId: 'template:worker.swe',
       agentName: 'coder',
       nodeId: NODE_ID,
       deferFreshExecutionBind: true,
@@ -519,7 +519,7 @@ describe('worker-template spawn payload (ATC-1 pin, feeds slice 7 lock semantics
     });
   });
 
-  test('a worker.coder kickoff message carries the task, runtime location, and role sections', async () => {
+  test('a worker.swe kickoff message carries the task, runtime location, and role sections', async () => {
     const h = makeSpawnPayloadHarness(makeWorkflow(makeTemplateWorkflowNode()), 'coder');
 
     await h.spawn();
