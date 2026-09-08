@@ -7298,6 +7298,7 @@ export class SpaceRuntime {
       .listByWorkflowRun(runId)
       .filter((execution) => execution.status === 'waiting_rebind');
     if (waitingExecutions.length === 0) return false;
+    if (this.config.taskRepo.getTask(canonicalTask.id)?.status === 'blocked') return false;
 
     const recoveryStates = waitingExecutions.map((execution) => {
       const data = parseNodeExecutionData(execution.data);
@@ -7407,7 +7408,7 @@ export class SpaceRuntime {
       if (run.status !== 'in_progress') {
         await this.transitionRunStatusAndEmit(run.id, 'in_progress');
       }
-      if (canonicalTask.status === 'blocked' || canonicalTask.status === 'open') {
+      if (canonicalTask.status === 'open') {
         await this.updateTaskAndEmit(spaceId, canonicalTask.id, {
           status: 'in_progress',
           completedAt: null,

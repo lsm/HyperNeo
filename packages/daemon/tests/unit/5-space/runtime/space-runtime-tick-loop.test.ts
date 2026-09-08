@@ -1466,6 +1466,41 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(restarts).toEqual([]);
     });
 
+    test('a blocked task halts before waiting-rebind recovery revives it (#3823)', async () => {
+      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);
+      const rt = new SpaceRuntime(buildConfig(tam));
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      const execution = nodeExecutionRepo.listByWorkflowRun(run.id)[0];
+      nodeExecutionRepo.update(execution.id, {
+        status: 'waiting_rebind',
+        agentSessionId: 'session:rebind-parked',
+      });
+      const continuationRepo = new ToolContinuationRecoveryRepository(db);
+      continuationRepo.ensureSchema();
+      continuationRepo.recordToolUse({
+        toolUseId: 'tool-use-rebind-parked',
+        sessionId: 'session:rebind-parked',
+        ttlMs: 60_000,
+        owner: { executionId: execution.id, workflowRunId: run.id },
+      });
+      continuationRepo.queueContinuation({
+        toolUseId: 'tool-use-rebind-parked',
+        sessionId: 'session:rebind-parked',
+        requestBody: {},
+        reason: 'orphaned tool_result queued for retry',
+        ttlMs: 60_000,
+      });
+      taskRepo.updateTask(tasks[0].id, { status: 'blocked' });
+
+      await processRunTick(rt, run.id);
+
+      expect(nodeExecutionRepo.getById(execution.id)?.status).toBe('waiting_rebind');
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('blocked');
+    });
+
     test('does not nag a DB-fallback-alive ghost session and resets it for spawn retry (#3109)', async () => {
       const nags: Array<{ sessionId: string; message: string }> = [];
       const spawned: string[] = [];

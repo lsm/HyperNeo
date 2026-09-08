@@ -2724,7 +2724,6 @@ export class TaskAgentManager {
     const sessionId = session.getSessionData().id;
     const taskId = taskIdFromSubSessionIdentity(sessionId);
     if (taskId === null) return;
-    await this.activateDeferredPromptsForResume(sessionId);
     if (
       !session.isQueryActiveOrStarting() &&
       (await this.restoredWorkerStartAdmitted(session, taskId))
@@ -2736,6 +2735,9 @@ export class TaskAgentManager {
         settleReplayProvisioning: true,
       })
     ) {
+      if (session.getSessionData().config?.queryMode !== 'manual') {
+        await this.activateDeferredPromptsForResume(sessionId);
+      }
       await this.replayPendingMessagesAfterRuntimeProvisioning(session);
     }
   }
@@ -4285,6 +4287,23 @@ export class TaskAgentManager {
     }
 
     try {
+      if (parentTaskId && this.config.taskRepo.getTask(parentTaskId)?.status === 'blocked') {
+        if (existing?.sendStatus === 'failed') {
+          await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
+        }
+        if (existing && existing.sendStatus !== 'deferred') {
+          this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
+        }
+        await settleDeliveryRowStatus(deliveryRows, {
+          sessionId,
+          message: sdkUserMessage,
+          messageId,
+          rowExists: !!existing,
+          status: 'deferred',
+          origin,
+        });
+        return messageId;
+      }
       if (!isBusy) {
         const clearSuppressedByPendingWork =
           outcome.decision.action === 'deliver_without_clear' &&
