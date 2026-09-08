@@ -17,6 +17,7 @@ import type { ChannelCycleRepository } from '../../../storage/repositories/chann
 import { McpAuditLogRepository } from '../../../storage/repositories/mcp-audit-log-repository.ts';
 import { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import type { SessionRepository } from '../../../storage/repositories/session-repository.ts';
+import { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/repositories/space-goal-outcome-notification-repository.ts';
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import {
@@ -75,6 +76,7 @@ import { LONG_HORIZON_AGENT_BUILTIN_TOOLS } from '../agents/long-horizon-agent-t
 import { buildSpaceChatSystemPrompt } from '../agents/space-chat-agent.ts';
 import { unifiedAgentRecordExists } from '../agents/worker-long-horizon-mapper.ts';
 import { encodeActorIdComponent, longTermAgentSessionId } from '../long-term-agent-session.ts';
+import { SpaceAgentTemplateManager } from '../managers/space-agent-template-manager.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
@@ -179,6 +181,7 @@ export class SpaceRuntimeService {
   private readonly workflowEventSubscriptionRepo: SpaceWorkflowEventSubscriptionRepository;
   private readonly actorRegistry: SpaceActorRegistryAdapter | null;
   private readonly auditLogRepo: McpAuditLogRepository;
+  private readonly templateManager: SpaceAgentTemplateManager;
   private readonly spaceDbQueryServers = new Map<string, DbQueryMcpServer>();
   private readonly memberSessionDbQueryServers = new Map<string, DbQueryMcpServer>();
   private readonly longTermAgentDbQueryServers = new Map<string, DbQueryMcpServer>();
@@ -197,6 +200,9 @@ export class SpaceRuntimeService {
       ? new SpaceActorRegistryAdapter(config.actorRegistryRepos)
       : null;
     this.auditLogRepo = new McpAuditLogRepository(this.config.db);
+    this.templateManager = new SpaceAgentTemplateManager(
+      new SpaceAgentTemplateRepository(this.config.db)
+    );
     this.queueHealthMetrics = config.queueHealthMetrics ?? new ExternalEventQueueMetrics();
     config.externalEventStore?.setDeliveryTerminalHook((event) =>
       this.queueHealthMetrics.recordDeliveryTerminal(event)
@@ -1033,6 +1039,7 @@ export class SpaceRuntimeService {
         agentId !== null && this.config.longHorizonAgentRepo?.getById(agentId)
           ? this.config.inactivityRunNow
           : undefined,
+      templateManager: this.templateManager,
     };
   }
 
@@ -1576,6 +1583,7 @@ export class SpaceRuntimeService {
       messageResolver: this.createMessageResolver(space.id),
       longTermAgentDelivery: this.longTermAgentDeliveryCallbacks(),
       externalEventStore: this.config.externalEventStore,
+      templateManager: this.templateManager,
     };
   }
 
@@ -1774,6 +1782,7 @@ export class SpaceRuntimeService {
       inactivityConfigRepo: coordinator ? this.config.inactivityConfigRepo : undefined,
       inactivityClaimRepo: coordinator ? this.config.inactivityClaimRepo : undefined,
       inactivityRunNow: coordinator ? this.config.inactivityRunNow : undefined,
+      templateManager: this.templateManager,
     };
     const mcpServer = createSpaceAgentMcpServer(spaceToolsConfig);
 
