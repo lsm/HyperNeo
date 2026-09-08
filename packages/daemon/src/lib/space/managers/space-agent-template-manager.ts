@@ -151,6 +151,13 @@ function validateToolsChoice(tools: string[] | null | undefined): string | null 
   return validateSpaceAgentTools(tools);
 }
 
+function stripRelocationMarkerLabels(
+  labels: string[] | null | undefined
+): string[] | null | undefined {
+  if (labels === undefined || labels === null) return labels;
+  return labels.filter((label) => !isRelocationMarkerLabel(label));
+}
+
 function normalizeTemplateLabels(labels: string[] | null | undefined): {
   labels: string[];
   error: string | null;
@@ -254,7 +261,7 @@ function createValidateTools(ctx: CreateTemplateCtx): CreateTemplateCtx {
 }
 
 function createValidateLabels(ctx: CreateTemplateCtx): CreateTemplateCtx {
-  const { labels, error } = normalizeTemplateLabels(ctx.params.labels);
+  const { labels, error } = normalizeTemplateLabels(stripRelocationMarkerLabels(ctx.params.labels));
   if (error) return { ...ctx, error };
   return { ...ctx, params: { ...ctx.params, labels } };
 }
@@ -320,7 +327,7 @@ function updateValidateTools(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
 
 function updateValidateLabels(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
   if (ctx.params.labels === undefined) return ctx;
-  const { labels, error } = normalizeTemplateLabels(ctx.params.labels);
+  const { labels, error } = normalizeTemplateLabels(stripRelocationMarkerLabels(ctx.params.labels));
   if (error) return { ...ctx, error };
   const sticky = (ctx.existing?.labels ?? []).filter((label) => isRelocationMarkerLabel(label));
   const merged = [...labels];

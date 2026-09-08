@@ -827,6 +827,44 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(workflow.nodes[0].postApproval?.targetAgent).toBe('coder');
     });
 
+    it('resolves a legacy route to the original worker.coder slot, not a literal worker.swe slot', async () => {
+      const bundle = {
+        version: 5,
+        type: 'bundle',
+        name: 'Test Bundle',
+        exportedAt: 1000,
+        agents: [],
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Collision Pipe',
+            nodes: [
+              {
+                agents: [{ templateKey: 'worker.swe', name: 'custom' }],
+                name: 'Custom',
+              },
+              {
+                agents: [{ templateKey: 'worker.coder', name: 'coder' }],
+                name: 'Coding',
+                postApproval: { targetAgent: 'worker.coder', instructions: 'merge the PR' },
+              },
+            ],
+            startNode: 'Custom',
+            tags: [],
+          },
+        ],
+      };
+
+      const result = await call<{ workflows: Array<{ id: string }> }>(
+        handlers,
+        'spaceImport.execute',
+        { spaceId: SPACE_ID, bundle }
+      );
+      const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
+      expect(workflow.nodes[1].postApproval?.targetAgent).toBe('coder');
+    });
+
     it('rejects a legacy route whose resolved slot name is shadowed by an earlier slot', async () => {
       const bundle = {
         version: 5,

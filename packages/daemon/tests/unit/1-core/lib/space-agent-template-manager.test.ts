@@ -492,6 +492,33 @@ describe('SpaceAgentTemplateManager', () => {
   });
 
   describe('update', () => {
+    test('strips spoofed relocation marker labels from create input', async () => {
+      const result = await manager.create({
+        ...fullParams(),
+        labels: ['relocated-from:worker.swe', 'quality'],
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value.labels).toEqual(['quality']);
+    });
+
+    test('round-trips eight user labels plus the sticky marker without limit failures', async () => {
+      await manager.create(fullParams());
+      const eight = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+      db.prepare(
+        `UPDATE space_agent_templates SET labels = ? WHERE key = 'release-readiness.custom'`
+      ).run(JSON.stringify([...eight, 'relocated-from:worker.swe']));
+
+      const roundTrip = await manager.update('release-readiness.custom', {
+        labels: [...eight, 'relocated-from:worker.swe'],
+      });
+
+      expect(roundTrip.ok).toBe(true);
+      if (!roundTrip.ok) throw new Error('expected ok');
+      expect(roundTrip.value?.labels).toEqual([...eight, 'relocated-from:worker.swe']);
+    });
+
     test('preserves relocation marker labels through label edits', async () => {
       await manager.create(fullParams());
       db.prepare(

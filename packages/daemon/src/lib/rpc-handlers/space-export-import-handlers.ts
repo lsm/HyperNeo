@@ -218,9 +218,14 @@ function ambiguousTemplateReferenceError(
   );
 }
 
+interface ImportedRouteSlot {
+  entry: NonNullable<WorkflowNodeInput['agents']>[number];
+  rawTemplateKey: string;
+}
+
 function normalizeImportedPostApproval(
   postApproval: WorkflowNodeInput['postApproval'],
-  agents: WorkflowNodeInput['agents']
+  slots: ReadonlyArray<ImportedRouteSlot>
 ): { postApproval: WorkflowNodeInput['postApproval']; error: string | null } {
   if (!postApproval || typeof postApproval.targetAgent !== 'string') {
     return { postApproval, error: null };
@@ -228,20 +233,19 @@ function normalizeImportedPostApproval(
   const target = postApproval.targetAgent.trim();
   const normalized = normalizeLegacyWorkerTemplateKey(target);
   if (normalized === target) return { postApproval, error: null };
-  const entries = agents ?? [];
-  const selectedIndex = entries.findIndex(
-    (entry) =>
+  const selectedIndex = slots.findIndex(
+    ({ entry, rawTemplateKey }) =>
       entry.name === target ||
       (entry.agentId !== '' && entry.agentId === target) ||
-      entry.templateKey === normalized
+      rawTemplateKey === target
   );
   if (selectedIndex < 0) return { postApproval, error: null };
-  const selected = entries[selectedIndex];
+  const { entry: selected } = slots[selectedIndex];
   if (selected.templateKey !== normalized || !selected.name) {
     return { postApproval, error: null };
   }
-  const nameFirstMatch = entries.findIndex(
-    (entry) =>
+  const nameFirstMatch = slots.findIndex(
+    ({ entry }) =>
       entry.name === selected.name || (entry.agentId !== '' && entry.agentId === selected.name)
   );
   if (nameFirstMatch !== selectedIndex) {
@@ -446,11 +450,14 @@ export function buildWorkflowCreateParams(
       return entry;
     });
 
-    return { exportedNode, agents } as const;
+    const rawTemplateKeys = exportedNode.agents.map((a) => a.templateKey?.trim() ?? '');
+    return { exportedNode, agents, rawTemplateKeys } as const;
   });
-  const flattenedAgents = builtAgents.flatMap(({ agents }) => agents);
+  const flattenedRoutes = builtAgents.flatMap(({ agents, rawTemplateKeys }) =>
+    agents.map((entry, index) => ({ entry, rawTemplateKey: rawTemplateKeys[index] ?? '' }))
+  );
   const nodes: WorkflowNodeInput[] = builtAgents.map(({ exportedNode, agents }) => {
-    const route = normalizeImportedPostApproval(exportedNode.postApproval, flattenedAgents);
+    const route = normalizeImportedPostApproval(exportedNode.postApproval, flattenedRoutes);
     if (route.error) warnings.push(`node "${exportedNode.name}": ${route.error}`);
     const node: WorkflowNodeInput = {
       id: nodeNameToId.get(exportedNode.name)!,
@@ -1155,7 +1162,7 @@ export function setupSpaceExportImportHandlers(
               allWarnings.push(`Workflow "${finalName}": ${w}`);
             }
             throw new Error(
-              `Cannot import workflow "${finalName}": unresolved agent reference(s) — run spaceImport.preview to see details`
+              `Cannot import workflow "${finalName}": unresolved agent reference(s) — ${warnings.join('; ')}`
             );
           }
 
