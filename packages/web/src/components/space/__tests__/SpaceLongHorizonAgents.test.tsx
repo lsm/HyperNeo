@@ -8,10 +8,8 @@ const {
   mockAgents,
   mockTemplates,
   mockUserTemplateKeys,
-  mockWorkflowDetails,
   mockConfigDataLoaded,
   mockEnsureConfigData,
-  mockEnsureWorkflowDetails,
   mockListAgentReminderCounts,
   mockCreateAgent,
   mockCreateTemplate,
@@ -28,10 +26,8 @@ const {
     mockAgents: makeSignal<SpaceLongHorizonAgent[]>([]),
     mockTemplates: makeSignal([]),
     mockUserTemplateKeys: makeSignal<Set<string>>(new Set()),
-    mockWorkflowDetails: makeSignal([]),
     mockConfigDataLoaded: makeSignal(true),
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
-    mockEnsureWorkflowDetails: vi.fn().mockResolvedValue(undefined),
     mockListAgentReminderCounts: vi.fn().mockResolvedValue({}),
     mockCreateAgent: vi.fn().mockResolvedValue(undefined),
     mockCreateTemplate: vi.fn().mockResolvedValue(undefined),
@@ -49,10 +45,8 @@ vi.mock('../../../lib/space-store', () => ({
       agents: mockAgents,
       agentTemplates: mockTemplates,
       userTemplateKeys: mockUserTemplateKeys,
-      workflowDetails: mockWorkflowDetails,
       configDataLoaded: mockConfigDataLoaded,
       ensureConfigData: mockEnsureConfigData,
-      ensureWorkflowDetails: mockEnsureWorkflowDetails,
       listAgentReminderCounts: mockListAgentReminderCounts,
       createAgent: mockCreateAgent,
       createTemplate: mockCreateTemplate,
@@ -215,10 +209,8 @@ describe('SpaceLongHorizonAgents', () => {
     mockAgents.value = [];
     mockTemplates.value = [];
     mockUserTemplateKeys.value = new Set();
-    mockWorkflowDetails.value = [];
     mockConfigDataLoaded.value = true;
     mockEnsureConfigData.mockClear();
-    mockEnsureWorkflowDetails.mockClear();
     mockListAgentReminderCounts.mockClear();
     mockCreateAgent.mockClear();
     mockCreateTemplate.mockClear();
@@ -408,22 +400,14 @@ describe('SpaceLongHorizonAgents', () => {
     await waitFor(() => expect(queryByTestId('confirm-modal')).toBeNull());
   });
 
-  it('blocks deleting a template referenced by workflow slots with a readable error', async () => {
+  it('surfaces the daemon reference-guard error and keeps the confirm dialog open', async () => {
     mockTemplates.value = [makeTemplate({ key: 'scribe', displayName: 'Scribe' })];
     mockUserTemplateKeys.value = new Set(['scribe']);
-    mockWorkflowDetails.value = [
-      {
-        id: 'wf-1',
-        name: 'Release',
-        nodes: [
-          {
-            id: 'n1',
-            name: 'Ship',
-            agents: [{ agentId: '', templateKey: 'scribe', name: 'Scribe' }],
-          },
-        ],
-      },
-    ];
+    mockDeleteTemplate.mockRejectedValueOnce(
+      new Error(
+        'Cannot delete template "scribe" - it is referenced by workflow nodes (Workflow: Release)'
+      )
+    );
 
     const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
@@ -432,10 +416,9 @@ describe('SpaceLongHorizonAgents', () => {
 
     await waitFor(() =>
       expect(getByTestId('confirm-modal-error').textContent).toBe(
-        'Cannot delete template "Scribe" - it is referenced by workflow slots (Workflow: Release)'
+        'Cannot delete template "scribe" - it is referenced by workflow nodes (Workflow: Release)'
       )
     );
-    expect(mockDeleteTemplate).not.toHaveBeenCalled();
     expect(getByTestId('confirm-modal')).toBeTruthy();
   });
 

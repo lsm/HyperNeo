@@ -447,6 +447,68 @@ describe('Space Agent RPC Handlers', () => {
         call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'missing.custom' })
       ).rejects.toThrow('Template not found: missing.custom');
     });
+
+    it('blocks deleting a template referenced by a workflow node slot in any space', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'guard.custom',
+        handle: 'guard',
+      });
+      insertSpace(db, 'space-2');
+      insertWorkflow(db, 'wf-guard', 'space-2', 'Release');
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(
+        'wf-guard-node',
+        'wf-guard',
+        'Ship',
+        JSON.stringify({ agents: [{ agentId: '', templateKey: 'guard.custom', name: 'Guard' }] }),
+        now,
+        now
+      );
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'guard.custom' })
+      ).rejects.toThrow(
+        'Cannot delete template "guard.custom" - it is referenced by workflow nodes (Workflow: Release)'
+      );
+
+      const list = await call<{ templates: Array<{ key: string }> }>(
+        hubData.handlers,
+        'spaceAgent.listTemplates',
+        {}
+      );
+      expect(list.templates.map((template) => template.key)).toContain('guard.custom');
+    });
+
+    it('does not block deletion when only a longer key sharing a prefix is referenced', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'guard.custom',
+        handle: 'guard',
+      });
+      insertWorkflow(db, 'wf-prefix', 'space-1', 'Prefix');
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(
+        'wf-prefix-node',
+        'wf-prefix',
+        'Ship',
+        JSON.stringify({
+          agents: [{ agentId: '', templateKey: 'guard.custom-2', name: 'Guard' }],
+        }),
+        now,
+        now
+      );
+
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'guard.custom' }
+      );
+
+      expect(result.success).toBe(true);
+    });
   });
 
   describe('spaceAgent.promotion', () => {

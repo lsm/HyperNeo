@@ -49,7 +49,10 @@ describe('Space long-horizon agent handlers', () => {
     removeLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
     clearLongTermAgentSessionProvider: ReturnType<typeof mock>;
   };
-  let workflowRepo: { getWorkflowsReferencingAgent: ReturnType<typeof mock> };
+  let workflowRepo: {
+    getWorkflowsReferencingAgent: ReturnType<typeof mock>;
+    getWorkflowsReferencingTemplate: ReturnType<typeof mock>;
+  };
   let internalEventBus: { publish: ReturnType<typeof mock> };
 
   beforeEach(() => {
@@ -107,7 +110,10 @@ describe('Space long-horizon agent handlers', () => {
       removeLongHorizonAgentSubscriptions: mock(() => {}),
       clearLongTermAgentSessionProvider: mock(async () => {}),
     };
-    workflowRepo = { getWorkflowsReferencingAgent: mock(() => []) };
+    workflowRepo = {
+      getWorkflowsReferencingAgent: mock(() => []),
+      getWorkflowsReferencingTemplate: mock(() => []),
+    };
     internalEventBus = { publish: mock(async () => {}) };
     setupSpaceAgentHandlers(
       hubData.hub,

@@ -1161,12 +1161,10 @@ export function SpaceLongHorizonAgents({
   const agents = spaceStore.agents.value;
   const templates = spaceStore.agentTemplates.value;
   const userTemplateKeys = spaceStore.userTemplateKeys.value;
-  const workflows = spaceStore.workflowDetails.value;
   const loading = !spaceStore.configDataLoaded.value;
 
   useEffect(() => {
     spaceStore.ensureConfigData().catch(() => {});
-    spaceStore.ensureWorkflowDetails().catch(() => {});
   }, [spaceId]);
 
   const [reminderCounts, setReminderCounts] = useState<Record<string, number>>({});
@@ -1234,14 +1232,6 @@ export function SpaceLongHorizonAgents({
 
   const handleTemplateDeleteConfirm = async () => {
     if (!deletingTemplate) return;
-    const referencingWorkflows = templateWorkflowRefs.get(deletingTemplate.key) ?? [];
-    if (referencingWorkflows.length > 0) {
-      setDeleteTemplateError(
-        `Cannot delete template "${deletingTemplate.displayName}" - it is referenced by workflow slots` +
-          referencingWorkflows.map((n) => ` (Workflow: ${n})`).join('')
-      );
-      return;
-    }
     setDeletingTemplateBusy(true);
     setDeleteTemplateError(null);
     try {
@@ -1286,18 +1276,6 @@ export function SpaceLongHorizonAgents({
       agent.templateKey,
       (templateInstanceCounts.get(agent.templateKey) ?? 0) + 1
     );
-  }
-
-  const templateWorkflowRefs = new Map<string, string[]>();
-  for (const workflow of workflows) {
-    for (const node of workflow.nodes) {
-      for (const slot of node.agents) {
-        if (!slot.templateKey) continue;
-        const names = templateWorkflowRefs.get(slot.templateKey) ?? [];
-        if (!names.includes(workflow.name)) names.push(workflow.name);
-        templateWorkflowRefs.set(slot.templateKey, names);
-      }
-    }
   }
 
   const templateGroups = groupTemplatesByLabel(templates);
