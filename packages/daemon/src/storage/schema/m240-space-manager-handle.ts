@@ -50,7 +50,14 @@ export function runMigration240(db: BunDatabase): void {
     db.prepare(
       `UPDATE space_long_horizon_agents
           SET handle = ?,
-              display_name = CASE WHEN display_name = 'Coordinator' THEN 'Space Manager' ELSE display_name END,
+              display_name = CASE
+                WHEN display_name = 'Coordinator' AND NOT EXISTS (
+                  SELECT 1 FROM space_long_horizon_agents other
+                   WHERE other.space_id = space_long_horizon_agents.space_id
+                     AND other.handle != 'coordinator'
+                     AND other.status != 'archived'
+                     AND lower(trim(other.display_name)) = 'space manager'
+                ) THEN 'Space Manager' ELSE display_name END,
               updated_at = ?
         WHERE handle = 'coordinator'`
     ).run(SPACE_MANAGER_HANDLE, now);

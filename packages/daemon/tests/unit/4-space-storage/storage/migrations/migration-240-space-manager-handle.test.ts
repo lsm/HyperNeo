@@ -18,6 +18,7 @@ function makeDb(): BunDatabase {
   insertSpace.run('space-4', '/tmp/space-4', 'Space 4', 'space-4');
   insertSpace.run('space-5', '/tmp/space-5', 'Space 5', 'space-5');
   insertSpace.run('space-6', '/tmp/space-6', 'Space 6', 'space-6');
+  insertSpace.run('space-7', '/tmp/space-7', 'Space 7', 'space-7');
   const insertAgent = db.prepare(
     `INSERT INTO space_long_horizon_agents (
 			id, space_id, handle, display_name, template_key, status, session_id,
@@ -115,6 +116,24 @@ function makeDb(): BunDatabase {
     'active',
     'space:chat:space-6'
   );
+  insertAgent.run(
+    'agent-named-manager-7',
+    'space-7',
+    'custom-named',
+    'space manager',
+    null,
+    'active',
+    null
+  );
+  insertAgent.run(
+    'agent-coord-7',
+    'space-7',
+    'coordinator',
+    'Coordinator',
+    'coordinator.default',
+    'active',
+    'space:chat:space-7'
+  );
   return db;
 }
 
@@ -177,6 +196,16 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
 
     expect(rowById(db, 'agent-coord-1').display_name).toBe('Space Manager');
     expect(rowById(db, 'agent-coord-4').display_name).toBe('My Coordinator');
+    db.close();
+  });
+
+  test('skips the display-name restamp when a custom agent already owns the name', () => {
+    const db = makeDb();
+    runMigration238(db);
+
+    expect(rowById(db, 'agent-coord-7').handle).toBe('space-manager');
+    expect(rowById(db, 'agent-coord-7').display_name).toBe('Coordinator');
+    expect(rowById(db, 'agent-named-manager-7').display_name).toBe('space manager');
     db.close();
   });
 
