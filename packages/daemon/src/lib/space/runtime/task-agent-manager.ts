@@ -2101,6 +2101,8 @@ export class TaskAgentManager {
     return this.withSessionRestoreLock(identity.sessionId, async () => {
       const indexed = this.agentSessionIndex.get(identity.sessionId);
       if (indexed && (indexed === suppliedSession || !suppliedSession)) {
+        const shouldReplayPendingMessages =
+          options.replayPendingMessages ?? options.startQuery !== false;
         if (
           options.startQuery !== false &&
           !indexed.isQueryActiveOrStarting() &&
@@ -2109,8 +2111,7 @@ export class TaskAgentManager {
           await indexed.startStreamingQuery();
         }
         if (
-          options.startQuery !== false &&
-          options.replayPendingMessages !== false &&
+          shouldReplayPendingMessages &&
           (await this.restoredWorkerStartAdmitted(indexed, taskId, {
             settleReplayProvisioning: true,
           }))
@@ -2279,6 +2280,8 @@ export class TaskAgentManager {
     this.agentSessionIndex.set(sessionId, agentSession);
     if (createdNow) this.config.sessionManager.registerSession(agentSession);
 
+    const shouldReplayPendingMessages =
+      options.replayPendingMessages ?? options.startQuery !== false;
     try {
       this.sanitizeSDKSessionTranscriptForRehydration(agentSession, workspacePath);
       if (agentSession.getSessionData().status === 'archived') {
@@ -2294,8 +2297,7 @@ export class TaskAgentManager {
         await agentSession.startStreamingQuery();
       }
       if (
-        options.startQuery !== false &&
-        options.replayPendingMessages !== false &&
+        shouldReplayPendingMessages &&
         (await this.restoredWorkerStartAdmitted(agentSession, taskId, {
           settleReplayProvisioning: true,
         }))
@@ -3490,8 +3492,8 @@ export class TaskAgentManager {
             0;
         const rehydrateOptions =
           this.readPersistedRateLimitCooldown(subSessionId) || !hasReplayableWork
-            ? { startQuery: false }
-            : {};
+            ? { startQuery: false, replayPendingMessages: false }
+            : { startQuery: false, replayPendingMessages: true };
         await this.rehydrateSubSession(subSessionId, undefined, rehydrateOptions);
       } catch (err) {
         log.warn(
@@ -3739,6 +3741,8 @@ export class TaskAgentManager {
     const rehydrateTask = this.withSessionRestoreLock(subSessionId, async () => {
       const indexed = this.agentSessionIndex.get(subSessionId);
       if (indexed && (indexed === suppliedSession || !suppliedSession)) {
+        const shouldReplayPendingMessages =
+          options.replayPendingMessages ?? options.startQuery !== false;
         const taskId = taskIdFromSubSessionIdentity(subSessionId);
         if (
           options.startQuery !== false &&
@@ -3749,8 +3753,7 @@ export class TaskAgentManager {
           await indexed.startStreamingQuery();
         }
         if (
-          options.startQuery !== false &&
-          options.replayPendingMessages !== false &&
+          shouldReplayPendingMessages &&
           taskId !== null &&
           (await this.restoredWorkerStartAdmitted(indexed, taskId, {
             settleReplayProvisioning: true,
@@ -3984,6 +3987,8 @@ export class TaskAgentManager {
       return agentSession;
     }
 
+    const shouldReplayPendingMessages =
+      options.replayPendingMessages ?? options.startQuery !== false;
     try {
       if (
         options.startQuery !== false &&
@@ -3992,8 +3997,7 @@ export class TaskAgentManager {
         await agentSession.startStreamingQuery();
       }
       if (
-        options.startQuery !== false &&
-        options.replayPendingMessages !== false &&
+        shouldReplayPendingMessages &&
         (await this.restoredWorkerStartAdmitted(agentSession, taskId, {
           settleReplayProvisioning: true,
         }))

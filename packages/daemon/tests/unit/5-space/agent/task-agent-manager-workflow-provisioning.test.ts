@@ -841,7 +841,7 @@ describe('TaskAgentManager startup rehydration admission', () => {
     expect(rehydrateSubSession).toHaveBeenCalledWith(
       'space:space-1:task:task-1:exec:e1',
       undefined,
-      { startQuery: false }
+      { startQuery: false, replayPendingMessages: false }
     );
   });
 
@@ -858,7 +858,7 @@ describe('TaskAgentManager startup rehydration admission', () => {
     expect(rehydrateSubSession).toHaveBeenCalledWith(
       'space:space-1:task:task-1:exec:e1',
       undefined,
-      { startQuery: false }
+      { startQuery: false, replayPendingMessages: false }
     );
   });
 
@@ -880,7 +880,7 @@ describe('TaskAgentManager startup rehydration admission', () => {
       expect(rehydrateSubSession).toHaveBeenCalledWith(
         'space:space-1:task:task-1:exec:e1',
         undefined,
-        {}
+        { startQuery: false, replayPendingMessages: true }
       );
     });
   }
