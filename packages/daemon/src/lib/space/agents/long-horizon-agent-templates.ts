@@ -100,11 +100,11 @@ const LEGACY_WORKER_TEMPLATE_KEYS: Record<string, string> = {
 };
 
 export function normalizeLegacyWorkerTemplateKey(key: string): string {
-  return LEGACY_WORKER_TEMPLATE_KEYS[key] ?? key;
+  return Object.hasOwn(LEGACY_WORKER_TEMPLATE_KEYS, key) ? LEGACY_WORKER_TEMPLATE_KEYS[key] : key;
 }
 
 export function isLegacyWorkerTemplateKey(key: string): boolean {
-  return key in LEGACY_WORKER_TEMPLATE_KEYS;
+  return Object.hasOwn(LEGACY_WORKER_TEMPLATE_KEYS, key);
 }
 
 function workerPresetTemplates(): SpaceLongHorizonAgentTemplate[] {

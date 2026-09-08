@@ -95,13 +95,11 @@ function collectSlotViews(
   return views;
 }
 
-function targetEligibleForRewrite(target: string, slots: ReadonlyArray<SlotView>): boolean {
-  if (
-    slots.some((slot) => slot.name === target || (slot.agentId !== '' && slot.agentId === target))
-  ) {
-    return false;
-  }
-  return slots.some((slot) => slot.renamingKey !== null && slot.sourceKey === target);
+function slotMatchesTarget(slot: SlotView, target: string, keysRenamed: boolean): boolean {
+  if (slot.name === target) return true;
+  if (slot.agentId !== '' && slot.agentId === target) return true;
+  const key = keysRenamed && slot.renamingKey !== null ? slot.renamingKey : slot.sourceKey;
+  return key === target;
 }
 
 function rewriteSlots(nodes: ReadonlyArray<NodeRecord>, storedRelocation: string | null): void {
@@ -125,9 +123,12 @@ function rewritePostApprovalTarget(
 ): boolean {
   if (typeof postApproval.targetAgent !== 'string') return false;
   const target = postApproval.targetAgent.trim();
-  if (!targetEligibleForRewrite(target, slots)) return false;
   const replacement = renamedKeyFor(target, storedRelocation);
   if (!replacement) return false;
+  const selectedIndex = slots.findIndex((slot) => slotMatchesTarget(slot, target, false));
+  if (selectedIndex < 0) return false;
+  const postRewriteIndex = slots.findIndex((slot) => slotMatchesTarget(slot, replacement, true));
+  if (postRewriteIndex !== selectedIndex) return false;
   postApproval.targetAgent = replacement;
   return true;
 }

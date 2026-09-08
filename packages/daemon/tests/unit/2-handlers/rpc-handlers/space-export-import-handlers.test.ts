@@ -818,7 +818,43 @@ describe('Space Export/Import RPC Handlers', () => {
       const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
       expect(workflow.nodes[0].agents![0].templateKey).toBe('worker.swe');
       expect(workflow.nodes[0].agents![0].agentId).toBe('');
-      expect(workflow.nodes[0].postApproval?.targetAgent).toBe('worker.swe');
+      expect(workflow.nodes[0].postApproval?.targetAgent).toBe('coder');
+    });
+
+    it('flags ambiguous worker.swe references when the custom key was relocated', async () => {
+      new SpaceAgentTemplateRepository(db).create({
+        key: 'worker.swe.migrated',
+        handle: 'legacy-swe',
+        displayName: 'Legacy SWE',
+      });
+      const bundle = {
+        version: 5,
+        type: 'bundle',
+        name: 'Test Bundle',
+        exportedAt: 1000,
+        agents: [],
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Ambiguous Pipe',
+            nodes: [
+              {
+                agents: [{ templateKey: 'worker.swe', name: 'coder' }],
+                name: 'Coding',
+              },
+            ],
+            startNode: 'Coding',
+            tags: [],
+          },
+        ],
+      };
+
+      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+      expect(preview.validationErrors.some((e) => e.includes('ambiguous'))).toBe(true);
     });
 
     it('prefers the agent fallback over an unverifiable colliding stored template', async () => {

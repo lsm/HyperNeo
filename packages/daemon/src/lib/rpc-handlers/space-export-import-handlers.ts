@@ -184,11 +184,17 @@ function normalizeImportedPostApproval(
   const target = postApproval.targetAgent.trim();
   const normalized = normalizeLegacyWorkerTemplateKey(target);
   if (normalized === target) return postApproval;
-  const occupied = (agents ?? []).some(
-    (entry) => entry.name === target || (entry.agentId !== '' && entry.agentId === target)
+  const entries = agents ?? [];
+  const selectedIndex = entries.findIndex(
+    (entry) =>
+      entry.name === target ||
+      (entry.agentId !== '' && entry.agentId === target) ||
+      entry.templateKey === normalized
   );
-  if (occupied) return postApproval;
-  return { ...postApproval, targetAgent: normalized };
+  if (selectedIndex < 0) return postApproval;
+  const selected = entries[selectedIndex];
+  if (selected.templateKey !== normalized || !selected.name) return postApproval;
+  return { ...postApproval, targetAgent: selected.name };
 }
 
 function generateUniqueName(baseName: string, existingNames: Set<string>): string {
@@ -428,7 +434,17 @@ function validateWorkflowForPreview(
       const rawTemplateKey = a.templateKey?.trim() ?? '';
       const templateKey = rawTemplateKey ? normalizeLegacyWorkerTemplateKey(rawTemplateKey) : '';
       if (templateKey) {
-        if (getLongHorizonAgentTemplate(templateKey)) continue;
+        if (getLongHorizonAgentTemplate(templateKey)) {
+          if (templateKey === 'worker.swe' && storedTemplateExists?.('worker.swe.migrated')) {
+            errors.push(
+              `node "${node.name}" references "worker.swe", which is ambiguous in this space: ` +
+                `a custom template with that key was relocated to "worker.swe.migrated". ` +
+                `Use "worker.swe.migrated" in the bundle to keep the custom template, or remove ` +
+                `the relocated template to keep the built-in.`
+            );
+          }
+          continue;
+        }
         if (storedTemplateExists?.(templateKey)) continue;
         const agentRef = a.agentRef?.trim() ?? '';
         if (

@@ -366,6 +366,54 @@ describe('migration 239 — rename worker.coder slot templateKey to worker.swe',
     db.close();
   });
 
+  test('rewrites targets by runtime slot order when a later slot shadows the key by name', () => {
+    const db = createMigrationDb();
+    insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
+    insertNodeWithSlots(
+      db,
+      'node-1',
+      'wf-1',
+      [
+        { agentId: '', templateKey: 'worker.coder', name: 'impl' },
+        { agentId: '', templateKey: 'team.other', name: 'worker.coder' },
+      ],
+      { targetAgent: 'worker.coder' }
+    );
+
+    runMigration239(db);
+
+    expect((readNodeConfig(db, 'node-1').postApproval as { targetAgent: string }).targetAgent).toBe(
+      'worker.swe'
+    );
+    db.close();
+  });
+
+  test('keeps a target when rewriting it would select an earlier slot after the rename', () => {
+    const db = createMigrationDb();
+    insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
+    insertNodeWithSlots(
+      db,
+      'node-1',
+      'wf-1',
+      [
+        { agentId: '', templateKey: 'team.other', name: 'worker.swe' },
+        { agentId: '', templateKey: 'worker.coder', name: 'impl' },
+      ],
+      { targetAgent: 'worker.coder' }
+    );
+
+    runMigration239(db);
+
+    expect((readNodeConfig(db, 'node-1').postApproval as { targetAgent: string }).targetAgent).toBe(
+      'worker.coder'
+    );
+    expect(readSlots(db, 'node-1')).toEqual([
+      { agentId: '', templateKey: 'team.other', name: 'worker.swe' },
+      { agentId: '', templateKey: 'worker.swe', name: 'impl' },
+    ]);
+    db.close();
+  });
+
   test('skips the relocation target when its version-seq key is still reserved', () => {
     const db = createMigrationDb();
     insertStoredTemplate(db, 'worker.swe');
