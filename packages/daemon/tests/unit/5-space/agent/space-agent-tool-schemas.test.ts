@@ -355,6 +355,7 @@ const LIFECYCLE_TOOL_NAMES: SpaceAgentLifecycleToolName[] = [
   'create_agent',
   'create_agent_from_template',
   'create_agent_template',
+  'update_agent_template',
   'list_agent_templates',
   'update_agent',
   'pause_agent',
@@ -409,11 +410,11 @@ const FORGE_TOOL_NAMES: SpaceForgeToolName[] = [
 ];
 
 describe('conditional family tool schema maps', () => {
-  test('SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS contains exactly the 18 agent-lifecycle tools', () => {
+  test('SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS contains exactly the 19 agent-lifecycle tools', () => {
     expect(Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS).sort()).toEqual(
       [...LIFECYCLE_TOOL_NAMES].sort()
     );
-    expect(Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS)).toHaveLength(18);
+    expect(Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS)).toHaveLength(19);
   });
 
   test('SPACE_GOAL_TOOL_SCHEMAS contains exactly the 9 goal tools', () => {
@@ -570,6 +571,55 @@ const LIFECYCLE_PINS: FamilySafeParsePin[] = [
       { key: 'k', handle: 'h', thinking_level: 'think64k' },
       { key: 'k', handle: 'h', setting_sources: ['bogus'] },
       { key: 'k', handle: 'h', model_pool: [{ model: 'm', maxConcurrent: 0, weight: 1 }] },
+    ],
+  },
+  {
+    tool: 'update_agent_template',
+    accepts: [
+      {
+        input: {
+          key: 'reviewer.custom',
+          expected_version: 2,
+          display_name: 'Reviewer',
+          description: 'Reviews code',
+          instructions: 'You review code.',
+          labels: ['workflow-worker'],
+          model: 'glm-5.3',
+          provider: 'zai',
+          model_pool: [{ model: 'glm-5.3', maxConcurrent: 2, weight: 1 }],
+          thinking_level: 'think16k',
+          setting_sources: ['user', 'project'],
+          tools: ['read_file'],
+        },
+        data: {
+          key: 'reviewer.custom',
+          expected_version: 2,
+          display_name: 'Reviewer',
+          description: 'Reviews code',
+          instructions: 'You review code.',
+          labels: ['workflow-worker'],
+          model: 'glm-5.3',
+          provider: 'zai',
+          model_pool: [{ model: 'glm-5.3', maxConcurrent: 2, weight: 1 }],
+          thinking_level: 'think16k',
+          setting_sources: ['user', 'project'],
+          tools: ['read_file'],
+        },
+      },
+      {
+        input: { key: 'k', labels: null, model: null, tools: null },
+        data: { key: 'k', labels: null, model: null, tools: null },
+      },
+    ],
+    rejects: [
+      {},
+      { expected_version: 1 },
+      { key: '' },
+      { key: 'k', expected_version: 0 },
+      { key: 'k', expected_version: 1.5 },
+      { key: 'k', thinking_level: 'think64k' },
+      { key: 'k', setting_sources: ['bogus'] },
+      { key: 'k', model_pool: [{ model: 'm', maxConcurrent: 0, weight: 1 }] },
     ],
   },
   {

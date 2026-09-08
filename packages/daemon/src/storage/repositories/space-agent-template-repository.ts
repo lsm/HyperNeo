@@ -129,7 +129,11 @@ export class SpaceAgentTemplateRepository {
       values.push(encodeJsonArray(params.labels));
     }
 
-    if (fields.length === 0) return this.getByKey(key);
+    if (fields.length === 0) {
+      if (expectedVersion === undefined) return this.getByKey(key);
+      const current = this.getByKeyWithVersion(key);
+      return current !== null && current.version === expectedVersion ? this.getByKey(key) : null;
+    }
 
     const nextVersion = this.nextVersionFor(key);
     fields.push('updated_at = ?');

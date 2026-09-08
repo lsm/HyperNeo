@@ -84,6 +84,7 @@ import {
   UnassignAgentFromGoalSchema,
   UnsubscribeAgentEventSchema,
   UpdateAgentSchema,
+  UpdateAgentTemplateSchema,
   UpdateForgeEpisodeSchema,
   UpdateForgeLessonSchema,
   UpdateForgeScopeSchema,
@@ -276,6 +277,18 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       paramsSchema: CreateAgentTemplateSchema,
       auditRedactKeys: ['instructions', 'description'],
       handler: (args) => handlers.create_agent_template(args),
+    }),
+    defineAction({
+      name: 'update_agent_template',
+      family: 'agents',
+      safetyClass: 'mutate',
+      description:
+        'Update a user-authored agent template by key with compare-and-swap versioning; built-in templates are code-defined and rejected; returns the updated template with its new version.',
+      paramsDoc:
+        'key, expected_version?, display_name?, description?, instructions?, labels?, model?, provider?, model_pool?, thinking_level?, setting_sources?, tools? (null clears)',
+      paramsSchema: UpdateAgentTemplateSchema,
+      auditRedactKeys: ['instructions', 'description'],
+      handler: (args) => handlers.update_agent_template(args),
     }),
     defineAction({
       name: 'list_agent_templates',

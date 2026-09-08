@@ -155,6 +155,7 @@ describe('SpaceAgentTemplateManager', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
       expect(result.value.key).toBe('release-readiness.custom');
+      expect(result.value.version).toBe(1);
       expect(manager.getByKey('release-readiness.custom')).not.toBeNull();
     });
 
@@ -787,6 +788,88 @@ describe('SpaceAgentTemplateManager', () => {
       const final = manager.getByKey('release-readiness.custom');
       expect(final?.model).toBe('glm-4-flash');
       expect(final?.provider).toBe('glm');
+    });
+  });
+
+  describe('casUpdate', () => {
+    test('updates against a matching expected version and returns the new version', async () => {
+      await manager.create(fullParams());
+
+      const result = await manager.casUpdate(
+        'release-readiness.custom',
+        { displayName: 'Updated' },
+        1
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value?.displayName).toBe('Updated');
+      expect(result.value?.version).toBe(2);
+    });
+
+    test('returns a null value on a stale expected version without persisting', async () => {
+      await manager.create(fullParams());
+
+      const result = await manager.casUpdate(
+        'release-readiness.custom',
+        { displayName: 'Stale' },
+        999
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value).toBeNull();
+      expect(repo.getByKey('release-readiness.custom')?.displayName).toBe('Release Readiness');
+    });
+
+    test('omitting expectedVersion validates against the current version', async () => {
+      await manager.create(fullParams());
+
+      const result = await manager.casUpdate('release-readiness.custom', {
+        displayName: 'Fresh',
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value?.displayName).toBe('Fresh');
+      expect(result.value?.version).toBe(2);
+    });
+
+    test('returns an error for an unknown key', async () => {
+      const result = await manager.casUpdate('missing.custom', { displayName: 'X' }, 1);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('not found');
+    });
+
+    test('probes the current version with no fields and a matching expected version', async () => {
+      await manager.create(fullParams());
+
+      const result = await manager.casUpdate('release-readiness.custom', {}, 1);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value?.version).toBe(1);
+      expect(result.value?.displayName).toBe('Release Readiness');
+    });
+
+    test('rejects a stale expected version on a no-field update', async () => {
+      await manager.create(fullParams());
+
+      const result = await manager.casUpdate('release-readiness.custom', {}, 999);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value).toBeNull();
+    });
+
+    test('validates fields exactly like update', async () => {
+      await manager.create(fullParams());
+
+      const result = await manager.casUpdate('release-readiness.custom', { displayName: '   ' }, 1);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('display name');
     });
   });
 

@@ -57,7 +57,10 @@ import {
 } from '../agents/unified-agent-events.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import { formatAgentMessage } from '../agent-message-envelope.ts';
-import { getLongHorizonAgentTemplates } from '../agents/long-horizon-agent-templates.ts';
+import {
+  getLongHorizonAgentTemplate,
+  getLongHorizonAgentTemplates,
+} from '../agents/long-horizon-agent-templates.ts';
 import { deriveAgentTemplate } from '../agents/template-derivation.ts';
 import { getNextRunAt, isValidCronExpression } from '../schedule/cron-utils.ts';
 import { mergeEvolutionPolicy } from '../evolution-scope-service.ts';
@@ -186,6 +189,7 @@ import {
   UnassignAgentFromGoalSchema,
   UnsubscribeAgentEventSchema,
   UpdateAgentSchema,
+  UpdateAgentTemplateSchema,
   UpdateForgeEpisodeSchema,
   UpdateForgeLessonSchema,
   UpdateForgeScopeSchema,
@@ -365,7 +369,7 @@ function templateOverridesFromArgs(args: {
   display_name?: string;
   description?: string;
   instructions?: string;
-  labels?: string[];
+  labels?: string[] | null;
   suggested_autonomy_level?: SpaceAgentAutonomyLevel;
   model?: string | null;
   provider?: string | null;
@@ -1954,6 +1958,54 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         const result = await requireTemplateManager().create(params);
         if (!result.ok) return jsonResult({ success: false, error: result.error });
         logAudit('create_agent_template', { key: args.key, from_agent_id: args.from_agent_id });
+        return jsonResult({ success: true, template: result.value });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResult({ success: false, error: message });
+      }
+    },
+
+    async update_agent_template(args: {
+      key: string;
+      expected_version?: number;
+      display_name?: string;
+      description?: string;
+      instructions?: string;
+      labels?: string[] | null;
+      model?: string | null;
+      provider?: string | null;
+      model_pool?: AgentModelPoolEntry[] | null;
+      thinking_level?: SpaceLongHorizonAgent['thinkingLevel'] | null;
+      setting_sources?: SpaceLongHorizonAgent['settingSources'] | null;
+      tools?: string[] | null;
+    }): Promise<ToolResult> {
+      try {
+        if (getLongHorizonAgentTemplate(args.key)) {
+          return jsonResult({
+            success: false,
+            error: `Template "${args.key}" is built-in and cannot be updated; built-ins live in the code registry (packages/daemon/src/lib/space/agents/long-horizon-agent-templates.ts)`,
+          });
+        }
+        const result = await requireTemplateManager().casUpdate(
+          args.key,
+          templateOverridesFromArgs(args),
+          args.expected_version
+        );
+        if (!result.ok) return jsonResult({ success: false, error: result.error });
+        if (result.value === null) {
+          const expected =
+            args.expected_version === undefined
+              ? ''
+              : ` (expected version ${args.expected_version})`;
+          return jsonResult({
+            success: false,
+            error: `Template "${args.key}" was modified concurrently${expected}; re-check the template and retry with its current version`,
+          });
+        }
+        logAudit('update_agent_template', {
+          key: args.key,
+          expected_version: args.expected_version,
+        });
         return jsonResult({ success: true, template: result.value });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -4631,6 +4683,12 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
         'Create a reusable agent template in this Space: handle, prompt, model/provider/model_pool/thinking_level/setting_sources, tool allowlist, labels, and a suggested autonomy level. Pass from_agent_id to derive defaults from an existing long-horizon agent in this space; caller-supplied fields override the derived ones.',
         CreateAgentTemplateSchema.shape,
         (args) => handlers.create_agent_template(args)
+      ),
+      tool(
+        'update_agent_template',
+        'Update a user-authored agent template in this Space by key: display_name, description, instructions, labels, model/provider/model_pool/thinking_level/setting_sources, and tools. Omitted fields stay unchanged; null clears a field to inherit defaults. Pass expected_version (from a prior create/update result) to fail on concurrent modification — the returned template carries its new version. Built-in templates are defined in code and cannot be updated.',
+        UpdateAgentTemplateSchema.shape,
+        (args) => handlers.update_agent_template(args)
       ),
       tool(
         'list_agent_templates',

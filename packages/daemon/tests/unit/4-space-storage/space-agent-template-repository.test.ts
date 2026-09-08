@@ -224,6 +224,14 @@ describe('SpaceAgentTemplateRepository', () => {
     expect(repo.update('release-readiness.custom', {})).toEqual(created);
   });
 
+  test('casUpdate with no fields honors the expected version', () => {
+    repo.create(fullParams());
+
+    expect(repo.casUpdate('release-readiness.custom', {}, 999)).toBeNull();
+    expect(repo.casUpdate('release-readiness.custom', {}, 1)?.key).toBe('release-readiness.custom');
+    expect(repo.casUpdate('release-readiness.custom', {})).not.toBeNull();
+  });
+
   test('update on an unknown key returns null', () => {
     expect(repo.update('missing.custom', { handle: 'x' })).toBeNull();
   });

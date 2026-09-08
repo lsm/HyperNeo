@@ -410,6 +410,50 @@ export const CreateAgentTemplateSchema = z.object({
     ),
 });
 
+export const UpdateAgentTemplateSchema = z.object({
+  key: z
+    .string()
+    .min(1)
+    .describe('Key of the user-authored template to update; built-in keys are rejected'),
+  expected_version: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe(
+      'Version the caller last saw (from a prior create/update result); the update fails when the stored version differs. Omit to update against the current stored version.'
+    ),
+  display_name: z.string().optional().describe('New display name'),
+  description: z.string().optional().describe('New short summary of what the template is for'),
+  instructions: z
+    .string()
+    .optional()
+    .describe('New system prompt for agents created from this template'),
+  labels: z
+    .array(z.string())
+    .nullable()
+    .optional()
+    .describe('Open tags replacing the existing labels; null clears them'),
+  model: z.string().nullable().optional().describe('Model override; null to inherit defaults'),
+  provider: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Provider override; null to inherit defaults'),
+  model_pool: z
+    .array(AgentModelPoolEntrySchema)
+    .nullable()
+    .optional()
+    .describe('Weighted model pool; null to inherit defaults'),
+  thinking_level: ThinkingLevelSchema.nullable().optional().describe('Thinking level override'),
+  setting_sources: SettingSourcesSchema.nullable().optional().describe('Settings sources'),
+  tools: z
+    .array(z.string())
+    .nullable()
+    .optional()
+    .describe('Tool allowlist; null to inherit defaults'),
+});
+
 export const UpdateAgentSchema = z.object({
   agent_id: z.string().describe('Long-horizon agent ID'),
   name: z.string().optional().describe('New agent name'),
@@ -492,6 +536,7 @@ export const SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS = {
   create_agent: CreateAgentSchema,
   create_agent_from_template: CreateAgentFromTemplateSchema,
   create_agent_template: CreateAgentTemplateSchema,
+  update_agent_template: UpdateAgentTemplateSchema,
   list_agent_templates: ListAgentTemplatesSchema,
   update_agent: UpdateAgentSchema,
   pause_agent: PauseAgentSchema,
