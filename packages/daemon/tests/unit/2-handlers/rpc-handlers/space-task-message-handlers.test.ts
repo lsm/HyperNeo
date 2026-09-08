@@ -727,6 +727,75 @@ describe('setupSpaceTaskMessageHandlers', () => {
       });
     });
 
+    describe('manager-method binding', () => {
+      const mockTaskWithWorkflowRun: SpaceTask = {
+        ...mockTaskWithSession,
+        workflowRunId: 'run-bind-1',
+      };
+
+      function setupWithThisDependentManager() {
+        const mh = createMockMessageHub();
+        hub = mh.hub;
+        handlers = mh.handlers;
+        const calls: Array<{ sessionId: string; thisBound: boolean }> = [];
+        const manager = {
+          origin: 'manager-instance',
+          injectSubSessionMessage(subSessionId: string) {
+            calls.push({ sessionId: subSessionId, thisBound: this.origin === 'manager-instance' });
+            return Promise.resolve();
+          },
+        };
+        taskAgentManager = manager as unknown as TaskAgentManagerInterface;
+        db = createMockDatabase(mockTaskWithWorkflowRun);
+        internalEventBus = {
+          publish: mock(async () => ({ delivered: 0, failures: [] })),
+          publishAsync: mock(() => {}),
+        } as unknown as InternalEventBus<DaemonInternalEventMap>;
+        setupSpaceTaskMessageHandlers(
+          hub,
+          taskAgentManager,
+          db,
+          internalEventBus,
+          makeNodeExecutionRepo([
+            {
+              id: 'exec-coder',
+              workflowNodeId: 'node-1',
+              agentName: 'coder',
+              agentSessionId: 'session-coder-1',
+            },
+          ])
+        );
+        return { calls };
+      }
+
+      it('invokes injectSubSessionMessage bound to the manager so this-dependent methods work', async () => {
+        const { calls } = setupWithThisDependentManager();
+
+        const res = await call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: 'steer the coder',
+          target: { kind: 'node_agent', agentName: 'coder' },
+        });
+
+        expect(res).toEqual({ ok: true, routedTo: ['coder'] });
+        expect(calls).toEqual([{ sessionId: 'session-coder-1', thisBound: true }]);
+      });
+
+      it('invokes the @mention path bound to the manager as well', async () => {
+        const { calls } = setupWithThisDependentManager();
+
+        const res = await call('space.task.sendMessage', {
+          spaceId: 'space-1',
+          taskId: 'task-1',
+          message: '@coder steer the coder',
+        });
+
+        expect(res).toMatchObject({ ok: true, routedTo: ['coder'] });
+        expect(calls).toEqual([{ sessionId: 'session-coder-1', thisBound: true }]);
+      });
+    });
+
     describe('post-approval worker routing', () => {
       const mockTaskWithWorkflowRun: SpaceTask = {
         ...mockTaskWithSession,
