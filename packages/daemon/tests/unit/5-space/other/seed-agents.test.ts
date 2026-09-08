@@ -48,27 +48,12 @@ describe('PRESET_AGENT_TOOLS export', () => {
     'CronList',
   ];
 
-  it('has entries for all 6 preset roles', () => {
-    expect(Object.keys(PRESET_AGENT_TOOLS).sort()).toEqual([
-      'coder',
-      'general',
-      'planner',
-      'qa',
-      'research',
-      'reviewer',
-    ]);
+  it('has entries for all 4 preset roles', () => {
+    expect(Object.keys(PRESET_AGENT_TOOLS).sort()).toEqual(['coder', 'qa', 'research', 'reviewer']);
   });
 
   it('coder role maps to empty permissive profile', () => {
     expect(PRESET_AGENT_TOOLS.coder).toEqual(EXPECTED_CODER_TOOLS);
-  });
-
-  it('general role maps to GENERAL_TOOLS (empty permissive profile)', () => {
-    expect(PRESET_AGENT_TOOLS.general).toEqual(EXPECTED_CODER_TOOLS);
-  });
-
-  it('planner role maps to PLANNER_TOOLS (empty permissive profile)', () => {
-    expect(PRESET_AGENT_TOOLS.planner).toEqual(EXPECTED_CODER_TOOLS);
   });
 
   it('research role maps to RESEARCH_TOOLS (empty permissive profile)', () => {
@@ -103,15 +88,15 @@ describe('SUB_SESSION_FEATURES export', () => {
 });
 
 describe('getPresetAgentTemplates', () => {
-  it('returns exactly 6 templates', () => {
+  it('returns exactly 4 templates', () => {
     const templates = getPresetAgentTemplates();
-    expect(templates).toHaveLength(6);
+    expect(templates).toHaveLength(4);
   });
 
   it('returns all expected agent names', () => {
     const templates = getPresetAgentTemplates();
     const names = templates.map((t) => t.name).sort();
-    expect(names).toEqual(['Coder', 'General', 'Planner', 'QA', 'Research', 'Reviewer']);
+    expect(names).toEqual(['Coder', 'QA', 'Research', 'Reviewer']);
   });
 
   it('each template has name, description, tools, and customPrompt', () => {

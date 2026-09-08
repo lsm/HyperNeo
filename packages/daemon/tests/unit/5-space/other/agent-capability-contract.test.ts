@@ -77,8 +77,6 @@ describe('effective runtime capability vs declared profile (worker presets)', ()
   test('every permissive preset inherits the full deniable set at runtime', () => {
     const permissive = {
       coder: PRESET_AGENT_TOOLS.coder,
-      general: PRESET_AGENT_TOOLS.general,
-      planner: PRESET_AGENT_TOOLS.planner,
       research: PRESET_AGENT_TOOLS.research,
     };
     for (const [name, profile] of Object.entries(permissive)) {

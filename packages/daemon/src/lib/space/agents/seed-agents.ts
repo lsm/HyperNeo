@@ -3,8 +3,6 @@ import {
   QA_SYSTEM_CONTRACT,
   REVIEWER_SYSTEM_CONTRACT,
   PRESET_CODER_PROMPT,
-  PRESET_GENERAL_PROMPT,
-  PRESET_PLANNER_PROMPT,
   PRESET_RESEARCH_PROMPT,
 } from '@hyperneo/prompts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
@@ -22,10 +20,6 @@ export const SUB_SESSION_FEATURES = {
 const PERMISSIVE_TOOLS: string[] = [];
 
 const CODER_TOOLS = PERMISSIVE_TOOLS;
-
-const GENERAL_TOOLS = PERMISSIVE_TOOLS;
-
-const PLANNER_TOOLS = PERMISSIVE_TOOLS;
 
 const RESEARCH_TOOLS = PERMISSIVE_TOOLS;
 
@@ -72,8 +66,6 @@ const QA_TOOLS: string[] = [
 
 export const PRESET_AGENT_TOOLS: Record<string, string[]> = {
   coder: CODER_TOOLS,
-  general: GENERAL_TOOLS,
-  planner: PLANNER_TOOLS,
   research: RESEARCH_TOOLS,
   reviewer: REVIEWER_TOOLS,
   qa: QA_TOOLS,
@@ -98,23 +90,6 @@ const PRESET_AGENTS: PresetDefinition[] = [
       'Implementation worker. Writes code, runs tests, commits changes, and opens pull requests.',
     tools: CODER_TOOLS,
     customPrompt: PRESET_CODER_PROMPT,
-  },
-  {
-    name: 'General',
-    handle: 'general',
-    description:
-      'General-purpose worker. Handles a wide range of tasks including coding, documentation, ' +
-      'debugging, and analysis.',
-    tools: GENERAL_TOOLS,
-    customPrompt: PRESET_GENERAL_PROMPT,
-  },
-  {
-    name: 'Planner',
-    handle: 'planner',
-    description:
-      'Planning agent. Breaks down goals into actionable tasks and drafts implementation plans.',
-    tools: PLANNER_TOOLS,
-    customPrompt: PRESET_PLANNER_PROMPT,
   },
   {
     name: 'Research',
