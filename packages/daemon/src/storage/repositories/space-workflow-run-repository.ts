@@ -214,6 +214,10 @@ export class SpaceWorkflowRunRepository {
            OR (
              run.status = 'done'
              AND EXISTS (
+               SELECT 1 FROM space_tasks t
+                WHERE t.workflow_run_id = run.id AND t.status != 'archived'
+             )
+             AND EXISTS (
                SELECT 1 FROM workflow_run_artifacts a
                 WHERE a.run_id = run.id
                   AND a.artifact_type = 'decision'
