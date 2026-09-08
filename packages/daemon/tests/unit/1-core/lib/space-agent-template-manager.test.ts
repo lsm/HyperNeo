@@ -495,7 +495,7 @@ describe('SpaceAgentTemplateManager', () => {
     test('strips spoofed relocation marker labels from create input', async () => {
       const result = await manager.create({
         ...fullParams(),
-        labels: ['relocated-from:worker.swe', 'quality'],
+        labels: ['relocated-from:worker.swe', ' relocated-from:worker.swe', 'quality'],
       });
 
       expect(result.ok).toBe(true);

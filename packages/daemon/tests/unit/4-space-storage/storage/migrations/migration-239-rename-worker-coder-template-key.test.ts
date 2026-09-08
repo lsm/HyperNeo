@@ -458,6 +458,28 @@ describe('migration 239 — rename worker.coder slot templateKey to worker.swe',
     db.close();
   });
 
+  test('preserves a route that exactly matches a whitespace-suffixed slot name', () => {
+    const db = createMigrationDb();
+    insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
+    insertNodeWithSlots(
+      db,
+      'node-1',
+      'wf-1',
+      [
+        { agentId: '', templateKey: 'team.x', name: 'worker.coder ' },
+        { agentId: '', templateKey: 'worker.coder', name: 'coder' },
+      ],
+      { targetAgent: 'worker.coder ' }
+    );
+
+    runMigration239(db);
+
+    expect((readNodeConfig(db, 'node-1').postApproval as { targetAgent: string }).targetAgent).toBe(
+      'worker.coder '
+    );
+    db.close();
+  });
+
   test('strips pre-existing spoofed relocation labels from stored templates', () => {
     const db = createMigrationDb();
     insertStoredTemplate(db, 'team.x', ['relocated-from:worker.swe', 'quality']);

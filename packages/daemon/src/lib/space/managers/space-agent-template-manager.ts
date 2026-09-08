@@ -254,9 +254,9 @@ function createValidateTools(ctx: CreateTemplateCtx): CreateTemplateCtx {
 }
 
 function createValidateLabels(ctx: CreateTemplateCtx): CreateTemplateCtx {
-  const { labels, error } = normalizeTemplateLabels(stripRelocationMarkerLabels(ctx.params.labels));
+  const { labels, error } = normalizeTemplateLabels(ctx.params.labels);
   if (error) return { ...ctx, error };
-  return { ...ctx, params: { ...ctx.params, labels } };
+  return { ...ctx, params: { ...ctx.params, labels: stripRelocationMarkerLabels(labels)! } };
 }
 
 async function createValidateModel(ctx: CreateTemplateCtx): Promise<CreateTemplateCtx> {
@@ -320,10 +320,11 @@ function updateValidateTools(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
 
 function updateValidateLabels(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
   if (ctx.params.labels === undefined) return ctx;
-  const { labels, error } = normalizeTemplateLabels(stripRelocationMarkerLabels(ctx.params.labels));
+  const { labels, error } = normalizeTemplateLabels(ctx.params.labels);
   if (error) return { ...ctx, error };
+  const userLabels = stripRelocationMarkerLabels(labels)!;
   const sticky = (ctx.existing?.labels ?? []).filter((label) => isRelocationMarkerLabel(label));
-  const merged = [...labels];
+  const merged = [...userLabels];
   for (const label of sticky) {
     if (!merged.includes(label)) merged.push(label);
   }

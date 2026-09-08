@@ -230,7 +230,7 @@ function normalizeImportedPostApproval(
   if (!postApproval || typeof postApproval.targetAgent !== 'string') {
     return { postApproval, error: null };
   }
-  const target = postApproval.targetAgent.trim();
+  const target = postApproval.targetAgent;
   const normalized = normalizeLegacyWorkerTemplateKey(target);
   if (normalized === target) return { postApproval, error: null };
   const selectedIndex = slots.findIndex(

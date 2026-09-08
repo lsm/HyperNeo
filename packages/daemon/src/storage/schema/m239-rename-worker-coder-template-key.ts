@@ -126,7 +126,7 @@ function rewritePostApprovalTarget(
   storedRelocation: string | null
 ): boolean {
   if (typeof postApproval.targetAgent !== 'string') return false;
-  const target = postApproval.targetAgent.trim();
+  const target = postApproval.targetAgent;
   const replacement = renamedKeyFor(target, storedRelocation);
   if (!replacement) return false;
   const selectedIndex = slots.findIndex((slot) => slotMatchesTarget(slot, target, false));
