@@ -376,6 +376,40 @@ describe('TaskAgentManager on-demand worker resume', () => {
       startQuery: false,
     });
   });
+
+  it('injects the prompt only after a dormant ghost session is attached', async () => {
+    const manager = Object.create(TaskAgentManager.prototype) as TaskAgentManager;
+    const restored = {} as AgentSession;
+    const agentSessionIndex = new Map<string, AgentSession>();
+    const rehydrateSubSession = mock(async (sessionId: string) => {
+      agentSessionIndex.set(sessionId, restored);
+      return restored;
+    });
+    const injectMessageIntoSession = mock(async () => 'message-1');
+    Object.defineProperty(manager, 'agentSessionIndex', { value: agentSessionIndex });
+    Object.defineProperty(manager, 'subSessions', { value: new Map() });
+    Object.defineProperty(manager, 'resolveNodeExecutionForSubSession', { value: () => null });
+    Object.defineProperty(manager, 'rehydrateSubSession', { value: rehydrateSubSession });
+    Object.defineProperty(manager, 'injectMessageIntoSession', { value: injectMessageIntoSession });
+
+    await expect(manager.injectSubSessionMessage(EXEC_SESSION_ID, 'hello')).resolves.toBe(
+      'message-1'
+    );
+
+    expect(rehydrateSubSession).toHaveBeenCalledWith(EXEC_SESSION_ID, undefined, {
+      startQuery: false,
+    });
+    expect(injectMessageIntoSession).toHaveBeenCalledWith(
+      restored,
+      'hello',
+      'immediate',
+      undefined,
+      true,
+      undefined,
+      'task',
+      undefined
+    );
+  });
 });
 
 function executionWorkerSession(): AgentSession {
