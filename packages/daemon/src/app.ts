@@ -74,6 +74,7 @@ import {
 import { createReactiveDatabase } from './storage/reactive-database.ts';
 import { LiveQueryEngine } from './storage/live-query.ts';
 import { installProcessFatalLogging } from './lib/process-fatal-logger.ts';
+import { startEventLoopWatchdog, type EventLoopWatchdogHandle } from './lib/event-loop-watchdog.ts';
 import { WorkflowHookRuntimeService } from './lib/space/workflow-hook-runtime-service.ts';
 import { WorkflowHookStateRepository } from './storage/repositories/workflow-hook-state-repository.ts';
 import { SpaceLongHorizonAgentRepository } from './storage/repositories/space-long-horizon-agent-repository.ts';
@@ -315,6 +316,7 @@ export interface DaemonAppContext {
   skillsManager: SkillsManager;
   fileIndex: FileIndex;
   flushStructuredLogs: () => Promise<void>;
+  armShutdownFuse: () => void;
   cleanup: () => Promise<void>;
 }
 
@@ -330,6 +332,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
   const { config, verbose = true, standalone = false } = options;
   let startupLogCaptureCleanup: (() => void) | null = null;
   let unsubscribeProviderFailureChanges: (() => void) | null = null;
+  let eventLoopWatchdog: EventLoopWatchdogHandle | null = null;
   await releaseStartupFileLogCapture().catch(() => {});
   const structuredLogSink = config.structuredLogFilePath
     ? new StructuredLogFileSink({
@@ -366,6 +369,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
     delete process.env.CLAUDECODE;
 
     if (process.env.NODE_ENV !== 'test') {
+      eventLoopWatchdog = await startEventLoopWatchdog();
+
       const prefetchLogInfo = verbose ? console.log : () => {};
       const prefetchLogError = verbose ? console.error : () => {};
       void prefetchAgentMemoryEmbeddingModel({
@@ -1464,7 +1469,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         await invalidateInFlightModelLoads();
         throw error;
       } finally {
-        await closeFileLogCapture();
+        try {
+          await closeFileLogCapture();
+        } finally {
+          eventLoopWatchdog?.stop();
+        }
       }
     };
 
@@ -1501,10 +1510,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       skillsManager,
       fileIndex,
       flushStructuredLogs: () => structuredLogSink?.flush() ?? Promise.resolve(),
+      armShutdownFuse: () => eventLoopWatchdog?.armShutdownFuse(),
       cleanup,
     };
   } catch (error) {
     startupTimer.finish();
+    eventLoopWatchdog?.stop();
     startupLogCaptureCleanup?.();
     unsubscribeProviderFailureChanges?.();
     await invalidateInFlightModelLoads();
