@@ -6383,6 +6383,7 @@ export class SpaceRuntime {
     if (spawnAdmission.action === 'skipSpawn') {
       if (
         spawnAdmission.reason === 'canonical_task_terminal' ||
+        spawnAdmission.reason === 'task_blocked' ||
         spawnAdmission.reason === 'parked_awaiting_approval'
       ) {
         log.info(

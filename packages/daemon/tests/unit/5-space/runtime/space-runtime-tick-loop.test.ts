@@ -377,6 +377,7 @@ describe('SpaceRuntime — tick loop correctness', () => {
     test.each([
       'rate_limited',
       'stopped',
+      'blocked',
     ] as const)('%s canonical task stops before spawn work', async (status) => {
       let spawnCount = 0;
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {

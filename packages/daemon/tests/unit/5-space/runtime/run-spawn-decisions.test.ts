@@ -221,7 +221,7 @@ describe('decideSpawnAdmission', () => {
     ).toEqual({ action: 'spawn' });
   });
 
-  test('spawns for a blocked task because blocked is not terminal for spawn', () => {
+  test('skips spawn for a blocked task even with pending executions and a space (#3823)', () => {
     expect(
       decideSpawnAdmission({
         pendingExecutionCount: 1,
@@ -229,7 +229,40 @@ describe('decideSpawnAdmission', () => {
         pendingExecutions: [makeSpawnPending()],
         hasSpace: true,
       })
-    ).toEqual({ action: 'spawn' });
+    ).toEqual({ action: 'skipSpawn', reason: 'task_blocked' });
+  });
+
+  test('task_blocked outranks a missing space', () => {
+    expect(
+      decideSpawnAdmission({
+        pendingExecutionCount: 1,
+        canonicalTaskStatus: 'blocked',
+        pendingExecutions: [makeSpawnPending()],
+        hasSpace: false,
+      })
+    ).toEqual({ action: 'skipSpawn', reason: 'task_blocked' });
+  });
+
+  test('terminal outranks task_blocked when both hold', () => {
+    expect(
+      decideSpawnAdmission({
+        pendingExecutionCount: 1,
+        canonicalTaskStatus: 'stopped',
+        pendingExecutions: [makeSpawnPending()],
+        hasSpace: false,
+      })
+    ).toEqual({ action: 'skipSpawn', reason: 'canonical_task_terminal' });
+  });
+
+  test('noPendingExecutions still wins for a blocked task', () => {
+    expect(
+      decideSpawnAdmission({
+        pendingExecutionCount: 0,
+        canonicalTaskStatus: 'blocked',
+        pendingExecutions: [],
+        hasSpace: true,
+      })
+    ).toEqual({ action: 'noPendingExecutions' });
   });
 });
 

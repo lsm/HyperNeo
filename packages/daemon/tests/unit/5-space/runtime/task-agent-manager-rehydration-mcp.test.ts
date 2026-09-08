@@ -234,6 +234,28 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(registered.get(SUB_SESSION_ID)).toBe(fake.agentSession);
   });
 
+  test('a blocked parent task restores the worker idle without starting a query (#3823)', async () => {
+    const { tam, registered } = makeManager();
+    const task = (
+      tam.config as unknown as { taskRepo: { getTask: () => { status: string } } }
+    ).taskRepo.getTask();
+    task.status = 'blocked';
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    restoreSpy = spyOn(AgentSession, 'restore').mockImplementation(
+      (() => fake.agentSession) as unknown as typeof AgentSession.restore
+    );
+
+    const rehydrated = await rehydrateOf(tam)(SUB_SESSION_ID);
+
+    expect(rehydrated).toBe(fake.agentSession);
+    expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers']);
+    const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> })
+      .agentSessionIndex;
+    expect(index.get(SUB_SESSION_ID)).toBe(fake.agentSession);
+    expect(registered.get(SUB_SESSION_ID)).toBe(fake.agentSession);
+  });
+
   test('concurrent rehydrates of the same sub-session share one restored instance', async () => {
     const { tam } = makeManager();
     let releaseStart: (() => void) | null = null;

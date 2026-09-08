@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { NodeExecution, Space, SpaceTask, SpaceWorkflowRun } from '@hyperneo/shared';
 import {
+  applyBlockedTaskGate,
   applyDaemonCleanupGate,
   applyManualQueryModeGate,
   applyTaskGate,
@@ -68,6 +69,7 @@ describe('restored worker admission decisionRun gates', () => {
     expect(applyManualQueryModeGate(ctx)).toEqual({ value: ctx });
     expect(applyDaemonCleanupGate(ctx)).toEqual({ value: ctx });
     expect(applyTaskGate(ctx)).toEqual({ value: ctx });
+    expect(applyBlockedTaskGate(ctx)).toEqual({ value: ctx });
   });
 
   test('manual query mode denies unless replay provisioning is settling', async () => {
@@ -97,6 +99,33 @@ describe('restored worker admission decisionRun gates', () => {
     ).resolves.toBe(false);
     await expect(
       decideRestoredWorkerAdmission(undecided({ task: makeTask({ status: 'archived' }) }))
+    ).resolves.toBe(false);
+  });
+
+  test('a blocked task denies worker startup and replay settlement (#3823)', async () => {
+    await expect(
+      decideRestoredWorkerAdmission(undecided({ task: makeTask({ status: 'blocked' }) }))
+    ).resolves.toBe(false);
+    await expect(
+      decideRestoredWorkerAdmission(
+        undecided({ task: makeTask({ status: 'blocked' }), settleReplayProvisioning: true })
+      )
+    ).resolves.toBe(false);
+    await expect(
+      decideRestoredWorkerAdmission(
+        undecided({
+          task: makeTask({ status: 'blocked' }),
+          execution: makeExecution({ status: 'blocked' }),
+        })
+      )
+    ).resolves.toBe(false);
+    await expect(
+      decideRestoredWorkerAdmission(
+        undecided({
+          task: makeTask({ status: 'blocked' }),
+          sessionId: POST_APPROVAL_SESSION_ID,
+        })
+      )
     ).resolves.toBe(false);
   });
 
@@ -252,6 +281,16 @@ describe('restored worker admission fact-read ordering', () => {
     expect(reads.fetchSpace).toBe(0);
     expect(reads.sessionStatus).toBe(0);
     expect(reads.execution).toBe(0);
+  });
+
+  test('a blocked-task deny reads no run, space, session, or execution facts', async () => {
+    const { input, reads } = countingInput({ task: () => makeTask({ status: 'blocked' }) });
+    await expect(decideRestoredWorkerAdmission(input)).resolves.toBe(false);
+    expect(reads.workflowRun).toBe(0);
+    expect(reads.fetchSpace).toBe(0);
+    expect(reads.sessionStatus).toBe(0);
+    expect(reads.execution).toBe(0);
+    expect(reads.hasQueuedRetryableHookAction).toBe(0);
   });
 
   test('a cancelled-run deny never awaits the space lookup', async () => {

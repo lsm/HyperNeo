@@ -20,6 +20,7 @@ export function isParkedAwaitingApproval(
 
 export type SpawnAdmissionSkipReason =
   | 'canonical_task_terminal'
+  | 'task_blocked'
   | 'parked_awaiting_approval'
   | 'space_missing';
 
@@ -39,6 +40,9 @@ export function decideSpawnAdmission(input: SpawnAdmissionInput): SpawnAdmission
   if (input.pendingExecutionCount <= 0) return { action: 'noPendingExecutions' };
   if (isCanonicalTaskTerminalForSpawn(input.canonicalTaskStatus)) {
     return { action: 'skipSpawn', reason: 'canonical_task_terminal' };
+  }
+  if (input.canonicalTaskStatus === 'blocked') {
+    return { action: 'skipSpawn', reason: 'task_blocked' };
   }
   if (isParkedAwaitingApproval(input.canonicalTaskStatus, input.pendingExecutions)) {
     return { action: 'skipSpawn', reason: 'parked_awaiting_approval' };
