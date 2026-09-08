@@ -261,4 +261,27 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
     expect(handleById(db, 'agent-manager-3')).toBe('space-manager-migrated-agent-manager-3-2');
     db.close();
   });
+
+  test('re-entry after a partial apply never relocates the deterministic manager', () => {
+    const db = makeDb();
+    db.prepare(
+      `INSERT INTO spaces (id, workspace_path, name, slug, created_at, updated_at)
+				VALUES ('space-9', '/tmp/space-9', 'Space 9', 'space-9', 1, 1)`
+    ).run();
+    db.prepare(
+      `INSERT INTO space_long_horizon_agents (
+					id, space_id, handle, display_name, template_key, status, session_id,
+					instructions, created_at, updated_at
+				) VALUES ('space-lh-agent:coordinator:space-9', 'space-9', 'coordinator', 'Coordinator', 'coordinator.default', 'active', 'space:chat:space-9', '', 1, 1)`
+    ).run();
+    runMigration238(db);
+    expect(handleById(db, 'space-lh-agent:coordinator:space-9')).toBe('space-manager');
+
+    runMigration238(db);
+    runMigration238(db);
+
+    expect(handleById(db, 'space-lh-agent:coordinator:space-9')).toBe('space-manager');
+    expect(rowById(db, 'space-lh-agent:coordinator:space-9').display_name).toBe('Space Manager');
+    db.close();
+  });
 });
