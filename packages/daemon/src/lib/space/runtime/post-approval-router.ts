@@ -70,6 +70,7 @@ export interface PostApprovalRouterDeps {
   }) => boolean;
   cancelSpawnedWorker?: (sessionId: string) => void;
   ownsRecordedPointer?: (args: { sessionId: string; taskId: string }) => boolean;
+  runtimeGenerationProvider?: () => number;
 }
 
 export interface PostApprovalRouteContext extends PostApprovalTemplateContext {
@@ -386,6 +387,17 @@ export class PostApprovalRouter {
       throw err;
     }
     const sessionId = spawnedSessionId;
+
+    if (
+      routeOptions.expectedRuntimeGeneration !== undefined &&
+      this.deps.runtimeGenerationProvider &&
+      this.deps.runtimeGenerationProvider() !== routeOptions.expectedRuntimeGeneration
+    ) {
+      this.deps.cancelSpawnedWorker?.(sessionId);
+      const reason = `runtime generation changed while spawning the post-approval worker for task ${task.id}; dispatch aborted before routing was recorded`;
+      log.warn(`PostApprovalRouter.route: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
 
     const recorded = this.deps.taskRepo.casPostApprovalRouting(
       task.id,

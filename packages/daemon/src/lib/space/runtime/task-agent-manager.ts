@@ -2542,6 +2542,11 @@ export class TaskAgentManager {
     return this.disposed;
   }
 
+  isSessionQueryActiveOrStarting(sessionId: string): boolean {
+    const indexed = this.agentSessionIndex.get(sessionId);
+    return indexed ? indexed.isQueryActiveOrStarting() : false;
+  }
+
   hasPendingRateLimitCooldown(sessionId: string): boolean {
     return this.readPersistedRateLimitCooldown(sessionId) !== null;
   }
@@ -5459,6 +5464,13 @@ export class TaskAgentManager {
             this.restoreWorkerMcpServers(existing, previousWorkerMcpServers);
             throw err;
           }
+        }
+        if (this.hasConsumedTaskInputSince(existing.session.id, taskId, task.approvedAt ?? 0)) {
+          log.info(
+            `TaskAgentManager.spawnPostApprovalSubSession: skipping kickoff inject to live session ` +
+              `${existingSessionId} — this approval generation's task input was already consumed`
+          );
+          return;
         }
         await this.injectMessageIntoSession(existing, kickoffMessage);
       });

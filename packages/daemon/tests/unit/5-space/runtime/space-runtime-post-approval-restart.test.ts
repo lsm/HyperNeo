@@ -93,6 +93,7 @@ interface TamMockOptions {
   };
   revivable?: string[];
   terminalRestoreIds?: string[];
+  notAdmittedRestoreIds?: string[];
 }
 
 function makeTaskAgentManagerMock(options: TamMockOptions = {}) {
@@ -102,6 +103,7 @@ function makeTaskAgentManagerMock(options: TamMockOptions = {}) {
   const adoption = options.adoption;
   const cancelled: string[] = [];
   const restoreCalls: Array<{ sessionId: string; deferredStart: boolean }> = [];
+  const queryActiveIds = new Set<string>();
   let runtimeRef: { stop: () => Promise<void> } | null = null;
   return {
     isSessionAlive: (sessionId: string) => aliveSessionIds.has(sessionId),
@@ -139,6 +141,9 @@ function makeTaskAgentManagerMock(options: TamMockOptions = {}) {
         return sessionId;
       }
       aliveSessionIds.add(sessionId);
+      if (!options.notAdmittedRestoreIds?.includes(sessionId)) {
+        queryActiveIds.add(sessionId);
+      }
       return sessionId;
     },
     isSpawning: () => false,
@@ -146,6 +151,7 @@ function makeTaskAgentManagerMock(options: TamMockOptions = {}) {
     isExecutionSpawning: () => false,
     isDisposed: () => adoption?.disposed === true,
     hasPendingRateLimitCooldown: () => false,
+    isSessionQueryActiveOrStarting: (sessionId: string) => queryActiveIds.has(sessionId),
     setRuntimeRef: (ref: { stop: () => Promise<void> }) => {
       runtimeRef = ref;
     },
@@ -648,7 +654,7 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
     taskRepo.updateTask(prior.id, { approvedAt: Date.now() - 5 * 60_000 });
 
     const spawned: string[] = [];
-    const { runtime: rt } = makeRuntime({
+    const { runtime: rt, cancelled } = makeRuntime({
       spawnImpl: async () => {
         spawned.push('session:replacement-post-approval');
         return { sessionId: 'session:replacement-post-approval' };
@@ -659,10 +665,35 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
     await rt.executeTick();
 
     expect(spawned).toEqual([]);
+    expect(cancelled).toContain('session:durable-orphan');
     const after = taskRepo.getTask(prior.id)!;
     expect(after.status).toBe('approved');
     expect(after.postApprovalSessionId ?? null).toBeNull();
     expect(after.postApprovalBlockedReason).toContain('could not be resumed');
+  });
+
+  test('restored worker whose query was not admitted is left retryable', async () => {
+    const workflow = buildRouteWorkflow();
+    const { task: prior } = seedApprovedPriorTask(workflow, 'done');
+
+    const spawned: string[] = [];
+    const { runtime: rt, restoreCalls } = makeRuntime({
+      spawnImpl: async () => {
+        spawned.push('session:replacement-post-approval');
+        return { sessionId: 'session:replacement-post-approval' };
+      },
+      revivable: ['session:dead-post-approval'],
+      notAdmittedRestoreIds: ['session:dead-post-approval'],
+    });
+
+    await rt.executeTick();
+
+    expect(restoreCalls.map((call) => call.sessionId)).toEqual(['session:dead-post-approval']);
+    expect(spawned).toEqual([]);
+    const after = taskRepo.getTask(prior.id)!;
+    expect(after.status).toBe('approved');
+    expect(after.postApprovalSessionId ?? null).toBeNull();
+    expect(after.postApprovalBlockedReason).toContain('query was not admitted');
   });
 
   test('a dispatch that outlives a stop/start cycle cannot release the next cycle claim', async () => {

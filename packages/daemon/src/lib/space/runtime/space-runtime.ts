@@ -2781,6 +2781,7 @@ export class SpaceRuntime {
       cancelSpawnedWorker: (sessionId) => manager.cancelBySessionId(sessionId),
       ownsRecordedPointer: ({ sessionId, taskId }) =>
         manager.isSessionWorkerForTask(sessionId, taskId),
+      runtimeGenerationProvider: () => this.getCurrentRuntimeGeneration(),
       goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
     });
@@ -7969,7 +7970,14 @@ export class SpaceRuntime {
         `SpaceRuntime: failed to resume adopted post-approval worker ${orphan.sessionId} for task ${task.id}: ${formatCommandError(err)}`
       );
     }
-    if (!resumedId || !manager.isSessionAlive(orphan.sessionId)) {
+    if (
+      !resumedId ||
+      !(
+        manager.isSessionAlive(orphan.sessionId) &&
+        this.postApprovalWorkerResumed(manager, orphan.sessionId)
+      )
+    ) {
+      manager.cancelBySessionId(orphan.sessionId);
       const fresh = this.config.taskRepo.getTask(task.id);
       if (
         fresh &&
@@ -7989,6 +7997,10 @@ export class SpaceRuntime {
     const adopted = this.config.taskRepo.getTask(task.id);
     if (adopted) await this.safeOnTaskUpdated(task.spaceId, adopted);
     return true;
+  }
+
+  private postApprovalWorkerResumed(manager: TaskAgentManager, sessionId: string): boolean {
+    return manager.isSessionQueryActiveOrStarting?.(sessionId) ?? true;
   }
 
   private async reviveRecordedPostApprovalWorker(
@@ -8017,6 +8029,26 @@ export class SpaceRuntime {
       return 'skip';
     }
     if (!restoredId || !manager.isSessionAlive(restoredId)) return 'replace';
+    const fresh = this.config.taskRepo.getTask(task.id);
+    if (
+      !fresh ||
+      fresh.status !== 'approved' ||
+      fresh.approvedAt !== task.approvedAt ||
+      fresh.workflowRunId !== task.workflowRunId ||
+      fresh.postApprovalSessionId !== task.postApprovalSessionId
+    ) {
+      manager.cancelBySessionId(restoredId);
+      return 'skip';
+    }
+    if (!this.postApprovalWorkerResumed(manager, restoredId)) {
+      this.config.taskRepo.updateTask(task.id, {
+        postApprovalSessionId: null,
+        postApprovalBlockedReason: `post-approval worker ${restoredId} restored but its query was not admitted; re-dispatch required`,
+      });
+      const blocked = this.config.taskRepo.getTask(task.id);
+      if (blocked) await this.safeOnTaskUpdated(task.spaceId, blocked);
+      return 'skip';
+    }
     log.info(
       `SpaceRuntime: resumed recorded post-approval worker ${restoredId} for task ${task.id} instead of replacing it`
     );
