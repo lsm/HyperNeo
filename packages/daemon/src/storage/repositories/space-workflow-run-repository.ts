@@ -221,7 +221,7 @@ export class SpaceWorkflowRunRepository {
                SELECT 1 FROM workflow_run_artifacts a
                 WHERE a.run_id = run.id
                   AND a.artifact_type = 'decision'
-                  AND a.updated_at > (
+                  AND a.updated_at >= (
                     SELECT COALESCE(MAX(t3.reconcile_checked_at), 0) FROM space_tasks t3
                      WHERE t3.workflow_run_id = run.id AND t3.status != 'archived'
                   )
@@ -238,7 +238,7 @@ export class SpaceWorkflowRunRepository {
                     OR COALESCE(TRIM(t.reported_summary), '') = ''
                   )
                   AND (
-                    t.updated_at > (
+                    t.updated_at >= (
                       SELECT COALESCE(MAX(t3.reconcile_checked_at), 0) FROM space_tasks t3
                        WHERE t3.workflow_run_id = run.id AND t3.status != 'archived'
                     )
@@ -248,7 +248,7 @@ export class SpaceWorkflowRunRepository {
                          AND s.id != t.id
                          AND s.status != 'archived'
                          AND COALESCE(TRIM(s.result), '') != ''
-                         AND s.updated_at > (
+                         AND s.updated_at >= (
                            SELECT COALESCE(MAX(t4.reconcile_checked_at), 0) FROM space_tasks t4
                             WHERE t4.workflow_run_id = run.id AND t4.status != 'archived'
                          )
@@ -258,7 +258,7 @@ export class SpaceWorkflowRunRepository {
                        WHERE e.workflow_run_id = run.id
                          AND e.status = 'idle'
                          AND COALESCE(TRIM(e.result), '') != ''
-                         AND e.updated_at > (
+                         AND e.updated_at >= (
                            SELECT COALESCE(MAX(t5.reconcile_checked_at), 0) FROM space_tasks t5
                             WHERE t5.workflow_run_id = run.id AND t5.status != 'archived'
                          )

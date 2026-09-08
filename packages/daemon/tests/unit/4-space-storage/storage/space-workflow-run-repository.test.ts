@@ -874,6 +874,23 @@ describe('SpaceWorkflowRunRepository.listTerminalRunsNeedingTaskReconciliation',
     expect(selectedRunIds()).toEqual([]);
   });
 
+  it('selects a done run whose source landed in the same millisecond as the watermark', () => {
+    const runId = seedRun('done');
+    seedTask(runId, {
+      result: null,
+      reportedSummary: null,
+      updatedAt: 1_500,
+      reconcileCheckedAt: 2_000,
+    });
+    seedExecution(runId, { status: 'idle', result: 'execution outcome', updatedAt: 2_000 });
+
+    expect(selectedRunIds()).toEqual([runId]);
+
+    markReconciled(runId, 3_000);
+
+    expect(selectedRunIds()).toEqual([]);
+  });
+
   it('selects a done run whose missing outcome can fill from a sibling result newer than the pass', () => {
     const runId = seedRun('done');
     seedTask(runId, {
