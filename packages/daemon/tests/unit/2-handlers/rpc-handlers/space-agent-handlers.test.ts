@@ -1102,7 +1102,7 @@ describe('Space Agent RPC Handlers', () => {
       );
       expect(result.agents).toHaveLength(3);
       const names = result.agents.map((a) => a.displayName).sort();
-      expect(names).toEqual(['Alpha', 'Beta', 'Coordinator']);
+      expect(names).toEqual(['Alpha', 'Beta', 'Space Manager']);
     });
 
     it('includes worker mirrors in the unified list', async () => {

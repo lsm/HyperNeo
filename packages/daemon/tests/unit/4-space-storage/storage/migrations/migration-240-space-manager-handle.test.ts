@@ -70,12 +70,12 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
     db.close();
   });
 
-  test('skips spaces that already hold an active space-manager row (unique-index guard)', () => {
+  test('relocates a pre-existing active space-manager holder instead of skipping the space', () => {
     const db = makeDb();
     runMigration240(db);
 
-    expect(handleById(db, 'agent-manager-3')).toBe('space-manager');
-    expect(handleById(db, 'agent-coord-3')).toBe('coordinator');
+    expect(handleById(db, 'agent-manager-3')).toBe('space-manager-migrated-agent-manager-3');
+    expect(handleById(db, 'agent-coord-3')).toBe('space-manager');
     db.close();
   });
 
@@ -86,6 +86,7 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
     const repo = new SpaceLongHorizonAgentRepository(db);
     expect(repo.getCoordinator('space-1')?.id).toBe('agent-coord-1');
     expect(repo.getCoordinatorRecord('space-1')?.id).toBe('agent-coord-1');
+    expect(repo.getCoordinator('space-3')?.id).toBe('agent-coord-3');
     db.close();
   });
 
@@ -95,7 +96,8 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
     runMigration240(db);
 
     expect(handleById(db, 'agent-coord-1')).toBe('space-manager');
-    expect(handleById(db, 'agent-coord-3')).toBe('coordinator');
+    expect(handleById(db, 'agent-coord-3')).toBe('space-manager');
+    expect(handleById(db, 'agent-manager-3')).toBe('space-manager-migrated-agent-manager-3');
     db.close();
   });
 });

@@ -39,8 +39,10 @@ const AUTONOMY_LABELS: Record<number, string> = {
 
 const MIGRATED_WORKER_TEMPLATE_KEY = 'migration.legacy_space_agent';
 
+const COORDINATOR_AGENT_HANDLES = new Set(['coordinator', 'space-manager']);
+
 function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
-  return agent.handle === 'coordinator';
+  return COORDINATOR_AGENT_HANDLES.has(agent.handle);
 }
 
 function toolPermissionsToolsList(owner: { toolPermissions: Record<string, unknown> }): string[] {

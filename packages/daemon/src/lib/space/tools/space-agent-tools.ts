@@ -502,9 +502,10 @@ async function resolveHandleForTaskRouting(
 
   const handle = `@${address.handle}`;
   const canonicalHandle = `@${normalizeAgentNameToken(address.handle)}`;
+  const canonicalHandleToken = (value: string) =>
+    canonicalizeSpaceManagerHandle(normalizeAgentNameToken(value).replace(/^@/, ''));
   const handlesEquivalent = (actorHandle: string) =>
-    canonicalizeSpaceManagerHandle(normalizeAgentNameToken(actorHandle)) ===
-    canonicalizeSpaceManagerHandle(normalizeAgentNameToken(handle));
+    canonicalHandleToken(actorHandle) === canonicalHandleToken(handle);
   const taskWorker =
     taskExecutions
       .filter(

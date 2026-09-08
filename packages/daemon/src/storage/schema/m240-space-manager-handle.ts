@@ -9,13 +9,17 @@ function tableExists(db: BunDatabase, tableName: string): boolean {
 
 export function runMigration240(db: BunDatabase): void {
   if (!tableExists(db, 'space_long_horizon_agents')) return;
+  const now = Date.now();
+  db.prepare(
+    `UPDATE space_long_horizon_agents
+        SET handle = 'space-manager-migrated-' || replace(id, ':', '-'), updated_at = ?
+      WHERE handle = ?
+        AND status != 'archived'
+        AND space_id IN (SELECT space_id FROM space_long_horizon_agents WHERE handle = 'coordinator')`
+  ).run(now, SPACE_MANAGER_HANDLE);
   db.prepare(
     `UPDATE space_long_horizon_agents
         SET handle = ?, updated_at = ?
-      WHERE handle = 'coordinator'
-        AND space_id NOT IN (
-          SELECT space_id FROM space_long_horizon_agents
-           WHERE handle = ? AND status != 'archived'
-        )`
-  ).run(SPACE_MANAGER_HANDLE, Date.now(), SPACE_MANAGER_HANDLE);
+      WHERE handle = 'coordinator'`
+  ).run(SPACE_MANAGER_HANDLE, now);
 }
