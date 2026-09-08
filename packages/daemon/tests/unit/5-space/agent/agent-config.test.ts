@@ -91,11 +91,6 @@ describe('PRESET_AGENT_TOOLS', () => {
     expect(tools).not.toContain('TaskStop');
   });
 
-  it('planner has an empty permissive profile (inherits all SDK built-ins)', () => {
-    const tools = PRESET_AGENT_TOOLS.planner;
-    expect(tools).toEqual([]);
-  });
-
   it('reviewer cannot Write or Edit', () => {
     const tools = PRESET_AGENT_TOOLS.reviewer;
     expect(tools).not.toContain('Write');
@@ -131,11 +126,6 @@ describe('PRESET_AGENT_TOOLS', () => {
     expect(tools).toContain('Bash');
     expect(tools).toContain('Grep');
     expect(tools).toContain('Glob');
-  });
-
-  it('general has an empty permissive profile (inherits all SDK built-ins)', () => {
-    const tools = PRESET_AGENT_TOOLS.general;
-    expect(tools).toEqual([]);
   });
 });
 

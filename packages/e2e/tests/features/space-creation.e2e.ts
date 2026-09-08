@@ -133,7 +133,7 @@ test.describe('Space Creation UX', () => {
     await expect(getModal(page)).not.toBeVisible({ timeout: 3000 });
   });
 
-  test('configure page shows all 6 preset agents and built-in workflows', async ({ page }) => {
+  test('configure page shows all 4 preset agents and built-in workflows', async ({ page }) => {
     const workspaceRoot = await getWorkspaceRoot(page);
     const spaceWorkspacePath = createUniqueSpaceDir(workspaceRoot, 'configure');
 
@@ -160,7 +160,7 @@ test.describe('Space Creation UX', () => {
     await page.goto(`/space/${createdSpaceId}/configure`);
     await expect(page.getByTestId('space-configure-tab-bar')).toBeVisible({ timeout: 10000 });
 
-    const PRESET_AGENTS = ['Coder', 'General', 'Planner', 'Research', 'Reviewer', 'QA'];
+    const PRESET_AGENTS = ['Coder', 'Research', 'Reviewer', 'QA'];
     for (const agentName of PRESET_AGENTS) {
       await expect(
         page.locator('.text-sm.font-medium.text-gray-100', { hasText: agentName })

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { PRESET_GENERAL_PROMPT, PRESET_PLANNER_PROMPT } from '@hyperneo/prompts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { runMigration213 } from '../../../../../src/storage/schema/m213-inactivity-watchdog.ts';
@@ -6,6 +7,26 @@ import { runMigration233 } from '../../../../../src/storage/schema/m233-retire-p
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
 import { insertSpace } from '../../../helpers/space-agent-schema.ts';
 import { createSpaceTables } from '../../../helpers/space-test-db.ts';
+
+const RETIRED_PRESET_MIRRORS = [
+  {
+    name: 'General',
+    handle: 'general',
+    description:
+      'General-purpose worker. Handles a wide range of tasks including coding, documentation, ' +
+      'debugging, and analysis.',
+    tools: [],
+    customPrompt: PRESET_GENERAL_PROMPT,
+  },
+  {
+    name: 'Planner',
+    handle: 'planner',
+    description:
+      'Planning agent. Breaks down goals into actionable tasks and drafts implementation plans.',
+    tools: [],
+    customPrompt: PRESET_PLANNER_PROMPT,
+  },
+];
 
 function createDb(): {
   db: Database;
@@ -16,7 +37,7 @@ function createDb(): {
   createSpaceTables(db);
   insertSpace(db);
   const repo = new SpaceLongHorizonAgentRepository(db);
-  const presets = getPresetAgentTemplates();
+  const presets = [...getPresetAgentTemplates(), ...RETIRED_PRESET_MIRRORS];
   const insertMirror = db.prepare(
     `INSERT INTO space_long_horizon_agents (
        id, space_id, handle, display_name, template_key, instructions,

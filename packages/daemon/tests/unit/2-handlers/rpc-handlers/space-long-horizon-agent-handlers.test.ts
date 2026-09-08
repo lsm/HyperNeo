@@ -1374,7 +1374,7 @@ describe('Space long-horizon agent handlers', () => {
         spaceId: 'space-1',
       });
 
-      expect(result.templates).toHaveLength(14);
+      expect(result.templates).toHaveLength(12);
       expect(result.templates.map((template) => template.key)).toContain('coordinator.default');
       expect(result.templates.map((template) => template.key)).toContain('worker.coder');
       for (const template of result.templates.filter((t) => !t.key.startsWith('worker.'))) {

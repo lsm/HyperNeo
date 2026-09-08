@@ -221,7 +221,7 @@ test.describe('Space Workflow Rules & Navigation Integration', () => {
           const node = {
             id: crypto.randomUUID(),
             name: 'Node 1',
-            agents: [{ agentId: '', name: 'Planner', templateKey: 'worker.planner' }],
+            agents: [{ agentId: '', name: 'Planner', templateKey: 'worker.research' }],
           };
           await hub.request('spaceWorkflow.create', {
             spaceId: sid,

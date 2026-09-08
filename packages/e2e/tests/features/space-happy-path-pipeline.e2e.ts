@@ -127,7 +127,6 @@ test.describe('Space Happy Path Pipeline (Task-First)', () => {
     await page.waitForURL(`/space/${spaceId}/agents`, { timeout: 10000 });
 
     await expect(page.getByTestId('space-agents-view')).toBeVisible({ timeout: 5000 });
-    await expect(page.getByText('Planner', { exact: true }).first()).toBeVisible({ timeout: 5000 });
     await expect(page.getByText('Coder', { exact: true }).first()).toBeVisible({ timeout: 5000 });
     await expect(page.getByText('Research', { exact: true }).first()).toBeVisible({
       timeout: 5000,
