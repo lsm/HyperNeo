@@ -1962,35 +1962,39 @@ export class TaskAgentManager {
     taskId: string,
     approvedAt: number
   ): boolean {
-    const db = this.config.db.getDatabase();
-    const legacyPendingTableExists = Boolean(
-      db
+    try {
+      const db = this.config.db.getDatabase();
+      const legacyPendingTableExists = Boolean(
+        db
+          .prepare(
+            `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pending_agent_messages'`
+          )
+          .get()
+      );
+      const legacyDrainExclusion = legacyPendingTableExists
+        ? ` AND NOT EXISTS (SELECT 1 FROM pending_agent_messages p WHERE p.id = sdk_messages.sdk_uuid)`
+        : '';
+      const row = db
         .prepare(
-          `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pending_agent_messages'`
-        )
-        .get()
-    );
-    const legacyDrainExclusion = legacyPendingTableExists
-      ? ` AND NOT EXISTS (SELECT 1 FROM pending_agent_messages p WHERE p.id = sdk_messages.sdk_uuid)`
-      : '';
-    const row = db
-      .prepare(
-        `SELECT 1 FROM sdk_messages
-          WHERE session_id = ? AND task_id = ? AND message_type = 'user'
-            AND consumed_seq IS NOT NULL AND timestamp >= ?${legacyDrainExclusion}
-            AND json_valid(sdk_message)
-            AND json_extract(sdk_message, '$.type') = 'user'
-            AND (
-              json_extract(sdk_message, '$.inputKind') = 'task'
-              OR (
-                json_type(sdk_message, '$.inputKind') IS NULL
-                AND COALESCE(CAST(json_extract(sdk_message, '$.isSynthetic') AS INTEGER), 0) = 1
+          `SELECT 1 FROM sdk_messages
+            WHERE session_id = ? AND task_id = ? AND message_type = 'user'
+              AND consumed_seq IS NOT NULL AND timestamp >= ?${legacyDrainExclusion}
+              AND json_valid(sdk_message)
+              AND json_extract(sdk_message, '$.type') = 'user'
+              AND (
+                json_extract(sdk_message, '$.inputKind') = 'task'
+                OR (
+                  json_type(sdk_message, '$.inputKind') IS NULL
+                  AND COALESCE(CAST(json_extract(sdk_message, '$.isSynthetic') AS INTEGER), 0) = 1
+                )
               )
-            )
-          LIMIT 1`
-      )
-      .get(sessionId, taskId, new Date(approvedAt).toISOString());
-    return row !== null && row !== undefined;
+            LIMIT 1`
+        )
+        .get(sessionId, taskId, new Date(approvedAt).toISOString());
+      return row !== null && row !== undefined;
+    } catch {
+      return false;
+    }
   }
 
   private readPersistedRateLimitCooldown(sessionId: string): { retryAt: number } | null {
