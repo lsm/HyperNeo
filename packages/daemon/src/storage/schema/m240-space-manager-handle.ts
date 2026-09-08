@@ -24,7 +24,11 @@ export function runMigration240(db: BunDatabase): void {
     .prepare(
       `SELECT id, space_id FROM space_long_horizon_agents
         WHERE handle = ?
-          AND space_id IN (SELECT space_id FROM space_long_horizon_agents WHERE handle = 'coordinator')`
+          AND space_id IN (
+            SELECT space_id FROM space_long_horizon_agents
+             WHERE handle = 'coordinator'
+                OR id = 'space-lh-agent:coordinator:' || space_id
+          )`
     )
     .all(SPACE_MANAGER_HANDLE) as AgentIdRow[];
   db.exec('BEGIN');

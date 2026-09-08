@@ -19,6 +19,7 @@ function makeDb(): BunDatabase {
   insertSpace.run('space-5', '/tmp/space-5', 'Space 5', 'space-5');
   insertSpace.run('space-6', '/tmp/space-6', 'Space 6', 'space-6');
   insertSpace.run('space-7', '/tmp/space-7', 'Space 7', 'space-7');
+  insertSpace.run('space-8', '/tmp/space-8', 'Space 8', 'space-8');
   const insertAgent = db.prepare(
     `INSERT INTO space_long_horizon_agents (
 			id, space_id, handle, display_name, template_key, status, session_id,
@@ -134,6 +135,16 @@ function makeDb(): BunDatabase {
     'active',
     'space:chat:space-7'
   );
+  insertAgent.run(
+    'space-lh-agent:coordinator:space-8',
+    'space-8',
+    'renamed-prelock',
+    'Coordinator',
+    'coordinator.default',
+    'active',
+    'space:chat:space-8'
+  );
+  insertAgent.run('agent-holder-8', 'space-8', 'space-manager', 'Holder', null, 'active', null);
   return db;
 }
 
@@ -206,6 +217,21 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
     expect(rowById(db, 'agent-coord-7').handle).toBe('space-manager');
     expect(rowById(db, 'agent-coord-7').display_name).toBe('Coordinator');
     expect(rowById(db, 'agent-named-manager-7').display_name).toBe('space manager');
+    db.close();
+  });
+
+  test('relocates holders when the coordinator row was pre-lock renamed', () => {
+    const db = makeDb();
+    runMigration238(db);
+
+    const holder = handleById(db, 'agent-holder-8');
+    expect(holder.startsWith('space-manager-migrated-')).toBe(true);
+    expect(handleById(db, 'space-lh-agent:coordinator:space-8')).toBe('renamed-prelock');
+
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    const healed = repo.ensureCoordinator('space-8');
+    expect(healed.id).toBe('space-lh-agent:coordinator:space-8');
+    expect(healed.handle).toBe('space-manager');
     db.close();
   });
 
