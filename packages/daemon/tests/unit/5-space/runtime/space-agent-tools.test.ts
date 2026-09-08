@@ -856,6 +856,10 @@ describe('createSpaceAgentToolHandlers — create_agent_template', () => {
         instructions: 'You review code.',
         labels: ['workflow-worker'],
         suggested_autonomy_level: 3,
+        model: 'glm-5.3',
+        provider: 'zai',
+        thinking_level: 'think16k',
+        setting_sources: ['user', 'project'],
         tools: ['Read', 'Bash'],
       })
     );
@@ -866,6 +870,10 @@ describe('createSpaceAgentToolHandlers — create_agent_template', () => {
     expect(template.displayName).toBe('Reviewer');
     expect(template.labels).toEqual(['workflow-worker']);
     expect(template.suggestedAutonomyLevel).toBe(3);
+    expect(template.model).toBe('glm-5.3');
+    expect(template.provider).toBe('zai');
+    expect(template.thinkingLevel).toBe('think16k');
+    expect(template.settingSources).toEqual(['user', 'project']);
     expect(template.tools).toEqual(['Read', 'Bash']);
     const stored = new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom');
     expect(stored?.instructions).toBe('You review code.');
@@ -874,10 +882,19 @@ describe('createSpaceAgentToolHandlers — create_agent_template', () => {
   test('rejects a key reserved for a built-in template', async () => {
     const handlers = makeTemplateHandlers();
     const result = parseResult(
-      await handlers.create_agent_template({ key: 'marketing.default', handle: 'marketer' })
+      await handlers.create_agent_template({ key: 'coordinator.default', handle: 'coordinator' })
     );
     expect(result.success).toBe(false);
     expect(result.error).toContain('reserved');
+  });
+
+  test('rejects a retired built-in template key', async () => {
+    const handlers = makeTemplateHandlers();
+    const result = parseResult(
+      await handlers.create_agent_template({ key: 'marketing.default', handle: 'marketer' })
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('retired');
   });
 
   test('rejects a duplicate template key', async () => {
@@ -923,6 +940,8 @@ describe('createSpaceAgentToolHandlers — create_agent_template', () => {
     );
     expect(result.success).toBe(true);
     const template = result.template as Record<string, unknown>;
+    expect(template.key).toBe('qa.custom');
+    expect(template.handle).toBe('qa');
     expect(template.instructions).toBe('Override prompt.');
     expect(template.displayName).toBe('QA Agent');
     expect(template.description).toBe('QA work');
@@ -962,11 +981,32 @@ describe('createSpaceAgentToolHandlers — create_agent_template', () => {
       await handlers.create_agent_template({
         key: 'k',
         handle: 'h',
-        from_agent_id: 'agent-coder-1',
+        from_agent_id: 'no-such-agent',
       })
     );
     expect(result.success).toBe(false);
-    expect(result.error).toBe('Long-horizon agent not found: agent-coder-1');
+    expect(result.error).toBe('Long-horizon agent not found: no-such-agent');
+  });
+
+  test('rejects from_agent_id belonging to another space', async () => {
+    const otherSpaceId = 'space-tools-test-other';
+    seedSpaceRow(ctx.db, otherSpaceId);
+    const agent = ctx.longHorizonAgentRepo.create({
+      spaceId: otherSpaceId,
+      handle: 'other-agent',
+      displayName: 'Other Agent',
+      instructions: 'Elsewhere.',
+    });
+    const handlers = makeTemplateHandlers();
+    const result = parseResult(
+      await handlers.create_agent_template({
+        key: 'k',
+        handle: 'h',
+        from_agent_id: agent.id,
+      })
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toBe(`Long-horizon agent not found: ${agent.id}`);
   });
 });
 

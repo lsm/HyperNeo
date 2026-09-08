@@ -355,6 +355,35 @@ function longHorizonAgentTools(agent: SpaceLongHorizonAgent): string[] | null {
     : null;
 }
 
+function templateOverridesFromArgs(args: {
+  display_name?: string;
+  description?: string;
+  instructions?: string;
+  labels?: string[];
+  suggested_autonomy_level?: SpaceAgentAutonomyLevel;
+  model?: string | null;
+  provider?: string | null;
+  model_pool?: AgentModelPoolEntry[] | null;
+  thinking_level?: SpaceLongHorizonAgent['thinkingLevel'] | null;
+  setting_sources?: SpaceLongHorizonAgent['settingSources'] | null;
+  tools?: string[] | null;
+}): Partial<CreateSpaceAgentTemplateParams> {
+  const overrides: Partial<CreateSpaceAgentTemplateParams> = {};
+  if (args.display_name !== undefined) overrides.displayName = args.display_name;
+  if (args.description !== undefined) overrides.description = args.description;
+  if (args.instructions !== undefined) overrides.instructions = args.instructions;
+  if (args.labels !== undefined) overrides.labels = args.labels;
+  if (args.suggested_autonomy_level !== undefined)
+    overrides.suggestedAutonomyLevel = args.suggested_autonomy_level;
+  if (args.model !== undefined) overrides.model = args.model;
+  if (args.provider !== undefined) overrides.provider = args.provider;
+  if (args.model_pool !== undefined) overrides.modelPool = args.model_pool;
+  if (args.thinking_level !== undefined) overrides.thinkingLevel = args.thinking_level;
+  if (args.setting_sources !== undefined) overrides.settingSources = args.setting_sources;
+  if (args.tools !== undefined) overrides.tools = args.tools;
+  return overrides;
+}
+
 function compactLongHorizonAgent(agent: {
   id: string;
   handle: string;
@@ -1837,28 +1866,34 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
       from_agent_id?: string;
     }): Promise<ToolResult> {
       try {
-        const { key, handle, from_agent_id, ...overrides } = args;
-        let params: CreateSpaceAgentTemplateParams = { key, handle };
+        const { key, handle, from_agent_id } = args;
+        const overrides = templateOverridesFromArgs(args);
+        let params: CreateSpaceAgentTemplateParams = { key, handle, ...overrides };
         if (from_agent_id !== undefined) {
           const agent = requireLongHorizonAgentInSpace(from_agent_id);
-          params = deriveAgentTemplate(
-            {
-              displayName: agent.displayName,
-              handle: agent.handle,
-              description: agent.description ?? null,
-              instructions: agent.instructions,
-              model: agent.model,
-              provider: agent.provider,
-              thinkingLevel: agent.thinkingLevel,
-              settingSources: agent.settingSources,
-              tools: longHorizonAgentTools(agent),
-              modelPool: agent.modelPool ?? null,
-              autonomyLevel: agent.autonomyLevel,
-            },
-            { key }
-          );
+          params = {
+            ...deriveAgentTemplate(
+              {
+                displayName: agent.displayName,
+                handle: agent.handle,
+                description: agent.description ?? null,
+                instructions: agent.instructions,
+                model: agent.model,
+                provider: agent.provider,
+                thinkingLevel: agent.thinkingLevel,
+                settingSources: agent.settingSources,
+                tools: longHorizonAgentTools(agent),
+                modelPool: agent.modelPool ?? null,
+                autonomyLevel: agent.autonomyLevel,
+              },
+              { key }
+            ),
+            ...overrides,
+            key,
+            handle,
+          };
         }
-        const result = await requireTemplateManager().create({ ...params, ...overrides });
+        const result = await requireTemplateManager().create(params);
         if (!result.ok) return jsonResult({ success: false, error: result.error });
         logAudit('create_agent_template', { key: args.key, from_agent_id: args.from_agent_id });
         return jsonResult({ success: true, template: result.value });
