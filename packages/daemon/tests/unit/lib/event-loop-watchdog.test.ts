@@ -1,5 +1,9 @@
 import { describe, expect, test, afterEach } from 'bun:test';
-import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   startEventLoopWatchdog,
   type EventLoopWatchdogHandle,
@@ -21,6 +25,36 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
   } finally {
     clearTimeout(timer);
   }
+}
+
+function resolveBunExecutable(): string {
+  if (basename(process.execPath).startsWith('bun')) return process.execPath;
+  const bunInstall = process.env.BUN_INSTALL ?? join(homedir(), '.bun');
+  const candidate = join(bunInstall, 'bin', 'bun');
+  if (existsSync(candidate)) return candidate;
+  return 'bun';
+}
+
+interface SpawnedFixture {
+  child: ReturnType<typeof spawn>;
+  closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  stderrText: () => string;
+}
+
+function spawnBunFixture(fixtureFileName: string): SpawnedFixture {
+  const fixturePath = fileURLToPath(new URL(`./${fixtureFileName}`, import.meta.url));
+  const child = spawn(resolveBunExecutable(), [fixturePath], {
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  const stderrChunks: Buffer[] = [];
+  child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+  const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+    (resolve, reject) => {
+      child.on('close', (code, signal) => resolve({ code, signal }));
+      child.on('error', reject);
+    }
+  );
+  return { child, closed, stderrText: () => Buffer.concat(stderrChunks).toString('utf-8') };
 }
 
 describe('event-loop-watchdog', () => {
@@ -135,23 +169,33 @@ describe('event-loop-watchdog', () => {
   });
 
   test('kills a process whose event loop spins forever', async () => {
-    const fixturePath = join(import.meta.dir, 'event-loop-watchdog-kill-fixture.ts');
-    const proc = Bun.spawn([process.execPath, 'run', fixturePath], {
-      stdout: 'ignore',
-      stderr: 'pipe',
-    });
+    const { child, closed, stderrText } = spawnBunFixture('event-loop-watchdog-kill-fixture.ts');
     try {
-      const [exitCode, stderrText] = await withTimeout(
-        Promise.all([proc.exited, new Response(proc.stderr).text()]),
-        10_000,
-        'watchdog kill'
-      );
-      expect(stderrText).toContain('fixture: spinning forever');
-      expect(stderrText).toContain('[EventLoopWatchdog] killing daemon');
-      expect(exitCode).not.toBe(0);
-      expect(exitCode).not.toBe(3);
+      const outcome = await withTimeout(closed, 10_000, 'watchdog kill');
+      expect(stderrText()).toContain('fixture: spinning forever');
+      expect(stderrText()).toContain('[EventLoopWatchdog] killing daemon');
+      expect(outcome.signal).toBe('SIGKILL');
     } finally {
-      proc.kill();
+      child.kill('SIGKILL');
+    }
+  });
+
+  test('survives whole-process suspension longer than the stall threshold', async () => {
+    if (process.platform === 'win32') return;
+    const { child } = spawnBunFixture('event-loop-watchdog-suspend-fixture.ts');
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      expect(child.kill(0)).toBe(true);
+
+      child.kill('SIGSTOP');
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      child.kill('SIGCONT');
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      expect(child.kill(0)).toBe(true);
+    } finally {
+      child.kill('SIGCONT');
+      child.kill('SIGKILL');
     }
   });
 });

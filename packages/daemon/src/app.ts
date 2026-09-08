@@ -1469,8 +1469,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
         await invalidateInFlightModelLoads();
         throw error;
       } finally {
-        eventLoopWatchdog?.stop();
-        await closeFileLogCapture();
+        try {
+          await closeFileLogCapture();
+        } finally {
+          eventLoopWatchdog?.stop();
+        }
       }
     };
 

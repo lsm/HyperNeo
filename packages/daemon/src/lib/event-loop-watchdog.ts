@@ -25,14 +25,14 @@ export interface EventLoopWatchdogHandle {
 
 const logger = new Logger('EventLoopWatchdog');
 
-async function resolveWorkerUrl(): Promise<string> {
+async function resolveWorkerUrl(): Promise<string | URL> {
   if (process.versions?.bun) {
     const { eventLoopWatchdogWorkerAssetUrl } = await import(
       './event-loop-watchdog-worker-asset.ts'
     );
     return eventLoopWatchdogWorkerAssetUrl;
   }
-  return new URL('./event-loop-watchdog-worker.ts', import.meta.url).href;
+  return new URL('./event-loop-watchdog-worker.ts', import.meta.url);
 }
 
 export async function startEventLoopWatchdog(

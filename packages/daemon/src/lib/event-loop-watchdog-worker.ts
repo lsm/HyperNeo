@@ -1,3 +1,4 @@
+import { writeSync } from 'node:fs';
 import { parentPort, workerData } from 'node:worker_threads';
 
 interface EventLoopWatchdogWorkerData {
@@ -15,7 +16,10 @@ type WatchdogNotice =
 
 const { pid, stallMs, checkIntervalMs, killMode } = workerData as EventLoopWatchdogWorkerData;
 
+const SUSPENSION_GAP_MS = Math.max(checkIntervalMs * 4, 1000);
+
 let lastHeartbeatMs = Date.now();
+let lastCheckMs = Date.now();
 let fuseDeadlineMs: number | null = null;
 let acted = false;
 
@@ -30,6 +34,15 @@ parentPort?.on('message', (command: WatchdogCommand) => {
 setInterval(() => {
   if (acted) return;
   const now = Date.now();
+  const checkGapMs = now - lastCheckMs;
+  lastCheckMs = now;
+  if (checkGapMs > SUSPENSION_GAP_MS) {
+    lastHeartbeatMs = now;
+    if (fuseDeadlineMs !== null) {
+      fuseDeadlineMs += checkGapMs;
+    }
+    return;
+  }
   const stalledForMs = now - lastHeartbeatMs;
   if (stalledForMs >= stallMs) {
     acted = true;
@@ -48,7 +61,7 @@ setInterval(() => {
 
 function report(reason: string, notice: WatchdogNotice): void {
   if (killMode === 'sigkill') {
-    process.stderr.write(`[EventLoopWatchdog] killing daemon pid=${pid}: ${reason}\n`);
+    writeSync(2, `[EventLoopWatchdog] killing daemon pid=${pid}: ${reason}\n`);
     process.kill(pid, 'SIGKILL');
     return;
   }
