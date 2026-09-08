@@ -787,11 +787,7 @@ export function registerUnifiedSpaceAgentMethods(
 
   if (templateManager) {
     messageHub.onRequest(method('listTemplates'), async () => {
-      return {
-        templates: templateManager
-          .list()
-          .filter((template) => !isReservedAgentHandle(template.handle)),
-      };
+      return { templates: templateManager.list() };
     });
 
     messageHub.onRequest(method('createTemplate'), async (data) => {

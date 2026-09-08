@@ -11,6 +11,7 @@ import type {
   SpaceAgentTemplateRepository,
 } from '../../../storage/repositories/space-agent-template-repository.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
+import { isReservedAgentHandle } from '../agent-handle.ts';
 import {
   getLongHorizonAgentTemplate,
   getLongHorizonAgentTemplates,
@@ -424,7 +425,10 @@ export class SpaceAgentTemplateManager {
 
   list(): SpaceAgentTemplate[] {
     const byKey = new Map<string, SpaceAgentTemplate>();
-    for (const template of this.builtIns()) byKey.set(template.key, template);
+    for (const template of this.builtIns()) {
+      if (isReservedAgentHandle(template.handle)) continue;
+      byKey.set(template.key, template);
+    }
     for (const template of this.repo.list()) {
       if (!byKey.has(template.key)) byKey.set(template.key, template);
     }
