@@ -1,33 +1,33 @@
-import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, SDKMessage, Session } from '@hyperneo/shared';
+import type {
+  DaemonInternalEventMap,
+  InternalEventBus,
+} from '../../../../src/lib/internal-event-bus';
+import { setModelsCache } from '../../../../src/lib/model-service';
 import { setupSpaceAgentHandlers } from '../../../../src/lib/rpc-handlers/space-agent-handlers';
+import { SpaceAgentTemplateManager } from '../../../../src/lib/space/managers/space-agent-template-manager';
+import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
+import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
+import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import {
   coordinatorLongHorizonAgentId,
   SpaceLongHorizonAgentRepository,
 } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
-import { SpaceAgentTemplateManager } from '../../../../src/lib/space/managers/space-agent-template-manager';
-import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
-import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
-import { SDKMessageRepository } from '../../../../src/storage/repositories/sdk-message-repository';
-import type {
-  DaemonInternalEventMap,
-  InternalEventBus,
-} from '../../../../src/lib/internal-event-bus';
-import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
-import { setModelsCache } from '../../../../src/lib/model-service';
+import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
+import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
+import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
+import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 import {
   createSpaceAgentSchema,
   insertSpace,
   insertWorkflow,
   insertWorkflowNode,
 } from '../../helpers/space-agent-schema';
-import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
-import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
-import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
-import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
-import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 

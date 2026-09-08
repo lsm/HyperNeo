@@ -12,15 +12,7 @@ import type {
   SpaceAgentTemplateRepository,
 } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import { isReservedAgentHandle } from '../agent-handle.ts';
-import {
-  getLongHorizonAgentTemplate,
-  getLongHorizonAgentTemplates,
-  isLegacyWorkerTemplateKey,
-  RETIRED_LONG_HORIZON_TEMPLATE_KEYS,
-} from '../agents/long-horizon-agent-templates.ts';
-import { validateSlug } from '../slug.ts';
 import type { SpaceAgentResult } from '../agents/agent-validation.ts';
 import {
   validateAgentModel,
@@ -32,6 +24,7 @@ import {
   getLongHorizonAgentTemplates,
   isLegacyWorkerTemplateKey,
   isRelocationMarkerLabel,
+  RETIRED_LONG_HORIZON_TEMPLATE_KEYS,
 } from '../agents/long-horizon-agent-templates.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import { validateSlug } from '../slug.ts';
