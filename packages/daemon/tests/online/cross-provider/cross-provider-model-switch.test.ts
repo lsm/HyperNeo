@@ -220,18 +220,14 @@ describe('Cross-Provider Model Switching (MiniMax <-> GLM)', () => {
       const { sessionId } = createResult;
       daemon.trackSession(sessionId);
 
-      await daemon.messageHub.request('settings.global.update', {
+      const { settings } = (await daemon.messageHub.request('settings.global.update', {
         updates: {
           fallbackModels: [
             { model: 'glm-5', provider: 'glm' },
             { model: 'glm-4.7', provider: 'glm' },
           ],
         },
-      });
-
-      const settings = (await daemon.messageHub.request('settings.global.get', {})) as {
-        fallbackModels?: Array<{ model: string; provider: string }>;
-      };
+      })) as { settings: { fallbackModels?: Array<{ model: string; provider: string }> } };
 
       expect(settings.fallbackModels).toBeDefined();
       expect(settings.fallbackModels!.length).toBeGreaterThan(0);

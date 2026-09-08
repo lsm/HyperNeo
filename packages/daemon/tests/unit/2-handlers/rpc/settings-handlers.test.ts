@@ -1,10 +1,5 @@
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
-import {
-  MessageHub,
-  type GlobalSettings,
-  type SessionSettings,
-  DEFAULT_GLOBAL_SETTINGS,
-} from '@hyperneo/shared';
+import { MessageHub, type GlobalSettings, DEFAULT_GLOBAL_SETTINGS } from '@hyperneo/shared';
 import {
   applyProviderModelAllowlistsToEnv,
   registerSettingsHandlers,
@@ -95,8 +90,6 @@ function createMockSettingsManager(): {
     getGlobalSettings: ReturnType<typeof mock>;
     updateGlobalSettings: ReturnType<typeof mock>;
     saveGlobalSettings: ReturnType<typeof mock>;
-    readFileOnlySettings: ReturnType<typeof mock>;
-    listMcpServersFromSources: ReturnType<typeof mock>;
   };
 } {
   const mocks = {
@@ -106,11 +99,6 @@ function createMockSettingsManager(): {
       ...updates,
     })),
     saveGlobalSettings: mock(() => {}),
-    readFileOnlySettings: mock(() => ({ someSetting: 'value' })),
-    listMcpServersFromSources: mock(() => [
-      { name: 'server-1', command: 'npx', args: ['-y', 'mcp-server-1'] },
-      { name: 'server-2', command: 'npx', args: ['-y', 'mcp-server-2'] },
-    ]),
   };
 
   return {
@@ -157,18 +145,6 @@ function createMockDatabase(): {
   };
 }
 
-function createMockMcpImportService(): {
-  service: import('../../../../src/lib/mcp').McpImportService;
-  refreshAllMock: ReturnType<typeof mock>;
-} {
-  const refreshAllMock = mock(() => ({ results: [], orphanPruned: 0 }));
-  const service = {
-    refreshAll: refreshAllMock,
-  } as unknown as import('../../../../src/lib/mcp').McpImportService;
-
-  return { service, refreshAllMock };
-}
-
 function createMockCredentialManager(): {
   manager: ProviderCredentialManager;
   storeApiKey: ReturnType<typeof mock>;
@@ -195,21 +171,18 @@ describe('Settings RPC Handlers', () => {
   let internalEventBusData: ReturnType<typeof createMockInternalEventBus>;
   let settingsManagerData: ReturnType<typeof createMockSettingsManager>;
   let dbData: ReturnType<typeof createMockDatabase>;
-  let mcpImportServiceData: ReturnType<typeof createMockMcpImportService>;
 
   beforeEach(() => {
     messageHubData = createMockMessageHub();
     internalEventBusData = createMockInternalEventBus();
     settingsManagerData = createMockSettingsManager();
     dbData = createMockDatabase();
-    mcpImportServiceData = createMockMcpImportService();
 
     registerSettingsHandlers(
       messageHubData.hub,
       settingsManagerData.settingsManager,
       internalEventBusData.bus,
-      dbData.db,
-      mcpImportServiceData.service
+      dbData.db
     );
   });
 
@@ -250,45 +223,6 @@ describe('Settings RPC Handlers', () => {
 
       expect(process.env.HYPERNEO_PROVIDER_MODEL_ALLOWLISTS).toBeUndefined();
       expect(getProviderCatalogEpoch('openrouter')).toBeGreaterThan(before);
-    });
-  });
-
-  describe('settings.global.get', () => {
-    it('returns global settings', async () => {
-      const handler = messageHubData.handlers.get('settings.global.get');
-      expect(handler).toBeDefined();
-
-      const result = (await handler!({}, {})) as GlobalSettings;
-
-      expect(result).toBeDefined();
-      expect(result.showArchived).toBe(false);
-    });
-
-    it('calls getGlobalSettings on settings manager', async () => {
-      const handler = messageHubData.handlers.get('settings.global.get');
-      expect(handler).toBeDefined();
-
-      await handler!({}, {});
-
-      expect(settingsManagerData.mocks.getGlobalSettings).toHaveBeenCalled();
-    });
-
-    it('strips voice apiKey and exposes hasApiKey', async () => {
-      settingsManagerData.mocks.getGlobalSettings.mockReturnValue({
-        ...defaultGlobalSettings,
-        voice: {
-          enabled: true,
-          endpoint: 'https://api.openai.com/v1/audio/transcriptions',
-          model: 'whisper-1',
-          apiKey: 'sk-test',
-        },
-      });
-      const handler = messageHubData.handlers.get('settings.global.get');
-
-      const result = (await handler!({}, {})) as GlobalSettings;
-
-      expect(result.voice?.apiKey).toBeUndefined();
-      expect(result.voice?.hasApiKey).toBe(true);
     });
   });
 
@@ -356,7 +290,6 @@ describe('Settings RPC Handlers', () => {
         settingsManagerData.settingsManager,
         internalEventBusData.bus,
         dbData.db,
-        mcpImportServiceData.service,
         credentialManager.manager
       );
       const handler = hubData.handlers.get('settings.global.update');
@@ -400,7 +333,6 @@ describe('Settings RPC Handlers', () => {
         settingsManagerData.settingsManager,
         internalEventBusData.bus,
         dbData.db,
-        mcpImportServiceData.service,
         credentialManager.manager
       );
       const handler = hubData.handlers.get('settings.global.update');
@@ -430,7 +362,6 @@ describe('Settings RPC Handlers', () => {
         settingsManagerData.settingsManager,
         internalEventBusData.bus,
         dbData.db,
-        mcpImportServiceData.service,
         credentialManager.manager
       );
       const handler = hubData.handlers.get('settings.global.update');
@@ -461,7 +392,6 @@ describe('Settings RPC Handlers', () => {
         settingsManagerData.settingsManager,
         internalEventBusData.bus,
         dbData.db,
-        mcpImportServiceData.service,
         credentialManager.manager
       );
       const handler = hubData.handlers.get('settings.global.update');
@@ -506,7 +436,6 @@ describe('Settings RPC Handlers', () => {
         settingsManagerData.settingsManager,
         internalEventBusData.bus,
         dbData.db,
-        mcpImportServiceData.service,
         credentialManager.manager
       );
       const handler = hubData.handlers.get('settings.global.update');
@@ -546,7 +475,6 @@ describe('Settings RPC Handlers', () => {
         settingsManagerData.settingsManager,
         internalEventBusData.bus,
         dbData.db,
-        mcpImportServiceData.service,
         credentialManager.manager
       );
       const handler = hubData.handlers.get('settings.global.update');
@@ -582,7 +510,6 @@ describe('Settings RPC Handlers', () => {
         settingsManagerData.settingsManager,
         internalEventBusData.bus,
         dbData.db,
-        mcpImportServiceData.service,
         credentialManager.manager
       );
       const handler = hubData.handlers.get('settings.global.update');
@@ -618,7 +545,6 @@ describe('Settings RPC Handlers', () => {
         settingsManagerData.settingsManager,
         internalEventBusData.bus,
         dbData.db,
-        mcpImportServiceData.service,
         credentialManager.manager
       );
       const handler = hubData.handlers.get('settings.global.update');
@@ -645,193 +571,9 @@ describe('Settings RPC Handlers', () => {
     });
   });
 
-  describe('settings.global.save', () => {
-    it('saves global settings', async () => {
-      const handler = messageHubData.handlers.get('settings.global.save');
-      expect(handler).toBeDefined();
-
-      const newSettings: GlobalSettings = {
-        ...defaultGlobalSettings,
-        showArchived: true,
-        model: 'claude-opus',
-      };
-
-      const result = (await handler!({ settings: newSettings }, {})) as { success: boolean };
-
-      expect(result.success).toBe(true);
-      expect(settingsManagerData.mocks.saveGlobalSettings).toHaveBeenCalledWith(newSettings);
-    });
-
-    it('preserves the voice block when a full save omits it', async () => {
-      const priorVoice = {
-        enabled: true,
-        endpoint: 'https://asr.example.com/v1/audio/transcriptions',
-        model: 'whisper-1',
-      };
-      settingsManagerData.mocks.getGlobalSettings.mockReturnValue({
-        ...defaultGlobalSettings,
-        voice: priorVoice,
-      });
-      const handler = messageHubData.handlers.get('settings.global.save');
-      const { voice: _omitVoice, ...withoutVoice } = defaultGlobalSettings;
-      const payload = { ...withoutVoice, model: 'claude-opus' };
-
-      await handler!({ settings: payload as GlobalSettings }, {});
-
-      const saved = settingsManagerData.mocks.saveGlobalSettings.mock.calls[0][0] as GlobalSettings;
-      expect(saved.voice).toEqual(priorVoice);
-    });
-
-    it('publishes settings.updated event through internalEventBus', async () => {
-      const handler = messageHubData.handlers.get('settings.global.save');
-      expect(handler).toBeDefined();
-
-      await handler!({ settings: defaultGlobalSettings }, {});
-
-      expect(internalEventBusData.publishAsyncMock).toHaveBeenCalledWith(
-        'settings.updated',
-        expect.objectContaining({
-          namespaceId: 'global',
-        })
-      );
-    });
-  });
-
-  describe('settings.fileOnly.read', () => {
-    it('returns file-only settings', async () => {
-      const handler = messageHubData.handlers.get('settings.fileOnly.read');
-      expect(handler).toBeDefined();
-
-      const result = await handler!({}, {});
-
-      expect(result).toBeDefined();
-      expect(settingsManagerData.mocks.readFileOnlySettings).toHaveBeenCalled();
-    });
-  });
-
-  describe('settings.mcp.listFromSources', () => {
-    it('returns MCP servers from global sources when no sessionId', async () => {
-      const handler = messageHubData.handlers.get('settings.mcp.listFromSources');
-      expect(handler).toBeDefined();
-
-      const result = (await handler!({}, {})) as {
-        servers: Array<{ name: string }>;
-      };
-
-      expect(result.servers).toBeDefined();
-      expect(result.servers).toHaveLength(2);
-    });
-
-    it('throws error when session not found', async () => {
-      const handler = messageHubData.handlers.get('settings.mcp.listFromSources');
-      expect(handler).toBeDefined();
-
-      dbData.mocks.getSession.mockReturnValueOnce(null);
-
-      await expect(handler!({ sessionId: 'non-existent' }, {})).rejects.toThrow(
-        'Session not found: non-existent'
-      );
-    });
-
-    it('accepts sessionId parameter', async () => {
-      const handler = messageHubData.handlers.get('settings.mcp.listFromSources');
-      expect(handler).toBeDefined();
-
-      expect(typeof handler).toBe('function');
-    });
-  });
-
-  describe('settings.mcp.refreshImports', () => {
-    it('returns empty results when mcpImportService is undefined', async () => {
-      registerSettingsHandlers(
-        messageHubData.hub,
-        settingsManagerData.settingsManager,
-        internalEventBusData.bus,
-        dbData.db
-      );
-
-      const handler = messageHubData.handlers.get('settings.mcp.refreshImports');
-      expect(handler).toBeDefined();
-
-      const result = (await handler!({}, {})) as { results: unknown[] };
-
-      expect(result.results).toEqual([]);
-    });
-
-    it('calls refreshAll and publishes settings.updated through internalEventBus', async () => {
-      const handler = messageHubData.handlers.get('settings.mcp.refreshImports');
-      expect(handler).toBeDefined();
-
-      const result = (await handler!({}, {})) as { results: unknown[] };
-
-      expect(mcpImportServiceData.refreshAllMock).toHaveBeenCalled();
-      expect(internalEventBusData.publishAsyncMock).toHaveBeenCalledWith(
-        'settings.updated',
-        expect.objectContaining({
-          namespaceId: 'global',
-        })
-      );
-      expect(result.results).toEqual([]);
-    });
-  });
-
-  describe('settings.session.get', () => {
-    it('returns session settings', async () => {
-      const handler = messageHubData.handlers.get('settings.session.get');
-      expect(handler).toBeDefined();
-
-      const result = (await handler!({ sessionId: 'session-123' }, {})) as {
-        sessionId: string;
-        settings: SessionSettings;
-      };
-
-      expect(result.sessionId).toBe('session-123');
-      expect(result.settings).toBeDefined();
-    });
-  });
-
-  describe('settings.session.update', () => {
-    it('updates session settings', async () => {
-      const handler = messageHubData.handlers.get('settings.session.update');
-      expect(handler).toBeDefined();
-
-      const result = (await handler!(
-        { sessionId: 'session-123', updates: { someSetting: 'value' } },
-        {}
-      )) as { success: boolean; sessionId: string };
-
-      expect(result.success).toBe(true);
-      expect(result.sessionId).toBe('session-123');
-    });
-  });
-
   describe('handler registration', () => {
-    it('registers settings.global.get handler', () => {
-      expect(messageHubData.handlers.has('settings.global.get')).toBe(true);
-    });
-
     it('registers settings.global.update handler', () => {
       expect(messageHubData.handlers.has('settings.global.update')).toBe(true);
-    });
-
-    it('registers settings.global.save handler', () => {
-      expect(messageHubData.handlers.has('settings.global.save')).toBe(true);
-    });
-
-    it('registers settings.fileOnly.read handler', () => {
-      expect(messageHubData.handlers.has('settings.fileOnly.read')).toBe(true);
-    });
-
-    it('registers settings.mcp.listFromSources handler', () => {
-      expect(messageHubData.handlers.has('settings.mcp.listFromSources')).toBe(true);
-    });
-
-    it('registers settings.session.get handler', () => {
-      expect(messageHubData.handlers.has('settings.session.get')).toBe(true);
-    });
-
-    it('registers settings.session.update handler', () => {
-      expect(messageHubData.handlers.has('settings.session.update')).toBe(true);
     });
 
     it('does NOT register removed legacy MCP handlers', () => {
@@ -839,6 +581,16 @@ describe('Settings RPC Handlers', () => {
       expect(messageHubData.handlers.has('settings.mcp.setDisabled')).toBe(false);
       expect(messageHubData.handlers.has('settings.mcp.getDisabled')).toBe(false);
       expect(messageHubData.handlers.has('settings.mcp.updateServerSettings')).toBe(false);
+    });
+
+    it('does NOT register removed dead settings handlers', () => {
+      expect(messageHubData.handlers.has('settings.global.get')).toBe(false);
+      expect(messageHubData.handlers.has('settings.global.save')).toBe(false);
+      expect(messageHubData.handlers.has('settings.fileOnly.read')).toBe(false);
+      expect(messageHubData.handlers.has('settings.mcp.listFromSources')).toBe(false);
+      expect(messageHubData.handlers.has('settings.mcp.refreshImports')).toBe(false);
+      expect(messageHubData.handlers.has('settings.session.get')).toBe(false);
+      expect(messageHubData.handlers.has('settings.session.update')).toBe(false);
     });
   });
 });

@@ -341,7 +341,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.settingsManager,
     deps.internalEventBus,
     deps.db,
-    deps.mcpImportService,
     deps.credentialManager
   );
   setupDaemonConfigHandlers(deps.messageHub, { service: deps.daemonConfigService });

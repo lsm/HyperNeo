@@ -51,8 +51,6 @@ function makeSettings(initial: GlobalSettings): {
     saveGlobalSettings: mock((settings: GlobalSettings) => {
       state.settings = settings;
     }),
-    readFileOnlySettings: mock(() => ({})),
-    listMcpServersFromSources: mock(() => []),
   } as unknown as SettingsManager;
   return { manager, state };
 }
@@ -122,49 +120,18 @@ describe('settings handlers — custom endpoints integration', () => {
       ).rejects.toThrow(/customEndpoints must be an array/);
       expect(syncCalls).toHaveLength(0);
     });
-  });
 
-  describe('settings.global.save', () => {
-    it('preserves existing custom endpoints when payload omits the field', async () => {
-      const handler = hubData.handlers.get('settings.global.save')!;
-      await handler({ settings: {} as GlobalSettings }, {});
-      expect(syncCalls).toHaveLength(0);
-      expect(clearModelsCacheCalls).toHaveLength(0);
-      expect(settings.state.settings.customEndpoints).toEqual([validEndpoint]);
-    });
-
-    it('rejects a null customEndpoints payload instead of silently wiping providers', async () => {
-      const handler = hubData.handlers.get('settings.global.save')!;
-      await expect(
-        handler(
-          {
-            settings: { customEndpoints: null } as unknown as GlobalSettings,
-          },
-          {}
-        )
-      ).rejects.toThrow(/customEndpoints must be an array/);
-      expect(settings.state.settings.customEndpoints).toEqual([validEndpoint]);
-      expect(syncCalls).toHaveLength(0);
-    });
-
-    it('explicitly clears endpoints when payload sets customEndpoints to []', async () => {
-      const handler = hubData.handlers.get('settings.global.save')!;
-      await handler({ settings: { customEndpoints: [] } as unknown as GlobalSettings }, {});
+    it('explicitly clears endpoints when updates set customEndpoints to []', async () => {
+      const handler = hubData.handlers.get('settings.global.update')!;
+      await handler({ updates: { customEndpoints: [] } }, {});
       expect(syncCalls).toEqual([[]]);
       expect(clearModelsCacheCalls).toHaveLength(1);
     });
 
-    it('validates customEndpoints before persisting on save', async () => {
-      const handler = hubData.handlers.get('settings.global.save')!;
+    it('validates customEndpoints entries before persisting', async () => {
+      const handler = hubData.handlers.get('settings.global.update')!;
       await expect(
-        handler(
-          {
-            settings: {
-              customEndpoints: [{ ...validEndpoint, id: 'bad/id' }],
-            } as unknown as GlobalSettings,
-          },
-          {}
-        )
+        handler({ updates: { customEndpoints: [{ ...validEndpoint, id: 'bad/id' }] } }, {})
       ).rejects.toThrow(/invalid/);
       expect(syncCalls).toHaveLength(0);
     });
@@ -219,40 +186,6 @@ describe('settings handlers — custom endpoints integration', () => {
 
       stallResolve?.();
       await Promise.all([updatePromise, addPromise]);
-
-      const ids = (settings.state.settings.customEndpoints ?? []).map((e) => e.id).sort();
-      expect(ids).toEqual(['lmstudio', 'second']);
-    });
-
-    it('serialises settings.global.save (no customEndpoints in payload) against customEndpoints.add', async () => {
-      registerCustomEndpointHandlers(hubData.hub, settings.manager, eventBus);
-
-      const realSave = settings.manager.saveGlobalSettings as unknown as (
-        s: GlobalSettings
-      ) => void;
-      let stallResolve: (() => void) | undefined;
-      const stall = new Promise<void>((r) => {
-        stallResolve = r;
-      });
-      let firstSave = true;
-      settings.manager.saveGlobalSettings = mock(async (s: GlobalSettings) => {
-        if (firstSave) {
-          firstSave = false;
-          await stall;
-        }
-        realSave.call(settings.manager, s);
-      }) as unknown as typeof settings.manager.saveGlobalSettings;
-
-      const saveHandler = hubData.handlers.get('settings.global.save')!;
-      const addHandler = hubData.handlers.get('customEndpoints.add')!;
-      const second: CustomEndpointConfig = { ...validEndpoint, id: 'second' };
-
-      const savePromise = saveHandler({ settings: { showArchived: true } as GlobalSettings }, {});
-      await Promise.resolve();
-      await Promise.resolve();
-      const addPromise = addHandler({ endpoint: second }, {});
-      stallResolve?.();
-      await Promise.all([savePromise, addPromise]);
 
       const ids = (settings.state.settings.customEndpoints ?? []).map((e) => e.id).sort();
       expect(ids).toEqual(['lmstudio', 'second']);
