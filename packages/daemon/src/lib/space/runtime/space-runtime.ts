@@ -681,7 +681,7 @@ export class SpaceRuntime {
     Array<{ generation: number; approvedAt: number | null }>
   >();
 
-  private postApprovalRecoveryInFlight = new Set<string>();
+  private postApprovalRecoveryInFlight = new Map<string, { generation: number }>();
 
   private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
 
@@ -3736,6 +3736,7 @@ export class SpaceRuntime {
       this.tickTimer = null;
     }
     this.postApprovalDispatchClaims.clear();
+    this.postApprovalRecoveryInFlight.clear();
     this.postApprovalRetryQueue = new TaskScopedRetrySerializer();
     this.settleCurrentReconciliation(false);
     this.retainedEventRedispatchPending = false;
@@ -7925,10 +7926,8 @@ export class SpaceRuntime {
     ) {
       return false;
     }
-    return (
-      task.approvedAt !== null &&
-      Date.now() - task.approvedAt > POST_APPROVAL_UNRECORDED_DISPATCH_GRACE_MS
-    );
+    const approvalBoundary = task.approvedAt ?? task.updatedAt;
+    return Date.now() - approvalBoundary > POST_APPROVAL_UNRECORDED_DISPATCH_GRACE_MS;
   }
 
   private postApprovalWorkerLive(manager: TaskAgentManager, sessionId: string): boolean {
@@ -8151,12 +8150,13 @@ export class SpaceRuntime {
   }
 
   private boundPostApprovalRecoveryAwait<T>(promise: Promise<T>): Promise<T | 'timeout'> {
-    return Promise.race([
-      promise,
-      new Promise<'timeout'>((resolve) => {
-        setTimeout(() => resolve('timeout'), POST_APPROVAL_RECOVERY_AWAIT_MS);
-      }),
-    ]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), POST_APPROVAL_RECOVERY_AWAIT_MS);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+      if (timer !== undefined) clearTimeout(timer);
+    }) as Promise<T | 'timeout'>;
   }
 
   private async reconcileStalledPostApprovalTasks(): Promise<void> {
@@ -8182,13 +8182,19 @@ export class SpaceRuntime {
             task.id,
             now + POST_APPROVAL_RECONCILE_RETRY_MS
           );
-          if (this.postApprovalRecoveryInFlight.has(task.id)) continue;
+          const inFlightMarker = this.postApprovalRecoveryInFlight.get(task.id);
+          if (inFlightMarker && inFlightMarker.generation === generation) continue;
           if (dispatchDead) {
             const revivePromise = this.reviveRecordedPostApprovalWorker(manager, task, generation);
-            this.postApprovalRecoveryInFlight.add(task.id);
+            const reviveMarker = { generation };
+            this.postApprovalRecoveryInFlight.set(task.id, reviveMarker);
             revivePromise
               .catch(() => undefined)
-              .finally(() => this.postApprovalRecoveryInFlight.delete(task.id))
+              .finally(() => {
+                if (this.postApprovalRecoveryInFlight.get(task.id) === reviveMarker) {
+                  this.postApprovalRecoveryInFlight.delete(task.id);
+                }
+              })
               .catch(() => undefined);
             const revive = await this.boundPostApprovalRecoveryAwait(revivePromise);
             if (revive === 'timeout') {
@@ -8201,10 +8207,15 @@ export class SpaceRuntime {
           }
           if (!task.postApprovalSessionId) {
             const adoptPromise = this.adoptDurablePostApprovalOrphan(manager, task, generation);
-            this.postApprovalRecoveryInFlight.add(task.id);
+            const adoptMarker = { generation };
+            this.postApprovalRecoveryInFlight.set(task.id, adoptMarker);
             adoptPromise
               .catch(() => undefined)
-              .finally(() => this.postApprovalRecoveryInFlight.delete(task.id))
+              .finally(() => {
+                if (this.postApprovalRecoveryInFlight.get(task.id) === adoptMarker) {
+                  this.postApprovalRecoveryInFlight.delete(task.id);
+                }
+              })
               .catch(() => undefined);
             const adopted = await this.boundPostApprovalRecoveryAwait(adoptPromise);
             if (adopted === 'timeout') {
