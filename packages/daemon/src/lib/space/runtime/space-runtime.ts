@@ -674,7 +674,7 @@ export class SpaceRuntime {
 
   private postApprovalReconcileNextAttempt = new Map<string, number>();
 
-  private postApprovalDispatchClaims = new Map<string, number>();
+  private postApprovalDispatchClaims = new Map<string, number[]>();
 
   private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
 
@@ -2804,10 +2804,9 @@ export class SpaceRuntime {
       return { mode: 'skipped', reason };
     }
     const dispatchRuntimeGeneration = this.runtimeGeneration;
-    this.postApprovalDispatchClaims.set(
-      taskId,
-      (this.postApprovalDispatchClaims.get(taskId) ?? 0) + 1
-    );
+    const claimStack = this.postApprovalDispatchClaims.get(taskId) ?? [];
+    claimStack.push(dispatchRuntimeGeneration);
+    this.postApprovalDispatchClaims.set(taskId, claimStack);
     try {
       return await this.dispatchPostApprovalClaimed(
         taskId,
@@ -2817,11 +2816,11 @@ export class SpaceRuntime {
         dispatchRuntimeGeneration
       );
     } finally {
-      const outstanding = this.postApprovalDispatchClaims.get(taskId) ?? 1;
-      if (outstanding <= 1) {
-        this.postApprovalDispatchClaims.delete(taskId);
-      } else {
-        this.postApprovalDispatchClaims.set(taskId, outstanding - 1);
+      const outstanding = this.postApprovalDispatchClaims.get(taskId);
+      if (outstanding) {
+        const ownIndex = outstanding.lastIndexOf(dispatchRuntimeGeneration);
+        if (ownIndex >= 0) outstanding.splice(ownIndex, 1);
+        if (outstanding.length === 0) this.postApprovalDispatchClaims.delete(taskId);
       }
     }
   }
@@ -7896,7 +7895,7 @@ export class SpaceRuntime {
 
   private isUnrecordedApprovalDispatchStale(task: SpaceTask): boolean {
     if (task.postApprovalSessionId !== null || task.postApprovalBlockedReason) return false;
-    if ((this.postApprovalDispatchClaims.get(task.id) ?? 0) > 0) return false;
+    if ((this.postApprovalDispatchClaims.get(task.id)?.length ?? 0) > 0) return false;
     return (
       task.approvedAt !== null &&
       Date.now() - task.approvedAt > POST_APPROVAL_UNRECORDED_DISPATCH_GRACE_MS
@@ -7908,6 +7907,12 @@ export class SpaceRuntime {
     return manager.hasPendingRateLimitCooldown?.(sessionId) ?? false;
   }
 
+  private postApprovalShutdownFenceTripped(manager: TaskAgentManager, generation: number): boolean {
+    return (
+      generation !== this.runtimeGeneration || this.isStopped || manager.isDisposed?.() === true
+    );
+  }
+
   private async adoptDurablePostApprovalOrphan(
     manager: TaskAgentManager,
     task: SpaceTask,
@@ -7915,27 +7920,24 @@ export class SpaceRuntime {
   ): Promise<boolean> {
     const orphan = manager.getPostApprovalWorkerSession?.(task.id);
     if (!orphan) return false;
-    let revived: unknown = null;
+    if (this.postApprovalShutdownFenceTripped(manager, generation)) return true;
+    let restoredId: string | null = null;
     try {
-      revived = await manager.rehydrateSubSessionById(orphan.sessionId);
+      restoredId =
+        (await manager.restorePostApprovalWorkerSession?.(task.id, orphan.sessionId, undefined, {
+          startQuery: false,
+        })) ?? null;
     } catch {
-      revived = null;
+      restoredId = null;
     }
-    const revivedSessionId =
-      (revived as { getSessionData?: () => { id?: string } } | null)?.getSessionData?.().id ??
-      orphan.sessionId;
-    if (
-      generation !== this.runtimeGeneration ||
-      this.isStopped ||
-      manager.isDisposed?.() === true
-    ) {
+    if (this.postApprovalShutdownFenceTripped(manager, generation)) {
       log.warn(
         `SpaceRuntime: discarding post-approval orphan adoption for task ${task.id}; the runtime is stopping or the task agent manager is disposed`
       );
-      manager.cancelBySessionId(revivedSessionId);
+      if (restoredId) manager.cancelBySessionId(restoredId);
       return true;
     }
-    if (!revived) return false;
+    if (!restoredId) return false;
     const recorded = this.config.taskRepo.casPostApprovalRouting(
       task.id,
       {
@@ -7947,15 +7949,65 @@ export class SpaceRuntime {
       { requireSucceededRun: true }
     );
     if (recorded !== 'won') {
-      manager.cancelBySessionId(revivedSessionId);
+      manager.cancelBySessionId(restoredId);
       return false;
     }
     log.info(
       `SpaceRuntime: adopted durable post-approval worker ${orphan.sessionId} for task ${task.id} instead of redispatching`
     );
+    try {
+      await manager.restorePostApprovalWorkerSession?.(task.id, orphan.sessionId, undefined, {});
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: failed to resume adopted post-approval worker ${orphan.sessionId} for task ${task.id}: ${formatCommandError(err)}`
+      );
+    }
     const adopted = this.config.taskRepo.getTask(task.id);
     if (adopted) await this.safeOnTaskUpdated(task.spaceId, adopted);
     return true;
+  }
+
+  private async reviveRecordedPostApprovalWorker(
+    manager: TaskAgentManager,
+    task: SpaceTask,
+    generation: number
+  ): Promise<'revived' | 'skip' | 'replace'> {
+    if (!task.postApprovalSessionId) return 'replace';
+    if (this.postApprovalShutdownFenceTripped(manager, generation)) return 'skip';
+    let restoredId: string | null = null;
+    try {
+      restoredId =
+        (await manager.restorePostApprovalWorkerSession?.(
+          task.id,
+          task.postApprovalSessionId,
+          undefined,
+          {}
+        )) ?? null;
+    } catch {
+      restoredId = null;
+    }
+    if (this.postApprovalShutdownFenceTripped(manager, generation)) {
+      if (restoredId) manager.cancelBySessionId(restoredId);
+      return 'skip';
+    }
+    if (!restoredId) return 'replace';
+    log.info(
+      `SpaceRuntime: resumed recorded post-approval worker ${restoredId} for task ${task.id} instead of replacing it`
+    );
+    return 'revived';
+  }
+
+  private async publishPostApprovalRecoveryUpdate(before: SpaceTask): Promise<void> {
+    const after = this.config.taskRepo.getTask(before.id);
+    if (!after) return;
+    if (
+      after.status === before.status &&
+      after.postApprovalSessionId === before.postApprovalSessionId &&
+      after.postApprovalBlockedReason === before.postApprovalBlockedReason
+    ) {
+      return;
+    }
+    await this.safeOnTaskUpdated(after.spaceId, after);
   }
 
   private async reconcileStalledPostApprovalTasks(): Promise<void> {
@@ -7981,6 +8033,10 @@ export class SpaceRuntime {
             task.id,
             now + POST_APPROVAL_RECONCILE_RETRY_MS
           );
+          if (dispatchDead) {
+            const revive = await this.reviveRecordedPostApprovalWorker(manager, task, generation);
+            if (revive !== 'replace') continue;
+          }
           if (
             unrecordedStale &&
             (await this.adoptDurablePostApprovalOrphan(manager, task, generation))
@@ -7989,11 +8045,12 @@ export class SpaceRuntime {
           }
           retries.push(
             this.retryPostApprovalDispatch(task.id).then(
-              () => undefined,
+              () => this.publishPostApprovalRecoveryUpdate(task),
               (err: unknown) => {
                 log.warn(
                   `SpaceRuntime: post-approval restart reconcile failed for task ${task.id}: ${formatCommandError(err)}`
                 );
+                return this.publishPostApprovalRecoveryUpdate(task);
               }
             )
           );
