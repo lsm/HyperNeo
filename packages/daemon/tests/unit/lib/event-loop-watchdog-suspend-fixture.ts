@@ -1,6 +1,10 @@
 import { startEventLoopWatchdog } from '../../../src/lib/event-loop-watchdog';
 
-const watchdog = await startEventLoopWatchdog({ stallMs: 2000, heartbeatMs: 50 });
+const watchdog = await startEventLoopWatchdog({
+  stallMs: 800,
+  heartbeatMs: 25,
+  shutdownFuseMs: 320,
+});
 if (!watchdog) {
   process.stderr.write('fixture: watchdog failed to start\n');
   process.exit(3);

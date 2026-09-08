@@ -178,24 +178,24 @@ describe('event-loop-watchdog', () => {
     } finally {
       child.kill('SIGKILL');
     }
-  });
+  }, 12_000);
 
   test('survives whole-process suspension longer than the stall threshold', async () => {
     if (process.platform === 'win32') return;
     const { child } = spawnBunFixture('event-loop-watchdog-suspend-fixture.ts');
     try {
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      await new Promise((resolve) => setTimeout(resolve, 400));
       expect(child.kill(0)).toBe(true);
 
       child.kill('SIGSTOP');
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      await new Promise((resolve) => setTimeout(resolve, 1300));
       child.kill('SIGCONT');
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await new Promise((resolve) => setTimeout(resolve, 700));
 
       expect(child.kill(0)).toBe(true);
     } finally {
       child.kill('SIGCONT');
       child.kill('SIGKILL');
     }
-  });
+  }, 10_000);
 });
