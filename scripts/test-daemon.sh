@@ -363,6 +363,7 @@ shard_paths() {
 			"$TEST_ROOT/1-core" \
 			"$TEST_ROOT/helpers" \
 			"$TEST_ROOT/lib/acp" \
+			"$TEST_ROOT/lib/event-loop-watchdog.test.ts" \
 			"$TEST_ROOT/lib/job-handlers" \
 			"$TEST_ROOT/lib/voice" \
 			"$TEST_ROOT/lib/runtime-server.test.ts" \

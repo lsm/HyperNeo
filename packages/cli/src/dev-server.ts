@@ -92,6 +92,8 @@ export async function startDevServer(config: Config) {
     }
     isShuttingDown = true;
 
+    daemonContext?.armShutdownFuse();
+
     if (typeof sdkWarmupTimer !== 'undefined') clearTimeout(sdkWarmupTimer);
 
     log.info(

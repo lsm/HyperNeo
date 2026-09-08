@@ -38,7 +38,7 @@ try {
   await flushFatalLogs();
   process.exit(1);
 }
-const { server, cleanup } = app;
+const { server, cleanup, armShutdownFuse } = app;
 
 console.log(`\n🚀 HyperNeo Daemon started!`);
 console.log(`   Host: ${server.hostname}`);
@@ -56,6 +56,8 @@ async function gracefulShutdown(signal: string): Promise<void> {
     process.exit(1);
   }
   isShuttingDown = true;
+
+  armShutdownFuse();
 
   console.log(
     `\n👋 Received ${signal}, shutting down gracefully... (Press Ctrl+C again to force exit)`
