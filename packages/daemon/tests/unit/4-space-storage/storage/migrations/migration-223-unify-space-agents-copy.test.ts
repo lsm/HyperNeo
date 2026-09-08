@@ -425,12 +425,12 @@ describe('migration 223 — handle collisions', () => {
       id: 'w-coordinator',
       spaceId: 'space-a',
       name: 'Coordinator',
-      handle: 'coordinator',
+      handle: 'space-manager',
     });
 
     runMigration223(db);
 
-    expect(longHorizonRow(db, 'w-coordinator')?.handle).toBe('coordinator-w-coordinator');
+    expect(longHorizonRow(db, 'w-coordinator')?.handle).toBe('space-manager-w-coordinator');
     const coordinator = repo.getCoordinator('space-a');
     expect(coordinator?.id).toBe('space-lh-agent:coordinator:space-a');
     expect(coordinator?.status).toBe('active');

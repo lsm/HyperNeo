@@ -411,7 +411,7 @@ describe('Space messaging adapter', () => {
       `@worker:${encodeURIComponent(runId)}/Review/reviewer`,
       `@worker:${encodeURIComponent(runId)}/Review/observer`,
       `@worker:${encodeURIComponent(runId)}/QA/reviewer`,
-      '@coordinator',
+      '@space-manager',
       `@worker:${encodeURIComponent(runId)}/Deploy/deployer`,
     ]);
     expect(() =>

@@ -1,0 +1,101 @@
+import { describe, expect, test } from 'bun:test';
+import { runMigrations } from '../../../../../src/storage/schema/index.ts';
+import { runMigration240 } from '../../../../../src/storage/schema/m240-space-manager-handle.ts';
+import { SpaceLongHorizonAgentRepository } from '../../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat.ts';
+
+function makeDb(): BunDatabase {
+  const db = new BunDatabase(':memory:');
+  db.exec('PRAGMA foreign_keys = ON');
+  runMigrations(db, () => {});
+  const insertSpace = db.prepare(
+    `INSERT INTO spaces (id, workspace_path, name, slug, created_at, updated_at)
+			VALUES (?, ?, ?, ?, 1, 1)`
+  );
+  insertSpace.run('space-1', '/tmp/space-1', 'Space 1', 'space-1');
+  insertSpace.run('space-2', '/tmp/space-2', 'Space 2', 'space-2');
+  insertSpace.run('space-3', '/tmp/space-3', 'Space 3', 'space-3');
+  const insertAgent = db.prepare(
+    `INSERT INTO space_long_horizon_agents (
+			id, space_id, handle, display_name, template_key, status, session_id,
+			instructions, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, '', 1, 1)`
+  );
+  insertAgent.run(
+    'agent-coord-1',
+    'space-1',
+    'coordinator',
+    'Coordinator',
+    'coordinator.default',
+    'active',
+    'space:chat:space-1'
+  );
+  insertAgent.run('agent-reviewer', 'space-2', 'reviewer', 'Reviewer', null, 'active', null);
+  insertAgent.run(
+    'agent-manager-3',
+    'space-3',
+    'space-manager',
+    'Custom Manager',
+    null,
+    'active',
+    null
+  );
+  insertAgent.run(
+    'agent-coord-3',
+    'space-3',
+    'coordinator',
+    'Coordinator',
+    'coordinator.default',
+    'active',
+    'space:chat:space-3'
+  );
+  return db;
+}
+
+function handleById(db: BunDatabase, id: string): string {
+  return (
+    db.prepare(`SELECT handle FROM space_long_horizon_agents WHERE id = ?`).get(id) as {
+      handle: string;
+    }
+  ).handle;
+}
+
+describe('Migration 240: rename coordinator handle to space-manager', () => {
+  test('renames coordinator rows per space and leaves other handles untouched', () => {
+    const db = makeDb();
+    runMigration240(db);
+
+    expect(handleById(db, 'agent-coord-1')).toBe('space-manager');
+    expect(handleById(db, 'agent-reviewer')).toBe('reviewer');
+    db.close();
+  });
+
+  test('skips spaces that already hold an active space-manager row (unique-index guard)', () => {
+    const db = makeDb();
+    runMigration240(db);
+
+    expect(handleById(db, 'agent-manager-3')).toBe('space-manager');
+    expect(handleById(db, 'agent-coord-3')).toBe('coordinator');
+    db.close();
+  });
+
+  test('renamed rows keep resolving through the repository coordinator lookup', () => {
+    const db = makeDb();
+    runMigration240(db);
+
+    const repo = new SpaceLongHorizonAgentRepository(db);
+    expect(repo.getCoordinator('space-1')?.id).toBe('agent-coord-1');
+    expect(repo.getCoordinatorRecord('space-1')?.id).toBe('agent-coord-1');
+    db.close();
+  });
+
+  test('is idempotent', () => {
+    const db = makeDb();
+    runMigration240(db);
+    runMigration240(db);
+
+    expect(handleById(db, 'agent-coord-1')).toBe('space-manager');
+    expect(handleById(db, 'agent-coord-3')).toBe('coordinator');
+    db.close();
+  });
+});

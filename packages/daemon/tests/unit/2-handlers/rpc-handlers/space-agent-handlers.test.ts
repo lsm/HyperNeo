@@ -1081,7 +1081,7 @@ describe('Space Agent RPC Handlers', () => {
         }
       );
       expect(result.agents).toHaveLength(1);
-      expect(result.agents[0].handle).toBe('coordinator');
+      expect(result.agents[0].handle).toBe('space-manager');
       expect(longHorizonRepo.getById(coordinatorLongHorizonAgentId('space-1'))).not.toBeNull();
     });
 

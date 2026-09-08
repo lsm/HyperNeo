@@ -214,6 +214,7 @@ import {
 import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../slug.ts';
 import {
+  canonicalizeSpaceManagerHandle,
   isReservedAgentHandle,
   normalizeAgentNameToken,
   normalizeReplyTargetHandle,
@@ -501,6 +502,9 @@ async function resolveHandleForTaskRouting(
 
   const handle = `@${address.handle}`;
   const canonicalHandle = `@${normalizeAgentNameToken(address.handle)}`;
+  const handlesEquivalent = (actorHandle: string) =>
+    canonicalizeSpaceManagerHandle(normalizeAgentNameToken(actorHandle)) ===
+    canonicalizeSpaceManagerHandle(normalizeAgentNameToken(handle));
   const taskWorker =
     taskExecutions
       .filter(
@@ -523,11 +527,7 @@ async function resolveHandleForTaskRouting(
         })
       ).resolved
         .map((resolved) => resolved.actor)
-        .filter(
-          (actor) =>
-            actor.handle !== undefined &&
-            normalizeAgentNameToken(actor.handle) === normalizeAgentNameToken(handle)
-        )
+        .filter((actor) => actor.handle !== undefined && handlesEquivalent(actor.handle))
     : [];
   const longHorizonActors = actors.filter((actor) => {
     if (actor.actorId.startsWith('system:')) return true;

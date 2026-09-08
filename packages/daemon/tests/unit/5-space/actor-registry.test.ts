@@ -272,7 +272,7 @@ describe('SpaceActorRegistryAdapter', () => {
       actorId: `agent:coordinator:${space.id}`,
       kind: 'agent',
       spaceId: space.id,
-      handle: '@coordinator',
+      handle: '@space-manager',
       roles: ['coordinator', 'space-agent'],
       status: 'active',
     });

@@ -1,3 +1,5 @@
+import { SPACE_MANAGER_HANDLE } from './agent-handle.ts';
+
 export type AgentMessageLevel = 'space-agent' | 'task-agent' | 'node-agent' | 'session-agent';
 
 export interface FormatAgentMessageOptions {
@@ -27,7 +29,7 @@ function replyTargetSuffix(options: FormatAgentMessageOptions): string {
 
 function replyTargetHandle(options: FormatAgentMessageOptions): string {
   if (options.replyTargetHandle) return options.replyTargetHandle;
-  if (options.fromAgentName === 'space-agent') return '@coordinator';
+  if (options.fromAgentName === 'space-agent') return `@${SPACE_MANAGER_HANDLE}`;
   return `@${options.fromAgentName}`;
 }
 

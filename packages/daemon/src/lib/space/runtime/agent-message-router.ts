@@ -5,6 +5,7 @@ import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types
 import type { SessionTarget } from '../../session-resolution/target.ts';
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import { formatAgentMessage } from '../agent-message-envelope.ts';
+import { SPACE_MANAGER_HANDLE } from '../agent-handle.ts';
 import type { SpaceAgentInjectionOutcome } from './space-agent-message-delivery.ts';
 import { SpaceDeliveryFacade } from '../messaging-adapter.ts';
 import {
@@ -360,7 +361,7 @@ export class AgentMessageRouter {
           reason:
             decision.action === 'failUnsupported'
               ? `Generic target ${decision.target} is not supported by node-agent send_message in this context.`
-              : `Generic target ${decision.target} is not supported by node-agent send_message. Use @coordinator, @handle, @role:<role>, @session:<authorized-reply-session>, or @worker:<node>/<agent>.`,
+              : `Generic target ${decision.target} is not supported by node-agent send_message. Use @${SPACE_MANAGER_HANDLE}, @handle, @role:<role>, @session:<authorized-reply-session>, or @worker:<node>/<agent>.`,
           queued: queued.length > 0 ? queued : undefined,
           notFoundAgentNames: notFound.length > 0 ? notFound : undefined,
         };

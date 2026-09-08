@@ -7369,7 +7369,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
     );
   });
 
-  test('coordinator sender falls back to coordinator handle when no alias exists', async () => {
+  test('coordinator sender falls back to the space manager handle when no alias exists', async () => {
     const wf = buildSingleStepWorkflow(
       ctx.spaceId,
       ctx.workflowManager,
@@ -7401,7 +7401,7 @@ describe('createSpaceAgentToolHandlers — send_message_to_task', () => {
 
     expect(tam.subSessionInjects[0]?.message).toContain('─── Message from space-agent ───');
     expect(tam.subSessionInjects[0]?.message).toContain(
-      'To reply, use: send_message with target "@coordinator"'
+      'To reply, use: send_message with target "@space-manager"'
     );
     expect(tam.subSessionInjects[0]?.message).not.toContain('target "@space-agent"');
   });
