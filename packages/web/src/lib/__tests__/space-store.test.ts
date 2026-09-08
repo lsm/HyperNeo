@@ -3171,6 +3171,14 @@ describe('SpaceStore — template CRUD methods', () => {
     expect(reviewer.toolPermissions).toEqual({});
   });
 
+  it('fetchTemplates() preserves template labels in the pane shape', async () => {
+    templateListResult = [makeAgentTemplate({ key: 'labeled', labels: ['workflow-worker'] })];
+
+    await spaceStore.fetchTemplates();
+
+    expect(spaceStore.agentTemplates.value[0].labels).toEqual(['workflow-worker']);
+  });
+
   it('fetchTemplates() preserves template tools, subscriptions, and reminders in the pane shape', async () => {
     const suggestedEventSubscriptions = [{ source: 'github', topic: 'pull_request.*', filter: {} }];
     const reminderDefaults: SpaceLongHorizonAgentTemplateReminderDefault[] = [

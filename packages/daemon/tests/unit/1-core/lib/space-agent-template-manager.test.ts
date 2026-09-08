@@ -259,6 +259,8 @@ describe('SpaceAgentTemplateManager', () => {
         'non\uFDD0char',
         'plane\uFFFFend',
         'private\uE000use',
+        'variation\uFE0Fselector',
+        'hangul\u3164filler',
       ]) {
         const result = await manager.create({ ...fullParams(), labels: [label] });
         expect(result.ok, label).toBe(false);

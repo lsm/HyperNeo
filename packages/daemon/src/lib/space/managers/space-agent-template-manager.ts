@@ -29,6 +29,8 @@ const MIN_AUTONOMY: SpaceAgentAutonomyLevel = 1;
 const MAX_AUTONOMY: SpaceAgentAutonomyLevel = 5;
 const MAX_LABELS = 8;
 const NON_PRINTABLE = /[\p{Cc}\p{Cf}\p{Cn}\p{Co}\p{Cs}\p{Zl}\p{Zp}]/u;
+const DEFAULT_IGNORABLE =
+  /[\u034F\u115F\u1160\u17B4\u17B5\u180B-\u180D\u180F\u3164\uFE00-\uFE0F\uFFA0\u{E0100}-\u{E01EF}]/u;
 
 export interface CreateTemplateCtx {
   repo: SpaceAgentTemplateRepository;
@@ -138,7 +140,7 @@ function normalizeTemplateLabels(labels: string[] | null | undefined): {
     if (trimmed === '') {
       return { labels: [], error: 'Template labels cannot be blank' };
     }
-    if (NON_PRINTABLE.test(trimmed)) {
+    if (NON_PRINTABLE.test(trimmed) || DEFAULT_IGNORABLE.test(trimmed)) {
       return { labels: [], error: 'Template labels must contain only printable characters' };
     }
     if (normalized.includes(trimmed)) continue;
