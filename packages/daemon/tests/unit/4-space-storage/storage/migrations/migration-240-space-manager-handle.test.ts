@@ -20,6 +20,7 @@ function makeDb(): BunDatabase {
   insertSpace.run('space-6', '/tmp/space-6', 'Space 6', 'space-6');
   insertSpace.run('space-7', '/tmp/space-7', 'Space 7', 'space-7');
   insertSpace.run('space-8', '/tmp/space-8', 'Space 8', 'space-8');
+  insertSpace.run('space-9', '/tmp/space-9', 'Space 9', 'space-9');
   const insertAgent = db.prepare(
     `INSERT INTO space_long_horizon_agents (
 			id, space_id, handle, display_name, template_key, status, session_id,
