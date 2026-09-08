@@ -187,7 +187,7 @@ Named queries (`NAMED_QUERY_REGISTRY`, `live-query-handlers.ts:4166`):
 | query | params | scope validation on subscribe | web consumers |
 |---|---|---|---|
 | `messages.bySession` | `[sessionId, limit ≤ 200]` | session must exist; limit integer 1–200 | session-store.ts (5 sites) |
-| `sessions.list` | `[showArchived: 0\|1]` — one **required** positional flag (paramCount 1; no default is inserted, unlike the compact query); SQL tests `?1 = 1` | excluded types/room/space sessions filtered out of invalidation | global-store.ts, SessionsSidebar |
+| `sessions.list` | `[showArchived]` — one **required** positional flag (paramCount 1); value **not validated**: the SQL `?1 = 1` comparison accepts `2`/`null`/`'1'` (archived hidden) and boolean `true` (archived shown) | excluded types/room/space sessions filtered out of invalidation | global-store.ts, SessionsSidebar |
 | `sessionGroupMessages.byGroup` | `[groupId]` | group must exist; task-type groups must resolve task + room | useGroupMessages.ts |
 | `spaceTaskMessages.byTask` | `[taskId]` | task must exist in `space_tasks` | useSpaceTaskMessages.ts |
 | `spaceTaskMessages.byTask.compact` | `[taskId, limit ≤ 100]` (limit defaults to 100) | task must exist; limit integer 1–100 | useSpaceTaskMessages.ts |
