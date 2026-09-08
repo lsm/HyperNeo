@@ -164,15 +164,6 @@ export interface SDKConfig
   includePartialMessages?: boolean;
 }
 
-export interface ConfigUpdateResult {
-  applied: string[];
-  pending: string[];
-  errors: Array<{
-    field: string;
-    error: string;
-  }>;
-}
-
 export interface ValidationResult {
   valid: boolean;
   error?: string;
