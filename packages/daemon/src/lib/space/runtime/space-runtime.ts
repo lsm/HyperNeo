@@ -91,6 +91,7 @@ import {
   MAX_TASK_AGENT_CRASH_RETRIES,
   MAX_TERMINAL_ERROR_CONTINUE_RETRIES,
   POST_APPROVAL_RECONCILE_RETRY_MS,
+  POST_APPROVAL_RECOVERY_AWAIT_MS,
   POST_APPROVAL_UNRECORDED_DISPATCH_GRACE_MS,
 } from './constants.ts';
 import {
@@ -7955,6 +7956,7 @@ export class SpaceRuntime {
           expectedApproval: {
             approvedAt: task.approvedAt ?? null,
             workflowRunId: task.workflowRunId ?? null,
+            postApprovalSessionId: null,
           },
         })) ?? null;
     } catch {
@@ -7992,6 +7994,7 @@ export class SpaceRuntime {
           expectedApproval: {
             approvedAt: task.approvedAt ?? null,
             workflowRunId: task.workflowRunId ?? null,
+            postApprovalSessionId: orphan.sessionId,
           },
         })) ?? null;
     } catch (err) {
@@ -8070,6 +8073,7 @@ export class SpaceRuntime {
             expectedApproval: {
               approvedAt: task.approvedAt ?? null,
               workflowRunId: task.workflowRunId ?? null,
+              postApprovalSessionId: task.postApprovalSessionId ?? null,
             },
           }
         )) ?? null;
@@ -8122,6 +8126,15 @@ export class SpaceRuntime {
     await this.safeOnTaskUpdated(after.spaceId, after);
   }
 
+  private boundPostApprovalRecoveryAwait<T>(promise: Promise<T>): Promise<T | 'timeout'> {
+    return Promise.race([
+      promise,
+      new Promise<'timeout'>((resolve) => {
+        setTimeout(() => resolve('timeout'), POST_APPROVAL_RECOVERY_AWAIT_MS);
+      }),
+    ]);
+  }
+
   private async reconcileStalledPostApprovalTasks(): Promise<void> {
     const manager = this.config.taskAgentManager;
     if (!manager) return;
@@ -8146,14 +8159,28 @@ export class SpaceRuntime {
             now + POST_APPROVAL_RECONCILE_RETRY_MS
           );
           if (dispatchDead) {
-            const revive = await this.reviveRecordedPostApprovalWorker(manager, task, generation);
+            const revive = await this.boundPostApprovalRecoveryAwait(
+              this.reviveRecordedPostApprovalWorker(manager, task, generation)
+            );
+            if (revive === 'timeout') {
+              log.warn(
+                `SpaceRuntime: post-approval worker revival for task ${task.id} did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while it runs fenced`
+              );
+              continue;
+            }
             if (revive !== 'replace') continue;
           }
-          if (
-            unrecordedStale &&
-            (await this.adoptDurablePostApprovalOrphan(manager, task, generation))
-          ) {
-            continue;
+          if (!task.postApprovalSessionId) {
+            const adopted = await this.boundPostApprovalRecoveryAwait(
+              this.adoptDurablePostApprovalOrphan(manager, task, generation)
+            );
+            if (adopted === 'timeout') {
+              log.warn(
+                `SpaceRuntime: post-approval orphan adoption for task ${task.id} did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while it runs fenced`
+              );
+              continue;
+            }
+            if (adopted) continue;
           }
           retries.push(
             this.retryPostApprovalDispatch(task.id).then(

@@ -2002,7 +2002,11 @@ export class TaskAgentManager {
 
   private approvalGenerationMatches(
     taskId: string,
-    expected?: { approvedAt: number | null; workflowRunId: string | null }
+    expected?: {
+      approvedAt: number | null;
+      workflowRunId: string | null;
+      postApprovalSessionId?: string | null;
+    }
   ): boolean {
     if (!expected) return true;
     const task = this.config.taskRepo.getTask(taskId);
@@ -2010,7 +2014,9 @@ export class TaskAgentManager {
       !!task &&
       task.status === 'approved' &&
       task.approvedAt === expected.approvedAt &&
-      (task.workflowRunId ?? null) === expected.workflowRunId
+      (task.workflowRunId ?? null) === expected.workflowRunId &&
+      (expected.postApprovalSessionId === undefined ||
+        (task.postApprovalSessionId ?? null) === expected.postApprovalSessionId)
     );
   }
 
@@ -2172,7 +2178,11 @@ export class TaskAgentManager {
       startQuery?: boolean;
       replayPendingMessages?: boolean;
       onReplaySettled?: (succeeded: boolean) => void;
-      expectedApproval?: { approvedAt: number | null; workflowRunId: string | null };
+      expectedApproval?: {
+        approvedAt: number | null;
+        workflowRunId: string | null;
+        postApprovalSessionId?: string | null;
+      };
     } = {}
   ): Promise<string | null> {
     const identity = this.readPostApprovalWorkerIdentity(taskId, hintSessionId);
@@ -2222,7 +2232,11 @@ export class TaskAgentManager {
       startQuery?: boolean;
       replayPendingMessages?: boolean;
       onReplaySettled?: (succeeded: boolean) => void;
-      expectedApproval?: { approvedAt: number | null; workflowRunId: string | null };
+      expectedApproval?: {
+        approvedAt: number | null;
+        workflowRunId: string | null;
+        postApprovalSessionId?: string | null;
+      };
     } = {}
   ): Promise<string | null> {
     const { sessionId, agentName, nodeId, agentId } = identity;
