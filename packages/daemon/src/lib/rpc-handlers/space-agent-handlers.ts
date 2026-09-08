@@ -455,9 +455,6 @@ async function createValidateConfigStage(
     const poolError = await validateAgentModelPool(params.modelPool);
     if (poolError) throw new Error(poolError);
   }
-  for (const subscription of params.suggestedEventSubscriptions ?? []) {
-    validateLongHorizonSubscriptionPattern(subscription.source, subscription.topic);
-  }
   for (const reminder of params.reminderDefaults ?? []) {
     const reminderCheck = validateTemplateReminder(reminder);
     if (!reminderCheck.ok) throw new Error(reminderCheck.reason);
@@ -477,6 +474,11 @@ function seedUnifiedAgentSubscriptions(
   agent: SpaceLongHorizonAgent
 ): void {
   for (const subscription of ctx.params.suggestedEventSubscriptions ?? []) {
+    try {
+      validateLongHorizonSubscriptionPattern(subscription.source, subscription.topic);
+    } catch {
+      continue;
+    }
     const stored = ctx.repo.upsertSubscription({
       spaceId: agent.spaceId,
       agentId: agent.id,

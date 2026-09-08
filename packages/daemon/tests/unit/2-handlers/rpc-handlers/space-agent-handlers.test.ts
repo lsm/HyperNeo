@@ -798,27 +798,37 @@ describe('Space Agent RPC Handlers', () => {
       expect(longHorizonRepo.listReminders(result.agent.id)).toEqual([]);
     });
 
-    it('rejects invalid suggested subscription sources on create', async () => {
-      await expect(
-        call(hubData.handlers, 'spaceAgent.create', {
-          spaceId: 'space-1',
-          name: 'BadSubAgent',
-          suggestedEventSubscriptions: [{ source: 'GitHub', topic: 'task.*', filter: {} }],
-        })
-      ).rejects.toThrow('Source "GitHub" must be lowercase');
-      expect(
-        longHorizonRepo.listBySpaceId('space-1').find((agent) => agent.handle === 'badsubagent')
-      ).toBeUndefined();
+    it('skips suggested subscriptions the runtime cannot route on create', async () => {
+      const result = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
+        spaceId: 'space-1',
+        name: 'MixedSubsAgent',
+        suggestedEventSubscriptions: [
+          { source: 'crm', topic: 'deal.*', filter: {} },
+          { source: 'github', topic: 'release.published', filter: {} },
+          { source: 'space', topic: 'bad topic!', filter: {} },
+          { source: 'space', topic: 'task.*', filter: {} },
+        ],
+      });
+
+      const subscriptions = longHorizonRepo.listSubscriptions(result.agent.id);
+      expect(subscriptions).toHaveLength(1);
+      expect(subscriptions[0]).toMatchObject({ source: 'space', topic: 'task.*' });
     });
 
-    it('rejects invalid suggested subscription topics on create', async () => {
-      await expect(
-        call(hubData.handlers, 'spaceAgent.create', {
+    it('creates the agent even when every suggested subscription is unroutable', async () => {
+      const result = await call<{ agent: { id: string; handle: string } }>(
+        hubData.handlers,
+        'spaceAgent.create',
+        {
           spaceId: 'space-1',
-          name: 'BadTopicAgent',
-          suggestedEventSubscriptions: [{ source: 'space', topic: 'bad topic!', filter: {} }],
-        })
-      ).rejects.toThrow('contains invalid characters');
+          name: 'SalesAgent',
+          templateKey: 'sales.default',
+          suggestedEventSubscriptions: [{ source: 'crm', topic: 'deal.*', filter: {} }],
+        }
+      );
+
+      expect(result.agent.handle).toBe('salesagent');
+      expect(longHorizonRepo.listSubscriptions(result.agent.id)).toEqual([]);
     });
 
     it('rejects invalid reminder default cron expressions on create', async () => {
