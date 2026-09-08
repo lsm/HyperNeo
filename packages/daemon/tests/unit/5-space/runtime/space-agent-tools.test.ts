@@ -1065,6 +1065,17 @@ describe('createSpaceAgentToolHandlers — update_agent_template', () => {
     expect(template.version).toBe(2);
   });
 
+  test('create result carries the persisted version for subsequent guarded updates', async () => {
+    const handlers = makeTemplateHandlers();
+
+    const created = parseResult(
+      await handlers.create_agent_template({ key: 'reviewer.custom', handle: 'reviewer' })
+    );
+
+    expect(created.success).toBe(true);
+    expect((created.template as Record<string, unknown>).version).toBe(1);
+  });
+
   test('clears nullable fields with null', async () => {
     const handlers = await seedUserTemplate();
 

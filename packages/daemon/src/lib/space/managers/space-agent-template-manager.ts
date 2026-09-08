@@ -51,7 +51,7 @@ export interface UpdateTemplateCtx {
   existing?: SpaceAgentTemplateRecord;
   version?: number;
   error?: string;
-  template?: SpaceAgentTemplateRecord | null;
+  template?: SpaceAgentTemplate | null;
 }
 
 export interface DeleteTemplateCtx {
@@ -406,10 +406,10 @@ export class SpaceAgentTemplateManager {
 
   async create(
     params: CreateSpaceAgentTemplateParams
-  ): Promise<SpaceAgentResult<SpaceAgentTemplate>> {
+  ): Promise<SpaceAgentResult<SpaceAgentTemplateRecord>> {
     const ctx = await runCreateTemplate({ repo: this.repo, params });
     if (ctx.error) return { ok: false, error: ctx.error };
-    return { ok: true, value: ctx.template! };
+    return { ok: true, value: this.repo.getByKeyWithVersion(ctx.params.key)! };
   }
 
   async update(
@@ -430,7 +430,7 @@ export class SpaceAgentTemplateManager {
     const ctx = await runUpdateTemplate({ repo: this.repo, key, params, expectedVersion });
     if (ctx.error) return { ok: false, error: ctx.error };
     if (ctx.template === null) return { ok: true, value: null };
-    return { ok: true, value: ctx.template! };
+    return { ok: true, value: this.repo.getByKeyWithVersion(key)! };
   }
 
   delete(key: string): SpaceAgentResult<void> {

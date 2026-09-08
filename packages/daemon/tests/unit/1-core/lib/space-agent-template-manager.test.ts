@@ -155,6 +155,7 @@ describe('SpaceAgentTemplateManager', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
       expect(result.value.key).toBe('release-readiness.custom');
+      expect(result.value.version).toBe(1);
       expect(manager.getByKey('release-readiness.custom')).not.toBeNull();
     });
 
@@ -839,6 +840,27 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).toContain('not found');
+    });
+
+    test('probes the current version with no fields and a matching expected version', async () => {
+      await manager.create(fullParams());
+
+      const result = await manager.casUpdate('release-readiness.custom', {}, 1);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value?.version).toBe(1);
+      expect(result.value?.displayName).toBe('Release Readiness');
+    });
+
+    test('rejects a stale expected version on a no-field update', async () => {
+      await manager.create(fullParams());
+
+      const result = await manager.casUpdate('release-readiness.custom', {}, 999);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value).toBeNull();
     });
 
     test('validates fields exactly like update', async () => {

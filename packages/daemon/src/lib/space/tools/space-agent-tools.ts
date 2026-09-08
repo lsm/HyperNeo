@@ -1993,9 +1993,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         );
         if (!result.ok) return jsonResult({ success: false, error: result.error });
         if (result.value === null) {
+          const expected =
+            args.expected_version === undefined
+              ? ''
+              : ` (expected version ${args.expected_version})`;
           return jsonResult({
             success: false,
-            error: `Template "${args.key}" was modified concurrently (expected version ${args.expected_version}); re-check the template and retry with its current version`,
+            error: `Template "${args.key}" was modified concurrently${expected}; re-check the template and retry with its current version`,
           });
         }
         logAudit('update_agent_template', {
