@@ -148,7 +148,9 @@ function stripRelocationMarkerLabels(
   labels: string[] | null | undefined
 ): string[] | null | undefined {
   if (labels === undefined || labels === null) return labels;
-  return labels.filter((label) => !isRelocationMarkerLabel(label));
+  return labels.filter(
+    (label) => typeof label !== 'string' || !isRelocationMarkerLabel(label.trim().normalize('NFC'))
+  );
 }
 
 function normalizeTemplateLabels(labels: string[] | null | undefined): {
@@ -254,9 +256,9 @@ function createValidateTools(ctx: CreateTemplateCtx): CreateTemplateCtx {
 }
 
 function createValidateLabels(ctx: CreateTemplateCtx): CreateTemplateCtx {
-  const { labels, error } = normalizeTemplateLabels(ctx.params.labels);
+  const { labels, error } = normalizeTemplateLabels(stripRelocationMarkerLabels(ctx.params.labels));
   if (error) return { ...ctx, error };
-  return { ...ctx, params: { ...ctx.params, labels: stripRelocationMarkerLabels(labels)! } };
+  return { ...ctx, params: { ...ctx.params, labels } };
 }
 
 async function createValidateModel(ctx: CreateTemplateCtx): Promise<CreateTemplateCtx> {
@@ -320,11 +322,10 @@ function updateValidateTools(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
 
 function updateValidateLabels(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
   if (ctx.params.labels === undefined) return ctx;
-  const { labels, error } = normalizeTemplateLabels(ctx.params.labels);
+  const { labels, error } = normalizeTemplateLabels(stripRelocationMarkerLabels(ctx.params.labels));
   if (error) return { ...ctx, error };
-  const userLabels = stripRelocationMarkerLabels(labels)!;
   const sticky = (ctx.existing?.labels ?? []).filter((label) => isRelocationMarkerLabel(label));
-  const merged = [...userLabels];
+  const merged = [...labels];
   for (const label of sticky) {
     if (!merged.includes(label)) merged.push(label);
   }

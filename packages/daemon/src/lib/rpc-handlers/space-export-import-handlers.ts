@@ -190,6 +190,10 @@ function parseStoredLabels(raw: unknown): string[] {
 }
 
 function loadRelocatedTemplateIndex(db: BunDatabase): Map<string, string> {
+  const tableExists = db
+    .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_templates'`)
+    .get();
+  if (!tableExists) return new Map();
   const rows = db.prepare(`SELECT key, labels FROM space_agent_templates`).all() as Array<{
     key: string;
     labels: string | null;
