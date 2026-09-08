@@ -433,9 +433,7 @@ describe('GoalDetailPanel', () => {
       return owner;
     });
     render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
-    await waitFor(() =>
-      expect(screen.getByText('Falls back to coordinator Scout (@scout)')).toBeTruthy()
-    );
+    await waitFor(() => expect(screen.getByText('Falls back to Scout (@scout)')).toBeTruthy());
   });
 
   it('assigns a new owner from the picker and reports the fresh owner', async () => {
@@ -590,7 +588,9 @@ describe('GoalDetailPanel', () => {
     });
     render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
 
-    await waitFor(() => expect(screen.getByText(/Coordinator fallback unavailable/)).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByText(/Space Manager fallback unavailable/)).toBeTruthy()
+    );
   });
 
   it('clears the owner error when an event-driven refresh caches a fresh owner', async () => {
