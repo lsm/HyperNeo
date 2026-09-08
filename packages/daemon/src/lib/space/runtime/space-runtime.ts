@@ -681,6 +681,8 @@ export class SpaceRuntime {
     Array<{ generation: number; approvedAt: number | null }>
   >();
 
+  private postApprovalRecoveryInFlight = new Set<string>();
+
   private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
 
   private nonTerminalIdleStates = new Map<string, NonTerminalIdleState>();
@@ -7947,6 +7949,28 @@ export class SpaceRuntime {
   ): Promise<boolean> {
     const orphan = manager.getPostApprovalWorkerSession?.(task.id);
     if (!orphan) return false;
+    const orphanRun = task.workflowRunId
+      ? this.config.workflowRunRepo.getRun(task.workflowRunId)
+      : null;
+    const orphanWorkflow = orphanRun?.workflowId
+      ? (this.config.spaceWorkflowManager.getWorkflowForRun(orphanRun) ?? null)
+      : null;
+    const orphanRoute = orphanWorkflow
+      ? selectFirstDispatchablePostApprovalRoute(orphanWorkflow)
+      : null;
+    if (!orphanRoute) return false;
+    if (
+      manager.isSessionOnPostApprovalRoute &&
+      !manager.isSessionOnPostApprovalRoute({
+        sessionId: orphan.sessionId,
+        taskId: task.id,
+        routeNodeId: orphanRoute.nodeId,
+        routeAgentName: orphanRoute.agentName,
+        workflowRunId: task.workflowRunId ?? null,
+      })
+    ) {
+      return false;
+    }
     if (this.postApprovalShutdownFenceTripped(manager, generation)) return true;
     let restoredId: string | null = null;
     try {
@@ -8078,7 +8102,7 @@ export class SpaceRuntime {
           }
         )) ?? null;
     } catch {
-      manager.cancelBySessionId(task.postApprovalSessionId);
+      await manager.stopSessionsVerified([task.postApprovalSessionId]).catch(() => undefined);
       restoredId = null;
     }
     if (this.postApprovalShutdownFenceTripped(manager, generation)) {
@@ -8158,25 +8182,34 @@ export class SpaceRuntime {
             task.id,
             now + POST_APPROVAL_RECONCILE_RETRY_MS
           );
+          if (this.postApprovalRecoveryInFlight.has(task.id)) continue;
           if (dispatchDead) {
-            const revive = await this.boundPostApprovalRecoveryAwait(
-              this.reviveRecordedPostApprovalWorker(manager, task, generation)
-            );
+            const revivePromise = this.reviveRecordedPostApprovalWorker(manager, task, generation);
+            this.postApprovalRecoveryInFlight.add(task.id);
+            revivePromise
+              .catch(() => undefined)
+              .finally(() => this.postApprovalRecoveryInFlight.delete(task.id))
+              .catch(() => undefined);
+            const revive = await this.boundPostApprovalRecoveryAwait(revivePromise);
             if (revive === 'timeout') {
               log.warn(
-                `SpaceRuntime: post-approval worker revival for task ${task.id} did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while it runs fenced`
+                `SpaceRuntime: post-approval worker revival for task ${task.id} did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while it runs single-flight fenced`
               );
               continue;
             }
             if (revive !== 'replace') continue;
           }
           if (!task.postApprovalSessionId) {
-            const adopted = await this.boundPostApprovalRecoveryAwait(
-              this.adoptDurablePostApprovalOrphan(manager, task, generation)
-            );
+            const adoptPromise = this.adoptDurablePostApprovalOrphan(manager, task, generation);
+            this.postApprovalRecoveryInFlight.add(task.id);
+            adoptPromise
+              .catch(() => undefined)
+              .finally(() => this.postApprovalRecoveryInFlight.delete(task.id))
+              .catch(() => undefined);
+            const adopted = await this.boundPostApprovalRecoveryAwait(adoptPromise);
             if (adopted === 'timeout') {
               log.warn(
-                `SpaceRuntime: post-approval orphan adoption for task ${task.id} did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while it runs fenced`
+                `SpaceRuntime: post-approval orphan adoption for task ${task.id} did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while it runs single-flight fenced`
               );
               continue;
             }

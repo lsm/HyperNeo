@@ -2647,7 +2647,17 @@ export class TaskAgentManager {
   }
 
   hasPendingRateLimitCooldown(sessionId: string): boolean {
-    return this.readPersistedRateLimitCooldown(sessionId) !== null;
+    if (this.readPersistedRateLimitCooldown(sessionId) === null) return false;
+    try {
+      const row = this.config.db
+        .getDatabase()
+        .prepare('SELECT status FROM sessions WHERE id = ?')
+        .get(sessionId) as { status?: string | null } | undefined;
+      if (row?.status === 'ended' || row?.status === 'archived') return false;
+    } catch {
+      return false;
+    }
+    return true;
   }
 
   isSessionInMemory(sessionId: string): boolean {
