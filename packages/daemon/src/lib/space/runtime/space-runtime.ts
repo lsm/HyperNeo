@@ -8012,8 +8012,25 @@ export class SpaceRuntime {
     const orphanRoute = orphanWorkflow
       ? selectFirstDispatchablePostApprovalRoute(orphanWorkflow)
       : null;
+    const rejectedOrphanStopped = async (): Promise<boolean> => {
+      try {
+        const results = await manager.stopSessionsVerified([orphan.sessionId]);
+        return results[0]?.stopped === true;
+      } catch {
+        return false;
+      }
+    };
     if (!orphanRoute) {
-      await manager.stopSessionsVerified([orphan.sessionId]).catch(() => undefined);
+      if (!(await rejectedOrphanStopped())) {
+        log.warn(
+          `SpaceRuntime: rejected post-approval orphan ${orphan.sessionId} for task ${task.id} (no dispatchable route) could not be stopped; deferring redispatch`
+        );
+        await this.annotateRecoveryTimeout(
+          task,
+          'post-approval orphan rejected but could not be stopped; re-dispatch deferred'
+        );
+        return true;
+      }
       return false;
     }
     if (
@@ -8026,7 +8043,16 @@ export class SpaceRuntime {
         workflowRunId: task.workflowRunId ?? null,
       })
     ) {
-      await manager.stopSessionsVerified([orphan.sessionId]).catch(() => undefined);
+      if (!(await rejectedOrphanStopped())) {
+        log.warn(
+          `SpaceRuntime: off-route post-approval orphan ${orphan.sessionId} for task ${task.id} could not be stopped; deferring redispatch`
+        );
+        await this.annotateRecoveryTimeout(
+          task,
+          'post-approval orphan rejected but could not be stopped; re-dispatch deferred'
+        );
+        return true;
+      }
       return false;
     }
     if (this.postApprovalShutdownFenceTripped(manager, generation)) return true;
