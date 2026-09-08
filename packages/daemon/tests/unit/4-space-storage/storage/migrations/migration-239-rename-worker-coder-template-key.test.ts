@@ -60,6 +60,19 @@ function storedTemplateKeys(db: BunDatabase): string[] {
   ).map((row) => row.key);
 }
 
+function storedTemplateLabels(db: BunDatabase, key: string): string[] {
+  const row = db.prepare(`SELECT labels FROM space_agent_templates WHERE key = ?`).get(key) as
+    | { labels: string | null }
+    | undefined;
+  if (!row?.labels) return [];
+  try {
+    const parsed: unknown = JSON.parse(row.labels);
+    return Array.isArray(parsed) ? (parsed.filter((l) => typeof l === 'string') as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 function readSlots(db: BunDatabase, nodeId: string): unknown[] {
   const row = db.prepare(`SELECT config FROM space_workflow_nodes WHERE id = ?`).get(nodeId) as {
     config: string;
@@ -174,6 +187,7 @@ function createMigrationDb(): BunDatabase {
   db.exec(`
     CREATE TABLE space_agent_templates (
       key TEXT PRIMARY KEY,
+      labels TEXT DEFAULT NULL,
       updated_at INTEGER NOT NULL
     )
   `);
@@ -321,6 +335,7 @@ describe('migration 239 — rename worker.coder slot templateKey to worker.swe',
     runMigration239(db);
 
     expect(storedTemplateKeys(db)).toEqual(['worker.swe.migrated']);
+    expect(storedTemplateLabels(db, 'worker.swe.migrated')).toEqual(['relocated-from:worker.swe']);
     expect(
       (
         db
@@ -357,7 +372,7 @@ describe('migration 239 — rename worker.coder slot templateKey to worker.swe',
     runMigration239(db);
 
     expect((readNodeConfig(db, 'node-1').postApproval as { targetAgent: string }).targetAgent).toBe(
-      'worker.coder'
+      'impl'
     );
     expect(readWorkflowPostApprovalTarget(db, 'wf-1')).toBe('worker.coder');
     expect(readSlots(db, 'node-1')).toEqual([
@@ -388,7 +403,7 @@ describe('migration 239 — rename worker.coder slot templateKey to worker.swe',
     db.close();
   });
 
-  test('keeps a target when rewriting it would select an earlier slot after the rename', () => {
+  test('retargets to the selected slot name when the renamed key would select an earlier slot', () => {
     const db = createMigrationDb();
     insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
     insertNodeWithSlots(
@@ -405,7 +420,7 @@ describe('migration 239 — rename worker.coder slot templateKey to worker.swe',
     runMigration239(db);
 
     expect((readNodeConfig(db, 'node-1').postApproval as { targetAgent: string }).targetAgent).toBe(
-      'worker.coder'
+      'impl'
     );
     expect(readSlots(db, 'node-1')).toEqual([
       { agentId: '', templateKey: 'team.other', name: 'worker.swe' },

@@ -176,6 +176,42 @@ function nameKey(name: string): string {
   return name.trim().toLowerCase();
 }
 
+function parseStoredLabels(raw: unknown): string[] {
+  if (typeof raw !== 'string' || !raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry): entry is string => typeof entry === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function findRelocatedTemplateKey(db: BunDatabase, fromKey: string): string | null {
+  const rows = db.prepare(`SELECT key, labels FROM space_agent_templates`).all() as Array<{
+    key: string;
+    labels: string | null;
+  }>;
+  const label = `relocated-from:${fromKey}`;
+  for (const row of rows) {
+    if (parseStoredLabels(row.labels).includes(label)) return row.key;
+  }
+  return null;
+}
+
+function ambiguousTemplateReferenceError(
+  nodeName: string,
+  fromKey: string,
+  relocatedKey: string
+): string {
+  return (
+    `node "${nodeName}" references "${fromKey}", which is ambiguous in this space: ` +
+    `a custom template with that key was relocated to "${relocatedKey}". ` +
+    `Use "${relocatedKey}" in the bundle to keep the custom template, or remove ` +
+    `the relocated template to keep the built-in.`
+  );
+}
+
 function normalizeImportedPostApproval(
   postApproval: WorkflowNodeInput['postApproval'],
   agents: WorkflowNodeInput['agents']
@@ -291,7 +327,8 @@ export function buildWorkflowCreateParams(
   exported: ExportedSpaceWorkflow,
   importedAgentNameToId: Map<string, string>,
   existingAgentNameToId: Map<string, string>,
-  usedWorkflowHandles?: Set<string>
+  usedWorkflowHandles?: Set<string>,
+  relocatedTemplateKey?: (fromKey: string) => string | null
 ): { params: CreateSpaceWorkflowParams; nodeNameToId: Map<string, string>; warnings: string[] } {
   const warnings: string[] = [];
 
@@ -307,7 +344,7 @@ export function buildWorkflowCreateParams(
     nodeNameToId.set(node.name, generateUUID());
   }
 
-  const nodes: WorkflowNodeInput[] = exported.nodes.map((exportedNode) => {
+  const builtAgents = exported.nodes.map((exportedNode) => {
     const agents = exportedNode.agents.map((a) => {
       const entry: {
         agentId: string;
@@ -337,6 +374,12 @@ export function buildWorkflowCreateParams(
             null)
           : null;
         if (getLongHorizonAgentTemplate(templateKey)) {
+          const relocatedKey = relocatedTemplateKey ? relocatedTemplateKey(templateKey) : null;
+          if (relocatedKey) {
+            warnings.push(
+              ambiguousTemplateReferenceError(exportedNode.name, templateKey, relocatedKey)
+            );
+          }
           entry.templateKey = templateKey;
         } else if (agentId) {
           entry.agentId = agentId;
@@ -378,11 +421,15 @@ export function buildWorkflowCreateParams(
       return entry;
     });
 
+    return { exportedNode, agents } as const;
+  });
+  const flattenedAgents = builtAgents.flatMap(({ agents }) => agents);
+  const nodes: WorkflowNodeInput[] = builtAgents.map(({ exportedNode, agents }) => {
     const node: WorkflowNodeInput = {
       id: nodeNameToId.get(exportedNode.name)!,
       name: exportedNode.name,
       agents,
-      postApproval: normalizeImportedPostApproval(exportedNode.postApproval, agents),
+      postApproval: normalizeImportedPostApproval(exportedNode.postApproval, flattenedAgents),
     };
     if (exportedNode.transitions && exportedNode.transitions.length > 0) {
       node.transitions = exportedNode.transitions.map((t) => ({ ...t }));
@@ -425,7 +472,8 @@ function validateWorkflowForPreview(
   importedAgentNames: Set<string>,
   existingAgentNameToId: Map<string, string>,
   agentNameToRole: Map<string, string>,
-  storedTemplateExists?: (key: string) => boolean
+  storedTemplateExists?: (key: string) => boolean,
+  relocatedTemplateKey?: (fromKey: string) => string | null
 ): string[] {
   const errors: string[] = [];
 
@@ -435,13 +483,9 @@ function validateWorkflowForPreview(
       const templateKey = rawTemplateKey ? normalizeLegacyWorkerTemplateKey(rawTemplateKey) : '';
       if (templateKey) {
         if (getLongHorizonAgentTemplate(templateKey)) {
-          if (templateKey === 'worker.swe' && storedTemplateExists?.('worker.swe.migrated')) {
-            errors.push(
-              `node "${node.name}" references "worker.swe", which is ambiguous in this space: ` +
-                `a custom template with that key was relocated to "worker.swe.migrated". ` +
-                `Use "worker.swe.migrated" in the bundle to keep the custom template, or remove ` +
-                `the relocated template to keep the built-in.`
-            );
+          const relocatedKey = relocatedTemplateKey ? relocatedTemplateKey(templateKey) : null;
+          if (relocatedKey) {
+            errors.push(ambiguousTemplateReferenceError(node.name, templateKey, relocatedKey));
           }
           continue;
         }
@@ -542,6 +586,8 @@ export function setupSpaceExportImportHandlers(
 ): void {
   const templateRepo = new SpaceAgentTemplateRepository(db);
   const storedTemplateExists = (key: string): boolean => templateRepo.getByKey(key) != null;
+  const relocatedTemplateKey = (fromKey: string): string | null =>
+    findRelocatedTemplateKey(db, fromKey);
 
   messageHub.onRequest('spaceExport.agents', async (data) => {
     const params = data as { spaceId: string; agentIds?: string[] };
@@ -761,7 +807,8 @@ export function setupSpaceExportImportHandlers(
         importedAgentNames,
         existingAgentNameToId,
         agentNameToRole,
-        storedTemplateExists
+        storedTemplateExists,
+        relocatedTemplateKey
       );
       for (const err of errors) {
         validationErrors.push(`Workflow "${wf.name}": ${err}`);
@@ -1057,7 +1104,8 @@ export function setupSpaceExportImportHandlers(
             exportedWorkflow,
             importedAgentNameToId,
             existingAgentNameToId,
-            usedWorkflowHandles
+            usedWorkflowHandles,
+            relocatedTemplateKey
           );
 
           const exportedHandle =

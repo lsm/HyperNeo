@@ -9,6 +9,7 @@ import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 const OLD_TEMPLATE_KEY = 'worker.coder';
 const NEW_TEMPLATE_KEY = 'worker.swe';
+const RELOCATED_FROM_LABEL = `relocated-from:${NEW_TEMPLATE_KEY}`;
 
 interface NodeRow {
   id: string;
@@ -127,10 +128,17 @@ function rewritePostApprovalTarget(
   if (!replacement) return false;
   const selectedIndex = slots.findIndex((slot) => slotMatchesTarget(slot, target, false));
   if (selectedIndex < 0) return false;
-  const postRewriteIndex = slots.findIndex((slot) => slotMatchesTarget(slot, replacement, true));
-  if (postRewriteIndex !== selectedIndex) return false;
-  postApproval.targetAgent = replacement;
-  return true;
+  const selected = slots[selectedIndex];
+  if (selected.renamingKey === null || selected.sourceKey !== target) return false;
+  if (slots.findIndex((slot) => slotMatchesTarget(slot, replacement, true)) === selectedIndex) {
+    postApproval.targetAgent = replacement;
+    return true;
+  }
+  if (selected.name !== '' && selected.name !== target) {
+    postApproval.targetAgent = selected.name;
+    return true;
+  }
+  return false;
 }
 
 function rewriteNodePostApprovals(
@@ -146,11 +154,22 @@ function rewriteNodePostApprovals(
   }
 }
 
+function parseLabelArray(raw: unknown): string[] {
+  if (typeof raw !== 'string' || !raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry): entry is string => typeof entry === 'string');
+  } catch {
+    return [];
+  }
+}
+
 function relocateConflictingStoredTemplate(db: BunDatabase, now: number): string | null {
   if (!tableExists(db, 'space_agent_templates')) return null;
   const stored = db
-    .prepare(`SELECT 1 FROM space_agent_templates WHERE key = ?`)
-    .get(NEW_TEMPLATE_KEY);
+    .prepare(`SELECT labels FROM space_agent_templates WHERE key = ?`)
+    .get(NEW_TEMPLATE_KEY) as { labels: string | null } | undefined;
   if (!stored) return null;
 
   let target = `${NEW_TEMPLATE_KEY}.migrated`;
@@ -164,11 +183,11 @@ function relocateConflictingStoredTemplate(db: BunDatabase, now: number): string
     target = `${NEW_TEMPLATE_KEY}.migrated-${suffix++}`;
   }
 
-  db.prepare(`UPDATE space_agent_templates SET key = ?, updated_at = ? WHERE key = ?`).run(
-    target,
-    now,
-    NEW_TEMPLATE_KEY
-  );
+  const labels = parseLabelArray(stored.labels);
+  if (!labels.includes(RELOCATED_FROM_LABEL)) labels.push(RELOCATED_FROM_LABEL);
+  db.prepare(
+    `UPDATE space_agent_templates SET key = ?, labels = ?, updated_at = ? WHERE key = ?`
+  ).run(target, JSON.stringify(labels), now, NEW_TEMPLATE_KEY);
   if (tableExists(db, 'space_agent_template_version_seq')) {
     db.prepare(`UPDATE space_agent_template_version_seq SET key = ? WHERE key = ?`).run(
       target,

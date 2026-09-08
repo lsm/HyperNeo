@@ -821,11 +821,12 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(workflow.nodes[0].postApproval?.targetAgent).toBe('coder');
     });
 
-    it('flags ambiguous worker.swe references when the custom key was relocated', async () => {
+    it('flags ambiguous worker.swe references using the actual relocated key', async () => {
       new SpaceAgentTemplateRepository(db).create({
-        key: 'worker.swe.migrated',
+        key: 'worker.swe.migrated-2',
         handle: 'legacy-swe',
         displayName: 'Legacy SWE',
+        labels: ['relocated-from:worker.swe'],
       });
       const bundle = {
         version: 5,
@@ -855,6 +856,82 @@ describe('Space Export/Import RPC Handlers', () => {
         bundle,
       });
       expect(preview.validationErrors.some((e) => e.includes('ambiguous'))).toBe(true);
+      expect(preview.validationErrors.some((e) => e.includes('worker.swe.migrated-2'))).toBe(true);
+    });
+
+    it('does not flag worker.swe when an unrelated template merely holds the migrated key', async () => {
+      new SpaceAgentTemplateRepository(db).create({
+        key: 'worker.swe.migrated',
+        handle: 'unrelated',
+        displayName: 'Unrelated',
+      });
+      const bundle = {
+        version: 5,
+        type: 'bundle',
+        name: 'Test Bundle',
+        exportedAt: 1000,
+        agents: [],
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Plain Pipe',
+            nodes: [
+              {
+                agents: [{ templateKey: 'worker.swe', name: 'coder' }],
+                name: 'Coding',
+              },
+            ],
+            startNode: 'Coding',
+            tags: [],
+          },
+        ],
+      };
+
+      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+      expect(preview.validationErrors.some((e) => e.includes('ambiguous'))).toBe(false);
+    });
+
+    it('normalizes legacy routes declared on a different node than the template slot', async () => {
+      const bundle = {
+        version: 5,
+        type: 'bundle',
+        name: 'Test Bundle',
+        exportedAt: 1000,
+        agents: [],
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Cross Node Pipe',
+            nodes: [
+              {
+                agents: [{ templateKey: 'worker.coder', name: 'coder' }],
+                name: 'Coding',
+              },
+              {
+                agents: [{ templateKey: 'worker.reviewer', name: 'reviewer' }],
+                name: 'Review',
+                postApproval: { targetAgent: 'worker.coder', instructions: 'merge the PR' },
+              },
+            ],
+            startNode: 'Coding',
+            tags: [],
+          },
+        ],
+      };
+
+      const result = await call<{ workflows: Array<{ id: string }> }>(
+        handlers,
+        'spaceImport.execute',
+        { spaceId: SPACE_ID, bundle }
+      );
+      const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
+      expect(workflow.nodes[0].agents![0].templateKey).toBe('worker.swe');
+      expect(workflow.nodes[1].postApproval?.targetAgent).toBe('coder');
     });
 
     it('prefers the agent fallback over an unverifiable colliding stored template', async () => {
