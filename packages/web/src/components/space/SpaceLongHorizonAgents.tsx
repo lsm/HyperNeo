@@ -93,7 +93,7 @@ interface OpenAgentSessionCtx {
   markOpenSeq: (openSeq: number) => void;
 }
 
-function openRouteStage(ctx: OpenAgentSessionCtx): {
+export function openRouteStage(ctx: OpenAgentSessionCtx): {
   ctx: OpenAgentSessionCtx;
   openHalt: string | undefined;
 } {
@@ -106,7 +106,7 @@ function openRouteStage(ctx: OpenAgentSessionCtx): {
   return { ctx: { ...ctx, openSeq, routeAtOpen: snapshotSpaceRoute() }, openHalt: undefined };
 }
 
-async function openProvisionStage(ctx: OpenAgentSessionCtx): Promise<{
+export async function openProvisionStage(ctx: OpenAgentSessionCtx): Promise<{
   ctx: OpenAgentSessionCtx;
   openHalt: string | undefined;
 }> {
@@ -125,7 +125,7 @@ function spaceRouteUnchangedOrUnknown(ctx: OpenAgentSessionCtx): boolean {
   return ctx.routeAtOpen !== null && spaceRouteUnchanged(ctx.routeAtOpen);
 }
 
-function openFreshnessStage(ctx: OpenAgentSessionCtx): {
+export function openFreshnessStage(ctx: OpenAgentSessionCtx): {
   ctx: OpenAgentSessionCtx;
   openHalt: string | undefined;
 } {
@@ -134,7 +134,7 @@ function openFreshnessStage(ctx: OpenAgentSessionCtx): {
   return { ctx, openHalt: undefined };
 }
 
-function openNavigateStage(ctx: OpenAgentSessionCtx): OpenAgentSessionCtx {
+export function openNavigateStage(ctx: OpenAgentSessionCtx): OpenAgentSessionCtx {
   if (ctx.ensuredSessionId) {
     navigateToSpaceSession(ctx.navigationSpaceId, ctx.ensuredSessionId);
   }
@@ -917,6 +917,7 @@ interface AgentCardProps {
   spaceId: string;
   navigationSpaceId: string;
   reminderCount: number;
+  recordOpenSeq: (openSeq: number) => void;
   onEdit: () => void;
   onDelete: () => void;
 }
@@ -926,6 +927,7 @@ function AgentCard({
   spaceId,
   navigationSpaceId,
   reminderCount,
+  recordOpenSeq,
   onEdit,
   onDelete,
 }: AgentCardProps) {
@@ -968,6 +970,7 @@ function AgentCard({
         ensuredSessionId: null,
         markOpenSeq: (openSeq) => {
           openSeqRef.current = openSeq;
+          recordOpenSeq(openSeq);
         },
       });
     } finally {
@@ -1165,6 +1168,17 @@ export function SpaceLongHorizonAgents({
   useEffect(() => {
     spaceStore.ensureConfigData().catch(() => {});
   }, [spaceId]);
+
+  const paneOpenSeqRef = useRef(0);
+
+  useEffect(
+    () => () => {
+      if (paneOpenSeqRef.current !== 0 && paneOpenSeqRef.current === latestAgentCardOpenSeq) {
+        latestAgentCardOpenSeq++;
+      }
+    },
+    [selectedHandle]
+  );
 
   const [reminderCounts, setReminderCounts] = useState<Record<string, number>>({});
   const [selectedTemplate, setSelectedTemplate] = useState<SpaceLongHorizonAgentTemplate | null>(
@@ -1445,6 +1459,9 @@ export function SpaceLongHorizonAgents({
                   spaceId={spaceId}
                   navigationSpaceId={routeSpaceId}
                   reminderCount={reminderCounts[agent.id] ?? 0}
+                  recordOpenSeq={(openSeq) => {
+                    paneOpenSeqRef.current = openSeq;
+                  }}
                   onEdit={() => {
                     setEditingAgent(agent);
                     setSelectedTemplate(null);
