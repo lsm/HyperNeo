@@ -679,7 +679,12 @@ export class SpaceRuntime {
 
   private postApprovalDispatchClaims = new Map<
     string,
-    Array<{ generation: number; approvedAt: number | null; claimedAt: number }>
+    Array<{
+      generation: number;
+      approvedAt: number | null;
+      claimedAt: number;
+      fenced: boolean;
+    }>
   >();
 
   private postApprovalRecoveryInFlight = new Map<string, { generation: number }>();
@@ -2829,10 +2834,12 @@ export class SpaceRuntime {
       generation: number;
       approvedAt: number | null;
       claimedAt: number;
+      fenced: boolean;
     } = {
       generation: dispatchRuntimeGeneration,
       approvedAt: claimTask?.approvedAt ?? null,
       claimedAt: Date.now(),
+      fenced: false,
     };
     const claimStack = this.postApprovalDispatchClaims.get(taskId) ?? [];
     claimStack.push(claimToken);
@@ -2867,7 +2874,12 @@ export class SpaceRuntime {
       requireSucceededRun?: boolean;
     },
     dispatchRuntimeGeneration: number,
-    claimToken: { generation: number; approvedAt: number | null; claimedAt: number }
+    claimToken: {
+      generation: number;
+      approvedAt: number | null;
+      claimedAt: number;
+      fenced: boolean;
+    }
   ): Promise<PostApprovalRouteResult> {
     const router = this.getPostApprovalRouter();
     if (!router) {
@@ -2995,6 +3007,11 @@ export class SpaceRuntime {
       workspace_path: space?.workspacePath,
       ...(approvalAuthorityName ? { approval_authority: approvalAuthorityName } : {}),
     };
+    if (claimToken.fenced) {
+      const reason = `post-approval dispatch for task ${taskId} expired its claim lease; refusing to continue the stalled dispatch`;
+      log.warn(`dispatchPostApproval: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
     let routeResult: PostApprovalRouteResult;
     try {
       routeResult = await router.route(approvedTask, workflow, routeContext, {
@@ -7931,14 +7948,12 @@ export class SpaceRuntime {
   private isUnrecordedApprovalDispatchStale(task: SpaceTask): boolean {
     if (task.postApprovalSessionId !== null || task.postApprovalBlockedReason) return false;
     const claimCheckNow = Date.now();
-    if (
-      (this.postApprovalDispatchClaims.get(task.id) ?? []).some(
-        (token) =>
-          token.approvedAt === task.approvedAt &&
-          claimCheckNow - token.claimedAt < POST_APPROVAL_DISPATCH_CLAIM_LEASE_MS
-      )
-    ) {
-      return false;
+    for (const token of this.postApprovalDispatchClaims.get(task.id) ?? []) {
+      if (token.approvedAt !== task.approvedAt) continue;
+      if (claimCheckNow - token.claimedAt < POST_APPROVAL_DISPATCH_CLAIM_LEASE_MS) {
+        return false;
+      }
+      token.fenced = true;
     }
     const approvalBoundary = task.approvedAt ?? task.updatedAt;
     return Date.now() - approvalBoundary > POST_APPROVAL_UNRECORDED_DISPATCH_GRACE_MS;
@@ -8198,9 +8213,10 @@ export class SpaceRuntime {
           );
           const inFlightMarker = this.postApprovalRecoveryInFlight.get(task.id);
           if (inFlightMarker && inFlightMarker.generation === generation) continue;
-          const bypass = this.postApprovalRecoveryBypass.get(task.id);
+          let bypass = this.postApprovalRecoveryBypass.get(task.id);
           if (bypass && bypass.generation !== generation) {
             this.postApprovalRecoveryBypass.delete(task.id);
+            bypass = undefined;
           }
           if (dispatchDead && !bypass?.revive) {
             const revivePromise = this.reviveRecordedPostApprovalWorker(manager, task, generation);
@@ -8244,7 +8260,21 @@ export class SpaceRuntime {
             this.postApprovalRecoveryInFlight.set(task.id, adoptMarker);
             adoptPromise
               .catch(() => undefined)
-              .then((outcome) => {
+              .then(async (outcome) => {
+                if (outcome === true) {
+                  const settled = this.config.taskRepo.getTask(task.id);
+                  if (
+                    settled?.status === 'approved' &&
+                    settled.postApprovalBlockedReason ===
+                      'post-approval worker adoption timed out; settlement still pending'
+                  ) {
+                    this.config.taskRepo.updateTask(task.id, {
+                      postApprovalBlockedReason: null,
+                    });
+                    const cleared = this.config.taskRepo.getTask(task.id);
+                    if (cleared) await this.safeOnTaskUpdated(task.spaceId, cleared);
+                  }
+                }
                 if (outcome === false) {
                   const existing = this.postApprovalRecoveryBypass.get(task.id) ?? {
                     generation,
@@ -8270,6 +8300,15 @@ export class SpaceRuntime {
               log.warn(
                 `SpaceRuntime: post-approval orphan adoption for task ${task.id} did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while it runs single-flight fenced`
               );
+              const freshTimeout = this.config.taskRepo.getTask(task.id);
+              if (freshTimeout?.status === 'approved' && !freshTimeout.postApprovalBlockedReason) {
+                this.config.taskRepo.updateTask(task.id, {
+                  postApprovalBlockedReason:
+                    'post-approval worker adoption timed out; settlement still pending',
+                });
+                const blockedTimeout = this.config.taskRepo.getTask(task.id);
+                if (blockedTimeout) await this.safeOnTaskUpdated(task.spaceId, blockedTimeout);
+              }
               continue;
             }
             if (adopted) continue;
