@@ -71,6 +71,29 @@ describe('Migration 236: deferred-message partial index', () => {
     }
   });
 
+  test('is a no-op on a legacy sdk_messages table without the sdk_uuid column', () => {
+    db.exec(`
+      DROP TABLE sdk_messages
+    `);
+    db.exec(`
+      CREATE TABLE sdk_messages (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        message_type TEXT NOT NULL,
+        sdk_message TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        send_status TEXT DEFAULT 'consumed'
+      )
+    `);
+
+    runMigration236(db);
+
+    const count = db
+      .prepare(`SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'index' AND name = ?`)
+      .get('idx_sdk_messages_deferred_uuid') as { n: number };
+    expect(count.n).toBe(0);
+  });
+
   test('digest handoff debt scan resolves through the partial index', () => {
     runMigration236(db);
 
