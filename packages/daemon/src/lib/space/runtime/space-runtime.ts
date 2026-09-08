@@ -134,6 +134,7 @@ import {
   type PostApprovalRouteContext,
   type PostApprovalRouteResult,
   PostApprovalRouter,
+  selectFirstDispatchablePostApprovalRoute,
 } from './post-approval-router.ts';
 import { runPostApprovalRetry, TaskScopedRetrySerializer } from './post-approval-retry.ts';
 import {
@@ -674,7 +675,10 @@ export class SpaceRuntime {
 
   private postApprovalReconcileNextAttempt = new Map<string, number>();
 
-  private postApprovalDispatchClaims = new Map<string, number[]>();
+  private postApprovalDispatchClaims = new Map<
+    string,
+    Array<{ generation: number; approvedAt: number | null }>
+  >();
 
   private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
 
@@ -2720,7 +2724,7 @@ export class SpaceRuntime {
   }
 
   private postApprovalRouter: PostApprovalRouter | null = null;
-  private readonly postApprovalRetryQueue = new TaskScopedRetrySerializer();
+  private postApprovalRetryQueue = new TaskScopedRetrySerializer();
 
   async retryPostApprovalDispatch(taskId: string): Promise<PostApprovalRouteResult> {
     const manager = this.config.taskAgentManager;
@@ -2805,8 +2809,13 @@ export class SpaceRuntime {
       return { mode: 'skipped', reason };
     }
     const dispatchRuntimeGeneration = this.runtimeGeneration;
+    const claimTask = this.config.taskRepo.getTask(taskId);
+    const claimToken = {
+      generation: dispatchRuntimeGeneration,
+      approvedAt: claimTask?.approvedAt ?? null,
+    };
     const claimStack = this.postApprovalDispatchClaims.get(taskId) ?? [];
-    claimStack.push(dispatchRuntimeGeneration);
+    claimStack.push(claimToken);
     this.postApprovalDispatchClaims.set(taskId, claimStack);
     try {
       return await this.dispatchPostApprovalClaimed(
@@ -2819,7 +2828,7 @@ export class SpaceRuntime {
     } finally {
       const outstanding = this.postApprovalDispatchClaims.get(taskId);
       if (outstanding) {
-        const ownIndex = outstanding.lastIndexOf(dispatchRuntimeGeneration);
+        const ownIndex = outstanding.indexOf(claimToken);
         if (ownIndex >= 0) outstanding.splice(ownIndex, 1);
         if (outstanding.length === 0) this.postApprovalDispatchClaims.delete(taskId);
       }
@@ -3715,6 +3724,7 @@ export class SpaceRuntime {
       this.tickTimer = null;
     }
     this.postApprovalDispatchClaims.clear();
+    this.postApprovalRetryQueue = new TaskScopedRetrySerializer();
     this.settleCurrentReconciliation(false);
     this.retainedEventRedispatchPending = false;
     this.unsubscribeExternalEventPublished?.();
@@ -7896,7 +7906,13 @@ export class SpaceRuntime {
 
   private isUnrecordedApprovalDispatchStale(task: SpaceTask): boolean {
     if (task.postApprovalSessionId !== null || task.postApprovalBlockedReason) return false;
-    if ((this.postApprovalDispatchClaims.get(task.id)?.length ?? 0) > 0) return false;
+    if (
+      (this.postApprovalDispatchClaims.get(task.id) ?? []).some(
+        (token) => token.approvedAt === task.approvedAt
+      )
+    ) {
+      return false;
+    }
     return (
       task.approvedAt !== null &&
       Date.now() - task.approvedAt > POST_APPROVAL_UNRECORDED_DISPATCH_GRACE_MS
@@ -7927,6 +7943,10 @@ export class SpaceRuntime {
       restoredId =
         (await manager.restorePostApprovalWorkerSession?.(task.id, orphan.sessionId, undefined, {
           startQuery: false,
+          expectedApproval: {
+            approvedAt: task.approvedAt ?? null,
+            workflowRunId: task.workflowRunId ?? null,
+          },
         })) ?? null;
     } catch {
       restoredId = null;
@@ -7959,12 +7979,12 @@ export class SpaceRuntime {
     let resumedId: string | null = null;
     try {
       resumedId =
-        (await manager.restorePostApprovalWorkerSession?.(
-          task.id,
-          orphan.sessionId,
-          undefined,
-          {}
-        )) ?? null;
+        (await manager.restorePostApprovalWorkerSession?.(task.id, orphan.sessionId, undefined, {
+          expectedApproval: {
+            approvedAt: task.approvedAt ?? null,
+            workflowRunId: task.workflowRunId ?? null,
+          },
+        })) ?? null;
     } catch (err) {
       log.warn(
         `SpaceRuntime: failed to resume adopted post-approval worker ${orphan.sessionId} for task ${task.id}: ${formatCommandError(err)}`
@@ -8012,6 +8032,23 @@ export class SpaceRuntime {
     if (this.postApprovalShutdownFenceTripped(manager, generation)) return 'skip';
     const run = task.workflowRunId ? this.config.workflowRunRepo.getRun(task.workflowRunId) : null;
     if (!run || !isWorkflowRunSucceeded(run.status)) return 'replace';
+    const workflow = run.workflowId
+      ? (this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null)
+      : null;
+    const route = workflow ? selectFirstDispatchablePostApprovalRoute(workflow) : null;
+    if (
+      route &&
+      manager.isSessionOnPostApprovalRoute &&
+      !manager.isSessionOnPostApprovalRoute({
+        sessionId: task.postApprovalSessionId,
+        taskId: task.id,
+        routeNodeId: route.nodeId,
+        routeAgentName: route.agentName,
+        workflowRunId: task.workflowRunId ?? null,
+      })
+    ) {
+      return 'replace';
+    }
     let restoredId: string | null = null;
     try {
       restoredId =
@@ -8019,9 +8056,15 @@ export class SpaceRuntime {
           task.id,
           task.postApprovalSessionId,
           undefined,
-          {}
+          {
+            expectedApproval: {
+              approvedAt: task.approvedAt ?? null,
+              workflowRunId: task.workflowRunId ?? null,
+            },
+          }
         )) ?? null;
     } catch {
+      manager.cancelBySessionId(task.postApprovalSessionId);
       restoredId = null;
     }
     if (this.postApprovalShutdownFenceTripped(manager, generation)) {
@@ -8041,6 +8084,7 @@ export class SpaceRuntime {
       return 'skip';
     }
     if (!this.postApprovalWorkerResumed(manager, restoredId)) {
+      manager.cancelBySessionId(restoredId);
       this.config.taskRepo.updateTask(task.id, {
         postApprovalSessionId: null,
         postApprovalBlockedReason: `post-approval worker ${restoredId} restored but its query was not admitted; re-dispatch required`,

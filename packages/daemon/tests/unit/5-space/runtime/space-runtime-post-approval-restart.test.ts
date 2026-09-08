@@ -94,6 +94,7 @@ interface TamMockOptions {
   revivable?: string[];
   terminalRestoreIds?: string[];
   notAdmittedRestoreIds?: string[];
+  offRouteSessionIds?: string[];
 }
 
 function makeTaskAgentManagerMock(options: TamMockOptions = {}) {
@@ -109,7 +110,7 @@ function makeTaskAgentManagerMock(options: TamMockOptions = {}) {
     isSessionAlive: (sessionId: string) => aliveSessionIds.has(sessionId),
     isSessionInMemory: (sessionId: string) => aliveSessionIds.has(sessionId),
     isSessionWorkerForTask: () => false,
-    isSessionOnPostApprovalRoute: () => false,
+    isSessionOnPostApprovalRoute: () => options.offRouteSessionIds === undefined,
     cancelBySessionId: (sessionId: string) => {
       cancelled.push(sessionId);
     },
