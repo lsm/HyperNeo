@@ -8,6 +8,7 @@ const {
   mockAgents,
   mockTemplates,
   mockConfigDataLoaded,
+  mockRuntimeState,
   mockEnsureConfigData,
   mockListAgentReminderCounts,
   mockCreateAgent,
@@ -24,6 +25,7 @@ const {
     mockAgents: makeSignal<SpaceLongHorizonAgent[]>([]),
     mockTemplates: makeSignal([]),
     mockConfigDataLoaded: makeSignal(true),
+    mockRuntimeState: makeSignal<'running' | 'paused' | 'stopped' | null>('running'),
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
     mockListAgentReminderCounts: vi.fn().mockResolvedValue({}),
     mockCreateAgent: vi.fn().mockResolvedValue(undefined),
@@ -41,6 +43,7 @@ vi.mock('../../../lib/space-store', () => ({
       agents: mockAgents,
       agentTemplates: mockTemplates,
       configDataLoaded: mockConfigDataLoaded,
+      runtimeState: mockRuntimeState,
       ensureConfigData: mockEnsureConfigData,
       listAgentReminderCounts: mockListAgentReminderCounts,
       createAgent: mockCreateAgent,
@@ -229,6 +232,7 @@ describe('SpaceLongHorizonAgents', () => {
     currentSpaceIdSignal.value = null;
     currentSpaceViewModeSignal.value = null;
     currentSpaceAgentHandleSignal.value = null;
+    mockRuntimeState.value = 'running';
   });
 
   afterEach(() => {
@@ -1847,6 +1851,40 @@ describe('SpaceLongHorizonAgents', () => {
     resolveEnsure('space:agent:space-1:lh-1');
     await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
+  });
+
+  it('invalidates a pending open when a pane dialog opens', async () => {
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+    let resolveEnsure: (sessionId: string) => void = () => {};
+    mockEnsureAgentSession.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveEnsure = resolve;
+        })
+    );
+
+    const { getByText, getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Research Long Horizon').closest('[role="button"]')!);
+    fireEvent.click(getByRole('button', { name: '+ Custom agent' }));
+
+    resolveEnsure('space:agent:space-1:lh-1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps derived cards inert while the space cannot provision', () => {
+    mockAgents.value = [makeLongHorizonAgent({ sessionId: null })];
+    mockRuntimeState.value = 'paused';
+
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    expect(getByText('Research Long Horizon').closest('[role="button"]')).toBeNull();
+    fireEvent.click(getByText('Research Long Horizon'));
+
+    expect(mockEnsureAgentSession).not.toHaveBeenCalled();
     expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
   });
 

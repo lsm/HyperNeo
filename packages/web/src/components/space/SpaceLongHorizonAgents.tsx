@@ -917,6 +917,7 @@ interface AgentCardProps {
   spaceId: string;
   navigationSpaceId: string;
   reminderCount: number;
+  provisioningAvailable: boolean;
   recordOpenSeq: (openSeq: number) => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -927,6 +928,7 @@ function AgentCard({
   spaceId,
   navigationSpaceId,
   reminderCount,
+  provisioningAvailable,
   recordOpenSeq,
   onEdit,
   onDelete,
@@ -941,7 +943,7 @@ function AgentCard({
 
   const sessionId = coordinator
     ? (agent.sessionId ?? `space:chat:${spaceId}`)
-    : agent.status === 'active'
+    : agent.status === 'active' && provisioningAvailable
       ? (agent.sessionId ?? buildLongHorizonAgentSessionId(spaceId, agent.id))
       : null;
   const hasSession = !!agent.sessionId || coordinator;
@@ -1172,14 +1174,15 @@ export function SpaceLongHorizonAgents({
 
   const paneOpenSeqRef = useRef(0);
 
-  useEffect(
-    () => () => {
-      if (paneOpenSeqRef.current !== 0 && paneOpenSeqRef.current === latestAgentCardOpenSeq) {
-        latestAgentCardOpenSeq++;
-      }
-    },
-    [selectedHandle]
-  );
+  const invalidatePanePendingOpen = () => {
+    if (paneOpenSeqRef.current !== 0 && paneOpenSeqRef.current === latestAgentCardOpenSeq) {
+      latestAgentCardOpenSeq++;
+    }
+  };
+
+  useEffect(() => () => invalidatePanePendingOpen(), [selectedHandle]);
+
+  const provisioningAvailable = spaceStore.runtimeState.value === 'running';
 
   const [reminderCounts, setReminderCounts] = useState<Record<string, number>>({});
   const [selectedTemplate, setSelectedTemplate] = useState<SpaceLongHorizonAgentTemplate | null>(
@@ -1308,6 +1311,7 @@ export function SpaceLongHorizonAgents({
           <button
             type="button"
             onClick={() => {
+              invalidatePanePendingOpen();
               setSelectedTemplate(null);
               setEditingAgent(null);
               setShowEditor(true);
@@ -1347,6 +1351,7 @@ export function SpaceLongHorizonAgents({
                           disabled={isMigratedWorkerMirror(selectedAgent)}
                           data-testid="reapply-template-button"
                           onClick={() => {
+                            invalidatePanePendingOpen();
                             setReapplyingAgent(selectedAgent);
                             setReapplyError(null);
                           }}
@@ -1404,7 +1409,10 @@ export function SpaceLongHorizonAgents({
             </div>
             <button
               type="button"
-              onClick={() => setShowTemplateEditor(true)}
+              onClick={() => {
+                invalidatePanePendingOpen();
+                setShowTemplateEditor(true);
+              }}
               class="text-xs font-medium text-accent-soft/85 underline-offset-4 transition-colors hover:text-accent-soft hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
             >
               New Template
@@ -1423,6 +1431,7 @@ export function SpaceLongHorizonAgents({
                       template={t}
                       addedCount={templateInstanceCounts.get(t.key) ?? 0}
                       onClick={() => {
+                        invalidatePanePendingOpen();
                         setSelectedTemplate(t);
                         setEditingAgent(null);
                         setShowEditor(true);
@@ -1460,6 +1469,7 @@ export function SpaceLongHorizonAgents({
                   spaceId={spaceId}
                   navigationSpaceId={routeSpaceId}
                   reminderCount={reminderCounts[agent.id] ?? 0}
+                  provisioningAvailable={provisioningAvailable}
                   recordOpenSeq={(openSeq) => {
                     paneOpenSeqRef.current = openSeq;
                   }}
