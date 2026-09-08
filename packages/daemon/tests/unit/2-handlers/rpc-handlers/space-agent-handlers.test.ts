@@ -1674,6 +1674,30 @@ describe('Space Agent RPC Handlers', () => {
       ).toHaveLength(0);
     });
 
+    it('rejects create ids containing reserved characters', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.create', {
+          spaceId: 'space-1',
+          name: 'Bad Id',
+          id: 'agent:id',
+        })
+      ).rejects.toThrow('id may only contain letters, digits, underscores, and hyphens');
+      await expect(
+        call(hubData.handlers, 'spaceAgent.create', {
+          spaceId: 'space-1',
+          name: 'Bad Path',
+          id: 'a/b c',
+        })
+      ).rejects.toThrow('id may only contain letters, digits, underscores, and hyphens');
+
+      const created = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
+        spaceId: 'space-1',
+        name: 'Good Id',
+        id: 'custom-agent_1',
+      });
+      expect(created.agent.id).toBe('custom-agent_1');
+    });
+
     it('routes mirror-row updates through the unified table', async () => {
       const workerId = 'worker-original';
       seedWorkerMirror(db, {
@@ -2152,6 +2176,49 @@ describe('Space Agent RPC Handlers', () => {
       );
 
       expect(result.agent.id).toBe(created.agent.id);
+    });
+
+    it('delays the reapply event until the stamped-session refresh succeeds', async () => {
+      const runtimeService = createRuntimeServiceMock();
+      runtimeService.refreshLongHorizonAgentSession.mockRejectedValueOnce(
+        new Error('refresh failed')
+      );
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        workflowRepo,
+        runtimeService,
+        new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db))
+      );
+      const templateRepo = new SpaceAgentTemplateRepository(db);
+      templateRepo.create({
+        key: 'late-reapply.custom',
+        handle: 'late-reapply',
+        displayName: 'Late Reapply',
+        instructions: 'Late reapplied instructions.',
+        suggestedAutonomyLevel: 2,
+      });
+      const created = await call<{ agent: { id: string } }>(
+        freshHub.handlers,
+        'spaceAgent.create',
+        { spaceId: 'space-1', name: 'Late Agent', templateName: 'late-reapply.custom' }
+      );
+      longHorizonRepo.update(created.agent.id, {
+        sessionId: `space:agent:space-1:${created.agent.id}`,
+      });
+      daemonData.publishMock.mockClear();
+
+      await expect(
+        call(freshHub.handlers, 'spaceAgent.reapplyTemplate', { agentId: created.agent.id })
+      ).rejects.toThrow('Failed to refresh session: refresh failed');
+
+      expect(
+        daemonData.publishMock.mock.calls.filter(([name]) => name === 'spaceAgent.updated')
+      ).toHaveLength(0);
     });
 
     it('refreshes the stamped session after reapplying a template', async () => {

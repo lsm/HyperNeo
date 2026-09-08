@@ -424,6 +424,9 @@ async function createAdmitRequestStage(ctx: CreateUnifiedAgentCtx): Promise<Crea
   if (!params.spaceId) throw new Error('spaceId is required');
   const displayName = params.displayName ?? params.name;
   if (!displayName && !params.handle) throw new Error('name is required');
+  if (params.id !== undefined && !/^[a-zA-Z0-9_-]+$/.test(params.id)) {
+    throw new Error('id may only contain letters, digits, underscores, and hyphens');
+  }
   const space = await ctx.spaceManager.getSpace(params.spaceId);
   if (!space) throw new Error(`Space not found: ${params.spaceId}`);
   return { ...ctx, agentId: params.id ?? '', displayName: displayName ?? '' };
@@ -1155,9 +1158,6 @@ export function setupSpaceAgentHandlers(
       if (!agentId) throw new Error('agentId is required');
       const result = await reapplyTemplateService.reapplyTemplate(agentId);
       if (!result.ok) throw new Error(result.error);
-      if (result.value.sessionId) {
-        await runtimeService?.refreshLongHorizonAgentSession(result.value.spaceId, result.value.id);
-      }
       return { agent: result.value };
     });
   }

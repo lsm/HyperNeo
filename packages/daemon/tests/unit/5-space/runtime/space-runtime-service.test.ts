@@ -4429,6 +4429,46 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
     expect(stampedSession.mergeRuntimeMcpServers).not.toHaveBeenCalled();
   });
 
+  test('stops the config refresh when the session archives mid-update', async () => {
+    const db = makeTestDb();
+    seedEnsureSpace(db);
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    const stampedSessionId = longTermAgentSessionId(ENSURE_SPACE_ID, 'lh-mid-update-archive');
+    repo.create({
+      id: 'lh-mid-update-archive',
+      spaceId: ENSURE_SPACE_ID,
+      handle: 'researcher',
+      sessionId: stampedSessionId,
+    });
+    const sessionState = { status: 'active' };
+    const stampedSession = {
+      mergeRuntimeMcpServers: mock(() => {}),
+      updateConfig: mock(async () => {
+        sessionState.status = 'archived';
+      }),
+      resetQuery: mock(async () => ({ success: true })),
+      restart: mock(async () => {}),
+      getSessionData: mock(() => ({
+        id: stampedSessionId,
+        status: sessionState.status,
+        metadata: {},
+        config: {},
+      })),
+    } as unknown as AgentSession;
+    const sessionManager = {
+      getSessionAsync: mock(async () => stampedSession),
+    } as unknown as SessionManager;
+    const svc = new SpaceRuntimeService(
+      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
+    );
+
+    await svc.refreshLongHorizonAgentSession(ENSURE_SPACE_ID, 'lh-mid-update-archive');
+
+    expect(stampedSession.updateConfig).toHaveBeenCalledTimes(1);
+    expect(stampedSession.resetQuery).not.toHaveBeenCalled();
+    expect(stampedSession.restart).not.toHaveBeenCalled();
+  });
+
   test('coalesces concurrent ensures for the same agent session', async () => {
     const db = makeTestDb();
     seedEnsureSpace(db);

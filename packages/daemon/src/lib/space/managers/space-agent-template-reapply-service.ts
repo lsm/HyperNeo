@@ -20,7 +20,10 @@ export interface ReapplyTemplateTemplateSource {
 }
 
 type ReapplyTemplateEventBus = InternalEventBus<DaemonInternalEventMap> | undefined;
-type ReapplyTemplateRuntimeService = Pick<SpaceRuntimeService, 'clearLongTermAgentSessionProvider'>;
+type ReapplyTemplateRuntimeService = Pick<
+  SpaceRuntimeService,
+  'clearLongTermAgentSessionProvider' | 'refreshLongHorizonAgentSession'
+>;
 
 export interface ReapplyTemplateCtx {
   agents: ReapplyTemplateAgentSource;
@@ -101,6 +104,17 @@ async function reapplyClearProvider(ctx: ReapplyTemplateCtx): Promise<ReapplyTem
   return ctx;
 }
 
+async function reapplyRefreshSession(ctx: ReapplyTemplateCtx): Promise<ReapplyTemplateCtx> {
+  if (!ctx.runtimeService || !ctx.updated?.sessionId) return ctx;
+  try {
+    await ctx.runtimeService.refreshLongHorizonAgentSession(ctx.updated.spaceId, ctx.updated.id);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { ...ctx, error: `Failed to refresh session: ${detail}` };
+  }
+  return ctx;
+}
+
 async function reapplyPublish(ctx: ReapplyTemplateCtx): Promise<ReapplyTemplateCtx> {
   if (!ctx.internalEventBus || !ctx.updated) return ctx;
   await publishUnifiedAgentUpdated(ctx.internalEventBus, ctx.updated);
@@ -124,6 +138,8 @@ export const runReapplyTemplate = (
   .pipe(reapplyPersist, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
   .pipe(reapplyClearProvider, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
+  .pipe(reapplyRefreshSession, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
   .pipe(reapplyPublish, 'ctx', 'ctx')
   .endAsync('ctx') as (input: ReapplyTemplateCtx) => Promise<ReapplyTemplateCtx>;

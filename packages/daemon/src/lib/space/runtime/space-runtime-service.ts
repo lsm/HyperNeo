@@ -656,10 +656,12 @@ export class SpaceRuntimeService {
     );
     if (!changed) return;
     await session.updateConfig(updates);
+    if (['ended', 'archived'].includes(session.getSessionData().status)) return;
     const result = await session.resetQuery({ restartQuery: false });
     if (!result.success) {
       throw new Error(result.error ?? 'Failed to refresh long-horizon agent session');
     }
+    if (['ended', 'archived'].includes(session.getSessionData().status)) return;
     await session.restart({
       beforeStart: () => session.reevaluateContextBudgetAfterModelSwitch?.(),
     });
