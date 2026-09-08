@@ -76,7 +76,7 @@ export class SpaceAgentTemplateRepository {
     key: string,
     params: UpdateSpaceAgentTemplateParams,
     expectedVersion?: number
-  ): SpaceAgentTemplate | null {
+  ): SpaceAgentTemplateRecord | null {
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
 
@@ -129,7 +129,7 @@ export class SpaceAgentTemplateRepository {
       values.push(encodeJsonArray(params.labels));
     }
 
-    if (fields.length === 0) return this.getByKey(key);
+    if (fields.length === 0) return this.getByKeyWithVersion(key);
 
     const nextVersion = this.nextVersionFor(key);
     fields.push('updated_at = ?');
@@ -145,7 +145,7 @@ export class SpaceAgentTemplateRepository {
       .prepare(`UPDATE space_agent_templates SET ${fields.join(', ')} ${where}`)
       .run(...values);
     if (result.changes === 0) return null;
-    return this.getByKey(key);
+    return this.getByKeyWithVersion(key);
   }
 
   delete(key: string): boolean {

@@ -514,6 +514,7 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
     expect(names).toContain('assign_agent_to_goal');
     expect(names).toContain('create_agent_reminder');
     expect(names).toContain('create_agent_template');
+    expect(names).toContain('update_agent_template');
     expect(() =>
       expectToolInputParses(server, 'update_agent', {
         agent_id: 'agent-1',
@@ -696,7 +697,7 @@ describe('createSpaceAgentMcpServer — agent/goal/Forge tool schema extraction 
     });
   }
 
-  test('db-configured server registers exactly the base tools plus the 18 lifecycle tools', () => {
+  test('db-configured server registers exactly the base tools plus the 19 lifecycle tools', () => {
     const server = makeServer({ db: ctx.db });
     expect(getRegisteredToolNames(server).sort()).toEqual(
       [
@@ -704,7 +705,7 @@ describe('createSpaceAgentMcpServer — agent/goal/Forge tool schema extraction 
         ...Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS),
       ].sort()
     );
-    expect(getRegisteredToolNames(server)).toHaveLength(42);
+    expect(getRegisteredToolNames(server)).toHaveLength(43);
   });
 
   test('goal-configured server registers exactly the base tools plus the 9 goal tools', () => {
@@ -784,6 +785,8 @@ describe('createSpaceAgentMcpServer — agent/goal/Forge tool schema extraction 
           model_pool: [{ model: 'm', maxConcurrent: 2, weight: 1 }],
         },
       ],
+      ['lifecycle', 'update_agent_template', { key: 'k', thinking_level: 'think64k' }],
+      ['lifecycle', 'update_agent_template', { key: 'k', expected_version: 0 }],
       ['lifecycle', 'list_agent_reminders', { agent_id: 'a1', status: 'done' }],
       ['lifecycle', 'subscribe_agent_event', { agent_id: 'a1', topic_pattern: 't/*' }],
       ['goal', 'list_goals', { status: 'completed' }],
@@ -1007,6 +1010,146 @@ describe('createSpaceAgentToolHandlers — create_agent_template', () => {
     );
     expect(result.success).toBe(false);
     expect(result.error).toBe(`Long-horizon agent not found: ${agent.id}`);
+  });
+});
+
+describe('createSpaceAgentToolHandlers — update_agent_template', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  function makeTemplateHandlers() {
+    return makeHandlers(ctx, {
+      templateManager: new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(ctx.db)),
+    });
+  }
+
+  async function seedUserTemplate() {
+    const handlers = makeTemplateHandlers();
+    const created = parseResult(
+      await handlers.create_agent_template({
+        key: 'reviewer.custom',
+        handle: 'reviewer',
+        display_name: 'Reviewer',
+        instructions: 'You review code.',
+        labels: ['workflow-worker'],
+        model: 'glm-5.3',
+        provider: 'zai',
+      })
+    );
+    expect(created.success).toBe(true);
+    return handlers;
+  }
+
+  test('updates mutable fields and returns the template with its new version', async () => {
+    const handlers = await seedUserTemplate();
+
+    const result = parseResult(
+      await handlers.update_agent_template({
+        key: 'reviewer.custom',
+        display_name: 'Senior Reviewer',
+        labels: ['long-horizon'],
+      })
+    );
+
+    expect(result.success).toBe(true);
+    const template = result.template as Record<string, unknown>;
+    expect(template.displayName).toBe('Senior Reviewer');
+    expect(template.labels).toEqual(['long-horizon']);
+    expect(template.instructions).toBe('You review code.');
+    expect(template.model).toBe('glm-5.3');
+    expect(template.version).toBe(2);
+  });
+
+  test('clears nullable fields with null', async () => {
+    const handlers = await seedUserTemplate();
+
+    const result = parseResult(
+      await handlers.update_agent_template({ key: 'reviewer.custom', model: null, labels: null })
+    );
+
+    expect(result.success).toBe(true);
+    const template = result.template as Record<string, unknown>;
+    expect(template.model).toBeNull();
+    expect(template.labels).toEqual([]);
+  });
+
+  test('rejects a stale expected_version and succeeds with the current one', async () => {
+    const handlers = await seedUserTemplate();
+
+    const stale = parseResult(
+      await handlers.update_agent_template({
+        key: 'reviewer.custom',
+        expected_version: 999,
+        display_name: 'Conflict',
+      })
+    );
+    expect(stale.success).toBe(false);
+    expect(stale.error).toContain('modified concurrently');
+    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')?.displayName).toBe(
+      'Reviewer'
+    );
+
+    const current = new SpaceAgentTemplateRepository(ctx.db).getByKeyWithVersion('reviewer.custom');
+    expect(current?.version).toBe(1);
+
+    const retried = parseResult(
+      await handlers.update_agent_template({
+        key: 'reviewer.custom',
+        expected_version: current?.version,
+        display_name: 'Conflict',
+      })
+    );
+    expect(retried.success).toBe(true);
+    expect((retried.template as Record<string, unknown>).displayName).toBe('Conflict');
+
+    const superseded = parseResult(
+      await handlers.update_agent_template({
+        key: 'reviewer.custom',
+        expected_version: current?.version,
+        display_name: 'Conflict',
+      })
+    );
+    expect(superseded.success).toBe(false);
+    expect(superseded.error).toContain('modified concurrently');
+  });
+
+  test('rejects a built-in template key with a pointer to the code registry', async () => {
+    const handlers = await seedUserTemplate();
+
+    const result = parseResult(
+      await handlers.update_agent_template({ key: 'worker.research', display_name: 'X' })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('built-in');
+    expect(result.error).toContain('long-horizon-agent-templates.ts');
+  });
+
+  test('returns an error for an unknown key', async () => {
+    const handlers = await seedUserTemplate();
+
+    const result = parseResult(
+      await handlers.update_agent_template({ key: 'missing.custom', display_name: 'X' })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not found');
+  });
+
+  test('reports unavailable template management without a templateManager', async () => {
+    const handlers = makeHandlers(ctx);
+
+    const result = parseResult(
+      await handlers.update_agent_template({ key: 'k', display_name: 'X' })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Agent template management not available');
   });
 });
 

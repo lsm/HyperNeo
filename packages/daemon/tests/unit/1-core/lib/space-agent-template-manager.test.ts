@@ -790,6 +790,67 @@ describe('SpaceAgentTemplateManager', () => {
     });
   });
 
+  describe('casUpdate', () => {
+    test('updates against a matching expected version and returns the new version', async () => {
+      await manager.create(fullParams());
+
+      const result = await manager.casUpdate(
+        'release-readiness.custom',
+        { displayName: 'Updated' },
+        1
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value?.displayName).toBe('Updated');
+      expect(result.value?.version).toBe(2);
+    });
+
+    test('returns a null value on a stale expected version without persisting', async () => {
+      await manager.create(fullParams());
+
+      const result = await manager.casUpdate(
+        'release-readiness.custom',
+        { displayName: 'Stale' },
+        999
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value).toBeNull();
+      expect(repo.getByKey('release-readiness.custom')?.displayName).toBe('Release Readiness');
+    });
+
+    test('omitting expectedVersion validates against the current version', async () => {
+      await manager.create(fullParams());
+
+      const result = await manager.casUpdate('release-readiness.custom', {
+        displayName: 'Fresh',
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value?.displayName).toBe('Fresh');
+      expect(result.value?.version).toBe(2);
+    });
+
+    test('returns an error for an unknown key', async () => {
+      const result = await manager.casUpdate('missing.custom', { displayName: 'X' }, 1);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('not found');
+    });
+
+    test('validates fields exactly like update', async () => {
+      await manager.create(fullParams());
+
+      const result = await manager.casUpdate('release-readiness.custom', { displayName: '   ' }, 1);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('display name');
+    });
+  });
+
   describe('delete', () => {
     test('deletes a custom template', async () => {
       await manager.create(fullParams());

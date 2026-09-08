@@ -47,10 +47,11 @@ export interface UpdateTemplateCtx {
   repo: SpaceAgentTemplateRepository;
   key: string;
   params: UpdateSpaceAgentTemplateParams;
+  expectedVersion?: number;
   existing?: SpaceAgentTemplateRecord;
   version?: number;
   error?: string;
-  template?: SpaceAgentTemplate | null;
+  template?: SpaceAgentTemplateRecord | null;
 }
 
 export interface DeleteTemplateCtx {
@@ -269,7 +270,7 @@ function createPersist(ctx: CreateTemplateCtx): CreateTemplateCtx {
 function updateLoadExisting(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
   const existing = ctx.repo.getByKeyWithVersion(ctx.key);
   if (!existing) return { ...ctx, error: `Template not found: ${ctx.key}` };
-  return { ...ctx, existing, version: existing.version };
+  return { ...ctx, existing, version: ctx.expectedVersion ?? existing.version };
 }
 
 function updateValidateHandle(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
@@ -416,6 +417,17 @@ export class SpaceAgentTemplateManager {
     params: UpdateSpaceAgentTemplateParams
   ): Promise<SpaceAgentResult<SpaceAgentTemplate | null>> {
     const ctx = await runUpdateTemplate({ repo: this.repo, key, params });
+    if (ctx.error) return { ok: false, error: ctx.error };
+    if (ctx.template === null) return { ok: true, value: null };
+    return { ok: true, value: ctx.template! };
+  }
+
+  async casUpdate(
+    key: string,
+    params: UpdateSpaceAgentTemplateParams,
+    expectedVersion?: number
+  ): Promise<SpaceAgentResult<SpaceAgentTemplateRecord | null>> {
+    const ctx = await runUpdateTemplate({ repo: this.repo, key, params, expectedVersion });
     if (ctx.error) return { ok: false, error: ctx.error };
     if (ctx.template === null) return { ok: true, value: null };
     return { ok: true, value: ctx.template! };
