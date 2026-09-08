@@ -2654,6 +2654,27 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     expect(result.agent.handle).toBe('research');
     expect(result.agent.instructions).toBe(template?.instructions);
     expect(result.agent.instructions).not.toBe('Shadow instructions.');
+
+    new SpaceAgentTemplateRepository(ctx.db).create({
+      key: 'WORKER.QA',
+      handle: 'qa-shadow',
+      displayName: 'QA Shadow',
+      instructions: 'Uppercase shadow instructions.',
+    });
+    const caseColliding = JSON.parse(
+      (await handlers.create_agent_from_template({ template_name: 'WORKER.QA' })).content[0].text
+    );
+    expect(caseColliding.success).toBe(true);
+    expect(caseColliding.agent.templateKey).toBe('WORKER.QA');
+    expect(caseColliding.agent.handle).toBe('qa-shadow');
+    expect(caseColliding.agent.instructions).toBe('Uppercase shadow instructions.');
+
+    const builtinByCase = JSON.parse(
+      (await handlers.create_agent_from_template({ template_name: 'worker.qa' })).content[0].text
+    );
+    expect(builtinByCase.success).toBe(true);
+    expect(builtinByCase.agent.templateKey).toBe('worker.qa');
+    expect(builtinByCase.agent.instructions).not.toBe('Uppercase shadow instructions.');
   });
 
   test('create_agent_from_template rejects user templates bearing a reserved handle (ATC-24)', async () => {

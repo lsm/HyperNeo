@@ -678,27 +678,33 @@ const runListAgentTemplates = (superpipe()('list-agent-templates') as PipelineAP
   .pipe(projectAgentTemplateEntries, 'filteredLibrary', 'entries')
   .end('entries') as (db: BunDatabase | undefined) => AgentTemplateListEntry[];
 
-function resolveBuiltinAgentTemplate(templateName: string): NodeAgentTemplateSource | null {
+function resolveExactAgentTemplate(
+  db: BunDatabase | undefined,
+  templateName: string
+): NodeAgentTemplateSource | null {
+  const builtIn = getLongHorizonAgentTemplates().find(
+    (candidate) => candidate.key === templateName
+  ) as NodeAgentTemplateSource | undefined;
+  if (builtIn) return builtIn;
+  const stored = db ? new SpaceAgentTemplateRepository(db).getByKey(templateName) : null;
+  return stored ? spaceAgentTemplateToNodeSource(stored) : null;
+}
+
+function fallbackBuiltinAgentTemplate(
+  templateName: string,
+  exact: NodeAgentTemplateSource | null
+): NodeAgentTemplateSource | null {
+  if (exact) return exact;
   const builtIn = getLongHorizonAgentTemplates().find(
     (candidate) => candidate.key.toLowerCase() === templateName.toLowerCase()
   ) as NodeAgentTemplateSource | undefined;
   return builtIn ?? null;
 }
 
-function resolveStoredAgentTemplate(
-  db: BunDatabase | undefined,
-  templateName: string,
-  builtIn: NodeAgentTemplateSource | null
-): NodeAgentTemplateSource | null {
-  if (builtIn) return builtIn;
-  const stored = db ? new SpaceAgentTemplateRepository(db).getByKey(templateName) : null;
-  return stored ? spaceAgentTemplateToNodeSource(stored) : null;
-}
-
 const runResolveAgentTemplateSource = (superpipe()('resolve-agent-template-source') as PipelineAPI)
   .input(['templateName', 'db'])
-  .pipe(resolveBuiltinAgentTemplate, 'templateName', 'builtIn')
-  .pipe(resolveStoredAgentTemplate, ['db', 'templateName', 'builtIn'], 'template')
+  .pipe(resolveExactAgentTemplate, ['db', 'templateName'], 'exact')
+  .pipe(fallbackBuiltinAgentTemplate, ['templateName', 'exact'], 'template')
   .end('template') as (
   templateName: string,
   db: BunDatabase | undefined
