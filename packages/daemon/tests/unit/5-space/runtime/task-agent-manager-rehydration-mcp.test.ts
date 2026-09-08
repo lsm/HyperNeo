@@ -748,6 +748,73 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(fake.state.calls).not.toContain('startStreamingQuery');
   });
 
+  test('a busy parked blocked worker defers a message instead of handing off to the mailbox (#3823)', async () => {
+    const { tam } = makeManager();
+    const task = (
+      tam.config as unknown as { taskRepo: { getTask: () => { status: string } } }
+    ).taskRepo.getTask();
+    task.status = 'blocked';
+    const fake = makeFakeAgentSession(SUB_SESSION_ID);
+    (
+      fake.agentSession as unknown as { getProcessingState: () => { status: string } }
+    ).getProcessingState = () => ({ status: 'processing' });
+    const config = (
+      tam as unknown as {
+        config: {
+          db: Record<string, unknown>;
+          nodeExecutionRepo: Record<string, unknown>;
+        };
+      }
+    ).config;
+    config.nodeExecutionRepo.getByAgentSessionId = () => makeExecution();
+    const outbox = createOutboxTestDb();
+    config.db.getDatabase = () => outbox.db;
+    config.db.getSDKMessageRepo = () => outbox.sdkRepo;
+    config.db.getJobQueueRepo = () => outbox.jobQueue;
+    config.db.saveUserMessage = (
+      sessionId: string,
+      message: unknown,
+      sendStatus?: string
+    ): string => {
+      const uuid = (message as { uuid?: string }).uuid ?? 'unknown';
+      const dbId = `${sessionId}:${uuid}`;
+      outbox.db
+        .prepare(
+          `INSERT OR REPLACE INTO sdk_messages
+             (id, session_id, message_type, sdk_message, timestamp, send_status, sdk_uuid)
+           VALUES (?, ?, 'user', ?, ?, ?, ?)`
+        )
+        .run(
+          dbId,
+          sessionId,
+          JSON.stringify(message),
+          new Date().toISOString(),
+          sendStatus ?? null,
+          uuid
+        );
+      return dbId;
+    };
+    config.db.getUserMessageIdsByStatus = () => [];
+    const session = fake.agentSession as unknown as Record<string, unknown>;
+    session.handleQueryTrigger = async () => {
+      throw new Error('handleQueryTrigger must not run while the parent task is blocked');
+    };
+    session.ensureQueryStarted = async () => {};
+    const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> })
+      .agentSessionIndex;
+    index.set(SUB_SESSION_ID, fake.agentSession);
+    const subSessions = (
+      tam as unknown as { subSessions: Map<string, Map<string, AgentSessionType>> }
+    ).subSessions;
+    subSessions.set(TASK_ID, new Map([[SUB_SESSION_ID, fake.agentSession]]));
+
+    const messageId = await tam.injectSubSessionMessage(SUB_SESSION_ID, 'busy nudge', true);
+
+    expect(outbox.sendStatus(SUB_SESSION_ID, messageId)).toBe('deferred');
+    expect(outbox.pendingDeliveryJobCount(SUB_SESSION_ID)).toBe(0);
+    expect(outbox.pendingMailboxJobCount(SUB_SESSION_ID)).toBe(0);
+  });
+
   test('rejects the injection when the resolved session disappears before the inject lock', async () => {
     const { tam } = makeManager();
     const fake = makeFakeAgentSession(SUB_SESSION_ID);

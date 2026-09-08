@@ -6359,6 +6359,9 @@ export class SpaceRuntime {
         completedAt: null,
       });
     }
+    if (promotable.length > 0) {
+      this.resumeParkedWorkersForRevivedRun(runId, tam);
+    }
     return this.config.nodeExecutionRepo.listByWorkflowRun(runId);
   }
 
@@ -7450,6 +7453,30 @@ export class SpaceRuntime {
     }
   }
 
+  private resumeParkedWorkersForRevivedRun(runId: string, tam?: TaskAgentManager): void {
+    if (!tam || typeof tam.prepareSubSessionForWorkflowResume !== 'function') return;
+    for (const execution of this.config.nodeExecutionRepo.listByWorkflowRun(runId)) {
+      if (
+        !execution.agentSessionId ||
+        (execution.status !== 'pending' &&
+          execution.status !== 'in_progress' &&
+          execution.status !== 'waiting_rebind') ||
+        !tam.isSessionInMemory(execution.agentSessionId)
+      ) {
+        continue;
+      }
+      void tam
+        .prepareSubSessionForWorkflowResume(execution.agentSessionId)
+        .catch((err: unknown) => {
+          log.warn(
+            `SpaceRuntime: failed to resume parked worker ${execution.agentSessionId} for revived run ${runId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        });
+    }
+  }
+
   private async attemptBlockedRunRecovery(runId: string, run: SpaceWorkflowRun): Promise<void> {
     const meta = this.executorMeta.get(runId);
     if (!meta) return;
@@ -7545,6 +7572,7 @@ export class SpaceRuntime {
         `SpaceRuntime: auto-retrying blocked run ${runId} ` +
           `(attempt ${effectiveRetryCount + 1}/${MAX_BLOCKED_RUN_RETRIES})`
       );
+      this.resumeParkedWorkersForRevivedRun(runId, this.config.taskAgentManager);
     } else {
       await this.safeNotify({
         kind: 'workflow_run_needs_attention',

@@ -217,7 +217,8 @@ export function planDeliveryAdmission(
     status === 'rate_limit_cooldown';
   const shouldDefer =
     status === 'rate_limit_cooldown' ||
-    (task !== null && deps.isRateOrUsageLimited(task.status ?? '')) ||
+    (task !== null &&
+      (deps.isRateOrUsageLimited(task.status ?? '') || task.status === 'blocked')) ||
     deps.hasHeldDeliveryBacklog(sessionId, ctx.messageId) ||
     (ctx.deliveryMode === 'defer' && isBusy);
   const shouldClear =

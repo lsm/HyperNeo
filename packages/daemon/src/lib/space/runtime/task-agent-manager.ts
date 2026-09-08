@@ -4244,6 +4244,25 @@ export class TaskAgentManager {
     });
 
     const deliveryRows = this.injectDeliveryRowDeps();
+    const settleAsDeferredForBlockedParent = async (): Promise<boolean> => {
+      if (!parentTaskId) return false;
+      if (this.config.taskRepo.getTask(parentTaskId)?.status !== 'blocked') return false;
+      if (existing?.sendStatus === 'failed') {
+        await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
+      }
+      if (existing && existing.sendStatus !== 'deferred') {
+        this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
+      }
+      await settleDeliveryRowStatus(deliveryRows, {
+        sessionId,
+        message: sdkUserMessage,
+        messageId,
+        rowExists: !!existing,
+        status: 'deferred',
+        origin,
+      });
+      return true;
+    };
 
     if (outcome.decision.action === 'noop') {
       return messageId;
@@ -4287,23 +4306,7 @@ export class TaskAgentManager {
     }
 
     try {
-      if (parentTaskId && this.config.taskRepo.getTask(parentTaskId)?.status === 'blocked') {
-        if (existing?.sendStatus === 'failed') {
-          await reopenFailedDeliveryRow(deliveryRows, sessionId, messageId);
-        }
-        if (existing && existing.sendStatus !== 'deferred') {
-          this.config.db.getSDKMessageRepo().markDeliveryDeferredByUuid(sessionId, messageId);
-        }
-        await settleDeliveryRowStatus(deliveryRows, {
-          sessionId,
-          message: sdkUserMessage,
-          messageId,
-          rowExists: !!existing,
-          status: 'deferred',
-          origin,
-        });
-        return messageId;
-      }
+      if (await settleAsDeferredForBlockedParent()) return messageId;
       if (!isBusy) {
         const clearSuppressedByPendingWork =
           outcome.decision.action === 'deliver_without_clear' &&
@@ -4330,6 +4333,7 @@ export class TaskAgentManager {
           clearedUpstream = replayed.clearedContext;
           backlogReplayFailed = replayed.replayFailed;
         }
+        if (await settleAsDeferredForBlockedParent()) return messageId;
         const replay = await session.handleQueryTrigger({
           deliverIndividually: true,
           excludeMessageUuid: messageId,
@@ -4368,6 +4372,7 @@ export class TaskAgentManager {
       }
 
       const jobQueue = this.config.db.getJobQueueRepo();
+      if (await settleAsDeferredForBlockedParent()) return messageId;
       const mailboxMessage: MailboxMessage = {
         type: 'user',
         parent_tool_use_id: null,

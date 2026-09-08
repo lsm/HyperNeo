@@ -218,6 +218,24 @@ describe('deliverAgentMessageToTarget', () => {
     expect(live.setQueuedIfIdle).not.toHaveBeenCalled();
   });
 
+  it('defers admission while the parent task is blocked (#3823)', async () => {
+    const live = makeSession();
+    const { deps, handoffCalls } = makeDeps({
+      taskRepo: {
+        getTask: () => ({ id: 'task-1', workflowRunId: 'run-1', status: 'blocked' }),
+      },
+      getSessionAsync: async () => live.session,
+    });
+    await deliverAgentMessageToTarget({
+      deps,
+      target: WORKER_TARGET,
+      message: 'peer nudge',
+      messageId: 'msg-6-blocked',
+    });
+    expect(handoffCalls[0].deliveryMode).toBe('defer');
+    expect(live.setQueuedIfIdle).not.toHaveBeenCalled();
+  });
+
   it('defers admission behind an unconsumed held backlog', async () => {
     const { deps, handoffCalls } = makeDeps({
       hasHeldDeliveryBacklog: () => true,
