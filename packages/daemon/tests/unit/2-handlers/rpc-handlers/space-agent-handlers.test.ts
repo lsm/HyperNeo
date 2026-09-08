@@ -285,6 +285,27 @@ describe('Space Agent RPC Handlers', () => {
       expect(keys).toContain('review.custom');
       expect(keys).toContain('coordinator.default');
     });
+
+    it('carries subscription and reminder defaults on built-in templates', async () => {
+      const result = await call<{
+        templates: Array<{
+          key: string;
+          suggestedEventSubscriptions?: Array<{ source: string; topic: string }>;
+          reminderDefaults?: Array<{ title: string; cronExpression: string | null }>;
+        }>;
+      }>(hubData.handlers, 'spaceAgent.listTemplates', {});
+
+      const coordinator = result.templates.find(
+        (template) => template.key === 'coordinator.default'
+      );
+      expect(coordinator?.suggestedEventSubscriptions?.length).toBeGreaterThan(0);
+      expect(coordinator?.suggestedEventSubscriptions?.[0]).toMatchObject({
+        source: 'space',
+        topic: 'task.*',
+      });
+      expect(coordinator?.reminderDefaults?.length).toBeGreaterThan(0);
+      expect(coordinator?.reminderDefaults?.[0].cronExpression).toBe('0 9 * * 1');
+    });
   });
 
   describe('spaceAgent.createTemplate', () => {
@@ -726,6 +747,122 @@ describe('Space Agent RPC Handlers', () => {
       );
 
       expect(result.agent.templateKey).toBe('Coder');
+    });
+
+    it('seeds suggested event subscriptions and reminder defaults on create', async () => {
+      const result = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
+        spaceId: 'space-1',
+        name: 'SeededAgent',
+        templateKey: 'coordinator.default',
+        suggestedEventSubscriptions: [
+          { source: 'space', topic: 'task.*', filter: { statuses: ['blocked'] } },
+        ],
+        reminderDefaults: [
+          {
+            title: 'Review Space plan',
+            body: 'Review active goals and blocked work.',
+            triggerType: 'cron',
+            cronExpression: '0 9 * * 1',
+            timezone: 'UTC',
+          },
+        ],
+      });
+
+      const subscriptions = longHorizonRepo.listSubscriptions(result.agent.id);
+      expect(subscriptions).toHaveLength(1);
+      expect(subscriptions[0]).toMatchObject({
+        source: 'space',
+        topic: 'task.*',
+        status: 'active',
+        filter: { statuses: ['blocked'] },
+      });
+
+      const reminders = longHorizonRepo.listReminders(result.agent.id);
+      expect(reminders).toHaveLength(1);
+      expect(reminders[0]).toMatchObject({
+        title: 'Review Space plan',
+        status: 'active',
+        cronExpression: '0 9 * * 1',
+        timezone: 'UTC',
+      });
+      expect(reminders[0].nextRunAt).toBeGreaterThan(0);
+    });
+
+    it('seeds no subscriptions or reminders when none are provided', async () => {
+      const result = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
+        spaceId: 'space-1',
+        name: 'UnseededAgent',
+      });
+
+      expect(longHorizonRepo.listSubscriptions(result.agent.id)).toEqual([]);
+      expect(longHorizonRepo.listReminders(result.agent.id)).toEqual([]);
+    });
+
+    it('rejects invalid suggested subscription sources on create', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.create', {
+          spaceId: 'space-1',
+          name: 'BadSubAgent',
+          suggestedEventSubscriptions: [{ source: 'GitHub', topic: 'task.*', filter: {} }],
+        })
+      ).rejects.toThrow('Source "GitHub" must be lowercase');
+      expect(
+        longHorizonRepo.listBySpaceId('space-1').find((agent) => agent.handle === 'badsubagent')
+      ).toBeUndefined();
+    });
+
+    it('rejects invalid suggested subscription topics on create', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.create', {
+          spaceId: 'space-1',
+          name: 'BadTopicAgent',
+          suggestedEventSubscriptions: [{ source: 'space', topic: 'bad topic!', filter: {} }],
+        })
+      ).rejects.toThrow('contains invalid characters');
+    });
+
+    it('rejects invalid reminder default cron expressions on create', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.create', {
+          spaceId: 'space-1',
+          name: 'BadReminderAgent',
+          reminderDefaults: [
+            {
+              title: 'Broken',
+              body: '',
+              triggerType: 'cron',
+              cronExpression: 'not-a-cron',
+              timezone: 'UTC',
+            },
+          ],
+        })
+      ).rejects.toThrow('invalid cron expression');
+    });
+
+    it('drops a seeded subscription when the runtime refresh rejects it', async () => {
+      const runtimeService = {
+        ...createRuntimeServiceMock(),
+        refreshLongHorizonSubscription: mock(() => ({ success: false, error: 'invalid pattern' })),
+      };
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        workflowRepo,
+        runtimeService,
+        new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db as any))
+      );
+
+      const result = await call<{ agent: { id: string } }>(freshHub.handlers, 'spaceAgent.create', {
+        spaceId: 'space-1',
+        name: 'RefreshFailAgent',
+        suggestedEventSubscriptions: [{ source: 'space', topic: 'task.*', filter: {} }],
+      });
+
+      expect(longHorizonRepo.listSubscriptions(result.agent.id)).toEqual([]);
     });
 
     it('emits unified created events after creation', async () => {

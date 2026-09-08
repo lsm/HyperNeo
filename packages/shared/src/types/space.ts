@@ -116,6 +116,8 @@ export interface SpaceAgentTemplate {
   description: string;
   instructions: string;
   suggestedAutonomyLevel: SpaceAgentAutonomyLevel;
+  suggestedEventSubscriptions?: SpaceLongHorizonAgentTemplateEventSubscription[] | null;
+  reminderDefaults?: SpaceLongHorizonAgentTemplateReminderDefault[] | null;
   model: string | null;
   provider: string | null;
   modelPool: AgentModelPoolEntry[] | null;

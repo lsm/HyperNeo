@@ -173,6 +173,8 @@ export interface CreateSpaceAgentParams {
   settingSources?: SpaceLongHorizonAgent['settingSources'];
   toolPermissions?: Record<string, unknown>;
   tools?: string[];
+  suggestedEventSubscriptions?: SpaceLongHorizonAgentTemplate['suggestedEventSubscriptions'];
+  reminderDefaults?: SpaceLongHorizonAgentTemplate['reminderDefaults'];
   status?: string;
   description?: string;
   modelPool?: SpaceLongHorizonAgent['modelPool'];
@@ -224,10 +226,11 @@ function toPaneAgentTemplate(template: SpaceAgentTemplate): SpaceLongHorizonAgen
     description: template.description,
     instructions: template.instructions,
     suggestedAutonomyLevel: template.suggestedAutonomyLevel,
-    suggestedEventSubscriptions: [],
-    reminderDefaults: [],
+    suggestedEventSubscriptions: template.suggestedEventSubscriptions ?? [],
+    reminderDefaults: template.reminderDefaults ?? [],
     ownershipPatterns: [],
-    toolPermissions: {},
+    toolPermissions:
+      template.tools && template.tools.length > 0 ? { tools: [...template.tools] } : {},
     model: template.model,
     provider: template.provider,
     modelPool: template.modelPool,

@@ -1196,6 +1196,59 @@ describe('SpaceLongHorizonAgents', () => {
     );
   });
 
+  it('prefills the tools editor from a template card click and persists the tools', async () => {
+    mockTemplates.value = [
+      makeTemplate({ toolPermissions: { tools: ['Read', 'Bash(gh pr view:*)'] } }),
+    ];
+    const { getByText, getByRole, container } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
+
+    expect(chipInput(container, 'Read').checked).toBe(true);
+    expect(chipInput(container, 'Read').disabled).toBe(false);
+    expect(chipInput(container, 'Bash').checked).toBe(false);
+    expect(getByText('Bash(gh pr view:*)')).toBeTruthy();
+
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    expect(mockCreateAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateKey: 'qa',
+        tools: ['Read', 'Bash(gh pr view:*)'],
+      })
+    );
+  });
+
+  it('seeds suggested event subscriptions and reminder defaults from the template', async () => {
+    const suggestedEventSubscriptions = [{ source: 'github', topic: 'pull_request.*', filter: {} }];
+    const reminderDefaults = [
+      {
+        title: 'Review Space plan',
+        body: 'Review active goals.',
+        triggerType: 'cron',
+        cronExpression: '0 9 * * 1',
+        timezone: 'UTC',
+      },
+    ];
+    mockTemplates.value = [makeTemplate({ suggestedEventSubscriptions, reminderDefaults })];
+    const { getByText, getByRole } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByText('Validates product quality.').closest('button')!);
+    fireEvent.click(getByRole('button', { name: 'Create agent' }));
+
+    await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+    expect(mockCreateAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateKey: 'qa',
+        suggestedEventSubscriptions,
+        reminderDefaults,
+      })
+    );
+  });
+
   it('creates a custom agent with a null template key', async () => {
     const { getByRole, container } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
 
@@ -1214,6 +1267,8 @@ describe('SpaceLongHorizonAgents', () => {
         settingSources: null,
       })
     );
+    expect(mockCreateAgent.mock.calls[0][0].suggestedEventSubscriptions).toBeUndefined();
+    expect(mockCreateAgent.mock.calls[0][0].reminderDefaults).toBeUndefined();
   });
 
   it('creates a custom agent carrying the tools selected in the editor', async () => {
