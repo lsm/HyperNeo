@@ -6,6 +6,8 @@ import type {
   SpaceWorkflow,
 } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
+import { withSessionOperationLock } from '../../../../src/lib/agent/message-delivery';
+import { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service';
 import { renderEventBlock } from '../../../../src/lib/external-events/deferred-event-digest';
 import { essenceEntryFromExternalEvent } from '../../../../src/lib/external-events/event-essence-entry';
 import { ExternalEventService } from '../../../../src/lib/external-events/external-event-service';
@@ -2592,6 +2594,39 @@ describe('SpaceRuntime external event subscriptions', () => {
       expect(deferredDigestUuids(sessionId)).toContain('digest-cold-owed');
       expect(eventStore.listDeliveries('evt-cold-new')[0]?.state).toBe('delivered');
       await runtime.stop();
+    });
+
+    test('session digest replay releases its operation lock during cold reconciliation', async () => {
+      const sessionId = 'session-rehydrate-replay';
+      const topic = 'github/lsm/neokai/pull_request/42.comment_polled';
+      const { task } = await startLiveSession(sessionId, topic);
+      await eventService.publish(makeEvent({ id: 'evt-rehydrate-replay', topic }));
+      const service = Object.assign(Object.create(SpaceRuntimeService.prototype), {
+        runtime,
+      }) as SpaceRuntimeService;
+      let replayReturned = false;
+      tam.rehydrate = async () => {
+        await withSessionOperationLock(sessionId, async () => {
+          expect(await service.renderPendingDigestForSession(sessionId, task.id)).toBeNull();
+          expect(eventStore.listDeliveries('evt-rehydrate-replay')[0]?.state).toBe('pending');
+          replayReturned = true;
+        });
+      };
+      const tick = runtime.executeTick();
+      try {
+        const completed = await Promise.race([tick.then(() => true), wait(250).then(() => false)]);
+        expect(completed).toBe(true);
+        expect(replayReturned).toBe(true);
+        expect(await withSessionOperationLock(sessionId, async () => 'available')).toBe(
+          'available'
+        );
+        await wait(1100);
+        expect(eventStore.listDeliveries('evt-rehydrate-replay')[0]?.state).toBe('delivered');
+        expect(digestRows(sessionId)).toHaveLength(1);
+      } finally {
+        await runtime.stop();
+        await tick;
+      }
     });
 
     test('flag on: a failed rehydration settles waiting renders instead of hanging them', async () => {

@@ -1050,7 +1050,9 @@ export class SpaceRuntimeService {
     sessionId: string,
     taskId?: string
   ): Promise<RenderPendingDigestOutcome | null> {
-    return this.runtime.renderPendingDigestForSession(sessionId, taskId);
+    return this.runtime.renderPendingDigestForSession(sessionId, taskId, {
+      waitForReconciliation: false,
+    });
   }
 
   requeuePendingDeliveriesForRun(workflowRunId: string): void {
