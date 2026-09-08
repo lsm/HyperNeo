@@ -4257,4 +4257,57 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
       })
     );
   });
+
+  test('converges when edits keep landing during the config refresh', async () => {
+    const db = makeTestDb();
+    seedEnsureSpace(db);
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    repo.create({
+      id: 'lh-ensure-3',
+      spaceId: ENSURE_SPACE_ID,
+      handle: 'researcher',
+      instructions: 'Original instructions',
+    });
+    const agentSessionId = longTermAgentSessionId(ENSURE_SPACE_ID, 'lh-ensure-3');
+    let resolveFirstUpdate: () => void = () => {};
+    const createdSession = {
+      mergeRuntimeMcpServers: mock(() => {}),
+      updateConfig: mock(async () => {
+        if (createdSession.updateConfig.mock.calls.length === 1) {
+          await new Promise<void>((resolve) => {
+            resolveFirstUpdate = resolve;
+          });
+        }
+      }),
+      resetQuery: mock(async () => ({ success: true })),
+      restart: mock(async () => {}),
+      getSessionData: mock(() => ({
+        id: agentSessionId,
+        status: 'active',
+        metadata: {},
+        config: {},
+      })),
+    } as unknown as AgentSession & {
+      updateConfig: ReturnType<typeof mock>;
+    };
+    const sessionManager = {
+      getSessionAsync: mock(async () => createdSession),
+    } as unknown as SessionManager;
+    const svc = new SpaceRuntimeService(
+      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), sessionManager)
+    );
+
+    const ensured = svc.ensureAgentSession(ENSURE_SPACE_ID, 'lh-ensure-3');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    repo.update('lh-ensure-3', { instructions: 'Freshly edited instructions' });
+    resolveFirstUpdate();
+    await ensured;
+
+    expect(repo.getById('lh-ensure-3')?.sessionId).toBe(agentSessionId);
+    expect(createdSession.updateConfig).toHaveBeenCalledTimes(2);
+    const lastUpdate = createdSession.updateConfig.mock.calls.at(-1)![0] as {
+      systemPrompt: { append: string };
+    };
+    expect(lastUpdate.systemPrompt.append).toContain('Freshly edited instructions');
+  });
 });

@@ -727,38 +727,41 @@ export class SpaceRuntimeService {
     } else {
       await this.refreshLongHorizonAgentSessionConfig(session, config);
     }
-    const latest = repo.getById(agentId) ?? agent;
-    if (agentSessionConfigSignature(latest) !== agentSessionConfigSignature(agent)) {
+    let applied = agent;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const latest = repo.getById(agentId) ?? applied;
+      if (agentSessionConfigSignature(latest) === agentSessionConfigSignature(applied)) break;
       const refreshedConfig = await buildAgentSessionConfig(
         { agent: latest },
         space,
         session.getSessionData().config
       );
       await this.refreshLongHorizonAgentSessionConfig(session, refreshedConfig);
+      applied = latest;
     }
     const currentMetadata = session.getSessionData().metadata;
     this.config.actorRegistryRepos?.sessionRepo.updateSession(sessionId, {
       metadata: {
         ...currentMetadata,
         promptProvenance: {
-          source: latest.templateKey ?? 'long_horizon_agent',
-          hash: latest.id,
-          agentId: latest.id,
-          agentName: latest.displayName,
+          source: applied.templateKey ?? 'long_horizon_agent',
+          hash: applied.id,
+          agentId: applied.id,
+          agentName: applied.displayName,
         },
       },
     });
     this.attachLongTermAgentMcpServers(
       session,
       space,
-      latest.displayName,
+      applied.displayName,
       sessionId,
       null,
       agentId,
-      [`@${latest.handle}`]
+      [`@${applied.handle}`]
     );
-    if (latest.sessionId !== sessionId) {
-      const updated = repo.update(latest.id, { sessionId });
+    if (applied.sessionId !== sessionId) {
+      const updated = repo.update(applied.id, { sessionId });
       if (updated) {
         await publishUnifiedAgentUpdated(this.config.internalEventBus, updated);
       }
