@@ -674,7 +674,7 @@ export class SpaceRuntime {
 
   private postApprovalReconcileNextAttempt = new Map<string, number>();
 
-  private postApprovalDispatchClaims = new Set<string>();
+  private postApprovalDispatchClaims = new Map<string, number>();
 
   private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
 
@@ -2735,7 +2735,7 @@ export class SpaceRuntime {
         taskRepo: this.config.taskRepo,
         workflowRunRepo: this.config.workflowRunRepo,
         spaceManager: this.config.spaceManager,
-        isSessionAlive: (sessionId) => manager.isSessionAlive(sessionId),
+        isSessionAlive: (sessionId) => this.postApprovalWorkerLive(manager, sessionId),
         isUnrecordedApprovalStale: (task) => this.isUnrecordedApprovalDispatchStale(task),
         dispatch: (id, approvalSource, dispatchOptions) =>
           this.dispatchPostApproval(
@@ -2804,7 +2804,10 @@ export class SpaceRuntime {
       return { mode: 'skipped', reason };
     }
     const dispatchRuntimeGeneration = this.runtimeGeneration;
-    this.postApprovalDispatchClaims.add(taskId);
+    this.postApprovalDispatchClaims.set(
+      taskId,
+      (this.postApprovalDispatchClaims.get(taskId) ?? 0) + 1
+    );
     try {
       return await this.dispatchPostApprovalClaimed(
         taskId,
@@ -2814,7 +2817,12 @@ export class SpaceRuntime {
         dispatchRuntimeGeneration
       );
     } finally {
-      this.postApprovalDispatchClaims.delete(taskId);
+      const outstanding = this.postApprovalDispatchClaims.get(taskId) ?? 1;
+      if (outstanding <= 1) {
+        this.postApprovalDispatchClaims.delete(taskId);
+      } else {
+        this.postApprovalDispatchClaims.set(taskId, outstanding - 1);
+      }
     }
   }
 
@@ -7888,11 +7896,16 @@ export class SpaceRuntime {
 
   private isUnrecordedApprovalDispatchStale(task: SpaceTask): boolean {
     if (task.postApprovalSessionId !== null || task.postApprovalBlockedReason) return false;
-    if (this.postApprovalDispatchClaims.has(task.id)) return false;
+    if ((this.postApprovalDispatchClaims.get(task.id) ?? 0) > 0) return false;
     return (
       task.approvedAt !== null &&
       Date.now() - task.approvedAt > POST_APPROVAL_UNRECORDED_DISPATCH_GRACE_MS
     );
+  }
+
+  private postApprovalWorkerLive(manager: TaskAgentManager, sessionId: string): boolean {
+    if (manager.isSessionAlive(sessionId)) return true;
+    return manager.hasPendingRateLimitCooldown?.(sessionId) ?? false;
   }
 
   private async adoptDurablePostApprovalOrphan(
@@ -7908,6 +7921,9 @@ export class SpaceRuntime {
     } catch {
       revived = null;
     }
+    const revivedSessionId =
+      (revived as { getSessionData?: () => { id?: string } } | null)?.getSessionData?.().id ??
+      orphan.sessionId;
     if (
       generation !== this.runtimeGeneration ||
       this.isStopped ||
@@ -7916,6 +7932,7 @@ export class SpaceRuntime {
       log.warn(
         `SpaceRuntime: discarding post-approval orphan adoption for task ${task.id}; the runtime is stopping or the task agent manager is disposed`
       );
+      manager.cancelBySessionId(revivedSessionId);
       return true;
     }
     if (!revived) return false;
@@ -7929,7 +7946,10 @@ export class SpaceRuntime {
       { postApprovalSessionId: orphan.sessionId, postApprovalStartedAt: Date.now() },
       { requireSucceededRun: true }
     );
-    if (recorded !== 'won') return false;
+    if (recorded !== 'won') {
+      manager.cancelBySessionId(revivedSessionId);
+      return false;
+    }
     log.info(
       `SpaceRuntime: adopted durable post-approval worker ${orphan.sessionId} for task ${task.id} instead of redispatching`
     );
@@ -7951,7 +7971,8 @@ export class SpaceRuntime {
         for (const task of this.config.taskRepo.listByStatus(space.id, 'approved')) {
           approvedTaskIds.add(task.id);
           const dispatchDead =
-            !!task.postApprovalSessionId && !manager.isSessionAlive(task.postApprovalSessionId);
+            !!task.postApprovalSessionId &&
+            !this.postApprovalWorkerLive(manager, task.postApprovalSessionId);
           const unrecordedStale = this.isUnrecordedApprovalDispatchStale(task);
           if (!dispatchDead && !task.postApprovalBlockedReason && !unrecordedStale) continue;
           const nextAttempt = this.postApprovalReconcileNextAttempt.get(task.id);

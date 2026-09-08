@@ -1963,12 +1963,13 @@ export class TaskAgentManager {
     approvedAt: number
   ): boolean {
     const db = this.config.db.getDatabase();
-    const legacyPendingTableExists =
-      (db
+    const legacyPendingTableExists = Boolean(
+      db
         .prepare(
           `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pending_agent_messages'`
         )
-        .get() as unknown) !== null;
+        .get()
+    );
     const legacyDrainExclusion = legacyPendingTableExists
       ? ` AND NOT EXISTS (SELECT 1 FROM pending_agent_messages p WHERE p.id = sdk_messages.sdk_uuid)`
       : '';
@@ -2539,6 +2540,10 @@ export class TaskAgentManager {
 
   isDisposed(): boolean {
     return this.disposed;
+  }
+
+  hasPendingRateLimitCooldown(sessionId: string): boolean {
+    return this.readPersistedRateLimitCooldown(sessionId) !== null;
   }
 
   isSessionInMemory(sessionId: string): boolean {
