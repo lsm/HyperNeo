@@ -839,6 +839,34 @@ describe('Space Agent RPC Handlers', () => {
       ).rejects.toThrow('invalid cron expression');
     });
 
+    it('rejects reminder defaults that cannot be scheduled on create', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.create', {
+          spaceId: 'space-1',
+          name: 'AtReminderAgent',
+          reminderDefaults: [
+            { title: 'Once', body: '', triggerType: 'at', cronExpression: null, timezone: 'UTC' },
+          ],
+        })
+      ).rejects.toThrow('reminderDefaults only supports triggerType "cron"');
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.create', {
+          spaceId: 'space-1',
+          name: 'BadTzAgent',
+          reminderDefaults: [
+            {
+              title: 'Weekly',
+              body: '',
+              triggerType: 'cron',
+              cronExpression: '0 9 * * 1',
+              timezone: 'Not/AZone',
+            },
+          ],
+        })
+      ).rejects.toThrow('Invalid timezone or cron expression');
+    });
+
     it('drops a seeded subscription when the runtime refresh rejects it', async () => {
       const runtimeService = {
         ...createRuntimeServiceMock(),

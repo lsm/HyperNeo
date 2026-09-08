@@ -461,6 +461,13 @@ async function createValidateConfigStage(
   for (const reminder of params.reminderDefaults ?? []) {
     const reminderCheck = validateTemplateReminder(reminder);
     if (!reminderCheck.ok) throw new Error(reminderCheck.reason);
+    if (reminder.triggerType !== 'cron') {
+      throw new Error('reminderDefaults only supports triggerType "cron"');
+    }
+    const timezone = reminder.timezone ?? 'UTC';
+    if (getNextRunAt(reminder.cronExpression ?? '', timezone) === null) {
+      throw new Error(`Invalid timezone or cron expression for reminder: ${timezone}`);
+    }
   }
   return ctx;
 }
