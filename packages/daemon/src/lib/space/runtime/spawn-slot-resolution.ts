@@ -12,7 +12,7 @@ import type {
   WorkflowNodeAgent,
 } from '@hyperneo/shared';
 import { resolveNodeAgents } from '@hyperneo/shared';
-import type { SpaceAgentTemplate } from '@hyperneo/shared';
+import type { SpaceAgentTemplate, WorkflowTemplateSnapshot } from '@hyperneo/shared';
 import type { AgentSessionInit } from '../../agent/agent-session.ts';
 import type { SlotOverrides } from '../agents/custom-agent.ts';
 
@@ -102,7 +102,7 @@ export interface NodeAgentTemplateSource extends SpaceLongHorizonAgentTemplate {
 }
 
 export function spaceAgentTemplateToNodeSource(
-  template: SpaceAgentTemplate
+  template: SpaceAgentTemplate | WorkflowTemplateSnapshot
 ): NodeAgentTemplateSource {
   return {
     key: template.key,
