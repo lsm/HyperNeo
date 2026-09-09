@@ -86,7 +86,11 @@ Out of scope for this PR; tracked as separate Space tasks:
    undocumented): episode `timeWindow`/`findings`, lesson/proposal
    `evidenceEpisodeIds` edits. (The RPC-only `evidence.create`, plain
    `episode.create`, `scope.resolveForGoal`, and `task.lessons.select` were
-   removed as dead surface; those capabilities remain MCP-reachable.)
+   removed as dead surface. Only `scope.resolveForGoal` has a close MCP
+   equivalent (`resolve_forge_scope`); the others have none — there is no
+   generic evidence-creation tool, `create_forge_episode` is evidence-bound,
+   and `list_forge_lessons` lacks `task.lessons.select`'s task-relevance
+   ranking and limit.)
 5. **MCP-only Forge surfaces** (MCP ahead of UI): `create_forge_task_proposal`,
    `assign_agent_to_forge_scope`, proposal→task `depends_on`.
 6. **Forge self-nag schedule resync** — `update_forge_scope` runs the shared
