@@ -913,15 +913,16 @@ describe('Space Export/Import RPC Handlers', () => {
             name: 'Whitespace Pipe',
             nodes: [
               {
-                agents: [
-                  { templateKey: 'worker.research', name: 'worker.coder ' },
-                  { templateKey: 'worker.coder', name: 'coder' },
-                ],
+                agents: [{ templateKey: 'worker.research', name: 'worker.coder ' }],
+                name: 'Setup',
+              },
+              {
+                agents: [{ templateKey: 'worker.coder', name: 'coder' }],
                 name: 'Coding',
                 postApproval: { targetAgent: 'worker.coder ', instructions: 'merge the PR' },
               },
             ],
-            startNode: 'Coding',
+            startNode: 'Setup',
             tags: [],
           },
         ],
@@ -950,15 +951,16 @@ describe('Space Export/Import RPC Handlers', () => {
             name: 'Padded Key Pipe',
             nodes: [
               {
-                agents: [
-                  { templateKey: ' worker.coder ', name: 'padded' },
-                  { templateKey: 'worker.coder', name: 'coder' },
-                ],
+                agents: [{ templateKey: ' worker.coder ', name: 'padded' }],
+                name: 'Setup',
+              },
+              {
+                agents: [{ templateKey: 'worker.coder', name: 'coder' }],
                 name: 'Coding',
                 postApproval: { targetAgent: 'worker.coder', instructions: 'merge the PR' },
               },
             ],
-            startNode: 'Coding',
+            startNode: 'Setup',
             tags: [],
           },
         ],
@@ -971,8 +973,8 @@ describe('Space Export/Import RPC Handlers', () => {
       );
       const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
       expect(workflow.nodes[0].agents![0].templateKey).toBe('worker.swe');
-      expect(workflow.nodes[0].agents![1].templateKey).toBe('worker.swe');
-      expect(workflow.nodes[0].postApproval?.targetAgent).toBe('coder');
+      expect(workflow.nodes[1].agents![0].templateKey).toBe('worker.swe');
+      expect(workflow.nodes[1].postApproval?.targetAgent).toBe('coder');
     });
 
     it('rejects a legacy route whose resolved slot name is shadowed by an earlier slot', async () => {
