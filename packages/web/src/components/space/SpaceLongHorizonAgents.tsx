@@ -210,6 +210,7 @@ interface TemplateSaveForm {
   instructions: string;
   suggestedAutonomyLevel: number;
   tools: string[];
+  pendingTool: string;
   model: string | null;
   provider: string | null;
   modelMode: ModelPoolEditorMode;
@@ -221,6 +222,7 @@ interface TemplateSaveForm {
 interface TemplateSaveCtx {
   template: SpaceLongHorizonAgentTemplate | null;
   form: TemplateSaveForm;
+  parsedTools: string[];
 }
 
 function templateSaveValidateStage(ctx: TemplateSaveCtx): TemplateSaveCtx {
@@ -230,10 +232,18 @@ function templateSaveValidateStage(ctx: TemplateSaveCtx): TemplateSaveCtx {
   return ctx;
 }
 
+function templateSaveParseToolsStage(ctx: TemplateSaveCtx): TemplateSaveCtx {
+  const pendingTool = ctx.form.pendingTool.trim();
+  const parsedTools =
+    pendingTool && !ctx.form.tools.includes(pendingTool)
+      ? [...ctx.form.tools, pendingTool]
+      : ctx.form.tools;
+  return { ...ctx, parsedTools };
+}
+
 async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateSaveCtx> {
-  const { form } = ctx;
+  const { form, parsedTools } = ctx;
   const effectiveModel = form.modelMode === 'single' ? form.model : '';
-  const effectiveProvider = effectiveModel ? form.provider : null;
   const cleanedModelPool = form.modelPool
     .map((entry) => ({ ...entry, model: entry.model.trim() }))
     .filter((entry) => entry.model.length > 0);
@@ -245,9 +255,9 @@ async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateS
     description: form.description.trim(),
     instructions: form.instructions.trim(),
     suggestedAutonomyLevel: form.suggestedAutonomyLevel as SpaceAgentAutonomyLevel,
-    tools: form.tools,
+    tools: parsedTools,
     model: effectiveModel || null,
-    provider: effectiveProvider,
+    provider: form.provider,
     modelPool: activeModelPool,
     thinkingLevel: form.thinkingLevel,
     settingSources: form.settingSources,
@@ -266,6 +276,7 @@ async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateS
 const runTemplateSave = (superpipe({})('save-agent-template') as PipelineAPI)
   .input(['ctx'])
   .pipe(templateSaveValidateStage, 'ctx', 'ctx')
+  .pipe(templateSaveParseToolsStage, 'ctx', 'ctx')
   .pipe(templateSavePersistStage, 'ctx', 'ctx')
   .endAsync('ctx') as (ctx: TemplateSaveCtx) => Promise<TemplateSaveCtx>;
 
@@ -660,6 +671,7 @@ function TemplateEditor({
     try {
       await runTemplateSave({
         template,
+        parsedTools: [],
         form: {
           displayName,
           key,
@@ -668,6 +680,7 @@ function TemplateEditor({
           instructions,
           suggestedAutonomyLevel: autonomyLevel,
           tools: toolsSelection.tools,
+          pendingTool: extraToolDraft,
           model: modelFields.model,
           provider: modelFields.provider,
           modelMode,

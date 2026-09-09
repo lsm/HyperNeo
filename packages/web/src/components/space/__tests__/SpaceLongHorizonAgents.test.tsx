@@ -385,6 +385,52 @@ describe('SpaceLongHorizonAgents', () => {
     );
   });
 
+  it('preserves a provider-only override when editing a template', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        key: 'scribe',
+        handle: 'scribe',
+        displayName: 'Scribe',
+        model: null,
+        provider: 'anthropic',
+      }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByDisplayValue } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+    fireEvent.input(getByDisplayValue('Scribe'), { target: { value: 'Scribe II' } });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTemplate).toHaveBeenCalledWith(
+      'scribe',
+      expect.objectContaining({ model: null, provider: 'anthropic' })
+    );
+  });
+
+  it('folds a pending scoped tool draft into the save without clicking Add', async () => {
+    mockTemplates.value = [
+      makeTemplate({ key: 'scribe', handle: 'scribe', displayName: 'Scribe' }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+    fireEvent.input(getByTestId('lh-template-extra-tool-input'), {
+      target: { value: 'Bash(gh pr view:*)' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTemplate).toHaveBeenCalledWith(
+      'scribe',
+      expect.objectContaining({ tools: ['Bash(gh pr view:*)'] })
+    );
+  });
+
   it('deletes a user template after confirmation', async () => {
     mockTemplates.value = [makeTemplate({ key: 'scribe', displayName: 'Scribe' })];
     mockUserTemplateKeys.value = new Set(['scribe']);
