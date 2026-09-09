@@ -27,8 +27,12 @@ export interface PostApprovalRecoveryAdmissionDeps {
   hasLeasedClaim(task: SpaceTask): boolean;
   isReviveBypassed(task: SpaceTask, generation: number): boolean;
   adoptBypassed(task: SpaceTask, generation: number): boolean;
-  revive(task: SpaceTask, generation: number): Promise<'revived' | 'skip' | 'replace' | 'timeout'>;
-  adopt(task: SpaceTask, generation: number): Promise<boolean | 'timeout'>;
+  revive(
+    task: SpaceTask,
+    generation: number,
+    awaitBudgetMs?: number
+  ): Promise<'revived' | 'skip' | 'replace' | 'timeout'>;
+  adopt(task: SpaceTask, generation: number, awaitBudgetMs?: number): Promise<boolean | 'timeout'>;
   clearBypass(taskId: string): void;
 }
 
@@ -85,10 +89,11 @@ export async function attemptWorkerRevival(
   deps: PostApprovalRecoveryAdmissionDeps,
   task: SpaceTask,
   generation: number,
-  facts: PostApprovalRecoveryFacts
+  facts: PostApprovalRecoveryFacts,
+  scanDeadline: number
 ): Promise<PostApprovalRecoveryAdmissionGate> {
   if (!facts.dispatchDead || facts.reviveBypassed) return admitted();
-  const outcome = await deps.revive(task, generation);
+  const outcome = await deps.revive(task, generation, Math.max(1_000, scanDeadline - Date.now()));
   if (outcome === 'timeout') return rejected('recovery-await-timeout');
   if (outcome !== 'replace') return rejected('worker-revived');
   return admitted();
@@ -97,11 +102,12 @@ export async function attemptWorkerRevival(
 export async function attemptOrphanAdoption(
   deps: PostApprovalRecoveryAdmissionDeps,
   task: SpaceTask,
-  generation: number
+  generation: number,
+  scanDeadline: number
 ): Promise<PostApprovalRecoveryAdmissionGate> {
   if (task.postApprovalSessionId) return admitted();
   if (deps.adoptBypassed(task, generation)) return admitted();
-  const outcome = await deps.adopt(task, generation);
+  const outcome = await deps.adopt(task, generation, Math.max(1_000, scanDeadline - Date.now()));
   if (outcome === 'timeout') return rejected('recovery-await-timeout');
   if (outcome === true) return rejected('orphan-adopted');
   return admitted();
@@ -110,11 +116,15 @@ export async function attemptOrphanAdoption(
 const recoveryAdmissionRun = (
   superpipe<Record<string, never>>({})('post-approval-recovery-admission') as PipelineAPI
 )
-  .input(['deps', 'task', 'generation', 'now'])
+  .input(['deps', 'task', 'generation', 'now', 'scanDeadline'])
   .pipe(loadAdmissionFacts, ['deps', 'task', 'generation'], 'facts')
   .pipe(gateTaskEligibility, ['deps', 'task', 'generation', 'facts', 'now'], 'result:rejection')
-  .pipe(attemptWorkerRevival, ['deps', 'task', 'generation', 'facts'], 'result:rejection')
-  .pipe(attemptOrphanAdoption, ['deps', 'task', 'generation'], 'result:rejection')
+  .pipe(
+    attemptWorkerRevival,
+    ['deps', 'task', 'generation', 'facts', 'scanDeadline'],
+    'result:rejection'
+  )
+  .pipe(attemptOrphanAdoption, ['deps', 'task', 'generation', 'scanDeadline'], 'result:rejection')
   .endAsync('rejection');
 
 export async function runPostApprovalRecoveryAdmission(
@@ -122,13 +132,15 @@ export async function runPostApprovalRecoveryAdmission(
     task: SpaceTask;
     generation: number;
     now: number;
+    scanDeadline: number;
   }
 ): Promise<PostApprovalRecoveryAdmissionResult> {
   const rejection = (await recoveryAdmissionRun(
     input,
     input.task,
     input.generation,
-    input.now
+    input.now,
+    input.scanDeadline
   )) as PostApprovalRecoveryAdmissionReason | null;
   if (rejection !== null && rejection !== undefined) {
     return { reason: rejection };

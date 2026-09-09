@@ -2212,10 +2212,12 @@ export class TaskAgentManager {
         }
         if (
           shouldReplayPendingMessages &&
+          runtimeGenerationCurrent() &&
           (await this.restoredWorkerStartAdmitted(indexed, taskId, {
             settleReplayProvisioning: true,
           })) &&
-          this.approvalGenerationMatches(taskId, options.expectedApproval)
+          this.approvalGenerationMatches(taskId, options.expectedApproval) &&
+          runtimeGenerationCurrent()
         ) {
           const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
           options.onReplaySettled?.(replayed);
@@ -2412,10 +2414,12 @@ export class TaskAgentManager {
       }
       if (
         shouldReplayPendingMessages &&
+        runtimeGenerationCurrent() &&
         (await this.restoredWorkerStartAdmitted(agentSession, taskId, {
           settleReplayProvisioning: true,
         })) &&
-        this.approvalGenerationMatches(taskId, options.expectedApproval)
+        this.approvalGenerationMatches(taskId, options.expectedApproval) &&
+        runtimeGenerationCurrent()
       ) {
         const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
         options.onReplaySettled?.(replayed);
