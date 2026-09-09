@@ -63,6 +63,7 @@ export type TemplateReferenceScan = Pick<
 
 export interface TemplateInstanceScan {
   listAgentDisplayNamesUsingTemplate(key: string): string[];
+  clearArchivedInstances?(key: string): void;
 }
 
 export interface DeleteTemplateCtx {
@@ -400,7 +401,10 @@ function deleteCheckInstances(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
 
 function deletePersist(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
   const deleted = ctx.repo.delete(ctx.key, ctx.expectedVersion);
-  if (deleted) return { ...ctx, deleted: true };
+  if (deleted) {
+    ctx.instanceScan?.clearArchivedInstances?.(ctx.key);
+    return { ...ctx, deleted: true };
+  }
   if (ctx.expectedVersion !== undefined && ctx.repo.getByKey(ctx.key)) {
     return { ...ctx, error: `Template "${ctx.key}" was modified concurrently; delete aborted.` };
   }

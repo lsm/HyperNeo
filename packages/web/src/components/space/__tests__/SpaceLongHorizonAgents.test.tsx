@@ -461,6 +461,41 @@ describe('SpaceLongHorizonAgents', () => {
     );
   });
 
+  it('clears the fixed model when a dual-state template pool entry is edited', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        key: 'scribe',
+        handle: 'scribe',
+        displayName: 'Scribe',
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        modelPool: [
+          { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+        ],
+      }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getAllByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+    fireEvent.change(getAllByTestId('pool-entry-model-select')[0], {
+      target: { value: 'claude-sonnet-4-6' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTemplate).toHaveBeenCalledWith(
+      'scribe',
+      expect.objectContaining({
+        model: null,
+        modelPool: [
+          { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+        ],
+      })
+    );
+  });
+
   it('sends the model fields when the editor changes the model on a template', async () => {
     mockTemplates.value = [
       makeTemplate({ key: 'scribe', handle: 'scribe', displayName: 'Scribe', version: 4 }),

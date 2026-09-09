@@ -215,6 +215,7 @@ interface TemplateSaveForm {
   provider: string | null;
   modelMode: ModelPoolEditorMode;
   initialModelMode: ModelPoolEditorMode;
+  poolEdited: boolean;
   modelPool: AgentModelPoolEntry[];
   thinkingLevel: ThinkingLevel | null;
   settingSources: SettingSource[] | null;
@@ -244,7 +245,8 @@ function templateSaveParseToolsStage(ctx: TemplateSaveCtx): TemplateSaveCtx {
 
 async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateSaveCtx> {
   const { form, parsedTools } = ctx;
-  const modeSwitched = form.modelMode !== form.initialModelMode;
+  const modeSwitched =
+    form.modelMode !== form.initialModelMode || (form.poolEdited && form.modelMode === 'pool');
   const effectiveModel = form.modelMode === 'single' || !modeSwitched ? form.model : '';
   const cleanedModelPool = form.modelPool
     .map((entry) => ({ ...entry, model: entry.model.trim() }))
@@ -651,6 +653,7 @@ function TemplateEditor({
   const initialModelMode: ModelPoolEditorMode =
     (template?.modelPool ?? []).length > 0 ? 'pool' : 'single';
   const [modelMode, setModelMode] = useState<ModelPoolEditorMode>(initialModelMode);
+  const [poolEdited, setPoolEdited] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [extraToolDraft, setExtraToolDraft] = useState('');
@@ -696,6 +699,7 @@ function TemplateEditor({
           provider: modelFields.provider,
           modelMode,
           initialModelMode,
+          poolEdited,
           modelPool,
           thinkingLevel: modelFields.thinkingLevel,
           settingSources,
@@ -827,7 +831,10 @@ function TemplateEditor({
                   provider: nextProvider || null,
                 }))
               }
-              onModelPoolChange={setModelPool}
+              onModelPoolChange={(next) => {
+                setModelPool(next);
+                setPoolEdited(JSON.stringify(next) !== JSON.stringify(template?.modelPool ?? []));
+              }}
             />
           </div>
           <TemplateModelFields value={modelFields} onChange={setModelFields} hideModelSelect />
