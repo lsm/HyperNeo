@@ -1710,6 +1710,51 @@ describe('Space Agent RPC Handlers', () => {
       expect(published[0][1].agent.sessionId).toBeNull();
     });
 
+    it('serializes concurrent updates for the same agent', async () => {
+      const runtimeService = createRuntimeServiceMock();
+      let resolveFirstRefresh: () => void = () => {};
+      runtimeService.refreshLongHorizonAgentSession.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveFirstRefresh = resolve;
+          })
+      );
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        workflowRepo,
+        runtimeService
+      );
+      const created = await call<{ agent: { id: string } }>(
+        freshHub.handlers,
+        'spaceAgent.create',
+        { spaceId: 'space-1', name: 'Serial Target' }
+      );
+
+      const first = call(freshHub.handlers, 'spaceAgent.update', {
+        id: created.agent.id,
+        name: 'First Rename',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const second = call(freshHub.handlers, 'spaceAgent.update', {
+        id: created.agent.id,
+        name: 'Second Rename',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(longHorizonRepo.getById(created.agent.id)?.displayName).toBe('First Rename');
+
+      resolveFirstRefresh();
+      await first;
+      await second;
+
+      expect(longHorizonRepo.getById(created.agent.id)?.displayName).toBe('Second Rename');
+    });
+
     it('rejects create ids containing reserved characters', async () => {
       await expect(
         call(hubData.handlers, 'spaceAgent.create', {
@@ -1725,6 +1770,13 @@ describe('Space Agent RPC Handlers', () => {
           id: 'a/b c',
         })
       ).rejects.toThrow('id may only contain letters, digits, underscores, and hyphens');
+      await expect(
+        call(hubData.handlers, 'spaceAgent.create', {
+          spaceId: 'space-1',
+          name: 'Alias Clash',
+          id: 'coordinator',
+        })
+      ).rejects.toThrow('id "coordinator" is reserved');
 
       const created = await call<{ agent: { id: string } }>(hubData.handlers, 'spaceAgent.create', {
         spaceId: 'space-1',

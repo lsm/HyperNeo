@@ -4467,6 +4467,7 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
     expect(stampedSession.updateConfig).toHaveBeenCalledTimes(1);
     expect(stampedSession.resetQuery).not.toHaveBeenCalled();
     expect(stampedSession.restart).not.toHaveBeenCalled();
+    expect(stampedSession.mergeRuntimeMcpServers).not.toHaveBeenCalled();
   });
 
   test('refreshes stamped sessions when the space configuration changes', async () => {

@@ -2422,7 +2422,8 @@ class SpaceStore {
       agentId,
     });
     const cached = this.agents.value.find((agent) => agent.id === agentId);
-    if (cached && cached.sessionId !== sessionId) {
+    const stillCurrent = this.agents.value.find((agent) => agent.id === agentId) === cached;
+    if (cached && stillCurrent && cached.sessionId !== sessionId) {
       this.agents.value = this.agents.value.map((agent) =>
         agent.id === agentId ? { ...agent, sessionId } : agent
       );

@@ -427,6 +427,9 @@ async function createAdmitRequestStage(ctx: CreateUnifiedAgentCtx): Promise<Crea
   if (params.id !== undefined && !/^[a-zA-Z0-9_-]+$/.test(params.id)) {
     throw new Error('id may only contain letters, digits, underscores, and hyphens');
   }
+  if (params.id === 'coordinator') {
+    throw new Error('id "coordinator" is reserved');
+  }
   const space = await ctx.spaceManager.getSpace(params.spaceId);
   if (!space) throw new Error(`Space not found: ${params.spaceId}`);
   return { ...ctx, agentId: params.id ?? '', displayName: displayName ?? '' };
@@ -548,6 +551,8 @@ async function createPublishStage(ctx: CreateUnifiedAgentCtx): Promise<CreateUni
   await publishUnifiedAgentCreated(ctx.internalEventBus, ctx.agent!);
   return ctx;
 }
+
+const agentUpdateQueues = new Map<string, Promise<unknown>>();
 
 const runCreateUnifiedSpaceAgent = (superpipe({})('create-unified-space-agent') as PipelineAPI)
   .input(['ctx'])
@@ -911,16 +916,29 @@ export function registerUnifiedSpaceAgentMethods(
   });
 
   messageHub.onRequest(method('update'), async (data) => {
-    const ctx = await runUpdateUnifiedSpaceAgent({
-      ...deps,
-      params: data as UnifiedAgentUpdateInput,
-      agentId: '',
-      existing: null,
-      spaceId: '',
-      unifiedAfter: null,
-      agent: null,
+    const params = data as UnifiedAgentUpdateInput;
+    const runUpdate = async () => {
+      const ctx = await runUpdateUnifiedSpaceAgent({
+        ...deps,
+        params,
+        agentId: '',
+        existing: null,
+        spaceId: '',
+        unifiedAfter: null,
+        agent: null,
+      });
+      return { agent: ctx.agent };
+    };
+    const targetId = params.id ?? params.agentId;
+    if (!targetId) return runUpdate();
+    const prior = agentUpdateQueues.get(targetId) ?? Promise.resolve();
+    const run = prior.then(runUpdate, runUpdate);
+    agentUpdateQueues.set(targetId, run);
+    return run.finally(() => {
+      if (agentUpdateQueues.get(targetId) === run) {
+        agentUpdateQueues.delete(targetId);
+      }
     });
-    return { agent: ctx.agent };
   });
 
   messageHub.onRequest(method('delete'), async (data) => {

@@ -117,7 +117,8 @@ async function reapplyRefreshSession(ctx: ReapplyTemplateCtx): Promise<ReapplyTe
 
 async function reapplyPublish(ctx: ReapplyTemplateCtx): Promise<ReapplyTemplateCtx> {
   if (!ctx.internalEventBus || !ctx.updated) return ctx;
-  await publishUnifiedAgentUpdated(ctx.internalEventBus, ctx.updated);
+  const fresh = ctx.agents.getById(ctx.updated.id) ?? ctx.updated;
+  await publishUnifiedAgentUpdated(ctx.internalEventBus, fresh);
   return ctx;
 }
 

@@ -499,6 +499,7 @@ export function setupSessionHandlers(
           .catch(() => {});
       } catch {}
     }
+    await spaceRuntimeService?.clearAgentStampForSession(targetSessionId);
 
     return { success: true };
   });
