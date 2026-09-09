@@ -17,13 +17,10 @@ import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
 
 import { setupSessionHandlers } from './session-handlers.ts';
 import { setupMessageHandlers } from './message-handlers.ts';
-import { setupFileHandlers } from './file-handlers.ts';
 import { setupSystemHandlers } from './system-handlers.ts';
 import { setupAuthHandlers } from './auth-handlers.ts';
 import { registerMcpHandlers } from './mcp-handlers.ts';
 import { registerSettingsHandlers } from './settings-handlers.ts';
-import { setupDaemonConfigHandlers } from './daemon-config-handlers.ts';
-import type { DaemonConfigService } from '../daemon-config-service.ts';
 import { registerCustomEndpointHandlers } from './custom-endpoint-handlers.ts';
 import { registerVoiceHandlers } from './voice-handlers.ts';
 import { setupProviderHandlers } from './provider-handlers.ts';
@@ -71,13 +68,7 @@ import {
   SPACE_WORKFLOW_RUN_SYNC_GATE_ARTIFACTS,
   SPACE_WORKFLOW_RUN_SYNC_COMMITS,
   SPACE_WORKFLOW_RUN_SYNC_FILE_DIFF,
-  MESSAGE_DELIVERY,
 } from '../job-queue-constants.ts';
-import {
-  aggregateInFlightBySession,
-  deliveryMetrics,
-  type MessageDeliveryDiagnostics,
-} from '../agent/message-delivery-metrics.ts';
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository.ts';
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import { setupSpaceAgentHandlers } from './space-agent-handlers.ts';
@@ -185,7 +176,6 @@ export interface RPCHandlerDependencies {
   authManager: AuthManager;
   credentialManager?: ProviderCredentialManager;
   settingsManager: SettingsManager;
-  daemonConfigService: DaemonConfigService;
   config: Config;
   internalEventBus: InternalEventBus<DaemonInternalEventMap>;
   commandBus: InternalCommandBus<DaemonCommandMap>;
@@ -199,7 +189,6 @@ export interface RPCHandlerDependencies {
   spaceManager: SpaceManager;
   jobQueue: JobQueueRepository;
   jobProcessor: JobQueueProcessor;
-  messageDeliveryProcessor: JobQueueProcessor;
   reactiveDb: ReactiveDatabase;
   liveQueries: LiveQueryEngine;
   skillsManager: SkillsManager;
@@ -325,8 +314,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   let inactivityRunNowCancelled = false;
   let inactivityAborted = false;
   setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
-  setupFileHandlers(deps.messageHub, deps.sessionManager);
-  setupSystemHandlers(deps.messageHub, deps.sessionManager, deps.authManager, deps.config);
+  setupSystemHandlers(deps.messageHub, deps.sessionManager);
   setupAuthHandlers(
     deps.messageHub,
     deps.authManager,
@@ -342,7 +330,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.db,
     deps.credentialManager
   );
-  setupDaemonConfigHandlers(deps.messageHub, { service: deps.daemonConfigService });
   registerCustomEndpointHandlers(
     deps.messageHub,
     deps.settingsManager,
@@ -982,29 +969,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   deps.messageHub.onRequest('space.externalEvents.queueHealth', async () => {
     return spaceRuntimeService.getQueueHealthSnapshot();
   });
-
-  deps.messageHub.onRequest(
-    'messageDelivery.diagnostics',
-    async (): Promise<MessageDeliveryDiagnostics> => {
-      const counts = deps.jobQueue.countByStatus(MESSAGE_DELIVERY);
-      const staleThresholdMs = 5 * 60 * 1000;
-      const staleProcessing = deps.jobQueue.countStaleProcessing(
-        MESSAGE_DELIVERY,
-        Date.now() - staleThresholdMs
-      );
-      const processor = deps.messageDeliveryProcessor.snapshot(MESSAGE_DELIVERY);
-      return {
-        lane: MESSAGE_DELIVERY,
-        statusCounts: counts,
-        staleProcessing,
-        activeProcessing: Math.max(0, counts.processing - staleProcessing),
-        oldestProcessingLeaseAgeMs: deps.jobQueue.oldestProcessingLeaseAgeMs(MESSAGE_DELIVERY),
-        processor,
-        inFlightBySession: aggregateInFlightBySession(processor.handlers),
-        metrics: deliveryMetrics.snapshot(),
-      };
-    }
-  );
 
   const spaceWorktreeManager = new SpaceWorktreeManager(deps.db.getDatabase());
 

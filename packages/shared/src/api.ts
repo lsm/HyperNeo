@@ -1,10 +1,5 @@
 import type {
   AuthStatus,
-  DaemonBehaviorConfig,
-  DaemonConfig,
-  DaemonConfigKeyEntry,
-  FileInfo,
-  FileTree,
   HealthStatus,
   Provider,
   ProviderInfo,
@@ -261,37 +256,6 @@ export interface SendMessageRequest {
 export interface SendMessageResponse {
   messageId: string;
   status: 'processing';
-}
-
-export interface ReadFileRequest {
-  path: string;
-  encoding?: 'utf-8' | 'base64';
-}
-
-export interface ReadFileResponse {
-  path: string;
-  content: string;
-  encoding: string;
-  size: number;
-  mtime: string;
-}
-
-export interface ListFilesRequest {
-  path?: string;
-  recursive?: boolean;
-}
-
-export interface ListFilesResponse {
-  files: FileInfo[];
-}
-
-export interface GetFileTreeRequest {
-  path?: string;
-  maxDepth?: number;
-}
-
-export interface GetFileTreeResponse {
-  tree: FileTree;
 }
 
 export interface ListToolsResponse {
@@ -618,17 +582,12 @@ export interface APIClient {
   sendMessage(sessionId: string, req: SendMessageRequest): Promise<SendMessageResponse>;
   clearMessages(sessionId: string): Promise<void>;
 
-  readFile(sessionId: string, req: ReadFileRequest): Promise<ReadFileResponse>;
-  listFiles(sessionId: string, req: ListFilesRequest): Promise<ListFilesResponse>;
-  getFileTree(sessionId: string, req: GetFileTreeRequest): Promise<GetFileTreeResponse>;
-
   listTools(): Promise<ListToolsResponse>;
   loadTools(sessionId: string, req: LoadToolsRequest): Promise<void>;
   unloadTools(sessionId: string, req: UnloadToolsRequest): Promise<void>;
   getActiveTools(sessionId: string): Promise<GetActiveToolsResponse>;
 
   health(): Promise<HealthStatus>;
-  getConfig(): Promise<DaemonConfig>;
   updateConfig(req: UpdateConfigRequest): Promise<void>;
 
   getAuthStatus(): Promise<GetAuthStatusResponse>;
@@ -807,21 +766,4 @@ export interface SkillSetEnabledRequest {
 
 export interface SkillSetEnabledResponse {
   skill: AppSkill;
-}
-
-export interface DaemonConfigGetRequest {}
-
-export interface DaemonConfigGetResponse {
-  config: DaemonBehaviorConfig;
-  catalog: readonly DaemonConfigKeyEntry[];
-}
-
-export interface DaemonConfigUpdateRequest {
-  patch: Partial<DaemonBehaviorConfig>;
-}
-
-export interface DaemonConfigUpdateResponse {
-  status: 'applied' | 'superseded';
-  config: DaemonBehaviorConfig;
-  changedKeys: string[];
 }

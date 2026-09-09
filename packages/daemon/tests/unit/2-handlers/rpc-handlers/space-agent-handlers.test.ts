@@ -1485,38 +1485,6 @@ describe('Space Agent RPC Handlers', () => {
     });
   });
 
-  describe('spaceAgent.get', () => {
-    it('registers the handler', () => {
-      expect(hubData.handlers.has('spaceAgent.get')).toBe(true);
-    });
-
-    it('returns the unified agent by id', async () => {
-      const created = await call<{ agent: { id: string; displayName: string } }>(
-        hubData.handlers,
-        'spaceAgent.create',
-        { spaceId: 'space-1', name: 'GetMe' }
-      );
-
-      const result = await call<{ agent: { id: string; displayName: string } }>(
-        hubData.handlers,
-        'spaceAgent.get',
-        { id: created.agent.id }
-      );
-      expect(result.agent.id).toBe(created.agent.id);
-      expect(result.agent.displayName).toBe('GetMe');
-    });
-
-    it('throws when id is missing', async () => {
-      await expect(call(hubData.handlers, 'spaceAgent.get', {})).rejects.toThrow('id is required');
-    });
-
-    it('throws when agent does not exist', async () => {
-      await expect(
-        call(hubData.handlers, 'spaceAgent.get', { id: 'nonexistent-id' })
-      ).rejects.toThrow('Agent not found');
-    });
-  });
-
   describe('spaceAgent.update', () => {
     let agentId: string;
 
@@ -2049,7 +2017,6 @@ describe('Space Agent RPC Handlers', () => {
   describe('spaceAgent reminders and subscriptions', () => {
     it('registers reminder and subscription CRUD on the spaceAgent namespace', async () => {
       for (const name of [
-        'spaceAgent.listReminders',
         'spaceAgent.listReminderCounts',
         'spaceAgent.createReminder',
         'spaceAgent.deleteReminder',

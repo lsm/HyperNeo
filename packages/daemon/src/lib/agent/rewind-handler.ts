@@ -2,7 +2,6 @@ import type {
   RewindMode,
   RewindPreview,
   RewindResult,
-  SelectiveRewindPreview,
   SelectiveRewindResult,
   Session,
 } from '@hyperneo/shared';
@@ -410,80 +409,6 @@ export class RewindHandler {
     }
 
     return { reverted, failed, skipped };
-  }
-
-  async previewSelectiveRewind(messageIds: string[]): Promise<SelectiveRewindPreview> {
-    const { session, db, queryObject, firstMessageReceived, logger } = this.ctx;
-
-    if (!queryObject) {
-      return {
-        canRewind: false,
-        error: 'SDK query not active. Start a conversation first.',
-        messagesToDelete: 0,
-        filesToRevert: [],
-      };
-    }
-
-    if (!firstMessageReceived) {
-      return {
-        canRewind: false,
-        error: 'SDK not ready. Please wait for the session to initialize.',
-        messagesToDelete: 0,
-        filesToRevert: [],
-      };
-    }
-
-    const { messages: allMessages } = db.getSDKMessages(session.id, 10000);
-    const selectedMessages = allMessages.filter((m) => m.uuid && messageIds.includes(m.uuid));
-
-    if (selectedMessages.length === 0) {
-      return {
-        canRewind: false,
-        error: 'No valid messages found',
-        messagesToDelete: 0,
-        filesToRevert: [],
-      };
-    }
-
-    const earliestMessage = selectedMessages.reduce((earliest, current) => {
-      const currentTimestamp = (current as Record<string, unknown>).timestamp as number;
-      const earliestTimestamp = (earliest as Record<string, unknown>).timestamp as number;
-      return currentTimestamp < earliestTimestamp ? current : earliest;
-    });
-
-    const earliestTimestamp = (earliestMessage as Record<string, unknown>).timestamp as number;
-
-    const messagesToDelete = allMessages.filter((m) => {
-      const msgTimestamp = (m as Record<string, unknown>).timestamp as number;
-      return msgTimestamp > earliestTimestamp;
-    }).length;
-
-    const checkpointId = messageIds[0];
-
-    try {
-      const sdkResult = await queryObject.rewindFiles(checkpointId, { dryRun: true });
-
-      const filesToRevert = (sdkResult.filesChanged || []).map((path) => ({
-        path,
-        hasCheckpoint: true,
-        hasEditDiff: false,
-      }));
-
-      return {
-        canRewind: sdkResult.canRewind,
-        error: sdkResult.error,
-        messagesToDelete,
-        filesToRevert,
-      };
-    } catch (error) {
-      logger.error('Selective rewind preview failed:', error);
-      return {
-        canRewind: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        messagesToDelete,
-        filesToRevert: [],
-      };
-    }
   }
 
   async executeSelectiveRewind(

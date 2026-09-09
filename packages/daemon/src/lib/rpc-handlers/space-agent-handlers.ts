@@ -858,12 +858,6 @@ export function registerUnifiedSpaceAgentMethods(
     return { success: true };
   });
 
-  messageHub.onRequest(method('listReminders'), async (data) => {
-    const params = data as { agentId: string };
-    if (!params.agentId) throw new Error('agentId is required');
-    return { reminders: deps.repo.listReminders(params.agentId) };
-  });
-
   messageHub.onRequest(method('listReminderCounts'), async (data) => {
     const params = data as { agentIds: string[] };
     if (!Array.isArray(params.agentIds)) throw new Error('agentIds is required');
@@ -1071,16 +1065,6 @@ export function setupSpaceAgentHandlers(
   const createUnifiedAgent = buildUnifiedAgentCreate(deps);
 
   registerUnifiedSpaceAgentMethods(messageHub, deps);
-
-  messageHub.onRequest('spaceAgent.get', async (data) => {
-    const params = data as { id: string };
-    if (!params.id) throw new Error('id is required');
-
-    const agent = longHorizonAgentRepo.getById(params.id);
-    if (!agent) throw new Error(`Agent not found: ${params.id}`);
-
-    return { agent };
-  });
 
   messageHub.onRequest('spaceAgent.getPromotionDraft', async (data) => {
     const params = data as { spaceId: string; sessionId: string };

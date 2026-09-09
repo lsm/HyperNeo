@@ -15,7 +15,6 @@ import type {
   RewindMode,
   RewindPreview,
   RewindResult,
-  SelectiveRewindPreview,
   SelectiveRewindResult,
   Session,
   SessionConfig,
@@ -1536,10 +1535,6 @@ export class AgentSession
 
   executeRewind(checkpointId: string, mode: RewindMode): Promise<RewindResult> {
     return this.rewindHandler.executeRewind(checkpointId, mode);
-  }
-
-  previewSelectiveRewind(messageIds: string[]): Promise<SelectiveRewindPreview> {
-    return this.rewindHandler.previewSelectiveRewind(messageIds);
   }
 
   executeSelectiveRewind(messageIds: string[], mode?: RewindMode): Promise<SelectiveRewindResult> {

@@ -583,57 +583,6 @@ describe('RewindHandler', () => {
     });
   });
 
-  describe('previewSelectiveRewind', () => {
-    it('should return error when SDK query not active', async () => {
-      handler = createHandler({ queryObject: null });
-      const result = await handler.previewSelectiveRewind([testRewindPoint.uuid]);
-
-      expect(result.canRewind).toBe(false);
-      expect(result.error).toContain('SDK query not active');
-    });
-
-    it('should return error when firstMessageReceived is false', async () => {
-      handler = createHandler({ firstMessageReceived: false });
-      const result = await handler.previewSelectiveRewind([testRewindPoint.uuid]);
-
-      expect(result.canRewind).toBe(false);
-      expect(result.error).toContain('SDK not ready');
-    });
-
-    it('should return error when no valid messages found', async () => {
-      mockDb.getSDKMessages = mock(() => ({
-        messages: [{ uuid: 'different-uuid', timestamp: 1000 }],
-        hasMore: false,
-      }));
-      handler = createHandler();
-      const result = await handler.previewSelectiveRewind([testRewindPoint.uuid]);
-
-      expect(result.canRewind).toBe(false);
-      expect(result.error).toBe('No valid messages found');
-    });
-
-    it('should count messages to delete and preview file changes', async () => {
-      mockDb.getSDKMessages = mock(() => ({
-        messages: [
-          { uuid: testRewindPoint.uuid, timestamp: testTimestamp },
-          { uuid: 'msg-2', timestamp: testTimestamp + 1000 },
-          { uuid: 'msg-3', timestamp: testTimestamp + 2000 },
-        ],
-        hasMore: false,
-      }));
-
-      handler = createHandler();
-      const result = await handler.previewSelectiveRewind([testRewindPoint.uuid]);
-
-      expect(result.canRewind).toBe(true);
-      expect(result.messagesToDelete).toBe(2);
-      expect(result.filesToRevert).toEqual([
-        { path: 'file1.ts', hasCheckpoint: true, hasEditDiff: false },
-        { path: 'file2.ts', hasCheckpoint: true, hasEditDiff: false },
-      ]);
-    });
-  });
-
   describe('executeSelectiveRewind', () => {
     it('should return error when SDK query not active', async () => {
       handler = createHandler({ queryObject: null });

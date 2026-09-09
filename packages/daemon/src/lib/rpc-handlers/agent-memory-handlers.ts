@@ -31,15 +31,6 @@ export function setupAgentMemoryHandlers(
     });
   });
 
-  messageHub.onRequest('agentMemory.search', async (payload: unknown) => {
-    const request = parseSpaceScopedRequest(payload);
-    return deps.memoryRepo.search(
-      request.spaceId,
-      readRequiredString(payload, 'query'),
-      readOptionalInteger(payload, 'limit') ?? 10
-    );
-  });
-
   messageHub.onRequest('agentMemory.read', async (payload: unknown) => {
     const request = parseSpaceScopedRequest(payload);
     return deps.memoryRepo.read(request.spaceId, readRequiredString(payload, 'key'), {

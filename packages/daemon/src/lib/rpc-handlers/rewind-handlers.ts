@@ -87,38 +87,6 @@ export function setupRewindHandlers(
     return { result };
   });
 
-  messageHub.onRequest('rewind.previewSelective', async (data) => {
-    const { sessionId, messageIds } = data as SelectiveRewindRequest;
-
-    if (messageIds.length === 0) {
-      return {
-        preview: {
-          canRewind: false,
-          error: 'No messages selected',
-          messagesToDelete: 0,
-          filesToRevert: [],
-        },
-      };
-    }
-
-    const agentSession = await sessionManager.getSessionAsync(sessionId, {
-      replayPendingMessages: false,
-    });
-    if (!agentSession) {
-      return {
-        preview: {
-          canRewind: false,
-          error: 'Session not found',
-          messagesToDelete: 0,
-          filesToRevert: [],
-        },
-      };
-    }
-
-    const preview = await agentSession.previewSelectiveRewind(messageIds);
-    return { preview };
-  });
-
   messageHub.onRequest('rewind.executeSelective', async (data) => {
     const {
       sessionId,

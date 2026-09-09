@@ -221,11 +221,6 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
 
     return { results: allResults };
   });
-
-  messageHub.onRequest('fileindex.rescan', async () => {
-    await fileIndex.refresh();
-    return { size: fileIndex.size() };
-  });
 }
 
 async function resolveSessionContext(

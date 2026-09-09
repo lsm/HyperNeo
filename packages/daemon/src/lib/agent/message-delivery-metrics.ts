@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import type { JobQueueProcessorSnapshot } from '../../storage/job-queue-processor.ts';
 import { emitStructuredLogEvent } from '../logger.ts';
 
 export type MessageDeliveryLifecycleEventName =
@@ -82,17 +81,6 @@ export interface DeliveryMetricsSnapshot {
   initializationP99: number | null;
   initializationSamples: number;
   initializationNeverProgressed: number;
-}
-
-export interface MessageDeliveryDiagnostics {
-  lane: string;
-  statusCounts: Record<string, number>;
-  staleProcessing: number;
-  activeProcessing: number;
-  oldestProcessingLeaseAgeMs: number | null;
-  processor: JobQueueProcessorSnapshot;
-  inFlightBySession: Record<string, number>;
-  metrics: DeliveryMetricsSnapshot;
 }
 
 const RESIDUAL_WINDOW_SAMPLE_CAP = 1000;
@@ -196,17 +184,6 @@ export class DeliveryMetrics {
 function pushBounded(samples: number[], ms: number): void {
   samples.push(ms);
   if (samples.length > RESIDUAL_WINDOW_SAMPLE_CAP) samples.shift();
-}
-
-export function aggregateInFlightBySession(
-  handlers: Array<Pick<JobQueueProcessorSnapshot['handlers'][number], 'sessionId'>>
-): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (const handler of handlers) {
-    if (typeof handler.sessionId !== 'string') continue;
-    counts[handler.sessionId] = (counts[handler.sessionId] ?? 0) + 1;
-  }
-  return counts;
 }
 
 function percentile(samples: number[], p: number): number | null {

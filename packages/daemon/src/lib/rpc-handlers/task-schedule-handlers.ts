@@ -75,27 +75,6 @@ export function setupTaskScheduleHandlers(
     return { schedule: schedule && schedule.spaceId === params.spaceId ? schedule : null };
   });
 
-  messageHub.onRequest('taskSchedule.update', async (data) => {
-    const params = data as {
-      scheduleId: string;
-      spaceId: string;
-      title?: string;
-      description?: string;
-      priority?: SpaceTaskPriority;
-      preferredWorkflowId?: string | null;
-      labels?: string[];
-      cronExpression?: string | null;
-      runAt?: number | null;
-      timezone?: string;
-    };
-
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const _existing = requireScheduleInSpace(params.scheduleId, params.spaceId);
-    const { scheduleId, spaceId: _spaceId, ...input } = params;
-    const schedule = scheduleService.updateSchedule(scheduleId, input);
-    return { schedule };
-  });
-
   messageHub.onRequest('taskSchedule.pause', async (data) => {
     const params = data as { scheduleId: string; spaceId: string };
     requireScheduleInSpace(params.scheduleId, params.spaceId);

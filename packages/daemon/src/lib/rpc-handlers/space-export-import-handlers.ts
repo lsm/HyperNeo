@@ -665,23 +665,6 @@ export function setupSpaceExportImportHandlers(
   const templateRepo = new SpaceAgentTemplateRepository(db);
   const storedTemplateExists = (key: string): boolean => templateRepo.getByKey(key) != null;
 
-  messageHub.onRequest('spaceExport.agents', async (data) => {
-    const params = data as { spaceId: string; agentIds?: string[] };
-    const space = await requireSpace(spaceManager, params.spaceId);
-
-    let agents: SpaceLongHorizonAgent[] = unifiedExportAgents(longHorizonAgentRepo, params.spaceId);
-    if (params.agentIds?.length) {
-      const idSet = new Set(params.agentIds);
-      agents = agents.filter((a) => idSet.has(a.id));
-    }
-    assertExportableAgentNames(agents);
-
-    const bundle = exportBundle(agents, [], `${space.name} agents`, {
-      exportedFrom: params.spaceId,
-    });
-    return { bundle };
-  });
-
   messageHub.onRequest('spaceExport.workflows', async (data) => {
     const params = data as { spaceId: string; workflowIds?: string[] };
     const space = await requireSpace(spaceManager, params.spaceId);
