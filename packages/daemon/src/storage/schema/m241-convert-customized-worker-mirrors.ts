@@ -181,6 +181,10 @@ function clearMirrorSlots(
       if (finalName) occupied.add(finalName);
       occupied.add(agentId);
       if (slotKey && newKeys.has(slotKey)) {
+        const slotName = typeof occ.slot.name === 'string' ? occ.slot.name.trim() : '';
+        if (targets.has(slotKey) && slotName !== '' && !occupied.has(slotName)) {
+          clearedNames.set(slotKey, occ.slot.name as string);
+        }
         delete occ.slot.templateKey;
         dirty = true;
       }

@@ -684,6 +684,36 @@ describe('migration 241: convert customized worker mirrors to user templates', (
     db.close();
   });
 
+  test('retargets routes off a neutralized stale key onto the owning slot name', () => {
+    const { db, agentRepo } = createDb();
+    agentRepo.update(SWE_ID, { model: 'claude-sonnet-5' });
+    agentRepo.create({
+      spaceId: 'space-1',
+      handle: 'ops-user',
+      displayName: 'Ops',
+      instructions: 'Ops agent',
+    });
+    const shadowKey = workerCustomTemplateKey(SWE_ID);
+    insertWorkflow(db, 'workflow-neutral', 'space-1', JSON.stringify({ targetAgent: shadowKey }));
+    insertNode(
+      db,
+      'node-neutral',
+      'workflow-neutral',
+      JSON.stringify({
+        agents: [{ agentId: 'user-1', templateKey: shadowKey, name: 'ops' }],
+      })
+    );
+
+    runMigration241(db);
+
+    expect(nodeAgents(db, 'node-neutral')).toEqual([{ agentId: 'user-1', name: 'ops' }]);
+    const postApproval = db
+      .prepare(`SELECT post_approval FROM space_workflows WHERE id = 'workflow-neutral'`)
+      .get() as { post_approval: string };
+    expect(JSON.parse(postApproval.post_approval)).toEqual({ targetAgent: 'ops' });
+    db.close();
+  });
+
   test('keeps a replaced-key route on an earlier slot that owns the key as its name', () => {
     const { db, agentRepo } = createDb();
     agentRepo.update(SWE_ID, { model: 'claude-sonnet-5' });
