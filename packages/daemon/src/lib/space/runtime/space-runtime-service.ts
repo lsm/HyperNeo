@@ -1174,6 +1174,7 @@ export class SpaceRuntimeService {
       sessionManager: this.config.sessionManager,
       clearLongTermAgentSessionProvider: (sid, aid) =>
         this.clearLongTermAgentSessionProvider(sid, aid),
+      refreshLongHorizonAgentSession: (sid, aid) => this.refreshLongHorizonAgentSession(sid, aid),
       getRuntimeSession: (sid) =>
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
@@ -1557,6 +1558,7 @@ export class SpaceRuntimeService {
               err
             );
           });
+          this.refreshStampedSessionsForSpace(event.spaceId);
         }
       },
       { sessionId: 'global', subscriberName: 'SpaceRuntimeService.global' }
@@ -1609,6 +1611,16 @@ export class SpaceRuntimeService {
     }
     if (policy.attachGenericSpaceTools) {
       await this.attachSpaceToolsToMemberSession(session, options);
+    }
+  }
+
+  private refreshStampedSessionsForSpace(spaceId: string): void {
+    const repo = this.config.longHorizonAgentRepo;
+    if (!repo) return;
+    const coordinatorId = repo.getCoordinator(spaceId)?.id;
+    for (const stamped of repo.listBySpaceId(spaceId)) {
+      if (!stamped.sessionId || stamped.id === coordinatorId) continue;
+      void this.refreshLongHorizonAgentSession(spaceId, stamped.id).catch(() => {});
     }
   }
 
@@ -1734,6 +1746,7 @@ export class SpaceRuntimeService {
       sessionManager: this.config.sessionManager,
       clearLongTermAgentSessionProvider: (sid, aid) =>
         this.clearLongTermAgentSessionProvider(sid, aid),
+      refreshLongHorizonAgentSession: (sid, aid) => this.refreshLongHorizonAgentSession(sid, aid),
       getRuntimeSession: (sid) =>
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,
@@ -1923,6 +1936,7 @@ export class SpaceRuntimeService {
       sessionManager: this.config.sessionManager,
       clearLongTermAgentSessionProvider: (sid, aid) =>
         this.clearLongTermAgentSessionProvider(sid, aid),
+      refreshLongHorizonAgentSession: (sid, aid) => this.refreshLongHorizonAgentSession(sid, aid),
       getRuntimeSession: (sid) =>
         this.taskAgentManager?.getCachedAgentSessionById(sid) ?? undefined,
       taskAgentManager: this.taskAgentManager ?? undefined,

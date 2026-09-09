@@ -1674,6 +1674,42 @@ describe('Space Agent RPC Handlers', () => {
       ).toHaveLength(0);
     });
 
+    it('publishes a fresh repository read after the refresh', async () => {
+      const runtimeService = createRuntimeServiceMock();
+      runtimeService.refreshLongHorizonAgentSession.mockImplementationOnce(async () => {
+        longHorizonRepo.update('lh-raced-stamp', { sessionId: null });
+      });
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        workflowRepo,
+        runtimeService
+      );
+      longHorizonRepo.create({
+        id: 'lh-raced-stamp',
+        spaceId: 'space-1',
+        handle: 'raced-stamp',
+        sessionId: 'space:agent:space-1:lh-raced-stamp',
+      });
+      daemonData.publishMock.mockClear();
+
+      const result = await call<{ agent: { id: string } }>(freshHub.handlers, 'spaceAgent.update', {
+        id: 'lh-raced-stamp',
+        instructions: 'Newly saved instructions',
+      });
+
+      expect(result.agent.id).toBe('lh-raced-stamp');
+      const published = daemonData.publishMock.mock.calls.filter(
+        ([name]) => name === 'spaceAgent.updated'
+      ) as Array<[string, { agent: { id: string; sessionId: string | null } }]>;
+      expect(published).toHaveLength(1);
+      expect(published[0][1].agent.sessionId).toBeNull();
+    });
+
     it('rejects create ids containing reserved characters', async () => {
       await expect(
         call(hubData.handlers, 'spaceAgent.create', {

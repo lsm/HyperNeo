@@ -593,6 +593,7 @@ export interface SpaceAgentToolsConfig {
   taskManager: SpaceTaskManager;
   sessionManager?: Pick<SessionManager, 'getCachedSession' | 'getSessionAsync' | 'sendUserMessage'>;
   clearLongTermAgentSessionProvider?: (spaceId: string, agentId: string) => Promise<void>;
+  refreshLongHorizonAgentSession?: (spaceId: string, agentId: string) => Promise<void>;
   getRuntimeSession?: (sessionId: string) => AgentSession | undefined;
   taskAgentManager?: TaskAgentManager;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
@@ -2155,7 +2156,14 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
         const refresh = runtime.refreshLongHorizonAgentSubscriptions(spaceId, args.agent_id);
         if (!refresh.success) return jsonResult({ success: false, error: refresh.error });
-        if (agent) emitLongHorizonAgentUpdated(agent);
+        if (agent?.sessionId) {
+          await config.refreshLongHorizonAgentSession?.(spaceId, args.agent_id);
+        }
+        if (agent) {
+          emitLongHorizonAgentUpdated(
+            requireLongHorizonAgentRepo().getById(args.agent_id) ?? agent
+          );
+        }
         logAudit('update_agent', { agent_id: args.agent_id, status: args.status });
         return jsonResult({ success: true, agent });
       } catch (err) {

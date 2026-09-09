@@ -4469,6 +4469,41 @@ describe('ensureAgentSession() / isAgentTargetLifecycleEligible()', () => {
     expect(stampedSession.restart).not.toHaveBeenCalled();
   });
 
+  test('refreshes stamped sessions when the space configuration changes', async () => {
+    const db = makeTestDb();
+    seedEnsureSpace(db);
+    const repo = new SpaceLongHorizonAgentRepository(db as never);
+    repo.create({ id: 'lh-sweep-1', spaceId: ENSURE_SPACE_ID, handle: 'sweep-one' });
+    repo.create({
+      id: 'lh-sweep-2',
+      spaceId: ENSURE_SPACE_ID,
+      handle: 'sweep-two',
+      sessionId: longTermAgentSessionId(ENSURE_SPACE_ID, 'lh-sweep-2'),
+    });
+    repo.create({
+      id: coordinatorLongHorizonAgentId(ENSURE_SPACE_ID),
+      spaceId: ENSURE_SPACE_ID,
+      handle: 'coordinator',
+      sessionId: coordinatorSessionId(ENSURE_SPACE_ID),
+    });
+    const svc = new SpaceRuntimeService(
+      buildEnsureConfig(db, repo, makeEnsureSpaceManager(makeEnsureSpace()), {
+        getSessionAsync: mock(async () => null),
+      } as unknown as SessionManager)
+    );
+    const refresh = mock(async () => {});
+    (svc as unknown as { refreshLongHorizonAgentSession: typeof refresh })[
+      'refreshLongHorizonAgentSession'
+    ] = refresh;
+
+    (svc as unknown as { refreshStampedSessionsForSpace: (spaceId: string) => void })[
+      'refreshStampedSessionsForSpace'
+    ](ENSURE_SPACE_ID);
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveBeenCalledWith(ENSURE_SPACE_ID, 'lh-sweep-2');
+  });
+
   test('coalesces concurrent ensures for the same agent session', async () => {
     const db = makeTestDb();
     seedEnsureSpace(db);

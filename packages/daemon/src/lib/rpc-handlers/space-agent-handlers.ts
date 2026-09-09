@@ -768,7 +768,8 @@ async function updateRefreshSessionStage(
 
 async function updatePublishStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
   if (ctx.unifiedAfter) {
-    await publishUnifiedAgentUpdated(ctx.internalEventBus, ctx.unifiedAfter);
+    const fresh = ctx.repo.getById(ctx.unifiedAfter.id) ?? ctx.unifiedAfter;
+    await publishUnifiedAgentUpdated(ctx.internalEventBus, fresh);
   }
   return ctx;
 }

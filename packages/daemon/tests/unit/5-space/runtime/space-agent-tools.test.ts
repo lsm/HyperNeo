@@ -2365,6 +2365,41 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     });
   });
 
+  test('update_agent refreshes the stamped session and publishes a fresh read', async () => {
+    const publish = mock(async () => {});
+    const refreshLongHorizonAgentSession = mock(async () => {});
+    const handlers = makeHandlers(ctx, {
+      internalEventBus: {
+        publish,
+      } as unknown as Parameters<typeof createSpaceAgentToolHandlers>[0]['internalEventBus'],
+      refreshLongHorizonAgentSession,
+      mySessionId: 'mcp-session',
+    });
+
+    const created = JSON.parse(
+      (await handlers.create_agent({ name: 'Stamped Mcp' })).content[0].text
+    );
+    const stampedSessionId = `space:agent:${ctx.spaceId}:${created.agent.id}`;
+    ctx.longHorizonRepo.update(created.agent.id, { sessionId: stampedSessionId });
+
+    const updated = JSON.parse(
+      (
+        await handlers.update_agent({
+          agent_id: created.agent.id,
+          custom_prompt: 'Refreshed prompt',
+        })
+      ).content[0].text
+    );
+    expect(updated.success).toBe(true);
+    expect(refreshLongHorizonAgentSession).toHaveBeenCalledWith(ctx.spaceId, created.agent.id);
+    expect(publish).toHaveBeenCalledWith(
+      'spaceAgent.updated',
+      expect.objectContaining({
+        agent: expect.objectContaining({ id: created.agent.id, sessionId: stampedSessionId }),
+      })
+    );
+  });
+
   test('manages agent assignments, reminders, and event subscriptions', async () => {
     const handlers = makeHandlers(ctx);
     const agent = JSON.parse(
