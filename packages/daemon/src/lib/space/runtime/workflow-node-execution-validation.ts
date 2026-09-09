@@ -7,7 +7,11 @@ import type {
   WorkflowNode,
 } from '@hyperneo/shared';
 import { isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
-import { migratedAgentTemplateKey } from '../agents/agent-template-synthesis.ts';
+import {
+  isMigrationIdentityKey,
+  MIGRATED_AGENT_TEMPLATE_KEY_PREFIX,
+  WORKER_CUSTOM_TEMPLATE_KEY_PREFIX,
+} from '../agents/agent-template-synthesis.ts';
 
 export type ExecutionWorkflowValidationResult =
   | { valid: true }
@@ -172,15 +176,7 @@ export function validateExecutionAgainstWorkflow(
   }
   if (execution.agentId && resolvedAgentId !== execution.agentId) {
     const slotTemplateKey = slot?.templateKey?.trim() ?? '';
-    const legacyKey = migratedAgentTemplateKey(execution.agentId);
-    const legacySuffix = slotTemplateKey.startsWith(`${legacyKey}.`)
-      ? slotTemplateKey.slice(legacyKey.length + 1)
-      : null;
-    const legacyIdentityMatches =
-      slotTemplateKey === legacyKey ||
-      legacySuffix === 'm228' ||
-      (legacySuffix !== null && /^m228-\d+$/.test(legacySuffix));
-    if (!legacyIdentityMatches) {
+    if (!slotIdentityMatchesRecordedAgent(slotTemplateKey, execution.agentId)) {
       return {
         valid: false,
         reason: `Agent slot ${execution.agentName} on workflow node ${execution.workflowNodeId} now references agent ${resolvedAgentId} instead of ${execution.agentId}`,
@@ -190,6 +186,20 @@ export function validateExecutionAgainstWorkflow(
   }
 
   return { valid: true };
+}
+
+const SLOT_IDENTITY_MIGRATION_TAGS: ReadonlyArray<readonly [string, string]> = [
+  [MIGRATED_AGENT_TEMPLATE_KEY_PREFIX, 'm228'],
+  [WORKER_CUSTOM_TEMPLATE_KEY_PREFIX, 'm241'],
+];
+
+function slotIdentityMatchesRecordedAgent(
+  slotTemplateKey: string,
+  executionAgentId: string
+): boolean {
+  return SLOT_IDENTITY_MIGRATION_TAGS.some(([prefix, tag]) =>
+    isMigrationIdentityKey(slotTemplateKey, prefix, executionAgentId, tag)
+  );
 }
 
 export function assertExecutionValidAgainstWorkflow(

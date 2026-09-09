@@ -174,6 +174,40 @@ describe('validateExecutionAgainstWorkflow', () => {
     expect(result.valid).toBe(false);
     if (!result.valid) expect(result.permanent).toBe(true);
   });
+
+  test('accepts a worker-mirror execution identity converted by migration 241', () => {
+    const workflow = makeWorkflow([
+      { agentId: '', templateKey: 'worker-custom.agent-1', name: 'coder' },
+    ]);
+    const result = validateExecutionAgainstWorkflow(
+      makeExecution({ agentId: 'agent-1' }),
+      workflow
+    );
+    expect(result).toEqual({ valid: true });
+  });
+
+  test('accepts a worker-mirror execution identity converted to a suffixed key', () => {
+    const workflow = makeWorkflow([
+      { agentId: '', templateKey: 'worker-custom.agent-1.m241-2', name: 'coder' },
+    ]);
+    const result = validateExecutionAgainstWorkflow(
+      makeExecution({ agentId: 'agent-1' }),
+      workflow
+    );
+    expect(result).toEqual({ valid: true });
+  });
+
+  test('rejects a worker-custom key belonging to another agent', () => {
+    const workflow = makeWorkflow([
+      { agentId: '', templateKey: 'worker-custom.agent-2', name: 'coder' },
+    ]);
+    const result = validateExecutionAgainstWorkflow(
+      makeExecution({ agentId: 'agent-1' }),
+      workflow
+    );
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.permanent).toBe(true);
+  });
 });
 
 describe('findMissingNodeAgentReferences template precedence', () => {

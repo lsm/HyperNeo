@@ -51,6 +51,7 @@ import { runMigration237 } from './m237-task-reconcile-watermark.ts';
 import { runMigration238 } from './m238-space-agent-template-labels.ts';
 import { runMigration239 } from './m239-rename-worker-coder-template-key.ts';
 import { runMigration240 } from './m240-space-manager-handle.ts';
+import { runMigration241 } from './m241-convert-customized-worker-mirrors.ts';
 import {
   findPendingMigrationSpaceReclaims,
   type MigrationSpaceReclaimRequest,
@@ -550,6 +551,8 @@ export function runMigrations(
   run(migrationMarkerKey(239), () => runMigration239(db));
 
   run(migrationMarkerKey(240), () => runMigration240(db));
+
+  run(migrationMarkerKey(241), () => runMigration241(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }

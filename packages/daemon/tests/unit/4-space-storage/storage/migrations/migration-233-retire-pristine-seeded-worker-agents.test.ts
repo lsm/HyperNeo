@@ -216,6 +216,46 @@ describe('migration 233: retire pristine seeded worker agents', () => {
     db.close();
   });
 
+  test('keeps a pristine worker referenced by a legacy node-level agentId binding', () => {
+    const { db, repo, idsByName } = createDb();
+    insertNodeWithAgents(
+      db,
+      'node-legacy-ref',
+      JSON.stringify({ agentId: idsByName.get('Coder'), agents: [] })
+    );
+
+    runMigration233(db);
+
+    expect(remaining(repo)).toEqual(['Coder']);
+    db.close();
+  });
+
+  test('keeps a pristine worker referenced by a null-agents node-level binding', () => {
+    const { db, repo, idsByName } = createDb();
+    insertNodeWithAgents(
+      db,
+      'node-null-agents-ref',
+      JSON.stringify({ agentId: idsByName.get('Coder'), agents: null })
+    );
+
+    runMigration233(db);
+
+    expect(remaining(repo)).toEqual(['Coder']);
+    db.close();
+  });
+
+  test('keeps a pristine worker referenced by an m228 identity key in a pinned run', () => {
+    const { db, repo, idsByName } = createDb();
+    insertPinnedRun(db, 'run-m228-pinned', 'in_progress', [
+      { agentId: '', templateKey: `migrated.agent.${idsByName.get('Coder')}` },
+    ]);
+
+    runMigration233(db);
+
+    expect(remaining(repo)).toEqual(['Coder']);
+    db.close();
+  });
+
   test('keeps a pristine worker referenced by any pinned run, terminal or not', () => {
     const { db, repo, idsByName } = createDb();
     insertPinnedRun(db, 'run-live', 'in_progress', [{ agentId: idsByName.get('Coder') }]);

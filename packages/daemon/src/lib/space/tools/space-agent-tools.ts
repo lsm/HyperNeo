@@ -55,6 +55,10 @@ import {
   publishUnifiedAgentCreated,
   publishUnifiedAgentUpdated,
 } from '../agents/unified-agent-events.ts';
+import {
+  isMigrationIdentityKey,
+  WORKER_CUSTOM_TEMPLATE_KEY_PREFIX,
+} from '../agents/agent-template-synthesis.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import { formatAgentMessage } from '../agent-message-envelope.ts';
 import {
@@ -538,7 +542,16 @@ async function resolveHandleForTaskRouting(
     const agentId = decodeURIComponent(actor.actorId.slice('agent:'.length));
     const unifiedAgent = longHorizonAgentRepo.getById(agentId);
     if (unifiedAgent?.spaceId !== spaceId) return false;
-    return unifiedAgent.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY;
+    if (unifiedAgent.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) return false;
+    return !(
+      unifiedAgent.templateKey &&
+      isMigrationIdentityKey(
+        unifiedAgent.templateKey,
+        WORKER_CUSTOM_TEMPLATE_KEY_PREFIX,
+        agentId,
+        'm241'
+      )
+    );
   });
 
   if (taskWorker && longHorizonActors.length === 0)

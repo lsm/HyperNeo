@@ -5,6 +5,10 @@ import type {
   SpaceLongHorizonAgentStatus,
   ThinkingLevel,
 } from '@hyperneo/shared';
+import {
+  isMigrationIdentityKey,
+  WORKER_CUSTOM_TEMPLATE_KEY_PREFIX,
+} from './agent-template-synthesis.ts';
 
 export interface WorkerAgentRowSource {
   id: string;
@@ -99,6 +103,17 @@ function mapWorkerStatus(status: string | null | undefined): SpaceLongHorizonAge
 
 export function isRunnableUnifiedAgent(agent: SpaceLongHorizonAgent): boolean {
   if (agent.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) return true;
+  if (agent.status === 'disabled') return false;
+  if (
+    isMigrationIdentityKey(
+      agent.templateKey ?? '',
+      WORKER_CUSTOM_TEMPLATE_KEY_PREFIX,
+      agent.id,
+      'm241'
+    )
+  ) {
+    return true;
+  }
   return agent.status === 'active';
 }
 

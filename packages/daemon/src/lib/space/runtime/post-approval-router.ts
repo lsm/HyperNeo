@@ -135,11 +135,14 @@ export function selectFirstDispatchablePostApprovalRoute(
   if (!selected) return null;
   const targetAgent = selected.targetAgent;
   for (const node of workflow.nodes) {
-    let owningSlot: { name?: string; agentId?: string } | null = null;
+    let owningSlot: { name?: string; agentId?: string; templateKey?: string | null } | null = null;
     try {
       owningSlot =
         resolveNodeAgents(node).find(
-          (agent) => agent.name === targetAgent || agent.agentId === targetAgent
+          (agent) =>
+            agent.name === targetAgent ||
+            agent.agentId === targetAgent ||
+            agent.templateKey === targetAgent
         ) ?? null;
     } catch {
       continue;

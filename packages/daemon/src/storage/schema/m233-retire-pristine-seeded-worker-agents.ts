@@ -1,5 +1,6 @@
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash.ts';
+import { MIGRATED_AGENT_TEMPLATE_KEY_PREFIX } from '../../lib/space/agents/agent-template-synthesis.ts';
 import { retireRemovedPresetAgents } from '../../lib/space/agents/seed-agents.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
 import { SpaceLongHorizonAgentRepository } from '../repositories/space-long-horizon-agent-repository.ts';
@@ -92,7 +93,7 @@ function collectAgentIds(db: BunDatabase, sql: string, column: string, ids: Set<
   }
 }
 
-function agentsWithLiveState(db: BunDatabase): Set<string> {
+export function agentsWithLiveState(db: BunDatabase): Set<string> {
   const ids = new Set<string>();
   if (tableExists(db, 'space_agent_inactivity_config')) {
     collectAgentIds(
@@ -126,12 +127,15 @@ function isPristineWorker(
 ): boolean {
   if (agent.templateKey !== MIGRATED_WORKER_TEMPLATE_KEY) return false;
   if (liveAgentIds.has(agent.id)) return false;
+  if (agent.status !== 'active' || agent.sessionId !== null) return false;
+  return isPristineWorkerContent(agent);
+}
+
+export function isPristineWorkerContent(agent: SpaceLongHorizonAgent): boolean {
   const snapshot = M233_PRESET_SNAPSHOTS.find((entry) => entry.name === agent.displayName);
   if (!snapshot) return false;
   if (!isMigratedHandle(agent.handle, snapshot.handle, agent.id)) return false;
   if (
-    agent.status !== 'active' ||
-    agent.sessionId !== null ||
     agent.autonomyLevel !== null ||
     agent.model !== null ||
     agent.thinkingLevel !== null ||
@@ -163,8 +167,12 @@ function isPristineWorker(
   );
 }
 
-function referencedAgentIds(db: BunDatabase): Set<string> {
+export function referencedAgentIds(db: BunDatabase): Set<string> {
   const referenced = new Set<string>();
+  const m228Keys: Set<string> = new Set();
+  const legacyShapeFilter = `(json_type(nodes.config, '$.agents') IS NULL
+              OR json_type(nodes.config, '$.agents') != 'array'
+              OR json_array_length(nodes.config, '$.agents') = 0)`;
   collectAgentIds(
     db,
     `SELECT DISTINCT json_extract(slot.value, '$.agentId') AS agent_id
@@ -179,10 +187,47 @@ function referencedAgentIds(db: BunDatabase): Set<string> {
     'agent_id',
     referenced
   );
+  collectAgentIds(
+    db,
+    `SELECT DISTINCT json_extract(nodes.config, '$.agentId') AS agent_id
+       FROM space_workflow_nodes nodes
+      WHERE json_valid(nodes.config)
+        AND ${legacyShapeFilter}
+        AND json_type(nodes.config, '$.agentId') = 'text'
+        AND trim(json_extract(nodes.config, '$.agentId')) != ''`,
+    'agent_id',
+    referenced
+  );
+  collectAgentIds(
+    db,
+    `SELECT DISTINCT json_extract(slot.value, '$.templateKey') AS template_key
+       FROM space_workflow_nodes nodes,
+            json_each(
+              CASE WHEN json_valid(nodes.config) THEN nodes.config END,
+              '$.agents'
+            ) slot
+      WHERE slot.type = 'object'
+        AND json_type(slot.value, '$.templateKey') = 'text'
+        AND json_extract(slot.value, '$.templateKey') LIKE 'migrated.agent.%'`,
+    'template_key',
+    m228Keys
+  );
+  collectAgentIds(
+    db,
+    `SELECT DISTINCT json_extract(nodes.config, '$.templateKey') AS template_key
+       FROM space_workflow_nodes nodes
+      WHERE json_valid(nodes.config)
+        AND ${legacyShapeFilter}
+        AND json_type(nodes.config, '$.templateKey') = 'text'
+        AND json_extract(nodes.config, '$.templateKey') LIKE 'migrated.agent.%'`,
+    'template_key',
+    m228Keys
+  );
   if (
     !tableExists(db, 'space_workflow_definition_versions') ||
     !tableExists(db, 'space_workflow_runs')
   ) {
+    expandMigratedAgentKeys(m228Keys, referenced);
     return referenced;
   }
   collectAgentIds(
@@ -213,7 +258,101 @@ function referencedAgentIds(db: BunDatabase): Set<string> {
     'agent_id',
     referenced
   );
+  collectAgentIds(
+    db,
+    `SELECT DISTINCT json_extract(node.value, '$.agentId') AS agent_id
+       FROM space_workflow_definition_versions versions
+       JOIN (
+                SELECT DISTINCT workflow_id, definition_version
+                  FROM space_workflow_runs
+                 WHERE definition_version IS NOT NULL
+            ) pinned
+         ON pinned.workflow_id = versions.workflow_id
+        AND pinned.definition_version = versions.version_hash
+       JOIN json_each(
+              CASE WHEN json_valid(versions.payload) THEN versions.payload END,
+              '$.nodes'
+            ) node
+      WHERE json_valid(node.value)
+        AND json_type(node.value) = 'object'
+        AND (json_type(node.value, '$.agents') IS NULL
+              OR json_type(node.value, '$.agents') != 'array'
+              OR json_array_length(node.value, '$.agents') = 0)
+        AND json_type(node.value, '$.agentId') = 'text'
+        AND trim(json_extract(node.value, '$.agentId')) != ''`,
+    'agent_id',
+    referenced
+  );
+  collectAgentIds(
+    db,
+    `SELECT DISTINCT json_extract(node.value, '$.templateKey') AS template_key
+       FROM space_workflow_definition_versions versions
+       JOIN (
+                SELECT DISTINCT workflow_id, definition_version
+                  FROM space_workflow_runs
+                 WHERE definition_version IS NOT NULL
+            ) pinned
+         ON pinned.workflow_id = versions.workflow_id
+        AND pinned.definition_version = versions.version_hash
+       JOIN json_each(
+              CASE WHEN json_valid(versions.payload) THEN versions.payload END,
+              '$.nodes'
+            ) node
+      WHERE json_valid(node.value)
+        AND json_type(node.value) = 'object'
+        AND (json_type(node.value, '$.agents') IS NULL
+              OR json_type(node.value, '$.agents') != 'array'
+              OR json_array_length(node.value, '$.agents') = 0)
+        AND json_type(node.value, '$.templateKey') = 'text'
+        AND json_extract(node.value, '$.templateKey') LIKE 'migrated.agent.%'`,
+    'template_key',
+    m228Keys
+  );
+  collectAgentIds(
+    db,
+    `SELECT DISTINCT json_extract(slot.value, '$.templateKey') AS template_key
+       FROM space_workflow_definition_versions versions
+       JOIN (
+                SELECT DISTINCT workflow_id, definition_version
+                  FROM space_workflow_runs
+                 WHERE definition_version IS NOT NULL
+            ) pinned
+         ON pinned.workflow_id = versions.workflow_id
+        AND pinned.definition_version = versions.version_hash
+       JOIN json_each(
+              CASE WHEN json_valid(versions.payload) THEN versions.payload END,
+              '$.nodes'
+            ) node
+       JOIN json_each(
+              CASE
+                WHEN json_valid(node.value) AND json_type(node.value) = 'object'
+                THEN node.value
+              END,
+              '$.agents'
+            ) slot
+      WHERE slot.type = 'object'
+        AND json_type(slot.value, '$.templateKey') = 'text'
+        AND json_extract(slot.value, '$.templateKey') LIKE 'migrated.agent.%'`,
+    'template_key',
+    m228Keys
+  );
+  expandMigratedAgentKeys(m228Keys, referenced);
   return referenced;
+}
+
+function expandMigratedAgentKeys(keys: Set<string>, referenced: Set<string>): void {
+  const prefix = `${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.`;
+  for (const key of keys) {
+    if (!key.startsWith(prefix)) continue;
+    const rest = key.slice(prefix.length);
+    const dot = rest.indexOf('.');
+    const agentId = dot === -1 ? rest : rest.slice(0, dot);
+    if (!agentId) continue;
+    const suffix = dot === -1 ? '' : rest.slice(dot + 1);
+    if (suffix === '' || suffix === 'm228' || /^m228-\d+$/.test(suffix)) {
+      referenced.add(agentId);
+    }
+  }
 }
 
 export function runMigration233(db: BunDatabase): void {

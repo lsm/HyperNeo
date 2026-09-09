@@ -678,6 +678,22 @@ describe('PostApprovalRouter.route — routing CAS', () => {
     expect(selected?.route.targetAgent).toBe('ghost');
     expect(selected?.nodeId).toBeNull();
   });
+
+  test('selectFirstDispatchablePostApprovalRoute resolves template-key targets to the owning slot name', () => {
+    const workflow = stubWorkflow({
+      postApproval: { targetAgent: 'worker-custom.coder-1', instructions: 'Ship.' },
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Build',
+          agents: [{ agentId: '', templateKey: 'worker-custom.coder-1', name: 'builder' }],
+        },
+      ],
+    });
+    const selected = selectFirstDispatchablePostApprovalRoute(workflow);
+    expect(selected?.nodeId).toBe('n1');
+    expect(selected?.agentName).toBe('builder');
+  });
 });
 
 describe('PostApprovalRouter.route — replacement and failure-write guards', () => {

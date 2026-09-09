@@ -263,4 +263,35 @@ describe('isRunnableUnifiedAgent — activity contract (U3a)', () => {
       isRunnableUnifiedAgent(longHorizonAgent({ templateKey: null, status: 'archived' }))
     ).toBe(false);
   });
+
+  test('converted mirror rows stay runnable on their own worker-custom identity', () => {
+    for (const status of ['active', 'paused', 'archived'] as const) {
+      expect(
+        isRunnableUnifiedAgent(longHorizonAgent({ templateKey: 'worker-custom.lh-1', status }))
+      ).toBe(true);
+    }
+    expect(
+      isRunnableUnifiedAgent(
+        longHorizonAgent({ id: 'lh-1', templateKey: 'worker-custom.lh-1.m240', status: 'paused' })
+      )
+    ).toBe(true);
+    expect(
+      isRunnableUnifiedAgent(
+        longHorizonAgent({ id: 'lh-1', templateKey: 'worker-custom.other-id', status: 'paused' })
+      )
+    ).toBe(false);
+    expect(
+      isRunnableUnifiedAgent(
+        longHorizonAgent({ id: 'lh-1', templateKey: 'worker-custom.research', status: 'paused' })
+      )
+    ).toBe(false);
+  });
+
+  test('disabled converted rows are not runnable', () => {
+    expect(
+      isRunnableUnifiedAgent(
+        longHorizonAgent({ templateKey: 'worker-custom.lh-1', status: 'disabled' })
+      )
+    ).toBe(false);
+  });
 });

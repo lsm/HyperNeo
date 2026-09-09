@@ -247,7 +247,7 @@ export function ensureTemplateForAgentRef(
   );
 }
 
-function matchesSynthesis(
+export function matchesSynthesis(
   existing: SpaceAgentTemplate,
   params: CreateSpaceAgentTemplateParams
 ): boolean {
