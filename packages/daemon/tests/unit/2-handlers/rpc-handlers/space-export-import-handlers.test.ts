@@ -21,6 +21,7 @@ import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositori
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { createLongHorizonAgentTables } from '../../../../src/storage/schema/long-horizon-agents';
+import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
 import { runMigration225 } from '../../../../src/storage/schema/m225-space-agent-templates';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
@@ -2740,6 +2741,7 @@ describe('multi-agent step import', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     createSchema(db);
+    createSpaceAgentTemplatesTable(db);
     insertSpace(db, SPACE_ID, 'My Space');
 
     workflowRepo = new SpaceWorkflowRepository(db as any);
@@ -3286,6 +3288,7 @@ describe('full export→import round-trip', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     createSchema(db);
+    createSpaceAgentTemplatesTable(db);
     insertSpace(db, SPACE_ID, 'Round Trip Space');
 
     workflowRepo = new SpaceWorkflowRepository(db as any);
