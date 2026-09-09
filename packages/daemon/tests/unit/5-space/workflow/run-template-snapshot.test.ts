@@ -116,6 +116,17 @@ describe('buildRunTemplateSnapshots', () => {
 
     expect(snapshots['toString']?.key).toBe('toString');
   });
+
+  test('snapshots the __proto__ template key as an own property', () => {
+    const snapshots = buildRunTemplateSnapshots(
+      workflow([{ id: 'n1', name: 'Odd', agents: [slot({ templateKey: '__proto__' })] }]),
+      (key) => (key === '__proto__' ? template({ key: '__proto__' }) : null)
+    );
+
+    expect(Object.keys(snapshots)).toEqual(['__proto__']);
+    expect(Object.hasOwn(snapshots, '__proto__')).toBe(true);
+    expect(snapshots['__proto__']?.key).toBe('__proto__');
+  });
 });
 
 describe('withRunTemplateSnapshots', () => {
@@ -137,6 +148,17 @@ describe('withRunTemplateSnapshots', () => {
     expect(pinned).not.toBe(wf);
     expect(pinned.templateSnapshots?.['worker.custom'].labels).toEqual(['workflow-worker']);
     expect(wf.templateSnapshots).toBeUndefined();
+  });
+
+  test('pins a workflow whose only template key is __proto__', () => {
+    const wf = workflow([{ id: 'n1', name: 'Odd', agents: [slot({ templateKey: '__proto__' })] }]);
+
+    const pinned = withRunTemplateSnapshots(wf, (key) =>
+      key === '__proto__' ? template({ key: '__proto__' }) : null
+    );
+
+    expect(pinned).not.toBe(wf);
+    expect(Object.keys(pinned.templateSnapshots ?? {})).toEqual(['__proto__']);
   });
 });
 

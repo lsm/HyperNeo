@@ -36,15 +36,17 @@ export function buildRunTemplateSnapshots(
   workflow: Pick<SpaceWorkflow, 'nodes'>,
   resolveTemplate: AgentTemplateResolver
 ): Record<string, WorkflowTemplateSnapshot> {
-  const snapshots: Record<string, WorkflowTemplateSnapshot> = {};
+  const collected = new Map<string, WorkflowTemplateSnapshot>();
   for (const node of workflow.nodes) {
     for (const slot of node.agents) {
       const key = slot.templateKey?.trim();
-      if (!key || Object.hasOwn(snapshots, key)) continue;
+      if (!key || collected.has(key)) continue;
       const template = resolveTemplate(key);
-      if (template) snapshots[key] = toRunTemplateSnapshot(template);
+      if (template) collected.set(key, toRunTemplateSnapshot(template));
     }
   }
+  const snapshots: Record<string, WorkflowTemplateSnapshot> = Object.create(null);
+  for (const [key, snapshot] of collected) snapshots[key] = snapshot;
   return snapshots;
 }
 
