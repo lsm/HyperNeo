@@ -328,12 +328,6 @@ export class SessionManager {
         await freshSession.replayPendingMessagesForImmediateMode();
       }
 
-      this.messageHub.event(
-        'session.reset',
-        { message: 'Agent has been reset and is ready for new messages' },
-        { channel: `session:${sessionId}` }
-      );
-
       return { success: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';

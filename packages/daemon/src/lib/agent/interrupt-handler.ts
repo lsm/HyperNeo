@@ -63,7 +63,7 @@ export class InterruptHandler {
     preserveDeliveryJobs?: boolean;
     skipDeferredReplay?: boolean;
   }): Promise<void> {
-    const { session, messageHub, messageQueue, stateManager, logger } = this.ctx;
+    const { session, messageQueue, stateManager, logger } = this.ctx;
 
     messageQueue.noteUserInterrupt();
     this.interruptRequests += 1;
@@ -229,8 +229,6 @@ export class InterruptHandler {
         this.ctx.queryObject = null;
 
         messageQueue.stop();
-
-        messageHub.event('session.interrupted', {}, { channel: `session:${session.id}` });
 
         await stateManager.setIdle();
         if (!opts?.skipDeferredReplay) {

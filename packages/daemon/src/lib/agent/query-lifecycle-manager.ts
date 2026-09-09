@@ -330,15 +330,7 @@ export class QueryLifecycleManager {
 
   async reset(options?: { restartAfter?: boolean }): Promise<{ success: boolean; error?: string }> {
     const { restartAfter = true } = options ?? {};
-    const {
-      session,
-      db,
-      messageQueue,
-      messageHub,
-      internalEventBus,
-      stateManager,
-      messageHandler,
-    } = this.ctx;
+    const { session, db, messageQueue, internalEventBus, stateManager, messageHandler } = this.ctx;
 
     this.ctx.attemptTokens?.invalidateCurrent();
 
@@ -400,12 +392,6 @@ export class QueryLifecycleManager {
 
         await this.ctx.startStreamingQuery();
       }
-
-      messageHub.event(
-        'session.reset',
-        { message: 'Agent has been reset and is ready for new messages' },
-        { channel: `session:${session.id}` }
-      );
 
       return { success: true };
     } catch (error) {

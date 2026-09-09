@@ -75,16 +75,6 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     channel: () => Channels.global(),
   },
   {
-    event: 'space.workflowRun.cyclesReset',
-    clientEvent: 'space.workflowRun.cyclesReset',
-    channel: () => Channels.global(),
-  },
-  {
-    event: 'space.workflowRun.deadLoop',
-    clientEvent: 'space.workflowRun.deadLoop',
-    channel: () => Channels.global(),
-  },
-  {
     event: 'spaceAgent.created',
     clientEvent: 'spaceAgent.created',
     channel: (p) => Channels.space((p as DaemonInternalEventMap['spaceAgent.created']).spaceId),
@@ -122,15 +112,6 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
 ];
 
 const SESSION_BRIDGE_MAPPINGS: BridgeMapping[] = [
-  {
-    event: 'session.created',
-    clientEvent: 'session.created',
-    channel: () => Channels.global(),
-    transform: (payload) => {
-      const p = payload as DaemonInternalEventMap['session.created'];
-      return { sessionId: p.session.id };
-    },
-  },
   {
     event: 'session.deleted',
     clientEvent: 'session.deleted',

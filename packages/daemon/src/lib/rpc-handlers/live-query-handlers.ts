@@ -442,21 +442,6 @@ WHERE workflow_run_id = ?
 ORDER BY created_at ASC, id ASC
 `.trim();
 
-const WORKFLOW_RUN_ARTIFACTS_BY_RUN_SQL = `
-SELECT
-  id,
-  run_id        AS runId,
-  node_id       AS nodeId,
-  artifact_type AS artifactType,
-  artifact_key  AS artifactKey,
-  data,
-  created_at    AS createdAt,
-  updated_at    AS updatedAt
-FROM workflow_run_artifacts
-WHERE run_id = ?
-ORDER BY created_at ASC, id ASC
-`.trim();
-
 const TASK_SHUTDOWN_BOUNDARY_CTE_SQL = `
 -- Newest settled top-level row per contributing session of the task. A
 -- worker_shutting_down banner stays visible only while nothing newer has
@@ -1858,19 +1843,6 @@ FROM (
 )
 ORDER BY createdAt ASC, id ASC
 `.trim();
-
-function mapArtifactRow(row: Record<string, unknown>): Record<string, unknown> {
-  const raw = row.data as string | null;
-  let data: Record<string, unknown> = {};
-  if (raw) {
-    try {
-      data = JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      log.warn(`Corrupted artifact JSON for id=${row.id} — returning empty data`);
-    }
-  }
-  return { ...row, data };
-}
 
 function mapTaskMilestoneRow(row: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -4291,14 +4263,6 @@ export const NAMED_QUERY_REGISTRY = new Map<string, NamedQuery>([
     {
       sql: NODE_EXECUTIONS_BY_RUN_SQL,
       paramCount: 1,
-    },
-  ],
-  [
-    'workflowRunArtifacts.byRun',
-    {
-      sql: WORKFLOW_RUN_ARTIFACTS_BY_RUN_SQL,
-      paramCount: 1,
-      mapRow: mapArtifactRow,
     },
   ],
   [

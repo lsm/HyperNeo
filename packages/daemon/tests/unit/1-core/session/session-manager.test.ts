@@ -1940,11 +1940,6 @@ describe('SessionManager', () => {
         session: expect.objectContaining({ id: 'test-id' }),
         restartQuery: false,
       });
-      expect(mockMessageHub.event).toHaveBeenCalledWith(
-        'session.reset',
-        { message: 'Agent has been reset and is ready for new messages' },
-        { channel: 'session:test-id' }
-      );
 
       await sessionManager.interruptInMemorySession('test-id');
     });
