@@ -22,7 +22,8 @@ import type { SpaceGoalOutcomeNotificationRepository } from '../../../storage/re
 import { SpaceGoalRepository } from '../../../storage/repositories/space-goal-repository.ts';
 import {
   coordinatorSessionId,
-  type SpaceLongHorizonAgentRepository,
+  SpaceLongHorizonAgentRepository,
+  templateInstanceScanFromRepo,
 } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
@@ -203,7 +204,8 @@ export class SpaceRuntimeService {
     this.templateManager = new SpaceAgentTemplateManager(
       new SpaceAgentTemplateRepository(this.config.db),
       undefined,
-      new SpaceWorkflowRepository(this.config.db)
+      new SpaceWorkflowRepository(this.config.db),
+      templateInstanceScanFromRepo(new SpaceLongHorizonAgentRepository(this.config.db))
     );
     this.queueHealthMetrics = config.queueHealthMetrics ?? new ExternalEventQueueMetrics();
     config.externalEventStore?.setDeliveryTerminalHook((event) =>

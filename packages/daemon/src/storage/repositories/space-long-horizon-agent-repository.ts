@@ -766,3 +766,15 @@ function parseObject(value: unknown): Record<string, unknown> {
     return {};
   }
 }
+
+export function templateInstanceScanFromRepo(
+  repo: Pick<SpaceLongHorizonAgentRepository, 'listByTemplateKey'>
+): { listAgentDisplayNamesUsingTemplate(key: string): string[] } {
+  return {
+    listAgentDisplayNamesUsingTemplate: (key) =>
+      repo
+        .listByTemplateKey(key)
+        .filter((agent) => agent.status !== 'archived')
+        .map((agent) => agent.displayName),
+  };
+}

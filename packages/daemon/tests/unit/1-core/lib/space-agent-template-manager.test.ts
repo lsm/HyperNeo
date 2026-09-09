@@ -985,9 +985,10 @@ describe('SpaceAgentTemplateManager', () => {
       }
       expect(manager.getByKey('release-readiness.custom')).not.toBeNull();
 
-      const agentBlocked = manager.delete('release-readiness.custom', undefined, {
+      const managerWithInstances = new SpaceAgentTemplateManager(repo, () => [], undefined, {
         listAgentDisplayNamesUsingTemplate: () => ['Scribe'],
       });
+      const agentBlocked = managerWithInstances.delete('release-readiness.custom');
       expect(agentBlocked.ok).toBe(false);
       if (!agentBlocked.ok) {
         expect(agentBlocked.error).toBe(
@@ -996,9 +997,7 @@ describe('SpaceAgentTemplateManager', () => {
         );
       }
 
-      const allowed = manager.delete('release-readiness.custom', undefined, {
-        listAgentDisplayNamesUsingTemplate: () => [],
-      });
+      const allowed = manager.delete('release-readiness.custom');
       expect(allowed.ok).toBe(true);
       expect(manager.getByKey('release-readiness.custom')).toBeNull();
     });

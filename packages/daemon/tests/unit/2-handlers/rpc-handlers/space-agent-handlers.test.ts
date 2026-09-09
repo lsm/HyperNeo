@@ -5,6 +5,7 @@ import { setupSpaceAgentHandlers } from '../../../../src/lib/rpc-handlers/space-
 import {
   coordinatorLongHorizonAgentId,
   SpaceLongHorizonAgentRepository,
+  templateInstanceScanFromRepo,
 } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceAgentTemplateManager } from '../../../../src/lib/space/managers/space-agent-template-manager';

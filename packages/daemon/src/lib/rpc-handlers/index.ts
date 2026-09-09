@@ -84,7 +84,10 @@ import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import { setupSpaceAgentHandlers } from './space-agent-handlers.ts';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
-import { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
+import {
+  SpaceLongHorizonAgentRepository,
+  templateInstanceScanFromRepo,
+} from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
 import {
@@ -931,7 +934,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     longHorizonAgentRepo,
     spaceWorkflowRepo,
     spaceRuntimeService,
-    new SpaceAgentTemplateManager(spaceAgentTemplateRepo, undefined, spaceWorkflowRepo)
+    new SpaceAgentTemplateManager(
+      spaceAgentTemplateRepo,
+      undefined,
+      spaceWorkflowRepo,
+      templateInstanceScanFromRepo(longHorizonAgentRepo)
+    )
   );
 
   setupSessionHandlers(

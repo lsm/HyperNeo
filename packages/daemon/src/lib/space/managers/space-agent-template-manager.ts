@@ -472,7 +472,8 @@ export class SpaceAgentTemplateManager {
   constructor(
     private repo: SpaceAgentTemplateRepository,
     private builtIns: BuiltInTemplateSource = getBuiltInSpaceAgentTemplates,
-    private workflowReferenceScan?: TemplateReferenceScan
+    private workflowReferenceScan?: TemplateReferenceScan,
+    private instanceScan?: TemplateInstanceScan
   ) {}
 
   async create(
@@ -510,11 +511,7 @@ export class SpaceAgentTemplateManager {
     return { ok: true, value: this.repo.getByKeyWithVersion(key)! };
   }
 
-  delete(
-    key: string,
-    expectedVersion?: number,
-    instanceScan?: TemplateInstanceScan
-  ): SpaceAgentResult<void> {
+  delete(key: string, expectedVersion?: number): SpaceAgentResult<void> {
     if (!this.repo.getByKey(key) && this.builtIns().some((template) => template.key === key)) {
       return { ok: false, error: `Built-in template "${key}" cannot be deleted` };
     }
@@ -523,7 +520,7 @@ export class SpaceAgentTemplateManager {
       key,
       expectedVersion,
       workflowReferenceScan: this.workflowReferenceScan,
-      instanceScan,
+      instanceScan: this.instanceScan,
     });
     if (ctx.error) return { ok: false, error: ctx.error };
     return { ok: true, value: undefined };
