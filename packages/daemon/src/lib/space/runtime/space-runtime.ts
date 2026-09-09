@@ -3935,6 +3935,7 @@ export class SpaceRuntime {
     let canonicalTask: SpaceTask | null = null;
     let startAgents: ReturnType<typeof resolveNodeAgents>;
     try {
+      this.assertNodeSlotsResolvable(startNode, run, workflow);
       if (options.parentTaskId) {
         const parent = this.config.taskRepo.getTask(options.parentTaskId);
         if (!parent) {
@@ -3962,7 +3963,6 @@ export class SpaceRuntime {
       await this.safeOnTaskUpdated(spaceId, canonicalTask);
 
       startAgents = resolveNodeAgents(startNode);
-      this.assertNodeSlotsResolvable(startNode, run, workflow);
       for (const agentEntry of startAgents) {
         this.createNodeExecutionOrIgnore({
           workflowRunId: run.id,
@@ -4161,6 +4161,17 @@ export class SpaceRuntime {
               (execution) => execution.workflowNodeId === currentExecution!.workflowNodeId
             )
           : [];
+      }
+
+      const auditSlotsByNode = new Map<string, Set<string>>();
+      for (const execution of currentNodeExecutions) {
+        const slotNames = auditSlotsByNode.get(execution.workflowNodeId) ?? new Set<string>();
+        slotNames.add(execution.agentName);
+        auditSlotsByNode.set(execution.workflowNodeId, slotNames);
+      }
+      for (const [nodeId, slotNames] of auditSlotsByNode) {
+        const auditedNode = workflow.nodes.find((candidate) => candidate.id === nodeId);
+        if (auditedNode) this.assertNodeSlotsResolvable(auditedNode, run, workflow, { slotNames });
       }
 
       for (const execution of currentNodeExecutions) {

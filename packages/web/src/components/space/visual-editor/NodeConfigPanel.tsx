@@ -20,20 +20,22 @@ function isLongHorizonTemplate(template: SpaceLongHorizonAgentTemplate): boolean
   return template.labels?.includes('long-horizon') ?? false;
 }
 
-function templateBindingWarning(
-  templateKey: string | null | undefined,
-  agentTemplates: SpaceLongHorizonAgentTemplate[]
-): string | null {
-  const key = templateKey?.trim();
+function templateBindingWarning(params: {
+  templateKey: string | null | undefined;
+  customPrompt?: NodeDraft['customPrompt'] | string;
+  replaceAgentPrompt?: boolean;
+  agentTemplates: SpaceLongHorizonAgentTemplate[];
+}): string | null {
+  const key = params.templateKey?.trim();
   if (!key) return null;
-  const template = agentTemplates.find((t) => t.key === key);
+  const template = params.agentTemplates.find((t) => t.key === key);
   if (!template) {
     return `Unknown template key "${key}" — pick a template for this slot`;
   }
-  if (!template.instructions.trim()) {
-    return `Template "${template.displayName}" has empty instructions — this slot would spawn without a role prompt`;
-  }
-  return null;
+  if (template.instructions.trim()) return null;
+  if (params.replaceAgentPrompt === true) return null;
+  if (extractOverrideValue(params.customPrompt).trim()) return null;
+  return `Template "${template.displayName}" has empty instructions — this slot would spawn without a role prompt`;
 }
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
@@ -445,7 +447,12 @@ function AgentsSection({
           })()}
         </select>
         {(() => {
-          const warning = templateBindingWarning(selectedSingleTemplateKey, agentTemplates);
+          const warning = templateBindingWarning({
+            templateKey: selectedSingleTemplateKey,
+            customPrompt: selectedSingleCustomPrompt,
+            replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
+            agentTemplates,
+          });
           return warning ? (
             <p data-testid="agent-template-warning" class="text-[11px] text-warning">
               {warning}
@@ -634,7 +641,12 @@ function AgentsSection({
                   })()}
                 </select>
                 {(() => {
-                  const warning = templateBindingWarning(sa.templateKey, agentTemplates);
+                  const warning = templateBindingWarning({
+                    templateKey: sa.templateKey,
+                    customPrompt: sa.customPrompt,
+                    replaceAgentPrompt: sa.replaceAgentPrompt,
+                    agentTemplates,
+                  });
                   if (warning) {
                     return (
                       <p data-testid="agent-template-warning" class="text-[11px] text-warning">

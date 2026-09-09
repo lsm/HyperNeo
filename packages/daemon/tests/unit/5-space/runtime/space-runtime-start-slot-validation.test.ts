@@ -126,6 +126,75 @@ describe('SpaceRuntime startWorkflowRun start-slot template audit', () => {
       count: number;
     };
     expect(executionCount.count).toBe(0);
+    const taskCount = db.prepare('SELECT COUNT(*) AS count FROM space_tasks').get() as {
+      count: number;
+    };
+    expect(taskCount.count).toBe(0);
+  });
+
+  test('leaves the parent task unlinked when the start audit rejects', async () => {
+    templateRepo.create({
+      key: 'migrated.agent.agent-orphan',
+      handle: 'orphan',
+      displayName: 'Orphan',
+      description: '',
+      instructions: '',
+      suggestedAutonomyLevel: 2,
+      labels: [],
+    });
+    const workflowId = makeWorkflow([
+      { agentId: '', templateKey: 'migrated.agent.agent-orphan', name: 'orphan-slot' },
+    ]);
+    const taskRepo = new SpaceTaskRepository(db);
+    const parent = taskRepo.createTask({
+      spaceId: SPACE_ID,
+      title: 'Standalone parent',
+      description: '',
+      status: 'open',
+    });
+
+    let caught: unknown;
+    try {
+      await runtime.startWorkflowRun(SPACE_ID, workflowId, 'Orphan restart', undefined, {
+        parentTaskId: parent.id,
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(MissingWorkflowAgentError);
+    expect(taskRepo.getTask(parent.id)?.workflowRunId).toBeNull();
+  });
+
+  test('refuses to recover a stopped run whose existing executions bind an emptied template', async () => {
+    templateRepo.create({
+      key: 'migrated.agent.agent-orphan',
+      handle: 'orphan',
+      displayName: 'Orphan',
+      description: '',
+      instructions: 'Original role instructions.',
+      suggestedAutonomyLevel: 2,
+      labels: [],
+    });
+    const workflowId = makeWorkflow([
+      { agentId: '', templateKey: 'migrated.agent.agent-orphan', name: 'orphan-slot' },
+    ]);
+    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflowId, 'Then emptied');
+    expect(nodeExecutionRepo.listByWorkflowRun(run.id).length).toBeGreaterThan(0);
+
+    templateRepo.update('migrated.agent.agent-orphan', { instructions: '' });
+
+    let caught: unknown;
+    try {
+      await runtime.recoverWorkflowBackedTask(SPACE_ID, tasks[0].id, 'open');
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(MissingWorkflowAgentError);
+    const message = (caught as MissingWorkflowAgentError).message;
+    expect(message).toContain('migrated.agent.agent-orphan');
+    expect(message).toContain('empty instructions');
   });
 
   test('starts normally when the slot customPrompt supplies the effective prompt', async () => {

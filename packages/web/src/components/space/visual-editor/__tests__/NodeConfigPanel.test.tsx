@@ -1735,6 +1735,56 @@ describe('NodeConfigPanel', () => {
       expect(warnings[0].textContent).toContain('empty instructions');
     });
 
+    it('renders no empty-instructions warning when the slot customPrompt supplies the prompt', () => {
+      const templates = [
+        ...defaultAgentTemplates,
+        { ...makeTemplate('migrated.agent.gone', 'Gone', 'gone'), instructions: '' },
+      ];
+      const { queryByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            step: makeStep({
+              agents: [
+                {
+                  agentId: '',
+                  templateKey: 'migrated.agent.gone',
+                  name: 'orphan',
+                  customPrompt: { value: 'Slot-level role instructions.' },
+                },
+              ],
+            }),
+            agentTemplates: templates,
+          })}
+        />
+      );
+      expect(queryByTestId('agent-template-warning')).toBeNull();
+    });
+
+    it('renders no empty-instructions warning when the slot replaces the agent prompt', () => {
+      const templates = [
+        ...defaultAgentTemplates,
+        { ...makeTemplate('migrated.agent.gone', 'Gone', 'gone'), instructions: '' },
+      ];
+      const { queryByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            step: makeStep({
+              agents: [
+                {
+                  agentId: '',
+                  templateKey: 'migrated.agent.gone',
+                  name: 'orphan',
+                  replaceAgentPrompt: true,
+                },
+              ],
+            }),
+            agentTemplates: templates,
+          })}
+        />
+      );
+      expect(queryByTestId('agent-template-warning')).toBeNull();
+    });
+
     it('renders no warnings when every multi-agent slot binds a healthy template', () => {
       const { queryByTestId } = render(
         <NodeConfigPanel
