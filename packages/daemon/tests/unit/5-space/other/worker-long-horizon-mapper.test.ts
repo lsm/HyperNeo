@@ -272,7 +272,7 @@ describe('isRunnableUnifiedAgent — activity contract (U3a)', () => {
     }
     expect(
       isRunnableUnifiedAgent(
-        longHorizonAgent({ id: 'lh-1', templateKey: 'worker-custom.lh-1.m240', status: 'paused' })
+        longHorizonAgent({ id: 'lh-1', templateKey: 'worker-custom.lh-1.m241', status: 'paused' })
       )
     ).toBe(true);
     expect(
