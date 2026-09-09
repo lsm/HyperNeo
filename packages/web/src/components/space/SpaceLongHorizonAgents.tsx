@@ -1222,9 +1222,6 @@ export function SpaceLongHorizonAgents({
   const [deletingAgent, setDeletingAgent] = useState<SpaceLongHorizonAgent | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [reapplyingAgent, setReapplyingAgent] = useState<SpaceLongHorizonAgent | null>(null);
-  const [reapplying, setReapplying] = useState(false);
-  const [reapplyError, setReapplyError] = useState<string | null>(null);
 
   useEffect(() => {
     if (agents.length === 0) return;
@@ -1279,21 +1276,6 @@ export function SpaceLongHorizonAgents({
       setDeleteTemplateError(err instanceof Error ? err.message : 'Failed to delete template');
     } finally {
       setDeletingTemplateBusy(false);
-    }
-  };
-
-  const handleReapplyConfirm = async () => {
-    if (!reapplyingAgent) return;
-    setReapplying(true);
-    setReapplyError(null);
-    try {
-      const agent = await spaceStore.reapplyAgentTemplate(reapplyingAgent.id);
-      toast.success(`Re-applied template to "${agent.displayName}"`);
-      setReapplyingAgent(null);
-    } catch (err) {
-      setReapplyError(err instanceof Error ? err.message : 'Failed to re-apply template');
-    } finally {
-      setReapplying(false);
     }
   };
 
@@ -1385,27 +1367,6 @@ export function SpaceLongHorizonAgents({
                     <span class="rounded-full bg-fill px-2 py-0.5 text-xs text-fg-soft">
                       {selectedAgent.status}
                     </span>
-                    {selectedAgent.templateKey && (
-                      <>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={isMigratedWorkerMirror(selectedAgent)}
-                          data-testid="reapply-template-button"
-                          onClick={() => {
-                            setReapplyingAgent(selectedAgent);
-                            setReapplyError(null);
-                          }}
-                        >
-                          Re-apply template
-                        </Button>
-                        {isMigratedWorkerMirror(selectedAgent) && (
-                          <span class="max-w-56 text-right text-[11px] leading-tight text-fg-faint">
-                            Migrated mirrors follow their worker — edit the worker agent instead.
-                          </span>
-                        )}
-                      </>
-                    )}
                   </div>
                 </div>
                 {selectedAgent.instructions && (
@@ -1591,25 +1552,6 @@ export function SpaceLongHorizonAgents({
           confirmButtonVariant="danger"
           isLoading={deleting}
           error={deleteError}
-        />
-      )}
-
-      {reapplyingAgent && (
-        <ConfirmModal
-          isOpen
-          onConfirm={handleReapplyConfirm}
-          title="Re-apply Template"
-          message={`Re-apply "${reapplyingAgent.templateKey}" to "${reapplyingAgent.displayName}"? Local edits to instructions, model, thinking, setting sources, and tools are replaced with template values.`}
-          confirmText="Re-apply"
-          confirmButtonVariant="warning"
-          isLoading={reapplying}
-          error={reapplyError}
-          confirmTestId="confirm-reapply-template"
-          onClose={() => {
-            if (reapplying) return;
-            setReapplyingAgent(null);
-            setReapplyError(null);
-          }}
         />
       )}
     </div>

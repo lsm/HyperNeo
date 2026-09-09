@@ -312,8 +312,6 @@ function makeMockHub() {
       if (method === 'spaceAgent.promoteSession')
         return { agent: makeLongHorizonAgent('promoted-agent') };
       if (method === 'spaceAgent.update') return { agent: makeLongHorizonAgent('a1') };
-      if (method === 'spaceAgent.reapplyTemplate')
-        return { agent: makeLongHorizonAgent(params?.agentId as string) };
       if (method === 'spaceAgent.create') {
         return {
           agent: makeLongHorizonAgent((params?.id as string | undefined) ?? 'new-agent'),
@@ -2017,35 +2015,6 @@ describe('SpaceStore — CRUD methods', () => {
       name: 'Renamed',
     });
     expect(spaceStore.agents.value.some((agent) => agent.id === 'a1')).toBe(true);
-  });
-
-  it('reapplyAgentTemplate calls spaceAgent.reapplyTemplate RPC and upserts returned agent', async () => {
-    await spaceStore.selectSpace('space-1');
-    const agent = await spaceStore.reapplyAgentTemplate('a1');
-
-    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.reapplyTemplate', {
-      agentId: 'a1',
-    });
-    expect(agent.id).toBe('a1');
-    expect(spaceStore.agents.value.some((a) => a.id === 'a1')).toBe(true);
-  });
-
-  it('reapplyAgentTemplate ignores the returned agent when the active space changes before the request resolves', async () => {
-    await spaceStore.selectSpace('space-1');
-    let resolveRequest: (value: { agent: SpaceLongHorizonAgent }) => void = () => {};
-    mockHub.request.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveRequest = resolve;
-        })
-    );
-
-    const request = spaceStore.reapplyAgentTemplate('a1');
-    await spaceStore.selectSpace('space-2');
-    resolveRequest({ agent: makeLongHorizonAgent('stale-agent') });
-    await request;
-
-    expect(spaceStore.agents.value.some((agent) => agent.id === 'stale-agent')).toBe(false);
   });
 
   it('previewWorkflowTemplateSync calls spaceWorkflow.previewTemplateSync RPC and returns the preview', async () => {
