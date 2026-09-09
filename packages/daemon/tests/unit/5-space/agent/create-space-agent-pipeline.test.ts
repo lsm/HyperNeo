@@ -41,6 +41,9 @@ interface Harness {
   templates: Map<string, SpaceAgentTemplate>;
   spaceExists: boolean;
   sessionOwners: Map<string, string>;
+  sessions: Map<string, { type: string; spaceId: string | null }>;
+  displayNames: string[];
+  published: SpaceAgent[];
 }
 
 function makeHarness(): Harness {
@@ -50,12 +53,20 @@ function makeHarness(): Harness {
     templates: new Map(),
     spaceExists: true,
     sessionOwners: new Map(),
+    sessions: new Map([['session-free', { type: 'space_chat', spaceId: 'space-1' }]]),
+    displayNames: [],
+    published: [],
     deps: {} as CreateSpaceAgentDeps,
   };
 
   harness.deps = {
     spaceExists: async () => harness.spaceExists,
     sessionOwner: (sessionId) => harness.sessionOwners.get(sessionId) ?? null,
+    getSession: (sessionId) => harness.sessions.get(sessionId) ?? null,
+    listDisplayNames: () => harness.displayNames,
+    publishCreated: async (agent) => {
+      harness.published.push(agent);
+    },
     getTemplate: (key) => harness.templates.get(key) ?? null,
     listHandles: () => harness.handles,
     createAgent: (params) => {
@@ -307,6 +318,7 @@ describe('createSpaceAgent', () => {
     });
 
     test('carries an explicit session binding through', async () => {
+      h.sessions.set('session-7', { type: 'space_chat', spaceId: 'space-1' });
       await expectAgent(h, baseInput({ sessionId: 'session-7' }));
       expect(h.created[0].sessionId).toBe('session-7');
     });
@@ -405,6 +417,7 @@ describe('gate order and rejection taxonomy', () => {
   });
   describe('session binding', () => {
     test('rejects a session already bound to another agent', async () => {
+      h.sessions.set('session-1', { type: 'space_chat', spaceId: 'space-1' });
       h.sessionOwners.set('session-1', 'agent-existing');
       const outcome = await run(h, baseInput({ sessionId: 'session-1' }));
 
@@ -413,6 +426,7 @@ describe('gate order and rejection taxonomy', () => {
     });
 
     test('does not persist when the session is taken', async () => {
+      h.sessions.set('session-1', { type: 'space_chat', spaceId: 'space-1' });
       h.sessionOwners.set('session-1', 'agent-existing');
       await run(h, baseInput({ sessionId: 'session-1' }));
 
@@ -436,6 +450,7 @@ describe('gate order and rejection taxonomy', () => {
     });
 
     test('a taken session is reported before an unknown template key', async () => {
+      h.sessions.set('session-1', { type: 'space_chat', spaceId: 'space-1' });
       h.sessionOwners.set('session-1', 'agent-existing');
       const outcome = await run(
         h,
@@ -443,6 +458,92 @@ describe('gate order and rejection taxonomy', () => {
       );
 
       expect(isCreateSpaceAgentRejection(outcome) && outcome.kind).toBe('session_taken');
+    });
+  });
+  describe('review findings', () => {
+    test('rejects a nonexistent session', async () => {
+      const outcome = await run(h, baseInput({ sessionId: 'ghost' }));
+      expectRejection(outcome, 'Session not found: ghost');
+      expect(isCreateSpaceAgentRejection(outcome) && outcome.kind).toBe('session_invalid');
+    });
+
+    test('rejects a session belonging to another space', async () => {
+      h.sessions.set('other', { type: 'space_chat', spaceId: 'space-2' });
+      expectRejection(await run(h, baseInput({ sessionId: 'other' })), 'does not belong to space');
+    });
+
+    test('rejects a task agent session', async () => {
+      h.sessions.set('task', { type: 'space_task_agent', spaceId: 'space-1' });
+      expectRejection(await run(h, baseInput({ sessionId: 'task' })), 'Task agent sessions cannot');
+    });
+
+    test('rejects a duplicate display name case-insensitively', async () => {
+      h.displayNames = ['My Agent'];
+      expectRejection(await run(h, baseInput({ displayName: 'my agent' })), 'is already used');
+    });
+
+    test('allows a display name that only collides with an archived agent', async () => {
+      h.displayNames = [];
+      await expectAgent(h, baseInput({ displayName: 'My Agent' }));
+      expect(h.created).toHaveLength(1);
+    });
+
+    test('generates a suffixed handle instead of failing on a reserved word', async () => {
+      const agent = await expectAgent(h, baseInput({ displayName: 'Coordinator' }));
+      expect(agent.handle).not.toBe('coordinator');
+      expect(agent.handle.startsWith('coordinator')).toBe(true);
+    });
+
+    test('still rejects an explicitly requested reserved handle', async () => {
+      expectRejection(await run(h, baseInput({ handle: 'coordinator' })), 'is reserved');
+    });
+
+    test('rejects a blank model rather than persisting an empty string', async () => {
+      const outcome = await run(h, baseInput({ model: '' }));
+      expectRejection(outcome, 'model cannot be blank');
+      expect(isCreateSpaceAgentRejection(outcome) && outcome.kind).toBe('invalid_request');
+    });
+
+    test('rejects a blank provider', async () => {
+      expectRejection(await run(h, baseInput({ provider: '' })), 'provider cannot be blank');
+    });
+
+    test('maps a repository session collision to session_taken', async () => {
+      h.deps.createAgent = () => {
+        throw new Error('Session session-9 is already bound to agent agent-x');
+      };
+      h.sessions.set('session-9', { type: 'space_chat', spaceId: 'space-1' });
+
+      const outcome = await run(h, baseInput({ sessionId: 'session-9' }));
+      expect(isCreateSpaceAgentRejection(outcome) && outcome.kind).toBe('session_taken');
+    });
+
+    test('maps a unique-handle constraint violation to invalid_identity', async () => {
+      h.deps.createAgent = () => {
+        throw new Error('UNIQUE constraint failed: space_long_horizon_agents.handle');
+      };
+
+      const outcome = await run(h, baseInput());
+      expect(isCreateSpaceAgentRejection(outcome) && outcome.kind).toBe('invalid_identity');
+    });
+
+    test('rethrows an unrecognised persistence failure', async () => {
+      h.deps.createAgent = () => {
+        throw new Error('disk on fire');
+      };
+
+      await expect(run(h, baseInput())).rejects.toThrow('disk on fire');
+    });
+
+    test('publishes the created agent', async () => {
+      const agent = await expectAgent(h, baseInput());
+      expect(h.published.map((a) => a.id)).toEqual([agent.id]);
+    });
+
+    test('does not publish when a gate rejects', async () => {
+      h.spaceExists = false;
+      await run(h, baseInput());
+      expect(h.published).toHaveLength(0);
     });
   });
 });

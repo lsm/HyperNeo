@@ -15,9 +15,12 @@ export interface CreateSpaceAgentInput extends Omit<CreateSpaceAgentParams, 'han
 export interface CreateSpaceAgentDeps extends Dependencies {
   spaceExists(spaceId: string): Promise<boolean>;
   sessionOwner(sessionId: string): string | null;
+  getSession(sessionId: string): BindableSession | null;
   getTemplate(key: string): SpaceAgentTemplate | null;
   listHandles(spaceId: string): string[];
+  listDisplayNames(spaceId: string): string[];
   createAgent(params: CreateSpaceAgentParams): SpaceAgent;
+  publishCreated(agent: SpaceAgent): Promise<void>;
   validateTools(tools: string[]): string | null;
   validateModel(model: string, provider: string | null): Promise<string | null>;
   validateModelPool(pool: AgentModelPoolEntry[]): Promise<string | null>;
@@ -26,10 +29,16 @@ export interface CreateSpaceAgentDeps extends Dependencies {
 export type CreateSpaceAgentRejectionKind =
   | 'invalid_request'
   | 'space_not_found'
+  | 'session_invalid'
   | 'session_taken'
   | 'template_not_found'
   | 'invalid_identity'
   | 'invalid_config';
+
+export interface BindableSession {
+  type: string;
+  spaceId: string | null;
+}
 
 export interface CreateSpaceAgentRejection {
   kind: CreateSpaceAgentRejectionKind;
@@ -70,7 +79,17 @@ export function gateRequest(request: CreateSpaceAgentInput): Gate<AdmittedReques
   if (request.handle !== undefined && request.handle.trim() === '') {
     return reject('invalid_request', 'handle cannot be blank');
   }
+  if (isBlankString(request.model)) {
+    return reject('invalid_request', 'model cannot be blank — use null to clear it');
+  }
+  if (isBlankString(request.provider)) {
+    return reject('invalid_request', 'provider cannot be blank — use null to clear it');
+  }
   return { value: { request } };
+}
+
+function isBlankString(value: string | null | undefined): boolean {
+  return typeof value === 'string' && value.trim() === '';
 }
 
 export async function gateSpace(
@@ -86,10 +105,21 @@ export async function gateSpace(
 
 export function gateSession(
   admitted: AdmittedRequest,
-  sessionOwner: CreateSpaceAgentDeps['sessionOwner']
+  sessionOwner: CreateSpaceAgentDeps['sessionOwner'],
+  getSession: CreateSpaceAgentDeps['getSession']
 ): Gate<AdmittedRequest> {
-  const sessionId = admitted.request.sessionId;
+  const { sessionId, spaceId } = admitted.request;
   if (!sessionId) return { value: admitted };
+
+  const session = getSession(sessionId);
+  if (!session) return reject('session_invalid', `Session not found: ${sessionId}`);
+  if (session.spaceId !== spaceId) {
+    return reject('session_invalid', `Session ${sessionId} does not belong to space ${spaceId}`);
+  }
+  if (session.type === 'space_task_agent') {
+    return reject('session_invalid', 'Task agent sessions cannot be bound to a space agent');
+  }
+
   const owner = sessionOwner(sessionId);
   if (owner) {
     return reject('session_taken', `Session ${sessionId} is already bound to agent ${owner}`);
@@ -110,7 +140,8 @@ export function gateTemplate(
 
 export function gateIdentity(
   admitted: AdmittedTemplate,
-  listHandles: CreateSpaceAgentDeps['listHandles']
+  listHandles: CreateSpaceAgentDeps['listHandles'],
+  listDisplayNames: CreateSpaceAgentDeps['listDisplayNames']
 ): Gate<AdmittedIdentity> {
   const { request, template } = admitted;
   const displayName = (request.displayName ?? template?.displayName ?? request.handle ?? '').trim();
@@ -118,7 +149,8 @@ export function gateIdentity(
   if (!handleSource) return reject('invalid_identity', 'handle or displayName is required');
 
   const taken = listHandles(request.spaceId);
-  const handle = request.handle ?? slugifyWithinLimit(handleSource, taken);
+  const handle =
+    request.handle ?? slugifyWithinLimit(handleSource, [...taken, ...RESERVED_SPACE_AGENT_HANDLES]);
 
   const slugError = validateSlug(handle);
   if (slugError) return reject('invalid_identity', slugError);
@@ -129,7 +161,18 @@ export function gateIdentity(
     return reject('invalid_identity', `Handle "${handle}" is already in use in this space`);
   }
 
-  return { value: { ...admitted, handle, displayName: displayName || handle } };
+  const resolvedName = displayName || handle;
+  const nameTaken = listDisplayNames(request.spaceId).some(
+    (name) => name.trim().toLowerCase() === resolvedName.trim().toLowerCase()
+  );
+  if (nameTaken) {
+    return reject(
+      'invalid_identity',
+      `Agent name "${resolvedName}" is already used by another agent in this space`
+    );
+  }
+
+  return { value: { ...admitted, handle, displayName: resolvedName } };
 }
 
 export function buildParams(admitted: AdmittedIdentity): CreateSpaceAgentParams {
@@ -202,8 +245,36 @@ export async function gateModelPool(
 export function persistAgent(
   params: CreateSpaceAgentParams,
   createAgent: CreateSpaceAgentDeps['createAgent']
-): SpaceAgent {
-  return createAgent(params);
+): Gate<SpaceAgent> {
+  try {
+    return { value: createAgent(params) };
+  } catch (error) {
+    const collision = classifyPersistenceCollision(error, params);
+    if (collision) return collision;
+    throw error;
+  }
+}
+
+function classifyPersistenceCollision(
+  error: unknown,
+  params: CreateSpaceAgentParams
+): { reason: CreateSpaceAgentRejection } | null {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes('is already bound to agent')) {
+    return reject('session_taken', message);
+  }
+  if (/UNIQUE constraint failed.*handle/i.test(message)) {
+    return reject('invalid_identity', `Handle "${params.handle}" is already in use in this space`);
+  }
+  return null;
+}
+
+export async function publishCreated(
+  agent: SpaceAgent,
+  publish: CreateSpaceAgentDeps['publishCreated']
+): Promise<SpaceAgent> {
+  await publish(agent);
+  return agent;
 }
 
 export function buildCreateSpaceAgentPipeline(
@@ -213,14 +284,15 @@ export function buildCreateSpaceAgentPipeline(
     .input(['request'])
     .pipe(gateRequest, 'request', 'result:admitted')
     .pipe(gateSpace, ['admitted', 'spaceExists'], 'result:admitted')
-    .pipe(gateSession, ['admitted', 'sessionOwner'], 'result:admitted')
+    .pipe(gateSession, ['admitted', 'sessionOwner', 'getSession'], 'result:admitted')
     .pipe(gateTemplate, ['admitted', 'getTemplate'], 'result:admitted')
-    .pipe(gateIdentity, ['admitted', 'listHandles'], 'result:admitted')
+    .pipe(gateIdentity, ['admitted', 'listHandles', 'listDisplayNames'], 'result:admitted')
     .pipe(buildParams, 'admitted', 'admitted')
     .pipe(gateTools, ['admitted', 'validateTools'], 'result:admitted')
     .pipe(gateModel, ['admitted', 'validateModel'], 'result:admitted')
     .pipe(gateModelPool, ['admitted', 'validateModelPool'], 'result:admitted')
-    .pipe(persistAgent, ['admitted', 'createAgent'], 'admitted')
+    .pipe(persistAgent, ['admitted', 'createAgent'], 'result:admitted')
+    .pipe(publishCreated, ['admitted', 'publishCreated'], 'admitted')
     .endAsync('admitted') as (
     request: CreateSpaceAgentInput
   ) => Promise<SpaceAgent | CreateSpaceAgentRejection>;
