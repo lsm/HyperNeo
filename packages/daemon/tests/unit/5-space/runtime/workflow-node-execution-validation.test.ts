@@ -4,6 +4,7 @@ import type { NodeExecution, SpaceWorkflow } from '@hyperneo/shared';
 import {
   findMissingNodeAgentReferences,
   formatMissingAgentReference,
+  formatMissingTemplateReference,
   isMissingWorkflowAgentError,
   MissingWorkflowAgentError,
   PermanentSpawnError,
@@ -210,5 +211,74 @@ describe('formatMissingAgentReference', () => {
     expect(message).toContain('reviewer');
     expect(message).toContain('gone');
     expect(message).not.toMatch(/FOREIGN KEY/i);
+  });
+});
+
+describe('findMissingNodeAgentReferences template drift', () => {
+  test('reports a templateKey that resolves to nothing when templateResolves is provided', () => {
+    const node = makeNode([{ agentId: '', templateKey: 'ghost.preview', name: 'ghost' }]);
+    expect(
+      findMissingNodeAgentReferences(node, () => true, { templateResolves: () => false })
+    ).toEqual([{ agentName: 'ghost', agentId: '', templateKey: 'ghost.preview' }]);
+  });
+
+  test('skips a templateKey that resolves', () => {
+    const node = makeNode([{ agentId: '', templateKey: 'worker.swe', name: 'coder' }]);
+    expect(
+      findMissingNodeAgentReferences(node, () => false, { templateResolves: () => true })
+    ).toEqual([]);
+  });
+
+  test('keeps skipping templateKey slots entirely when no templateResolves predicate is given', () => {
+    const node = makeNode([{ agentId: 'gone', templateKey: 'ghost.preview', name: 'ghost' }]);
+    expect(findMissingNodeAgentReferences(node, () => false)).toEqual([]);
+  });
+
+  test('falls back to a live agentId when the templateKey does not resolve', () => {
+    const node = makeNode([{ agentId: 'live', templateKey: 'ghost.preview', name: 'ghost' }]);
+    expect(
+      findMissingNodeAgentReferences(node, (id) => id === 'live', {
+        templateResolves: () => false,
+      })
+    ).toEqual([]);
+  });
+
+  test('reports when neither the templateKey resolves nor the agentId exists', () => {
+    const node = makeNode([{ agentId: 'gone', templateKey: 'ghost.preview', name: 'ghost' }]);
+    expect(
+      findMissingNodeAgentReferences(node, (id) => id !== 'gone', {
+        templateResolves: () => false,
+      })
+    ).toEqual([{ agentName: 'ghost', agentId: 'gone', templateKey: 'ghost.preview' }]);
+  });
+
+  test('honors slotNames alongside template drift', () => {
+    const node = makeNode([
+      { agentId: '', templateKey: 'ghost.preview', name: 'ghost' },
+      { agentId: 'present', name: 'reviewer' },
+    ]);
+    expect(
+      findMissingNodeAgentReferences(node, () => true, {
+        slotNames: new Set(['reviewer']),
+        templateResolves: () => false,
+      })
+    ).toEqual([]);
+  });
+});
+
+describe('formatMissingTemplateReference', () => {
+  test('names the template key, workflow, run, node, and slot', () => {
+    const message = formatMissingTemplateReference({
+      runId: 'run-321',
+      nodeLabel: 'Preview',
+      workflowName: 'Release Flow',
+      agentName: 'reviewer',
+      templateKey: 'ghost.preview',
+    });
+    expect(message).toContain('ghost.preview');
+    expect(message).toContain('Release Flow');
+    expect(message).toContain('run-321');
+    expect(message).toContain('Preview');
+    expect(message).toContain('reviewer');
   });
 });

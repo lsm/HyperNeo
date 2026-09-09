@@ -147,6 +147,7 @@ import { WorkflowExecutor } from './workflow-executor.ts';
 import {
   findMissingNodeAgentReferences,
   formatMissingAgentReference,
+  formatMissingTemplateReference,
   isMissingWorkflowAgentError,
   isPermanentSpawnError,
   isSpawnSupersededError,
@@ -5143,18 +5144,30 @@ export class SpaceRuntime {
         const targetNode = nodeByName.get(targetName);
         if (!targetNode || targetNode.id === sourceNode.id) continue;
 
-        const missing = findMissingNodeAgentReferences(targetNode, (id) =>
-          this.agentRecordExists(id, run.spaceId)
+        const missing = findMissingNodeAgentReferences(
+          targetNode,
+          (id) => this.agentRecordExists(id, run.spaceId),
+          {
+            templateResolves: (key) => this.config.spaceWorkflowManager.agentTemplateResolves(key),
+          }
         );
         if (missing.length > 0) {
           const first = missing[0];
           throw new MissingWorkflowAgentError(
-            formatMissingAgentReference({
-              runId: run.id,
-              nodeLabel: targetNode.name,
-              agentName: first.agentName,
-              agentId: first.agentId,
-            }),
+            first.templateKey
+              ? formatMissingTemplateReference({
+                  runId: run.id,
+                  nodeLabel: targetNode.name,
+                  workflowName: workflow.name,
+                  agentName: first.agentName,
+                  templateKey: first.templateKey,
+                })
+              : formatMissingAgentReference({
+                  runId: run.id,
+                  nodeLabel: targetNode.name,
+                  agentName: first.agentName,
+                  agentId: first.agentId,
+                }),
             first
           );
         }

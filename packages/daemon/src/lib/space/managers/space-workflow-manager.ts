@@ -172,6 +172,13 @@ export class SpaceWorkflowManager {
     return this.sanitizePostApprovalForLoad(drifted);
   }
 
+  agentTemplateResolves(key: string): boolean {
+    const trimmed = key.trim();
+    if (!trimmed) return false;
+    if (getLongHorizonAgentTemplate(trimmed)) return true;
+    return this.templateRepo !== undefined && this.templateRepo.getByKey(trimmed) !== null;
+  }
+
   getWorkflowByHandle(spaceId: string, handle: string): SpaceWorkflow | null {
     const wf = this.repo.getWorkflowByHandle(spaceId, handle);
     if (!wf) return null;

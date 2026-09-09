@@ -14,6 +14,7 @@ import {
 import { ChannelCycleRepository } from '../../../../src/storage/repositories/channel-cycle-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
+import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
@@ -146,7 +147,11 @@ describe('ChannelRouter', () => {
     longHorizonAgentRepo = new SpaceLongHorizonAgentRepository(db);
 
     const workflowRepo = new SpaceWorkflowRepository(db);
-    workflowManager = new SpaceWorkflowManager(workflowRepo);
+    workflowManager = new SpaceWorkflowManager(
+      workflowRepo,
+      null,
+      new SpaceAgentTemplateRepository(db)
+    );
 
     router = new ChannelRouter({
       taskRepo,
@@ -210,6 +215,56 @@ describe('ChannelRouter', () => {
       expect(message).toContain(AGENT_CUSTOM);
       expect(message).not.toMatch(/FOREIGN KEY/i);
       expect(new NodeExecutionRepository(db).listByNode(run.id, NODE_B)).toHaveLength(0);
+    });
+
+    test('throws an actionable error naming the key and workflow when a slot templateKey resolves to nothing', async () => {
+      new SpaceAgentTemplateRepository(db).create({
+        key: 'ghost.preview',
+        handle: 'ghost',
+        instructions: 'Preview the release.',
+      });
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Template Drift Flow',
+        description: '',
+        nodes: [
+          {
+            id: NODE_A,
+            name: 'Preview',
+            agents: [{ agentId: '', templateKey: 'ghost.preview', name: 'ghost-slot' }],
+          },
+          { id: NODE_B, name: 'End', agents: [{ agentId: AGENT_PLANNER, name: 'end' }] },
+        ],
+        startNodeId: NODE_A,
+        endNodeId: NODE_B,
+        tags: [],
+        channels: [],
+        completionAutonomyLevel: 3,
+      });
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Template Drift Activation',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      db.prepare(`DELETE FROM space_agent_templates WHERE key = ?`).run('ghost.preview');
+
+      let caught: unknown;
+      try {
+        await router.activateNode(run.id, NODE_A);
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(MissingWorkflowAgentError);
+      const message = (caught as MissingWorkflowAgentError).message;
+      expect(message).toContain('ghost.preview');
+      expect(message).toContain('Template Drift Flow');
+      expect(message).toContain(run.id);
+      expect(message).toContain('Preview');
+      expect(message).toContain('ghost-slot');
+      expect(new NodeExecutionRepository(db).listByNode(run.id, NODE_A)).toHaveLength(0);
     });
 
     test('slot-targeted activation succeeds even when a sibling slot references a deleted agent', async () => {
