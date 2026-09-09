@@ -139,7 +139,9 @@ function rewritePostApprovalTarget(
   const selectedIndex = slots.findIndex((slot) => slotMatchesTarget(slot, target, false));
   if (selectedIndex < 0) return false;
   const selected = slots[selectedIndex];
-  if (selected.renamingKey === null || selected.rawKey !== target) return false;
+  if (selected.renamingKey === null || selected.rawKey !== target) {
+    return rewriteUnchangedRouteTarget(postApproval, target, slots);
+  }
   if (slots.findIndex((slot) => slotMatchesTarget(slot, replacement, true)) === selectedIndex) {
     postApproval.targetAgent = replacement;
     return true;
@@ -165,7 +167,10 @@ function rewriteUnchangedRouteTarget(
   if (preIndex < 0) return false;
   if (slots.findIndex((slot) => slotMatchesTarget(slot, target, true)) === preIndex) return false;
   const selected = slots[preIndex];
-  if (selected.agentId !== '') {
+  if (
+    selected.agentId !== '' &&
+    slots.findIndex((slot) => slotMatchesTarget(slot, selected.agentId, true)) === preIndex
+  ) {
     postApproval.targetAgent = selected.agentId;
     return true;
   }

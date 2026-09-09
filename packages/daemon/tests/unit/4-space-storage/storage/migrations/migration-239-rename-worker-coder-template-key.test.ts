@@ -554,6 +554,55 @@ describe('migration 239 — rename worker.coder slot templateKey to worker.swe',
     db.close();
   });
 
+  test('rechecks name-matched worker.swe routes during a stored-template relocation', () => {
+    const db = createMigrationDb();
+    insertStoredTemplate(db, 'worker.swe');
+    insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
+    insertNodeWithSlots(
+      db,
+      'node-1',
+      'wf-1',
+      [
+        { agentId: '', templateKey: 'worker.coder', name: 'setup' },
+        { agentId: 'agent-9', templateKey: 'team.x', name: 'worker.swe' },
+      ],
+      { targetAgent: 'worker.swe' }
+    );
+
+    runMigration239(db);
+
+    expect(readSlots(db, 'node-1')).toEqual([
+      { agentId: '', templateKey: 'worker.swe', name: 'setup' },
+      { agentId: 'agent-9', templateKey: 'team.x', name: 'worker.swe' },
+    ]);
+    expect((readNodeConfig(db, 'node-1').postApproval as { targetAgent: string }).targetAgent).toBe(
+      'agent-9'
+    );
+    db.close();
+  });
+
+  test('skips a shadowed agent-ID fallback and leaves the route unchanged', () => {
+    const db = createMigrationDb();
+    insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
+    insertNodeWithSlots(
+      db,
+      'node-1',
+      'wf-1',
+      [
+        { agentId: '', templateKey: 'worker.coder', name: 'agent-7' },
+        { agentId: 'agent-7', templateKey: 'team.x', name: 'worker.swe' },
+      ],
+      { targetAgent: 'worker.swe' }
+    );
+
+    runMigration239(db);
+
+    expect((readNodeConfig(db, 'node-1').postApproval as { targetAgent: string }).targetAgent).toBe(
+      'worker.swe'
+    );
+    db.close();
+  });
+
   test('keeps the relocation marker when the migration re-runs', () => {
     const db = createMigrationDb();
     insertStoredTemplate(db, 'worker.swe');
