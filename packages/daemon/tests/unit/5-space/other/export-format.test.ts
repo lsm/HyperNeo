@@ -361,6 +361,21 @@ describe('exportWorkflow', () => {
     expect(exported.nodes[0].agents[0].agentRef).toBe('Edited Coder');
   });
 
+  test('derives the agentRef fallback for a dotted agent id', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Code step',
+          agents: [{ agentId: '', templateKey: 'worker-custom.team.worker', name: 'coder' }],
+        },
+      ],
+    });
+    const exported = exportWorkflow(workflow, [makeAgent({ id: 'team.worker' })]);
+    expect(exported.nodes[0].agents[0].templateKey).toBe('worker-custom.team.worker');
+    expect(exported.nodes[0].agents[0].agentRef).toBe('My Coder');
+  });
+
   test('exports resetContextPerTurn on agent slots', () => {
     const workflow = makeWorkflow({
       nodes: [
@@ -414,6 +429,7 @@ describe('withWorkerCustomTemplateOverlay', () => {
     const [overlaid] = withWorkerCustomTemplateOverlay([agent], [editedWorkerCustomTemplate()]);
 
     expect(overlaid.displayName).toBe('Edited Coder');
+    expect(overlaid.handle).toBe('edited-coder');
     expect(overlaid.description).toBe('Now edited');
     expect(overlaid.instructions).toBe('fresh instructions');
     expect(overlaid.model).toBe('claude-opus-5');
@@ -446,7 +462,7 @@ describe('withWorkerCustomTemplateOverlay', () => {
 function editedWorkerCustomTemplate() {
   return {
     key: 'worker-custom.agent-uuid-1',
-    handle: 'my-coder',
+    handle: 'edited-coder',
     displayName: 'Edited Coder',
     description: 'Now edited',
     instructions: 'fresh instructions',

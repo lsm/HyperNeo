@@ -22,6 +22,17 @@ export function workerCustomTemplateKey(agentId: string): string {
   return `${WORKER_CUSTOM_TEMPLATE_KEY_PREFIX}.${agentId}`;
 }
 
+export function migratedAgentIdCandidates(templateKey: string): string[] {
+  const prefix = `${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.`;
+  if (!templateKey.startsWith(prefix)) return [];
+  const rest = templateKey.slice(prefix.length);
+  if (!rest) return [];
+  const match = /^(.*)\.m228(?:-\d+)?$/.exec(rest);
+  if (!match) return [rest];
+  const stripped = match[1] ?? '';
+  return rest === stripped ? [rest] : [rest, stripped];
+}
+
 export function isMigrationIdentityKey(
   templateKey: string,
   prefix: string,

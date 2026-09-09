@@ -331,6 +331,41 @@ describe('migration 233: retire pristine seeded worker agents', () => {
     db.close();
   });
 
+  test('keeps a pristine worker whose literal id ends in the m228 suffix', () => {
+    const { db, repo, idsByName } = createDb();
+    db.prepare(`UPDATE space_long_horizon_agents SET id = 'team.m228' WHERE id = ?`).run(
+      idsByName.get('Coder')
+    );
+    insertNodeWithAgents(
+      db,
+      'node-suffix-id-key',
+      JSON.stringify({ agents: [{ agentId: '', templateKey: 'migrated.agent.team.m228' }] })
+    );
+
+    runMigration233(db);
+
+    expect(remaining(repo)).toEqual(['Coder']);
+    db.close();
+  });
+
+  test('keeps a pristine worker referenced by an NBSP-padded m228 key', () => {
+    const { db, repo, idsByName } = createDb();
+    insertNodeWithAgents(
+      db,
+      'node-nbsp-key',
+      JSON.stringify({
+        agents: [
+          { agentId: '', templateKey: `\u00A0migrated.agent.${idsByName.get('Coder')}\u00A0` },
+        ],
+      })
+    );
+
+    runMigration233(db);
+
+    expect(remaining(repo)).toEqual(['Coder']);
+    db.close();
+  });
+
   test('keeps a pristine worker referenced by any pinned run, terminal or not', () => {
     const { db, repo, idsByName } = createDb();
     insertPinnedRun(db, 'run-live', 'in_progress', [{ agentId: idsByName.get('Coder') }]);

@@ -207,6 +207,17 @@ describe('validateExecutionAgainstWorkflow', () => {
     expect(result).toEqual({ valid: true });
   });
 
+  test('normalizes a recorded dotted-agent m228 identity', () => {
+    const workflow = makeWorkflow([
+      { agentId: '', templateKey: 'worker-custom.team.worker', name: 'coder' },
+    ]);
+    const result = validateExecutionAgainstWorkflow(
+      makeExecution({ agentId: 'template:migrated.agent.team.worker' }),
+      workflow
+    );
+    expect(result).toEqual({ valid: true });
+  });
+
   test('rejects a squatted migrated-agent template key against a converted mirror slot', () => {
     const workflow = makeWorkflow([
       { agentId: '', templateKey: 'worker-custom.agent-1', name: 'coder' },

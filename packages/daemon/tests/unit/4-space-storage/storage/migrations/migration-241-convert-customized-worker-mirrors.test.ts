@@ -771,6 +771,31 @@ describe('migration 241: convert customized worker mirrors to user templates', (
     db.close();
   });
 
+  test('recovers an agentless m228 slot for a literal id ending in the m228 suffix', () => {
+    const { db } = createDb();
+    db.prepare(
+      `INSERT INTO space_long_horizon_agents (
+         id, space_id, handle, display_name, template_key, instructions, model,
+         tool_permissions_json, created_at, updated_at
+       ) VALUES ('team.m228', 'space-1', 'suffixed', 'Suffixed Worker',
+         'migration.legacy_space_agent', 'Customized prompt', 'claude-sonnet-5', '{}', 1, 1)`
+    ).run();
+    insertNodeWithAgents(
+      db,
+      'node-suffix-id',
+      JSON.stringify({
+        agents: [{ agentId: '', templateKey: 'migrated.agent.team.m228', name: 'suffixed' }],
+      })
+    );
+
+    runMigration241(db);
+
+    expect(nodeAgents(db, 'node-suffix-id')).toEqual([
+      { agentId: '', name: 'suffixed', templateKey: 'worker-custom.team.m228' },
+    ]);
+    db.close();
+  });
+
   test('retargets routes off a neutralized stale key onto the owning slot name', () => {
     const { db, agentRepo } = createDb();
     agentRepo.update(SWE_ID, { model: 'claude-sonnet-5' });

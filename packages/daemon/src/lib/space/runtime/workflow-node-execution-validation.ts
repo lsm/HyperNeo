@@ -10,6 +10,7 @@ import { isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import {
   isMigrationIdentityKey,
   MIGRATED_AGENT_TEMPLATE_KEY_PREFIX,
+  migratedAgentIdCandidates,
   WORKER_CUSTOM_TEMPLATE_KEY_PREFIX,
 } from '../agents/agent-template-synthesis.ts';
 
@@ -176,8 +177,12 @@ export function validateExecutionAgainstWorkflow(
   }
   if (execution.agentId && resolvedAgentId !== execution.agentId) {
     const slotTemplateKey = slot?.templateKey?.trim() ?? '';
-    const recordedId = recordedIdentityAgentId(execution.agentId);
-    if (!slotIdentityMatchesRecordedAgent(slotTemplateKey, recordedId)) {
+    const recordedIds = recordedIdentityAgentIds(execution.agentId);
+    if (
+      !recordedIds.some((candidateId) =>
+        slotIdentityMatchesRecordedAgent(slotTemplateKey, candidateId)
+      )
+    ) {
       return {
         valid: false,
         reason: `Agent slot ${execution.agentName} on workflow node ${execution.workflowNodeId} now references agent ${resolvedAgentId} instead of ${execution.agentId}`,
@@ -189,18 +194,11 @@ export function validateExecutionAgainstWorkflow(
   return { valid: true };
 }
 
-function recordedIdentityAgentId(recorded: string): string {
+function recordedIdentityAgentIds(recorded: string): string[] {
   const templatePrefix = 'template:';
-  if (!recorded.startsWith(templatePrefix)) return recorded;
-  const key = recorded.slice(templatePrefix.length);
-  if (!key.startsWith(`${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.`)) return recorded;
-  const rest = key.slice(MIGRATED_AGENT_TEMPLATE_KEY_PREFIX.length + 1);
-  const dot = rest.indexOf('.');
-  const agentId = dot === -1 ? rest : rest.slice(0, dot);
-  if (!isMigrationIdentityKey(key, MIGRATED_AGENT_TEMPLATE_KEY_PREFIX, agentId, 'm228')) {
-    return recorded;
-  }
-  return agentId;
+  if (!recorded.startsWith(templatePrefix)) return [recorded];
+  const candidates = migratedAgentIdCandidates(recorded.slice(templatePrefix.length));
+  return candidates.length > 0 ? candidates : [recorded];
 }
 
 const SLOT_IDENTITY_MIGRATION_TAGS: ReadonlyArray<readonly [string, string]> = [

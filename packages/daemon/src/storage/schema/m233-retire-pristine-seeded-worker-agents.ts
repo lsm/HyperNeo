@@ -1,6 +1,6 @@
 import type { SpaceLongHorizonAgent } from '@hyperneo/shared';
 import { computeAgentTemplateHash } from '../../lib/space/agents/agent-template-hash.ts';
-import { MIGRATED_AGENT_TEMPLATE_KEY_PREFIX } from '../../lib/space/agents/agent-template-synthesis.ts';
+import { migratedAgentIdCandidates } from '../../lib/space/agents/agent-template-synthesis.ts';
 import { retireRemovedPresetAgents } from '../../lib/space/agents/seed-agents.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
 import { SpaceLongHorizonAgentRepository } from '../repositories/space-long-horizon-agent-repository.ts';
@@ -93,7 +93,9 @@ function collectAgentIds(db: BunDatabase, sql: string, column: string, ids: Set<
   }
 }
 
-const SQL_TRIM_WHITESPACE = "char(9) || char(10) || char(11) || char(12) || char(13) || ' '";
+const SQL_TRIM_WHITESPACE =
+  'char(9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, ' +
+  '8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279)';
 
 export function agentsWithLiveState(db: BunDatabase): Set<string> {
   const ids = new Set<string>();
@@ -172,6 +174,10 @@ export function isPristineWorkerContent(agent: SpaceLongHorizonAgent): boolean {
 export function referencedAgentIds(db: BunDatabase): Set<string> {
   const referenced = new Set<string>();
   const m228Keys: Set<string> = new Set();
+  const agentIds = new Set<string>();
+  if (tableExists(db, 'space_long_horizon_agents')) {
+    collectAgentIds(db, `SELECT DISTINCT id FROM space_long_horizon_agents`, 'id', agentIds);
+  }
   const legacyShapeFilter = `(json_type(nodes.config, '$.agents') IS NULL
               OR json_type(nodes.config, '$.agents') != 'array'
               OR json_array_length(nodes.config, '$.agents') = 0)`;
@@ -229,7 +235,7 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
     !tableExists(db, 'space_workflow_definition_versions') ||
     !tableExists(db, 'space_workflow_runs')
   ) {
-    expandMigratedAgentKeys(m228Keys, referenced);
+    expandMigratedAgentKeys(m228Keys, referenced, agentIds);
     return referenced;
   }
   collectAgentIds(
@@ -338,18 +344,24 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
     'template_key',
     m228Keys
   );
-  expandMigratedAgentKeys(m228Keys, referenced);
+  expandMigratedAgentKeys(m228Keys, referenced, agentIds);
   return referenced;
 }
 
-function expandMigratedAgentKeys(keys: Set<string>, referenced: Set<string>): void {
-  const prefix = `${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.`;
+function expandMigratedAgentKeys(
+  keys: Set<string>,
+  referenced: Set<string>,
+  agentIds: ReadonlySet<string>
+): void {
   for (const key of keys) {
-    if (!key.startsWith(prefix)) continue;
-    const rest = key.slice(prefix.length);
-    if (!rest) continue;
-    const match = /^(.*)\.m228(?:-\d+)?$/.exec(rest);
-    referenced.add(match ? (match[1] ?? '') : rest);
+    const candidates = migratedAgentIdCandidates(key);
+    if (candidates.length === 0) continue;
+    const matched = candidates.filter((candidate) => agentIds.has(candidate));
+    if (matched.length > 0) {
+      for (const agentId of matched) referenced.add(agentId);
+    } else {
+      referenced.add(candidates[candidates.length - 1] ?? '');
+    }
   }
 }
 

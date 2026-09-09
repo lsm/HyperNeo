@@ -41,6 +41,7 @@ export function withWorkerCustomTemplateOverlay(
     return {
       ...agent,
       displayName: template.displayName,
+      handle: template.handle,
       description: template.description || undefined,
       instructions: template.instructions,
       model: template.model,
@@ -51,6 +52,15 @@ export function withWorkerCustomTemplateOverlay(
       toolPermissions: template.tools && template.tools.length > 0 ? { tools: template.tools } : {},
     };
   });
+}
+
+function resolveWorkerCustomAgentId(templateKey: string, agents: SpaceLongHorizonAgent[]): string {
+  for (const agent of agents) {
+    if (isMigrationIdentityKey(templateKey, WORKER_CUSTOM_TEMPLATE_KEY_PREFIX, agent.id, 'm241')) {
+      return agent.id;
+    }
+  }
+  return '';
 }
 
 const _workflowConditionSchema = z
@@ -355,15 +365,6 @@ export function exportAgent(agent: SpaceLongHorizonAgent): ExportedSpaceAgent {
   return exported;
 }
 
-const WORKER_CUSTOM_TEMPLATE_ID_PATTERN = new RegExp(
-  `^${WORKER_CUSTOM_TEMPLATE_KEY_PREFIX}\\.([^.]+)(?:\\.m241(?:-\\d+)?)?$`
-);
-
-function workerCustomFallbackAgentId(templateKey: string): string {
-  const match = WORKER_CUSTOM_TEMPLATE_ID_PATTERN.exec(templateKey);
-  return match ? (match[1] ?? '') : '';
-}
-
 export function exportWorkflow(
   workflow: SpaceWorkflow,
   agents: SpaceLongHorizonAgent[]
@@ -387,7 +388,8 @@ export function exportWorkflow(
       };
       if (a.templateKey?.trim()) {
         entry.templateKey = a.templateKey.trim();
-        const fallbackId = a.agentId?.trim() || workerCustomFallbackAgentId(entry.templateKey);
+        const fallbackId =
+          a.agentId?.trim() || resolveWorkerCustomAgentId(entry.templateKey, agents);
         const fallbackName = fallbackId ? agentIdToName.get(fallbackId) : undefined;
         if (fallbackName) entry.agentRef = fallbackName;
       } else {

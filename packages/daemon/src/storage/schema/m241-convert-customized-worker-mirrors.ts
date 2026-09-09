@@ -5,7 +5,7 @@ import type {
   SpaceWorkflow,
 } from '@hyperneo/shared';
 import {
-  MIGRATED_AGENT_TEMPLATE_KEY_PREFIX,
+  migratedAgentIdCandidates,
   synthesizeWorkerCustomTemplate,
   workerCustomTemplateKey,
 } from '../../lib/space/agents/agent-template-synthesis.ts';
@@ -88,13 +88,12 @@ function effectiveSlotName(rawName: unknown, agentId: string): string {
   return agentId;
 }
 
-function resolveMigratedAgentIdentity(templateKey: string): string {
-  const prefix = `${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.`;
-  if (!templateKey.startsWith(prefix)) return '';
-  const rest = templateKey.slice(prefix.length);
-  if (!rest) return '';
-  const match = /^(.*)\.m228(?:-\d+)?$/.exec(rest);
-  return match ? (match[1] ?? '') : rest;
+function resolveMigratedAgentIdentity(
+  templateKey: string,
+  knownAgentIds: { has(id: string): boolean }
+): string {
+  const candidates = migratedAgentIdCandidates(templateKey);
+  return candidates.find((candidate) => knownAgentIds.has(candidate)) ?? candidates.at(-1) ?? '';
 }
 
 function collectSlotOccurrences(
@@ -176,7 +175,7 @@ function clearMirrorSlots(
     let agentId = occ.agentId;
     let m228OwnedKey = false;
     if (!agentId) {
-      const recovered = slotKey ? resolveMigratedAgentIdentity(slotKey) : '';
+      const recovered = slotKey ? resolveMigratedAgentIdentity(slotKey, keyByAgentId) : '';
       if (!recovered || !keyByAgentId.has(recovered)) {
         if (finalName) occupied.add(finalName);
         if (slotKey) occupied.add(slotKey);
@@ -185,7 +184,7 @@ function clearMirrorSlots(
       agentId = recovered;
       occ.agentId = recovered;
       m228OwnedKey = true;
-    } else if (slotKey && resolveMigratedAgentIdentity(slotKey) === agentId) {
+    } else if (slotKey && resolveMigratedAgentIdentity(slotKey, new Set([agentId])) === agentId) {
       m228OwnedKey = true;
     }
     if (
