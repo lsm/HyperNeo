@@ -936,6 +936,45 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(workflow.nodes[0].postApproval?.targetAgent).toBe('worker.coder ');
     });
 
+    it('selects legacy routes by raw keys so padded keys never capture them', async () => {
+      const bundle = {
+        version: 5,
+        type: 'bundle',
+        name: 'Test Bundle',
+        exportedAt: 1000,
+        agents: [],
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Padded Key Pipe',
+            nodes: [
+              {
+                agents: [
+                  { templateKey: ' worker.coder ', name: 'padded' },
+                  { templateKey: 'worker.coder', name: 'coder' },
+                ],
+                name: 'Coding',
+                postApproval: { targetAgent: 'worker.coder', instructions: 'merge the PR' },
+              },
+            ],
+            startNode: 'Coding',
+            tags: [],
+          },
+        ],
+      };
+
+      const result = await call<{ workflows: Array<{ id: string }> }>(
+        handlers,
+        'spaceImport.execute',
+        { spaceId: SPACE_ID, bundle }
+      );
+      const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
+      expect(workflow.nodes[0].agents![0].templateKey).toBe('worker.swe');
+      expect(workflow.nodes[0].agents![1].templateKey).toBe('worker.swe');
+      expect(workflow.nodes[0].postApproval?.targetAgent).toBe('coder');
+    });
+
     it('rejects a legacy route whose resolved slot name is shadowed by an earlier slot', async () => {
       const bundle = {
         version: 5,

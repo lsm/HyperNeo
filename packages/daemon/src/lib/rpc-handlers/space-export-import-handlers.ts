@@ -456,7 +456,7 @@ export function buildWorkflowCreateParams(
       return entry;
     });
 
-    const rawTemplateKeys = exportedNode.agents.map((a) => a.templateKey?.trim() ?? '');
+    const rawTemplateKeys = exportedNode.agents.map((a) => a.templateKey ?? '');
     return { exportedNode, agents, rawTemplateKeys } as const;
   });
   const flattenedRoutes = builtAgents.flatMap(({ agents, rawTemplateKeys }) =>

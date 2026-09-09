@@ -181,9 +181,9 @@ function sanitizeSpoofedRelocationLabels(db: BunDatabase, now: number): void {
   const update = db.prepare(
     `UPDATE space_agent_templates SET labels = ?, updated_at = ? WHERE key = ?`
   );
-  const relocationTargetPrefix = `${NEW_TEMPLATE_KEY}.migrated`;
+  const relocationTargetPattern = /^worker\.swe\.migrated(?:-\d+)?$/;
   for (const row of rows) {
-    if (row.key.startsWith(relocationTargetPrefix)) continue;
+    if (relocationTargetPattern.test(row.key)) continue;
     const labels = parseLabelArray(row.labels);
     const sanitized = labels.filter((label) => !label.startsWith(RELOCATED_FROM_LABEL_PREFIX));
     if (sanitized.length === labels.length) continue;
