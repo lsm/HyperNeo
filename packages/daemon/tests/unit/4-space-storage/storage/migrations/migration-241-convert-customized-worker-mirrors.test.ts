@@ -714,6 +714,95 @@ describe('migration 241: convert customized worker mirrors to user templates', (
     db.close();
   });
 
+  test('retargets a self-owned binding-key route to the slot name', () => {
+    const { db, agentRepo, templateRepo } = createDb();
+    agentRepo.update(SWE_ID, { model: 'claude-sonnet-5' });
+    const key = workerCustomTemplateKey(SWE_ID);
+    templateRepo.create({
+      ...synthesizeWorkerCustomTemplate(
+        agentRepo.listBySpaceId('space-1').find((agent) => agent.id === SWE_ID)!
+      ),
+      key,
+    });
+    insertWorkflow(db, 'workflow-self-key', 'space-1', JSON.stringify({ targetAgent: key }));
+    insertNode(
+      db,
+      'node-self-key',
+      'workflow-self-key',
+      JSON.stringify({ agents: [{ agentId: SWE_ID, templateKey: key, name: 'builder' }] })
+    );
+
+    runMigration241(db);
+
+    expect(nodeAgents(db, 'node-self-key')).toEqual([
+      { agentId: SWE_ID, name: 'builder', templateKey: key },
+    ]);
+    const postApproval = db
+      .prepare(`SELECT post_approval FROM space_workflows WHERE id = 'workflow-self-key'`)
+      .get() as { post_approval: string };
+    expect(JSON.parse(postApproval.post_approval)).toEqual({ targetAgent: 'builder' });
+    db.close();
+  });
+
+  test('preserves a resolvable binding to a template key the migration reuses', () => {
+    const { db, agentRepo, templateRepo } = createDb();
+    agentRepo.update(SWE_ID, { model: 'claude-sonnet-5' });
+    const key = workerCustomTemplateKey(SWE_ID);
+    templateRepo.create({
+      ...synthesizeWorkerCustomTemplate(
+        agentRepo.listBySpaceId('space-1').find((agent) => agent.id === SWE_ID)!
+      ),
+      key,
+    });
+    insertNodeWithAgents(
+      db,
+      'node-reuse-keep',
+      JSON.stringify({ agents: [{ agentId: 'user-1', templateKey: key, name: 'ops' }] })
+    );
+
+    runMigration241(db);
+
+    expect(nodeAgents(db, 'node-reuse-keep')).toEqual([
+      { agentId: 'user-1', templateKey: key, name: 'ops' },
+    ]);
+    db.close();
+  });
+
+  test('retains a targeted newly-minted key when the slot name is owned by an earlier slot', () => {
+    const { db, agentRepo } = createDb();
+    agentRepo.update(SWE_ID, { model: 'claude-sonnet-5' });
+    const key = workerCustomTemplateKey(SWE_ID);
+    insertWorkflow(
+      db,
+      'workflow-contested-neutral',
+      'space-1',
+      JSON.stringify({ targetAgent: key })
+    );
+    insertNode(
+      db,
+      'node-contested-a',
+      'workflow-contested-neutral',
+      JSON.stringify({ agents: [{ agentId: 'user-1', name: 'ops' }] })
+    );
+    insertNode(
+      db,
+      'node-contested-b',
+      'workflow-contested-neutral',
+      JSON.stringify({ agents: [{ agentId: 'user-2', templateKey: key, name: 'ops' }] })
+    );
+
+    runMigration241(db);
+
+    expect(nodeAgents(db, 'node-contested-b')).toEqual([
+      { agentId: 'user-2', templateKey: key, name: 'ops' },
+    ]);
+    const postApproval = db
+      .prepare(`SELECT post_approval FROM space_workflows WHERE id = 'workflow-contested-neutral'`)
+      .get() as { post_approval: string };
+    expect(JSON.parse(postApproval.post_approval)).toEqual({ targetAgent: key });
+    db.close();
+  });
+
   test('keeps a replaced-key route on an earlier slot that owns the key as its name', () => {
     const { db, agentRepo } = createDb();
     agentRepo.update(SWE_ID, { model: 'claude-sonnet-5' });

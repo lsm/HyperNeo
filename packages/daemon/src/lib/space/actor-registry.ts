@@ -1,13 +1,13 @@
-import type { ActorRef, ActorStatus } from '../../../../messaging/src/types.ts';
 import type { NodeExecution, Session, Space, SpaceLongHorizonAgent } from '@hyperneo/shared';
+import type { ActorRef, ActorStatus } from '../../../../messaging/src/types.ts';
 import type { NodeExecutionRepository } from '../../storage/repositories/node-execution-repository.ts';
 import type { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from './agents/worker-long-horizon-mapper.ts';
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
 import { SPACE_MANAGER_HANDLE } from './agent-handle.ts';
+import { isMigratedWorkerAgent } from './agents/worker-long-horizon-mapper.ts';
 import { encodeActorIdComponent, longTermAgentSessionId } from './long-term-agent-session.ts';
 
 export const SPACE_SYSTEM_ACTORS = [
@@ -76,7 +76,7 @@ export class SpaceActorRegistryAdapter {
     return (this.repos.longHorizonAgentRepo?.listBySpaceId(spaceId) ?? [])
       .filter((agent) => agent.id !== coordinatorAgentId)
       .map((agent) =>
-        agent.templateKey === MIGRATED_WORKER_TEMPLATE_KEY
+        isMigratedWorkerAgent(agent)
           ? agentActor(agent, this.findLongTermAgentSession(spaceId, agent.id))
           : longHorizonAgentActor(agent)
       );

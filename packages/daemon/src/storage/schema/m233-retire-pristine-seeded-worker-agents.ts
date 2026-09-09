@@ -175,7 +175,7 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
               OR json_array_length(nodes.config, '$.agents') = 0)`;
   collectAgentIds(
     db,
-    `SELECT DISTINCT json_extract(slot.value, '$.agentId') AS agent_id
+    `SELECT DISTINCT trim(json_extract(slot.value, '$.agentId')) AS agent_id
        FROM space_workflow_nodes nodes,
             json_each(
               CASE WHEN json_valid(nodes.config) THEN nodes.config END,
@@ -183,13 +183,13 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
             ) slot
       WHERE slot.type = 'object'
         AND json_type(slot.value, '$.agentId') = 'text'
-        AND json_extract(slot.value, '$.agentId') != ''`,
+        AND trim(json_extract(slot.value, '$.agentId')) != ''`,
     'agent_id',
     referenced
   );
   collectAgentIds(
     db,
-    `SELECT DISTINCT json_extract(nodes.config, '$.agentId') AS agent_id
+    `SELECT DISTINCT trim(json_extract(nodes.config, '$.agentId')) AS agent_id
        FROM space_workflow_nodes nodes
       WHERE json_valid(nodes.config)
         AND ${legacyShapeFilter}
@@ -200,7 +200,7 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
   );
   collectAgentIds(
     db,
-    `SELECT DISTINCT json_extract(slot.value, '$.templateKey') AS template_key
+    `SELECT DISTINCT trim(json_extract(slot.value, '$.templateKey')) AS template_key
        FROM space_workflow_nodes nodes,
             json_each(
               CASE WHEN json_valid(nodes.config) THEN nodes.config END,
@@ -208,18 +208,18 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
             ) slot
       WHERE slot.type = 'object'
         AND json_type(slot.value, '$.templateKey') = 'text'
-        AND json_extract(slot.value, '$.templateKey') LIKE 'migrated.agent.%'`,
+        AND trim(json_extract(slot.value, '$.templateKey')) LIKE 'migrated.agent.%'`,
     'template_key',
     m228Keys
   );
   collectAgentIds(
     db,
-    `SELECT DISTINCT json_extract(nodes.config, '$.templateKey') AS template_key
+    `SELECT DISTINCT trim(json_extract(nodes.config, '$.templateKey')) AS template_key
        FROM space_workflow_nodes nodes
       WHERE json_valid(nodes.config)
         AND ${legacyShapeFilter}
         AND json_type(nodes.config, '$.templateKey') = 'text'
-        AND json_extract(nodes.config, '$.templateKey') LIKE 'migrated.agent.%'`,
+        AND trim(json_extract(nodes.config, '$.templateKey')) LIKE 'migrated.agent.%'`,
     'template_key',
     m228Keys
   );
@@ -232,7 +232,7 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
   }
   collectAgentIds(
     db,
-    `SELECT DISTINCT json_extract(slot.value, '$.agentId') AS agent_id
+    `SELECT DISTINCT trim(json_extract(slot.value, '$.agentId')) AS agent_id
        FROM space_workflow_definition_versions versions
        JOIN (
                 SELECT DISTINCT workflow_id, definition_version
@@ -254,13 +254,13 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
             ) slot
       WHERE slot.type = 'object'
         AND json_type(slot.value, '$.agentId') = 'text'
-        AND json_extract(slot.value, '$.agentId') != ''`,
+        AND trim(json_extract(slot.value, '$.agentId')) != ''`,
     'agent_id',
     referenced
   );
   collectAgentIds(
     db,
-    `SELECT DISTINCT json_extract(node.value, '$.agentId') AS agent_id
+    `SELECT DISTINCT trim(json_extract(node.value, '$.agentId')) AS agent_id
        FROM space_workflow_definition_versions versions
        JOIN (
                 SELECT DISTINCT workflow_id, definition_version
@@ -285,7 +285,7 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
   );
   collectAgentIds(
     db,
-    `SELECT DISTINCT json_extract(node.value, '$.templateKey') AS template_key
+    `SELECT DISTINCT trim(json_extract(node.value, '$.templateKey')) AS template_key
        FROM space_workflow_definition_versions versions
        JOIN (
                 SELECT DISTINCT workflow_id, definition_version
@@ -304,13 +304,13 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
               OR json_type(node.value, '$.agents') != 'array'
               OR json_array_length(node.value, '$.agents') = 0)
         AND json_type(node.value, '$.templateKey') = 'text'
-        AND json_extract(node.value, '$.templateKey') LIKE 'migrated.agent.%'`,
+        AND trim(json_extract(node.value, '$.templateKey')) LIKE 'migrated.agent.%'`,
     'template_key',
     m228Keys
   );
   collectAgentIds(
     db,
-    `SELECT DISTINCT json_extract(slot.value, '$.templateKey') AS template_key
+    `SELECT DISTINCT trim(json_extract(slot.value, '$.templateKey')) AS template_key
        FROM space_workflow_definition_versions versions
        JOIN (
                 SELECT DISTINCT workflow_id, definition_version
@@ -332,7 +332,7 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
             ) slot
       WHERE slot.type = 'object'
         AND json_type(slot.value, '$.templateKey') = 'text'
-        AND json_extract(slot.value, '$.templateKey') LIKE 'migrated.agent.%'`,
+        AND trim(json_extract(slot.value, '$.templateKey')) LIKE 'migrated.agent.%'`,
     'template_key',
     m228Keys
   );

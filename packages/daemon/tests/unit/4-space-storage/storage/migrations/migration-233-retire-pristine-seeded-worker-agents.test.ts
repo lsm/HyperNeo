@@ -256,6 +256,48 @@ describe('migration 233: retire pristine seeded worker agents', () => {
     db.close();
   });
 
+  test('keeps a pristine worker referenced by a whitespace-padded m228 identity key', () => {
+    const { db, repo, idsByName } = createDb();
+    insertNodeWithAgents(
+      db,
+      'node-padded-key',
+      JSON.stringify({
+        agents: [{ agentId: '', templateKey: ` migrated.agent.${idsByName.get('Coder')} ` }],
+      })
+    );
+
+    runMigration233(db);
+
+    expect(remaining(repo)).toEqual(['Coder']);
+    db.close();
+  });
+
+  test('keeps a pristine worker referenced by a padded m228 key in a pinned run', () => {
+    const { db, repo, idsByName } = createDb();
+    insertPinnedRun(db, 'run-padded-key', 'in_progress', [
+      { agentId: '', templateKey: ` migrated.agent.${idsByName.get('Coder')} ` },
+    ]);
+
+    runMigration233(db);
+
+    expect(remaining(repo)).toEqual(['Coder']);
+    db.close();
+  });
+
+  test('keeps a pristine worker referenced by a whitespace-padded slot agentId', () => {
+    const { db, repo, idsByName } = createDb();
+    insertNodeWithAgents(
+      db,
+      'node-padded-agent',
+      JSON.stringify({ agents: [{ agentId: ` ${idsByName.get('Coder')} ` }] })
+    );
+
+    runMigration233(db);
+
+    expect(remaining(repo)).toEqual(['Coder']);
+    db.close();
+  });
+
   test('keeps a pristine worker referenced by any pinned run, terminal or not', () => {
     const { db, repo, idsByName } = createDb();
     insertPinnedRun(db, 'run-live', 'in_progress', [{ agentId: idsByName.get('Coder') }]);

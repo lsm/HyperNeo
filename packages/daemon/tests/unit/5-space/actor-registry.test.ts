@@ -473,6 +473,61 @@ describe('SpaceActorRegistryAdapter', () => {
     expect(actor?.status).not.toBe('archived');
   });
 
+  it('keeps a paused restamped worker routable through its worker actor', () => {
+    const space = spaceRepo.createSpace({
+      workspacePath: '/workspace/project',
+      slug: 'project',
+      name: 'Project',
+    });
+    const workerId = 'restamped-worker';
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO space_long_horizon_agents (
+         id, space_id, handle, display_name, template_key, status, instructions,
+         tool_permissions_json, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, 'paused', '', '{}', ?, ?)`
+    ).run(
+      workerId,
+      space.id,
+      'restamped-worker',
+      'Restamped Worker',
+      `worker-custom.${workerId}`,
+      now,
+      now
+    );
+    sessionRepo.createSession(
+      makeSession(longTermAgentSessionId(space.id, workerId), { context: { spaceId: space.id } })
+    );
+
+    const actor = registry.getActor(space.id, `agent:${workerId}`);
+
+    expect(actor?.handle).toBe('@restamped-worker');
+    expect(actor?.status).toBe('active');
+  });
+
+  it('keeps an agent bound to another agent worker-custom key classified as long-horizon', () => {
+    const space = spaceRepo.createSpace({
+      workspacePath: '/workspace/project',
+      slug: 'project',
+      name: 'Project',
+    });
+    const agent = longHorizonAgentRepo.create({
+      spaceId: space.id,
+      handle: 'borrowed-key',
+      displayName: 'Borrowed Key',
+      status: 'paused',
+      templateKey: 'worker-custom.someone-else',
+    });
+    sessionRepo.createSession(
+      makeSession(longTermAgentSessionId(space.id, agent.id), { context: { spaceId: space.id } })
+    );
+
+    const actor = registry.getActor(space.id, `agent:${agent.id}`);
+
+    expect(actor?.handle).toBe('@borrowed-key');
+    expect(actor?.status).toBe('archived');
+  });
+
   it('lists both families side by side', () => {
     const space = spaceRepo.createSpace({
       workspacePath: '/workspace/project',

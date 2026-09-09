@@ -57,6 +57,16 @@ export interface WorkerAgentToLongHorizonOptions {
 
 export const MIGRATED_WORKER_TEMPLATE_KEY = 'migration.legacy_space_agent';
 
+export function isMigratedWorkerAgent(
+  agent: Pick<SpaceLongHorizonAgent, 'id' | 'templateKey'>
+): boolean {
+  if (agent.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) return true;
+  return (
+    agent.templateKey !== null &&
+    isMigrationIdentityKey(agent.templateKey, WORKER_CUSTOM_TEMPLATE_KEY_PREFIX, agent.id, 'm241')
+  );
+}
+
 export function workerAgentToLongHorizonParams(
   worker: WorkerAgentRowSource,
   options: WorkerAgentToLongHorizonOptions

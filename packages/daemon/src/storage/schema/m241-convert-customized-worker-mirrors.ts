@@ -5,9 +5,9 @@ import type {
   SpaceWorkflow,
 } from '@hyperneo/shared';
 import {
+  MIGRATED_AGENT_TEMPLATE_KEY_PREFIX,
   synthesizeWorkerCustomTemplate,
   workerCustomTemplateKey,
-  MIGRATED_AGENT_TEMPLATE_KEY_PREFIX,
 } from '../../lib/space/agents/agent-template-synthesis.ts';
 import { getLongHorizonAgentTemplates } from '../../lib/space/agents/long-horizon-agent-templates.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
@@ -18,13 +18,13 @@ import {
 import { SpaceAgentTemplateRepository } from '../repositories/space-agent-template-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../repositories/space-long-horizon-agent-repository.ts';
 import { SpaceWorkflowDefinitionVersionRepository } from '../repositories/space-workflow-definition-version-repository.ts';
+import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import { matchesSynthesis } from './m228-migrate-workflow-agent-template-refs.ts';
 import {
   agentsWithLiveState,
   isPristineWorkerContent,
   referencedAgentIds,
 } from './m233-retire-pristine-seeded-worker-agents.ts';
-import type { Database as BunDatabase } from '../sqlite-compat.ts';
 
 const TASK_AGENT_TARGET = 'task-agent';
 const MAX_TEMPLATE_KEY_ATTEMPTS = 100;
@@ -158,6 +158,11 @@ function clearMirrorSlots(
   let dirty = false;
   const occupied = new Set<string>();
   const newKeys = new Set(keyByAgentId.values());
+  const slotNames = new Set<string>();
+  for (const occ of occurrences) {
+    const name = occ.effectiveName.trim();
+    if (name) slotNames.add(name);
+  }
   for (const occ of occurrences) {
     const finalName = occ.effectiveName;
     const slotKey = typeof occ.slot.templateKey === 'string' ? occ.slot.templateKey.trim() : '';
@@ -179,7 +184,7 @@ function clearMirrorSlots(
       (spaceId !== undefined && spaceByAgentId.get(agentId) !== spaceId)
     ) {
       const nameOwnedByEarlierSlot = finalName !== '' && occupied.has(finalName);
-      if (slotKey && newKeys.has(slotKey)) {
+      if (slotKey && newKeys.has(slotKey) && !resolvable(slotKey)) {
         const slotName = typeof occ.slot.name === 'string' ? occ.slot.name.trim() : '';
         if (
           targets.has(slotKey) &&
@@ -188,9 +193,9 @@ function clearMirrorSlots(
           !occupied.has(slotName)
         ) {
           clearedNames.set(slotKey, occ.slot.name as string);
+          delete occ.slot.templateKey;
+          dirty = true;
         }
-        delete occ.slot.templateKey;
-        dirty = true;
       }
       if (finalName) occupied.add(finalName);
       occupied.add(agentId);
@@ -202,7 +207,12 @@ function clearMirrorSlots(
       existingKey && resolvable(existingKey) && !m228OwnedKey
         ? existingKey
         : (keyByAgentId.get(agentId) ?? '');
-    if (!m228OwnedKey && bindingKey !== '' && targets.has(bindingKey)) {
+    if (
+      !m228OwnedKey &&
+      bindingKey !== '' &&
+      targets.has(bindingKey) &&
+      (slotNames.has(bindingKey) || occupied.has(bindingKey))
+    ) {
       occupied.add(finalName);
       occupied.add(agentId);
       if (existingKey) occupied.add(existingKey);
@@ -212,14 +222,21 @@ function clearMirrorSlots(
     if (keyTargeted) {
       const candidateName = occ.rawName.trim() ? (occ.slot.name as string) : occ.agentId;
       const nameContested = candidateName === '' || occupied.has(candidateName);
-      if (!nameContested && occ.slot.templateKey !== bindingKey) {
-        if (!occ.rawName.trim()) occ.slot.name = occ.agentId;
+      if (!nameContested) {
+        if (occ.slot.templateKey !== bindingKey) {
+          if (!occ.rawName.trim()) occ.slot.name = occ.agentId;
+          occ.slot.templateKey = bindingKey;
+          dirty = true;
+          if (occ.node) occ.node.agents = [occ.slot];
+        } else if (!occ.rawName.trim()) {
+          occ.slot.name = occ.agentId;
+          dirty = true;
+          if (occ.node) occ.node.agents = [occ.slot];
+        }
         if (existingKey && !occupied.has(existingKey) && !clearedNames.has(existingKey)) {
           clearedNames.set(existingKey, occ.slot.name as string);
+          dirty = true;
         }
-        occ.slot.templateKey = bindingKey;
-        dirty = true;
-        if (occ.node) occ.node.agents = [occ.slot];
       }
       occupied.add(finalName);
       occupied.add(occ.agentId);
