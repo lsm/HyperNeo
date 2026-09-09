@@ -669,7 +669,10 @@ export class TaskAgentManager {
       dispatcherActionNames?: ReadonlySet<string>;
     } = { reservationHeld: false, reservedExecution: false };
     const spawnNode = workflow?.nodes.find((node) => node.id === execution.workflowNodeId);
-    if (spawnNode) {
+    const reusingLiveSession =
+      !!execution.agentSessionId && this.isSessionAlive(execution.agentSessionId);
+    const awaitingConcurrentSpawn = this.spawningExecutionIds.has(execution.id);
+    if (spawnNode && !reusingLiveSession && !awaitingConcurrentSpawn) {
       this.assertSlotTemplateSpawnable({
         workflow,
         runId: workflowRun.id,
@@ -5459,7 +5462,13 @@ export class TaskAgentManager {
         `spawnPostApprovalSubSession: no agent slot "${targetAgent}" declared in workflow ${workflow.id}`
       );
     }
-    if (auditNode) {
+
+    const existingSessionId = await this.findLiveSubSessionForAgent(
+      task,
+      matchedSlot.name,
+      matchedNodeId
+    );
+    if (auditNode && !existingSessionId) {
       this.assertSlotTemplateSpawnable({
         workflow,
         runId: task.workflowRunId ?? taskId,
@@ -5470,12 +5479,6 @@ export class TaskAgentManager {
         slotName: matchedSlot.name,
       });
     }
-
-    const existingSessionId = await this.findLiveSubSessionForAgent(
-      task,
-      matchedSlot.name,
-      matchedNodeId
-    );
     await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, admission);
     if (existingSessionId) {
       const existing = this.getSubSession(existingSessionId);

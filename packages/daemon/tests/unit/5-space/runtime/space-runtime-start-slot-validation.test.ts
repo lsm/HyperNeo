@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { WorkflowNodeAgent } from '@hyperneo/shared';
+import type { SpaceWorkflow, WorkflowNodeAgent } from '@hyperneo/shared';
 import { SpaceManager } from '../../../../src/lib/space/managers/space-manager.ts';
+import { computeDefinitionVersion } from '../../../../src/lib/space/workflows/definition-version.ts';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager.ts';
 import {
   isMissingWorkflowAgentError,
@@ -222,10 +223,16 @@ describe('SpaceRuntime startWorkflowRun start-slot template audit', () => {
       .get(run.workflowId, run.definitionVersion) as { payload: string };
     const payload = JSON.parse(pinnedRow.payload);
     payload.templateSnapshots['migrated.agent.agent-orphan'].instructions = '';
+    const repinned = computeDefinitionVersion(payload);
     db.prepare(
-      `UPDATE space_workflow_definition_versions SET payload = ?
-       WHERE workflow_id = ? AND version_hash = ?`
-    ).run(JSON.stringify(payload), run.workflowId, run.definitionVersion);
+      `INSERT INTO space_workflow_definition_versions
+       (workflow_id, version_hash, space_id, payload, source, created_at)
+       VALUES (?, ?, ?, ?, 'pin-run', ?)`
+    ).run(run.workflowId, repinned.versionHash, SPACE_ID, repinned.payload, Date.now());
+    db.prepare(`UPDATE space_workflow_runs SET definition_version = ? WHERE id = ?`).run(
+      repinned.versionHash,
+      run.id
+    );
 
     let caught: unknown;
     try {

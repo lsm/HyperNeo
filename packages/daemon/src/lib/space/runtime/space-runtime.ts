@@ -3920,6 +3920,18 @@ export class SpaceRuntime {
     );
 
     const run = this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
+
+    const pinnedWorkflow = this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? workflow;
+    const auditStartNode = pinnedWorkflow.nodes.find((s) => s.id === workflow.startNodeId);
+    if (auditStartNode) {
+      try {
+        this.assertNodeSlotsResolvable(auditStartNode, run, pinnedWorkflow);
+      } catch (err) {
+        this.config.workflowRunRepo.deleteRun(run.id);
+        throw err;
+      }
+    }
+
     await this.safeOnWorkflowRunCreated(spaceId, run);
 
     const meta: ExecutorMeta = { workflow, spaceId, workspacePath: space.workspacePath };
@@ -3939,7 +3951,6 @@ export class SpaceRuntime {
     let canonicalTask: SpaceTask | null = null;
     let startAgents: ReturnType<typeof resolveNodeAgents>;
     try {
-      this.assertNodeSlotsResolvable(startNode, run, workflow);
       if (options.parentTaskId) {
         const parent = this.config.taskRepo.getTask(options.parentTaskId);
         if (!parent) {
@@ -3980,9 +3991,6 @@ export class SpaceRuntime {
       this.executors.delete(run.id);
       this.executorMeta.delete(run.id);
       await this.transitionRunStatusAndEmit(run.id, 'cancelled');
-      if (!canonicalTask) {
-        this.config.workflowRunRepo.deleteRun(run.id);
-      }
       throw err;
     }
 

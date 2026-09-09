@@ -35,6 +35,7 @@ function makeManager(templateRepo: ReturnType<typeof stubTemplateRepo>): TaskAge
     },
     workflowRunRepo: { getRun: () => null },
     spaceWorkflowManager: { getWorkflowForRun: () => null },
+    nodeExecutionRepo: { listByWorkflowRun: () => [] },
     templateRepo: templateRepo as never,
   } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
 }
@@ -132,6 +133,22 @@ describe('TaskAgentManager spawn-boundary template audit', () => {
         RUN,
         makeExecution('orphan-slot')
       );
+    } catch (err) {
+      caught = err;
+    }
+    expect(isMissingWorkflowAgentError(caught)).toBe(false);
+  });
+
+  test('spawnWorkflowNodeAgentForExecution skips the audit when a live session would be reused', async () => {
+    const manager = makeManager(ORPHAN_REPO);
+    const withLiveSession = {
+      ...makeExecution('orphan-slot'),
+      agentSessionId: 'session-live',
+    } as NodeExecution;
+    (manager as unknown as Record<string, unknown>).isSessionAlive = () => true;
+    let caught: unknown;
+    try {
+      await manager.spawnWorkflowNodeAgentForExecution(TASK, SPACE, WORKFLOW, RUN, withLiveSession);
     } catch (err) {
       caught = err;
     }
