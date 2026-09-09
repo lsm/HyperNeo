@@ -12,7 +12,6 @@ import type {
   SystemState,
   SettingsState,
   GlobalStateSnapshot,
-  SessionStateSnapshot,
   SessionState,
   SDKMessagesState,
   SDKMessagesUpdate,
@@ -248,23 +247,6 @@ export class StateProjectionService {
       return await this.getGlobalSnapshot();
     });
 
-    this.messageHub.onRequest(STATE_CHANNELS.SESSION_SNAPSHOT, async (data) => {
-      const { sessionId } = data as { sessionId: string };
-      return await this.getSessionSnapshot(sessionId);
-    });
-
-    this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SYSTEM, async () => {
-      return await this.getSystemState();
-    });
-
-    this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SESSIONS, async () => {
-      return await this.getSessionsState();
-    });
-
-    this.messageHub.onRequest(STATE_CHANNELS.GLOBAL_SETTINGS, async () => {
-      return await this.getSettingsState();
-    });
-
     this.messageHub.onRequest(STATE_CHANNELS.SESSION, async (data) => {
       const { sessionId } = data as { sessionId: string };
       return await this.getSessionState(sessionId);
@@ -357,24 +339,6 @@ export class StateProjectionService {
       sessions,
       hasArchivedSessions,
       timestamp: Date.now(),
-    };
-  }
-
-  async getSessionSnapshot(sessionId: string): Promise<SessionStateSnapshot> {
-    const [session, sdkMessages] = await Promise.all([
-      this.getSessionState(sessionId),
-      this.getSDKMessagesState(sessionId),
-    ]);
-
-    return {
-      session,
-      sdkMessages,
-      meta: {
-        channel: 'session',
-        sessionId,
-        lastUpdate: Date.now(),
-        version: this.channelVersions.get(`session:${sessionId}`) || 0,
-      },
     };
   }
 

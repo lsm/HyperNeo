@@ -140,18 +140,6 @@ describe('End-to-End Session Workflow', () => {
 
       expect(snapshot.sessions.sessions.length).toBeGreaterThanOrEqual(2);
     });
-
-    test('should provide consistent session snapshot', async () => {
-      const sessionId = await createSession('/test/session-snapshot');
-
-      const snapshot = (await daemon.messageHub.request(STATE_CHANNELS.SESSION_SNAPSHOT, {
-        sessionId,
-      })) as {
-        session: { sessionInfo: { id: string } };
-      };
-
-      expect(snapshot.session.sessionInfo.id).toBe(sessionId);
-    });
   });
 
   describe('Error Recovery', () => {

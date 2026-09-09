@@ -45,8 +45,8 @@ export async function getWorkspaceRoot(page: Page): Promise<string> {
       throw new Error('MessageHub not available');
     }
 
-    const systemState = await hub.request('state.system', {});
-    return (systemState as { workspaceRoot: string }).workspaceRoot;
+    const snapshot = await hub.request('state.global.snapshot', {});
+    return (snapshot as { system: { workspaceRoot: string } }).system.workspaceRoot;
   });
 
   if (!workspaceRoot) {
