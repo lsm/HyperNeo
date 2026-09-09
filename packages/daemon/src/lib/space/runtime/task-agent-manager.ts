@@ -667,7 +667,7 @@ export class TaskAgentManager {
       appliedSlot?: WorkflowNodeAgent;
       dispatcherActionNames?: ReadonlySet<string>;
     } = { reservationHeld: false, reservedExecution: false };
-    const spawnNode = workflow.nodes.find((node) => node.id === execution.workflowNodeId);
+    const spawnNode = workflow?.nodes.find((node) => node.id === execution.workflowNodeId);
     if (spawnNode) {
       this.assertSlotTemplateSpawnable({
         workflow,

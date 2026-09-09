@@ -22,6 +22,9 @@ function stubTemplateRepo(getByKey: (key: string) => { key: string; instructions
 
 function makeManager(templateRepo: ReturnType<typeof stubTemplateRepo>): TaskAgentManager {
   return new TaskAgentManager({
+    db: { getDatabase: () => null, getSession: () => null },
+    sessionManager: { registerSession: () => {}, getSession: () => undefined },
+    internalEventBus: { subscribe: () => () => {} },
     spaceManager: {
       getSpace: async () => ({
         id: SPACE_ID,
