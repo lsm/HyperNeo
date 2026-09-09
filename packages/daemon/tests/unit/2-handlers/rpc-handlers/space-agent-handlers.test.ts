@@ -238,7 +238,8 @@ describe('Space Agent RPC Handlers', () => {
       new SpaceAgentTemplateManager(
         new SpaceAgentTemplateRepository(db as any),
         undefined,
-        workflowRepo
+        workflowRepo,
+        templateInstanceScanFromRepo(longHorizonRepo)
       )
     );
   });

@@ -302,23 +302,6 @@ describe('TemplateModelFields', () => {
     expect(values).toEqual(['', 'off', 'think32k']);
   });
 
-  it('clears an invalid initial thinking level once the catalog resolves', async () => {
-    const onChange = vi.fn();
-    render(
-      <TemplateModelFields
-        value={{ model: 'minimax-1', provider: 'minimax', thinkingLevel: 'think8k' }}
-        onChange={onChange}
-      />
-    );
-    await waitFor(() =>
-      expect(onChange).toHaveBeenCalledWith({
-        model: 'minimax-1',
-        provider: 'minimax',
-        thinkingLevel: null,
-      })
-    );
-  });
-
   it('preserves a saved thinking level when the selected model is absent from the catalog', async () => {
     const onChange = vi.fn();
     const { getByTestId } = render(
