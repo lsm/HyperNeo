@@ -899,7 +899,8 @@ export class TaskAgentManager {
         resolveWorkflowNodeSlot(workflow, execution.workflowNodeId, execution.agentName) ?? null,
       createSpawnedSession: async (request) => {
         const customAgent =
-          this.resolveSlotSpawnConfig(request.space.id, request.slot)?.agent ?? null;
+          this.resolveSlotSpawnConfig(request.space.id, request.slot, request.workflowRun)?.agent ??
+          null;
         let slot = request.slot;
         let poolProvider: string | undefined;
         if (customAgent) {
@@ -1075,7 +1076,11 @@ export class TaskAgentManager {
             })
           : [];
 
-        const spawnConfig = this.resolveSlotSpawnConfig(request.space.id, request.slot);
+        const spawnConfig = this.resolveSlotSpawnConfig(
+          request.space.id,
+          request.slot,
+          request.workflowRun
+        );
         if (!spawnConfig) {
           throw new PermanentSpawnError(
             `Agent not found: ${request.slot.agentId || request.slot.templateKey} (task: ${request.task.id})`
@@ -2213,7 +2218,7 @@ export class TaskAgentManager {
         workflow: workflow ?? undefined,
         workflowRun: workflowRun ?? undefined,
       });
-      const spawnConfig = this.resolveSlotSpawnConfig(space.id, matchedSlot);
+      const spawnConfig = this.resolveSlotSpawnConfig(space.id, matchedSlot, workflowRun);
       if (spawnConfig) {
         slotInit = resolveAgentInit({
           task,
@@ -3368,10 +3373,14 @@ export class TaskAgentManager {
 
   private resolveSlotSpawnConfig(
     spaceId: string,
-    slot: WorkflowNodeAgent
+    slot: WorkflowNodeAgent,
+    workflowRun?: Pick<SpaceWorkflowRun, 'workflowId' | 'definitionVersion'> | null
   ): NodeAgentSpawnConfig | null {
     if (slot.templateKey?.trim()) {
-      const template = this.resolveNodeTemplateSource(slot.templateKey.trim());
+      const templateKey = slot.templateKey.trim();
+      const template =
+        this.resolvePinnedTemplateSource(workflowRun, templateKey) ??
+        this.resolveNodeTemplateSource(templateKey);
       if (template) {
         return resolveNodeAgentConfig(
           template,
@@ -3402,6 +3411,17 @@ export class TaskAgentManager {
     return this.resolveUnifiedSlotAgent(spaceId, agentId) !== null;
   }
 
+  private resolvePinnedTemplateSource(
+    workflowRun: Pick<SpaceWorkflowRun, 'workflowId' | 'definitionVersion'> | null | undefined,
+    key: string
+  ): NodeAgentTemplateSource | null {
+    if (!workflowRun?.definitionVersion) return null;
+    const snapshots =
+      this.config.spaceWorkflowManager.getWorkflowForRun(workflowRun)?.templateSnapshots;
+    if (!snapshots || !Object.hasOwn(snapshots, key)) return null;
+    return spaceAgentTemplateToNodeSource(snapshots[key]);
+  }
+
   private resolveNodeTemplateSource(key: string): NodeAgentTemplateSource | null {
     const builtIn = getLongHorizonAgentTemplate(key) as NodeAgentTemplateSource | undefined;
     if (builtIn) return builtIn;
@@ -3411,7 +3431,8 @@ export class TaskAgentManager {
 
   private buildAgentNameAliasesForExecution(
     workflow: SpaceWorkflow | null,
-    execution: NodeExecution
+    execution: NodeExecution,
+    workflowRun?: Pick<SpaceWorkflowRun, 'workflowId' | 'definitionVersion'> | null
   ): string[] {
     const aliases = new Set<string>(this.agentNameVariants(execution.agentName));
     if (!workflow) return [...aliases];
@@ -3441,7 +3462,7 @@ export class TaskAgentManager {
     if (execution.agentId) {
       spaceAgent = this.resolveUnifiedSlotAgent(workflow.spaceId, execution.agentId);
     } else if (slot) {
-      const spawnConfig = this.resolveSlotSpawnConfig(workflow.spaceId, slot);
+      const spawnConfig = this.resolveSlotSpawnConfig(workflow.spaceId, slot, workflowRun);
       spaceAgent = spawnConfig?.agent ?? null;
     }
     if (spaceAgent?.displayName) {
@@ -4056,7 +4077,7 @@ export class TaskAgentManager {
       return null;
     }
 
-    const spawnConfig = this.resolveSlotSpawnConfig(space.id, slot);
+    const spawnConfig = this.resolveSlotSpawnConfig(space.id, slot, workflowRun);
     if (!spawnConfig) {
       log.warn(
         `TaskAgentManager.rehydrateSubSession: could not resolve agent config for ${execution.agentName} ` +
@@ -4980,7 +5001,7 @@ export class TaskAgentManager {
     });
 
     const agentNameAliases = execution
-      ? this.buildAgentNameAliasesForExecution(workflow, execution)
+      ? this.buildAgentNameAliasesForExecution(workflow, execution, run)
       : this.agentNameVariants(agentName);
 
     const isEndNode = this.isTerminalNode(workflow, workflowNodeId);
@@ -5473,7 +5494,7 @@ export class TaskAgentManager {
     }).workspacePath;
 
     const matchedNode = workflow.nodes.find((node) => node.id === matchedNodeId);
-    const spawnConfig = this.resolveSlotSpawnConfig(spaceId, matchedSlot);
+    const spawnConfig = this.resolveSlotSpawnConfig(spaceId, matchedSlot, workflowRun);
     const poolAgent = spawnConfig?.agent ?? null;
     let slot = matchedSlot;
     let poolProvider: string | undefined;
