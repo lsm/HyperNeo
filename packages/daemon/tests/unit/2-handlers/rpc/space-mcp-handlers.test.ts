@@ -3,12 +3,7 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type {
-  MessageHub,
-  Space,
-  SpaceMcpListResponse,
-  McpImportsRefreshResponse,
-} from '@hyperneo/shared';
+import type { MessageHub, Space, McpImportsRefreshResponse } from '@hyperneo/shared';
 import { createTables } from '../../../../src/storage/schema';
 import { createReactiveDatabase } from '../../../../src/storage/reactive-database';
 import { AppMcpServerRepository } from '../../../../src/storage/repositories/app-mcp-server-repository';
@@ -132,84 +127,6 @@ describe('space-mcp-handlers', () => {
       process.env.HOME = originalHome;
     }
     rmSync(tmpRoot, { recursive: true, force: true });
-  });
-
-  describe('space.mcp.list', () => {
-    test('returns one entry per registry row with resolved enabled state', async () => {
-      const globalOn = appMcpRepo.create({
-        name: 'global-on',
-        sourceType: 'stdio',
-        command: 'on',
-        enabled: true,
-        source: 'user',
-      });
-      const globalOff = appMcpRepo.create({
-        name: 'global-off',
-        sourceType: 'stdio',
-        command: 'off',
-        enabled: false,
-        source: 'user',
-      });
-
-      enablementRepo.setOverride('space', 'space-A', globalOn.id, false);
-
-      const { hub, handlers } = createMockHub();
-      const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
-
-      const handler = handlers.get('space.mcp.list')!;
-      const result = (await handler({ spaceId: 'space-A' })) as SpaceMcpListResponse;
-
-      expect(result.entries).toHaveLength(2);
-      const on = result.entries.find((e) => e.serverId === globalOn.id)!;
-      expect(on.globallyEnabled).toBe(true);
-      expect(on.overridden).toBe(true);
-      expect(on.enabled).toBe(false);
-
-      const off = result.entries.find((e) => e.serverId === globalOff.id)!;
-      expect(off.globallyEnabled).toBe(false);
-      expect(off.overridden).toBe(false);
-      expect(off.enabled).toBe(false);
-    });
-
-    test('surfaces imported source + sourcePath on entries', async () => {
-      appMcpRepo.create({
-        name: 'imp',
-        sourceType: 'stdio',
-        command: 'x',
-        source: 'imported',
-        sourcePath: '/repo/.mcp.json',
-        enabled: true,
-      });
-
-      const { hub, handlers } = createMockHub();
-      const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
-
-      const handler = handlers.get('space.mcp.list')!;
-      const result = (await handler({ spaceId: 'space-A' })) as SpaceMcpListResponse;
-      const entry = result.entries.find((e) => e.name === 'imp')!;
-      expect(entry.source).toBe('imported');
-      expect(entry.sourcePath).toBe('/repo/.mcp.json');
-    });
-
-    test('throws when spaceId is missing', async () => {
-      const { hub, handlers } = createMockHub();
-      const spaceManager = createSpaceManagerMock([]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
-
-      const handler = handlers.get('space.mcp.list')!;
-      await expect(handler({})).rejects.toThrow('spaceId is required');
-    });
-
-    test('throws when space does not exist', async () => {
-      const { hub, handlers } = createMockHub();
-      const spaceManager = createSpaceManagerMock([fakeSpace('space-A')]);
-      setupSpaceMcpHandlers(hub, createMockInternalEventBus(), db, spaceManager);
-
-      const handler = handlers.get('space.mcp.list')!;
-      await expect(handler({ spaceId: 'nope' })).rejects.toThrow('Space not found');
-    });
   });
 
   describe('space.mcp.setEnabled', () => {

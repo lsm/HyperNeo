@@ -195,53 +195,6 @@ export function setupSpaceHandlers(
     );
   });
 
-  messageHub.onRequest('space.list', async (data) => {
-    const params = (data ?? {}) as { includeArchived?: boolean };
-    return spaceManager.listSpaces(params.includeArchived ?? false);
-  });
-
-  messageHub.onRequest('space.get', async (data) => {
-    const params = data as { id?: string; slug?: string };
-
-    if (!params.id && !params.slug) {
-      throw new Error('id or slug is required');
-    }
-
-    let space;
-    if (params.id) {
-      space = await spaceManager.getSpace(params.id);
-    } else {
-      space = await spaceManager.getSpaceBySlug(params.slug!);
-    }
-
-    if (!space) {
-      throw new Error(`Space not found: ${params.id ?? params.slug}`);
-    }
-
-    return space;
-  });
-
-  messageHub.onRequest('space.updateSlug', async (data) => {
-    const params = data as { id: string; slug: string };
-
-    if (!params.id) {
-      throw new Error('id is required');
-    }
-    if (!params.slug) {
-      throw new Error('slug is required');
-    }
-
-    const space = await spaceManager.updateSlug(params.id, params.slug);
-
-    internalEventBus
-      .publish('space.updated', { sessionId: 'global', spaceId: params.id, space })
-      .catch((err) => {
-        log.warn('Failed to emit space.updated:', err);
-      });
-
-    return space;
-  });
-
   messageHub.onRequest('space.update', async (data) => {
     const params = data as { id: string } & UpdateSpaceParams;
 
@@ -268,26 +221,6 @@ export function setupSpaceHandlers(
 
     internalEventBus
       .publish('space.updated', { sessionId: 'global', spaceId: id, space })
-      .catch((err) => {
-        log.warn('Failed to emit space.updated:', err);
-      });
-
-    return space;
-  });
-
-  messageHub.onRequest('space.setConcurrentLimit', async (data) => {
-    const params = data as { spaceId?: string; id?: string; limit: unknown };
-    const spaceId = params.spaceId ?? params.id;
-
-    if (!spaceId) {
-      throw new Error('spaceId is required');
-    }
-
-    const limit = validateConcurrentLimit(params.limit);
-    const space = await spaceManager.updateSpace(spaceId, { maxConcurrentTasks: limit });
-
-    internalEventBus
-      .publish('space.updated', { sessionId: 'global', spaceId, space })
       .catch((err) => {
         log.warn('Failed to emit space.updated:', err);
       });

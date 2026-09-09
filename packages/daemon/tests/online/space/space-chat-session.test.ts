@@ -73,11 +73,11 @@ describe('space:chat session provisioning', () => {
       const space = await createSpace(daemon);
       const spaceChatSessionId = `space:chat:${space.id}`;
 
-      const fetchedSpace = (await daemon.messageHub.request('space.get', {
+      const fetched = (await daemon.messageHub.request('space.overview', {
         id: space.id,
-      })) as Space;
+      })) as { space: Space };
 
-      expect(fetchedSpace.sessionIds).toContain(spaceChatSessionId);
+      expect(fetched.space.sessionIds).toContain(spaceChatSessionId);
     },
     TEST_TIMEOUT
   );
