@@ -6,6 +6,10 @@ import {
 } from '../../../../../src/lib/space/agents/agent-template-synthesis.ts';
 import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../../src/lib/space/agents/worker-long-horizon-mapper.ts';
+import {
+  computeDefinitionVersion,
+  verifyDefinitionVersion,
+} from '../../../../../src/lib/space/workflows/definition-version.ts';
 import { SpaceAgentTemplateRepository } from '../../../../../src/storage/repositories/space-agent-template-repository.ts';
 import { SpaceLongHorizonAgentRepository } from '../../../../../src/storage/repositories/space-long-horizon-agent-repository.ts';
 import { runMigration213 } from '../../../../../src/storage/schema/m213-inactivity-watchdog.ts';
@@ -15,10 +19,6 @@ import { runMigration227 } from '../../../../../src/storage/schema/m227-space-ag
 import { runMigration238 } from '../../../../../src/storage/schema/m238-space-agent-template-labels.ts';
 import { runMigration241 } from '../../../../../src/storage/schema/m241-convert-customized-worker-mirrors.ts';
 import { Database } from '../../../../../src/storage/sqlite-compat.ts';
-import {
-  computeDefinitionVersion,
-  verifyDefinitionVersion,
-} from '../../../../../src/lib/space/workflows/definition-version.ts';
 import { insertSpace } from '../../../helpers/space-agent-schema.ts';
 import { createSpaceTables } from '../../../helpers/space-test-db.ts';
 
@@ -768,7 +768,7 @@ describe('migration 241: convert customized worker mirrors to user templates', (
     db.close();
   });
 
-  test('retains a targeted newly-minted key when the slot name is owned by an earlier slot', () => {
+  test('clears a targeted newly-minted key when the slot name is owned by an earlier slot', () => {
     const { db, agentRepo } = createDb();
     agentRepo.update(SWE_ID, { model: 'claude-sonnet-5' });
     const key = workerCustomTemplateKey(SWE_ID);
@@ -793,9 +793,7 @@ describe('migration 241: convert customized worker mirrors to user templates', (
 
     runMigration241(db);
 
-    expect(nodeAgents(db, 'node-contested-b')).toEqual([
-      { agentId: 'user-2', templateKey: key, name: 'ops' },
-    ]);
+    expect(nodeAgents(db, 'node-contested-b')).toEqual([{ agentId: 'user-2', name: 'ops' }]);
     const postApproval = db
       .prepare(`SELECT post_approval FROM space_workflows WHERE id = 'workflow-contested-neutral'`)
       .get() as { post_approval: string };
@@ -816,6 +814,30 @@ describe('migration 241: convert customized worker mirrors to user templates', (
     runMigration241(db);
 
     expect(nodeAgents(db, 'node-stale-clear')).toEqual([{ agentId: 'user-1', name: 'ops' }]);
+    db.close();
+  });
+
+  test('rebinds a mirror slot named after its own generated key', () => {
+    const { db, agentRepo } = createDb();
+    agentRepo.update(SWE_ID, { model: 'claude-sonnet-5' });
+    const key = workerCustomTemplateKey(SWE_ID);
+    insertWorkflow(db, 'workflow-self-name', 'space-1', JSON.stringify({ targetAgent: key }));
+    insertNode(
+      db,
+      'node-self-name',
+      'workflow-self-name',
+      JSON.stringify({ agents: [{ agentId: SWE_ID, name: key }] })
+    );
+
+    runMigration241(db);
+
+    expect(nodeAgents(db, 'node-self-name')).toEqual([
+      { agentId: '', name: key, templateKey: key },
+    ]);
+    const postApproval = db
+      .prepare(`SELECT post_approval FROM space_workflows WHERE id = 'workflow-self-name'`)
+      .get() as { post_approval: string };
+    expect(JSON.parse(postApproval.post_approval)).toEqual({ targetAgent: key });
     db.close();
   });
 

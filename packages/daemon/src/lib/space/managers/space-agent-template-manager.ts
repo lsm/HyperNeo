@@ -13,6 +13,10 @@ import type {
 } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
 import { isReservedAgentHandle } from '../agent-handle.ts';
+import {
+  MIGRATED_AGENT_TEMPLATE_KEY_PREFIX,
+  WORKER_CUSTOM_TEMPLATE_KEY_PREFIX,
+} from '../agents/agent-template-synthesis.ts';
 import type { SpaceAgentResult } from '../agents/agent-validation.ts';
 import {
   validateAgentModel,
@@ -108,6 +112,12 @@ function validateTemplateKey(key: string): string | null {
   }
   if (key === MIGRATED_WORKER_TEMPLATE_KEY) {
     return `Template key "${key}" is reserved`;
+  }
+  if (key.startsWith(`${WORKER_CUSTOM_TEMPLATE_KEY_PREFIX}.`)) {
+    return `Template key "${key}" is reserved for migration-managed templates`;
+  }
+  if (key.startsWith(`${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.`)) {
+    return `Template key "${key}" is reserved for migration-managed templates`;
   }
   if ((RETIRED_LONG_HORIZON_TEMPLATE_KEYS as readonly string[]).includes(key)) {
     return `Template key "${key}" is retired and cannot be reused`;

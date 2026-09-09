@@ -203,6 +203,26 @@ describe('SpaceAgentTemplateManager', () => {
       if (!result.ok) expect(result.error).toContain('retired');
     });
 
+    test('rejects keys squatting the migration-managed worker-custom namespace', async () => {
+      const result = await manager.create({
+        ...fullParams(),
+        key: 'worker-custom.agent-1',
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('migration-managed');
+    });
+
+    test('rejects keys squatting the migration-managed migrated-agent namespace', async () => {
+      const result = await manager.create({
+        ...fullParams(),
+        key: 'migrated.agent.agent-1.custom',
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('migration-managed');
+    });
+
     test('rejects an invalid handle', async () => {
       const result = await manager.create({ ...fullParams(), handle: 'Bad Handle!' });
 

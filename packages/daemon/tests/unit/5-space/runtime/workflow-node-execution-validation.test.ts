@@ -1,6 +1,5 @@
-import { describe, test, expect } from 'bun:test';
-import type { WorkflowNode } from '@hyperneo/shared';
-import type { NodeExecution, SpaceWorkflow } from '@hyperneo/shared';
+import { describe, expect, test } from 'bun:test';
+import type { NodeExecution, SpaceWorkflow, WorkflowNode } from '@hyperneo/shared';
 import {
   findMissingNodeAgentReferences,
   formatMissingAgentReference,
@@ -195,6 +194,29 @@ describe('validateExecutionAgainstWorkflow', () => {
       workflow
     );
     expect(result).toEqual({ valid: true });
+  });
+
+  test('normalizes a recorded m228-suffixed template identity', () => {
+    const workflow = makeWorkflow([
+      { agentId: '', templateKey: 'worker-custom.agent-1', name: 'coder' },
+    ]);
+    const result = validateExecutionAgainstWorkflow(
+      makeExecution({ agentId: 'template:migrated.agent.agent-1.m228' }),
+      workflow
+    );
+    expect(result).toEqual({ valid: true });
+  });
+
+  test('rejects a squatted migrated-agent template key against a converted mirror slot', () => {
+    const workflow = makeWorkflow([
+      { agentId: '', templateKey: 'worker-custom.agent-1', name: 'coder' },
+    ]);
+    const result = validateExecutionAgainstWorkflow(
+      makeExecution({ agentId: 'template:migrated.agent.agent-1.custom' }),
+      workflow
+    );
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.permanent).toBe(true);
   });
 
   test('rejects a worker-custom key belonging to another agent', () => {

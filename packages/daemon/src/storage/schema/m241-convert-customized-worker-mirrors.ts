@@ -158,10 +158,10 @@ function clearMirrorSlots(
   let dirty = false;
   const occupied = new Set<string>();
   const newKeys = new Set(keyByAgentId.values());
-  const slotNames = new Set<string>();
+  const slotNameCounts = new Map<string, number>();
   for (const occ of occurrences) {
     const name = occ.effectiveName.trim();
-    if (name) slotNames.add(name);
+    if (name) slotNameCounts.set(name, (slotNameCounts.get(name) ?? 0) + 1);
   }
   for (const occ of occurrences) {
     const finalName = occ.effectiveName;
@@ -186,18 +186,16 @@ function clearMirrorSlots(
       const nameOwnedByEarlierSlot = finalName !== '' && occupied.has(finalName);
       if (slotKey && newKeys.has(slotKey) && !resolvable(slotKey)) {
         const slotName = typeof occ.slot.name === 'string' ? occ.slot.name.trim() : '';
-        const aliasRecorded =
+        if (
           targets.has(slotKey) &&
           slotName !== '' &&
           !nameOwnedByEarlierSlot &&
-          !occupied.has(slotName);
-        if (aliasRecorded) {
+          !occupied.has(slotName)
+        ) {
           clearedNames.set(slotKey, occ.slot.name as string);
         }
-        if (!targets.has(slotKey) || aliasRecorded) {
-          delete occ.slot.templateKey;
-          dirty = true;
-        }
+        delete occ.slot.templateKey;
+        dirty = true;
       }
       if (finalName) occupied.add(finalName);
       occupied.add(agentId);
@@ -209,11 +207,13 @@ function clearMirrorSlots(
       existingKey && resolvable(existingKey) && !m228OwnedKey
         ? existingKey
         : (keyByAgentId.get(agentId) ?? '');
+    const selfNamedByKey = finalName.trim() === bindingKey;
+    const keyNamedElsewhere = (slotNameCounts.get(bindingKey) ?? 0) > (selfNamedByKey ? 1 : 0);
     if (
       !m228OwnedKey &&
       bindingKey !== '' &&
       targets.has(bindingKey) &&
-      (slotNames.has(bindingKey) || occupied.has(bindingKey))
+      (keyNamedElsewhere || occupied.has(bindingKey))
     ) {
       occupied.add(finalName);
       occupied.add(agentId);

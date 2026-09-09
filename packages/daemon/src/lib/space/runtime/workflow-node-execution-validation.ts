@@ -196,7 +196,11 @@ function recordedIdentityAgentId(recorded: string): string {
   if (!key.startsWith(`${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.`)) return recorded;
   const rest = key.slice(MIGRATED_AGENT_TEMPLATE_KEY_PREFIX.length + 1);
   const dot = rest.indexOf('.');
-  return dot === -1 ? rest : rest.slice(0, dot);
+  const agentId = dot === -1 ? rest : rest.slice(0, dot);
+  if (!isMigrationIdentityKey(key, MIGRATED_AGENT_TEMPLATE_KEY_PREFIX, agentId, 'm228')) {
+    return recorded;
+  }
+  return agentId;
 }
 
 const SLOT_IDENTITY_MIGRATION_TAGS: ReadonlyArray<readonly [string, string]> = [
