@@ -265,6 +265,32 @@ export function createSpaceAgentSchema(db: Database): void {
 	`);
 
   db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workflow_definition_versions (
+			workflow_id TEXT NOT NULL,
+			version_hash TEXT NOT NULL,
+			space_id TEXT NOT NULL,
+			payload TEXT NOT NULL,
+			source TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (workflow_id, version_hash)
+		)
+	`);
+
+  db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workflow_runs (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			workflow_id TEXT NOT NULL,
+			definition_version TEXT,
+			title TEXT,
+			description TEXT DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`);
+
+  db.exec(`
 		CREATE TABLE IF NOT EXISTS node_executions (
 			id TEXT PRIMARY KEY,
 			workflow_run_id TEXT NOT NULL,
