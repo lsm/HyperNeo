@@ -156,6 +156,7 @@ import {
   explicitTaskWorkspace,
   findAvailableSessionId,
   type NodeAgentSpawnConfig,
+  resolveAgentTemplateInstructions,
   resolveNodeAgentConfig,
   resolveSpawnWorkspace,
   resolveTaskWorkspace,
@@ -3399,7 +3400,10 @@ export class TaskAgentManager {
     const missing = findMissingSlotTemplateReference(
       node,
       slotName,
-      slotTemplateAuditSources(this.config.templateRepo, pinnedSnapshots)
+      slotTemplateAuditSources(
+        (key) => resolveAgentTemplateInstructions(this.config.templateRepo, key),
+        pinnedSnapshots
+      )
     );
     if (!missing) return;
     throw new MissingWorkflowAgentError(

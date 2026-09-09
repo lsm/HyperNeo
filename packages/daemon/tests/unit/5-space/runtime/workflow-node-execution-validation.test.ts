@@ -616,7 +616,7 @@ describe('formatEmptyTemplateInstructionsReference', () => {
 
 describe('findMissingSlotTemplateReference spawn-boundary audit', () => {
   const sources = {
-    templateResolves: (key: string) => key === 'worker.swe',
+    templateResolves: () => true,
     templateInstructions: (key: string) => (key === 'worker.swe' ? 'You are the SWE worker.' : ''),
   };
 
@@ -628,10 +628,8 @@ describe('findMissingSlotTemplateReference spawn-boundary audit', () => {
   });
 
   test('slotTemplateAuditSources prefers the pinned snapshot over the live template', () => {
-    const repo = {
-      getByKey: (key: string) =>
-        key === 'worker.pinned' ? { key, instructions: 'Repaired live instructions.' } : null,
-    };
+    const live = (key: string): string | null =>
+      key === 'worker.pinned' ? 'Repaired live instructions.' : null;
     const snapshots = {
       'worker.pinned': {
         key: 'worker.pinned',
@@ -641,20 +639,18 @@ describe('findMissingSlotTemplateReference spawn-boundary audit', () => {
         instructions: '',
       },
     };
-    expect(slotTemplateAuditSources(repo, snapshots).templateInstructions('worker.pinned')).toBe(
+    expect(slotTemplateAuditSources(live, snapshots).templateInstructions('worker.pinned')).toBe(
       ''
     );
-    expect(slotTemplateAuditSources(repo).templateInstructions('worker.pinned')).toBe(
+    expect(slotTemplateAuditSources(live).templateInstructions('worker.pinned')).toBe(
       'Repaired live instructions.'
     );
   });
 
   test('slotTemplateAuditSources falls back to live resolution for keys absent from snapshots', () => {
-    const repo = {
-      getByKey: (key: string) =>
-        key === 'worker.live' ? { key, instructions: 'Live instructions.' } : null,
-    };
-    const liveFallback = slotTemplateAuditSources(repo, {});
+    const live = (key: string): string | null =>
+      key === 'worker.live' ? 'Live instructions.' : null;
+    const liveFallback = slotTemplateAuditSources(live, {});
     expect(liveFallback.templateInstructions('worker.live')).toBe('Live instructions.');
     expect(liveFallback.templateInstructions('ghost.preview')).toBeNull();
   });

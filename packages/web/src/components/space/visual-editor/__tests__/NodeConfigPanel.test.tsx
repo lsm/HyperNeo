@@ -1886,6 +1886,19 @@ describe('NodeConfigPanel', () => {
       expect(queryByTestId('agent-template-warning')).toBeNull();
     });
 
+    it('suppresses the unknown-key warning when the slot falls back to a live agent', () => {
+      const { queryByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            step: makeStep({
+              agents: [{ agentId: 'agent-1', templateKey: 'ghost.preview', name: 'ghost' }],
+            }),
+          })}
+        />
+      );
+      expect(queryByTestId('agent-template-warning')).toBeNull();
+    });
+
     it('renders no warnings when every multi-agent slot binds a healthy template', () => {
       const { queryByTestId } = render(
         <NodeConfigPanel

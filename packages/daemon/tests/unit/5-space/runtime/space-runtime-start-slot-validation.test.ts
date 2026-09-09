@@ -130,6 +130,10 @@ describe('SpaceRuntime startWorkflowRun start-slot template audit', () => {
       count: number;
     };
     expect(taskCount.count).toBe(0);
+    const runCount = db.prepare('SELECT COUNT(*) AS count FROM space_workflow_runs').get() as {
+      count: number;
+    };
+    expect(runCount.count).toBe(0);
   });
 
   test('leaves the parent task unlinked when the start audit rejects', async () => {
@@ -166,7 +170,7 @@ describe('SpaceRuntime startWorkflowRun start-slot template audit', () => {
     expect(taskRepo.getTask(parent.id)?.workflowRunId ?? null).toBeNull();
   });
 
-  test('refuses to recover a stopped run whose existing executions bind an emptied template', async () => {
+  test('recovers a run whose pinned snapshot stays healthy even when the live template is emptied', async () => {
     templateRepo.create({
       key: 'migrated.agent.agent-orphan',
       handle: 'orphan',
@@ -183,6 +187,45 @@ describe('SpaceRuntime startWorkflowRun start-slot template audit', () => {
     expect(nodeExecutionRepo.listByWorkflowRun(run.id).length).toBeGreaterThan(0);
 
     templateRepo.update('migrated.agent.agent-orphan', { instructions: '' });
+
+    let caught: unknown;
+    try {
+      await runtime.recoverWorkflowBackedTask(SPACE_ID, tasks[0].id, 'open');
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(isMissingWorkflowAgentError(caught)).toBe(false);
+  });
+
+  test('refuses to recover a run whose pinned snapshot instructions are empty', async () => {
+    templateRepo.create({
+      key: 'migrated.agent.agent-orphan',
+      handle: 'orphan',
+      displayName: 'Orphan',
+      description: '',
+      instructions: 'Original role instructions.',
+      suggestedAutonomyLevel: 2,
+      labels: [],
+    });
+    const workflowId = makeWorkflow([
+      { agentId: '', templateKey: 'migrated.agent.agent-orphan', name: 'orphan-slot' },
+    ]);
+    const { run, tasks } = await runtime.startWorkflowRun(SPACE_ID, workflowId, 'Degraded pin');
+    expect(nodeExecutionRepo.listByWorkflowRun(run.id).length).toBeGreaterThan(0);
+
+    const pinnedRow = db
+      .prepare(
+        `SELECT payload FROM space_workflow_definition_versions
+         WHERE workflow_id = ? AND version_hash = ?`
+      )
+      .get(run.workflowId, run.definitionVersion) as { payload: string };
+    const payload = JSON.parse(pinnedRow.payload);
+    payload.templateSnapshots['migrated.agent.agent-orphan'].instructions = '';
+    db.prepare(
+      `UPDATE space_workflow_definition_versions SET payload = ?
+       WHERE workflow_id = ? AND version_hash = ?`
+    ).run(JSON.stringify(payload), run.workflowId, run.definitionVersion);
 
     let caught: unknown;
     try {

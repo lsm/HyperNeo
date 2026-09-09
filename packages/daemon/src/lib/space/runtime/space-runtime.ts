@@ -155,6 +155,7 @@ import {
   isSpawnSupersededError,
   isTransientSpawnError,
   MissingWorkflowAgentError,
+  slotTemplateAuditSources,
 } from './workflow-node-execution-validation.ts';
 import { canTransition as canTransitionRunStatus } from './workflow-run-status-machine.ts';
 import { selectWorkflow } from './workflow-selector.ts';
@@ -896,17 +897,20 @@ export class SpaceRuntime {
   private assertNodeSlotsResolvable(
     node: WorkflowNode,
     run: Pick<SpaceWorkflowRun, 'id' | 'spaceId'>,
-    workflow: Pick<SpaceWorkflow, 'name'>,
+    workflow: Pick<SpaceWorkflow, 'name' | 'templateSnapshots'>,
     options?: { slotNames?: ReadonlySet<string> }
   ): void {
+    const templateSources = slotTemplateAuditSources(
+      (key) => this.config.spaceWorkflowManager.agentTemplateInstructions(key),
+      workflow.templateSnapshots
+    );
     const missing = findMissingNodeAgentReferences(
       node,
       (id) => this.agentRecordExists(id, run.spaceId),
       {
         ...(options?.slotNames ? { slotNames: options.slotNames } : {}),
-        templateResolves: (key) => this.config.spaceWorkflowManager.agentTemplateResolves(key),
-        templateInstructions: (key) =>
-          this.config.spaceWorkflowManager.agentTemplateInstructions(key),
+        templateResolves: templateSources.templateResolves,
+        templateInstructions: templateSources.templateInstructions,
       }
     );
     if (missing.length === 0) return;
@@ -3976,6 +3980,9 @@ export class SpaceRuntime {
       this.executors.delete(run.id);
       this.executorMeta.delete(run.id);
       await this.transitionRunStatusAndEmit(run.id, 'cancelled');
+      if (!canonicalTask) {
+        this.config.workflowRunRepo.deleteRun(run.id);
+      }
       throw err;
     }
 

@@ -9,10 +9,7 @@ import type {
 } from '@hyperneo/shared';
 import { isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import { migratedAgentTemplateKey } from '../agents/agent-template-synthesis.ts';
-import {
-  resolveAgentTemplateInstructions,
-  resolveSlotCustomPrompt,
-} from './spawn-slot-resolution.ts';
+import { resolveSlotCustomPrompt } from './spawn-slot-resolution.ts';
 
 export type SlotTemplateAuditSources = {
   templateResolves: (key: string) => boolean;
@@ -20,14 +17,14 @@ export type SlotTemplateAuditSources = {
 };
 
 export function slotTemplateAuditSources(
-  templateRepo: Parameters<typeof resolveAgentTemplateInstructions>[0],
+  liveInstructions: (key: string) => string | null,
   pinnedSnapshots?: Record<string, WorkflowTemplateSnapshot> | null
 ): SlotTemplateAuditSources {
   const resolve = (key: string): string | null => {
     const trimmed = key.trim();
     const snapshot = trimmed ? pinnedSnapshots?.[trimmed] : undefined;
     if (snapshot) return snapshot.instructions;
-    return resolveAgentTemplateInstructions(templateRepo, trimmed);
+    return liveInstructions(trimmed);
   };
   return {
     templateResolves: (key) => resolve(key) !== null,

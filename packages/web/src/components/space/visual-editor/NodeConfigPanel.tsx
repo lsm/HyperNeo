@@ -21,6 +21,7 @@ function isLongHorizonTemplate(template: SpaceLongHorizonAgentTemplate): boolean
 }
 
 interface SlotPromptSource {
+  agentId?: string;
   customPrompt?: NodeDraft['customPrompt'] | string;
   replaceAgentPrompt?: boolean;
   systemPrompt?: NodeDraft['customPrompt'] | string;
@@ -41,11 +42,16 @@ function templateBindingWarning(params: {
   templateKey: string | null | undefined;
   slot: SlotPromptSource;
   agentTemplates: SpaceLongHorizonAgentTemplate[];
+  agents: SpaceLongHorizonAgent[];
 }): string | null {
   const key = params.templateKey?.trim();
   if (!key) return null;
   const template = params.agentTemplates.find((t) => t.key === key);
   if (!template) {
+    const fallbackAgent = params.slot.agentId
+      ? params.agents.find((a) => a.id === params.slot.agentId)
+      : undefined;
+    if (fallbackAgent) return null;
     return `Unknown template key "${key}" — pick a template for this slot`;
   }
   if (template.instructions.trim()) return null;
@@ -465,10 +471,12 @@ function AgentsSection({
           const warning = templateBindingWarning({
             templateKey: selectedSingleTemplateKey,
             slot: singleSlot ?? {
+              agentId: selectedSingleAgentId,
               customPrompt: selectedSingleCustomPrompt,
               replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
             },
             agentTemplates,
+            agents,
           });
           return warning ? (
             <p data-testid="agent-template-warning" class="text-[11px] text-warning">
@@ -662,6 +670,7 @@ function AgentsSection({
                     templateKey: sa.templateKey,
                     slot: sa,
                     agentTemplates,
+                    agents,
                   });
                   if (warning) {
                     return (
