@@ -7,6 +7,7 @@ const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const SETUP_TIMEOUT = IS_MOCK ? 20_000 : 60_000;
 const TEST_TIMEOUT = IS_MOCK ? 30_000 : 120_000;
 const TASK_AGENT_SPAWN_TIMEOUT = IS_MOCK ? 15_000 : 45_000;
+const RUN_DISPATCH_TIMEOUT = IS_MOCK ? 30_000 : 60_000;
 
 type TestFixtures = {
   space: Space;
@@ -46,26 +47,40 @@ async function startWorkflowRun(
   workflowId: string,
   title: string
 ): Promise<{ runId: string; taskId: string; executionId: string }> {
-  const { run } = (await daemon.messageHub.request('spaceWorkflowRun.start', {
+  const created = (await daemon.messageHub.request('spaceTask.create', {
     spaceId,
-    workflowId,
     title,
-  })) as { run: { id: string } };
+    description: '',
+    preferredWorkflowId: workflowId,
+  })) as { id: string };
 
-  const tasks = (await daemon.messageHub.request('spaceTask.list', {
-    spaceId,
-  })) as Array<{ id: string; workflowRunId: string; status: string }>;
-  const task = tasks.find((candidate) => candidate.workflowRunId === run.id);
-  if (!task) throw new Error(`No canonical task found for workflow run ${run.id}`);
+  const deadline = Date.now() + RUN_DISPATCH_TIMEOUT;
+  let runId: string | null = null;
+  while (Date.now() < deadline) {
+    const current = (await daemon.messageHub.request('spaceTask.get', {
+      spaceId,
+      taskId: created.id,
+    })) as { workflowRunId?: string | null };
+    if (current.workflowRunId) {
+      runId = current.workflowRunId;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  if (!runId) {
+    throw new Error(
+      `Task ${created.id} was not attached to a workflow run within ${RUN_DISPATCH_TIMEOUT}ms`
+    );
+  }
 
   const { executions } = (await daemon.messageHub.request('nodeExecution.list', {
-    workflowRunId: run.id,
+    workflowRunId: runId,
     spaceId,
   })) as { executions: NodeExecution[] };
   const execution = executions[0];
-  if (!execution) throw new Error(`No node execution found for workflow run ${run.id}`);
+  if (!execution) throw new Error(`No node execution found for workflow run ${runId}`);
 
-  return { runId: run.id, taskId: task.id, executionId: execution.id };
+  return { runId, taskId: created.id, executionId: execution.id };
 }
 
 async function waitForNodeAgentSpawned(

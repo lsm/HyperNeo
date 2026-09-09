@@ -1,6 +1,6 @@
 import { describe, expect, it, mock, beforeEach } from 'bun:test';
 import { MessageHub } from '@hyperneo/shared';
-import type { Space, SpaceWorkflow, SpaceWorkflowRun, SpaceTask } from '@hyperneo/shared';
+import type { Space, SpaceWorkflowRun, SpaceTask } from '@hyperneo/shared';
 import {
   setupSpaceWorkflowRunHandlers,
   type SpaceWorkflowRunTaskManagerFactory,
@@ -10,7 +10,6 @@ import type { SpaceWorkflowManager } from '../../../../src/lib/space/managers/sp
 import type { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository.ts';
 import type { WorkflowHookStateRepository } from '../../../../src/storage/repositories/workflow-hook-state-repository.ts';
 import type { SpaceRuntimeService } from '../../../../src/lib/space/runtime/space-runtime-service.ts';
-import type { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { SpaceTaskManager } from '../../../../src/lib/space/managers/space-task-manager.ts';
 import type { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import type { SpaceWorktreeManager } from '../../../../src/lib/space/managers/space-worktree-manager.ts';
@@ -36,17 +35,6 @@ const mockSpace: Space = {
   instructions: '',
   sessionIds: [],
   status: 'active',
-  createdAt: NOW,
-  updatedAt: NOW,
-};
-
-const mockWorkflow: SpaceWorkflow = {
-  id: 'workflow-1',
-  spaceId: 'space-1',
-  name: 'Test Workflow',
-  nodes: [{ id: 'step-1', name: 'Step One', agents: [{ agentId: 'agent-1', name: 'coder' }] }],
-  startNodeId: 'step-1',
-  tags: [],
   createdAt: NOW,
   updatedAt: NOW,
 };
@@ -123,23 +111,13 @@ function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
   } as unknown as SpaceManager;
 }
 
-function createMockWorkflowManager(
-  workflows: SpaceWorkflow[] = [mockWorkflow],
-  singleWorkflow: SpaceWorkflow | null = mockWorkflow
-): SpaceWorkflowManager {
-  return {
-    listWorkflows: mock(() => workflows),
-    getWorkflow: mock(() => singleWorkflow),
-  } as unknown as SpaceWorkflowManager;
+function createMockWorkflowManager(): SpaceWorkflowManager {
+  return {} as unknown as SpaceWorkflowManager;
 }
 
-function createMockRunRepo(
-  run: SpaceWorkflowRun | null = mockRun,
-  runs: SpaceWorkflowRun[] = [mockRun]
-): SpaceWorkflowRunRepository {
+function createMockRunRepo(run: SpaceWorkflowRun | null = mockRun): SpaceWorkflowRunRepository {
   return {
     getRun: mock(() => run),
-    listBySpace: mock(() => runs),
     updateStatus: mock((id: string, status: string) =>
       run ? { ...run, id, status: status as SpaceWorkflowRun['status'] } : null
     ),
@@ -169,26 +147,9 @@ function createMockHookStateRepo(): WorkflowHookStateRepository {
   } as unknown as WorkflowHookStateRepository;
 }
 
-function createMockRuntime(run: SpaceWorkflowRun = mockRun): SpaceRuntime {
+function createMockRuntimeService(): SpaceRuntimeService {
   return {
-    startWorkflowRun: mock(async () => ({ run, tasks: [mockTask] })),
-    start: mock(() => {}),
-    stop: mock(() => {}),
-    executeTick: mock(async () => {}),
-  } as unknown as SpaceRuntime;
-}
-
-function createMockRuntimeService(
-  space: Space | null = mockSpace,
-  runtime: SpaceRuntime = createMockRuntime()
-): SpaceRuntimeService {
-  return {
-    createOrGetRuntime: mock(async (spaceId: string) => {
-      if (!space) throw new Error(`Space not found: ${spaceId}`);
-      return runtime;
-    }),
     cancelWorkflowRun: mock(async () => ({ ...mockRun, status: 'cancelled' as const })),
-    notifyRunResumed: mock(() => {}),
     start: mock(() => {}),
     stop: mock(() => {}),
     stopRuntime: mock(() => {}),
@@ -280,7 +241,6 @@ describe('space-workflow-run-handlers', () => {
   let workflowManager: SpaceWorkflowManager;
   let runRepo: SpaceWorkflowRunRepository;
   let runtimeService: SpaceRuntimeService;
-  let runtime: SpaceRuntime;
   let taskManagerFactory: SpaceWorkflowRunTaskManagerFactory;
   let taskManager: SpaceTaskManager;
   let spaceTaskRepo: SpaceTaskRepository;
@@ -289,10 +249,7 @@ describe('space-workflow-run-handlers', () => {
   function setup(
     opts: {
       space?: Space | null;
-      workflows?: SpaceWorkflow[];
-      singleWorkflow?: SpaceWorkflow | null;
       run?: SpaceWorkflowRun | null;
-      runs?: SpaceWorkflowRun[];
       tasks?: SpaceTask[];
       worktreePath?: string | null;
     } = {}
@@ -303,14 +260,10 @@ describe('space-workflow-run-handlers', () => {
     internalEventBus = createMockInternalEventBus();
     const resolvedSpace = 'space' in opts ? opts.space : mockSpace;
     spaceManager = createMockSpaceManager(resolvedSpace ?? null);
-    workflowManager = createMockWorkflowManager(
-      opts.workflows ?? [mockWorkflow],
-      opts.singleWorkflow !== undefined ? opts.singleWorkflow : mockWorkflow
-    );
+    workflowManager = createMockWorkflowManager();
     const resolvedRun = 'run' in opts ? opts.run : mockRun;
-    runRepo = createMockRunRepo(resolvedRun ?? null, opts.runs ?? [mockRun]);
-    runtime = createMockRuntime(resolvedRun ?? mockRun);
-    runtimeService = createMockRuntimeService(resolvedSpace ?? null, runtime);
+    runRepo = createMockRunRepo(resolvedRun ?? null);
+    runtimeService = createMockRuntimeService();
     taskManager = createMockTaskManager(opts.tasks ?? []);
     taskManagerFactory = mock(() => taskManager);
     spaceTaskRepo = createMockSpaceTaskRepo([mockTask]);
@@ -340,254 +293,6 @@ describe('space-workflow-run-handlers', () => {
   };
 
   beforeEach(() => setup());
-
-  describe('spaceWorkflowRun.start', () => {
-    it('throws if spaceId is missing', async () => {
-      await expect(call('spaceWorkflowRun.start', { title: 'My Run' })).rejects.toThrow(
-        'spaceId is required'
-      );
-    });
-
-    it('throws if title is missing', async () => {
-      await expect(call('spaceWorkflowRun.start', { spaceId: 'space-1' })).rejects.toThrow(
-        'title is required'
-      );
-    });
-
-    it('throws if title is empty string', async () => {
-      await expect(
-        call('spaceWorkflowRun.start', { spaceId: 'space-1', title: '   ' })
-      ).rejects.toThrow('title is required');
-    });
-
-    it('throws if space not found', async () => {
-      setup({ space: null });
-      await expect(
-        call('spaceWorkflowRun.start', { spaceId: 'missing', title: 'Test' })
-      ).rejects.toThrow('Space not found: missing');
-    });
-
-    it('throws if provided workflowId not found', async () => {
-      setup({ singleWorkflow: null });
-      await expect(
-        call('spaceWorkflowRun.start', {
-          spaceId: 'space-1',
-          title: 'Test',
-          workflowId: 'bad-wf',
-        })
-      ).rejects.toThrow('Workflow not found: bad-wf');
-    });
-
-    it('throws if provided workflowId belongs to a different space', async () => {
-      const otherWorkflow: SpaceWorkflow = {
-        ...mockWorkflow,
-        id: 'wf-other',
-        spaceId: 'space-99',
-      };
-      setup({ singleWorkflow: otherWorkflow });
-      await expect(
-        call('spaceWorkflowRun.start', {
-          spaceId: 'space-1',
-          title: 'Test',
-          workflowId: 'wf-other',
-        })
-      ).rejects.toThrow('Workflow not found: wf-other');
-    });
-
-    it('throws if no workflows exist (auto-select mode)', async () => {
-      setup({ workflows: [], singleWorkflow: null });
-      await expect(
-        call('spaceWorkflowRun.start', { spaceId: 'space-1', title: 'Test' })
-      ).rejects.toThrow('No workflows found for space: space-1');
-    });
-
-    it('creates run via runtime (event emission is owned by SpaceRuntimeService callbacks)', async () => {
-      const result = await call('spaceWorkflowRun.start', {
-        spaceId: 'space-1',
-        title: 'My Run',
-        description: 'Some context',
-      });
-
-      expect(result).toEqual({ run: mockRun });
-      expect(runtime.startWorkflowRun).toHaveBeenCalledWith(
-        'space-1',
-        'workflow-1',
-        'My Run',
-        'Some context'
-      );
-      expect(
-        (internalEventBus as unknown as { publish: ReturnType<typeof mock> }).publish
-      ).not.toHaveBeenCalled();
-    });
-
-    it('auto-selects first workflow when workflowId not provided', async () => {
-      await call('spaceWorkflowRun.start', { spaceId: 'space-1', title: 'Auto' });
-      expect(runtime.startWorkflowRun).toHaveBeenCalledWith(
-        'space-1',
-        'workflow-1',
-        'Auto',
-        undefined
-      );
-    });
-
-    it('uses provided workflowId when given', async () => {
-      await call('spaceWorkflowRun.start', {
-        spaceId: 'space-1',
-        title: 'Explicit WF',
-        workflowId: 'workflow-1',
-      });
-      expect(runtime.startWorkflowRun).toHaveBeenCalledWith(
-        'space-1',
-        'workflow-1',
-        'Explicit WF',
-        undefined
-      );
-    });
-
-    it('throws if provided workflowId is disabled', async () => {
-      const disabledWorkflow = { ...mockWorkflow, disabled: true };
-      setup({ singleWorkflow: disabledWorkflow });
-      await expect(
-        call('spaceWorkflowRun.start', {
-          spaceId: 'space-1',
-          title: 'Test',
-          workflowId: 'workflow-1',
-        })
-      ).rejects.toThrow('Workflow is disabled: workflow-1');
-    });
-
-    it('auto-select skips disabled workflows', async () => {
-      const enabledWf = { ...mockWorkflow, id: 'wf-enabled', name: 'Enabled' };
-      const disabledWf = { ...mockWorkflow, id: 'wf-disabled', name: 'Disabled', disabled: true };
-      setup({ workflows: [disabledWf, enabledWf], singleWorkflow: enabledWf });
-      await call('spaceWorkflowRun.start', { spaceId: 'space-1', title: 'Auto' });
-      expect(runtime.startWorkflowRun).toHaveBeenCalledWith(
-        'space-1',
-        'wf-enabled',
-        'Auto',
-        undefined
-      );
-    });
-
-    it('auto-select prefers a default-tagged workflow over the first by created_at', async () => {
-      const legacyRow = {
-        ...mockWorkflow,
-        id: 'wf-legacy',
-        name: 'Coding Workflow',
-        tags: ['coding'],
-      };
-      const stableRow = {
-        ...mockWorkflow,
-        id: 'wf-stable',
-        name: 'Coding',
-        tags: ['coding', 'default'],
-      };
-      setup({ workflows: [legacyRow, stableRow], singleWorkflow: stableRow });
-      await call('spaceWorkflowRun.start', { spaceId: 'space-1', title: 'Auto' });
-      expect(runtime.startWorkflowRun).toHaveBeenCalledWith(
-        'space-1',
-        'wf-stable',
-        'Auto',
-        undefined
-      );
-    });
-
-    it('auto-select throws when all workflows are disabled', async () => {
-      const disabledWf = { ...mockWorkflow, disabled: true };
-      setup({ workflows: [disabledWf], singleWorkflow: disabledWf });
-      await expect(
-        call('spaceWorkflowRun.start', { spaceId: 'space-1', title: 'Auto' })
-      ).rejects.toThrow('No workflows found for space: space-1');
-    });
-
-    it('does not pass goalId to startWorkflowRun (removed)', async () => {
-      await call('spaceWorkflowRun.start', {
-        spaceId: 'space-1',
-        title: 'Goal Run',
-        goalId: 'goal-rpc-123',
-      });
-      expect(runtime.startWorkflowRun).toHaveBeenCalledWith(
-        'space-1',
-        'workflow-1',
-        'Goal Run',
-        undefined
-      );
-    });
-  });
-
-  describe('spaceWorkflowRun.list', () => {
-    it('throws if spaceId is missing', async () => {
-      await expect(call('spaceWorkflowRun.list', {})).rejects.toThrow('spaceId is required');
-    });
-
-    it('throws if space not found', async () => {
-      setup({ space: null });
-      await expect(call('spaceWorkflowRun.list', { spaceId: 'missing' })).rejects.toThrow(
-        'Space not found: missing'
-      );
-    });
-
-    it('returns all runs for the space', async () => {
-      const result = await call('spaceWorkflowRun.list', { spaceId: 'space-1' });
-      expect(result).toEqual({ runs: [mockRun] });
-    });
-
-    it('filters runs by status when provided', async () => {
-      const completedRun: SpaceWorkflowRun = { ...mockRun, id: 'run-2', status: 'done' };
-      setup({ runs: [mockRun, completedRun] });
-
-      const result = (await call('spaceWorkflowRun.list', {
-        spaceId: 'space-1',
-        status: 'in_progress',
-      })) as { runs: SpaceWorkflowRun[] };
-
-      expect(result.runs).toHaveLength(1);
-      expect(result.runs[0].id).toBe('run-1');
-    });
-
-    it('returns empty list when no runs match status filter', async () => {
-      const result = (await call('spaceWorkflowRun.list', {
-        spaceId: 'space-1',
-        status: 'cancelled',
-      })) as { runs: SpaceWorkflowRun[] };
-
-      expect(result.runs).toHaveLength(0);
-    });
-  });
-
-  describe('spaceWorkflowRun.get', () => {
-    it('throws if id is missing', async () => {
-      await expect(call('spaceWorkflowRun.get', {})).rejects.toThrow('id is required');
-    });
-
-    it('throws if run not found', async () => {
-      setup({ run: null });
-      await expect(call('spaceWorkflowRun.get', { id: 'missing-run' })).rejects.toThrow(
-        'WorkflowRun not found: missing-run'
-      );
-    });
-
-    it('returns the run', async () => {
-      const result = await call('spaceWorkflowRun.get', { id: 'run-1' });
-      expect(result).toEqual({ run: mockRun });
-    });
-
-    it('returns the run without spaceId filter', async () => {
-      const result = await call('spaceWorkflowRun.get', { id: 'run-1' });
-      expect(result).toEqual({ run: mockRun });
-    });
-
-    it('throws if spaceId does not match run.spaceId (ownership check)', async () => {
-      await expect(
-        call('spaceWorkflowRun.get', { id: 'run-1', spaceId: 'space-other' })
-      ).rejects.toThrow('WorkflowRun not found: run-1');
-    });
-
-    it('succeeds when spaceId matches run.spaceId', async () => {
-      const result = await call('spaceWorkflowRun.get', { id: 'run-1', spaceId: 'space-1' });
-      expect(result).toEqual({ run: mockRun });
-    });
-  });
 
   describe('spaceWorkflowRun.cancel', () => {
     it('throws if id is missing', async () => {

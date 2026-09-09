@@ -23,13 +23,38 @@ async function createSpaceWithRun(
         workspacePath: wsPath,
       })) as { id: string };
 
-      const runRes = (await hub.request('spaceWorkflowRun.start', {
+      const { workflows } = (await hub.request('spaceWorkflow.list', {
+        spaceId: spaceRes.id,
+      })) as { workflows: Array<{ id: string; disabled?: boolean; tags?: string[] }> };
+      const enabled = workflows.filter((w) => !w.disabled);
+      const preferred = enabled.find((w) => (w.tags ?? []).includes('default')) ?? enabled[0];
+      if (!preferred) throw new Error('No enabled workflow found for space');
+
+      const taskRes = (await hub.request('spaceTask.create', {
         spaceId: spaceRes.id,
         title: 'E2E: Task-first runtime flow',
         description: 'Validate task thread lifecycle for workflow-backed tasks.',
-      })) as { run: { id: string } };
+        preferredWorkflowId: preferred.id,
+      })) as { id: string; workflowRunId?: string | null };
 
-      return { spaceId: spaceRes.id, runId: runRes.run.id };
+      const dispatchDeadline = Date.now() + 30_000;
+      let runId: string | null = null;
+      while (Date.now() < dispatchDeadline) {
+        const current = (await hub.request('spaceTask.get', {
+          spaceId: spaceRes.id,
+          taskId: taskRes.id,
+        })) as { workflowRunId?: string | null };
+        if (current.workflowRunId) {
+          runId = current.workflowRunId;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      if (!runId) {
+        throw new Error(`Task ${taskRes.id} was not attached to a workflow run within 30s`);
+      }
+
+      return { spaceId: spaceRes.id, runId };
     },
     { wsPath }
   );
