@@ -686,6 +686,49 @@ describe('Space Agent RPC Handlers', () => {
       expect(result.success).toBe(true);
     });
 
+    it('ignores archived instances when guarding template deletion', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'guard.custom',
+        handle: 'guard',
+      });
+      longHorizonRepo.create({
+        spaceId: 'space-1',
+        handle: 'scribe',
+        displayName: 'Scribe',
+        templateKey: 'guard.custom',
+        instructions: 'Take notes.',
+        status: 'archived',
+      });
+
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'guard.custom' }
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects a delete whose expected version is stale', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'guard.custom',
+        handle: 'guard',
+      });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', {
+          key: 'guard.custom',
+          expectedVersion: 99,
+        })
+      ).rejects.toThrow('modified concurrently');
+
+      const current = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'guard.custom', expectedVersion: 1 }
+      );
+      expect(current.success).toBe(true);
+    });
+
     it('blocks deleting a template still used by agent instances', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
         key: 'guard.custom',

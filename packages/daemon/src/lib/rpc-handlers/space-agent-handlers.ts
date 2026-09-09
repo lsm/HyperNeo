@@ -812,11 +812,14 @@ export function registerUnifiedSpaceAgentMethods(
     });
 
     messageHub.onRequest(method('deleteTemplate'), async (data) => {
-      const params = data as { key: string };
+      const params = data as { key: string; expectedVersion?: number };
       if (!params.key) throw new Error('key is required');
-      const result = templateManager.delete(params.key, undefined, {
+      const result = templateManager.delete(params.key, params.expectedVersion, {
         listAgentDisplayNamesUsingTemplate: (key) =>
-          deps.repo.listByTemplateKey(key).map((agent) => agent.displayName),
+          deps.repo
+            .listByTemplateKey(key)
+            .filter((agent) => agent.status !== 'archived')
+            .map((agent) => agent.displayName),
       });
       if (!result.ok) throw new Error(result.error);
       return { success: true };

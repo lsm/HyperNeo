@@ -443,6 +443,34 @@ describe('SpaceLongHorizonAgents', () => {
     );
   });
 
+  it('omits unchanged model fields from a template edit', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        key: 'scribe',
+        handle: 'scribe',
+        displayName: 'Scribe',
+        model: 'retired-model-x',
+        provider: 'anthropic',
+      }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByDisplayValue } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+    fireEvent.input(getByDisplayValue('Scribe'), { target: { value: 'Scribe II' } });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    const payload = mockUpdateTemplate.mock.calls[0][1];
+    expect(payload).toEqual(
+      expect.objectContaining({ displayName: 'Scribe II', expectedVersion: undefined })
+    );
+    expect(payload).not.toHaveProperty('model');
+    expect(payload).not.toHaveProperty('provider');
+    expect(payload).not.toHaveProperty('modelPool');
+  });
+
   it('folds a pending scoped tool draft into the save without clicking Add', async () => {
     mockTemplates.value = [
       makeTemplate({ key: 'scribe', handle: 'scribe', displayName: 'Scribe' }),
@@ -464,8 +492,8 @@ describe('SpaceLongHorizonAgents', () => {
     );
   });
 
-  it('deletes a user template after confirmation', async () => {
-    mockTemplates.value = [makeTemplate({ key: 'scribe', displayName: 'Scribe' })];
+  it('deletes a user template after confirmation, passing the captured version', async () => {
+    mockTemplates.value = [makeTemplate({ key: 'scribe', displayName: 'Scribe', version: 3 })];
     mockUserTemplateKeys.value = new Set(['scribe']);
 
     const { getByRole, getByTestId, queryByTestId } = render(
@@ -476,13 +504,13 @@ describe('SpaceLongHorizonAgents', () => {
     expect(getByTestId('confirm-modal')).toBeTruthy();
     fireEvent.click(getByTestId('confirm-delete-template'));
 
-    await waitFor(() => expect(mockDeleteTemplate).toHaveBeenCalledWith('scribe'));
+    await waitFor(() => expect(mockDeleteTemplate).toHaveBeenCalledWith('scribe', 3));
     expect(vi.mocked(toast.success)).toHaveBeenCalledWith('"Scribe" deleted');
     await waitFor(() => expect(queryByTestId('confirm-modal')).toBeNull());
   });
 
   it('surfaces the daemon reference-guard error and keeps the confirm dialog open', async () => {
-    mockTemplates.value = [makeTemplate({ key: 'scribe', displayName: 'Scribe' })];
+    mockTemplates.value = [makeTemplate({ key: 'scribe', displayName: 'Scribe', version: 4 })];
     mockUserTemplateKeys.value = new Set(['scribe']);
     mockDeleteTemplate.mockRejectedValueOnce(
       new Error(

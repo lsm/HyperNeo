@@ -267,10 +267,17 @@ async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateS
     settingSources: form.settingSources,
   };
   if (ctx.template) {
-    await spaceStore.updateTemplate(ctx.template.key, {
-      ...fields,
-      expectedVersion: ctx.template.version,
-    });
+    const { model, provider, modelPool, ...rest } = fields;
+    const modelConfigUnchanged =
+      (effectiveModel || null) === (ctx.template.model ?? null) &&
+      (form.provider ?? null) === (ctx.template.provider ?? null) &&
+      JSON.stringify(activeModelPool ?? null) === JSON.stringify(ctx.template.modelPool ?? null);
+    await spaceStore.updateTemplate(
+      ctx.template.key,
+      modelConfigUnchanged
+        ? { ...rest, expectedVersion: ctx.template.version }
+        : { ...rest, model, provider, modelPool, expectedVersion: ctx.template.version }
+    );
     return ctx;
   }
   await spaceStore.createTemplate({ key: form.key.trim(), ...fields });
@@ -1256,7 +1263,7 @@ export function SpaceLongHorizonAgents({
     setDeletingTemplateBusy(true);
     setDeleteTemplateError(null);
     try {
-      await spaceStore.deleteTemplate(deletingTemplate.key);
+      await spaceStore.deleteTemplate(deletingTemplate.key, deletingTemplate.version);
       toast.success(`"${deletingTemplate.displayName}" deleted`);
       setDeletingTemplate(null);
     } catch (err) {

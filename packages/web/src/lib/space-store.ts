@@ -2468,11 +2468,14 @@ class SpaceStore {
     return template;
   }
 
-  async deleteTemplate(key: string): Promise<void> {
+  async deleteTemplate(key: string, expectedVersion?: number): Promise<void> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    await hub.request('spaceAgent.deleteTemplate', { key });
+    await hub.request(
+      'spaceAgent.deleteTemplate',
+      expectedVersion === undefined ? { key } : { key, expectedVersion }
+    );
     this.agentTemplates.value = this.agentTemplates.value.filter((t) => t.key !== key);
     this.userTemplateKeys.value = new Set(
       [...this.userTemplateKeys.value].filter((existing) => existing !== key)
