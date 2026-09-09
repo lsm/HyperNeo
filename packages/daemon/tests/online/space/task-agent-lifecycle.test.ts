@@ -12,6 +12,7 @@ const TEST_TIMEOUT = IS_MOCK ? 180_000 : 360_000;
 const TASK_AGENT_SPAWN_TIMEOUT = IS_MOCK ? 30_000 : 45_000;
 const KICKOFF_CONTEXT_TIMEOUT = IS_MOCK ? 40_000 : 90_000;
 const PROBE_RESPONSE_TIMEOUT = IS_MOCK ? 40_000 : 90_000;
+const RUN_DISPATCH_TIMEOUT = IS_MOCK ? 30_000 : 60_000;
 
 const STEP_CODE_ID = 'step-code-lifecycle-001';
 
@@ -66,31 +67,42 @@ async function startWorkflowRunAndGetTask(
     agentSessionId: string | null;
   };
 }> {
-  const { run } = (await daemon.messageHub.request('spaceWorkflowRun.start', {
+  const created = (await daemon.messageHub.request('spaceTask.create', {
     spaceId,
-    workflowId,
     title: runTitle,
-  })) as { run: { id: string } };
+    description: '',
+    preferredWorkflowId: workflowId,
+  })) as { id: string };
 
-  const tasks = (await daemon.messageHub.request('spaceTask.list', {
-    spaceId,
-  })) as Array<{
-    id: string;
-    workflowRunId: string;
-    status: string;
-  }>;
-  const task = tasks.find((candidate) => candidate.workflowRunId === run.id);
-  if (!task) throw new Error(`No canonical task found for workflow run ${run.id}`);
+  const deadline = Date.now() + RUN_DISPATCH_TIMEOUT;
+  let task: { id: string; status: string; workflowRunId?: string | null } | null = null;
+  while (Date.now() < deadline) {
+    const current = (await daemon.messageHub.request('spaceTask.get', {
+      spaceId,
+      taskId: created.id,
+    })) as { id: string; status: string; workflowRunId?: string | null };
+    if (current.workflowRunId && current.status !== 'open') {
+      task = current;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  if (!task?.workflowRunId) {
+    throw new Error(
+      `Task ${created.id} was not attached to a workflow run within ${RUN_DISPATCH_TIMEOUT}ms`
+    );
+  }
+  const runId = task.workflowRunId;
 
   const { executions } = (await daemon.messageHub.request('nodeExecution.list', {
-    workflowRunId: run.id,
+    workflowRunId: runId,
     spaceId,
   })) as { executions: NodeExecution[] };
   const execution = executions[0];
-  if (!execution) throw new Error(`No node execution found for workflow run ${run.id}`);
+  if (!execution) throw new Error(`No node execution found for workflow run ${runId}`);
 
   return {
-    runId: run.id,
+    runId,
     task,
     execution: {
       id: execution.id,
@@ -260,7 +272,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
         'Lifecycle test run — spawning'
       );
 
-      expect(task.status).toBe('open');
+      expect(task.status).toBe('in_progress');
       expect(execution.status).toBe('pending');
       expect(execution.agentSessionId).toBeNull();
 

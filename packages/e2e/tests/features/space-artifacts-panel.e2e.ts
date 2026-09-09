@@ -48,20 +48,37 @@ async function createSpaceWithRunAndChanges(
       })) as { id: string };
       const spaceId = spaceRes.id;
 
-      const runRes = (await hub.request('spaceWorkflowRun.start', {
+      const { workflows } = (await hub.request('spaceWorkflow.list', { spaceId })) as {
+        workflows: Array<{ id: string; disabled?: boolean; tags?: string[] }>;
+      };
+      const enabled = workflows.filter((w) => !w.disabled);
+      const preferred = enabled.find((w) => (w.tags ?? []).includes('default')) ?? enabled[0];
+      if (!preferred) throw new Error('No enabled workflow found for space');
+
+      const taskRes = (await hub.request('spaceTask.create', {
         spaceId,
         title: 'E2E: Artifacts panel test',
         description: 'Verify the artifacts side panel shows changed files.',
-      })) as { run: { id: string } };
-      const runId = runRes.run.id;
+        preferredWorkflowId: preferred.id,
+      })) as { id: string; workflowRunId?: string | null };
 
-      const tasks = (await hub.request('spaceTask.list', { spaceId })) as Array<{
-        id: string;
-        workflowRunId?: string;
-      }>;
-      const task = tasks.find((t) => t.workflowRunId === runId);
-      if (!task) throw new Error(`No task found for run ${runId}`);
-      const taskId = task.id;
+      const dispatchDeadline = Date.now() + 30_000;
+      let runId: string | null = null;
+      while (Date.now() < dispatchDeadline) {
+        const current = (await hub.request('spaceTask.get', {
+          spaceId,
+          taskId: taskRes.id,
+        })) as { workflowRunId?: string | null };
+        if (current.workflowRunId) {
+          runId = current.workflowRunId;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      if (!runId) {
+        throw new Error(`Task ${taskRes.id} was not attached to a workflow run within 30s`);
+      }
+      const taskId = taskRes.id;
 
       await hub.request('spaceTask.update', { spaceId, taskId, status: 'done' });
 

@@ -10,6 +10,7 @@ const IDLE_TIMEOUT = IS_MOCK ? 45_000 : 60_000;
 const SETUP_TIMEOUT = IS_MOCK ? 45_000 : 90_000;
 const TEST_TIMEOUT = IS_MOCK ? 180_000 : 300_000;
 const RECOVERY_TIMEOUT = IS_MOCK ? 60_000 : 90_000;
+const RUN_DISPATCH_TIMEOUT = IS_MOCK ? 30_000 : 60_000;
 
 const STEP_CODE_ID = 'step-code-kimi-recovery-001';
 
@@ -54,20 +55,40 @@ async function startWorkflowRunAndGetExecution(
   workflowId: string,
   runTitle: string
 ): Promise<{ runId: string; execution: NodeExecution }> {
-  const { run } = (await daemon.messageHub.request('spaceWorkflowRun.start', {
+  const created = (await daemon.messageHub.request('spaceTask.create', {
     spaceId,
-    workflowId,
     title: runTitle,
-  })) as { run: { id: string } };
+    description: '',
+    preferredWorkflowId: workflowId,
+  })) as { id: string };
+
+  const deadline = Date.now() + RUN_DISPATCH_TIMEOUT;
+  let runId: string | null = null;
+  while (Date.now() < deadline) {
+    const current = (await daemon.messageHub.request('spaceTask.get', {
+      spaceId,
+      taskId: created.id,
+    })) as { workflowRunId?: string | null };
+    if (current.workflowRunId) {
+      runId = current.workflowRunId;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  if (!runId) {
+    throw new Error(
+      `Task ${created.id} was not attached to a workflow run within ${RUN_DISPATCH_TIMEOUT}ms`
+    );
+  }
 
   const { executions } = (await daemon.messageHub.request('nodeExecution.list', {
-    workflowRunId: run.id,
+    workflowRunId: runId,
     spaceId,
   })) as { executions: NodeExecution[] };
   const execution = executions[0];
-  if (!execution) throw new Error(`No node execution found for workflow run ${run.id}`);
+  if (!execution) throw new Error(`No node execution found for workflow run ${runId}`);
 
-  return { runId: run.id, execution };
+  return { runId, execution };
 }
 
 async function waitForNodeAgentSpawned(
