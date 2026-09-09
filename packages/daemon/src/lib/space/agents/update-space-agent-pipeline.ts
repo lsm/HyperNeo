@@ -20,7 +20,7 @@ export interface UpdateSpaceAgentDeps extends Dependencies {
   getSession(sessionId: string): BindableSession | null;
   sessionOwner(sessionId: string): string | null;
   listHandles(spaceId: string): string[];
-  listDisplayNames(spaceId: string): string[];
+  listDisplayNames(spaceId: string, excludeAgentId: string): string[];
   applyUpdate(id: string, changes: UpdateSpaceAgentParams): SpaceAgent | null;
   publishUpdated(agent: SpaceAgent): Promise<void>;
   validateTools(tools: string[]): string | null;
@@ -32,6 +32,12 @@ export interface AdmittedUpdate {
   agent: SpaceAgent;
   changes: UpdateSpaceAgentParams;
 }
+
+const THINKING_LEVELS = new Set(['off', 'think8k', 'think16k', 'think24k', 'think32k']);
+const SETTING_SOURCES = new Set(['user', 'project', 'local']);
+const AGENT_STATUSES = new Set(['active', 'paused', 'disabled', 'archived']);
+const COORDINATOR_HANDLES = new Set(['space-manager', 'coordinator']);
+const LOCKED_COORDINATOR_STATUSES = new Set(['paused', 'disabled', 'archived']);
 
 function isBlankString(value: string | null | undefined): boolean {
   return typeof value === 'string' && value.trim() === '';
@@ -65,6 +71,55 @@ export function gateChanges(admitted: AdmittedUpdate): Gate<AdmittedUpdate> {
   }
   if (isBlankString(changes.provider)) {
     return reject('invalid_request', 'provider cannot be blank — use null to clear it');
+  }
+  if (
+    changes.thinkingLevel !== undefined &&
+    changes.thinkingLevel !== null &&
+    !THINKING_LEVELS.has(changes.thinkingLevel)
+  ) {
+    return reject('invalid_request', `Invalid thinkingLevel: ${String(changes.thinkingLevel)}`);
+  }
+  if (changes.settingSources !== undefined && changes.settingSources !== null) {
+    if (!Array.isArray(changes.settingSources)) {
+      return reject('invalid_request', 'settingSources must be an array');
+    }
+    const invalid = changes.settingSources.filter((source) => !SETTING_SOURCES.has(source));
+    if (invalid.length > 0) {
+      return reject('invalid_request', `Invalid settingSources: ${invalid.join(', ')}`);
+    }
+  }
+  if (
+    changes.status !== undefined &&
+    (typeof changes.status !== 'string' || !AGENT_STATUSES.has(changes.status))
+  ) {
+    return reject('invalid_request', `Invalid status: ${String(changes.status)}`);
+  }
+  if (
+    changes.autonomyLevel !== undefined &&
+    changes.autonomyLevel !== null &&
+    !(
+      Number.isInteger(changes.autonomyLevel) &&
+      changes.autonomyLevel >= 1 &&
+      changes.autonomyLevel <= 5
+    )
+  ) {
+    return reject('invalid_request', `Invalid autonomyLevel: ${String(changes.autonomyLevel)}`);
+  }
+  return { value: admitted };
+}
+
+export function gateDefaultAgent(admitted: AdmittedUpdate): Gate<AdmittedUpdate> {
+  const { agent, changes } = admitted;
+  if (!COORDINATOR_HANDLES.has(agent.handle)) return { value: admitted };
+
+  if (changes.handle !== undefined && changes.handle !== agent.handle) {
+    return reject(
+      'invalid_identity',
+      'The Space Manager handle is locked; instructions, model, provider and tools stay editable'
+    );
+  }
+  if (changes.status !== undefined && LOCKED_COORDINATOR_STATUSES.has(changes.status)) {
+    return reject('invalid_request', 'The Space Manager cannot be paused, disabled or archived');
   }
   return { value: admitted };
 }
@@ -119,17 +174,18 @@ export function gateIdentityChange(
     }
   }
 
-  if (changes.displayName !== undefined && changes.displayName !== agent.displayName) {
-    const target = changes.displayName.trim().toLowerCase();
-    const taken = listDisplayNames(agent.spaceId).filter(
-      (name) => name.trim().toLowerCase() !== agent.displayName.trim().toLowerCase()
+  const renaming = changes.displayName !== undefined && changes.displayName !== agent.displayName;
+  const unarchiving = agent.status === 'archived' && changes.status === 'active';
+  const nameToCheck = renaming ? changes.displayName : unarchiving ? agent.displayName : undefined;
+  if (nameToCheck === undefined) return { value: admitted };
+
+  const target = nameToCheck.trim().toLowerCase();
+  const peers = listDisplayNames(agent.spaceId, agent.id);
+  if (peers.some((name) => name.trim().toLowerCase() === target)) {
+    return reject(
+      'invalid_identity',
+      `Agent name "${nameToCheck}" is already used by another agent in this space`
     );
-    if (taken.some((name) => name.trim().toLowerCase() === target)) {
-      return reject(
-        'invalid_identity',
-        `Agent name "${changes.displayName}" is already used by another agent in this space`
-      );
-    }
   }
 
   return { value: admitted };
@@ -147,11 +203,17 @@ export async function gateUpdateModel(
   admitted: AdmittedUpdate,
   validateModel: UpdateSpaceAgentDeps['validateModel']
 ): Promise<Gate<AdmittedUpdate>> {
-  const merged = {
-    ...admitted.changes,
-    provider: admitted.changes.provider ?? admitted.agent.provider,
-  };
-  const outcome = await gateModel(merged, validateModel);
+  const { agent, changes } = admitted;
+  const modelChanged = changes.model !== undefined;
+  const providerChanged = changes.provider !== undefined;
+  if (!modelChanged && !providerChanged) return { value: admitted };
+
+  const effectiveModel = modelChanged ? changes.model : agent.model;
+  const effectiveProvider = providerChanged ? changes.provider : agent.provider;
+  const outcome = await gateModel(
+    { model: effectiveModel, provider: effectiveProvider },
+    validateModel
+  );
   return 'reason' in outcome ? outcome : { value: admitted };
 }
 
@@ -207,6 +269,7 @@ export function buildUpdateSpaceAgentPipeline(
     .input(['input'])
     .pipe(gateTarget, ['input', 'getAgent'], 'result:admitted')
     .pipe(gateChanges, 'admitted', 'result:admitted')
+    .pipe(gateDefaultAgent, 'admitted', 'result:admitted')
     .pipe(gateSessionChange, ['admitted', 'getSession', 'sessionOwner'], 'result:admitted')
     .pipe(gateIdentityChange, ['admitted', 'listHandles', 'listDisplayNames'], 'result:admitted')
     .pipe(gateUpdateTools, ['admitted', 'validateTools'], 'result:admitted')

@@ -41,6 +41,7 @@ interface Harness {
   published: SpaceAgent[];
   handles: string[];
   displayNames: string[];
+  displayNameIds: string[];
   sessions: Map<string, { type: string; spaceId: string | null }>;
   sessionOwners: Map<string, string>;
 }
@@ -53,6 +54,7 @@ function makeHarness(agent = makeAgent()): Harness {
     published: [],
     handles: [agent.handle],
     displayNames: [agent.displayName],
+    displayNameIds: [agent.id],
     sessions: new Map([['session-free', { type: 'space_chat', spaceId: 'space-1' }]]),
     sessionOwners: new Map(),
   };
@@ -62,7 +64,8 @@ function makeHarness(agent = makeAgent()): Harness {
     getSession: (id) => h.sessions.get(id) ?? null,
     sessionOwner: (id) => h.sessionOwners.get(id) ?? null,
     listHandles: () => h.handles,
-    listDisplayNames: () => h.displayNames,
+    listDisplayNames: (_spaceId, excludeId) =>
+      h.displayNames.filter((_n, i) => h.displayNameIds[i] !== excludeId),
     applyUpdate: (id, changes) => {
       h.applied.push({ id, changes });
       return { ...h.agent, ...(changes as Partial<SpaceAgent>) } as SpaceAgent;
@@ -201,6 +204,7 @@ describe('updateSpaceAgent', () => {
 
     test('rejects a display name held by another agent, case-insensitively', async () => {
       h.displayNames = ['Researcher', 'Taken Name'];
+      h.displayNameIds = ['agent-1', 'agent-2'];
       expectKind(
         await run(h, { id: 'agent-1', displayName: 'taken name' }),
         'invalid_identity',
@@ -295,6 +299,99 @@ describe('updateSpaceAgent', () => {
       await run(h, { id: 'agent-1', handle: 'coordinator' });
       expect(h.applied).toHaveLength(0);
       expect(h.published).toHaveLength(0);
+    });
+  });
+  describe('review findings', () => {
+    test('validates the pair when only provider changes', async () => {
+      h = makeHarness(makeAgent({ model: 'claude-opus-5', provider: 'anthropic' }));
+      const seen: Array<[string, string | null]> = [];
+      h.deps.validateModel = async (model, provider) => {
+        seen.push([model, provider]);
+        return null;
+      };
+
+      await run(h, { id: 'agent-1', provider: 'bedrock' });
+      expect(seen).toEqual([['claude-opus-5', 'bedrock']]);
+    });
+
+    test('honours an explicit provider clear instead of restoring the old one', async () => {
+      h = makeHarness(makeAgent({ model: 'claude-opus-5', provider: 'anthropic' }));
+      const seen: Array<[string, string | null]> = [];
+      h.deps.validateModel = async (model, provider) => {
+        seen.push([model, provider]);
+        return null;
+      };
+
+      await run(h, { id: 'agent-1', model: 'claude-sonnet-5', provider: null });
+      expect(seen).toEqual([['claude-sonnet-5', null]]);
+    });
+
+    test('skips model validation when neither model nor provider changes', async () => {
+      h = makeHarness(makeAgent({ model: 'claude-opus-5' }));
+      let called = false;
+      h.deps.validateModel = async () => {
+        called = true;
+        return null;
+      };
+      await run(h, { id: 'agent-1', instructions: 'x' });
+      expect(called).toBe(false);
+    });
+
+    test('locks the Space Manager handle', async () => {
+      h = makeHarness(makeAgent({ handle: 'space-manager' }));
+      expectKind(await run(h, { id: 'agent-1', handle: 'renamed' }), 'invalid_identity', 'locked');
+    });
+
+    test('refuses to archive the Space Manager', async () => {
+      h = makeHarness(makeAgent({ handle: 'space-manager' }));
+      expectKind(await run(h, { id: 'agent-1', status: 'archived' }), 'invalid_request');
+    });
+
+    test('still allows editing the Space Manager instructions', async () => {
+      h = makeHarness(makeAgent({ handle: 'space-manager' }));
+      const outcome = await run(h, { id: 'agent-1', instructions: 'Coordinate.' });
+      expect(isRejection(outcome)).toBe(false);
+    });
+
+    test('rechecks the display name when unarchiving', async () => {
+      h = makeHarness(makeAgent({ status: 'archived', displayName: 'Shared' }));
+      h.displayNames = ['Shared'];
+      h.displayNameIds = ['agent-other'];
+
+      expectKind(
+        await run(h, { id: 'agent-1', status: 'active' }),
+        'invalid_identity',
+        'already used'
+      );
+    });
+
+    test('allows unarchiving when the name is free', async () => {
+      h = makeHarness(makeAgent({ status: 'archived', displayName: 'Unique' }));
+      h.displayNames = [];
+      h.displayNameIds = [];
+
+      const outcome = await run(h, { id: 'agent-1', status: 'active' });
+      expect(isRejection(outcome)).toBe(false);
+    });
+
+    test.each([
+      ['thinkingLevel', { thinkingLevel: 'bogus' as never }],
+      ['settingSources', { settingSources: ['bogus'] as never }],
+      ['status', { status: 'bogus' as never }],
+      ['autonomyLevel', { autonomyLevel: 9 as never }],
+    ])('rejects an invalid %s', async (_label, changes) => {
+      expectKind(await run(h, { id: 'agent-1', ...changes }), 'invalid_request');
+    });
+
+    test('accepts valid enum values', async () => {
+      const outcome = await run(h, {
+        id: 'agent-1',
+        thinkingLevel: 'think16k',
+        settingSources: ['user', 'project'],
+        status: 'paused',
+        autonomyLevel: 3,
+      });
+      expect(isRejection(outcome)).toBe(false);
     });
   });
 });
