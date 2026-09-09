@@ -749,6 +749,53 @@ describe('Space Agent RPC Handlers', () => {
           'Delete or re-point those agents before deleting the template.'
       );
     });
+
+    it('ignores archived agents when checking template instance usage', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'guard.custom',
+        handle: 'guard',
+      });
+      longHorizonRepo.create({
+        spaceId: 'space-1',
+        handle: 'old-scribe',
+        displayName: 'Old Scribe',
+        templateKey: 'guard.custom',
+        instructions: 'Take notes.',
+        status: 'archived',
+      });
+
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'guard.custom' }
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects a stale expected version on delete', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'cas.custom',
+        handle: 'cas',
+      });
+      await call(hubData.handlers, 'spaceAgent.updateTemplate', {
+        key: 'cas.custom',
+        displayName: 'Two',
+      });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', {
+          key: 'cas.custom',
+          expectedVersion: 1,
+        })
+      ).rejects.toThrow('modified concurrently');
+
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'cas.custom', expectedVersion: 2 }
+      );
+      expect(result.success).toBe(true);
+    });
   });
 
   describe('spaceAgent.promotion', () => {

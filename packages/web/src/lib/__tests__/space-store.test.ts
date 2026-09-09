@@ -3332,6 +3332,20 @@ describe('SpaceStore — template CRUD methods', () => {
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['first']);
   });
 
+  it('deleteTemplate() forwards the expected version for stale-write protection', async () => {
+    templateListResult = [makeAgentTemplate({ key: 'scribe' })];
+    await spaceStore.fetchTemplates();
+    mockHub.request.mockClear();
+    mockHub.request.mockResolvedValueOnce({ success: true });
+
+    await spaceStore.deleteTemplate('scribe', 7);
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.deleteTemplate', {
+      key: 'scribe',
+      expectedVersion: 7,
+    });
+  });
+
   it('deleteTemplate() removes the cached entry even when the follow-up refresh fails', async () => {
     templateListResult = [makeAgentTemplate({ key: 'scribe' })];
     await spaceStore.fetchTemplates();

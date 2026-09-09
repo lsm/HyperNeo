@@ -404,10 +404,11 @@ describe('SpaceLongHorizonAgents', () => {
     fireEvent.click(getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
-    expect(mockUpdateTemplate).toHaveBeenCalledWith(
-      'scribe',
-      expect.objectContaining({ model: null, provider: 'anthropic' })
-    );
+    const providerEdit = mockUpdateTemplate.mock.calls[0][1];
+    expect(providerEdit.displayName).toBe('Scribe II');
+    expect(providerEdit).not.toHaveProperty('model');
+    expect(providerEdit).not.toHaveProperty('provider');
+    expect(providerEdit).not.toHaveProperty('modelPool');
   });
 
   it('preserves both model and pool on an unrelated edit of a dual-state template', async () => {
@@ -433,12 +434,34 @@ describe('SpaceLongHorizonAgents', () => {
     fireEvent.click(getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    const dualEdit = mockUpdateTemplate.mock.calls[0][1];
+    expect(dualEdit.displayName).toBe('Scribe II');
+    expect(dualEdit).not.toHaveProperty('model');
+    expect(dualEdit).not.toHaveProperty('provider');
+    expect(dualEdit).not.toHaveProperty('modelPool');
+  });
+
+  it('sends the model fields when the editor changes the model on a template', async () => {
+    mockTemplates.value = [
+      makeTemplate({ key: 'scribe', handle: 'scribe', displayName: 'Scribe', version: 4 }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+    const modelSelect = getByTestId('space-agent-model-select') as HTMLSelectElement;
+    modelSelect.value = 'claude-sonnet-4-6';
+    fireEvent.change(modelSelect);
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
     expect(mockUpdateTemplate).toHaveBeenCalledWith(
       'scribe',
       expect.objectContaining({
         model: 'claude-sonnet-4-6',
         provider: 'anthropic',
-        modelPool: pool,
+        expectedVersion: 4,
       })
     );
   });
