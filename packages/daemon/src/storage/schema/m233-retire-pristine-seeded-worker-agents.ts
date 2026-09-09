@@ -93,6 +93,8 @@ function collectAgentIds(db: BunDatabase, sql: string, column: string, ids: Set<
   }
 }
 
+const SQL_TRIM_WHITESPACE = "char(9) || char(10) || char(11) || char(12) || char(13) || ' '";
+
 export function agentsWithLiveState(db: BunDatabase): Set<string> {
   const ids = new Set<string>();
   if (tableExists(db, 'space_agent_inactivity_config')) {
@@ -175,7 +177,7 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
               OR json_array_length(nodes.config, '$.agents') = 0)`;
   collectAgentIds(
     db,
-    `SELECT DISTINCT trim(json_extract(slot.value, '$.agentId')) AS agent_id
+    `SELECT DISTINCT trim(json_extract(slot.value, '$.agentId'), ${SQL_TRIM_WHITESPACE}) AS agent_id
        FROM space_workflow_nodes nodes,
             json_each(
               CASE WHEN json_valid(nodes.config) THEN nodes.config END,
@@ -183,24 +185,24 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
             ) slot
       WHERE slot.type = 'object'
         AND json_type(slot.value, '$.agentId') = 'text'
-        AND trim(json_extract(slot.value, '$.agentId')) != ''`,
+        AND trim(json_extract(slot.value, '$.agentId'), ${SQL_TRIM_WHITESPACE}) != ''`,
     'agent_id',
     referenced
   );
   collectAgentIds(
     db,
-    `SELECT DISTINCT trim(json_extract(nodes.config, '$.agentId')) AS agent_id
+    `SELECT DISTINCT trim(json_extract(nodes.config, '$.agentId'), ${SQL_TRIM_WHITESPACE}) AS agent_id
        FROM space_workflow_nodes nodes
       WHERE json_valid(nodes.config)
         AND ${legacyShapeFilter}
         AND json_type(nodes.config, '$.agentId') = 'text'
-        AND trim(json_extract(nodes.config, '$.agentId')) != ''`,
+        AND trim(json_extract(nodes.config, '$.agentId'), ${SQL_TRIM_WHITESPACE}) != ''`,
     'agent_id',
     referenced
   );
   collectAgentIds(
     db,
-    `SELECT DISTINCT trim(json_extract(slot.value, '$.templateKey')) AS template_key
+    `SELECT DISTINCT trim(json_extract(slot.value, '$.templateKey'), ${SQL_TRIM_WHITESPACE}) AS template_key
        FROM space_workflow_nodes nodes,
             json_each(
               CASE WHEN json_valid(nodes.config) THEN nodes.config END,
@@ -208,18 +210,18 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
             ) slot
       WHERE slot.type = 'object'
         AND json_type(slot.value, '$.templateKey') = 'text'
-        AND trim(json_extract(slot.value, '$.templateKey')) LIKE 'migrated.agent.%'`,
+        AND trim(json_extract(slot.value, '$.templateKey'), ${SQL_TRIM_WHITESPACE}) LIKE 'migrated.agent.%'`,
     'template_key',
     m228Keys
   );
   collectAgentIds(
     db,
-    `SELECT DISTINCT trim(json_extract(nodes.config, '$.templateKey')) AS template_key
+    `SELECT DISTINCT trim(json_extract(nodes.config, '$.templateKey'), ${SQL_TRIM_WHITESPACE}) AS template_key
        FROM space_workflow_nodes nodes
       WHERE json_valid(nodes.config)
         AND ${legacyShapeFilter}
         AND json_type(nodes.config, '$.templateKey') = 'text'
-        AND trim(json_extract(nodes.config, '$.templateKey')) LIKE 'migrated.agent.%'`,
+        AND trim(json_extract(nodes.config, '$.templateKey'), ${SQL_TRIM_WHITESPACE}) LIKE 'migrated.agent.%'`,
     'template_key',
     m228Keys
   );
@@ -232,7 +234,7 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
   }
   collectAgentIds(
     db,
-    `SELECT DISTINCT trim(json_extract(slot.value, '$.agentId')) AS agent_id
+    `SELECT DISTINCT trim(json_extract(slot.value, '$.agentId'), ${SQL_TRIM_WHITESPACE}) AS agent_id
        FROM space_workflow_definition_versions versions
        JOIN (
                 SELECT DISTINCT workflow_id, definition_version
@@ -254,13 +256,13 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
             ) slot
       WHERE slot.type = 'object'
         AND json_type(slot.value, '$.agentId') = 'text'
-        AND trim(json_extract(slot.value, '$.agentId')) != ''`,
+        AND trim(json_extract(slot.value, '$.agentId'), ${SQL_TRIM_WHITESPACE}) != ''`,
     'agent_id',
     referenced
   );
   collectAgentIds(
     db,
-    `SELECT DISTINCT trim(json_extract(node.value, '$.agentId')) AS agent_id
+    `SELECT DISTINCT trim(json_extract(node.value, '$.agentId'), ${SQL_TRIM_WHITESPACE}) AS agent_id
        FROM space_workflow_definition_versions versions
        JOIN (
                 SELECT DISTINCT workflow_id, definition_version
@@ -279,13 +281,13 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
               OR json_type(node.value, '$.agents') != 'array'
               OR json_array_length(node.value, '$.agents') = 0)
         AND json_type(node.value, '$.agentId') = 'text'
-        AND trim(json_extract(node.value, '$.agentId')) != ''`,
+        AND trim(json_extract(node.value, '$.agentId'), ${SQL_TRIM_WHITESPACE}) != ''`,
     'agent_id',
     referenced
   );
   collectAgentIds(
     db,
-    `SELECT DISTINCT trim(json_extract(node.value, '$.templateKey')) AS template_key
+    `SELECT DISTINCT trim(json_extract(node.value, '$.templateKey'), ${SQL_TRIM_WHITESPACE}) AS template_key
        FROM space_workflow_definition_versions versions
        JOIN (
                 SELECT DISTINCT workflow_id, definition_version
@@ -304,13 +306,13 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
               OR json_type(node.value, '$.agents') != 'array'
               OR json_array_length(node.value, '$.agents') = 0)
         AND json_type(node.value, '$.templateKey') = 'text'
-        AND trim(json_extract(node.value, '$.templateKey')) LIKE 'migrated.agent.%'`,
+        AND trim(json_extract(node.value, '$.templateKey'), ${SQL_TRIM_WHITESPACE}) LIKE 'migrated.agent.%'`,
     'template_key',
     m228Keys
   );
   collectAgentIds(
     db,
-    `SELECT DISTINCT trim(json_extract(slot.value, '$.templateKey')) AS template_key
+    `SELECT DISTINCT trim(json_extract(slot.value, '$.templateKey'), ${SQL_TRIM_WHITESPACE}) AS template_key
        FROM space_workflow_definition_versions versions
        JOIN (
                 SELECT DISTINCT workflow_id, definition_version
@@ -332,7 +334,7 @@ export function referencedAgentIds(db: BunDatabase): Set<string> {
             ) slot
       WHERE slot.type = 'object'
         AND json_type(slot.value, '$.templateKey') = 'text'
-        AND trim(json_extract(slot.value, '$.templateKey')) LIKE 'migrated.agent.%'`,
+        AND trim(json_extract(slot.value, '$.templateKey'), ${SQL_TRIM_WHITESPACE}) LIKE 'migrated.agent.%'`,
     'template_key',
     m228Keys
   );
@@ -345,13 +347,9 @@ function expandMigratedAgentKeys(keys: Set<string>, referenced: Set<string>): vo
   for (const key of keys) {
     if (!key.startsWith(prefix)) continue;
     const rest = key.slice(prefix.length);
-    const dot = rest.indexOf('.');
-    const agentId = dot === -1 ? rest : rest.slice(0, dot);
-    if (!agentId) continue;
-    const suffix = dot === -1 ? '' : rest.slice(dot + 1);
-    if (suffix === '' || suffix === 'm228' || /^m228-\d+$/.test(suffix)) {
-      referenced.add(agentId);
-    }
+    if (!rest) continue;
+    const match = /^(.*)\.m228(?:-\d+)?$/.exec(rest);
+    referenced.add(match ? (match[1] ?? '') : rest);
   }
 }
 

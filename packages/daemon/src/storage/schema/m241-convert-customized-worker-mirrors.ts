@@ -91,8 +91,10 @@ function effectiveSlotName(rawName: unknown, agentId: string): string {
 function resolveMigratedAgentIdentity(templateKey: string): string {
   const prefix = `${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.`;
   if (!templateKey.startsWith(prefix)) return '';
-  const match = /^([^.]+)(?:\.m228(?:-\d+)?)?$/.exec(templateKey.slice(prefix.length));
-  return match ? match[1] : '';
+  const rest = templateKey.slice(prefix.length);
+  if (!rest) return '';
+  const match = /^(.*)\.m228(?:-\d+)?$/.exec(rest);
+  return match ? (match[1] ?? '') : rest;
 }
 
 function collectSlotOccurrences(
@@ -183,6 +185,8 @@ function clearMirrorSlots(
       agentId = recovered;
       occ.agentId = recovered;
       m228OwnedKey = true;
+    } else if (slotKey && resolveMigratedAgentIdentity(slotKey) === agentId) {
+      m228OwnedKey = true;
     }
     if (
       !keyByAgentId.has(agentId) ||
@@ -217,7 +221,6 @@ function clearMirrorSlots(
     const selfBoundByKey = existingKey === bindingKey;
     const keyBoundElsewhere = (slotKeyCounts.get(bindingKey) ?? 0) > (selfBoundByKey ? 1 : 0);
     if (
-      !m228OwnedKey &&
       bindingKey !== '' &&
       targets.has(bindingKey) &&
       (keyNamedElsewhere || keyBoundElsewhere || occupied.has(bindingKey))

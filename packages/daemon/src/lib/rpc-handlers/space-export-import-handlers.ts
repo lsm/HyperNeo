@@ -31,7 +31,12 @@ import {
   publishUnifiedAgentUpdated,
 } from '../space/agents/unified-agent-events.ts';
 import { isRunnableUnifiedAgent } from '../space/agents/worker-long-horizon-mapper.ts';
-import { exportBundle, normalizeOverride, validateExportBundle } from '../space/export-format.ts';
+import {
+  exportBundle,
+  normalizeOverride,
+  validateExportBundle,
+  withWorkerCustomTemplateOverlay,
+} from '../space/export-format.ts';
 import type { SpaceManager } from '../space/managers/space-manager.ts';
 import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug.ts';
@@ -664,12 +669,16 @@ export function setupSpaceExportImportHandlers(
 ): void {
   const templateRepo = new SpaceAgentTemplateRepository(db);
   const storedTemplateExists = (key: string): boolean => templateRepo.getByKey(key) != null;
+  const overlayTemplates = (agents: SpaceLongHorizonAgent[]): SpaceLongHorizonAgent[] =>
+    withWorkerCustomTemplateOverlay(agents, templateRepo.list());
 
   messageHub.onRequest('spaceExport.agents', async (data) => {
     const params = data as { spaceId: string; agentIds?: string[] };
     const space = await requireSpace(spaceManager, params.spaceId);
 
-    let agents: SpaceLongHorizonAgent[] = unifiedExportAgents(longHorizonAgentRepo, params.spaceId);
+    let agents: SpaceLongHorizonAgent[] = overlayTemplates(
+      unifiedExportAgents(longHorizonAgentRepo, params.spaceId)
+    );
     if (params.agentIds?.length) {
       const idSet = new Set(params.agentIds);
       agents = agents.filter((a) => idSet.has(a.id));
@@ -692,7 +701,7 @@ export function setupSpaceExportImportHandlers(
       workflows = workflows.filter((w) => idSet.has(w.id));
     }
 
-    const allAgents = unifiedExportAgents(longHorizonAgentRepo, params.spaceId);
+    const allAgents = overlayTemplates(unifiedExportAgents(longHorizonAgentRepo, params.spaceId));
 
     const referencedAgentIds = new Set<string>();
     for (const wf of workflows) {
@@ -769,7 +778,9 @@ export function setupSpaceExportImportHandlers(
     const params = data as { spaceId: string; agentIds?: string[]; workflowIds?: string[] };
     const space = await requireSpace(spaceManager, params.spaceId);
 
-    const exportableAgents = unifiedExportAgents(longHorizonAgentRepo, params.spaceId);
+    const exportableAgents = overlayTemplates(
+      unifiedExportAgents(longHorizonAgentRepo, params.spaceId)
+    );
     let agents = exportableAgents;
     if (params.agentIds?.length) {
       const idSet = new Set(params.agentIds);

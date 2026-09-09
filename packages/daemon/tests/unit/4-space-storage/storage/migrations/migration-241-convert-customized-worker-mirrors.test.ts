@@ -684,6 +684,93 @@ describe('migration 241: convert customized worker mirrors to user templates', (
     db.close();
   });
 
+  test('rebinds an m231-retained slot that keeps its agentId beside the m228 key', () => {
+    const { db, agentRepo, templateRepo } = createDb();
+    agentRepo.update(SWE_ID, { model: 'claude-sonnet-5' });
+    const m228Key = `migrated.agent.${SWE_ID}`;
+    templateRepo.create({
+      key: m228Key,
+      handle: 'swe-m228',
+      displayName: 'SWE m228',
+      instructions: 'm228 snapshot',
+    });
+    insertNodeWithAgents(
+      db,
+      'node-m231-retained',
+      JSON.stringify({ agents: [{ agentId: SWE_ID, templateKey: m228Key, name: 'builder' }] })
+    );
+
+    runMigration241(db);
+
+    expect(nodeAgents(db, 'node-m231-retained')).toEqual([
+      { agentId: '', name: 'builder', templateKey: workerCustomTemplateKey(SWE_ID) },
+    ]);
+    db.close();
+  });
+
+  test('holds a recovered m228 slot off a key owned by a later slot', () => {
+    const { db, agentRepo } = createDb();
+    agentRepo.update(SWE_ID, { model: 'claude-sonnet-5' });
+    const key = workerCustomTemplateKey(SWE_ID);
+    const m228Key = `migrated.agent.${SWE_ID}`;
+    insertWorkflow(db, 'workflow-m228-later', 'space-1', JSON.stringify({ targetAgent: key }));
+    insertNode(
+      db,
+      'node-m228-later-mirror',
+      'workflow-m228-later',
+      JSON.stringify({ agents: [{ agentId: '', templateKey: m228Key, name: 'builder' }] })
+    );
+    insertNode(
+      db,
+      'node-m228-later-early',
+      'workflow-m228-later',
+      JSON.stringify({ agents: [{ agentId: 'user-0', name: 'ops' }] })
+    );
+    insertNode(
+      db,
+      'node-m228-later-late',
+      'workflow-m228-later',
+      JSON.stringify({ agents: [{ agentId: 'user-1', templateKey: key, name: 'ops' }] })
+    );
+
+    runMigration241(db);
+
+    expect(nodeAgents(db, 'node-m228-later-mirror')).toEqual([
+      { agentId: '', templateKey: m228Key, name: 'builder' },
+    ]);
+    expect(nodeAgents(db, 'node-m228-later-late')).toEqual([{ agentId: 'user-1', name: 'ops' }]);
+    const postApproval = db
+      .prepare(`SELECT post_approval FROM space_workflows WHERE id = 'workflow-m228-later'`)
+      .get() as { post_approval: string };
+    expect(JSON.parse(postApproval.post_approval)).toEqual({ targetAgent: key });
+    db.close();
+  });
+
+  test('recovers an agentless m228 slot for a dotted agent id', () => {
+    const { db } = createDb();
+    db.prepare(
+      `INSERT INTO space_long_horizon_agents (
+         id, space_id, handle, display_name, template_key, instructions, model,
+         tool_permissions_json, created_at, updated_at
+       ) VALUES ('team.worker', 'space-1', 'dotted', 'Dotted Worker',
+         'migration.legacy_space_agent', 'Customized prompt', 'claude-sonnet-5', '{}', 1, 1)`
+    ).run();
+    insertNodeWithAgents(
+      db,
+      'node-dotted',
+      JSON.stringify({
+        agents: [{ agentId: '', templateKey: 'migrated.agent.team.worker', name: 'dotted' }],
+      })
+    );
+
+    runMigration241(db);
+
+    expect(nodeAgents(db, 'node-dotted')).toEqual([
+      { agentId: '', name: 'dotted', templateKey: 'worker-custom.team.worker' },
+    ]);
+    db.close();
+  });
+
   test('retargets routes off a neutralized stale key onto the owning slot name', () => {
     const { db, agentRepo } = createDb();
     agentRepo.update(SWE_ID, { model: 'claude-sonnet-5' });

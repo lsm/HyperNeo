@@ -9,6 +9,7 @@ import {
   validateExportBundle,
   validateExportedAgent,
   validateExportedWorkflow,
+  withWorkerCustomTemplateOverlay,
 } from '../../../../src/lib/space/export-format.ts';
 
 function makeAgent(overrides: Partial<SpaceLongHorizonAgent> = {}): SpaceLongHorizonAgent {
@@ -342,6 +343,24 @@ describe('exportWorkflow', () => {
     expect(exported.nodes[0].agents[0].agentRef).toBeUndefined();
   });
 
+  test('derives the agentRef fallback from the overlaid template displayName', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Code step',
+          agents: [{ agentId: '', templateKey: 'worker-custom.agent-uuid-1', name: 'coder' }],
+        },
+      ],
+    });
+    const overlaid = withWorkerCustomTemplateOverlay(
+      [makeAgent({ templateKey: 'worker-custom.agent-uuid-1' })],
+      [editedWorkerCustomTemplate()]
+    );
+    const exported = exportWorkflow(workflow, overlaid);
+    expect(exported.nodes[0].agents[0].agentRef).toBe('Edited Coder');
+  });
+
   test('exports resetContextPerTurn on agent slots', () => {
     const workflow = makeWorkflow({
       nodes: [
@@ -383,6 +402,66 @@ describe('exportWorkflow', () => {
     expect(exported.type).toBe('workflow');
   });
 });
+
+describe('withWorkerCustomTemplateOverlay', () => {
+  test('serializes the current template state over the migration-time row', () => {
+    const agent = makeAgent({
+      templateKey: 'worker-custom.agent-uuid-1',
+      instructions: 'stale migration snapshot',
+      model: null,
+    });
+
+    const [overlaid] = withWorkerCustomTemplateOverlay([agent], [editedWorkerCustomTemplate()]);
+
+    expect(overlaid.displayName).toBe('Edited Coder');
+    expect(overlaid.description).toBe('Now edited');
+    expect(overlaid.instructions).toBe('fresh instructions');
+    expect(overlaid.model).toBe('claude-opus-5');
+    expect(overlaid.provider).toBe('anthropic');
+    expect(overlaid.toolPermissions).toEqual({ tools: ['bash'] });
+  });
+
+  test('leaves agents with other or missing template keys untouched', () => {
+    const plain = makeAgent();
+    const otherKey = makeAgent({ templateKey: 'worker-custom.someone-else' });
+
+    const overlaid = withWorkerCustomTemplateOverlay(
+      [plain, otherKey],
+      [editedWorkerCustomTemplate()]
+    );
+
+    expect(overlaid[0]).toBe(plain);
+    expect(overlaid[1]).toBe(otherKey);
+  });
+
+  test('leaves restamped agents untouched when the template is missing', () => {
+    const agent = makeAgent({ templateKey: 'worker-custom.agent-uuid-1' });
+
+    const [overlaid] = withWorkerCustomTemplateOverlay([agent], []);
+
+    expect(overlaid).toBe(agent);
+  });
+});
+
+function editedWorkerCustomTemplate() {
+  return {
+    key: 'worker-custom.agent-uuid-1',
+    handle: 'my-coder',
+    displayName: 'Edited Coder',
+    description: 'Now edited',
+    instructions: 'fresh instructions',
+    suggestedAutonomyLevel: 2 as const,
+    model: 'claude-opus-5',
+    provider: 'anthropic',
+    modelPool: null,
+    thinkingLevel: null,
+    settingSources: null,
+    tools: ['bash'],
+    labels: ['workflow-worker'],
+    createdAt: 0,
+    updatedAt: 0,
+  };
+}
 
 describe('exportBundle', () => {
   test('creates bundle with correct structure', () => {

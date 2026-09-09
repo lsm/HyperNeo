@@ -5,6 +5,7 @@ import type {
   ExportedWorkflowChannel,
   ExportedWorkflowNode,
   ExportedWorkflowNodeAgent,
+  SpaceAgentTemplate,
   SpaceExportBundle,
   SpaceLongHorizonAgent,
   SpaceWorkflow,
@@ -12,8 +13,45 @@ import type {
 import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
 import { z } from 'zod';
 import { validateGlobPattern } from '../external-events/topic-validator.ts';
-import { WORKER_CUSTOM_TEMPLATE_KEY_PREFIX } from './agents/agent-template-synthesis.ts';
+import {
+  isMigrationIdentityKey,
+  WORKER_CUSTOM_TEMPLATE_KEY_PREFIX,
+} from './agents/agent-template-synthesis.ts';
 import { validateSlug } from './slug.ts';
+
+export function withWorkerCustomTemplateOverlay(
+  agents: SpaceLongHorizonAgent[],
+  templates: SpaceAgentTemplate[]
+): SpaceLongHorizonAgent[] {
+  const templateByKey = new Map(templates.map((template) => [template.key, template]));
+  return agents.map((agent) => {
+    if (!agent.templateKey) return agent;
+    if (
+      !isMigrationIdentityKey(
+        agent.templateKey,
+        WORKER_CUSTOM_TEMPLATE_KEY_PREFIX,
+        agent.id,
+        'm241'
+      )
+    ) {
+      return agent;
+    }
+    const template = templateByKey.get(agent.templateKey);
+    if (!template) return agent;
+    return {
+      ...agent,
+      displayName: template.displayName,
+      description: template.description || undefined,
+      instructions: template.instructions,
+      model: template.model,
+      provider: template.provider,
+      thinkingLevel: template.thinkingLevel,
+      settingSources: template.settingSources,
+      modelPool: template.modelPool ?? undefined,
+      toolPermissions: template.tools && template.tools.length > 0 ? { tools: template.tools } : {},
+    };
+  });
+}
 
 const _workflowConditionSchema = z
   .object({
