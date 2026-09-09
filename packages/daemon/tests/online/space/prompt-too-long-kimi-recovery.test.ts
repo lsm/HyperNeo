@@ -198,11 +198,19 @@ async function waitForUserMessageText(
   throw new Error('Timed out waiting for user message matching predicate');
 }
 
+type DaemonWithContext = DaemonServerContext & { daemonContext: DaemonAppContext };
+
 describe('Kimi prompt-too-long recovery — online with Dev Proxy', () => {
-  let daemon: DaemonServerContext & { daemonContext: DaemonAppContext };
+  let daemon: DaemonWithContext;
 
   beforeEach(async () => {
-    daemon = await createDaemonServer();
+    daemon = (await createDaemonServer()) as DaemonWithContext;
+    if (!daemon.daemonContext) {
+      throw new Error(
+        'Kimi prompt-too-long recovery tests require in-process daemon mode. ' +
+          'Unset DAEMON_TEST_SPAWN to run these tests.'
+      );
+    }
   }, SETUP_TIMEOUT);
 
   afterEach(async () => {

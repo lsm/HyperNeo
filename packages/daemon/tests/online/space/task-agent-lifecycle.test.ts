@@ -232,11 +232,19 @@ function extractTextContent(assistantMessages: Array<Record<string, unknown>>): 
     .join(' ');
 }
 
+type DaemonWithContext = DaemonServerContext & { daemonContext: DaemonAppContext };
+
 describe('Task Agent Lifecycle — Online Tests', () => {
-  let daemon: DaemonServerContext & { daemonContext: DaemonAppContext };
+  let daemon: DaemonWithContext;
 
   beforeEach(async () => {
-    daemon = await createDaemonServer();
+    daemon = (await createDaemonServer()) as DaemonWithContext;
+    if (!daemon.daemonContext) {
+      throw new Error(
+        'Task agent lifecycle tests require in-process daemon mode. ' +
+          'Unset DAEMON_TEST_SPAWN to run these tests.'
+      );
+    }
   }, SETUP_TIMEOUT);
 
   afterEach(async () => {
