@@ -1767,20 +1767,6 @@ describe('SessionManager', () => {
     });
   });
 
-  describe('cleanupOrphanedWorktrees', () => {
-    it('should delegate to worktreeManager using the provided path', async () => {
-      const result = await sessionManager.cleanupOrphanedWorktrees('/custom/path');
-
-      expect(Array.isArray(result)).toBe(true);
-    });
-
-    it('should use the provided path, not config.workspaceRoot', async () => {
-      const result = await sessionManager.cleanupOrphanedWorktrees('/explicit/repo');
-
-      expect(Array.isArray(result)).toBe(true);
-    });
-  });
-
   describe('getDatabase', () => {
     it('should return the database instance', () => {
       const db = sessionManager.getDatabase();

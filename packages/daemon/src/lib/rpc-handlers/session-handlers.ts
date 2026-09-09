@@ -25,18 +25,11 @@ import { activatePrompts, retryPrompt } from '../agent/message-delivery-outbox.t
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import { Logger } from '../logger.ts';
 import {
-  clearModelsCache,
   hasRefreshBeenAttemptedFor,
   isCuratedOutModel,
   markRefreshAttemptedFor,
 } from '../model-service.js';
 import { getProviderRegistry, inferProviderForModel } from '../providers/registry.js';
-import {
-  archiveSDKSessionFiles,
-  deleteSDKSessionFiles,
-  identifyOrphanedSDKFiles,
-  scanSDKSessionFiles,
-} from '../sdk-session-file-manager.ts';
 import { validateImageSizes } from '../session/message-persistence.ts';
 import {
   hasRuntimeNodeAgentServer,
@@ -310,29 +303,6 @@ export function setupSessionHandlers(
         workingDirectory: session.worktree?.worktreePath ?? session.workspacePath ?? null,
       },
     };
-  });
-
-  messageHub.onRequest('session.validate', async (data) => {
-    const { sessionId: targetSessionId } = data as { sessionId: string };
-    try {
-      const agentSession = await sessionManager.getSessionForControl(targetSessionId);
-      return { valid: agentSession !== null, error: null };
-    } catch (error) {
-      return {
-        valid: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  });
-
-  messageHub.onRequest('session.getSkillMcpServers', async (data) => {
-    const { sessionId: targetSessionId } = data as { sessionId: string };
-    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
-    if (!agentSession) {
-      throw new Error(`Session not found: ${targetSessionId}`);
-    }
-    const servers = agentSession.optionsBuilder.getSkillMcpServers();
-    return { servers };
   });
 
   messageHub.onRequest('session.update', async (data, _ctx) => {
@@ -801,110 +771,6 @@ export function setupSessionHandlers(
     }
   });
 
-  messageHub.onRequest('models.clearCache', async () => {
-    clearModelsCache();
-    return { success: true };
-  });
-
-  messageHub.onRequest('agent.getState', async (data) => {
-    const { sessionId: targetSessionId } = data as { sessionId: string };
-
-    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
-    if (!agentSession) {
-      throw new Error('Session not found');
-    }
-
-    const state = agentSession.getProcessingState();
-
-    return { state };
-  });
-
-  messageHub.onRequest('worktree.cleanup', async (data) => {
-    const { workspacePath: resolvedPath } = data as { workspacePath?: string };
-    if (!resolvedPath) {
-      throw new Error('workspacePath is required');
-    }
-    const cleanedPaths = await sessionManager.cleanupOrphanedWorktrees(resolvedPath);
-
-    return {
-      success: true,
-      cleanedPaths,
-      message: `Cleaned up ${cleanedPaths.length} orphaned worktree(s)`,
-    };
-  });
-
-  messageHub.onRequest('sdk.scan', async (data) => {
-    const { workspacePath } = data as { workspacePath: string };
-
-    const files = scanSDKSessionFiles(workspacePath);
-
-    const sessions = sessionManager.listSessions({ includeArchived: true });
-    const activeIds = new Set(sessions.filter((s) => s.status === 'active').map((s) => s.id));
-    const archivedIds = new Set(sessions.filter((s) => s.status === 'archived').map((s) => s.id));
-
-    const orphaned = identifyOrphanedSDKFiles(files, activeIds, archivedIds);
-
-    return {
-      success: true,
-      workspacePath,
-      summary: {
-        totalFiles: files.length,
-        totalSize: files.reduce((sum, f) => sum + f.size, 0),
-        orphanedFiles: orphaned.length,
-        orphanedSize: orphaned.reduce((sum, f) => sum + f.size, 0),
-      },
-      files,
-      orphaned,
-    };
-  });
-
-  messageHub.onRequest('sdk.cleanup', async (data) => {
-    const { workspacePath, mode, sdkSessionIds } = data as {
-      workspacePath: string;
-      mode: 'archive' | 'delete';
-      sdkSessionIds?: string[];
-    };
-
-    const errors: string[] = [];
-    let processedCount = 0;
-    let totalSize = 0;
-
-    let filesToClean = scanSDKSessionFiles(workspacePath);
-    if (sdkSessionIds && sdkSessionIds.length > 0) {
-      filesToClean = filesToClean.filter((f) => sdkSessionIds.includes(f.sdkSessionId));
-    }
-
-    for (const file of filesToClean) {
-      const kaiSessionId = file.kaiSessionIds[0] || 'orphan';
-
-      if (mode === 'delete') {
-        const result = deleteSDKSessionFiles(workspacePath, file.sdkSessionId, kaiSessionId);
-        if (result.success) {
-          processedCount++;
-          totalSize += result.deletedSize;
-        } else {
-          errors.push(...result.errors);
-        }
-      } else {
-        const result = archiveSDKSessionFiles(workspacePath, file.sdkSessionId, kaiSessionId);
-        if (result.success) {
-          processedCount++;
-          totalSize += result.totalSize;
-        } else {
-          errors.push(...result.errors);
-        }
-      }
-    }
-
-    return {
-      success: errors.length === 0,
-      mode,
-      processedCount,
-      totalSize,
-      errors,
-    };
-  });
-
   messageHub.onRequest('session.resetQuery', async (data) => {
     const { sessionId: targetSessionId, restartQuery = true } = data as {
       sessionId: string;
@@ -939,45 +805,6 @@ export function setupSessionHandlers(
     return result;
   });
 
-  messageHub.onRequest('session.restart', async (data) => {
-    const { sessionId: targetSessionId } = data as { sessionId: string };
-
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId, {
-      startQuery: false,
-    });
-    if (!agentSession) {
-      throw new Error('Session not found');
-    }
-    const restartData = agentSession.getSessionData();
-    if (
-      isWorkflowSubSessionIdentity(restartData.id) &&
-      !hasRuntimeNodeAgentServer(restartData.config)
-    ) {
-      throw new Error(
-        `Workflow session ${targetSessionId} is not resumable — provisioning skipped`
-      );
-    }
-
-    try {
-      await agentSession.restart();
-
-      await internalEventBus.publish('agent.restart', {
-        sessionId: targetSessionId,
-        success: true,
-      });
-
-      return { success: true };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      await internalEventBus.publish('agent.restart', {
-        sessionId: targetSessionId,
-        success: false,
-        error: errorMessage,
-      });
-      return { success: false, error: errorMessage };
-    }
-  });
-
   messageHub.onRequest('session.cancelRateLimitRetry', async (data) => {
     const { sessionId: targetSessionId } = data as { sessionId: string };
     const agentSession = await sessionManager.getSessionForControl(targetSessionId);
@@ -998,47 +825,6 @@ export function setupSessionHandlers(
     }
     const resumed = await agentSession.retryNowAfterRateLimit();
     return { success: resumed };
-  });
-
-  messageHub.onRequest('session.query.trigger', async (data) => {
-    const { sessionId: targetSessionId } = data as { sessionId: string };
-
-    const agentSession = await sessionManager.getSessionAsync(targetSessionId);
-    if (!agentSession) {
-      throw new Error('Session not found');
-    }
-    const triggerData = agentSession.getSessionData();
-    if (
-      isWorkflowSubSessionIdentity(triggerData.id) &&
-      !hasRuntimeNodeAgentServer(triggerData.config)
-    ) {
-      throw new Error(
-        `Workflow session ${targetSessionId} is not resumable — provisioning skipped`
-      );
-    }
-
-    await agentSession.replayAllPendingMessages();
-
-    return { success: true };
-  });
-
-  messageHub.onRequest('session.messages.countByStatus', async (data) => {
-    const { sessionId: targetSessionId, status } = data as {
-      sessionId: string;
-      status: 'deferred' | 'enqueued' | 'consumed';
-    };
-
-    const agentSession = await sessionManager.getSessionForControl(targetSessionId);
-    if (!agentSession) {
-      throw new Error('Session not found');
-    }
-
-    const session = agentSession.getSessionData();
-
-    const db = sessionManager.getDatabase();
-    const count = db.getMessageCountByStatus(session.id, status);
-
-    return { count };
   });
 
   messageHub.onRequest('session.messages.byStatus', async (data) => {

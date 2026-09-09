@@ -34,11 +34,11 @@ describe('Message delivery mode queue flow', () => {
     sessionId: string,
     status: 'deferred' | 'enqueued' | 'consumed'
   ): Promise<number> {
-    const result = (await daemon.messageHub.request('session.messages.countByStatus', {
+    const result = (await daemon.messageHub.request('session.messages.byStatus', {
       sessionId,
       status,
-    })) as { count: number };
-    return result.count;
+    })) as { total: number };
+    return result.total;
   }
 
   async function waitForCount(

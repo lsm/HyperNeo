@@ -649,60 +649,6 @@ describe('WorktreeManager', () => {
     });
   });
 
-  describe('cleanupOrphanedWorktrees', () => {
-    it('should return empty array for non-git repository', async () => {
-      existsSyncResults.set('/test/path/.git', false);
-
-      const result = await manager.cleanupOrphanedWorktrees('/test/path');
-
-      expect(result).toEqual([]);
-    });
-
-    it('should prune and remove orphaned worktrees', async () => {
-      existsSyncResults.set('/test/repo/.git', true);
-      existsSyncResults.set('/test/repo/.hyperneo/worktrees/session-1', false);
-
-      mockGitRevparse.mockResolvedValue('.git');
-      mockGitRaw
-        .mockResolvedValueOnce('')
-        .mockResolvedValueOnce(
-          'worktree /test/repo\nHEAD abc123\n\nworktree /test/repo/.hyperneo/worktrees/session-1\nHEAD def456\nbranch refs/heads/session/session-1\nprunable\n'
-        )
-        .mockResolvedValue('');
-
-      const result = await manager.cleanupOrphanedWorktrees('/test/repo');
-
-      expect(result).toContain('/test/repo/.hyperneo/worktrees/session-1');
-    });
-
-    it('should delete task/ branches for orphaned task worktrees', async () => {
-      existsSyncResults.set('/test/repo/.git', true);
-
-      mockGitRevparse.mockResolvedValue('.git');
-      mockGitRaw
-        .mockResolvedValueOnce('')
-        .mockResolvedValueOnce(
-          'worktree /test/repo\nHEAD abc123\n\nworktree /test/repo/.hyperneo/worktrees/task-wt\nHEAD def456\nbranch refs/heads/task/task-42-implement-feature\nprunable\n'
-        )
-        .mockResolvedValue('');
-
-      const result = await manager.cleanupOrphanedWorktrees('/test/repo');
-
-      expect(result).toContain('/test/repo/.hyperneo/worktrees/task-wt');
-      expect(mockGitBranch).toHaveBeenCalledWith(['-D', 'task/task-42-implement-feature']);
-    });
-
-    it('should throw on cleanup failure', async () => {
-      existsSyncResults.set('/test/repo/.git', true);
-      mockGitRevparse.mockResolvedValue('.git');
-      mockGitRaw.mockRejectedValue(new Error('Git error'));
-
-      await expect(manager.cleanupOrphanedWorktrees('/test/repo')).rejects.toThrow(
-        'Failed to cleanup'
-      );
-    });
-  });
-
   describe('getCommitsAhead', () => {
     it('should return no commits when branch does not exist', async () => {
       mockGitRevparse.mockRejectedValue(new Error('Branch not found'));

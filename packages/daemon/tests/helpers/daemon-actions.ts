@@ -140,15 +140,15 @@ export async function getProcessingState(
   daemon: DaemonServerContext,
   sessionId: string
 ): Promise<{ status: string; phase?: string }> {
-  const result = (await daemon.messageHub.request('agent.getState', {
+  const result = (await daemon.messageHub.request('state.session', {
     sessionId,
-  })) as { state: { status: string; phase?: string } } | undefined;
+  })) as { agentState?: { status: string; phase?: string } } | undefined;
 
-  if (!result?.state) {
+  if (!result?.agentState) {
     return { status: 'unknown' };
   }
 
-  return result.state;
+  return result.agentState;
 }
 
 export async function getSession(

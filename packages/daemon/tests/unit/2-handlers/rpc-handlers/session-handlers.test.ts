@@ -7,7 +7,7 @@ import type {
   InternalEventBus,
 } from '../../../../src/lib/internal-event-bus';
 import { MESSAGE_DELIVERY } from '../../../../src/lib/job-queue-constants';
-import { setModelsCache } from '../../../../src/lib/model-service.js';
+import { clearModelsCache, setModelsCache } from '../../../../src/lib/model-service.js';
 import { resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 import { detectStrandedProviders } from '../../../../src/lib/rpc-handlers/session-handlers';
@@ -573,7 +573,7 @@ describe('Session RPC Handlers — models.list', () => {
     expect(second.cached).toBe(true);
     expect(getModelCalls).toBe(1);
 
-    await messageHubData.handlers.get('models.clearCache')!({}, {});
+    clearModelsCache();
 
     const third = (await listModels({ useCache: true }, {})) as {
       models: Array<{ id: string }>;
@@ -2394,61 +2394,6 @@ describe('Session RPC Handlers — client.interrupt', () => {
     getCachedSession.mockReturnValue(null);
 
     await expect(handler!({ sessionId: 'session-1' }, {})).rejects.toThrow('Session not found');
-  });
-});
-
-describe('Session RPC Handlers — session.query.trigger', () => {
-  let messageHubData: ReturnType<typeof createMockMessageHub>;
-  let getSessionAsync: ReturnType<typeof mock>;
-
-  beforeEach(async () => {
-    messageHubData = createMockMessageHub();
-    getSessionAsync = mock(async () => null);
-    const sessionManager = {
-      getSessionAsync,
-    } as unknown as SessionManager;
-    const { setupSessionHandlers } = await import(
-      '../../../../src/lib/rpc-handlers/session-handlers'
-    );
-    setupSessionHandlers(
-      messageHubData.hub,
-      sessionManager,
-      createMockInternalEventBus(),
-      {} as SpaceManager
-    );
-  });
-
-  it('rejects the trigger when workflow provisioning was skipped', async () => {
-    const handler = messageHubData.handlers.get('session.query.trigger');
-    expect(handler).toBeDefined();
-    const replayAllPendingMessages = mock(async () => {});
-    getSessionAsync.mockResolvedValue({
-      getSessionData: () => ({ id: 'space:s1:task:t1:exec:e1', config: {} }),
-      replayAllPendingMessages,
-    } as unknown as Awaited<ReturnType<SessionManager['getSessionAsync']>>);
-
-    await expect(handler!({ sessionId: 'space:s1:task:t1:exec:e1' }, {})).rejects.toThrow(
-      'not resumable'
-    );
-    expect(replayAllPendingMessages).not.toHaveBeenCalled();
-  });
-
-  it('replays pending messages for a provisioned session', async () => {
-    const handler = messageHubData.handlers.get('session.query.trigger');
-    expect(handler).toBeDefined();
-    const replayAllPendingMessages = mock(async () => {});
-    getSessionAsync.mockResolvedValue({
-      getSessionData: () => ({
-        id: 'session-1',
-        config: { mcpServers: { 'node-agent': { type: 'sdk' } } },
-      }),
-      replayAllPendingMessages,
-    } as unknown as Awaited<ReturnType<SessionManager['getSessionAsync']>>);
-
-    const result = (await handler!({ sessionId: 'session-1' }, {})) as { success: boolean };
-
-    expect(result).toEqual({ success: true });
-    expect(replayAllPendingMessages).toHaveBeenCalledTimes(1);
   });
 });
 

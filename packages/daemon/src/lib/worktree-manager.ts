@@ -847,57 +847,6 @@ export class WorktreeManager {
     return worktrees;
   }
 
-  async cleanupOrphanedWorktrees(repoPath: string): Promise<string[]> {
-    const gitRoot = await this.findGitRoot(repoPath);
-    if (!gitRoot) {
-      return [];
-    }
-
-    const git = this.getGit(gitRoot);
-    const cleaned: string[] = [];
-
-    try {
-      await git.raw(['worktree', 'prune', '--verbose']);
-
-      const worktrees = await this.listWorktrees(gitRoot);
-
-      for (const worktree of worktrees) {
-        if (worktree.path === gitRoot) {
-          continue;
-        }
-
-        const testBaseDir = process.env.TEST_WORKTREE_BASE_DIR;
-        const isSessionWorktree = testBaseDir
-          ? worktree.path.startsWith(testBaseDir)
-          : worktree.path.includes('.hyperneo/projects');
-
-        if (worktree.isPrunable || (!existsSync(worktree.path) && isSessionWorktree)) {
-          try {
-            await git.raw(['worktree', 'remove', worktree.path, '--force']);
-            cleaned.push(worktree.path);
-
-            if (worktree.branch.startsWith('session/') || worktree.branch.startsWith('task/')) {
-              try {
-                await git.branch(['-D', worktree.branch]);
-              } catch {}
-            }
-          } catch (error) {
-            this.logger.error(
-              `[WorktreeManager] Failed to remove worktree ${worktree.path}:`,
-              error
-            );
-          }
-        }
-      }
-      return cleaned;
-    } catch (error) {
-      this.logger.error(' Failed to cleanup orphaned worktrees:', error);
-      throw new Error(
-        `Failed to cleanup: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  }
-
   async verifyWorktree(worktree: WorktreeMetadata): Promise<boolean> {
     const { worktreePath, mainRepoPath } = worktree;
 
