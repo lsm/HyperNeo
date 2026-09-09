@@ -13,8 +13,22 @@ import type {
 } from '@hyperneo/shared';
 import { resolveNodeAgents } from '@hyperneo/shared';
 import type { SpaceAgentTemplate, WorkflowTemplateSnapshot } from '@hyperneo/shared';
+import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
 import type { AgentSessionInit } from '../../agent/agent-session.ts';
 import type { SlotOverrides } from '../agents/custom-agent.ts';
+import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
+
+export function resolveAgentTemplateInstructions(
+  templateRepo: Pick<SpaceAgentTemplateRepository, 'getByKey'> | undefined,
+  key: string
+): string | null {
+  const trimmed = key.trim();
+  if (!trimmed) return null;
+  const builtIn = getLongHorizonAgentTemplate(trimmed);
+  if (builtIn) return builtIn.instructions;
+  const stored = templateRepo?.getByKey(trimmed);
+  return stored ? stored.instructions : null;
+}
 
 export interface WorkflowNodeSlotResolution {
   node: WorkflowNode;

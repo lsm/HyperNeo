@@ -5,10 +5,35 @@ import type {
   SpaceTaskStatus,
   SpaceWorkflow,
   WorkflowNode,
+  WorkflowTemplateSnapshot,
 } from '@hyperneo/shared';
 import { isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import { migratedAgentTemplateKey } from '../agents/agent-template-synthesis.ts';
-import { resolveSlotCustomPrompt } from './spawn-slot-resolution.ts';
+import {
+  resolveAgentTemplateInstructions,
+  resolveSlotCustomPrompt,
+} from './spawn-slot-resolution.ts';
+
+export type SlotTemplateAuditSources = {
+  templateResolves: (key: string) => boolean;
+  templateInstructions: (key: string) => string | null;
+};
+
+export function slotTemplateAuditSources(
+  templateRepo: Parameters<typeof resolveAgentTemplateInstructions>[0],
+  pinnedSnapshots?: Record<string, WorkflowTemplateSnapshot> | null
+): SlotTemplateAuditSources {
+  const resolve = (key: string): string | null => {
+    const trimmed = key.trim();
+    const snapshot = trimmed ? pinnedSnapshots?.[trimmed] : undefined;
+    if (snapshot) return snapshot.instructions;
+    return resolveAgentTemplateInstructions(templateRepo, trimmed);
+  };
+  return {
+    templateResolves: (key) => resolve(key) !== null,
+    templateInstructions: resolve,
+  };
+}
 
 export type ExecutionWorkflowValidationResult =
   | { valid: true }
@@ -216,6 +241,19 @@ export function formatMissingNodeAgentReference(params: {
     });
   }
   return formatMissingTemplateReference({ ...common, templateKey: reference.templateKey });
+}
+
+export function findMissingSlotTemplateReference(
+  node: WorkflowNode,
+  slotName: string,
+  sources: SlotTemplateAuditSources
+): MissingNodeAgentReference | null {
+  const missing = findMissingNodeAgentReferences(node, () => true, {
+    slotNames: new Set([slotName]),
+    templateResolves: sources.templateResolves,
+    templateInstructions: sources.templateInstructions,
+  });
+  return missing.length > 0 ? missing[0] : null;
 }
 
 export function validateExecutionAgainstWorkflow(

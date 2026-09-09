@@ -171,8 +171,12 @@ import {
 } from './workflow-hook-engine.ts';
 import {
   assertExecutionValidAgainstWorkflow,
+  findMissingSlotTemplateReference,
+  formatMissingNodeAgentReference,
   isSpawnSupersededError,
+  MissingWorkflowAgentError,
   PermanentSpawnError,
+  slotTemplateAuditSources,
   SPAWN_BINDABLE_EXECUTION_STATUSES,
   SPAWN_RESERVABLE_TASK_STATUSES,
   SpawnSupersededError,
@@ -663,6 +667,16 @@ export class TaskAgentManager {
       appliedSlot?: WorkflowNodeAgent;
       dispatcherActionNames?: ReadonlySet<string>;
     } = { reservationHeld: false, reservedExecution: false };
+    const spawnNode = workflow.nodes.find((node) => node.id === execution.workflowNodeId);
+    if (spawnNode) {
+      this.assertSlotTemplateSpawnable({
+        workflow,
+        runId: workflowRun.id,
+        workflowRun,
+        node: spawnNode,
+        slotName: execution.agentName,
+      });
+    }
     const outcome = await runSpawnExecutionFlow(this.buildSpawnExecutionFlowDeps(spawnState), {
       task,
       space,
@@ -3371,6 +3385,34 @@ export class TaskAgentManager {
     return null;
   }
 
+  private assertSlotTemplateSpawnable(params: {
+    workflow: Pick<SpaceWorkflow, 'name'>;
+    runId: string;
+    workflowRun?: Pick<SpaceWorkflowRun, 'workflowId' | 'definitionVersion'> | null;
+    node: WorkflowNode;
+    slotName: string;
+  }): void {
+    const { workflow, node, slotName } = params;
+    const pinnedSnapshots = params.workflowRun?.definitionVersion
+      ? this.config.spaceWorkflowManager.getWorkflowForRun(params.workflowRun)?.templateSnapshots
+      : undefined;
+    const missing = findMissingSlotTemplateReference(
+      node,
+      slotName,
+      slotTemplateAuditSources(this.config.templateRepo, pinnedSnapshots)
+    );
+    if (!missing) return;
+    throw new MissingWorkflowAgentError(
+      formatMissingNodeAgentReference({
+        reference: missing,
+        runId: params.runId,
+        nodeLabel: node.name,
+        workflowName: workflow.name,
+      }),
+      missing
+    );
+  }
+
   private resolveSlotSpawnConfig(
     spaceId: string,
     slot: WorkflowNodeAgent,
@@ -5392,6 +5434,7 @@ export class TaskAgentManager {
 
     let matchedSlot: ReturnType<typeof resolveNodeAgents>[number] | null = null;
     let matchedNodeId: string | null = null;
+    let auditNode: WorkflowNode | null = null;
     for (const node of workflow.nodes) {
       for (const slot of resolveNodeAgents(node)) {
         if (
@@ -5401,6 +5444,7 @@ export class TaskAgentManager {
         ) {
           matchedSlot = slot;
           matchedNodeId = node.id;
+          auditNode = node;
           break;
         }
       }
@@ -5410,6 +5454,17 @@ export class TaskAgentManager {
       throw new Error(
         `spawnPostApprovalSubSession: no agent slot "${targetAgent}" declared in workflow ${workflow.id}`
       );
+    }
+    if (auditNode) {
+      this.assertSlotTemplateSpawnable({
+        workflow,
+        runId: task.workflowRunId ?? taskId,
+        workflowRun: task.workflowRunId
+          ? this.config.workflowRunRepo.getRun(task.workflowRunId)
+          : null,
+        node: auditNode,
+        slotName: matchedSlot.name,
+      });
     }
 
     const existingSessionId = await this.findLiveSubSessionForAgent(

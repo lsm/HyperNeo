@@ -3,6 +3,7 @@ import type { WorkflowNode } from '@hyperneo/shared';
 import type { NodeExecution, SpaceWorkflow } from '@hyperneo/shared';
 import {
   findMissingNodeAgentReferences,
+  findMissingSlotTemplateReference,
   formatEmptyTemplateInstructionsReference,
   formatMissingAgentReference,
   formatMissingNodeAgentReference,
@@ -10,6 +11,7 @@ import {
   isMissingWorkflowAgentError,
   MissingWorkflowAgentError,
   PermanentSpawnError,
+  slotTemplateAuditSources,
   validateExecutionAgainstWorkflow,
 } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 
@@ -559,5 +561,86 @@ describe('formatEmptyTemplateInstructionsReference', () => {
     expect(message).toContain('Orphan Gate');
     expect(message).toContain('reviewer');
     expect(message).toContain('empty instructions');
+  });
+});
+
+describe('findMissingSlotTemplateReference spawn-boundary audit', () => {
+  const sources = {
+    templateResolves: (key: string) => key === 'worker.swe',
+    templateInstructions: (key: string) => (key === 'worker.swe' ? 'You are the SWE worker.' : ''),
+  };
+
+  test('flags the named slot bound to an empty-instruction template', () => {
+    const node = makeNode([{ agentId: '', templateKey: 'migrated.agent.gone', name: 'orphan' }]);
+    expect(findMissingSlotTemplateReference(node, 'orphan', sources)?.templateReason).toBe(
+      'empty-instructions'
+    );
+  });
+
+  test('slotTemplateAuditSources prefers the pinned snapshot over the live template', () => {
+    const repo = {
+      getByKey: (key: string) =>
+        key === 'worker.pinned' ? { key, instructions: 'Repaired live instructions.' } : null,
+    };
+    const snapshots = {
+      'worker.pinned': {
+        key: 'worker.pinned',
+        handle: 'pinned',
+        displayName: 'Pinned',
+        description: '',
+        instructions: '',
+      },
+    };
+    expect(slotTemplateAuditSources(repo, snapshots).templateInstructions('worker.pinned')).toBe(
+      ''
+    );
+    expect(slotTemplateAuditSources(repo).templateInstructions('worker.pinned')).toBe(
+      'Repaired live instructions.'
+    );
+  });
+
+  test('slotTemplateAuditSources falls back to live resolution for keys absent from snapshots', () => {
+    const repo = {
+      getByKey: (key: string) =>
+        key === 'worker.live' ? { key, instructions: 'Live instructions.' } : null,
+    };
+    const liveFallback = slotTemplateAuditSources(repo, {});
+    expect(liveFallback.templateInstructions('worker.live')).toBe('Live instructions.');
+    expect(liveFallback.templateInstructions('ghost.preview')).toBeNull();
+  });
+
+  test('returns null for a healthy target slot', () => {
+    const node = makeNode([{ agentId: '', templateKey: 'worker.swe', name: 'coder' }]);
+    expect(findMissingSlotTemplateReference(node, 'coder', sources)).toBeNull();
+  });
+
+  test('ignores sibling slots outside the audit target', () => {
+    const node = makeNode([
+      { agentId: '', templateKey: 'worker.swe', name: 'coder' },
+      { agentId: '', templateKey: 'migrated.agent.gone', name: 'orphan' },
+    ]);
+    expect(findMissingSlotTemplateReference(node, 'coder', sources)).toBeNull();
+  });
+
+  test('never flags agentId-only slots at the spawn boundary', () => {
+    const node = makeNode([{ agentId: 'legacy-agent', name: 'reviewer' }]);
+    expect(findMissingSlotTemplateReference(node, 'reviewer', sources)).toBeNull();
+  });
+
+  test('honors the slot customPrompt exemption', () => {
+    const node = makeNode([
+      {
+        agentId: '',
+        templateKey: 'migrated.agent.gone',
+        name: 'orphan',
+        customPrompt: { value: 'Slot-level role instructions.' },
+      },
+    ]);
+    expect(findMissingSlotTemplateReference(node, 'orphan', sources)).toBeNull();
+  });
+
+  test('returns null when the node has no agents', () => {
+    const node = { id: 'node-1', name: 'Empty' } as WorkflowNode;
+    expect(findMissingSlotTemplateReference(node, 'orphan', sources)).toBeNull();
   });
 });

@@ -1785,6 +1785,56 @@ describe('NodeConfigPanel', () => {
       expect(queryByTestId('agent-template-warning')).toBeNull();
     });
 
+    it('renders no empty-instructions warning when a legacy systemPrompt carries the prompt', () => {
+      const templates = [
+        ...defaultAgentTemplates,
+        { ...makeTemplate('migrated.agent.gone', 'Gone', 'gone'), instructions: '' },
+      ];
+      const { queryByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            step: makeStep({
+              agents: [
+                {
+                  agentId: '',
+                  templateKey: 'migrated.agent.gone',
+                  name: 'orphan',
+                  systemPrompt: { value: 'Legacy slot system prompt.' },
+                } as never,
+              ],
+            }),
+            agentTemplates: templates,
+          })}
+        />
+      );
+      expect(queryByTestId('agent-template-warning')).toBeNull();
+    });
+
+    it('renders no empty-instructions warning when a legacy instructions override carries the prompt', () => {
+      const templates = [
+        ...defaultAgentTemplates,
+        { ...makeTemplate('migrated.agent.gone', 'Gone', 'gone'), instructions: '' },
+      ];
+      const { queryByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            step: makeStep({
+              agents: [
+                {
+                  agentId: '',
+                  templateKey: 'migrated.agent.gone',
+                  name: 'orphan',
+                  instructions: { value: 'Legacy slot instructions.' },
+                } as never,
+              ],
+            }),
+            agentTemplates: templates,
+          })}
+        />
+      );
+      expect(queryByTestId('agent-template-warning')).toBeNull();
+    });
+
     it('renders no warnings when every multi-agent slot binds a healthy template', () => {
       const { queryByTestId } = render(
         <NodeConfigPanel

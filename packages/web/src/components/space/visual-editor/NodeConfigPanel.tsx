@@ -20,10 +20,26 @@ function isLongHorizonTemplate(template: SpaceLongHorizonAgentTemplate): boolean
   return template.labels?.includes('long-horizon') ?? false;
 }
 
-function templateBindingWarning(params: {
-  templateKey: string | null | undefined;
+interface SlotPromptSource {
   customPrompt?: NodeDraft['customPrompt'] | string;
   replaceAgentPrompt?: boolean;
+  systemPrompt?: NodeDraft['customPrompt'] | string;
+  instructions?: NodeDraft['customPrompt'] | string;
+}
+
+function resolveSlotPromptText(slot: SlotPromptSource): string {
+  const directPrompt = extractOverrideValue(slot.customPrompt);
+  if (directPrompt) return directPrompt;
+  if (slot.replaceAgentPrompt === true) return '';
+  const systemPrompt = extractOverrideValue(slot.systemPrompt).trim();
+  const instructions = extractOverrideValue(slot.instructions).trim();
+  if (systemPrompt && instructions) return `${systemPrompt}\n\n${instructions}`;
+  return systemPrompt || instructions;
+}
+
+function templateBindingWarning(params: {
+  templateKey: string | null | undefined;
+  slot: SlotPromptSource;
   agentTemplates: SpaceLongHorizonAgentTemplate[];
 }): string | null {
   const key = params.templateKey?.trim();
@@ -33,8 +49,8 @@ function templateBindingWarning(params: {
     return `Unknown template key "${key}" — pick a template for this slot`;
   }
   if (template.instructions.trim()) return null;
-  if (params.replaceAgentPrompt === true) return null;
-  if (extractOverrideValue(params.customPrompt).trim()) return null;
+  if (params.slot.replaceAgentPrompt === true) return null;
+  if (resolveSlotPromptText(params.slot).trim()) return null;
   return `Template "${template.displayName}" has empty instructions — this slot would spawn without a role prompt`;
 }
 
@@ -449,8 +465,10 @@ function AgentsSection({
         {(() => {
           const warning = templateBindingWarning({
             templateKey: selectedSingleTemplateKey,
-            customPrompt: selectedSingleCustomPrompt,
-            replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
+            slot: {
+              customPrompt: selectedSingleCustomPrompt,
+              replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
+            },
             agentTemplates,
           });
           return warning ? (
@@ -643,8 +661,7 @@ function AgentsSection({
                 {(() => {
                   const warning = templateBindingWarning({
                     templateKey: sa.templateKey,
-                    customPrompt: sa.customPrompt,
-                    replaceAgentPrompt: sa.replaceAgentPrompt,
+                    slot: sa,
                     agentTemplates,
                   });
                   if (warning) {

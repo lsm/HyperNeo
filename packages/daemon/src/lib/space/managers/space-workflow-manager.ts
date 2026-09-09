@@ -19,6 +19,7 @@ import { Logger } from '../../logger.ts';
 import { getLongHorizonAgentTemplate } from '../agents/long-horizon-agent-templates.ts';
 import { isRunnableUnifiedAgent } from '../agents/worker-long-horizon-mapper.ts';
 import { MAX_AGENT_SLOT_EVENT_INTERESTS } from '../export-format.ts';
+import { resolveAgentTemplateInstructions } from '../runtime/spawn-slot-resolution.ts';
 import { KNOWN_TOPIC_FROM_SOURCES } from '../runtime/parse-pr-url.ts';
 import { validateWorkflowHooks } from '../workflow-hook-validation.ts';
 import { patchPinnedBuiltInPromptDrift } from '../workflows/built-in-workflows.ts';
@@ -177,12 +178,7 @@ export class SpaceWorkflowManager {
   }
 
   agentTemplateInstructions(key: string): string | null {
-    const trimmed = key.trim();
-    if (!trimmed) return null;
-    const builtIn = getLongHorizonAgentTemplate(trimmed);
-    if (builtIn) return builtIn.instructions;
-    const template = this.templateRepo?.getByKey(trimmed);
-    return template ? template.instructions : null;
+    return resolveAgentTemplateInstructions(this.templateRepo, key);
   }
 
   getWorkflowByHandle(spaceId: string, handle: string): SpaceWorkflow | null {
