@@ -40,7 +40,7 @@ export function buildRunTemplateSnapshots(
   for (const node of workflow.nodes) {
     for (const slot of node.agents) {
       const key = slot.templateKey?.trim();
-      if (!key || key in snapshots) continue;
+      if (!key || Object.hasOwn(snapshots, key)) continue;
       const template = resolveTemplate(key);
       if (template) snapshots[key] = toRunTemplateSnapshot(template);
     }

@@ -107,6 +107,15 @@ describe('buildRunTemplateSnapshots', () => {
 
     expect(Object.keys(snapshots)).toEqual(['worker.custom']);
   });
+
+  test('snapshots template keys that collide with Object.prototype members', () => {
+    const snapshots = buildRunTemplateSnapshots(
+      workflow([{ id: 'n1', name: 'Odd', agents: [slot({ templateKey: 'toString' })] }]),
+      (key) => (key === 'toString' ? template({ key: 'toString' }) : null)
+    );
+
+    expect(snapshots['toString']?.key).toBe('toString');
+  });
 });
 
 describe('withRunTemplateSnapshots', () => {
@@ -133,7 +142,10 @@ describe('withRunTemplateSnapshots', () => {
 
 describe('createAgentTemplateResolver', () => {
   test('prefers built-in templates over stored templates with the same key', () => {
-    const stored = { getByKey: (key: string) => template({ key, instructions: 'stored copy' }) };
+    const stored = {
+      getByKey: (key: string) =>
+        key === 'worker.custom' ? template({ instructions: 'stored copy' }) : null,
+    };
     const resolve = createAgentTemplateResolver(stored);
 
     const builtIn = resolve('worker.swe');

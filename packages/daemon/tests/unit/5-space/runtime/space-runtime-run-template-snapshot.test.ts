@@ -44,7 +44,7 @@ describe('SpaceRuntime startWorkflowRun template snapshot pinning', () => {
     workflowRunRepo = new SpaceWorkflowRunRepository(db);
     templateRepo = new SpaceAgentTemplateRepository(db);
 
-    workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db));
+    workflowManager = new SpaceWorkflowManager(new SpaceWorkflowRepository(db), null, templateRepo);
 
     const config: SpaceRuntimeConfig = {
       db,
