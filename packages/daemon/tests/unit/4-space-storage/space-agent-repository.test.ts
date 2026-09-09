@@ -273,4 +273,122 @@ describe('SpaceAgentRepository', () => {
       expect(repo.getById(agent.id)?.tools).toBeNull();
     });
   });
+  describe('migrated worker mirrors', () => {
+    function makeMirror(id: string): void {
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_long_horizon_agents (
+           id, space_id, handle, display_name, template_key, status, instructions,
+           tool_permissions_json, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        id,
+        'space-1',
+        id,
+        'Mirror',
+        'migration.legacy_space_agent',
+        'active',
+        '',
+        '{}',
+        now,
+        now
+      );
+    }
+
+    test('refuses to update a migrated worker mirror', () => {
+      makeMirror('mirror-1');
+
+      expect(() => repo.update('mirror-1', { status: 'disabled' })).toThrow(
+        'not owned by SpaceAgentRepository'
+      );
+      expect(() => repo.update('mirror-1', { autonomyLevel: 4 })).toThrow(
+        'not owned by SpaceAgentRepository'
+      );
+    });
+
+    test('leaves the mirror row untouched when it refuses', () => {
+      makeMirror('mirror-2');
+
+      expect(() => repo.update('mirror-2', { status: 'disabled' })).toThrow();
+      expect(repo.getById('mirror-2')?.status).toBe('active');
+    });
+
+    test('still reads mirrors', () => {
+      makeMirror('mirror-3');
+      expect(repo.getById('mirror-3')?.displayName).toBe('Mirror');
+    });
+  });
+
+  describe('session binding', () => {
+    test('rejects creating a second agent on a bound session', () => {
+      repo.create({ spaceId: 'space-1', handle: 'first', sessionId: 'session-1' });
+
+      expect(() =>
+        repo.create({ spaceId: 'space-1', handle: 'second', sessionId: 'session-1' })
+      ).toThrow('Session session-1 is already bound');
+    });
+
+    test('does not insert the losing agent', () => {
+      repo.create({ spaceId: 'space-1', handle: 'first', sessionId: 'session-1' });
+      expect(() =>
+        repo.create({ spaceId: 'space-1', handle: 'second', sessionId: 'session-1' })
+      ).toThrow();
+
+      expect(repo.getByHandle('space-1', 'second')).toBeNull();
+    });
+
+    test('rejects moving a bound session onto another agent', () => {
+      repo.create({ spaceId: 'space-1', handle: 'first', sessionId: 'session-1' });
+      const second = repo.create({ spaceId: 'space-1', handle: 'second' });
+
+      expect(() => repo.update(second.id, { sessionId: 'session-1' })).toThrow(
+        'already bound to agent'
+      );
+    });
+
+    test('allows rebinding an agent to its own session', () => {
+      const agent = repo.create({ spaceId: 'space-1', handle: 'first', sessionId: 'session-1' });
+
+      expect(() => repo.update(agent.id, { sessionId: 'session-1' })).not.toThrow();
+    });
+
+    test('allows a session to be handed over once cleared', () => {
+      const first = repo.create({ spaceId: 'space-1', handle: 'first', sessionId: 'session-1' });
+      const second = repo.create({ spaceId: 'space-1', handle: 'second' });
+
+      repo.update(first.id, { sessionId: null });
+      repo.update(second.id, { sessionId: 'session-1' });
+
+      expect(repo.getBySessionId('session-1')?.id).toBe(second.id);
+    });
+
+    test('many agents may hold a null session', () => {
+      repo.create({ spaceId: 'space-1', handle: 'a' });
+      expect(() => repo.create({ spaceId: 'space-1', handle: 'b' })).not.toThrow();
+    });
+
+    test('getBySessionId is deterministic if duplicates predate the guard', () => {
+      const first = repo.create({ spaceId: 'space-1', handle: 'first', sessionId: 'session-1' });
+      const second = repo.create({ spaceId: 'space-1', handle: 'second' });
+      db.prepare(`UPDATE space_long_horizon_agents SET session_id = ? WHERE id = ?`).run(
+        'session-1',
+        second.id
+      );
+
+      const resolved = repo.getBySessionId('session-1')?.id;
+      expect([first.id, second.id]).toContain(resolved);
+      expect(repo.getBySessionId('session-1')?.id).toBe(resolved);
+      expect(repo.getBySessionId('session-1')?.id).toBe(resolved);
+    });
+
+    test('getBySessionId prefers the older binding when timestamps differ', () => {
+      const older = repo.create({ spaceId: 'space-1', handle: 'older', sessionId: 'session-1' });
+      const newer = repo.create({ spaceId: 'space-1', handle: 'newer' });
+      db.prepare(
+        `UPDATE space_long_horizon_agents SET session_id = ?, created_at = ? WHERE id = ?`
+      ).run('session-1', Date.now() + 1000, newer.id);
+
+      expect(repo.getBySessionId('session-1')?.id).toBe(older.id);
+    });
+  });
 });

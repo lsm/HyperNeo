@@ -6,6 +6,7 @@ import type {
   UpdateSpaceAgentParams,
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
 import type { SQLiteValue } from '../types.ts';
 
@@ -18,6 +19,16 @@ export class SpaceAgentRepository {
     const id = params.id ?? generateUUID();
     const now = Date.now();
 
+    const insert = this.db.transaction(() => {
+      this.requireSessionUnbound(params.sessionId ?? null, id);
+      this.insertRow(id, params, now);
+    });
+    insert();
+
+    return this.getById(id) as SpaceAgent;
+  }
+
+  private insertRow(id: string, params: CreateSpaceAgentParams, now: number): void {
     this.db
       .prepare(
         `INSERT INTO ${AGENTS_TABLE} (
@@ -45,8 +56,6 @@ export class SpaceAgentRepository {
         now,
         now
       );
-
-    return this.getById(id) as SpaceAgent;
   }
 
   getById(id: string): SpaceAgent | null {
@@ -67,7 +76,10 @@ export class SpaceAgentRepository {
 
   getBySessionId(sessionId: string): SpaceAgent | null {
     const row = this.db
-      .prepare(`SELECT * FROM ${AGENTS_TABLE} WHERE session_id = ?`)
+      .prepare(
+        `SELECT * FROM ${AGENTS_TABLE} WHERE session_id = ?
+         ORDER BY created_at ASC, id ASC LIMIT 1`
+      )
       .get(sessionId) as Record<string, unknown> | undefined;
     return row ? rowToSpaceAgent(row) : null;
   }
@@ -81,6 +93,8 @@ export class SpaceAgentRepository {
 
   update(id: string, params: UpdateSpaceAgentParams): SpaceAgent | null {
     if (!this.getById(id)) return null;
+    this.requireNotMigratedWorkerMirror(id);
+    if (params.sessionId !== undefined) this.requireSessionUnbound(params.sessionId ?? null, id);
 
     const fields: string[] = [];
     const values: SQLiteValue[] = [];
@@ -129,6 +143,27 @@ export class SpaceAgentRepository {
       .prepare(`SELECT tool_permissions_json FROM ${AGENTS_TABLE} WHERE id = ?`)
       .get(id) as { tool_permissions_json?: unknown } | undefined;
     return parseObject(row?.tool_permissions_json);
+  }
+
+  private requireNotMigratedWorkerMirror(id: string): void {
+    const row = this.db.prepare(`SELECT template_key FROM ${AGENTS_TABLE} WHERE id = ?`).get(id) as
+      | { template_key?: string | null }
+      | undefined;
+    if (row?.template_key === MIGRATED_WORKER_TEMPLATE_KEY) {
+      throw new Error(
+        `Agent ${id} is a migrated worker mirror and is not owned by SpaceAgentRepository`
+      );
+    }
+  }
+
+  private requireSessionUnbound(sessionId: string | null, agentId: string): void {
+    if (sessionId === null) return;
+    const row = this.db
+      .prepare(`SELECT id FROM ${AGENTS_TABLE} WHERE session_id = ? AND id != ? LIMIT 1`)
+      .get(sessionId, agentId) as { id?: string } | undefined;
+    if (row?.id) {
+      throw new Error(`Session ${sessionId} is already bound to agent ${row.id}`);
+    }
   }
 }
 
