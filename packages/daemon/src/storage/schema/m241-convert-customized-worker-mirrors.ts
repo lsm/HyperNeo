@@ -178,16 +178,22 @@ function clearMirrorSlots(
       !keyByAgentId.has(agentId) ||
       (spaceId !== undefined && spaceByAgentId.get(agentId) !== spaceId)
     ) {
-      if (finalName) occupied.add(finalName);
-      occupied.add(agentId);
+      const nameOwnedByEarlierSlot = finalName !== '' && occupied.has(finalName);
       if (slotKey && newKeys.has(slotKey)) {
         const slotName = typeof occ.slot.name === 'string' ? occ.slot.name.trim() : '';
-        if (targets.has(slotKey) && slotName !== '' && !occupied.has(slotName)) {
+        if (
+          targets.has(slotKey) &&
+          slotName !== '' &&
+          !nameOwnedByEarlierSlot &&
+          !occupied.has(slotName)
+        ) {
           clearedNames.set(slotKey, occ.slot.name as string);
         }
         delete occ.slot.templateKey;
         dirty = true;
       }
+      if (finalName) occupied.add(finalName);
+      occupied.add(agentId);
       if (slotKey) occupied.add(slotKey);
       continue;
     }
