@@ -2050,7 +2050,7 @@ export class TaskAgentManager {
         .prepare(
           `SELECT 1 FROM sdk_messages
             WHERE session_id = ? AND task_id = ? AND message_type = 'user'
-              AND (consumed_seq IS NOT NULL OR send_status IN ('enqueued', 'deferred'))
+              AND (consumed_seq IS NOT NULL OR send_status IN ('enqueued', 'deferred', 'submitted'))
               AND timestamp >= ?
               AND json_valid(sdk_message)
               AND json_extract(sdk_message, '$.type') = 'user'

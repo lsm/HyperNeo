@@ -13,77 +13,79 @@ export interface DurableKickoffReuseDeps {
   startQuery(sessionId: string): Promise<void>;
 }
 
-export interface DurableKickoffReuseCtx extends DurableKickoffReuseDeps {
-  task: SpaceTask;
-  sessionId: string;
-  alreadyDelivered: boolean;
-  result: DurableKickoffReuseResult | null;
+export function loadKickoffFacts(
+  deps: DurableKickoffReuseDeps,
+  task: SpaceTask,
+  sessionId: string
+): { alreadyDelivered: boolean } {
+  return { alreadyDelivered: deps.hasDurableKickoff(task, sessionId) };
 }
 
-function settled(
-  ctx: DurableKickoffReuseCtx,
-  result: DurableKickoffReuseResult
-): DurableKickoffReuseCtx {
-  return { ...ctx, result };
-}
-
-export function loadKickoffFacts(ctx: DurableKickoffReuseCtx): DurableKickoffReuseCtx {
-  return { ...ctx, alreadyDelivered: ctx.hasDurableKickoff(ctx.task, ctx.sessionId) };
-}
-
-export function gateFreshInjection(ctx: DurableKickoffReuseCtx): DurableKickoffReuseCtx {
-  if (ctx.alreadyDelivered) return ctx;
-  return settled(ctx, { value: { action: 'inject' } });
+export function gateFreshInjection(
+  _deps: DurableKickoffReuseDeps,
+  { alreadyDelivered }: { alreadyDelivered: boolean }
+): DurableKickoffReuseResult | null {
+  if (alreadyDelivered) return null;
+  return { value: { action: 'inject' } };
 }
 
 export async function resumeDeliveredWorker(
-  ctx: DurableKickoffReuseCtx
-): Promise<DurableKickoffReuseCtx> {
-  if (ctx.isQueryActive(ctx.sessionId)) {
-    return settled(ctx, { reason: 'already-running' });
+  deps: DurableKickoffReuseDeps,
+  task: SpaceTask,
+  sessionId: string
+): Promise<DurableKickoffReuseResult> {
+  if (deps.isQueryActive(sessionId)) {
+    return { reason: 'already-running' };
   }
   try {
-    await ctx.admitResume(ctx.task);
+    await deps.admitResume(task);
   } catch {
-    return settled(ctx, {
+    return {
       value: {
         action: 'refuse',
-        reason: `reused session ${ctx.sessionId} already holds this approval generation's kickoff but its query could not be admitted`,
+        reason: `reused session ${sessionId} already holds this approval generation's kickoff but its query could not be admitted`,
       },
-    });
+    };
   }
-  await ctx.startQuery(ctx.sessionId);
-  if (!ctx.isQueryActive(ctx.sessionId)) {
-    return settled(ctx, {
+  await deps.startQuery(sessionId);
+  if (!deps.isQueryActive(sessionId)) {
+    return {
       value: {
         action: 'refuse',
-        reason: `reused session ${ctx.sessionId} already holds this approval generation's kickoff but its query could not be started`,
+        reason: `reused session ${sessionId} already holds this approval generation's kickoff but its query could not be started`,
       },
-    });
+    };
   }
-  return settled(ctx, { reason: 'resumed' });
+  return { reason: 'resumed' };
 }
 
+type KickoffReuseState = {
+  deps: DurableKickoffReuseDeps;
+  task: SpaceTask;
+  sessionId: string;
+  alreadyDelivered: boolean;
+  outcome: DurableKickoffReuseResult | null;
+};
+
 const kickoffReuseRun = (
-  superpipe<{ admitted: (ctx: DurableKickoffReuseCtx) => boolean }>({
-    admitted: (ctx: DurableKickoffReuseCtx): boolean => ctx.result !== null,
+  superpipe<{ settled: (state: KickoffReuseState) => boolean }>({
+    settled: (state: KickoffReuseState): boolean => state.outcome !== null,
   })('durable-kickoff-reuse-admission') as PipelineAPI
 )
-  .input(['ctx'])
-  .pipe(loadKickoffFacts, 'ctx', 'ctx')
-  .pipe(gateFreshInjection, 'ctx', 'ctx')
-  .pipe('!admitted', 'ctx')
-  .pipe(resumeDeliveredWorker, 'ctx', 'ctx')
-  .endAsync('ctx');
+  .input(['deps', 'task', 'sessionId'])
+  .pipe(loadKickoffFacts, ['deps', 'task', 'sessionId'], 'alreadyDelivered')
+  .pipe(gateFreshInjection, ['deps', 'alreadyDelivered'], 'outcome')
+  .pipe('!settled', ['deps', 'task', 'sessionId'])
+  .pipe(resumeDeliveredWorker, ['deps', 'task', 'sessionId'], 'outcome')
+  .endAsync('outcome');
 
 export async function runDurableKickoffReuseAdmission(
   input: DurableKickoffReuseDeps & { task: SpaceTask; sessionId: string }
 ): Promise<DurableKickoffReuseResult> {
-  const ctx = (await kickoffReuseRun({
-    ...input,
-    alreadyDelivered: false,
-    result: null,
-  })) as DurableKickoffReuseCtx;
-  if (ctx.result !== null) return ctx.result;
-  return { reason: 'resumed' };
+  const outcome = (await kickoffReuseRun(
+    input,
+    input.task,
+    input.sessionId
+  )) as DurableKickoffReuseResult | null;
+  return outcome ?? { reason: 'resumed' };
 }

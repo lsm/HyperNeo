@@ -688,7 +688,10 @@ export class SpaceRuntime {
     }>
   >();
 
-  private postApprovalRecoveryInFlight = new Map<string, { generation: number }>();
+  private postApprovalRecoveryInFlight = new Map<
+    string,
+    { generation: number; approvedAt: number | null }
+  >();
 
   private postApprovalRecoveryBypass = new Map<
     string,
@@ -697,6 +700,7 @@ export class SpaceRuntime {
       revive: boolean;
       revivePointer: string | null;
       adopt: boolean;
+      adoptApprovedAt: number | null;
     }
   >();
 
@@ -8270,7 +8274,13 @@ export class SpaceRuntime {
     taskId: string,
     generation: number
   ):
-    | { generation: number; revive: boolean; revivePointer: string | null; adopt: boolean }
+    | {
+        generation: number;
+        revive: boolean;
+        revivePointer: string | null;
+        adopt: boolean;
+        adoptApprovedAt: number | null;
+      }
     | undefined {
     const entry = this.postApprovalRecoveryBypass.get(taskId);
     if (entry && entry.generation !== generation) {
@@ -8326,7 +8336,7 @@ export class SpaceRuntime {
     generation: number
   ): Promise<'revived' | 'skip' | 'replace' | 'timeout'> {
     const revivePromise = this.reviveRecordedPostApprovalWorker(manager, task, generation);
-    const marker = { generation };
+    const marker = { generation, approvedAt: task.approvedAt ?? null };
     this.postApprovalRecoveryInFlight.set(task.id, marker);
     revivePromise
       .catch(() => undefined)
@@ -8344,6 +8354,7 @@ export class SpaceRuntime {
             revive: false,
             revivePointer: null,
             adopt: false,
+            adoptApprovedAt: null,
           };
           this.postApprovalRecoveryBypass.set(task.id, {
             ...existing,
@@ -8381,7 +8392,7 @@ export class SpaceRuntime {
     generation: number
   ): Promise<boolean | 'timeout'> {
     const adoptPromise = this.adoptDurablePostApprovalOrphan(manager, task, generation);
-    const marker = { generation };
+    const marker = { generation, approvedAt: task.approvedAt ?? null };
     this.postApprovalRecoveryInFlight.set(task.id, marker);
     adoptPromise
       .catch(() => undefined)
@@ -8399,11 +8410,13 @@ export class SpaceRuntime {
             revive: false,
             revivePointer: null,
             adopt: false,
+            adoptApprovedAt: null,
           };
           this.postApprovalRecoveryBypass.set(task.id, {
             ...existing,
             generation,
             adopt: true,
+            adoptApprovedAt: task.approvedAt ?? null,
           });
         }
       })
@@ -8461,8 +8474,12 @@ export class SpaceRuntime {
                 at + POST_APPROVAL_RECONCILE_RETRY_MS
               );
             },
-            recoveryInFlight: (taskId, gen) =>
-              this.postApprovalRecoveryInFlight.get(taskId)?.generation === gen,
+            recoveryInFlight: (candidate, gen) => {
+              const marker = this.postApprovalRecoveryInFlight.get(candidate.id);
+              return (
+                marker?.generation === gen && marker.approvedAt === (candidate.approvedAt ?? null)
+              );
+            },
             hasLeasedClaim: (candidate) => this.hasLeasedPostApprovalClaim(candidate),
             isReviveBypassed: (candidate, gen) => {
               const entry = this.currentPostApprovalBypass(candidate.id, gen);
@@ -8470,8 +8487,10 @@ export class SpaceRuntime {
                 !!entry?.revive && entry.revivePointer === (candidate.postApprovalSessionId ?? null)
               );
             },
-            adoptBypassed: (candidate, gen) =>
-              !!this.currentPostApprovalBypass(candidate.id, gen)?.adopt,
+            adoptBypassed: (candidate, gen) => {
+              const entry = this.currentPostApprovalBypass(candidate.id, gen);
+              return !!entry?.adopt && entry.adoptApprovedAt === (candidate.approvedAt ?? null);
+            },
             revive: (candidate, gen) =>
               this.recoverPostApprovalWorkerBounded(manager, candidate, gen),
             adopt: (candidate, gen) => this.adoptPostApprovalOrphanBounded(manager, candidate, gen),

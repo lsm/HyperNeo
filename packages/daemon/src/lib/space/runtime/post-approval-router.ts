@@ -236,6 +236,15 @@ export class PostApprovalRouter {
 
     if (dispatchable.length === 0) {
       if (
+        routeOptions.expectedRuntimeGeneration !== undefined &&
+        this.deps.runtimeGenerationProvider &&
+        this.deps.runtimeGenerationProvider() !== routeOptions.expectedRuntimeGeneration
+      ) {
+        const reason = `runtime generation changed while resolving post-approval routes for task ${task.id}; no-route completion aborted`;
+        log.warn(`PostApprovalRouter.route: ${reason}`);
+        return { mode: 'skipped', reason };
+      }
+      if (
         task.postApprovalSessionId &&
         (!this.deps.ownsRecordedPointer ||
           this.deps.ownsRecordedPointer({
@@ -396,7 +405,10 @@ export class PostApprovalRouter {
       this.deps.runtimeGenerationProvider &&
       this.deps.runtimeGenerationProvider() !== routeOptions.expectedRuntimeGeneration
     ) {
-      this.deps.cancelSpawnedWorker?.(sessionId);
+      const winner = this.deps.taskRepo.getTask(task.id)?.postApprovalSessionId ?? null;
+      if (winner !== sessionId) {
+        this.deps.cancelSpawnedWorker?.(sessionId);
+      }
       const reason = `runtime generation changed while spawning the post-approval worker for task ${task.id}; dispatch aborted before routing was recorded`;
       log.warn(`PostApprovalRouter.route: ${reason}`);
       return { mode: 'skipped', reason };
