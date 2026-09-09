@@ -115,18 +115,6 @@ export class ChannelRouter {
       }
     }
 
-    const existingTasks = this.getActiveTasksForNode(runId, nodeId);
-    if (existingTasks.length > 0) {
-      const targetAgentName = options?.targetAgentName;
-      if (!targetAgentName) return existingTasks;
-      const targetSlotExists = this.config.nodeExecutionRepo
-        .listByNode(runId, nodeId)
-        .some(
-          (e) => e.agentName === targetAgentName && !TERMINAL_NODE_EXECUTION_STATUSES.has(e.status)
-        );
-      if (targetSlotExists) return existingTasks;
-    }
-
     const workflow = this.config.workflowManager.getWorkflowForRun(run);
     if (!workflow) {
       throw new ActivationError(`Workflow not found: ${run.workflowId}`);
@@ -186,6 +174,18 @@ export class ChannelRouter {
           `inbound activation of node "${nodeId}" on run in status "${run.status}"`,
         options?.reopenBy ?? 'activation'
       );
+    }
+
+    const existingTasks = this.getActiveTasksForNode(runId, nodeId);
+    if (existingTasks.length > 0) {
+      const targetAgentName = options?.targetAgentName;
+      if (!targetAgentName) return existingTasks;
+      const targetSlotExists = this.config.nodeExecutionRepo
+        .listByNode(runId, nodeId)
+        .some(
+          (e) => e.agentName === targetAgentName && !TERMINAL_NODE_EXECUTION_STATUSES.has(e.status)
+        );
+      if (targetSlotExists) return existingTasks;
     }
 
     const existingExecutions = this.config.nodeExecutionRepo.listByNode(runId, nodeId);

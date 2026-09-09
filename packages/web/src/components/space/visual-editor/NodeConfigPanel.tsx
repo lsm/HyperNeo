@@ -9,6 +9,7 @@ import type {
 import { generateUUID, normalizeThinkingLevel } from '@hyperneo/shared';
 import { useComputed } from '@preact/signals';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import superpipe, { type PipelineAPI } from 'superpipe';
 import { skillsStore } from '../../../lib/skills-store';
 import type { NodeDraft } from '../WorkflowNodeCard';
 import { buildOverride, extractOverrideValue, isMultiAgentNode } from '../WorkflowNodeCard';
@@ -38,25 +39,71 @@ function resolveSlotPromptText(slot: SlotPromptSource): string {
   return systemPrompt || instructions;
 }
 
+interface TemplateBindingAuditCtx {
+  templateKey: string | null | undefined;
+  slot: SlotPromptSource;
+  agentTemplates: SpaceLongHorizonAgentTemplate[];
+  agents: SpaceLongHorizonAgent[];
+  normalizedKey: string;
+  warning: string | null;
+}
+
+interface TemplateBindingResolvedCtx extends TemplateBindingAuditCtx {
+  template: SpaceLongHorizonAgentTemplate | undefined;
+  fallbackAgent: SpaceLongHorizonAgent | undefined;
+}
+
+function normalizeTemplateBindingKey(ctx: TemplateBindingAuditCtx): TemplateBindingAuditCtx {
+  return { ...ctx, normalizedKey: ctx.templateKey?.trim() ?? '', warning: null };
+}
+
+function resolveTemplateBinding(ctx: TemplateBindingAuditCtx): TemplateBindingResolvedCtx {
+  return {
+    ...ctx,
+    template: ctx.agentTemplates.find((t) => t.key === ctx.normalizedKey),
+    fallbackAgent: ctx.slot.agentId ? ctx.agents.find((a) => a.id === ctx.slot.agentId) : undefined,
+  };
+}
+
+function classifyTemplateBinding(ctx: TemplateBindingResolvedCtx): TemplateBindingAuditCtx {
+  if (!ctx.template) {
+    if (ctx.fallbackAgent) return { ...ctx, warning: null };
+    return {
+      ...ctx,
+      warning: `Unknown template key "${ctx.normalizedKey}" — pick a template for this slot`,
+    };
+  }
+  if (ctx.template.instructions.trim()) return { ...ctx, warning: null };
+  if (resolveSlotPromptText(ctx.slot).trim()) return { ...ctx, warning: null };
+  return {
+    ...ctx,
+    warning: `Template "${ctx.template.displayName}" has empty instructions — this slot would spawn without a role prompt`,
+  };
+}
+
+const runTemplateBindingAudit = (
+  superpipe<{ hasEmptyKey: (ctx: TemplateBindingAuditCtx) => boolean }>({
+    hasEmptyKey: (ctx) => ctx.normalizedKey === '',
+  })('node-template-binding-audit') as PipelineAPI
+)
+  .input(['ctx'])
+  .pipe(normalizeTemplateBindingKey, 'ctx', 'ctx')
+  .pipe('!hasEmptyKey', 'ctx')
+  .pipe(resolveTemplateBinding, 'ctx', 'ctx')
+  .pipe(classifyTemplateBinding, 'ctx', 'ctx')
+  .end('ctx') as (ctx: TemplateBindingAuditCtx) => TemplateBindingAuditCtx;
+
 function templateBindingWarning(params: {
   templateKey: string | null | undefined;
   slot: SlotPromptSource;
   agentTemplates: SpaceLongHorizonAgentTemplate[];
   agents: SpaceLongHorizonAgent[];
 }): string | null {
-  const key = params.templateKey?.trim();
-  if (!key) return null;
-  const template = params.agentTemplates.find((t) => t.key === key);
-  if (!template) {
-    const fallbackAgent = params.slot.agentId
-      ? params.agents.find((a) => a.id === params.slot.agentId)
-      : undefined;
-    if (fallbackAgent) return null;
-    return `Unknown template key "${key}" — pick a template for this slot`;
-  }
-  if (template.instructions.trim()) return null;
-  if (resolveSlotPromptText(params.slot).trim()) return null;
-  return `Template "${template.displayName}" has empty instructions — this slot would spawn without a role prompt`;
+  return runTemplateBindingAudit({
+    ...params,
+    normalizedKey: '',
+    warning: null,
+  }).warning;
 }
 
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [

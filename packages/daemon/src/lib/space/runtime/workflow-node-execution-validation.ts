@@ -242,9 +242,10 @@ export function formatMissingNodeAgentReference(params: {
 export function findMissingSlotTemplateReference(
   node: WorkflowNode,
   slotName: string,
-  sources: SlotTemplateAuditSources
+  sources: SlotTemplateAuditSources,
+  agentExists: (agentId: string) => boolean
 ): MissingNodeAgentReference | null {
-  const missing = findMissingNodeAgentReferences(node, () => true, {
+  const missing = findMissingNodeAgentReferences(node, agentExists, {
     slotNames: new Set([slotName]),
     templateResolves: sources.templateResolves,
     templateInstructions: sources.templateInstructions,

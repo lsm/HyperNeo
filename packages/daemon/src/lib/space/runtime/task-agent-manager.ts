@@ -670,12 +670,15 @@ export class TaskAgentManager {
     } = { reservationHeld: false, reservedExecution: false };
     const spawnNode = workflow?.nodes.find((node) => node.id === execution.workflowNodeId);
     const reusingLiveSession =
-      !!execution.agentSessionId && this.isSessionAlive(execution.agentSessionId);
+      !!execution.agentSessionId &&
+      this.agentSessionIndex.has(execution.agentSessionId) &&
+      this.isSessionAlive(execution.agentSessionId);
     const awaitingConcurrentSpawn = this.spawningExecutionIds.has(execution.id);
     if (spawnNode && !reusingLiveSession && !awaitingConcurrentSpawn) {
       this.assertSlotTemplateSpawnable({
         workflow,
         runId: workflowRun.id,
+        spaceId: space.id,
         workflowRun,
         node: spawnNode,
         slotName: execution.agentName,
@@ -3392,6 +3395,7 @@ export class TaskAgentManager {
   private assertSlotTemplateSpawnable(params: {
     workflow: Pick<SpaceWorkflow, 'name'>;
     runId: string;
+    spaceId: string;
     workflowRun?: Pick<SpaceWorkflowRun, 'workflowId' | 'definitionVersion'> | null;
     node: WorkflowNode;
     slotName: string;
@@ -3406,7 +3410,8 @@ export class TaskAgentManager {
       slotTemplateAuditSources(
         (key) => resolveAgentTemplateInstructions(this.config.templateRepo, key),
         pinnedSnapshots
-      )
+      ),
+      (agentId) => this.slotAgentExists(params.spaceId, agentId)
     );
     if (!missing) return;
     throw new MissingWorkflowAgentError(
@@ -5472,6 +5477,7 @@ export class TaskAgentManager {
       this.assertSlotTemplateSpawnable({
         workflow,
         runId: task.workflowRunId ?? taskId,
+        spaceId,
         workflowRun: task.workflowRunId
           ? this.config.workflowRunRepo.getRun(task.workflowRunId)
           : null,

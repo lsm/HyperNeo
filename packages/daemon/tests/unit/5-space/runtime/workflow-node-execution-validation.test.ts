@@ -622,9 +622,9 @@ describe('findMissingSlotTemplateReference spawn-boundary audit', () => {
 
   test('flags the named slot bound to an empty-instruction template', () => {
     const node = makeNode([{ agentId: '', templateKey: 'migrated.agent.gone', name: 'orphan' }]);
-    expect(findMissingSlotTemplateReference(node, 'orphan', sources)?.templateReason).toBe(
-      'empty-instructions'
-    );
+    expect(
+      findMissingSlotTemplateReference(node, 'orphan', sources, () => true)?.templateReason
+    ).toBe('empty-instructions');
   });
 
   test('slotTemplateAuditSources prefers the pinned snapshot over the live template', () => {
@@ -657,7 +657,7 @@ describe('findMissingSlotTemplateReference spawn-boundary audit', () => {
 
   test('returns null for a healthy target slot', () => {
     const node = makeNode([{ agentId: '', templateKey: 'worker.swe', name: 'coder' }]);
-    expect(findMissingSlotTemplateReference(node, 'coder', sources)).toBeNull();
+    expect(findMissingSlotTemplateReference(node, 'coder', sources, () => true)).toBeNull();
   });
 
   test('ignores sibling slots outside the audit target', () => {
@@ -665,12 +665,20 @@ describe('findMissingSlotTemplateReference spawn-boundary audit', () => {
       { agentId: '', templateKey: 'worker.swe', name: 'coder' },
       { agentId: '', templateKey: 'migrated.agent.gone', name: 'orphan' },
     ]);
-    expect(findMissingSlotTemplateReference(node, 'coder', sources)).toBeNull();
+    expect(findMissingSlotTemplateReference(node, 'coder', sources, () => true)).toBeNull();
   });
 
-  test('never flags agentId-only slots at the spawn boundary', () => {
+  test('flags a stale fallback agent when the existence predicate rejects it', () => {
     const node = makeNode([{ agentId: 'legacy-agent', name: 'reviewer' }]);
-    expect(findMissingSlotTemplateReference(node, 'reviewer', sources)).toBeNull();
+    expect(findMissingSlotTemplateReference(node, 'reviewer', sources, () => false)).toEqual({
+      agentName: 'reviewer',
+      agentId: 'legacy-agent',
+    });
+  });
+
+  test('keeps an agentId-only slot whose agent exists per the predicate', () => {
+    const node = makeNode([{ agentId: 'legacy-agent', name: 'reviewer' }]);
+    expect(findMissingSlotTemplateReference(node, 'reviewer', sources, () => true)).toBeNull();
   });
 
   test('honors the slot customPrompt exemption', () => {
@@ -682,11 +690,11 @@ describe('findMissingSlotTemplateReference spawn-boundary audit', () => {
         customPrompt: { value: 'Slot-level role instructions.' },
       },
     ]);
-    expect(findMissingSlotTemplateReference(node, 'orphan', sources)).toBeNull();
+    expect(findMissingSlotTemplateReference(node, 'orphan', sources, () => true)).toBeNull();
   });
 
   test('returns null when the node has no agents', () => {
     const node = { id: 'node-1', name: 'Empty' } as WorkflowNode;
-    expect(findMissingSlotTemplateReference(node, 'orphan', sources)).toBeNull();
+    expect(findMissingSlotTemplateReference(node, 'orphan', sources, () => true)).toBeNull();
   });
 });

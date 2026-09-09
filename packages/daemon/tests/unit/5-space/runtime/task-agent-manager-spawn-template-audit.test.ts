@@ -145,7 +145,9 @@ describe('TaskAgentManager spawn-boundary template audit', () => {
       ...makeExecution('orphan-slot'),
       agentSessionId: 'session-live',
     } as NodeExecution;
-    (manager as unknown as Record<string, unknown>).isSessionAlive = () => true;
+    const internals = manager as unknown as Record<string, unknown>;
+    internals.isSessionAlive = () => true;
+    internals.agentSessionIndex = new Map([['session-live', {}]]);
     let caught: unknown;
     try {
       await manager.spawnWorkflowNodeAgentForExecution(TASK, SPACE, WORKFLOW, RUN, withLiveSession);
@@ -153,6 +155,30 @@ describe('TaskAgentManager spawn-boundary template audit', () => {
       caught = err;
     }
     expect(isMissingWorkflowAgentError(caught)).toBe(false);
+  });
+
+  test('spawnWorkflowNodeAgentForExecution still audits when the live session is not indexed', async () => {
+    const manager = makeManager(ORPHAN_REPO);
+    const cachedOnlySession = {
+      ...makeExecution('orphan-slot'),
+      agentSessionId: 'session-cached-only',
+    } as NodeExecution;
+    const internals = manager as unknown as Record<string, unknown>;
+    internals.isSessionAlive = () => true;
+    internals.agentSessionIndex = new Map();
+    let caught: unknown;
+    try {
+      await manager.spawnWorkflowNodeAgentForExecution(
+        TASK,
+        SPACE,
+        WORKFLOW,
+        RUN,
+        cachedOnlySession
+      );
+    } catch (err) {
+      caught = err;
+    }
+    expect(isMissingWorkflowAgentError(caught)).toBe(true);
   });
 
   test('spawnPostApprovalSubSession rejects a post-approval target bound to an empty-instruction template', async () => {
