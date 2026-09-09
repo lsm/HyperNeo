@@ -2380,7 +2380,7 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
       (await handlers.create_agent({ name: 'Stamped Mcp' })).content[0].text
     );
     const stampedSessionId = `space:agent:${ctx.spaceId}:${created.agent.id}`;
-    ctx.longHorizonRepo.update(created.agent.id, { sessionId: stampedSessionId });
+    ctx.longHorizonAgentRepo.update(created.agent.id, { sessionId: stampedSessionId });
 
     const updated = JSON.parse(
       (

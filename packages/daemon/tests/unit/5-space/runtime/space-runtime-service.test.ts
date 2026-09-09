@@ -84,6 +84,8 @@ function createMockSpaceManager(space: Space | null = mockSpace): SpaceManager {
   return {
     getSpace: mock(async () => space),
     listSpaces: mock(async () => []),
+    addSession: mock(async () => space),
+    removeSession: mock(async () => space),
   } as unknown as SpaceManager;
 }
 
@@ -140,6 +142,7 @@ function buildMailboxDeliveryDb(sessionIds: string[] = []): {
       getSDKMessageRepo: () => sdkRepo,
       getJobQueueRepo: () => jobQueue,
     },
+    notifyChange: mock(() => {}),
   } as unknown as SpaceRuntimeServiceConfig['reactiveDb'];
   return { db, reactiveDb, sdkRepo, jobQueue };
 }
@@ -842,6 +845,7 @@ describe('SpaceRuntimeService', () => {
       return {
         getSessionAsync: mock(async () => session),
         createSession: mock(async () => 'space:chat:space-1'),
+        updateSession: mock(async () => {}),
         listSessions: mock(() => [] as Session[]),
         registerSessionResetSubscriber: mock(() => () => {}),
       } as unknown as SessionManager;
@@ -2228,6 +2232,7 @@ describe('SpaceRuntimeService', () => {
         setRuntimeSystemPrompt: mock(() => {}),
         updateConfig: mock(async () => {}),
         resetQuery: mock(async () => ({ success: true })),
+        restart: mock(async () => {}),
         getSessionData: mock(() => ({ id: sessionId, metadata: {}, config: {} }) as Session),
         ensureQueryStarted: mock(async () => {}),
         messageQueue: { enqueueWithId: mock(async () => {}) },
