@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import type { NodeExecution, Space, SpaceWorkflow } from '@hyperneo/shared';
+import type { LiveQuerySnapshotEvent, NodeExecution, Space, SpaceWorkflow } from '@hyperneo/shared';
 
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const SETUP_TIMEOUT = IS_MOCK ? 20_000 : 60_000;
@@ -91,6 +91,47 @@ async function waitForNodeAgentSpawned(
   );
 }
 
+type LiveSkillRow = {
+  id: string;
+  name: string;
+  sourceType: string;
+  enabled: boolean;
+  builtIn: boolean;
+};
+
+async function listSkillsViaLiveQuery(daemon: DaemonServerContext): Promise<LiveSkillRow[]> {
+  const snapshots: LiveQuerySnapshotEvent[] = [];
+  const subscriptionId = `sub-skills-list-${Date.now()}`;
+  const unsubscribeEvent = daemon.messageHub.onEvent<LiveQuerySnapshotEvent>(
+    'liveQuery.snapshot',
+    (ev) => {
+      if (ev.subscriptionId === subscriptionId) snapshots.push(ev);
+    }
+  );
+
+  try {
+    const result = (await daemon.messageHub.request('liveQuery.subscribe', {
+      queryName: 'skills.list',
+      params: [],
+      subscriptionId,
+    })) as { ok: boolean };
+    expect(result.ok).toBe(true);
+
+    const deadline = Date.now() + 8_000;
+    while (snapshots.length === 0) {
+      if (Date.now() >= deadline) {
+        throw new Error('Timed out waiting for skills.list snapshot');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    return snapshots[0].rows as LiveSkillRow[];
+  } finally {
+    unsubscribeEvent();
+    await daemon.messageHub.request('liveQuery.unsubscribe', { subscriptionId });
+  }
+}
+
 describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
   let daemon: DaemonServerContext;
 
@@ -137,14 +178,7 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
       expect(skill.enabled).toBe(true);
       expect(skill.sourceType).toBe('mcp_server');
 
-      const { skills } = (await daemon.messageHub.request('skill.list', {})) as {
-        skills: Array<{
-          id: string;
-          name: string;
-          enabled: boolean;
-          sourceType: string;
-        }>;
-      };
+      const skills = await listSkillsViaLiveQuery(daemon);
 
       const enabledMcpSkills = skills.filter((s) => s.sourceType === 'mcp_server' && s.enabled);
       expect(enabledMcpSkills.length).toBeGreaterThan(0);
@@ -192,17 +226,9 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
   );
 
   test(
-    'skill.list contains the seeded chrome-devtools-mcp skill at daemon startup',
+    'skills.list LiveQuery contains the seeded chrome-devtools-mcp skill at daemon startup',
     async () => {
-      const { skills } = (await daemon.messageHub.request('skill.list', {})) as {
-        skills: Array<{
-          id: string;
-          name: string;
-          sourceType: string;
-          enabled: boolean;
-          builtIn: boolean;
-        }>;
-      };
+      const skills = await listSkillsViaLiveQuery(daemon);
 
       const chromeSkill = skills.find((s) => s.name === 'chrome-devtools-mcp');
       expect(chromeSkill).toBeDefined();
@@ -216,14 +242,7 @@ describe('Task Agent Skills — Online Tests (G1+G2+G3)', () => {
   test(
     'task agent session is spawned after enabling the chrome-devtools-mcp skill globally',
     async () => {
-      const { skills } = (await daemon.messageHub.request('skill.list', {})) as {
-        skills: Array<{
-          id: string;
-          name: string;
-          enabled: boolean;
-          sourceType: string;
-        }>;
-      };
+      const skills = await listSkillsViaLiveQuery(daemon);
       const chromeSkill = skills.find((s) => s.name === 'chrome-devtools-mcp');
       expect(chromeSkill).toBeDefined();
 

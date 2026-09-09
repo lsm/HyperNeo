@@ -65,14 +65,6 @@ export class SettingsRepository {
     }
   }
 
-  saveGlobalToolsConfig(config: GlobalToolsConfig): void {
-    const stmt = this.db.prepare(`
-			INSERT OR REPLACE INTO global_tools_config (id, config, updated_at)
-			VALUES (1, ?, datetime('now'))
-		`);
-    stmt.run(JSON.stringify(config));
-  }
-
   getGlobalSettings(): GlobalSettings {
     const stmt = this.db.prepare(`SELECT settings FROM global_settings WHERE id = 1`);
     const row = stmt.get() as { settings: string } | undefined;

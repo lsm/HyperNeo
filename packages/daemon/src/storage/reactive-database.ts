@@ -262,7 +262,6 @@ const METHOD_TABLE_MAP: Record<string, MethodMapping> = {
     table: 'sdk_messages',
     extractScope: (args) => ({ sessionId: args[0] as string }),
   },
-  saveGlobalToolsConfig: { table: 'global_tools_config' },
   saveGlobalSettings: { table: 'global_settings' },
   updateGlobalSettings: { table: 'global_settings' },
   createGitHubMapping: { table: 'room_github_mappings' },

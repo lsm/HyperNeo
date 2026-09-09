@@ -66,8 +66,6 @@ function createMockMessageHub(): {
 
 function createMockSkillsManager() {
   return {
-    listSkills: mock(() => [mockSkill]),
-    getSkill: mock((id: string) => (id === mockSkill.id ? mockSkill : null)),
     addSkill: mock((params: CreateSkillParams) => ({
       ...mockSkill,
       id: 'skill-new',
@@ -114,41 +112,6 @@ describe('Skill RPC Handlers', () => {
 
   afterEach(() => {
     mock.restore();
-  });
-
-  describe('skill.list', () => {
-    it('returns all skills', async () => {
-      const handler = hubData.handlers.get('skill.list');
-      expect(handler).toBeDefined();
-
-      const result = (await handler!({}, {})) as { skills: AppSkill[] };
-      expect(result.skills).toHaveLength(1);
-      expect(result.skills[0].id).toBe('skill-1');
-      expect(skillsManager.listSkills).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('skill.get', () => {
-    it('returns a skill by id', async () => {
-      const handler = hubData.handlers.get('skill.get');
-      expect(handler).toBeDefined();
-
-      const result = (await handler!({ id: 'skill-1' }, {})) as { skill: AppSkill };
-      expect(result.skill).toBeDefined();
-      expect(result.skill!.id).toBe('skill-1');
-      expect(skillsManager.getSkill).toHaveBeenCalledWith('skill-1');
-    });
-
-    it('returns null for non-existent skill', async () => {
-      const handler = hubData.handlers.get('skill.get');
-      const result = (await handler!({ id: 'nonexistent' }, {})) as { skill: AppSkill | null };
-      expect(result.skill).toBeNull();
-    });
-
-    it('throws if id is missing', async () => {
-      const handler = hubData.handlers.get('skill.get');
-      await expect(handler!({}, {})).rejects.toThrow('id is required');
-    });
   });
 
   describe('skill.create', () => {

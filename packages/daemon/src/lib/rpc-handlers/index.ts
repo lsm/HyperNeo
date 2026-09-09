@@ -114,7 +114,7 @@ import { setupLiveQueryHandlers } from './live-query-handlers.ts';
 import { setupReferenceHandlers } from './reference-handlers.ts';
 import { FileIndex } from '../file-index.ts';
 import { LiveQueryEngine } from '../../storage/live-query.ts';
-import type { AppMcpLifecycleManager, McpImportService } from '../mcp/index.ts';
+import type { McpImportService } from '../mcp/index.ts';
 import { registerAppMcpHandlers, setupAppMcpHandlers } from './app-mcp-handlers.ts';
 import { setupSpaceMcpHandlers } from './space-mcp-handlers.ts';
 import { registerSkillHandlers } from './skill-handlers.ts';
@@ -204,7 +204,6 @@ export interface RPCHandlerDependencies {
   messageDeliveryProcessor: JobQueueProcessor;
   reactiveDb: ReactiveDatabase;
   liveQueries: LiveQueryEngine;
-  appMcpManager: AppMcpLifecycleManager;
   skillsManager: SkillsManager;
   mcpImportService: McpImportService;
 }
@@ -338,7 +337,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.internalEventBus,
     deps.db.providers
   );
-  registerMcpHandlers(deps.messageHub, deps.sessionManager, deps.appMcpManager);
+  registerMcpHandlers(deps.messageHub, deps.sessionManager);
   registerSettingsHandlers(
     deps.messageHub,
     deps.settingsManager,

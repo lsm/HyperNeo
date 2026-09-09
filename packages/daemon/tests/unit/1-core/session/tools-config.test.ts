@@ -16,7 +16,6 @@ describe('ToolsConfigManager', () => {
   beforeEach(() => {
     mockDb = {
       getGlobalToolsConfig: mock(() => defaultGlobalToolsConfig),
-      saveGlobalToolsConfig: mock(() => {}),
     } as unknown as Database;
 
     manager = new ToolsConfigManager(mockDb);
@@ -28,19 +27,6 @@ describe('ToolsConfigManager', () => {
 
       expect(config).toEqual(defaultGlobalToolsConfig);
       expect(mockDb.getGlobalToolsConfig).toHaveBeenCalled();
-    });
-  });
-
-  describe('saveGlobal', () => {
-    it('should save global tools configuration to database', () => {
-      const newConfig: GlobalToolsConfig = {
-        ...defaultGlobalToolsConfig,
-        mcp: { allowProjectMcp: false, defaultProjectMcp: false },
-      };
-
-      manager.saveGlobal(newConfig);
-
-      expect(mockDb.saveGlobalToolsConfig).toHaveBeenCalledWith(newConfig);
     });
   });
 });

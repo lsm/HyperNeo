@@ -44,7 +44,6 @@ describe('SessionManager', () => {
         },
         mcpServers: {},
       })),
-      saveGlobalToolsConfig: mock(() => {}),
       saveSDKMessage: mock(() => {}),
       getUserMessages: mock(() => []),
       getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
@@ -1692,15 +1691,6 @@ describe('SessionManager', () => {
       const result = sessionManager.getGlobalToolsConfig();
 
       expect(result).toBeDefined();
-    });
-  });
-
-  describe('saveGlobalToolsConfig', () => {
-    it('should delegate to toolsConfigManager', () => {
-      const config = { useClaudeCodePreset: true };
-      sessionManager.saveGlobalToolsConfig(
-        config as ReturnType<typeof sessionManager.getGlobalToolsConfig>
-      );
     });
   });
 

@@ -159,28 +159,6 @@ describe('McpEnablementRepository', () => {
     });
   });
 
-  describe('clearScope', () => {
-    test('deletes every row at that scope, returns count, and notifies once', () => {
-      repo.setOverride('room', 'room-cleanup', serverA, false);
-      repo.setOverride('room', 'room-cleanup', serverB, true);
-      repo.setOverride('room', 'room-keep', serverA, false);
-      notifyChangeSpy.mockClear();
-
-      const count = repo.clearScope('room', 'room-cleanup');
-      expect(count).toBe(2);
-      expect(repo.listForScope('room', 'room-cleanup')).toEqual([]);
-      expect(repo.listForScope('room', 'room-keep')).toHaveLength(1);
-      expect(notifyChangeSpy).toHaveBeenCalledTimes(1);
-      expect(notifyChangeSpy).toHaveBeenCalledWith('mcp_enablement');
-    });
-
-    test('returns 0 and does not notify when nothing matches', () => {
-      notifyChangeSpy.mockClear();
-      expect(repo.clearScope('space', 'empty')).toBe(0);
-      expect(notifyChangeSpy).not.toHaveBeenCalled();
-    });
-  });
-
   describe('foreign key cascade', () => {
     test('deleting the underlying app_mcp_servers row removes overrides', () => {
       bunDb.exec('PRAGMA foreign_keys = ON');

@@ -831,7 +831,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       messageDeliveryProcessor,
       reactiveDb,
       liveQueries,
-      appMcpManager,
       skillsManager,
       mcpImportService,
     });
