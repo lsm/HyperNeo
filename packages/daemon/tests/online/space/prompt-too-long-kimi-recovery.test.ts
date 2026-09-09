@@ -3,6 +3,7 @@ import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { waitForIdle } from '../../helpers/daemon-actions';
 import type { NodeExecution, Space, SpaceWorkflow } from '@hyperneo/shared';
+import type { DaemonAppContext } from '../../../src/app';
 import { buildPromptTooLongContinueNag } from '../../../src/lib/space/runtime/prompt-too-long-recovery';
 
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
@@ -197,11 +198,19 @@ async function waitForUserMessageText(
   throw new Error('Timed out waiting for user message matching predicate');
 }
 
+type DaemonWithContext = DaemonServerContext & { daemonContext: DaemonAppContext };
+
 describe('Kimi prompt-too-long recovery — online with Dev Proxy', () => {
-  let daemon: DaemonServerContext;
+  let daemon: DaemonWithContext;
 
   beforeEach(async () => {
-    daemon = await createDaemonServer();
+    daemon = (await createDaemonServer()) as DaemonWithContext;
+    if (!daemon.daemonContext) {
+      throw new Error(
+        'Kimi prompt-too-long recovery tests require in-process daemon mode. ' +
+          'Unset DAEMON_TEST_SPAWN to run these tests.'
+      );
+    }
   }, SETUP_TIMEOUT);
 
   afterEach(async () => {
@@ -247,21 +256,16 @@ describe('Kimi prompt-too-long recovery — online with Dev Proxy', () => {
     await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
     await waitForSdkMessageType(daemon, sessionId, 'result', IDLE_TIMEOUT);
 
-    await daemon.messageHub.request('nodeExecution.update', {
-      id: execution.id,
-      spaceId: space.id,
+    daemon.daemonContext.db.getNodeExecutionRepo().update(execution.id, {
       status: 'idle',
       result: 'Kimi prompt-too-long injected',
     });
 
     const stderrMessage = `<local-command-stderr>${stderrContent}</local-command-stderr>`;
-    await daemon.messageHub.request('test.injectSDKMessage', {
-      sessionId,
-      message: {
-        type: 'user',
-        message: { role: 'user', content: stderrMessage },
-        parent_tool_use_id: null,
-      },
+    daemon.daemonContext.db.saveSDKMessage(sessionId, {
+      type: 'user',
+      message: { role: 'user', content: stderrMessage },
+      parent_tool_use_id: null,
     });
 
     const persistedStderrText = await waitForSdkMessageText(

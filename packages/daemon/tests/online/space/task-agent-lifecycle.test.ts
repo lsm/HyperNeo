@@ -3,6 +3,7 @@ import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 import type { NodeExecution, Space, SpaceWorkflow } from '@hyperneo/shared';
+import type { DaemonAppContext } from '../../../src/app';
 
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const IDLE_TIMEOUT = IS_MOCK ? 10_000 : 60_000;
@@ -231,11 +232,19 @@ function extractTextContent(assistantMessages: Array<Record<string, unknown>>): 
     .join(' ');
 }
 
+type DaemonWithContext = DaemonServerContext & { daemonContext: DaemonAppContext };
+
 describe('Task Agent Lifecycle — Online Tests', () => {
-  let daemon: DaemonServerContext;
+  let daemon: DaemonWithContext;
 
   beforeEach(async () => {
-    daemon = await createDaemonServer();
+    daemon = (await createDaemonServer()) as DaemonWithContext;
+    if (!daemon.daemonContext) {
+      throw new Error(
+        'Task agent lifecycle tests require in-process daemon mode. ' +
+          'Unset DAEMON_TEST_SPAWN to run these tests.'
+      );
+    }
   }, SETUP_TIMEOUT);
 
   afterEach(async () => {
@@ -472,9 +481,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
       daemon.trackSession(nodeAgentSessionId);
       await waitForIdle(daemon, nodeAgentSessionId, IDLE_TIMEOUT);
 
-      await daemon.messageHub.request('nodeExecution.update', {
-        id: execution.id,
-        spaceId: space.id,
+      daemon.daemonContext.db.getNodeExecutionRepo().update(execution.id, {
         status: 'idle',
         result: 'Lifecycle completion test',
       });
