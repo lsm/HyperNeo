@@ -6,7 +6,7 @@ import {
 } from '../../../../src/lib/space/agents/seed-agents';
 
 describe('PRESET_AGENT_TOOLS export', () => {
-  const EXPECTED_CODER_TOOLS: string[] = [];
+  const EXPECTED_SWE_TOOLS: string[] = [];
 
   const EXPECTED_QA_TOOLS = [
     'Read',
@@ -49,15 +49,15 @@ describe('PRESET_AGENT_TOOLS export', () => {
   ];
 
   it('has entries for all 4 preset roles', () => {
-    expect(Object.keys(PRESET_AGENT_TOOLS).sort()).toEqual(['coder', 'qa', 'research', 'reviewer']);
+    expect(Object.keys(PRESET_AGENT_TOOLS).sort()).toEqual(['qa', 'research', 'reviewer', 'swe']);
   });
 
-  it('coder role maps to empty permissive profile', () => {
-    expect(PRESET_AGENT_TOOLS.coder).toEqual(EXPECTED_CODER_TOOLS);
+  it('swe role maps to empty permissive profile', () => {
+    expect(PRESET_AGENT_TOOLS.swe).toEqual(EXPECTED_SWE_TOOLS);
   });
 
   it('research role maps to RESEARCH_TOOLS (empty permissive profile)', () => {
-    expect(PRESET_AGENT_TOOLS.research).toEqual(EXPECTED_CODER_TOOLS);
+    expect(PRESET_AGENT_TOOLS.research).toEqual(EXPECTED_SWE_TOOLS);
   });
 
   it('reviewer role maps to REVIEWER_TOOLS (read-only + scoped gh Bash + Task/* + Cron*, no bare Bash)', () => {
@@ -96,7 +96,7 @@ describe('getPresetAgentTemplates', () => {
   it('returns all expected agent names', () => {
     const templates = getPresetAgentTemplates();
     const names = templates.map((t) => t.name).sort();
-    expect(names).toEqual(['Coder', 'QA', 'Research', 'Reviewer']);
+    expect(names).toEqual(['QA', 'Research', 'Reviewer', 'SWE']);
   });
 
   it('each template has name, description, tools, and customPrompt', () => {
@@ -114,12 +114,12 @@ describe('getPresetAgentTemplates', () => {
 
   it('returns cloned arrays — mutating tools does not affect globals', () => {
     const first = getPresetAgentTemplates();
-    const coderTools = first.find((t) => t.name === 'Coder')!.tools;
-    coderTools.push('FakeTool');
+    const sweTools = first.find((t) => t.name === 'SWE')!.tools;
+    sweTools.push('FakeTool');
 
     const second = getPresetAgentTemplates();
-    const coderTools2 = second.find((t) => t.name === 'Coder')!.tools;
-    expect(coderTools2).not.toContain('FakeTool');
+    const sweTools2 = second.find((t) => t.name === 'SWE')!.tools;
+    expect(sweTools2).not.toContain('FakeTool');
   });
 
   it('template tools match PRESET_AGENT_TOOLS', () => {

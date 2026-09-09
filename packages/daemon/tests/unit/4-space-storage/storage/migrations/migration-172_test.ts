@@ -127,7 +127,7 @@ describe('Migration 172: re-backfill orphaned preset agent template tracking', (
     insertAgent(db, {
       id: 'a-1',
       spaceId: 'sp-1',
-      name: 'Coder',
+      name: 'SWE',
       description: 'whatever',
       tools: ['Read'],
       customPrompt: 'old prompt',
@@ -141,19 +141,19 @@ describe('Migration 172: re-backfill orphaned preset agent template tracking', (
   });
 
   test('idempotent — matching row re-attached on run 1, no-op on run 2', () => {
-    const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder')!;
+    const swe = getPresetAgentTemplates().find((p) => p.name === 'SWE')!;
     insertAgent(db, {
       id: 'a-1',
       spaceId: 'sp-1',
-      name: 'Coder',
-      description: coder.description,
-      tools: coder.tools,
-      customPrompt: coder.customPrompt,
+      name: 'SWE',
+      description: swe.description,
+      tools: swe.tools,
+      customPrompt: swe.customPrompt,
     });
 
     runMigration172(db);
     const after1 = readAgent(db, 'a-1')!;
-    expect(after1.template_name).toBe('Coder');
+    expect(after1.template_name).toBe('SWE');
     expect(after1.template_hash).toMatch(/^[0-9a-f]{64}$/);
 
     runMigration172(db);
@@ -188,20 +188,20 @@ describe('Migration 172: re-backfill orphaned preset agent template tracking', (
   });
 
   test('matching row → stamped hash equals the preset hash', () => {
-    const coder = getPresetAgentTemplates().find((p) => p.name === 'Coder')!;
+    const swe = getPresetAgentTemplates().find((p) => p.name === 'SWE')!;
     insertAgent(db, {
       id: 'a-match',
       spaceId: 'sp-1',
-      name: 'Coder',
-      description: coder.description,
-      tools: coder.tools,
-      customPrompt: coder.customPrompt,
+      name: 'SWE',
+      description: swe.description,
+      tools: swe.tools,
+      customPrompt: swe.customPrompt,
     });
 
     runMigration172(db);
 
     const row = readAgent(db, 'a-match')!;
-    const presetHash = computeAgentTemplateHash(coder);
+    const presetHash = computeAgentTemplateHash(swe);
     expect(row.template_hash).toBe(presetHash);
   });
 

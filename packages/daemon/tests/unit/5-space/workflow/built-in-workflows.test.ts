@@ -1300,7 +1300,7 @@ describe('seedBuiltInWorkflows()', () => {
     const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
     expect(wf).toBeDefined();
     expect(wf!.nodes).toHaveLength(2);
-    expect(wf!.nodes[0].agents[0]?.templateKey).toBe(workerTemplateKey('coder'));
+    expect(wf!.nodes[0].agents[0]?.templateKey).toBe(workerTemplateKey('swe'));
     expect(wf!.nodes[1].agents[0]?.templateKey).toBe(workerTemplateKey('reviewer'));
     expect(wf!.nodes[0].postApproval?.targetAgent).toBe('coder');
   });
@@ -3597,7 +3597,7 @@ describe('seedBuiltInWorkflows()', () => {
     const wf = manager
       .listWorkflows(SPACE_ID)
       .find((w) => w.name === CODING_WITH_QA_WORKFLOW.name)!;
-    expect(wf.nodes[0].agents[0]?.templateKey).toBe(workerTemplateKey('coder'));
+    expect(wf.nodes[0].agents[0]?.templateKey).toBe(workerTemplateKey('swe'));
     expect(wf.nodes[1].agents[0]?.templateKey).toBe(workerTemplateKey('reviewer'));
     expect(wf.nodes[2].agents[0]?.templateKey).toBe(workerTemplateKey('qa'));
   });

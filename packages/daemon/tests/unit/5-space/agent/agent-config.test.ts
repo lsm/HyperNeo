@@ -79,13 +79,13 @@ function makeConfig(tools?: string[]): CustomAgentConfig {
 }
 
 describe('PRESET_AGENT_TOOLS', () => {
-  it('coder has an empty permissive profile (inherits all SDK built-ins)', () => {
-    const tools = PRESET_AGENT_TOOLS.coder;
+  it('swe has an empty permissive profile (inherits all SDK built-ins)', () => {
+    const tools = PRESET_AGENT_TOOLS.swe;
     expect(tools).toEqual([]);
   });
 
-  it('coder does not have Task/TaskOutput/TaskStop in its explicit profile', () => {
-    const tools = PRESET_AGENT_TOOLS.coder;
+  it('swe does not have Task/TaskOutput/TaskStop in its explicit profile', () => {
+    const tools = PRESET_AGENT_TOOLS.swe;
     expect(tools).not.toContain('Task');
     expect(tools).not.toContain('TaskOutput');
     expect(tools).not.toContain('TaskStop');
@@ -223,7 +223,7 @@ describe('expandPrompt', () => {
 
 describe('createCustomAgentInit — sub-session features', () => {
   it('applies SUB_SESSION_FEATURES for agent with tools', () => {
-    const init = createCustomAgentInit(makeConfig(PRESET_AGENT_TOOLS.coder));
+    const init = createCustomAgentInit(makeConfig(PRESET_AGENT_TOOLS.swe));
     expect(init.features).toEqual(SUB_SESSION_FEATURES);
   });
 
@@ -279,7 +279,7 @@ describe('createCustomAgentInit — sub-session features', () => {
   });
 
   it('coder is permissive and does not set SDK tool allowlists', () => {
-    const config = makeConfig(PRESET_AGENT_TOOLS.coder);
+    const config = makeConfig(PRESET_AGENT_TOOLS.swe);
     const init = createCustomAgentInit(config);
 
     expect(init.agent).toBeUndefined();
@@ -296,10 +296,10 @@ describe('createCustomAgentInit — sub-session features', () => {
   });
 
   it('applies customPrompt slot expansion in system prompt', () => {
-    const config = makeConfig(PRESET_AGENT_TOOLS.coder);
+    const config = makeConfig(PRESET_AGENT_TOOLS.swe);
     config.customAgent = makeAgent({
       instructions: 'Base prompt',
-      toolPermissions: { tools: PRESET_AGENT_TOOLS.coder },
+      toolPermissions: { tools: PRESET_AGENT_TOOLS.swe },
     });
     config.slotOverrides = {
       customPrompt: 'Slot expansion',

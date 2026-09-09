@@ -1,10 +1,10 @@
 import type {
+  AgentModelPoolEntry,
   CreateSpaceAgentTemplateParams,
   SpaceAgentAutonomyLevel,
   SpaceAgentTemplate,
   SpaceWorkflow,
   UpdateSpaceAgentTemplateParams,
-  AgentModelPoolEntry,
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type {
@@ -12,20 +12,22 @@ import type {
   SpaceAgentTemplateRepository,
 } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
-import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
 import { isReservedAgentHandle } from '../agent-handle.ts';
-import {
-  getLongHorizonAgentTemplate,
-  getLongHorizonAgentTemplates,
-  RETIRED_LONG_HORIZON_TEMPLATE_KEYS,
-} from '../agents/long-horizon-agent-templates.ts';
-import { validateSlug } from '../slug.ts';
 import type { SpaceAgentResult } from '../agents/agent-validation.ts';
 import {
   validateAgentModel,
   validateAgentModelPool,
   validateSpaceAgentTools,
 } from '../agents/agent-validation.ts';
+import {
+  getLongHorizonAgentTemplate,
+  getLongHorizonAgentTemplates,
+  isLegacyWorkerTemplateKey,
+  isRelocationMarkerLabel,
+  RETIRED_LONG_HORIZON_TEMPLATE_KEYS,
+} from '../agents/long-horizon-agent-templates.ts';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../agents/worker-long-horizon-mapper.ts';
+import { validateSlug } from '../slug.ts';
 
 type BuiltInTemplateSource = () => SpaceAgentTemplate[];
 
@@ -110,7 +112,7 @@ function validateTemplateKey(key: string): string | null {
   if ((RETIRED_LONG_HORIZON_TEMPLATE_KEYS as readonly string[]).includes(key)) {
     return `Template key "${key}" is retired and cannot be reused`;
   }
-  if (getLongHorizonAgentTemplate(key)) {
+  if (getLongHorizonAgentTemplate(key) || isLegacyWorkerTemplateKey(key)) {
     return `Template key "${key}" is reserved for a built-in agent template`;
   }
   return null;
@@ -140,6 +142,15 @@ function validateDisplayName(displayName: string | undefined | null): string | n
 function validateToolsChoice(tools: string[] | null | undefined): string | null {
   if (tools === undefined || tools === null) return null;
   return validateSpaceAgentTools(tools);
+}
+
+function stripRelocationMarkerLabels(
+  labels: string[] | null | undefined
+): string[] | null | undefined {
+  if (labels === undefined || labels === null || !Array.isArray(labels)) return labels;
+  return labels.filter(
+    (label) => typeof label !== 'string' || !isRelocationMarkerLabel(label.trim().normalize('NFC'))
+  );
 }
 
 function normalizeTemplateLabels(labels: string[] | null | undefined): {
@@ -245,7 +256,7 @@ function createValidateTools(ctx: CreateTemplateCtx): CreateTemplateCtx {
 }
 
 function createValidateLabels(ctx: CreateTemplateCtx): CreateTemplateCtx {
-  const { labels, error } = normalizeTemplateLabels(ctx.params.labels);
+  const { labels, error } = normalizeTemplateLabels(stripRelocationMarkerLabels(ctx.params.labels));
   if (error) return { ...ctx, error };
   return { ...ctx, params: { ...ctx.params, labels } };
 }
@@ -311,9 +322,14 @@ function updateValidateTools(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
 
 function updateValidateLabels(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
   if (ctx.params.labels === undefined) return ctx;
-  const { labels, error } = normalizeTemplateLabels(ctx.params.labels);
+  const { labels, error } = normalizeTemplateLabels(stripRelocationMarkerLabels(ctx.params.labels));
   if (error) return { ...ctx, error };
-  return { ...ctx, params: { ...ctx.params, labels } };
+  const sticky = (ctx.existing?.labels ?? []).filter((label) => isRelocationMarkerLabel(label));
+  const merged = [...labels];
+  for (const label of sticky) {
+    if (!merged.includes(label)) merged.push(label);
+  }
+  return { ...ctx, params: { ...ctx.params, labels: merged } };
 }
 
 async function updateValidateModel(ctx: UpdateTemplateCtx): Promise<UpdateTemplateCtx> {

@@ -14,10 +14,10 @@ import {
   SpaceAgentTemplateManager,
 } from '../../../../src/lib/space/managers/space-agent-template-manager';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
-import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
+import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
 const BUILT_INS: SpaceAgentTemplate[] = [
@@ -398,7 +398,7 @@ describe('SpaceAgentTemplateManager', () => {
     });
 
     test('rejects keys reserved for code built-in templates', async () => {
-      for (const key of ['worker.coder', 'worker.reviewer', 'coordinator.default']) {
+      for (const key of ['worker.swe', 'worker.coder', 'worker.reviewer', 'coordinator.default']) {
         const result = await manager.create({ ...fullParams(), key });
         expect(result.ok, key).toBe(false);
         if (!result.ok) expect(result.error).toContain('reserved for a built-in agent template');
@@ -492,6 +492,48 @@ describe('SpaceAgentTemplateManager', () => {
   });
 
   describe('update', () => {
+    test('strips spoofed relocation marker labels from create input', async () => {
+      const result = await manager.create({
+        ...fullParams(),
+        labels: ['relocated-from:worker.swe', ' relocated-from:worker.swe', 'quality'],
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok');
+      expect(result.value.labels).toEqual(['quality']);
+    });
+
+    test('round-trips eight user labels plus the sticky marker without limit failures', async () => {
+      await manager.create(fullParams());
+      const eight = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+      db.prepare(
+        `UPDATE space_agent_templates SET labels = ? WHERE key = 'release-readiness.custom'`
+      ).run(JSON.stringify([...eight, 'relocated-from:worker.swe']));
+
+      const roundTrip = await manager.update('release-readiness.custom', {
+        labels: [...eight, 'relocated-from:worker.swe'],
+      });
+
+      expect(roundTrip.ok).toBe(true);
+      if (!roundTrip.ok) throw new Error('expected ok');
+      expect(roundTrip.value?.labels).toEqual([...eight, 'relocated-from:worker.swe']);
+    });
+
+    test('preserves relocation marker labels through label edits', async () => {
+      await manager.create(fullParams());
+      db.prepare(
+        `UPDATE space_agent_templates SET labels = ? WHERE key = 'release-readiness.custom'`
+      ).run(JSON.stringify(['relocated-from:worker.swe', 'quality']));
+
+      const cleared = await manager.update('release-readiness.custom', {
+        labels: ['infra'],
+      });
+
+      expect(cleared.ok).toBe(true);
+      if (!cleared.ok) throw new Error('expected ok');
+      expect(cleared.value?.labels).toEqual(['infra', 'relocated-from:worker.swe']);
+    });
+
     test('updates a custom template', async () => {
       await manager.create(fullParams());
 
@@ -1139,7 +1181,7 @@ describe('SpaceAgentTemplateManager', () => {
       expect(template?.tools).toContain('Bash(gh pr view:*)');
       expect(template?.tools).not.toContain('Bash');
 
-      const coder = defaultManager.getByKey('worker.coder');
+      const coder = defaultManager.getByKey('worker.swe');
       expect(coder?.tools).toBeNull();
     });
 

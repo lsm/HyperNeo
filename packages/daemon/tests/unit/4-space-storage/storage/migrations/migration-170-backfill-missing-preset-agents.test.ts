@@ -1,12 +1,11 @@
-import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { rmSync, mkdirSync, copyFileSync } from 'node:fs';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
+import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
+import { runMigration170, runMigrations } from '../../../../../src/storage/schema/index.ts';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import { createLegacySpaceAgentTables } from '../../../helpers/space-agent-schema.ts';
-import { runMigrations } from '../../../../../src/storage/schema/index.ts';
-import { runMigration170 } from '../../../../../src/storage/schema/index.ts';
-import { getPresetAgentTemplates } from '../../../../../src/lib/space/agents/seed-agents.ts';
-import { computeAgentTemplateHash } from '../../../../../src/lib/space/agents/agent-template-hash.ts';
 
 interface AgentRow {
   id: string;
@@ -19,7 +18,9 @@ interface AgentRow {
   custom_prompt: string | null;
 }
 
-const PRESETS = getPresetAgentTemplates();
+const PRESETS = getPresetAgentTemplates().map((preset) =>
+  preset.handle === 'swe' ? { ...preset, name: 'Coder', handle: 'coder' } : preset
+);
 const CANONICAL_PRESET = PRESETS[0];
 
 function insertSpace(db: BunDatabase, id: string): void {

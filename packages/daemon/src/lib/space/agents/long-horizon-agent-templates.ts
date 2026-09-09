@@ -95,6 +95,24 @@ export function workerTemplateKey(handle: string): string {
   return `${WORKER_TEMPLATE_KEY_PREFIX}${handle}`;
 }
 
+const LEGACY_WORKER_TEMPLATE_KEYS: Record<string, string> = {
+  'worker.coder': 'worker.swe',
+};
+
+export const RELOCATED_FROM_LABEL_PREFIX = 'relocated-from:';
+
+export function isRelocationMarkerLabel(label: string): boolean {
+  return label.startsWith(RELOCATED_FROM_LABEL_PREFIX);
+}
+
+export function normalizeLegacyWorkerTemplateKey(key: string): string {
+  return Object.hasOwn(LEGACY_WORKER_TEMPLATE_KEYS, key) ? LEGACY_WORKER_TEMPLATE_KEYS[key] : key;
+}
+
+export function isLegacyWorkerTemplateKey(key: string): boolean {
+  return Object.hasOwn(LEGACY_WORKER_TEMPLATE_KEYS, key);
+}
+
 function workerPresetTemplates(): SpaceLongHorizonAgentTemplate[] {
   return getPresetAgentTemplates().map((preset) => ({
     key: workerTemplateKey(preset.handle),

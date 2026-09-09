@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
   getLongHorizonAgentTemplates,
+  isLegacyWorkerTemplateKey,
+  normalizeLegacyWorkerTemplateKey,
   WORKER_TEMPLATE_KEY_PREFIX,
 } from '../../../../src/lib/space/agents/long-horizon-agent-templates';
 
@@ -30,7 +32,7 @@ describe('long-horizon agent templates', () => {
     );
 
     expect(workerTemplates.map((template) => template.key)).toEqual([
-      'worker.coder',
+      'worker.swe',
       'worker.research',
       'worker.reviewer',
       'worker.qa',
@@ -127,5 +129,23 @@ describe('long-horizon agent templates', () => {
     expect(again.reminderDefaults[0].title).not.toBe('Mutated');
     expect(again.ownershipPatterns[0].description).not.toBe('Mutated');
     expect(again.toolPermissions).not.toHaveProperty('mutated');
+  });
+});
+
+describe('legacy worker template key helpers', () => {
+  test('maps the removed key to its successor', () => {
+    expect(normalizeLegacyWorkerTemplateKey('worker.coder')).toBe('worker.swe');
+    expect(isLegacyWorkerTemplateKey('worker.coder')).toBe(true);
+  });
+
+  test('passes unknown keys through', () => {
+    expect(normalizeLegacyWorkerTemplateKey('worker.qa')).toBe('worker.qa');
+    expect(isLegacyWorkerTemplateKey('worker.qa')).toBe(false);
+  });
+
+  test('does not match inherited prototype properties', () => {
+    expect(normalizeLegacyWorkerTemplateKey('toString')).toBe('toString');
+    expect(isLegacyWorkerTemplateKey('constructor')).toBe(false);
+    expect(isLegacyWorkerTemplateKey('hasOwnProperty')).toBe(false);
   });
 });

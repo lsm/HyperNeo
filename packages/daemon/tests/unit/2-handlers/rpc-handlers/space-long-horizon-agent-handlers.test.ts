@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { Database } from '../../../../src/storage/sqlite-compat';
 import type { MessageHub } from '@hyperneo/shared';
 import { setupSpaceAgentHandlers } from '../../../../src/lib/rpc-handlers/space-agent-handlers';
 import type { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -1377,7 +1377,7 @@ describe('Space long-horizon agent handlers', () => {
       expect(result.templates).toHaveLength(5);
       expect(result.templates.map((template) => template.key)).not.toContain('coordinator.default');
       expect(result.templates.map((template) => template.key)).toContain('task-manager.default');
-      expect(result.templates.map((template) => template.key)).toContain('worker.coder');
+      expect(result.templates.map((template) => template.key)).toContain('worker.swe');
       for (const template of result.templates.filter((t) => !t.key.startsWith('worker.'))) {
         if (template.key === 'task-manager.default') {
           expect(template.suggestedEventSubscriptions).toEqual([]);

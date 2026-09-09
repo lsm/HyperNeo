@@ -1,34 +1,40 @@
-import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
-import { generateUUID } from '@hyperneo/shared';
 import type {
-  MessageHub,
-  Space,
-  SpaceWorkflow,
+  CreateSpaceLongHorizonAgentParams,
   CreateSpaceWorkflowParams,
-  WorkflowNodeInput,
-  SpaceExportBundle,
   ExportedSpaceAgent,
   ExportedSpaceWorkflow,
+  MessageHub,
+  Space,
+  SpaceExportBundle,
+  SpaceLongHorizonAgent,
+  SpaceWorkflow,
+  WorkflowNodeInput,
 } from '@hyperneo/shared';
-import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import type { SpaceManager } from '../space/managers/space-manager.ts';
-import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
-import type { CreateSpaceLongHorizonAgentParams, SpaceLongHorizonAgent } from '@hyperneo/shared';
+import { generateUUID } from '@hyperneo/shared';
+import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import {
   coordinatorLongHorizonAgentId,
   type SpaceLongHorizonAgentRepository,
 } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
-import { exportBundle, validateExportBundle, normalizeOverride } from '../space/export-format.ts';
-import { isRunnableUnifiedAgent } from '../space/agents/worker-long-horizon-mapper.ts';
+import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
+import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
+import { Logger } from '../logger.ts';
+import {
+  getLongHorizonAgentTemplate,
+  isRelocationMarkerLabel,
+  normalizeLegacyWorkerTemplateKey,
+  RELOCATED_FROM_LABEL_PREFIX,
+} from '../space/agents/long-horizon-agent-templates.ts';
 import {
   publishUnifiedAgentCreated,
   publishUnifiedAgentUpdated,
 } from '../space/agents/unified-agent-events.ts';
+import { isRunnableUnifiedAgent } from '../space/agents/worker-long-horizon-mapper.ts';
+import { exportBundle, normalizeOverride, validateExportBundle } from '../space/export-format.ts';
+import type { SpaceManager } from '../space/managers/space-manager.ts';
+import type { SpaceWorkflowManager } from '../space/managers/space-workflow-manager.ts';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit } from '../space/slug.ts';
-import { getLongHorizonAgentTemplate } from '../space/agents/long-horizon-agent-templates.ts';
-import { Logger } from '../logger.ts';
 
 const log = new Logger('space-export-import-handlers');
 const RESERVED_AGENT_HANDLE_SET = new Set<string>(RESERVED_SPACE_AGENT_HANDLES);
@@ -172,6 +178,128 @@ function nameKey(name: string): string {
   return name.trim().toLowerCase();
 }
 
+function parseStoredLabels(raw: unknown): string[] {
+  if (typeof raw !== 'string' || !raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry): entry is string => typeof entry === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function loadRelocatedTemplateIndex(db: BunDatabase): Map<string, string> {
+  const tableExists = db
+    .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_templates'`)
+    .get();
+  if (!tableExists) return new Map();
+  const rows = db.prepare(`SELECT key, labels FROM space_agent_templates`).all() as Array<{
+    key: string;
+    labels: string | null;
+  }>;
+  const index = new Map<string, string>();
+  for (const row of rows) {
+    for (const label of parseStoredLabels(row.labels)) {
+      if (isRelocationMarkerLabel(label)) {
+        index.set(label.slice(RELOCATED_FROM_LABEL_PREFIX.length), row.key);
+      }
+    }
+  }
+  return index;
+}
+
+function ambiguousTemplateReferenceError(
+  nodeName: string,
+  fromKey: string,
+  relocatedKey: string
+): string {
+  return (
+    `node "${nodeName}" references "${fromKey}", which is ambiguous in this space: ` +
+    `a custom template with that key was relocated to "${relocatedKey}". ` +
+    `Use "${relocatedKey}" in the bundle to keep the custom template, or remove ` +
+    `the relocated template to keep the built-in.`
+  );
+}
+
+interface ImportedRouteSlot {
+  entry: NonNullable<WorkflowNodeInput['agents']>[number];
+  rawTemplateKey: string;
+}
+
+function normalizeImportedPostApproval(
+  postApproval: WorkflowNodeInput['postApproval'],
+  slots: ReadonlyArray<ImportedRouteSlot>
+): { postApproval: WorkflowNodeInput['postApproval']; error: string | null } {
+  if (!postApproval || typeof postApproval.targetAgent !== 'string') {
+    return { postApproval, error: null };
+  }
+  const target = postApproval.targetAgent;
+  const normalized = normalizeLegacyWorkerTemplateKey(target);
+  if (normalized === target) {
+    return recheckUnchangedRoute(postApproval, target, slots);
+  }
+  const selectedIndex = slots.findIndex(
+    ({ entry, rawTemplateKey }) =>
+      entry.name === target ||
+      (entry.agentId !== '' && entry.agentId === target) ||
+      rawTemplateKey === target
+  );
+  if (selectedIndex < 0) return { postApproval, error: null };
+  const { entry: selected } = slots[selectedIndex];
+  if (selected.templateKey !== normalized || !selected.name) {
+    return { postApproval, error: null };
+  }
+  const nameFirstMatch = slots.findIndex(
+    ({ entry }) =>
+      entry.name === selected.name ||
+      (entry.agentId !== '' && entry.agentId === selected.name) ||
+      entry.templateKey === selected.name
+  );
+  if (nameFirstMatch !== selectedIndex) {
+    return {
+      postApproval,
+      error:
+        `post-approval route "${target}" resolves to a slot whose name "${selected.name}" is ` +
+        `shadowed by an earlier slot; rename the slot in the bundle and retry`,
+    };
+  }
+  return { postApproval: { ...postApproval, targetAgent: selected.name }, error: null };
+}
+
+function firstRouteMatch(
+  slots: ReadonlyArray<ImportedRouteSlot>,
+  target: string,
+  useRawKeys: boolean
+): number {
+  return slots.findIndex(
+    ({ entry, rawTemplateKey }) =>
+      entry.name === target ||
+      (entry.agentId !== '' && entry.agentId === target) ||
+      (useRawKeys ? rawTemplateKey : entry.templateKey) === target
+  );
+}
+
+function recheckUnchangedRoute(
+  postApproval: WorkflowNodeInput['postApproval'],
+  target: string,
+  slots: ReadonlyArray<ImportedRouteSlot>
+): { postApproval: WorkflowNodeInput['postApproval']; error: string | null } {
+  const normalizationChangedKeys = slots.some(
+    ({ entry, rawTemplateKey }) => rawTemplateKey !== entry.templateKey
+  );
+  if (!normalizationChangedKeys) return { postApproval, error: null };
+  const rawFirst = firstRouteMatch(slots, target, true);
+  const normalizedFirst = firstRouteMatch(slots, target, false);
+  if (rawFirst === normalizedFirst) return { postApproval, error: null };
+  return {
+    postApproval,
+    error:
+      `post-approval route "${target}" resolves to a different slot after legacy-key ` +
+      `normalization; rename the route or the shadowing slot in the bundle and retry`,
+  };
+}
+
 function generateUniqueName(baseName: string, existingNames: Set<string>): string {
   const normalized = new Set([...existingNames].map((n) => nameKey(n)));
   if (!normalized.has(nameKey(baseName))) return baseName;
@@ -266,7 +394,8 @@ export function buildWorkflowCreateParams(
   exported: ExportedSpaceWorkflow,
   importedAgentNameToId: Map<string, string>,
   existingAgentNameToId: Map<string, string>,
-  usedWorkflowHandles?: Set<string>
+  usedWorkflowHandles?: Set<string>,
+  relocatedTemplateKey?: (fromKey: string) => string | null
 ): { params: CreateSpaceWorkflowParams; nodeNameToId: Map<string, string>; warnings: string[] } {
   const warnings: string[] = [];
 
@@ -282,7 +411,7 @@ export function buildWorkflowCreateParams(
     nodeNameToId.set(node.name, generateUUID());
   }
 
-  const nodes: WorkflowNodeInput[] = exported.nodes.map((exportedNode) => {
+  const builtAgents = exported.nodes.map((exportedNode) => {
     const agents = exportedNode.agents.map((a) => {
       const entry: {
         agentId: string;
@@ -302,7 +431,8 @@ export function buildWorkflowCreateParams(
         agentId: '',
         name: a.name,
       };
-      const templateKey = a.templateKey?.trim();
+      const rawTemplateKey = a.templateKey?.trim() ?? '';
+      const templateKey = rawTemplateKey ? normalizeLegacyWorkerTemplateKey(rawTemplateKey) : '';
       if (templateKey) {
         const agentRef = a.agentRef?.trim() ?? '';
         const agentId = agentRef
@@ -311,6 +441,15 @@ export function buildWorkflowCreateParams(
             null)
           : null;
         if (getLongHorizonAgentTemplate(templateKey)) {
+          const relocatedKey =
+            rawTemplateKey === templateKey && relocatedTemplateKey
+              ? relocatedTemplateKey(templateKey)
+              : null;
+          if (relocatedKey) {
+            warnings.push(
+              ambiguousTemplateReferenceError(exportedNode.name, templateKey, relocatedKey)
+            );
+          }
           entry.templateKey = templateKey;
         } else if (agentId) {
           entry.agentId = agentId;
@@ -352,11 +491,20 @@ export function buildWorkflowCreateParams(
       return entry;
     });
 
+    const rawTemplateKeys = exportedNode.agents.map((a) => a.templateKey ?? '');
+    return { exportedNode, agents, rawTemplateKeys } as const;
+  });
+  const flattenedRoutes = builtAgents.flatMap(({ agents, rawTemplateKeys }) =>
+    agents.map((entry, index) => ({ entry, rawTemplateKey: rawTemplateKeys[index] ?? '' }))
+  );
+  const nodes: WorkflowNodeInput[] = builtAgents.map(({ exportedNode, agents }) => {
+    const route = normalizeImportedPostApproval(exportedNode.postApproval, flattenedRoutes);
+    if (route.error) warnings.push(`node "${exportedNode.name}": ${route.error}`);
     const node: WorkflowNodeInput = {
       id: nodeNameToId.get(exportedNode.name)!,
       name: exportedNode.name,
       agents,
-      postApproval: exportedNode.postApproval,
+      postApproval: route.postApproval,
     };
     if (exportedNode.transitions && exportedNode.transitions.length > 0) {
       node.transitions = exportedNode.transitions.map((t) => ({ ...t }));
@@ -399,15 +547,26 @@ function validateWorkflowForPreview(
   importedAgentNames: Set<string>,
   existingAgentNameToId: Map<string, string>,
   agentNameToRole: Map<string, string>,
-  storedTemplateExists?: (key: string) => boolean
+  storedTemplateExists?: (key: string) => boolean,
+  relocatedTemplateKey?: (fromKey: string) => string | null
 ): string[] {
   const errors: string[] = [];
 
   for (const node of exported.nodes) {
     for (const a of node.agents) {
-      const templateKey = a.templateKey?.trim();
+      const rawTemplateKey = a.templateKey?.trim() ?? '';
+      const templateKey = rawTemplateKey ? normalizeLegacyWorkerTemplateKey(rawTemplateKey) : '';
       if (templateKey) {
-        if (getLongHorizonAgentTemplate(templateKey)) continue;
+        if (getLongHorizonAgentTemplate(templateKey)) {
+          const relocatedKey =
+            rawTemplateKey === templateKey && relocatedTemplateKey
+              ? relocatedTemplateKey(templateKey)
+              : null;
+          if (relocatedKey) {
+            errors.push(ambiguousTemplateReferenceError(node.name, templateKey, relocatedKey));
+          }
+          continue;
+        }
         if (storedTemplateExists?.(templateKey)) continue;
         const agentRef = a.agentRef?.trim() ?? '';
         if (
@@ -657,6 +816,9 @@ export function setupSpaceExportImportHandlers(
     const params = data as { bundle: unknown; spaceId: string };
     await requireSpace(spaceManager, params.spaceId);
 
+    const relocatedIndex = loadRelocatedTemplateIndex(db);
+    const relocatedTemplateKey = (fromKey: string): string | null =>
+      relocatedIndex.get(fromKey) ?? null;
     const validation = validateExportBundle(params.bundle);
     if (!validation.ok) {
       const result: ImportPreviewResult = {
@@ -724,7 +886,8 @@ export function setupSpaceExportImportHandlers(
         importedAgentNames,
         existingAgentNameToId,
         agentNameToRole,
-        storedTemplateExists
+        storedTemplateExists,
+        relocatedTemplateKey
       );
       for (const err of errors) {
         validationErrors.push(`Workflow "${wf.name}": ${err}`);
@@ -759,6 +922,9 @@ export function setupSpaceExportImportHandlers(
     };
     await requireSpace(spaceManager, params.spaceId);
 
+    const relocatedIndex = loadRelocatedTemplateIndex(db);
+    const relocatedTemplateKey = (fromKey: string): string | null =>
+      relocatedIndex.get(fromKey) ?? null;
     const validation = validateExportBundle(params.bundle);
     if (!validation.ok) {
       throw new Error(`Invalid bundle: ${validation.error}`);
@@ -1020,7 +1186,8 @@ export function setupSpaceExportImportHandlers(
             exportedWorkflow,
             importedAgentNameToId,
             existingAgentNameToId,
-            usedWorkflowHandles
+            usedWorkflowHandles,
+            relocatedTemplateKey
           );
 
           const exportedHandle =
@@ -1036,7 +1203,7 @@ export function setupSpaceExportImportHandlers(
               allWarnings.push(`Workflow "${finalName}": ${w}`);
             }
             throw new Error(
-              `Cannot import workflow "${finalName}": unresolved agent reference(s) — run spaceImport.preview to see details`
+              `Cannot import workflow "${finalName}": unresolved agent reference(s) — ${warnings.join('; ')}`
             );
           }
 

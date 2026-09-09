@@ -33,8 +33,8 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import { Logger } from '../../logger.ts';
-import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
 import { workerTemplateKey } from '../agents/long-horizon-agent-templates.ts';
+import { QA_SYSTEM_CONTRACT } from '../agents/system-contracts.ts';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts';
 
 export {
@@ -365,7 +365,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
       agents: [
         {
           agentId: '',
-          templateKey: workerTemplateKey('coder'),
+          templateKey: workerTemplateKey('swe'),
           name: 'coder',
           customPrompt: { value: CODER_OWNED_MERGE_PROMPT },
           eventInterests: [IMPLEMENTER_PR_EVENT_INTEREST],
@@ -554,7 +554,7 @@ export const CODING_WITH_QA_WORKFLOW: SpaceWorkflow = {
       agents: [
         {
           agentId: '',
-          templateKey: workerTemplateKey('coder'),
+          templateKey: workerTemplateKey('swe'),
           name: 'coder',
           customPrompt: { value: CODER_OWNED_MERGE_PROMPT },
           eventInterests: [IMPLEMENTER_PR_EVENT_INTEREST],
@@ -676,7 +676,7 @@ export const CODER_ONLY_WORKFLOW: SpaceWorkflow = {
       agents: [
         {
           agentId: '',
-          templateKey: workerTemplateKey('coder'),
+          templateKey: workerTemplateKey('swe'),
           name: 'coder',
           customPrompt: { value: CODER_ONLY_PROMPT },
           eventInterests: [IMPLEMENTER_PR_EVENT_INTEREST],
