@@ -841,6 +841,43 @@ describe('migration 241: convert customized worker mirrors to user templates', (
     db.close();
   });
 
+  test('holds the mirror off a key owned by a later slot when its name is contested', () => {
+    const { db, agentRepo } = createDb();
+    agentRepo.update(SWE_ID, { model: 'claude-sonnet-5' });
+    const key = workerCustomTemplateKey(SWE_ID);
+    insertWorkflow(db, 'workflow-later-owner', 'space-1', JSON.stringify({ targetAgent: key }));
+    insertNode(
+      db,
+      'node-later-owner-mirror',
+      'workflow-later-owner',
+      JSON.stringify({ agents: [{ agentId: SWE_ID, name: 'builder' }] })
+    );
+    insertNode(
+      db,
+      'node-later-owner-early',
+      'workflow-later-owner',
+      JSON.stringify({ agents: [{ agentId: 'user-0', name: 'ops' }] })
+    );
+    insertNode(
+      db,
+      'node-later-owner-late',
+      'workflow-later-owner',
+      JSON.stringify({ agents: [{ agentId: 'user-1', templateKey: key, name: 'ops' }] })
+    );
+
+    runMigration241(db);
+
+    expect(nodeAgents(db, 'node-later-owner-mirror')).toEqual([
+      { agentId: SWE_ID, name: 'builder' },
+    ]);
+    expect(nodeAgents(db, 'node-later-owner-late')).toEqual([{ agentId: 'user-1', name: 'ops' }]);
+    const postApproval = db
+      .prepare(`SELECT post_approval FROM space_workflows WHERE id = 'workflow-later-owner'`)
+      .get() as { post_approval: string };
+    expect(JSON.parse(postApproval.post_approval)).toEqual({ targetAgent: key });
+    db.close();
+  });
+
   test('keeps a replaced-key route on an earlier slot that owns the key as its name', () => {
     const { db, agentRepo } = createDb();
     agentRepo.update(SWE_ID, { model: 'claude-sonnet-5' });

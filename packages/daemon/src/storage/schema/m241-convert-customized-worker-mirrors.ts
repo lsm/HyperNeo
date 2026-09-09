@@ -163,6 +163,11 @@ function clearMirrorSlots(
     const name = occ.effectiveName.trim();
     if (name) slotNameCounts.set(name, (slotNameCounts.get(name) ?? 0) + 1);
   }
+  const slotKeyCounts = new Map<string, number>();
+  for (const occ of occurrences) {
+    const key = typeof occ.slot.templateKey === 'string' ? occ.slot.templateKey.trim() : '';
+    if (key) slotKeyCounts.set(key, (slotKeyCounts.get(key) ?? 0) + 1);
+  }
   for (const occ of occurrences) {
     const finalName = occ.effectiveName;
     const slotKey = typeof occ.slot.templateKey === 'string' ? occ.slot.templateKey.trim() : '';
@@ -209,11 +214,13 @@ function clearMirrorSlots(
         : (keyByAgentId.get(agentId) ?? '');
     const selfNamedByKey = finalName.trim() === bindingKey;
     const keyNamedElsewhere = (slotNameCounts.get(bindingKey) ?? 0) > (selfNamedByKey ? 1 : 0);
+    const selfBoundByKey = existingKey === bindingKey;
+    const keyBoundElsewhere = (slotKeyCounts.get(bindingKey) ?? 0) > (selfBoundByKey ? 1 : 0);
     if (
       !m228OwnedKey &&
       bindingKey !== '' &&
       targets.has(bindingKey) &&
-      (keyNamedElsewhere || occupied.has(bindingKey))
+      (keyNamedElsewhere || keyBoundElsewhere || occupied.has(bindingKey))
     ) {
       occupied.add(finalName);
       occupied.add(agentId);

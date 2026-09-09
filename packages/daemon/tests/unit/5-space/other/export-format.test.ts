@@ -1,15 +1,15 @@
-import { describe, test, expect } from 'bun:test';
-import {
-  exportAgent,
-  exportWorkflow,
-  exportBundle,
-  validateExportedAgent,
-  validateExportedWorkflow,
-  validateExportBundle,
-  normalizeOverride,
-} from '../../../../src/lib/space/export-format.ts';
+import { describe, expect, test } from 'bun:test';
 import type { SpaceLongHorizonAgent, SpaceWorkflow } from '@hyperneo/shared';
 import { MAX_NODE_HANDOFF_TRANSITIONS } from '@hyperneo/shared';
+import {
+  exportAgent,
+  exportBundle,
+  exportWorkflow,
+  normalizeOverride,
+  validateExportBundle,
+  validateExportedAgent,
+  validateExportedWorkflow,
+} from '../../../../src/lib/space/export-format.ts';
 
 function makeAgent(overrides: Partial<SpaceLongHorizonAgent> = {}): SpaceLongHorizonAgent {
   return {
@@ -292,6 +292,53 @@ describe('exportWorkflow', () => {
     });
     const exported = exportWorkflow(workflow, []);
     expect(exported.nodes[0].agents[0].templateKey).toBe('migrated.agent.agent-gone');
+    expect(exported.nodes[0].agents[0].agentRef).toBeUndefined();
+  });
+
+  test('derives the agentRef fallback from a worker-custom key without an agentId', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Code step',
+          agents: [{ agentId: '', templateKey: 'worker-custom.agent-uuid-1', name: 'coder' }],
+        },
+      ],
+    });
+    const exported = exportWorkflow(workflow, [makeAgent()]);
+    expect(exported.nodes[0].agents[0].templateKey).toBe('worker-custom.agent-uuid-1');
+    expect(exported.nodes[0].agents[0].agentRef).toBe('My Coder');
+  });
+
+  test('derives the agentRef fallback from a m241-suffixed worker-custom key', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Code step',
+          agents: [
+            { agentId: '', templateKey: 'worker-custom.agent-uuid-1.m241-2', name: 'coder' },
+          ],
+        },
+      ],
+    });
+    const exported = exportWorkflow(workflow, [makeAgent()]);
+    expect(exported.nodes[0].agents[0].templateKey).toBe('worker-custom.agent-uuid-1.m241-2');
+    expect(exported.nodes[0].agents[0].agentRef).toBe('My Coder');
+  });
+
+  test('omits the agentRef fallback for worker-custom keys of unknown agents', () => {
+    const workflow = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Code step',
+          agents: [{ agentId: '', templateKey: 'worker-custom.agent-gone', name: 'coder' }],
+        },
+      ],
+    });
+    const exported = exportWorkflow(workflow, []);
+    expect(exported.nodes[0].agents[0].templateKey).toBe('worker-custom.agent-gone');
     expect(exported.nodes[0].agents[0].agentRef).toBeUndefined();
   });
 
