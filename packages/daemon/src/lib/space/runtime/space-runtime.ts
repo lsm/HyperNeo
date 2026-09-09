@@ -7994,7 +7994,7 @@ export class SpaceRuntime {
   }
 
   private postApprovalWorkerLive(manager: TaskAgentManager, sessionId: string): boolean {
-    if (manager.isSessionAlive(sessionId)) return true;
+    if (manager.isSessionInMemory(sessionId)) return true;
     return manager.hasPendingRateLimitCooldown?.(sessionId) ?? false;
   }
 
@@ -8251,7 +8251,9 @@ export class SpaceRuntime {
       fresh.workflowRunId !== task.workflowRunId ||
       fresh.postApprovalSessionId !== task.postApprovalSessionId
     ) {
-      manager.cancelBySessionId(restoredId);
+      if ((fresh?.postApprovalSessionId ?? null) !== restoredId) {
+        manager.cancelBySessionId(restoredId);
+      }
       return 'skip';
     }
     if (!this.postApprovalWorkerResumed(manager, restoredId)) {
