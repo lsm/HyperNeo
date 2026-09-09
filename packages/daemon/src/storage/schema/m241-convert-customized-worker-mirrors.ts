@@ -157,6 +157,7 @@ function clearMirrorSlots(
   const clearedNames = new Map<string, string>();
   let dirty = false;
   const occupied = new Set<string>();
+  const newKeys = new Set(keyByAgentId.values());
   for (const occ of occurrences) {
     const finalName = occ.effectiveName;
     const slotKey = typeof occ.slot.templateKey === 'string' ? occ.slot.templateKey.trim() : '';
@@ -179,6 +180,10 @@ function clearMirrorSlots(
     ) {
       if (finalName) occupied.add(finalName);
       occupied.add(agentId);
+      if (slotKey && newKeys.has(slotKey)) {
+        delete occ.slot.templateKey;
+        dirty = true;
+      }
       if (slotKey) occupied.add(slotKey);
       continue;
     }
