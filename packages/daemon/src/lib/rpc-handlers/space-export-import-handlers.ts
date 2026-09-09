@@ -236,7 +236,9 @@ function normalizeImportedPostApproval(
   }
   const target = postApproval.targetAgent;
   const normalized = normalizeLegacyWorkerTemplateKey(target);
-  if (normalized === target) return { postApproval, error: null };
+  if (normalized === target) {
+    return recheckUnchangedRoute(postApproval, target, slots);
+  }
   const selectedIndex = slots.findIndex(
     ({ entry, rawTemplateKey }) =>
       entry.name === target ||
@@ -263,6 +265,39 @@ function normalizeImportedPostApproval(
     };
   }
   return { postApproval: { ...postApproval, targetAgent: selected.name }, error: null };
+}
+
+function firstRouteMatch(
+  slots: ReadonlyArray<ImportedRouteSlot>,
+  target: string,
+  useRawKeys: boolean
+): number {
+  return slots.findIndex(
+    ({ entry, rawTemplateKey }) =>
+      entry.name === target ||
+      (entry.agentId !== '' && entry.agentId === target) ||
+      (useRawKeys ? rawTemplateKey : entry.templateKey) === target
+  );
+}
+
+function recheckUnchangedRoute(
+  postApproval: WorkflowNodeInput['postApproval'],
+  target: string,
+  slots: ReadonlyArray<ImportedRouteSlot>
+): { postApproval: WorkflowNodeInput['postApproval']; error: string | null } {
+  const normalizationChangedKeys = slots.some(
+    ({ entry, rawTemplateKey }) => rawTemplateKey !== entry.templateKey
+  );
+  if (!normalizationChangedKeys) return { postApproval, error: null };
+  const rawFirst = firstRouteMatch(slots, target, true);
+  const normalizedFirst = firstRouteMatch(slots, target, false);
+  if (rawFirst === normalizedFirst) return { postApproval, error: null };
+  return {
+    postApproval,
+    error:
+      `post-approval route "${target}" resolves to a different slot after legacy-key ` +
+      `normalization; rename the route or the shadowing slot in the bundle and retry`,
+  };
 }
 
 function generateUniqueName(baseName: string, existingNames: Set<string>): string {

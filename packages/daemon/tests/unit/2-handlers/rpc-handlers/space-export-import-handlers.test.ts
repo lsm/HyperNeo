@@ -977,6 +977,40 @@ describe('Space Export/Import RPC Handlers', () => {
       expect(workflow.nodes[1].postApproval?.targetAgent).toBe('coder');
     });
 
+    it('rejects a worker.swe route whose selection changes after legacy-key normalization', async () => {
+      const bundle = {
+        version: 5,
+        type: 'bundle',
+        name: 'Test Bundle',
+        exportedAt: 1000,
+        agents: [],
+        workflows: [
+          {
+            version: 5,
+            type: 'workflow',
+            name: 'Reselect Pipe',
+            nodes: [
+              {
+                agents: [{ templateKey: 'worker.coder', name: 'setup' }],
+                name: 'Setup',
+              },
+              {
+                agents: [{ templateKey: 'worker.research', name: 'worker.swe' }],
+                name: 'Coding',
+                postApproval: { targetAgent: 'worker.swe', instructions: 'merge the PR' },
+              },
+            ],
+            startNode: 'Setup',
+            tags: [],
+          },
+        ],
+      };
+
+      await expect(
+        call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle })
+      ).rejects.toThrow(/different slot after legacy-key normalization/);
+    });
+
     it('rejects a legacy route whose resolved slot name is shadowed by an earlier slot', async () => {
       const bundle = {
         version: 5,

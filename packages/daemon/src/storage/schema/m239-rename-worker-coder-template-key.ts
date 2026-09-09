@@ -128,8 +128,12 @@ function rewritePostApprovalTarget(
 ): boolean {
   if (typeof postApproval.targetAgent !== 'string') return false;
   const target = postApproval.targetAgent;
-  const replacement = renamedKeyFor(target, storedRelocation);
-  if (!replacement) return false;
+  let replacement = renamedKeyFor(target, storedRelocation);
+  if (!replacement) {
+    const rawKeyMatch = slots.find((slot) => slot.renamingKey !== null && slot.rawKey === target);
+    if (!rawKeyMatch || rawKeyMatch.renamingKey === null) return false;
+    replacement = rawKeyMatch.renamingKey;
+  }
   const selectedIndex = slots.findIndex((slot) => slotMatchesTarget(slot, target, false));
   if (selectedIndex < 0) return false;
   const selected = slots[selectedIndex];

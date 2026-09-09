@@ -506,6 +506,28 @@ describe('migration 239 — rename worker.coder slot templateKey to worker.swe',
     db.close();
   });
 
+  test('retargets a padded route when its padded raw key is normalized', () => {
+    const db = createMigrationDb();
+    insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
+    insertNodeWithSlots(
+      db,
+      'node-1',
+      'wf-1',
+      [{ agentId: '', templateKey: ' worker.coder ', name: 'padded' }],
+      { targetAgent: ' worker.coder ' }
+    );
+
+    runMigration239(db);
+
+    expect(readSlots(db, 'node-1')).toEqual([
+      { agentId: '', templateKey: 'worker.swe', name: 'padded' },
+    ]);
+    expect((readNodeConfig(db, 'node-1').postApproval as { targetAgent: string }).targetAgent).toBe(
+      'worker.swe'
+    );
+    db.close();
+  });
+
   test('keeps the relocation marker when the migration re-runs', () => {
     const db = createMigrationDb();
     insertStoredTemplate(db, 'worker.swe');
