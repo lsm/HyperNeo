@@ -1,11 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type {
-  NodeExecution,
-  SpaceTask,
-  SpaceWorkflow,
-  SpaceWorkflowRun,
-  WorkflowNode,
-} from '@hyperneo/shared';
+import type { SpaceTask, SpaceWorkflow, SpaceWorkflowRun, WorkflowNode } from '@hyperneo/shared';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import {
   isMissingWorkflowAgentError,
@@ -36,6 +30,7 @@ function makeManager(templateRepo: ReturnType<typeof stubTemplateRepo>): TaskAge
     workflowRunRepo: { getRun: () => null },
     spaceWorkflowManager: { getWorkflowForRun: () => null },
     nodeExecutionRepo: { listByWorkflowRun: () => [] },
+    taskRepo: { getTask: () => TASK },
     templateRepo: templateRepo as never,
   } as unknown as ConstructorParameters<typeof TaskAgentManager>[0]);
 }
@@ -63,124 +58,16 @@ const WORKFLOW = {
 
 const START_NODE = WORKFLOW.nodes[0] as WorkflowNode;
 
-const TASK = { id: TASK_ID, spaceId: SPACE_ID, workflowRunId: RUN_ID } as unknown as SpaceTask;
+const TASK = {
+  id: TASK_ID,
+  spaceId: SPACE_ID,
+  workflowRunId: RUN_ID,
+  status: 'approved',
+} as unknown as SpaceTask;
 
 const RUN = { id: RUN_ID, workflowId: WORKFLOW.id, spaceId: SPACE_ID } as SpaceWorkflowRun;
 
-const SPACE = { id: SPACE_ID, paused: false, stopped: false, status: 'active' } as never;
-
-function makeExecution(agentName: string): NodeExecution {
-  return {
-    id: `exec-${agentName}`,
-    taskId: TASK_ID,
-    workflowRunId: RUN_ID,
-    workflowNodeId: START_NODE.id,
-    agentName,
-    agentId: '',
-    status: 'pending',
-    createdAt: 0,
-    updatedAt: 0,
-  } as NodeExecution;
-}
-
 describe('TaskAgentManager spawn-boundary template audit', () => {
-  test('spawnWorkflowNodeAgentForExecution rejects an empty-instruction orphan slot', async () => {
-    const manager = makeManager(ORPHAN_REPO);
-    let caught: unknown;
-    try {
-      await manager.spawnWorkflowNodeAgentForExecution(
-        TASK,
-        SPACE,
-        WORKFLOW,
-        RUN,
-        makeExecution('orphan-slot')
-      );
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(MissingWorkflowAgentError);
-    expect(isMissingWorkflowAgentError(caught)).toBe(true);
-    const message = (caught as MissingWorkflowAgentError).message;
-    expect(message).toContain('migrated.agent.agent-orphan');
-    expect(message).toContain('empty instructions');
-    expect(message).toContain('orphan-slot');
-  });
-
-  test('spawnWorkflowNodeAgentForExecution passes a slot whose customPrompt supplies the prompt', async () => {
-    const workflow = {
-      ...WORKFLOW,
-      nodes: [
-        {
-          ...START_NODE,
-          agents: [
-            {
-              agentId: '',
-              templateKey: 'migrated.agent.agent-orphan',
-              name: 'orphan-slot',
-              customPrompt: { value: 'Slot-level role instructions.' },
-            },
-          ],
-        },
-      ],
-    } as unknown as SpaceWorkflow;
-    const manager = makeManager(ORPHAN_REPO);
-    let caught: unknown;
-    try {
-      await manager.spawnWorkflowNodeAgentForExecution(
-        TASK,
-        SPACE,
-        workflow,
-        RUN,
-        makeExecution('orphan-slot')
-      );
-    } catch (err) {
-      caught = err;
-    }
-    expect(isMissingWorkflowAgentError(caught)).toBe(false);
-  });
-
-  test('spawnWorkflowNodeAgentForExecution skips the audit when a live session would be reused', async () => {
-    const manager = makeManager(ORPHAN_REPO);
-    const withLiveSession = {
-      ...makeExecution('orphan-slot'),
-      agentSessionId: 'session-live',
-    } as NodeExecution;
-    const internals = manager as unknown as Record<string, unknown>;
-    internals.isSessionAlive = () => true;
-    internals.agentSessionIndex = new Map([['session-live', {}]]);
-    let caught: unknown;
-    try {
-      await manager.spawnWorkflowNodeAgentForExecution(TASK, SPACE, WORKFLOW, RUN, withLiveSession);
-    } catch (err) {
-      caught = err;
-    }
-    expect(isMissingWorkflowAgentError(caught)).toBe(false);
-  });
-
-  test('spawnWorkflowNodeAgentForExecution still audits when the live session is not indexed', async () => {
-    const manager = makeManager(ORPHAN_REPO);
-    const cachedOnlySession = {
-      ...makeExecution('orphan-slot'),
-      agentSessionId: 'session-cached-only',
-    } as NodeExecution;
-    const internals = manager as unknown as Record<string, unknown>;
-    internals.isSessionAlive = () => true;
-    internals.agentSessionIndex = new Map();
-    let caught: unknown;
-    try {
-      await manager.spawnWorkflowNodeAgentForExecution(
-        TASK,
-        SPACE,
-        WORKFLOW,
-        RUN,
-        cachedOnlySession
-      );
-    } catch (err) {
-      caught = err;
-    }
-    expect(isMissingWorkflowAgentError(caught)).toBe(true);
-  });
-
   test('spawnPostApprovalSubSession rejects a post-approval target bound to an empty-instruction template', async () => {
     const manager = makeManager(ORPHAN_REPO);
     let caught: unknown;

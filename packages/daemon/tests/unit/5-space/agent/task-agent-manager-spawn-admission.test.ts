@@ -124,6 +124,7 @@ interface SpawnHarnessOptions {
   failEnsure?: boolean;
   bindCasOutcome?: 'won' | 'superseded';
   rebindCasOutcome?: 'won' | 'superseded';
+  templateRepo?: { getByKey: (key: string) => { key: string; instructions: string } | null };
 }
 
 export interface SpawnAdmissionCasCall {
@@ -163,6 +164,7 @@ function makeSpawnHarness(options: SpawnHarnessOptions = {}): SpawnHarness {
   const heldReservations = new Set<string>();
 
   const tam = new TaskAgentManager({
+    templateRepo: options.templateRepo,
     db: { getDatabase: () => new BunDatabase(':memory:'), getSession: () => null },
     sessionManager: { registerSession: () => {}, getSession: () => undefined },
     internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
@@ -531,6 +533,32 @@ describe('spawnWorkflowNodeAgentForExecution — admission table', () => {
 
     await expect(h.spawn()).rejects.toBeInstanceOf(PermanentSpawnError);
     await expect(h.spawn()).rejects.toThrow(`Workflow for execution exec-1 no longer exists`);
+    expect(h.order).toEqual([]);
+  });
+
+  test('empty-instruction template slot on a fresh spawn is a permanent template rejection', async () => {
+    const h = makeSpawnHarness({
+      execution: { ...makeExecution(), agentId: '' },
+      workflow: makeWorkflow([
+        {
+          id: NODE_ID,
+          agents: [
+            {
+              agentId: '',
+              templateKey: 'migrated.agent.orphan',
+              name: AGENT_NAME,
+            } as never,
+          ],
+        },
+      ]),
+      templateRepo: {
+        getByKey: (key: string) =>
+          key === 'migrated.agent.orphan' ? { key, instructions: '' } : null,
+      },
+    });
+
+    await expect(h.spawn()).rejects.toBeInstanceOf(PermanentSpawnError);
+    await expect(h.spawn()).rejects.toThrow('empty instructions');
     expect(h.order).toEqual([]);
   });
 

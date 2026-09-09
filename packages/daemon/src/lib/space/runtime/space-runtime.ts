@@ -6512,7 +6512,7 @@ export class SpaceRuntime {
         if (isMissingWorkflowAgentError(err)) {
           this.cancelExecutionForPermanentSpawnError(execution, err);
           await this.blockRunForMissingAgent(run, err);
-          return { blockedByCrash, permanentSpawnFailureReason: err.message };
+          return { blockedByCrash, permanentSpawnFailureReason: null };
         }
         if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
           permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);

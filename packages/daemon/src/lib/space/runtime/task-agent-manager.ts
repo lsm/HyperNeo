@@ -668,22 +668,6 @@ export class TaskAgentManager {
       appliedSlot?: WorkflowNodeAgent;
       dispatcherActionNames?: ReadonlySet<string>;
     } = { reservationHeld: false, reservedExecution: false };
-    const spawnNode = workflow?.nodes.find((node) => node.id === execution.workflowNodeId);
-    const reusingLiveSession =
-      !!execution.agentSessionId &&
-      this.agentSessionIndex.has(execution.agentSessionId) &&
-      this.isSessionAlive(execution.agentSessionId);
-    const awaitingConcurrentSpawn = this.spawningExecutionIds.has(execution.id);
-    if (spawnNode && !reusingLiveSession && !awaitingConcurrentSpawn) {
-      this.assertSlotTemplateSpawnable({
-        workflow,
-        runId: workflowRun.id,
-        spaceId: space.id,
-        workflowRun,
-        node: spawnNode,
-        slotName: execution.agentName,
-      });
-    }
     const outcome = await runSpawnExecutionFlow(this.buildSpawnExecutionFlowDeps(spawnState), {
       task,
       space,
@@ -808,6 +792,16 @@ export class TaskAgentManager {
       getFreshTask: (taskId) => this.config.taskRepo.getTask(taskId),
       getNodeExecution: (executionId) => this.config.nodeExecutionRepo.getById(executionId),
       isSpawningExecution: (executionId) => this.spawningExecutionIds.has(executionId),
+      auditSlotTemplateBinding: ({ space, workflow, workflowRun, slotResolution }) => {
+        this.assertSlotTemplateSpawnable({
+          workflow,
+          runId: workflowRun.id,
+          spaceId: space.id,
+          workflowRun,
+          node: slotResolution.node,
+          slotName: slotResolution.slot.name,
+        });
+      },
       inspectIndexedSession: (agentSessionId) => {
         if (agentSessionId && this.agentSessionIndex.has(agentSessionId)) {
           if (this.isSessionAlive(agentSessionId)) {
@@ -3401,6 +3395,13 @@ export class TaskAgentManager {
     slotName: string;
   }): void {
     const { workflow, node, slotName } = params;
+    let auditedSlot: WorkflowNodeAgent | undefined;
+    try {
+      auditedSlot = resolveNodeAgents(node).find((agent) => agent.name === slotName);
+    } catch {
+      auditedSlot = undefined;
+    }
+    if (!auditedSlot?.templateKey?.trim()) return;
     const pinnedSnapshots = params.workflowRun?.definitionVersion
       ? this.config.spaceWorkflowManager.getWorkflowForRun(params.workflowRun)?.templateSnapshots
       : undefined;
@@ -5473,6 +5474,7 @@ export class TaskAgentManager {
       matchedSlot.name,
       matchedNodeId
     );
+    await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, admission);
     if (auditNode && !existingSessionId) {
       this.assertSlotTemplateSpawnable({
         workflow,
@@ -5485,7 +5487,6 @@ export class TaskAgentManager {
         slotName: matchedSlot.name,
       });
     }
-    await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, admission);
     if (existingSessionId) {
       const existing = this.getSubSession(existingSessionId);
       if (!existing) {

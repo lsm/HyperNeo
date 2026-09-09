@@ -1,4 +1,10 @@
-import type { SpaceTask, SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
+import type {
+  SpaceTask,
+  SpaceWorkflow,
+  SpaceWorkflowRun,
+  WorkflowChannel,
+  WorkflowNode,
+} from '@hyperneo/shared';
 import { resolveNodeAgents, isChannelCyclic } from '@hyperneo/shared';
 import type { NodeExecution } from '@hyperneo/shared';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
@@ -134,6 +140,24 @@ export class ChannelRouter {
       );
     }
 
+    const existingTasks = this.getActiveTasksForNode(runId, nodeId);
+    if (existingTasks.length > 0) {
+      const targetAgentName = options?.targetAgentName;
+      if (!targetAgentName) {
+        await this.reopenIfTerminal(run, nodeId, options);
+        return existingTasks;
+      }
+      const targetSlotExists = this.config.nodeExecutionRepo
+        .listByNode(runId, nodeId)
+        .some(
+          (e) => e.agentName === targetAgentName && !TERMINAL_NODE_EXECUTION_STATUSES.has(e.status)
+        );
+      if (targetSlotExists) {
+        await this.reopenIfTerminal(run, nodeId, options);
+        return existingTasks;
+      }
+    }
+
     const targetAgentName = options?.targetAgentName;
     const templateSources = slotTemplateAuditSources(
       (key) => this.config.workflowManager.agentTemplateInstructions(key),
@@ -174,18 +198,6 @@ export class ChannelRouter {
           `inbound activation of node "${nodeId}" on run in status "${run.status}"`,
         options?.reopenBy ?? 'activation'
       );
-    }
-
-    const existingTasks = this.getActiveTasksForNode(runId, nodeId);
-    if (existingTasks.length > 0) {
-      const targetAgentName = options?.targetAgentName;
-      if (!targetAgentName) return existingTasks;
-      const targetSlotExists = this.config.nodeExecutionRepo
-        .listByNode(runId, nodeId)
-        .some(
-          (e) => e.agentName === targetAgentName && !TERMINAL_NODE_EXECUTION_STATUSES.has(e.status)
-        );
-      if (targetSlotExists) return existingTasks;
     }
 
     const existingExecutions = this.config.nodeExecutionRepo.listByNode(runId, nodeId);
@@ -490,6 +502,27 @@ export class ChannelRouter {
     const tasks = this.config.taskRepo.listByWorkflowRunIncludingArchived(runId);
     if (tasks.length === 0) return false;
     return tasks.every((t) => t.archivedAt != null);
+  }
+
+  private async reopenIfTerminal(
+    run: SpaceWorkflowRun,
+    nodeId: string,
+    options?: {
+      reopenReason?: string;
+      reopenBy?: string;
+      allowTerminalReopen?: boolean;
+      targetAgentName?: string;
+    }
+  ): Promise<void> {
+    if (run.status !== 'done' && run.status !== 'cancelled') return;
+    await this.reopenRun(
+      run.id,
+      run.status,
+      run.spaceId,
+      options?.reopenReason ??
+        `inbound activation of node "${nodeId}" on run in status "${run.status}"`,
+      options?.reopenBy ?? 'activation'
+    );
   }
 
   private async reopenRun(

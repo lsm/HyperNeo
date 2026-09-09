@@ -66,6 +66,13 @@ export interface SpawnExecutionFlowDeps {
     execution: NodeExecution,
     task: SpaceTask
   ): WorkflowNodeSlotResolution | null;
+  auditSlotTemplateBinding(params: {
+    space: Space;
+    workflow: SpaceWorkflow;
+    workflowRun: SpaceWorkflowRun;
+    execution: NodeExecution;
+    slotResolution: WorkflowNodeSlotResolution;
+  }): void;
   reserveExecution(executionId: string): void;
   releaseExecution(executionId: string): void;
   reserveTaskSpawn(taskId: string): 'won' | 'superseded';
@@ -284,6 +291,13 @@ export function runSpawnExecutionFlow(
           const workspacePath = await deps.resolveWorkspacePath(spawnTask, view.space);
           validateTaskAllowsSpawn(deps.getFreshTask(view.task.id) ?? spawnTask);
           const slotResolution = view.slotResolution!;
+          deps.auditSlotTemplateBinding({
+            space: view.space,
+            workflow: view.workflow,
+            workflowRun: view.workflowRun,
+            execution: view.execution,
+            slotResolution,
+          });
           attempt.task = spawnTask;
           attempt.workspacePath = workspacePath;
           attempt.sessionId = await deps.createSpawnedSession({
