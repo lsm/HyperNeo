@@ -158,12 +158,6 @@ export interface GlobalStateSnapshot {
   meta: StateChannelMeta;
 }
 
-export interface SessionStateSnapshot {
-  session: SessionState;
-  sdkMessages: SDKMessagesState;
-  meta: StateChannelMeta;
-}
-
 export interface SessionsUpdate {
   added?: SessionInfo[];
   updated?: SessionInfo[];
@@ -177,14 +171,12 @@ export interface SDKMessagesUpdate {
 }
 
 export const STATE_CHANNELS = {
-  GLOBAL_SESSIONS: 'state.sessions',
   GLOBAL_SYSTEM: 'state.system',
   GLOBAL_SETTINGS: 'state.settings',
   GLOBAL_SNAPSHOT: 'state.global.snapshot',
 
   SESSION: 'state.session',
   SESSION_SDK_MESSAGES: 'state.sdkMessages',
-  SESSION_SNAPSHOT: 'state.session.snapshot',
 } as const;
 
 export type StateChangeEvent<T> = {

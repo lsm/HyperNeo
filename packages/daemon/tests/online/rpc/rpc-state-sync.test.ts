@@ -58,30 +58,10 @@ describe('State Sync', () => {
     });
   });
 
-  describe('Session State Snapshot', () => {
-    test('should return session state with all sections', async () => {
-      const sessionId = await createSession('/test/state-sync-2');
-
-      const snapshot = (await daemon.messageHub.request(STATE_CHANNELS.SESSION_SNAPSHOT, {
-        sessionId,
-      })) as Record<string, unknown>;
-
-      expect(snapshot.session).toBeDefined();
-      expect(snapshot.sdkMessages).toBeDefined();
-      expect(snapshot.meta).toBeDefined();
-
-      const session = snapshot.session as Record<string, unknown>;
-      expect(session.sessionInfo).toBeDefined();
-      expect(session.agentState).toBeDefined();
-      expect(session.commandsData).toBeDefined();
-
-      const meta = snapshot.meta as Record<string, unknown>;
-      expect(meta.sessionId).toBe(sessionId);
-    });
-
+  describe('Session State', () => {
     test('should throw error for non-existent session', async () => {
       await expect(
-        daemon.messageHub.request(STATE_CHANNELS.SESSION_SNAPSHOT, {
+        daemon.messageHub.request(STATE_CHANNELS.SESSION, {
           sessionId: 'non-existent',
         })
       ).rejects.toThrow('Session not found');
@@ -89,11 +69,16 @@ describe('State Sync', () => {
   });
 
   describe('System State', () => {
+    async function getSystemState(): Promise<Record<string, unknown>> {
+      const snapshot = (await daemon.messageHub.request(
+        STATE_CHANNELS.GLOBAL_SNAPSHOT,
+        {}
+      )) as Record<string, unknown>;
+      return snapshot.system as Record<string, unknown>;
+    }
+
     test('should report system health', async () => {
-      const system = (await daemon.messageHub.request(STATE_CHANNELS.GLOBAL_SYSTEM, {})) as Record<
-        string,
-        unknown
-      >;
+      const system = await getSystemState();
 
       const health = system.health as Record<string, unknown>;
       expect(health.status).toBe('ok');
@@ -111,10 +96,7 @@ describe('State Sync', () => {
       await createSession('/test/state-sync-3a');
       await createSession('/test/state-sync-3b');
 
-      const system = (await daemon.messageHub.request(STATE_CHANNELS.GLOBAL_SYSTEM, {})) as Record<
-        string,
-        unknown
-      >;
+      const system = await getSystemState();
 
       const health = system.health as Record<string, unknown>;
       const sessions = health.sessions as Record<string, number>;
@@ -123,10 +105,7 @@ describe('State Sync', () => {
     });
 
     test('should expose config information', async () => {
-      const system = (await daemon.messageHub.request(STATE_CHANNELS.GLOBAL_SYSTEM, {})) as Record<
-        string,
-        unknown
-      >;
+      const system = await getSystemState();
 
       expect(system.version).toBeString();
       expect(system.claudeSDKVersion).toBeString();
@@ -136,10 +115,7 @@ describe('State Sync', () => {
     });
 
     test('should expose auth status', async () => {
-      const system = (await daemon.messageHub.request(STATE_CHANNELS.GLOBAL_SYSTEM, {})) as Record<
-        string,
-        unknown
-      >;
+      const system = await getSystemState();
 
       const auth = system.auth as Record<string, unknown>;
       expect(auth).toBeDefined();
@@ -158,25 +134,6 @@ describe('State Sync', () => {
 
       const meta = snapshot.meta as Record<string, unknown>;
       expect(meta.version).toBeNumber();
-    });
-
-    test('should have independent versions for different channels', async () => {
-      const sessionId = await createSession('/test/state-sync-4');
-
-      const sessionSnapshot = (await daemon.messageHub.request(STATE_CHANNELS.SESSION_SNAPSHOT, {
-        sessionId,
-      })) as Record<string, unknown>;
-
-      const globalSnapshot = (await daemon.messageHub.request(
-        STATE_CHANNELS.GLOBAL_SNAPSHOT,
-        {}
-      )) as Record<string, unknown>;
-
-      const sessionMeta = sessionSnapshot.meta as Record<string, unknown>;
-      const globalMeta = globalSnapshot.meta as Record<string, unknown>;
-
-      expect(sessionMeta.version).toBeNumber();
-      expect(globalMeta.version).toBeNumber();
     });
   });
 });

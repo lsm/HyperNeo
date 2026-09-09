@@ -366,28 +366,6 @@ describe('StateProjectionService', () => {
     });
   });
 
-  describe('getSessionSnapshot', () => {
-    it('should return session snapshot', async () => {
-      const mockAgentSession = {
-        getSessionData: mock(() => ({ id: 'test-id', title: 'Test' })),
-        getProcessingState: mock(() => ({ status: 'idle' })),
-        getSlashCommands: mock(async () => []),
-        getContextInfo: mock(() => null),
-        getSDKMessages: mock(() => ({ messages: [], hasMore: false })),
-      };
-      (mockSessionManager.getSessionForControl as ReturnType<typeof mock>).mockResolvedValue(
-        mockAgentSession
-      );
-
-      const result = await service.getSessionSnapshot('test-id');
-
-      expect(result).toHaveProperty('session');
-      expect(result).toHaveProperty('sdkMessages');
-      expect(result).toHaveProperty('meta');
-      expect(result.meta.sessionId).toBe('test-id');
-    });
-  });
-
   describe('InternalEventBus subscribers', () => {
     describe('session.created', () => {
       it('should cache session and initial processing state', async () => {
