@@ -934,7 +934,7 @@ describe('Space Export/Import RPC Handlers', () => {
         { spaceId: SPACE_ID, bundle }
       );
       const workflow = workflowRepo.getWorkflow(result.workflows[0].id)!;
-      expect(workflow.nodes[0].postApproval?.targetAgent).toBe('worker.coder ');
+      expect(workflow.nodes[1].postApproval?.targetAgent).toBe('worker.coder ');
     });
 
     it('selects legacy routes by raw keys so padded keys never capture them', async () => {
