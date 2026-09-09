@@ -286,7 +286,7 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
 
   test('keeps collision-generated replacement handles within the slug limit', () => {
     const db = makeDb();
-    runMigration239(db);
+    runMigration240(db);
 
     const relocated = handleById(db, '0f1e2d3c-4b5a-6978-8976-a5b4c3d2e1f0');
     expect(relocated.startsWith('space-manager-migrated-')).toBe(true);
@@ -298,7 +298,7 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
 
   test('restamps pristine coordinator display names and preserves customized ones', () => {
     const db = makeDb();
-    runMigration239(db);
+    runMigration240(db);
 
     expect(rowById(db, 'agent-coord-1').display_name).toBe('Space Manager');
     expect(rowById(db, 'agent-coord-4').display_name).toBe('My Coordinator');
@@ -307,7 +307,7 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
 
   test('skips the display-name restamp when a custom agent already owns the name', () => {
     const db = makeDb();
-    runMigration239(db);
+    runMigration240(db);
 
     expect(rowById(db, 'agent-coord-7').handle).toBe('space-manager');
     expect(rowById(db, 'agent-coord-7').display_name).toBe('Coordinator');
@@ -317,7 +317,7 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
 
   test('skips the restamp when an archived custom agent owns the name', () => {
     const db = makeDb();
-    runMigration239(db);
+    runMigration240(db);
 
     expect(rowById(db, 'agent-coord-9').handle).toBe('space-manager');
     expect(rowById(db, 'agent-coord-9').display_name).toBe('Coordinator');
@@ -327,7 +327,7 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
 
   test('keeps the archived deterministic manager over an active legacy impostor', () => {
     const db = makeDb();
-    runMigration239(db);
+    runMigration240(db);
 
     const impostor = handleById(db, 'agent-holder-14');
     expect(impostor.startsWith('space-manager-migrated-')).toBe(true);
@@ -342,7 +342,7 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
 
   test('collision check normalizes whitespace like the application', () => {
     const db = makeDb();
-    runMigration239(db);
+    runMigration240(db);
 
     expect(rowById(db, 'agent-coord-13').handle).toBe('space-manager');
     expect(rowById(db, 'agent-coord-13').display_name).toBe('Coordinator');
@@ -352,7 +352,7 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
 
   test('relocates holders when the coordinator row was pre-lock renamed', () => {
     const db = makeDb();
-    runMigration239(db);
+    runMigration240(db);
 
     const holder = handleById(db, 'agent-holder-8');
     expect(holder.startsWith('space-manager-migrated-')).toBe(true);
@@ -368,7 +368,7 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
 
   test('relocates an active coordinator impostor when the manager was pre-lock renamed', () => {
     const db = makeDb();
-    runMigration239(db);
+    runMigration240(db);
 
     const impostor = handleById(db, 'agent-impostor-12');
     expect(impostor.startsWith('space-manager-migrated-')).toBe(true);
@@ -383,7 +383,7 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
 
   test('relocates archived space-manager holders so they stay restorable', () => {
     const db = makeDb();
-    runMigration239(db);
+    runMigration240(db);
 
     expect(handleById(db, 'agent-coord-6')).toBe('space-manager');
     const relocated = handleById(db, 'agent-archived-6');
@@ -399,7 +399,7 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
 
   test('relocates archived duplicate coordinator rows instead of renaming them', () => {
     const db = makeDb();
-    runMigration239(db);
+    runMigration240(db);
 
     expect(handleById(db, 'agent-coord-11')).toBe('space-manager');
     const relocated = handleById(db, 'agent-archived-coordinator-11');
@@ -436,11 +436,11 @@ describe('Migration 240: rename coordinator handle to space-manager', () => {
 					instructions, created_at, updated_at
 				) VALUES ('space-lh-agent:coordinator:space-10', 'space-10', 'coordinator', 'Coordinator', 'coordinator.default', 'active', 'space:chat:space-10', '', 1, 1)`
     ).run();
-    runMigration239(db);
+    runMigration240(db);
     expect(handleById(db, 'space-lh-agent:coordinator:space-10')).toBe('space-manager');
 
-    runMigration239(db);
-    runMigration239(db);
+    runMigration240(db);
+    runMigration240(db);
 
     expect(handleById(db, 'space-lh-agent:coordinator:space-10')).toBe('space-manager');
     expect(rowById(db, 'space-lh-agent:coordinator:space-10').display_name).toBe('Space Manager');
