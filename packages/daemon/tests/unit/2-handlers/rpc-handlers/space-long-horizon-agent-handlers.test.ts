@@ -52,7 +52,6 @@ describe('Space long-horizon agent handlers', () => {
   let workflowRepo: {
     getWorkflowsReferencingAgent: ReturnType<typeof mock>;
     getWorkflowsReferencingTemplate: ReturnType<typeof mock>;
-    listNonterminalRunWorkflowNamesReferencingTemplate: ReturnType<typeof mock>;
   };
   let internalEventBus: { publish: ReturnType<typeof mock> };
 
@@ -114,7 +113,6 @@ describe('Space long-horizon agent handlers', () => {
     workflowRepo = {
       getWorkflowsReferencingAgent: mock(() => []),
       getWorkflowsReferencingTemplate: mock(() => []),
-      listNonterminalRunWorkflowNamesReferencingTemplate: mock(() => []),
     };
     internalEventBus = { publish: mock(async () => {}) };
     setupSpaceAgentHandlers(

@@ -205,6 +205,13 @@ describe('Space Agent RPC Handlers', () => {
         updated_at INTEGER NOT NULL
       )
     `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS space_tasks (
+        id TEXT PRIMARY KEY,
+        workflow_run_id TEXT,
+        archived_at INTEGER
+      )
+    `);
     createSpaceAgentTemplatesTable(db);
     runMigration226(db);
     runMigration227(db);
@@ -227,7 +234,11 @@ describe('Space Agent RPC Handlers', () => {
       longHorizonRepo,
       workflowRepo,
       undefined,
-      new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db as any))
+      new SpaceAgentTemplateManager(
+        new SpaceAgentTemplateRepository(db as any),
+        undefined,
+        workflowRepo
+      )
     );
   });
 
@@ -525,7 +536,9 @@ describe('Space Agent RPC Handlers', () => {
       await expect(
         call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'guard.custom' })
       ).rejects.toThrow(
-        'Cannot delete template "guard.custom" - it is referenced by workflow nodes (Workflow: Release)'
+        'Template "guard.custom" is referenced by workflow slot(s) in: Release. ' +
+          'Remove or replace the templateKey in those workflows — or wait for their in-flight runs ' +
+          'to finish — before deleting the template.'
       );
 
       const list = await call<{ templates: Array<{ key: string }> }>(
@@ -624,11 +637,13 @@ describe('Space Agent RPC Handlers', () => {
       await expect(
         call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'guard.custom' })
       ).rejects.toThrow(
-        'Cannot delete template "guard.custom" - it is referenced by workflow nodes (Workflow: Pinned Flow)'
+        'Template "guard.custom" is referenced by workflow slot(s) in: Pinned Flow. ' +
+          'Remove or replace the templateKey in those workflows — or wait for their in-flight runs ' +
+          'to finish — before deleting the template.'
       );
     });
 
-    it('allows deleting a template whose pinned references are on terminal runs only', async () => {
+    it('allows deleting a template whose pinned references are on fully archived runs only', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
         key: 'guard.custom',
         handle: 'guard',
@@ -657,6 +672,11 @@ describe('Space Agent RPC Handlers', () => {
            (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       ).run('run-terminal', 'space-1', 'wf-terminal', 'vh-terminal', 'Run 2', 'done', now, now);
+      db.prepare(`INSERT INTO space_tasks (id, workflow_run_id, archived_at) VALUES (?, ?, ?)`).run(
+        'task-terminal',
+        'run-terminal',
+        now
+      );
 
       const result = await call<{ success: boolean }>(
         hubData.handlers,
@@ -682,7 +702,8 @@ describe('Space Agent RPC Handlers', () => {
       await expect(
         call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'guard.custom' })
       ).rejects.toThrow(
-        'Cannot delete template "guard.custom" - it is in use by 1 agent ("Scribe")'
+        'Template "guard.custom" is in use by 1 agent ("Scribe"). ' +
+          'Delete or re-point those agents before deleting the template.'
       );
     });
   });

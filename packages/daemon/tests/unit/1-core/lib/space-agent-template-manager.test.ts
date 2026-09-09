@@ -968,32 +968,35 @@ describe('SpaceAgentTemplateManager', () => {
 
     test('blocks deletion inside the pipeline when references report usage', async () => {
       await manager.create(fullParams());
-
-      const workflowBlocked = manager.delete('release-readiness.custom', {
-        listWorkflowNamesReferencingTemplate: () => ['Release'],
-        listAgentDisplayNamesUsingTemplate: () => [],
+      const scan = { getWorkflowsReferencingTemplate: () => [] as never[] };
+      const managerWithScan = new SpaceAgentTemplateManager(repo, () => [], {
+        ...scan,
+        getWorkflowsReferencingTemplate: () => [{ name: 'Release' } as never],
       });
+
+      const workflowBlocked = managerWithScan.delete('release-readiness.custom');
       expect(workflowBlocked.ok).toBe(false);
       if (!workflowBlocked.ok) {
         expect(workflowBlocked.error).toBe(
-          'Cannot delete template "release-readiness.custom" - it is referenced by workflow nodes (Workflow: Release)'
+          'Template "release-readiness.custom" is referenced by workflow slot(s) in: Release. ' +
+            'Remove or replace the templateKey in those workflows — or wait for their in-flight runs ' +
+            'to finish — before deleting the template.'
         );
       }
       expect(manager.getByKey('release-readiness.custom')).not.toBeNull();
 
-      const agentBlocked = manager.delete('release-readiness.custom', {
-        listWorkflowNamesReferencingTemplate: () => [],
+      const agentBlocked = manager.delete('release-readiness.custom', undefined, {
         listAgentDisplayNamesUsingTemplate: () => ['Scribe'],
       });
       expect(agentBlocked.ok).toBe(false);
       if (!agentBlocked.ok) {
         expect(agentBlocked.error).toBe(
-          'Cannot delete template "release-readiness.custom" - it is in use by 1 agent ("Scribe")'
+          'Template "release-readiness.custom" is in use by 1 agent ("Scribe"). ' +
+            'Delete or re-point those agents before deleting the template.'
         );
       }
 
-      const allowed = manager.delete('release-readiness.custom', {
-        listWorkflowNamesReferencingTemplate: () => [],
+      const allowed = manager.delete('release-readiness.custom', undefined, {
         listAgentDisplayNamesUsingTemplate: () => [],
       });
       expect(allowed.ok).toBe(true);
