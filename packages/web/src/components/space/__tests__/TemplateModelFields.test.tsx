@@ -172,6 +172,20 @@ describe('TemplateModelFields', () => {
     expect(getByTestId('template-model-fields-thinking-level')).toBeTruthy();
   });
 
+  it('preserves a stored thinking level the catalog no longer advertises', async () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <TemplateModelFields
+        value={{ model: 'minimax-1', provider: 'minimax', thinkingLevel: 'think8k' }}
+        onChange={onChange}
+      />
+    );
+    const select = getByTestId('template-model-fields-thinking-level') as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe('think8k'));
+    expect(select.textContent).toContain('Think 8k');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('still resolves thinking options from model metadata while the model select is hidden', () => {
     const { getByTestId } = render(
       <TemplateModelFields

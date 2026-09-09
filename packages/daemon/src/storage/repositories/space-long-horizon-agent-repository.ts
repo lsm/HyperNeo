@@ -145,6 +145,16 @@ export class SpaceLongHorizonAgentRepository {
     return rows.map(rowToAgent);
   }
 
+  clearTemplateKeyForArchivedAgents(templateKey: string): number {
+    const result = this.db
+      .prepare(
+        `UPDATE space_long_horizon_agents SET template_key = NULL, updated_at = ?
+         WHERE template_key = ? AND status = 'archived'`
+      )
+      .run(Date.now(), templateKey);
+    return Number(result.changes ?? 0);
+  }
+
   listByTemplateKey(templateKey: string): SpaceLongHorizonAgent[] {
     const rows = this.db
       .prepare(

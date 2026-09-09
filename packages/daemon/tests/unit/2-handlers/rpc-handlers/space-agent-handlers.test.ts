@@ -765,12 +765,22 @@ describe('Space Agent RPC Handlers', () => {
         status: 'archived',
       });
 
+      const archived = longHorizonRepo.create({
+        spaceId: 'space-1',
+        handle: 'older-scribe',
+        displayName: 'Older Scribe',
+        templateKey: 'guard.custom',
+        instructions: 'Take notes.',
+        status: 'archived',
+      });
+
       const result = await call<{ success: boolean }>(
         hubData.handlers,
         'spaceAgent.deleteTemplate',
         { key: 'guard.custom' }
       );
       expect(result.success).toBe(true);
+      expect(longHorizonRepo.getById(archived.id)?.templateKey).toBeNull();
     });
 
     it('rejects a stale expected version on delete', async () => {

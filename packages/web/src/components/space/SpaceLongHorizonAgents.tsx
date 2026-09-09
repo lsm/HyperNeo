@@ -257,7 +257,7 @@ async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateS
     handle: form.handle.trim(),
     displayName: form.displayName.trim(),
     description: form.description.trim(),
-    instructions: form.instructions.trim(),
+    instructions: ctx.template ? form.instructions : form.instructions.trim(),
     suggestedAutonomyLevel: form.suggestedAutonomyLevel as SpaceAgentAutonomyLevel,
     tools: parsedTools,
     model: effectiveModel || null,

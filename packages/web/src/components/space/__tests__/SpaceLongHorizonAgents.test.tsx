@@ -441,6 +441,26 @@ describe('SpaceLongHorizonAgents', () => {
     expect(dualEdit).not.toHaveProperty('modelPool');
   });
 
+  it('preserves instruction whitespace on an unrelated template edit', async () => {
+    const instructions = '    indented code block\nsecond line';
+    mockTemplates.value = [
+      makeTemplate({ key: 'scribe', handle: 'scribe', displayName: 'Scribe', instructions }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByDisplayValue } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+    fireEvent.input(getByDisplayValue('Scribe'), { target: { value: 'Scribe II' } });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTemplate).toHaveBeenCalledWith(
+      'scribe',
+      expect.objectContaining({ instructions })
+    );
+  });
+
   it('sends the model fields when the editor changes the model on a template', async () => {
     mockTemplates.value = [
       makeTemplate({ key: 'scribe', handle: 'scribe', displayName: 'Scribe', version: 4 }),

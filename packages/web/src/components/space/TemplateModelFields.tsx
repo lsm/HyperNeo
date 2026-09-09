@@ -4,7 +4,7 @@ import {
   normalizeThinkingLevel,
   THINKING_LEVEL_LABELS,
 } from '@hyperneo/shared';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import {
   WorkflowModelSelect,
   type WorkflowModelSelection,
@@ -33,7 +33,6 @@ export function TemplateModelFields({
   const thinkingSelectId = `${testId}-thinking-level`;
 
   const [models, setModels] = useState<ModelInfo[]>([]);
-  const [modelsLoaded, setModelsLoaded] = useState(false);
 
   const resolvedModel = useMemo(() => {
     if (!value.model) return undefined;
@@ -54,7 +53,6 @@ export function TemplateModelFields({
   const thinkingOptions = useMemo(() => {
     if (
       value.thinkingLevel &&
-      !resolvedModel &&
       !baseThinkingOptions.some((option) => option.value === value.thinkingLevel)
     ) {
       return [
@@ -63,23 +61,10 @@ export function TemplateModelFields({
       ];
     }
     return baseThinkingOptions;
-  }, [baseThinkingOptions, resolvedModel, value.thinkingLevel]);
-
-  useEffect(() => {
-    const supported = thinkingOptions.map((option) => option.value);
-    if (
-      modelsLoaded &&
-      resolvedModel &&
-      value.thinkingLevel &&
-      !supported.includes(value.thinkingLevel)
-    ) {
-      onChange({ ...value, thinkingLevel: null });
-    }
-  }, [modelsLoaded, resolvedModel, thinkingOptions, value.thinkingLevel, value.provider, onChange]);
+  }, [baseThinkingOptions, value.thinkingLevel]);
 
   function handleModelsLoad(loaded: ModelInfo[]) {
     setModels(loaded);
-    setModelsLoaded(true);
   }
 
   function handleModelChange(model: string | undefined, selection?: WorkflowModelSelection) {

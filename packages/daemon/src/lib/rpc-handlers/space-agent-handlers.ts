@@ -816,6 +816,7 @@ export function registerUnifiedSpaceAgentMethods(
       if (!params.key) throw new Error('key is required');
       const result = templateManager.delete(params.key, params.expectedVersion);
       if (!result.ok) throw new Error(result.error);
+      deps.repo.clearTemplateKeyForArchivedAgents(params.key);
       return { success: true };
     });
   }
