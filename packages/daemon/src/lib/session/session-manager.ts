@@ -882,10 +882,6 @@ export class SessionManager {
     return this.toolsConfigManager.getGlobal();
   }
 
-  saveGlobalToolsConfig(config: ReturnType<typeof this.toolsConfigManager.getGlobal>) {
-    this.toolsConfigManager.saveGlobal(config);
-  }
-
   async cleanup(): Promise<void> {
     if (this.cleanupState !== CleanupState.IDLE) {
       return;

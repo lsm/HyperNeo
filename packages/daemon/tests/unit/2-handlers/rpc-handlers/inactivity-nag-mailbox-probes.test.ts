@@ -112,7 +112,6 @@ describe('inactivity nag probes reconciled with mailbox admissions', () => {
       messageDeliveryProcessor: noopProxy(),
       reactiveDb,
       liveQueries: noopProxy(),
-      appMcpManager: noopProxy(),
       skillsManager: noopProxy(),
       mcpImportService: noopProxy(),
     } as unknown as RPCHandlerDependencies;

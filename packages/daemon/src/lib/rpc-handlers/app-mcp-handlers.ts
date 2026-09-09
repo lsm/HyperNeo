@@ -15,10 +15,6 @@ import type { Database } from '../../storage/database.ts';
 import type {
   McpEnablementClearOverrideRequest,
   McpEnablementClearOverrideResponse,
-  McpEnablementClearScopeRequest,
-  McpEnablementClearScopeResponse,
-  McpEnablementListRequest,
-  McpEnablementListResponse,
   McpEnablementSetOverrideRequest,
   McpEnablementSetOverrideResponse,
 } from '@hyperneo/shared';
@@ -44,21 +40,6 @@ export function registerAppMcpHandlers(messageHub: MessageHub, ctx: AppMcpHandle
   messageHub.onRequest('mcp.registry.list', async () => {
     const servers = db.appMcpServers.list();
     return { servers } satisfies { servers: AppMcpServer[] };
-  });
-
-  messageHub.onRequest('mcp.registry.get', async (data) => {
-    const { id } = data as { id: string };
-
-    if (!id) {
-      throw new Error('id is required');
-    }
-
-    const server = db.appMcpServers.get(id);
-    if (!server) {
-      throw new Error(`MCP server not found: ${id}`);
-    }
-
-    return { server } satisfies { server: AppMcpServer };
   });
 
   messageHub.onRequest('mcp.registry.create', async (data) => {
@@ -140,14 +121,6 @@ export function setupAppMcpHandlers(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   db: Database
 ): void {
-  messageHub.onRequest('mcp.enablement.list', (data) => {
-    const { scopeType, scopeId } = data as McpEnablementListRequest;
-    if (!scopeType) throw new Error('scopeType is required');
-    if (!scopeId) throw new Error('scopeId is required');
-    const overrides = db.mcpEnablement.listForScope(scopeType, scopeId);
-    return { overrides } satisfies McpEnablementListResponse;
-  });
-
   messageHub.onRequest('mcp.enablement.setOverride', (data) => {
     const { scopeType, scopeId, serverId, enabled } = data as McpEnablementSetOverrideRequest;
     if (!scopeType) throw new Error('scopeType is required');
@@ -182,20 +155,6 @@ export function setupAppMcpHandlers(
         .catch((err) => log.warn('Failed to emit mcp.registry.changed:', err));
     }
     return { deleted } satisfies McpEnablementClearOverrideResponse;
-  });
-
-  messageHub.onRequest('mcp.enablement.clearScope', (data) => {
-    const { scopeType, scopeId } = data as McpEnablementClearScopeRequest;
-    if (!scopeType) throw new Error('scopeType is required');
-    if (!scopeId) throw new Error('scopeId is required');
-
-    const deleted = db.mcpEnablement.clearScope(scopeType, scopeId);
-    if (deleted > 0) {
-      internalEventBus
-        .publish('mcp.registry.changed', { sessionId: 'global' })
-        .catch((err) => log.warn('Failed to emit mcp.registry.changed:', err));
-    }
-    return { deleted } satisfies McpEnablementClearScopeResponse;
   });
 
   messageHub.onRequest('session.mcp.list', (data) => {

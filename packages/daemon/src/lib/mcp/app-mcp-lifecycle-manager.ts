@@ -15,12 +15,6 @@ import {
 
 export type { ValidationResult } from '@hyperneo/shared';
 
-export interface McpStartupError {
-  serverId: string;
-  name: string;
-  error: string;
-}
-
 export class AppMcpLifecycleManager {
   constructor(private readonly db: Database) {}
 
@@ -94,24 +88,6 @@ export class AppMcpLifecycleManager {
         };
       }
     }
-  }
-
-  getStartupErrors(): McpStartupError[] {
-    const allEntries = this.db.appMcpServers.list();
-    const errors: McpStartupError[] = [];
-
-    for (const entry of allEntries) {
-      const validation = this.validateEntry(entry);
-      if (!validation.valid) {
-        errors.push({
-          serverId: entry.id,
-          name: entry.name,
-          error: validation.error ?? 'Unknown validation error',
-        });
-      }
-    }
-
-    return errors;
   }
 
   private convertEntry(entry: AppMcpServer): McpServerConfig {

@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, mock, afterEach, afterAll } from 'bun:test';
+import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import {
   MessageHub,
   type ToolsConfig,
@@ -8,14 +8,9 @@ import {
 import { registerMcpHandlers } from '../../../../src/lib/rpc-handlers/mcp-handlers';
 import type { SessionManager } from '../../../../src/lib/session-manager';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
-import type { AppMcpLifecycleManager } from '../../../../src/lib/mcp';
 import type { Session } from '@hyperneo/shared';
 
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
-
-mock.module('node:fs/promises', () => ({
-  readFile: mock(async () => '{}'),
-}));
 
 function createMockMessageHub(): {
   hub: MessageHub;
@@ -85,7 +80,6 @@ function createMockSessionManager(): {
   mocks: {
     getSession: ReturnType<typeof mock>;
     getGlobalToolsConfig: ReturnType<typeof mock>;
-    saveGlobalToolsConfig: ReturnType<typeof mock>;
   };
   agentSessionData: ReturnType<typeof createMockAgentSession>;
 } {
@@ -94,7 +88,6 @@ function createMockSessionManager(): {
   const mocks = {
     getSession: mock(() => agentSessionData.agentSession),
     getGlobalToolsConfig: mock(() => DEFAULT_GLOBAL_TOOLS_CONFIG),
-    saveGlobalToolsConfig: mock(() => {}),
   };
 
   const sessionManager = {
@@ -104,43 +97,15 @@ function createMockSessionManager(): {
   return { sessionManager, mocks, agentSessionData };
 }
 
-function createMockAppMcpManager(): {
-  manager: AppMcpLifecycleManager;
-  mocks: { getStartupErrors: ReturnType<typeof mock> };
-} {
-  const mocks = {
-    getStartupErrors: mock(() => []),
-  };
-  const manager = mocks as unknown as AppMcpLifecycleManager;
-  return { manager, mocks };
-}
-
 describe('MCP/Tools RPC Handlers', () => {
   let messageHubData: ReturnType<typeof createMockMessageHub>;
   let sessionManagerData: ReturnType<typeof createMockSessionManager>;
-  let appMcpManagerData: ReturnType<typeof createMockAppMcpManager>;
 
   beforeEach(() => {
     messageHubData = createMockMessageHub();
     sessionManagerData = createMockSessionManager();
-    appMcpManagerData = createMockAppMcpManager();
 
-    registerMcpHandlers(
-      messageHubData.hub,
-      sessionManagerData.sessionManager,
-      appMcpManagerData.manager
-    );
-  });
-
-  afterEach(() => {
-    mock.restore();
-    mock.module('node:fs/promises', () => ({
-      readFile: mock(async () => '{}'),
-    }));
-  });
-
-  afterAll(() => {
-    mock.module('node:fs/promises', () => require('node:fs/promises'));
+    registerMcpHandlers(messageHubData.hub, sessionManagerData.sessionManager);
   });
 
   describe('tools.save', () => {
@@ -211,87 +176,6 @@ describe('MCP/Tools RPC Handlers', () => {
     });
   });
 
-  describe('mcp.listServers', () => {
-    it('returns list of MCP servers from .mcp.json', async () => {
-      const handler = messageHubData.handlers.get('mcp.listServers');
-      expect(handler).toBeDefined();
-
-      const mockConfig = JSON.stringify({
-        mcpServers: {
-          filesystem: {
-            command: 'npx',
-            args: ['-y', '@modelcontextprotocol/server-filesystem'],
-          },
-          github: {
-            command: 'npx',
-            args: ['-y', '@modelcontextprotocol/server-github'],
-          },
-        },
-      });
-
-      mock.module('node:fs/promises', () => ({
-        readFile: mock(async () => mockConfig),
-      }));
-
-      const params = {
-        sessionId: 'session-123',
-      };
-
-      const result = (await handler!(params, {})) as { servers: Record<string, unknown> };
-
-      expect(result.servers).toBeDefined();
-    });
-
-    it('returns empty object when .mcp.json does not exist', async () => {
-      const handler = messageHubData.handlers.get('mcp.listServers');
-      expect(handler).toBeDefined();
-
-      mock.module('node:fs/promises', () => ({
-        readFile: mock(async () => {
-          throw new Error('ENOENT: no such file');
-        }),
-      }));
-
-      const params = {
-        sessionId: 'session-123',
-      };
-
-      const result = (await handler!(params, {})) as { servers: Record<string, unknown> };
-
-      expect(result.servers).toEqual({});
-    });
-
-    it('returns empty object when .mcp.json is invalid JSON', async () => {
-      const handler = messageHubData.handlers.get('mcp.listServers');
-      expect(handler).toBeDefined();
-
-      mock.module('node:fs/promises', () => ({
-        readFile: mock(async () => 'not valid json'),
-      }));
-
-      const params = {
-        sessionId: 'session-123',
-      };
-
-      const result = (await handler!(params, {})) as { servers: Record<string, unknown> };
-
-      expect(result.servers).toEqual({});
-    });
-
-    it('throws error when session not found', async () => {
-      const handler = messageHubData.handlers.get('mcp.listServers');
-      expect(handler).toBeDefined();
-
-      sessionManagerData.mocks.getSession.mockReturnValueOnce(null);
-
-      const params = {
-        sessionId: 'non-existent',
-      };
-
-      await expect(handler!(params, {})).rejects.toThrow('Session not found: non-existent');
-    });
-  });
-
   describe('globalTools.getConfig', () => {
     it('returns global tools configuration', async () => {
       const handler = messageHubData.handlers.get('globalTools.getConfig');
@@ -304,37 +188,6 @@ describe('MCP/Tools RPC Handlers', () => {
       expect(result.config.systemPrompt).toBeDefined();
       expect(result.config.settingSources).toBeDefined();
       expect(result.config.mcp).toBeDefined();
-    });
-  });
-
-  describe('globalTools.saveConfig', () => {
-    it('saves global tools configuration', async () => {
-      const handler = messageHubData.handlers.get('globalTools.saveConfig');
-      expect(handler).toBeDefined();
-
-      const params = {
-        config: DEFAULT_GLOBAL_TOOLS_CONFIG,
-      };
-
-      await handler!(params, {});
-
-      expect(sessionManagerData.mocks.saveGlobalToolsConfig).toHaveBeenCalledWith(params.config);
-    });
-  });
-
-  describe('mcp.registry.listErrors', () => {
-    it('surfaces startup validation errors from the app MCP registry', async () => {
-      const handler = messageHubData.handlers.get('mcp.registry.listErrors');
-      expect(handler).toBeDefined();
-
-      appMcpManagerData.mocks.getStartupErrors.mockReturnValueOnce([
-        { name: 'broken-server', error: 'missing command' },
-      ]);
-
-      const result = await handler!({}, {});
-
-      expect(appMcpManagerData.mocks.getStartupErrors).toHaveBeenCalled();
-      expect(result).toEqual([{ name: 'broken-server', error: 'missing command' }]);
     });
   });
 });

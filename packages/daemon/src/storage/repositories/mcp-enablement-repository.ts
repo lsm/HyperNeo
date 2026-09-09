@@ -118,14 +118,4 @@ export class McpEnablementRepository {
     }
     return deleted;
   }
-
-  clearScope(scopeType: McpEnablementScopeType, scopeId: string): number {
-    const result = this.db
-      .prepare(`DELETE FROM mcp_enablement WHERE scope_type = ? AND scope_id = ?`)
-      .run(scopeType, scopeId);
-    if (result.changes > 0) {
-      this.reactiveDb.notifyChange('mcp_enablement');
-    }
-    return result.changes;
-  }
 }

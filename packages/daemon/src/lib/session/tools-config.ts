@@ -6,8 +6,4 @@ export class ToolsConfigManager {
   getGlobal() {
     return this.db.getGlobalToolsConfig();
   }
-
-  saveGlobal(config: ReturnType<typeof this.db.getGlobalToolsConfig>) {
-    this.db.saveGlobalToolsConfig(config);
-  }
 }

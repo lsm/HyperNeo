@@ -472,27 +472,36 @@ Compatibility mappings:
 - `tools.save` maps to `config.values.patch` at session scope.
 - `globalTools.getConfig` maps to `tools.globalConfig.get` or `config.effective.preview` at global tools
   scope so ToolsModal can hydrate saved global tool settings before writing changes.
-- `globalTools.saveConfig` maps to `config.values.patch` at global tools scope.
+- `globalTools.saveConfig` was removed in PR #3897 (2026-09-09): the dead-surface audit (#3824) found
+  zero web call sites — ToolsModal only hydrates through `globalTools.getConfig`, so the write path was
+  dead surface and the persisted config was already immutable through the application API. The mapping to
+  `config.values.patch` remains the target for any future global tools write surface.
 - `usage.calculate` remains a compatibility query for historical usage analytics; it is not replaced by
   live runtime usage events because the settings tab needs an on-demand aggregate over persisted sessions,
   token counts, and costs.
-- `mcp.registry.list`, `mcp.registry.get`, `mcp.registry.create`, `mcp.registry.update`,
+- `mcp.registry.list`, `mcp.registry.create`, `mcp.registry.update`,
   `mcp.registry.delete`, and `mcp.registry.setEnabled` remain compatibility aliases for application-level
   MCP server settings.
-- `mcp.registry.listErrors` remains a compatibility alias for `mcp.registry.errors.list` so settings
-  warning badges and the MCP registry RPC suite can keep surfacing invalid entries during cleanup.
+- `mcp.registry.get` and `mcp.registry.listErrors` were removed in PR #3897 (2026-09-09): the
+  dead-surface audit (#3824) found zero web call sites — settings surfaces hydrate from
+  `mcp.registry.list`, which already carries full entries, and the startup-error read had no consumer.
+  The target queries `mcp.registry.get` and `mcp.registry.errors.list` above remain the read models for a
+  future detail view or warning badges if one is built.
 - `config.mcp.addServer` and `config.mcp.removeServer` were removed in PR #3885 together with the online
   config RPC suite that was their last exerciser; the settings surface manages MCP servers through
   `mcp.registry.*` directly.
 - `mcp.enablement.setOverride` and `mcp.enablement.clearOverride` remain compatibility aliases for
   session and Space tool enablement overrides; they write scoped config rows and trigger the same
   effective-preview invalidation as other MCP config changes.
-- `skills.list` and `skill.list` remain compatibility aliases for `skill.registry.list` until Skills
-  settings moves to the target read model. This registry read model is distinct from
-  `skill.effective.list`: it loads installed/disabled skills and MCP-wrapper associations for management
-  UI, while `skill.effective.list` answers what is active for a given Space/session scope.
-- `skill.get` remains a compatibility alias for `skill.registry.get` until callers and the skill RPC tests
-  migrate from the current installed-skill detail read.
+- The `skills.list` LiveQuery remains the installed-skills read model for Skills settings.
+  `skill.list` was removed in PR #3897 (2026-09-09): the dead-surface audit (#3824) found zero web call
+  sites — Skills settings and the online skill tests hydrate through the `skills.list` LiveQuery. This
+  registry read model is distinct from `skill.effective.list`: it loads installed/disabled skills and
+  MCP-wrapper associations for management UI, while `skill.effective.list` answers what is active for a
+  given Space/session scope.
+- `skill.get` was removed in PR #3897 (2026-09-09) for the same zero-caller reason; the skill RPC tests
+  were migrated to `skills-manager` and `skills.list` LiveQuery reads. `skill.registry.get` remains the
+  target detail read if management UI ever needs single-skill hydration.
 - `skill.create`, `skill.update`, `skill.delete`, `skill.setEnabled`, and `skill.installFromGit`
   remain compatibility aliases over the extension/skill package commands until the Skills settings UI
   uses the target package/skill contract directly.

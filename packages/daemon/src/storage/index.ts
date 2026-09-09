@@ -402,10 +402,6 @@ export class Database {
     return this.settingsRepo.getGlobalToolsConfig();
   }
 
-  saveGlobalToolsConfig(config: GlobalToolsConfig): void {
-    this.settingsRepo.saveGlobalToolsConfig(config);
-  }
-
   getGlobalSettings(): GlobalSettings {
     return this.settingsRepo.getGlobalSettings();
   }

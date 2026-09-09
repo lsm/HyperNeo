@@ -23,22 +23,6 @@ export function registerSkillHandlers(
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   workspaceRoot?: string
 ): void {
-  messageHub.onRequest('skill.list', async () => {
-    const skills = skillsManager.listSkills();
-    return { skills } satisfies { skills: AppSkill[] };
-  });
-
-  messageHub.onRequest('skill.get', async (data) => {
-    const { id } = data as { id: string };
-
-    if (!id) {
-      throw new Error('id is required');
-    }
-
-    const skill = skillsManager.getSkill(id);
-    return { skill } satisfies { skill: AppSkill | null };
-  });
-
   messageHub.onRequest('skill.create', async (data) => {
     const { params } = data as { params: CreateSkillParams };
 

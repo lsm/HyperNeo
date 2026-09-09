@@ -76,7 +76,9 @@ describe('SettingsRepository', () => {
           defaultProjectMcp: false,
         },
       };
-      repository.saveGlobalToolsConfig(customConfig);
+      db.prepare(
+        `INSERT OR REPLACE INTO global_tools_config (id, config, updated_at) VALUES (1, ?, datetime('now'))`
+      ).run(JSON.stringify(customConfig));
 
       const config = repository.getGlobalToolsConfig();
 
@@ -161,50 +163,6 @@ describe('SettingsRepository', () => {
       const config = repository.getGlobalToolsConfig();
 
       expect(config).toEqual(DEFAULT_GLOBAL_TOOLS_CONFIG);
-    });
-  });
-
-  describe('saveGlobalToolsConfig', () => {
-    it('should save a new config', () => {
-      const config: GlobalToolsConfig = {
-        systemPrompt: {
-          claudeCodePreset: {
-            allowed: false,
-            defaultEnabled: false,
-          },
-        },
-        settingSources: {
-          project: {
-            allowed: true,
-            defaultEnabled: true,
-          },
-        },
-        mcp: {
-          allowProjectMcp: true,
-          defaultProjectMcp: true,
-        },
-      };
-
-      repository.saveGlobalToolsConfig(config);
-
-      const saved = repository.getGlobalToolsConfig();
-      expect(saved.systemPrompt.claudeCodePreset.allowed).toBe(false);
-    });
-
-    it('should update existing config (upsert)', () => {
-      repository.saveGlobalToolsConfig(DEFAULT_GLOBAL_TOOLS_CONFIG);
-
-      const updatedConfig: GlobalToolsConfig = {
-        ...DEFAULT_GLOBAL_TOOLS_CONFIG,
-        mcp: {
-          allowProjectMcp: false,
-          defaultProjectMcp: false,
-        },
-      };
-      repository.saveGlobalToolsConfig(updatedConfig);
-
-      const config = repository.getGlobalToolsConfig();
-      expect(config.mcp.allowProjectMcp).toBe(false);
     });
   });
 
@@ -371,13 +329,17 @@ describe('SettingsRepository', () => {
         ...DEFAULT_GLOBAL_SETTINGS,
         model: 'custom-model',
       });
-      repository.saveGlobalToolsConfig({
-        ...DEFAULT_GLOBAL_TOOLS_CONFIG,
-        mcp: {
-          allowProjectMcp: false,
-          defaultProjectMcp: false,
-        },
-      });
+      db.prepare(
+        `INSERT OR REPLACE INTO global_tools_config (id, config, updated_at) VALUES (1, ?, datetime('now'))`
+      ).run(
+        JSON.stringify({
+          ...DEFAULT_GLOBAL_TOOLS_CONFIG,
+          mcp: {
+            allowProjectMcp: false,
+            defaultProjectMcp: false,
+          },
+        })
+      );
 
       const newRepository = new SettingsRepository(db as any);
 

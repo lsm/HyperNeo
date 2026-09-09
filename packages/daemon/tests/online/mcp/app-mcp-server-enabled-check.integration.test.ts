@@ -3,10 +3,42 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import type { AppMcpServer } from '@hyperneo/shared';
-import type { AppSkill } from '@hyperneo/shared';
+import type { AppMcpServer, AppSkill, LiveQuerySnapshotEvent } from '@hyperneo/shared';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
+
+async function listSkillsViaLiveQuery(daemon: DaemonServerContext): Promise<AppSkill[]> {
+  const snapshots: LiveQuerySnapshotEvent[] = [];
+  const subscriptionId = `sub-skills-list-${Date.now()}`;
+  const unsubscribeEvent = daemon.messageHub.onEvent<LiveQuerySnapshotEvent>(
+    'liveQuery.snapshot',
+    (ev) => {
+      if (ev.subscriptionId === subscriptionId) snapshots.push(ev);
+    }
+  );
+
+  try {
+    const result = (await daemon.messageHub.request('liveQuery.subscribe', {
+      queryName: 'skills.list',
+      params: [],
+      subscriptionId,
+    })) as { ok: boolean };
+    expect(result.ok).toBe(true);
+
+    const deadline = Date.now() + 8_000;
+    while (snapshots.length === 0) {
+      if (Date.now() >= deadline) {
+        throw new Error('Timed out waiting for skills.list snapshot');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    return snapshots[0].rows as AppSkill[];
+  } finally {
+    unsubscribeEvent();
+    await daemon.messageHub.request('liveQuery.unsubscribe', { subscriptionId });
+  }
+}
 
 describe('AppMcpServer.enabled check — skills-based MCP injection', () => {
   let daemon: DaemonServerContext;
@@ -55,10 +87,8 @@ describe('AppMcpServer.enabled check — skills-based MCP injection', () => {
     expect(server).toBeDefined();
     expect(server!.enabled).toBe(true);
 
-    const skillListResult = (await daemon.messageHub.request('skill.list', {})) as {
-      skills: AppSkill[];
-    };
-    const skill = skillListResult.skills.find((s) => s.id === skillResult.skill.id);
+    const skillListResult = await listSkillsViaLiveQuery(daemon);
+    const skill = skillListResult.find((s) => s.id === skillResult.skill.id);
     expect(skill).toBeDefined();
     expect(skill!.enabled).toBe(true);
   }, 60_000);
@@ -92,10 +122,8 @@ describe('AppMcpServer.enabled check — skills-based MCP injection', () => {
     })) as { server: AppMcpServer };
     expect(disableResult.server.enabled).toBe(false);
 
-    const skillListResult = (await daemon.messageHub.request('skill.list', {})) as {
-      skills: AppSkill[];
-    };
-    const skill = skillListResult.skills.find((s) => s.id === skillResult.skill.id);
+    const skillListResult = await listSkillsViaLiveQuery(daemon);
+    const skill = skillListResult.find((s) => s.id === skillResult.skill.id);
     expect(skill!.enabled).toBe(true);
 
     const listResult = (await daemon.messageHub.request('mcp.registry.list', {})) as {
