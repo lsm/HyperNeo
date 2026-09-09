@@ -23,8 +23,6 @@ import type {
 } from './types/app-mcp-server.ts';
 import type { AppSkill, CreateSkillParams, UpdateSkillParams } from './types/skills.ts';
 import type {
-  CreateEvidenceRefParams,
-  CreateEvolutionEpisodeParams,
   CreateEvolutionLessonParams,
   CreateEvolutionScopeParams,
   CreateMetricSnapshotParams,
@@ -438,10 +436,6 @@ export interface EvolutionScopeUpdateResponse {
   scope: EvolutionScope | null;
 }
 
-export interface EvolutionEvidenceCreateRequest {
-  params: CreateEvidenceRefParams;
-}
-
 export interface EvolutionEvidenceCreateResponse {
   evidence: EvidenceRef;
 }
@@ -490,10 +484,6 @@ export interface EvolutionEvidenceListResponse {
   };
 }
 
-export interface EvolutionEpisodeCreateRequest {
-  params: CreateEvolutionEpisodeParams;
-}
-
 export interface EvolutionEpisodeCreateFromEvidenceRequest {
   scopeId: string;
   evidenceIds: string[];
@@ -529,10 +519,6 @@ export interface EvolutionEpisodeListRequest {
   offset?: number;
 }
 
-export interface EvolutionEpisodeListResponse {
-  episodes: EvolutionEpisode[];
-}
-
 export interface EvolutionLessonCreateRequest {
   params: CreateEvolutionLessonParams;
 }
@@ -561,15 +547,6 @@ export interface EvolutionLessonListResponse {
   lessons: EvolutionLesson[];
 }
 
-export interface EvolutionTaskLessonSelectRequest {
-  taskId: string;
-  limit?: number;
-}
-
-export interface EvolutionTaskLessonSelectResponse {
-  lessons: EvolutionLesson[];
-}
-
 export interface EvolutionTaskProposalCreateRequest {
   params: CreateTaskProposalParams;
 }
@@ -585,17 +562,6 @@ export interface EvolutionTaskProposalUpdateRequest {
 
 export interface EvolutionTaskProposalUpdateResponse {
   proposal: TaskProposal | null;
-}
-
-export interface EvolutionTaskProposalListRequest {
-  scopeId: string;
-  status?: TaskProposal['status'];
-  limit?: number;
-  offset?: number;
-}
-
-export interface EvolutionTaskProposalListResponse {
-  proposals: TaskProposal[];
 }
 
 export interface EvolutionTaskProposalCreateTaskRequest {
