@@ -116,6 +116,7 @@ const EXPECTED_ENTRIES: ReadonlyArray<readonly [string, string, string]> = [
   ['create_agent_template', 'agents', 'mutate'],
   ['update_agent_template', 'agents', 'mutate'],
   ['list_agent_templates', 'agents', 'read'],
+  ['delete_agent_template', 'agents', 'destructive'],
   ['update_agent', 'agents', 'mutate'],
   ['pause_agent', 'agents', 'mutate'],
   ['archive_agent', 'agents', 'mutate'],
@@ -231,6 +232,7 @@ describe('createSpaceRegistryEntries — composition', () => {
             'cancel_task',
             'approve_task',
             'approve_pending_completion',
+            'delete_agent_template',
           ].includes(name)
         )
           continue;
@@ -533,7 +535,7 @@ describe('createSpaceRegistryEntries — conditional entries', () => {
       const entries = createSpaceRegistryEntries(ctx.config);
       expect(entries.filter((entry) => entry.family === 'agents')).toEqual([]);
       expect(entries.filter((entry) => entry.family === 'sessions')).toEqual([]);
-      expect(entries).toHaveLength(EXPECTED_ENTRIES.length - 25);
+      expect(entries).toHaveLength(EXPECTED_ENTRIES.length - 26);
       expect(entries.map((entry) => entry.name)).toContain('list_tasks');
     } finally {
       ctx.db.close();

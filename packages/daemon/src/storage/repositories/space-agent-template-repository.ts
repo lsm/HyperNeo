@@ -68,6 +68,13 @@ export class SpaceAgentTemplateRepository {
     return rows.map(rowToTemplate);
   }
 
+  listWithVersions(): SpaceAgentTemplateRecord[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM space_agent_templates ORDER BY created_at ASC, key ASC`)
+      .all() as Record<string, unknown>[];
+    return rows.map(rowToTemplateRecord);
+  }
+
   update(key: string, params: UpdateSpaceAgentTemplateParams): SpaceAgentTemplate | null {
     return this.casUpdate(key, params, undefined);
   }
@@ -152,8 +159,13 @@ export class SpaceAgentTemplateRepository {
     return this.getByKey(key);
   }
 
-  delete(key: string): boolean {
-    const result = this.db.prepare(`DELETE FROM space_agent_templates WHERE key = ?`).run(key);
+  delete(key: string, expectedVersion?: number): boolean {
+    const result =
+      expectedVersion === undefined
+        ? this.db.prepare(`DELETE FROM space_agent_templates WHERE key = ?`).run(key)
+        : this.db
+            .prepare(`DELETE FROM space_agent_templates WHERE key = ? AND version = ?`)
+            .run(key, expectedVersion);
     return result.changes > 0;
   }
 

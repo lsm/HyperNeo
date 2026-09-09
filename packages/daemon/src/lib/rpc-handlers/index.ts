@@ -931,7 +931,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     longHorizonAgentRepo,
     spaceWorkflowRepo,
     spaceRuntimeService,
-    new SpaceAgentTemplateManager(spaceAgentTemplateRepo)
+    new SpaceAgentTemplateManager(spaceAgentTemplateRepo, undefined, spaceWorkflowRepo)
   );
 
   setupSessionHandlers(

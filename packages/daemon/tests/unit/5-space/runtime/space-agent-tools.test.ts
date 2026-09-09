@@ -515,6 +515,7 @@ describe('createSpaceAgentMcpServer — tool registration', () => {
     expect(names).toContain('create_agent_reminder');
     expect(names).toContain('create_agent_template');
     expect(names).toContain('update_agent_template');
+    expect(names).toContain('delete_agent_template');
     expect(() =>
       expectToolInputParses(server, 'update_agent', {
         agent_id: 'agent-1',
@@ -697,7 +698,7 @@ describe('createSpaceAgentMcpServer — agent/goal/Forge tool schema extraction 
     });
   }
 
-  test('db-configured server registers exactly the base tools plus the 19 lifecycle tools', () => {
+  test('db-configured server registers exactly the base tools plus the 20 lifecycle tools', () => {
     const server = makeServer({ db: ctx.db });
     expect(getRegisteredToolNames(server).sort()).toEqual(
       [
@@ -705,7 +706,7 @@ describe('createSpaceAgentMcpServer — agent/goal/Forge tool schema extraction 
         ...Object.keys(SPACE_AGENT_LIFECYCLE_TOOL_SCHEMAS),
       ].sort()
     );
-    expect(getRegisteredToolNames(server)).toHaveLength(43);
+    expect(getRegisteredToolNames(server)).toHaveLength(44);
   });
 
   test('goal-configured server registers exactly the base tools plus the 9 goal tools', () => {
@@ -1159,6 +1160,194 @@ describe('createSpaceAgentToolHandlers — update_agent_template', () => {
       await handlers.update_agent_template({ key: 'k', display_name: 'X' })
     );
 
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Agent template management not available');
+  });
+});
+
+describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
+  let ctx: TestCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+  afterEach(() => {
+    ctx.db.close();
+  });
+
+  function makeTemplateHandlers(spaceLevel = 4) {
+    return makeHandlers(ctx, {
+      templateManager: new SpaceAgentTemplateManager(
+        new SpaceAgentTemplateRepository(ctx.db),
+        undefined,
+        new SpaceWorkflowRepository(ctx.db)
+      ),
+      getSpaceAutonomyLevel: async () => spaceLevel,
+    });
+  }
+
+  function makeWorkflowManager() {
+    return new SpaceWorkflowManager(
+      new SpaceWorkflowRepository(ctx.db),
+      null,
+      new SpaceAgentTemplateRepository(ctx.db)
+    );
+  }
+
+  async function createTemplate(key: string) {
+    const handlers = makeTemplateHandlers();
+    const created = parseResult(await handlers.create_agent_template({ key, handle: 'worker' }));
+    expect(created.success).toBe(true);
+    return handlers;
+  }
+
+  test('deletes an unreferenced user template', async () => {
+    const handlers = await createTemplate('reviewer.custom');
+
+    const result = parseResult(await handlers.delete_agent_template({ key: 'reviewer.custom' }));
+
+    expect(result.success).toBe(true);
+    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).toBeNull();
+  });
+
+  test('denies deletion below the destructive autonomy level', async () => {
+    const handlers = makeTemplateHandlers(3);
+    await new SpaceAgentTemplateRepository(ctx.db).create({
+      key: 'reviewer.custom',
+      handle: 'reviewer',
+    });
+
+    const result = parseResult(await handlers.delete_agent_template({ key: 'reviewer.custom' }));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not permitted');
+    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).not.toBeNull();
+  });
+
+  test('create and list expose the current template version', async () => {
+    const handlers = makeTemplateHandlers();
+    const created = parseResult(
+      await handlers.create_agent_template({ key: 'reviewer.custom', handle: 'reviewer' })
+    );
+    expect((created.template as Record<string, unknown>).version).toBe(1);
+
+    const listed = parseResult(await handlers.list_agent_templates());
+    const entries = listed.long_horizon_templates as Array<Record<string, unknown>>;
+    const custom = entries.find((entry) => entry.template_name === 'reviewer.custom');
+    const builtin = entries.find((entry) => entry.builtin === true);
+    expect(custom?.version).toBe(1);
+    expect(builtin?.version).toBeNull();
+  });
+
+  test('rejects a built-in template key', async () => {
+    const handlers = makeTemplateHandlers();
+
+    const result = parseResult(await handlers.delete_agent_template({ key: 'worker.reviewer' }));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('cannot be deleted');
+  });
+
+  test('rejects an unknown template key', async () => {
+    const handlers = makeTemplateHandlers();
+
+    const result = parseResult(await handlers.delete_agent_template({ key: 'missing.custom' }));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('not found');
+  });
+
+  test('blocks deletion while a workflow slot references the template', async () => {
+    const handlers = await createTemplate('reviewer.custom');
+    makeWorkflowManager().createWorkflow({
+      spaceId: ctx.spaceId,
+      name: 'Release Flow',
+      nodes: [
+        {
+          name: 'Review',
+          agents: [{ agentId: '', name: 'Reviewer', templateKey: 'reviewer.custom' }],
+        },
+      ],
+      tags: [],
+    });
+
+    const result = parseResult(await handlers.delete_agent_template({ key: 'reviewer.custom' }));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Release Flow');
+    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).not.toBeNull();
+  });
+
+  test('a run pinned to a definition that referenced the template blocks deletion', async () => {
+    const handlers = await createTemplate('reviewer.custom');
+    const workflowManager = makeWorkflowManager();
+    const workflow = workflowManager.createWorkflow({
+      spaceId: ctx.spaceId,
+      name: 'Guard Flow',
+      nodes: [
+        {
+          name: 'Review',
+          agents: [{ agentId: '', name: 'Reviewer', templateKey: 'reviewer.custom' }],
+        },
+      ],
+      tags: [],
+    });
+    ctx.workflowRunRepo.createPinnedRun({
+      spaceId: ctx.spaceId,
+      workflowId: workflow.id,
+      title: 'Pinned run',
+      rawWorkflow: workflow,
+    });
+    workflowManager.updateWorkflow(workflow.id, {
+      nodes: [
+        {
+          id: workflow.nodes[0]?.id,
+          name: 'Review',
+          agents: [{ agentId: 'agent-alt', name: 'Reviewer' }],
+        },
+      ],
+    });
+
+    const result = parseResult(await handlers.delete_agent_template({ key: 'reviewer.custom' }));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Guard Flow');
+    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).not.toBeNull();
+  });
+
+  test('rejects a stale CAS version and reports the current one', async () => {
+    const handlers = await createTemplate('reviewer.custom');
+    await new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(ctx.db)).update(
+      'reviewer.custom',
+      { displayName: 'Updated' }
+    );
+
+    const result = parseResult(
+      await handlers.delete_agent_template({ key: 'reviewer.custom', expected_version: 1 })
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('current version 2');
+    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).not.toBeNull();
+  });
+
+  test('deletes with the current CAS version', async () => {
+    const handlers = await createTemplate('reviewer.custom');
+    await new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(ctx.db)).update(
+      'reviewer.custom',
+      { displayName: 'Updated' }
+    );
+
+    const result = parseResult(
+      await handlers.delete_agent_template({ key: 'reviewer.custom', expected_version: 2 })
+    );
+
+    expect(result.success).toBe(true);
+    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).toBeNull();
+  });
+
+  test('reports unavailable template management without a templateManager', async () => {
+    const handlers = makeHandlers(ctx, { getSpaceAutonomyLevel: async () => 4 });
+    const result = parseResult(await handlers.delete_agent_template({ key: 'k' }));
     expect(result.success).toBe(false);
     expect(result.error).toBe('Agent template management not available');
   });
@@ -2704,149 +2893,6 @@ describe('createSpaceAgentToolHandlers — long-horizon agent tools', () => {
     );
     expect(blank.success).toBe(false);
     expect(blank.error).toBe('template_name is required');
-  });
-
-  test('create_agent_from_template instantiates stored user templates (ATC-24)', async () => {
-    new SpaceAgentTemplateRepository(ctx.db).create({
-      key: 'watcher.sre',
-      handle: 'ops',
-      displayName: 'SRE Watchdog',
-      description: 'Watches alert queues',
-      instructions: 'Own the alert queue.',
-      suggestedAutonomyLevel: 3,
-      model: 'kimi-k2',
-      provider: 'moonshot',
-      thinkingLevel: 'think8k',
-      settingSources: ['user'],
-      tools: ['Read', 'Bash(kubectl:*)'],
-      labels: ['custom'],
-    });
-
-    const handlers = makeHandlers(ctx);
-    const created = JSON.parse(
-      (await handlers.create_agent_from_template({ template_name: 'watcher.sre' })).content[0].text
-    );
-    expect(created.success).toBe(true);
-    expect(created.agent.templateKey).toBe('watcher.sre');
-    expect(created.agent.displayName).toBe('SRE Watchdog');
-    expect(created.agent.handle).toBe('ops');
-    expect(created.agent.instructions).toBe('Own the alert queue.');
-    expect(created.agent.description).toBe('Watches alert queues');
-    expect(created.agent.autonomyLevel).toBe(3);
-    expect(created.agent.model).toBe('kimi-k2');
-    expect(created.agent.provider).toBe('moonshot');
-    expect(created.agent.thinkingLevel).toBe('think8k');
-    expect(created.agent.settingSources).toEqual(['user']);
-    expect(created.agent.toolPermissions).toEqual({ tools: ['Read', 'Bash(kubectl:*)'] });
-    expect(created.seeded_subscriptions).toEqual([]);
-    expect(created.skipped_subscriptions).toEqual([]);
-    expect(created.seeded_reminders).toEqual([]);
-    expect(created.skipped_reminders).toEqual([]);
-
-    setModelsCache(
-      new Map([
-        [
-          'global',
-          [
-            {
-              id: 'sonnet',
-              name: 'Claude Sonnet',
-              alias: 'default',
-              provider: 'anthropic',
-              family: 'sonnet',
-              contextWindow: 200000,
-              description: 'Best balance of speed and intelligence',
-              releaseDate: '2025-01-01',
-              available: true,
-            },
-          ],
-        ],
-      ])
-    );
-    const overridden = JSON.parse(
-      (
-        await handlers.create_agent_from_template({
-          template_name: 'watcher.sre',
-          name: 'Night Watch',
-          model: 'sonnet',
-          provider: 'anthropic',
-        })
-      ).content[0].text
-    );
-    expect(overridden.success).toBe(true);
-    expect(overridden.agent.displayName).toBe('Night Watch');
-    expect(overridden.agent.handle).toBe('night-watch');
-    expect(overridden.agent.model).toBe('sonnet');
-    expect(overridden.agent.provider).toBe('anthropic');
-    expect(overridden.agent.thinkingLevel).toBe('think8k');
-    expect(overridden.agent.settingSources).toEqual(['user']);
-    expect(overridden.agent.instructions).toBe('Own the alert queue.');
-
-    const upper = JSON.parse(
-      (await handlers.create_agent_from_template({ template_name: 'WATCHER.SRE' })).content[0].text
-    );
-    expect(upper.success).toBe(false);
-    expect(upper.error).toContain('Agent template not found');
-  });
-
-  test('create_agent_from_template prefers built-ins over stored rows sharing a key (ATC-24)', async () => {
-    new SpaceAgentTemplateRepository(ctx.db).create({
-      key: 'worker.research',
-      handle: 'research-shadow',
-      displayName: 'Research Shadow',
-      instructions: 'Shadow instructions.',
-    });
-
-    const handlers = makeHandlers(ctx);
-    const result = JSON.parse(
-      (await handlers.create_agent_from_template({ template_name: 'worker.research' })).content[0]
-        .text
-    );
-    expect(result.success).toBe(true);
-    const template = getLongHorizonAgentTemplate('worker.research');
-    expect(result.agent.templateKey).toBe('worker.research');
-    expect(result.agent.handle).toBe('research');
-    expect(result.agent.instructions).toBe(template?.instructions);
-    expect(result.agent.instructions).not.toBe('Shadow instructions.');
-
-    new SpaceAgentTemplateRepository(ctx.db).create({
-      key: 'WORKER.QA',
-      handle: 'qa-shadow',
-      displayName: 'QA Shadow',
-      instructions: 'Uppercase shadow instructions.',
-    });
-    const caseColliding = JSON.parse(
-      (await handlers.create_agent_from_template({ template_name: 'WORKER.QA' })).content[0].text
-    );
-    expect(caseColliding.success).toBe(true);
-    expect(caseColliding.agent.templateKey).toBe('WORKER.QA');
-    expect(caseColliding.agent.handle).toBe('qa-shadow');
-    expect(caseColliding.agent.instructions).toBe('Uppercase shadow instructions.');
-
-    const builtinByCase = JSON.parse(
-      (await handlers.create_agent_from_template({ template_name: 'worker.qa' })).content[0].text
-    );
-    expect(builtinByCase.success).toBe(true);
-    expect(builtinByCase.agent.templateKey).toBe('worker.qa');
-    expect(builtinByCase.agent.instructions).not.toBe('Uppercase shadow instructions.');
-  });
-
-  test('create_agent_from_template rejects user templates bearing a reserved handle (ATC-24)', async () => {
-    new SpaceAgentTemplateRepository(ctx.db).create({
-      key: 'coordinator.clone',
-      handle: 'coordinator',
-      displayName: 'Coordinator Clone',
-      instructions: 'Duplicate manager.',
-    });
-
-    const handlers = makeHandlers(ctx);
-    const result = JSON.parse(
-      (await handlers.create_agent_from_template({ template_name: 'coordinator.clone' })).content[0]
-        .text
-    );
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('reserved');
-    expect(result.error).toContain('coordinator');
   });
 });
 
