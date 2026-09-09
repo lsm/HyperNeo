@@ -1,7 +1,6 @@
 import type { MessageHub, SpaceAgent, UpdateSpaceAgentParams } from '@hyperneo/shared';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
-import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import { SPACE_MANAGER_HANDLE } from '../space/agent-handle.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
 import {
@@ -29,22 +28,14 @@ export interface SpaceAgentV2Deps {
   templates: Pick<SpaceAgentTemplateRepository, 'getByKey'>;
   spaceExists(spaceId: string): Promise<boolean>;
   getSession(sessionId: string): SessionLookup | null;
-  workflows: Pick<SpaceWorkflowRepository, 'getWorkflowsReferencingAgent'>;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 }
 
 const COORDINATOR_HANDLES = new Set([SPACE_MANAGER_HANDLE, 'coordinator']);
 
-export function assertAgentDeletable(deps: SpaceAgentV2Deps, agent: SpaceAgent): void {
+export function assertAgentDeletable(agent: SpaceAgent): void {
   if (COORDINATOR_HANDLES.has(agent.handle)) {
     throw new Error('The Space Manager agent cannot be deleted');
-  }
-  const referencing = deps.workflows.getWorkflowsReferencingAgent(agent.id);
-  if (referencing.length > 0) {
-    const names = referencing.map((wf) => ` (Workflow: ${wf.name})`).join('');
-    throw new Error(
-      `Cannot delete agent "${agent.displayName}" - it is referenced by workflow nodes${names}`
-    );
   }
 }
 
@@ -161,7 +152,7 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
     const id = requireString(params.id, 'id');
     const existing = deps.agents.getById(id);
     if (!existing) throw new Error(`Agent not found: ${id}`);
-    assertAgentDeletable(deps, existing);
+    assertAgentDeletable(existing);
     deps.agents.delete(id);
     await publishAgentDeleted(deps, existing.spaceId, id);
     return { id };
