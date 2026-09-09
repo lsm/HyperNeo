@@ -545,18 +545,6 @@ export interface SDKArchiveResult {
   errors: string[];
 }
 
-export interface SDKSessionFileInfo {
-  path: string;
-  sdkSessionId: string;
-  kaiSessionIds: string[];
-  size: number;
-  modifiedAt: Date;
-}
-
-export interface OrphanedSDKFileInfo extends SDKSessionFileInfo {
-  reason: 'no-matching-session' | 'unknown-session';
-}
-
 interface ArchiveMetadata {
   kaiSessionId: string;
   originalWorkspacePath: string;
@@ -722,90 +710,6 @@ export function archiveSDKSessionFiles(
   }
 
   return result;
-}
-
-export function scanSDKSessionFiles(workspacePath: string): SDKSessionFileInfo[] {
-  const results: SDKSessionFileInfo[] = [];
-
-  try {
-    const sessionDir = getSDKProjectDir(workspacePath);
-
-    if (!existsSync(sessionDir)) {
-      return results;
-    }
-
-    const files = readdirSync(sessionDir).filter((f) => f.endsWith('.jsonl'));
-
-    for (const file of files) {
-      const filePath = join(sessionDir, file);
-
-      try {
-        const stats = statSync(filePath);
-        const sdkSessionId = file.replace('.jsonl', '');
-
-        const kaiSessionIds = extractKaiSessionIds(filePath);
-
-        results.push({
-          path: filePath,
-          sdkSessionId,
-          kaiSessionIds,
-          size: stats.size,
-          modifiedAt: stats.mtime,
-        });
-      } catch {}
-    }
-  } catch {}
-
-  return results;
-}
-
-function extractKaiSessionIds(filePath: string): string[] {
-  const ids = new Set<string>();
-
-  try {
-    const content = readFileSync(filePath, 'utf-8');
-
-    const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi;
-    const matches = content.match(uuidPattern);
-
-    if (matches) {
-      const idCounts = new Map<string, number>();
-      for (const id of matches) {
-        const lower = id.toLowerCase();
-        idCounts.set(lower, (idCounts.get(lower) || 0) + 1);
-      }
-
-      for (const [id, count] of idCounts) {
-        if (count >= 3) {
-          ids.add(id);
-        }
-      }
-    }
-  } catch {}
-
-  return Array.from(ids);
-}
-
-export function identifyOrphanedSDKFiles(
-  files: SDKSessionFileInfo[],
-  activeSessionIds: Set<string>,
-  archivedSessionIds: Set<string>
-): OrphanedSDKFileInfo[] {
-  const orphaned: OrphanedSDKFileInfo[] = [];
-
-  for (const file of files) {
-    const hasActiveSession = file.kaiSessionIds.some((id) => activeSessionIds.has(id));
-    const hasArchivedSession = file.kaiSessionIds.some((id) => archivedSessionIds.has(id));
-
-    if (!hasActiveSession && !hasArchivedSession) {
-      orphaned.push({
-        ...file,
-        reason: file.kaiSessionIds.length === 0 ? 'unknown-session' : 'no-matching-session',
-      });
-    }
-  }
-
-  return orphaned;
 }
 
 export interface StripThinkingBlocksResult {

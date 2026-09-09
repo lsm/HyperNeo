@@ -105,14 +105,4 @@ describe('Model RPC Handlers', () => {
       expect(result.model).toBe(currentModel);
     });
   });
-
-  describe('models.clearCache', () => {
-    test('should clear model cache successfully', async () => {
-      const result = (await daemon.messageHub.request('models.clearCache', {})) as {
-        success: boolean;
-      };
-
-      expect(result.success).toBe(true);
-    });
-  });
 });

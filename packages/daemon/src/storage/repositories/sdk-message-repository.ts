@@ -1759,14 +1759,6 @@ export class SDKMessageRepository {
     return { dbId: row.id, uuid: message.uuid ?? '' };
   }
 
-  getMessageCountByStatus(sessionId: string, status: SendStatus): number {
-    const stmt = this.db.prepare(
-      `SELECT COUNT(*) as count FROM sdk_messages WHERE session_id = ? AND send_status = ?`
-    );
-    const result = stmt.get(sessionId, status) as { count: number };
-    return result.count;
-  }
-
   private deleteMessagesFromTimestamp(
     sessionId: string,
     timestamp: number,

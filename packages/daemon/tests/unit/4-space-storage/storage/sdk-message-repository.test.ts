@@ -4409,28 +4409,6 @@ describe('SDKMessageRepository', () => {
     });
   });
 
-  describe('getMessageCountByStatus', () => {
-    it('should return count of messages with specified status', () => {
-      repository.saveUserMessage('session-1', createUserMessage('Msg 1'), 'deferred');
-      repository.saveUserMessage('session-1', createUserMessage('Msg 2'), 'deferred');
-      repository.saveUserMessage('session-1', createUserMessage('Msg 3'), 'consumed');
-
-      const deferredCount = repository.getMessageCountByStatus('session-1', 'deferred');
-      const consumedCount = repository.getMessageCountByStatus('session-1', 'consumed');
-
-      expect(deferredCount).toBe(2);
-      expect(consumedCount).toBe(1);
-    });
-
-    it('should return 0 for non-matching status', () => {
-      repository.saveUserMessage('session-1', createUserMessage('Test'), 'deferred');
-
-      const count = repository.getMessageCountByStatus('session-1', 'enqueued');
-
-      expect(count).toBe(0);
-    });
-  });
-
   describe('deleteMessagesAfter', () => {
     it('should delete messages after specified timestamp', async () => {
       repository.saveSDKMessage('session-1', createUserMessage('First'));

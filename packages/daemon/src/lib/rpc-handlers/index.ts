@@ -20,7 +20,6 @@ import { setupMessageHandlers } from './message-handlers.ts';
 import { setupFileHandlers } from './file-handlers.ts';
 import { setupSystemHandlers } from './system-handlers.ts';
 import { setupAuthHandlers } from './auth-handlers.ts';
-import { setupCommandHandlers } from './command-handlers.ts';
 import { registerMcpHandlers } from './mcp-handlers.ts';
 import { registerSettingsHandlers } from './settings-handlers.ts';
 import { setupDaemonConfigHandlers } from './daemon-config-handlers.ts';
@@ -327,7 +326,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   let inactivityRunNowCancelled = false;
   let inactivityAborted = false;
   setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
-  setupCommandHandlers(deps.messageHub, deps.sessionManager);
   setupFileHandlers(deps.messageHub, deps.sessionManager);
   setupSystemHandlers(deps.messageHub, deps.sessionManager, deps.authManager, deps.config);
   setupAuthHandlers(

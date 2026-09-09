@@ -21,25 +21,6 @@ describe('Agent RPC Handlers', () => {
     return sessionId;
   }
 
-  describe('agent.getState', () => {
-    test('should return error for non-existent session', async () => {
-      await expect(
-        daemon.messageHub.request('agent.getState', { sessionId: 'non-existent' })
-      ).rejects.toThrow();
-    });
-
-    test('should return agent state for existing session', async () => {
-      const sessionId = await createSession('/test/agent-state');
-
-      const result = (await daemon.messageHub.request('agent.getState', {
-        sessionId,
-      })) as { state: { status: string } };
-
-      expect(result.state).toBeDefined();
-      expect(result.state.status).toBe('idle');
-    });
-  });
-
   describe('session.resetQuery', () => {
     test('should return error for non-existent session', async () => {
       await expect(
@@ -78,11 +59,11 @@ describe('Agent RPC Handlers', () => {
 
       expect(resetResult.success).toBe(true);
 
-      const stateResult = (await daemon.messageHub.request('agent.getState', {
+      const stateResult = (await daemon.messageHub.request('state.session', {
         sessionId,
-      })) as { state: { status: string } };
+      })) as { agentState: { status: string } };
 
-      expect(stateResult.state.status).toBe('idle');
+      expect(stateResult.agentState.status).toBe('idle');
     });
   });
 });

@@ -286,10 +286,6 @@ export class QueryOptionsBuilder {
     return this.getPermissionMode();
   }
 
-  getSkillMcpServers(): Record<string, McpServerConfig> {
-    return this.getMcpServersFromSkills();
-  }
-
   getEffectiveMcpServers(): Record<string, McpServerConfig> | undefined {
     return this.computeEffectiveMcpServers();
   }

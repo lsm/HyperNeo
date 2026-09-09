@@ -355,10 +355,6 @@ export class Database {
   commitTransaction?(): void;
   abortTransaction?(): void;
 
-  getMessageCountByStatus(sessionId: string, status: SendStatus): number {
-    return this.sdkMessageRepo.getMessageCountByStatus(sessionId, status);
-  }
-
   deleteMessagesAfter(sessionId: string, afterTimestamp: number): number {
     return this.sdkMessageRepo.deleteMessagesAfter(sessionId, afterTimestamp);
   }

@@ -936,10 +936,6 @@ export class SessionManager {
     return this.cleanupState;
   }
 
-  async cleanupOrphanedWorktrees(workspacePath: string): Promise<string[]> {
-    return await this.worktreeManager.cleanupOrphanedWorktrees(workspacePath);
-  }
-
   getDatabase(): Database {
     return this.db;
   }

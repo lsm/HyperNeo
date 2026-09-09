@@ -238,24 +238,6 @@ describe('Session RPC Handlers - Extended', () => {
     });
   });
 
-  describe('worktree.cleanup', () => {
-    test('should return success with empty cleanedPaths', async () => {
-      const result = (await daemon.messageHub.request('worktree.cleanup', {
-        workspacePath: '/test/workspace',
-      })) as { success: boolean; cleanedPaths: unknown[]; message: string };
-
-      expect(result.success).toBe(true);
-      expect(result.cleanedPaths).toBeArray();
-      expect(result.message).toContain('orphaned worktree');
-    });
-
-    test('should throw an error without workspacePath', async () => {
-      await expect(daemon.messageHub.request('worktree.cleanup', {})).rejects.toThrow(
-        'workspacePath is required'
-      );
-    });
-  });
-
   describe('models.list', () => {
     test('should list available models', async () => {
       const result = (await daemon.messageHub.request('models.list', {})) as {
@@ -282,34 +264,6 @@ describe('Session RPC Handlers - Extended', () => {
       })) as { cached: boolean };
 
       expect(result.cached).toBe(false);
-    });
-  });
-
-  describe('models.clearCache', () => {
-    test('should clear model cache', async () => {
-      const result = (await daemon.messageHub.request('models.clearCache', {})) as {
-        success: boolean;
-      };
-
-      expect(result.success).toBe(true);
-    });
-  });
-
-  describe('agent.getState', () => {
-    test('should get agent state', async () => {
-      const sessionId = await createSession('/test/agent-state');
-
-      const result = (await daemon.messageHub.request('agent.getState', {
-        sessionId,
-      })) as { state: unknown };
-
-      expect(result.state).toBeDefined();
-    });
-
-    test('should error for non-existent session', async () => {
-      await expect(
-        daemon.messageHub.request('agent.getState', { sessionId: 'non-existent' })
-      ).rejects.toThrow();
     });
   });
 
