@@ -2184,10 +2184,16 @@ export class TaskAgentManager {
         workflowRunId: string | null;
         postApprovalSessionId?: string | null;
       };
+      expectedRuntimeGeneration?: number;
     } = {}
   ): Promise<string | null> {
     const identity = this.readPostApprovalWorkerIdentity(taskId, hintSessionId);
     if (!identity) return null;
+
+    const runtimeGenerationCurrent = (): boolean =>
+      options.expectedRuntimeGeneration === undefined ||
+      this.config.spaceRuntimeService.getCurrentRuntimeGeneration() ===
+        options.expectedRuntimeGeneration;
 
     return this.withSessionRestoreLock(identity.sessionId, async () => {
       const indexed = this.agentSessionIndex.get(identity.sessionId);
@@ -2197,8 +2203,10 @@ export class TaskAgentManager {
         if (
           options.startQuery !== false &&
           !indexed.isQueryActiveOrStarting() &&
+          runtimeGenerationCurrent() &&
           (await this.restoredWorkerStartAdmitted(indexed, taskId)) &&
-          this.approvalGenerationMatches(taskId, options.expectedApproval)
+          this.approvalGenerationMatches(taskId, options.expectedApproval) &&
+          runtimeGenerationCurrent()
         ) {
           await indexed.startStreamingQuery();
         }
@@ -2238,9 +2246,14 @@ export class TaskAgentManager {
         workflowRunId: string | null;
         postApprovalSessionId?: string | null;
       };
+      expectedRuntimeGeneration?: number;
     } = {}
   ): Promise<string | null> {
     const { sessionId, agentName, nodeId, agentId } = identity;
+    const runtimeGenerationCurrent = (): boolean =>
+      options.expectedRuntimeGeneration === undefined ||
+      this.config.spaceRuntimeService.getCurrentRuntimeGeneration() ===
+        options.expectedRuntimeGeneration;
 
     const indexed = this.agentSessionIndex.get(sessionId);
     if (indexed && (indexed === suppliedSession || !suppliedSession)) return sessionId;
@@ -2390,8 +2403,10 @@ export class TaskAgentManager {
       }
       if (
         options.startQuery !== false &&
+        runtimeGenerationCurrent() &&
         (await this.restoredWorkerStartAdmitted(agentSession, taskId)) &&
-        this.approvalGenerationMatches(taskId, options.expectedApproval)
+        this.approvalGenerationMatches(taskId, options.expectedApproval) &&
+        runtimeGenerationCurrent()
       ) {
         await agentSession.startStreamingQuery();
       }

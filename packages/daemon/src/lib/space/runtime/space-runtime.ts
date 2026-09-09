@@ -2762,7 +2762,15 @@ export class SpaceRuntime {
       return { mode: 'skipped', reason };
     }
     const retryGeneration = this.runtimeGeneration;
-    return this.postApprovalRetryQueue.run(taskId, async () => {
+    const onlyFencedClaims = (() => {
+      const claims = this.postApprovalDispatchClaims.get(taskId) ?? [];
+      if (claims.length === 0) return false;
+      const now = Date.now();
+      return claims.every(
+        (token) => now - token.claimedAt >= POST_APPROVAL_DISPATCH_CLAIM_LEASE_MS
+      );
+    })();
+    const attempt = async (): Promise<PostApprovalRouteResult> => {
       if (retryGeneration !== this.runtimeGeneration || this.isStopped) {
         const reason = `post-approval retry for task ${taskId} discarded; the runtime generation changed while it was queued`;
         log.warn(`retryPostApprovalDispatch: ${reason}`);
@@ -2795,7 +2803,14 @@ export class SpaceRuntime {
           );
         },
       });
-    });
+    };
+    if (onlyFencedClaims) {
+      log.warn(
+        `retryPostApprovalDispatch: bypassing the retry serializer for task ${taskId}; its prior attempt's claim lease expired`
+      );
+      return attempt();
+    }
+    return this.postApprovalRetryQueue.run(taskId, attempt);
   }
 
   private getPostApprovalRouter(): PostApprovalRouter | null {
@@ -8108,6 +8123,14 @@ export class SpaceRuntime {
     log.info(
       `SpaceRuntime: adopted durable post-approval worker ${orphan.sessionId} for task ${task.id} instead of redispatching`
     );
+    if (manager.hasPendingRateLimitCooldown?.(orphan.sessionId)) {
+      log.info(
+        `SpaceRuntime: adopted post-approval worker ${orphan.sessionId} for task ${task.id} is in a persisted rate-limit cooldown; leaving its query stopped until the cooldown expires`
+      );
+      const adoptedCooldown = this.config.taskRepo.getTask(task.id);
+      if (adoptedCooldown) await this.safeOnTaskUpdated(task.spaceId, adoptedCooldown);
+      return true;
+    }
     let resumedId: string | null = null;
     try {
       resumedId =
@@ -8215,6 +8238,7 @@ export class SpaceRuntime {
               workflowRunId: task.workflowRunId ?? null,
               postApprovalSessionId: task.postApprovalSessionId ?? null,
             },
+            expectedRuntimeGeneration: generation,
           }
         )) ?? null;
     } catch {
@@ -8302,10 +8326,13 @@ export class SpaceRuntime {
     await this.safeOnTaskUpdated(after.spaceId, after);
   }
 
-  private boundPostApprovalRecoveryAwait<T>(promise: Promise<T>): Promise<T | 'timeout'> {
+  private boundPostApprovalRecoveryAwait<T>(
+    promise: Promise<T>,
+    timeoutMs: number = POST_APPROVAL_RECOVERY_AWAIT_MS
+  ): Promise<T | 'timeout'> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<'timeout'>((resolve) => {
-      timer = setTimeout(() => resolve('timeout'), POST_APPROVAL_RECOVERY_AWAIT_MS);
+      timer = setTimeout(() => resolve('timeout'), timeoutMs);
     });
     return Promise.race([promise, timeout]).finally(() => {
       if (timer !== undefined) clearTimeout(timer);
@@ -8576,7 +8603,8 @@ export class SpaceRuntime {
         `SpaceRuntime: post-approval restart reconcile scan failed: ${formatCommandError(err)}`
       );
     } finally {
-      const drained = await this.boundPostApprovalRecoveryAwait(Promise.all(retries));
+      const drainBudget = Math.max(1_000, scanDeadline - Date.now());
+      const drained = await this.boundPostApprovalRecoveryAwait(Promise.all(retries), drainBudget);
       if (drained === 'timeout') {
         log.warn(
           `SpaceRuntime: post-approval recovery redispatches did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while they run fenced`
