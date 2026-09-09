@@ -32,6 +32,7 @@ import {
 import type { NodeExecutionRepository } from '../../../storage/repositories/node-execution-repository.ts';
 import { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository.ts';
+import type { SpaceAgentTemplateRepository } from '../../../storage/repositories/space-agent-template-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { SpaceWorkflowEventSubscriptionRepository } from '../../../storage/repositories/space-workflow-event-subscription-repository.ts';
@@ -79,6 +80,7 @@ import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
 } from '../managers/space-workflow-manager.ts';
+import { createAgentTemplateResolver } from '../workflows/run-template-snapshot.ts';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
 import type { WorkflowArtifactProfile } from './artifact-profile.ts';
 import { CompletionDetector } from './completion-detector.ts';
@@ -195,6 +197,7 @@ export interface SpaceRuntimeConfig {
   channelCycleRepo?: ChannelCycleRepository;
   spaceManager: SpaceManager;
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
+  templateRepo?: SpaceAgentTemplateRepository;
   workflowEventSubscriptionRepo?: SpaceWorkflowEventSubscriptionRepository;
   spaceWorkflowManager: SpaceWorkflowManager;
   workflowRunRepo: SpaceWorkflowRunRepository;
@@ -3871,13 +3874,16 @@ export class SpaceRuntime {
       throw new Error(`Space not found: ${spaceId}`);
     }
 
-    const pendingRun = this.config.workflowRunRepo.createPinnedRun({
-      spaceId,
-      workflowId,
-      title,
-      description,
-      rawWorkflow,
-    });
+    const pendingRun = this.config.workflowRunRepo.createPinnedRun(
+      {
+        spaceId,
+        workflowId,
+        title,
+        description,
+        rawWorkflow,
+      },
+      createAgentTemplateResolver(this.config.templateRepo)
+    );
 
     const run = this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
     await this.safeOnWorkflowRunCreated(spaceId, run);

@@ -136,6 +136,103 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(count.count).toBe(1);
     });
 
+    it('embeds resolved template snapshots into the pinned definition payload', () => {
+      const workflow = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.custom', name: 'Worker' }],
+          },
+        ],
+      });
+
+      const run = repo.createPinnedRun(
+        {
+          spaceId,
+          workflowId: WORKFLOW_ID,
+          title: 'Snapshot run',
+          rawWorkflow: workflow,
+        },
+        (key) =>
+          key === 'worker.custom'
+            ? {
+                key: 'worker.custom',
+                handle: 'custom-worker',
+                displayName: 'Custom Worker',
+                description: 'A custom worker template.',
+                instructions: 'Frozen instructions.',
+                suggestedAutonomyLevel: 2,
+                model: 'claude-sonnet-5',
+                provider: 'anthropic',
+                modelPool: null,
+                thinkingLevel: null,
+                settingSources: null,
+                tools: ['Read'],
+                labels: ['workflow-worker'],
+                createdAt: 111,
+                updatedAt: 222,
+              }
+            : null
+      );
+
+      const version = db
+        .prepare(
+          `SELECT version_hash, payload FROM space_workflow_definition_versions
+           WHERE workflow_id = ? AND version_hash = ?`
+        )
+        .get(WORKFLOW_ID, run.definitionVersion) as { version_hash: string; payload: string };
+      const pinned = JSON.parse(version.payload) as SpaceWorkflow;
+      expect(pinned.templateSnapshots?.['worker.custom']).toEqual({
+        key: 'worker.custom',
+        handle: 'custom-worker',
+        displayName: 'Custom Worker',
+        description: 'A custom worker template.',
+        instructions: 'Frozen instructions.',
+        suggestedAutonomyLevel: 2,
+        model: 'claude-sonnet-5',
+        provider: 'anthropic',
+        modelPool: null,
+        thinkingLevel: null,
+        settingSources: null,
+        tools: ['Read'],
+        labels: ['workflow-worker'],
+      });
+      expect(computeDefinitionVersion(workflow).versionHash).not.toBe(run.definitionVersion);
+    });
+
+    it('leaves the pinned payload unchanged when the resolver returns nothing', () => {
+      const workflow = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.gone', name: 'Worker' }],
+          },
+        ],
+      });
+      const expected = computeDefinitionVersion(workflow);
+
+      const run = repo.createPinnedRun(
+        {
+          spaceId,
+          workflowId: WORKFLOW_ID,
+          title: 'Snapshot run',
+          rawWorkflow: workflow,
+        },
+        () => null
+      );
+
+      expect(run.definitionVersion).toBe(expected.versionHash);
+      const version = db
+        .prepare(
+          `SELECT payload FROM space_workflow_definition_versions
+           WHERE workflow_id = ? AND version_hash = ?`
+        )
+        .get(WORKFLOW_ID, run.definitionVersion) as { payload: string };
+      expect(version.payload).toBe(expected.payload);
+    });
+
     it('rolls back a newly appended version when run insertion fails', () => {
       db.exec(`
         CREATE TRIGGER reject_pinned_run BEFORE INSERT ON space_workflow_runs

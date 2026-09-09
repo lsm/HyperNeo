@@ -130,6 +130,8 @@ export interface SpaceAgentTemplate {
   updatedAt: number;
 }
 
+export type WorkflowTemplateSnapshot = Omit<SpaceAgentTemplate, 'createdAt' | 'updatedAt'>;
+
 export interface CreateSpaceAgentTemplateParams {
   key: string;
   handle: string;
@@ -1211,6 +1213,7 @@ export interface SpaceWorkflow {
   postApproval?: PostApprovalRoute;
   disabled?: boolean;
   handle?: string;
+  templateSnapshots?: Record<string, WorkflowTemplateSnapshot>;
 }
 
 export interface CreateSpaceWorkflowParams {
