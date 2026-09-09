@@ -253,7 +253,10 @@ async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateS
     settingSources: form.settingSources,
   };
   if (ctx.template) {
-    await spaceStore.updateTemplate(ctx.template.key, fields);
+    await spaceStore.updateTemplate(ctx.template.key, {
+      ...fields,
+      expectedVersion: ctx.template.version,
+    });
     return ctx;
   }
   await spaceStore.createTemplate({ key: form.key.trim(), ...fields });
@@ -1344,7 +1347,9 @@ export function SpaceLongHorizonAgents({
                     <span class="rounded-full bg-fill px-2 py-0.5 text-xs text-fg-soft">
                       {selectedAgent.status}
                     </span>
-                    {selectedAgent.templateKey && (
+                    {(isMigratedWorkerMirror(selectedAgent) ||
+                      (selectedAgent.templateKey &&
+                        templates.some((t) => t.key === selectedAgent.templateKey))) && (
                       <>
                         <Button
                           variant="ghost"

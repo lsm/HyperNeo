@@ -66,7 +66,9 @@ interface UnifiedSpaceAgentMethodDeps {
   templateManager?: SpaceAgentTemplateManager;
   workflowRepo: Pick<
     SpaceWorkflowRepository,
-    'getWorkflowsReferencingAgent' | 'getWorkflowsReferencingTemplate'
+    | 'getWorkflowsReferencingAgent'
+    | 'getWorkflowsReferencingTemplate'
+    | 'listNonterminalRunWorkflowNamesReferencingTemplate'
   >;
   runtimeService?: UnifiedSpaceAgentRuntimeService;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
@@ -814,9 +816,13 @@ export function registerUnifiedSpaceAgentMethods(
     messageHub.onRequest(method('deleteTemplate'), async (data) => {
       const params = data as { key: string };
       if (!params.key) throw new Error('key is required');
-      const referencingWorkflows = deps.workflowRepo.getWorkflowsReferencingTemplate(params.key);
-      if (referencingWorkflows.length > 0) {
-        const workflowNames = referencingWorkflows.map((wf) => wf.name);
+      const workflowNames = [
+        ...new Set([
+          ...deps.workflowRepo.getWorkflowsReferencingTemplate(params.key).map((wf) => wf.name),
+          ...deps.workflowRepo.listNonterminalRunWorkflowNamesReferencingTemplate(params.key),
+        ]),
+      ];
+      if (workflowNames.length > 0) {
         throw new Error(
           `Cannot delete template "${params.key}" - it is referenced by workflow nodes` +
             workflowNames.map((n) => ` (Workflow: ${n})`).join('')
@@ -1064,7 +1070,9 @@ export function setupSpaceAgentHandlers(
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
   workflowRepo: Pick<
     SpaceWorkflowRepository,
-    'getWorkflowsReferencingAgent' | 'getWorkflowsReferencingTemplate'
+    | 'getWorkflowsReferencingAgent'
+    | 'getWorkflowsReferencingTemplate'
+    | 'listNonterminalRunWorkflowNamesReferencingTemplate'
   >,
   runtimeService?: UnifiedSpaceAgentRuntimeService,
   templateManager?: SpaceAgentTemplateManager

@@ -198,6 +198,7 @@ function rowToTemplate(row: Record<string, unknown>): SpaceAgentTemplate {
     labels: decodeJsonArray<string>(row.labels) ?? [],
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number,
+    version: (row.version as number | undefined) ?? 1,
   };
 }
 

@@ -335,7 +335,7 @@ async function updateValidateModelPool(ctx: UpdateTemplateCtx): Promise<UpdateTe
 
 function updatePersist(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
   if (ctx.version === undefined) return { ...ctx, error: `Template version missing: ${ctx.key}` };
-  const template = ctx.repo.casUpdate(ctx.key, ctx.params, ctx.version);
+  const template = ctx.repo.casUpdate(ctx.key, ctx.params, ctx.expectedVersion ?? ctx.version);
   if (!template) {
     return { ...ctx, template: null };
   }
@@ -461,7 +461,13 @@ export class SpaceAgentTemplateManager {
     key: string,
     params: UpdateSpaceAgentTemplateParams
   ): Promise<SpaceAgentResult<SpaceAgentTemplate | null>> {
-    const ctx = await runUpdateTemplate({ repo: this.repo, key, params });
+    const { expectedVersion, ...updates } = params;
+    const ctx = await runUpdateTemplate({
+      repo: this.repo,
+      key,
+      params: updates,
+      expectedVersion,
+    });
     if (ctx.error) return { ok: false, error: ctx.error };
     if (ctx.template === null) return { ok: true, value: null };
     return { ok: true, value: ctx.template! };

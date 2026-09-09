@@ -412,6 +412,37 @@ describe('Space Agent RPC Handlers', () => {
         })
       ).rejects.toThrow('Template not found: missing.custom');
     });
+
+    it('returns a null template when the client expected version is stale', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'cas.custom',
+        handle: 'cas',
+        displayName: 'One',
+      });
+      const second = await call<{ template: { version?: number } | null }>(
+        hubData.handlers,
+        'spaceAgent.updateTemplate',
+        { key: 'cas.custom', displayName: 'Two' }
+      );
+
+      const stale = await call<{ template: { displayName: string } | null }>(
+        hubData.handlers,
+        'spaceAgent.updateTemplate',
+        { key: 'cas.custom', displayName: 'Stale', expectedVersion: 1 }
+      );
+      expect(stale.template).toBeNull();
+
+      const fresh = await call<{ template: { displayName: string; version?: number } | null }>(
+        hubData.handlers,
+        'spaceAgent.updateTemplate',
+        {
+          key: 'cas.custom',
+          displayName: 'Three',
+          expectedVersion: second.template?.version,
+        }
+      );
+      expect(fresh.template?.displayName).toBe('Three');
+    });
   });
 
   describe('spaceAgent.deleteTemplate', () => {
@@ -507,6 +538,155 @@ describe('Space Agent RPC Handlers', () => {
         { key: 'guard.custom' }
       );
 
+      expect(result.success).toBe(true);
+    });
+
+    it('matches template keys exactly rather than by SQL wildcard semantics', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'qa_%',
+        handle: 'wild',
+      });
+      insertWorkflow(db, 'wf-wild', 'space-1', 'Wild');
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(
+        'wf-wild-node',
+        'wf-wild',
+        'Ship',
+        JSON.stringify({ agents: [{ agentId: '', templateKey: 'qaXYZcustom', name: 'W' }] }),
+        now,
+        now
+      );
+
+      const wildResult = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'qa_%' }
+      );
+      expect(wildResult.success).toBe(true);
+    });
+
+    it('blocks deleting a template referenced by a nonterminal pinned run', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'guard.custom',
+        handle: 'guard',
+      });
+      insertWorkflow(db, 'wf-pinned', 'space-1', 'Pinned Flow');
+      const now = Date.now();
+      const payload = JSON.stringify({
+        id: 'wf-pinned',
+        spaceId: 'space-1',
+        name: 'Pinned Flow',
+        nodes: [
+          {
+            id: 'p1',
+            name: 'Ship',
+            agents: [{ agentId: '', templateKey: 'guard.custom', name: 'Guard' }],
+          },
+        ],
+      });
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS space_workflow_definition_versions (
+          workflow_id TEXT NOT NULL,
+          version_hash TEXT NOT NULL,
+          space_id TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          source TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (workflow_id, version_hash)
+        )
+      `);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS space_workflow_runs (
+          id TEXT PRIMARY KEY,
+          space_id TEXT NOT NULL,
+          workflow_id TEXT NOT NULL,
+          definition_version TEXT,
+          title TEXT,
+          description TEXT DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'pending',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      `);
+      db.prepare(
+        `INSERT INTO space_workflow_definition_versions
+           (workflow_id, version_hash, space_id, payload, source, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run('wf-pinned', 'vh-guard', 'space-1', payload, 'run_create', now);
+      db.prepare(
+        `INSERT INTO space_workflow_runs
+           (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run('run-guard', 'space-1', 'wf-pinned', 'vh-guard', 'Run 1', 'in_progress', now, now);
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'guard.custom' })
+      ).rejects.toThrow(
+        'Cannot delete template "guard.custom" - it is referenced by workflow nodes (Workflow: Pinned Flow)'
+      );
+    });
+
+    it('allows deleting a template whose pinned references are on terminal runs only', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'guard.custom',
+        handle: 'guard',
+      });
+      insertWorkflow(db, 'wf-terminal', 'space-1', 'Terminal Flow');
+      const now = Date.now();
+      const payload = JSON.stringify({
+        id: 'wf-terminal',
+        spaceId: 'space-1',
+        name: 'Terminal Flow',
+        nodes: [
+          {
+            id: 't1',
+            name: 'Ship',
+            agents: [{ agentId: '', templateKey: 'guard.custom', name: 'Guard' }],
+          },
+        ],
+      });
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS space_workflow_definition_versions (
+          workflow_id TEXT NOT NULL,
+          version_hash TEXT NOT NULL,
+          space_id TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          source TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (workflow_id, version_hash)
+        )
+      `);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS space_workflow_runs (
+          id TEXT PRIMARY KEY,
+          space_id TEXT NOT NULL,
+          workflow_id TEXT NOT NULL,
+          definition_version TEXT,
+          title TEXT,
+          description TEXT DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'pending',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      `);
+      db.prepare(
+        `INSERT INTO space_workflow_definition_versions
+           (workflow_id, version_hash, space_id, payload, source, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run('wf-terminal', 'vh-terminal', 'space-1', payload, 'run_create', now);
+      db.prepare(
+        `INSERT INTO space_workflow_runs
+           (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run('run-terminal', 'space-1', 'wf-terminal', 'vh-terminal', 'Run 2', 'done', now, now);
+
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'guard.custom' }
+      );
       expect(result.success).toBe(true);
     });
   });

@@ -237,6 +237,7 @@ function toPaneAgentTemplate(template: SpaceAgentTemplate): SpaceLongHorizonAgen
     thinkingLevel: template.thinkingLevel,
     settingSources: template.settingSources,
     labels: template.labels,
+    version: template.version,
   };
 }
 

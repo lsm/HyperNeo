@@ -615,6 +615,34 @@ export class SpaceWorkflowRepository {
     return workflows;
   }
 
+  listNonterminalRunWorkflowNamesReferencingTemplate(templateKey: string): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT w.name AS name, dv.payload AS payload
+	         FROM space_workflow_runs r
+	         JOIN space_workflow_definition_versions dv
+	           ON dv.version_hash = r.definition_version AND dv.workflow_id = r.workflow_id
+	         JOIN space_workflows w ON w.id = r.workflow_id
+	         WHERE r.status NOT IN ('done', 'cancelled')
+	           AND dv.payload LIKE '%"templateKey":%'`
+      )
+      .all() as Array<{ name: string; payload: string }>;
+
+    const names = new Set<string>();
+    for (const row of rows) {
+      let payloadWorkflow: unknown;
+      try {
+        payloadWorkflow = JSON.parse(row.payload);
+      } catch {
+        continue;
+      }
+      if (workflowReferencesTemplate(payloadWorkflow as SpaceWorkflow, templateKey)) {
+        names.add(row.name);
+      }
+    }
+    return [...names];
+  }
+
   private fetchNodes(workflowId: string, ctx?: NodeMigrationContext): WorkflowNode[] {
     const rows = this.db.prepare(LIST_SPACE_WORKFLOW_NODES_SQL).all(workflowId) as NodeRow[];
     return rows.map((r) => rowToNode(r, ctx));
@@ -762,4 +790,16 @@ export class SpaceWorkflowRepository {
         now
       );
   }
+}
+
+export function workflowReferencesTemplate(
+  workflow: Pick<SpaceWorkflow, 'nodes'>,
+  templateKey: string
+): boolean {
+  for (const node of workflow.nodes ?? []) {
+    for (const slot of node.agents ?? []) {
+      if (slot.templateKey === templateKey) return true;
+    }
+  }
+  return false;
 }
