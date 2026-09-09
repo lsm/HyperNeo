@@ -803,6 +803,22 @@ describe('migration 241: convert customized worker mirrors to user templates', (
     db.close();
   });
 
+  test('clears an untargeted stale key that a newly minted template makes resolvable', () => {
+    const { db, agentRepo } = createDb();
+    agentRepo.update(SWE_ID, { model: 'claude-sonnet-5' });
+    const key = workerCustomTemplateKey(SWE_ID);
+    insertNodeWithAgents(
+      db,
+      'node-stale-clear',
+      JSON.stringify({ agents: [{ agentId: 'user-1', templateKey: key, name: 'ops' }] })
+    );
+
+    runMigration241(db);
+
+    expect(nodeAgents(db, 'node-stale-clear')).toEqual([{ agentId: 'user-1', name: 'ops' }]);
+    db.close();
+  });
+
   test('keeps a replaced-key route on an earlier slot that owns the key as its name', () => {
     const { db, agentRepo } = createDb();
     agentRepo.update(SWE_ID, { model: 'claude-sonnet-5' });

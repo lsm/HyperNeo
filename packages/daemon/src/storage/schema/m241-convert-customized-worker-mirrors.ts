@@ -186,13 +186,15 @@ function clearMirrorSlots(
       const nameOwnedByEarlierSlot = finalName !== '' && occupied.has(finalName);
       if (slotKey && newKeys.has(slotKey) && !resolvable(slotKey)) {
         const slotName = typeof occ.slot.name === 'string' ? occ.slot.name.trim() : '';
-        if (
+        const aliasRecorded =
           targets.has(slotKey) &&
           slotName !== '' &&
           !nameOwnedByEarlierSlot &&
-          !occupied.has(slotName)
-        ) {
+          !occupied.has(slotName);
+        if (aliasRecorded) {
           clearedNames.set(slotKey, occ.slot.name as string);
+        }
+        if (!targets.has(slotKey) || aliasRecorded) {
           delete occ.slot.templateKey;
           dirty = true;
         }
