@@ -73,12 +73,16 @@ export function isSpawnSupersededError(err: unknown): err is SpawnSupersededErro
 export interface MissingNodeAgentReference {
   agentName: string;
   agentId: string;
+  templateKey?: string;
 }
 
 export function findMissingNodeAgentReferences(
   node: WorkflowNode,
   agentExists: (agentId: string) => boolean,
-  options?: { slotNames?: ReadonlySet<string> }
+  options?: {
+    slotNames?: ReadonlySet<string>;
+    templateResolves?: (key: string) => boolean;
+  }
 ): MissingNodeAgentReference[] {
   let agents: ReturnType<typeof resolveNodeAgents>;
   try {
@@ -87,10 +91,18 @@ export function findMissingNodeAgentReferences(
     return [];
   }
   const slotFilter = options?.slotNames;
+  const templateResolves = options?.templateResolves;
   const missing: MissingNodeAgentReference[] = [];
   for (const agent of agents) {
     if (slotFilter && !slotFilter.has(agent.name)) continue;
-    if (agent.agentId && !agent.templateKey?.trim() && !agentExists(agent.agentId)) {
+    const templateKey = agent.templateKey?.trim() ?? '';
+    if (templateKey) {
+      if (!templateResolves || templateResolves(templateKey)) continue;
+      if (agent.agentId && agentExists(agent.agentId)) continue;
+      missing.push({ agentName: agent.name, agentId: agent.agentId, templateKey });
+      continue;
+    }
+    if (agent.agentId && !agentExists(agent.agentId)) {
       missing.push({ agentName: agent.name, agentId: agent.agentId });
     }
   }
@@ -124,6 +136,23 @@ export function formatMissingAgentReference(params: {
     `definition pinned at creation time, so editing the workflow or recreating ` +
     `the agent (a new id) will not repair it; create a new run from a corrected ` +
     `workflow.`
+  );
+}
+
+export function formatMissingTemplateReference(params: {
+  runId: string;
+  nodeLabel: string;
+  workflowName: string;
+  agentName: string;
+  templateKey: string;
+}): string {
+  return (
+    `Workflow run "${params.runId}" cannot activate node "${params.nodeLabel}" of workflow ` +
+    `"${params.workflowName}": agent slot "${params.agentName}" references agent template ` +
+    `key "${params.templateKey}", which resolves to neither a code built-in nor a user ` +
+    `template in this Space. Recreate a template with that key, or correct the slot's ` +
+    `templateKey on the workflow and start a new run — this run resolves a workflow ` +
+    `definition pinned at creation time.`
   );
 }
 
