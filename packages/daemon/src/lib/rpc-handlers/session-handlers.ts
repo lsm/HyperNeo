@@ -245,10 +245,6 @@ export function setupSessionHandlers(
 
     const updatedSession = await sessionLifecycle.completeWorktreeChoice(sessionId, mode);
 
-    messageHub.event('session.updated', updatedSession, {
-      channel: `session:${sessionId}`,
-    });
-
     return { success: true, session: updatedSession };
   });
 
@@ -273,10 +269,6 @@ export function setupSessionHandlers(
       workspacePath,
       worktreeMode
     );
-
-    messageHub.event('session.updated', updatedSession, {
-      channel: `session:${sessionId}`,
-    });
 
     return { success: true, session: updatedSession };
   });
@@ -361,7 +353,6 @@ export function setupSessionHandlers(
     }
 
     const agentSessionForUpdate = sessionManager.getSession(targetSessionId);
-    const roomIdForUpdate = agentSessionForUpdate?.getSessionData().context?.roomId;
 
     const configUpdate = (updates as Partial<Session>).config;
     if (configUpdate && (configUpdate.model !== undefined || configUpdate.provider !== undefined)) {
@@ -394,12 +385,6 @@ export function setupSessionHandlers(
     }
 
     await sessionManager.updateSession(targetSessionId, updates as Partial<Session>);
-
-    const updatedPayload = { ...updates, sessionId: targetSessionId, roomId: roomIdForUpdate };
-
-    messageHub.event('session.updated', updatedPayload, {
-      channel: `session:${targetSessionId}`,
-    });
 
     return { success: true };
   });
@@ -439,13 +424,6 @@ export function setupSessionHandlers(
     }
     const updates: UpdateSessionRequest = { metadata: metadataUpdate };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);
-    messageHub.event(
-      'session.updated',
-      { ...updates, sessionId },
-      {
-        channel: `session:${sessionId}`,
-      }
-    );
     messageHub.event('session.voiceLanded', { sessionId }, { channel: `session:${sessionId}` });
     return { success: true };
   });
@@ -468,13 +446,6 @@ export function setupSessionHandlers(
       },
     };
     await sessionManager.updateSession(sessionId, updates as Partial<Session>);
-    messageHub.event(
-      'session.updated',
-      { ...updates, sessionId },
-      {
-        channel: `session:${sessionId}`,
-      }
-    );
     return { cleared: true };
   });
 
@@ -515,7 +486,6 @@ export function setupSessionHandlers(
     }
 
     const hadWorktree = !!session.worktree;
-    const roomIdForArchive = session.context?.roomId;
     const spaceIdForArchive = session.context?.spaceId;
     let commitsRemoved = 0;
     if (session.worktree) {
@@ -553,15 +523,6 @@ export function setupSessionHandlers(
           .catch(() => {});
       } catch {}
     }
-
-    const archivedPayload = {
-      sessionId: targetSessionId,
-      status: 'archived',
-      roomId: roomIdForArchive,
-    };
-    messageHub.event('session.updated', archivedPayload, {
-      channel: `session:${targetSessionId}`,
-    });
 
     return {
       success: true,
@@ -672,14 +633,6 @@ export function setupSessionHandlers(
 
     const result = await agentSession.handleModelSwitch(model, provider);
 
-    if (result.success) {
-      messageHub.event(
-        'session.updated',
-        { model: result.model },
-        { channel: `session:${targetSessionId}` }
-      );
-    }
-
     return result;
   });
 
@@ -708,12 +661,6 @@ export function setupSessionHandlers(
     const result = agentSession.isQueryActiveOrStarting()
       ? await agentSession.resetQuery({ restartQuery: true })
       : { success: true as const };
-
-    messageHub.event(
-      'session.updated',
-      { config: { coordinatorMode } },
-      { channel: `session:${targetSessionId}` }
-    );
 
     return { success: result.success, coordinatorMode, error: result.error };
   });
@@ -749,12 +696,6 @@ export function setupSessionHandlers(
       ? await agentSession.resetQuery({ restartQuery: true })
       : { success: true as const };
 
-    messageHub.event(
-      'session.updated',
-      { config: { sandbox: updatedSandbox } },
-      { channel: `session:${targetSessionId}` }
-    );
-
     return { success: result.success, sandboxEnabled, error: result.error };
   });
 
@@ -777,12 +718,6 @@ export function setupSessionHandlers(
         thinkingLevel,
       },
     });
-
-    messageHub.event(
-      'session.updated',
-      { config: { thinkingLevel } },
-      { channel: `session:${targetSessionId}` }
-    );
 
     return { success: true, thinkingLevel };
   });

@@ -104,12 +104,6 @@ export function setupMessageHandlers(
 
     await sessionManager.markOutputRemoved(targetSessionId, messageUuid);
 
-    messageHub.event(
-      'sdk.message.updated',
-      { sessionId: targetSessionId, messageUuid },
-      { channel: `session:${targetSessionId}` }
-    );
-
     return { success: true };
   });
 

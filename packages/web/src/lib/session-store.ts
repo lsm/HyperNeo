@@ -303,29 +303,6 @@ export class SessionStore {
       );
       this.cleanupFunctions.push(unsubContextUpdated);
 
-      const unsubRetryAttempt = hub.onEvent<{
-        sessionId: string;
-        attempt: number;
-        max_retries: number;
-        delay_ms: number;
-        error_status: number | null;
-        error: string;
-      }>('session.retryAttempt', (retryInfo) => {
-        if (retryInfo.sessionId !== sessionId) return;
-        this.retryAttempts.value = [
-          ...this.retryAttempts.value,
-          {
-            attempt: retryInfo.attempt,
-            max_retries: retryInfo.max_retries,
-            delay_ms: retryInfo.delay_ms,
-            error_status: retryInfo.error_status,
-            error: retryInfo.error,
-            occurredAt: Date.now(),
-          },
-        ];
-      });
-      this.cleanupFunctions.push(unsubRetryAttempt);
-
       const unsubDeleted = hub.onEvent<{ sessionId: string }>('session.deleted', (event) => {
         if (event?.sessionId && event.sessionId === sessionId && !this.destroyed) {
           this.deleted = true;

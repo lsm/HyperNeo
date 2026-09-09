@@ -672,18 +672,6 @@ describe('InterruptHandler', () => {
       expect(queueStopSpy).toHaveBeenCalled();
     });
 
-    it('should publish session.interrupted event', async () => {
-      handler = createHandler();
-
-      await handler.handleInterrupt();
-
-      expect(publishSpy).toHaveBeenCalledWith(
-        'session.interrupted',
-        {},
-        { channel: 'session:test-session-id' }
-      );
-    });
-
     it('should set state back to idle', async () => {
       handler = createHandler();
 

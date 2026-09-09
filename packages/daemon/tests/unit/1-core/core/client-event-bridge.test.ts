@@ -82,7 +82,6 @@ describe('ClientEventBridge', () => {
       expect(eventHandlers.has('space.workflowRun.updated')).toBe(true);
       expect(eventHandlers.has('space.hookState.updated')).toBe(true);
       expect(eventHandlers.has('space.artifactCache.updated')).toBe(true);
-      expect(eventHandlers.has('space.workflowRun.cyclesReset')).toBe(true);
       expect(eventHandlers.has('spaceAgent.created')).toBe(true);
       expect(eventHandlers.has('spaceAgent.updated')).toBe(true);
       expect(eventHandlers.has('spaceAgent.deleted')).toBe(true);
@@ -96,7 +95,6 @@ describe('ClientEventBridge', () => {
       const bridge = new ClientEventBridge(internalEventBus, gateway);
       bridge.start();
 
-      expect(eventHandlers.has('session.created')).toBe(true);
       expect(eventHandlers.has('session.deleted')).toBe(true);
       expect(eventHandlers.has('context.updated')).toBe(true);
       expect(eventHandlers.has('messages.statusChanged')).toBe(true);
@@ -142,7 +140,7 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.start();
 
-      expect(eventHandlers.size).toBe(30);
+      expect(eventHandlers.size).toBe(27);
     });
   });
 
@@ -318,21 +316,6 @@ describe('ClientEventBridge', () => {
       expect(published[0].channel).toEqual({ kind: 'global' });
     });
 
-    it('forwards space.workflowRun.cyclesReset to global channel', () => {
-      const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
-      createClientEventBridge(internalEventBus, gateway).start();
-
-      const data = {
-        sessionId: 'global',
-        spaceId: 's-1',
-        workflowRunId: 'run-1',
-        channelId: 'ch-1',
-      };
-      eventHandlers.get('space.workflowRun.cyclesReset')![0](data);
-
-      expect(published[0].channel).toEqual({ kind: 'global' });
-    });
-
     it('forwards spaceAgent.created to space-scoped channel', () => {
       const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
       createClientEventBridge(internalEventBus, gateway).start();
@@ -411,21 +394,6 @@ describe('ClientEventBridge', () => {
   });
 
   describe('session event forwarding', () => {
-    it('forwards session.created to global channel with transformed payload', () => {
-      const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
-      createClientEventBridge(internalEventBus, gateway).start();
-
-      const data = {
-        sessionId: 'sess-1',
-        session: { id: 'sess-1', title: 'Test', status: 'active', metadata: {} },
-      };
-      eventHandlers.get('session.created')![0](data);
-
-      expect(published[0].method).toBe('session.created');
-      expect(published[0].data).toEqual({ sessionId: 'sess-1' });
-      expect(published[0].channel).toEqual({ kind: 'global' });
-    });
-
     it('forwards session.deleted to global channel with transformed payload', () => {
       const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
       createClientEventBridge(internalEventBus, gateway).start();

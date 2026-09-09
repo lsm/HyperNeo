@@ -373,32 +373,6 @@ describe('ModelSwitchHandler', () => {
         );
       });
 
-      it('should emit model-switching event', async () => {
-        handler = createHandler({ queryObject: null });
-        await handler.switchModel(VALID_MODEL, 'anthropic');
-
-        expect(publishSpy).toHaveBeenCalledWith(
-          'session.model-switching',
-          expect.objectContaining({
-            from: 'default',
-          }),
-          { channel: 'session:' + mockSession.id }
-        );
-      });
-
-      it('should emit model-switched event on success', async () => {
-        handler = createHandler({ queryObject: null });
-        await handler.switchModel(VALID_MODEL, 'anthropic');
-
-        expect(publishSpy).toHaveBeenCalledWith(
-          'session.model-switched',
-          expect.objectContaining({
-            from: 'default',
-          }),
-          { channel: 'session:' + mockSession.id }
-        );
-      });
-
       it('should align provider with model for pre-query cross-provider switches', async () => {
         mockSession.config.model = 'glm-5';
         mockSession.config.provider = 'glm';

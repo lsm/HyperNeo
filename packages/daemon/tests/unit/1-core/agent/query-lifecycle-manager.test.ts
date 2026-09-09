@@ -793,11 +793,6 @@ describe('QueryLifecycleManager', () => {
       expect(resetCircuitBreakerSpy).toHaveBeenCalled();
       expect(setIdleSpy).toHaveBeenCalled();
       expect(clearModelsCacheSpy).toHaveBeenCalled();
-      expect(publishSpy).toHaveBeenCalledWith(
-        'session.reset',
-        expect.objectContaining({ message: expect.any(String) }),
-        expect.objectContaining({ channel: 'session:test-session' })
-      );
       expect(startStreamingCalled).toBe(true);
     });
 

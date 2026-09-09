@@ -136,7 +136,6 @@ export class ModelSwitchHandler {
     const {
       session,
       db,
-      messageHub,
       internalEventBus,
       contextTracker,
       stateManager,
@@ -183,15 +182,6 @@ export class ModelSwitchHandler {
           error: `Already using ${modelInfo?.name || resolvedModel}`,
         };
       }
-
-      messageHub.event(
-        'session.model-switching',
-        {
-          from: previousModel,
-          to: resolvedModel,
-        },
-        { channel: `session:${session.id}` }
-      );
 
       const providerRegistry = getProviderRegistry();
       const newProviderInstance = providerRegistry.detectProviderForModel(
@@ -310,16 +300,6 @@ export class ModelSwitchHandler {
 
       const selectedModel = session.config.model;
       contextTracker.setModel(selectedModel);
-
-      messageHub.event(
-        'session.model-switched',
-        {
-          from: previousModel,
-          to: selectedModel,
-          modelInfo: selectedModel === resolvedModel ? modelInfo || null : null,
-        },
-        { channel: `session:${session.id}` }
-      );
 
       return {
         success: true,
