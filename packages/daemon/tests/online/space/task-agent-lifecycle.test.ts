@@ -3,6 +3,7 @@ import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 import type { NodeExecution, Space, SpaceWorkflow } from '@hyperneo/shared';
+import type { DaemonAppContext } from '../../../src/app';
 
 const IS_MOCK = !!process.env.HYPERNEO_USE_DEV_PROXY;
 const IDLE_TIMEOUT = IS_MOCK ? 10_000 : 60_000;
@@ -232,7 +233,7 @@ function extractTextContent(assistantMessages: Array<Record<string, unknown>>): 
 }
 
 describe('Task Agent Lifecycle — Online Tests', () => {
-  let daemon: DaemonServerContext;
+  let daemon: DaemonServerContext & { daemonContext: DaemonAppContext };
 
   beforeEach(async () => {
     daemon = await createDaemonServer();
@@ -472,9 +473,7 @@ describe('Task Agent Lifecycle — Online Tests', () => {
       daemon.trackSession(nodeAgentSessionId);
       await waitForIdle(daemon, nodeAgentSessionId, IDLE_TIMEOUT);
 
-      await daemon.messageHub.request('nodeExecution.update', {
-        id: execution.id,
-        spaceId: space.id,
+      daemon.daemonContext.db.getNodeExecutionRepo().update(execution.id, {
         status: 'idle',
         result: 'Lifecycle completion test',
       });

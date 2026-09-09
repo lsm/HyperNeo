@@ -83,12 +83,4 @@ export function setupSystemHandlers(
 
     return response;
   });
-
-  messageHub.onRequest('test.echo', async (data: { message: string }) => {
-    const echoMessage = data.message || 'echo';
-
-    messageHub.event('test.echo', { echo: echoMessage }, { channel: 'global' });
-
-    return { echoed: echoMessage };
-  });
 }
