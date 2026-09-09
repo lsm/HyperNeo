@@ -113,14 +113,6 @@ export class ChannelRouter {
           `Run ${runId} is ${run.status} — create a new task or use an explicit resume action.`
         );
       }
-      await this.reopenRun(
-        run.id,
-        run.status,
-        run.spaceId,
-        options?.reopenReason ??
-          `inbound activation of node "${nodeId}" on run in status "${run.status}"`,
-        options?.reopenBy ?? 'activation'
-      );
     }
 
     const existingTasks = this.getActiveTasksForNode(runId, nodeId);
@@ -182,6 +174,17 @@ export class ChannelRouter {
           workflowName: workflow.name,
         }),
         missingAgent[0]
+      );
+    }
+
+    if (run.status === 'done' || run.status === 'cancelled') {
+      await this.reopenRun(
+        run.id,
+        run.status,
+        run.spaceId,
+        options?.reopenReason ??
+          `inbound activation of node "${nodeId}" on run in status "${run.status}"`,
+        options?.reopenBy ?? 'activation'
       );
     }
 

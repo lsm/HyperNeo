@@ -4180,6 +4180,10 @@ export class SpaceRuntime {
 
       const auditSlotsByNode = new Map<string, Set<string>>();
       for (const execution of currentNodeExecutions) {
+        const sessionId = execution.agentSessionId;
+        const hasLiveSession =
+          !!sessionId && (this.config.taskAgentManager?.isSessionAlive(sessionId) ?? false);
+        if (hasLiveSession) continue;
         const slotNames = auditSlotsByNode.get(execution.workflowNodeId) ?? new Set<string>();
         slotNames.add(execution.agentName);
         auditSlotsByNode.set(execution.workflowNodeId, slotNames);
@@ -6504,6 +6508,11 @@ export class SpaceRuntime {
             `SpaceRuntime: spawn for execution ${execution.id} superseded at ${err.stage ?? 'unknown'} — concurrent writer moved a guarded row; skipping for this tick`
           );
           continue;
+        }
+        if (isMissingWorkflowAgentError(err)) {
+          this.cancelExecutionForPermanentSpawnError(execution, err);
+          await this.blockRunForMissingAgent(run, err);
+          return { blockedByCrash, permanentSpawnFailureReason: err.message };
         }
         if (this.cancelExecutionForPermanentSpawnError(execution, err)) {
           permanentSpawnFailureReason = err instanceof Error ? err.message : String(err);
