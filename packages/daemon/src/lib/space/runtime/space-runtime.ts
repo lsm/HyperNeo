@@ -8505,7 +8505,12 @@ export class SpaceRuntime {
         `SpaceRuntime: post-approval restart reconcile scan failed: ${formatCommandError(err)}`
       );
     } finally {
-      await Promise.all(retries);
+      const drained = await this.boundPostApprovalRecoveryAwait(Promise.all(retries));
+      if (drained === 'timeout') {
+        log.warn(
+          `SpaceRuntime: post-approval recovery redispatches did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while they run fenced`
+        );
+      }
     }
   }
 

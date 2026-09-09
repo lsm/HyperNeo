@@ -1,18 +1,18 @@
 import type { SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
-export type PostApprovalRecoveryAdmissionOutcome =
+export type PostApprovalRecoveryAdmissionReason =
+  | 'task-not-eligible'
+  | 'retry-cadence-pending'
+  | 'recovery-in-flight'
+  | 'dispatch-claim-leased'
+  | 'worker-revived'
+  | 'orphan-adopted'
+  | 'recovery-await-timeout';
+
+export type PostApprovalRecoveryAdmissionResult =
   | { value: { action: 'redispatch'; task: SpaceTask } }
-  | {
-      reason:
-        | 'task-not-eligible'
-        | 'retry-cadence-pending'
-        | 'recovery-in-flight'
-        | 'dispatch-claim-leased'
-        | 'worker-revived'
-        | 'orphan-adopted'
-        | 'recovery-await-timeout';
-    };
+  | { reason: PostApprovalRecoveryAdmissionReason };
 
 export interface PostApprovalRecoveryAdmissionDeps {
   isDispatchDead(task: SpaceTask): boolean;
@@ -35,14 +35,14 @@ export interface PostApprovalRecoveryAdmissionCtx extends PostApprovalRecoveryAd
   dispatchDead: boolean;
   unrecordedStale: boolean;
   reviveBypassed: boolean;
-  halt: string | null;
+  result: PostApprovalRecoveryAdmissionResult | null;
 }
 
-function halted(
+function settled(
   ctx: PostApprovalRecoveryAdmissionCtx,
-  reason: string
+  reason: PostApprovalRecoveryAdmissionReason
 ): PostApprovalRecoveryAdmissionCtx {
-  return { ...ctx, halt: reason };
+  return { ...ctx, result: { reason } };
 }
 
 export function loadAdmissionFacts(
@@ -61,17 +61,17 @@ export function gateTaskEligibility(
 ): PostApprovalRecoveryAdmissionCtx {
   const task = ctx.task;
   if (!ctx.dispatchDead && !task.postApprovalBlockedReason && !ctx.unrecordedStale) {
-    return halted(ctx, 'task-not-eligible');
+    return settled(ctx, 'task-not-eligible');
   }
   if (ctx.cadencePending(task.id, ctx.now)) {
-    return halted(ctx, 'retry-cadence-pending');
+    return settled(ctx, 'retry-cadence-pending');
   }
   ctx.markCadence(task.id, ctx.now);
   if (ctx.recoveryInFlight(task.id, ctx.generation)) {
-    return halted(ctx, 'recovery-in-flight');
+    return settled(ctx, 'recovery-in-flight');
   }
   if (ctx.hasLeasedClaim(task)) {
-    return halted(ctx, 'dispatch-claim-leased');
+    return settled(ctx, 'dispatch-claim-leased');
   }
   return ctx;
 }
@@ -81,8 +81,8 @@ export async function attemptWorkerRevival(
 ): Promise<PostApprovalRecoveryAdmissionCtx> {
   if (!ctx.dispatchDead || ctx.reviveBypassed) return ctx;
   const outcome = await ctx.revive(ctx.task, ctx.generation);
-  if (outcome === 'timeout') return halted(ctx, 'recovery-await-timeout');
-  if (outcome !== 'replace') return halted(ctx, 'worker-revived');
+  if (outcome === 'timeout') return settled(ctx, 'recovery-await-timeout');
+  if (outcome !== 'replace') return settled(ctx, 'worker-revived');
   return ctx;
 }
 
@@ -92,38 +92,32 @@ export async function attemptOrphanAdoption(
   if (ctx.task.postApprovalSessionId) return ctx;
   if (ctx.adoptBypassed(ctx.task, ctx.generation)) return ctx;
   const outcome = await ctx.adopt(ctx.task, ctx.generation);
-  if (outcome === 'timeout') return halted(ctx, 'recovery-await-timeout');
-  if (outcome === true) return halted(ctx, 'orphan-adopted');
+  if (outcome === 'timeout') return settled(ctx, 'recovery-await-timeout');
+  if (outcome === true) return settled(ctx, 'orphan-adopted');
   return ctx;
 }
 
 export function finalizeRedispatch(
   ctx: PostApprovalRecoveryAdmissionCtx
-): PostApprovalRecoveryAdmissionOutcome {
-  if (ctx.halt !== null) {
-    return {
-      reason: ctx.halt as PostApprovalRecoveryAdmissionOutcome extends { reason: infer R }
-        ? R
-        : never,
-    };
-  }
+): PostApprovalRecoveryAdmissionResult {
+  if (ctx.result !== null) return ctx.result;
   ctx.clearBypass(ctx.task.id);
   return { value: { action: 'redispatch', task: ctx.task } };
 }
 
 const recoveryAdmissionRun = (
-  superpipe<{ halted: (ctx: PostApprovalRecoveryAdmissionCtx) => boolean }>({
-    halted: (ctx: PostApprovalRecoveryAdmissionCtx): boolean => ctx.halt !== null,
+  superpipe<{ admitted: (ctx: PostApprovalRecoveryAdmissionCtx) => boolean }>({
+    admitted: (ctx: PostApprovalRecoveryAdmissionCtx): boolean => ctx.result !== null,
   })('post-approval-recovery-admission') as PipelineAPI
 )
   .input(['ctx'])
   .pipe(loadAdmissionFacts, 'ctx', 'ctx')
   .pipe(gateTaskEligibility, 'ctx', 'ctx')
-  .pipe('!halted', 'ctx')
+  .pipe('!admitted', 'ctx')
   .pipe(attemptWorkerRevival, 'ctx', 'ctx')
-  .pipe('!halted', 'ctx')
+  .pipe('!admitted', 'ctx')
   .pipe(attemptOrphanAdoption, 'ctx', 'ctx')
-  .pipe('!halted', 'ctx')
+  .pipe('!admitted', 'ctx')
   .endAsync('ctx');
 
 export async function runPostApprovalRecoveryAdmission(
@@ -132,13 +126,13 @@ export async function runPostApprovalRecoveryAdmission(
     generation: number;
     now: number;
   }
-): Promise<PostApprovalRecoveryAdmissionOutcome> {
+): Promise<PostApprovalRecoveryAdmissionResult> {
   const ctx = (await recoveryAdmissionRun({
     ...input,
     dispatchDead: false,
     unrecordedStale: false,
     reviveBypassed: false,
-    halt: null,
+    result: null,
   })) as PostApprovalRecoveryAdmissionCtx;
   return finalizeRedispatch(ctx);
 }

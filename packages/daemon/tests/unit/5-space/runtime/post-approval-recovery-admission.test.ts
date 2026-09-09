@@ -49,7 +49,7 @@ function makeCtx(
     dispatchDead: false,
     unrecordedStale: true,
     reviveBypassed: false,
-    halt: null,
+    result: null,
     ...overrides,
   };
 }
@@ -65,7 +65,7 @@ describe('post-approval recovery admission — stage gates', () => {
     expect(ctx.dispatchDead).toBe(true);
     expect(ctx.unrecordedStale).toBe(false);
     expect(ctx.reviveBypassed).toBe(true);
-    expect(ctx.halt).toBeNull();
+    expect(ctx.result).toBeNull();
   });
 
   test('gateTaskEligibility halts ineligible tasks before cadence mutation', () => {
@@ -77,19 +77,19 @@ describe('post-approval recovery admission — stage gates', () => {
     const gated = gateTaskEligibility(
       makeCtx(deps, { dispatchDead: false, unrecordedStale: false })
     );
-    expect(gated.halt).toBe('task-not-eligible');
+    expect(gated.result).toEqual({ reason: 'task-not-eligible' });
     expect(cadenceMarked).toBe(false);
   });
 
   test('gateTaskEligibility marks cadence then defers on pending cadence, in-flight, and lease', () => {
     const cadenceHalted = gateTaskEligibility(makeCtx(makeDeps({ cadencePending: () => true })));
-    expect(cadenceHalted.halt).toBe('retry-cadence-pending');
+    expect(cadenceHalted.result).toEqual({ reason: 'retry-cadence-pending' });
 
     const inFlightHalted = gateTaskEligibility(makeCtx(makeDeps({ recoveryInFlight: () => true })));
-    expect(inFlightHalted.halt).toBe('recovery-in-flight');
+    expect(inFlightHalted.result).toEqual({ reason: 'recovery-in-flight' });
 
     const leasedHalted = gateTaskEligibility(makeCtx(makeDeps({ hasLeasedClaim: () => true })));
-    expect(leasedHalted.halt).toBe('dispatch-claim-leased');
+    expect(leasedHalted.result).toEqual({ reason: 'dispatch-claim-leased' });
   });
 });
 

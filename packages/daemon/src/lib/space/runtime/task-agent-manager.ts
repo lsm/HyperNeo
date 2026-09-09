@@ -5591,6 +5591,7 @@ export class TaskAgentManager {
               expectedApprovedAt: owner.approvedAt ?? null,
               expectedWorkflowRunId: owner.workflowRunId ?? null,
               expectedRuntimeGeneration: admission.expectedRuntimeGeneration,
+              requireSucceededRun: admission.requireSucceededRun,
             });
           },
           startQuery: async (sessionId) => {

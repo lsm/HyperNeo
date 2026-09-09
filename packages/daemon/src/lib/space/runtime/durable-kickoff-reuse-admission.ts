@@ -1,7 +1,7 @@
 import type { SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 
-export type DurableKickoffReuseOutcome =
+export type DurableKickoffReuseResult =
   | { value: { action: 'inject' } }
   | { value: { action: 'refuse'; reason: string } }
   | { reason: 'already-running' | 'resumed' };
@@ -17,11 +17,14 @@ export interface DurableKickoffReuseCtx extends DurableKickoffReuseDeps {
   task: SpaceTask;
   sessionId: string;
   alreadyDelivered: boolean;
-  halt: string | null;
+  result: DurableKickoffReuseResult | null;
 }
 
-function halted(ctx: DurableKickoffReuseCtx, reason: string): DurableKickoffReuseCtx {
-  return { ...ctx, halt: reason };
+function settled(
+  ctx: DurableKickoffReuseCtx,
+  result: DurableKickoffReuseResult
+): DurableKickoffReuseCtx {
+  return { ...ctx, result };
 }
 
 export function loadKickoffFacts(ctx: DurableKickoffReuseCtx): DurableKickoffReuseCtx {
@@ -30,61 +33,57 @@ export function loadKickoffFacts(ctx: DurableKickoffReuseCtx): DurableKickoffReu
 
 export function gateFreshInjection(ctx: DurableKickoffReuseCtx): DurableKickoffReuseCtx {
   if (ctx.alreadyDelivered) return ctx;
-  return halted(ctx, 'fresh-kickoff');
+  return settled(ctx, { value: { action: 'inject' } });
 }
 
 export async function resumeDeliveredWorker(
   ctx: DurableKickoffReuseCtx
 ): Promise<DurableKickoffReuseCtx> {
   if (ctx.isQueryActive(ctx.sessionId)) {
-    return halted(ctx, 'already-running');
+    return settled(ctx, { reason: 'already-running' });
   }
   try {
     await ctx.admitResume(ctx.task);
   } catch {
-    return halted(ctx, 'resume-refused');
+    return settled(ctx, {
+      value: {
+        action: 'refuse',
+        reason: `reused session ${ctx.sessionId} already holds this approval generation's kickoff but its query could not be admitted`,
+      },
+    });
   }
   await ctx.startQuery(ctx.sessionId);
   if (!ctx.isQueryActive(ctx.sessionId)) {
-    return halted(ctx, 'resume-refused');
+    return settled(ctx, {
+      value: {
+        action: 'refuse',
+        reason: `reused session ${ctx.sessionId} already holds this approval generation's kickoff but its query could not be started`,
+      },
+    });
   }
-  return halted(ctx, 'resumed');
-}
-
-export function finalizeKickoffReuse(ctx: DurableKickoffReuseCtx): DurableKickoffReuseOutcome {
-  if (ctx.halt === 'fresh-kickoff') {
-    return { value: { action: 'inject' } };
-  }
-  if (ctx.halt === 'already-running' || ctx.halt === 'resumed') {
-    return { reason: ctx.halt };
-  }
-  return {
-    value: {
-      action: 'refuse',
-      reason: `reused session ${ctx.sessionId} already holds this approval generation's kickoff but its query could not be admitted; refusing to record an idle post-approval worker`,
-    },
-  };
+  return settled(ctx, { reason: 'resumed' });
 }
 
 const kickoffReuseRun = (
-  superpipe<{ halted: (ctx: DurableKickoffReuseCtx) => boolean }>({
-    halted: (ctx: DurableKickoffReuseCtx): boolean => ctx.halt !== null,
+  superpipe<{ admitted: (ctx: DurableKickoffReuseCtx) => boolean }>({
+    admitted: (ctx: DurableKickoffReuseCtx): boolean => ctx.result !== null,
   })('durable-kickoff-reuse-admission') as PipelineAPI
 )
   .input(['ctx'])
   .pipe(loadKickoffFacts, 'ctx', 'ctx')
   .pipe(gateFreshInjection, 'ctx', 'ctx')
-  .pipe('!halted', 'ctx')
+  .pipe('!admitted', 'ctx')
   .pipe(resumeDeliveredWorker, 'ctx', 'ctx')
   .endAsync('ctx');
 
 export async function runDurableKickoffReuseAdmission(
   input: DurableKickoffReuseDeps & { task: SpaceTask; sessionId: string }
-): Promise<DurableKickoffReuseOutcome> {
+): Promise<DurableKickoffReuseResult> {
   const ctx = (await kickoffReuseRun({
     ...input,
     alreadyDelivered: false,
-    halt: null,
+    result: null,
   })) as DurableKickoffReuseCtx;
-  return finalizeKickoffReuse(ctx);
+  if (ctx.result !== null) return ctx.result;
+  return { reason: 'resumed' };
 }
