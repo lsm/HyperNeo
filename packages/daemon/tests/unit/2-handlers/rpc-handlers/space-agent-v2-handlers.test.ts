@@ -6,6 +6,7 @@ import {
 } from '../../../../src/lib/rpc-handlers/space-agent-v2-handlers';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
+import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
@@ -65,6 +66,7 @@ describe('setupSpaceAgentV2Handlers', () => {
       templates,
       spaceExists: async (id) => id === 'space-1',
       getSession: (id) => sessions.get(id) ?? null,
+      workflows: new SpaceWorkflowRepository(db),
       internalEventBus: {
         publish: async (topic: string, payload: unknown) => {
           published.push({ topic, payload });
@@ -338,6 +340,33 @@ describe('setupSpaceAgentV2Handlers', () => {
       await expect(call(handlers, 'spaceAgentV2.delete', { id: 'ghost' })).rejects.toThrow(
         'Agent not found: ghost'
       );
+    });
+
+    test('refuses to delete the Space Manager agent', async () => {
+      const coordinator = agents.create({ spaceId: 'space-1', handle: 'space-manager' });
+
+      await expect(call(handlers, 'spaceAgentV2.delete', { id: coordinator.id })).rejects.toThrow(
+        'Space Manager agent cannot be deleted'
+      );
+      expect(agents.getById(coordinator.id)).not.toBeNull();
+    });
+
+    test('refuses to delete an agent referenced by a workflow node', async () => {
+      const created = agents.create({ spaceId: 'space-1', handle: 'referenced' });
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflows (id, space_id, name, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)`
+      ).run('wf-1', 'space-1', 'Release Flow', now, now);
+      db.prepare(
+        `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run('node-1', 'wf-1', 'Worker', JSON.stringify({ agentId: created.id }), now, now);
+
+      await expect(call(handlers, 'spaceAgentV2.delete', { id: created.id })).rejects.toThrow(
+        'referenced by workflow nodes'
+      );
+      expect(agents.getById(created.id)).not.toBeNull();
     });
 
     test('publishes spaceAgentV2.deleted with the agent space', async () => {
