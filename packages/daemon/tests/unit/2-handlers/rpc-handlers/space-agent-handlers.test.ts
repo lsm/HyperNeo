@@ -1710,6 +1710,39 @@ describe('Space Agent RPC Handlers', () => {
       expect(published[0][1].agent.sessionId).toBeNull();
     });
 
+    it('skips the update event when the agent is deleted mid-update', async () => {
+      const runtimeService = createRuntimeServiceMock();
+      runtimeService.refreshLongHorizonAgentSession.mockImplementationOnce(async () => {
+        longHorizonRepo.delete('lh-deleted-mid-update');
+      });
+      const freshHub = createMockMessageHub();
+      setupSpaceAgentHandlers(
+        freshHub.hub,
+        daemonData.internalEventBus,
+        spaceManagerData.spaceManager,
+        createTestDatabaseFacade(db),
+        longHorizonRepo,
+        workflowRepo,
+        runtimeService
+      );
+      longHorizonRepo.create({
+        id: 'lh-deleted-mid-update',
+        spaceId: 'space-1',
+        handle: 'deleted-mid-update',
+        sessionId: 'space:agent:space-1:lh-deleted-mid-update',
+      });
+      daemonData.publishMock.mockClear();
+
+      await call(freshHub.handlers, 'spaceAgent.update', {
+        id: 'lh-deleted-mid-update',
+        instructions: 'Updated before deletion',
+      });
+
+      expect(
+        daemonData.publishMock.mock.calls.filter(([name]) => name === 'spaceAgent.updated')
+      ).toHaveLength(0);
+    });
+
     it('serializes concurrent updates for the same agent', async () => {
       const runtimeService = createRuntimeServiceMock();
       let resolveFirstRefresh: () => void = () => {};
@@ -1734,6 +1767,9 @@ describe('Space Agent RPC Handlers', () => {
         'spaceAgent.create',
         { spaceId: 'space-1', name: 'Serial Target' }
       );
+      longHorizonRepo.update(created.agent.id, {
+        sessionId: `space:agent:space-1:${created.agent.id}`,
+      });
 
       const first = call(freshHub.handlers, 'spaceAgent.update', {
         id: created.agent.id,

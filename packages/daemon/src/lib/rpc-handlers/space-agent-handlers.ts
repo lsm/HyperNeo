@@ -767,14 +767,14 @@ async function updateRefreshSessionStage(
 ): Promise<UpdateUnifiedAgentCtx> {
   if (ctx.agent?.sessionId) {
     await ctx.runtimeService?.refreshLongHorizonAgentSession(ctx.agent.spaceId, ctx.agent.id);
+    ctx.unifiedAfter = ctx.repo.getById(ctx.agent.id) ?? null;
   }
   return ctx;
 }
 
 async function updatePublishStage(ctx: UpdateUnifiedAgentCtx): Promise<UpdateUnifiedAgentCtx> {
   if (ctx.unifiedAfter) {
-    const fresh = ctx.repo.getById(ctx.unifiedAfter.id) ?? ctx.unifiedAfter;
-    await publishUnifiedAgentUpdated(ctx.internalEventBus, fresh);
+    await publishUnifiedAgentUpdated(ctx.internalEventBus, ctx.unifiedAfter);
   }
   return ctx;
 }
