@@ -95,6 +95,7 @@ interface TamMockOptions {
   terminalRestoreIds?: string[];
   notAdmittedRestoreIds?: string[];
   offRouteSessionIds?: string[];
+  unstoppableSessionIds?: string[];
 }
 
 function makeTaskAgentManagerMock(options: TamMockOptions = {}) {
@@ -153,7 +154,10 @@ function makeTaskAgentManagerMock(options: TamMockOptions = {}) {
     isDisposed: () => adoption?.disposed === true,
     hasPendingRateLimitCooldown: () => false,
     stopSessionsVerified: async (sessionIds: string[]) =>
-      sessionIds.map((sessionId) => ({ sessionId, stopped: true })),
+      sessionIds.map((sessionId) => ({
+        sessionId,
+        stopped: !options.unstoppableSessionIds?.includes(sessionId),
+      })),
     isSessionQueryActiveOrStarting: (sessionId: string) => queryActiveIds.has(sessionId),
     setRuntimeRef: (ref: { stop: () => Promise<void> }) => {
       runtimeRef = ref;
@@ -657,7 +661,7 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
     taskRepo.updateTask(prior.id, { approvedAt: Date.now() - 5 * 60_000 });
 
     const spawned: string[] = [];
-    const { runtime: rt, cancelled } = makeRuntime({
+    const { runtime: rt } = makeRuntime({
       spawnImpl: async () => {
         spawned.push('session:replacement-post-approval');
         return { sessionId: 'session:replacement-post-approval' };
@@ -668,11 +672,34 @@ describe('SpaceRuntime — post-crash open-task dispatch (post-approval window)'
     await rt.executeTick();
 
     expect(spawned).toEqual([]);
-    expect(cancelled).toContain('session:durable-orphan');
     const after = taskRepo.getTask(prior.id)!;
     expect(after.status).toBe('approved');
     expect(after.postApprovalSessionId ?? null).toBeNull();
     expect(after.postApprovalBlockedReason).toContain('could not be resumed');
+  });
+
+  test('adoption whose worker cannot be resumed or stopped retains the pointer and defers', async () => {
+    const workflow = buildRouteWorkflow();
+    const { task: prior } = seedApprovedPriorTask(workflow, 'done', null);
+    taskRepo.updateTask(prior.id, { approvedAt: Date.now() - 5 * 60_000 });
+
+    const spawned: string[] = [];
+    const { runtime: rt } = makeRuntime({
+      spawnImpl: async () => {
+        spawned.push('session:replacement-post-approval');
+        return { sessionId: 'session:replacement-post-approval' };
+      },
+      adoption: { orphanSessionId: 'session:durable-orphan', failResume: true },
+      unstoppableSessionIds: ['session:durable-orphan'],
+    });
+
+    await rt.executeTick();
+
+    expect(spawned).toEqual([]);
+    const after = taskRepo.getTask(prior.id)!;
+    expect(after.status).toBe('approved');
+    expect(after.postApprovalSessionId).toBe('session:durable-orphan');
+    expect(after.postApprovalBlockedReason).toContain('replacement deferred');
   });
 
   test('restored worker whose query was not admitted is left retryable', async () => {

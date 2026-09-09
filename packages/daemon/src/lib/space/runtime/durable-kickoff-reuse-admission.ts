@@ -32,8 +32,10 @@ export function gateFreshInjection(
 export async function resumeDeliveredWorker(
   deps: DurableKickoffReuseDeps,
   task: SpaceTask,
-  sessionId: string
-): Promise<DurableKickoffReuseResult> {
+  sessionId: string,
+  priorOutcome: DurableKickoffReuseResult | null
+): Promise<DurableKickoffReuseResult | null> {
+  if (priorOutcome !== null) return priorOutcome;
   if (deps.isQueryActive(sessionId)) {
     return { reason: 'already-running' };
   }
@@ -59,24 +61,13 @@ export async function resumeDeliveredWorker(
   return { reason: 'resumed' };
 }
 
-type KickoffReuseState = {
-  deps: DurableKickoffReuseDeps;
-  task: SpaceTask;
-  sessionId: string;
-  alreadyDelivered: boolean;
-  outcome: DurableKickoffReuseResult | null;
-};
-
 const kickoffReuseRun = (
-  superpipe<{ settled: (state: KickoffReuseState) => boolean }>({
-    settled: (state: KickoffReuseState): boolean => state.outcome !== null,
-  })('durable-kickoff-reuse-admission') as PipelineAPI
+  superpipe<Record<string, never>>({})('durable-kickoff-reuse-admission') as PipelineAPI
 )
   .input(['deps', 'task', 'sessionId'])
   .pipe(loadKickoffFacts, ['deps', 'task', 'sessionId'], 'alreadyDelivered')
   .pipe(gateFreshInjection, ['deps', 'alreadyDelivered'], 'outcome')
-  .pipe('!settled', ['deps', 'task', 'sessionId'])
-  .pipe(resumeDeliveredWorker, ['deps', 'task', 'sessionId'], 'outcome')
+  .pipe(resumeDeliveredWorker, ['deps', 'task', 'sessionId', 'outcome'], 'outcome')
   .endAsync('outcome');
 
 export async function runDurableKickoffReuseAdmission(

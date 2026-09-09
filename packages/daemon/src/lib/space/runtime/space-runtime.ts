@@ -690,7 +690,11 @@ export class SpaceRuntime {
 
   private postApprovalRecoveryInFlight = new Map<
     string,
-    { generation: number; approvedAt: number | null }
+    {
+      generation: number;
+      approvedAt: number | null;
+      postApprovalSessionId: string | null;
+    }
   >();
 
   private postApprovalRecoveryBypass = new Map<
@@ -8127,14 +8131,33 @@ export class SpaceRuntime {
         this.postApprovalWorkerResumed(manager, orphan.sessionId)
       )
     ) {
-      manager.cancelBySessionId(orphan.sessionId);
+      let stopConfirmed = false;
+      try {
+        const results = await manager.stopSessionsVerified([orphan.sessionId]);
+        stopConfirmed = results[0]?.stopped === true;
+      } catch {
+        stopConfirmed = false;
+      }
       const fresh = this.config.taskRepo.getTask(task.id);
-      if (
+      const ownsPointer =
         fresh &&
         fresh.status === 'approved' &&
         fresh.approvedAt === task.approvedAt &&
-        fresh.postApprovalSessionId === orphan.sessionId
-      ) {
+        fresh.postApprovalSessionId === orphan.sessionId;
+      if (!stopConfirmed) {
+        log.warn(
+          `SpaceRuntime: adopted post-approval worker ${orphan.sessionId} for task ${task.id} could not be resumed or stopped; deferring replacement`
+        );
+        if (ownsPointer) {
+          this.config.taskRepo.updateTask(task.id, {
+            postApprovalBlockedReason: `post-approval worker ${orphan.sessionId} was adopted but could not be resumed or stopped; replacement deferred`,
+          });
+          const blocked = this.config.taskRepo.getTask(task.id);
+          if (blocked) await this.safeOnTaskUpdated(task.spaceId, blocked);
+        }
+        return true;
+      }
+      if (ownsPointer) {
         this.config.taskRepo.updateTask(task.id, {
           postApprovalSessionId: null,
           postApprovalBlockedReason: `post-approval worker ${orphan.sessionId} was adopted but could not be resumed; re-dispatch required`,
@@ -8232,7 +8255,24 @@ export class SpaceRuntime {
       return 'skip';
     }
     if (!this.postApprovalWorkerResumed(manager, restoredId)) {
-      manager.cancelBySessionId(restoredId);
+      let stopConfirmed = false;
+      try {
+        const results = await manager.stopSessionsVerified([restoredId]);
+        stopConfirmed = results[0]?.stopped === true;
+      } catch {
+        stopConfirmed = false;
+      }
+      if (!stopConfirmed) {
+        log.warn(
+          `SpaceRuntime: restored post-approval worker ${restoredId} for task ${task.id} was not admitted and could not be stopped; deferring replacement`
+        );
+        await this.annotateRecoveryTimeout(
+          task,
+          'post-approval worker restored but not admitted and could not be stopped; replacement deferred',
+          generation
+        );
+        return 'skip';
+      }
       this.config.taskRepo.updateTask(task.id, {
         postApprovalSessionId: null,
         postApprovalBlockedReason: `post-approval worker ${restoredId} restored but its query was not admitted; re-dispatch required`,
@@ -8336,7 +8376,11 @@ export class SpaceRuntime {
     generation: number
   ): Promise<'revived' | 'skip' | 'replace' | 'timeout'> {
     const revivePromise = this.reviveRecordedPostApprovalWorker(manager, task, generation);
-    const marker = { generation, approvedAt: task.approvedAt ?? null };
+    const marker = {
+      generation,
+      approvedAt: task.approvedAt ?? null,
+      postApprovalSessionId: task.postApprovalSessionId ?? null,
+    };
     this.postApprovalRecoveryInFlight.set(task.id, marker);
     revivePromise
       .catch(() => undefined)
@@ -8392,7 +8436,11 @@ export class SpaceRuntime {
     generation: number
   ): Promise<boolean | 'timeout'> {
     const adoptPromise = this.adoptDurablePostApprovalOrphan(manager, task, generation);
-    const marker = { generation, approvedAt: task.approvedAt ?? null };
+    const marker = {
+      generation,
+      approvedAt: task.approvedAt ?? null,
+      postApprovalSessionId: task.postApprovalSessionId ?? null,
+    };
     this.postApprovalRecoveryInFlight.set(task.id, marker);
     adoptPromise
       .catch(() => undefined)
@@ -8477,7 +8525,9 @@ export class SpaceRuntime {
             recoveryInFlight: (candidate, gen) => {
               const marker = this.postApprovalRecoveryInFlight.get(candidate.id);
               return (
-                marker?.generation === gen && marker.approvedAt === (candidate.approvedAt ?? null)
+                marker?.generation === gen &&
+                marker.approvedAt === (candidate.approvedAt ?? null) &&
+                marker.postApprovalSessionId === (candidate.postApprovalSessionId ?? null)
               );
             },
             hasLeasedClaim: (candidate) => this.hasLeasedPostApprovalClaim(candidate),
