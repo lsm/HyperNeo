@@ -85,7 +85,6 @@ describe('SessionManager', () => {
         ...DEFAULT_GLOBAL_SETTINGS,
         settingSources: ['user', 'project', 'local'],
       })),
-      listMcpServersFromSources: mock(() => []),
     } as unknown as SettingsManager;
 
     mockInternalEventBus = {

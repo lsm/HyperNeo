@@ -14,16 +14,9 @@ describe('Settings RPC Handlers', () => {
     await daemon.waitForExit();
   }, 15_000);
 
-  async function createSession(workspacePath: string): Promise<string> {
-    const { sessionId } = (await daemon.messageHub.request('session.create', {
-      workspacePath,
-    })) as { sessionId: string };
-    daemon.trackSession(sessionId);
-    return sessionId;
-  }
-
   async function getGlobalSettings(): Promise<GlobalSettings> {
-    return (await daemon.messageHub.request('settings.global.get', {})) as GlobalSettings;
+    const { settings } = await updateGlobalSettings({});
+    return settings;
   }
 
   async function updateGlobalSettings(
@@ -34,27 +27,15 @@ describe('Settings RPC Handlers', () => {
     })) as { success: boolean; settings: GlobalSettings };
   }
 
-  describe('settings.global.get', () => {
-    test('returns default settings', async () => {
-      const result = await getGlobalSettings();
+  describe('settings.global.update', () => {
+    test('returns persisted settings reflecting defaults', async () => {
+      const { settings } = await updateGlobalSettings({});
 
-      expect(result).toMatchObject({
+      expect(settings).toMatchObject({
         settingSources: ['user', 'project', 'local'],
       });
     });
 
-    test('returns saved settings after update', async () => {
-      await updateGlobalSettings({
-        model: 'claude-opus-4-5-20251101',
-      });
-
-      const result = await getGlobalSettings();
-
-      expect(result.model).toBe('claude-opus-4-5-20251101');
-    });
-  });
-
-  describe('settings.global.update', () => {
     test('updates global settings', async () => {
       const result = await updateGlobalSettings({
         model: 'claude-haiku-3-5-20241022',
@@ -83,34 +64,6 @@ describe('Settings RPC Handlers', () => {
 
       expect(result.settings.model).toBe('claude-sonnet-4-5-20250929');
       expect(result.settings.autoScroll).toBe(false);
-    });
-  });
-
-  describe('settings.global.save', () => {
-    test('saves complete settings', async () => {
-      const completeSettings: GlobalSettings = {
-        settingSources: ['project', 'local'],
-        model: 'claude-opus-4-5-20251101',
-        permissionMode: 'acceptEdits',
-      };
-
-      const result = (await daemon.messageHub.request('settings.global.save', {
-        settings: completeSettings,
-      })) as { success: boolean };
-
-      expect(result.success).toBe(true);
-
-      const loaded = await getGlobalSettings();
-      expect(loaded.settingSources).toEqual(['project', 'local']);
-      expect(loaded.model).toBe('claude-opus-4-5-20251101');
-      expect(loaded.permissionMode).toBe('acceptEdits');
-    });
-  });
-
-  describe('settings.fileOnly.read', () => {
-    test('returns empty object if file does not exist', async () => {
-      const result = await daemon.messageHub.request('settings.fileOnly.read', {});
-      expect(result).toEqual({});
     });
   });
 
@@ -276,61 +229,6 @@ describe('Settings RPC Handlers', () => {
     });
   });
 
-  describe('settings.mcp.listFromSources', () => {
-    test('should list MCP servers without sessionId', async () => {
-      const result = (await daemon.messageHub.request('settings.mcp.listFromSources', {})) as {
-        servers: unknown;
-      };
-
-      expect(result).toHaveProperty('servers');
-    });
-
-    test('should list MCP servers with sessionId', async () => {
-      const sessionId = await createSession('/test/mcp-list');
-
-      const result = (await daemon.messageHub.request('settings.mcp.listFromSources', {
-        sessionId,
-      })) as { servers: unknown };
-
-      expect(result).toHaveProperty('servers');
-    });
-
-    test('should error for non-existent session', async () => {
-      await expect(
-        daemon.messageHub.request('settings.mcp.listFromSources', {
-          sessionId: 'non-existent-session',
-        })
-      ).rejects.toThrow();
-    });
-  });
-
-  describe('settings.session.get', () => {
-    test('should get session settings', async () => {
-      const sessionId = await createSession('/test/session-settings-get');
-
-      const result = (await daemon.messageHub.request('settings.session.get', {
-        sessionId,
-      })) as { sessionId: string; settings: Record<string, unknown> };
-
-      expect(result.sessionId).toBe(sessionId);
-      expect(result.settings).toBeDefined();
-    });
-  });
-
-  describe('settings.session.update', () => {
-    test('should update session settings', async () => {
-      const sessionId = await createSession('/test/session-settings-update');
-
-      const result = (await daemon.messageHub.request('settings.session.update', {
-        sessionId,
-        updates: { someKey: 'someValue' },
-      })) as { success: boolean; sessionId: string };
-
-      expect(result.success).toBe(true);
-      expect(result.sessionId).toBe(sessionId);
-    });
-  });
-
   describe('Concurrent operations', () => {
     test('multiple concurrent updates are handled correctly', async () => {
       await Promise.all([
@@ -366,6 +264,28 @@ describe('Settings RPC Handlers', () => {
           serverName: 'x',
           settings: { allowed: true },
         })
+      ).rejects.toThrow();
+    });
+
+    test('does NOT register removed dead settings RPCs (global.get/save, session.get/update, fileOnly.read, mcp.listFromSources, mcp.refreshImports)', async () => {
+      await expect(daemon.messageHub.request('settings.global.get', {})).rejects.toThrow();
+
+      await expect(
+        daemon.messageHub.request('settings.global.save', { settings: {} })
+      ).rejects.toThrow();
+
+      await expect(daemon.messageHub.request('settings.fileOnly.read', {})).rejects.toThrow();
+
+      await expect(daemon.messageHub.request('settings.mcp.listFromSources', {})).rejects.toThrow();
+
+      await expect(daemon.messageHub.request('settings.mcp.refreshImports', {})).rejects.toThrow();
+
+      await expect(
+        daemon.messageHub.request('settings.session.get', { sessionId: 'x' })
+      ).rejects.toThrow();
+
+      await expect(
+        daemon.messageHub.request('settings.session.update', { sessionId: 'x', updates: {} })
       ).rejects.toThrow();
     });
   });

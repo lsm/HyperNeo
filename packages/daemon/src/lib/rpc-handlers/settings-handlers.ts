@@ -1,10 +1,9 @@
 import type { MessageHub } from '@hyperneo/shared';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
-import type { GlobalSettings, SessionSettings } from '@hyperneo/shared';
+import type { GlobalSettings } from '@hyperneo/shared';
 import { bumpProviderCatalogEpoch, clearModelsCache } from '../model-service.js';
 import type { SettingsManager } from '../settings-manager.ts';
 import type { Database } from '../../storage/database.ts';
-import type { McpImportService } from '../mcp/index.ts';
 import type { ProviderCredentialManager } from '../credentials/provider-credential-manager.ts';
 import { withVoiceCredentialLock } from './voice-credential-lock.ts';
 
@@ -64,13 +63,8 @@ export function registerSettingsHandlers(
   settingsManager: SettingsManager,
   internalEventBus: InternalEventBus<DaemonInternalEventMap>,
   db: Database,
-  mcpImportService?: McpImportService,
   credentialManager?: ProviderCredentialManager
 ) {
-  messageHub.onRequest('settings.global.get', async () => {
-    return sanitizeGlobalSettings(settingsManager.getGlobalSettings(), credentialManager);
-  });
-
   messageHub.onRequest(
     'settings.global.update',
     async (data: { updates: Partial<GlobalSettings> }) => {
@@ -137,137 +131,6 @@ export function registerSettingsHandlers(
       };
       const { withCustomEndpointsLock } = await import('./custom-endpoint-handlers.js');
       return withCustomEndpointsLock(run);
-    }
-  );
-
-  messageHub.onRequest('settings.global.save', async (data: { settings: GlobalSettings }) => {
-    const customEndpointsProvided = Object.prototype.hasOwnProperty.call(
-      data.settings,
-      'customEndpoints'
-    );
-    const run = async () => {
-      if (customEndpointsProvided) {
-        const { validateCustomEndpoints } = await import('./custom-endpoint-handlers.js');
-        validateCustomEndpoints(data.settings.customEndpoints);
-      }
-      const voiceMutation: VoiceCredentialMutation = {};
-      const preparedSettings = (await prepareGlobalSettingsUpdate(
-        data.settings,
-        credentialManager,
-        settingsManager,
-        voiceMutation
-      )) as GlobalSettings;
-      const runVoiceSave = async () => {
-        const priorSettings = settingsManager.getGlobalSettings();
-        const needsCredentialSnapshot = credentialManager
-          ? Boolean(voiceMutation.storeKey || voiceMutation.remove)
-          : false;
-        const priorCredential = needsCredentialSnapshot
-          ? await credentialManager!.getCredentials(VOICE_CREDENTIAL_PROVIDER_ID)
-          : null;
-        const voiceProvided = Object.prototype.hasOwnProperty.call(data.settings, 'voice');
-        const settingsToPersist: GlobalSettings = {
-          ...preparedSettings,
-          ...(customEndpointsProvided ? {} : { customEndpoints: priorSettings.customEndpoints }),
-          ...(voiceProvided ? {} : { voice: priorSettings.voice }),
-        };
-        settingsManager.saveGlobalSettings(settingsToPersist);
-        try {
-          await applyVoiceCredentialMutation(voiceMutation, credentialManager);
-        } catch (error) {
-          settingsManager.saveGlobalSettings(priorSettings);
-          await restorePriorVoiceCredential(priorCredential, credentialManager);
-          throw error;
-        }
-      };
-      if (voiceMutation.storeKey || voiceMutation.remove) {
-        await withVoiceCredentialLock(runVoiceSave);
-      } else {
-        await runVoiceSave();
-      }
-      if (data.settings.providerModelAllowlists !== undefined) {
-        await syncProviderModelAllowlists(data.settings.providerModelAllowlists);
-      }
-      if (customEndpointsProvided) {
-        const { filterDisabledCustomEndpoints, syncCustomEndpointsToProviderTable } = await import(
-          './custom-endpoint-handlers.js'
-        );
-        syncCustomEndpointsToProviderTable(db, data.settings.customEndpoints ?? []);
-        const endpointsToSync = filterDisabledCustomEndpoints(
-          data.settings.customEndpoints ?? [],
-          db
-        );
-        const { syncCustomEndpointProviders } = await import('../providers/factory.js');
-        await syncCustomEndpointProviders(endpointsToSync);
-        const { clearModelsCache } = await import('../model-service.ts');
-        clearModelsCache();
-      }
-      internalEventBus.publishAsync('settings.updated', {
-        namespaceId: 'global',
-        settings: sanitizeGlobalSettings(settingsManager.getGlobalSettings(), credentialManager),
-      });
-      if (customEndpointsProvided || data.settings.providerModelAllowlists !== undefined) {
-        internalEventBus.publishAsync('providers.changed', { sessionId: 'global' });
-      }
-      return { success: true };
-    };
-    const { withCustomEndpointsLock } = await import('./custom-endpoint-handlers.js');
-    return withCustomEndpointsLock(run);
-  });
-
-  messageHub.onRequest('settings.fileOnly.read', async () => {
-    return settingsManager.readFileOnlySettings();
-  });
-
-  messageHub.onRequest('settings.mcp.listFromSources', async (data?: { sessionId?: string }) => {
-    let effectiveSettings = settingsManager;
-
-    if (data?.sessionId) {
-      const session = db.getSession(data.sessionId);
-      if (!session) {
-        throw new Error(`Session not found: ${data.sessionId}`);
-      }
-
-      const workspacePath = session.worktree?.worktreePath ?? session.workspacePath ?? undefined;
-      effectiveSettings = new (await import('../settings-manager.ts')).SettingsManager(
-        db,
-        workspacePath
-      );
-    }
-
-    return {
-      servers: effectiveSettings.listMcpServersFromSources(),
-    };
-  });
-
-  messageHub.onRequest('settings.mcp.refreshImports', async () => {
-    if (!mcpImportService) {
-      return { results: [] };
-    }
-    const { results, orphanPruned } = mcpImportService.refreshAll();
-    internalEventBus.publishAsync('settings.updated', {
-      namespaceId: 'global',
-      settings: sanitizeGlobalSettings(settingsManager.getGlobalSettings(), credentialManager),
-    });
-    const changedRows =
-      results.reduce((sum, r) => sum + r.added + r.updated + r.removed, 0) + orphanPruned;
-    if (changedRows > 0) {
-      internalEventBus.publishAsync('mcp.registry.changed', { sessionId: 'global' });
-    }
-    return { results };
-  });
-
-  messageHub.onRequest('settings.session.get', async (data: { sessionId: string }) => {
-    return {
-      sessionId: data.sessionId,
-      settings: {},
-    };
-  });
-
-  messageHub.onRequest(
-    'settings.session.update',
-    async (data: { sessionId: string; updates: Partial<SessionSettings> }) => {
-      return { success: true, sessionId: data.sessionId };
     }
   );
 
