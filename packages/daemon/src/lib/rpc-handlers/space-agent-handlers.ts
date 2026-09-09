@@ -816,19 +816,16 @@ export function registerUnifiedSpaceAgentMethods(
     messageHub.onRequest(method('deleteTemplate'), async (data) => {
       const params = data as { key: string };
       if (!params.key) throw new Error('key is required');
-      const workflowNames = [
-        ...new Set([
-          ...deps.workflowRepo.getWorkflowsReferencingTemplate(params.key).map((wf) => wf.name),
-          ...deps.workflowRepo.listNonterminalRunWorkflowNamesReferencingTemplate(params.key),
-        ]),
-      ];
-      if (workflowNames.length > 0) {
-        throw new Error(
-          `Cannot delete template "${params.key}" - it is referenced by workflow nodes` +
-            workflowNames.map((n) => ` (Workflow: ${n})`).join('')
-        );
-      }
-      const result = templateManager.delete(params.key);
+      const result = templateManager.delete(params.key, {
+        listWorkflowNamesReferencingTemplate: (key) => [
+          ...new Set([
+            ...deps.workflowRepo.getWorkflowsReferencingTemplate(key).map((wf) => wf.name),
+            ...deps.workflowRepo.listNonterminalRunWorkflowNamesReferencingTemplate(key),
+          ]),
+        ],
+        listAgentDisplayNamesUsingTemplate: (key) =>
+          deps.repo.listByTemplateKey(key).map((agent) => agent.displayName),
+      });
       if (!result.ok) throw new Error(result.error);
       return { success: true };
     });

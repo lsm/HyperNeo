@@ -965,6 +965,40 @@ describe('SpaceAgentTemplateManager', () => {
       expect(result.ok).toBe(true);
       expect(repo.getByKey('release-readiness.custom')).toBeNull();
     });
+
+    test('blocks deletion inside the pipeline when references report usage', async () => {
+      await manager.create(fullParams());
+
+      const workflowBlocked = manager.delete('release-readiness.custom', {
+        listWorkflowNamesReferencingTemplate: () => ['Release'],
+        listAgentDisplayNamesUsingTemplate: () => [],
+      });
+      expect(workflowBlocked.ok).toBe(false);
+      if (!workflowBlocked.ok) {
+        expect(workflowBlocked.error).toBe(
+          'Cannot delete template "release-readiness.custom" - it is referenced by workflow nodes (Workflow: Release)'
+        );
+      }
+      expect(manager.getByKey('release-readiness.custom')).not.toBeNull();
+
+      const agentBlocked = manager.delete('release-readiness.custom', {
+        listWorkflowNamesReferencingTemplate: () => [],
+        listAgentDisplayNamesUsingTemplate: () => ['Scribe'],
+      });
+      expect(agentBlocked.ok).toBe(false);
+      if (!agentBlocked.ok) {
+        expect(agentBlocked.error).toBe(
+          'Cannot delete template "release-readiness.custom" - it is in use by 1 agent ("Scribe")'
+        );
+      }
+
+      const allowed = manager.delete('release-readiness.custom', {
+        listWorkflowNamesReferencingTemplate: () => [],
+        listAgentDisplayNamesUsingTemplate: () => [],
+      });
+      expect(allowed.ok).toBe(true);
+      expect(manager.getByKey('release-readiness.custom')).toBeNull();
+    });
   });
 
   describe('create pipeline', () => {

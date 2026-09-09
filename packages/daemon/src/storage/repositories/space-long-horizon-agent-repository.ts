@@ -145,6 +145,15 @@ export class SpaceLongHorizonAgentRepository {
     return rows.map(rowToAgent);
   }
 
+  listByTemplateKey(templateKey: string): SpaceLongHorizonAgent[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM space_long_horizon_agents WHERE template_key = ? ORDER BY created_at ASC`
+      )
+      .all(templateKey) as Record<string, unknown>[];
+    return rows.map(rowToAgent);
+  }
+
   update(id: string, params: UpdateSpaceLongHorizonAgentParams): SpaceLongHorizonAgent | null {
     const existing = this.getById(id);
     if (existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {

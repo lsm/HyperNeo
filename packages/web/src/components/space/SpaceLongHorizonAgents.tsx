@@ -1347,9 +1347,7 @@ export function SpaceLongHorizonAgents({
                     <span class="rounded-full bg-fill px-2 py-0.5 text-xs text-fg-soft">
                       {selectedAgent.status}
                     </span>
-                    {(isMigratedWorkerMirror(selectedAgent) ||
-                      (selectedAgent.templateKey &&
-                        templates.some((t) => t.key === selectedAgent.templateKey))) && (
+                    {selectedAgent.templateKey && (
                       <>
                         <Button
                           variant="ghost"

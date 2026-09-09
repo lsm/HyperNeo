@@ -641,6 +641,26 @@ describe('Space Agent RPC Handlers', () => {
       );
       expect(result.success).toBe(true);
     });
+
+    it('blocks deleting a template still used by agent instances', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'guard.custom',
+        handle: 'guard',
+      });
+      longHorizonRepo.create({
+        spaceId: 'space-1',
+        handle: 'scribe',
+        displayName: 'Scribe',
+        templateKey: 'guard.custom',
+        instructions: 'Take notes.',
+      });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'guard.custom' })
+      ).rejects.toThrow(
+        'Cannot delete template "guard.custom" - it is in use by 1 agent ("Scribe")'
+      );
+    });
   });
 
   describe('spaceAgent.promotion', () => {

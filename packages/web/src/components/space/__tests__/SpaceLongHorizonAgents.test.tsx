@@ -1589,7 +1589,6 @@ describe('SpaceLongHorizonAgents', () => {
 
   it('re-applies the template from agent detail after confirmation', async () => {
     mockAgents.value = [makeLongHorizonAgent({ templateKey: 'coder.v1' })];
-    mockTemplates.value = [makeTemplate({ key: 'coder.v1' })];
     mockReapplyAgentTemplate.mockResolvedValue(makeLongHorizonAgent({ templateKey: 'coder.v1' }));
 
     const { getByTestId, queryByTestId } = render(
@@ -1608,7 +1607,6 @@ describe('SpaceLongHorizonAgents', () => {
 
   it('shows the RPC error and keeps the confirm dialog open when re-apply fails', async () => {
     mockAgents.value = [makeLongHorizonAgent({ templateKey: 'coder.v1' })];
-    mockTemplates.value = [makeTemplate({ key: 'coder.v1' })];
     mockReapplyAgentTemplate.mockRejectedValue(new Error('Template not found: coder.v1'));
 
     const { getByTestId } = render(
@@ -1648,20 +1646,8 @@ describe('SpaceLongHorizonAgents', () => {
     expect(queryByTestId('reapply-template-button')).toBeNull();
   });
 
-  it('omits re-apply template when the source template no longer exists', () => {
-    mockAgents.value = [makeLongHorizonAgent({ templateKey: 'deleted.custom' })];
-    mockTemplates.value = [makeTemplate({ key: 'worker.swe', labels: ['workflow-worker'] })];
-
-    const { queryByTestId } = render(
-      <SpaceLongHorizonAgents spaceId="space-1" selectedHandle="research" />
-    );
-
-    expect(queryByTestId('reapply-template-button')).toBeNull();
-  });
-
   it('keeps the confirm dialog open when dismissed while re-apply is pending', async () => {
     mockAgents.value = [makeLongHorizonAgent({ templateKey: 'coder.v1' })];
-    mockTemplates.value = [makeTemplate({ key: 'coder.v1' })];
     let resolveReapply: (agent: unknown) => void = () => {};
     mockReapplyAgentTemplate.mockImplementationOnce(
       () =>
