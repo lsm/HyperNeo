@@ -15,6 +15,7 @@ import type {
 import { generateUUID } from '@hyperneo/shared';
 import { getLongHorizonAgentTemplate } from '../../lib/space/agents/long-horizon-agent-templates.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../lib/space/agents/worker-long-horizon-mapper.ts';
+import { SPACE_MANAGER_HANDLE } from '../../lib/space/agent-handle.ts';
 import {
   decideGoalOwnerResolution,
   type GoalOwnerAgentState,
@@ -92,27 +93,36 @@ export class SpaceLongHorizonAgentRepository {
   }
 
   getCoordinator(spaceId: string): SpaceLongHorizonAgent | null {
-    return this.getByHandle(spaceId, 'coordinator');
+    return (
+      this.getByHandle(spaceId, SPACE_MANAGER_HANDLE) ?? this.getByHandle(spaceId, 'coordinator')
+    );
   }
 
   getCoordinatorRecord(spaceId: string): SpaceLongHorizonAgent | null {
     const row = this.db
       .prepare(
-        `SELECT * FROM space_long_horizon_agents WHERE space_id = ? AND handle = 'coordinator'
+        `SELECT * FROM space_long_horizon_agents WHERE space_id = ? AND handle IN (?, ?)
 				 ORDER BY (status = 'archived'), updated_at DESC LIMIT 1`
       )
-      .get(spaceId) as Record<string, unknown> | undefined;
+      .get(spaceId, SPACE_MANAGER_HANDLE, 'coordinator') as Record<string, unknown> | undefined;
     return row ? rowToAgent(row) : null;
   }
 
   ensureCoordinator(spaceId: string): SpaceLongHorizonAgent {
     const existingByHandle = this.getCoordinator(spaceId);
-    if (existingByHandle) return existingByHandle;
+    if (existingByHandle) {
+      if (existingByHandle.handle === SPACE_MANAGER_HANDLE) return existingByHandle;
+      return this.update(existingByHandle.id, {
+        handle: SPACE_MANAGER_HANDLE,
+        description: existingByHandle.description ?? null,
+        modelPool: existingByHandle.modelPool ?? null,
+      }) as SpaceLongHorizonAgent;
+    }
     const existingById = this.getById(coordinatorLongHorizonAgentId(spaceId));
     if (existingById) {
-      if (existingById.handle !== 'coordinator') {
+      if (existingById.handle !== SPACE_MANAGER_HANDLE) {
         return this.update(existingById.id, {
-          handle: 'coordinator',
+          handle: SPACE_MANAGER_HANDLE,
           description: existingById.description ?? null,
           modelPool: existingById.modelPool ?? null,
         }) as SpaceLongHorizonAgent;
@@ -125,8 +135,8 @@ export class SpaceLongHorizonAgentRepository {
     return this.create({
       id: coordinatorLongHorizonAgentId(spaceId),
       spaceId,
-      handle: template?.handle ?? 'coordinator',
-      displayName: template?.displayName ?? 'Coordinator',
+      handle: template?.handle ?? SPACE_MANAGER_HANDLE,
+      displayName: template?.displayName ?? 'Space Manager',
       templateKey: template?.key ?? 'coordinator.default',
       status: 'active',
       sessionId: coordinatorSessionId(spaceId),

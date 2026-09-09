@@ -1776,7 +1776,7 @@ describe('restampBuiltInWorkflowsOnStartup — worker templateKey binding', () =
     );
 
     expect(env.longHorizonAgentRepo.getCoordinator('space-retire')?.id).toBe(coordinator.id);
-    expect(env.longHorizonAgentRepo.getById(coordinator.id)?.handle).toBe('coordinator');
+    expect(env.longHorizonAgentRepo.getById(coordinator.id)?.handle).toBe('space-manager');
     env.db.close();
   });
 });

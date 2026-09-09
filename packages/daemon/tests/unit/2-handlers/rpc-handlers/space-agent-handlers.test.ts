@@ -1081,7 +1081,7 @@ describe('Space Agent RPC Handlers', () => {
         }
       );
       expect(result.agents).toHaveLength(1);
-      expect(result.agents[0].handle).toBe('coordinator');
+      expect(result.agents[0].handle).toBe('space-manager');
       expect(longHorizonRepo.getById(coordinatorLongHorizonAgentId('space-1'))).not.toBeNull();
     });
 
@@ -1102,7 +1102,7 @@ describe('Space Agent RPC Handlers', () => {
       );
       expect(result.agents).toHaveLength(3);
       const names = result.agents.map((a) => a.displayName).sort();
-      expect(names).toEqual(['Alpha', 'Beta', 'Coordinator']);
+      expect(names).toEqual(['Alpha', 'Beta', 'Space Manager']);
     });
 
     it('includes worker mirrors in the unified list', async () => {
@@ -1373,7 +1373,7 @@ describe('Space Agent RPC Handlers', () => {
 
       await expect(
         call(hubData.handlers, 'spaceAgent.delete', { id: coordinator.id })
-      ).rejects.toThrow('The coordinator agent cannot be deleted');
+      ).rejects.toThrow('The Space Manager agent cannot be deleted');
       expect(longHorizonRepo.getById(coordinator.id)?.status).toBe('active');
     });
 

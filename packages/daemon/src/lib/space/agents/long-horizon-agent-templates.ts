@@ -1,12 +1,13 @@
 import { LH_COORDINATOR_INSTRUCTIONS, LH_TASK_MANAGER_INSTRUCTIONS } from '@hyperneo/prompts';
 import type { SpaceLongHorizonAgentTemplate } from '@hyperneo/shared';
+import { SPACE_MANAGER_HANDLE } from '../agent-handle.ts';
 import { getPresetAgentTemplates } from './seed-agents.ts';
 
 const LONG_HORIZON_AGENT_TEMPLATES: SpaceLongHorizonAgentTemplate[] = [
   {
     key: 'coordinator.default',
-    handle: 'coordinator',
-    displayName: 'Coordinator',
+    handle: SPACE_MANAGER_HANDLE,
+    displayName: 'Space Manager',
     description:
       'Orchestrates goals, reminders, reactive subscriptions, and handoffs across the Space.',
     instructions: LH_COORDINATOR_INSTRUCTIONS,

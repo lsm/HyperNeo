@@ -28,14 +28,14 @@ describe('SpaceLongHorizonAgentRepository', () => {
     db.close();
   });
 
-  test('ensures default Coordinator row once with stable session identity', () => {
+  test('ensures default Space Manager row once with stable session identity', () => {
     const coordinator = repo.ensureCoordinator('space-1');
     const again = repo.ensureCoordinator('space-1');
 
     expect(coordinator).toEqual(again);
     expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
-    expect(coordinator.handle).toBe('coordinator');
-    expect(coordinator.displayName).toBe('Coordinator');
+    expect(coordinator.handle).toBe('space-manager');
+    expect(coordinator.displayName).toBe('Space Manager');
     expect(coordinator.templateKey).toBe('coordinator.default');
     expect(coordinator.status).toBe('active');
     expect(coordinator.sessionId).toBe(coordinatorSessionId('space-1'));
@@ -43,6 +43,36 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(coordinator.autonomyLevel).toBe(2);
     expect(coordinator.toolPermissions).toEqual({});
     expect(repo.listBySpaceId('space-1')).toHaveLength(1);
+  });
+
+  test('resolves legacy coordinator-handle rows via getCoordinator', () => {
+    const legacy = repo.create({
+      id: coordinatorLongHorizonAgentId('space-1'),
+      spaceId: 'space-1',
+      handle: 'coordinator',
+      displayName: 'Coordinator',
+      status: 'active',
+    });
+
+    expect(repo.getCoordinator('space-1')?.id).toBe(legacy.id);
+    expect(repo.getCoordinatorRecord('space-1')?.id).toBe(legacy.id);
+  });
+
+  test('ensures the coordinator repairs a legacy coordinator handle to space-manager', () => {
+    const legacy = repo.create({
+      id: coordinatorLongHorizonAgentId('space-1'),
+      spaceId: 'space-1',
+      handle: 'coordinator',
+      displayName: 'Coordinator',
+      status: 'active',
+    });
+
+    const coordinator = repo.ensureCoordinator('space-1');
+
+    expect(coordinator.id).toBe(legacy.id);
+    expect(coordinator.handle).toBe('space-manager');
+    expect(repo.getByHandle('space-1', 'coordinator')).toBeNull();
+    expect(repo.getByHandle('space-1', 'space-manager')?.id).toBe(legacy.id);
   });
 
   test('ignores archived rows when fetching by handle', () => {
@@ -58,7 +88,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
     expect(archived.status).toBe('archived');
     expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
     expect(coordinator.status).toBe('active');
-    expect(repo.getByHandle('space-1', 'coordinator')?.id).toBe(coordinator.id);
+    expect(repo.getByHandle('space-1', 'space-manager')?.id).toBe(coordinator.id);
     expect(repo.listBySpaceId('space-1')).toHaveLength(2);
   });
 
@@ -82,7 +112,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
     const coordinator = repo.ensureCoordinator('space-1');
 
     expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
-    expect(coordinator.handle).toBe('coordinator');
+    expect(coordinator.handle).toBe('space-manager');
     expect(repo.getCoordinator('space-1')?.id).toBe(coordinator.id);
     expect(repo.listBySpaceId('space-1')).toHaveLength(1);
   });
@@ -94,7 +124,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
     const coordinator = repo.ensureCoordinator('space-1');
 
     expect(coordinator.id).toBe(coordinatorLongHorizonAgentId('space-1'));
-    expect(coordinator.handle).toBe('coordinator');
+    expect(coordinator.handle).toBe('space-manager');
     expect(coordinator.status).toBe('archived');
     expect(repo.getCoordinator('space-1')).toBeNull();
     expect(repo.listBySpaceId('space-1')).toHaveLength(1);
@@ -111,7 +141,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
 
     const healedPaused = repo.ensureCoordinator('space-2');
 
-    expect(healedPaused.handle).toBe('coordinator');
+    expect(healedPaused.handle).toBe('space-manager');
     expect(healedPaused.status).toBe('paused');
   });
 
@@ -123,7 +153,7 @@ describe('SpaceLongHorizonAgentRepository', () => {
     const healed = repo.ensureCoordinator('space-1');
 
     expect(healed.id).toBe(coordinatorLongHorizonAgentId('space-1'));
-    expect(healed.handle).toBe('coordinator');
+    expect(healed.handle).toBe('space-manager');
     expect(healed.status).toBe('paused');
     expect(repo.listBySpaceId('space-1')).toHaveLength(1);
   });

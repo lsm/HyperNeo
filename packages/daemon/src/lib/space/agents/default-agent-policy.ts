@@ -29,7 +29,7 @@ export function decideDefaultAgentUpdateAdmission(input: {
     return {
       action: 'reject',
       message:
-        'The default Space agent (coordinator) handle is locked and cannot be changed; ' +
+        'The default Space agent (Space Manager) handle is locked and cannot be changed; ' +
         'instructions, model, provider, and tools stay editable.',
     };
   }
@@ -37,7 +37,7 @@ export function decideDefaultAgentUpdateAdmission(input: {
     return {
       action: 'reject',
       message:
-        'The default Space agent (coordinator) cannot be paused, archived, or disabled; ' +
+        'The default Space agent (Space Manager) cannot be paused, archived, or disabled; ' +
         'instructions, model, provider, and tools stay editable.',
     };
   }

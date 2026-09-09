@@ -39,8 +39,10 @@ const AUTONOMY_LABELS: Record<number, string> = {
 
 const MIGRATED_WORKER_TEMPLATE_KEY = 'migration.legacy_space_agent';
 
+const COORDINATOR_AGENT_HANDLES = new Set(['coordinator', 'space-manager']);
+
 function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
-  return agent.handle === 'coordinator';
+  return COORDINATOR_AGENT_HANDLES.has(agent.handle);
 }
 
 function toolPermissionsToolsList(owner: { toolPermissions: Record<string, unknown> }): string[] {
@@ -849,7 +851,7 @@ function AgentCard({
               </span>
               {coordinator && (
                 <span class="flex-shrink-0 rounded-full border border-purple-400/20 bg-cat-purple/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-cat-purple">
-                  Coordinator
+                  Space Manager
                 </span>
               )}
             </div>
@@ -1087,7 +1089,11 @@ export function SpaceLongHorizonAgents({
   const others = agents.filter((a) => !isCoordinator(a) && a.status !== 'archived');
   const sortedAgents = coordinator ? [coordinator, ...others] : others;
   const selectedAgent = selectedHandle
-    ? (agents.find((agent) => agent.handle === selectedHandle) ?? null)
+    ? (agents.find(
+        (agent) =>
+          agent.handle === selectedHandle ||
+          (isCoordinator(agent) && selectedHandle === 'coordinator')
+      ) ?? null)
     : null;
   const existingHandles = new Set(agents.map((a) => a.handle));
   const existingNames = new Set(agents.map((a) => a.displayName));
@@ -1129,8 +1135,8 @@ export function SpaceLongHorizonAgents({
               <span data-testid="configured-agent-count">{sortedAgents.length}</span>
             </h2>
             <p class="mt-1 text-sm leading-5 text-fg-soft">
-              Persistent Space actors — coordinators, workers, and custom roles — rehydrated by the
-              runtime and recalled across runs.
+              Persistent Space actors — the Space Manager, workers, and custom roles — rehydrated by
+              the runtime and recalled across runs.
             </p>
           </div>
           <button
@@ -1196,7 +1202,7 @@ export function SpaceLongHorizonAgents({
                   </p>
                 )}
                 <div class="mt-3 flex flex-wrap gap-2 text-xs text-fg-muted">
-                  {isCoordinator(selectedAgent) && <span>Coordinator</span>}
+                  {isCoordinator(selectedAgent) && <span>Space Manager</span>}
                   {selectedAgent.autonomyLevel && (
                     <span>
                       L{selectedAgent.autonomyLevel} {AUTONOMY_LABELS[selectedAgent.autonomyLevel]}

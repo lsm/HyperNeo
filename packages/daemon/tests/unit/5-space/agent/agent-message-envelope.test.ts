@@ -48,7 +48,7 @@ describe('formatAgentMessage', () => {
     );
   });
 
-  test('defaults space-agent reply target to coordinator handle', () => {
+  test('defaults space-agent reply target to the space manager handle', () => {
     expect(
       formatAgentMessage({
         fromLevel: 'space-agent',
@@ -62,7 +62,7 @@ describe('formatAgentMessage', () => {
         '─── Reply ───\n' +
         REPLY_PROTOCOL +
         '\n' +
-        'To reply, use: send_message with target "@coordinator"'
+        'To reply, use: send_message with target "@space-manager"'
     );
   });
 

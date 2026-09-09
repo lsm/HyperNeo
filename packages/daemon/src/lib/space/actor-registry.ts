@@ -7,6 +7,7 @@ import { MIGRATED_WORKER_TEMPLATE_KEY } from './agents/worker-long-horizon-mappe
 import type { SpaceRepository } from '../../storage/repositories/space-repository.ts';
 import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository.ts';
+import { SPACE_MANAGER_HANDLE } from './agent-handle.ts';
 import { encodeActorIdComponent, longTermAgentSessionId } from './long-term-agent-session.ts';
 
 export const SPACE_SYSTEM_ACTORS = [
@@ -132,7 +133,7 @@ function coordinatorActor(space: Space, session: Session | null): ActorRef {
     actorId: `agent:coordinator:${space.id}`,
     kind: 'agent',
     spaceId: space.id,
-    handle: '@coordinator',
+    handle: `@${SPACE_MANAGER_HANDLE}`,
     roles: ['coordinator', 'space-agent'],
     status: session ? statusFromSession(session) : 'inactive',
   };

@@ -272,7 +272,7 @@ describe('SpaceActorRegistryAdapter', () => {
       actorId: `agent:coordinator:${space.id}`,
       kind: 'agent',
       spaceId: space.id,
-      handle: '@coordinator',
+      handle: '@space-manager',
       roles: ['coordinator', 'space-agent'],
       status: 'active',
     });
@@ -517,14 +517,14 @@ describe('SpaceActorRegistryAdapter', () => {
       actorId: `agent:coordinator:${space.id}`,
       kind: 'agent',
       spaceId: space.id,
-      handle: '@coordinator',
+      handle: '@space-manager',
       roles: ['coordinator', 'space-agent'],
       status: 'inactive',
     });
     expect(
       actors.some((actor) => actor.actorId === `agent:${coordinatorLongHorizonAgentId(space.id)}`)
     ).toBe(false);
-    expect(actors.filter((actor) => actor.handle === '@coordinator')).toHaveLength(1);
+    expect(actors.filter((actor) => actor.handle === '@space-manager')).toHaveLength(1);
   });
 
   it('exposes a pre-lock renamed derived-id row under its handle once it is not the coordinator row', () => {
@@ -551,7 +551,7 @@ describe('SpaceActorRegistryAdapter', () => {
       status: 'active',
     });
     expect(renamedActor?.roles).toContain('space-agent');
-    expect(actors.filter((actor) => actor.handle === '@coordinator')).toHaveLength(1);
+    expect(actors.filter((actor) => actor.handle === '@space-manager')).toHaveLength(1);
   });
 
   it('returns row-backed inactive coordinator when no space chat session exists', () => {
@@ -565,7 +565,7 @@ describe('SpaceActorRegistryAdapter', () => {
       actorId: `agent:coordinator:${space.id}`,
       kind: 'agent',
       spaceId: space.id,
-      handle: '@coordinator',
+      handle: '@space-manager',
       roles: ['coordinator', 'space-agent'],
       status: 'inactive',
     });
@@ -590,7 +590,7 @@ describe('SpaceActorRegistryAdapter', () => {
       actorId: `agent:coordinator:${space.id}`,
       kind: 'agent',
       spaceId: space.id,
-      handle: '@coordinator',
+      handle: '@space-manager',
       roles: ['coordinator', 'space-agent'],
       status: 'inactive',
     });

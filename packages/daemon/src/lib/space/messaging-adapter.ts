@@ -14,6 +14,7 @@ import type { SpaceWorkflowRunRepository } from '../../storage/repositories/spac
 import type { SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@hyperneo/shared';
 import { ChannelResolver } from './runtime/channel-resolver.ts';
 import type { SpaceActorRegistryAdapter } from './actor-registry.ts';
+import { SPACE_MANAGER_HANDLE, canonicalizeSpaceManagerHandle } from './agent-handle.ts';
 
 export interface SpaceMessageResolverContext {
   spaceId: string;
@@ -100,7 +101,7 @@ export class SpaceMessageResolver implements ActorResolver {
 
     switch (address.kind) {
       case 'handle': {
-        const handle = `@${address.handle}`;
+        const handle = `@${canonicalizeSpaceManagerHandle(address.handle)}`;
         const matches = actors.filter((actor) => actor.handle === handle && isRoutable(actor));
         return matches.length > 0
           ? { actors: stableActors(matches) }
@@ -408,7 +409,7 @@ export function translateTaskMessageTarget(
   if (explicitTarget) {
     if (explicitTarget === 'task-agent') {
       throw new Error(
-        'Target "task-agent" is no longer supported. Use @coordinator or a worker target.'
+        `Target "task-agent" is no longer supported. Use @${SPACE_MANAGER_HANDLE} or a worker target.`
       );
     }
     const address = parseAddress(explicitTarget);
@@ -431,7 +432,7 @@ export function translateTaskMessageTarget(
   }
   if (nodeId === 'task-agent') {
     throw new Error(
-      'Target "task-agent" is no longer supported. Use @coordinator or a worker target.'
+      `Target "task-agent" is no longer supported. Use @${SPACE_MANAGER_HANDLE} or a worker target.`
     );
   }
 
@@ -543,7 +544,9 @@ function translateLegacyNodeTarget(
   const targetRef = target.trim();
   if (!targetRef) return [];
   if (targetRef === 'task-agent') {
-    throw new Error('Target "task-agent" is no longer supported. Use space-agent or @coordinator.');
+    throw new Error(
+      `Target "task-agent" is no longer supported. Use space-agent or @${SPACE_MANAGER_HANDLE}.`
+    );
   }
   if (targetRef.startsWith('@') || targetRef.startsWith('#')) {
     parseAddress(targetRef);
@@ -551,7 +554,7 @@ function translateLegacyNodeTarget(
   }
   if (targetRef === 'space-agent') {
     const replyTo = config.replyRoutingLookup?.(config.agentName);
-    return [replyTo ? `@session:${replyTo}` : '@coordinator'];
+    return [replyTo ? `@session:${replyTo}` : `@${SPACE_MANAGER_HANDLE}`];
   }
   if (targetRef === '*') {
     return permittedWorkerTargets(config);

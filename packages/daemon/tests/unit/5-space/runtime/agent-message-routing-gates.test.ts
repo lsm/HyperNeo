@@ -525,6 +525,12 @@ describe('decideGenericAddressRouting: @coordinator', () => {
       )
     ).toEqual({ action: 'notFound', target: '@coordinator' });
   });
+
+  test('routes the canonical @space-manager handle to the coordinator', () => {
+    expect(
+      decideGenericAddressRouting(parseAddress('@space-manager'), makeGenericConfig())
+    ).toEqual({ action: 'deliverToCoordinator' });
+  });
 });
 
 describe('decideGenericAddressRouting: @session', () => {

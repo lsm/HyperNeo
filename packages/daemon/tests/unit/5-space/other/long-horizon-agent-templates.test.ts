@@ -21,7 +21,7 @@ describe('long-horizon agent templates', () => {
       'task-manager.default',
     ]);
     expect(templates.map((template) => template.displayName)).toEqual([
-      'Coordinator',
+      'Space Manager',
       'Task Manager',
     ]);
   });

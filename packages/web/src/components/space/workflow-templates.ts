@@ -131,10 +131,12 @@ function extractInstructionText(
   return trimmed ? trimmed : undefined;
 }
 
+const COORDINATOR_AGENT_HANDLES = new Set(['coordinator', 'space-manager']);
+
 export function filterAgents(agents: SpaceLongHorizonAgent[]): SpaceLongHorizonAgent[] {
   return agents.filter(
     (a) =>
-      a.handle !== 'coordinator' &&
+      !COORDINATOR_AGENT_HANDLES.has(a.handle) &&
       (a.templateKey === 'migration.legacy_space_agent' || a.status === 'active')
   );
 }

@@ -241,7 +241,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
                 <div class="flex items-center gap-2">
                   <StatusBadge tone="warning" label="Unowned" />
                   <span class="text-sm text-warning-soft">
-                    Coordinator fallback unavailable — assign an owner to restore ownership.
+                    Space Manager fallback unavailable — assign an owner to restore ownership.
                   </span>
                 </div>
               );
@@ -250,7 +250,7 @@ export function GoalDetailPanel({ spaceId, navigationSpaceId, goalId }: GoalDeta
               <div class="flex items-center gap-2">
                 <StatusBadge tone="neutral" label="Unowned" />
                 <span class="text-sm text-fg-soft">
-                  Falls back to coordinator {agentLabel(owner.coordinatorAgentId)}
+                  Falls back to {agentLabel(owner.coordinatorAgentId)}
                 </span>
               </div>
             );
