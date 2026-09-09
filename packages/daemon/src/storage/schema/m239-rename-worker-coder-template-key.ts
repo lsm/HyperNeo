@@ -131,7 +131,9 @@ function rewritePostApprovalTarget(
   let replacement = renamedKeyFor(target, storedRelocation);
   if (!replacement) {
     const rawKeyMatch = slots.find((slot) => slot.renamingKey !== null && slot.rawKey === target);
-    if (!rawKeyMatch || rawKeyMatch.renamingKey === null) return false;
+    if (!rawKeyMatch || rawKeyMatch.renamingKey === null) {
+      return rewriteUnchangedRouteTarget(postApproval, target, slots);
+    }
     replacement = rawKeyMatch.renamingKey;
   }
   const selectedIndex = slots.findIndex((slot) => slotMatchesTarget(slot, target, false));
@@ -146,6 +148,31 @@ function rewritePostApprovalTarget(
     selected.name !== '' &&
     selected.name !== target &&
     slots.findIndex((slot) => slotMatchesTarget(slot, selected.name, true)) === selectedIndex
+  ) {
+    postApproval.targetAgent = selected.name;
+    return true;
+  }
+  return false;
+}
+
+function rewriteUnchangedRouteTarget(
+  postApproval: Record<string, unknown>,
+  target: string,
+  slots: ReadonlyArray<SlotView>
+): boolean {
+  if (!slots.some((slot) => slot.renamingKey !== null)) return false;
+  const preIndex = slots.findIndex((slot) => slotMatchesTarget(slot, target, false));
+  if (preIndex < 0) return false;
+  if (slots.findIndex((slot) => slotMatchesTarget(slot, target, true)) === preIndex) return false;
+  const selected = slots[preIndex];
+  if (selected.agentId !== '') {
+    postApproval.targetAgent = selected.agentId;
+    return true;
+  }
+  if (
+    selected.name !== '' &&
+    selected.name !== target &&
+    slots.findIndex((slot) => slotMatchesTarget(slot, selected.name, true)) === preIndex
   ) {
     postApproval.targetAgent = selected.name;
     return true;
