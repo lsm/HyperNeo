@@ -314,7 +314,7 @@ describe('Space Agent RPC Handlers', () => {
       }>(hubData.handlers, 'spaceAgent.listTemplates', {});
 
       expect(Array.isArray(result.templates)).toBe(true);
-      expect(result.templates.map((template) => template.key)).toContain('worker.coder');
+      expect(result.templates.map((template) => template.key)).toContain('worker.swe');
       expect(result.templates.map((template) => template.key)).not.toContain('coordinator.default');
       for (const template of result.templates) {
         expect(typeof template.createdAt).toBe('number');
@@ -337,7 +337,7 @@ describe('Space Agent RPC Handlers', () => {
 
       const keys = result.templates.map((template) => template.key);
       expect(keys).toContain('review.custom');
-      expect(keys).toContain('worker.coder');
+      expect(keys).toContain('worker.swe');
       expect(keys).not.toContain('coordinator.default');
     });
   });

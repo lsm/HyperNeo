@@ -841,11 +841,11 @@ describe('Space Export/Import RPC Handlers', () => {
             name: 'Key Shadow Pipe',
             nodes: [
               {
-                agents: [{ templateKey: 'impl', name: 'setup' }],
+                agents: [{ templateKey: 'worker.research', name: 'worker.research' }],
                 name: 'Setup',
               },
               {
-                agents: [{ templateKey: 'worker.coder', name: 'impl' }],
+                agents: [{ templateKey: 'worker.coder', name: 'worker.research' }],
                 name: 'Coding',
                 postApproval: { targetAgent: 'worker.coder', instructions: 'merge the PR' },
               },
@@ -914,7 +914,7 @@ describe('Space Export/Import RPC Handlers', () => {
             nodes: [
               {
                 agents: [
-                  { templateKey: 'team.x', name: 'worker.coder ' },
+                  { templateKey: 'worker.research', name: 'worker.coder ' },
                   { templateKey: 'worker.coder', name: 'coder' },
                 ],
                 name: 'Coding',
@@ -950,11 +950,11 @@ describe('Space Export/Import RPC Handlers', () => {
             name: 'Shadowed Pipe',
             nodes: [
               {
-                agents: [{ templateKey: 'team.other', name: 'impl' }],
+                agents: [{ templateKey: 'worker.research', name: 'worker.research' }],
                 name: 'Setup',
               },
               {
-                agents: [{ templateKey: 'worker.coder', name: 'impl' }],
+                agents: [{ templateKey: 'worker.coder', name: 'worker.research' }],
                 name: 'Coding',
                 postApproval: { targetAgent: 'worker.coder', instructions: 'merge the PR' },
               },

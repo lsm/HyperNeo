@@ -147,7 +147,7 @@ function validateToolsChoice(tools: string[] | null | undefined): string | null 
 function stripRelocationMarkerLabels(
   labels: string[] | null | undefined
 ): string[] | null | undefined {
-  if (labels === undefined || labels === null) return labels;
+  if (labels === undefined || labels === null || !Array.isArray(labels)) return labels;
   return labels.filter(
     (label) => typeof label !== 'string' || !isRelocationMarkerLabel(label.trim().normalize('NFC'))
   );
