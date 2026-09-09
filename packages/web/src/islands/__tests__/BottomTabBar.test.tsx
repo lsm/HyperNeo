@@ -95,7 +95,7 @@ describe('BottomTabBar space active tab', () => {
     expect(selectedTabLabel()).toBe('Tasks');
   });
 
-  it('selects Agents for coordinator chat', () => {
+  it('selects Agents for space manager chat', () => {
     currentSpaceSessionIdSignal.value = 'space:chat:space-1';
 
     render(<BottomTabBar />);
@@ -103,7 +103,7 @@ describe('BottomTabBar space active tab', () => {
     expect(selectedTabLabel()).toBe('Agents');
   });
 
-  it('selects Agents for slug-routed coordinator chat', () => {
+  it('selects Agents for slug-routed space manager chat', () => {
     currentSpaceIdSignal.value = 'space-slug';
     currentSpaceCanonicalIdSignal.value = 'space-1';
     currentSpaceSessionIdSignal.value = 'space:chat:space-1';

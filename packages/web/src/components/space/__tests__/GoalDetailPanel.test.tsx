@@ -412,7 +412,7 @@ describe('GoalDetailPanel', () => {
     expect(notice.textContent).not.toMatch(/coordinator covers/);
   });
 
-  it('shows the unowned state for no-recipient and coordinator fallback', async () => {
+  it('shows the unowned state for no-recipient and space manager fallback', async () => {
     mockFetchGoalOwner.mockImplementation(async (goalId: string) => {
       const owner: SpaceGoalOwnerResolution = { action: 'no_recipient' };
       mockGoalOwners.value = new Map(mockGoalOwners.value).set(goalId, owner);
@@ -576,7 +576,7 @@ describe('GoalDetailPanel', () => {
     expect(screen.getByText('Owner unavailable — refresh to retry.')).toBeTruthy();
   });
 
-  it('shows unavailable fallback when the coordinator is not active', async () => {
+  it('shows unavailable fallback when the space manager is not active', async () => {
     mockAgents.value = [makeAgent({ status: 'paused' })];
     mockFetchGoalOwner.mockImplementation(async (goalId: string) => {
       const owner: SpaceGoalOwnerResolution = {
@@ -715,7 +715,7 @@ describe('GoalDetailPanel', () => {
     render(<GoalDetailPanel spaceId="space-1" goalId="goal-1" />);
     await waitFor(() => expect(mockFetchGoalOwner).toHaveBeenCalledTimes(1));
 
-    mockAgents.value = [makeAgent({ handle: 'coordinator' })];
+    mockAgents.value = [makeAgent({ handle: 'space-manager' })];
 
     await waitFor(() => expect(mockFetchGoalOwner).toHaveBeenCalledTimes(2));
   });
