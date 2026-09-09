@@ -58,12 +58,12 @@ writable — they are derived/managed by the service.
 | scope: create / name / objective / kind / metricDefinitions / parentScopeId / goal link / full `policy` replace | partial (create + goal link; name/objective/kind/metrics/parent not in edit form) | ✅ `.scope.update` | ✅ `update_forge_scope` | — |
 | scope: **deep-merge `policyPatch`** (automation.*, judge model/provider) | ✅ | ✅ | ✅ `update_forge_scope.policy_patch` (this PR) | previously MCP could only full-replace `policy` |
 | scope: `episodeJudgeModel` + **`episodeJudgeProvider`** | ✅ (paired) | ✅ | ✅ `episode_judge_model` / `episode_judge_provider` (provider added this PR) | provider was previously dropped |
-| evidence: manual note / attach task / attach workflow run / metric snapshot | partial | ✅ | ✅ | — |
+| evidence: manual note / attach task / attach workflow run / metric snapshot | partial | manual note + metric snapshot only (attach RPCs removed as dead surface) | ✅ | — |
 | episode: create / status (accepted/dismissed) / title / outcomeSummary | partial | ✅ `.episode.update` | ✅ `update_forge_episode` | — |
 | lesson: status (active/dismissed) / rule / why / appliesTo / confidence | partial | ✅ `.lesson.update` | ✅ `update_forge_lesson` | — |
 | proposal: status (accepted/dismissed) / edit fields / create task | partial | ✅ | ✅ `update_forge_task_proposal` / `create_task_from_forge_proposal` | — |
 | rollup (summary + nextSteps; `progress` accepted but discarded for recurring) | ✅ | ✅ | ✅ `apply_forge_rollup` | — |
-| read: list/get scope, timeline, evidence, review bundle, metric snapshots | ✅ | ✅ | ✅ | — |
+| read: list/get scope, evidence, review bundle, metric snapshots | ✅ | ✅ | ✅ | timeline RPC removed as dead surface; timeline reads via MCP |
 
 `policy_patch` uses the service's `mergeEvolutionPolicy`: top-level keys are
 merged (`null` clears a key), and `automation.*` is **nested-merged**, so an
@@ -83,9 +83,14 @@ Out of scope for this PR; tracked as separate Space tasks:
 3. **Goal UI: "Completed" button + goal delete.** RPC/MCP can mark `completed`;
    the UI has no button. No surface supports goal deletion (archive only).
 4. **RPC-only Forge mutations** (not UI-mutable, so not UI→MCP gaps, but
-   undocumented): generic `evidence.create`, plain `episode.create`,
-   `scope.resolveForGoal`, `task.lessons.select`, episode `timeWindow`/
-   `findings`, lesson/proposal `evidenceEpisodeIds` edits.
+   undocumented): episode `timeWindow`/`findings`, lesson/proposal
+   `evidenceEpisodeIds` edits. (The RPC-only `evidence.create`, plain
+   `episode.create`, `scope.resolveForGoal`, and `task.lessons.select` were
+   removed as dead surface. Only `scope.resolveForGoal` has a close MCP
+   equivalent (`resolve_forge_scope`); the others have none — there is no
+   generic evidence-creation tool, `create_forge_episode` is evidence-bound,
+   and `list_forge_lessons` lacks `task.lessons.select`'s task-relevance
+   ranking and limit.)
 5. **MCP-only Forge surfaces** (MCP ahead of UI): `create_forge_task_proposal`,
    `assign_agent_to_forge_scope`, proposal→task `depends_on`.
 6. **Forge self-nag schedule resync** — `update_forge_scope` runs the shared

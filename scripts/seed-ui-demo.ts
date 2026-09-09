@@ -1304,11 +1304,13 @@ async function seedSpace(ws: WebSocket): Promise<{ spaceId: string; taskIds: str
     scopeId: scope.scope.id,
     summary: 'Migration landed: 95% of raw palette utilities replaced across 605 files.',
   });
-  await rpcCall(ws, 'evolution.evidence.addMetricSnapshot', {
-    scopeId: scope.scope.id,
-    values: { rawPalette: 358, themedComponents: 95 },
-    source: 'manual',
-    note: 'Post-migration baseline.',
+  await rpcCall(ws, 'evolution.metricSnapshot.create', {
+    params: {
+      scopeId: scope.scope.id,
+      values: { rawPalette: 358, themedComponents: 95 },
+      source: 'manual',
+      note: 'Post-migration baseline.',
+    },
   });
 
   await rpcCall(ws, 'agentMemory.write', {
