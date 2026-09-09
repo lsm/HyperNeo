@@ -99,7 +99,7 @@ try {
   console.log(
     `[seed] space.create failed (${err instanceof Error ? err.message : err}), reusing existing`
   );
-  const spaces = await rpcCall(ws, 'space.list', {});
+  const spaces = await rpcCall(ws, 'space.listWithTasks', {});
   space = (Array.isArray(spaces) ? spaces : (spaces?.spaces ?? [])).find(
     (s: { workspacePath?: string }) => s.workspacePath === workspace
   );
