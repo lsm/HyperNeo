@@ -68,6 +68,14 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
     )
     .sort();
 
+  const nodeAgentTemplateKeyEntries = workflow.nodes
+    .flatMap((n) =>
+      n.agents
+        .filter((a) => typeof a.templateKey === 'string' && a.templateKey.trim() !== '')
+        .map((a) => `${n.name}|${a.name}|${(a.templateKey as string).trim()}`)
+    )
+    .sort();
+
   const nodePostApproval = workflow.nodes
     .filter((n) => n.postApproval)
     .map(
@@ -112,6 +120,9 @@ export function buildWorkflowFingerprint(workflow: SpaceWorkflow): WorkflowFinge
       : {}),
     ...(nodeAgentEventInterestsEntries.length > 0
       ? { nodeAgentEventInterests: nodeAgentEventInterestsEntries }
+      : {}),
+    ...(nodeAgentTemplateKeyEntries.length > 0
+      ? { nodeAgentTemplateKeys: nodeAgentTemplateKeyEntries }
       : {}),
     completionAutonomyLevel: workflow.completionAutonomyLevel,
     nodePostApproval,

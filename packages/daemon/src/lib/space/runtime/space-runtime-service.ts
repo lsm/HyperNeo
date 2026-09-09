@@ -132,6 +132,7 @@ export interface SpaceRuntimeServiceConfig {
   dbPath?: string;
   spaceManager: SpaceManager;
   longHorizonAgentRepo?: SpaceLongHorizonAgentRepository;
+  templateRepo?: SpaceAgentTemplateRepository;
   spaceWorkflowManager: SpaceWorkflowManager;
   workflowRunRepo: SpaceWorkflowRunRepository;
   taskRepo: SpaceTaskRepository;
@@ -211,6 +212,7 @@ export class SpaceRuntimeService {
     );
     this.runtime = new SpaceRuntime({
       ...config,
+      templateRepo: config.templateRepo ?? new SpaceAgentTemplateRepository(this.config.db),
       nodeExecutionRepo: this.nodeExecutionRepo,
       workflowEventSubscriptionRepo: this.workflowEventSubscriptionRepo,
       queueHealthMetrics: this.queueHealthMetrics,

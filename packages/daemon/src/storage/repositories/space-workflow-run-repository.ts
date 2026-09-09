@@ -9,6 +9,10 @@ import type {
   WorkflowRunFailureReason,
 } from '@hyperneo/shared';
 import { computeDefinitionVersion } from '../../lib/space/workflows/definition-version.ts';
+import {
+  withRunTemplateSnapshots,
+  type AgentTemplateResolver,
+} from '../../lib/space/workflows/run-template-snapshot.ts';
 import { SpaceWorkflowDefinitionVersionRepository } from './space-workflow-definition-version-repository.ts';
 import type { SQLiteValue } from '../types.ts';
 import { assertValidTransition } from '../../lib/space/runtime/workflow-run-status-machine.ts';
@@ -53,7 +57,8 @@ export class SpaceWorkflowRunRepository {
   }
 
   createPinnedRun(
-    params: CreateWorkflowRunParams & { rawWorkflow: SpaceWorkflow }
+    params: CreateWorkflowRunParams & { rawWorkflow: SpaceWorkflow },
+    resolveTemplate?: AgentTemplateResolver
   ): SpaceWorkflowRun {
     if (params.rawWorkflow.id !== params.workflowId) {
       throw new Error('Pinned workflow id does not match the run workflow id');
@@ -62,7 +67,10 @@ export class SpaceWorkflowRunRepository {
       throw new Error('Pinned workflow space does not match the run space');
     }
 
-    const { versionHash, payload } = computeDefinitionVersion(params.rawWorkflow);
+    const pinnedWorkflow = resolveTemplate
+      ? withRunTemplateSnapshots(params.rawWorkflow, resolveTemplate)
+      : params.rawWorkflow;
+    const { versionHash, payload } = computeDefinitionVersion(pinnedWorkflow);
     const appendVersion = new SpaceWorkflowDefinitionVersionRepository(this.db);
     return this.db.transaction(() => {
       appendVersion.appendVersion({

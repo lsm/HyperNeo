@@ -246,6 +246,40 @@ describe('buildWorkflowFingerprint', () => {
     const fp = buildWorkflowFingerprint(wf);
     expect(fp.completionAutonomyLevel).toBe(5);
   });
+
+  it('includes per-slot templateKey refs in fingerprint (drift detection)', () => {
+    const base = makeWorkflow();
+    const withTemplateKeys: SpaceWorkflow = {
+      ...base,
+      nodes: base.nodes.map((n) =>
+        n.name === 'Coder'
+          ? { ...n, agents: n.agents.map((a) => ({ ...a, templateKey: 'worker.swe' })) }
+          : n
+      ),
+    };
+    expect(
+      (buildWorkflowFingerprint(base) as Record<string, unknown>).nodeAgentTemplateKeys
+    ).toBeUndefined();
+    expect(
+      (buildWorkflowFingerprint(withTemplateKeys) as Record<string, unknown>).nodeAgentTemplateKeys
+    ).toEqual(['Coder|Coder|worker.swe']);
+    expect(computeWorkflowHash(base)).not.toBe(computeWorkflowHash(withTemplateKeys));
+  });
+
+  it('ignores blank templateKey values (no fingerprint churn for empty refs)', () => {
+    const base = makeWorkflow();
+    const blank: SpaceWorkflow = {
+      ...base,
+      nodes: base.nodes.map((n) => ({
+        ...n,
+        agents: n.agents.map((a) => ({ ...a, templateKey: '   ' })),
+      })),
+    };
+    expect(
+      (buildWorkflowFingerprint(blank) as Record<string, unknown>).nodeAgentTemplateKeys
+    ).toBeUndefined();
+    expect(workflowsMatchFingerprint(base, blank)).toBe(true);
+  });
 });
 
 describe('computeWorkflowHash', () => {
@@ -451,6 +485,28 @@ describe('workflowsMatchFingerprint', () => {
     const wf1 = makeWorkflow();
     const wf2 = makeWorkflow({ id: 'wf-different-id', layout: { n1: { x: 42, y: 42 } } });
     expect(workflowsMatchFingerprint(wf1, wf2)).toBe(true);
+  });
+
+  it('distinguishes workflows that differ only in slot templateKey refs', () => {
+    const swe = makeWorkflow({
+      nodes: [
+        {
+          id: 'n1',
+          name: 'Coder',
+          agents: [{ agentId: '', templateKey: 'worker.swe', name: 'Coder' }],
+        },
+        { id: 'n2', name: 'Reviewer', agents: [{ agentId: 'a2', name: 'Reviewer' }] },
+      ],
+    });
+    const qa: SpaceWorkflow = {
+      ...swe,
+      nodes: swe.nodes.map((n) =>
+        n.name === 'Coder'
+          ? { ...n, agents: n.agents.map((a) => ({ ...a, templateKey: 'worker.qa' })) }
+          : n
+      ),
+    };
+    expect(workflowsMatchFingerprint(swe, qa)).toBe(false);
   });
 
   it('returns false when node structure differs', () => {
