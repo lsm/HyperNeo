@@ -85,6 +85,9 @@ describe('ClientEventBridge', () => {
       expect(eventHandlers.has('spaceAgent.created')).toBe(true);
       expect(eventHandlers.has('spaceAgent.updated')).toBe(true);
       expect(eventHandlers.has('spaceAgent.deleted')).toBe(true);
+      expect(eventHandlers.has('spaceAgentV2.created')).toBe(true);
+      expect(eventHandlers.has('spaceAgentV2.updated')).toBe(true);
+      expect(eventHandlers.has('spaceAgentV2.deleted')).toBe(true);
       expect(eventHandlers.has('spaceWorkflow.created')).toBe(true);
       expect(eventHandlers.has('spaceWorkflow.updated')).toBe(true);
       expect(eventHandlers.has('spaceWorkflow.deleted')).toBe(true);
@@ -140,7 +143,7 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.start();
 
-      expect(eventHandlers.size).toBe(27);
+      expect(eventHandlers.size).toBe(30);
     });
   });
 
@@ -151,7 +154,7 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.stop();
 
-      expect(unsubscribers.length).toBe(28);
+      expect(unsubscribers.length).toBe(31);
     });
   });
 
@@ -314,6 +317,26 @@ describe('ClientEventBridge', () => {
       eventHandlers.get('space.artifactCache.updated')![0](data);
 
       expect(published[0].channel).toEqual({ kind: 'global' });
+    });
+
+    it('forwards spaceAgentV2 events to space-scoped channels', () => {
+      const { internalEventBus, gateway, eventHandlers, published } = buildFixture();
+      createClientEventBridge(internalEventBus, gateway).start();
+
+      const agent = { sessionId: 'space:s-1', spaceId: 's-1', agent: { id: 'a-1' } };
+      eventHandlers.get('spaceAgentV2.created')![0](agent);
+      eventHandlers.get('spaceAgentV2.updated')![0](agent);
+      eventHandlers.get('spaceAgentV2.deleted')![0]({
+        sessionId: 'space:s-1',
+        spaceId: 's-1',
+        agentId: 'a-1',
+      });
+
+      expect(published.map((p) => p.channel)).toEqual([
+        { kind: 'space', spaceId: 's-1' },
+        { kind: 'space', spaceId: 's-1' },
+        { kind: 'space', spaceId: 's-1' },
+      ]);
     });
 
     it('forwards spaceAgent.created to space-scoped channel', () => {

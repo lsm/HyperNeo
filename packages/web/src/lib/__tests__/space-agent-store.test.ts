@@ -200,4 +200,56 @@ describe('SpaceAgentStore', () => {
       expect(store.agents.value).toHaveLength(0);
     });
   });
+  describe('connection and staleness', () => {
+    it('retries selection after the hub was unavailable', async () => {
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValueOnce(
+        null as unknown as ReturnType<typeof connectionManager.getHubIfConnected>
+      );
+      await store.selectSpace('space-1');
+      expect(eventHandlers.size).toBe(0);
+
+      listResult = [makeAgent('a')];
+      await store.selectSpace('space-1');
+
+      expect([...eventHandlers.keys()].length).toBe(3);
+      expect(store.agents.value.map((a) => a.id)).toEqual(['a']);
+    });
+
+    it('does not write a stale error into the newly selected space', async () => {
+      let rejectFirst: (err: Error) => void = () => {};
+      hub.request.mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectFirst = reject;
+          })
+      );
+
+      const pending = store.selectSpace('space-1');
+      await store.selectSpace('space-2');
+      rejectFirst(new Error('space-1 blew up'));
+      await pending;
+
+      expect(store.error.value).toBeNull();
+    });
+
+    it('does not clear loading for the new space when a stale request settles', async () => {
+      let resolveFirst: (value: { agents: SpaceAgent[] }) => void = () => {};
+      hub.request.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          })
+      );
+
+      const pending = store.selectSpace('space-1');
+      hub.request.mockImplementationOnce(() => new Promise(() => {}));
+      const second = store.selectSpace('space-2');
+
+      resolveFirst({ agents: [] });
+      await pending;
+
+      expect(store.loading.value).toBe(true);
+      void second;
+    });
+  });
 });

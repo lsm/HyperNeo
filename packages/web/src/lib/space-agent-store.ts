@@ -18,6 +18,7 @@ export class SpaceAgentStore {
   readonly spaceId = signal<string | null>(null);
 
   private cleanups: Array<() => void> = [];
+  private subscribedSpaceId: string | null = null;
 
   private hub() {
     const hub = connectionManager.getHubIfConnected();
@@ -26,7 +27,7 @@ export class SpaceAgentStore {
   }
 
   async selectSpace(spaceId: string): Promise<void> {
-    if (this.spaceId.value === spaceId) return;
+    if (this.spaceId.value === spaceId && this.subscribedSpaceId === spaceId) return;
     this.teardown();
     this.spaceId.value = spaceId;
     this.agents.value = [];
@@ -46,9 +47,10 @@ export class SpaceAgentStore {
       if (this.spaceId.value !== spaceId) return;
       this.agents.value = sortAgents(agents);
     } catch (err) {
+      if (this.spaceId.value !== spaceId) return;
       this.error.value = err instanceof Error ? err.message : 'Failed to load agents';
     } finally {
-      this.loading.value = false;
+      if (this.spaceId.value === spaceId) this.loading.value = false;
     }
   }
 
@@ -113,11 +115,13 @@ export class SpaceAgentStore {
         if (event.spaceId === spaceId) this.drop(event.agentId);
       })
     );
+    this.subscribedSpaceId = spaceId;
   }
 
   teardown(): void {
     for (const cleanup of this.cleanups) cleanup();
     this.cleanups = [];
+    this.subscribedSpaceId = null;
     this.spaceId.value = null;
   }
 }
