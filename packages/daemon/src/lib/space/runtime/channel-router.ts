@@ -25,9 +25,7 @@ import {
   MissingWorkflowAgentError,
   PermanentSpawnError,
   findMissingNodeAgentReferences,
-  formatEmptyTemplateInstructionsReference,
-  formatMissingAgentReference,
-  formatMissingTemplateReference,
+  formatMissingNodeAgentReference,
   validateExecutionAgainstWorkflow,
 } from './workflow-node-execution-validation.ts';
 
@@ -168,31 +166,14 @@ export class ChannelRouter {
         : { templateResolves, templateInstructions }
     );
     if (missingAgent.length > 0) {
-      const first = missingAgent[0];
       throw new MissingWorkflowAgentError(
-        first.templateKey
-          ? first.templateReason === 'empty-instructions'
-            ? formatEmptyTemplateInstructionsReference({
-                runId,
-                nodeLabel: node.name,
-                workflowName: workflow.name,
-                agentName: first.agentName,
-                templateKey: first.templateKey,
-              })
-            : formatMissingTemplateReference({
-                runId,
-                nodeLabel: node.name,
-                workflowName: workflow.name,
-                agentName: first.agentName,
-                templateKey: first.templateKey,
-              })
-          : formatMissingAgentReference({
-              runId,
-              nodeLabel: node.name,
-              agentName: first.agentName,
-              agentId: first.agentId,
-            }),
-        first
+        formatMissingNodeAgentReference({
+          reference: missingAgent[0],
+          runId,
+          nodeLabel: node.name,
+          workflowName: workflow.name,
+        }),
+        missingAgent[0]
       );
     }
 

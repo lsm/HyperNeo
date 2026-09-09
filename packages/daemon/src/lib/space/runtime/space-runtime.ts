@@ -148,9 +148,8 @@ import type { TaskAgentManager } from './task-agent-manager.ts';
 import { WorkflowExecutor } from './workflow-executor.ts';
 import {
   findMissingNodeAgentReferences,
-  formatEmptyTemplateInstructionsReference,
   formatMissingAgentReference,
-  formatMissingTemplateReference,
+  formatMissingNodeAgentReference,
   isMissingWorkflowAgentError,
   isPermanentSpawnError,
   isSpawnSupersededError,
@@ -892,6 +891,35 @@ export class SpaceRuntime {
 
   private slotAgentId(slot: { agentId: string; templateKey?: string | null }): string | null {
     return slot.templateKey?.trim() ? null : slot.agentId || null;
+  }
+
+  private assertNodeSlotsResolvable(
+    node: WorkflowNode,
+    run: Pick<SpaceWorkflowRun, 'id' | 'spaceId'>,
+    workflow: Pick<SpaceWorkflow, 'name'>,
+    options?: { slotNames?: ReadonlySet<string> }
+  ): void {
+    const missing = findMissingNodeAgentReferences(
+      node,
+      (id) => this.agentRecordExists(id, run.spaceId),
+      {
+        ...(options?.slotNames ? { slotNames: options.slotNames } : {}),
+        templateResolves: (key) => this.config.spaceWorkflowManager.agentTemplateResolves(key),
+        templateInstructions: (key) =>
+          this.config.spaceWorkflowManager.agentTemplateInstructions(key),
+      }
+    );
+    if (missing.length === 0) return;
+    const first = missing[0];
+    throw new MissingWorkflowAgentError(
+      formatMissingNodeAgentReference({
+        reference: first,
+        runId: run.id,
+        nodeLabel: node.name,
+        workflowName: workflow.name,
+      }),
+      first
+    );
   }
 
   registerRunInterests(workflowRunId: string, taskId: string, nodes: WorkflowNode[]): void {
@@ -3934,6 +3962,7 @@ export class SpaceRuntime {
       await this.safeOnTaskUpdated(spaceId, canonicalTask);
 
       startAgents = resolveNodeAgents(startNode);
+      this.assertNodeSlotsResolvable(startNode, run, workflow);
       for (const agentEntry of startAgents) {
         this.createNodeExecutionOrIgnore({
           workflowRunId: run.id,
@@ -4058,6 +4087,7 @@ export class SpaceRuntime {
             `Start node "${workflow.startNodeId}" not found in workflow "${workflow.id}"`
           );
         }
+        this.assertNodeSlotsResolvable(startNode, run, workflow);
         for (const agentEntry of resolveNodeAgents(startNode)) {
           this.createNodeExecutionOrIgnore({
             workflowRunId: run.id,
@@ -4095,6 +4125,12 @@ export class SpaceRuntime {
               `Subscribed slot ${options.workflowNodeId}/${options.agentName ?? ''} is not recoverable`
             );
           }
+          this.assertNodeSlotsResolvable(
+            slotNode,
+            run,
+            workflow,
+            options.agentName ? { slotNames: new Set([options.agentName]) } : undefined
+          );
           this.createNodeExecutionOrIgnore({
             workflowRunId: run.id,
             workflowNodeId: slotNode.id,
@@ -5151,43 +5187,7 @@ export class SpaceRuntime {
         const targetNode = nodeByName.get(targetName);
         if (!targetNode || targetNode.id === sourceNode.id) continue;
 
-        const missing = findMissingNodeAgentReferences(
-          targetNode,
-          (id) => this.agentRecordExists(id, run.spaceId),
-          {
-            templateResolves: (key) => this.config.spaceWorkflowManager.agentTemplateResolves(key),
-            templateInstructions: (key) =>
-              this.config.spaceWorkflowManager.agentTemplateInstructions(key),
-          }
-        );
-        if (missing.length > 0) {
-          const first = missing[0];
-          throw new MissingWorkflowAgentError(
-            first.templateKey
-              ? first.templateReason === 'empty-instructions'
-                ? formatEmptyTemplateInstructionsReference({
-                    runId: run.id,
-                    nodeLabel: targetNode.name,
-                    workflowName: workflow.name,
-                    agentName: first.agentName,
-                    templateKey: first.templateKey,
-                  })
-                : formatMissingTemplateReference({
-                    runId: run.id,
-                    nodeLabel: targetNode.name,
-                    workflowName: workflow.name,
-                    agentName: first.agentName,
-                    templateKey: first.templateKey,
-                  })
-              : formatMissingAgentReference({
-                  runId: run.id,
-                  nodeLabel: targetNode.name,
-                  agentName: first.agentName,
-                  agentId: first.agentId,
-                }),
-            first
-          );
-        }
+        this.assertNodeSlotsResolvable(targetNode, run, workflow);
 
         let activatedForTarget = false;
         for (const agentEntry of resolveNodeAgents(targetNode)) {

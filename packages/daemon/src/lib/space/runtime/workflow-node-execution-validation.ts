@@ -8,6 +8,7 @@ import type {
 } from '@hyperneo/shared';
 import { isRateOrUsageLimited, resolveNodeAgents } from '@hyperneo/shared';
 import { migratedAgentTemplateKey } from '../agents/agent-template-synthesis.ts';
+import { resolveSlotCustomPrompt } from './spawn-slot-resolution.ts';
 
 export type ExecutionWorkflowValidationResult =
   | { valid: true }
@@ -107,6 +108,8 @@ export function findMissingNodeAgentReferences(
       const resolves = templateResolves ? templateResolves(templateKey) : instructions != null;
       if (resolves) {
         if (instructions == null || instructions.trim()) continue;
+        if (agent.replaceAgentPrompt === true) continue;
+        if (resolveSlotCustomPrompt(agent)?.trim()) continue;
         missing.push({
           agentName: agent.name,
           agentId: agent.agentId,
@@ -193,6 +196,26 @@ export function formatEmptyTemplateInstructionsReference(params: {
     `role prompt. Edit the template to add instructions, or rebind the slot's templateKey on ` +
     `the workflow and start a new run.`
   );
+}
+
+export function formatMissingNodeAgentReference(params: {
+  reference: MissingNodeAgentReference;
+  runId: string;
+  nodeLabel: string;
+  workflowName: string;
+}): string {
+  const { reference, runId, nodeLabel, workflowName } = params;
+  const common = { runId, nodeLabel, workflowName, agentName: reference.agentName };
+  if (!reference.templateKey) {
+    return formatMissingAgentReference({ ...common, agentId: reference.agentId });
+  }
+  if (reference.templateReason === 'empty-instructions') {
+    return formatEmptyTemplateInstructionsReference({
+      ...common,
+      templateKey: reference.templateKey,
+    });
+  }
+  return formatMissingTemplateReference({ ...common, templateKey: reference.templateKey });
 }
 
 export function validateExecutionAgainstWorkflow(

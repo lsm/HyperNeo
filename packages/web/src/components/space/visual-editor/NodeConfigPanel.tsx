@@ -24,10 +24,11 @@ function templateBindingWarning(
   templateKey: string | null | undefined,
   agentTemplates: SpaceLongHorizonAgentTemplate[]
 ): string | null {
-  if (!templateKey) return null;
-  const template = agentTemplates.find((t) => t.key === templateKey);
+  const key = templateKey?.trim();
+  if (!key) return null;
+  const template = agentTemplates.find((t) => t.key === key);
   if (!template) {
-    return `Unknown template key "${templateKey}" — pick a template for this slot`;
+    return `Unknown template key "${key}" — pick a template for this slot`;
   }
   if (!template.instructions.trim()) {
     return `Template "${template.displayName}" has empty instructions — this slot would spawn without a role prompt`;

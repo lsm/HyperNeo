@@ -1750,5 +1750,30 @@ describe('NodeConfigPanel', () => {
       );
       expect(queryByTestId('agent-template-warning')).toBeNull();
     });
+
+    it('resolves a whitespace-padded templateKey instead of warning unknown', () => {
+      const { queryByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            step: makeStep({
+              agents: [{ agentId: '', templateKey: '  planner-v1  ', name: 'planner' }],
+            }),
+          })}
+        />
+      );
+      expect(queryByTestId('agent-template-warning')).toBeNull();
+    });
+
+    it('names the trimmed key when a padded templateKey resolves nowhere', () => {
+      const { getByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            step: makeStep({ agentId: '', templateKey: '  ghost.preview  ' }),
+          })}
+        />
+      );
+      const warning = getByTestId('agent-template-warning');
+      expect(warning.textContent).toContain('Unknown template key "ghost.preview"');
+    });
   });
 });

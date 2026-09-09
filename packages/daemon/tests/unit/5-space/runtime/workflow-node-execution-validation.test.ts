@@ -5,6 +5,7 @@ import {
   findMissingNodeAgentReferences,
   formatEmptyTemplateInstructionsReference,
   formatMissingAgentReference,
+  formatMissingNodeAgentReference,
   formatMissingTemplateReference,
   isMissingWorkflowAgentError,
   MissingWorkflowAgentError,
@@ -13,7 +14,14 @@ import {
 } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 
 function makeNode(
-  agents: Array<{ agentId?: string | null; templateKey?: string; name: string }>
+  agents: Array<{
+    agentId?: string | null;
+    templateKey?: string;
+    name: string;
+    customPrompt?: { value: string };
+    replaceAgentPrompt?: boolean;
+    systemPrompt?: { value: string };
+  }>
 ): WorkflowNode {
   return {
     id: 'node-1',
@@ -395,6 +403,127 @@ describe('findMissingNodeAgentReferences empty-instruction audit', () => {
         templateReason: 'empty-instructions',
       },
     ]);
+  });
+
+  test('keeps a slot whose customPrompt supplies the effective prompt in append mode', () => {
+    const node = makeNode([
+      {
+        agentId: '',
+        templateKey: 'migrated.agent.gone',
+        name: 'orphan',
+        customPrompt: { value: 'You handle orphaned review work.' },
+      },
+    ]);
+    expect(
+      findMissingNodeAgentReferences(node, () => true, {
+        templateResolves: () => true,
+        templateInstructions: () => '',
+      })
+    ).toEqual([]);
+  });
+
+  test('keeps a replace-mode slot regardless of template instructions', () => {
+    const node = makeNode([
+      {
+        agentId: '',
+        templateKey: 'migrated.agent.gone',
+        name: 'orphan',
+        replaceAgentPrompt: true,
+      },
+    ]);
+    expect(
+      findMissingNodeAgentReferences(node, () => true, {
+        templateResolves: () => true,
+        templateInstructions: () => '',
+      })
+    ).toEqual([]);
+  });
+
+  test('keeps a slot whose legacy systemPrompt override supplies the effective prompt', () => {
+    const node = makeNode([
+      {
+        agentId: '',
+        templateKey: 'migrated.agent.gone',
+        name: 'orphan',
+        systemPrompt: { value: 'Legacy slot instructions.' },
+      },
+    ]);
+    expect(
+      findMissingNodeAgentReferences(node, () => true, {
+        templateResolves: () => true,
+        templateInstructions: () => '',
+      })
+    ).toEqual([]);
+  });
+
+  test('flags a slot whose customPrompt is whitespace-only alongside empty instructions', () => {
+    const node = makeNode([
+      {
+        agentId: '',
+        templateKey: 'migrated.agent.gone',
+        name: 'orphan',
+        customPrompt: { value: '   ' },
+      },
+    ]);
+    expect(
+      findMissingNodeAgentReferences(node, () => true, {
+        templateResolves: () => true,
+        templateInstructions: () => '',
+      })
+    ).toEqual([
+      {
+        agentName: 'orphan',
+        agentId: '',
+        templateKey: 'migrated.agent.gone',
+        templateReason: 'empty-instructions',
+      },
+    ]);
+  });
+});
+
+describe('formatMissingNodeAgentReference', () => {
+  test('formats the empty-instructions arm for a degraded template binding', () => {
+    const message = formatMissingNodeAgentReference({
+      reference: {
+        agentName: 'orphan',
+        agentId: '',
+        templateKey: 'migrated.agent.agent-9',
+        templateReason: 'empty-instructions',
+      },
+      runId: 'run-777',
+      nodeLabel: 'Gate',
+      workflowName: 'Migrated Flow',
+    });
+    expect(message).toContain('empty instructions');
+    expect(message).toContain('migrated.agent.agent-9');
+    expect(message).toContain('run-777');
+  });
+
+  test('formats the unknown-template arm for an unresolvable key', () => {
+    const message = formatMissingNodeAgentReference({
+      reference: {
+        agentName: 'ghost',
+        agentId: '',
+        templateKey: 'ghost.preview',
+        templateReason: 'unknown-template',
+      },
+      runId: 'run-778',
+      nodeLabel: 'Gate',
+      workflowName: 'Drift Flow',
+    });
+    expect(message).toContain('resolves to neither a code built-in nor a user template');
+    expect(message).toContain('ghost.preview');
+  });
+
+  test('formats the missing-agent arm for a stale agent id', () => {
+    const message = formatMissingNodeAgentReference({
+      reference: { agentName: 'reviewer', agentId: 'gone' },
+      runId: 'run-779',
+      nodeLabel: 'Gate',
+      workflowName: 'Agent Flow',
+    });
+    expect(message).toContain('no longer exists in this Space');
+    expect(message).toContain('gone');
   });
 });
 
