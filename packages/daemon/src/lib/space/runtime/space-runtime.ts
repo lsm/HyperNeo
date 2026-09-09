@@ -148,6 +148,7 @@ import type { TaskAgentManager } from './task-agent-manager.ts';
 import { WorkflowExecutor } from './workflow-executor.ts';
 import {
   findMissingNodeAgentReferences,
+  formatEmptyTemplateInstructionsReference,
   formatMissingAgentReference,
   formatMissingTemplateReference,
   isMissingWorkflowAgentError,
@@ -5155,19 +5156,29 @@ export class SpaceRuntime {
           (id) => this.agentRecordExists(id, run.spaceId),
           {
             templateResolves: (key) => this.config.spaceWorkflowManager.agentTemplateResolves(key),
+            templateInstructions: (key) =>
+              this.config.spaceWorkflowManager.agentTemplateInstructions(key),
           }
         );
         if (missing.length > 0) {
           const first = missing[0];
           throw new MissingWorkflowAgentError(
             first.templateKey
-              ? formatMissingTemplateReference({
-                  runId: run.id,
-                  nodeLabel: targetNode.name,
-                  workflowName: workflow.name,
-                  agentName: first.agentName,
-                  templateKey: first.templateKey,
-                })
+              ? first.templateReason === 'empty-instructions'
+                ? formatEmptyTemplateInstructionsReference({
+                    runId: run.id,
+                    nodeLabel: targetNode.name,
+                    workflowName: workflow.name,
+                    agentName: first.agentName,
+                    templateKey: first.templateKey,
+                  })
+                : formatMissingTemplateReference({
+                    runId: run.id,
+                    nodeLabel: targetNode.name,
+                    workflowName: workflow.name,
+                    agentName: first.agentName,
+                    templateKey: first.templateKey,
+                  })
               : formatMissingAgentReference({
                   runId: run.id,
                   nodeLabel: targetNode.name,

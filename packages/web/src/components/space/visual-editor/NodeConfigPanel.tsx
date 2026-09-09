@@ -20,6 +20,21 @@ function isLongHorizonTemplate(template: SpaceLongHorizonAgentTemplate): boolean
   return template.labels?.includes('long-horizon') ?? false;
 }
 
+function templateBindingWarning(
+  templateKey: string | null | undefined,
+  agentTemplates: SpaceLongHorizonAgentTemplate[]
+): string | null {
+  if (!templateKey) return null;
+  const template = agentTemplates.find((t) => t.key === templateKey);
+  if (!template) {
+    return `Unknown template key "${templateKey}" — pick a template for this slot`;
+  }
+  if (!template.instructions.trim()) {
+    return `Template "${template.displayName}" has empty instructions — this slot would spawn without a role prompt`;
+  }
+  return null;
+}
+
 const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }> = [
   { value: '', label: 'Inherit' },
   { value: 'off', label: 'Off' },
@@ -428,6 +443,14 @@ function AgentsSection({
             );
           })()}
         </select>
+        {(() => {
+          const warning = templateBindingWarning(selectedSingleTemplateKey, agentTemplates);
+          return warning ? (
+            <p data-testid="agent-template-warning" class="text-[11px] text-warning">
+              {warning}
+            </p>
+          ) : null;
+        })()}
         <div class="space-y-1">
           <label class="text-xs font-medium text-fg-muted">
             LLM Model <span class="font-normal text-fg-muted">(optional override)</span>
@@ -609,9 +632,21 @@ function AgentsSection({
                     );
                   })()}
                 </select>
-                <p class="text-[11px] text-fg-muted">
-                  {templateInfo?.displayName ?? agentInfo?.displayName ?? selectedSlotRef}
-                </p>
+                {(() => {
+                  const warning = templateBindingWarning(sa.templateKey, agentTemplates);
+                  if (warning) {
+                    return (
+                      <p data-testid="agent-template-warning" class="text-[11px] text-warning">
+                        {warning}
+                      </p>
+                    );
+                  }
+                  return (
+                    <p class="text-[11px] text-fg-muted">
+                      {templateInfo?.displayName ?? agentInfo?.displayName ?? selectedSlotRef}
+                    </p>
+                  );
+                })()}
               </div>
               <div class="space-y-1">
                 <label class="text-[11px] font-medium uppercase tracking-[0.16em] text-fg-muted">

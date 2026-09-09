@@ -173,10 +173,16 @@ export class SpaceWorkflowManager {
   }
 
   agentTemplateResolves(key: string): boolean {
+    return this.agentTemplateInstructions(key) !== null;
+  }
+
+  agentTemplateInstructions(key: string): string | null {
     const trimmed = key.trim();
-    if (!trimmed) return false;
-    if (getLongHorizonAgentTemplate(trimmed)) return true;
-    return this.templateRepo !== undefined && this.templateRepo.getByKey(trimmed) !== null;
+    if (!trimmed) return null;
+    const builtIn = getLongHorizonAgentTemplate(trimmed);
+    if (builtIn) return builtIn.instructions;
+    const template = this.templateRepo?.getByKey(trimmed);
+    return template ? template.instructions : null;
   }
 
   getWorkflowByHandle(spaceId: string, handle: string): SpaceWorkflow | null {

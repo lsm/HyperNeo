@@ -110,7 +110,7 @@ function makeTemplate(
     handle,
     displayName,
     description: '',
-    instructions: '',
+    instructions: `You are ${displayName}. Carry out the tasks assigned to you.`,
     suggestedAutonomyLevel: 3,
     suggestedEventSubscriptions: [],
     reminderDefaults: [],
@@ -1654,6 +1654,101 @@ describe('NodeConfigPanel', () => {
           ],
         })
       );
+    });
+  });
+
+  describe('template binding warnings', () => {
+    it('renders an unknown-key warning for a single-agent slot bound to a key with no template', () => {
+      const { getByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({ step: makeStep({ agentId: '', templateKey: 'ghost.preview' }) })}
+        />
+      );
+      const warning = getByTestId('agent-template-warning');
+      expect(warning.textContent).toContain('Unknown template key "ghost.preview"');
+    });
+
+    it('renders an empty-instructions warning for a single-agent slot bound to a blank template', () => {
+      const templates = [
+        { ...makeTemplate('orphan-v1', 'Orphan', 'orphan', ['workflow-worker']), instructions: '' },
+      ];
+      const { getByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            step: makeStep({ agentId: '', templateKey: 'orphan-v1' }),
+            agentTemplates: templates,
+          })}
+        />
+      );
+      const warning = getByTestId('agent-template-warning');
+      expect(warning.textContent).toContain('Orphan');
+      expect(warning.textContent).toContain('empty instructions');
+    });
+
+    it('renders no warning for a single-agent slot bound to a healthy template', () => {
+      const { queryByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({ step: makeStep({ agentId: '', templateKey: 'planner-v1' }) })}
+        />
+      );
+      expect(queryByTestId('agent-template-warning')).toBeNull();
+    });
+
+    it('renders an unknown-key warning for a multi-agent slot bound to a key with no template', () => {
+      const { getAllByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            step: makeStep({
+              agents: [
+                { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+                { agentId: '', templateKey: 'ghost.preview', name: 'ghost' },
+              ],
+            }),
+          })}
+        />
+      );
+      const warnings = getAllByTestId('agent-template-warning');
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0].textContent).toContain('Unknown template key "ghost.preview"');
+    });
+
+    it('renders an empty-instructions warning for a multi-agent slot bound to a blank template', () => {
+      const templates = [
+        ...defaultAgentTemplates,
+        { ...makeTemplate('migrated.agent.gone', 'Gone', 'gone'), instructions: '' },
+      ];
+      const { getAllByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            step: makeStep({
+              agents: [
+                { agentId: '', templateKey: 'coder-v1', name: 'coder' },
+                { agentId: '', templateKey: 'migrated.agent.gone', name: 'orphan' },
+              ],
+            }),
+            agentTemplates: templates,
+          })}
+        />
+      );
+      const warnings = getAllByTestId('agent-template-warning');
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0].textContent).toContain('empty instructions');
+    });
+
+    it('renders no warnings when every multi-agent slot binds a healthy template', () => {
+      const { queryByTestId } = render(
+        <NodeConfigPanel
+          {...makeProps({
+            step: makeStep({
+              agents: [
+                { agentId: '', templateKey: 'planner-v1', name: 'planner' },
+                { agentId: '', templateKey: 'coder-v1', name: 'coder' },
+              ],
+            }),
+          })}
+        />
+      );
+      expect(queryByTestId('agent-template-warning')).toBeNull();
     });
   });
 });

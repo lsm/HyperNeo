@@ -25,6 +25,7 @@ import {
   MissingWorkflowAgentError,
   PermanentSpawnError,
   findMissingNodeAgentReferences,
+  formatEmptyTemplateInstructionsReference,
   formatMissingAgentReference,
   formatMissingTemplateReference,
   validateExecutionAgainstWorkflow,
@@ -157,24 +158,34 @@ export class ChannelRouter {
     const targetAgentName = options?.targetAgentName;
     const templateResolves = (key: string): boolean =>
       this.config.workflowManager.agentTemplateResolves(key);
+    const templateInstructions = (key: string): string | null =>
+      this.config.workflowManager.agentTemplateInstructions(key);
     const missingAgent = findMissingNodeAgentReferences(
       node,
       (id) => this.config.agentExists(id),
       targetAgentName
-        ? { slotNames: new Set([targetAgentName]), templateResolves }
-        : { templateResolves }
+        ? { slotNames: new Set([targetAgentName]), templateResolves, templateInstructions }
+        : { templateResolves, templateInstructions }
     );
     if (missingAgent.length > 0) {
       const first = missingAgent[0];
       throw new MissingWorkflowAgentError(
         first.templateKey
-          ? formatMissingTemplateReference({
-              runId,
-              nodeLabel: node.name,
-              workflowName: workflow.name,
-              agentName: first.agentName,
-              templateKey: first.templateKey,
-            })
+          ? first.templateReason === 'empty-instructions'
+            ? formatEmptyTemplateInstructionsReference({
+                runId,
+                nodeLabel: node.name,
+                workflowName: workflow.name,
+                agentName: first.agentName,
+                templateKey: first.templateKey,
+              })
+            : formatMissingTemplateReference({
+                runId,
+                nodeLabel: node.name,
+                workflowName: workflow.name,
+                agentName: first.agentName,
+                templateKey: first.templateKey,
+              })
           : formatMissingAgentReference({
               runId,
               nodeLabel: node.name,

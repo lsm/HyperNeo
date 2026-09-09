@@ -3,6 +3,7 @@ import type { WorkflowNode } from '@hyperneo/shared';
 import type { NodeExecution, SpaceWorkflow } from '@hyperneo/shared';
 import {
   findMissingNodeAgentReferences,
+  formatEmptyTemplateInstructionsReference,
   formatMissingAgentReference,
   formatMissingTemplateReference,
   isMissingWorkflowAgentError,
@@ -219,7 +220,14 @@ describe('findMissingNodeAgentReferences template drift', () => {
     const node = makeNode([{ agentId: '', templateKey: 'ghost.preview', name: 'ghost' }]);
     expect(
       findMissingNodeAgentReferences(node, () => true, { templateResolves: () => false })
-    ).toEqual([{ agentName: 'ghost', agentId: '', templateKey: 'ghost.preview' }]);
+    ).toEqual([
+      {
+        agentName: 'ghost',
+        agentId: '',
+        templateKey: 'ghost.preview',
+        templateReason: 'unknown-template',
+      },
+    ]);
   });
 
   test('skips a templateKey that resolves', () => {
@@ -249,7 +257,14 @@ describe('findMissingNodeAgentReferences template drift', () => {
       findMissingNodeAgentReferences(node, (id) => id !== 'gone', {
         templateResolves: () => false,
       })
-    ).toEqual([{ agentName: 'ghost', agentId: 'gone', templateKey: 'ghost.preview' }]);
+    ).toEqual([
+      {
+        agentName: 'ghost',
+        agentId: 'gone',
+        templateKey: 'ghost.preview',
+        templateReason: 'unknown-template',
+      },
+    ]);
   });
 
   test('honors slotNames alongside template drift', () => {
@@ -263,6 +278,123 @@ describe('findMissingNodeAgentReferences template drift', () => {
         templateResolves: () => false,
       })
     ).toEqual([]);
+  });
+});
+
+describe('findMissingNodeAgentReferences empty-instruction audit', () => {
+  test('flags a templateKey that resolves to a template with empty instructions', () => {
+    const node = makeNode([{ agentId: '', templateKey: 'migrated.agent.gone', name: 'orphan' }]);
+    expect(
+      findMissingNodeAgentReferences(node, () => true, {
+        templateResolves: () => true,
+        templateInstructions: () => '',
+      })
+    ).toEqual([
+      {
+        agentName: 'orphan',
+        agentId: '',
+        templateKey: 'migrated.agent.gone',
+        templateReason: 'empty-instructions',
+      },
+    ]);
+  });
+
+  test('flags whitespace-only instructions as empty', () => {
+    const node = makeNode([{ agentId: '', templateKey: 'blank.role', name: 'blank' }]);
+    expect(
+      findMissingNodeAgentReferences(node, () => true, {
+        templateResolves: () => true,
+        templateInstructions: () => '   ',
+      })
+    ).toEqual([
+      {
+        agentName: 'blank',
+        agentId: '',
+        templateKey: 'blank.role',
+        templateReason: 'empty-instructions',
+      },
+    ]);
+  });
+
+  test('skips a templateKey whose instructions are non-empty', () => {
+    const node = makeNode([{ agentId: '', templateKey: 'worker.swe', name: 'coder' }]);
+    expect(
+      findMissingNodeAgentReferences(node, () => false, {
+        templateResolves: () => true,
+        templateInstructions: () => 'You are the SWE worker.',
+      })
+    ).toEqual([]);
+  });
+
+  test('does not rescue an empty-instruction template via a live agentId (the template wins at spawn)', () => {
+    const node = makeNode([
+      { agentId: 'live', templateKey: 'migrated.agent.gone', name: 'orphan' },
+    ]);
+    expect(
+      findMissingNodeAgentReferences(node, () => true, {
+        templateResolves: () => true,
+        templateInstructions: () => '',
+      })
+    ).toEqual([
+      {
+        agentName: 'orphan',
+        agentId: 'live',
+        templateKey: 'migrated.agent.gone',
+        templateReason: 'empty-instructions',
+      },
+    ]);
+  });
+
+  test('reports unknown-template (not empty-instructions) when templateInstructions resolves nothing', () => {
+    const node = makeNode([{ agentId: '', templateKey: 'ghost.preview', name: 'ghost' }]);
+    expect(
+      findMissingNodeAgentReferences(node, () => true, {
+        templateInstructions: () => null,
+      })
+    ).toEqual([
+      {
+        agentName: 'ghost',
+        agentId: '',
+        templateKey: 'ghost.preview',
+        templateReason: 'unknown-template',
+      },
+    ]);
+  });
+
+  test('audits instructions with templateInstructions alone, no templateResolves predicate', () => {
+    const node = makeNode([{ agentId: '', templateKey: 'migrated.agent.gone', name: 'orphan' }]);
+    expect(
+      findMissingNodeAgentReferences(node, () => true, {
+        templateInstructions: (key) => (key === 'migrated.agent.gone' ? '' : null),
+      })
+    ).toEqual([
+      {
+        agentName: 'orphan',
+        agentId: '',
+        templateKey: 'migrated.agent.gone',
+        templateReason: 'empty-instructions',
+      },
+    ]);
+  });
+
+  test('reports only the degraded slot among a mixed set', () => {
+    const node = makeNode([
+      { agentId: '', templateKey: 'worker.swe', name: 'coder' },
+      { agentId: '', templateKey: 'migrated.agent.gone', name: 'orphan' },
+    ]);
+    expect(
+      findMissingNodeAgentReferences(node, () => true, {
+        templateResolves: () => true,
+        templateInstructions: (key) => (key === 'worker.swe' ? 'You are the SWE worker.' : ''),
+      })
+    ).toEqual([
+      {
+        agentName: 'orphan',
+        agentId: '',
+        templateKey: 'migrated.agent.gone',
+        templateReason: 'empty-instructions',
+      },
+    ]);
   });
 });
 
@@ -280,5 +412,23 @@ describe('formatMissingTemplateReference', () => {
     expect(message).toContain('run-321');
     expect(message).toContain('Preview');
     expect(message).toContain('reviewer');
+  });
+});
+
+describe('formatEmptyTemplateInstructionsReference', () => {
+  test('names the template key, workflow, run, node, slot, and the empty-instructions cause', () => {
+    const message = formatEmptyTemplateInstructionsReference({
+      runId: 'run-655',
+      nodeLabel: 'Orphan Gate',
+      workflowName: 'Migrated Flow',
+      agentName: 'reviewer',
+      templateKey: 'migrated.agent.agent-9',
+    });
+    expect(message).toContain('migrated.agent.agent-9');
+    expect(message).toContain('Migrated Flow');
+    expect(message).toContain('run-655');
+    expect(message).toContain('Orphan Gate');
+    expect(message).toContain('reviewer');
+    expect(message).toContain('empty instructions');
   });
 });

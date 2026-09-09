@@ -70,10 +70,13 @@ export function isSpawnSupersededError(err: unknown): err is SpawnSupersededErro
   return err instanceof SpawnSupersededError;
 }
 
+export type MissingTemplateReason = 'unknown-template' | 'empty-instructions';
+
 export interface MissingNodeAgentReference {
   agentName: string;
   agentId: string;
   templateKey?: string;
+  templateReason?: MissingTemplateReason;
 }
 
 export function findMissingNodeAgentReferences(
@@ -82,6 +85,7 @@ export function findMissingNodeAgentReferences(
   options?: {
     slotNames?: ReadonlySet<string>;
     templateResolves?: (key: string) => boolean;
+    templateInstructions?: (key: string) => string | null;
   }
 ): MissingNodeAgentReference[] {
   let agents: ReturnType<typeof resolveNodeAgents>;
@@ -92,14 +96,32 @@ export function findMissingNodeAgentReferences(
   }
   const slotFilter = options?.slotNames;
   const templateResolves = options?.templateResolves;
+  const templateInstructions = options?.templateInstructions;
   const missing: MissingNodeAgentReference[] = [];
   for (const agent of agents) {
     if (slotFilter && !slotFilter.has(agent.name)) continue;
     const templateKey = agent.templateKey?.trim() ?? '';
     if (templateKey) {
-      if (!templateResolves || templateResolves(templateKey)) continue;
+      if (!templateResolves && !templateInstructions) continue;
+      const instructions = templateInstructions ? templateInstructions(templateKey) : null;
+      const resolves = templateResolves ? templateResolves(templateKey) : instructions != null;
+      if (resolves) {
+        if (instructions == null || instructions.trim()) continue;
+        missing.push({
+          agentName: agent.name,
+          agentId: agent.agentId,
+          templateKey,
+          templateReason: 'empty-instructions',
+        });
+        continue;
+      }
       if (agent.agentId && agentExists(agent.agentId)) continue;
-      missing.push({ agentName: agent.name, agentId: agent.agentId, templateKey });
+      missing.push({
+        agentName: agent.name,
+        agentId: agent.agentId,
+        templateKey,
+        templateReason: 'unknown-template',
+      });
       continue;
     }
     if (agent.agentId && !agentExists(agent.agentId)) {
@@ -153,6 +175,23 @@ export function formatMissingTemplateReference(params: {
     `template in this Space. Recreate a template with that key, or correct the slot's ` +
     `templateKey on the workflow and start a new run — this run resolves a workflow ` +
     `definition pinned at creation time.`
+  );
+}
+
+export function formatEmptyTemplateInstructionsReference(params: {
+  runId: string;
+  nodeLabel: string;
+  workflowName: string;
+  agentName: string;
+  templateKey: string;
+}): string {
+  return (
+    `Workflow run "${params.runId}" cannot activate node "${params.nodeLabel}" of workflow ` +
+    `"${params.workflowName}": agent slot "${params.agentName}" references agent template ` +
+    `key "${params.templateKey}", which resolves to a template with empty instructions — a ` +
+    `degraded binding (typically a migrated orphan placeholder) that would spawn without a ` +
+    `role prompt. Edit the template to add instructions, or rebind the slot's templateKey on ` +
+    `the workflow and start a new run.`
   );
 }
 

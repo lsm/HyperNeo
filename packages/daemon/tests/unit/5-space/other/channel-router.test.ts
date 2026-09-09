@@ -267,6 +267,55 @@ describe('ChannelRouter', () => {
       expect(new NodeExecutionRepository(db).listByNode(run.id, NODE_A)).toHaveLength(0);
     });
 
+    test('throws an actionable empty-instructions error when a slot templateKey resolves to a template without instructions', async () => {
+      new SpaceAgentTemplateRepository(db).create({
+        key: 'migrated.agent.agent-orphan',
+        handle: 'orphan',
+        instructions: '',
+      });
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: 'Orphan Binding Flow',
+        description: '',
+        nodes: [
+          {
+            id: NODE_A,
+            name: 'Orphan',
+            agents: [
+              { agentId: '', templateKey: 'migrated.agent.agent-orphan', name: 'orphan-slot' },
+            ],
+          },
+          { id: NODE_B, name: 'End', agents: [{ agentId: AGENT_PLANNER, name: 'end' }] },
+        ],
+        startNodeId: NODE_A,
+        endNodeId: NODE_B,
+        tags: [],
+        channels: [],
+        completionAutonomyLevel: 3,
+      });
+      const run = workflowRunRepo.createRun({
+        spaceId: SPACE_ID,
+        workflowId: workflow.id,
+        title: 'Orphan Binding Activation',
+      });
+      workflowRunRepo.transitionStatus(run.id, 'in_progress');
+
+      let caught: unknown;
+      try {
+        await router.activateNode(run.id, NODE_A);
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(caught).toBeInstanceOf(MissingWorkflowAgentError);
+      const message = (caught as MissingWorkflowAgentError).message;
+      expect(message).toContain('migrated.agent.agent-orphan');
+      expect(message).toContain('empty instructions');
+      expect(message).toContain('Orphan Binding Flow');
+      expect(message).toContain('orphan-slot');
+      expect(new NodeExecutionRepository(db).listByNode(run.id, NODE_A)).toHaveLength(0);
+    });
+
     test('slot-targeted activation succeeds even when a sibling slot references a deleted agent', async () => {
       const workflow = buildWorkflow(SPACE_ID, workflowManager, [
         {
