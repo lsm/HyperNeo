@@ -125,8 +125,7 @@ describe('Message delivery mode queue flow', () => {
         await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
         await waitForCount(sessionId, 'deferred', (count) => count === 0, 20000);
-        const sentCount = await getCountByStatus(sessionId, 'consumed');
-        expect(sentCount).toBeGreaterThanOrEqual(2);
+        await waitForCount(sessionId, 'consumed', (count) => count >= 2, IS_MOCK ? 10000 : 30000);
       } finally {
         try {
           await daemon.messageHub.request('client.interrupt', { sessionId });
