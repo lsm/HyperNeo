@@ -521,6 +521,17 @@ interface ClientForwardingEvents {
     agent: import('@hyperneo/shared').SpaceLongHorizonAgent;
   };
   'spaceAgent.deleted': { sessionId: string; spaceId: string; agentId: string };
+  'spaceAgentV2.created': {
+    sessionId: string;
+    spaceId: string;
+    agent: import('@hyperneo/shared').SpaceAgent;
+  };
+  'spaceAgentV2.updated': {
+    sessionId: string;
+    spaceId: string;
+    agent: import('@hyperneo/shared').SpaceAgent;
+  };
+  'spaceAgentV2.deleted': { sessionId: string; spaceId: string; agentId: string };
   'spaceGoal.ownerChanged': { sessionId: string; spaceId: string; goalId: string };
   'spaceWorkflow.created': {
     sessionId: string;
