@@ -1553,7 +1553,25 @@ describe('SpaceLongHorizonAgents', () => {
     expect(mockNavigateToSpaceSession).not.toHaveBeenCalled();
   });
 
-  it('treats the space chat as the coordinator session', () => {
+  it('treats the space chat as the manager session for the canonical handle', () => {
+    mockAgents.value = [
+      makeLongHorizonAgent({
+        handle: 'space-manager',
+        displayName: 'Ops Manager',
+        sessionId: null,
+      }),
+    ];
+
+    const { getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    const card = getByText('Ops Manager').closest('[role="button"]')!;
+    expect(card.textContent).toContain('Session');
+    fireEvent.click(card);
+
+    expect(mockNavigateToSpaceSession).toHaveBeenCalledWith('space-1', 'space:chat:space-1');
+  });
+
+  it('treats the space chat as the manager session for the legacy alias handle', () => {
     mockAgents.value = [
       makeLongHorizonAgent({
         handle: 'coordinator',

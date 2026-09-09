@@ -51,10 +51,11 @@ function makeWorkflow(overrides: Partial<SpaceWorkflow> = {}): SpaceWorkflow {
 }
 
 describe('filterAgents', () => {
-  it('removes the coordinator agent', () => {
+  it('removes the space manager agent under both handles', () => {
     const agents = [
       makeAgent('a1', 'Coder'),
-      { ...makeAgent('a2', 'Coordinator'), handle: 'coordinator' },
+      { ...makeAgent('a2', 'Space Manager'), handle: 'space-manager' },
+      { ...makeAgent('a3', 'Legacy Coordinator'), handle: 'coordinator' },
       makeAgent('a5', 'Reviewer'),
     ];
     const result = filterAgents(agents);
@@ -76,7 +77,7 @@ describe('filterAgents', () => {
     expect(result.map((a) => a.id)).toEqual(['a1', 'a2']);
   });
 
-  it('returns all agents when no coordinator is present', () => {
+  it('returns all agents when no space manager is present', () => {
     const agents = [makeAgent('a1', 'Coder'), makeAgent('a2', 'Reviewer')];
     expect(filterAgents(agents)).toHaveLength(2);
   });
