@@ -410,6 +410,39 @@ describe('SpaceLongHorizonAgents', () => {
     );
   });
 
+  it('preserves both model and pool on an unrelated edit of a dual-state template', async () => {
+    const pool = [
+      { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 1 },
+    ];
+    mockTemplates.value = [
+      makeTemplate({
+        key: 'scribe',
+        handle: 'scribe',
+        displayName: 'Scribe',
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        modelPool: pool,
+      }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByDisplayValue } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+    fireEvent.input(getByDisplayValue('Scribe'), { target: { value: 'Scribe II' } });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTemplate).toHaveBeenCalledWith(
+      'scribe',
+      expect.objectContaining({
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        modelPool: pool,
+      })
+    );
+  });
+
   it('folds a pending scoped tool draft into the save without clicking Add', async () => {
     mockTemplates.value = [
       makeTemplate({ key: 'scribe', handle: 'scribe', displayName: 'Scribe' }),

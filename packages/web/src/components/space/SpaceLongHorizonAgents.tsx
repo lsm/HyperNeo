@@ -214,6 +214,7 @@ interface TemplateSaveForm {
   model: string | null;
   provider: string | null;
   modelMode: ModelPoolEditorMode;
+  initialModelMode: ModelPoolEditorMode;
   modelPool: AgentModelPoolEntry[];
   thinkingLevel: ThinkingLevel | null;
   settingSources: SettingSource[] | null;
@@ -243,12 +244,15 @@ function templateSaveParseToolsStage(ctx: TemplateSaveCtx): TemplateSaveCtx {
 
 async function templateSavePersistStage(ctx: TemplateSaveCtx): Promise<TemplateSaveCtx> {
   const { form, parsedTools } = ctx;
-  const effectiveModel = form.modelMode === 'single' ? form.model : '';
+  const modeSwitched = form.modelMode !== form.initialModelMode;
+  const effectiveModel = form.modelMode === 'single' || !modeSwitched ? form.model : '';
   const cleanedModelPool = form.modelPool
     .map((entry) => ({ ...entry, model: entry.model.trim() }))
     .filter((entry) => entry.model.length > 0);
   const activeModelPool =
-    form.modelMode === 'pool' && cleanedModelPool.length > 0 ? cleanedModelPool : null;
+    (form.modelMode === 'pool' || !modeSwitched) && cleanedModelPool.length > 0
+      ? cleanedModelPool
+      : null;
   const fields = {
     handle: form.handle.trim(),
     displayName: form.displayName.trim(),
@@ -637,9 +641,9 @@ function TemplateEditor({
     template?.settingSources ?? null
   );
   const [modelPool, setModelPool] = useState<AgentModelPoolEntry[]>(template?.modelPool ?? []);
-  const [modelMode, setModelMode] = useState<ModelPoolEditorMode>(
-    (template?.modelPool ?? []).length > 0 ? 'pool' : 'single'
-  );
+  const initialModelMode: ModelPoolEditorMode =
+    (template?.modelPool ?? []).length > 0 ? 'pool' : 'single';
+  const [modelMode, setModelMode] = useState<ModelPoolEditorMode>(initialModelMode);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [extraToolDraft, setExtraToolDraft] = useState('');
@@ -684,6 +688,7 @@ function TemplateEditor({
           model: modelFields.model,
           provider: modelFields.provider,
           modelMode,
+          initialModelMode,
           modelPool,
           thinkingLevel: modelFields.thinkingLevel,
           settingSources,
