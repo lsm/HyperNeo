@@ -1007,6 +1007,42 @@ describe('SpaceAgentTemplateManager', () => {
       expect(result.ok).toBe(true);
       expect(repo.getByKey('release-readiness.custom')).toBeNull();
     });
+
+    test('blocks deletion inside the pipeline when references report usage', async () => {
+      await manager.create(fullParams());
+      const scan = { getWorkflowsReferencingTemplate: () => [] as never[] };
+      const managerWithScan = new SpaceAgentTemplateManager(repo, () => [], {
+        ...scan,
+        getWorkflowsReferencingTemplate: () => [{ name: 'Release' } as never],
+      });
+
+      const workflowBlocked = managerWithScan.delete('release-readiness.custom');
+      expect(workflowBlocked.ok).toBe(false);
+      if (!workflowBlocked.ok) {
+        expect(workflowBlocked.error).toBe(
+          'Template "release-readiness.custom" is referenced by workflow slot(s) in: Release. ' +
+            'Remove or replace the templateKey in those workflows — or wait for their in-flight runs ' +
+            'to finish — before deleting the template.'
+        );
+      }
+      expect(manager.getByKey('release-readiness.custom')).not.toBeNull();
+
+      const managerWithInstances = new SpaceAgentTemplateManager(repo, () => [], undefined, {
+        listAgentDisplayNamesUsingTemplate: () => ['Scribe'],
+      });
+      const agentBlocked = managerWithInstances.delete('release-readiness.custom');
+      expect(agentBlocked.ok).toBe(false);
+      if (!agentBlocked.ok) {
+        expect(agentBlocked.error).toBe(
+          'Template "release-readiness.custom" is in use by 1 agent ("Scribe"). ' +
+            'Delete or re-point those agents before deleting the template.'
+        );
+      }
+
+      const allowed = manager.delete('release-readiness.custom');
+      expect(allowed.ok).toBe(true);
+      expect(manager.getByKey('release-readiness.custom')).toBeNull();
+    });
   });
 
   describe('create pipeline', () => {

@@ -51,6 +51,7 @@ export interface SpaceLongHorizonAgentTemplate {
   thinkingLevel?: ThinkingLevel | null;
   settingSources?: SettingSource[] | null;
   labels?: string[];
+  version?: number;
 }
 
 export interface SpaceLongHorizonAgent {
@@ -128,6 +129,7 @@ export interface SpaceAgentTemplate {
   labels: string[];
   createdAt: number;
   updatedAt: number;
+  version?: number;
 }
 
 export type WorkflowTemplateSnapshot = Omit<SpaceAgentTemplate, 'createdAt' | 'updatedAt'>;
@@ -161,6 +163,7 @@ export interface UpdateSpaceAgentTemplateParams {
   settingSources?: SettingSource[] | null;
   tools?: string[] | null;
   labels?: string[] | null;
+  expectedVersion?: number;
 }
 
 export interface SpaceLongHorizonAgentGoal {

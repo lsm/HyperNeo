@@ -64,7 +64,10 @@ interface UnifiedSpaceAgentMethodDeps {
   spaceManager: SpaceManager;
   repo: SpaceLongHorizonAgentRepository;
   templateManager?: SpaceAgentTemplateManager;
-  workflowRepo: Pick<SpaceWorkflowRepository, 'getWorkflowsReferencingAgent'>;
+  workflowRepo: Pick<
+    SpaceWorkflowRepository,
+    'getWorkflowsReferencingAgent' | 'getWorkflowsReferencingTemplate'
+  >;
   runtimeService?: UnifiedSpaceAgentRuntimeService;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 }
@@ -809,9 +812,9 @@ export function registerUnifiedSpaceAgentMethods(
     });
 
     messageHub.onRequest(method('deleteTemplate'), async (data) => {
-      const params = data as { key: string };
+      const params = data as { key: string; expectedVersion?: number };
       if (!params.key) throw new Error('key is required');
-      const result = templateManager.delete(params.key);
+      const result = templateManager.delete(params.key, params.expectedVersion);
       if (!result.ok) throw new Error(result.error);
       return { success: true };
     });
@@ -1051,7 +1054,10 @@ export function setupSpaceAgentHandlers(
   spaceManager: SpaceManager,
   db: Database,
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
-  workflowRepo: Pick<SpaceWorkflowRepository, 'getWorkflowsReferencingAgent'>,
+  workflowRepo: Pick<
+    SpaceWorkflowRepository,
+    'getWorkflowsReferencingAgent' | 'getWorkflowsReferencingTemplate'
+  >,
   runtimeService?: UnifiedSpaceAgentRuntimeService,
   templateManager?: SpaceAgentTemplateManager
 ): void {

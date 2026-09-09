@@ -237,6 +237,7 @@ function toPaneAgentTemplate(template: SpaceAgentTemplate): SpaceLongHorizonAgen
     thinkingLevel: template.thinkingLevel,
     settingSources: template.settingSources,
     labels: template.labels,
+    version: template.version,
   };
 }
 
@@ -258,6 +259,8 @@ class SpaceStore {
   readonly agents = signal<SpaceLongHorizonAgent[]>([]);
 
   readonly agentTemplates = signal<SpaceLongHorizonAgentTemplate[]>([]);
+
+  readonly userTemplateKeys = signal<ReadonlySet<string>>(new Set());
 
   readonly workflows = signal<SpaceWorkflowSummary[]>([]);
 
@@ -980,10 +983,10 @@ class SpaceStore {
         'spaceAgent.listTemplates'
       );
       if (this.spaceId.value !== spaceId) return;
-      this.agentTemplates.value = (result?.templates ?? []).map(toPaneAgentTemplate);
+      this.applyTemplateLibrary(result?.templates ?? []);
     } catch (err) {
       logger.error('Failed to fetch agent templates:', err);
-      if (this.spaceId.value === spaceId) this.agentTemplates.value = [];
+      if (this.spaceId.value === spaceId) this.applyTemplateLibrary([]);
     }
   }
 
@@ -2427,7 +2430,14 @@ class SpaceStore {
     const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
       'spaceAgent.listTemplates'
     );
-    this.agentTemplates.value = (result?.templates ?? []).map(toPaneAgentTemplate);
+    this.applyTemplateLibrary(result?.templates ?? []);
+  }
+
+  private applyTemplateLibrary(templates: SpaceAgentTemplate[]): void {
+    this.agentTemplates.value = templates.map(toPaneAgentTemplate);
+    this.userTemplateKeys.value = new Set(
+      templates.filter((template) => template.createdAt > 0).map((template) => template.key)
+    );
   }
 
   async createTemplate(params: CreateSpaceAgentTemplateParams): Promise<SpaceAgentTemplate> {
@@ -2458,16 +2468,28 @@ class SpaceStore {
     return template;
   }
 
-  async deleteTemplate(key: string): Promise<void> {
+  async deleteTemplate(key: string, expectedVersion?: number): Promise<void> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) throw new Error('Not connected');
 
-    await hub.request('spaceAgent.deleteTemplate', { key });
-    await this.refreshTemplateLibrary(hub);
+    await hub.request(
+      'spaceAgent.deleteTemplate',
+      expectedVersion === undefined ? { key } : { key, expectedVersion }
+    );
+    this.agentTemplates.value = this.agentTemplates.value.filter((t) => t.key !== key);
+    this.userTemplateKeys.value = new Set(
+      [...this.userTemplateKeys.value].filter((existing) => existing !== key)
+    );
+    try {
+      await this.refreshTemplateLibrary(hub);
+    } catch (err) {
+      logger.error('Failed to refresh template library after delete:', err);
+    }
   }
 
   private upsertAgentTemplate(template: SpaceAgentTemplate): void {
     const mapped = toPaneAgentTemplate(template);
+    this.userTemplateKeys.value = new Set([...this.userTemplateKeys.value, template.key]);
     const current = this.agentTemplates.value;
     const index = current.findIndex((existing) => existing.key === mapped.key);
     if (index === -1) {

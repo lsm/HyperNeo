@@ -63,11 +63,17 @@ export type TemplateReferenceScan = Pick<
   'getWorkflowsReferencingTemplate'
 >;
 
+export interface TemplateInstanceScan {
+  listAgentDisplayNamesUsingTemplate(key: string): string[];
+  clearArchivedInstances?(key: string): void;
+}
+
 export interface DeleteTemplateCtx {
   repo: SpaceAgentTemplateRepository;
   key: string;
   expectedVersion?: number;
   workflowReferenceScan?: TemplateReferenceScan;
+  instanceScan?: TemplateInstanceScan;
   existing?: SpaceAgentTemplate;
   version?: number;
   referencingWorkflows?: SpaceWorkflow[];
@@ -351,7 +357,7 @@ async function updateValidateModelPool(ctx: UpdateTemplateCtx): Promise<UpdateTe
 
 function updatePersist(ctx: UpdateTemplateCtx): UpdateTemplateCtx {
   if (ctx.version === undefined) return { ...ctx, error: `Template version missing: ${ctx.key}` };
-  const template = ctx.repo.casUpdate(ctx.key, ctx.params, ctx.version);
+  const template = ctx.repo.casUpdate(ctx.key, ctx.params, ctx.expectedVersion ?? ctx.version);
   if (!template) {
     return { ...ctx, template: null };
   }
@@ -390,9 +396,31 @@ function deleteCheckWorkflowReferences(ctx: DeleteTemplateCtx): DeleteTemplateCt
   };
 }
 
+function deleteCheckInstances(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
+  if (!ctx.instanceScan) return ctx;
+  const agentNames = ctx.instanceScan.listAgentDisplayNamesUsingTemplate(ctx.key);
+  if (agentNames.length === 0) return ctx;
+  const shown = agentNames
+    .slice(0, 5)
+    .map((n) => `"${n}"`)
+    .join(', ');
+  const remaining = agentNames.length - Math.min(agentNames.length, 5);
+  return {
+    ...ctx,
+    error:
+      `Template "${ctx.key}" is in use by ${agentNames.length} agent` +
+      (agentNames.length === 1 ? '' : 's') +
+      ` (${shown}${remaining > 0 ? `, +${remaining} more` : ''}). ` +
+      'Delete or re-point those agents before deleting the template.',
+  };
+}
+
 function deletePersist(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
   const deleted = ctx.repo.delete(ctx.key, ctx.expectedVersion);
-  if (deleted) return { ...ctx, deleted: true };
+  if (deleted) {
+    ctx.instanceScan?.clearArchivedInstances?.(ctx.key);
+    return { ...ctx, deleted: true };
+  }
   if (ctx.expectedVersion !== undefined && ctx.repo.getByKey(ctx.key)) {
     return { ...ctx, error: `Template "${ctx.key}" was modified concurrently; delete aborted.` };
   }
@@ -455,6 +483,8 @@ export const runDeleteTemplate = (templatePipeline('delete-space-agent-template'
   .pipe('!hasError', 'ctx')
   .pipe(deleteCheckWorkflowReferences, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
+  .pipe(deleteCheckInstances, 'ctx', 'ctx')
+  .pipe('!hasError', 'ctx')
   .pipe(deletePersist, 'ctx', 'ctx')
   .end('ctx') as (input: DeleteTemplateCtx) => DeleteTemplateCtx;
 
@@ -462,7 +492,8 @@ export class SpaceAgentTemplateManager {
   constructor(
     private repo: SpaceAgentTemplateRepository,
     private builtIns: BuiltInTemplateSource = getBuiltInSpaceAgentTemplates,
-    private workflowReferenceScan?: TemplateReferenceScan
+    private workflowReferenceScan?: TemplateReferenceScan,
+    private instanceScan?: TemplateInstanceScan
   ) {}
 
   async create(
@@ -477,7 +508,13 @@ export class SpaceAgentTemplateManager {
     key: string,
     params: UpdateSpaceAgentTemplateParams
   ): Promise<SpaceAgentResult<SpaceAgentTemplate | null>> {
-    const ctx = await runUpdateTemplate({ repo: this.repo, key, params });
+    const { expectedVersion, ...updates } = params;
+    const ctx = await runUpdateTemplate({
+      repo: this.repo,
+      key,
+      params: updates,
+      expectedVersion,
+    });
     if (ctx.error) return { ok: false, error: ctx.error };
     if (ctx.template === null) return { ok: true, value: null };
     return { ok: true, value: ctx.template! };
@@ -503,6 +540,7 @@ export class SpaceAgentTemplateManager {
       key,
       expectedVersion,
       workflowReferenceScan: this.workflowReferenceScan,
+      instanceScan: this.instanceScan,
     });
     if (ctx.error) return { ok: false, error: ctx.error };
     return { ok: true, value: undefined };

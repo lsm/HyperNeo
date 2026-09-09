@@ -7,11 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const {
   mockAgents,
   mockTemplates,
+  mockUserTemplateKeys,
   mockConfigDataLoaded,
   mockEnsureConfigData,
   mockListAgentReminderCounts,
   mockCreateAgent,
   mockCreateTemplate,
+  mockUpdateTemplate,
+  mockDeleteTemplate,
   mockUpdateAgent,
   mockReapplyAgentTemplate,
   mockNavigateToSpaceSession,
@@ -22,11 +25,14 @@ const {
   return {
     mockAgents: makeSignal<SpaceLongHorizonAgent[]>([]),
     mockTemplates: makeSignal([]),
+    mockUserTemplateKeys: makeSignal<Set<string>>(new Set()),
     mockConfigDataLoaded: makeSignal(true),
     mockEnsureConfigData: vi.fn().mockResolvedValue(undefined),
     mockListAgentReminderCounts: vi.fn().mockResolvedValue({}),
     mockCreateAgent: vi.fn().mockResolvedValue(undefined),
     mockCreateTemplate: vi.fn().mockResolvedValue(undefined),
+    mockUpdateTemplate: vi.fn().mockResolvedValue(undefined),
+    mockDeleteTemplate: vi.fn().mockResolvedValue(undefined),
     mockUpdateAgent: vi.fn().mockResolvedValue(undefined),
     mockReapplyAgentTemplate: vi.fn().mockResolvedValue({ displayName: 'Research Long Horizon' }),
     mockNavigateToSpaceSession: vi.fn(),
@@ -38,11 +44,14 @@ vi.mock('../../../lib/space-store', () => ({
     return {
       agents: mockAgents,
       agentTemplates: mockTemplates,
+      userTemplateKeys: mockUserTemplateKeys,
       configDataLoaded: mockConfigDataLoaded,
       ensureConfigData: mockEnsureConfigData,
       listAgentReminderCounts: mockListAgentReminderCounts,
       createAgent: mockCreateAgent,
       createTemplate: mockCreateTemplate,
+      updateTemplate: mockUpdateTemplate,
+      deleteTemplate: mockDeleteTemplate,
       updateAgent: mockUpdateAgent,
       reapplyAgentTemplate: mockReapplyAgentTemplate,
     };
@@ -199,11 +208,14 @@ describe('SpaceLongHorizonAgents', () => {
     cleanup();
     mockAgents.value = [];
     mockTemplates.value = [];
+    mockUserTemplateKeys.value = new Set();
     mockConfigDataLoaded.value = true;
     mockEnsureConfigData.mockClear();
     mockListAgentReminderCounts.mockClear();
     mockCreateAgent.mockClear();
     mockCreateTemplate.mockClear();
+    mockUpdateTemplate.mockClear();
+    mockDeleteTemplate.mockClear();
     mockUpdateAgent.mockClear();
     mockNavigateToSpaceSession.mockClear();
   });
@@ -280,6 +292,337 @@ describe('SpaceLongHorizonAgents', () => {
     expect(queryByTestId('agent-template-group-workflow-worker')).toBeNull();
     expect(queryByTestId('agent-template-group-long-horizon')).toBeNull();
     expect(getByTestId('agent-template-count').textContent).toBe('1');
+  });
+
+  it('marks built-in templates read-only and offers edit and delete on user templates', () => {
+    mockTemplates.value = [
+      makeTemplate({ key: 'worker.swe', displayName: 'SWE Worker', labels: ['workflow-worker'] }),
+      makeTemplate({ key: 'scribe', displayName: 'Scribe' }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByText, getByRole, queryByRole, getByTestId } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    const workers = getByTestId('agent-template-group-workflow-worker');
+    expect(within(workers).getByText('Built-in')).toBeTruthy();
+    expect(queryByRole('button', { name: 'Edit template SWE Worker' })).toBeNull();
+    expect(queryByRole('button', { name: 'Delete template SWE Worker' })).toBeNull();
+    expect(getByRole('button', { name: 'Edit template Scribe' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Delete template Scribe' })).toBeTruthy();
+  });
+
+  it('opens the template editor prefilled from a user template card and saves changes', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        key: 'scribe',
+        handle: 'note-taker',
+        displayName: 'Scribe',
+        description: 'Takes notes.',
+        instructions: 'Write everything down.',
+        suggestedAutonomyLevel: 2,
+        toolPermissions: { tools: ['Read'] },
+        version: 7,
+      }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByDisplayValue, getByText, queryByRole } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+
+    expect(getByText('Edit template')).toBeTruthy();
+    const keyInput = getByDisplayValue('scribe') as HTMLInputElement;
+    expect(keyInput.disabled).toBe(true);
+    expect(getByDisplayValue('note-taker')).toBeTruthy();
+    expect(getByDisplayValue('Takes notes.')).toBeTruthy();
+    expect(getByDisplayValue('Write everything down.')).toBeTruthy();
+
+    fireEvent.input(getByDisplayValue('Scribe'), { target: { value: 'Scribe II' } });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTemplate).toHaveBeenCalledWith(
+      'scribe',
+      expect.objectContaining({
+        displayName: 'Scribe II',
+        handle: 'note-taker',
+        instructions: 'Write everything down.',
+        tools: ['Read'],
+        expectedVersion: 7,
+      })
+    );
+    expect(mockCreateTemplate).not.toHaveBeenCalled();
+    await waitFor(() => expect(queryByRole('button', { name: 'Save changes' })).toBeNull());
+  });
+
+  it('shows scoped tool entries in the template editor and persists their removal', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        key: 'scribe',
+        handle: 'scribe',
+        displayName: 'Scribe',
+        toolPermissions: { tools: ['Read', 'Bash(gh pr view:*)'] },
+      }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByText } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+
+    expect(getByText('Bash(gh pr view:*)')).toBeTruthy();
+    fireEvent.click(getByRole('button', { name: 'Remove Bash(gh pr view:*)' }));
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTemplate).toHaveBeenCalledWith(
+      'scribe',
+      expect.objectContaining({ tools: ['Read'] })
+    );
+  });
+
+  it('preserves a provider-only override when editing a template', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        key: 'scribe',
+        handle: 'scribe',
+        displayName: 'Scribe',
+        model: null,
+        provider: 'anthropic',
+      }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByDisplayValue } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+    fireEvent.input(getByDisplayValue('Scribe'), { target: { value: 'Scribe II' } });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    const providerEdit = mockUpdateTemplate.mock.calls[0][1];
+    expect(providerEdit.displayName).toBe('Scribe II');
+    expect(providerEdit).not.toHaveProperty('model');
+    expect(providerEdit).not.toHaveProperty('provider');
+    expect(providerEdit).not.toHaveProperty('modelPool');
+  });
+
+  it('preserves both model and pool on an unrelated edit of a dual-state template', async () => {
+    const pool = [
+      { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 1 },
+    ];
+    mockTemplates.value = [
+      makeTemplate({
+        key: 'scribe',
+        handle: 'scribe',
+        displayName: 'Scribe',
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        modelPool: pool,
+      }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByDisplayValue } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+    fireEvent.input(getByDisplayValue('Scribe'), { target: { value: 'Scribe II' } });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    const dualEdit = mockUpdateTemplate.mock.calls[0][1];
+    expect(dualEdit.displayName).toBe('Scribe II');
+    expect(dualEdit).not.toHaveProperty('model');
+    expect(dualEdit).not.toHaveProperty('provider');
+    expect(dualEdit).not.toHaveProperty('modelPool');
+  });
+
+  it('preserves instruction whitespace on an unrelated template edit', async () => {
+    const instructions = '    indented code block\nsecond line';
+    mockTemplates.value = [
+      makeTemplate({ key: 'scribe', handle: 'scribe', displayName: 'Scribe', instructions }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByDisplayValue } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+    fireEvent.input(getByDisplayValue('Scribe'), { target: { value: 'Scribe II' } });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTemplate).toHaveBeenCalledWith(
+      'scribe',
+      expect.objectContaining({ instructions })
+    );
+  });
+
+  it('clears the fixed model when a dual-state template pool entry is edited', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        key: 'scribe',
+        handle: 'scribe',
+        displayName: 'Scribe',
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        modelPool: [
+          { model: 'claude-haiku-4-5', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+        ],
+      }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getAllByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+    fireEvent.change(getAllByTestId('pool-entry-model-select')[0], {
+      target: { value: 'claude-sonnet-4-6' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTemplate).toHaveBeenCalledWith(
+      'scribe',
+      expect.objectContaining({
+        model: null,
+        modelPool: [
+          { model: 'claude-sonnet-4-6', provider: 'anthropic', maxConcurrent: 1, weight: 100 },
+        ],
+      })
+    );
+  });
+
+  it('sends the model fields when the editor changes the model on a template', async () => {
+    mockTemplates.value = [
+      makeTemplate({ key: 'scribe', handle: 'scribe', displayName: 'Scribe', version: 4 }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+    const modelSelect = getByTestId('space-agent-model-select') as HTMLSelectElement;
+    modelSelect.value = 'claude-sonnet-4-6';
+    fireEvent.change(modelSelect);
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTemplate).toHaveBeenCalledWith(
+      'scribe',
+      expect.objectContaining({
+        model: 'claude-sonnet-4-6',
+        provider: 'anthropic',
+        expectedVersion: 4,
+      })
+    );
+  });
+
+  it('omits unchanged model fields from a template edit', async () => {
+    mockTemplates.value = [
+      makeTemplate({
+        key: 'scribe',
+        handle: 'scribe',
+        displayName: 'Scribe',
+        model: 'retired-model-x',
+        provider: 'anthropic',
+      }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByDisplayValue } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+    fireEvent.input(getByDisplayValue('Scribe'), { target: { value: 'Scribe II' } });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    const payload = mockUpdateTemplate.mock.calls[0][1];
+    expect(payload).toEqual(
+      expect.objectContaining({ displayName: 'Scribe II', expectedVersion: undefined })
+    );
+    expect(payload).not.toHaveProperty('model');
+    expect(payload).not.toHaveProperty('provider');
+    expect(payload).not.toHaveProperty('modelPool');
+  });
+
+  it('folds a pending scoped tool draft into the save without clicking Add', async () => {
+    mockTemplates.value = [
+      makeTemplate({ key: 'scribe', handle: 'scribe', displayName: 'Scribe' }),
+    ];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Edit template Scribe' }));
+    fireEvent.input(getByTestId('lh-template-extra-tool-input'), {
+      target: { value: 'Bash(gh pr view:*)' },
+    });
+    fireEvent.click(getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalledTimes(1));
+    expect(mockUpdateTemplate).toHaveBeenCalledWith(
+      'scribe',
+      expect.objectContaining({ tools: ['Bash(gh pr view:*)'] })
+    );
+  });
+
+  it('deletes a user template after confirmation, passing the captured version', async () => {
+    mockTemplates.value = [makeTemplate({ key: 'scribe', displayName: 'Scribe', version: 3 })];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+
+    const { getByRole, getByTestId, queryByTestId } = render(
+      <SpaceLongHorizonAgents spaceId="space-1" />
+    );
+
+    fireEvent.click(getByRole('button', { name: 'Delete template Scribe' }));
+    expect(getByTestId('confirm-modal')).toBeTruthy();
+    fireEvent.click(getByTestId('confirm-delete-template'));
+
+    await waitFor(() => expect(mockDeleteTemplate).toHaveBeenCalledWith('scribe', 3));
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('"Scribe" deleted');
+    await waitFor(() => expect(queryByTestId('confirm-modal')).toBeNull());
+  });
+
+  it('surfaces the daemon reference-guard error and keeps the confirm dialog open', async () => {
+    mockTemplates.value = [makeTemplate({ key: 'scribe', displayName: 'Scribe', version: 4 })];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+    mockDeleteTemplate.mockRejectedValueOnce(
+      new Error(
+        'Cannot delete template "scribe" - it is referenced by workflow nodes (Workflow: Release)'
+      )
+    );
+
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Delete template Scribe' }));
+    fireEvent.click(getByTestId('confirm-delete-template'));
+
+    await waitFor(() =>
+      expect(getByTestId('confirm-modal-error').textContent).toBe(
+        'Cannot delete template "scribe" - it is referenced by workflow nodes (Workflow: Release)'
+      )
+    );
+    expect(getByTestId('confirm-modal')).toBeTruthy();
+  });
+
+  it('surfaces the daemon RPC error and keeps the confirm dialog open', async () => {
+    mockTemplates.value = [makeTemplate({ key: 'scribe', displayName: 'Scribe' })];
+    mockUserTemplateKeys.value = new Set(['scribe']);
+    mockDeleteTemplate.mockRejectedValueOnce(new Error('Template not found: scribe'));
+
+    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
+
+    fireEvent.click(getByRole('button', { name: 'Delete template Scribe' }));
+    fireEvent.click(getByTestId('confirm-delete-template'));
+
+    await waitFor(() =>
+      expect(getByTestId('confirm-modal-error').textContent).toBe('Template not found: scribe')
+    );
+    expect(getByTestId('confirm-modal')).toBeTruthy();
   });
 
   it('opens a dedicated template editor from New Template', () => {

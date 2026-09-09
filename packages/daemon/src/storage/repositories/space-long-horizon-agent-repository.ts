@@ -155,6 +155,25 @@ export class SpaceLongHorizonAgentRepository {
     return rows.map(rowToAgent);
   }
 
+  clearTemplateKeyForArchivedAgents(templateKey: string): number {
+    const result = this.db
+      .prepare(
+        `UPDATE space_long_horizon_agents SET template_key = NULL, updated_at = ?
+         WHERE template_key = ? AND status = 'archived'`
+      )
+      .run(Date.now(), templateKey);
+    return Number(result.changes ?? 0);
+  }
+
+  listByTemplateKey(templateKey: string): SpaceLongHorizonAgent[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM space_long_horizon_agents WHERE template_key = ? ORDER BY created_at ASC`
+      )
+      .all(templateKey) as Record<string, unknown>[];
+    return rows.map(rowToAgent);
+  }
+
   update(id: string, params: UpdateSpaceLongHorizonAgentParams): SpaceLongHorizonAgent | null {
     const existing = this.getById(id);
     if (existing?.templateKey === MIGRATED_WORKER_TEMPLATE_KEY) {
@@ -766,4 +785,23 @@ function parseObject(value: unknown): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+export function templateInstanceScanFromRepo(repo: {
+  listByTemplateKey: SpaceLongHorizonAgentRepository['listByTemplateKey'];
+  clearTemplateKeyForArchivedAgents: SpaceLongHorizonAgentRepository['clearTemplateKeyForArchivedAgents'];
+}): {
+  listAgentDisplayNamesUsingTemplate(key: string): string[];
+  clearArchivedInstances(key: string): void;
+} {
+  return {
+    listAgentDisplayNamesUsingTemplate: (key) =>
+      repo
+        .listByTemplateKey(key)
+        .filter((agent) => agent.status !== 'archived')
+        .map((agent) => agent.displayName),
+    clearArchivedInstances: (key) => {
+      repo.clearTemplateKeyForArchivedAgents(key);
+    },
+  };
 }

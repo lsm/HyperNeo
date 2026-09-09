@@ -3257,6 +3257,30 @@ describe('SpaceStore — template CRUD methods', () => {
     expect(spaceStore.agentTemplates.value[0].handle).toBe('scribe-agent');
   });
 
+  it('fetchTemplates() marks only persisted templates as user templates', async () => {
+    templateListResult = [
+      makeAgentTemplate({ key: 'worker.swe', createdAt: 0, updatedAt: 0 }),
+      makeAgentTemplate({ key: 'scribe', createdAt: 2 }),
+    ];
+
+    await spaceStore.fetchTemplates();
+
+    expect(spaceStore.userTemplateKeys.value.has('worker.swe')).toBe(false);
+    expect(spaceStore.userTemplateKeys.value.has('scribe')).toBe(true);
+  });
+
+  it('createTemplate() and deleteTemplate() keep userTemplateKeys in sync', async () => {
+    templateListResult = [makeAgentTemplate({ key: 'worker.swe', createdAt: 0, updatedAt: 0 })];
+    await spaceStore.fetchTemplates();
+
+    await spaceStore.createTemplate({ key: 'scribe', handle: 'scribe-agent' });
+    expect(spaceStore.userTemplateKeys.value.has('scribe')).toBe(true);
+
+    templateListResult = [makeAgentTemplate({ key: 'worker.swe', createdAt: 0, updatedAt: 0 })];
+    await spaceStore.deleteTemplate('scribe');
+    expect(spaceStore.userTemplateKeys.value.has('scribe')).toBe(false);
+  });
+
   it('updateTemplate() replaces the existing entry in place', async () => {
     templateListResult = [
       makeAgentTemplate({ key: 'first', createdAt: 0 }),
@@ -3308,26 +3332,39 @@ describe('SpaceStore — template CRUD methods', () => {
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['first']);
   });
 
+  it('deleteTemplate() forwards the expected version for stale-write protection', async () => {
+    templateListResult = [makeAgentTemplate({ key: 'scribe' })];
+    await spaceStore.fetchTemplates();
+    mockHub.request.mockClear();
+    mockHub.request.mockResolvedValueOnce({ success: true });
+
+    await spaceStore.deleteTemplate('scribe', 7);
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.deleteTemplate', {
+      key: 'scribe',
+      expectedVersion: 7,
+    });
+  });
+
+  it('deleteTemplate() removes the cached entry even when the follow-up refresh fails', async () => {
+    templateListResult = [makeAgentTemplate({ key: 'scribe' })];
+    await spaceStore.fetchTemplates();
+    mockHub.request
+      .mockResolvedValueOnce({ success: true })
+      .mockRejectedValueOnce(new Error('refresh failed'));
+
+    await expect(spaceStore.deleteTemplate('scribe')).resolves.toBeUndefined();
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual([]);
+    expect(spaceStore.userTemplateKeys.value.has('scribe')).toBe(false);
+  });
+
   it('deleteTemplate() propagates RPC errors and keeps the cached list', async () => {
     templateListResult = [makeAgentTemplate({ key: 'scribe' })];
     await spaceStore.fetchTemplates();
     mockHub.request.mockRejectedValueOnce(new Error('Template not found: scribe'));
 
     await expect(spaceStore.deleteTemplate('scribe')).rejects.toThrow('Template not found');
-
-    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['scribe']);
-  });
-
-  it('deleteTemplate() rejects when the post-delete refresh fails', async () => {
-    templateListResult = [makeAgentTemplate({ key: 'scribe' })];
-    await spaceStore.fetchTemplates();
-    mockHub.request
-      .mockImplementationOnce(async () => ({ success: true }))
-      .mockImplementationOnce(async () => {
-        throw new Error('connection dropped');
-      });
-
-    await expect(spaceStore.deleteTemplate('scribe')).rejects.toThrow('connection dropped');
 
     expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['scribe']);
   });

@@ -14,6 +14,7 @@ import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositori
 import {
   coordinatorLongHorizonAgentId,
   SpaceLongHorizonAgentRepository,
+  templateInstanceScanFromRepo,
 } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
@@ -181,6 +182,37 @@ describe('Space Agent RPC Handlers', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     createSpaceAgentSchema(db);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS space_workflow_definition_versions (
+        workflow_id TEXT NOT NULL,
+        version_hash TEXT NOT NULL,
+        space_id TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (workflow_id, version_hash)
+      )
+    `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS space_workflow_runs (
+        id TEXT PRIMARY KEY,
+        space_id TEXT NOT NULL,
+        workflow_id TEXT NOT NULL,
+        definition_version TEXT,
+        title TEXT,
+        description TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS space_tasks (
+        id TEXT PRIMARY KEY,
+        workflow_run_id TEXT,
+        archived_at INTEGER
+      )
+    `);
     createSpaceAgentTemplatesTable(db);
     runMigration226(db);
     runMigration227(db);
@@ -203,7 +235,12 @@ describe('Space Agent RPC Handlers', () => {
       longHorizonRepo,
       workflowRepo,
       undefined,
-      new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db as any))
+      new SpaceAgentTemplateManager(
+        new SpaceAgentTemplateRepository(db as any),
+        undefined,
+        workflowRepo,
+        templateInstanceScanFromRepo(longHorizonRepo)
+      )
     );
   });
 
@@ -412,6 +449,37 @@ describe('Space Agent RPC Handlers', () => {
         })
       ).rejects.toThrow('Template not found: missing.custom');
     });
+
+    it('returns a null template when the client expected version is stale', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'cas.custom',
+        handle: 'cas',
+        displayName: 'One',
+      });
+      const second = await call<{ template: { version?: number } | null }>(
+        hubData.handlers,
+        'spaceAgent.updateTemplate',
+        { key: 'cas.custom', displayName: 'Two' }
+      );
+
+      const stale = await call<{ template: { displayName: string } | null }>(
+        hubData.handlers,
+        'spaceAgent.updateTemplate',
+        { key: 'cas.custom', displayName: 'Stale', expectedVersion: 1 }
+      );
+      expect(stale.template).toBeNull();
+
+      const fresh = await call<{ template: { displayName: string; version?: number } | null }>(
+        hubData.handlers,
+        'spaceAgent.updateTemplate',
+        {
+          key: 'cas.custom',
+          displayName: 'Three',
+          expectedVersion: second.template?.version,
+        }
+      );
+      expect(fresh.template?.displayName).toBe('Three');
+    });
   });
 
   describe('spaceAgent.deleteTemplate', () => {
@@ -446,6 +514,299 @@ describe('Space Agent RPC Handlers', () => {
       await expect(
         call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'missing.custom' })
       ).rejects.toThrow('Template not found: missing.custom');
+    });
+
+    it('blocks deleting a template referenced by a workflow node slot in any space', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'guard.custom',
+        handle: 'guard',
+      });
+      insertSpace(db, 'space-2');
+      insertWorkflow(db, 'wf-guard', 'space-2', 'Release');
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(
+        'wf-guard-node',
+        'wf-guard',
+        'Ship',
+        JSON.stringify({ agents: [{ agentId: '', templateKey: 'guard.custom', name: 'Guard' }] }),
+        now,
+        now
+      );
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'guard.custom' })
+      ).rejects.toThrow(
+        'Template "guard.custom" is referenced by workflow slot(s) in: Release. ' +
+          'Remove or replace the templateKey in those workflows — or wait for their in-flight runs ' +
+          'to finish — before deleting the template.'
+      );
+
+      const list = await call<{ templates: Array<{ key: string }> }>(
+        hubData.handlers,
+        'spaceAgent.listTemplates',
+        {}
+      );
+      expect(list.templates.map((template) => template.key)).toContain('guard.custom');
+    });
+
+    it('does not block deletion when only a longer key sharing a prefix is referenced', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'guard.custom',
+        handle: 'guard',
+      });
+      insertWorkflow(db, 'wf-prefix', 'space-1', 'Prefix');
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(
+        'wf-prefix-node',
+        'wf-prefix',
+        'Ship',
+        JSON.stringify({
+          agents: [{ agentId: '', templateKey: 'guard.custom-2', name: 'Guard' }],
+        }),
+        now,
+        now
+      );
+
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'guard.custom' }
+      );
+
+      expect(result.success).toBe(true);
+    });
+
+    it('matches template keys exactly rather than by SQL wildcard semantics', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'qa_%',
+        handle: 'wild',
+      });
+      insertWorkflow(db, 'wf-wild', 'space-1', 'Wild');
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(
+        'wf-wild-node',
+        'wf-wild',
+        'Ship',
+        JSON.stringify({ agents: [{ agentId: '', templateKey: 'qaXYZcustom', name: 'W' }] }),
+        now,
+        now
+      );
+
+      const wildResult = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'qa_%' }
+      );
+      expect(wildResult.success).toBe(true);
+    });
+
+    it('blocks deleting a template referenced by a nonterminal pinned run', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'guard.custom',
+        handle: 'guard',
+      });
+      insertWorkflow(db, 'wf-pinned', 'space-1', 'Pinned Flow');
+      const now = Date.now();
+      const payload = JSON.stringify({
+        id: 'wf-pinned',
+        spaceId: 'space-1',
+        name: 'Pinned Flow',
+        nodes: [
+          {
+            id: 'p1',
+            name: 'Ship',
+            agents: [{ agentId: '', templateKey: 'guard.custom', name: 'Guard' }],
+          },
+        ],
+      });
+      db.prepare(
+        `INSERT INTO space_workflow_definition_versions
+           (workflow_id, version_hash, space_id, payload, source, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run('wf-pinned', 'vh-guard', 'space-1', payload, 'run_create', now);
+      db.prepare(
+        `INSERT INTO space_workflow_runs
+           (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run('run-guard', 'space-1', 'wf-pinned', 'vh-guard', 'Run 1', 'in_progress', now, now);
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'guard.custom' })
+      ).rejects.toThrow(
+        'Template "guard.custom" is referenced by workflow slot(s) in: Pinned Flow. ' +
+          'Remove or replace the templateKey in those workflows — or wait for their in-flight runs ' +
+          'to finish — before deleting the template.'
+      );
+    });
+
+    it('allows deleting a template whose pinned references are on fully archived runs only', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'guard.custom',
+        handle: 'guard',
+      });
+      insertWorkflow(db, 'wf-terminal', 'space-1', 'Terminal Flow');
+      const now = Date.now();
+      const payload = JSON.stringify({
+        id: 'wf-terminal',
+        spaceId: 'space-1',
+        name: 'Terminal Flow',
+        nodes: [
+          {
+            id: 't1',
+            name: 'Ship',
+            agents: [{ agentId: '', templateKey: 'guard.custom', name: 'Guard' }],
+          },
+        ],
+      });
+      db.prepare(
+        `INSERT INTO space_workflow_definition_versions
+           (workflow_id, version_hash, space_id, payload, source, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run('wf-terminal', 'vh-terminal', 'space-1', payload, 'run_create', now);
+      db.prepare(
+        `INSERT INTO space_workflow_runs
+           (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run('run-terminal', 'space-1', 'wf-terminal', 'vh-terminal', 'Run 2', 'done', now, now);
+      db.prepare(`INSERT INTO space_tasks (id, workflow_run_id, archived_at) VALUES (?, ?, ?)`).run(
+        'task-terminal',
+        'run-terminal',
+        now
+      );
+
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'guard.custom' }
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('ignores archived instances when guarding template deletion', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'guard.custom',
+        handle: 'guard',
+      });
+      longHorizonRepo.create({
+        spaceId: 'space-1',
+        handle: 'scribe',
+        displayName: 'Scribe',
+        templateKey: 'guard.custom',
+        instructions: 'Take notes.',
+        status: 'archived',
+      });
+
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'guard.custom' }
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects a delete whose expected version is stale', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'guard.custom',
+        handle: 'guard',
+      });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', {
+          key: 'guard.custom',
+          expectedVersion: 99,
+        })
+      ).rejects.toThrow('modified concurrently');
+
+      const current = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'guard.custom', expectedVersion: 1 }
+      );
+      expect(current.success).toBe(true);
+    });
+
+    it('blocks deleting a template still used by agent instances', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'guard.custom',
+        handle: 'guard',
+      });
+      longHorizonRepo.create({
+        spaceId: 'space-1',
+        handle: 'scribe',
+        displayName: 'Scribe',
+        templateKey: 'guard.custom',
+        instructions: 'Take notes.',
+      });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'guard.custom' })
+      ).rejects.toThrow(
+        'Template "guard.custom" is in use by 1 agent ("Scribe"). ' +
+          'Delete or re-point those agents before deleting the template.'
+      );
+    });
+
+    it('ignores archived agents when checking template instance usage', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'guard.custom',
+        handle: 'guard',
+      });
+      longHorizonRepo.create({
+        spaceId: 'space-1',
+        handle: 'old-scribe',
+        displayName: 'Old Scribe',
+        templateKey: 'guard.custom',
+        instructions: 'Take notes.',
+        status: 'archived',
+      });
+
+      const archived = longHorizonRepo.create({
+        spaceId: 'space-1',
+        handle: 'older-scribe',
+        displayName: 'Older Scribe',
+        templateKey: 'guard.custom',
+        instructions: 'Take notes.',
+        status: 'archived',
+      });
+
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'guard.custom' }
+      );
+      expect(result.success).toBe(true);
+      expect(longHorizonRepo.getById(archived.id)?.templateKey).toBeNull();
+    });
+
+    it('rejects a stale expected version on delete', async () => {
+      await call(hubData.handlers, 'spaceAgent.createTemplate', {
+        key: 'cas.custom',
+        handle: 'cas',
+      });
+      await call(hubData.handlers, 'spaceAgent.updateTemplate', {
+        key: 'cas.custom',
+        displayName: 'Two',
+      });
+
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', {
+          key: 'cas.custom',
+          expectedVersion: 1,
+        })
+      ).rejects.toThrow('modified concurrently');
+
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'cas.custom', expectedVersion: 2 }
+      );
+      expect(result.success).toBe(true);
     });
   });
 

@@ -67,6 +67,7 @@ describe('SpaceAgentTemplateRepository', () => {
       labels: ['quality', 'release'],
       createdAt: expect.any(Number),
       updatedAt: expect.any(Number),
+      version: 1,
     } satisfies SpaceAgentTemplate);
     expect(repo.getByKey('release-readiness.custom')).toEqual(created);
   });
