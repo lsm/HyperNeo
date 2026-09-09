@@ -49,7 +49,6 @@ function templateBindingWarning(params: {
     return `Unknown template key "${key}" — pick a template for this slot`;
   }
   if (template.instructions.trim()) return null;
-  if (params.slot.replaceAgentPrompt === true) return null;
   if (resolveSlotPromptText(params.slot).trim()) return null;
   return `Template "${template.displayName}" has empty instructions — this slot would spawn without a role prompt`;
 }
@@ -465,7 +464,7 @@ function AgentsSection({
         {(() => {
           const warning = templateBindingWarning({
             templateKey: selectedSingleTemplateKey,
-            slot: {
+            slot: singleSlot ?? {
               customPrompt: selectedSingleCustomPrompt,
               replaceAgentPrompt: selectedSingleReplaceAgentPrompt,
             },

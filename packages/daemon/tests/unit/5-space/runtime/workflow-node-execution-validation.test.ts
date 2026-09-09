@@ -424,7 +424,25 @@ describe('findMissingNodeAgentReferences empty-instruction audit', () => {
     ).toEqual([]);
   });
 
-  test('keeps a replace-mode slot regardless of template instructions', () => {
+  test('keeps a replace-mode slot whose replacement prompt is non-empty', () => {
+    const node = makeNode([
+      {
+        agentId: '',
+        templateKey: 'migrated.agent.gone',
+        name: 'orphan',
+        customPrompt: { value: 'Full replacement role instructions.' },
+        replaceAgentPrompt: true,
+      },
+    ]);
+    expect(
+      findMissingNodeAgentReferences(node, () => true, {
+        templateResolves: () => true,
+        templateInstructions: () => '',
+      })
+    ).toEqual([]);
+  });
+
+  test('flags a replace-mode slot with an empty replacement prompt', () => {
     const node = makeNode([
       {
         agentId: '',
@@ -438,7 +456,39 @@ describe('findMissingNodeAgentReferences empty-instruction audit', () => {
         templateResolves: () => true,
         templateInstructions: () => '',
       })
-    ).toEqual([]);
+    ).toEqual([
+      {
+        agentName: 'orphan',
+        agentId: '',
+        templateKey: 'migrated.agent.gone',
+        templateReason: 'empty-instructions',
+      },
+    ]);
+  });
+
+  test('flags a replace-mode slot whose replacement prompt is whitespace-only', () => {
+    const node = makeNode([
+      {
+        agentId: '',
+        templateKey: 'migrated.agent.gone',
+        name: 'orphan',
+        customPrompt: { value: '   ' },
+        replaceAgentPrompt: true,
+      },
+    ]);
+    expect(
+      findMissingNodeAgentReferences(node, () => true, {
+        templateResolves: () => true,
+        templateInstructions: () => '',
+      })
+    ).toEqual([
+      {
+        agentName: 'orphan',
+        agentId: '',
+        templateKey: 'migrated.agent.gone',
+        templateReason: 'empty-instructions',
+      },
+    ]);
   });
 
   test('keeps a slot whose legacy systemPrompt override supplies the effective prompt', () => {

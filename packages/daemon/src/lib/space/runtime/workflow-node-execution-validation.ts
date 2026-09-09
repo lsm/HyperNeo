@@ -133,7 +133,6 @@ export function findMissingNodeAgentReferences(
       const resolves = templateResolves ? templateResolves(templateKey) : instructions != null;
       if (resolves) {
         if (instructions == null || instructions.trim()) continue;
-        if (agent.replaceAgentPrompt === true) continue;
         if (resolveSlotCustomPrompt(agent)?.trim()) continue;
         missing.push({
           agentName: agent.name,

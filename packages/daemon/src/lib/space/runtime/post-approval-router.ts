@@ -14,6 +14,7 @@ import {
 } from '../workflows/post-approval-template.ts';
 import { Logger } from '../../logger.ts';
 import {
+  isMissingWorkflowAgentError,
   isSpawnSupersededError,
   isTransientSpawnError,
 } from './workflow-node-execution-validation.ts';
@@ -376,6 +377,12 @@ export class PostApprovalRouter {
       }
       if (isTransientSpawnError(err)) {
         const reason = `post-approval spawn for task ${task.id} deferred: ${err.message}; the dispatch stays recorded as blocked for retry`;
+        log.warn(`PostApprovalRouter.route: ${reason}`);
+        this.recordBlockedReasonIfCurrent(task, reason);
+        return { mode: 'skipped', reason };
+      }
+      if (isMissingWorkflowAgentError(err)) {
+        const reason = `post-approval spawn for task ${task.id} refused: ${err.message}; the dispatch is recorded as blocked until the slot's template binding is repaired`;
         log.warn(`PostApprovalRouter.route: ${reason}`);
         this.recordBlockedReasonIfCurrent(task, reason);
         return { mode: 'skipped', reason };

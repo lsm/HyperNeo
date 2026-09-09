@@ -3,6 +3,7 @@ import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository.ts';
 import {
+  MissingWorkflowAgentError,
   SpawnSupersededError,
   TransientSpawnError,
 } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
@@ -192,6 +193,51 @@ describe('PostApprovalRouter.route', () => {
     }
     expect(taskRepo.getTask(task.id)?.status).toBe('approved');
     expect(taskRepo.getTask(task.id)?.postApprovalBlockedReason).toContain('superseded');
+  });
+
+  test('a permanent template-audit failure maps to a recorded blocked dispatch instead of escaping', async () => {
+    const task = makeApprovedTask(taskRepo);
+    const delegates = makeDelegates();
+    const refusingSpawner = {
+      spawnPostApprovalSubSession: () => {
+        throw new MissingWorkflowAgentError(
+          'Workflow run "run-1" cannot activate node "Deploy" of workflow "wf": agent slot ' +
+            '"deployer" references agent template key "migrated.agent.agent-9", which resolves ' +
+            'to a template with empty instructions.',
+          {
+            agentName: 'deployer',
+            agentId: '',
+            templateKey: 'migrated.agent.agent-9',
+            templateReason: 'empty-instructions',
+          }
+        );
+      },
+    };
+    const router = new PostApprovalRouter({
+      taskRepo,
+      spawner: refusingSpawner,
+      livenessProbe: delegates.liveness,
+    });
+
+    const workflow = stubWorkflow({
+      postApproval: {
+        targetAgent: 'deployer',
+        instructions: 'Deploy {{task_title}} now.',
+      },
+    });
+
+    const result = await router.route(task, workflow, {
+      approvalSource: 'agent',
+      task_title: task.title,
+      spaceId: SPACE_ID,
+    });
+
+    expect(result.mode).toBe('skipped');
+    if (result.mode === 'skipped') {
+      expect(result.reason).toContain('template binding is repaired');
+    }
+    expect(taskRepo.getTask(task.id)?.status).toBe('approved');
+    expect(taskRepo.getTask(task.id)?.postApprovalBlockedReason).toContain('empty instructions');
   });
 
   test('targetAgent pointing at node agent → spawn sub-session + stamp', async () => {
