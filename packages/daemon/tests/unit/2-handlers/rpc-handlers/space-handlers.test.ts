@@ -559,26 +559,6 @@ describe('space-handlers', () => {
     });
   });
 
-  describe('space.list', () => {
-    beforeEach(() => setup());
-
-    it('lists active spaces by default', async () => {
-      const result = await call('space.list', {});
-      expect(result).toEqual([mockSpace]);
-      expect(spaceManager.listSpaces).toHaveBeenCalledWith(false);
-    });
-
-    it('lists including archived when requested', async () => {
-      await call('space.list', { includeArchived: true });
-      expect(spaceManager.listSpaces).toHaveBeenCalledWith(true);
-    });
-
-    it('accepts null/undefined data', async () => {
-      await call('space.list', null);
-      expect(spaceManager.listSpaces).toHaveBeenCalledWith(false);
-    });
-  });
-
   describe('space.listWithTasks', () => {
     beforeEach(() => setup());
 
@@ -628,24 +608,6 @@ describe('space-handlers', () => {
       expect(task.descriptionTruncated).toBe(false);
       expect(task.result).toBe(mockTask.result);
       expect(task.resultTruncated).toBe(false);
-    });
-  });
-
-  describe('space.get', () => {
-    beforeEach(() => setup());
-
-    it('returns the space when found', async () => {
-      const result = await call('space.get', { id: 'space-1' });
-      expect(result).toEqual(mockSpace);
-    });
-
-    it('throws when id and slug are both missing', async () => {
-      await expect(call('space.get', {})).rejects.toThrow('id or slug is required');
-    });
-
-    it('throws when space is not found', async () => {
-      await setup(null);
-      await expect(call('space.get', { id: 'nope' })).rejects.toThrow('Space not found: nope');
     });
   });
 
@@ -707,65 +669,6 @@ describe('space-handlers', () => {
 
       const [, params] = (spaceManager.updateSpace as ReturnType<typeof mock>).mock.calls[0];
       expect(params.autonomyLevel).toBeUndefined();
-    });
-  });
-
-  describe('space.setConcurrentLimit', () => {
-    beforeEach(() => setup());
-
-    it('updates maxConcurrentTasks and publishes space.updated', async () => {
-      const updated = { ...mockSpace, maxConcurrentTasks: 4 };
-      (spaceManager.updateSpace as ReturnType<typeof mock>).mockResolvedValue(updated);
-
-      const result = await call('space.setConcurrentLimit', { spaceId: 'space-1', limit: 4 });
-
-      expect(result).toEqual(updated);
-      expect(spaceManager.updateSpace).toHaveBeenCalledWith('space-1', { maxConcurrentTasks: 4 });
-      expect(internalEventBus.publish).toHaveBeenCalledWith('space.updated', {
-        sessionId: 'global',
-        spaceId: 'space-1',
-        space: updated,
-      });
-    });
-
-    it('accepts id as a backwards-compatible alias for spaceId', async () => {
-      await call('space.setConcurrentLimit', { id: 'space-1', limit: 2 });
-
-      expect(spaceManager.updateSpace).toHaveBeenCalledWith('space-1', { maxConcurrentTasks: 2 });
-    });
-
-    it('throws when spaceId is missing', async () => {
-      await expect(call('space.setConcurrentLimit', { limit: 2 })).rejects.toThrow(
-        'spaceId is required'
-      );
-    });
-
-    it('throws when limit is below 1', async () => {
-      await expect(
-        call('space.setConcurrentLimit', { spaceId: 'space-1', limit: 0 })
-      ).rejects.toThrow('Invalid concurrent task limit');
-    });
-
-    it('throws when limit is above 20', async () => {
-      await expect(
-        call('space.setConcurrentLimit', { spaceId: 'space-1', limit: 21 })
-      ).rejects.toThrow('Invalid concurrent task limit');
-    });
-
-    it('throws when limit is non-integer', async () => {
-      await expect(
-        call('space.setConcurrentLimit', { spaceId: 'space-1', limit: 1.5 })
-      ).rejects.toThrow('Invalid concurrent task limit');
-    });
-
-    it('propagates not-found errors from SpaceManager', async () => {
-      (spaceManager.updateSpace as ReturnType<typeof mock>).mockRejectedValue(
-        new Error('Space not found: missing')
-      );
-
-      await expect(
-        call('space.setConcurrentLimit', { spaceId: 'missing', limit: 2 })
-      ).rejects.toThrow('Space not found');
     });
   });
 

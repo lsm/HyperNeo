@@ -378,14 +378,6 @@ export interface SpaceMcpEntry {
   enabled: boolean;
 }
 
-export interface SpaceMcpListRequest {
-  spaceId: string;
-}
-
-export interface SpaceMcpListResponse {
-  entries: SpaceMcpEntry[];
-}
-
 export interface SpaceMcpSetEnabledRequest {
   spaceId: string;
   serverId: string;

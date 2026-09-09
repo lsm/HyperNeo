@@ -202,7 +202,7 @@ if (health?.status !== 'ok') {
 }
 
 async function cleanupPreviousRun(): Promise<void> {
-  const spacesRes = await rpcCall(ws, 'space.list', { includeArchived: true });
+  const spacesRes = await rpcCall(ws, 'space.listWithTasks', { includeArchived: true });
   const spaces = Array.isArray(spacesRes) ? spacesRes : (spacesRes?.spaces ?? []);
   for (const space of spaces) {
     if (space.name === SEED_SPACE_NAME && space.workspacePath === WORKSPACE) {

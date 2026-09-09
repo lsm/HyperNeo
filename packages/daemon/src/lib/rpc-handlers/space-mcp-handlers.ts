@@ -1,8 +1,5 @@
 import type {
   MessageHub,
-  SpaceMcpEntry,
-  SpaceMcpListRequest,
-  SpaceMcpListResponse,
   SpaceMcpSetEnabledRequest,
   SpaceMcpSetEnabledResponse,
   SpaceMcpClearOverrideRequest,
@@ -39,37 +36,6 @@ export function setupSpaceMcpHandlers(
   spaceManager: SpaceManager,
   mcpImportService?: McpImportService
 ): void {
-  messageHub.onRequest('space.mcp.list', async (data) => {
-    const { spaceId } = data as SpaceMcpListRequest;
-    if (!spaceId || typeof spaceId !== 'string') {
-      throw new Error('spaceId is required');
-    }
-    await assertSpaceExists(spaceManager, spaceId);
-
-    const servers = db.appMcpServers.list();
-    const overrides = db.mcpEnablement.listForScope('space', spaceId);
-    const overrideMap = new Map(overrides.map((o) => [o.serverId, o.enabled]));
-
-    const entries: SpaceMcpEntry[] = servers.map((server) => {
-      const override = overrideMap.get(server.id);
-      const overridden = override !== undefined;
-      const enabled = overridden ? override! : server.enabled;
-      return {
-        serverId: server.id,
-        name: server.name,
-        ...(server.description !== undefined ? { description: server.description } : {}),
-        sourceType: server.sourceType,
-        source: server.source,
-        ...(server.sourcePath !== undefined ? { sourcePath: server.sourcePath } : {}),
-        globallyEnabled: server.enabled,
-        overridden,
-        enabled,
-      };
-    });
-
-    return { entries } satisfies SpaceMcpListResponse;
-  });
-
   messageHub.onRequest('space.mcp.setEnabled', async (data) => {
     const { spaceId, serverId, enabled } = data as SpaceMcpSetEnabledRequest;
     if (!spaceId || typeof spaceId !== 'string') {
