@@ -163,7 +163,7 @@ describe('SpaceRuntime startWorkflowRun start-slot template audit', () => {
     }
 
     expect(caught).toBeInstanceOf(MissingWorkflowAgentError);
-    expect(taskRepo.getTask(parent.id)?.workflowRunId).toBeNull();
+    expect(taskRepo.getTask(parent.id)?.workflowRunId ?? null).toBeNull();
   });
 
   test('refuses to recover a stopped run whose existing executions bind an emptied template', async () => {
