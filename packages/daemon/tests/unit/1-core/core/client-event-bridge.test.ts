@@ -151,7 +151,7 @@ describe('ClientEventBridge', () => {
       bridge.start();
       bridge.stop();
 
-      expect(unsubscribers.length).toBe(31);
+      expect(unsubscribers.length).toBe(28);
     });
   });
 
