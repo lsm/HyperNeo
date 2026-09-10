@@ -44,6 +44,7 @@ interface Harness {
   sessions: Map<string, { type: string; spaceId: string | null }>;
   displayNames: string[];
   published: SpaceAgent[];
+  seeded: Array<{ agentId: string; templateKey: string }>;
 }
 
 function makeHarness(): Harness {
@@ -56,6 +57,7 @@ function makeHarness(): Harness {
     sessions: new Map([['session-free', { type: 'space_chat', spaceId: 'space-1' }]]),
     displayNames: [],
     published: [],
+    seeded: [],
     deps: {} as CreateSpaceAgentDeps,
   };
 
@@ -66,6 +68,9 @@ function makeHarness(): Harness {
     listDisplayNames: () => harness.displayNames,
     publishCreated: async (agent) => {
       harness.published.push(agent);
+    },
+    seedTemplateExtras: (agent, template) => {
+      harness.seeded.push({ agentId: agent.id, templateKey: template.key });
     },
     getTemplate: (key) => harness.templates.get(key) ?? null,
     listHandles: () => harness.handles,
@@ -421,6 +426,53 @@ describe('templateToCreateParams', () => {
     expect(params.instructions).toBe('Mine.');
     expect(params.description).toBe('Investigates things.');
     expect(params.autonomyLevel).toBe(3);
+  });
+});
+
+describe('template extras seeding', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = makeHarness();
+  });
+
+  test('seeds from the resolved template after the agent is persisted', async () => {
+    h.templates.set('scribe.v1', makeTemplate({ key: 'scribe.v1', handle: 'scribe' }));
+
+    const outcome = await run(h, baseInput({ templateKey: 'scribe.v1' }));
+
+    expect(isCreateSpaceAgentRejection(outcome)).toBe(false);
+    if (isCreateSpaceAgentRejection(outcome)) return;
+    expect(h.seeded).toEqual([{ agentId: outcome.id, templateKey: 'scribe.v1' }]);
+  });
+
+  test('does not seed when the agent was created without a template', async () => {
+    const outcome = await run(h, baseInput());
+
+    expect(isCreateSpaceAgentRejection(outcome)).toBe(false);
+    expect(h.seeded).toEqual([]);
+  });
+
+  test('does not seed when creation is rejected', async () => {
+    h.templates.set('scribe.v1', makeTemplate({ key: 'scribe.v1', handle: 'scribe' }));
+    h.spaceExists = false;
+
+    await run(h, baseInput({ templateKey: 'scribe.v1' }));
+
+    expect(h.seeded).toEqual([]);
+  });
+
+  test('seeds before the created event is published', async () => {
+    h.templates.set('scribe.v1', makeTemplate({ key: 'scribe.v1', handle: 'scribe' }));
+    const order: string[] = [];
+    h.deps.seedTemplateExtras = () => order.push('seed');
+    h.deps.publishCreated = async () => {
+      order.push('publish');
+    };
+
+    await run(h, baseInput({ templateKey: 'scribe.v1' }));
+
+    expect(order).toEqual(['seed', 'publish']);
   });
 });
 
