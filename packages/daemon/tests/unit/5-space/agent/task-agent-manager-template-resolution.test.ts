@@ -565,6 +565,22 @@ describe('resolveSlotSpawnConfig pinned snapshot consumption (ATC-8)', () => {
     expect(h.templateRepoCalls).toEqual([]);
   });
 
+  test('a dual-reference slot in a run refuses to fall through to its live agentId', () => {
+    const h = makeTemplateResolutionHarness({
+      storedTemplates: [makeStoredTemplate()],
+      registryAgents: [makeRegistryAgent({ id: 'agent-live', displayName: 'Live Agent' })],
+    });
+
+    const config = h.internals.resolveSlotSpawnConfig(
+      SPACE_ID,
+      { agentId: 'agent-live', templateKey: 'custom.stored', name: 'stored' },
+      { workflowId: 'wf-3832', definitionVersion: null }
+    );
+
+    expect(config).toBeNull();
+    expect(h.templateRepoCalls).toEqual([]);
+  });
+
   test('a direct spawn without a run resolves live (send-to-agent path)', () => {
     const h = makeTemplateResolutionHarness({
       storedTemplates: [makeStoredTemplate()],

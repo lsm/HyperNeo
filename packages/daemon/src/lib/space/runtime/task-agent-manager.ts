@@ -3391,6 +3391,7 @@ export class TaskAgentManager {
           []
         );
       }
+      if (workflowRun) return null;
     }
     if (!slot.agentId) return null;
     const registryAgent = this.resolveUnifiedSlotAgent(spaceId, slot.agentId);

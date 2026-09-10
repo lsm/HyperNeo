@@ -98,7 +98,6 @@ export function findMissingNodeAgentReferences(
     const templateKey = agent.templateKey?.trim() ?? '';
     if (templateKey) {
       if (!templateResolves || templateResolves(templateKey)) continue;
-      if (agent.agentId && agentExists(agent.agentId)) continue;
       missing.push({ agentName: agent.name, agentId: agent.agentId, templateKey });
       continue;
     }

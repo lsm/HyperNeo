@@ -234,13 +234,13 @@ describe('findMissingNodeAgentReferences template drift', () => {
     expect(findMissingNodeAgentReferences(node, () => false)).toEqual([]);
   });
 
-  test('falls back to a live agentId when the templateKey does not resolve', () => {
+  test('reports a template slot that does not resolve even when its agentId is live', () => {
     const node = makeNode([{ agentId: 'live', templateKey: 'ghost.preview', name: 'ghost' }]);
     expect(
       findMissingNodeAgentReferences(node, (id) => id === 'live', {
         templateResolves: () => false,
       })
-    ).toEqual([]);
+    ).toEqual([{ agentName: 'ghost', agentId: 'live', templateKey: 'ghost.preview' }]);
   });
 
   test('reports when neither the templateKey resolves nor the agentId exists', () => {
