@@ -19,6 +19,7 @@ export class SpaceAgentStore {
 
   private cleanups: Array<() => void> = [];
   private subscribedSpaceId: string | null = null;
+  private activeChannel: string | null = null;
   private generation = 0;
 
   private hub() {
@@ -32,7 +33,7 @@ export class SpaceAgentStore {
     this.teardown();
     this.spaceId.value = spaceId;
     this.agents.value = [];
-    this.subscribe(spaceId);
+    await this.subscribe(spaceId);
     await this.refresh();
   }
 
@@ -86,7 +87,7 @@ export class SpaceAgentStore {
   }
 
   upsert(agent: SpaceAgent): void {
-    if (this.spaceId.value && agent.spaceId !== this.spaceId.value) return;
+    if (!this.spaceId.value || agent.spaceId !== this.spaceId.value) return;
     const current = this.agents.value;
     const index = current.findIndex((a) => a.id === agent.id);
     if (index === -1) {
@@ -102,9 +103,17 @@ export class SpaceAgentStore {
     this.agents.value = this.agents.value.filter((a) => a.id !== id);
   }
 
-  private subscribe(spaceId: string): void {
+  private async subscribe(spaceId: string): Promise<void> {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return;
+
+    const channel = `space:${spaceId}`;
+    await hub.joinChannel(channel);
+    if (this.spaceId.value !== spaceId) {
+      hub.leaveChannel(channel);
+      return;
+    }
+    this.activeChannel = channel;
 
     this.cleanups.push(
       hub.onEvent<{ spaceId: string; agent: SpaceAgent }>('spaceAgentV2.created', (event) => {
@@ -125,6 +134,10 @@ export class SpaceAgentStore {
   }
 
   teardown(): void {
+    if (this.activeChannel) {
+      connectionManager.getHubIfConnected()?.leaveChannel(this.activeChannel);
+      this.activeChannel = null;
+    }
     for (const cleanup of this.cleanups) cleanup();
     this.cleanups = [];
     this.subscribedSpaceId = null;

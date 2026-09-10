@@ -7,6 +7,12 @@ let eventHandlers: Map<string, Set<(event: unknown) => void>>;
 let listResult: SpaceAgent[];
 let requests: Array<{ method: string; params: unknown }>;
 let failNextRequest: string | null;
+let joinedChannels: string[];
+let leftChannels: string[];
+
+async function tick(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 function fire(event: string, payload: unknown): void {
   eventHandlers.get(event)?.forEach((handler) => {
@@ -57,6 +63,12 @@ function makeMockHub() {
       if (method === 'spaceAgentV2.delete') return { id: (params as { id: string }).id };
       throw new Error(`unexpected method ${method}`);
     }),
+    joinChannel: vi.fn(async (channel: string) => {
+      joinedChannels.push(channel);
+    }),
+    leaveChannel: vi.fn(async (channel: string) => {
+      leftChannels.push(channel);
+    }),
     onEvent: vi.fn((event: string, handler: (payload: unknown) => void) => {
       if (!eventHandlers.has(event)) eventHandlers.set(event, new Set());
       eventHandlers.get(event)?.add(handler);
@@ -73,6 +85,8 @@ describe('SpaceAgentStore', () => {
     eventHandlers = new Map();
     requests = [];
     failNextRequest = null;
+    joinedChannels = [];
+    leftChannels = [];
     listResult = [];
     hub = makeMockHub();
     vi.spyOn(connectionManager, 'getHubIfConnected').mockReturnValue(
@@ -225,6 +239,7 @@ describe('SpaceAgentStore', () => {
       );
 
       const pending = store.selectSpace('space-1');
+      await tick();
       await store.selectSpace('space-2');
       rejectFirst(new Error('space-1 blew up'));
       await pending;
@@ -242,6 +257,7 @@ describe('SpaceAgentStore', () => {
       );
 
       const pending = store.selectSpace('space-1');
+      await tick();
       hub.request.mockImplementationOnce(() => new Promise(() => {}));
       const second = store.selectSpace('space-2');
 
@@ -263,6 +279,7 @@ describe('SpaceAgentStore', () => {
       );
 
       const first = store.selectSpace('space-1');
+      await tick();
       await store.selectSpace('space-2');
       listResult = [makeAgent('final')];
       await store.selectSpace('space-1');
@@ -283,6 +300,7 @@ describe('SpaceAgentStore', () => {
       );
 
       const first = store.selectSpace('space-1');
+      await tick();
       await store.selectSpace('space-2');
       await store.selectSpace('space-1');
 
@@ -308,11 +326,42 @@ describe('SpaceAgentStore', () => {
     it('teardown during a pending refresh does not leave the store loading', async () => {
       hub.request.mockImplementationOnce(() => new Promise(() => {}));
       const pending = store.selectSpace('space-1');
+      await tick();
 
       store.teardown();
 
       expect(store.loading.value).toBe(false);
       void pending;
+    });
+  });
+  describe('space channel membership', () => {
+    it('joins the space channel before installing handlers', async () => {
+      await store.selectSpace('space-1');
+      expect(joinedChannels).toEqual(['space:space-1']);
+    });
+
+    it('leaves the previous channel when switching spaces', async () => {
+      await store.selectSpace('space-1');
+      await store.selectSpace('space-2');
+
+      expect(leftChannels).toContain('space:space-1');
+      expect(joinedChannels).toEqual(['space:space-1', 'space:space-2']);
+    });
+
+    it('leaves the channel on teardown', async () => {
+      await store.selectSpace('space-1');
+      store.teardown();
+
+      expect(leftChannels).toEqual(['space:space-1']);
+    });
+
+    it('does not accept a mutation result after teardown', async () => {
+      await store.selectSpace('space-1');
+      store.teardown();
+
+      store.upsert(makeAgent('late'));
+
+      expect(store.agents.value).toEqual([]);
     });
   });
 });
