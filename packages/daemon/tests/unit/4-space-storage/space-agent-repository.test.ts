@@ -126,7 +126,7 @@ describe('SpaceAgentRepository', () => {
       expect(repo.getBySessionId('session-absent')).toBeNull();
     });
 
-    test('listBySpaceId returns only that space, oldest first', () => {
+    test('listOwnedBySpaceId returns only that space, oldest first', () => {
       db.prepare(
         `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?)`
@@ -136,8 +136,47 @@ describe('SpaceAgentRepository', () => {
       const second = repo.create({ spaceId: 'space-1', handle: 'second' });
       repo.create({ spaceId: 'space-2', handle: 'other-space' });
 
-      const listed = repo.listBySpaceId('space-1');
+      const listed = repo.listOwnedBySpaceId('space-1');
       expect(listed.map((a) => a.id)).toEqual([first.id, second.id]);
+    });
+
+    test('listOwnedBySpaceId keeps rows carrying an unrelated template key', () => {
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_long_horizon_agents (
+           id, space_id, handle, display_name, template_key, status, instructions,
+           tool_permissions_json, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        'templated-1',
+        'space-1',
+        'templated',
+        'Templated',
+        'coder.v1',
+        'active',
+        '',
+        '{}',
+        now,
+        now
+      );
+
+      expect(repo.listOwnedBySpaceId('space-1').map((a) => a.id)).toEqual(['templated-1']);
+    });
+
+    test('listIdentitiesBySpaceId returns only that space, oldest first', () => {
+      db.prepare(
+        `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run('space-2', 'space-2', '/tmp/space-2', 'Space Two', Date.now(), Date.now());
+
+      const first = repo.create({ spaceId: 'space-1', handle: 'first', displayName: 'First' });
+      const second = repo.create({ spaceId: 'space-1', handle: 'second', status: 'archived' });
+      repo.create({ spaceId: 'space-2', handle: 'other-space' });
+
+      expect(repo.listIdentitiesBySpaceId('space-1')).toEqual([
+        { id: first.id, handle: 'first', displayName: 'First', status: 'active' },
+        { id: second.id, handle: 'second', displayName: 'second', status: 'archived' },
+      ]);
     });
   });
 
@@ -316,6 +355,21 @@ describe('SpaceAgentRepository', () => {
     test('still reads mirrors', () => {
       makeMirror('mirror-3');
       expect(repo.getById('mirror-3')?.displayName).toBe('Mirror');
+    });
+
+    test('omits mirrors from the owned listing it can mutate', () => {
+      makeMirror('mirror-4');
+      const owned = repo.create({ spaceId: 'space-1', handle: 'owned' });
+
+      expect(repo.listOwnedBySpaceId('space-1').map((a) => a.id)).toEqual([owned.id]);
+    });
+
+    test('keeps mirrors visible to identity reads so their handles stay taken', () => {
+      makeMirror('mirror-5');
+
+      expect(repo.listIdentitiesBySpaceId('space-1')).toEqual([
+        { id: 'mirror-5', handle: 'mirror-5', displayName: 'Mirror', status: 'active' },
+      ]);
     });
   });
 

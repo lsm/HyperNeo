@@ -98,10 +98,11 @@ export function buildAgentCreate(
     sessionOwner: (sessionId) => deps.agents.getBySessionId(sessionId)?.id ?? null,
     getSession: (sessionId) => toBindableSession(deps.getSession(sessionId)),
     getTemplate: resolveTemplate(deps),
-    listHandles: (spaceId) => deps.agents.listBySpaceId(spaceId).map((agent) => agent.handle),
+    listHandles: (spaceId) =>
+      deps.agents.listIdentitiesBySpaceId(spaceId).map((agent) => agent.handle),
     listDisplayNames: (spaceId) =>
       deps.agents
-        .listBySpaceId(spaceId)
+        .listIdentitiesBySpaceId(spaceId)
         .filter((agent) => agent.status !== 'archived')
         .map((agent) => agent.displayName),
     createAgent: (params) => deps.agents.create(params),
@@ -125,10 +126,11 @@ export function buildAgentUpdate(
     getAgent: (id) => deps.agents.getById(id),
     getSession: (sessionId) => toBindableSession(deps.getSession(sessionId)),
     sessionOwner: (sessionId) => deps.agents.getBySessionId(sessionId)?.id ?? null,
-    listHandles: (spaceId) => deps.agents.listBySpaceId(spaceId).map((agent) => agent.handle),
+    listHandles: (spaceId) =>
+      deps.agents.listIdentitiesBySpaceId(spaceId).map((agent) => agent.handle),
     listDisplayNames: (spaceId, excludeAgentId) =>
       deps.agents
-        .listBySpaceId(spaceId)
+        .listIdentitiesBySpaceId(spaceId)
         .filter((agent) => agent.status !== 'archived' && agent.id !== excludeAgentId)
         .map((agent) => agent.displayName),
     applyUpdate: (id, changes) => deps.agents.update(id, changes),
@@ -152,7 +154,7 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
   messageHub.onRequest(method('list'), async (data) => {
     const params = data as { spaceId?: string };
     const spaceId = requireString(params.spaceId, 'spaceId');
-    return { agents: deps.agents.listBySpaceId(spaceId) };
+    return { agents: deps.agents.listOwnedBySpaceId(spaceId) };
   });
 
   messageHub.onRequest(method('get'), async (data) => {
