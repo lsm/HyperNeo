@@ -93,7 +93,7 @@ export function mapMessageReceipt(outcome: MailboxHandoffOutcome, messageId: str
 
 const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
   .input(['input', 'caller', 'jobQueue'])
-  .pipe(generateUUID, [], 'messageId')
+  .pipe(generateUUID, undefined, 'messageId')
   .pipe(selectMessageOrigin, 'caller', 'origin')
   .pipe(persistOperationMessage, ['input', 'origin', 'messageId', 'jobQueue'], 'handoff')
   .pipe(mapMessageReceipt, ['handoff', 'messageId'], 'receipt')
