@@ -717,7 +717,7 @@ export class SpaceTaskRepository {
                ELSE post_approval_blocked_reason
              END,
              updated_at = ?
-       WHERE post_approval_session_id = ? AND id != ?`
+       WHERE space_id IS NOT NULL AND post_approval_session_id = ? AND id != ?`
     );
     const recordRouting = this.db.prepare(
       `UPDATE space_tasks
@@ -729,7 +729,7 @@ export class SpaceTaskRepository {
              pending_completion_submitted_at = NULL,
              pending_completion_reason = NULL,
              updated_at = ?
-       WHERE id = ?
+       WHERE space_id IS NOT NULL AND id = ?
          AND status = 'approved'
          AND ((? IS NULL AND workflow_run_id IS NULL) OR workflow_run_id = ?)
          AND ((? IS NULL AND approved_at IS NULL) OR approved_at = ?)
@@ -811,7 +811,7 @@ export class SpaceTaskRepository {
     this.db
       .prepare(
         `UPDATE space_tasks SET reconcile_checked_at = ?
-          WHERE workflow_run_id = ? AND status != 'archived'`
+          WHERE space_id IS NOT NULL AND workflow_run_id = ? AND status != 'archived'`
       )
       .run(checkedAt, workflowRunId);
   }
@@ -864,11 +864,13 @@ export class SpaceTaskRepository {
 
   promoteDraftTasksByCreator(createdByTaskId: string): number {
     const rows = this.db
-      .prepare(`SELECT id FROM space_tasks WHERE created_by_task_id = ? AND status = 'draft'`)
+      .prepare(
+        `SELECT id FROM space_tasks WHERE space_id IS NOT NULL AND created_by_task_id = ? AND status = 'draft'`
+      )
       .all(createdByTaskId) as Array<{ id: string }>;
     const result = this.db
       .prepare(
-        `UPDATE space_tasks SET status = 'open', updated_at = ? WHERE created_by_task_id = ? AND status = 'draft'`
+        `UPDATE space_tasks SET status = 'open', updated_at = ? WHERE space_id IS NOT NULL AND created_by_task_id = ? AND status = 'draft'`
       )
       .run(Date.now(), createdByTaskId);
     if (result.changes > 0) {
