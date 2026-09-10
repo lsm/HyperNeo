@@ -6,6 +6,7 @@ import {
 } from '../../../../src/lib/rpc-handlers/space-agent-v2-handlers';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
+import { SpaceLongHorizonAgentRepository } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
@@ -57,6 +58,7 @@ function insertMirror(db: Database, id: string, handle: string, displayName: str
 describe('setupSpaceAgentV2Handlers', () => {
   let db: Database;
   let agents: SpaceAgentRepository;
+  let legacyAgents: SpaceLongHorizonAgentRepository;
   let templates: SpaceAgentTemplateRepository;
   let handlers: Map<string, RequestHandler>;
   let deps: SpaceAgentV2Deps;
@@ -76,6 +78,7 @@ describe('setupSpaceAgentV2Handlers', () => {
     ).run('space-1', 'space-1', '/tmp/space-1', 'Space One', Date.now(), Date.now());
 
     agents = new SpaceAgentRepository(db);
+    legacyAgents = new SpaceLongHorizonAgentRepository(db);
     templates = new SpaceAgentTemplateRepository(db);
     sessions = new Map([
       ['session-1', { type: 'space_chat', context: { spaceId: 'space-1' } }],
@@ -84,6 +87,7 @@ describe('setupSpaceAgentV2Handlers', () => {
     published = [];
     deps = {
       agents,
+      legacyAgents,
       templates,
       spaceExists: async (id) => id === 'space-1',
       getSession: (id) => sessions.get(id) ?? null,
@@ -247,12 +251,47 @@ describe('setupSpaceAgentV2Handlers', () => {
         tools: ['Read'],
       });
 
-      expect(published).toHaveLength(1);
-      expect(published[0].topic).toBe('spaceAgentV2.created');
+      expect(published.map((event) => event.topic)).toEqual([
+        'spaceAgentV2.created',
+        'spaceAgent.created',
+      ]);
       const payload = published[0].payload as { spaceId: string; agent: SpaceAgent };
       expect(payload.spaceId).toBe('space-1');
       expect(payload.agent.id).toBe(agent.id);
       expect(payload.agent.tools).toEqual(['Read']);
+    });
+
+    test('mirrors creation to the legacy event so pre-V2 caches stay current', async () => {
+      const { agent } = await call<{ agent: SpaceAgent }>(handlers, 'spaceAgentV2.create', {
+        spaceId: 'space-1',
+        displayName: 'Publisher',
+        tools: ['Read'],
+      });
+
+      const legacy = published.find((event) => event.topic === 'spaceAgent.created');
+      const payload = legacy?.payload as { spaceId: string; agent: { id: string } };
+      expect(payload.spaceId).toBe('space-1');
+      expect(payload.agent).toEqual(legacyAgents.getById(agent.id));
+    });
+
+    test('mirrors the stored legacy row, preserving fields the V2 shape cannot express', async () => {
+      const existing = legacyAgents.create({
+        spaceId: 'space-1',
+        handle: 'legacy-made',
+        displayName: 'Legacy Made',
+        templateKey: 'reviewer.custom',
+        toolPermissions: { mode: 'scoped', tools: ['Read'] },
+      });
+      published = [];
+
+      await call(handlers, 'spaceAgentV2.update', { id: existing.id, displayName: 'Renamed' });
+
+      const legacy = published.find((event) => event.topic === 'spaceAgent.updated');
+      const payload = legacy?.payload as {
+        agent: { templateKey: string | null; toolPermissions: Record<string, unknown> };
+      };
+      expect(payload.agent.templateKey).toBe('reviewer.custom');
+      expect(payload.agent.toolPermissions).toEqual({ mode: 'scoped', tools: ['Read'] });
     });
 
     test('does not publish when creation is rejected', async () => {
@@ -411,7 +450,7 @@ describe('setupSpaceAgentV2Handlers', () => {
 
       await call(handlers, 'spaceAgentV2.update', { id: created.id, displayName: 'Renamed' });
 
-      expect(published.map((p) => p.topic)).toEqual(['spaceAgentV2.updated']);
+      expect(published.map((p) => p.topic)).toEqual(['spaceAgentV2.updated', 'spaceAgent.updated']);
     });
 
     test('requires an id', async () => {
@@ -538,9 +577,13 @@ describe('setupSpaceAgentV2Handlers', () => {
 
       await call(handlers, 'spaceAgentV2.delete', { id: created.id });
 
-      expect(published).toHaveLength(1);
-      expect(published[0].topic).toBe('spaceAgentV2.deleted');
-      expect(published[0].payload).toMatchObject({ spaceId: 'space-1', agentId: created.id });
+      expect(published.map((event) => event.topic)).toEqual([
+        'spaceAgentV2.deleted',
+        'spaceAgent.deleted',
+      ]);
+      for (const event of published) {
+        expect(event.payload).toMatchObject({ spaceId: 'space-1', agentId: created.id });
+      }
     });
   });
 });
