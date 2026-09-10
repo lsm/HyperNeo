@@ -1,18 +1,13 @@
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
 import { appState, connectionState } from './state';
 import { globalStore } from './global-store';
-import {
-  markAllSessionStoresRecovering,
-  refreshAllSessionStores,
-  sessionStore,
-} from './session-store';
-import { spaceStore } from './space-store';
-import { spaceAgentStore } from './space-agent-store';
+import { markAllSessionStoresRecovering, sessionStore } from './session-store';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
 import { currentSessionIdSignal, slashCommandsSignal } from './signals';
 import { runConnectionEvent } from './connection-event-pipeline';
 import { runConnectionResume } from './connection-resume-pipeline';
+import { createDefaultConnectionResumeEffects } from './connection-resume-adapter';
 import { createDefaultConnectionEventEffects } from './connection-event-adapter';
 import { startAutoFlush, stopAutoFlush } from './outbound-queue';
 import { startVoiceAudioOutboxFlush, stopVoiceAudioOutboxFlush } from './voice/voice-audio-outbox';
@@ -307,16 +302,12 @@ export class ConnectionManager {
       }
 
       try {
-        await runConnectionResume({
-          checkHealth: () => this.messageHub!.request('system.health', {}, { timeout: 3000 }),
-          joinChannel: (channel) => this.messageHub!.joinChannel(channel),
-          getActiveSpaceId: () => spaceStore.spaceId.value,
-          refreshSessions: refreshAllSessionStores,
-          refreshApp: () => appState.refreshAll(),
-          refreshGlobal: () => globalStore.refresh(),
-          refreshSpace: () => spaceStore.refresh(),
-          recoverAgents: () => spaceAgentStore.recover(),
-        });
+        await runConnectionResume(
+          createDefaultConnectionResumeEffects({
+            checkHealth: () => this.messageHub!.request('system.health', {}, { timeout: 3000 }),
+            joinChannel: (channel) => this.messageHub!.joinChannel(channel),
+          })
+        );
       } catch {
         if (this.transport) {
           this.transport.forceReconnect();
