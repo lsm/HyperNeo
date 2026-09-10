@@ -2,12 +2,12 @@ import { describe, expect, it, test, beforeEach, afterEach, mock } from 'bun:tes
 import { mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { ReferenceResolver } from '../../../../src/lib/agent/reference-resolver';
+import { ReferenceResolver } from '../../../src/lib/agent/reference-resolver';
 import type {
   ResolutionContext,
   GoalRepoLike,
   SpaceTaskRepoLike,
-} from '../../../../src/lib/agent/reference-resolver';
+} from '../../../src/lib/agent/reference-resolver';
 import type { ResolvedFileReference, ResolvedFolderReference } from '@hyperneo/shared';
 
 async function createWorkspace(): Promise<string> {

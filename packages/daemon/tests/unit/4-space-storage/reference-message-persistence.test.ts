@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { Session } from '@hyperneo/shared';
-import type { Database } from '../../../../src/storage/database';
-import type { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
-import type { InternalEventBus } from '../../../../src/lib/internal-event-bus';
-import { MessagePersistence } from '../../../../src/lib/session/message-persistence';
-import { ReferenceResolver } from '../../../../src/lib/session/reference-resolver';
-import type { SessionCache } from '../../../../src/lib/session/session-cache';
-import type { GoalRepoForReference } from '../../../../src/lib/rpc-handlers/reference-handlers';
+import type { Database } from '../../../src/storage/database';
+import type { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
+import type { InternalEventBus } from '../../../src/lib/internal-event-bus';
+import { MessagePersistence } from '../../../src/lib/session/message-persistence';
+import { ReferenceResolver } from '../../../src/lib/session/reference-resolver';
+import type { SessionCache } from '../../../src/lib/session/session-cache';
+import type { GoalRepoForReference } from '../../../src/lib/rpc-handlers/reference-handlers';
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
