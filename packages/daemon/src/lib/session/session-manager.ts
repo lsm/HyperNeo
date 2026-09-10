@@ -123,7 +123,6 @@ export class SessionManager {
     );
 
     const referenceResolver = new ReferenceResolver({
-      taskRepo: db.getTaskRepo(),
       goalRepo: db.getGoalRepo(),
     });
     this.messagePersistence = new MessagePersistence(
