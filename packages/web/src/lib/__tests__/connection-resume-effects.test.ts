@@ -239,13 +239,19 @@ describe('real ConnectionManager resume recovery', () => {
       if (missing === 'messageHub') {
         const transport = Reflect.get(manager, 'transport') as { forceReconnect(): void };
         transport.forceReconnect();
+      } else {
+        fixture.ready = true;
+        Reflect.set(manager, 'transport', {
+          isReady: () => fixture.ready,
+          close: () => {},
+        });
       }
     });
     await runResume();
     expect(fixture.effects).toEqual(
       missing === 'messageHub'
         ? ['mark-recovering', 'reconnect', 'force-reconnect']
-        : ['mark-recovering', 'reconnect']
+        : ['mark-recovering', 'reconnect', 'state:connected', 'notify']
     );
     expect(Reflect.get(manager, '_isResuming')).toBe(false);
   });
