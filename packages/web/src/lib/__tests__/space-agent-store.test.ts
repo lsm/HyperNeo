@@ -230,6 +230,49 @@ describe('SpaceAgentStore', () => {
       expect(store.agents.value).toHaveLength(0);
     });
   });
+  describe('recover', () => {
+    it('installs handlers that were never installed because the page mounted offline', async () => {
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValueOnce(
+        null as unknown as ReturnType<typeof connectionManager.getHubIfConnected>
+      );
+      await store.selectSpace('space-1');
+      expect(eventHandlers.size).toBe(0);
+
+      listResult = [makeAgent('a')];
+      await store.recover();
+
+      expect([...eventHandlers.keys()].length).toBe(3);
+      expect(store.agents.value.map((a) => a.id)).toEqual(['a']);
+
+      fire('spaceAgentV2.created', { spaceId: 'space-1', agent: makeAgent('live') });
+      expect(store.agents.value.map((a) => a.id)).toEqual(['a', 'live']);
+    });
+
+    it('rejoins the space channel, whose membership is dropped on reconnect', async () => {
+      await store.selectSpace('space-1');
+      joinedChannels.length = 0;
+
+      await store.recover();
+
+      expect(joinedChannels).toEqual(['space:space-1']);
+    });
+
+    it('does not accumulate duplicate handlers across repeated recoveries', async () => {
+      await store.selectSpace('space-1');
+      await store.recover();
+      await store.recover();
+
+      expect(eventHandlers.get('spaceAgentV2.created')?.size).toBe(1);
+    });
+
+    it('is a no-op with no space selected', async () => {
+      await store.recover();
+
+      expect(requests).toEqual([]);
+      expect(joinedChannels).toEqual([]);
+    });
+  });
+
   describe('connection and staleness', () => {
     it('retries selection after the hub was unavailable', async () => {
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValueOnce(

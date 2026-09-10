@@ -189,6 +189,7 @@ export class ConnectionManager {
         startVoiceAudioOutboxFlush();
         startVoiceTranscriptOutboxFlush();
         this.notifyConnectionHandlers();
+        void spaceAgentStore.recover();
       }
 
       if (state === 'reconnecting' || state === 'connecting') {
@@ -347,7 +348,7 @@ export class ConnectionManager {
           appState.refreshAll(),
           globalStore.refresh(),
           spaceStore.refresh(),
-          spaceAgentStore.refresh(),
+          spaceAgentStore.recover(),
         ]);
       } catch {
         if (this.transport) {

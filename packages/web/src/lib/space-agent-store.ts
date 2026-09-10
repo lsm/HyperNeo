@@ -60,6 +60,16 @@ export class SpaceAgentStore {
     return this.generation === generation;
   }
 
+  async recover(): Promise<void> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) return;
+    this.releaseHandlers();
+    try {
+      await this.subscribe(spaceId);
+    } catch {}
+    await this.refresh();
+  }
+
   async create(params: CreateSpaceAgentRequest): Promise<SpaceAgent> {
     const spaceId = this.spaceId.value;
     if (!spaceId) throw new Error('No space selected');
@@ -134,10 +144,14 @@ export class SpaceAgentStore {
     await hub.joinChannel(`space:${spaceId}`);
   }
 
-  teardown(): void {
+  private releaseHandlers(): void {
     for (const cleanup of this.cleanups) cleanup();
     this.cleanups = [];
     this.subscribedSpaceId = null;
+  }
+
+  teardown(): void {
+    this.releaseHandlers();
     this.generation += 1;
     this.spaceId.value = null;
     this.agents.value = [];
