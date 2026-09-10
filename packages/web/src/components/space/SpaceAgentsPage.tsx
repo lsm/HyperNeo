@@ -1,4 +1,4 @@
-import type { SpaceAgent, SpaceAgentTemplate } from '@hyperneo/shared';
+import type { SpaceAgent } from '@hyperneo/shared';
 import { useEffect, useState } from 'preact/hooks';
 import { spaceAgentStore } from '../../lib/space-agent-store';
 import { spaceStore } from '../../lib/space-store';
@@ -10,12 +10,19 @@ export interface SpaceAgentsPageProps {
   spaceId: string;
 }
 
-function templateOptions(): SpaceAgentTemplate[] {
-  return spaceStore.agentTemplates.value as unknown as SpaceAgentTemplate[];
+const PROTECTED_HANDLES = new Set(['space-manager', 'coordinator']);
+
+interface TemplateOption {
+  key: string;
+  displayName: string;
+}
+
+function templateOptions(): TemplateOption[] {
+  return spaceStore.agentTemplates.value;
 }
 
 export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
-  const agents = spaceAgentStore.agents.value;
+  const agents = spaceAgentStore.agents.value.filter((agent) => agent.status !== 'archived');
   const loading = spaceAgentStore.loading.value;
   const loadError = spaceAgentStore.error.value;
 
@@ -30,6 +37,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
 
   useEffect(() => {
     void spaceAgentStore.selectSpace(spaceId);
+    spaceStore.fetchTemplates().catch(() => {});
     return () => {
       spaceAgentStore.teardown();
     };
@@ -59,6 +67,11 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     event.preventDefault();
     const data = new FormData(event.currentTarget as HTMLFormElement);
     const field = (name: string) => String(data.get(name) ?? '').trim();
+
+    if (editing && field('displayName') === '') {
+      setFormError('Name is required');
+      return;
+    }
 
     setSaving(true);
     setFormError(null);
@@ -232,17 +245,19 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
                 <Button size="sm" variant="ghost" onClick={() => openEdit(selected)}>
                   Edit
                 </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  data-testid="agent-delete-button"
-                  onClick={() => {
-                    setDeleting(selected);
-                    setDeleteError(null);
-                  }}
-                >
-                  Delete
-                </Button>
+                {!PROTECTED_HANDLES.has(selected.handle) && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    data-testid="agent-delete-button"
+                    onClick={() => {
+                      setDeleting(selected);
+                      setDeleteError(null);
+                    }}
+                  >
+                    Delete
+                  </Button>
+                )}
               </div>
             </div>
           )}

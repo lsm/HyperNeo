@@ -13,6 +13,7 @@ const {
   mockRemove,
   mockTeardown,
   mockTemplates,
+  mockFetchTemplates,
 } = vi.hoisted(() => ({
   mockAgents: { value: [] as SpaceAgent[] },
   mockLoading: { value: false },
@@ -23,6 +24,7 @@ const {
   mockRemove: vi.fn().mockResolvedValue(undefined),
   mockTeardown: vi.fn(),
   mockTemplates: { value: [] as Array<{ key: string; displayName: string }> },
+  mockFetchTemplates: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../../../lib/space-agent-store', () => ({
@@ -39,7 +41,7 @@ vi.mock('../../../lib/space-agent-store', () => ({
 }));
 
 vi.mock('../../../lib/space-store', () => ({
-  spaceStore: { agentTemplates: mockTemplates },
+  spaceStore: { agentTemplates: mockTemplates, fetchTemplates: mockFetchTemplates },
 }));
 
 import { SpaceAgentsPage } from '../SpaceAgentsPage';
@@ -78,6 +80,7 @@ describe('SpaceAgentsPage', () => {
     mockUpdate.mockReset().mockResolvedValue(makeAgent('a'));
     mockRemove.mockReset().mockResolvedValue(undefined);
     mockTeardown.mockClear();
+    mockFetchTemplates.mockClear();
   });
 
   it('selects the space on mount', () => {
@@ -85,12 +88,24 @@ describe('SpaceAgentsPage', () => {
     expect(mockSelectSpace).toHaveBeenCalledWith('space-1');
   });
 
-  it('tears the store down on unmount so the space channel is released', () => {
+  it('tears the store down on unmount', () => {
     const { unmount } = render(<SpaceAgentsPage spaceId="space-1" />);
     expect(mockTeardown).not.toHaveBeenCalled();
 
     unmount();
     expect(mockTeardown).toHaveBeenCalled();
+  });
+
+  it('loads the template library on mount so the create form can offer templates', () => {
+    render(<SpaceAgentsPage spaceId="space-1" />);
+    expect(mockFetchTemplates).toHaveBeenCalled();
+  });
+
+  it('renders when the template library cannot be loaded', () => {
+    mockFetchTemplates.mockRejectedValueOnce(new Error('Not connected'));
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    expect(getByTestId('space-agents-page')).toBeTruthy();
   });
 
   it('reselects and tears down when the space changes', () => {
@@ -118,6 +133,14 @@ describe('SpaceAgentsPage', () => {
 
     expect(getByTestId('agent-row-alpha')).toBeTruthy();
     expect(getByTestId('agent-row-beta')).toBeTruthy();
+  });
+
+  it('hides archived agents from the list', () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('retired', { status: 'archived' })];
+    const { getByTestId, queryByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    expect(getByTestId('agent-row-alpha')).toBeTruthy();
+    expect(queryByTestId('agent-row-retired')).toBeNull();
   });
 
   it('shows detail for the selected agent', () => {
@@ -204,6 +227,33 @@ describe('SpaceAgentsPage', () => {
         })
       )
     );
+  });
+
+  it('rejects an empty name on edit without calling the store', async () => {
+    mockAgents.value = [makeAgent('alpha')];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: '   ' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() =>
+      expect(getByTestId('agent-form-error').textContent).toBe('Name is required')
+    );
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'space-manager',
+    'coordinator',
+  ])('does not offer deletion for the protected %s agent', (handle) => {
+    mockAgents.value = [makeAgent(handle)];
+    const { getByTestId, queryByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId(`agent-row-${handle}`));
+    expect(getByTestId('agent-detail')).toBeTruthy();
+    expect(queryByTestId('agent-delete-button')).toBeNull();
   });
 
   it('deletes after confirmation', async () => {

@@ -19,7 +19,6 @@ export class SpaceAgentStore {
 
   private cleanups: Array<() => void> = [];
   private subscribedSpaceId: string | null = null;
-  private activeChannel: string | null = null;
   private generation = 0;
 
   private hub() {
@@ -107,13 +106,8 @@ export class SpaceAgentStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return;
 
-    const channel = `space:${spaceId}`;
-    await hub.joinChannel(channel);
-    if (this.spaceId.value !== spaceId) {
-      hub.leaveChannel(channel);
-      return;
-    }
-    this.activeChannel = channel;
+    await this.joinSharedSpaceChannel(hub, spaceId);
+    if (this.spaceId.value !== spaceId) return;
 
     this.cleanups.push(
       hub.onEvent<{ spaceId: string; agent: SpaceAgent }>('spaceAgentV2.created', (event) => {
@@ -133,11 +127,14 @@ export class SpaceAgentStore {
     this.subscribedSpaceId = spaceId;
   }
 
+  private async joinSharedSpaceChannel(
+    hub: NonNullable<ReturnType<typeof connectionManager.getHubIfConnected>>,
+    spaceId: string
+  ): Promise<void> {
+    await hub.joinChannel(`space:${spaceId}`);
+  }
+
   teardown(): void {
-    if (this.activeChannel) {
-      connectionManager.getHubIfConnected()?.leaveChannel(this.activeChannel);
-      this.activeChannel = null;
-    }
     for (const cleanup of this.cleanups) cleanup();
     this.cleanups = [];
     this.subscribedSpaceId = null;

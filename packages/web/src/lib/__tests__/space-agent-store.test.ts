@@ -340,19 +340,28 @@ describe('SpaceAgentStore', () => {
       expect(joinedChannels).toEqual(['space:space-1']);
     });
 
-    it('leaves the previous channel when switching spaces', async () => {
+    it('joins the new channel when switching spaces', async () => {
       await store.selectSpace('space-1');
       await store.selectSpace('space-2');
 
-      expect(leftChannels).toContain('space:space-1');
       expect(joinedChannels).toEqual(['space:space-1', 'space:space-2']);
     });
 
-    it('leaves the channel on teardown', async () => {
+    it('never leaves the shared space channel, which spaceStore owns', async () => {
+      await store.selectSpace('space-1');
+      await store.selectSpace('space-2');
+      store.teardown();
+
+      expect(leftChannels).toEqual([]);
+    });
+
+    it('stops handling events after teardown even though the channel stays joined', async () => {
       await store.selectSpace('space-1');
       store.teardown();
 
-      expect(leftChannels).toEqual(['space:space-1']);
+      fire('spaceAgentV2.created', { spaceId: 'space-1', agent: makeAgent('ghost') });
+
+      expect(store.agents.value).toEqual([]);
     });
 
     it('does not accept a mutation result after teardown', async () => {
