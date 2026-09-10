@@ -5,6 +5,11 @@ import { Logger } from '../../logger.ts';
 import type { SpaceManager } from '../managers/space-manager.ts';
 import type { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceGoalService } from '../goals/goal-service.ts';
+import type { PostApprovalRouteResult } from '../runtime/post-approval-router.ts';
+import {
+  runEndNodeApproval,
+  type EndNodeApprovalDispatchFence,
+} from './end-node-approval-pipeline.ts';
 import type {
   ApproveTaskInput,
   MarkCompleteInput,
@@ -26,6 +31,7 @@ export interface EndNodeHandlerDeps {
   taskManager: Pick<SpaceTaskManager, 'submitTaskForReview'>;
   spaceManager: Pick<SpaceManager, 'getSpace'>;
   internalEventBus?: Pick<InternalEventBus<DaemonInternalEventMap>, 'publish'>;
+  dispatchApproval: (fence: EndNodeApprovalDispatchFence) => Promise<PostApprovalRouteResult>;
 }
 
 export interface EndNodeHandlers {
@@ -240,6 +246,7 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
     taskManager,
     spaceManager,
     internalEventBus,
+    dispatchApproval,
   } = deps;
 
   const emitTaskUpdated = (task: SpaceTask): void => {
@@ -265,8 +272,13 @@ export function createEndNodeHandlers(deps: EndNodeHandlerDeps): EndNodeHandlers
         });
       }
 
-      const task = taskRepo.getTask(taskId);
-      if (!task) return jsonResult({ success: false, error: `Task not found: ${taskId}` });
+      const outcome = await runEndNodeApproval({
+        taskId,
+        taskRepo,
+        dispatchApproval,
+        emitTaskUpdated,
+      });
+      if (outcome.action === 'respond') return outcome.response;
 
       try {
         const updated = taskRepo.updateTask(taskId, {

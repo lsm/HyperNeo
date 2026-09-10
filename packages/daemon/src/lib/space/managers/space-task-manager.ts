@@ -401,6 +401,7 @@ export class SpaceTaskManager {
       pendingCompletionSubmittedByNodeId: opts.submittedByNodeId,
       pendingCompletionSubmittedAt: Date.now(),
       pendingCompletionReason: opts.reason,
+      reportedStatus: null,
       blockReason: null,
       postApprovalSourceNodeId: opts.submittedByNodeId,
     });

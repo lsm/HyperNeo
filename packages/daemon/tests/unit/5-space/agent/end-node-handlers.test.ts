@@ -142,6 +142,7 @@ function makeDeps(
     spaceManager: {
       getSpace: async () => makeSpace(ctx.spaceId, 3),
     },
+    dispatchApproval: async () => ({ mode: 'no-route', taskStatus: 'done' }),
     ...overrides,
   };
 }
@@ -655,7 +656,7 @@ describe('createEndNodeHandlers — approve_task', () => {
     expect(t?.reportedStatus).toBe('done');
   });
 
-  test('clears pending-completion fields except approval source node', async () => {
+  test('review task: approve_task fires the terminal dispatch itself instead of only stamping fields', async () => {
     const task = ctx.taskRepo.createTask({
       spaceId: ctx.spaceId,
       title: 'T',
@@ -669,22 +670,174 @@ describe('createEndNodeHandlers — approve_task', () => {
       pendingCompletionReason: 'prior reason',
     });
 
+    const dispatchCalls: number[] = [];
+    const innerDispatch = async () => ({ mode: 'no-route' as const, taskStatus: 'done' as const });
     const { onApproveTask } = createEndNodeHandlers(
       makeDeps(ctx, task.id, {
         workflow: makeWorkflow(2),
         spaceManager: { getSpace: async () => makeSpace(ctx.spaceId, 3) },
+        dispatchApproval: async () => {
+          dispatchCalls.push(Date.now());
+          return innerDispatch();
+        },
       })
     );
 
     const out = await onApproveTask({});
-    expect(JSON.parse(out.content[0].text).success).toBe(true);
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.message).toContain('no post-approval route');
+    expect(dispatchCalls).toHaveLength(1);
 
     const t = ctx.taskRepo.getTask(task.id);
     expect(t?.reportedStatus).toBe('done');
-    expect(t?.pendingCheckpointType).toBeNull();
-    expect(t?.pendingCompletionSubmittedByNodeId).toBe('end-node');
-    expect(t?.pendingCompletionSubmittedAt).toBeNull();
-    expect(t?.pendingCompletionReason).toBeNull();
+    expect(t?.pendingCheckpointType).toBe('task_completion');
+    expect(t?.pendingCompletionSubmittedAt).not.toBeNull();
+  });
+
+  test('review task: handler does not orphan the row when the dispatch throws', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'review',
+    });
+    ctx.taskRepo.updateTask(task.id, {
+      pendingCheckpointType: 'task_completion',
+      pendingCompletionSubmittedByNodeId: 'end-node',
+      pendingCompletionSubmittedAt: Date.now() - 1000,
+    });
+
+    const { onApproveTask } = createEndNodeHandlers(
+      makeDeps(ctx, task.id, {
+        workflow: makeWorkflow(2),
+        spaceManager: { getSpace: async () => makeSpace(ctx.spaceId, 3) },
+        dispatchApproval: async () => {
+          throw new Error('router not wired');
+        },
+      })
+    );
+
+    const out = await onApproveTask({});
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('router not wired');
+
+    const t = ctx.taskRepo.getTask(task.id);
+    expect(t?.reportedStatus).toBe('done');
+    expect(t?.pendingCheckpointType).toBe('task_completion');
+  });
+
+  test('review task: skipped dispatch reports failure with the reason', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'review',
+    });
+
+    const { onApproveTask } = createEndNodeHandlers(
+      makeDeps(ctx, task.id, {
+        workflow: makeWorkflow(2),
+        spaceManager: { getSpace: async () => makeSpace(ctx.spaceId, 3) },
+        dispatchApproval: async () => ({
+          mode: 'skipped' as const,
+          reason: 'PostApprovalRouter not wired yet',
+        }),
+      })
+    );
+
+    const out = await onApproveTask({});
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('PostApprovalRouter not wired yet');
+  });
+
+  test('review task: a dispatch failure after the approval commit records postApprovalBlockedReason', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'review',
+    });
+
+    const { onApproveTask } = createEndNodeHandlers(
+      makeDeps(ctx, task.id, {
+        workflow: makeWorkflow(2),
+        spaceManager: { getSpace: async () => makeSpace(ctx.spaceId, 3) },
+        dispatchApproval: async () => {
+          ctx.taskRepo.updateTask(task.id, { status: 'approved' });
+          throw new Error('post-approval spawn failed permanently');
+        },
+      })
+    );
+
+    const out = await onApproveTask({});
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('post-approval spawn failed permanently');
+
+    const t = ctx.taskRepo.getTask(task.id);
+    expect(t?.status).toBe('approved');
+    expect(t?.postApprovalBlockedReason).toContain('Approval recorded');
+    expect(t?.postApprovalBlockedReason).toContain('post-approval spawn failed permanently');
+  });
+
+  test('approved task: repeated approve_task re-routes through the dispatch idempotently', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'approved',
+    });
+
+    const { onApproveTask } = createEndNodeHandlers(
+      makeDeps(ctx, task.id, {
+        workflow: makeWorkflow(2),
+        spaceManager: { getSpace: async () => makeSpace(ctx.spaceId, 3) },
+        dispatchApproval: async () => ({
+          mode: 'already-routed' as const,
+          postApprovalSessionId: 'session-1',
+        }),
+      })
+    );
+
+    const out = await onApproveTask({});
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.message).toContain('already running');
+  });
+
+  test.each([
+    'done',
+    'cancelled',
+    'archived',
+  ] as const)('terminal %s task: approve_task reports it is not applicable without mutating', async (status) => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    ctx.taskRepo.updateTask(task.id, { status });
+
+    const { onApproveTask } = createEndNodeHandlers(
+      makeDeps(ctx, task.id, {
+        workflow: makeWorkflow(2),
+        spaceManager: { getSpace: async () => makeSpace(ctx.spaceId, 3) },
+        dispatchApproval: async () => {
+          throw new Error('must not dispatch for a terminal task');
+        },
+      })
+    );
+
+    const out = await onApproveTask({});
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain(`already '${status}'`);
+    const t = ctx.taskRepo.getTask(task.id);
+    expect(t?.status).toBe(status);
+    expect(t?.reportedStatus).toBeFalsy();
   });
 
   test('records calling node as approval source for post-approval routing', async () => {
@@ -808,6 +961,25 @@ describe('createEndNodeHandlers — submit_for_approval', () => {
     expect(t?.pendingCompletionReason).toBe('needs review');
     expect(t?.pendingCompletionSubmittedAt).toBeGreaterThanOrEqual(before);
     expect(t?.pendingCompletionSubmittedAt).toBeLessThanOrEqual(after);
+  });
+
+  test('submitting for review clears a stale agent completion stamp from an earlier generation', async () => {
+    const task = ctx.taskRepo.createTask({
+      spaceId: ctx.spaceId,
+      title: 'T',
+      description: '',
+      status: 'in_progress',
+    });
+    ctx.taskRepo.updateTask(task.id, { reportedStatus: 'done' });
+    const { onSubmitForApproval } = createEndNodeHandlers(makeDeps(ctx, task.id));
+
+    const out = await onSubmitForApproval({ reason: 're-request human review' });
+    expect(JSON.parse(out.content[0].text).success).toBe(true);
+
+    const t = ctx.taskRepo.getTask(task.id);
+    expect(t?.status).toBe('review');
+    expect(t?.pendingCheckpointType).toBe('task_completion');
+    expect(t?.reportedStatus).toBeNull();
   });
 
   test('handles missing reason (optional field)', async () => {

@@ -8,6 +8,7 @@ import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-w
 import type { SpaceRuntimeConfig } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
+import { TransientSpawnError } from '../../../../src/lib/space/runtime/workflow-node-execution-validation.ts';
 import { CodingArtifactProfile } from '../../../../src/lib/space/workflows/coding-artifact-profile.ts';
 import { EvolutionRepository } from '../../../../src/storage/repositories/evolution-repository.ts';
 import { NodeExecutionRepository } from '../../../../src/storage/repositories/node-execution-repository.ts';
@@ -720,7 +721,6 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
     });
 
     test.each([
-      'review',
       'approved',
       'cancelled',
     ] as const)('resolved %s task keeps its status without post-approval dispatch', async (status) => {
@@ -758,6 +758,466 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
       expect(taskRepo.getTask(tasks[0].id)?.status).toBe(status);
       expect(mockTam.spawnedPostApprovalSessions).toHaveLength(0);
+    });
+
+    test('review task awaiting human approval (no agent approval stamp) keeps its status without dispatch', async () => {
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      const rt = makeRuntimeWithTam({
+        taskAgentManager: mockTam as unknown as TaskAgentManager,
+      });
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Review human wait ${Date.now()}`,
+        description: '',
+        nodes: [
+          {
+            id: 'review-human-wait-end',
+            name: 'End',
+            agents: [{ agentId: AGENT_A, name: 'End' }],
+            postApproval: { targetAgent: 'End', instructions: 'continue' },
+          },
+        ],
+        startNodeId: 'review-human-wait-end',
+        endNodeId: 'review-human-wait-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'review',
+        pendingCheckpointType: 'task_completion',
+        pendingCompletionSubmittedByNodeId: 'review-human-wait-end',
+        pendingCompletionSubmittedAt: Date.now(),
+      });
+      seedNodeExec(db, run.id, 'review-human-wait-end', 'End', 'idle');
+
+      await rt.executeTick();
+
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('review');
+      expect(mockTam.spawnedPostApprovalSessions).toHaveLength(0);
+    });
+
+    test.each([
+      'blocked',
+      'cancelled',
+    ] as const)('review task reporting %s is not treated as an agent approval and never dispatches', async (reportedStatus) => {
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      const rt = makeRuntimeWithTam({
+        taskAgentManager: mockTam as unknown as TaskAgentManager,
+      });
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Review reported ${reportedStatus} ${Date.now()}`,
+        description: '',
+        nodes: [
+          {
+            id: `review-reported-${reportedStatus}-end`,
+            name: 'End',
+            agents: [{ agentId: AGENT_A, name: 'End' }],
+            postApproval: { targetAgent: 'End', instructions: 'continue' },
+          },
+        ],
+        startNodeId: `review-reported-${reportedStatus}-end`,
+        endNodeId: `review-reported-${reportedStatus}-end`,
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'review',
+        reportedStatus,
+        pendingCheckpointType: null,
+      });
+      seedNodeExec(db, run.id, `review-reported-${reportedStatus}-end`, 'End', 'idle');
+
+      await rt.executeTick();
+
+      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('review');
+      expect(mockTam.spawnedPostApprovalSessions).toHaveLength(0);
+    });
+
+    test('review task with an agent approval stamp (reportedStatus=done) terminalizes on run settlement', async () => {
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      const rt = makeRuntimeWithTam({
+        taskAgentManager: mockTam as unknown as TaskAgentManager,
+      });
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Review orphan heal ${Date.now()}`,
+        description: '',
+        nodes: [
+          {
+            id: 'review-orphan-heal-end',
+            name: 'End',
+            agents: [{ agentId: AGENT_A, name: 'End' }],
+            postApproval: { targetAgent: 'End', instructions: 'continue' },
+          },
+        ],
+        startNodeId: 'review-orphan-heal-end',
+        endNodeId: 'review-orphan-heal-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'review',
+        reportedStatus: 'done',
+        pendingCheckpointType: null,
+        pendingCompletionSubmittedByNodeId: 'review-orphan-heal-end',
+        pendingCompletionSubmittedAt: null,
+      });
+      seedNodeExec(db, run.id, 'review-orphan-heal-end', 'End', 'idle');
+
+      await rt.executeTick();
+
+      const healed = taskRepo.getTask(tasks[0].id);
+      expect(healed?.status).toBe('approved');
+      expect(healed?.approvalSource).toBe('agent');
+      expect(healed?.approvedAt).not.toBeNull();
+      expect(healed?.pendingCheckpointType).toBeNull();
+      expect(mockTam.spawnedPostApprovalSessions).toHaveLength(1);
+    });
+
+    test('review task with an agent approval stamp completes done on a no-route workflow', async () => {
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      const rt = makeRuntimeWithTam({
+        taskAgentManager: mockTam as unknown as TaskAgentManager,
+      });
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'review-orphan-noroute-end', name: 'End', agentId: AGENT_A },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'review',
+        reportedStatus: 'done',
+        pendingCheckpointType: null,
+      });
+      seedNodeExec(db, run.id, 'review-orphan-noroute-end', 'agent', 'idle');
+
+      await rt.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+      const healed = taskRepo.getTask(tasks[0].id);
+      expect(healed?.status).toBe('done');
+      expect(healed?.approvalSource).toBe('agent');
+      expect(mockTam.spawnedPostApprovalSessions).toHaveLength(0);
+    });
+
+    test('already-done run with an orphaned review approval heals through the terminal reconcile sweep', async () => {
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      const rt = makeRuntimeWithTam({
+        taskAgentManager: mockTam as unknown as TaskAgentManager,
+      });
+      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+        { id: 'review-orphan-sweep-end', name: 'End', agentId: AGENT_A },
+      ]);
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      workflowRunRepo.transitionStatus(run.id, 'done');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'review',
+        reportedStatus: 'done',
+        pendingCheckpointType: null,
+        pendingCompletionSubmittedByNodeId: 'review-orphan-sweep-end',
+        pendingCompletionSubmittedAt: null,
+        result: 'outcome',
+        reportedSummary: 'summary',
+      });
+      seedNodeExec(db, run.id, 'review-orphan-sweep-end', 'agent', 'idle');
+
+      await rt.executeTick();
+
+      const healed = taskRepo.getTask(tasks[0].id);
+      expect(healed?.status).toBe('done');
+      expect(healed?.approvalSource).toBe('agent');
+      expect(healed?.approvedAt).not.toBeNull();
+      expect(healed?.completedAt).not.toBeNull();
+    });
+
+    test('settlement spares the post-approval worker an end-node approve_task dispatched before the tick', async () => {
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      Object.assign(mockTam, {
+        isSessionAlive: (sid: string) => sid === 'pa-session-1' || sid === 'extra-session-1',
+        isSessionInMemory: (sid: string) => sid === 'pa-session-1' || sid === 'extra-session-1',
+      });
+      const rt = makeRuntimeWithTam({
+        taskAgentManager: mockTam as unknown as TaskAgentManager,
+      });
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Early routed worker ${Date.now()}`,
+        description: '',
+        nodes: [
+          {
+            id: 'er-end',
+            name: 'End',
+            agents: [{ agentId: AGENT_A, name: 'End' }],
+            postApproval: { targetAgent: 'Merger', instructions: 'merge it' },
+          },
+          { id: 'er-merge', name: 'Merge', agents: [{ agentId: AGENT_B, name: 'Merger' }] },
+          { id: 'er-extra', name: 'Extra', agents: [{ agentId: AGENT_C, name: 'Extra' }] },
+        ],
+        startNodeId: 'er-end',
+        endNodeId: 'er-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'approved',
+        reportedStatus: 'done',
+        postApprovalSessionId: 'pa-session-1',
+        postApprovalSourceNodeId: 'er-end',
+        approvalSource: 'agent',
+        approvedAt: Date.now(),
+      });
+      seedNodeExec(db, run.id, 'er-end', 'End', 'idle');
+      seedNodeExec(db, run.id, 'er-merge', 'Merger', 'in_progress');
+      seedNodeExec(db, run.id, 'er-extra', 'Extra', 'in_progress');
+      db.prepare(
+        `UPDATE node_executions SET agent_session_id = 'pa-session-1'
+          WHERE workflow_run_id = ? AND workflow_node_id = 'er-merge'`
+      ).run(run.id);
+      db.prepare(
+        `UPDATE node_executions SET agent_session_id = 'extra-session-1'
+          WHERE workflow_run_id = ? AND workflow_node_id = 'er-extra'`
+      ).run(run.id);
+
+      await rt.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+      const executions = nodeExecutionRepo.listByWorkflowRun(run.id);
+      const mergeExec = executions.find((e) => e.workflowNodeId === 'er-merge');
+      const extraExec = executions.find((e) => e.workflowNodeId === 'er-extra');
+      expect(mergeExec?.status).toBe('in_progress');
+      expect(mockTam.interruptedSessions).not.toContain('pa-session-1');
+      expect(extraExec?.status).toBe('idle');
+      expect(mockTam.interruptedSessions).toContain('extra-session-1');
+      expect(mockTam.spawnedPostApprovalSessions).toHaveLength(0);
+    });
+
+    test('settlement re-reads the routed session recorded mid-tick and spares that worker', async () => {
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      let pointerRecorded = false;
+      let taskIdLate = '';
+      Object.assign(mockTam, {
+        isSessionAlive: (sid: string) => sid === 'pa-session-late',
+        isSessionInMemory: (sid: string) => sid === 'pa-session-late',
+        getAgentSessionById: (sid: string | null) => {
+          if (sid === 'pa-session-late' && !pointerRecorded) {
+            pointerRecorded = true;
+            taskRepo.updateTask(taskIdLate, { postApprovalSessionId: 'pa-session-late' });
+          }
+          return null;
+        },
+      });
+      const rt = makeRuntimeWithTam({
+        taskAgentManager: mockTam as unknown as TaskAgentManager,
+      });
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Late routed worker ${Date.now()}`,
+        description: '',
+        nodes: [
+          {
+            id: 'lr-end',
+            name: 'End',
+            agents: [{ agentId: AGENT_A, name: 'End' }],
+            postApproval: { targetAgent: 'Merger', instructions: 'merge it' },
+          },
+          { id: 'lr-merge', name: 'Merge', agents: [{ agentId: AGENT_B, name: 'Merger' }] },
+        ],
+        startNodeId: 'lr-end',
+        endNodeId: 'lr-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskIdLate = tasks[0].id;
+      taskRepo.updateTask(taskIdLate, {
+        status: 'approved',
+        reportedStatus: 'done',
+        postApprovalSessionId: null,
+        postApprovalSourceNodeId: 'lr-end',
+        approvalSource: 'agent',
+        approvedAt: Date.now(),
+      });
+      seedNodeExec(db, run.id, 'lr-end', 'End', 'idle');
+      seedNodeExec(db, run.id, 'lr-merge', 'Merger', 'in_progress');
+      db.prepare(
+        `UPDATE node_executions SET agent_session_id = 'pa-session-late'
+          WHERE workflow_run_id = ? AND workflow_node_id = 'lr-merge'`
+      ).run(run.id);
+
+      await rt.executeTick();
+
+      expect(pointerRecorded).toBe(true);
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+      const mergeExec = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .find((e) => e.workflowNodeId === 'lr-merge');
+      expect(mergeExec?.status).toBe('in_progress');
+      expect(mockTam.interruptedSessions).not.toContain('pa-session-late');
+    });
+
+    test('orphan healing records postApprovalBlockedReason when the dispatch fails after the approval commit', async () => {
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      Object.assign(mockTam, {
+        spawnPostApprovalSubSession: async () => {
+          throw new Error('kickoff injection failed permanently');
+        },
+      });
+      const rt = makeRuntimeWithTam({
+        taskAgentManager: mockTam as unknown as TaskAgentManager,
+      });
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Failing dispatch heal ${Date.now()}`,
+        description: '',
+        nodes: [
+          {
+            id: 'fd-end',
+            name: 'End',
+            agents: [{ agentId: AGENT_A, name: 'End' }],
+            postApproval: { targetAgent: 'End', instructions: 'merge it' },
+          },
+        ],
+        startNodeId: 'fd-end',
+        endNodeId: 'fd-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      workflowRunRepo.transitionStatus(run.id, 'done');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'review',
+        reportedStatus: 'done',
+        pendingCheckpointType: null,
+        result: 'outcome',
+        reportedSummary: 'summary',
+      });
+      seedNodeExec(db, run.id, 'fd-end', 'End', 'idle');
+
+      await rt.executeTick();
+
+      const healed = taskRepo.getTask(tasks[0].id);
+      expect(healed?.status).toBe('approved');
+      expect(healed?.postApprovalBlockedReason).toContain('Approval recorded');
+      expect(healed?.postApprovalBlockedReason).toContain('kickoff injection failed permanently');
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+    });
+
+    test('settlement still quiesces siblings when the approval dispatch fails post-commit', async () => {
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      Object.assign(mockTam, {
+        isSessionAlive: (sid: string) => sid === 'sibling-session-1',
+        isSessionInMemory: (sid: string) => sid === 'sibling-session-1',
+        spawnPostApprovalSubSession: async () => {
+          throw new Error('kickoff injection failed permanently');
+        },
+      });
+      const rt = makeRuntimeWithTam({
+        taskAgentManager: mockTam as unknown as TaskAgentManager,
+      });
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Failing dispatch settle ${Date.now()}`,
+        description: '',
+        nodes: [
+          {
+            id: 'fs-end',
+            name: 'End',
+            agents: [{ agentId: AGENT_A, name: 'End' }],
+            postApproval: { targetAgent: 'End', instructions: 'merge it' },
+          },
+          { id: 'fs-sibling', name: 'Side', agents: [{ agentId: AGENT_B, name: 'Side' }] },
+        ],
+        startNodeId: 'fs-end',
+        endNodeId: 'fs-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'review',
+        reportedStatus: 'done',
+        pendingCheckpointType: null,
+        postApprovalSourceNodeId: 'fs-end',
+      });
+      seedNodeExec(db, run.id, 'fs-end', 'End', 'idle');
+      seedNodeExec(db, run.id, 'fs-sibling', 'Side', 'in_progress');
+      db.prepare(
+        `UPDATE node_executions SET agent_session_id = 'sibling-session-1'
+          WHERE workflow_run_id = ? AND workflow_node_id = 'fs-sibling'`
+      ).run(run.id);
+
+      await rt.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+      const healed = taskRepo.getTask(tasks[0].id);
+      expect(healed?.status).toBe('approved');
+      expect(healed?.postApprovalBlockedReason).toContain('Approval recorded');
+      const siblingExec = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .find((e) => e.workflowNodeId === 'fs-sibling');
+      expect(siblingExec?.status).toBe('idle');
+      expect(mockTam.interruptedSessions).toContain('sibling-session-1');
+    });
+
+    test('settlement quiesces siblings when the router defers a transient spawn failure post-commit', async () => {
+      const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
+      Object.assign(mockTam, {
+        isSessionAlive: (sid: string) => sid === 'ts-sibling-1',
+        isSessionInMemory: (sid: string) => sid === 'ts-sibling-1',
+        spawnPostApprovalSubSession: async () => {
+          throw new TransientSpawnError('database is locked');
+        },
+      });
+      const rt = makeRuntimeWithTam({
+        taskAgentManager: mockTam as unknown as TaskAgentManager,
+      });
+      const workflow = workflowManager.createWorkflow({
+        spaceId: SPACE_ID,
+        name: `Transient dispatch settle ${Date.now()}`,
+        description: '',
+        nodes: [
+          {
+            id: 'ts-end',
+            name: 'End',
+            agents: [{ agentId: AGENT_A, name: 'End' }],
+            postApproval: { targetAgent: 'End', instructions: 'merge it' },
+          },
+          { id: 'ts-sibling', name: 'Side', agents: [{ agentId: AGENT_B, name: 'Side' }] },
+        ],
+        startNodeId: 'ts-end',
+        endNodeId: 'ts-end',
+        tags: [],
+        completionAutonomyLevel: 3,
+      });
+      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+      taskRepo.updateTask(tasks[0].id, {
+        status: 'review',
+        reportedStatus: 'done',
+        pendingCheckpointType: null,
+        postApprovalSourceNodeId: 'ts-end',
+      });
+      seedNodeExec(db, run.id, 'ts-end', 'End', 'idle');
+      seedNodeExec(db, run.id, 'ts-sibling', 'Side', 'in_progress');
+      db.prepare(
+        `UPDATE node_executions SET agent_session_id = 'ts-sibling-1'
+          WHERE workflow_run_id = ? AND workflow_node_id = 'ts-sibling'`
+      ).run(run.id);
+
+      await rt.executeTick();
+
+      expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
+      const healed = taskRepo.getTask(tasks[0].id);
+      expect(healed?.status).toBe('approved');
+      expect(healed?.postApprovalBlockedReason).toContain('deferred');
+      const siblingExec = nodeExecutionRepo
+        .listByWorkflowRun(run.id)
+        .find((e) => e.workflowNodeId === 'ts-sibling');
+      expect(siblingExec?.status).toBe('idle');
+      expect(mockTam.interruptedSessions).toContain('ts-sibling-1');
     });
 
     test('blocked → in_progress → done lifecycle via resume', async () => {
@@ -1506,7 +1966,7 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
       expect(mockTam.spawnedPostApprovalSessions).toHaveLength(0);
     });
 
-    test('skipped post-approval dispatch preserves its settlement-tick sibling state', async () => {
+    test('skipped post-approval dispatch records the block and quiesces settlement-tick siblings', async () => {
       const mockTam = new MockTaskAgentManager(nodeExecutionRepo);
       mockTam.isSessionAlive = () => true;
       const rt = makeRuntimeWithTam({
@@ -1553,10 +2013,12 @@ describe('SpaceRuntime — completion detection & status transitions', () => {
 
       await rt.executeTick();
 
-      expect(taskRepo.getTask(tasks[0].id)?.status).toBe('approved');
-      expect(taskRepo.getTask(tasks[0].id)?.postApprovalSessionId).toBeNull();
-      expect(nodeExecutionRepo.getById(siblingExecutionId)?.status).toBe('in_progress');
-      expect(mockTam.interruptedSessions).not.toContain(siblingSessionId);
+      const settled = taskRepo.getTask(tasks[0].id);
+      expect(settled?.status).toBe('approved');
+      expect(settled?.postApprovalSessionId).toBeNull();
+      expect(settled?.postApprovalBlockedReason).toContain('Approval recorded');
+      expect(nodeExecutionRepo.getById(siblingExecutionId)?.status).toBe('idle');
+      expect(mockTam.interruptedSessions).toContain(siblingSessionId);
       expect(mockTam.spawnedPostApprovalSessions).toHaveLength(0);
     });
 

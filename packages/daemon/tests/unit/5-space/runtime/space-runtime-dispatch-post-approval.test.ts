@@ -160,6 +160,81 @@ describe('SpaceRuntime.dispatchPostApproval — end-to-end', () => {
     expect(final?.approvedAt).toBeTypeOf('number');
   });
 
+  test('refuses a fenced dispatch when the review is rejected during the space lookup', async () => {
+    let rejectTaskId = '';
+    ctx = buildRuntime({
+      onSpaceLookup: () => {
+        ctx.taskRepo.updateTask(rejectTaskId, { status: 'in_progress' });
+      },
+    });
+    const task = seedReviewTask(ctx.taskRepo);
+    rejectTaskId = task.id;
+
+    const result = await ctx.runtime.dispatchPostApproval(
+      task.id,
+      'agent',
+      {},
+      {
+        expectedStatus: 'review',
+        expectedCheckpointAt: task.pendingCompletionSubmittedAt ?? null,
+      }
+    );
+
+    expect(result.mode).toBe('skipped');
+    if (result.mode === 'skipped') {
+      expect(result.reason).toContain('refusing the stale dispatch');
+    }
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.status).toBe('in_progress');
+    expect(ctx.spawned).toHaveLength(0);
+  });
+
+  test('refuses a fenced dispatch when a newer review checkpoint lands during the space lookup', async () => {
+    let resubmitTaskId = '';
+    ctx = buildRuntime({
+      onSpaceLookup: () => {
+        ctx.taskRepo.updateTask(resubmitTaskId, {
+          pendingCompletionSubmittedAt: Date.now(),
+        });
+      },
+    });
+    const task = seedReviewTask(ctx.taskRepo);
+    resubmitTaskId = task.id;
+
+    const result = await ctx.runtime.dispatchPostApproval(
+      task.id,
+      'agent',
+      {},
+      {
+        expectedStatus: 'review',
+        expectedCheckpointAt: null,
+      }
+    );
+
+    expect(result.mode).toBe('skipped');
+    const final = ctx.taskRepo.getTask(task.id);
+    expect(final?.status).toBe('review');
+    expect(ctx.spawned).toHaveLength(0);
+  });
+
+  test('a fence matching the live generation still dispatches', async () => {
+    ctx = buildRuntime();
+    const task = seedReviewTask(ctx.taskRepo);
+
+    const result = await ctx.runtime.dispatchPostApproval(
+      task.id,
+      'agent',
+      {},
+      {
+        expectedStatus: 'review',
+        expectedCheckpointAt: task.pendingCompletionSubmittedAt ?? null,
+      }
+    );
+
+    expect(result.mode).toBe('no-route');
+    expect(ctx.taskRepo.getTask(task.id)?.status).toBe('done');
+  });
+
   test('undefined approvalReason leaves it null (no spurious stamp)', async () => {
     const task = seedReviewTask(ctx.taskRepo);
 

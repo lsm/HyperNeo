@@ -1082,6 +1082,7 @@ describe('SpaceWorkflowRunRepository.listTerminalRunsNeedingTaskReconciliation',
       status?: string;
       result?: string | null;
       reportedSummary?: string | null;
+      reportedStatus?: string | null;
       updatedAt?: number;
       reconcileCheckedAt?: number;
     } = {}
@@ -1091,8 +1092,8 @@ describe('SpaceWorkflowRunRepository.listTerminalRunsNeedingTaskReconciliation',
     const now = Date.now();
     db.prepare(
       `INSERT INTO space_tasks
-         (id, space_id, task_number, title, status, workflow_run_id, result, reported_summary, created_at, updated_at, reconcile_checked_at)
-       VALUES (?, ?, ?, 'Task', ?, ?, ?, ?, ?, ?, ?)`
+         (id, space_id, task_number, title, status, workflow_run_id, result, reported_summary, reported_status, created_at, updated_at, reconcile_checked_at)
+       VALUES (?, ?, ?, 'Task', ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       spaceId,
@@ -1101,6 +1102,7 @@ describe('SpaceWorkflowRunRepository.listTerminalRunsNeedingTaskReconciliation',
       runId,
       opts.result ?? null,
       opts.reportedSummary ?? null,
+      opts.reportedStatus ?? null,
       now,
       opts.updatedAt ?? now,
       opts.reconcileCheckedAt ?? null
@@ -1181,6 +1183,61 @@ describe('SpaceWorkflowRunRepository.listTerminalRunsNeedingTaskReconciliation',
   it('includes a done run with an in_progress task the reconciler can dispatch', () => {
     const runId = seedRun('done');
     seedTask(runId, { status: 'in_progress' });
+
+    expect(selectedRunIds()).toEqual([runId]);
+  });
+
+  it('includes a done run with a review task carrying an agent approval stamp (orphaned approval)', () => {
+    const runId = seedRun('done');
+    seedTask(runId, {
+      status: 'review',
+      reportedStatus: 'done',
+      result: 'outcome',
+      reportedSummary: 'summary',
+    });
+
+    expect(selectedRunIds()).toEqual([runId]);
+  });
+
+  it('excludes a done run whose review task has no agent approval stamp (awaiting human)', () => {
+    const runId = seedRun('done');
+    seedTask(runId, {
+      status: 'review',
+      reportedStatus: null,
+      result: 'outcome',
+      reportedSummary: 'summary',
+    });
+
+    expect(selectedRunIds()).toEqual([]);
+  });
+
+  it.each([
+    'blocked',
+    'cancelled',
+  ])('excludes a done run whose review task reports %s — only reportedStatus=done is an approval', (reportedStatus) => {
+    const runId = seedRun('done');
+    seedTask(runId, {
+      status: 'review',
+      reportedStatus,
+      result: 'outcome',
+      reportedSummary: 'summary',
+    });
+
+    expect(selectedRunIds()).toEqual([]);
+  });
+
+  it('keeps selecting an orphaned review approval across reconcile passes until it heals', () => {
+    const runId = seedRun('done');
+    seedTask(runId, {
+      status: 'review',
+      reportedStatus: 'done',
+      result: 'outcome',
+      reportedSummary: 'summary',
+    });
+
+    expect(selectedRunIds()).toEqual([runId]);
+
+    markReconciled(runId, Date.now() + 1_000);
 
     expect(selectedRunIds()).toEqual([runId]);
   });
