@@ -1083,9 +1083,7 @@ export class TaskAgentManager {
           request.workflowRun
         );
         if (!spawnConfig) {
-          throw new PermanentSpawnError(
-            `Agent not found: ${request.slot.agentId || request.slot.templateKey} (task: ${request.task.id})`
-          );
+          throw this.missingSlotAgentError(request, request.slot);
         }
         const customAgent = spawnConfig.agent;
         const initialMessage = buildCustomAgentTaskMessage({
@@ -5532,6 +5530,18 @@ export class TaskAgentManager {
 
     const matchedNode = workflow.nodes.find((node) => node.id === matchedNodeId);
     const spawnConfig = this.resolveSlotSpawnConfig(spaceId, matchedSlot, workflowRun);
+    if (!spawnConfig && matchedSlot.templateKey?.trim() && workflowRun) {
+      throw this.missingSlotAgentError(
+        {
+          task,
+          node: matchedNode,
+          workflow,
+          workflowRun,
+          execution: { workflowNodeId: matchedNodeId },
+        },
+        matchedSlot
+      );
+    }
     const poolAgent = spawnConfig?.agent ?? null;
     let slot = matchedSlot;
     let poolProvider: string | undefined;
