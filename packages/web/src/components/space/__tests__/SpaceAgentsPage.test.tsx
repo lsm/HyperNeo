@@ -444,7 +444,9 @@ describe('SpaceAgentsPage', () => {
     fireEvent.click(getByTestId('new-agent-button'));
     fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Scribe' } });
     fireEvent.input(getByTestId('agent-description-input'), { target: { value: 'Takes notes' } });
-    fireEvent.change(getByTestId('agent-autonomy-select'), { target: { value: '3' } });
+    const sel_agent_autonomy_select = getByTestId('agent-autonomy-select') as HTMLSelectElement;
+    sel_agent_autonomy_select.value = '3';
+    fireEvent.change(sel_agent_autonomy_select);
     fireEvent.submit(getByTestId('agent-form'));
 
     await waitFor(() =>
@@ -476,7 +478,9 @@ describe('SpaceAgentsPage', () => {
     fireEvent.click(getByTestId('agent-row-alpha'));
     fireEvent.click(getByText('Edit'));
     expect(getByTestId('agent-status-select')).toBeTruthy();
-    fireEvent.change(getByTestId('agent-status-select'), { target: { value: 'paused' } });
+    const sel_agent_status_select = getByTestId('agent-status-select') as HTMLSelectElement;
+    sel_agent_status_select.value = 'paused';
+    fireEvent.change(sel_agent_status_select);
     fireEvent.submit(getByTestId('agent-form'));
 
     await waitFor(() =>
@@ -523,7 +527,9 @@ describe('SpaceAgentsPage', () => {
     expect(options).toEqual(['', 'none', '1', '2', '3', '4', '5']);
 
     fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Scribe' } });
-    fireEvent.change(getByTestId('agent-autonomy-select'), { target: { value: 'none' } });
+    const sel_agent_autonomy_select = getByTestId('agent-autonomy-select') as HTMLSelectElement;
+    sel_agent_autonomy_select.value = 'none';
+    fireEvent.change(sel_agent_autonomy_select);
     fireEvent.submit(getByTestId('agent-form'));
 
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
@@ -542,7 +548,9 @@ describe('SpaceAgentsPage', () => {
     );
     expect(options).toEqual(['', '1', '2', '3', '4', '5']);
 
-    fireEvent.change(getByTestId('agent-autonomy-select'), { target: { value: '' } });
+    const sel_agent_autonomy_select = getByTestId('agent-autonomy-select') as HTMLSelectElement;
+    sel_agent_autonomy_select.value = '';
+    fireEvent.change(sel_agent_autonomy_select);
     fireEvent.submit(getByTestId('agent-form'));
 
     await waitFor(() =>
@@ -551,6 +559,49 @@ describe('SpaceAgentsPage', () => {
         expect.objectContaining({ autonomyLevel: null })
       )
     );
+  });
+
+  it('preselects the stored status when opening the editor', async () => {
+    mockAgents.value = [makeAgent('alpha', { status: 'disabled' })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+
+    expect((getByTestId('agent-status-select') as HTMLSelectElement).value).toBe('disabled');
+  });
+
+  it('does not silently reactivate a paused agent on an unrelated edit', async () => {
+    mockAgents.value = [makeAgent('alpha', { status: 'paused' })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.input(getByTestId('agent-description-input'), { target: { value: 'note' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].status).toBe('paused');
+  });
+
+  it('preselects the stored autonomy level when opening the editor', async () => {
+    mockAgents.value = [makeAgent('alpha', { autonomyLevel: 4 })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+
+    expect((getByTestId('agent-autonomy-select') as HTMLSelectElement).value).toBe('4');
+  });
+
+  it('preselects unset autonomy when the agent has none', async () => {
+    mockAgents.value = [makeAgent('alpha', { autonomyLevel: null })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+
+    expect((getByTestId('agent-autonomy-select') as HTMLSelectElement).value).toBe('');
   });
 
   it('clears a description on edit rather than dropping the field', async () => {
