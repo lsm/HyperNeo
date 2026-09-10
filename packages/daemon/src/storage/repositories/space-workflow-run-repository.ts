@@ -142,9 +142,14 @@ export class SpaceWorkflowRunRepository {
          WHERE r.definition_version IS NOT NULL
            AND json_valid(v.payload)
            AND json_extract(v.payload, '$.templateSnapshots') IS NULL
-           AND EXISTS (
-             SELECT 1 FROM space_tasks t
-             WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+           AND (
+             NOT EXISTS (
+               SELECT 1 FROM space_tasks t WHERE t.workflow_run_id = r.id
+             )
+             OR EXISTS (
+               SELECT 1 FROM space_tasks t
+               WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+             )
            )
          ORDER BY r.created_at ASC, r.rowid ASC`
       )

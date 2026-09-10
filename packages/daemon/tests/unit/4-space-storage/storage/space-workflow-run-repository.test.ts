@@ -706,6 +706,31 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(repo.getRun(run.id)!.definitionVersion).toBe(before);
     });
 
+    it('migrateSnapshotlessPins includes a taskless run, which is still executable', () => {
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.gone', name: 'Worker' }],
+          },
+        ],
+      });
+      const run = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Crashed before task creation',
+        rawWorkflow: wf,
+      });
+      const before = repo.getRun(run.id)!.definitionVersion;
+
+      expect(repo.migrateSnapshotlessPins(() => null)).toBe(1);
+
+      const after = repo.getRun(run.id)!.definitionVersion;
+      expect(after).not.toBe(before);
+      expect(JSON.parse(pinnedPayload(after!)).templateSnapshots).toEqual({});
+    });
+
     it('migrateSnapshotlessPins skips runs whose task is archived', () => {
       const wf = rawWorkflow({
         nodes: [
