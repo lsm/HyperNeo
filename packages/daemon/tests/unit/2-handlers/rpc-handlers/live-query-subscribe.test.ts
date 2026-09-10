@@ -383,6 +383,27 @@ describe('setupLiveQueryHandlers', () => {
     ).rejects.toThrow('limit must be an integer in [1, 200]');
   });
 
+  test.each([
+    'spaceTaskActivity.byTask',
+    'spaceTaskMessages.byTask',
+    'spaceTaskMessages.byTask.compact',
+    'spaceTaskActiveTurn.byTask',
+    'actorMessages.byTask',
+    'taskMilestones.byTask',
+  ])('subscribe %s: rejects an existing task without Space ownership', async (queryName) => {
+    db.exec('CREATE TEMP TABLE space_tasks (id TEXT PRIMARY KEY, space_id TEXT)');
+    db.prepare('INSERT INTO temp.space_tasks (id, space_id) VALUES (?, NULL)').run('standalone');
+    const params =
+      queryName === 'spaceTaskMessages.byTask.compact' ? ['standalone', 20] : ['standalone'];
+    await expect(
+      setup.callHandler('liveQuery.subscribe', {
+        queryName,
+        params,
+        subscriptionId: 'standalone-sub',
+      })
+    ).rejects.toThrow('Unauthorized: space task "standalone" not found');
+  });
+
   test('subscribe spaceTaskActivity.byTask: nonexistent task rejected', async () => {
     await expect(
       setup.callHandler('liveQuery.subscribe', {

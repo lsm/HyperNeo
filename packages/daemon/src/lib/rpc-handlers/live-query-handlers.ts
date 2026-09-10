@@ -4439,7 +4439,9 @@ export function setupLiveQueryHandlers(
       const taskId = params[0] as string;
       let spaceTask: { space_id: string } | null = null;
       try {
-        spaceTask = db.prepare('SELECT space_id FROM space_tasks WHERE id = ?').get(taskId) as {
+        spaceTask = db
+          .prepare('SELECT space_id FROM space_tasks WHERE id = ? AND space_id IS NOT NULL')
+          .get(taskId) as {
           space_id: string;
         } | null;
       } catch {
