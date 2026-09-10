@@ -1,18 +1,13 @@
 import { createHash } from 'node:crypto';
-import type { MessageOrigin, ReferenceMetadata } from '@hyperneo/shared';
 import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor.ts';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
-import {
-  activatePrompts,
-  ensurePrompt,
-  type PromptHold,
-  retryPrompt,
-} from '../agent/message-delivery-outbox.ts';
-import { mailboxMessageIsSynthetic, parseMailboxEntry } from './entry.ts';
+import { activatePrompts, ensurePrompt, retryPrompt } from '../agent/message-delivery-outbox.ts';
+import { planMailboxAdmission } from './admission-plan.ts';
+import { parseMailboxEntry } from './entry.ts';
 import { type MailboxSettlement, settleMailboxEntry } from './settlement.ts';
 import { decodeUlidTimestamp } from './ulid.ts';
 
@@ -39,7 +34,7 @@ export function createMailboxDeadHandler(logError: (message: string) => void) {
 
 const MAILBOX_MESSAGE_UUID_PREFIX = 'mbox-';
 
-function deterministicUuid(entryId: string): NonNullable<SDKUserMessage['uuid']> {
+export function deterministicUuid(entryId: string): NonNullable<SDKUserMessage['uuid']> {
   const digest = createHash('sha256').update(entryId).digest('hex');
   return `${MAILBOX_MESSAGE_UUID_PREFIX}${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}` as NonNullable<
     SDKUserMessage['uuid']
@@ -56,7 +51,7 @@ function isMailboxDeliveryOrigin(origin: string): origin is MessageDeliveryOrigi
   );
 }
 
-function mapOrigin(origin: string): MessageDeliveryOrigin {
+export function mapOrigin(origin: string): MessageDeliveryOrigin {
   return isMailboxDeliveryOrigin(origin) ? origin : 'space_inject';
 }
 
@@ -97,18 +92,9 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
     if (Date.now() - decodeUlidTimestamp(entry.id) > entry.policy.ttlMs) {
       throw new DeadLetterImmediatelyError('mailbox: entry expired (ttl)');
     }
-    const synthetic = mailboxMessageIsSynthetic(entry.origin, entry.message);
-    const admittedAt = decodeUlidTimestamp(entry.id);
     const admissionRowid = readAdmissionRowid(deps.db, job.id);
-    const message: SDKUserMessage & { referenceMetadata?: ReferenceMetadata } = {
-      ...entry.message,
-      uuid: (entry.messageUuid ?? deterministicUuid(entry.id)) as NonNullable<
-        SDKUserMessage['uuid']
-      >,
-      session_id: target,
-      ...(synthetic ? { isSynthetic: true } : {}),
-    };
-    const messageUuid = message.uuid as NonNullable<SDKUserMessage['uuid']>;
+    const plan = planMailboxAdmission({ ...entry, to: entry.to }, admissionRowid);
+    const messageUuid = plan.message.uuid;
     const existing = deps.sdkMessageRepo.getDeliveryContent(target, messageUuid);
     const publish = (dbId: string): void => {
       if (!deps.publishStatusChanged) return;
@@ -119,18 +105,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       }
     };
     const ensured = ensurePrompt({
-      sessionId: target,
-      message,
-      ...(synthetic ? { origin: 'system' as MessageOrigin } : {}),
-      ...(entry.deliveryMode === 'defer'
-        ? { hold: 'manual' as PromptHold, materializeOnly: true }
-        : {}),
-      delivery: {
-        origin: mapOrigin(entry.origin),
-        parentToolUseId: null,
-        admittedAt,
-        ...(admissionRowid !== undefined ? { admissionRowid } : {}),
-      },
+      ...plan,
       db: deps.db,
       sdkMessageRepo: deps.sdkMessageRepo,
       jobQueue: deps.jobQueue,
@@ -142,10 +117,7 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
       const retried = await retryPrompt({
         sessionId: target,
         messageUuid,
-        origin: mapOrigin(entry.origin),
-        parentToolUseId: null,
-        admittedAt,
-        ...(admissionRowid !== undefined ? { admissionRowid } : {}),
+        ...plan.delivery,
         db: deps.db,
         sdkMessageRepo: deps.sdkMessageRepo,
         jobQueue: deps.jobQueue,
@@ -158,8 +130,8 @@ export function createMailboxDeliveryHandler(deps: MailboxDeliveryDeps): JobHand
         jobQueue: deps.jobQueue,
         sessionId: target,
         messageUuids: [messageUuid],
-        origin: mapOrigin(entry.origin),
-        admittedAt,
+        origin: plan.delivery.origin,
+        admittedAt: plan.delivery.admittedAt,
         ...(admissionRowid !== undefined ? { admissionRowid } : {}),
         claimValid: () => deps.jobQueue.isClaimCurrent(job.id, job.claimToken),
       });
