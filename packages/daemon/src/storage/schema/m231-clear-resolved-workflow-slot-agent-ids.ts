@@ -1,5 +1,4 @@
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
-import { SpaceAgentTemplateRepository } from '../repositories/space-agent-template-repository.ts';
 import { SpaceWorkflowDefinitionVersionRepository } from '../repositories/space-workflow-definition-version-repository.ts';
 import {
   computeDefinitionVersion,
@@ -36,6 +35,10 @@ interface SlotOccurrence {
   rawName: string;
   effectiveName: string;
   index: number;
+}
+
+function frozenTemplateExists(db: BunDatabase, key: string): boolean {
+  return !!db.prepare(`SELECT 1 FROM space_agent_templates WHERE key = ?`).get(key);
 }
 
 function tableExists(db: BunDatabase, tableName: string): boolean {
@@ -78,15 +81,15 @@ export function runMigration231(db: BunDatabase): void {
   if (!tableExists(db, 'space_workflow_nodes')) return;
   if (!tableExists(db, 'space_agent_templates')) return;
 
-  const templateRepo = new SpaceAgentTemplateRepository(db);
   const builtInKeys = new Set(getLongHorizonAgentTemplates().map((t) => t.key));
-  const resolvable = (key: string): boolean => !!templateRepo.getByKey(key) || builtInKeys.has(key);
+  const resolvable = (key: string): boolean =>
+    frozenTemplateExists(db, key) || builtInKeys.has(key);
   const now = Date.now();
 
   db.exec('BEGIN');
   try {
     clearLiveNodeAgentIds(db, resolvable, now);
-    migratePinnedRunDefinitions(db, templateRepo, resolvable, now);
+    migratePinnedRunDefinitions(db, resolvable, now);
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
@@ -231,7 +234,6 @@ function rewriteTargetAgent(
 
 function migratePinnedRunDefinitions(
   db: BunDatabase,
-  templateRepo: SpaceAgentTemplateRepository,
   resolvable: (key: string) => boolean,
   now: number
 ): void {
@@ -325,7 +327,7 @@ function migratePinnedRunDefinitions(
       } else {
         key =
           templateKeyByAgentId.get(occ.agentId) ??
-          ensureTemplateForAgentRef(db, templateRepo, spaceId, occ.agentId, occ.slot);
+          ensureTemplateForAgentRef(db, spaceId, occ.agentId, occ.slot);
       }
       if (!key) {
         if (finalName) occupied.add(finalName);

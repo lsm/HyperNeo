@@ -4,7 +4,6 @@ import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compa
 import { runMigration225 } from '../../../../../src/storage/schema/m225-space-agent-templates.ts';
 import { runMigration226 } from '../../../../../src/storage/schema/m226-space-agent-templates-version.ts';
 import { runMigration227 } from '../../../../../src/storage/schema/m227-space-agent-template-version-seq.ts';
-import { runMigration238 } from '../../../../../src/storage/schema/m238-space-agent-template-labels.ts';
 import { runMigration228 } from '../../../../../src/storage/schema/m228-migrate-workflow-agent-template-refs.ts';
 import { SpaceAgentTemplateRepository } from '../../../../../src/storage/repositories/space-agent-template-repository.ts';
 import {
@@ -85,6 +84,19 @@ function readNodeConfig(db: BunDatabase, nodeId: string): Record<string, unknown
   return JSON.parse(row.config) as Record<string, unknown>;
 }
 
+function seedPreexistingTemplate(
+  db: BunDatabase,
+  seed: { key: string; handle: string; displayName: string; instructions: string }
+): void {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO space_agent_templates (
+       key, handle, display_name, description, instructions, suggested_autonomy_level,
+       created_at, updated_at, version
+     ) VALUES (?, ?, ?, '', ?, 2, ?, ?, 1)`
+  ).run(seed.key, seed.handle, seed.displayName, seed.instructions, now, now);
+}
+
 function createMigrationDb(): BunDatabase {
   const db = new BunDatabase(':memory:');
   createSpaceAgentSchema(db);
@@ -92,7 +104,6 @@ function createMigrationDb(): BunDatabase {
   runMigration225(db);
   runMigration226(db);
   runMigration227(db);
-  runMigration238(db);
   return db;
 }
 
@@ -508,12 +519,41 @@ describe('migration 228: workflow agentId refs to templateKey', () => {
     db.close();
   });
 
+  test('runs against the pre-m238 schema without touching the labels column', () => {
+    const db = createMigrationDb();
+    const columns = (
+      db.prepare(`PRAGMA table_info("space_agent_templates")`).all() as Array<{ name: string }>
+    ).map((column) => column.name);
+    expect(columns).not.toContain('labels');
+
+    insertLongHorizonAgent(db, {
+      id: 'agent-prelabels',
+      handle: 'pre-labels',
+      displayName: 'Pre Labels',
+      instructions: 'Contract',
+    });
+    insertWorkflow(db, 'wf-prelabels', 'space-1', 'Pre Labels Flow');
+    insertNodeWithConfig(db, 'node-prelabels', 'wf-prelabels', {
+      agents: [{ agentId: 'agent-prelabels', name: 'slot' }],
+    });
+
+    expect(() => runMigration228(db)).not.toThrow();
+
+    expect(readNodeConfig(db, 'node-prelabels').agents).toEqual([
+      {
+        agentId: 'agent-prelabels',
+        name: 'slot',
+        templateKey: 'migrated.agent.agent-prelabels',
+      },
+    ]);
+    db.close();
+  });
+
   test('is a no-op when workflow tables are absent', () => {
     const db = new BunDatabase(':memory:');
     runMigration225(db);
     runMigration226(db);
     runMigration227(db);
-    runMigration238(db);
 
     runMigration228(db);
 
@@ -546,7 +586,7 @@ describe('migration 228: workflow agentId refs to templateKey', () => {
   test('does not bind to an unrelated user template colliding with the migrated key', () => {
     const db = createMigrationDb();
     const repo = new SpaceAgentTemplateRepository(db);
-    repo.create({
+    seedPreexistingTemplate(db, {
       key: migratedAgentTemplateKey('agent-collide'),
       handle: 'user-made',
       displayName: 'User Made',
@@ -583,16 +623,19 @@ describe('migration 228: workflow agentId refs to templateKey', () => {
   test('probes past further key collisions without binding to unrelated templates', () => {
     const db = createMigrationDb();
     const repo = new SpaceAgentTemplateRepository(db);
-    repo.create({
+    seedPreexistingTemplate(db, {
       key: migratedAgentTemplateKey('agent-collide'),
       handle: 'user-made',
       displayName: 'User Made',
       instructions: 'User authored content',
     });
-    repo.create({
+    seedPreexistingTemplate(db, {
       key: `${migratedAgentTemplateKey('agent-collide')}.m228`,
+
       handle: 'user-made-2',
+
       displayName: 'User Made Too',
+
       instructions: 'More user content',
     });
     insertLongHorizonAgent(db, {

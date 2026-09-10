@@ -1,11 +1,9 @@
 import type {
   CreateSpaceAgentTemplateParams,
   SettingSource,
-  SpaceAgentTemplate,
   AgentModelPoolEntry,
 } from '@hyperneo/shared';
 import type { Database as BunDatabase } from '../sqlite-compat.ts';
-import { SpaceAgentTemplateRepository } from '../repositories/space-agent-template-repository.ts';
 import { SpaceWorkflowRepository } from '../repositories/space-workflow-repository.ts';
 import { SpaceWorkflowDefinitionVersionRepository } from '../repositories/space-workflow-definition-version-repository.ts';
 import { computeDefinitionVersion } from '../../lib/space/workflows/definition-version.ts';
@@ -165,7 +163,6 @@ export function runMigration228(db: BunDatabase): void {
     .all() as WorkflowRow[];
   if (workflows.length === 0) return;
 
-  const repo = new SpaceAgentTemplateRepository(db);
   const updateNode = db.prepare(
     `UPDATE space_workflow_nodes SET config = ?, updated_at = ? WHERE id = ?`
   );
@@ -191,7 +188,7 @@ export function runMigration228(db: BunDatabase): void {
           const agentId = typeof slot.agentId === 'string' ? slot.agentId.trim() : '';
           if (!agentId) continue;
           if (typeof slot.templateKey === 'string' && slot.templateKey.trim()) continue;
-          const key = ensureTemplateForAgentRef(db, repo, workflow.space_id, agentId, slot);
+          const key = ensureTemplateForAgentRef(db, workflow.space_id, agentId, slot);
           if (!key) continue;
           slot.templateKey = key;
           dirty = true;
@@ -208,11 +205,97 @@ export function runMigration228(db: BunDatabase): void {
   }
 }
 
+interface FrozenTemplateRow {
+  handle: string;
+  displayName: string;
+  description: string;
+  instructions: string;
+  suggestedAutonomyLevel: number;
+  model: string | null;
+  provider: string | null;
+  modelPool: AgentModelPoolEntry[] | null;
+  thinkingLevel: string | null;
+  settingSources: SettingSource[] | null;
+  tools: string[] | null;
+}
+
+function frozenDecodeJsonArray<T>(value: unknown): T[] | null {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  return JSON.parse(value) as T[];
+}
+
+function frozenEncodeJsonArray<T>(value: T[] | null | undefined): string | null {
+  return value != null && value.length > 0 ? JSON.stringify(value) : null;
+}
+
+function frozenGetTemplate(db: BunDatabase, key: string): FrozenTemplateRow | null {
+  const row = db
+    .prepare(
+      `SELECT handle, display_name, description, instructions, suggested_autonomy_level,
+              model, provider, model_pool, thinking_level, setting_sources, tools
+         FROM space_agent_templates
+        WHERE key = ?`
+    )
+    .get(key) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    handle: row.handle as string,
+    displayName: row.display_name as string,
+    description: (row.description as string | null) ?? '',
+    instructions: (row.instructions as string | null) ?? '',
+    suggestedAutonomyLevel: row.suggested_autonomy_level as number,
+    model: (row.model as string | null) ?? null,
+    provider: (row.provider as string | null) ?? null,
+    modelPool: frozenDecodeJsonArray<AgentModelPoolEntry>(row.model_pool),
+    thinkingLevel: (row.thinking_level as string | null) ?? null,
+    settingSources: frozenDecodeJsonArray<SettingSource>(row.setting_sources),
+    tools: frozenDecodeJsonArray<string>(row.tools),
+  };
+}
+
+function frozenNextVersion(db: BunDatabase, key: string): number {
+  if (!tableExists(db, 'space_agent_template_version_seq')) return 1;
+  const row = db
+    .prepare(
+      `INSERT INTO space_agent_template_version_seq (key, next_version) VALUES (?, 1)
+         ON CONFLICT(key) DO UPDATE SET next_version = next_version + 1
+         RETURNING next_version`
+    )
+    .get(key) as { next_version: number } | undefined;
+  return row?.next_version ?? 1;
+}
+
+function frozenCreateTemplate(db: BunDatabase, params: CreateSpaceAgentTemplateParams): void {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO space_agent_templates (
+       key, handle, display_name, description, instructions, suggested_autonomy_level,
+       model, provider, model_pool, thinking_level, setting_sources, tools,
+       created_at, updated_at, version
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    params.key,
+    params.handle,
+    params.displayName ?? params.handle,
+    params.description ?? '',
+    params.instructions ?? '',
+    params.suggestedAutonomyLevel ?? 2,
+    params.model ?? null,
+    params.provider ?? null,
+    frozenEncodeJsonArray(params.modelPool),
+    params.thinkingLevel ?? null,
+    params.settingSources === undefined ? null : JSON.stringify(params.settingSources),
+    frozenEncodeJsonArray(params.tools),
+    now,
+    now,
+    frozenNextVersion(db, params.key)
+  );
+}
+
 const MAX_TEMPLATE_KEY_ATTEMPTS = 100;
 
 export function ensureTemplateForAgentRef(
   db: BunDatabase,
-  repo: SpaceAgentTemplateRepository,
   spaceId: string,
   agentId: string,
   orphanSlot: Record<string, unknown>
@@ -226,18 +309,18 @@ export function ensureTemplateForAgentRef(
     : synthesizeOrphanAgentTemplate(agentId, orphanSlotSource(agentId, orphanSlot));
   const baseKey = migratedAgentTemplateKey(agentId);
 
-  const existing = repo.getByKey(baseKey);
+  const existing = frozenGetTemplate(db, baseKey);
   if (!existing) {
-    repo.create({ ...params, key: baseKey });
+    frozenCreateTemplate(db, { ...params, key: baseKey });
     return baseKey;
   }
   if (matchesSynthesis(existing, params)) return baseKey;
 
   for (let attempt = 0; attempt < MAX_TEMPLATE_KEY_ATTEMPTS; attempt++) {
     const key = attempt === 0 ? `${baseKey}.m228` : `${baseKey}.m228-${attempt + 1}`;
-    const occupied = repo.getByKey(key);
+    const occupied = frozenGetTemplate(db, key);
     if (!occupied) {
-      repo.create({ ...params, key });
+      frozenCreateTemplate(db, { ...params, key });
       return key;
     }
     if (matchesSynthesis(occupied, params)) return key;
@@ -248,7 +331,7 @@ export function ensureTemplateForAgentRef(
 }
 
 function matchesSynthesis(
-  existing: SpaceAgentTemplate,
+  existing: FrozenTemplateRow,
   params: CreateSpaceAgentTemplateParams
 ): boolean {
   const normalizePool = (pool: CreateSpaceAgentTemplateParams['modelPool']) =>
