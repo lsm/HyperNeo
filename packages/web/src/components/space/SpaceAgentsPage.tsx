@@ -12,12 +12,17 @@ export interface SpaceAgentsPageProps {
 }
 
 const PROTECTED_HANDLES = new Set(['space-manager', 'coordinator']);
-const AGENT_STATUSES: SpaceAgentStatus[] = ['active', 'paused', 'disabled', 'archived'];
+const EDITABLE_STATUSES: SpaceAgentStatus[] = ['active', 'paused', 'disabled'];
+const UNSET_AUTONOMY = 'none';
 const AUTONOMY_LEVELS = [1, 2, 3, 4, 5] as const;
 
 interface TemplateOption {
   key: string;
   displayName: string;
+}
+
+function statusOptions(handle: string): SpaceAgentStatus[] {
+  return PROTECTED_HANDLES.has(handle) ? ['active'] : EDITABLE_STATUSES;
 }
 
 function templateOptions(): TemplateOption[] {
@@ -96,9 +101,11 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     event.preventDefault();
     const data = new FormData(event.currentTarget as HTMLFormElement);
     const field = (name: string) => String(data.get(name) ?? '').trim();
-    const autonomyLevel = field('autonomyLevel')
-      ? (Number(field('autonomyLevel')) as SpaceAgentAutonomyLevel)
-      : null;
+    const autonomyChoice = field('autonomyLevel');
+    const autonomyLevel =
+      autonomyChoice && autonomyChoice !== UNSET_AUTONOMY
+        ? (Number(autonomyChoice) as SpaceAgentAutonomyLevel)
+        : null;
 
     if (editing && field('displayName') === '') {
       setFormError('Name is required');
@@ -129,7 +136,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
           handle: field('handle') || undefined,
           instructions: field('instructions') || undefined,
           description: field('description') || undefined,
-          autonomyLevel: autonomyLevel ?? undefined,
+          autonomyLevel: autonomyChoice === '' ? undefined : autonomyLevel,
           templateKey: field('templateKey') || undefined,
         });
         if (!isCurrentSubmission()) return;
@@ -272,7 +279,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
                     defaultValue={editing.status}
                     data-testid="agent-status-select"
                   >
-                    {AGENT_STATUSES.map((value) => (
+                    {statusOptions(editing.handle).map((value) => (
                       <option key={value} value={value}>
                         {value}
                       </option>
@@ -289,7 +296,8 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
                   defaultValue={editing?.autonomyLevel ? String(editing.autonomyLevel) : ''}
                   data-testid="agent-autonomy-select"
                 >
-                  <option value="">Unset</option>
+                  <option value="">{editing ? 'Unset' : 'Template default'}</option>
+                  {!editing && <option value={UNSET_AUTONOMY}>Unset</option>}
                   {AUTONOMY_LEVELS.map((value) => (
                     <option key={value} value={String(value)}>
                       {value}
