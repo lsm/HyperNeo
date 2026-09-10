@@ -33,10 +33,20 @@ export async function parseOperationInput(
   operation: OperationDefinition,
   input: unknown
 ): Promise<Gate<PreparedOperation>> {
-  const parsed = await operation.inputSchema.safeParseAsync(input);
-  return parsed.success
-    ? { value: { operation, input: parsed.data } }
-    : { reason: { kind: 'failed', code: 'invalid_input', message: parsed.error.message } };
+  try {
+    const parsed = await operation.inputSchema.safeParseAsync(input);
+    return parsed.success
+      ? { value: { operation, input: parsed.data } }
+      : { reason: { kind: 'failed', code: 'invalid_input', message: parsed.error.message } };
+  } catch (error) {
+    return {
+      reason: {
+        kind: 'failed',
+        code: 'invalid_input',
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
 }
 
 export async function executeOperation(
@@ -64,10 +74,20 @@ export async function executeOperation(
 export async function validateOperationResult(
   executed: ExecutedOperation
 ): Promise<Gate<Extract<OperationOutcome, { kind: 'completed' }>>> {
-  const parsed = await executed.operation.resultSchema.safeParseAsync(executed.result);
-  return parsed.success
-    ? { value: { kind: 'completed', value: parsed.data } }
-    : { reason: { kind: 'failed', code: 'invalid_result', message: parsed.error.message } };
+  try {
+    const parsed = await executed.operation.resultSchema.safeParseAsync(executed.result);
+    return parsed.success
+      ? { value: { kind: 'completed', value: parsed.data } }
+      : { reason: { kind: 'failed', code: 'invalid_result', message: parsed.error.message } };
+  } catch (error) {
+    return {
+      reason: {
+        kind: 'failed',
+        code: 'invalid_result',
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
 }
 
 export const invokeOperation = (superpipe({})('invoke-operation') as PipelineAPI)

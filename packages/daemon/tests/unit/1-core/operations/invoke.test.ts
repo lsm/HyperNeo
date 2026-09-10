@@ -116,4 +116,31 @@ describe('shared operation invocation', () => {
       code: 'invalid_result',
     });
   });
+  test.each([
+    'input',
+    'result',
+  ] as const)('normalizes throwing and rejecting %s schema callbacks', async (phase) => {
+    for (const asynchronous of [false, true]) {
+      const broken = z.string().transform(() => {
+        if (asynchronous) return Promise.reject(new Error('schema callback failed'));
+        throw new Error('schema callback failed');
+      });
+      const execute = mock(async () => 'value');
+      const registry = createOperationRegistry([
+        defineOperation({
+          name: 'example',
+          description: 'Broken schema',
+          inputSchema: phase === 'input' ? broken : z.string(),
+          resultSchema: phase === 'result' ? broken : z.string(),
+          execute,
+        }),
+      ]);
+      expect(await invokeOperation(registry, 'example', 'value', caller)).toEqual({
+        kind: 'failed',
+        code: phase === 'input' ? 'invalid_input' : 'invalid_result',
+        message: 'schema callback failed',
+      });
+      expect(execute).toHaveBeenCalledTimes(phase === 'input' ? 0 : 1);
+    }
+  });
 });
