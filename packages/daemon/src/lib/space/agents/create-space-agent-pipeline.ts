@@ -26,24 +26,29 @@ export interface CreateSpaceAgentDeps extends Dependencies {
   validateModelPool(pool: AgentModelPoolEntry[]): Promise<string | null>;
 }
 
-export type CreateSpaceAgentRejectionKind =
+export type SpaceAgentRejectionKind =
   | 'invalid_request'
   | 'space_not_found'
+  | 'agent_not_found'
   | 'session_invalid'
   | 'session_taken'
   | 'template_not_found'
   | 'invalid_identity'
   | 'invalid_config';
 
+export type CreateSpaceAgentRejectionKind = SpaceAgentRejectionKind;
+
 export interface BindableSession {
   type: string;
   spaceId: string | null;
 }
 
-export interface CreateSpaceAgentRejection {
-  kind: CreateSpaceAgentRejectionKind;
+export interface SpaceAgentRejection {
+  kind: SpaceAgentRejectionKind;
   message: string;
 }
+
+export type CreateSpaceAgentRejection = SpaceAgentRejection;
 
 export interface AdmittedRequest {
   request: CreateSpaceAgentInput;
@@ -58,14 +63,16 @@ export interface AdmittedIdentity extends AdmittedTemplate {
   displayName: string;
 }
 
-type Gate<T> = { value: T } | { reason: CreateSpaceAgentRejection };
+export type Gate<T> = { value: T } | { reason: CreateSpaceAgentRejection };
 
-function reject(
-  kind: CreateSpaceAgentRejectionKind,
+export function rejectSpaceAgent(
+  kind: SpaceAgentRejectionKind,
   message: string
-): { reason: CreateSpaceAgentRejection } {
+): { reason: SpaceAgentRejection } {
   return { reason: { kind, message } };
 }
+
+const reject = rejectSpaceAgent;
 
 function isReservedHandle(handle: string): boolean {
   return (RESERVED_SPACE_AGENT_HANDLES as readonly string[]).includes(handle);
@@ -215,28 +222,35 @@ export function templateToCreateParams(
   };
 }
 
-export function gateTools(
-  params: CreateSpaceAgentParams,
+export interface AgentConfigFields {
+  tools?: string[] | null;
+  model?: string | null;
+  provider?: string | null;
+  modelPool?: AgentModelPoolEntry[] | null;
+}
+
+export function gateTools<T extends AgentConfigFields>(
+  params: T,
   validateTools: CreateSpaceAgentDeps['validateTools']
-): Gate<CreateSpaceAgentParams> {
+): Gate<T> {
   if (!params.tools || params.tools.length === 0) return { value: params };
   const error = validateTools(params.tools);
   return error ? reject('invalid_config', error) : { value: params };
 }
 
-export async function gateModel(
-  params: CreateSpaceAgentParams,
+export async function gateModel<T extends AgentConfigFields>(
+  params: T,
   validateModel: CreateSpaceAgentDeps['validateModel']
-): Promise<Gate<CreateSpaceAgentParams>> {
+): Promise<Gate<T>> {
   if (!params.model) return { value: params };
   const error = await validateModel(params.model, params.provider ?? null);
   return error ? reject('invalid_config', error) : { value: params };
 }
 
-export async function gateModelPool(
-  params: CreateSpaceAgentParams,
+export async function gateModelPool<T extends AgentConfigFields>(
+  params: T,
   validateModelPool: CreateSpaceAgentDeps['validateModelPool']
-): Promise<Gate<CreateSpaceAgentParams>> {
+): Promise<Gate<T>> {
   if (!params.modelPool || params.modelPool.length === 0) return { value: params };
   const error = await validateModelPool(params.modelPool);
   return error ? reject('invalid_config', error) : { value: params };
