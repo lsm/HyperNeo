@@ -438,6 +438,72 @@ describe('SpaceAgentsPage', () => {
     expect(queryByTestId('agent-form-error')).toBeNull();
   });
 
+  it('sends description and autonomy level when creating', async () => {
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Scribe' } });
+    fireEvent.input(getByTestId('agent-description-input'), { target: { value: 'Takes notes' } });
+    fireEvent.change(getByTestId('agent-autonomy-select'), { target: { value: '3' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() =>
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ description: 'Takes notes', autonomyLevel: 3 })
+      )
+    );
+  });
+
+  it('omits an unset autonomy level rather than sending zero', async () => {
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Scribe' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].autonomyLevel).toBeUndefined();
+  });
+
+  it('offers status only when editing, and sends the chosen value', async () => {
+    mockAgents.value = [makeAgent('alpha', { status: 'active' })];
+    const { getByTestId, getByText, queryByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    expect(queryByTestId('agent-status-select')).toBeNull();
+    fireEvent.click(getByText('Cancel'));
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    expect(getByTestId('agent-status-select')).toBeTruthy();
+    fireEvent.change(getByTestId('agent-status-select'), { target: { value: 'paused' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenCalledWith(
+        'alpha',
+        expect.objectContaining({ status: 'paused' })
+      )
+    );
+  });
+
+  it('clears a description on edit rather than dropping the field', async () => {
+    mockAgents.value = [makeAgent('alpha', { description: 'old' })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.input(getByTestId('agent-description-input'), { target: { value: '' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenCalledWith(
+        'alpha',
+        expect.objectContaining({ description: null })
+      )
+    );
+  });
+
   it('deletes after confirmation', async () => {
     mockAgents.value = [makeAgent('alpha')];
     const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);

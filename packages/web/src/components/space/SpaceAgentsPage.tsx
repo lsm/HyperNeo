@@ -1,4 +1,4 @@
-import type { SpaceAgent } from '@hyperneo/shared';
+import type { SpaceAgent, SpaceAgentAutonomyLevel, SpaceAgentStatus } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
 import { spaceAgentStore } from '../../lib/space-agent-store';
@@ -12,6 +12,8 @@ export interface SpaceAgentsPageProps {
 }
 
 const PROTECTED_HANDLES = new Set(['space-manager', 'coordinator']);
+const AGENT_STATUSES: SpaceAgentStatus[] = ['active', 'paused', 'disabled', 'archived'];
+const AUTONOMY_LEVELS = [1, 2, 3, 4, 5] as const;
 
 interface TemplateOption {
   key: string;
@@ -94,6 +96,9 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     event.preventDefault();
     const data = new FormData(event.currentTarget as HTMLFormElement);
     const field = (name: string) => String(data.get(name) ?? '').trim();
+    const autonomyLevel = field('autonomyLevel')
+      ? (Number(field('autonomyLevel')) as SpaceAgentAutonomyLevel)
+      : null;
 
     if (editing && field('displayName') === '') {
       setFormError('Name is required');
@@ -112,6 +117,9 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
         await spaceAgentStore.update(editing.id, {
           displayName: field('displayName'),
           instructions: field('instructions'),
+          description: field('description') || null,
+          status: field('status') as SpaceAgentStatus,
+          autonomyLevel,
         });
         if (!isCurrentSubmission()) return;
       } else {
@@ -120,6 +128,8 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
           displayName: field('displayName') || undefined,
           handle: field('handle') || undefined,
           instructions: field('instructions') || undefined,
+          description: field('description') || undefined,
+          autonomyLevel: autonomyLevel ?? undefined,
           templateKey: field('templateKey') || undefined,
         });
         if (!isCurrentSubmission()) return;
@@ -242,6 +252,51 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
                   </label>
                 </>
               )}
+
+              <label class="block text-xs text-fg-soft">
+                Description
+                <input
+                  class="mt-1 w-full rounded border border-border bg-bg px-2 py-1 text-xs text-fg"
+                  name="description"
+                  defaultValue={editing?.description ?? ''}
+                  data-testid="agent-description-input"
+                />
+              </label>
+
+              {editing && (
+                <label class="block text-xs text-fg-soft">
+                  Status
+                  <select
+                    class="mt-1 w-full rounded border border-border bg-bg px-2 py-1 text-xs text-fg"
+                    name="status"
+                    defaultValue={editing.status}
+                    data-testid="agent-status-select"
+                  >
+                    {AGENT_STATUSES.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              <label class="block text-xs text-fg-soft">
+                Autonomy level
+                <select
+                  class="mt-1 w-full rounded border border-border bg-bg px-2 py-1 text-xs text-fg"
+                  name="autonomyLevel"
+                  defaultValue={editing?.autonomyLevel ? String(editing.autonomyLevel) : ''}
+                  data-testid="agent-autonomy-select"
+                >
+                  <option value="">Unset</option>
+                  {AUTONOMY_LEVELS.map((value) => (
+                    <option key={value} value={String(value)}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
               <label class="block text-xs text-fg-soft">
                 Instructions
