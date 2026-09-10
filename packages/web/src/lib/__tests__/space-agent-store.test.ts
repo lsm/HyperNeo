@@ -136,6 +136,22 @@ describe('SpaceAgentStore', () => {
       expect(store.error.value).toBe('boom');
       expect(store.loading.value).toBe(false);
     });
+
+    it('refresh is a no-op with no space selected, so connection recovery can call it blind', async () => {
+      await store.refresh();
+
+      expect(requests).toEqual([]);
+      expect(store.loading.value).toBe(false);
+    });
+
+    it('refresh reloads the selected space, recovering state missed while disconnected', async () => {
+      await store.selectSpace('space-1');
+      listResult = [makeAgent('added-while-offline')];
+
+      await store.refresh();
+
+      expect(store.agents.value.map((a) => a.id)).toEqual(['added-while-offline']);
+    });
   });
 
   describe('mutations', () => {
