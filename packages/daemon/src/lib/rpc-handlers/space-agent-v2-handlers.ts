@@ -1,5 +1,6 @@
-import type { MessageHub, SpaceAgent, SpaceLongHorizonAgent } from '@hyperneo/shared';
+import type { MessageHub, SpaceAgent } from '@hyperneo/shared';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
+import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { SPACE_MANAGER_HANDLE } from '../space/agent-handle.ts';
 import type { DaemonInternalEventMap, InternalEventBus } from '../internal-event-bus.ts';
@@ -38,6 +39,7 @@ export interface SpaceAgentV2Deps {
   spaceExists(spaceId: string): Promise<boolean>;
   getSession(sessionId: string): SessionLookup | null;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
+  legacyAgents?: Pick<SpaceLongHorizonAgentRepository, 'getById'>;
 }
 
 const COORDINATOR_HANDLES = new Set([SPACE_MANAGER_HANDLE, 'coordinator']);
@@ -53,16 +55,6 @@ export function toBindableSession(session: SessionLookup | null): BindableSessio
   return { type: session.type, spaceId: session.context?.spaceId ?? null };
 }
 
-export function toLegacyAgentShape(agent: SpaceAgent): SpaceLongHorizonAgent {
-  return {
-    ...agent,
-    templateKey: null,
-    description: agent.description ?? undefined,
-    modelPool: agent.modelPool ?? undefined,
-    toolPermissions: agent.tools ? { tools: [...agent.tools] } : {},
-  } as unknown as SpaceLongHorizonAgent;
-}
-
 async function publishAgentEvent(
   deps: SpaceAgentV2Deps,
   topic: 'spaceAgentV2.created' | 'spaceAgentV2.updated',
@@ -72,7 +64,8 @@ async function publishAgentEvent(
   await deps.internalEventBus
     .publish(topic, { sessionId: `space:${agent.spaceId}`, spaceId: agent.spaceId, agent })
     .catch(() => {});
-  const legacy = toLegacyAgentShape(agent);
+  const legacy = deps.legacyAgents?.getById(agent.id);
+  if (!legacy) return;
   if (topic === 'spaceAgentV2.created') {
     await publishUnifiedAgentCreated(deps.internalEventBus, legacy);
     return;
