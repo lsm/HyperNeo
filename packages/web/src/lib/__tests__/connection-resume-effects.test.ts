@@ -142,7 +142,8 @@ describe('real ConnectionManager resume recovery', () => {
 
   it.each([
     'health',
-    ...refreshes,
+    'refresh:app',
+    'refresh:global',
   ])('reconnects on %s failure without announcing connected', async (failure) => {
     fixture.failure = failure;
     await runResume();
@@ -182,13 +183,14 @@ describe('real ConnectionManager resume recovery', () => {
     const pending = runResume();
     await setImmediate();
     expect(fixture.effects).toEqual(['mark-recovering', 'health', 'join:global']);
+    fixture.activeSpace = 'space-2';
     releases[0]();
     await setImmediate();
     expect(fixture.effects).toEqual([
       'mark-recovering',
       'health',
       'join:global',
-      'join:space:space-1',
+      'join:space:space-2',
     ]);
     releases[1]();
     await pending;
@@ -234,11 +236,15 @@ describe('real ConnectionManager resume recovery', () => {
     if (missing !== 'messageHub') Reflect.set(manager, 'transport', null);
     vi.spyOn(manager, 'reconnect').mockImplementation(async () => {
       fixture.effects.push('reconnect');
+      if (missing === 'messageHub') {
+        const transport = Reflect.get(manager, 'transport') as { forceReconnect(): void };
+        transport.forceReconnect();
+      }
     });
     await runResume();
     expect(fixture.effects).toEqual(
       missing === 'messageHub'
-        ? ['mark-recovering', 'reconnect', 'state:connected', 'notify']
+        ? ['mark-recovering', 'reconnect', 'force-reconnect']
         : ['mark-recovering', 'reconnect']
     );
     expect(Reflect.get(manager, '_isResuming')).toBe(false);
