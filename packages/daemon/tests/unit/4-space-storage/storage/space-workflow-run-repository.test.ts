@@ -201,7 +201,7 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(computeDefinitionVersion(workflow).versionHash).not.toBe(run.definitionVersion);
     });
 
-    it('leaves the pinned payload unchanged when the resolver returns nothing', () => {
+    it('pins an empty snapshot record when the resolver returns nothing', () => {
       const workflow = rawWorkflow({
         nodes: [
           {
@@ -210,6 +210,33 @@ describe('SpaceWorkflowRunRepository', () => {
             agents: [{ agentId: '', templateKey: 'worker.gone', name: 'Worker' }],
           },
         ],
+      });
+      const expected = computeDefinitionVersion({ ...workflow, templateSnapshots: {} });
+
+      const run = repo.createPinnedRun(
+        {
+          spaceId,
+          workflowId: WORKFLOW_ID,
+          title: 'Snapshot run',
+          rawWorkflow: workflow,
+        },
+        () => null
+      );
+
+      expect(run.definitionVersion).toBe(expected.versionHash);
+      const version = db
+        .prepare(
+          `SELECT payload FROM space_workflow_definition_versions
+           WHERE workflow_id = ? AND version_hash = ?`
+        )
+        .get(WORKFLOW_ID, run.definitionVersion) as { payload: string };
+      expect(version.payload).toBe(expected.payload);
+      expect(JSON.parse(version.payload).templateSnapshots).toEqual({});
+    });
+
+    it('leaves the pinned payload unchanged for a workflow with no template slots', () => {
+      const workflow = rawWorkflow({
+        nodes: [{ id: 'n1', name: 'Build', agents: [{ agentId: 'agent-1', name: 'Worker' }] }],
       });
       const expected = computeDefinitionVersion(workflow);
 
@@ -231,6 +258,7 @@ describe('SpaceWorkflowRunRepository', () => {
         )
         .get(WORKFLOW_ID, run.definitionVersion) as { payload: string };
       expect(version.payload).toBe(expected.payload);
+      expect(JSON.parse(version.payload).templateSnapshots).toBeUndefined();
     });
 
     it('rolls back a newly appended version when run insertion fails', () => {
