@@ -9,8 +9,7 @@ import type { SessionManager } from '../session-manager.ts';
 import type { SpaceRuntimeService } from '../space/runtime/space-runtime-service.ts';
 import type { TaskAgentManager } from '../space/runtime/task-agent-manager.ts';
 import { type SessionResolutionDeps, workerTaskPhaseOf } from './deps.ts';
-
-const sessionUnavailable = (status: string): boolean => status === 'ended' || status === 'archived';
+import { resolveLiveSession, sessionUnavailable } from './session-lookup.ts';
 
 export interface DefaultSessionResolutionServices {
   sessionManager: SessionManager;
@@ -33,29 +32,8 @@ export function createDefaultSessionResolutionDeps(
     return taskAgentManager;
   };
 
-  const resolveLiveSession = async (sessionId: string): Promise<unknown | null> => {
-    const indexed = taskAgentManager?.getSubSession(sessionId);
-    if (indexed !== undefined && sessionManager.getCachedSession(sessionId) === indexed) {
-      const data = indexed.getSessionData();
-      if (sessionUnavailable(data.status)) return null;
-      if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeNodeAgentServer(data.config)) {
-        return null;
-      }
-      return indexed;
-    }
-    const session = await sessionManager.getSessionAsync(sessionId);
-    if (session === null || sessionUnavailable(session.getSessionData().status)) return null;
-    if (
-      isWorkflowSubSessionIdentity(sessionId) &&
-      !hasRuntimeNodeAgentServer(session.getSessionData().config)
-    ) {
-      return null;
-    }
-    return session;
-  };
-
   return {
-    getSession: (sessionId) => resolveLiveSession(sessionId),
+    getSession: (sessionId) => resolveLiveSession(sessionId, sessionManager, taskAgentManager),
 
     async rehydrateSubSession(sessionId) {
       const restored = await requireTaskAgentManager().rehydrateSubSessionById(sessionId);
