@@ -731,6 +731,34 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(JSON.parse(pinnedPayload(after!)).templateSnapshots).toEqual({});
     });
 
+    it('migrateSnapshotlessPins refuses to rehash a pinned payload whose hash does not verify', () => {
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.gone', name: 'Worker' }],
+          },
+        ],
+      });
+      const run = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Tampered pin',
+        rawWorkflow: wf,
+      });
+      seedTaskForRun(run.id, spaceId);
+      const before = repo.getRun(run.id)!.definitionVersion;
+      const tampered = JSON.stringify({ ...wf, name: 'Altered after pinning' });
+      db.prepare(
+        `UPDATE space_workflow_definition_versions SET payload = ?
+         WHERE workflow_id = ? AND version_hash = ?`
+      ).run(tampered, WORKFLOW_ID, before);
+
+      expect(repo.migrateSnapshotlessPins(() => null)).toBe(0);
+      expect(repo.getRun(run.id)!.definitionVersion).toBe(before);
+    });
+
     it('migrateSnapshotlessPins skips runs whose task is archived', () => {
       const wf = rawWorkflow({
         nodes: [

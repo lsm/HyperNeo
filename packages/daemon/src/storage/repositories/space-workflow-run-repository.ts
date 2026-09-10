@@ -8,7 +8,10 @@ import type {
   CreateWorkflowRunParams,
   WorkflowRunFailureReason,
 } from '@hyperneo/shared';
-import { computeDefinitionVersion } from '../../lib/space/workflows/definition-version.ts';
+import {
+  computeDefinitionVersion,
+  verifyDefinitionVersion,
+} from '../../lib/space/workflows/definition-version.ts';
 import {
   withRunTemplateSnapshots,
   type AgentTemplateResolver,
@@ -133,10 +136,16 @@ export class SpaceWorkflowRunRepository {
     })();
   }
 
-  listSnapshotlessPinnedRuns(): Array<{ id: string; workflowId: string; payload: string }> {
+  listSnapshotlessPinnedRuns(): Array<{
+    id: string;
+    workflowId: string;
+    payload: string;
+    versionHash: string;
+  }> {
     const rows = this.db
       .prepare(
-        `SELECT r.id, r.workflow_id, v.payload FROM space_workflow_runs r
+        `SELECT r.id, r.workflow_id, r.definition_version AS version_hash, v.payload
+         FROM space_workflow_runs r
          JOIN space_workflow_definition_versions v
            ON v.workflow_id = r.workflow_id AND v.version_hash = r.definition_version
          WHERE r.definition_version IS NOT NULL
@@ -153,14 +162,31 @@ export class SpaceWorkflowRunRepository {
            )
          ORDER BY r.created_at ASC, r.rowid ASC`
       )
-      .all() as Array<{ id: string; workflow_id: string; payload: string }>;
-    return rows.map((r) => ({ id: r.id, workflowId: r.workflow_id, payload: r.payload }));
+      .all() as Array<{
+      id: string;
+      workflow_id: string;
+      payload: string;
+      version_hash: string;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      workflowId: r.workflow_id,
+      payload: r.payload,
+      versionHash: r.version_hash,
+    }));
   }
 
   migrateSnapshotlessPins(resolveTemplate: AgentTemplateResolver): number {
     let count = 0;
     for (const run of this.listSnapshotlessPinnedRuns()) {
       try {
+        if (!verifyDefinitionVersion(run.payload, run.versionHash)) {
+          log.warn(
+            `migrateSnapshotlessPins: payload hash mismatch for run ${run.id} ` +
+              `(version ${run.versionHash}); leaving it unmigrated`
+          );
+          continue;
+        }
         const pinned = JSON.parse(run.payload) as SpaceWorkflow;
         if (!pinned || !Array.isArray(pinned.nodes)) continue;
         const withSnapshots = withRunTemplateSnapshots(pinned, resolveTemplate);
