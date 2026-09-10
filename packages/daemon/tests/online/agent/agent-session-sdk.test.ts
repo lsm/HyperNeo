@@ -10,44 +10,9 @@ const IDLE_TIMEOUT = IS_MOCK ? 5000 : 30000;
 const SETUP_TIMEOUT = IS_MOCK ? 20000 : 30000;
 const TEST_TIMEOUT = IS_MOCK ? 60000 : 150000;
 
-function createWebSocketWithFirstMessage(baseUrl: string): {
-  ws: WebSocket;
-  firstMessagePromise: Promise<unknown>;
-} {
+function createWebSocket(baseUrl: string): WebSocket {
   const wsUrl = baseUrl.replace('http://', 'ws://');
-  const ws = new WebSocket(`${wsUrl}/ws`);
-
-  const firstMessagePromise = new Promise((resolve, reject) => {
-    const messageHandler = (event: MessageEvent) => {
-      clearTimeout(timer);
-      ws.removeEventListener('message', messageHandler);
-      ws.removeEventListener('error', errorHandler);
-      try {
-        const data = JSON.parse(event.data as string);
-        resolve(data);
-      } catch {
-        reject(new Error('Failed to parse WebSocket message'));
-      }
-    };
-
-    const errorHandler = (error: Event) => {
-      clearTimeout(timer);
-      ws.removeEventListener('message', messageHandler);
-      ws.removeEventListener('error', errorHandler);
-      reject(error);
-    };
-
-    ws.addEventListener('message', messageHandler);
-    ws.addEventListener('error', errorHandler);
-
-    const timer = setTimeout(() => {
-      ws.removeEventListener('message', messageHandler);
-      ws.removeEventListener('error', errorHandler);
-      reject(new Error('No WebSocket message received within 5000ms'));
-    }, 5000);
-  });
-
-  return { ws, firstMessagePromise };
+  return new WebSocket(`${wsUrl}/ws`);
 }
 
 async function waitForWebSocketState(ws: WebSocket, state: number): Promise<void> {
@@ -247,12 +212,8 @@ describe('AgentSession SDK Integration', () => {
         const { sessionId } = createResult;
         daemon.trackSession(sessionId);
 
-        const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(
-          daemon.baseUrl,
-          sessionId
-        );
+        const ws = createWebSocket(daemon.baseUrl);
         await waitForWebSocketState(ws, 1);
-        await firstMessagePromise;
 
         const subPromise = waitForWebSocketMessage(ws);
         ws.send(

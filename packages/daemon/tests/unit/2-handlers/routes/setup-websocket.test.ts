@@ -83,25 +83,6 @@ describe('createWebSocketHandlers', () => {
 
       expect(ws.data.clientId).toBe('client-123');
     });
-
-    it('should send connection.established event', () => {
-      const ws: MockWebSocket = {
-        data: { connectionSessionId: 'global' },
-        send: mock(),
-        readyState: 1,
-      };
-
-      handlers.open(ws as unknown as Parameters<typeof handlers.open>[0]);
-
-      expect(ws.send).toHaveBeenCalledTimes(1);
-
-      const sentMessage = JSON.parse(ws.send.mock.calls[0][0] as string);
-      expect(sentMessage.type).toBe('EVENT');
-      expect(sentMessage.method).toBe('connection.established');
-      expect(sentMessage.data.message).toBe('WebSocket connection established');
-      expect(sentMessage.data.protocol).toBe('MessageHub');
-      expect(sentMessage.data.version).toBe('1.0.0');
-    });
   });
 
   describe('message handler', () => {

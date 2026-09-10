@@ -1,10 +1,5 @@
 import type { RuntimeSocket } from '../lib/runtime-server/index.ts';
-import {
-  createEventMessage,
-  createErrorResponseMessage,
-  MessageType,
-  generateUUID,
-} from '@hyperneo/shared';
+import { createErrorResponseMessage, MessageType, generateUUID } from '@hyperneo/shared';
 import { DEFAULT_MAX_OUTBOUND_MESSAGE_SIZE } from '@hyperneo/shared/message-hub/router';
 import type { HubMessage } from '@hyperneo/shared/message-hub/protocol';
 import type { WebSocketServerTransport } from '../lib/websocket-server-transport.ts';
@@ -59,17 +54,6 @@ export function createWebSocketHandlers(
       const clientId = transport.registerClient(ws, GLOBAL_SESSION_ID);
 
       ws.data.clientId = clientId;
-
-      const connectionEvent = createEventMessage({
-        method: 'connection.established',
-        sessionId: GLOBAL_SESSION_ID,
-        data: {
-          message: 'WebSocket connection established',
-          protocol: 'MessageHub',
-          version: '1.0.0',
-        },
-      });
-      sendCapped(ws, connectionEvent);
     },
 
     async message(ws: RuntimeSocket<WebSocketData>, message: string | Buffer) {
