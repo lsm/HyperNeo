@@ -14,7 +14,7 @@ import type {
   RewindResult,
 } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
-import type { NeoTask, Room, RoomGoal, RuntimeState } from '@hyperneo/shared/types/neo';
+import type { Room, RoomGoal, RuntimeState } from '@hyperneo/shared/types/neo';
 
 export type CompactionTrigger = 'manual' | 'auto';
 
@@ -165,20 +165,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
     roomId: string;
     state: RuntimeState;
   };
-  'room.task.update': {
-    sessionId: string;
-    roomId: string;
-    task: NeoTask;
-  };
-
-  'task.created': { sessionId: string; roomId: string; taskId: string; task: NeoTask };
-  'task.updated': {
-    sessionId: string;
-    roomId: string;
-    taskId: string;
-    task?: Partial<NeoTask>;
-  };
-
   'room.message': {
     sessionId: string;
     roomId: string;

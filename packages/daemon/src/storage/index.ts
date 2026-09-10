@@ -32,7 +32,6 @@ import {
 } from './repositories/goal-repository.ts';
 import { JobQueueRepository } from './repositories/job-queue-repository.ts';
 import { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
-import { TaskRepository } from './repositories/task-repository.ts';
 import { SpaceTaskRepository } from './repositories/space-task-repository.ts';
 import { NodeExecutionRepository } from './repositories/node-execution-repository.ts';
 import { McpEnablementRepository } from './repositories/mcp-enablement-repository.ts';
@@ -68,7 +67,6 @@ export type {
 
 // @public - Library export
 export { GoalRepository } from './repositories/goal-repository.ts';
-export { TaskRepository } from './repositories/task-repository.ts';
 export { AppMcpServerRepository } from './repositories/app-mcp-server-repository.ts';
 export { McpEnablementRepository } from './repositories/mcp-enablement-repository.ts';
 export { SkillRepository } from './repositories/skill-repository.ts';
@@ -107,7 +105,6 @@ export class Database {
   private goalRepo!: GoalRepository;
   private jobQueueRepo!: JobQueueRepository;
   private appMcpServerRepo!: AppMcpServerRepository;
-  private taskRepo!: TaskRepository;
   private spaceTaskRepo!: SpaceTaskRepository;
   private nodeExecutionRepo!: NodeExecutionRepository;
   private mcpEnablementRepo!: McpEnablementRepository;
@@ -151,7 +148,6 @@ export class Database {
     this.githubMappingRepo = new GitHubMappingRepository(db);
     this.inboxItemRepo = new InboxItemRepository(db);
     this.goalRepo = new GoalRepository(db, reactiveDb, shortIdAllocator);
-    this.taskRepo = new TaskRepository(db, reactiveDb, shortIdAllocator);
     this.spaceTaskRepo = new SpaceTaskRepository(db, reactiveDb);
     this.nodeExecutionRepo = new NodeExecutionRepository(db, reactiveDb);
     this.jobQueueRepo = new JobQueueRepository(db);
@@ -564,10 +560,6 @@ export class Database {
 
   getGoalRepo(): GoalRepository {
     return this.goalRepo;
-  }
-
-  getTaskRepo(): TaskRepository {
-    return this.taskRepo;
   }
 
   getSpaceTaskRepo(): SpaceTaskRepository {
