@@ -21,6 +21,7 @@ export interface CreateSpaceAgentDeps extends Dependencies {
   listHandles(spaceId: string): string[];
   listDisplayNames(spaceId: string): string[];
   createAgent(params: CreateSpaceAgentParams): SpaceAgent;
+  seedTemplateExtras?(agent: SpaceAgent, template: SpaceAgentTemplate): void;
   publishCreated(agent: SpaceAgent): Promise<void>;
   validateTools(tools: string[]): string | null;
   validateModel(model: string, provider: string | null): Promise<string | null>;
@@ -243,6 +244,19 @@ export async function gateModelPool<T extends AgentConfigFields>(
   return error ? reject('invalid_config', error) : { value: params };
 }
 
+export function captureTemplate(admitted: AdmittedIdentity): SpaceAgentTemplate | null {
+  return admitted.template;
+}
+
+export function seedFromTemplate(
+  agent: SpaceAgent,
+  template: SpaceAgentTemplate | null,
+  seedTemplateExtras: CreateSpaceAgentDeps['seedTemplateExtras']
+): SpaceAgent {
+  if (template && seedTemplateExtras) seedTemplateExtras(agent, template);
+  return agent;
+}
+
 export function persistAgent(
   params: CreateSpaceAgentParams,
   createAgent: CreateSpaceAgentDeps['createAgent']
@@ -288,11 +302,13 @@ export function buildCreateSpaceAgentPipeline(
     .pipe(gateSession, ['admitted', 'sessionOwner', 'getSession'], 'result:admitted')
     .pipe(gateTemplate, ['admitted', 'getTemplate'], 'result:admitted')
     .pipe(gateIdentity, ['admitted', 'listHandles', 'listDisplayNames'], 'result:admitted')
+    .pipe(captureTemplate, 'admitted', 'template')
     .pipe(buildParams, 'admitted', 'admitted')
     .pipe(gateTools, ['admitted', 'validateTools'], 'result:admitted')
     .pipe(gateModel, ['admitted', 'validateModel'], 'result:admitted')
     .pipe(gateModelPool, ['admitted', 'validateModelPool'], 'result:admitted')
     .pipe(persistAgent, ['admitted', 'createAgent'], 'result:admitted')
+    .pipe(seedFromTemplate, ['admitted', 'template', 'seedTemplateExtras'], 'admitted')
     .pipe(publishCreated, ['admitted', 'publishCreated'], 'admitted')
     .endAsync('admitted') as (
     request: CreateSpaceAgentInput
