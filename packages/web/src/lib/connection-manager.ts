@@ -7,6 +7,7 @@ import {
   sessionStore,
 } from './session-store';
 import { spaceStore } from './space-store';
+import { spaceAgentStore } from './space-agent-store';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
 import { currentSessionIdSignal, slashCommandsSignal } from './signals';
@@ -188,6 +189,7 @@ export class ConnectionManager {
         startVoiceAudioOutboxFlush();
         startVoiceTranscriptOutboxFlush();
         this.notifyConnectionHandlers();
+        void spaceAgentStore.recover();
       }
 
       if (state === 'reconnecting' || state === 'connecting') {
@@ -346,6 +348,7 @@ export class ConnectionManager {
           appState.refreshAll(),
           globalStore.refresh(),
           spaceStore.refresh(),
+          spaceAgentStore.recover(),
         ]);
       } catch {
         if (this.transport) {

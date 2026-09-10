@@ -136,6 +136,22 @@ describe('SpaceAgentStore', () => {
       expect(store.error.value).toBe('boom');
       expect(store.loading.value).toBe(false);
     });
+
+    it('refresh is a no-op with no space selected, so connection recovery can call it blind', async () => {
+      await store.refresh();
+
+      expect(requests).toEqual([]);
+      expect(store.loading.value).toBe(false);
+    });
+
+    it('refresh reloads the selected space, recovering state missed while disconnected', async () => {
+      await store.selectSpace('space-1');
+      listResult = [makeAgent('added-while-offline')];
+
+      await store.refresh();
+
+      expect(store.agents.value.map((a) => a.id)).toEqual(['added-while-offline']);
+    });
   });
 
   describe('mutations', () => {
@@ -214,6 +230,49 @@ describe('SpaceAgentStore', () => {
       expect(store.agents.value).toHaveLength(0);
     });
   });
+  describe('recover', () => {
+    it('installs handlers that were never installed because the page mounted offline', async () => {
+      vi.mocked(connectionManager.getHubIfConnected).mockReturnValueOnce(
+        null as unknown as ReturnType<typeof connectionManager.getHubIfConnected>
+      );
+      await store.selectSpace('space-1');
+      expect(eventHandlers.size).toBe(0);
+
+      listResult = [makeAgent('a')];
+      await store.recover();
+
+      expect([...eventHandlers.keys()].length).toBe(3);
+      expect(store.agents.value.map((a) => a.id)).toEqual(['a']);
+
+      fire('spaceAgentV2.created', { spaceId: 'space-1', agent: makeAgent('live') });
+      expect(store.agents.value.map((a) => a.id)).toEqual(['a', 'live']);
+    });
+
+    it('rejoins the space channel, whose membership is dropped on reconnect', async () => {
+      await store.selectSpace('space-1');
+      joinedChannels.length = 0;
+
+      await store.recover();
+
+      expect(joinedChannels).toEqual(['space:space-1']);
+    });
+
+    it('does not accumulate duplicate handlers across repeated recoveries', async () => {
+      await store.selectSpace('space-1');
+      await store.recover();
+      await store.recover();
+
+      expect(eventHandlers.get('spaceAgentV2.created')?.size).toBe(1);
+    });
+
+    it('is a no-op with no space selected', async () => {
+      await store.recover();
+
+      expect(requests).toEqual([]);
+      expect(joinedChannels).toEqual([]);
+    });
+  });
+
   describe('connection and staleness', () => {
     it('retries selection after the hub was unavailable', async () => {
       vi.mocked(connectionManager.getHubIfConnected).mockReturnValueOnce(
@@ -340,19 +399,28 @@ describe('SpaceAgentStore', () => {
       expect(joinedChannels).toEqual(['space:space-1']);
     });
 
-    it('leaves the previous channel when switching spaces', async () => {
+    it('joins the new channel when switching spaces', async () => {
       await store.selectSpace('space-1');
       await store.selectSpace('space-2');
 
-      expect(leftChannels).toContain('space:space-1');
       expect(joinedChannels).toEqual(['space:space-1', 'space:space-2']);
     });
 
-    it('leaves the channel on teardown', async () => {
+    it('never leaves the shared space channel, which spaceStore owns', async () => {
+      await store.selectSpace('space-1');
+      await store.selectSpace('space-2');
+      store.teardown();
+
+      expect(leftChannels).toEqual([]);
+    });
+
+    it('stops handling events after teardown even though the channel stays joined', async () => {
       await store.selectSpace('space-1');
       store.teardown();
 
-      expect(leftChannels).toEqual(['space:space-1']);
+      fire('spaceAgentV2.created', { spaceId: 'space-1', agent: makeAgent('ghost') });
+
+      expect(store.agents.value).toEqual([]);
     });
 
     it('does not accept a mutation result after teardown', async () => {

@@ -19,7 +19,6 @@ export class SpaceAgentStore {
 
   private cleanups: Array<() => void> = [];
   private subscribedSpaceId: string | null = null;
-  private activeChannel: string | null = null;
   private generation = 0;
 
   private hub() {
@@ -59,6 +58,16 @@ export class SpaceAgentStore {
 
   private isCurrent(generation: number): boolean {
     return this.generation === generation;
+  }
+
+  async recover(): Promise<void> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) return;
+    this.releaseHandlers();
+    try {
+      await this.subscribe(spaceId);
+    } catch {}
+    await this.refresh();
   }
 
   async create(params: CreateSpaceAgentRequest): Promise<SpaceAgent> {
@@ -107,13 +116,8 @@ export class SpaceAgentStore {
     const hub = connectionManager.getHubIfConnected();
     if (!hub) return;
 
-    const channel = `space:${spaceId}`;
-    await hub.joinChannel(channel);
-    if (this.spaceId.value !== spaceId) {
-      hub.leaveChannel(channel);
-      return;
-    }
-    this.activeChannel = channel;
+    await this.joinSharedSpaceChannel(hub, spaceId);
+    if (this.spaceId.value !== spaceId) return;
 
     this.cleanups.push(
       hub.onEvent<{ spaceId: string; agent: SpaceAgent }>('spaceAgentV2.created', (event) => {
@@ -133,14 +137,21 @@ export class SpaceAgentStore {
     this.subscribedSpaceId = spaceId;
   }
 
-  teardown(): void {
-    if (this.activeChannel) {
-      connectionManager.getHubIfConnected()?.leaveChannel(this.activeChannel);
-      this.activeChannel = null;
-    }
+  private async joinSharedSpaceChannel(
+    hub: NonNullable<ReturnType<typeof connectionManager.getHubIfConnected>>,
+    spaceId: string
+  ): Promise<void> {
+    await hub.joinChannel(`space:${spaceId}`);
+  }
+
+  private releaseHandlers(): void {
     for (const cleanup of this.cleanups) cleanup();
     this.cleanups = [];
     this.subscribedSpaceId = null;
+  }
+
+  teardown(): void {
+    this.releaseHandlers();
     this.generation += 1;
     this.spaceId.value = null;
     this.agents.value = [];
