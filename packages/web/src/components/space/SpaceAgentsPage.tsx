@@ -42,6 +42,8 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
   const [deleting, setDeleting] = useState<SpaceAgent | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [formStatus, setFormStatus] = useState<SpaceAgentStatus>('active');
+  const [formAutonomy, setFormAutonomy] = useState<string>('');
   const activeSpaceRef = useRef(spaceId);
   const formGenerationRef = useRef(0);
 
@@ -55,6 +57,8 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     setDeleting(null);
     setDeleteBusy(false);
     setDeleteError(null);
+    setFormStatus('active');
+    setFormAutonomy('');
   }
 
   useEffect(() => {
@@ -82,6 +86,8 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     setFormError(null);
     setEditing(null);
     setCreating(true);
+    setFormStatus('active');
+    setFormAutonomy('');
   }
 
   function openEdit(agent: SpaceAgent) {
@@ -89,6 +95,8 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     setFormError(null);
     setCreating(false);
     setEditing(agent);
+    setFormStatus(agent.status);
+    setFormAutonomy(agent.autonomyLevel ? String(agent.autonomyLevel) : '');
   }
 
   function closeForm() {
@@ -101,7 +109,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     event.preventDefault();
     const data = new FormData(event.currentTarget as HTMLFormElement);
     const field = (name: string) => String(data.get(name) ?? '').trim();
-    const autonomyChoice = field('autonomyLevel');
+    const autonomyChoice = formAutonomy;
     const autonomyLevel =
       autonomyChoice && autonomyChoice !== UNSET_AUTONOMY
         ? (Number(autonomyChoice) as SpaceAgentAutonomyLevel)
@@ -125,7 +133,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
           displayName: field('displayName'),
           instructions: field('instructions'),
           description: field('description') || null,
-          status: field('status') as SpaceAgentStatus,
+          status: formStatus,
           autonomyLevel,
         });
         if (!isCurrentSubmission()) return;
@@ -246,7 +254,6 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
                     <select
                       class="mt-1 w-full rounded border border-border bg-bg px-2 py-1 text-xs text-fg"
                       name="templateKey"
-                      defaultValue=""
                       data-testid="agent-template-select"
                     >
                       <option value="">Blank agent</option>
@@ -276,7 +283,10 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
                   <select
                     class="mt-1 w-full rounded border border-border bg-bg px-2 py-1 text-xs text-fg"
                     name="status"
-                    defaultValue={editing.status}
+                    value={formStatus}
+                    onInput={(event) =>
+                      setFormStatus(event.currentTarget.value as SpaceAgentStatus)
+                    }
                     data-testid="agent-status-select"
                   >
                     {statusOptions(editing.handle).map((value) => (
@@ -293,7 +303,8 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
                 <select
                   class="mt-1 w-full rounded border border-border bg-bg px-2 py-1 text-xs text-fg"
                   name="autonomyLevel"
-                  defaultValue={editing?.autonomyLevel ? String(editing.autonomyLevel) : ''}
+                  value={formAutonomy}
+                  onInput={(event) => setFormAutonomy(event.currentTarget.value)}
                   data-testid="agent-autonomy-select"
                 >
                   <option value="">{editing ? 'Unset' : 'Template default'}</option>
