@@ -208,7 +208,7 @@ export class SpaceTaskRepository {
   }
 
   getTask(id: string): SpaceTask | null {
-    const stmt = this.db.prepare(`SELECT * FROM space_tasks WHERE id = ?`);
+    const stmt = this.db.prepare(`SELECT * FROM space_tasks WHERE space_id IS NOT NULL AND id = ?`);
     const row = stmt.get(id) as Record<string, unknown> | undefined;
 
     if (!row) return null;
@@ -219,7 +219,7 @@ export class SpaceTaskRepository {
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => '?').join(', ');
     const rows = this.db
-      .prepare(`SELECT * FROM space_tasks WHERE id IN (${placeholders})`)
+      .prepare(`SELECT * FROM space_tasks WHERE space_id IS NOT NULL AND id IN (${placeholders})`)
       .all(...ids) as Record<string, unknown>[];
     return rows.map((row) => this.rowToSpaceTask(row));
   }
@@ -302,7 +302,7 @@ export class SpaceTaskRepository {
 
   listByWorkflowRun(workflowRunId: string): SpaceTask[] {
     const stmt = this.db.prepare(
-      `SELECT * FROM space_tasks WHERE workflow_run_id = ? AND status != 'archived' ORDER BY created_at ASC`
+      `SELECT * FROM space_tasks WHERE space_id IS NOT NULL AND workflow_run_id = ? AND status != 'archived' ORDER BY created_at ASC`
     );
     const rows = stmt.all(workflowRunId) as Record<string, unknown>[];
     return rows.map((r) => this.rowToSpaceTask(r));
@@ -310,7 +310,7 @@ export class SpaceTaskRepository {
 
   listByWorkflowRunIncludingArchived(workflowRunId: string): SpaceTask[] {
     const stmt = this.db.prepare(
-      `SELECT * FROM space_tasks WHERE workflow_run_id = ? ORDER BY created_at ASC`
+      `SELECT * FROM space_tasks WHERE space_id IS NOT NULL AND workflow_run_id = ? ORDER BY created_at ASC`
     );
     const rows = stmt.all(workflowRunId) as Record<string, unknown>[];
     return rows.map((r) => this.rowToSpaceTask(r));
@@ -321,7 +321,7 @@ export class SpaceTaskRepository {
     const placeholders = workflowRunIds.map(() => '?').join(', ');
     const rows = this.db
       .prepare(
-        `SELECT * FROM space_tasks WHERE workflow_run_id IN (${placeholders}) ORDER BY created_at ASC`
+        `SELECT * FROM space_tasks WHERE space_id IS NOT NULL AND workflow_run_id IN (${placeholders}) ORDER BY created_at ASC`
       )
       .all(...workflowRunIds) as Record<string, unknown>[];
     return rows.map((row) => this.rowToSpaceTask(row));
@@ -876,7 +876,7 @@ export class SpaceTaskRepository {
 
   listActive(): SpaceTask[] {
     const stmt = this.db.prepare(
-      `SELECT * FROM space_tasks WHERE status IN ('in_progress', 'review', 'blocked', 'approved')`
+      `SELECT * FROM space_tasks WHERE space_id IS NOT NULL AND status IN ('in_progress', 'review', 'blocked', 'approved')`
     );
     const rows = stmt.all() as Record<string, unknown>[];
     return rows.map((r) => this.rowToSpaceTask(r));
@@ -884,7 +884,7 @@ export class SpaceTaskRepository {
 
   listActiveWithTaskAgentSession(): SpaceTask[] {
     const stmt = this.db.prepare(
-      `SELECT * FROM space_tasks WHERE status IN ('in_progress', 'review', 'blocked', 'approved') AND task_agent_session_id IS NOT NULL`
+      `SELECT * FROM space_tasks WHERE space_id IS NOT NULL AND status IN ('in_progress', 'review', 'blocked', 'approved') AND task_agent_session_id IS NOT NULL`
     );
     const rows = stmt.all() as Record<string, unknown>[];
     return rows.map((r) => this.rowToSpaceTask(r));
@@ -892,7 +892,7 @@ export class SpaceTaskRepository {
 
   getTaskBySessionId(sessionId: string): SpaceTask | null {
     const stmt = this.db.prepare(
-      `SELECT * FROM space_tasks WHERE task_agent_session_id = ? LIMIT 1`
+      `SELECT * FROM space_tasks WHERE space_id IS NOT NULL AND task_agent_session_id = ? LIMIT 1`
     );
     const row = stmt.get(sessionId) as Record<string, unknown> | undefined;
     if (!row) return null;
@@ -910,7 +910,7 @@ export class SpaceTaskRepository {
   getDraftTasksByCreator(createdByTaskId: string): SpaceTask[] {
     const rows = this.db
       .prepare(
-        `SELECT * FROM space_tasks WHERE created_by_task_id = ? AND status = 'open' ORDER BY created_at ASC`
+        `SELECT * FROM space_tasks WHERE space_id IS NOT NULL AND created_by_task_id = ? AND status = 'open' ORDER BY created_at ASC`
       )
       .all(createdByTaskId) as Record<string, unknown>[];
     return rows.map((r) => this.rowToSpaceTask(r));
