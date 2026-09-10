@@ -104,8 +104,15 @@ export class SpaceWorkflowRunRepository {
     }));
   }
 
-  pinExistingRun(runId: string, rawWorkflow: SpaceWorkflow): boolean {
-    const { versionHash, payload } = computeDefinitionVersion(rawWorkflow);
+  pinExistingRun(
+    runId: string,
+    rawWorkflow: SpaceWorkflow,
+    resolveTemplate?: AgentTemplateResolver
+  ): boolean {
+    const pinnedWorkflow = resolveTemplate
+      ? withRunTemplateSnapshots(rawWorkflow, resolveTemplate)
+      : rawWorkflow;
+    const { versionHash, payload } = computeDefinitionVersion(pinnedWorkflow);
     const appendVersion = new SpaceWorkflowDefinitionVersionRepository(this.db);
     return this.db.transaction(() => {
       appendVersion.appendVersion({
@@ -126,13 +133,16 @@ export class SpaceWorkflowRunRepository {
     })();
   }
 
-  backfillDefinitionPins(loadWorkflow: (workflowId: string) => SpaceWorkflow | null): number {
+  backfillDefinitionPins(
+    loadWorkflow: (workflowId: string) => SpaceWorkflow | null,
+    resolveTemplate?: AgentTemplateResolver
+  ): number {
     let count = 0;
     for (const run of this.listPinnableRuns()) {
       try {
         const workflow = loadWorkflow(run.workflowId);
         if (!workflow) continue;
-        if (this.pinExistingRun(run.id, workflow)) count += 1;
+        if (this.pinExistingRun(run.id, workflow, resolveTemplate)) count += 1;
       } catch (err) {
         log.warn(`backfillDefinitionPins: skipped run ${run.id} (non-fatal):`, err);
       }

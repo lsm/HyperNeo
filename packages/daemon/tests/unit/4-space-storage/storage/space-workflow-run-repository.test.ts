@@ -5,7 +5,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { computeDefinitionVersion } from '../../../../src/lib/space/workflows/definition-version';
-import type { SpaceWorkflow } from '@hyperneo/shared';
+import type { SpaceAgentTemplate, SpaceWorkflow } from '@hyperneo/shared';
 
 describe('SpaceWorkflowRunRepository', () => {
   let db: Database;
@@ -543,6 +543,83 @@ describe('SpaceWorkflowRunRepository', () => {
         )
         .get(WORKFLOW_ID, stamped.definitionVersion) as { source: string };
       expect(row.source).toBe('backfill');
+    });
+
+    it('pinExistingRun embeds template snapshots so backfilled runs are not snapshot-less', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.custom', name: 'Worker' }],
+          },
+        ],
+      });
+
+      expect(
+        repo.pinExistingRun(run.id, wf, (key) =>
+          key === 'worker.custom'
+            ? ({
+                key: 'worker.custom',
+                handle: 'custom-worker',
+                displayName: 'Custom Worker',
+                description: null,
+                instructions: 'Frozen at backfill.',
+                suggestedAutonomyLevel: 2,
+                model: null,
+                provider: null,
+                modelPool: null,
+                thinkingLevel: null,
+                settingSources: null,
+                tools: null,
+                labels: [],
+                createdAt: 1,
+                updatedAt: 1,
+              } as unknown as SpaceAgentTemplate)
+            : null
+        )
+      ).toBe(true);
+
+      const stamped = repo.getRun(run.id)!;
+      const version = db
+        .prepare(
+          `SELECT payload FROM space_workflow_definition_versions
+           WHERE workflow_id = ? AND version_hash = ?`
+        )
+        .get(WORKFLOW_ID, stamped.definitionVersion) as { payload: string };
+      const pinned = JSON.parse(version.payload) as SpaceWorkflow;
+      expect(pinned.templateSnapshots?.['worker.custom']?.instructions).toBe('Frozen at backfill.');
+    });
+
+    it('backfillDefinitionPins passes the resolver through so pinned runs carry snapshots', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
+      seedTaskForRun(run.id, spaceId);
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.gone', name: 'Worker' }],
+          },
+        ],
+      });
+
+      expect(
+        repo.backfillDefinitionPins(
+          () => wf,
+          () => null
+        )
+      ).toBe(1);
+
+      const stamped = repo.getRun(run.id)!;
+      const version = db
+        .prepare(
+          `SELECT payload FROM space_workflow_definition_versions
+           WHERE workflow_id = ? AND version_hash = ?`
+        )
+        .get(WORKFLOW_ID, stamped.definitionVersion) as { payload: string };
+      expect(JSON.parse(version.payload).templateSnapshots).toEqual({});
     });
 
     it('pinExistingRun is idempotent and never overwrites an existing pin', () => {
