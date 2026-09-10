@@ -36,8 +36,10 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const activeSpaceRef = useRef(spaceId);
+  const formGenerationRef = useRef(0);
 
   function resetViewState() {
+    formGenerationRef.current += 1;
     setSelectedId(null);
     setCreating(false);
     setEditing(null);
@@ -69,12 +71,14 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
   const selected = agents.find((agent) => agent.id === selectedId) ?? null;
 
   function openCreate() {
+    formGenerationRef.current += 1;
     setFormError(null);
     setEditing(null);
     setCreating(true);
   }
 
   function openEdit(agent: SpaceAgent) {
+    formGenerationRef.current += 1;
     setFormError(null);
     setCreating(false);
     setEditing(agent);
@@ -97,6 +101,10 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     }
 
     const submittedFor = spaceId;
+    const submittedGeneration = formGenerationRef.current;
+    const isCurrentSubmission = () =>
+      activeSpaceRef.current === submittedFor && formGenerationRef.current === submittedGeneration;
+
     setSaving(true);
     setFormError(null);
     try {
@@ -105,7 +113,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
           displayName: field('displayName'),
           instructions: field('instructions'),
         });
-        if (activeSpaceRef.current !== submittedFor) return;
+        if (!isCurrentSubmission()) return;
       } else {
         const agent = await spaceAgentStore.create({
           spaceId,
@@ -114,15 +122,15 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
           instructions: field('instructions') || undefined,
           templateKey: field('templateKey') || undefined,
         });
-        if (activeSpaceRef.current !== submittedFor) return;
+        if (!isCurrentSubmission()) return;
         setSelectedId(agent.id);
       }
       closeForm();
     } catch (err) {
-      if (activeSpaceRef.current !== submittedFor) return;
+      if (!isCurrentSubmission()) return;
       setFormError(err instanceof Error ? err.message : 'Failed to save agent');
     } finally {
-      if (activeSpaceRef.current === submittedFor) setSaving(false);
+      if (isCurrentSubmission()) setSaving(false);
     }
   }
 

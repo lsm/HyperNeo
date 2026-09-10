@@ -391,6 +391,53 @@ describe('SpaceAgentsPage', () => {
     expect(queryByTestId('agent-form-error')).toBeNull();
   });
 
+  it('ignores a create that resolves after the form was replaced in the same space', async () => {
+    let resolveCreate: (agent: SpaceAgent) => void = () => {};
+    mockCreate.mockReturnValueOnce(
+      new Promise<SpaceAgent>((resolve) => {
+        resolveCreate = resolve;
+      })
+    );
+    const { getByTestId, queryByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'First' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    fireEvent.click(getByText('Cancel'));
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Second' } });
+
+    resolveCreate(makeAgent('first'));
+    await tick();
+
+    expect(getByTestId('agent-form')).toBeTruthy();
+    expect(queryByTestId('agent-detail')).toBeNull();
+  });
+
+  it('does not write a replaced submission error into the current form', async () => {
+    let rejectCreate: (err: Error) => void = () => {};
+    mockCreate.mockReturnValueOnce(
+      new Promise<SpaceAgent>((_resolve, reject) => {
+        rejectCreate = reject;
+      })
+    );
+    const { getByTestId, queryByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'First' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    fireEvent.click(getByText('Cancel'));
+    fireEvent.click(getByTestId('new-agent-button'));
+
+    rejectCreate(new Error('first submission failed'));
+    await tick();
+
+    expect(getByTestId('agent-form')).toBeTruthy();
+    expect(queryByTestId('agent-form-error')).toBeNull();
+  });
+
   it('deletes after confirmation', async () => {
     mockAgents.value = [makeAgent('alpha')];
     const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
