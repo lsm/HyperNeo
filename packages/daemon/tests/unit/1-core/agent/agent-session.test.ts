@@ -2328,20 +2328,6 @@ describe('AgentSession', () => {
       expect(result).toEqual(mockResult);
     });
 
-    it('previewSelectiveRewind should delegate to rewindHandler', async () => {
-      const mockPreview = { messagesToDelete: [], filesToRevert: [] };
-      const previewSelectiveRewindSpy = mock(async () => mockPreview);
-      // biome-ignore lint: test mock access
-      (agentSession as unknown as Record<string, unknown>).rewindHandler = {
-        previewSelectiveRewind: previewSelectiveRewindSpy,
-      };
-
-      const result = await agentSession.previewSelectiveRewind(['msg1', 'msg2']);
-
-      expect(previewSelectiveRewindSpy).toHaveBeenCalledWith(['msg1', 'msg2']);
-      expect(result).toEqual(mockPreview);
-    });
-
     it('setMaxThinkingTokens should delegate to sdkRuntimeConfig', async () => {
       const mockResult = { success: true };
       const setMaxThinkingTokensSpy = mock(async () => mockResult);

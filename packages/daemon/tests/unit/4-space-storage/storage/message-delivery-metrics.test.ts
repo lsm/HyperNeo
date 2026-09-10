@@ -1,6 +1,5 @@
 import { describe, expect, it, beforeEach } from 'bun:test';
 import {
-  aggregateInFlightBySession,
   DeliveryMetrics,
   emitMessageDeliveryLifecycleEvent,
   fingerprintDeliveryClaim,
@@ -233,22 +232,6 @@ describe('DeliveryMetrics (task #861 item 13)', () => {
       metrics.recordInitializationDuration(-3, 'never_progressed');
       expect(metrics.snapshot().initializationSamples).toBe(0);
       expect(metrics.snapshot().initializationNeverProgressed).toBe(0);
-    });
-  });
-
-  describe('per-session in-flight aggregation', () => {
-    it('counts in-flight jobs per session and skips sessionless handlers', () => {
-      const counts = aggregateInFlightBySession([
-        { sessionId: 'sess-a' },
-        { sessionId: 'sess-a' },
-        { sessionId: 'sess-b' },
-        {},
-      ]);
-      expect(counts).toEqual({ 'sess-a': 2, 'sess-b': 1 });
-    });
-
-    it('returns an empty map for no in-flight handlers', () => {
-      expect(aggregateInFlightBySession([])).toEqual({});
     });
   });
 });

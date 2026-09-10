@@ -25,17 +25,6 @@ export interface SelectiveRewindRequest {
   mode?: RewindMode;
 }
 
-export interface SelectiveRewindPreview {
-  canRewind: boolean;
-  error?: string;
-  messagesToDelete: number;
-  filesToRevert: Array<{
-    path: string;
-    hasCheckpoint: boolean;
-    hasEditDiff: boolean;
-  }>;
-}
-
 export interface SelectiveRewindResult {
   success: boolean;
   error?: string;

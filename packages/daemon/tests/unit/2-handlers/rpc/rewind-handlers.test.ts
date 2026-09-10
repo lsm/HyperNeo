@@ -52,7 +52,6 @@ function createMockAgentSession(): {
     getRewindPoints: ReturnType<typeof mock>;
     previewRewind: ReturnType<typeof mock>;
     executeRewind: ReturnType<typeof mock>;
-    previewSelectiveRewind: ReturnType<typeof mock>;
     executeSelectiveRewind: ReturnType<typeof mock>;
   };
 } {
@@ -80,11 +79,6 @@ function createMockAgentSession(): {
       success: true,
       filesReverted: ['src/file1.ts', 'src/file2.ts'],
       messagesDeleted: 5,
-    })),
-    previewSelectiveRewind: mock(async () => ({
-      canRewind: true,
-      messagesToDelete: 3,
-      filesToRevert: ['src/modified.ts'],
     })),
     executeSelectiveRewind: mock(async () => ({
       success: true,
@@ -210,20 +204,6 @@ describe('Rewind RPC Handlers', () => {
 
     expect(mocks.previewRewind).toHaveBeenCalledTimes(1);
     expect(replay).not.toHaveBeenCalled();
-  });
-
-  it('rejects an empty selective preview without provisioning', async () => {
-    const handler = messageHubData.handlers.get('rewind.previewSelective');
-    expect(handler).toBeDefined();
-
-    sessionManagerData.getSessionAsyncMock.mockClear();
-
-    const result = (await handler!({ sessionId: 'session-123', messageIds: [] }, {})) as {
-      preview: { canRewind: boolean; error: string };
-    };
-
-    expect(result.preview.error).toBe('No messages selected');
-    expect(sessionManagerData.getSessionAsyncMock).not.toHaveBeenCalled();
   });
 
   it('previews provision dormant workers without replaying pending messages', async () => {
@@ -371,48 +351,6 @@ describe('Rewind RPC Handlers', () => {
 
       expect(result.result.success).toBe(false);
       expect(replay).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('rewind.previewSelective', () => {
-    it('returns preview for selective rewind', async () => {
-      const handler = messageHubData.handlers.get('rewind.previewSelective');
-      expect(handler).toBeDefined();
-
-      const result = (await handler!(
-        { sessionId: 'session-123', messageIds: ['msg-1', 'msg-2'] },
-        {}
-      )) as { preview: { canRewind: boolean; messagesToDelete: number } };
-
-      expect(result.preview).toBeDefined();
-      expect(result.preview.canRewind).toBe(true);
-      expect(result.preview.messagesToDelete).toBe(3);
-    });
-
-    it('returns error preview when session not found', async () => {
-      const handler = messageHubData.handlers.get('rewind.previewSelective');
-      expect(handler).toBeDefined();
-
-      sessionManagerData.getSessionAsyncMock.mockResolvedValueOnce(null);
-
-      const result = (await handler!({ sessionId: 'non-existent', messageIds: ['msg-1'] }, {})) as {
-        preview: { canRewind: boolean; error: string };
-      };
-
-      expect(result.preview.canRewind).toBe(false);
-      expect(result.preview.error).toBe('Session not found');
-    });
-
-    it('returns error preview when no messages selected', async () => {
-      const handler = messageHubData.handlers.get('rewind.previewSelective');
-      expect(handler).toBeDefined();
-
-      const result = (await handler!({ sessionId: 'session-123', messageIds: [] }, {})) as {
-        preview: { canRewind: boolean; error: string };
-      };
-
-      expect(result.preview.canRewind).toBe(false);
-      expect(result.preview.error).toBe('No messages selected');
     });
   });
 

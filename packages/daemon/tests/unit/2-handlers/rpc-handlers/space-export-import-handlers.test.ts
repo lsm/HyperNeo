@@ -298,8 +298,7 @@ describe('Space Export/Import RPC Handlers', () => {
     );
   });
 
-  it('registers all 5 handlers', () => {
-    expect(handlers.has('spaceExport.agents')).toBe(true);
+  it('registers all 4 handlers', () => {
     expect(handlers.has('spaceExport.workflows')).toBe(true);
     expect(handlers.has('spaceExport.bundle')).toBe(true);
     expect(handlers.has('spaceImport.preview')).toBe(true);
@@ -308,7 +307,6 @@ describe('Space Export/Import RPC Handlers', () => {
 
   describe('spaceId validation', () => {
     it.each([
-      'spaceExport.agents',
       'spaceExport.workflows',
       'spaceExport.bundle',
     ])('%s: throws if spaceId missing', async (method) => {
@@ -316,7 +314,6 @@ describe('Space Export/Import RPC Handlers', () => {
     });
 
     it.each([
-      'spaceExport.agents',
       'spaceExport.workflows',
       'spaceExport.bundle',
     ])('%s: throws if space not found', async (method) => {
@@ -341,107 +338,6 @@ describe('Space Export/Import RPC Handlers', () => {
       await expect(
         call(handlers, 'spaceImport.execute', { spaceId: 'ghost', bundle: {} })
       ).rejects.toThrow('Space not found: ghost');
-    });
-  });
-
-  describe('spaceExport.agents', () => {
-    it('rejects the export when two agents share a display name', async () => {
-      seedAgent({ spaceId: SPACE_ID, name: 'Dup', handle: 'dup-1' });
-      longHorizonAgentRepo.create({
-        spaceId: SPACE_ID,
-        handle: 'dup-2',
-        displayName: 'Dup',
-      });
-
-      await expect(
-        call<{ bundle: unknown }>(handlers, 'spaceExport.agents', { spaceId: SPACE_ID })
-      ).rejects.toThrow('duplicate agent name "Dup"');
-    });
-
-    it('exports all agents when no filter provided', async () => {
-      seedAgent({ spaceId: SPACE_ID, name: 'Alpha' });
-      seedAgent({ spaceId: SPACE_ID, name: 'Beta' });
-
-      const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
-        spaceId: SPACE_ID,
-      });
-
-      expect(bundle.type).toBe('bundle');
-      expect(bundle.agents).toHaveLength(2);
-      expect(bundle.agents.map((a: any) => a.name)).toEqual(
-        expect.arrayContaining(['Alpha', 'Beta'])
-      );
-      expect(bundle.workflows).toHaveLength(0);
-    });
-
-    it('filters agents by agentIds', async () => {
-      const a1 = seedAgent({ spaceId: SPACE_ID, name: 'Alpha' });
-      seedAgent({ spaceId: SPACE_ID, name: 'Beta' });
-
-      const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
-        spaceId: SPACE_ID,
-        agentIds: [a1.id],
-      });
-
-      expect(bundle.agents).toHaveLength(1);
-      expect(bundle.agents[0].name).toBe('Alpha');
-    });
-
-    it('exported agent preserves fields and strips id/spaceId', async () => {
-      seedAgent({
-        spaceId: SPACE_ID,
-        name: 'Coder',
-        handle: 'feature-coder',
-        model: 'claude-3',
-        customPrompt: 'You code.',
-        tools: ['read_file'],
-      });
-
-      const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
-        spaceId: SPACE_ID,
-      });
-
-      const exported = bundle.agents[0];
-      expect(exported.name).toBe('Coder');
-      expect(exported.handle).toBe('feature-coder');
-      expect(exported.model).toBe('claude-3');
-      expect(exported.systemPrompt).toBe('You code.');
-      expect(exported.tools).toEqual(['read_file']);
-      expect(exported.id).toBeUndefined();
-      expect(exported.spaceId).toBeUndefined();
-      expect(exported.version).toBe(5);
-      expect(exported.type).toBe('agent');
-    });
-
-    it('sets exportedFrom to spaceId', async () => {
-      seedAgent({ spaceId: SPACE_ID, name: 'A' });
-      const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
-        spaceId: SPACE_ID,
-      });
-      expect(bundle.exportedFrom).toBe(SPACE_ID);
-    });
-
-    it('excludes a coordinator recognized by handle even with a non-canonical id', async () => {
-      seedAgent({ spaceId: SPACE_ID, name: 'Coder' });
-      longHorizonAgentRepo.create({
-        spaceId: SPACE_ID,
-        handle: 'coordinator',
-        displayName: 'Legacy Space Coordinator',
-      });
-
-      const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
-        spaceId: SPACE_ID,
-      });
-
-      expect(bundle.agents).toHaveLength(1);
-      expect(bundle.agents[0].name).toBe('Coder');
-    });
-
-    it('returns empty agents array when no agents exist', async () => {
-      const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
-        spaceId: SPACE_ID,
-      });
-      expect(bundle.agents).toHaveLength(0);
     });
   });
 
@@ -583,9 +479,6 @@ describe('Space Export/Import RPC Handlers', () => {
       await expect(call(handlers, 'spaceExport.workflows', { spaceId: SPACE_ID })).rejects.toThrow(
         'autonomy ceiling the export format cannot carry'
       );
-      await expect(call(handlers, 'spaceExport.agents', { spaceId: SPACE_ID })).rejects.toThrow(
-        'duplicate agent name'
-      );
     });
 
     it('rejects execute when the import target has ambiguous normalized names', async () => {
@@ -615,7 +508,7 @@ describe('Space Export/Import RPC Handlers', () => {
         displayName: ' Coder ',
       });
 
-      await expect(call(handlers, 'spaceExport.agents', { spaceId: SPACE_ID })).rejects.toThrow(
+      await expect(call(handlers, 'spaceExport.bundle', { spaceId: SPACE_ID })).rejects.toThrow(
         'duplicate agent name'
       );
     });
@@ -1255,7 +1148,7 @@ describe('Space Export/Import RPC Handlers', () => {
         status: 'paused',
       });
 
-      const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
+      const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.bundle', {
         spaceId: SPACE_ID,
       });
 
@@ -1273,7 +1166,7 @@ describe('Space Export/Import RPC Handlers', () => {
         status: 'paused',
       });
 
-      const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.agents', {
+      const { bundle } = await call<{ bundle: any }>(handlers, 'spaceExport.bundle', {
         spaceId: SPACE_ID,
       });
 

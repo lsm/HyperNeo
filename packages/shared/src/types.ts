@@ -444,11 +444,7 @@ export type EventType =
   | 'message.send'
   | 'message.list.request'
   | 'message.sdkMessages.request'
-  | 'file.read.request'
-  | 'file.list.request'
-  | 'file.tree.request'
   | 'system.health.request'
-  | 'system.config.request'
   | 'auth.status.request'
   | 'session.create.response'
   | 'session.list.response'
@@ -457,11 +453,7 @@ export type EventType =
   | 'session.delete.response'
   | 'message.list.response'
   | 'message.sdkMessages.response'
-  | 'file.read.response'
-  | 'file.list.response'
-  | 'file.tree.response'
   | 'system.health.response'
-  | 'system.config.response'
   | 'auth.status.response'
   | 'message.cancel'
   | 'client.typing'
@@ -472,20 +464,6 @@ export type EventType =
   | 'client.ack'
   | 'ping'
   | 'pong';
-
-export interface FileInfo {
-  path: string;
-  type: 'file' | 'directory';
-  size: number;
-  mtime: string;
-}
-
-export interface FileTree {
-  name: string;
-  path: string;
-  type: 'file' | 'directory';
-  children?: FileTree[];
-}
 
 export interface FileSnapshot {
   sessionId: string;
@@ -539,16 +517,6 @@ export interface AuthStatus {
   };
   expiresAt?: number;
   source?: 'env' | 'database';
-}
-
-export interface DaemonConfig {
-  version: string;
-  claudeSDKVersion: string;
-  defaultModel: string;
-  maxSessions: number;
-  storageLocation: string;
-  authMethod: AuthMethod;
-  authStatus: AuthStatus;
 }
 
 export interface SlashCommand {

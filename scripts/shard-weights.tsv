@@ -11,7 +11,6 @@
 64039	packages/daemon/tests/online/rewind/selective-rewind.test.ts
 14236	packages/daemon/tests/online/rpc/rpc-agent-handlers.test.ts
 5159	packages/daemon/tests/online/rpc/rpc-draft-handlers.test.ts
-17665	packages/daemon/tests/online/rpc/rpc-file-handlers.test.ts
 2342	packages/daemon/tests/online/rpc/rpc-interrupt-handlers.test.ts
 1126	packages/daemon/tests/online/rpc/rpc-live-query.test.ts
 62529	packages/daemon/tests/online/rpc/rpc-message-handlers.test.ts
