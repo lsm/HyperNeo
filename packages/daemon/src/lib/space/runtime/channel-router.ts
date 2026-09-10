@@ -2,6 +2,7 @@ import type { SpaceTask, SpaceWorkflow, WorkflowChannel, WorkflowNode } from '@h
 import { resolveNodeAgents, isChannelCyclic } from '@hyperneo/shared';
 import type { NodeExecution } from '@hyperneo/shared';
 import { POST_APPROVAL_TASK_AGENT_TARGET } from '../workflows/post-approval-validator.ts';
+import { runTemplateResolves } from '../workflows/run-template-snapshot.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository.ts';
 import type { ChannelCycleRepository } from '../../../storage/repositories/channel-cycle-repository.ts';
@@ -156,7 +157,9 @@ export class ChannelRouter {
 
     const targetAgentName = options?.targetAgentName;
     const templateResolves = (key: string): boolean =>
-      this.config.workflowManager.agentTemplateResolves(key);
+      runTemplateResolves(workflow, run, key, (live) =>
+        this.config.workflowManager.agentTemplateResolves(live)
+      );
     const missingAgent = findMissingNodeAgentReferences(
       node,
       (id) => this.config.agentExists(id),

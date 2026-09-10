@@ -3,6 +3,7 @@ import type { SpaceAgentTemplate, SpaceWorkflow } from '@hyperneo/shared';
 import {
   buildRunTemplateSnapshots,
   createAgentTemplateResolver,
+  runTemplateResolves,
   toRunTemplateSnapshot,
   withRunTemplateSnapshots,
 } from '../../../../src/lib/space/workflows/run-template-snapshot.ts';
@@ -185,5 +186,83 @@ describe('createAgentTemplateResolver', () => {
 
     expect(resolve('worker.swe')?.key).toBe('worker.swe');
     expect(resolve('worker.unheard-of')).toBeNull();
+  });
+});
+
+describe('runTemplateResolves', () => {
+  const pinned = { definitionVersion: 'vh-1' };
+  const unpinned = { definitionVersion: null };
+  const live = (key: string) => key === 'live.only';
+
+  test('resolves a key present in the run snapshot without consulting live templates', () => {
+    let liveCalls = 0;
+    const resolved = runTemplateResolves(
+      { templateSnapshots: { 'worker.custom': {} as never } },
+      pinned,
+      'worker.custom',
+      () => {
+        liveCalls += 1;
+        return true;
+      }
+    );
+
+    expect(resolved).toBe(true);
+    expect(liveCalls).toBe(0);
+  });
+
+  test('rejects a key absent from the run snapshot even when it resolves live', () => {
+    expect(
+      runTemplateResolves(
+        { templateSnapshots: { 'worker.custom': {} as never } },
+        pinned,
+        'live.only',
+        live
+      )
+    ).toBe(false);
+  });
+
+  test('falls back to live resolution for an unpinned run', () => {
+    expect(runTemplateResolves({}, unpinned, 'live.only', live)).toBe(true);
+  });
+
+  test('falls back to live resolution for a pinned run predating snapshots', () => {
+    expect(runTemplateResolves({}, pinned, 'live.only', live)).toBe(true);
+  });
+
+  test('falls back to live resolution when the pinned definition is unresolvable', () => {
+    expect(runTemplateResolves(null, pinned, 'live.only', live)).toBe(true);
+  });
+
+  test('does not treat prototype members as snapshot entries', () => {
+    expect(
+      runTemplateResolves(
+        { templateSnapshots: JSON.parse('{"worker.custom":{}}') },
+        pinned,
+        'toString',
+        () => true
+      )
+    ).toBe(false);
+  });
+
+  test('rejects a blank key without consulting anything', () => {
+    let liveCalls = 0;
+    const resolved = runTemplateResolves({}, unpinned, '   ', () => {
+      liveCalls += 1;
+      return true;
+    });
+
+    expect(resolved).toBe(false);
+    expect(liveCalls).toBe(0);
+  });
+
+  test('trims the key before matching the snapshot', () => {
+    expect(
+      runTemplateResolves(
+        { templateSnapshots: { 'worker.custom': {} as never } },
+        pinned,
+        '  worker.custom  ',
+        () => false
+      )
+    ).toBe(true);
   });
 });
