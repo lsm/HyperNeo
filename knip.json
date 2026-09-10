@@ -49,6 +49,7 @@
     "packages/daemon/src/lib/providers/acp-provider.ts"
   ],
   "ignoreIssues": {
+    "packages/daemon/src/lib/mailbox/admission-plan.ts": ["files", "exports"],
     "packages/daemon/src/lib/agent/ack-selection.ts": ["exports"],
     "packages/daemon/src/lib/agent/context-budget-decision.ts": ["exports"],
     "packages/daemon/src/lib/agent/delivery-turn-routing.ts": ["exports"],
