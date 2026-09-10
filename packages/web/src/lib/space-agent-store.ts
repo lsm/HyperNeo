@@ -69,6 +69,7 @@ export class SpaceAgentStore {
       await this.subscribe(spaceId);
     } catch {}
     await this.refresh();
+    this.syncLegacyAgentCache();
   }
 
   async create(params: CreateSpaceAgentRequest): Promise<SpaceAgent> {

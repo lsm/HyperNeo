@@ -122,6 +122,21 @@ describe('legacy agent cache sync', () => {
     spaceStore.spaceId.value = null;
   });
 
+  it('syncs the legacy store after a recovery refresh, which bypasses upsert', async () => {
+    const refresh = vi.spyOn(spaceStore, 'refreshAgents').mockResolvedValue(undefined);
+    spaceStore.spaceId.value = 'space-1';
+    await store.selectSpace('space-1');
+    refresh.mockClear();
+
+    listResult = [makeAgent('changed-while-offline')];
+    await store.recover();
+
+    expect(store.agents.value.map((a) => a.id)).toEqual(['changed-while-offline']);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    refresh.mockRestore();
+    spaceStore.spaceId.value = null;
+  });
+
   it('does not touch the legacy store when it is on a different space', async () => {
     const refresh = vi.spyOn(spaceStore, 'refreshAgents').mockResolvedValue(undefined);
     spaceStore.spaceId.value = 'space-9';
