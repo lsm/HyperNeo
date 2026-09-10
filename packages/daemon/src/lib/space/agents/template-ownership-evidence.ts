@@ -41,7 +41,7 @@ export interface TemplateOwnershipEvidence {
 
 const MIGRATED_KEY_PREFIX = `${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.`;
 const PROBE_SUFFIX = /\.m228(?:-\d+)?$/;
-const CREATE_AUDIT_FIELDS = new Set(['key', 'from_agent_id']);
+export const AUDIT_CREATION_WINDOW_MS = 60_000;
 
 function emptyEvidence(): TemplateOwnershipEvidence {
   return {
@@ -83,9 +83,6 @@ export function auditedTemplateKey(entry: TemplateOwnershipAuditRow): string | n
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   const record = parsed as Record<string, unknown>;
-  for (const field of Object.keys(record)) {
-    if (!CREATE_AUDIT_FIELDS.has(field)) return null;
-  }
   const key = record.key;
   return typeof key === 'string' && key.trim() !== '' ? key.trim() : null;
 }
@@ -134,7 +131,7 @@ export function collectTemplateOwnershipEvidence(
     const entry = evidence.get(key);
     const createdAt = createdAtByKey.get(key);
     if (!entry || createdAt === undefined) continue;
-    if (audit.timestamp < createdAt) continue;
+    if (Math.abs(audit.timestamp - createdAt) > AUDIT_CREATION_WINDOW_MS) continue;
     addSpace(entry.auditedSpaces, audit.spaceId);
   }
 

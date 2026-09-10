@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  AUDIT_CREATION_WINDOW_MS,
   auditedTemplateKey,
   collectTemplateOwnershipEvidence,
   migratedAgentIdCandidates,
@@ -83,7 +84,7 @@ describe('auditedTemplateKey', () => {
     ).toBeNull();
   });
 
-  test('ignores the dispatcher row written before the handler runs', () => {
+  test('accepts the dispatcher row, which is the only row on the call_action path', () => {
     expect(
       auditedTemplateKey({
         spaceId: 'sp1',
@@ -95,7 +96,7 @@ describe('auditedTemplateKey', () => {
           display_name: 'Custom',
         }),
       })
-    ).toBeNull();
+    ).toBe('custom.one');
   });
 
   test('accepts the handler row with and without from_agent_id', () => {
@@ -232,26 +233,63 @@ describe('collectTemplateOwnershipEvidence', () => {
     );
     expect(evidence.get('custom.one')?.workflowSlotSpaces).toEqual(['sp1']);
   });
-  test('drops audit entries predating the current template row', () => {
+  test('keeps only audit entries near the row own creation time', () => {
+    const createdAt = 10_000_000;
     const evidence = collectTemplateOwnershipEvidence(
       inputs({
-        templates: [{ key: 'shared.one', createdAt: 500 }],
+        templates: [{ key: 'shared.one', createdAt }],
         auditEntries: [
           {
             spaceId: 'former-owner',
             toolName: 'create_agent_template',
-            timestamp: 100,
+            timestamp: createdAt - 10 * AUDIT_CREATION_WINDOW_MS,
             paramsSummary: JSON.stringify({ key: 'shared.one' }),
           },
           {
-            spaceId: 'current-owner',
+            spaceId: 'failed-attempt',
             toolName: 'create_agent_template',
-            timestamp: 500,
+            timestamp: createdAt + 10 * AUDIT_CREATION_WINDOW_MS,
+            paramsSummary: JSON.stringify({ key: 'shared.one', handle: 'dup' }),
+          },
+          {
+            spaceId: 'dispatcher-before-insert',
+            toolName: 'create_agent_template',
+            timestamp: createdAt - 2_000,
+            paramsSummary: JSON.stringify({ key: 'shared.one', handle: 'real' }),
+          },
+          {
+            spaceId: 'handler-after-insert',
+            toolName: 'create_agent_template',
+            timestamp: createdAt + 5,
             paramsSummary: JSON.stringify({ key: 'shared.one' }),
           },
         ],
       })
     );
-    expect(evidence.get('shared.one')?.auditedSpaces).toEqual(['current-owner']);
+    expect(evidence.get('shared.one')?.auditedSpaces).toEqual([
+      'dispatcher-before-insert',
+      'handler-after-insert',
+    ]);
+  });
+
+  test('surfaces a namespace/authorship conflict as both kinds of evidence', () => {
+    const createdAt = 10_000_000;
+    const evidence = collectTemplateOwnershipEvidence(
+      inputs({
+        templates: [{ key: 'migrated.agent.a1', createdAt }],
+        agents: [{ id: 'a1', spaceId: 'agent-space', templateKey: null }],
+        auditEntries: [
+          {
+            spaceId: 'author-space',
+            toolName: 'create_agent_template',
+            timestamp: createdAt,
+            paramsSummary: JSON.stringify({ key: 'migrated.agent.a1', handle: 'hand-made' }),
+          },
+        ],
+      })
+    );
+    const entry = evidence.get('migrated.agent.a1');
+    expect(entry?.migratedAgentSpaces).toEqual(['agent-space']);
+    expect(entry?.auditedSpaces).toEqual(['author-space']);
   });
 });
