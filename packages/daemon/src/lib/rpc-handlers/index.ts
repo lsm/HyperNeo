@@ -29,7 +29,6 @@ import { ProviderCredentialManager } from '../credentials/provider-credential-ma
 import { setupRewindHandlers } from './rewind-handlers.ts';
 import type { GitHubService } from '../github/github-service.ts';
 import { Logger } from '../logger.ts';
-import { TaskRepository } from '../../storage/repositories/task-repository.ts';
 import { setupDialogHandlers } from './dialog-handlers.ts';
 import { setupQuestionHandlers } from './question-handlers.ts';
 import { setupSpaceHandlers } from './space-handlers.ts';
@@ -366,7 +365,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     reactiveDb: deps.reactiveDb,
     shortIdAllocator: deps.db.getShortIdAllocator(),
     sessionManager: deps.sessionManager,
-    taskRepo: new TaskRepository(deps.db.getDatabase(), deps.reactiveDb),
     goalRepo: deps.db.getGoalRepo(),
     workspaceRoot: deps.config.workspaceRoot,
     fileIndex,

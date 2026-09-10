@@ -8,7 +8,6 @@ import {
   type GoalRepoForReference,
   type ReferenceHandlerDeps,
   setupReferenceHandlers,
-  type TaskRepoForReference,
 } from '../../../../src/lib/rpc-handlers/reference-handlers';
 
 type RequestHandler = (data: unknown) => Promise<unknown>;
@@ -63,28 +62,12 @@ function makeSessionManager(opts: { workspacePath: string; roomId?: string; exis
   };
 }
 
-const SAMPLE_TASK = {
-  id: 'task-uuid-1',
-  roomId: 'room-1',
-  title: 'Fix bug',
-  status: 'pending',
-};
-
 const SAMPLE_GOAL = {
   id: 'goal-uuid-1',
   roomId: 'room-1',
   title: 'Ship feature',
   status: 'active',
 };
-
-function makeTaskRepo(task: typeof SAMPLE_TASK | null = SAMPLE_TASK): TaskRepoForReference {
-  return {
-    getTask: mock((id: string) => (task && id === task.id ? task : null)),
-    getTaskByShortId: mock((_roomId: string, shortId: string) =>
-      task && shortId === 't-1' ? task : null
-    ),
-  };
-}
 
 function makeGoalRepo(goal: typeof SAMPLE_GOAL | null = SAMPLE_GOAL): GoalRepoForReference {
   return {
@@ -112,7 +95,6 @@ describe('reference.resolve handler', () => {
       const { hub, handlers } = createMockMessageHub();
       const deps: ReferenceHandlerDeps = {
         sessionManager: makeSessionManager({ workspacePath: testWorkspace }) as never,
-        taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(),
         workspaceRoot: testWorkspace,
       };
@@ -128,7 +110,6 @@ describe('reference.resolve handler', () => {
       const { hub, handlers } = createMockMessageHub();
       const deps: ReferenceHandlerDeps = {
         sessionManager: makeSessionManager({ workspacePath: testWorkspace }) as never,
-        taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(),
         workspaceRoot: testWorkspace,
       };
@@ -144,7 +125,6 @@ describe('reference.resolve handler', () => {
       const { hub, handlers } = createMockMessageHub();
       const deps: ReferenceHandlerDeps = {
         sessionManager: makeSessionManager({ workspacePath: testWorkspace }) as never,
-        taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(),
         workspaceRoot: testWorkspace,
       };
@@ -157,137 +137,32 @@ describe('reference.resolve handler', () => {
     });
   });
 
-  describe('task resolution', () => {
-    it('returns task data for a valid UUID in room context', async () => {
-      const { hub, handlers } = createMockMessageHub();
-      const deps: ReferenceHandlerDeps = {
-        sessionManager: makeSessionManager({
-          workspacePath: testWorkspace,
-          roomId: 'room-1',
-        }) as never,
-        taskRepo: makeTaskRepo(),
-        goalRepo: makeGoalRepo(),
-        workspaceRoot: testWorkspace,
-      };
-      setupReferenceHandlers(hub, deps);
-      const handler = handlers.get('reference.resolve')!;
+  it('leaves retired room tasks unresolved and absent from search', async () => {
+    const { hub, handlers } = createMockMessageHub();
+    const deps = {
+      sessionManager: {
+        ...makeSessionManager({ workspacePath: testWorkspace, roomId: 'room-1' }),
+        getSessionFromDB: () => ({ context: { roomId: 'room-1' } }),
+      },
+      goalRepo: makeGoalRepo(),
+      workspaceRoot: testWorkspace,
+    } as unknown as ReferenceHandlerDeps;
+    setupReferenceHandlers(hub, deps);
 
-      const result = (await handler({
-        sessionId: 'session-1',
-        type: 'task',
-        id: 'task-uuid-1',
-      })) as { resolved: unknown };
-
-      expect(result.resolved).toMatchObject({
-        type: 'task',
-        id: 'task-uuid-1',
-        data: { id: 'task-uuid-1', title: 'Fix bug' },
-      });
-    });
-
-    it('resolves task by short ID', async () => {
-      const { hub, handlers } = createMockMessageHub();
-      const deps: ReferenceHandlerDeps = {
-        sessionManager: makeSessionManager({
-          workspacePath: testWorkspace,
-          roomId: 'room-1',
-        }) as never,
-        taskRepo: makeTaskRepo(),
-        goalRepo: makeGoalRepo(),
-        workspaceRoot: testWorkspace,
-      };
-      setupReferenceHandlers(hub, deps);
-      const handler = handlers.get('reference.resolve')!;
-
-      const result = (await handler({
+    expect(
+      await handlers.get('reference.resolve')!({
         sessionId: 'session-1',
         type: 'task',
         id: 't-1',
-      })) as { resolved: unknown };
-
-      expect(result.resolved).toMatchObject({
-        type: 'task',
-        id: 't-1',
-        data: { id: 'task-uuid-1', title: 'Fix bug' },
-      });
-    });
-
-    it('resolves task by UUID even without room context', async () => {
-      const { hub, handlers } = createMockMessageHub();
-      const deps: ReferenceHandlerDeps = {
-        sessionManager: makeSessionManager({
-          workspacePath: testWorkspace,
-        }) as never,
-        taskRepo: makeTaskRepo(),
-        goalRepo: makeGoalRepo(),
-        workspaceRoot: testWorkspace,
-      };
-      setupReferenceHandlers(hub, deps);
-      const handler = handlers.get('reference.resolve')!;
-
-      const result = (await handler({
+      })
+    ).toEqual({ resolved: null });
+    expect(
+      await handlers.get('reference.search')!({
         sessionId: 'session-1',
-        type: 'task',
-        id: 'task-uuid-1',
-      })) as { resolved: unknown };
-
-      expect(result.resolved).toMatchObject({
-        type: 'task',
-        id: 'task-uuid-1',
-        data: { id: 'task-uuid-1', title: 'Fix bug' },
-      });
-    });
-
-    it('returns null when task does not exist', async () => {
-      const { hub, handlers } = createMockMessageHub();
-      const deps: ReferenceHandlerDeps = {
-        sessionManager: makeSessionManager({
-          workspacePath: testWorkspace,
-          roomId: 'room-1',
-        }) as never,
-        taskRepo: makeTaskRepo(null),
-        goalRepo: makeGoalRepo(),
-        workspaceRoot: testWorkspace,
-      };
-      setupReferenceHandlers(hub, deps);
-      const handler = handlers.get('reference.resolve')!;
-
-      const result = (await handler({
-        sessionId: 'session-1',
-        type: 'task',
-        id: 'non-existent',
-      })) as { resolved: unknown };
-
-      expect(result.resolved).toBeNull();
-    });
-
-    it('resolves task by UUID when session does not exist (falls back to workspaceRoot)', async () => {
-      const { hub, handlers } = createMockMessageHub();
-      const deps: ReferenceHandlerDeps = {
-        sessionManager: makeSessionManager({
-          workspacePath: testWorkspace,
-          roomId: 'room-1',
-          exists: false,
-        }) as never,
-        taskRepo: makeTaskRepo(),
-        goalRepo: makeGoalRepo(),
-        workspaceRoot: testWorkspace,
-      };
-      setupReferenceHandlers(hub, deps);
-      const handler = handlers.get('reference.resolve')!;
-
-      const result = (await handler({
-        sessionId: 'unknown-session',
-        type: 'task',
-        id: 'task-uuid-1',
-      })) as { resolved: unknown };
-
-      expect(result.resolved).toMatchObject({
-        type: 'task',
-        id: 'task-uuid-1',
-        data: { id: 'task-uuid-1', title: 'Fix bug' },
-      });
-    });
+        query: '',
+        types: ['task'],
+      })
+    ).toEqual({ results: [] });
   });
 
   describe('goal resolution', () => {
@@ -298,7 +173,6 @@ describe('reference.resolve handler', () => {
           workspacePath: testWorkspace,
           roomId: 'room-1',
         }) as never,
-        taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(),
         workspaceRoot: testWorkspace,
       };
@@ -325,7 +199,6 @@ describe('reference.resolve handler', () => {
           workspacePath: testWorkspace,
           roomId: 'room-1',
         }) as never,
-        taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(),
         workspaceRoot: testWorkspace,
       };
@@ -351,7 +224,6 @@ describe('reference.resolve handler', () => {
         sessionManager: makeSessionManager({
           workspacePath: testWorkspace,
         }) as never,
-        taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(),
         workspaceRoot: testWorkspace,
       };
@@ -378,7 +250,6 @@ describe('reference.resolve handler', () => {
           workspacePath: testWorkspace,
           roomId: 'room-1',
         }) as never,
-        taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(null),
         workspaceRoot: testWorkspace,
       };
@@ -403,7 +274,6 @@ describe('reference.resolve handler', () => {
       const { hub, handlers } = createMockMessageHub();
       const deps: ReferenceHandlerDeps = {
         sessionManager: makeSessionManager({ workspacePath: testWorkspace }) as never,
-        taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(),
         workspaceRoot: testWorkspace,
       };
@@ -438,7 +308,6 @@ describe('reference.resolve handler', () => {
       const { hub, handlers } = createMockMessageHub();
       const deps: ReferenceHandlerDeps = {
         sessionManager: makeSessionManager({ workspacePath: testWorkspace }) as never,
-        taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(),
         workspaceRoot: testWorkspace,
       };
@@ -467,7 +336,6 @@ describe('reference.resolve handler', () => {
       const { hub, handlers } = createMockMessageHub();
       const deps: ReferenceHandlerDeps = {
         sessionManager: makeSessionManager({ workspacePath: testWorkspace }) as never,
-        taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(),
         workspaceRoot: testWorkspace,
       };
@@ -492,7 +360,6 @@ describe('reference.resolve handler', () => {
       const { hub, handlers } = createMockMessageHub();
       const deps: ReferenceHandlerDeps = {
         sessionManager: makeSessionManager({ workspacePath: testWorkspace }) as never,
-        taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(),
         workspaceRoot: testWorkspace,
       };
@@ -519,7 +386,6 @@ describe('reference.resolve handler', () => {
       const { hub, handlers } = createMockMessageHub();
       const deps: ReferenceHandlerDeps = {
         sessionManager: makeSessionManager({ workspacePath: testWorkspace }) as never,
-        taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(),
         workspaceRoot: testWorkspace,
       };
@@ -547,7 +413,6 @@ describe('reference.resolve handler', () => {
       const { hub, handlers } = createMockMessageHub();
       const deps: ReferenceHandlerDeps = {
         sessionManager: makeSessionManager({ workspacePath: testWorkspace }) as never,
-        taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(),
         workspaceRoot: testWorkspace,
       };
@@ -579,7 +444,6 @@ describe('reference.resolve handler', () => {
       const { hub, handlers } = createMockMessageHub();
       const deps: ReferenceHandlerDeps = {
         sessionManager: makeSessionManager({ workspacePath: testWorkspace }) as never,
-        taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(),
         workspaceRoot: testWorkspace,
       };
@@ -599,7 +463,6 @@ describe('reference.resolve handler', () => {
       const { hub, handlers } = createMockMessageHub();
       const deps: ReferenceHandlerDeps = {
         sessionManager: makeSessionManager({ workspacePath: testWorkspace }) as never,
-        taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(),
         workspaceRoot: testWorkspace,
       };
@@ -626,7 +489,6 @@ describe('reference.resolve handler', () => {
           workspacePath: testWorkspace,
           exists: false,
         }) as never,
-        taskRepo: makeTaskRepo(),
         goalRepo: makeGoalRepo(),
         workspaceRoot: testWorkspace,
       };
