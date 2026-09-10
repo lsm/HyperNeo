@@ -1,4 +1,4 @@
-import type { MessageHub, SpaceAgent, UpdateSpaceAgentParams } from '@hyperneo/shared';
+import type { MessageHub, SpaceAgent } from '@hyperneo/shared';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { SPACE_MANAGER_HANDLE } from '../space/agent-handle.ts';
@@ -14,6 +14,10 @@ import {
   type CreateSpaceAgentInput,
   isCreateSpaceAgentRejection,
 } from '../space/agents/create-space-agent-pipeline.ts';
+import {
+  buildUpdateSpaceAgentPipeline,
+  type UpdateSpaceAgentInput,
+} from '../space/agents/update-space-agent-pipeline.ts';
 import { getBuiltInSpaceAgentTemplates } from '../space/managers/space-agent-template-manager.ts';
 
 const METHOD_PREFIX = 'spaceAgentV2';
@@ -114,8 +118,36 @@ export function buildAgentCreate(
   };
 }
 
+export function buildAgentUpdate(
+  deps: SpaceAgentV2Deps
+): (input: UpdateSpaceAgentInput) => Promise<SpaceAgent> {
+  const run = buildUpdateSpaceAgentPipeline({
+    getAgent: (id) => deps.agents.getById(id),
+    getSession: (sessionId) => toBindableSession(deps.getSession(sessionId)),
+    sessionOwner: (sessionId) => deps.agents.getBySessionId(sessionId)?.id ?? null,
+    listHandles: (spaceId) => deps.agents.listBySpaceId(spaceId).map((agent) => agent.handle),
+    listDisplayNames: (spaceId, excludeAgentId) =>
+      deps.agents
+        .listBySpaceId(spaceId)
+        .filter((agent) => agent.status !== 'archived' && agent.id !== excludeAgentId)
+        .map((agent) => agent.displayName),
+    applyUpdate: (id, changes) => deps.agents.update(id, changes),
+    publishUpdated: (agent) => publishAgentEvent(deps, 'spaceAgentV2.updated', agent),
+    validateTools: validateSpaceAgentTools,
+    validateModel: (model, provider) => validateAgentModel(model, provider),
+    validateModelPool: validateAgentModelPool,
+  });
+
+  return async (input) => {
+    const outcome = await run(input);
+    if (isCreateSpaceAgentRejection(outcome)) throw new Error(outcome.message);
+    return outcome;
+  };
+}
+
 export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAgentV2Deps): void {
   const createAgent = buildAgentCreate(deps);
+  const updateAgent = buildAgentUpdate(deps);
 
   messageHub.onRequest(method('list'), async (data) => {
     const params = data as { spaceId?: string };
@@ -138,13 +170,9 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
   });
 
   messageHub.onRequest(method('update'), async (data) => {
-    const params = data as { id?: string } & UpdateSpaceAgentParams;
-    const { id, ...changes } = params;
-    const agentId = requireString(id, 'id');
-    const agent = deps.agents.update(agentId, changes);
-    if (!agent) throw new Error(`Agent not found: ${agentId}`);
-    await publishAgentEvent(deps, 'spaceAgentV2.updated', agent);
-    return { agent };
+    const params = data as UpdateSpaceAgentInput;
+    requireString(params?.id, 'id');
+    return { agent: await updateAgent(params) };
   });
 
   messageHub.onRequest(method('delete'), async (data) => {
