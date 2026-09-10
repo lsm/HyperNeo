@@ -557,6 +557,69 @@ describe('createMailboxDeliveryHandler', () => {
     });
   });
 
+  describe('admission projection contract', () => {
+    describe.each(['immediate', 'defer'] as const)('%s', (deliveryMode) => {
+      test.each([
+        ['chat', 'system', false, 'chat'],
+        ['chat', 'task', false, 'chat'],
+        ['space_agent', 'human', false, 'space_agent'],
+        ['future_origin', 'human', false, 'space_inject'],
+        ['future_origin', 'system', true, 'space_inject'],
+      ] as const)('%s with %s input preserves provenance and admission identity', async (origin, inputKind, synthetic, deliveryOrigin) => {
+        const entry = makeEntry({
+          id: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+          origin,
+          deliveryMode,
+          policy: { ttlMs: Number.MAX_SAFE_INTEGER },
+          message: {
+            ...message,
+            priority: 'next',
+            inputKind,
+            referenceMetadata: {
+              '@ref{task:t1}': { type: 'task', id: 't1', displayText: 'Task one' },
+            },
+          },
+        });
+        const job = claimMailboxJob(mailbox, entry);
+        const originalPayload = JSON.stringify(job.payload);
+        const admission = mailbox.db
+          .prepare('SELECT rowid AS rid FROM job_queue WHERE id = ?')
+          .get(job.id) as { rid: number };
+        const { handler } = makeHandler();
+
+        await handler(job);
+
+        const uuid = 'mbox-8eac53b3-f14d-71fe-51a6-3af287b39e99';
+        const rows = mailbox.sdkRows();
+        expect(rows).toHaveLength(1);
+        expect(rows[0].sdk_uuid).toBe(uuid);
+        expect(rows[0].origin).toBe(synthetic ? 'system' : null);
+        expect(rows[0].send_status).toBe(deliveryMode === 'defer' ? 'deferred' : 'enqueued');
+        expect(JSON.parse(rows[0].sdk_message)).toEqual({
+          ...entry.message,
+          uuid,
+          session_id: SESSION_ID,
+          ...(synthetic ? { isSynthetic: true } : {}),
+        });
+        expect(JSON.stringify(job.payload)).toBe(originalPayload);
+        const pointers = deliveryPayloads(mailbox, SESSION_ID, uuid);
+        if (deliveryMode === 'defer') {
+          expect(pointers).toEqual([]);
+        } else {
+          expect(pointers).toHaveLength(1);
+          expect(pointers[0]).toMatchObject({
+            sessionId: SESSION_ID,
+            messageUuid: uuid,
+            origin: deliveryOrigin,
+            parentToolUseId: null,
+            admittedAt: 1469922850259,
+            admissionRowid: admission.rid,
+          });
+        }
+      });
+    });
+  });
+
   describe('origin mapping', () => {
     test('passes each known delivery origin through unmapped', async () => {
       for (const origin of ['chat', 'space_inject', 'space_agent', 'long_term_agent', 'recovery']) {
