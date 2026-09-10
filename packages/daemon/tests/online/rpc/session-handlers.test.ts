@@ -21,44 +21,9 @@ describe('Session RPC Handlers (API-dependent)', () => {
     { timeout: 15000 }
   );
 
-  function createWebSocketWithFirstMessage(baseUrl: string): {
-    ws: WebSocket;
-    firstMessagePromise: Promise<unknown>;
-  } {
+  function createWebSocket(baseUrl: string): WebSocket {
     const wsUrl = baseUrl.replace('http://', 'ws://');
-    const ws = new WebSocket(`${wsUrl}/ws`);
-
-    const firstMessagePromise = new Promise((resolve, reject) => {
-      const messageHandler = (event: MessageEvent) => {
-        clearTimeout(timer);
-        ws.removeEventListener('message', messageHandler);
-        ws.removeEventListener('error', errorHandler);
-        try {
-          const data = JSON.parse(event.data as string);
-          resolve(data);
-        } catch {
-          reject(new Error('Failed to parse WebSocket message'));
-        }
-      };
-
-      const errorHandler = (error: Event) => {
-        clearTimeout(timer);
-        ws.removeEventListener('message', messageHandler);
-        ws.removeEventListener('error', errorHandler);
-        reject(error);
-      };
-
-      ws.addEventListener('message', messageHandler);
-      ws.addEventListener('error', errorHandler);
-
-      const timer = setTimeout(() => {
-        ws.removeEventListener('message', messageHandler);
-        ws.removeEventListener('error', errorHandler);
-        reject(new Error('No WebSocket message received within 5000ms'));
-      }, 5000);
-    });
-
-    return { ws, firstMessagePromise };
+    return new WebSocket(`${wsUrl}/ws`);
   }
 
   async function waitForWebSocketState(ws: WebSocket, state: number): Promise<void> {
@@ -130,9 +95,8 @@ describe('Session RPC Handlers (API-dependent)', () => {
         const { sessionId } = createResult;
         daemon.trackSession(sessionId);
 
-        const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+        const ws = createWebSocket(daemon.baseUrl);
         await waitForWebSocketState(ws, WebSocket.OPEN);
-        await firstMessagePromise;
 
         const responsePromise = waitForWebSocketResponse(ws, 'msg-2', 12000);
 
@@ -172,9 +136,8 @@ describe('Session RPC Handlers (API-dependent)', () => {
 
   describe('models.list', () => {
     test('should return list of models with cache', async () => {
-      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+      const ws = createWebSocket(daemon.baseUrl);
       await waitForWebSocketState(ws, WebSocket.OPEN);
-      await firstMessagePromise;
 
       const responsePromise = waitForWebSocketResponse(ws, 'models-list-1', 10000);
 
@@ -206,9 +169,8 @@ describe('Session RPC Handlers (API-dependent)', () => {
     });
 
     test('should return list of models without cache', async () => {
-      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+      const ws = createWebSocket(daemon.baseUrl);
       await waitForWebSocketState(ws, WebSocket.OPEN);
-      await firstMessagePromise;
 
       const responsePromise = waitForWebSocketResponse(ws, 'models-list-2', 10000);
 
@@ -240,9 +202,8 @@ describe('Session RPC Handlers (API-dependent)', () => {
     });
 
     test('should force refresh cache', async () => {
-      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+      const ws = createWebSocket(daemon.baseUrl);
       await waitForWebSocketState(ws, WebSocket.OPEN);
-      await firstMessagePromise;
 
       const responsePromise = waitForWebSocketResponse(ws, 'models-list-3', 10000);
 

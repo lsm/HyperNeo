@@ -2,7 +2,6 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import {
   createWebSocket,
-  createWebSocketWithFirstMessage,
   waitForWebSocketState,
   waitForWebSocketMessage,
   sendRPCCall,
@@ -34,23 +33,6 @@ describe('WebSocket Protocol', () => {
 
       ws.close();
       await waitForWebSocketState(ws, WebSocket.CLOSED);
-    });
-
-    test('should send connection.established event on connect', async () => {
-      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
-      await waitForWebSocketState(ws, WebSocket.OPEN);
-
-      const message = await firstMessagePromise;
-
-      expect(message.type).toBe('EVENT');
-      expect(message.method).toBe('connection.established');
-      expect((message.data as Record<string, unknown>).message).toBe(
-        'WebSocket connection established'
-      );
-      expect((message.data as Record<string, unknown>).protocol).toBe('MessageHub');
-      expect((message.data as Record<string, unknown>).version).toBe('1.0.0');
-
-      ws.close();
     });
 
     test(
@@ -125,9 +107,8 @@ describe('WebSocket Protocol', () => {
 
   describe('Ping/Pong Heartbeat', () => {
     test('should respond to ping with pong', async () => {
-      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+      const ws = createWebSocket(daemon.baseUrl);
       await waitForWebSocketState(ws, WebSocket.OPEN);
-      await firstMessagePromise;
 
       const responsePromise = waitForWebSocketMessage(ws);
 
@@ -153,9 +134,8 @@ describe('WebSocket Protocol', () => {
     });
 
     test('should respond to PING (uppercase) with pong', async () => {
-      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+      const ws = createWebSocket(daemon.baseUrl);
       await waitForWebSocketState(ws, WebSocket.OPEN);
-      await firstMessagePromise;
 
       const responsePromise = waitForWebSocketMessage(ws);
 
@@ -182,9 +162,8 @@ describe('WebSocket Protocol', () => {
 
   describe('RPC Call/Response', () => {
     test('should handle RPC call/response with correct correlation', async () => {
-      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+      const ws = createWebSocket(daemon.baseUrl);
       await waitForWebSocketState(ws, WebSocket.OPEN);
-      await firstMessagePromise;
 
       const messageId = sendRPCCall(ws, 'session.list');
 
@@ -198,9 +177,8 @@ describe('WebSocket Protocol', () => {
     });
 
     test('should handle concurrent RPC calls with correct correlation', async () => {
-      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+      const ws = createWebSocket(daemon.baseUrl);
       await waitForWebSocketState(ws, WebSocket.OPEN);
-      await firstMessagePromise;
 
       const id1 = sendRPCCall(ws, 'session.list');
       const id2 = sendRPCCall(ws, 'session.list');
@@ -225,9 +203,8 @@ describe('WebSocket Protocol', () => {
     test(
       'should handle many concurrent calls',
       async () => {
-        const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+        const ws = createWebSocket(daemon.baseUrl);
         await waitForWebSocketState(ws, WebSocket.OPEN);
-        await firstMessagePromise;
 
         const count = 50;
         for (let i = 0; i < count; i++) {
@@ -250,9 +227,8 @@ describe('WebSocket Protocol', () => {
 
   describe('Error Handling', () => {
     test('should return error for non-existent RPC method', async () => {
-      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+      const ws = createWebSocket(daemon.baseUrl);
       await waitForWebSocketState(ws, WebSocket.OPEN);
-      await firstMessagePromise;
 
       const messageId = sendRPCCall(ws, 'non.existent.method');
 
@@ -267,9 +243,8 @@ describe('WebSocket Protocol', () => {
     });
 
     test('should return SESSION_NOT_FOUND for non-existent session', async () => {
-      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+      const ws = createWebSocket(daemon.baseUrl);
       await waitForWebSocketState(ws, WebSocket.OPEN);
-      await firstMessagePromise;
 
       const responsePromise = waitForWebSocketMessage(ws);
 
@@ -311,9 +286,8 @@ describe('WebSocket Protocol', () => {
     });
 
     test('should default to global sessionId', async () => {
-      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+      const ws = createWebSocket(daemon.baseUrl);
       await waitForWebSocketState(ws, WebSocket.OPEN);
-      await firstMessagePromise;
 
       const responsePromise = waitForWebSocketMessage(ws);
 
@@ -339,9 +313,8 @@ describe('WebSocket Protocol', () => {
     });
 
     test('should accept messages smaller than 50MB', async () => {
-      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+      const ws = createWebSocket(daemon.baseUrl);
       await waitForWebSocketState(ws, WebSocket.OPEN);
-      await firstMessagePromise;
 
       const responsePromise = waitForWebSocketMessage(ws);
 
@@ -367,9 +340,8 @@ describe('WebSocket Protocol', () => {
 
   describe('Session Operations via Raw WebSocket', () => {
     test('should create session via WebSocket RPC', async () => {
-      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+      const ws = createWebSocket(daemon.baseUrl);
       await waitForWebSocketState(ws, WebSocket.OPEN);
-      await firstMessagePromise;
 
       const messageId = sendRPCCall(ws, 'session.create', {
         workspacePath: '/test/ws-protocol',
@@ -400,9 +372,8 @@ describe('WebSocket Protocol', () => {
     });
 
     test('should get RPC error for non-existent session.get', async () => {
-      const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+      const ws = createWebSocket(daemon.baseUrl);
       await waitForWebSocketState(ws, WebSocket.OPEN);
-      await firstMessagePromise;
 
       const messageId = sendRPCCall(ws, 'session.get', {
         sessionId: 'non-existent-id',

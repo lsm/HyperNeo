@@ -11,45 +11,6 @@ export function createWebSocket(baseUrl: string): WebSocket {
   return ws;
 }
 
-export function createWebSocketWithFirstMessage(
-  baseUrl: string,
-  timeout = 5000
-): { ws: WebSocket; firstMessagePromise: Promise<Record<string, unknown>> } {
-  const wsUrl = baseUrl.replace('http://', 'ws://');
-  const ws = new WebSocket(`${wsUrl}/ws`);
-
-  const firstMessagePromise = new Promise<Record<string, unknown>>((resolve, reject) => {
-    const messageHandler = (event: MessageEvent) => {
-      clearTimeout(timer);
-      ws.removeEventListener('message', messageHandler);
-      ws.removeEventListener('error', errorHandler);
-      try {
-        resolve(JSON.parse(event.data as string));
-      } catch {
-        reject(new Error('Failed to parse WebSocket message'));
-      }
-    };
-
-    const errorHandler = (error: Event) => {
-      clearTimeout(timer);
-      ws.removeEventListener('message', messageHandler);
-      ws.removeEventListener('error', errorHandler);
-      reject(error);
-    };
-
-    ws.addEventListener('message', messageHandler);
-    ws.addEventListener('error', errorHandler);
-
-    const timer = setTimeout(() => {
-      ws.removeEventListener('message', messageHandler);
-      ws.removeEventListener('error', errorHandler);
-      reject(new Error(`No WebSocket message received within ${timeout}ms`));
-    }, timeout);
-  });
-
-  return { ws, firstMessagePromise };
-}
-
 export async function waitForWebSocketState(
   ws: WebSocket,
   state: number,
