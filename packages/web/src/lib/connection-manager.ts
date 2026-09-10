@@ -12,6 +12,7 @@ import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
 import { currentSessionIdSignal, slashCommandsSignal } from './signals';
 import { runConnectionEvent } from './connection-event-pipeline';
+import { runConnectionResume } from './connection-resume-pipeline';
 import { createDefaultConnectionEventEffects } from './connection-event-adapter';
 import { startAutoFlush, stopAutoFlush } from './outbound-queue';
 import { startVoiceAudioOutboxFlush, stopVoiceAudioOutboxFlush } from './voice/voice-audio-outbox';
@@ -306,21 +307,16 @@ export class ConnectionManager {
       }
 
       try {
-        await this.messageHub.request('system.health', {}, { timeout: 3000 });
-
-        await this.messageHub.joinChannel('global');
-        const activeSpaceId = spaceStore.spaceId.value;
-        if (activeSpaceId) {
-          await this.messageHub.joinChannel(`space:${activeSpaceId}`);
-        }
-
-        await Promise.all([
-          refreshAllSessionStores(),
-          appState.refreshAll(),
-          globalStore.refresh(),
-          spaceStore.refresh(),
-          spaceAgentStore.recover(),
-        ]);
+        await runConnectionResume({
+          checkHealth: () => this.messageHub!.request('system.health', {}, { timeout: 3000 }),
+          joinChannel: (channel) => this.messageHub!.joinChannel(channel),
+          getActiveSpaceId: () => spaceStore.spaceId.value,
+          refreshSessions: refreshAllSessionStores,
+          refreshApp: () => appState.refreshAll(),
+          refreshGlobal: () => globalStore.refresh(),
+          refreshSpace: () => spaceStore.refresh(),
+          recoverAgents: () => spaceAgentStore.recover(),
+        });
       } catch {
         if (this.transport) {
           this.transport.forceReconnect();
