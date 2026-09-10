@@ -172,7 +172,9 @@ import {
 } from './workflow-hook-engine.ts';
 import {
   assertExecutionValidAgainstWorkflow,
+  formatMissingTemplateReference,
   isSpawnSupersededError,
+  MissingWorkflowAgentError,
   PermanentSpawnError,
   SPAWN_BINDABLE_EXECUTION_STATUSES,
   SPAWN_RESERVABLE_TASK_STATUSES,
@@ -947,9 +949,7 @@ export class TaskAgentManager {
           };
 
           if (!customAgent) {
-            throw new PermanentSpawnError(
-              `Agent not found: ${slot.agentId || slot.templateKey} (task: ${request.task.id})`
-            );
+            throw this.missingSlotAgentError(request, slot);
           }
 
           let init = resolveAgentInit({
@@ -1083,9 +1083,7 @@ export class TaskAgentManager {
           request.workflowRun
         );
         if (!spawnConfig) {
-          throw new PermanentSpawnError(
-            `Agent not found: ${request.slot.agentId || request.slot.templateKey} (task: ${request.task.id})`
-          );
+          throw this.missingSlotAgentError(request, request.slot);
         }
         const customAgent = spawnConfig.agent;
         const initialMessage = buildCustomAgentTaskMessage({
@@ -3391,6 +3389,7 @@ export class TaskAgentManager {
           []
         );
       }
+      if (workflowRun) return null;
     }
     if (!slot.agentId) return null;
     const registryAgent = this.resolveUnifiedSlotAgent(spaceId, slot.agentId);
@@ -3410,18 +3409,51 @@ export class TaskAgentManager {
     return this.resolveUnifiedSlotAgent(spaceId, agentId) !== null;
   }
 
+  private missingSlotAgentError(
+    request: {
+      task: { id: string };
+      node?: { name?: string } | null;
+      workflow?: { name?: string } | null;
+      workflowRun?: SpaceWorkflowRun | null;
+      execution?: { workflowNodeId?: string } | null;
+    },
+    slot: WorkflowNodeAgent
+  ): PermanentSpawnError {
+    const templateKey = slot.templateKey?.trim();
+    const run = request.workflowRun;
+    if (templateKey && run) {
+      const pinned = run.definitionVersion
+        ? this.config.spaceWorkflowManager.getWorkflowForRun(run)
+        : null;
+      return new MissingWorkflowAgentError(
+        formatMissingTemplateReference({
+          runId: run.id,
+          nodeLabel: request.node?.name ?? request.execution?.workflowNodeId ?? 'unknown node',
+          workflowName: request.workflow?.name ?? run.workflowId,
+          agentName: slot.name,
+          templateKey,
+          hasSnapshot: runTemplateSnapshotRecord(pinned, run) !== null,
+        }),
+        { agentName: slot.name, agentId: slot.agentId, templateKey }
+      );
+    }
+    return new PermanentSpawnError(
+      `Agent not found: ${slot.agentId || slot.templateKey} (task: ${request.task.id})`
+    );
+  }
+
   private resolveSlotTemplateSource(
     workflowRun: Pick<SpaceWorkflowRun, 'workflowId' | 'definitionVersion'> | null | undefined,
     key: string
   ): NodeAgentTemplateSource | null {
+    if (!workflowRun) return this.resolveNodeTemplateSource(key);
     const snapshots = runTemplateSnapshotRecord(
-      workflowRun?.definitionVersion
+      workflowRun.definitionVersion
         ? this.config.spaceWorkflowManager.getWorkflowForRun(workflowRun)
         : null,
       workflowRun
     );
-    if (!snapshots) return this.resolveNodeTemplateSource(key);
-    if (!Object.hasOwn(snapshots, key)) return null;
+    if (!snapshots || !Object.hasOwn(snapshots, key)) return null;
     return spaceAgentTemplateToNodeSource(snapshots[key]);
   }
 
@@ -5498,6 +5530,18 @@ export class TaskAgentManager {
 
     const matchedNode = workflow.nodes.find((node) => node.id === matchedNodeId);
     const spawnConfig = this.resolveSlotSpawnConfig(spaceId, matchedSlot, workflowRun);
+    if (!spawnConfig && matchedSlot.templateKey?.trim() && workflowRun) {
+      throw this.missingSlotAgentError(
+        {
+          task,
+          node: matchedNode,
+          workflow,
+          workflowRun,
+          execution: { workflowNodeId: matchedNodeId },
+        },
+        matchedSlot
+      );
+    }
     const poolAgent = spawnConfig?.agent ?? null;
     let slot = matchedSlot;
     let poolProvider: string | undefined;
