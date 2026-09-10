@@ -300,10 +300,13 @@ export class QueryOptionsBuilder {
       ...registryServers,
       ...skillServers,
       ...runtimeServers,
-      ...(this.ctx.getOperationMcpServer
-        ? { 'hyperneo-operations': this.ctx.getOperationMcpServer() }
-        : {}),
     };
+    if (this.ctx.getOperationMcpServer) {
+      let name = 'hyperneo-operations';
+      let suffix = 2;
+      while (Object.hasOwn(merged, name)) name = `hyperneo-operations-${suffix++}`;
+      merged[name] = this.ctx.getOperationMcpServer();
+    }
     return Object.keys(merged).length > 0 ? merged : undefined;
   }
 

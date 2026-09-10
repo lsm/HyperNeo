@@ -243,7 +243,11 @@ export class AcpMcpProxyBridge {
 export function shouldProxy(serverName: string, config: unknown): boolean {
   if (!config || typeof config !== 'object') return false;
   const server = config as { type?: string; instance?: unknown };
-  return !!server.instance && server.type === 'sdk' && PROXIED_SERVER_NAMES.has(serverName);
+  return (
+    !!server.instance &&
+    server.type === 'sdk' &&
+    (PROXIED_SERVER_NAMES.has(serverName) || /^hyperneo-operations(?:-[0-9]+)?$/.test(serverName))
+  );
 }
 
 function getRegisteredTools(config: unknown): Record<string, RegisteredTool> {

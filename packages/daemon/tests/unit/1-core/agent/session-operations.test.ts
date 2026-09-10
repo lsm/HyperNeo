@@ -1,3 +1,5 @@
+import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
+import { convertMcpServersForAcp } from '../../../../src/lib/acp/acp-query-runner';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { MessageHub, type Session } from '@hyperneo/shared';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
@@ -75,6 +77,51 @@ describe('session operation MCP attachment', () => {
       origin: 'session:sender',
     });
     expect(db.getSession(source.id)?.config.mcpServers).toBeUndefined();
+  });
+
+  test('preserves name collisions and proxies operations for ACP sessions', async () => {
+    const source = createTestSession('acp-sender');
+    source.config.provider = 'acp';
+    source.config.mcpServers = {
+      'hyperneo-operations': { command: 'user-server' },
+      'hyperneo-operations-2': { command: 'another-user-server' },
+    };
+    db.createSession(source);
+    const session = await restore(source.id);
+    const effective = session.optionsBuilder.getEffectiveMcpServers();
+    expect(effective).toMatchObject(source.config.mcpServers);
+    expect(effective?.['hyperneo-operations-3']).toBe(session.getOperationMcpServer());
+    const bridge = new AcpMcpProxyBridge(effective as never);
+    expect(bridge.getToolsForServer('hyperneo-operations-3').map(({ name }) => name)).toEqual([
+      'invoke',
+    ]);
+    expect(convertMcpServersForAcp(effective, () => {}, bridge)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'hyperneo-operations-3', type: 'stdio' }),
+      ])
+    );
+  });
+
+  test('rejects MCP attempts to claim human input provenance before persistence', async () => {
+    db.createSession(createTestSession('sender'));
+    const session = await restore('sender');
+    const result = await session.getOperationMcpServer().tools[0].handler(
+      {
+        name: 'message.send',
+        input: {
+          sessionId: 'destination',
+          message: {
+            type: 'user',
+            message: { content: 'hello' },
+            parent_tool_use_id: null,
+            inputKind: 'human',
+          },
+        },
+      },
+      {}
+    );
+    expect(JSON.stringify(result.content)).toContain('rejected');
+    expect(db.getJobQueueRepo().listJobs({ queue: 'mailbox' })).toEqual([]);
   });
 
   test('retains the operation server across runtime MCP changes without persisting it', async () => {
