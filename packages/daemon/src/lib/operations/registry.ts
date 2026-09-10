@@ -18,9 +18,10 @@ export type OperationDefinition = OperationEntry<unknown, unknown>;
 export function defineOperation<Input, Output>(
   entry: OperationEntry<Input, Output>
 ): OperationDefinition {
+  const { execute, ...definition } = entry;
   return {
-    ...entry,
-    execute: (input, caller) => entry.execute(input as Input, caller),
+    ...definition,
+    execute: (input, caller) => execute(input as Input, caller),
   };
 }
 

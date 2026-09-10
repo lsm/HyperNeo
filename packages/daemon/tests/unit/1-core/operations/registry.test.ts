@@ -41,6 +41,26 @@ describe('operation registry', () => {
     expect(Object.isFrozen(registry.entries[0])).toBe(true);
   });
 
+  test('captures execution before the source callback is reassigned', async () => {
+    const original = mock(async () => ({ accepted: true }));
+    const replacement = mock(async () => ({ accepted: false }));
+    const source = {
+      name: 'message.send',
+      description: 'Accept a message',
+      inputSchema: z.object({ content: z.string() }),
+      resultSchema: z.object({ accepted: z.boolean() }),
+      execute: original,
+    };
+    const registry = createOperationRegistry([defineOperation(source)]);
+    source.execute = replacement;
+    const result = await registry
+      .get('message.send')!
+      .execute({ content: 'hello' }, { source: 'rpc' });
+    expect(result).toEqual({ accepted: true });
+    expect(original).toHaveBeenCalledTimes(1);
+    expect(replacement).not.toHaveBeenCalled();
+  });
+
   test('rejects ambiguous duplicate registrations', () => {
     expect(() => createOperationRegistry([example(), example()])).toThrow('Duplicate operation');
   });
