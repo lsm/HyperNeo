@@ -1,5 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { z } from 'zod';
+import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
+import { createOperationMcpHandler } from '../../../../src/lib/operations/mcp-adapter';
 import {
   createDiscoveryOperations,
   findDescribedOperation,
@@ -96,5 +98,26 @@ describe('shared operation discovery', () => {
     expect(
       await invokeOperation(registry, 'operations.describe', { name: 'unrepresentable' }, caller)
     ).toMatchObject({ kind: 'failed', code: 'execution_failed' });
+  });
+  test('accepts no-input discovery requests through RPC and MCP', async () => {
+    const { registry, execute } = fixture();
+    const rpc = createOperationRpcHandler(registry, () => ({}));
+    const mcp = createOperationMcpHandler(registry, () => ({}));
+    const expected = registry.entries.map(({ name, description }) => ({ name, description }));
+    expect(
+      await rpc(
+        { name: 'operations.list' },
+        {
+          messageId: 'request-1',
+          sessionId: 'global',
+          method: 'operation.invoke',
+          timestamp: 'now',
+        }
+      )
+    ).toEqual(expected);
+    const result = await mcp({ name: 'operations.list' });
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.content[0].text)).toEqual(expected);
+    expect(execute).not.toHaveBeenCalled();
   });
 });

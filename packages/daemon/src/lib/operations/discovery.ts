@@ -50,7 +50,7 @@ export function createDiscoveryOperations(
     defineOperation({
       name: 'operations.list',
       description: 'List operations available in this catalog.',
-      inputSchema: z.object({}),
+      inputSchema: z.object({}).default({}),
       resultSchema: z.array(SummarySchema),
       execute: async () => listOperationSummaries(getRegistry()),
     }),
