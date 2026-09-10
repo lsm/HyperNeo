@@ -175,7 +175,8 @@ export function gateIdentityChange(
   }
 
   const renaming = changes.displayName !== undefined && changes.displayName !== agent.displayName;
-  const unarchiving = agent.status === 'archived' && changes.status === 'active';
+  const unarchiving =
+    agent.status === 'archived' && changes.status !== undefined && changes.status !== 'archived';
   const nameToCheck = renaming ? changes.displayName : unarchiving ? agent.displayName : undefined;
   if (nameToCheck === undefined) return { value: admitted };
 
