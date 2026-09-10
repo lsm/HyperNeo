@@ -17,7 +17,7 @@ export interface VerifiedStopFlowDeps {
   awaitProcessExitSettle(session: AgentSession): Promise<void>;
   readLivePids(session: AgentSession): readonly number[];
   terminateTrackedProcesses(session: AgentSession): void;
-  unregisterSession(sessionId: string): Promise<void>;
+  unregisterSession(sessionId: string, session?: AgentSession): Promise<void>;
   detachSessionBookkeeping(sessionId: string): void;
   warn(message: string, err?: unknown): void;
 }
@@ -240,12 +240,12 @@ export function runVerifiedStopFlow(
       }),
       s.effect({
         name: 'detach-and-unregister',
-        reads: ['sessionId'],
+        reads: ['sessionId', 'session'],
         writes: [],
         run: async (view) => {
           deps.detachSessionBookkeeping(view.sessionId);
           try {
-            await deps.unregisterSession(view.sessionId);
+            await deps.unregisterSession(view.sessionId, view.session ?? undefined);
           } catch (err) {
             notes.push(`unregister failed: ${describeError(err)}`);
           }

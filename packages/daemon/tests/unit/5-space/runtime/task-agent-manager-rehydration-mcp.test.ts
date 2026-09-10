@@ -25,6 +25,7 @@ interface FakeSessionState {
   onMissingWorkflowMcpServers?: AgentSessionType['onMissingWorkflowMcpServers'];
   calls: string[];
   metadataUpdates: Array<Record<string, unknown>>;
+  interruptOptions: unknown[];
   startSawCallback: boolean;
 }
 
@@ -36,6 +37,7 @@ function makeFakeAgentSession(
     session: { id, status: 'active', config: {} },
     calls: [],
     metadataUpdates: [],
+    interruptOptions: [],
     startSawCallback: false,
   };
   const agentSession = {
@@ -72,8 +74,12 @@ function makeFakeAgentSession(
     restartQuery: async () => {
       state.calls.push('restartQuery');
     },
-    handleInterrupt: async () => {
+    handleInterrupt: async (options?: unknown) => {
       state.calls.push('handleInterrupt');
+      state.interruptOptions.push(options);
+    },
+    cleanup: async () => {
+      state.calls.push('cleanup');
     },
     startStreamingQuery: async () => {
       state.calls.push('startStreamingQuery');
@@ -123,6 +129,7 @@ function makeExecution() {
 
 function makeManager(): {
   tam: TaskAgentManager;
+  execution: ReturnType<typeof makeExecution>;
   registered: Map<string, AgentSessionType>;
   unregistered: string[];
 } {
@@ -140,8 +147,11 @@ function makeManager(): {
     db: { getDatabase: () => new BunDatabase(':memory:') },
     internalEventBus: new InternalEventBus<DaemonInternalEventMap>(),
     sessionManager: {
-      registerSession: (session: AgentSessionType) => {
-        registered.set(session.getSessionData().id, session);
+      registerSession: (session: AgentSessionType, expectedCurrent?: AgentSessionType) => {
+        const sessionId = session.getSessionData().id;
+        if (expectedCurrent && registered.get(sessionId) !== expectedCurrent) return false;
+        registered.set(sessionId, session);
+        return true;
       },
       unregisterSession: async (sessionId: string) => {
         unregistered.push(sessionId);
@@ -162,15 +172,27 @@ function makeManager(): {
       update: () => execution,
     },
     workflowRunRepo: { getRun: () => ({ id: RUN_ID, status: 'in_progress' }) },
-    spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
+    spaceManager: {
+      getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }),
+      getSpaceSync: () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }),
+    },
   } as unknown as TaskAgentManagerConfig);
-  return { tam, registered, unregistered };
+  return { tam, execution, registered, unregistered };
 }
 
 function rehydrateOf(tam: TaskAgentManager) {
   return (
     tam as unknown as { rehydrateSubSession: (id: string) => Promise<AgentSessionType | null> }
   ).rehydrateSubSession.bind(tam);
+}
+
+function registerCanonicalSession(tam: TaskAgentManager, session: AgentSessionType): void {
+  const sessionId = session.getSessionData().id;
+  (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> }).agentSessionIndex.set(
+    sessionId,
+    session
+  );
+  tam.config.sessionManager.registerSession(session);
 }
 
 describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
@@ -262,6 +284,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> })
       .agentSessionIndex;
     index.set(SUB_SESSION_ID, fake.agentSession);
+    tam.config.sessionManager.registerSession(fake.agentSession);
     (tam.config as unknown as { db: Record<string, unknown> }).db.getUserMessagesByStatus = () => ({
       messages: [],
     });
@@ -287,6 +310,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> })
       .agentSessionIndex;
     index.set(SUB_SESSION_ID, fake.agentSession);
+    tam.config.sessionManager.registerSession(fake.agentSession);
     (tam.config as unknown as { db: Record<string, unknown> }).db.getUserMessagesByStatus = () => ({
       messages: [],
     });
@@ -358,6 +382,152 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(fake.state.session.config.mcpServers?.['node-agent']).toBeDefined();
     expect(fake.state.calls).toEqual(['mergeRuntimeMcpServers']);
     expect(restoreSpy).toHaveBeenCalledTimes(0);
+  });
+
+  test('a hard-reset replacement adopts a live idle worker without starting an empty query', async () => {
+    const { tam, execution, registered } = makeManager();
+    execution.status = 'idle';
+    const displaced = makeFakeAgentSession(SUB_SESSION_ID);
+    const replacement = makeFakeAgentSession(SUB_SESSION_ID);
+    const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> })
+      .agentSessionIndex;
+    const subSessions = (
+      tam as unknown as { subSessions: Map<string, Map<string, AgentSessionType>> }
+    ).subSessions;
+    index.set(SUB_SESSION_ID, displaced.agentSession);
+    subSessions.set(TASK_ID, new Map([[SUB_SESSION_ID, displaced.agentSession]]));
+    registered.set(SUB_SESSION_ID, replacement.agentSession);
+    Object.defineProperty(tam, 'hasQueuedRetryableHookAction', { value: () => false });
+
+    await tam.provisionWorkflowSession(replacement.agentSession, {
+      startQuery: false,
+      intent: 'reset-replacement',
+    });
+
+    expect(displaced.state.calls).toEqual(['handleInterrupt', 'cleanup']);
+    expect(displaced.state.interruptOptions).toEqual([
+      { preserveDeliveryJobs: true, skipDeferredReplay: true },
+    ]);
+    expect(replacement.state.session.config.mcpServers?.['node-agent']).toBeDefined();
+    expect(replacement.state.calls).toEqual(['mergeRuntimeMcpServers']);
+    expect(replacement.state.calls).not.toContain('startStreamingQuery');
+    expect(replacement.state.calls).not.toContain('replayPendingMessagesForImmediateMode');
+    expect(index.get(SUB_SESSION_ID)).toBe(replacement.agentSession);
+    expect(subSessions.get(TASK_ID)?.get(SUB_SESSION_ID)).toBe(replacement.agentSession);
+    expect(registered.get(SUB_SESSION_ID)).toBe(replacement.agentSession);
+    const deliverySession =
+      tam.getSubSession(SUB_SESSION_ID) === registered.get(SUB_SESSION_ID)
+        ? tam.getSubSession(SUB_SESSION_ID)
+        : null;
+    expect(deliverySession).toBe(replacement.agentSession);
+  });
+
+  test('an active hard-reset replacement replays only after MCP provisioning', async () => {
+    const { tam, registered } = makeManager();
+    const displaced = makeFakeAgentSession(SUB_SESSION_ID);
+    const replacement = makeFakeAgentSession(SUB_SESSION_ID);
+    const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> })
+      .agentSessionIndex;
+    const subSessions = (
+      tam as unknown as { subSessions: Map<string, Map<string, AgentSessionType>> }
+    ).subSessions;
+    index.set(SUB_SESSION_ID, displaced.agentSession);
+    subSessions.set(TASK_ID, new Map([[SUB_SESSION_ID, displaced.agentSession]]));
+    registered.set(SUB_SESSION_ID, replacement.agentSession);
+
+    const outcome = await tam.provisionWorkflowSession(replacement.agentSession, {
+      startQuery: true,
+      replayPendingMessages: true,
+      intent: 'reset-replacement',
+    });
+
+    expect(outcome).toBe('provisioned');
+    expect(replacement.state.calls).toEqual([
+      'mergeRuntimeMcpServers',
+      'startStreamingQuery',
+      'replayPendingMessagesForImmediateMode',
+    ]);
+    expect(replacement.state.startSawCallback).toBe(true);
+    expect(index.get(SUB_SESSION_ID)).toBe(replacement.agentSession);
+    expect(registered.get(SUB_SESSION_ID)).toBe(replacement.agentSession);
+  });
+
+  test('rejects a reset replacement when teardown starts during provisioning', async () => {
+    const { tam, execution, registered } = makeManager();
+    execution.status = 'idle';
+    const displaced = makeFakeAgentSession(SUB_SESSION_ID);
+    const replacement = makeFakeAgentSession(SUB_SESSION_ID);
+    const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> })
+      .agentSessionIndex;
+    const subSessions = (
+      tam as unknown as { subSessions: Map<string, Map<string, AgentSessionType>> }
+    ).subSessions;
+    index.set(SUB_SESSION_ID, displaced.agentSession);
+    subSessions.set(TASK_ID, new Map([[SUB_SESSION_ID, displaced.agentSession]]));
+    registered.set(SUB_SESSION_ID, replacement.agentSession);
+    Object.defineProperty(tam, 'hasQueuedRetryableHookAction', { value: () => false });
+    const merge = replacement.agentSession.mergeRuntimeMcpServers.bind(replacement.agentSession);
+    replacement.agentSession.mergeRuntimeMcpServers = (
+      additional: Record<string, McpServerConfig>
+    ) => {
+      merge(additional);
+      (
+        tam as unknown as { supersedeSessionOwnership: (sessionId: string) => void }
+      ).supersedeSessionOwnership(SUB_SESSION_ID);
+    };
+
+    const outcome = await tam.provisionWorkflowSession(replacement.agentSession, {
+      startQuery: true,
+      intent: 'reset-replacement',
+    });
+
+    expect(outcome).toBe('skipped');
+    expect(displaced.state.calls).toEqual(['handleInterrupt', 'cleanup']);
+    expect(index.has(SUB_SESSION_ID)).toBe(false);
+    expect(subSessions.get(TASK_ID)?.has(SUB_SESSION_ID)).toBe(false);
+    expect(registered.get(SUB_SESSION_ID)).toBe(replacement.agentSession);
+    expect(replacement.state.calls).toEqual(['mergeRuntimeMcpServers']);
+    expect(replacement.state.calls).not.toContain('startStreamingQuery');
+    expect(replacement.state.calls).not.toContain('replayPendingMessagesForImmediateMode');
+  });
+
+  test('rejects a reset replacement whose owner stops during provisioning', async () => {
+    const { tam, registered } = makeManager();
+    const task = (
+      tam.config as unknown as { taskRepo: { getTask: () => { status: string } } }
+    ).taskRepo.getTask();
+    const displaced = makeFakeAgentSession(SUB_SESSION_ID);
+    const replacement = makeFakeAgentSession(SUB_SESSION_ID);
+    const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> })
+      .agentSessionIndex;
+    const subSessions = (
+      tam as unknown as { subSessions: Map<string, Map<string, AgentSessionType>> }
+    ).subSessions;
+    index.set(SUB_SESSION_ID, displaced.agentSession);
+    subSessions.set(TASK_ID, new Map([[SUB_SESSION_ID, displaced.agentSession]]));
+    registered.set(SUB_SESSION_ID, replacement.agentSession);
+    Object.defineProperty(tam, 'hasQueuedRetryableHookAction', { value: () => false });
+    const merge = replacement.agentSession.mergeRuntimeMcpServers.bind(replacement.agentSession);
+    replacement.agentSession.mergeRuntimeMcpServers = (
+      additional: Record<string, McpServerConfig>
+    ) => {
+      merge(additional);
+      task.status = 'stopped';
+    };
+
+    const outcome = await tam.provisionWorkflowSession(replacement.agentSession, {
+      startQuery: true,
+      intent: 'reset-replacement',
+    });
+
+    expect(outcome).toBe('skipped');
+    expect(displaced.state.calls).toEqual(['handleInterrupt', 'cleanup']);
+    expect(index.has(SUB_SESSION_ID)).toBe(false);
+    expect(subSessions.get(TASK_ID)?.has(SUB_SESSION_ID)).toBe(false);
+    expect(registered.get(SUB_SESSION_ID)).toBe(replacement.agentSession);
+    expect(replacement.state.calls).toEqual(['mergeRuntimeMcpServers']);
+    expect(replacement.state.calls).not.toContain('startStreamingQuery');
+    expect(replacement.state.calls).not.toContain('replayPendingMessagesForImmediateMode');
   });
 
   test('skips query startup when the session archives during provisioning', async () => {
@@ -510,27 +680,22 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     expect(bookkeeping.get(SUB_SESSION_ID)).toHaveLength(1);
   });
 
-  test('mcpSelfHeal provisions and adopts the instance the runner actually started', async () => {
+  test('mcpSelfHeal refuses to adopt a non-canonical session instance', async () => {
     const { tam, registered } = makeManager();
+    const canonical = makeFakeAgentSession(SUB_SESSION_ID);
     const stale = makeFakeAgentSession(SUB_SESSION_ID);
-    const started = makeFakeAgentSession(SUB_SESSION_ID);
     const index = (tam as unknown as { agentSessionIndex: Map<string, AgentSessionType> })
       .agentSessionIndex;
-    index.set(SUB_SESSION_ID, stale.agentSession);
+    index.set(SUB_SESSION_ID, canonical.agentSession);
+    registered.set(SUB_SESSION_ID, canonical.agentSession);
 
-    await tam.mcpSelfHeal(started.agentSession, ['node-agent']);
+    await tam.mcpSelfHeal(stale.agentSession, ['node-agent']);
 
-    expect(started.state.session.config.mcpServers?.['node-agent']).toBeDefined();
-    expect(index.get(SUB_SESSION_ID)).toBe(started.agentSession);
-    expect(registered.get(SUB_SESSION_ID)).toBe(started.agentSession);
-    expect(started.state.calls).toContain('restartQuery');
-    expect(stale.state.calls).toContain('handleInterrupt');
-    const adopted = started.agentSession as unknown as { slotResetsContext?: () => boolean };
-    expect(adopted.slotResetsContext).toBeTypeOf('function');
-    expect(adopted.slotResetsContext?.()).toBe(false);
-    const completionCallbacks = (tam as unknown as { completionCallbacks: Map<string, unknown[]> })
-      .completionCallbacks;
-    expect(completionCallbacks.get(SUB_SESSION_ID)).toHaveLength(1);
+    expect(stale.state.session.config.mcpServers?.['node-agent']).toBeUndefined();
+    expect(stale.state.calls).toEqual([]);
+    expect(index.get(SUB_SESSION_ID)).toBe(canonical.agentSession);
+    expect(registered.get(SUB_SESSION_ID)).toBe(canonical.agentSession);
+    expect(canonical.state.calls).toEqual([]);
   });
 
   test('the wired self-heal callback restores node-agent on the session it was invoked with', async () => {
@@ -945,6 +1110,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     const { tam } = makeManager();
     const fake = makeFakeAgentSession(SUB_SESSION_ID);
     fake.state.session.workspacePath = '/old/workspace';
+    registerCanonicalSession(tam, fake.agentSession);
     const repo = (tam.config as unknown as { taskRepo: Record<string, unknown> }).taskRepo;
     repo.getTask = () => ({
       id: TASK_ID,
@@ -965,6 +1131,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     const { tam } = makeManager();
     const fake = makeFakeAgentSession(SUB_SESSION_ID);
     fake.state.session.workspacePath = '/old/workspace';
+    registerCanonicalSession(tam, fake.agentSession);
     const repo = (tam.config as unknown as { taskRepo: Record<string, unknown> }).taskRepo;
     repo.getTask = () => ({
       id: TASK_ID,
@@ -986,6 +1153,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
     const { tam } = makeManager();
     const fake = makeFakeAgentSession(SUB_SESSION_ID);
     fake.state.session.workspacePath = '/old/workspace';
+    registerCanonicalSession(tam, fake.agentSession);
     const repo = (tam.config as unknown as { taskRepo: Record<string, unknown> }).taskRepo;
     repo.getTask = () => ({
       id: TASK_ID,
@@ -1018,6 +1186,7 @@ describe('TaskAgentManager — ghost rehydration MCP invariant', () => {
       const { tam } = makeManager();
       const fake = makeFakeAgentSession(SUB_SESSION_ID);
       fake.state.session.workspacePath = '/old/workspace';
+      registerCanonicalSession(tam, fake.agentSession);
       const previousSpaceActions = { __previous: 'space-actions' } as unknown as McpServerConfig;
       fake.state.session.config = {
         mcpServers: {

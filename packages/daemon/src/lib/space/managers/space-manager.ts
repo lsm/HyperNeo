@@ -354,6 +354,10 @@ export class SpaceManager {
   }
 
   async getSpace(id: string): Promise<Space | null> {
+    return this.getSpaceSync(id);
+  }
+
+  getSpaceSync(id: string): Space | null {
     return this.spaceRepo.getSpace(id);
   }
 

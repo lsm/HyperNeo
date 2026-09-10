@@ -1026,6 +1026,38 @@ describe('SpaceRuntimeService', () => {
       await svc.stop();
     });
 
+    test('provisionResetWorkflowSession delegates replay to reset replacement provisioning', async () => {
+      const workflowSessionId = 'space:space-1:task:task-1:exec:exec-1';
+      const workflowSession = {
+        getSessionData: mock(() => ({ id: workflowSessionId, config: {} }) as Session),
+      } as unknown as AgentSession;
+      const sessionManager = {
+        registerSessionResetSubscriber: mock(() => () => {}),
+        listSessions: mock(() => [] as Session[]),
+      } as unknown as SessionManager;
+      const internalEventBus = {
+        subscribe: mock(() => () => {}),
+        publish: mock(async () => ({ delivered: 0, failures: [] })),
+        publishAsync: mock(() => {}),
+      } as unknown as SpaceRuntimeServiceConfig['internalEventBus'];
+      const svc = new SpaceRuntimeService(
+        buildConfigWithSession(sessionManager, createMockSpaceManager(), internalEventBus)
+      );
+      const provisionWorkflowSession = mock(async () => 'provisioned' as const);
+      svc.setTaskAgentManager({ provisionWorkflowSession } as unknown as TaskAgentManager);
+
+      await svc.provisionResetWorkflowSession(workflowSession, {
+        startQuery: true,
+        replayPendingMessages: true,
+      });
+
+      expect(provisionWorkflowSession).toHaveBeenCalledWith(workflowSession, {
+        startQuery: true,
+        replayPendingMessages: true,
+        intent: 'reset-replacement',
+      });
+    });
+
     test('session.reset re-provisions reset Space chats before query replay', async () => {
       const session = makeSession();
       const sessionManager = makeSessionManager(session);

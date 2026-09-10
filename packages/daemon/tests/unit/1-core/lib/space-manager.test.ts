@@ -283,8 +283,15 @@ describe('SpaceManager', () => {
       expect(found!.id).toBe(created.id);
     });
 
+    it('returns the same current space synchronously', async () => {
+      const created = await manager.createSpace({ workspacePath: tmpDir, name: 'P' });
+
+      expect(manager.getSpaceSync(created.id)).toEqual(await manager.getSpace(created.id));
+    });
+
     it('returns null for unknown ID', async () => {
       expect(await manager.getSpace('nonexistent')).toBeNull();
+      expect(manager.getSpaceSync('nonexistent')).toBeNull();
     });
   });
 

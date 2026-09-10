@@ -29,6 +29,7 @@ interface FakeSessionOptions {
   interruptErrors?: unknown[];
   interruptGate?: Promise<void>;
   livePids?: number[];
+  onInterrupt?: (controller: FakeSessionController) => void;
   onTerminate?: (controller: FakeSessionController) => void;
   interruptInProgress?: boolean;
   processingStateError?: unknown;
@@ -66,6 +67,7 @@ function makeFakeSession(options: FakeSessionOptions = {}): FakeSessionControlle
       if (options.interruptGate) await options.interruptGate;
       interruptCalls++;
       calls.interrupts++;
+      options.onInterrupt?.(controller);
       const err = options.interruptErrors?.[interruptCalls - 1];
       if (err !== undefined) throw err;
       if (statusIndex < statusSequence.length - 1) {
@@ -99,10 +101,10 @@ function makeSessionManager(options: { events?: string[]; failUnregisterFor?: st
     cached,
     unregisterCalls,
     getCachedSession: (sessionId: string) => cached.get(sessionId) ?? null,
-    unregisterSession: async (sessionId: string) => {
+    unregisterSession: async (sessionId: string, expectedCurrent?: AgentSession) => {
       options.events?.push('unregister');
       unregisterCalls.push(sessionId);
-      cached.delete(sessionId);
+      if (!expectedCurrent || cached.get(sessionId) === expectedCurrent) cached.delete(sessionId);
       if (options.failUnregisterFor?.includes(sessionId)) {
         throw new Error('unregister rejected');
       }
@@ -133,6 +135,10 @@ function registerSession(
   }
   nodeMap.set(sessionId, session);
   internals.agentSessionIndex.set(sessionId, session);
+  const sessionManager = (
+    manager as unknown as { config: { sessionManager: { cached?: Map<string, AgentSession> } } }
+  ).config.sessionManager;
+  sessionManager.cached?.set(sessionId, session);
 }
 
 function internalsOf(manager: TaskAgentManager) {
@@ -177,6 +183,25 @@ describe('TaskAgentManager.stopSessionVerified stagedRun interpreter', () => {
     expect(internals.subSessions.get('task-1')?.has('sess-1')).toBe(false);
     expect(sessionManager.unregisterCalls).toEqual(['sess-1']);
     expect(internals.cancellingSessions.has('sess-1')).toBe(false);
+  });
+
+  test('late teardown does not unregister a newer cached replacement', async () => {
+    const sessionManager = makeSessionManager();
+    const manager = makeManager(sessionManager);
+    const replacement = makeFakeSession({ statusSequence: ['idle'] });
+    const displaced = makeFakeSession({
+      statusSequence: ['processing', 'idle'],
+      onInterrupt: () => {
+        sessionManager.cached.set('sess-1', replacement.session);
+      },
+    });
+    registerSession(manager, 'task-1', 'sess-1', displaced.session);
+
+    const result = await stopVerified(manager, 'sess-1');
+
+    expect(result.stopped).toBe(true);
+    expect(sessionManager.cached.get('sess-1')).toBe(replacement.session);
+    expect(sessionManager.unregisterCalls).toEqual(['sess-1']);
   });
 
   test('a missing session reports stopped and still unregisters', async () => {

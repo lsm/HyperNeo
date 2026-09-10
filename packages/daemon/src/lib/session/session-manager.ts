@@ -39,6 +39,8 @@ import {
 import { hasRuntimeNodeAgentServer, isWorkflowSubSessionIdentity } from './sub-session-identity.ts';
 import { ToolsConfigManager } from './tools-config.ts';
 
+export type SessionResetSubscriberResult = { replayOwner: 'subscriber' } | void;
+
 export interface SpaceRuntimeMcpProvider {
   reattachMemberSpaceTools(sessionId: string): Promise<void>;
   reattachWorkflowMcpServers?(session: AgentSession, missing: string[]): Promise<void>;
@@ -48,6 +50,13 @@ export interface SpaceRuntimeMcpProvider {
       startQuery?: boolean;
       replayPendingMessages?: boolean;
       onReplaySettled?: (succeeded: boolean) => void;
+    }
+  ): Promise<void>;
+  provisionResetWorkflowSession?(
+    session: AgentSession,
+    options: {
+      startQuery: boolean;
+      replayPendingMessages: boolean;
     }
   ): Promise<void>;
 }
@@ -63,7 +72,11 @@ export class SessionManager {
   private worktreeManager: WorktreeManager;
   private internalEventBusUnsubscribers: Array<() => void> = [];
   private sessionResetSubscribers: Array<
-    (event: { sessionId: string; session: Session; restartQuery: boolean }) => Promise<void> | void
+    (event: {
+      sessionId: string;
+      session: Session;
+      restartQuery: boolean;
+    }) => Promise<SessionResetSubscriberResult> | SessionResetSubscriberResult
   > = [];
   private started = false;
 
@@ -226,7 +239,7 @@ export class SessionManager {
       sessionId: string;
       session: Session;
       restartQuery: boolean;
-    }) => Promise<void> | void
+    }) => Promise<SessionResetSubscriberResult> | SessionResetSubscriberResult
   ): () => void {
     this.sessionResetSubscribers.push(subscriber);
     return () => {
@@ -241,11 +254,14 @@ export class SessionManager {
     sessionId: string;
     session: Session;
     restartQuery: boolean;
-  }): Promise<void> {
+  }): Promise<boolean> {
     await this.internalEventBus.publish('session.reset', event);
+    let replayOwnedBySubscriber = false;
     for (const subscriber of this.sessionResetSubscribers) {
-      await subscriber(event);
+      const result = await subscriber(event);
+      replayOwnedBySubscriber = replayOwnedBySubscriber || result?.replayOwner === 'subscriber';
     }
+    return replayOwnedBySubscriber;
   }
 
   private async performHardResetAgentSession(
@@ -303,12 +319,24 @@ export class SessionManager {
       this.sessionCache.set(sessionId, freshSession);
 
       let resetError: unknown;
+      let replayOwnedBySubscriber = false;
       try {
-        await this.emitSessionReset({
-          sessionId,
-          session: sessionForFreshInstance,
-          restartQuery: options.restartQuery,
-        });
+        if (
+          this.isWorkflowSubSession(freshSession) &&
+          this.spaceRuntimeMcpProvider?.provisionResetWorkflowSession
+        ) {
+          await this.spaceRuntimeMcpProvider.provisionResetWorkflowSession(freshSession, {
+            startQuery: options.restartQuery,
+            replayPendingMessages: options.restartQuery,
+          });
+          replayOwnedBySubscriber = true;
+        }
+        replayOwnedBySubscriber =
+          (await this.emitSessionReset({
+            sessionId,
+            session: sessionForFreshInstance,
+            restartQuery: options.restartQuery,
+          })) || replayOwnedBySubscriber;
       } catch (error) {
         resetError = error;
       }
@@ -324,7 +352,11 @@ export class SessionManager {
 
       if (resetError) throw resetError;
 
-      if (options.restartQuery) {
+      if (
+        options.restartQuery &&
+        !replayOwnedBySubscriber &&
+        this.getCachedSession(sessionId) === freshSession
+      ) {
         await freshSession.replayPendingMessagesForImmediateMode();
       }
 
@@ -610,12 +642,15 @@ export class SessionManager {
     return null;
   }
 
-  registerSession(agentSession: AgentSession): void {
+  registerSession(agentSession: AgentSession, expectedCurrent?: AgentSession): boolean {
+    const sessionId = agentSession.getSessionData().id;
+    if (expectedCurrent && this.getCachedSession(sessionId) !== expectedCurrent) return false;
     if (this.mailboxDeferredReplaySuppressor) {
       const suppressor = this.mailboxDeferredReplaySuppressor;
-      agentSession.suppressDeferredReplay = (sessionId) => suppressor(sessionId);
+      agentSession.suppressDeferredReplay = (id) => suppressor(id);
     }
-    this.sessionCache.set(agentSession.getSessionData().id, agentSession);
+    this.sessionCache.set(sessionId, agentSession);
+    return true;
   }
 
   *getTrackedAgentRootPids(): Iterable<number> {
@@ -646,12 +681,15 @@ export class SessionManager {
     return { live, exited };
   }
 
-  async unregisterSession(sessionId: string): Promise<void> {
+  async unregisterSession(sessionId: string, expectedCurrent?: AgentSession): Promise<boolean> {
     const agentSession = this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
+    if (expectedCurrent && agentSession !== expectedCurrent) return false;
     if (agentSession) {
       await this.preserveRootPids(agentSession);
+      if (expectedCurrent && this.getCachedSession(sessionId) !== expectedCurrent) return false;
     }
     this.sessionCache.remove(sessionId);
+    return true;
   }
 
   async injectMessage(

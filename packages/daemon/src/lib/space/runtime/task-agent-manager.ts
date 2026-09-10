@@ -297,6 +297,18 @@ interface RateLimitSessionEntry {
   reason: string;
 }
 
+export type WorkflowSessionProvisionOutcome = 'provisioned' | 'adopted-dormant' | 'skipped';
+
+interface SubSessionRehydrateOptions {
+  startQuery?: boolean;
+  replayPendingMessages?: boolean;
+  onReplaySettled?: (succeeded: boolean) => void;
+  resetReplacement?: {
+    expectedCachedSession: AgentSession;
+    ownershipGeneration: number;
+  };
+}
+
 const RATE_LIMIT_FALLBACK_RESET_AT_MS = 60 * 60 * 1000;
 
 const WORKER_REINJECTABLE_MCP_SERVERS = ['node-agent', 'space-actions'] as const;
@@ -344,6 +356,8 @@ export class TaskAgentManager {
   private cancellingSessions = new Set<string>();
 
   private readonly sessionRestoreLocks = new Map<string, Promise<void>>();
+
+  private readonly sessionOwnershipGenerations = new Map<string, number>();
 
   private readonly rehydrateInFlight = new Map<string, Promise<AgentSession | null>>();
 
@@ -1604,6 +1618,14 @@ export class TaskAgentManager {
     }
   }
 
+  private sessionOwnershipGeneration(sessionId: string): number {
+    return this.sessionOwnershipGenerations.get(sessionId) ?? 0;
+  }
+
+  private supersedeSessionOwnership(sessionId: string): void {
+    this.sessionOwnershipGenerations.set(sessionId, this.sessionOwnershipGeneration(sessionId) + 1);
+  }
+
   private async withSessionRestoreLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.sessionRestoreLocks.get(sessionId) ?? Promise.resolve();
     let release!: () => void;
@@ -2094,11 +2116,7 @@ export class TaskAgentManager {
     taskId: string,
     hintSessionId?: string,
     suppliedSession?: AgentSession,
-    options: {
-      startQuery?: boolean;
-      replayPendingMessages?: boolean;
-      onReplaySettled?: (succeeded: boolean) => void;
-    } = {}
+    options: SubSessionRehydrateOptions = {}
   ): Promise<string | null> {
     const identity = this.readPostApprovalWorkerIdentity(taskId, hintSessionId);
     if (!identity) return null;
@@ -2141,11 +2159,7 @@ export class TaskAgentManager {
     taskId: string,
     identity: { sessionId: string; agentName: string; nodeId?: string; agentId?: string },
     suppliedSession?: AgentSession,
-    options: {
-      startQuery?: boolean;
-      replayPendingMessages?: boolean;
-      onReplaySettled?: (succeeded: boolean) => void;
-    } = {}
+    options: SubSessionRehydrateOptions = {}
   ): Promise<string | null> {
     const { sessionId, agentName, nodeId, agentId } = identity;
 
@@ -2278,12 +2292,21 @@ export class TaskAgentManager {
     };
     this.reattachSlotContextReset(agentSession);
 
+    if (
+      options.resetReplacement &&
+      !this.commitResetReplacement(taskId, agentSession, options.resetReplacement, true)
+    ) {
+      return null;
+    }
+
     if (!this.subSessions.has(taskId)) {
       this.subSessions.set(taskId, new Map());
     }
     this.subSessions.get(taskId)!.set(sessionId, agentSession);
     this.agentSessionIndex.set(sessionId, agentSession);
-    if (createdNow) this.config.sessionManager.registerSession(agentSession);
+    if (createdNow && !options.resetReplacement) {
+      this.config.sessionManager.registerSession(agentSession);
+    }
 
     const shouldReplayPendingMessages =
       options.replayPendingMessages ?? options.startQuery !== false;
@@ -2314,7 +2337,7 @@ export class TaskAgentManager {
       this.subSessions.get(taskId)?.delete(sessionId);
       this.agentSessionIndex.delete(sessionId);
       if (createdNow) {
-        await this.config.sessionManager.unregisterSession(sessionId).catch(() => {});
+        await this.config.sessionManager.unregisterSession(sessionId, agentSession).catch(() => {});
       }
       throw err;
     }
@@ -2786,6 +2809,7 @@ export class TaskAgentManager {
   }
 
   private async respawnRateLimitedExecution(sessionId: string): Promise<void> {
+    this.supersedeSessionOwnership(sessionId);
     const execution = this.config.nodeExecutionRepo.getByAgentSessionId(sessionId);
     if (execution) {
       this.config.nodeExecutionRepo.update(execution.id, {
@@ -2816,7 +2840,7 @@ export class TaskAgentManager {
       nodeMap.delete(sessionId);
     }
     try {
-      await this.config.sessionManager.unregisterSession(sessionId);
+      await this.config.sessionManager.unregisterSession(sessionId, session);
     } catch (err) {
       log.warn(
         `TaskAgentManager.respawnRateLimitedExecution: failed to unregister session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
@@ -2825,6 +2849,7 @@ export class TaskAgentManager {
   }
 
   cancelBySessionId(agentSessionId: string): void {
+    this.supersedeSessionOwnership(agentSessionId);
     const session =
       this.agentSessionIndex.get(agentSessionId) ??
       this.config.sessionManager.getCachedSession(agentSessionId);
@@ -2838,7 +2863,7 @@ export class TaskAgentManager {
     void this.stopSessionPreserveDb(agentSessionId, session, { strict: true })
       .then(() => {
         for (const [, nodeMap] of this.subSessions) nodeMap.delete(agentSessionId);
-        return this.config.sessionManager.unregisterSession?.(agentSessionId);
+        return this.config.sessionManager.unregisterSession?.(agentSessionId, session);
       })
       .catch((err) => {
         log.warn(
@@ -2874,6 +2899,7 @@ export class TaskAgentManager {
   }
 
   private async stopSessionVerified(sessionId: string): Promise<VerifiedSessionStop> {
+    this.supersedeSessionOwnership(sessionId);
     this.cancellingSessions.add(sessionId);
     try {
       const outcome = await runVerifiedStopFlow(this.buildVerifiedStopFlowDeps(), sessionId);
@@ -2912,8 +2938,8 @@ export class TaskAgentManager {
         session.terminateTrackedAgentProcesses({
           forceDelayMs: VERIFIED_STOP_ESCALATION_FORCE_KILL_MS,
         }),
-      unregisterSession: async (sessionId) => {
-        await this.config.sessionManager?.unregisterSession?.(sessionId);
+      unregisterSession: async (sessionId, session) => {
+        await this.config.sessionManager?.unregisterSession?.(sessionId, session);
       },
       detachSessionBookkeeping: (sessionId) => this.detachSessionBookkeeping(sessionId),
       warn: (message, err) => {
@@ -2962,6 +2988,7 @@ export class TaskAgentManager {
   }
 
   async restartStuckSubSession(agentSessionId: string): Promise<void> {
+    this.supersedeSessionOwnership(agentSessionId);
     const session = this.getAgentSessionById(agentSessionId);
     if (!session) {
       throw new Error(`Cannot restart stuck sub-session; session not found: ${agentSessionId}`);
@@ -2971,7 +2998,7 @@ export class TaskAgentManager {
     for (const [, nodeMap] of this.subSessions) {
       nodeMap.delete(agentSessionId);
     }
-    await this.config.sessionManager.unregisterSession(agentSessionId);
+    await this.config.sessionManager.unregisterSession(agentSessionId, session);
   }
 
   async rehydrate(): Promise<void> {
@@ -3016,6 +3043,9 @@ export class TaskAgentManager {
 
   async cleanupAll(): Promise<void> {
     this.disposed = true;
+    for (const sessionId of this.agentSessionIndex.keys()) {
+      this.supersedeSessionOwnership(sessionId);
+    }
     clearAllRetryableHookActionTimers();
     for (const executionId of this.concurrentSpawnWaiters.keys()) {
       this.settleConcurrentSpawnWaiters(executionId, { status: 'failed' });
@@ -3036,6 +3066,9 @@ export class TaskAgentManager {
   private async shutdownTask(taskId: string): Promise<void> {
     const nodeMap = this.subSessions.get(taskId);
     if (nodeMap) {
+      for (const subSessionId of nodeMap.keys()) {
+        this.supersedeSessionOwnership(subSessionId);
+      }
       for (const [subSessionId, session] of nodeMap) {
         await this.stopSessionPreserveDb(subSessionId, session, {
           preserveDeliveryJobs: true,
@@ -3069,8 +3102,11 @@ export class TaskAgentManager {
 
     const nodeMap = this.subSessions.get(taskId);
     if (nodeMap) {
-      for (const [subSessionId, session] of nodeMap) {
+      for (const subSessionId of nodeMap.keys()) {
         sessionIdsToClean.add(subSessionId);
+        this.supersedeSessionOwnership(subSessionId);
+      }
+      for (const [subSessionId, session] of nodeMap) {
         await this.stopSessionPreserveDb(subSessionId, session);
       }
       this.subSessions.delete(taskId);
@@ -3525,14 +3561,69 @@ export class TaskAgentManager {
     }
   }
 
+  private resetReplacementCanCommit(
+    taskId: string,
+    session: AgentSession,
+    ownershipGeneration: number,
+    postApproval: boolean
+  ): boolean {
+    const sessionId = session.getSessionData().id;
+    if (this.sessionOwnershipGeneration(sessionId) !== ownershipGeneration) return false;
+    if (this.config.sessionManager.getCachedSession(sessionId) !== session) return false;
+    if (this.disposed || this.sessionManagerCleaningUp()) return false;
+    const task = this.config.taskRepo.getTask(taskId);
+    if (!task?.workflowRunId || isCanonicalTaskTerminalForSpawn(task.status)) return false;
+    const space = this.config.spaceManager.getSpaceSync(task.spaceId);
+    if (!space || space.paused || space.stopped || space.status === 'archived') return false;
+    const run = this.config.workflowRunRepo.getRun(task.workflowRunId);
+    if (!run || run.status === 'cancelled') return false;
+    if (postApproval) {
+      return (
+        task.status === 'approved' &&
+        (task.postApprovalSessionId === sessionId ||
+          (task.postApprovalSessionId === null && sessionId.includes(':post-approval:')))
+      );
+    }
+    if (run.status === 'done') return false;
+    const execution = this.resolveNodeExecutionForSubSession(sessionId);
+    if (!execution || execution.workflowRunId !== run.id) return false;
+    return (
+      execution.status === 'in_progress' ||
+      execution.status === 'blocked' ||
+      execution.status === 'idle' ||
+      execution.status === 'waiting_rebind' ||
+      this.hasQueuedRetryableHookAction(execution.workflowRunId, execution)
+    );
+  }
+
+  private commitResetReplacement(
+    taskId: string,
+    session: AgentSession,
+    replacement: NonNullable<SubSessionRehydrateOptions['resetReplacement']>,
+    postApproval: boolean
+  ): boolean {
+    if (
+      !this.resetReplacementCanCommit(
+        taskId,
+        session,
+        replacement.ownershipGeneration,
+        postApproval
+      )
+    ) {
+      return false;
+    }
+    return this.config.sessionManager.registerSession(session, replacement.expectedCachedSession);
+  }
+
   async provisionWorkflowSession(
     session: AgentSession,
     options: {
       startQuery?: boolean;
       replayPendingMessages?: boolean;
       onReplaySettled?: (succeeded: boolean) => void;
+      intent?: 'lookup' | 'reset-replacement';
     } = {}
-  ): Promise<void> {
+  ): Promise<WorkflowSessionProvisionOutcome> {
     interface WorkflowProvisioningState {
       sessionId: string;
       taskId: string;
@@ -3543,7 +3634,20 @@ export class TaskAgentManager {
 
     const sessionId = session.getSessionData().id;
     const taskId = taskIdFromSubSessionIdentity(sessionId);
-    if (!taskId) return;
+    if (!taskId) return 'skipped';
+    const indexed = this.agentSessionIndex.get(sessionId);
+    const replacesLiveSession =
+      options.intent === 'reset-replacement' &&
+      indexed !== undefined &&
+      indexed !== session &&
+      this.isAgentSessionAlive(indexed);
+    const resetReplacement = replacesLiveSession
+      ? {
+          expectedCachedSession: session,
+          ownershipGeneration: this.sessionOwnershipGeneration(sessionId),
+        }
+      : undefined;
+    let provisionOutcome: WorkflowSessionProvisionOutcome = 'skipped';
 
     const outcome = await stagedRun<WorkflowProvisioningState>(
       'provision-workflow-session',
@@ -3563,12 +3667,13 @@ export class TaskAgentManager {
         s.decide({
           name: 'admit-workflow-provisioning',
           reads: ['task', 'workflowRun', 'space'],
-          branches: ['skip', 'postApproval', 'rehydrate'],
+          branches: ['skip', 'adoptDormant', 'postApproval', 'rehydrate'],
           run: (view) => {
             const task = view.task;
             const workflowRun = view.workflowRun;
             const space = view.space;
-            const isPostApproval = sessionId.includes(':post-approval:');
+            const isPostApproval =
+              sessionId.includes(':post-approval:') || task?.postApprovalSessionId === sessionId;
             if (session.getSessionData().status === 'archived') {
               return { decision: 'archived-session', skip: true };
             }
@@ -3595,6 +3700,12 @@ export class TaskAgentManager {
             const execution = this.resolveNodeExecutionForSubSession(sessionId);
             if (!execution) return { decision: 'missing-execution', skip: true };
             if (
+              replacesLiveSession &&
+              (execution.status === 'idle' || execution.status === 'waiting_rebind')
+            ) {
+              return { decision: 'rehydrate-dormant-reset', adoptDormant: true };
+            }
+            if (
               execution.status !== 'in_progress' &&
               execution.status !== 'blocked' &&
               !this.hasQueuedRetryableHookAction(execution.workflowRunId, execution)
@@ -3607,39 +3718,70 @@ export class TaskAgentManager {
         s.halt({
           name: 'skip-workflow-provisioning',
           when: 'skip',
-          run: () => undefined,
+          run: () => 'skipped',
+        }),
+        s.effect({
+          name: 'rehydrate-dormant-reset-replacement',
+          when: 'adoptDormant',
+          writes: [],
+          run: async () => {
+            const rehydrated = await this.rehydrateSubSession(sessionId, session, {
+              startQuery: false,
+              replayPendingMessages: false,
+              resetReplacement,
+            });
+            provisionOutcome = rehydrated ? 'adopted-dormant' : 'skipped';
+          },
+        }),
+        s.halt({
+          name: 'return-adopted-dormant-reset-replacement',
+          when: 'adoptDormant',
+          run: () => provisionOutcome,
         }),
         s.effect({
           name: 'restore-post-approval-worker',
           when: 'postApproval',
           writes: [],
           run: async () => {
+            const resetReplacementOptions = resetReplacement ? { resetReplacement } : {};
             const restoreOptions = this.readPersistedRateLimitCooldown(sessionId)
-              ? { ...options, startQuery: false }
-              : options;
-            await this.restorePostApprovalWorkerSession(taskId, sessionId, session, restoreOptions);
+              ? { ...options, ...resetReplacementOptions, startQuery: false }
+              : { ...options, ...resetReplacementOptions };
+            const restored = await this.restorePostApprovalWorkerSession(
+              taskId,
+              sessionId,
+              session,
+              restoreOptions
+            );
+            provisionOutcome = restored ? 'provisioned' : 'skipped';
           },
         }),
         s.halt({
           name: 'return-restored-post-approval-worker',
           when: 'postApproval',
-          run: () => undefined,
+          run: () => provisionOutcome,
         }),
         s.effect({
           name: 'rehydrate-workflow-execution',
           when: 'rehydrate',
           writes: [],
           run: async () => {
+            const resetReplacementOptions = resetReplacement ? { resetReplacement } : {};
             const rehydrateOptions = this.readPersistedRateLimitCooldown(sessionId)
-              ? { ...options, startQuery: false }
-              : options;
-            await this.rehydrateSubSession(sessionId, session, rehydrateOptions);
+              ? { ...options, ...resetReplacementOptions, startQuery: false }
+              : { ...options, ...resetReplacementOptions };
+            const rehydrated = await this.rehydrateSubSession(sessionId, session, rehydrateOptions);
+            provisionOutcome = rehydrated ? 'provisioned' : 'skipped';
           },
         }),
       ],
       { input: ['sessionId', 'taskId'] }
     )({ sessionId, taskId });
     if (outcome.status === 'error') throw outcome.error;
+    if (outcome.status === 'completed' && typeof outcome.result === 'string') {
+      return outcome.result as WorkflowSessionProvisionOutcome;
+    }
+    return provisionOutcome;
   }
 
   private hasQueuedRetryableHookAction(workflowRunId: string, execution: NodeExecution): boolean {
@@ -3746,11 +3888,7 @@ export class TaskAgentManager {
   private async rehydrateSubSession(
     subSessionId: string,
     suppliedSession?: AgentSession,
-    options: {
-      startQuery?: boolean;
-      replayPendingMessages?: boolean;
-      onReplaySettled?: (succeeded: boolean) => void;
-    } = {}
+    options: SubSessionRehydrateOptions = {}
   ): Promise<AgentSession | null> {
     const inFlight = this.rehydrateInFlight.get(subSessionId);
     if (inFlight) {
@@ -3805,11 +3943,7 @@ export class TaskAgentManager {
   private async performSubSessionRehydrate(
     subSessionId: string,
     suppliedSession?: AgentSession,
-    options: {
-      startQuery?: boolean;
-      replayPendingMessages?: boolean;
-      onReplaySettled?: (succeeded: boolean) => void;
-    } = {}
+    options: SubSessionRehydrateOptions = {}
   ): Promise<AgentSession | null> {
     const alreadyIndexed = this.agentSessionIndex.get(subSessionId);
     if (alreadyIndexed && (alreadyIndexed === suppliedSession || !suppliedSession)) {
@@ -3972,13 +4106,22 @@ export class TaskAgentManager {
       phase: 'rehydrate',
     });
 
+    if (
+      options.resetReplacement &&
+      !this.commitResetReplacement(taskId, agentSession, options.resetReplacement, false)
+    ) {
+      return null;
+    }
+
     if (!this.subSessions.has(taskId)) {
       this.subSessions.set(taskId, new Map());
     }
     this.subSessions.get(taskId)!.set(subSessionId, agentSession);
     this.agentSessionIndex.set(subSessionId, agentSession);
 
-    this.config.sessionManager.registerSession(agentSession);
+    if (!options.resetReplacement) {
+      this.config.sessionManager.registerSession(agentSession);
+    }
 
     this.registerCompletionCallback(subSessionId, async () => {
       await this.handleSubSessionComplete(taskId, execution.workflowNodeId, subSessionId);
@@ -4033,7 +4176,9 @@ export class TaskAgentManager {
         !suppliedSession &&
         this.config.sessionManager.getCachedSession(subSessionId) === agentSession
       ) {
-        await this.config.sessionManager.unregisterSession(subSessionId).catch(() => {});
+        await this.config.sessionManager
+          .unregisterSession(subSessionId, agentSession)
+          .catch(() => {});
       }
       throw err;
     }
@@ -4649,31 +4794,14 @@ export class TaskAgentManager {
     }
 
     const agentSession = target;
-    if (this.agentSessionIndex.get(sessionId) !== agentSession) {
-      const displaced = this.agentSessionIndex.get(sessionId);
+    if (
+      this.agentSessionIndex.get(sessionId) !== agentSession ||
+      this.config.sessionManager.getCachedSession(sessionId) !== agentSession
+    ) {
       log.warn(
-        `TaskAgentManager.mcpSelfHeal: adopting the started session instance for ${sessionId} ` +
-          `as the canonical in-memory sub-session before healing`
+        `TaskAgentManager.mcpSelfHeal: refusing to heal non-canonical session instance ${sessionId}`
       );
-      if (displaced) {
-        this.detachSessionBookkeeping(sessionId);
-        void displaced.handleInterrupt({ skipDeferredReplay: true }).catch((err) => {
-          log.warn(
-            `TaskAgentManager.mcpSelfHeal: failed to interrupt displaced session instance ` +
-              `${sessionId}: ${err instanceof Error ? err.message : String(err)}`
-          );
-        });
-      }
-      if (!this.subSessions.has(parentTask.id)) {
-        this.subSessions.set(parentTask.id, new Map());
-      }
-      this.subSessions.get(parentTask.id)!.set(sessionId, agentSession);
-      this.agentSessionIndex.set(sessionId, agentSession);
-      this.config.sessionManager.registerSession(agentSession);
-      this.reattachSlotContextReset(agentSession);
-      this.registerCompletionCallback(sessionId, async () => {
-        await this.handleSubSessionComplete(parentTask.id, execution.workflowNodeId, sessionId);
-      });
+      return;
     }
 
     await this.withSessionInjectLock(sessionId, async () => {

@@ -1993,6 +1993,81 @@ describe('SessionManager', () => {
       }
     });
 
+    it('provisions a workflow reset replacement before publishing the reset event', async () => {
+      const workflowSessionId = 'space:space-1:task:task-1:exec:exec-1';
+      const persistedSession = makePersistedSession({
+        id: workflowSessionId,
+        type: 'worker',
+        context: { spaceId: 'space-1' },
+      });
+      (mockDb.getSession as ReturnType<typeof mock>).mockImplementation((id: string) =>
+        id === workflowSessionId ? persistedSession : null
+      );
+      const oldSession = sessionManager.getSession(workflowSessionId)!;
+      const order: string[] = [];
+      let provisionedSession: AgentSession | null = null;
+      sessionManager.setSpaceRuntimeMcpProvider({
+        reattachMemberSpaceTools: mock(async () => {}),
+        provisionResetWorkflowSession: mock(async (session) => {
+          provisionedSession = session;
+          order.push('provision');
+        }),
+      });
+      const unregister = sessionManager.registerSessionResetSubscriber(() => {
+        order.push('event');
+      });
+      const replaySpy = spyOn(
+        AgentSession.prototype,
+        'replayPendingMessagesForImmediateMode'
+      ).mockImplementation(async () => true);
+
+      try {
+        const result = await oldSession.resetQuery({ restartQuery: true, hardReset: true });
+        const freshSession = sessionManager.getCachedSession(workflowSessionId);
+
+        expect(result).toEqual({ success: true });
+        expect(freshSession).not.toBe(oldSession);
+        expect(provisionedSession).toBe(freshSession);
+        expect(order).toEqual(['provision', 'event']);
+        expect(replaySpy).not.toHaveBeenCalled();
+      } finally {
+        unregister();
+        replaySpy.mockRestore();
+        await sessionManager.interruptInMemorySession(workflowSessionId);
+      }
+    });
+
+    it('lets a reset subscriber own replay while keeping the fresh session', async () => {
+      const persistedSession = makePersistedSession();
+      (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);
+
+      const oldSession = sessionManager.getSession('test-id')!;
+      const cleanupSpy = spyOn(oldSession, 'cleanup');
+      const first = sessionManager.registerSessionResetSubscriber(() => ({
+        replayOwner: 'subscriber',
+      }));
+      const second = sessionManager.registerSessionResetSubscriber(() => undefined);
+      const replaySpy = spyOn(
+        AgentSession.prototype,
+        'replayPendingMessagesForImmediateMode'
+      ).mockImplementation(async () => true);
+
+      try {
+        const result = await oldSession.resetQuery({ restartQuery: true, hardReset: true });
+        const freshSession = sessionManager.getSession('test-id');
+
+        expect(result).toEqual({ success: true });
+        expect(freshSession).not.toBe(oldSession);
+        expect(cleanupSpy).toHaveBeenCalledTimes(1);
+        expect(replaySpy).not.toHaveBeenCalled();
+      } finally {
+        first();
+        second();
+        replaySpy.mockRestore();
+        await sessionManager.interruptInMemorySession('test-id');
+      }
+    });
+
     it('coalesces concurrent hard resets for the same session', async () => {
       const persistedSession = makePersistedSession();
       (mockDb.getSession as ReturnType<typeof mock>).mockReturnValue(persistedSession);
