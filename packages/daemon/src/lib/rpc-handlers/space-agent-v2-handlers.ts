@@ -1,4 +1,4 @@
-import type { MessageHub, SpaceAgent } from '@hyperneo/shared';
+import type { MessageHub, SpaceAgent, SpaceLongHorizonAgent } from '@hyperneo/shared';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
 import { SPACE_MANAGER_HANDLE } from '../space/agent-handle.ts';
@@ -19,6 +19,11 @@ import {
   type UpdateSpaceAgentInput,
 } from '../space/agents/update-space-agent-pipeline.ts';
 import { getBuiltInSpaceAgentTemplates } from '../space/managers/space-agent-template-manager.ts';
+import {
+  publishUnifiedAgentCreated,
+  publishUnifiedAgentDeleted,
+  publishUnifiedAgentUpdated,
+} from '../space/agents/unified-agent-events.ts';
 
 const METHOD_PREFIX = 'spaceAgentV2';
 
@@ -48,6 +53,16 @@ export function toBindableSession(session: SessionLookup | null): BindableSessio
   return { type: session.type, spaceId: session.context?.spaceId ?? null };
 }
 
+export function toLegacyAgentShape(agent: SpaceAgent): SpaceLongHorizonAgent {
+  return {
+    ...agent,
+    templateKey: null,
+    description: agent.description ?? undefined,
+    modelPool: agent.modelPool ?? undefined,
+    toolPermissions: agent.tools ? { tools: [...agent.tools] } : {},
+  } as unknown as SpaceLongHorizonAgent;
+}
+
 async function publishAgentEvent(
   deps: SpaceAgentV2Deps,
   topic: 'spaceAgentV2.created' | 'spaceAgentV2.updated',
@@ -57,6 +72,12 @@ async function publishAgentEvent(
   await deps.internalEventBus
     .publish(topic, { sessionId: `space:${agent.spaceId}`, spaceId: agent.spaceId, agent })
     .catch(() => {});
+  const legacy = toLegacyAgentShape(agent);
+  if (topic === 'spaceAgentV2.created') {
+    await publishUnifiedAgentCreated(deps.internalEventBus, legacy);
+    return;
+  }
+  await publishUnifiedAgentUpdated(deps.internalEventBus, legacy);
 }
 
 async function publishAgentDeleted(
@@ -68,6 +89,7 @@ async function publishAgentDeleted(
   await deps.internalEventBus
     .publish('spaceAgentV2.deleted', { sessionId: `space:${spaceId}`, spaceId, agentId })
     .catch(() => {});
+  await publishUnifiedAgentDeleted(deps.internalEventBus, spaceId, agentId);
 }
 
 function method(name: string): string {

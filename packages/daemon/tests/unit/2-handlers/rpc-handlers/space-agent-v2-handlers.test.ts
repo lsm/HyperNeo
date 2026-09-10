@@ -247,12 +247,32 @@ describe('setupSpaceAgentV2Handlers', () => {
         tools: ['Read'],
       });
 
-      expect(published).toHaveLength(1);
-      expect(published[0].topic).toBe('spaceAgentV2.created');
+      expect(published.map((event) => event.topic)).toEqual([
+        'spaceAgentV2.created',
+        'spaceAgent.created',
+      ]);
       const payload = published[0].payload as { spaceId: string; agent: SpaceAgent };
       expect(payload.spaceId).toBe('space-1');
       expect(payload.agent.id).toBe(agent.id);
       expect(payload.agent.tools).toEqual(['Read']);
+    });
+
+    test('mirrors creation to the legacy event so pre-V2 caches stay current', async () => {
+      const { agent } = await call<{ agent: SpaceAgent }>(handlers, 'spaceAgentV2.create', {
+        spaceId: 'space-1',
+        displayName: 'Publisher',
+        tools: ['Read'],
+      });
+
+      const legacy = published.find((event) => event.topic === 'spaceAgent.created');
+      const payload = legacy?.payload as {
+        spaceId: string;
+        agent: { id: string; templateKey: string | null; toolPermissions: { tools?: string[] } };
+      };
+      expect(payload.spaceId).toBe('space-1');
+      expect(payload.agent.id).toBe(agent.id);
+      expect(payload.agent.templateKey).toBeNull();
+      expect(payload.agent.toolPermissions).toEqual({ tools: ['Read'] });
     });
 
     test('does not publish when creation is rejected', async () => {
@@ -411,7 +431,7 @@ describe('setupSpaceAgentV2Handlers', () => {
 
       await call(handlers, 'spaceAgentV2.update', { id: created.id, displayName: 'Renamed' });
 
-      expect(published.map((p) => p.topic)).toEqual(['spaceAgentV2.updated']);
+      expect(published.map((p) => p.topic)).toEqual(['spaceAgentV2.updated', 'spaceAgent.updated']);
     });
 
     test('requires an id', async () => {
@@ -538,9 +558,13 @@ describe('setupSpaceAgentV2Handlers', () => {
 
       await call(handlers, 'spaceAgentV2.delete', { id: created.id });
 
-      expect(published).toHaveLength(1);
-      expect(published[0].topic).toBe('spaceAgentV2.deleted');
-      expect(published[0].payload).toMatchObject({ spaceId: 'space-1', agentId: created.id });
+      expect(published.map((event) => event.topic)).toEqual([
+        'spaceAgentV2.deleted',
+        'spaceAgent.deleted',
+      ]);
+      for (const event of published) {
+        expect(event.payload).toMatchObject({ spaceId: 'space-1', agentId: created.id });
+      }
     });
   });
 });

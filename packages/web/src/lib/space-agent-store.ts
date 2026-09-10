@@ -1,7 +1,6 @@
 import type { CreateSpaceAgentParams, SpaceAgent, UpdateSpaceAgentParams } from '@hyperneo/shared';
 import { signal } from '@preact/signals';
 import { connectionManager } from './connection-manager';
-import { spaceStore } from './space-store';
 
 export interface CreateSpaceAgentRequest extends Omit<CreateSpaceAgentParams, 'handle'> {
   handle?: string;
@@ -69,7 +68,6 @@ export class SpaceAgentStore {
       await this.subscribe(spaceId);
     } catch {}
     await this.refresh();
-    this.syncLegacyAgentCache();
   }
 
   async create(params: CreateSpaceAgentRequest): Promise<SpaceAgent> {
@@ -103,22 +101,15 @@ export class SpaceAgentStore {
     const index = current.findIndex((a) => a.id === agent.id);
     if (index === -1) {
       this.agents.value = sortAgents([...current, agent]);
-    } else {
-      const next = [...current];
-      next[index] = agent;
-      this.agents.value = next;
+      return;
     }
-    this.syncLegacyAgentCache();
+    const next = [...current];
+    next[index] = agent;
+    this.agents.value = next;
   }
 
   drop(id: string): void {
     this.agents.value = this.agents.value.filter((a) => a.id !== id);
-    this.syncLegacyAgentCache();
-  }
-
-  private syncLegacyAgentCache(): void {
-    if (spaceStore.spaceId.value !== this.spaceId.value) return;
-    void spaceStore.refreshAgents().catch(() => {});
   }
 
   private async subscribe(spaceId: string): Promise<void> {

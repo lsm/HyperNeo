@@ -1,7 +1,6 @@
 import type { SpaceAgent } from '@hyperneo/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectionManager } from '../connection-manager.ts';
-import { spaceStore } from '../space-store.ts';
 import { SpaceAgentStore } from '../space-agent-store.ts';
 
 let eventHandlers: Map<string, Set<(event: unknown) => void>>;
@@ -77,79 +76,6 @@ function makeMockHub() {
     }),
   };
 }
-
-describe('legacy agent cache sync', () => {
-  let store: SpaceAgentStore;
-
-  beforeEach(() => {
-    eventHandlers = new Map();
-    requests = [];
-    failNextRequest = null;
-    joinedChannels = [];
-    leftChannels = [];
-    listResult = [];
-    const hub = makeMockHub();
-    vi.spyOn(connectionManager, 'getHubIfConnected').mockReturnValue(
-      hub as unknown as ReturnType<typeof connectionManager.getHubIfConnected>
-    );
-    store = new SpaceAgentStore();
-  });
-
-  it('refreshes the legacy store after a local mutation so both caches agree', async () => {
-    const refresh = vi.spyOn(spaceStore, 'refreshAgents').mockResolvedValue(undefined);
-    spaceStore.spaceId.value = 'space-1';
-    await store.selectSpace('space-1');
-    refresh.mockClear();
-
-    await store.create({ spaceId: 'space-1', displayName: 'New' });
-
-    expect(refresh).toHaveBeenCalledTimes(1);
-    refresh.mockRestore();
-    spaceStore.spaceId.value = null;
-  });
-
-  it('refreshes the legacy store when another client deletes an agent', async () => {
-    const refresh = vi.spyOn(spaceStore, 'refreshAgents').mockResolvedValue(undefined);
-    spaceStore.spaceId.value = 'space-1';
-    listResult = [makeAgent('a')];
-    await store.selectSpace('space-1');
-    refresh.mockClear();
-
-    fire('spaceAgentV2.deleted', { spaceId: 'space-1', agentId: 'a' });
-
-    expect(refresh).toHaveBeenCalledTimes(1);
-    refresh.mockRestore();
-    spaceStore.spaceId.value = null;
-  });
-
-  it('syncs the legacy store after a recovery refresh, which bypasses upsert', async () => {
-    const refresh = vi.spyOn(spaceStore, 'refreshAgents').mockResolvedValue(undefined);
-    spaceStore.spaceId.value = 'space-1';
-    await store.selectSpace('space-1');
-    refresh.mockClear();
-
-    listResult = [makeAgent('changed-while-offline')];
-    await store.recover();
-
-    expect(store.agents.value.map((a) => a.id)).toEqual(['changed-while-offline']);
-    expect(refresh).toHaveBeenCalledTimes(1);
-    refresh.mockRestore();
-    spaceStore.spaceId.value = null;
-  });
-
-  it('does not touch the legacy store when it is on a different space', async () => {
-    const refresh = vi.spyOn(spaceStore, 'refreshAgents').mockResolvedValue(undefined);
-    spaceStore.spaceId.value = 'space-9';
-    await store.selectSpace('space-1');
-    refresh.mockClear();
-
-    await store.create({ spaceId: 'space-1', displayName: 'New' });
-
-    expect(refresh).not.toHaveBeenCalled();
-    refresh.mockRestore();
-    spaceStore.spaceId.value = null;
-  });
-});
 
 describe('SpaceAgentStore', () => {
   let store: SpaceAgentStore;
