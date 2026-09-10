@@ -100,6 +100,7 @@ import {
 } from './lib/job-queue-constants.ts';
 import { createMessageDeliveryHandler } from './lib/job-handlers/message-delivery.handler.ts';
 import { registerMailboxJobs } from './lib/mailbox/registration.ts';
+import { resolveMailboxSession } from './lib/mailbox/session-lookup.ts';
 import { MAILBOX_LANE } from './lib/mailbox/enqueue.ts';
 import { settleMessageDeliveryDeadLetter } from './lib/job-handlers/message-delivery-dead-letter.ts';
 import { asMessageDeliveryPayload } from './lib/agent/message-delivery.ts';
@@ -959,29 +960,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
       sessionManager,
       isSessionHeldByTaskLimit: (sessionId) =>
         taskAgentManager?.isSessionHeldByTaskRateLimit(sessionId) ?? false,
-      getSession: async (sessionId: string) => {
-        const indexed = taskAgentManager?.getSubSession(sessionId);
-        if (indexed && sessionManager?.getCachedSession(sessionId) === indexed) {
-          const data = indexed.getSessionData();
-          if (data.status === 'ended') return null;
-          if (isWorkflowSubSessionIdentity(sessionId) && !hasRuntimeNodeAgentServer(data.config)) {
-            return null;
-          }
-          return indexed;
-        }
-        const session = (await sessionManager?.getSessionAsync(sessionId)) ?? null;
-        if (session && session.getSessionData().status === 'ended') {
-          return null;
-        }
-        if (
-          session &&
-          isWorkflowSubSessionIdentity(sessionId) &&
-          !hasRuntimeNodeAgentServer(session.getSessionData().config)
-        ) {
-          return null;
-        }
-        return session;
-      },
+      getSession: (sessionId) => resolveMailboxSession(sessionId, sessionManager, taskAgentManager),
       isSessionArchived: (sessionId: string) =>
         reactiveDb?.db.getSession(sessionId)?.status === 'archived',
       logError,
