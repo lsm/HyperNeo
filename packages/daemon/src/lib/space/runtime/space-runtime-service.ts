@@ -205,7 +205,6 @@ export class SpaceRuntimeService {
     this.templateManager = new SpaceAgentTemplateManager(
       new SpaceAgentTemplateRepository(this.config.db),
       undefined,
-      new SpaceWorkflowRepository(this.config.db),
       templateInstanceScanFromRepo(new SpaceLongHorizonAgentRepository(this.config.db))
     );
     this.queueHealthMetrics = config.queueHealthMetrics ?? new ExternalEventQueueMetrics();

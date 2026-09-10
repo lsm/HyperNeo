@@ -30,38 +30,6 @@ function createTestDb(): Database {
 	`);
 
   db.exec(`
-		CREATE TABLE IF NOT EXISTS tasks (
-			id TEXT PRIMARY KEY,
-			room_id TEXT NOT NULL,
-			title TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled', 'archived', 'rate_limited', 'usage_limited')),
-			priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
-			progress INTEGER,
-			current_step TEXT,
-			result TEXT,
-			error TEXT,
-			depends_on TEXT DEFAULT '[]',
-			created_at INTEGER NOT NULL,
-			started_at INTEGER,
-			completed_at INTEGER,
-			task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
-			assigned_agent TEXT DEFAULT 'coder',
-			created_by_task_id TEXT,
-			archived_at INTEGER,
-			active_session TEXT,
-			pr_url TEXT,
-			pr_number INTEGER,
-			pr_created_at INTEGER,
-			input_draft TEXT,
-			updated_at INTEGER,
-			short_id TEXT,
-			restrictions TEXT,
-			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-		)
-	`);
-
-  db.exec(`
 		CREATE TABLE IF NOT EXISTS goals (
 			id TEXT PRIMARY KEY,
 			room_id TEXT NOT NULL,
@@ -112,21 +80,6 @@ function insertRoom(db: Database, id: string, name = 'Test Room'): void {
     now,
     now
   );
-}
-
-function insertTask(
-  db: Database,
-  roomId: string,
-  id: string,
-  title: string,
-  shortId?: string,
-  status = 'pending'
-): void {
-  const now = Date.now();
-  db.prepare(
-    `INSERT INTO tasks (id, room_id, title, description, status, created_at, updated_at, short_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, roomId, title, '', status, now, now, shortId ?? null);
 }
 
 function insertGoal(
@@ -214,97 +167,6 @@ describe('reference.search handler', () => {
 
   afterEach(() => {
     db.close();
-  });
-
-  describe('task search', () => {
-    it('returns tasks matching the query', async () => {
-      insertTask(db, roomId, 'task-1', 'Fix authentication bug', 't-1');
-      insertTask(db, roomId, 'task-2', 'Add login page', 't-2');
-      insertTask(db, roomId, 'task-3', 'Refactor database layer', 't-3');
-
-      const sessions = new Map([['sess-1', { roomId }]]);
-      const { hub, call } = buildMessageHub();
-      setupReferenceHandlers(hub, {
-        db: db as never,
-        reactiveDb: buildReactiveDb(),
-        shortIdAllocator: buildShortIdAllocator(),
-        sessionManager: buildSessionManager(sessions) as never,
-        fileIndex: buildFileIndex(),
-      });
-
-      const result = (await call('reference.search', {
-        sessionId: 'sess-1',
-        query: 'auth',
-      })) as { results: Array<{ type: string; id: string; displayText: string }> };
-
-      expect(result.results).toHaveLength(1);
-      expect(result.results[0].type).toBe('task');
-      expect(result.results[0].id).toBe('task-1');
-      expect(result.results[0].displayText).toBe('Fix authentication bug');
-    });
-
-    it('includes shortId when available', async () => {
-      insertTask(db, roomId, 'task-1', 'Implement feature', 't-42');
-
-      const sessions = new Map([['sess-1', { roomId }]]);
-      const { hub, call } = buildMessageHub();
-      setupReferenceHandlers(hub, {
-        db: db as never,
-        reactiveDb: buildReactiveDb(),
-        shortIdAllocator: buildShortIdAllocator(),
-        sessionManager: buildSessionManager(sessions) as never,
-        fileIndex: buildFileIndex(),
-      });
-
-      const result = (await call('reference.search', {
-        sessionId: 'sess-1',
-        query: 'Implement',
-      })) as { results: Array<{ shortId?: string }> };
-
-      expect(result.results[0].shortId).toBe('t-42');
-    });
-
-    it('includes task status as subtitle', async () => {
-      insertTask(db, roomId, 'task-1', 'Deploy app', 't-1', 'in_progress');
-
-      const sessions = new Map([['sess-1', { roomId }]]);
-      const { hub, call } = buildMessageHub();
-      setupReferenceHandlers(hub, {
-        db: db as never,
-        reactiveDb: buildReactiveDb(),
-        shortIdAllocator: buildShortIdAllocator(),
-        sessionManager: buildSessionManager(sessions) as never,
-        fileIndex: buildFileIndex(),
-      });
-
-      const result = (await call('reference.search', {
-        sessionId: 'sess-1',
-        query: 'Deploy',
-      })) as { results: Array<{ subtitle?: string }> };
-
-      expect(result.results[0].subtitle).toBe('in_progress');
-    });
-
-    it('returns empty task results when query does not match', async () => {
-      insertTask(db, roomId, 'task-1', 'Fix login flow', 't-1');
-
-      const sessions = new Map([['sess-1', { roomId }]]);
-      const { hub, call } = buildMessageHub();
-      setupReferenceHandlers(hub, {
-        db: db as never,
-        reactiveDb: buildReactiveDb(),
-        shortIdAllocator: buildShortIdAllocator(),
-        sessionManager: buildSessionManager(sessions) as never,
-        fileIndex: buildFileIndex(),
-      });
-
-      const result = (await call('reference.search', {
-        sessionId: 'sess-1',
-        query: 'xxxxnonexistent',
-      })) as { results: unknown[] };
-
-      expect(result.results).toHaveLength(0);
-    });
   });
 
   describe('goal search', () => {
@@ -432,27 +294,6 @@ describe('reference.search handler', () => {
   });
 
   describe('standalone sessions (no room context)', () => {
-    it('returns no task results for sessions without roomId', async () => {
-      insertTask(db, roomId, 'task-1', 'Some task', 't-1');
-
-      const sessions = new Map([['sess-standalone', {}]]);
-      const { hub, call } = buildMessageHub();
-      setupReferenceHandlers(hub, {
-        db: db as never,
-        reactiveDb: buildReactiveDb(),
-        shortIdAllocator: buildShortIdAllocator(),
-        sessionManager: buildSessionManager(sessions) as never,
-        fileIndex: buildFileIndex(),
-      });
-
-      const result = (await call('reference.search', {
-        sessionId: 'sess-standalone',
-        query: 'Some',
-      })) as { results: Array<{ type: string }> };
-
-      expect(result.results.filter((r) => r.type === 'task')).toHaveLength(0);
-    });
-
     it('returns no goal results for sessions without roomId', async () => {
       insertGoal(db, roomId, 'goal-1', 'Some goal', 'g-1');
 
@@ -539,9 +380,9 @@ describe('reference.search handler', () => {
       expect(result.results).toHaveLength(0);
     });
 
-    it('traversal guard is in the file/folder branch — task search is unaffected', async () => {
-      insertTask(db, roomId, 'task-1', 'traversal fix', 't-1');
-      insertTask(db, roomId, 'task-2', 'other task', 't-2');
+    it('traversal guard is in the file/folder branch — goal search is unaffected', async () => {
+      insertGoal(db, roomId, 'goal-1', 'traversal fix', 'g-1');
+      insertGoal(db, roomId, 'goal-2', 'other goal', 'g-2');
 
       const sessions = new Map([['sess-1', { roomId }]]);
       const { hub, call } = buildMessageHub();
@@ -553,27 +394,26 @@ describe('reference.search handler', () => {
         fileIndex: buildFileIndex(),
       });
 
-      const resultTask = (await call('reference.search', {
+      const resultGoal = (await call('reference.search', {
         sessionId: 'sess-1',
         query: 'traversal',
-        types: ['task'],
+        types: ['goal'],
       })) as { results: Array<{ type: string; id: string }> };
-      expect(resultTask.results.filter((r) => r.type === 'task')).toHaveLength(1);
-      expect(resultTask.results[0].id).toBe('task-1');
+      expect(resultGoal.results.filter((r) => r.type === 'goal')).toHaveLength(1);
+      expect(resultGoal.results[0].id).toBe('goal-1');
 
       const resultMixed = (await call('reference.search', {
         sessionId: 'sess-1',
         query: 'traversal',
-        types: ['task', 'file'],
+        types: ['goal', 'file'],
       })) as { results: Array<{ type: string }> };
-      expect(resultMixed.results.filter((r) => r.type === 'task')).toHaveLength(1);
+      expect(resultMixed.results.filter((r) => r.type === 'goal')).toHaveLength(1);
       expect(resultMixed.results.filter((r) => r.type === 'file')).toHaveLength(0);
     });
   });
 
   describe('type filtering', () => {
-    it('returns only task results when types=["task"]', async () => {
-      insertTask(db, roomId, 'task-1', 'Auth feature', 't-1');
+    it('returns only goal results when types=["goal"]', async () => {
       insertGoal(db, roomId, 'goal-1', 'Auth goal', 'g-1');
       const files: FileIndexEntry[] = [{ path: 'auth.ts', name: 'auth.ts', type: 'file' }];
 
@@ -590,15 +430,15 @@ describe('reference.search handler', () => {
       const result = (await call('reference.search', {
         sessionId: 'sess-1',
         query: 'Auth',
-        types: ['task'],
+        types: ['goal'],
       })) as { results: Array<{ type: string }> };
 
-      expect(result.results.every((r) => r.type === 'task')).toBe(true);
+      expect(result.results.every((r) => r.type === 'goal')).toBe(true);
       expect(result.results).toHaveLength(1);
     });
 
     it('returns only file results when types=["file"]', async () => {
-      insertTask(db, roomId, 'task-1', 'index task', 't-1');
+      insertGoal(db, roomId, 'goal-1', 'index goal', 'g-1');
       const files: FileIndexEntry[] = [
         { path: 'src/index.ts', name: 'index.ts', type: 'file' },
         { path: 'src', name: 'src', type: 'folder' },
@@ -624,7 +464,6 @@ describe('reference.search handler', () => {
     });
 
     it('returns all types when types is omitted', async () => {
-      insertTask(db, roomId, 'task-1', 'main feature', 't-1');
       insertGoal(db, roomId, 'goal-1', 'main goal', 'g-1');
       const files: FileIndexEntry[] = [
         { path: 'main.ts', name: 'main.ts', type: 'file' },
@@ -647,7 +486,7 @@ describe('reference.search handler', () => {
       })) as { results: Array<{ type: string }> };
 
       const types = new Set(result.results.map((r) => r.type));
-      expect(types.has('task')).toBe(true);
+      expect(types.has('task')).toBe(false);
       expect(types.has('goal')).toBe(true);
       expect(types.has('file')).toBe(true);
     });
@@ -655,9 +494,9 @@ describe('reference.search handler', () => {
 
   describe('relevance sorting', () => {
     it('sorts exact name match above starts-with above contains', async () => {
-      insertTask(db, roomId, 'task-1', 'login', 't-1');
-      insertTask(db, roomId, 'task-2', 'login page', 't-2');
-      insertTask(db, roomId, 'task-3', 'fix login bug', 't-3');
+      insertGoal(db, roomId, 'goal-1', 'login', 'g-1');
+      insertGoal(db, roomId, 'goal-2', 'login page', 'g-2');
+      insertGoal(db, roomId, 'goal-3', 'fix login bug', 'g-3');
 
       const sessions = new Map([['sess-1', { roomId }]]);
       const { hub, call } = buildMessageHub();
@@ -672,12 +511,12 @@ describe('reference.search handler', () => {
       const result = (await call('reference.search', {
         sessionId: 'sess-1',
         query: 'login',
-        types: ['task'],
+        types: ['goal'],
       })) as { results: Array<{ id: string }> };
 
-      expect(result.results[0].id).toBe('task-1');
-      expect(result.results[1].id).toBe('task-2');
-      expect(result.results[2].id).toBe('task-3');
+      expect(result.results[0].id).toBe('goal-1');
+      expect(result.results[1].id).toBe('goal-2');
+      expect(result.results[2].id).toBe('goal-3');
     });
   });
 
@@ -713,7 +552,7 @@ describe('reference.search handler', () => {
     });
 
     it('returns empty results for whitespace-only query without room context', async () => {
-      insertTask(db, roomId, 'task-1', 'Some task', 't-1');
+      insertGoal(db, roomId, 'goal-1', 'Some goal', 'g-1');
 
       const sessions = new Map();
       const { hub, call } = buildMessageHub();
@@ -733,8 +572,8 @@ describe('reference.search handler', () => {
       expect(result.results).toHaveLength(0);
     });
 
-    it('returns all tasks for empty query when room context exists', async () => {
-      insertTask(db, roomId, 'task-1', 'Some task', 't-1');
+    it('returns all goals for empty query when room context exists', async () => {
+      insertGoal(db, roomId, 'goal-1', 'Some goal', 'g-1');
 
       const sessions = new Map([['sess-1', { roomId }]]);
       const { hub, call } = buildMessageHub();
@@ -752,7 +591,7 @@ describe('reference.search handler', () => {
       })) as { results: Array<{ type: string }> };
 
       expect(result.results).toHaveLength(1);
-      expect(result.results[0].type).toBe('task');
+      expect(result.results[0].type).toBe('goal');
     });
   });
 });

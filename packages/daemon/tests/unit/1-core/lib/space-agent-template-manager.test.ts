@@ -3,7 +3,6 @@ import type {
   CreateSpaceAgentTemplateParams,
   ModelInfo,
   SpaceAgentTemplate,
-  SpaceWorkflow,
 } from '@hyperneo/shared';
 import { setModelsCache } from '../../../../src/lib/model-service';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
@@ -68,20 +67,6 @@ function makeModelInfo(id: string, alias: string, provider = 'anthropic'): Model
     description: '',
     releaseDate: '2025-01-01',
     available: true,
-  };
-}
-
-function workflowNamed(name: string): SpaceWorkflow {
-  return {
-    id: `wf-${name}`,
-    spaceId: 'sp-1',
-    name,
-    nodes: [],
-    startNodeId: '',
-    tags: [],
-    createdAt: 0,
-    updatedAt: 0,
-    completionAutonomyLevel: 3,
   };
 }
 
@@ -977,64 +962,18 @@ describe('SpaceAgentTemplateManager', () => {
       expect(manager.getByKey('release-readiness.custom')).not.toBeNull();
     });
 
-    test('blocks deletion while a workflow references the template', async () => {
+    test('deletes a template that workflow slots still reference', async () => {
       await manager.create(fullParams());
-      const guarded = new SpaceAgentTemplateManager(repo, () => BUILT_INS, {
-        getWorkflowsReferencingTemplate: (key) =>
-          key === 'release-readiness.custom'
-            ? [workflowNamed('Release Flow'), workflowNamed('Guard Flow')]
-            : [],
-      });
 
-      const result = guarded.delete('release-readiness.custom');
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error).toContain('Release Flow');
-        expect(result.error).toContain('Guard Flow');
-      }
-      expect(repo.getByKey('release-readiness.custom')).not.toBeNull();
-    });
-
-    test('deletes when the reference scan reports no referencing workflow', async () => {
-      await manager.create(fullParams());
-      const guarded = new SpaceAgentTemplateManager(repo, () => BUILT_INS, {
-        getWorkflowsReferencingTemplate: () => [],
-      });
-
-      const result = guarded.delete('release-readiness.custom');
+      const result = manager.delete('release-readiness.custom');
 
       expect(result.ok).toBe(true);
       expect(repo.getByKey('release-readiness.custom')).toBeNull();
     });
 
-    test('blocks deletion inside the pipeline when references report usage', async () => {
-      await manager.create(fullParams());
-      const scan = { getWorkflowsReferencingTemplate: () => [] as never[] };
-      const managerWithScan = new SpaceAgentTemplateManager(repo, () => [], {
-        ...scan,
-        getWorkflowsReferencingTemplate: () => [{ name: 'Release' } as never],
-      });
-
-      const workflowBlocked = managerWithScan.delete('release-readiness.custom');
-      expect(workflowBlocked.ok).toBe(false);
-      if (!workflowBlocked.ok) {
-        expect(workflowBlocked.error).toBe(
-          'Template "release-readiness.custom" is referenced by workflow slot(s) in: Release. ' +
-            'Remove or replace the templateKey in those workflows — or wait for their in-flight runs ' +
-            'to finish — before deleting the template.'
-        );
-      }
-      expect(manager.getByKey('release-readiness.custom')).not.toBeNull();
-
-      const allowed = manager.delete('release-readiness.custom');
-      expect(allowed.ok).toBe(true);
-      expect(manager.getByKey('release-readiness.custom')).toBeNull();
-    });
-
     test('deletes a template that agents were created from', async () => {
       await manager.create(fullParams());
-      const withInstances = new SpaceAgentTemplateManager(repo, () => BUILT_INS, undefined, {
+      const withInstances = new SpaceAgentTemplateManager(repo, () => BUILT_INS, {
         clearArchivedInstances: () => {},
       });
 
@@ -1047,7 +986,7 @@ describe('SpaceAgentTemplateManager', () => {
     test('clears the template key on archived instances after deleting', async () => {
       await manager.create(fullParams());
       const cleared: string[] = [];
-      const withInstances = new SpaceAgentTemplateManager(repo, () => BUILT_INS, undefined, {
+      const withInstances = new SpaceAgentTemplateManager(repo, () => BUILT_INS, {
         clearArchivedInstances: (key) => cleared.push(key),
       });
 
@@ -1179,21 +1118,14 @@ describe('SpaceAgentTemplateManager', () => {
       expect(repo.getByKey('release-readiness.custom')).not.toBeNull();
     });
 
-    test('halts before delete when the reference scan finds a workflow', async () => {
+    test('deletes through the pipeline regardless of workflow usage', async () => {
       await manager.create(fullParams());
 
-      const ctx = runDeleteTemplate({
-        repo,
-        key: 'release-readiness.custom',
-        workflowReferenceScan: {
-          getWorkflowsReferencingTemplate: () => [workflowNamed('Release Flow')],
-        },
-      });
+      const ctx = runDeleteTemplate({ repo, key: 'release-readiness.custom' });
 
-      expect(ctx.error).toContain('Release Flow');
-      expect(ctx.referencingWorkflows).toHaveLength(1);
-      expect(ctx.deleted).toBeUndefined();
-      expect(repo.getByKey('release-readiness.custom')).not.toBeNull();
+      expect(ctx.error).toBeUndefined();
+      expect(ctx.deleted).toBe(true);
+      expect(repo.getByKey('release-readiness.custom')).toBeNull();
     });
   });
 

@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { ReferenceResolver } from '../../../src/lib/agent/reference-resolver';
 import type {
   ResolutionContext,
-  TaskRepoLike,
   GoalRepoLike,
   SpaceTaskRepoLike,
 } from '../../../src/lib/agent/reference-resolver';
@@ -527,21 +526,6 @@ const SPACE_ID = 'space-111';
 const OTHER_SPACE_ID = 'space-222';
 const WORKSPACE = '/workspace';
 
-function makeTask(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 'task-uuid-1',
-    shortId: 't-1',
-    roomId: ROOM_ID,
-    title: 'Default Task',
-    description: '',
-    status: 'pending',
-    priority: 'normal',
-    dependsOn: [],
-    createdAt: Date.now(),
-    ...overrides,
-  };
-}
-
 function makeSpaceTask(overrides: Record<string, unknown> = {}) {
   return {
     id: 'space-task-uuid-1',
@@ -573,10 +557,6 @@ function makeGoal(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function mockTaskRepo(returnValue?: ReturnType<typeof makeTask>): TaskRepoLike {
-  return { getTaskByShortId: mock(() => returnValue ?? null) };
-}
-
 function mockGoalRepo(returnValue?: ReturnType<typeof makeGoal>): GoalRepoLike {
   return { getGoalByShortId: mock(() => returnValue ?? null) };
 }
@@ -584,71 +564,6 @@ function mockGoalRepo(returnValue?: ReturnType<typeof makeGoal>): GoalRepoLike {
 function mockSpaceTaskRepo(returnValue?: ReturnType<typeof makeSpaceTask>): SpaceTaskRepoLike {
   return { getTask: mock(() => returnValue ?? null) };
 }
-
-describe('ReferenceResolver — room task resolution', () => {
-  test('resolves a room task by shortId', async () => {
-    const task = makeTask({ shortId: 't-1', title: 'Implement auth', priority: 'high' });
-    const resolver = new ReferenceResolver({ taskRepo: mockTaskRepo(task) });
-
-    const result = await resolver.resolveReference(
-      { type: 'task', id: 't-1', displayText: '@ref{task:t-1}' },
-      { roomId: ROOM_ID, workspacePath: WORKSPACE }
-    );
-
-    expect(result).not.toBeNull();
-    expect(result!.type).toBe('task');
-    expect(result!.id).toBe(task.id);
-    const data = result!.data as typeof task;
-    expect(data.shortId).toBe('t-1');
-    expect(data.title).toBe('Implement auth');
-    expect(data.roomId).toBe(ROOM_ID);
-  });
-
-  test('returns null when session has no room context', async () => {
-    const resolver = new ReferenceResolver({ taskRepo: mockTaskRepo(makeTask()) });
-
-    const result = await resolver.resolveReference(
-      { type: 'task', id: 't-1', displayText: '@ref{task:t-1}' },
-      { workspacePath: WORKSPACE }
-    );
-
-    expect(result).toBeNull();
-  });
-
-  test('returns null for unrecognized task ID format (no t- or st- prefix)', async () => {
-    const resolver = new ReferenceResolver({ taskRepo: mockTaskRepo(makeTask()) });
-
-    const result = await resolver.resolveReference(
-      { type: 'task', id: 'abc123', displayText: '@ref{task:abc123}' },
-      { roomId: ROOM_ID, workspacePath: WORKSPACE }
-    );
-
-    expect(result).toBeNull();
-  });
-
-  test('returns null when task does not exist', async () => {
-    const resolver = new ReferenceResolver({ taskRepo: mockTaskRepo() });
-
-    const result = await resolver.resolveReference(
-      { type: 'task', id: 't-999', displayText: '@ref{task:t-999}' },
-      { roomId: ROOM_ID, workspacePath: WORKSPACE }
-    );
-
-    expect(result).toBeNull();
-  });
-
-  test('cross-room check: rejects task whose roomId differs from context', async () => {
-    const task = makeTask({ roomId: OTHER_ROOM_ID });
-    const resolver = new ReferenceResolver({ taskRepo: mockTaskRepo(task) });
-
-    const result = await resolver.resolveReference(
-      { type: 'task', id: 't-1', displayText: '@ref{task:t-1}' },
-      { roomId: ROOM_ID, workspacePath: WORKSPACE }
-    );
-
-    expect(result).toBeNull();
-  });
-});
 
 describe('ReferenceResolver — space task resolution', () => {
   test('resolves a space task by st-<uuid> reference', async () => {
@@ -783,37 +698,42 @@ describe('ReferenceResolver — goal resolution', () => {
 
 describe('ReferenceResolver.resolveAllReferences — task/goal', () => {
   test('resolves task and goal references together', async () => {
-    const task = makeTask({ shortId: 't-1' });
+    const task = makeSpaceTask();
     const goal = makeGoal({ shortId: 'g-1' });
     const resolver = new ReferenceResolver({
-      taskRepo: mockTaskRepo(task),
+      spaceTaskRepo: mockSpaceTaskRepo(task),
       goalRepo: mockGoalRepo(goal),
     });
 
-    const text = 'Work on @ref{task:t-1} toward @ref{goal:g-1}';
+    const text = 'Work on @ref{task:st-space-task-uuid-1} toward @ref{goal:g-1}';
     const result = await resolver.resolveAllReferences(text, {
       roomId: ROOM_ID,
+      spaceId: SPACE_ID,
       workspacePath: WORKSPACE,
     });
 
     expect(Object.keys(result)).toHaveLength(2);
-    expect(result['@ref{task:t-1}']).toBeDefined();
+    expect(result['@ref{task:st-space-task-uuid-1}']).toBeDefined();
     expect(result['@ref{goal:g-1}']).toBeDefined();
   });
 
   test('omits unresolvable task references', async () => {
-    const task = makeTask({ shortId: 't-1' });
-    const tRepo: TaskRepoLike = {
-      getTaskByShortId: mock((_, shortId: string) => (shortId === 't-1' ? task : null)),
+    const task = makeSpaceTask();
+    const tRepo: SpaceTaskRepoLike = {
+      getTask: mock((id: string) => (id === task.id ? task : null)),
     };
-    const resolver = new ReferenceResolver({ taskRepo: tRepo });
+    const resolver = new ReferenceResolver({ spaceTaskRepo: tRepo });
 
-    const result = await resolver.resolveAllReferences('@ref{task:t-1} @ref{task:t-999}', {
-      roomId: ROOM_ID,
-      workspacePath: WORKSPACE,
-    });
+    const result = await resolver.resolveAllReferences(
+      '@ref{task:st-space-task-uuid-1} @ref{task:st-missing}',
+      {
+        roomId: ROOM_ID,
+        spaceId: SPACE_ID,
+        workspacePath: WORKSPACE,
+      }
+    );
 
     expect(Object.keys(result)).toHaveLength(1);
-    expect(result['@ref{task:t-1}']).toBeDefined();
+    expect(result['@ref{task:st-space-task-uuid-1}']).toBeDefined();
   });
 });

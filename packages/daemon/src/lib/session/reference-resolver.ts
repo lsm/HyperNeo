@@ -1,9 +1,6 @@
 import type { ReferenceMention, ReferenceMetadata, ResolvedReference } from '@hyperneo/shared';
 import { REFERENCE_PATTERN } from '@hyperneo/shared';
-import type {
-  TaskRepoForReference,
-  GoalRepoForReference,
-} from '../rpc-handlers/reference-handlers.ts';
+import type { GoalRepoForReference } from '../rpc-handlers/reference-handlers.ts';
 import { resolveFile, resolveFolder } from '../rpc-handlers/reference-handlers.ts';
 import { Logger } from '../logger.ts';
 
@@ -21,7 +18,6 @@ export interface PreprocessedMessage {
 }
 
 export interface ReferenceResolverDeps {
-  taskRepo: TaskRepoForReference;
   goalRepo: GoalRepoForReference;
 }
 
@@ -53,9 +49,6 @@ export class ReferenceResolver {
   ): Promise<ResolvedReference | null> {
     try {
       switch (mention.type) {
-        case 'task':
-          return this.resolveTask(mention.id, context.roomId);
-
         case 'goal':
           return this.resolveGoal(mention.id, context.roomId);
 
@@ -106,23 +99,6 @@ export class ReferenceResolver {
     }
 
     return metadata;
-  }
-
-  private resolveTask(id: string, roomId: string | null): ResolvedReference | null {
-    let task = this.deps.taskRepo.getTask(id);
-    if (!task && roomId) {
-      task = this.deps.taskRepo.getTaskByShortId(roomId, id);
-    }
-
-    if (!task) {
-      return null;
-    }
-
-    if (roomId && (task as { roomId?: string }).roomId !== roomId) {
-      return null;
-    }
-
-    return { type: 'task', id, data: task };
   }
 
   private resolveGoal(id: string, roomId: string | null): ResolvedReference | null {

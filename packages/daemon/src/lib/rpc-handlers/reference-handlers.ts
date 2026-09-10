@@ -7,7 +7,6 @@ import type {
 } from '@hyperneo/shared';
 import type { ReactiveDatabase } from '../../storage/reactive-database.ts';
 import { GoalRepository } from '../../storage/repositories/goal-repository.ts';
-import { TaskRepository } from '../../storage/repositories/task-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
 import type { FileIndex } from '../file-index.ts';
 import { FileManager } from '../file-manager.ts';
@@ -23,11 +22,6 @@ const BINARY_DETECTION_SAMPLE_BYTES = 8_192;
 
 const RESULTS_PER_CATEGORY = 10;
 
-export interface TaskRepoForReference {
-  getTask(id: string): unknown | null;
-  getTaskByShortId(roomId: string, shortId: string): unknown | null;
-}
-
 export interface GoalRepoForReference {
   getGoal(id: string): unknown | null;
   getGoalByShortId(roomId: string, shortId: string): unknown | null;
@@ -38,7 +32,6 @@ export interface ReferenceHandlerDeps {
   reactiveDb: ReactiveDatabase;
   shortIdAllocator: ShortIdAllocator;
   sessionManager: SessionManager;
-  taskRepo: TaskRepoForReference;
   goalRepo: GoalRepoForReference;
   workspaceRoot?: string;
   fileIndex: FileIndex;
@@ -101,9 +94,6 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
 
       try {
         switch (params.type) {
-          case 'task':
-            return { resolved: await resolveTask(params.id, roomId, deps) };
-
           case 'goal':
             return { resolved: resolveGoal(params.id, roomId, deps) };
 
@@ -148,25 +138,6 @@ export function setupReferenceHandlers(messageHub: MessageHub, deps: ReferenceHa
     if (!query && !roomId) return { results: [] };
 
     const allResults: ReferenceSearchResult[] = [];
-
-    if (requestedTypes.includes('task')) {
-      if (roomId) {
-        try {
-          const taskRepo = new TaskRepository(db, reactiveDb, shortIdAllocator);
-          const tasks = taskRepo.listTasks(roomId);
-          const taskResults: ReferenceSearchResult[] = tasks.map((t) => ({
-            type: 'task' as const,
-            id: t.id,
-            shortId: t.shortId ?? undefined,
-            displayText: t.title,
-            subtitle: t.status,
-          }));
-          allResults.push(...filterAndSort(taskResults, query, RESULTS_PER_CATEGORY));
-        } catch (err) {
-          log.warn('Failed to search tasks:', err);
-        }
-      }
-    }
 
     if (requestedTypes.includes('goal')) {
       if (roomId) {
@@ -236,31 +207,6 @@ async function resolveSessionContext(
   return {
     workspacePath: sessionData.workspacePath ?? deps.workspaceRoot,
     roomId: sessionData.context?.roomId ?? null,
-  };
-}
-
-async function resolveTask(
-  id: string,
-  roomId: string | null,
-  deps: ReferenceHandlerDeps
-): Promise<ResolvedReference | null> {
-  let task = deps.taskRepo.getTask(id);
-  if (!task && roomId) {
-    task = deps.taskRepo.getTaskByShortId(roomId, id);
-  }
-
-  if (!task) {
-    return null;
-  }
-
-  if (roomId && (task as { roomId?: string }).roomId !== roomId) {
-    return null;
-  }
-
-  return {
-    type: 'task',
-    id,
-    data: task,
   };
 }
 

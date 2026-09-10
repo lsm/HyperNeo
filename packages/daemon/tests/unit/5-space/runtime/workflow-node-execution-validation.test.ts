@@ -234,13 +234,13 @@ describe('findMissingNodeAgentReferences template drift', () => {
     expect(findMissingNodeAgentReferences(node, () => false)).toEqual([]);
   });
 
-  test('falls back to a live agentId when the templateKey does not resolve', () => {
+  test('reports a template slot that does not resolve even when its agentId is live', () => {
     const node = makeNode([{ agentId: 'live', templateKey: 'ghost.preview', name: 'ghost' }]);
     expect(
       findMissingNodeAgentReferences(node, (id) => id === 'live', {
         templateResolves: () => false,
       })
-    ).toEqual([]);
+    ).toEqual([{ agentName: 'ghost', agentId: 'live', templateKey: 'ghost.preview' }]);
   });
 
   test('reports when neither the templateKey resolves nor the agentId exists', () => {
@@ -274,6 +274,7 @@ describe('formatMissingTemplateReference', () => {
       workflowName: 'Release Flow',
       agentName: 'reviewer',
       templateKey: 'ghost.preview',
+      hasSnapshot: true,
     });
     expect(message).toContain('ghost.preview');
     expect(message).toContain('Release Flow');
@@ -282,30 +283,48 @@ describe('formatMissingTemplateReference', () => {
     expect(message).toContain('reviewer');
   });
 
-  test('offers recreating the template when the run still resolves live', () => {
+  test('tells a run holding a snapshot that recreating the template will not help', () => {
     const message = formatMissingTemplateReference({
       runId: 'run-321',
       nodeLabel: 'Preview',
       workflowName: 'Release Flow',
       agentName: 'reviewer',
       templateKey: 'ghost.preview',
+      hasSnapshot: true,
     });
 
-    expect(message).toContain('Recreate a template with that key');
-  });
-
-  test('tells a snapshot-only run that recreating the template will not help', () => {
-    const message = formatMissingTemplateReference({
-      runId: 'run-321',
-      nodeLabel: 'Preview',
-      workflowName: 'Release Flow',
-      agentName: 'reviewer',
-      templateKey: 'ghost.preview',
-      snapshotOnly: true,
-    });
-
+    expect(message).toContain('not in the template snapshot this run pinned');
     expect(message).toContain('will not repair this run');
     expect(message).toContain('start a new run');
-    expect(message).not.toContain('Recreate a template with that key');
+  });
+
+  test('tells a run with no snapshot that it cannot resolve templates at all', () => {
+    const message = formatMissingTemplateReference({
+      runId: 'run-321',
+      nodeLabel: 'Preview',
+      workflowName: 'Release Flow',
+      agentName: 'reviewer',
+      templateKey: 'ghost.preview',
+      hasSnapshot: false,
+    });
+
+    expect(message).toContain('no pinned template snapshot');
+    expect(message).toContain('start a new run');
+  });
+
+  test.each([
+    true,
+    false,
+  ])('never suggests recreating the template (hasSnapshot=%s)', (hasSnapshot) => {
+    const message = formatMissingTemplateReference({
+      runId: 'run-321',
+      nodeLabel: 'Preview',
+      workflowName: 'Release Flow',
+      agentName: 'reviewer',
+      templateKey: 'ghost.preview',
+      hasSnapshot,
+    });
+
+    expect(message).not.toContain('Recreate a template');
   });
 });

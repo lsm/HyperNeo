@@ -11,7 +11,7 @@ import type {
   ReferenceType,
   SpaceTask,
 } from '@hyperneo/shared';
-import type { NeoTask, RoomGoal } from '@hyperneo/shared/types/neo';
+import type { RoomGoal } from '@hyperneo/shared/types/neo';
 import { REFERENCE_PATTERN } from '@hyperneo/shared';
 import { Logger } from '../logger.ts';
 
@@ -21,12 +21,7 @@ const MAX_FILE_SIZE = 50 * 1024;
 
 const MAX_FOLDER_ENTRIES = 200;
 
-const ROOM_TASK_PREFIX = 't-';
 const SPACE_TASK_PREFIX = 'st-';
-
-export interface TaskRepoLike {
-  getTaskByShortId(roomId: string, shortId: string): NeoTask | null;
-}
 
 export interface GoalRepoLike {
   getGoalByShortId(roomId: string, shortId: string): RoomGoal | null;
@@ -37,7 +32,6 @@ export interface SpaceTaskRepoLike {
 }
 
 export interface ReferenceResolverDeps {
-  taskRepo?: TaskRepoLike;
   goalRepo?: GoalRepoLike;
   spaceTaskRepo?: SpaceTaskRepoLike;
 }
@@ -49,12 +43,10 @@ export interface ResolutionContext {
 }
 
 export class ReferenceResolver {
-  private readonly taskRepo?: TaskRepoLike;
   private readonly goalRepo?: GoalRepoLike;
   private readonly spaceTaskRepo?: SpaceTaskRepoLike;
 
   constructor(deps: ReferenceResolverDeps = {}) {
-    this.taskRepo = deps.taskRepo;
     this.goalRepo = deps.goalRepo;
     this.spaceTaskRepo = deps.spaceTaskRepo;
   }
@@ -320,39 +312,8 @@ export class ReferenceResolver {
     if (id.startsWith(SPACE_TASK_PREFIX)) {
       return this.resolveSpaceTask(id, context);
     }
-    if (id.startsWith(ROOM_TASK_PREFIX)) {
-      return this.resolveRoomTask(id, context);
-    }
-    log.warn(
-      `Unrecognized task reference format: "${id}" (expected ${ROOM_TASK_PREFIX} or ${SPACE_TASK_PREFIX} prefix)`
-    );
+    log.warn(`Unrecognized task reference format: "${id}" (expected ${SPACE_TASK_PREFIX} prefix)`);
     return null;
-  }
-
-  private resolveRoomTask(
-    shortId: string,
-    context: ResolutionContext
-  ): ResolvedTaskReference | null {
-    if (!context.roomId) {
-      log.warn(`Cannot resolve room task "${shortId}": session has no room context`);
-      return null;
-    }
-    if (!this.taskRepo) {
-      log.warn('Cannot resolve room task: TaskRepository not injected');
-      return null;
-    }
-    const task = this.taskRepo.getTaskByShortId(context.roomId, shortId);
-    if (!task) {
-      log.warn(`Room task not found: "${shortId}" in room "${context.roomId}"`);
-      return null;
-    }
-    if (task.roomId !== context.roomId) {
-      log.warn(
-        `Cross-room reference rejected: task "${shortId}" belongs to room "${task.roomId}", not "${context.roomId}"`
-      );
-      return null;
-    }
-    return { type: 'task', id: task.id, data: task };
   }
 
   private resolveSpaceTask(id: string, context: ResolutionContext): ResolvedTaskReference | null {

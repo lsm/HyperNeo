@@ -1,14 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { TaskRepository } from '../../../../src/storage/repositories/task-repository';
-import type {
-  NeoTask,
-  CreateTaskParams,
-  UpdateTaskParams,
-  TaskStatus,
-  TaskPriority,
-  TaskFilter,
-} from '@hyperneo/shared';
+import type { CreateTaskParams, TaskPriority, TaskFilter } from '@hyperneo/shared';
 import { noOpReactiveDb } from '../../../helpers/reactive-database';
 
 describe('TaskRepository', () => {
@@ -175,12 +168,20 @@ describe('TaskRepository', () => {
       expect(tasks[2].title).toBe('Oldest');
 
       await new Promise((r) => setTimeout(r, 5));
-      repository.updateTask(oldest.id, { title: 'Oldest (updated)' });
+      db.prepare('UPDATE tasks SET title = ?, updated_at = ? WHERE id = ?').run(
+        'Oldest (updated)',
+        Date.now(),
+        oldest.id
+      );
       const tasksAfterUpdate = repository.listTasks('room-1');
       expect(tasksAfterUpdate[0].title).toBe('Oldest (updated)');
 
       await new Promise((r) => setTimeout(r, 5));
-      repository.updateTask(middle.id, { title: 'Middle (updated)' });
+      db.prepare('UPDATE tasks SET title = ?, updated_at = ? WHERE id = ?').run(
+        'Middle (updated)',
+        Date.now(),
+        middle.id
+      );
       const tasksAfterMiddleUpdate = repository.listTasks('room-1');
       expect(tasksAfterMiddleUpdate[0].title).toBe('Middle (updated)');
     });
@@ -193,7 +194,7 @@ describe('TaskRepository', () => {
         title: 'Pending 2',
         description: 'Desc',
       });
-      repository.updateTask(task.id, { status: 'in_progress' });
+      db.prepare("UPDATE tasks SET status = 'in_progress' WHERE id = ?").run(task.id);
 
       const filter: TaskFilter = { status: 'pending' };
       const pendingTasks = repository.listTasks('room-1', filter);
@@ -229,7 +230,7 @@ describe('TaskRepository', () => {
         description: 'Desc',
         priority: 'high',
       });
-      repository.updateTask(task1.id, { status: 'in_progress' });
+      db.prepare("UPDATE tasks SET status = 'in_progress' WHERE id = ?").run(task1.id);
       repository.createTask({
         roomId: 'room-1',
         title: 'Task 2',
@@ -247,365 +248,6 @@ describe('TaskRepository', () => {
       const tasks = repository.listTasks('non-existent-room');
 
       expect(tasks).toEqual([]);
-    });
-  });
-
-  describe('updateTask', () => {
-    it('should update title', () => {
-      const task = repository.createTask({
-        roomId: 'room-1',
-        title: 'Original Title',
-        description: 'Desc',
-      });
-
-      const updated = repository.updateTask(task.id, { title: 'New Title' });
-
-      expect(updated?.title).toBe('New Title');
-    });
-
-    it('should update description', () => {
-      const task = repository.createTask({
-        roomId: 'room-1',
-        title: 'Task',
-        description: 'Original desc',
-      });
-
-      const updated = repository.updateTask(task.id, { description: 'New description' });
-
-      expect(updated?.description).toBe('New description');
-    });
-
-    it('should update status and set started_at when status is in_progress', () => {
-      const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
-      const beforeTime = Date.now();
-
-      const updated = repository.updateTask(task.id, { status: 'in_progress' });
-
-      expect(updated?.status).toBe('in_progress');
-      expect(updated?.startedAt).toBeDefined();
-      expect(updated?.startedAt).toBeGreaterThanOrEqual(beforeTime);
-    });
-
-    it('should update status and set completed_at when status is completed', () => {
-      const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
-      const beforeTime = Date.now();
-
-      const updated = repository.updateTask(task.id, { status: 'completed' });
-
-      expect(updated?.status).toBe('completed');
-      expect(updated?.completedAt).toBeDefined();
-      expect(updated?.completedAt).toBeGreaterThanOrEqual(beforeTime);
-    });
-
-    it('should update status and set completed_at when status is failed', () => {
-      const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
-      const beforeTime = Date.now();
-
-      const updated = repository.updateTask(task.id, { status: 'needs_attention' });
-
-      expect(updated?.status).toBe('needs_attention');
-      expect(updated?.completedAt).toBeDefined();
-      expect(updated?.completedAt).toBeGreaterThanOrEqual(beforeTime);
-    });
-
-    it('should update priority', () => {
-      const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
-
-      const updated = repository.updateTask(task.id, { priority: 'urgent' });
-
-      expect(updated?.priority).toBe('urgent');
-    });
-
-    it('should update progress', () => {
-      const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
-
-      const updated = repository.updateTask(task.id, { progress: 50 });
-
-      expect(updated?.progress).toBe(50);
-    });
-
-    it('should update currentStep', () => {
-      const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
-
-      const updated = repository.updateTask(task.id, { currentStep: 'Running tests' });
-
-      expect(updated?.currentStep).toBe('Running tests');
-    });
-
-    it('should update result', () => {
-      const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
-
-      const updated = repository.updateTask(task.id, { result: 'Task completed successfully' });
-
-      expect(updated?.result).toBe('Task completed successfully');
-    });
-
-    it('should update error', () => {
-      const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
-
-      const updated = repository.updateTask(task.id, { error: 'Something went wrong' });
-
-      expect(updated?.error).toBe('Something went wrong');
-    });
-
-    it('should update dependsOn', () => {
-      const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
-
-      const updated = repository.updateTask(task.id, { dependsOn: ['task-a', 'task-b'] });
-
-      expect(updated?.dependsOn).toEqual(['task-a', 'task-b']);
-    });
-
-    it('should return null for non-existent task', () => {
-      const updated = repository.updateTask('non-existent', { title: 'New Title' });
-
-      expect(updated).toBeNull();
-    });
-
-    it('should update updatedAt timestamp on every update', async () => {
-      const task = repository.createTask({
-        roomId: 'room-1',
-        title: 'Task',
-        description: 'Desc',
-      });
-      const originalUpdatedAt = task.updatedAt;
-
-      await new Promise((r) => setTimeout(r, 5));
-      const updated = repository.updateTask(task.id, { title: 'New Title' });
-
-      expect(updated?.updatedAt).toBeGreaterThan(originalUpdatedAt);
-    });
-
-    it('should update multiple fields at once', () => {
-      const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
-
-      const updated = repository.updateTask(task.id, {
-        title: 'Updated Title',
-        status: 'in_progress',
-        priority: 'high',
-        progress: 25,
-        currentStep: 'Step 1',
-      });
-
-      expect(updated?.title).toBe('Updated Title');
-      expect(updated?.status).toBe('in_progress');
-      expect(updated?.priority).toBe('high');
-      expect(updated?.progress).toBe(25);
-      expect(updated?.currentStep).toBe('Step 1');
-    });
-  });
-
-  describe('deleteTask', () => {
-    it('should delete a task by ID', () => {
-      const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
-
-      repository.deleteTask(task.id);
-
-      expect(repository.getTask(task.id)).toBeNull();
-    });
-
-    it('should only delete the specified task', () => {
-      const task1 = repository.createTask({
-        roomId: 'room-1',
-        title: 'Task 1',
-        description: 'Desc',
-      });
-      const task2 = repository.createTask({
-        roomId: 'room-1',
-        title: 'Task 2',
-        description: 'Desc',
-      });
-
-      repository.deleteTask(task1.id);
-
-      expect(repository.getTask(task1.id)).toBeNull();
-      expect(repository.getTask(task2.id)).not.toBeNull();
-    });
-
-    it('should not throw when deleting non-existent task', () => {
-      expect(() => repository.deleteTask('non-existent')).not.toThrow();
-    });
-  });
-
-  describe('deleteTasksForRoom', () => {
-    it('should delete all tasks for a room', () => {
-      repository.createTask({ roomId: 'room-1', title: 'Task 1', description: 'Desc' });
-      repository.createTask({ roomId: 'room-1', title: 'Task 2', description: 'Desc' });
-      repository.createTask({ roomId: 'room-2', title: 'Task 3', description: 'Desc' });
-
-      repository.deleteTasksForRoom('room-1');
-
-      expect(repository.listTasks('room-1')).toEqual([]);
-      expect(repository.listTasks('room-2').length).toBe(1);
-    });
-
-    it('should not throw when deleting for non-existent room', () => {
-      expect(() => repository.deleteTasksForRoom('non-existent')).not.toThrow();
-    });
-  });
-
-  describe('countTasksByStatus', () => {
-    it('should count tasks by status', () => {
-      repository.createTask({ roomId: 'room-1', title: 'Task 1', description: 'Desc' });
-      repository.createTask({ roomId: 'room-1', title: 'Task 2', description: 'Desc' });
-      const task3 = repository.createTask({
-        roomId: 'room-1',
-        title: 'Task 3',
-        description: 'Desc',
-      });
-      repository.updateTask(task3.id, { status: 'in_progress' });
-
-      const pendingCount = repository.countTasksByStatus('room-1', 'pending');
-      const inProgressCount = repository.countTasksByStatus('room-1', 'in_progress');
-
-      expect(pendingCount).toBe(2);
-      expect(inProgressCount).toBe(1);
-    });
-
-    it('should return 0 when no tasks match status', () => {
-      repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
-
-      const completedCount = repository.countTasksByStatus('room-1', 'completed');
-
-      expect(completedCount).toBe(0);
-    });
-
-    it('should return 0 for non-existent room', () => {
-      const count = repository.countTasksByStatus('non-existent', 'pending');
-
-      expect(count).toBe(0);
-    });
-  });
-
-  describe('countActiveTasks', () => {
-    it('should count active (non-completed, non-failed) tasks', () => {
-      const task1 = repository.createTask({
-        roomId: 'room-1',
-        title: 'Task 1',
-        description: 'Desc',
-      });
-      const task2 = repository.createTask({
-        roomId: 'room-1',
-        title: 'Task 2',
-        description: 'Desc',
-      });
-      const task3 = repository.createTask({
-        roomId: 'room-1',
-        title: 'Task 3',
-        description: 'Desc',
-      });
-      const task4 = repository.createTask({
-        roomId: 'room-1',
-        title: 'Task 4',
-        description: 'Desc',
-      });
-
-      repository.updateTask(task1.id, { status: 'in_progress' });
-      repository.updateTask(task2.id, { status: 'completed' });
-      repository.updateTask(task3.id, { status: 'needs_attention' });
-
-      const activeCount = repository.countActiveTasks('room-1');
-
-      expect(activeCount).toBe(2);
-    });
-
-    it('should return 0 when all tasks are completed or needs_attention', () => {
-      const task1 = repository.createTask({
-        roomId: 'room-1',
-        title: 'Task 1',
-        description: 'Desc',
-      });
-      const task2 = repository.createTask({
-        roomId: 'room-1',
-        title: 'Task 2',
-        description: 'Desc',
-      });
-
-      repository.updateTask(task1.id, { status: 'completed' });
-      repository.updateTask(task2.id, { status: 'needs_attention' });
-
-      const activeCount = repository.countActiveTasks('room-1');
-
-      expect(activeCount).toBe(0);
-    });
-
-    it('should return 0 for non-existent room', () => {
-      const count = repository.countActiveTasks('non-existent');
-
-      expect(count).toBe(0);
-    });
-  });
-
-  describe('task lifecycle', () => {
-    it('should support full task lifecycle', async () => {
-      const task = repository.createTask({
-        roomId: 'room-1',
-        title: 'Feature Implementation',
-        description: 'Implement new feature',
-        priority: 'high',
-        dependsOn: ['task-prereq'],
-      });
-      expect(task.status).toBe('pending');
-
-      await new Promise((r) => setTimeout(r, 5));
-      repository.updateTask(task.id, {
-        status: 'in_progress',
-        progress: 0,
-      });
-      let current = repository.getTask(task.id);
-      expect(current?.status).toBe('in_progress');
-      expect(current?.startedAt).toBeDefined();
-
-      repository.updateTask(task.id, {
-        progress: 50,
-        currentStep: 'Writing tests',
-      });
-      current = repository.getTask(task.id);
-      expect(current?.progress).toBe(50);
-      expect(current?.currentStep).toBe('Writing tests');
-
-      repository.updateTask(task.id, {
-        status: 'completed',
-        progress: 100,
-        result: 'Feature implemented successfully',
-      });
-      current = repository.getTask(task.id);
-      expect(current?.status).toBe('completed');
-      expect(current?.completedAt).toBeDefined();
-      expect(current?.result).toBe('Feature implemented successfully');
-    });
-
-    it('should support task failure with error', async () => {
-      const task = repository.createTask({
-        roomId: 'room-1',
-        title: 'Risky Task',
-        description: 'Task that might fail',
-      });
-
-      repository.updateTask(task.id, { status: 'in_progress' });
-
-      repository.updateTask(task.id, {
-        status: 'needs_attention',
-        error: 'Connection timeout',
-      });
-
-      const failed = repository.getTask(task.id);
-      expect(failed?.status).toBe('needs_attention');
-      expect(failed?.completedAt).toBeDefined();
-      expect(failed?.error).toBe('Connection timeout');
-    });
-
-    it('should support review task status', () => {
-      const task = repository.createTask({
-        roomId: 'room-1',
-        title: 'Review Task',
-        description: 'Needs human review',
-      });
-
-      repository.updateTask(task.id, { status: 'review' });
-
-      const reviewed = repository.getTask(task.id);
-      expect(reviewed?.status).toBe('review');
     });
   });
 
@@ -635,10 +277,9 @@ describe('TaskRepository', () => {
         title: 'Active session task',
         description: '',
       });
-      repository.updateTask(task.id, {
-        status: 'in_progress',
-        activeSession: 'worker',
-      });
+      db.prepare(
+        "UPDATE tasks SET status = 'in_progress', active_session = 'worker' WHERE id = ?"
+      ).run(task.id);
 
       const archived = repository.archiveTask(task.id);
       expect(archived!.status).toBe('archived');
@@ -755,58 +396,6 @@ describe('TaskRepository', () => {
       const tasks = repository.listTasks('room-1', { includeArchived: true });
       expect(tasks.length).toBe(2);
     });
-
-    it('should exclude archived tasks from countActiveTasks', () => {
-      const task = repository.createTask({
-        roomId: 'room-1',
-        title: 'T',
-        description: '',
-      });
-      expect(repository.countActiveTasks('room-1')).toBe(1);
-
-      repository.archiveTask(task.id);
-      expect(repository.countActiveTasks('room-1')).toBe(0);
-    });
-
-    it('should count archived tasks with countTasksByStatus', () => {
-      const task = repository.createTask({
-        roomId: 'room-1',
-        title: 'T',
-        description: '',
-      });
-      repository.archiveTask(task.id);
-
-      expect(repository.countTasksByStatus('room-1', 'archived')).toBe(1);
-      expect(repository.countTasksByStatus('room-1', 'pending')).toBe(0);
-    });
-  });
-
-  describe('updateTask archived_at stamping', () => {
-    it('should stamp archived_at when status is set to archived via updateTask', () => {
-      const task = repository.createTask({
-        roomId: 'room-1',
-        title: 'T',
-        description: '',
-      });
-      const updated = repository.updateTask(task.id, { status: 'archived' });
-      expect(updated!.status).toBe('archived');
-      expect(updated!.archivedAt).toBeDefined();
-      expect(updated!.archivedAt).toBeGreaterThan(0);
-    });
-
-    it('should auto-clear active_session when status is set to archived', () => {
-      const task = repository.createTask({
-        roomId: 'room-1',
-        title: 'T',
-        description: '',
-      });
-      repository.updateTask(task.id, {
-        status: 'in_progress',
-        activeSession: 'worker',
-      });
-      const updated = repository.updateTask(task.id, { status: 'archived' });
-      expect(updated!.activeSession).toBeNull();
-    });
   });
 
   describe('PR fields', () => {
@@ -820,51 +409,6 @@ describe('TaskRepository', () => {
       expect(task.prUrl).toBeUndefined();
       expect(task.prNumber).toBeUndefined();
       expect(task.prCreatedAt).toBeUndefined();
-    });
-
-    it('should update PR fields', () => {
-      const task = repository.createTask({
-        roomId: 'room-1',
-        title: 'PR Task',
-        description: '',
-      });
-      const now = Date.now();
-
-      repository.updateTask(task.id, {
-        prUrl: 'https://github.com/org/repo/pull/42',
-        prNumber: 42,
-        prCreatedAt: now,
-      });
-
-      const updated = repository.getTask(task.id);
-      expect(updated?.prUrl).toBe('https://github.com/org/repo/pull/42');
-      expect(updated?.prNumber).toBe(42);
-      expect(updated?.prCreatedAt).toBe(now);
-    });
-
-    it('should allow clearing PR fields to null', () => {
-      const task = repository.createTask({
-        roomId: 'room-1',
-        title: 'PR Task',
-        description: '',
-      });
-
-      repository.updateTask(task.id, {
-        prUrl: 'https://github.com/org/repo/pull/1',
-        prNumber: 1,
-        prCreatedAt: Date.now(),
-      });
-
-      repository.updateTask(task.id, {
-        prUrl: null,
-        prNumber: null,
-        prCreatedAt: null,
-      });
-
-      const cleared = repository.getTask(task.id);
-      expect(cleared?.prUrl).toBeUndefined();
-      expect(cleared?.prNumber).toBeUndefined();
-      expect(cleared?.prCreatedAt).toBeUndefined();
     });
   });
 });

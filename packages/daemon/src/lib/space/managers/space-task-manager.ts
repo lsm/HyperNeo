@@ -1,3 +1,4 @@
+import { buildTaskDependencyGraph, hasTaskDependencyCycle } from '../../tasks/dependency-graph.ts';
 import type { Database as BunDatabase } from '../../../storage/sqlite-compat.ts';
 import type {
   InternalCreateSpaceTaskParams,
@@ -682,44 +683,11 @@ export class SpaceTaskManager {
 
     if (taskId && depIds.length > 0) {
       const allTasks = await this.listTasks(true);
-      const adj = new Map<string, string[]>();
-      for (const t of allTasks) {
-        if (t.id === taskId) {
-          adj.set(t.id, [...depIds]);
-        } else {
-          adj.set(t.id, [...(t.dependsOn ?? [])]);
-        }
-      }
-      if (this.hasCycle(adj)) {
+      const adj = buildTaskDependencyGraph(allTasks, taskId, depIds);
+      if (hasTaskDependencyCycle(adj)) {
         throw new Error('Adding these dependencies would create a circular dependency');
       }
     }
-  }
-
-  private hasCycle(adj: Map<string, string[]>): boolean {
-    const WHITE = 0;
-    const GRAY = 1;
-    const BLACK = 2;
-    const color = new Map<string, number>();
-    for (const id of adj.keys()) {
-      color.set(id, WHITE);
-    }
-
-    const dfs = (node: string): boolean => {
-      color.set(node, GRAY);
-      for (const neighbor of adj.get(node) ?? []) {
-        const c = color.get(neighbor);
-        if (c === GRAY) return true;
-        if (c === WHITE && dfs(neighbor)) return true;
-      }
-      color.set(node, BLACK);
-      return false;
-    };
-
-    for (const id of adj.keys()) {
-      if (color.get(id) === WHITE && dfs(id)) return true;
-    }
-    return false;
   }
 }
 
