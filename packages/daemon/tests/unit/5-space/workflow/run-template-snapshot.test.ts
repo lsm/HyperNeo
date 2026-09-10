@@ -193,45 +193,37 @@ describe('createAgentTemplateResolver', () => {
 describe('runTemplateResolves', () => {
   const pinned = { definitionVersion: 'vh-1' };
   const unpinned = { definitionVersion: null };
-  const live = (key: string) => key === 'live.only';
 
-  test('resolves a key present in the run snapshot without consulting live templates', () => {
-    let liveCalls = 0;
-    const resolved = runTemplateResolves(
-      { templateSnapshots: { 'worker.custom': {} as never } },
-      pinned,
-      'worker.custom',
-      () => {
-        liveCalls += 1;
-        return true;
-      }
-    );
-
-    expect(resolved).toBe(true);
-    expect(liveCalls).toBe(0);
-  });
-
-  test('rejects a key absent from the run snapshot even when it resolves live', () => {
+  test('resolves a key present in the run snapshot', () => {
     expect(
       runTemplateResolves(
         { templateSnapshots: { 'worker.custom': {} as never } },
         pinned,
-        'live.only',
-        live
+        'worker.custom'
+      )
+    ).toBe(true);
+  });
+
+  test('rejects a key absent from the run snapshot', () => {
+    expect(
+      runTemplateResolves(
+        { templateSnapshots: { 'worker.custom': {} as never } },
+        pinned,
+        'other.key'
       )
     ).toBe(false);
   });
 
-  test('falls back to live resolution for an unpinned run', () => {
-    expect(runTemplateResolves({}, unpinned, 'live.only', live)).toBe(true);
+  test('rejects an unpinned run rather than resolving live', () => {
+    expect(runTemplateResolves({}, unpinned, 'worker.custom')).toBe(false);
   });
 
-  test('falls back to live resolution for a pinned run predating snapshots', () => {
-    expect(runTemplateResolves({}, pinned, 'live.only', live)).toBe(true);
+  test('rejects a pinned run predating snapshots rather than resolving live', () => {
+    expect(runTemplateResolves({}, pinned, 'worker.custom')).toBe(false);
   });
 
-  test('falls back to live resolution when the pinned definition is unresolvable', () => {
-    expect(runTemplateResolves(null, pinned, 'live.only', live)).toBe(true);
+  test('rejects when the pinned definition is unresolvable', () => {
+    expect(runTemplateResolves(null, pinned, 'worker.custom')).toBe(false);
   });
 
   test('does not treat prototype members as snapshot entries', () => {
@@ -239,21 +231,13 @@ describe('runTemplateResolves', () => {
       runTemplateResolves(
         { templateSnapshots: JSON.parse('{"worker.custom":{}}') },
         pinned,
-        'toString',
-        () => true
+        'toString'
       )
     ).toBe(false);
   });
 
-  test('rejects a blank key without consulting anything', () => {
-    let liveCalls = 0;
-    const resolved = runTemplateResolves({}, unpinned, '   ', () => {
-      liveCalls += 1;
-      return true;
-    });
-
-    expect(resolved).toBe(false);
-    expect(liveCalls).toBe(0);
+  test('rejects a blank key', () => {
+    expect(runTemplateResolves({ templateSnapshots: {} }, pinned, '   ')).toBe(false);
   });
 
   test('trims the key before matching the snapshot', () => {
@@ -261,8 +245,7 @@ describe('runTemplateResolves', () => {
       runTemplateResolves(
         { templateSnapshots: { 'worker.custom': {} as never } },
         pinned,
-        '  worker.custom  ',
-        () => false
+        '  worker.custom  '
       )
     ).toBe(true);
   });

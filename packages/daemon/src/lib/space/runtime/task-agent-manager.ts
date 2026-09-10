@@ -3414,14 +3414,14 @@ export class TaskAgentManager {
     workflowRun: Pick<SpaceWorkflowRun, 'workflowId' | 'definitionVersion'> | null | undefined,
     key: string
   ): NodeAgentTemplateSource | null {
+    if (!workflowRun) return this.resolveNodeTemplateSource(key);
     const snapshots = runTemplateSnapshotRecord(
-      workflowRun?.definitionVersion
+      workflowRun.definitionVersion
         ? this.config.spaceWorkflowManager.getWorkflowForRun(workflowRun)
         : null,
       workflowRun
     );
-    if (!snapshots) return this.resolveNodeTemplateSource(key);
-    if (!Object.hasOwn(snapshots, key)) return null;
+    if (!snapshots || !Object.hasOwn(snapshots, key)) return null;
     return spaceAgentTemplateToNodeSource(snapshots[key]);
   }
 

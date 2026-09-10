@@ -159,10 +159,7 @@ export class ChannelRouter {
     }
 
     const targetAgentName = options?.targetAgentName;
-    const templateResolves = (key: string): boolean =>
-      runTemplateResolves(workflow, run, key, (live) =>
-        this.config.workflowManager.agentTemplateResolves(live)
-      );
+    const templateResolves = (key: string): boolean => runTemplateResolves(workflow, run, key);
     const missingAgent = findMissingNodeAgentReferences(
       node,
       (id) => this.config.agentExists(id),
