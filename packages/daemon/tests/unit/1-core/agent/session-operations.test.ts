@@ -1,3 +1,6 @@
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
 import { convertMcpServersForAcp } from '../../../../src/lib/acp/acp-query-runner';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -42,6 +45,29 @@ describe('session operation MCP attachment', () => {
     sessions.push(session);
     return session;
   }
+
+  test('ordinary chat sessions can discover and read existing tasks through MCP', async () => {
+    db.createSession(createTestSession('reader'));
+    const session = await restore('reader');
+    const space = new SpaceRepository(db.getDatabase()).createSpace({
+      workspacePath: '/workspace/test',
+      slug: 'test',
+      name: 'Test',
+    });
+    const tasks = new SpaceTaskRepository(db.getDatabase());
+    const stored = tasks.createTask({ spaceId: space.id, title: 'Read me', description: '' });
+    const tool = session.getOperationMcpServer().tools[0];
+    const result = await tool.handler({ name: 'task.get', input: { taskId: stored.id } }, {});
+    expect(result.isError).not.toBe(true);
+    const content = result.content[0];
+    if (content.type !== 'text') throw new Error('Expected task JSON');
+    expect(JSON.parse(content.text)).toEqual(readTaskCore(db.getDatabase(), stored.id));
+    expect(tasks.getTask(stored.id)).toEqual(stored);
+    const discovery = await tool.handler({ name: 'operations.list' }, {});
+    const listed = discovery.content[0];
+    if (listed.type !== 'text') throw new Error('Expected catalog JSON');
+    expect(JSON.parse(listed.text)).toContainEqual(expect.objectContaining({ name: 'task.get' }));
+  });
 
   test.each([
     undefined,
