@@ -1,5 +1,5 @@
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
-import { appState, connectionState, reconnectAttemptCount } from './state';
+import { appState, connectionState } from './state';
 import { globalStore } from './global-store';
 import {
   markAllSessionStoresRecovering,
@@ -11,7 +11,8 @@ import { spaceAgentStore } from './space-agent-store';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
 import { currentSessionIdSignal, slashCommandsSignal } from './signals';
-import { runConnectionEvent, type ConnectionEventEffects } from './connection-event-pipeline';
+import { runConnectionEvent } from './connection-event-pipeline';
+import { createDefaultConnectionEventEffects } from './connection-event-adapter';
 import { startAutoFlush, stopAutoFlush } from './outbound-queue';
 import { startVoiceAudioOutboxFlush, stopVoiceAudioOutboxFlush } from './voice/voice-audio-outbox';
 import {
@@ -158,34 +159,13 @@ export class ConnectionManager {
       debug: false,
     });
 
-    const eventEffects: ConnectionEventEffects = {
-      setState: (state) => {
-        connectionState.value = state;
-      },
-      setReconnectAttempts: (attempts) => {
-        reconnectAttemptCount.value = attempts;
-      },
-      startActions: startAutoFlush,
-      startAudio: startVoiceAudioOutboxFlush,
-      startTranscripts: startVoiceTranscriptOutboxFlush,
-      stopActions: stopAutoFlush,
-      stopAudio: stopVoiceAudioOutboxFlush,
-      stopTranscripts: stopVoiceTranscriptOutboxFlush,
+    const eventEffects = createDefaultConnectionEventEffects({
       closeTransport: () => {
         this.transport?.close();
       },
-      redirectExpiredSession: () => {
-        if (
-          typeof window !== 'undefined' &&
-          !window.location.search.includes('reason=session_expired')
-        ) {
-          window.location.href = '/settings?tab=providers&reason=session_expired';
-        }
-      },
       notifyConnected: () => this.notifyConnectionHandlers(),
-      recoverAgents: () => spaceAgentStore.recover(),
       getReconnectAttempts: () => this.transport?.getReconnectAttempts(),
-    };
+    });
     this.messageHub.onConnection((state, error) => {
       runConnectionEvent(eventEffects, state, error, this._isResuming);
     });
