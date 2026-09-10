@@ -1,7 +1,6 @@
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
-import { appState, connectionState } from './state';
-import { globalStore } from './global-store';
-import { markAllSessionStoresRecovering, sessionStore } from './session-store';
+import type { ConnectionState } from './state';
+import { markAllSessionStoresRecovering } from './session-store';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
 import { currentSessionIdSignal, slashCommandsSignal } from './signals';
@@ -9,12 +8,7 @@ import { runConnectionEvent } from './connection-event-pipeline';
 import { runConnectionResume } from './connection-resume-pipeline';
 import { createDefaultConnectionResumeEffects } from './connection-resume-adapter';
 import { createDefaultConnectionEventEffects } from './connection-event-adapter';
-import { startAutoFlush, stopAutoFlush } from './outbound-queue';
-import { startVoiceAudioOutboxFlush, stopVoiceAudioOutboxFlush } from './voice/voice-audio-outbox';
-import {
-  startVoiceTranscriptOutboxFlush,
-  stopVoiceTranscriptOutboxFlush,
-} from './voice/voice-transcript-outbox';
+import { createDefaultConnectionLifecycleEffects } from './connection-lifecycle-adapter';
 
 if (typeof window !== 'undefined') {
   (
@@ -50,6 +44,7 @@ export function getDaemonWsUrl(
 }
 
 export class ConnectionManager {
+  private readonly lifecycleEffects = createDefaultConnectionLifecycleEffects();
   private messageHub: MessageHub | null = null;
   private transport: WebSocketClientTransport | null = null;
   private baseUrl: string;
@@ -148,7 +143,7 @@ export class ConnectionManager {
   }
 
   private async connect(): Promise<MessageHub> {
-    connectionState.value = 'connecting';
+    this.lifecycleEffects.setState('connecting');
 
     this.messageHub = new MessageHub({
       defaultSessionId: 'global',
@@ -166,17 +161,7 @@ export class ConnectionManager {
       runConnectionEvent(eventEffects, state, error, this._isResuming);
     });
 
-    if (typeof window !== 'undefined') {
-      window.__messageHub = this.messageHub;
-      window.appState = appState;
-      window.__messageHubReady = false;
-      window.connectionManager = this;
-      window.globalStore = globalStore;
-      window.sessionStore = sessionStore;
-
-      window.currentSessionIdSignal = currentSessionIdSignal;
-      window.slashCommandsSignal = slashCommandsSignal;
-    }
+    this.lifecycleEffects.exposeHub(this.messageHub, this);
 
     this.transport = new WebSocketClientTransport({
       url: `${this.baseUrl}/ws`,
@@ -188,8 +173,8 @@ export class ConnectionManager {
 
     this.messageHub.registerTransport(this.transport);
 
-    startVoiceAudioOutboxFlush();
-    startVoiceTranscriptOutboxFlush();
+    this.lifecycleEffects.startAudio();
+    this.lifecycleEffects.startTranscripts();
 
     await this.transport.initialize();
 
@@ -199,11 +184,9 @@ export class ConnectionManager {
 
     this.startPeriodicStateValidation();
 
-    startAutoFlush();
+    this.lifecycleEffects.startActions();
 
-    if (typeof window !== 'undefined' && window.__messageHub) {
-      window.__messageHubReady = true;
-    }
+    this.lifecycleEffects.markHubReady();
 
     return this.messageHub;
   }
@@ -245,11 +228,11 @@ export class ConnectionManager {
   async disconnect(): Promise<void> {
     this.stopPeriodicStateValidation();
 
-    stopAutoFlush();
-    stopVoiceAudioOutboxFlush();
-    stopVoiceTranscriptOutboxFlush();
+    this.lifecycleEffects.stopActions();
+    this.lifecycleEffects.stopAudio();
+    this.lifecycleEffects.stopTranscripts();
 
-    connectionState.value = 'disconnected';
+    this.lifecycleEffects.setState('disconnected');
 
     this.cleanupVisibilityHandlers();
 
@@ -268,8 +251,8 @@ export class ConnectionManager {
     return this.messageHub?.isConnected() || false;
   }
 
-  getConnectionState(): typeof connectionState.value {
-    return connectionState.value;
+  getConnectionState(): ConnectionState {
+    return this.lifecycleEffects.getState();
   }
 
   private setupVisibilityHandlers(): void {
@@ -316,7 +299,7 @@ export class ConnectionManager {
     } finally {
       this._isResuming = false;
       if (this.transport?.isReady()) {
-        connectionState.value = 'connected';
+        this.lifecycleEffects.setState('connected');
         this.notifyConnectionHandlers();
       }
     }
@@ -362,12 +345,12 @@ export class ConnectionManager {
     this.messageHub = null;
     this.connectionPromise = null;
 
-    connectionState.value = 'connecting';
+    this.lifecycleEffects.setState('connecting');
 
     try {
       await this.getHub();
     } catch {
-      connectionState.value = 'failed';
+      this.lifecycleEffects.setState('failed');
     }
   }
 
@@ -397,7 +380,7 @@ export class ConnectionManager {
     if (this.transport) {
       this.transport.close();
     }
-    connectionState.value = 'disconnected';
+    this.lifecycleEffects.setState('disconnected');
   }
 }
 
