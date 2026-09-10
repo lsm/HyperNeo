@@ -1398,11 +1398,11 @@ export class SpaceRuntimeService {
 
     const unsubSessionReset =
       typeof sessionManager.registerSessionResetSubscriber === 'function'
-        ? sessionManager.registerSessionResetSubscriber(async (event) => {
-            await this.reprovisionResetSession(event.session, {
+        ? sessionManager.registerSessionResetSubscriber((event) =>
+            this.reprovisionResetSession(event.session, {
               replayPendingMessages: event.restartQuery,
-            });
-          })
+            })
+          )
         : () => {};
     this.unsubscribers.push(unsubSessionReset);
   }
@@ -1411,18 +1411,6 @@ export class SpaceRuntimeService {
     session: Session,
     options: { replayPendingMessages: boolean }
   ): Promise<void> {
-    const isWorkflowSubSession =
-      session.id.includes(':task:') &&
-      (session.id.includes(':exec:') || session.id.includes(':post-approval:'));
-    const workflowSession = isWorkflowSubSession
-      ? this.config.sessionManager?.getCachedSession(session.id)
-      : null;
-    if (workflowSession && this.taskAgentManager) {
-      await this.taskAgentManager.provisionWorkflowSession(workflowSession, {
-        startQuery: options.replayPendingMessages,
-      });
-      return;
-    }
     if (session.type === 'space_chat') {
       const spaceId = session.context?.spaceId ?? session.id.match(/^space:chat:(.+)$/)?.[1];
       if (!spaceId) return;
@@ -1708,6 +1696,17 @@ export class SpaceRuntimeService {
   ): Promise<void> {
     if (!this.taskAgentManager) return;
     await this.taskAgentManager.provisionWorkflowSession(session, options);
+  }
+
+  async provisionResetWorkflowSession(
+    session: AgentSession,
+    options: { startQuery: boolean; replayPendingMessages: boolean }
+  ): Promise<void> {
+    if (!this.taskAgentManager) return;
+    await this.taskAgentManager.provisionWorkflowSession(session, {
+      ...options,
+      intent: 'reset-replacement',
+    });
   }
 
   async setupSpaceAgentSession(

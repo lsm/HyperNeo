@@ -20,8 +20,19 @@ function makeManager(input: {
   routingPointerTaskId?: string;
 }) {
   const restorePostApprovalWorkerSession = mock(async () => input.restoreResult ?? null);
-  const rehydrateSubSession = mock(async () => null);
+  const restored = {
+    marker: 'restored',
+    getSessionData: () => ({ status: 'active' }),
+  } as unknown as AgentSession;
+  const rehydrateSubSession = mock(async () => restored);
   const manager = Object.create(TaskAgentManager.prototype) as TaskAgentManager;
+  const cachedSessions = new Map<string, AgentSession>();
+  const registerSession = mock((session: AgentSession, expectedCurrent?: AgentSession) => {
+    const sessionId = session.getSessionData().id;
+    if (expectedCurrent && cachedSessions.get(sessionId) !== expectedCurrent) return false;
+    cachedSessions.set(sessionId, session);
+    return true;
+  });
   Object.defineProperty(manager, 'config', {
     value: {
       taskRepo: {
@@ -47,6 +58,16 @@ function makeManager(input: {
             status: input.spaceArchived ? 'archived' : 'active',
           };
         },
+        getSpaceSync: () => ({
+          id: 'space-1',
+          stopped: input.spaceStopped ?? false,
+          paused: input.spacePaused ?? false,
+          status: input.spaceArchived ? 'archived' : 'active',
+        }),
+      },
+      sessionManager: {
+        getCachedSession: (sessionId: string) => cachedSessions.get(sessionId) ?? null,
+        registerSession,
       },
       ...(input.routingPointerTaskId
         ? {
@@ -67,17 +88,24 @@ function makeManager(input: {
     value: rehydrateSubSession,
     configurable: true,
   });
-  const restored = {
-    marker: 'restored',
-    getSessionData: () => ({ status: 'active' }),
-  } as unknown as AgentSession;
+  Object.defineProperty(manager, 'agentSessionIndex', { value: new Map(), configurable: true });
+  Object.defineProperty(manager, 'sessionOwnershipGenerations', {
+    value: new Map(),
+    configurable: true,
+  });
   Object.defineProperty(manager, 'getSubSession', { value: () => restored, configurable: true });
   if (input.cooldown) {
     Object.defineProperty(manager, 'readPersistedRateLimitCooldown', {
       value: () => ({ retryAt: Date.now() + 60_000 }),
     });
   }
-  return { manager, restorePostApprovalWorkerSession, rehydrateSubSession };
+  return {
+    manager,
+    restorePostApprovalWorkerSession,
+    rehydrateSubSession,
+    cachedSessions,
+    registerSession,
+  };
 }
 
 function workflowSession(): AgentSession {
@@ -112,6 +140,23 @@ describe('TaskAgentManager workflow session provisioning', () => {
     expect(restorePostApprovalWorkerSession).toHaveBeenCalledWith(
       TASK_ID,
       SESSION_ID,
+      expect.anything(),
+      {}
+    );
+  });
+
+  it('restores an execution-shaped recorded post-approval worker after workflow completion', async () => {
+    const { manager, restorePostApprovalWorkerSession } = makeManager({
+      taskStatus: 'approved',
+      runStatus: 'done',
+      postApprovalSessionId: EXEC_SESSION_ID,
+    });
+
+    await manager.provisionWorkflowSession(executionWorkerSession());
+
+    expect(restorePostApprovalWorkerSession).toHaveBeenCalledWith(
+      TASK_ID,
+      EXEC_SESSION_ID,
       expect.anything(),
       {}
     );
@@ -231,6 +276,157 @@ describe('TaskAgentManager workflow session provisioning', () => {
       expect.anything(),
       {}
     );
+  });
+
+  it('adopts a reset replacement for a live idle execution', async () => {
+    const { manager, rehydrateSubSession, cachedSessions } = makeManager({
+      taskStatus: 'in_progress',
+    });
+    const replacement = executionWorkerSession();
+    const displaced = {
+      getSessionData: () => ({ id: EXEC_SESSION_ID, status: 'active' }),
+      getProcessingState: () => ({ status: 'idle' }),
+    } as unknown as AgentSession;
+    cachedSessions.set(EXEC_SESSION_ID, replacement);
+    Object.defineProperty(manager, 'agentSessionIndex', {
+      value: new Map([[EXEC_SESSION_ID, displaced]]),
+    });
+    Object.defineProperty(manager, 'resolveNodeExecutionForSubSession', {
+      value: () => ({ workflowRunId: 'run-1', status: 'idle' }),
+    });
+    Object.defineProperty(manager, 'hasQueuedRetryableHookAction', {
+      value: () => false,
+    });
+
+    const outcome = await manager.provisionWorkflowSession(replacement, {
+      startQuery: true,
+      intent: 'reset-replacement',
+    });
+
+    expect(rehydrateSubSession).toHaveBeenCalledWith(EXEC_SESSION_ID, replacement, {
+      startQuery: false,
+      replayPendingMessages: false,
+      resetReplacement: {
+        expectedCachedSession: replacement,
+        ownershipGeneration: 0,
+      },
+    });
+    expect(outcome).toBe('adopted-dormant');
+  });
+
+  it('keeps ordinary idle workflow lookups dormant', async () => {
+    for (const indexed of [undefined, executionWorkerSession()]) {
+      const { manager, rehydrateSubSession } = makeManager({ taskStatus: 'in_progress' });
+      const session = indexed ?? executionWorkerSession();
+      Object.defineProperty(manager, 'agentSessionIndex', {
+        value: new Map(indexed ? [[EXEC_SESSION_ID, indexed]] : []),
+      });
+      Object.defineProperty(manager, 'resolveNodeExecutionForSubSession', {
+        value: () => ({ workflowRunId: 'run-1', status: 'idle' }),
+      });
+      Object.defineProperty(manager, 'hasQueuedRetryableHookAction', {
+        value: () => false,
+      });
+
+      await manager.provisionWorkflowSession(session, { startQuery: false });
+
+      expect(rehydrateSubSession).not.toHaveBeenCalled();
+    }
+  });
+
+  it('does not adopt reset replacements after their owner becomes ineligible', async () => {
+    for (const input of [
+      { taskStatus: 'done' },
+      { runStatus: 'done' },
+      { runStatus: 'cancelled' },
+      { spacePaused: true },
+      { spaceStopped: true },
+      { spaceArchived: true },
+    ]) {
+      const { manager, rehydrateSubSession, registerSession } = makeManager(input);
+      const replacement = executionWorkerSession();
+      const displaced = {
+        getSessionData: () => ({ id: EXEC_SESSION_ID, status: 'active' }),
+        getProcessingState: () => ({ status: 'idle' }),
+      } as unknown as AgentSession;
+      const index = new Map([[EXEC_SESSION_ID, displaced]]);
+      Object.defineProperty(manager, 'agentSessionIndex', { value: index });
+      Object.defineProperty(manager, 'resolveNodeExecutionForSubSession', {
+        value: () => ({ workflowRunId: 'run-1', status: 'idle' }),
+      });
+      Object.defineProperty(manager, 'hasQueuedRetryableHookAction', {
+        value: () => false,
+      });
+
+      const outcome = await manager.provisionWorkflowSession(replacement, {
+        startQuery: true,
+        intent: 'reset-replacement',
+      });
+
+      expect(rehydrateSubSession).not.toHaveBeenCalled();
+      expect(registerSession).not.toHaveBeenCalled();
+      expect(index.get(EXEC_SESSION_ID)).toBe(displaced);
+      expect(outcome).toBe('skipped');
+    }
+  });
+
+  it('keeps owner-ineligible ordinary lookups dormant', async () => {
+    const { manager, rehydrateSubSession } = makeManager({ taskStatus: 'done' });
+    const session = executionWorkerSession();
+
+    const outcome = await manager.provisionWorkflowSession(session, { startQuery: false });
+
+    expect(rehydrateSubSession).not.toHaveBeenCalled();
+    expect(outcome).toBe('skipped');
+  });
+
+  it('provisions a waiting-rebind reset replacement without starting it', async () => {
+    const { manager, rehydrateSubSession, cachedSessions } = makeManager({
+      taskStatus: 'in_progress',
+    });
+    const replacement = executionWorkerSession();
+    const displaced = {
+      getSessionData: () => ({ id: EXEC_SESSION_ID, status: 'active' }),
+      getProcessingState: () => ({ status: 'idle' }),
+    } as unknown as AgentSession;
+    cachedSessions.set(EXEC_SESSION_ID, replacement);
+    Object.defineProperty(manager, 'agentSessionIndex', {
+      value: new Map([[EXEC_SESSION_ID, displaced]]),
+    });
+    Object.defineProperty(manager, 'resolveNodeExecutionForSubSession', {
+      value: () => ({ workflowRunId: 'run-1', status: 'waiting_rebind' }),
+    });
+
+    const outcome = await manager.provisionWorkflowSession(replacement, {
+      startQuery: true,
+      intent: 'reset-replacement',
+    });
+
+    expect(rehydrateSubSession).toHaveBeenCalledWith(EXEC_SESSION_ID, replacement, {
+      startQuery: false,
+      replayPendingMessages: false,
+      resetReplacement: {
+        expectedCachedSession: replacement,
+        ownershipGeneration: 0,
+      },
+    });
+    expect(outcome).toBe('adopted-dormant');
+  });
+
+  it('keeps ordinary waiting-rebind lookups dormant', async () => {
+    const { manager, rehydrateSubSession } = makeManager({ taskStatus: 'in_progress' });
+    const session = executionWorkerSession();
+    Object.defineProperty(manager, 'resolveNodeExecutionForSubSession', {
+      value: () => ({ workflowRunId: 'run-1', status: 'waiting_rebind' }),
+    });
+    Object.defineProperty(manager, 'hasQueuedRetryableHookAction', {
+      value: () => false,
+    });
+
+    const outcome = await manager.provisionWorkflowSession(session, { startQuery: false });
+
+    expect(rehydrateSubSession).not.toHaveBeenCalled();
+    expect(outcome).toBe('skipped');
   });
 });
 
