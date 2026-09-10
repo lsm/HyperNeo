@@ -1,5 +1,6 @@
 import type {
   CanUseTool,
+  McpServerConfig as SdkMcpServerConfig,
   HookCallback,
   Options,
   PreToolUseHookInput,
@@ -232,6 +233,7 @@ export function buildProviderSettings(
 }
 
 export interface QueryOptionsBuilderContext {
+  getOperationMcpServer?(): SdkMcpServerConfig;
   readonly session: Session;
   readonly settingsManager: SettingsManager;
   readonly db?: Database;
@@ -286,19 +288,25 @@ export class QueryOptionsBuilder {
     return this.getPermissionMode();
   }
 
-  getEffectiveMcpServers(): Record<string, McpServerConfig> | undefined {
+  getEffectiveMcpServers(): Record<string, SdkMcpServerConfig> | undefined {
     return this.computeEffectiveMcpServers();
   }
 
-  private computeEffectiveMcpServers(): Record<string, McpServerConfig> | undefined {
+  private computeEffectiveMcpServers(): Record<string, SdkMcpServerConfig> | undefined {
     const registryServers = this.getMcpServersFromRegistry();
     const skillServers = this.getMcpServersFromSkills();
     const runtimeServers = this.getMcpServers() as Record<string, McpServerConfig> | undefined;
-    const merged: Record<string, McpServerConfig> = {
+    const merged: Record<string, SdkMcpServerConfig> = {
       ...registryServers,
       ...skillServers,
       ...runtimeServers,
     };
+    if (this.ctx.getOperationMcpServer) {
+      let name = 'hyperneo-operations';
+      let suffix = 2;
+      while (Object.hasOwn(merged, name)) name = `hyperneo-operations-${suffix++}`;
+      merged[name] = this.ctx.getOperationMcpServer();
+    }
     return Object.keys(merged).length > 0 ? merged : undefined;
   }
 

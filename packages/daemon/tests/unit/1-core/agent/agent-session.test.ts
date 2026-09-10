@@ -4596,6 +4596,7 @@ describe('AgentSession', () => {
 
     const makeMocks = () => {
       const mockDb = {
+        getJobQueueRepo: mock(() => ({})),
         getSession: mock(() => null),
         createSession: mock(() => {}),
         updateSession: mock(() => {}),
@@ -4741,6 +4742,7 @@ describe('AgentSession', () => {
 
       expect(setMcpServers).toHaveBeenCalledTimes(1);
       expect(setMcpServers).toHaveBeenCalledWith({
+        'hyperneo-operations': agentSession.getOperationMcpServer(),
         'task-agent': existing['task-agent'],
         'space-agent-tools': spaceAgent,
       });
@@ -5360,6 +5362,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        getJobQueueRepo: mock(() => ({})),
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getSDKMessages: mock(() => ({ messages: [], hasMore: false })),

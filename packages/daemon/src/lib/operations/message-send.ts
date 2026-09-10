@@ -64,6 +64,15 @@ export const SendMessageResultSchema = z.discriminatedUnion('kind', [
 type SendInput = z.infer<typeof SendMessageInputSchema>;
 type SendResult = z.infer<typeof SendMessageResultSchema>;
 
+function admitOperationMessage(
+  input: SendInput,
+  caller: OperationCaller
+): { value: SendInput } | { reason: SendResult } {
+  return caller.source === 'mcp' && input.message.inputKind === 'human'
+    ? { reason: { kind: 'rejected', reason: 'MCP callers cannot claim human input provenance' } }
+    : { value: input };
+}
+
 export function selectMessageOrigin(caller: OperationCaller): string {
   if (caller.sessionId) return renderAddress({ kind: 'session', sessionId: caller.sessionId });
   return caller.source === 'rpc' ? 'chat' : 'system';
@@ -93,9 +102,10 @@ export function mapMessageReceipt(outcome: MailboxHandoffOutcome, messageId: str
 
 const runSendMessage = (superpipe({})('send-operation-message') as PipelineAPI)
   .input(['input', 'caller', 'jobQueue'])
+  .pipe(admitOperationMessage, ['input', 'caller'], 'result:receipt')
   .pipe(generateUUID, undefined, 'messageId')
   .pipe(selectMessageOrigin, 'caller', 'origin')
-  .pipe(persistOperationMessage, ['input', 'origin', 'messageId', 'jobQueue'], 'handoff')
+  .pipe(persistOperationMessage, ['receipt', 'origin', 'messageId', 'jobQueue'], 'handoff')
   .pipe(mapMessageReceipt, ['handoff', 'messageId'], 'receipt')
   .endAsync('receipt') as (
   input: SendInput,
