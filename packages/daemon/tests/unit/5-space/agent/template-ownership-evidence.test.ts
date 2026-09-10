@@ -1,7 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  AUDIT_CREATION_WINDOW_MS,
-  auditedTemplateKey,
   collectTemplateOwnershipEvidence,
   migratedAgentIdCandidates,
   type TemplateOwnershipInputs,
@@ -12,7 +10,6 @@ function inputs(overrides: Partial<TemplateOwnershipInputs> = {}): TemplateOwner
     templates: [],
     agents: [],
     workflowSlots: [],
-    auditEntries: [],
     ...overrides,
   };
 }
@@ -39,86 +36,6 @@ describe('migratedAgentIdCandidates', () => {
   });
 });
 
-describe('auditedTemplateKey', () => {
-  test('reads the key from a create_agent_template entry', () => {
-    expect(
-      auditedTemplateKey({
-        spaceId: 'sp1',
-        timestamp: 0,
-        toolName: 'create_agent_template',
-        paramsSummary: JSON.stringify({ key: 'custom.one', from_agent_id: 'a1' }),
-      })
-    ).toBe('custom.one');
-  });
-
-  test('ignores other tools, malformed json, and missing keys', () => {
-    const base = {
-      spaceId: 'sp1',
-      paramsSummary: JSON.stringify({ key: 'custom.one' }),
-      timestamp: 0,
-    };
-    expect(auditedTemplateKey({ ...base, toolName: 'delete_agent_template' })).toBeNull();
-    expect(
-      auditedTemplateKey({
-        spaceId: 'sp1',
-        toolName: 'create_agent_template',
-        paramsSummary: '{',
-        timestamp: 0,
-      })
-    ).toBeNull();
-    expect(
-      auditedTemplateKey({
-        spaceId: 'sp1',
-        timestamp: 0,
-        toolName: 'create_agent_template',
-        paramsSummary: JSON.stringify(['custom.one']),
-      })
-    ).toBeNull();
-    expect(
-      auditedTemplateKey({
-        spaceId: 'sp1',
-        toolName: 'create_agent_template',
-        paramsSummary: null,
-        timestamp: 0,
-      })
-    ).toBeNull();
-  });
-
-  test('accepts the dispatcher row, which is the only row on the call_action path', () => {
-    expect(
-      auditedTemplateKey({
-        spaceId: 'sp1',
-        toolName: 'create_agent_template',
-        timestamp: 0,
-        paramsSummary: JSON.stringify({
-          key: 'custom.one',
-          handle: 'custom',
-          display_name: 'Custom',
-        }),
-      })
-    ).toBe('custom.one');
-  });
-
-  test('accepts the handler row with and without from_agent_id', () => {
-    expect(
-      auditedTemplateKey({
-        spaceId: 'sp1',
-        toolName: 'create_agent_template',
-        timestamp: 0,
-        paramsSummary: JSON.stringify({ key: 'custom.one' }),
-      })
-    ).toBe('custom.one');
-    expect(
-      auditedTemplateKey({
-        spaceId: 'sp1',
-        toolName: 'create_agent_template',
-        timestamp: 0,
-        paramsSummary: JSON.stringify({ key: 'custom.one', from_agent_id: 'a1' }),
-      })
-    ).toBe('custom.one');
-  });
-});
-
 describe('collectTemplateOwnershipEvidence', () => {
   test('returns an entry for every known key and nothing for unknown keys', () => {
     const evidence = collectTemplateOwnershipEvidence(
@@ -136,7 +53,6 @@ describe('collectTemplateOwnershipEvidence', () => {
       migratedAgentSpaces: [],
       agentReferenceSpaces: [],
       workflowSlotSpaces: [],
-      auditedSpaces: [],
     });
   });
 
@@ -148,8 +64,8 @@ describe('collectTemplateOwnershipEvidence', () => {
           { key: 'migrated.agent.a2.m228-2', createdAt: 0 },
         ],
         agents: [
-          { id: 'a1', spaceId: 'sp1', templateKey: null },
-          { id: 'a2', spaceId: 'sp2', templateKey: null },
+          { id: 'a1', spaceId: 'sp1', templateKey: null, createdAt: 0 },
+          { id: 'a2', spaceId: 'sp2', templateKey: null, createdAt: 0 },
         ],
       })
     );
@@ -162,8 +78,8 @@ describe('collectTemplateOwnershipEvidence', () => {
       inputs({
         templates: [{ key: 'migrated.agent.a1.m228', createdAt: 0 }],
         agents: [
-          { id: 'a1.m228', spaceId: 'exact', templateKey: null },
-          { id: 'a1', spaceId: 'stripped', templateKey: null },
+          { id: 'a1.m228', spaceId: 'exact', templateKey: null, createdAt: 0 },
+          { id: 'a1', spaceId: 'stripped', templateKey: null, createdAt: 0 },
         ],
       })
     );
@@ -178,50 +94,32 @@ describe('collectTemplateOwnershipEvidence', () => {
       inputs({
         templates: [{ key: 'shared.one', createdAt: 0 }],
         agents: [
-          { id: 'a1', spaceId: 'sp1', templateKey: 'shared.one' },
-          { id: 'a2', spaceId: 'sp2', templateKey: 'shared.one' },
-          { id: 'a3', spaceId: 'sp1', templateKey: 'shared.one' },
+          { id: 'a1', spaceId: 'sp1', templateKey: 'shared.one', createdAt: 0 },
+          { id: 'a2', spaceId: 'sp2', templateKey: 'shared.one', createdAt: 0 },
+          { id: 'a3', spaceId: 'sp1', templateKey: 'shared.one', createdAt: 0 },
         ],
         workflowSlots: [
           { spaceId: 'sp3', templateKey: 'shared.one' },
           { spaceId: 'sp3', templateKey: 'shared.one' },
-        ],
-        auditEntries: [
-          {
-            spaceId: 'sp4',
-            timestamp: 0,
-            toolName: 'create_agent_template',
-            paramsSummary: JSON.stringify({ key: 'shared.one' }),
-          },
         ],
       })
     );
     const entry = evidence.get('shared.one');
     expect(entry?.agentReferenceSpaces).toEqual(['sp1', 'sp2']);
     expect(entry?.workflowSlotSpaces).toEqual(['sp3']);
-    expect(entry?.auditedSpaces).toEqual(['sp4']);
   });
 
   test('ignores blank Space ids and blank template references', () => {
     const evidence = collectTemplateOwnershipEvidence(
       inputs({
         templates: [{ key: 'custom.one', createdAt: 0 }],
-        agents: [{ id: 'a1', spaceId: '   ', templateKey: 'custom.one' }],
+        agents: [{ id: 'a1', spaceId: '   ', templateKey: 'custom.one', createdAt: 0 }],
         workflowSlots: [{ spaceId: 'sp1', templateKey: '   ' }],
-        auditEntries: [
-          {
-            spaceId: null,
-            timestamp: 0,
-            toolName: 'create_agent_template',
-            paramsSummary: JSON.stringify({ key: 'custom.one' }),
-          },
-        ],
       })
     );
     const entry = evidence.get('custom.one');
     expect(entry?.agentReferenceSpaces).toEqual([]);
     expect(entry?.workflowSlotSpaces).toEqual([]);
-    expect(entry?.auditedSpaces).toEqual([]);
   });
 
   test('trims keys and Space ids before matching', () => {
@@ -233,63 +131,26 @@ describe('collectTemplateOwnershipEvidence', () => {
     );
     expect(evidence.get('custom.one')?.workflowSlotSpaces).toEqual(['sp1']);
   });
-  test('keeps only audit entries near the row own creation time', () => {
-    const createdAt = 10_000_000;
+  test('rejects a replacement agent created after the template it would claim', () => {
     const evidence = collectTemplateOwnershipEvidence(
       inputs({
-        templates: [{ key: 'shared.one', createdAt }],
-        auditEntries: [
-          {
-            spaceId: 'former-owner',
-            toolName: 'create_agent_template',
-            timestamp: createdAt - 10 * AUDIT_CREATION_WINDOW_MS,
-            paramsSummary: JSON.stringify({ key: 'shared.one' }),
-          },
-          {
-            spaceId: 'failed-attempt',
-            toolName: 'create_agent_template',
-            timestamp: createdAt + 10 * AUDIT_CREATION_WINDOW_MS,
-            paramsSummary: JSON.stringify({ key: 'shared.one', handle: 'dup' }),
-          },
-          {
-            spaceId: 'dispatcher-before-insert',
-            toolName: 'create_agent_template',
-            timestamp: createdAt - 2_000,
-            paramsSummary: JSON.stringify({ key: 'shared.one', handle: 'real' }),
-          },
-          {
-            spaceId: 'handler-after-insert',
-            toolName: 'create_agent_template',
-            timestamp: createdAt + 5,
-            paramsSummary: JSON.stringify({ key: 'shared.one' }),
-          },
-        ],
+        templates: [{ key: 'migrated.agent.reused', createdAt: 1_000 }],
+        agents: [{ id: 'reused', spaceId: 'replacement', templateKey: null, createdAt: 5_000 }],
       })
     );
-    expect(evidence.get('shared.one')?.auditedSpaces).toEqual([
-      'dispatcher-before-insert',
-      'handler-after-insert',
-    ]);
+    expect(evidence.get('migrated.agent.reused')?.migratedAgentSpaces).toEqual([]);
   });
 
-  test('surfaces a namespace/authorship conflict as both kinds of evidence', () => {
-    const createdAt = 10_000_000;
+  test('rejects an agent reference that predates the current template row', () => {
     const evidence = collectTemplateOwnershipEvidence(
       inputs({
-        templates: [{ key: 'migrated.agent.a1', createdAt }],
-        agents: [{ id: 'a1', spaceId: 'agent-space', templateKey: null }],
-        auditEntries: [
-          {
-            spaceId: 'author-space',
-            toolName: 'create_agent_template',
-            timestamp: createdAt,
-            paramsSummary: JSON.stringify({ key: 'migrated.agent.a1', handle: 'hand-made' }),
-          },
+        templates: [{ key: 'shared.one', createdAt: 5_000 }],
+        agents: [
+          { id: 'stale', spaceId: 'former', templateKey: 'shared.one', createdAt: 1_000 },
+          { id: 'fresh', spaceId: 'current', templateKey: 'shared.one', createdAt: 9_000 },
         ],
       })
     );
-    const entry = evidence.get('migrated.agent.a1');
-    expect(entry?.migratedAgentSpaces).toEqual(['agent-space']);
-    expect(entry?.auditedSpaces).toEqual(['author-space']);
+    expect(evidence.get('shared.one')?.agentReferenceSpaces).toEqual(['current']);
   });
 });

@@ -1,23 +1,15 @@
 import { MIGRATED_AGENT_TEMPLATE_KEY_PREFIX } from './agent-template-synthesis.ts';
 
-export const TEMPLATE_OWNERSHIP_AUDIT_TOOL = 'create_agent_template';
-
 export interface TemplateOwnershipAgentRow {
   id: string;
   spaceId: string;
   templateKey: string | null;
+  createdAt: number;
 }
 
 export interface TemplateOwnershipSlotRow {
   spaceId: string;
   templateKey: string | null;
-}
-
-export interface TemplateOwnershipAuditRow {
-  spaceId: string | null;
-  toolName: string;
-  paramsSummary: string | null;
-  timestamp: number;
 }
 
 export interface TemplateOwnershipTemplateRow {
@@ -29,26 +21,22 @@ export interface TemplateOwnershipInputs {
   templates: readonly TemplateOwnershipTemplateRow[];
   agents: readonly TemplateOwnershipAgentRow[];
   workflowSlots: readonly TemplateOwnershipSlotRow[];
-  auditEntries: readonly TemplateOwnershipAuditRow[];
 }
 
 export interface TemplateOwnershipEvidence {
   migratedAgentSpaces: string[];
   agentReferenceSpaces: string[];
   workflowSlotSpaces: string[];
-  auditedSpaces: string[];
 }
 
 const MIGRATED_KEY_PREFIX = `${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.`;
 const PROBE_SUFFIX = /\.m228(?:-\d+)?$/;
-export const AUDIT_CREATION_WINDOW_MS = 60_000;
 
 function emptyEvidence(): TemplateOwnershipEvidence {
   return {
     migratedAgentSpaces: [],
     agentReferenceSpaces: [],
     workflowSlotSpaces: [],
-    auditedSpaces: [],
   };
 }
 
@@ -72,21 +60,6 @@ export function migratedAgentIdCandidates(key: string): string[] {
   return candidates;
 }
 
-export function auditedTemplateKey(entry: TemplateOwnershipAuditRow): string | null {
-  if (entry.toolName !== TEMPLATE_OWNERSHIP_AUDIT_TOOL) return null;
-  if (typeof entry.paramsSummary !== 'string' || entry.paramsSummary === '') return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(entry.paramsSummary);
-  } catch {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-  const record = parsed as Record<string, unknown>;
-  const key = record.key;
-  return typeof key === 'string' && key.trim() !== '' ? key.trim() : null;
-}
-
 export function collectTemplateOwnershipEvidence(
   inputs: TemplateOwnershipInputs
 ): Map<string, TemplateOwnershipEvidence> {
@@ -99,40 +72,37 @@ export function collectTemplateOwnershipEvidence(
     createdAtByKey.set(trimmed, template.createdAt);
   }
 
-  const spaceByAgentId = new Map<string, string>();
+  const agentsById = new Map<string, TemplateOwnershipAgentRow>();
   for (const agent of inputs.agents) {
     const id = normalizeKey(agent.id);
-    const space = normalizeKey(agent.spaceId);
-    if (id && space) spaceByAgentId.set(id, space);
+    if (id && normalizeKey(agent.spaceId)) agentsById.set(id, agent);
   }
 
   for (const [key, entry] of evidence) {
+    const createdAt = createdAtByKey.get(key);
+    if (createdAt === undefined) continue;
     for (const candidate of migratedAgentIdCandidates(key)) {
-      const space = spaceByAgentId.get(candidate);
-      if (space) addSpace(entry.migratedAgentSpaces, space);
+      const agent = agentsById.get(candidate);
+      if (agent && agent.createdAt <= createdAt) {
+        addSpace(entry.migratedAgentSpaces, agent.spaceId);
+      }
     }
   }
 
   for (const agent of inputs.agents) {
     const referenced = normalizeKey(agent.templateKey);
-    const entry = referenced ? evidence.get(referenced) : undefined;
-    if (entry) addSpace(entry.agentReferenceSpaces, agent.spaceId);
+    if (!referenced) continue;
+    const entry = evidence.get(referenced);
+    const createdAt = createdAtByKey.get(referenced);
+    if (!entry || createdAt === undefined) continue;
+    if (agent.createdAt < createdAt) continue;
+    addSpace(entry.agentReferenceSpaces, agent.spaceId);
   }
 
   for (const slot of inputs.workflowSlots) {
     const key = normalizeKey(slot.templateKey);
     const entry = key ? evidence.get(key) : undefined;
     if (entry) addSpace(entry.workflowSlotSpaces, slot.spaceId);
-  }
-
-  for (const audit of inputs.auditEntries) {
-    const key = auditedTemplateKey(audit);
-    if (!key) continue;
-    const entry = evidence.get(key);
-    const createdAt = createdAtByKey.get(key);
-    if (!entry || createdAt === undefined) continue;
-    if (Math.abs(audit.timestamp - createdAt) > AUDIT_CREATION_WINDOW_MS) continue;
-    addSpace(entry.auditedSpaces, audit.spaceId);
   }
 
   return evidence;
