@@ -1,10 +1,7 @@
-import { createHash } from 'node:crypto';
-import type { SDKUserMessage } from '@hyperneo/shared/sdk';
 import { DeadLetterImmediatelyError, type JobHandler } from '../../storage/job-queue-processor.ts';
 import type { Job, JobQueueRepository } from '../../storage/repositories/job-queue-repository.ts';
 import type { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository.ts';
 import type { Database as BunDatabase } from '../../storage/sqlite-compat.ts';
-import type { MessageDeliveryOrigin } from '../agent/message-delivery.ts';
 import { activatePrompts, ensurePrompt, retryPrompt } from '../agent/message-delivery-outbox.ts';
 import { planMailboxAdmission } from './admission-plan.ts';
 import { parseMailboxEntry } from './entry.ts';
@@ -30,29 +27,6 @@ export function createMailboxDeadHandler(logError: (message: string) => void) {
     const entryId = typeof job.payload.id === 'string' ? job.payload.id : 'unknown';
     logError(`mailbox: entry ${entryId} dead-lettered: ${job.error ?? 'unknown error'}`);
   };
-}
-
-const MAILBOX_MESSAGE_UUID_PREFIX = 'mbox-';
-
-export function deterministicUuid(entryId: string): NonNullable<SDKUserMessage['uuid']> {
-  const digest = createHash('sha256').update(entryId).digest('hex');
-  return `${MAILBOX_MESSAGE_UUID_PREFIX}${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}` as NonNullable<
-    SDKUserMessage['uuid']
-  >;
-}
-
-function isMailboxDeliveryOrigin(origin: string): origin is MessageDeliveryOrigin {
-  return (
-    origin === 'chat' ||
-    origin === 'space_inject' ||
-    origin === 'space_agent' ||
-    origin === 'long_term_agent' ||
-    origin === 'recovery'
-  );
-}
-
-export function mapOrigin(origin: string): MessageDeliveryOrigin {
-  return isMailboxDeliveryOrigin(origin) ? origin : 'space_inject';
 }
 
 function readAdmissionRowid(db: BunDatabase, jobId: string): number | undefined {
