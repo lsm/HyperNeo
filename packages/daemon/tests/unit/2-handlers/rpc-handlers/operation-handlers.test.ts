@@ -1,3 +1,8 @@
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { createSpaceTables } from '../../helpers/space-test-db';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { InProcessTransport, MessageHub } from '@hyperneo/shared';
 import { setupOperationHandlers } from '../../../../src/lib/rpc-handlers/operation-handlers';
@@ -7,18 +12,23 @@ const message = { type: 'user', message: { content: 'hello' }, parent_tool_use_i
 
 describe('operation.invoke RPC registration', () => {
   let mailbox: MailboxTestDb;
+  let taskDb: Database;
   let client: MessageHub;
   let server: MessageHub;
   let transports: [InProcessTransport, InProcessTransport];
   let unregister: () => void;
   beforeEach(async () => {
     mailbox = createMailboxTestDb();
+    taskDb = new Database(':memory:');
+    createSpaceTables(taskDb);
     client = new MessageHub();
     server = new MessageHub();
     transports = InProcessTransport.createPair();
     client.registerTransport(transports[0]);
     server.registerTransport(transports[1]);
-    unregister = setupOperationHandlers(server, mailbox.jobQueue);
+    unregister = setupOperationHandlers(server, mailbox.jobQueue, (taskId) =>
+      readTaskCore(taskDb, taskId)
+    );
     await Promise.all(transports.map((transport) => transport.initialize()));
   });
   afterEach(async () => {
@@ -27,6 +37,7 @@ describe('operation.invoke RPC registration', () => {
     server.cleanup();
     await Promise.all(transports.map((transport) => transport.close()));
     mailbox.close();
+    taskDb.close();
   });
 
   test('responds with persisted acceptance over the actual hub protocol', async () => {
@@ -50,6 +61,7 @@ describe('operation.invoke RPC registration', () => {
     });
     expect(listed.map(({ name }) => name)).toEqual([
       'message.send',
+      'task.get',
       'operations.list',
       'operations.describe',
     ]);
@@ -79,6 +91,40 @@ describe('operation.invoke RPC registration', () => {
         input: { name: 'missing' },
       })
     ).toEqual({ found: false, name: 'missing' });
+    expect(mailbox.rows()).toEqual([]);
+  });
+
+  test('reads and discovers core task data through the hub without changing Space storage', async () => {
+    const space = new SpaceRepository(taskDb).createSpace({
+      workspacePath: '/workspace/test',
+      slug: 'test',
+      name: 'Test',
+    });
+    const tasks = new SpaceTaskRepository(taskDb);
+    const stored = tasks.createTask({ spaceId: space.id, title: 'Read me', description: '' });
+    const result = await client.request('operation.invoke', {
+      name: 'task.get',
+      input: { taskId: stored.id },
+    });
+    expect(result).toEqual(readTaskCore(taskDb, stored.id));
+    expect(result).not.toHaveProperty('spaceId');
+    expect(tasks.getTask(stored.id)).toEqual(stored);
+    expect(
+      await client.request('operation.invoke', {
+        name: 'task.get',
+        input: { taskId: 'absent' },
+      })
+    ).toBeNull();
+    expect(
+      await client.request('operation.invoke', {
+        name: 'operations.describe',
+        input: { name: 'task.get' },
+      })
+    ).toMatchObject({
+      found: true,
+      name: 'task.get',
+      inputSchema: { properties: { taskId: { type: 'string' } } },
+    });
     expect(mailbox.rows()).toEqual([]);
   });
 

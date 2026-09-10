@@ -1,3 +1,4 @@
+import { readTaskCore } from '../../storage/tasks/task-reader.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
@@ -315,7 +316,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   let inactivityRunNowCancelled = false;
   let inactivityAborted = false;
   setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
-  setupOperationHandlers(deps.messageHub, deps.jobQueue);
+  setupOperationHandlers(deps.messageHub, deps.jobQueue, (taskId) =>
+    readTaskCore(deps.db.getDatabase(), taskId)
+  );
   setupSystemHandlers(deps.messageHub, deps.sessionManager);
   setupAuthHandlers(
     deps.messageHub,

@@ -1,3 +1,4 @@
+import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { InProcessTransport, MessageHub, type Session } from '@hyperneo/shared';
 import { createMailboxDeliveryHandler } from '../../../../src/lib/mailbox/delivery';
@@ -44,7 +45,7 @@ describe('shared operation delivery parity', () => {
     transports = InProcessTransport.createPair();
     client.registerTransport(transports[0]);
     server.registerTransport(transports[1]);
-    setupOperationHandlers(server, mailbox.jobQueue);
+    setupOperationHandlers(server, mailbox.jobQueue, (taskId) => readTaskCore(mailbox.db, taskId));
     await Promise.all(transports.map((transport) => transport.initialize()));
   });
 
@@ -74,9 +75,14 @@ describe('shared operation delivery parity', () => {
     if (source === 'rpc') {
       receipt = await client.request<Receipt>('operation.invoke', { name: 'message.send', input });
     } else {
-      const mcp = createOperationMcpServer(createDaemonOperationCatalog(mailbox.jobQueue), () => ({
-        sessionId: sender.id,
-      }));
+      const mcp = createOperationMcpServer(
+        createDaemonOperationCatalog(mailbox.jobQueue, (taskId) =>
+          readTaskCore(mailbox.db, taskId)
+        ),
+        () => ({
+          sessionId: sender.id,
+        })
+      );
       const result = await mcp.tools[0].handler({ name: 'message.send', input }, {});
       expect(result.isError).not.toBe(true);
       const content = result.content[0];

@@ -1,3 +1,4 @@
+import { readTaskCore } from '../../storage/tasks/task-reader.ts';
 import { createDaemonOperationCatalog } from '../operations/catalog.ts';
 import { createOperationMcpServer } from '../operations/mcp-server.ts';
 import type {
@@ -246,7 +247,9 @@ export class AgentSession
 
   getOperationMcpServer(): ReturnType<typeof createOperationMcpServer> {
     return (this.operationMcpServer ??= createOperationMcpServer(
-      createDaemonOperationCatalog(this.db.getJobQueueRepo()),
+      createDaemonOperationCatalog(this.db.getJobQueueRepo(), (taskId) =>
+        readTaskCore(this.db.getDatabase(), taskId)
+      ),
       () => ({ sessionId: this.session.id })
     ));
   }
