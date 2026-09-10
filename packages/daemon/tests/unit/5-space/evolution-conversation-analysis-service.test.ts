@@ -409,7 +409,7 @@ describe('EvolutionConversationAnalysisService', () => {
       },
     });
 
-    expect(service.captureForTask({ scopeId: scope.id, taskId: task.id })).rejects.toThrow(
+    await expect(service.captureForTask({ scopeId: scope.id, taskId: task.id })).rejects.toThrow(
       'LLM unavailable'
     );
   });

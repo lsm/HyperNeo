@@ -55,12 +55,12 @@ describe('task dependency graph', () => {
       cyclic: true,
     },
     { edges: [['a', ['missing']]], cyclic: false },
-  ] as { edges: [string, string[]][]; cyclic: boolean }[])('detects cycles in %j', ({
-    edges,
-    cyclic,
-  }) => {
-    expect(hasTaskDependencyCycle(new Map(edges))).toBe(cyclic);
-  });
+  ] as { edges: [string, string[]][]; cyclic: boolean }[])(
+    'detects cycles in %j',
+    ({ edges, cyclic }) => {
+      expect(hasTaskDependencyCycle(new Map(edges))).toBe(cyclic);
+    }
+  );
 
   test('does not synthesize an absent update target', () => {
     expect([...buildTaskDependencyGraph([{ id: 'a' }], 'missing', ['a'])]).toEqual([['a', []]]);

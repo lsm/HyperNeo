@@ -29,15 +29,14 @@ describe('task transition policy', () => {
     ['archived', 'open', false],
     ['done', 'open', false],
     ['draft', 'done', false],
-  ] as [
-    TaskLifecycleStatus,
-    TaskLifecycleStatus,
-    boolean,
-  ][])('preserves %s to %s = %s', (from, to, allowed) => {
-    expect(isValidTaskTransition(from, to)).toBe(allowed);
-    if (allowed) expect(() => assertValidTaskTransition(from, to)).not.toThrow();
-    else expect(() => assertValidTaskTransition(from, to)).toThrow('Invalid status transition');
-  });
+  ] as [TaskLifecycleStatus, TaskLifecycleStatus, boolean][])(
+    'preserves %s to %s = %s',
+    (from, to, allowed) => {
+      expect(isValidTaskTransition(from, to)).toBe(allowed);
+      if (allowed) expect(() => assertValidTaskTransition(from, to)).not.toThrow();
+      else expect(() => assertValidTaskTransition(from, to)).toThrow('Invalid status transition');
+    }
+  );
 
   test('preserves the diagnostic including allowed transitions in their original order', () => {
     expect(() => assertValidTaskTransition('done', 'open')).toThrow(

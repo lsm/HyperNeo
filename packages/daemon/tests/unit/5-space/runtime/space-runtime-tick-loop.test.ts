@@ -377,31 +377,30 @@ describe('SpaceRuntime — tick loop correctness', () => {
       expect(workflowRunRepo.getRun(run.id)?.status).toBe('done');
     });
 
-    test.each([
-      'rate_limited',
-      'stopped',
-      'blocked',
-    ] as const)('%s canonical task stops before spawn work', async (status) => {
-      let spawnCount = 0;
-      const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
-        spawnWorkflowNodeAgentForExecution: async () => {
-          spawnCount++;
-          return 'session:unexpected';
-        },
-      });
-      const rt = new SpaceRuntime(buildConfig(tam));
-      const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
-        { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
-      ]);
-      const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
-      taskRepo.updateTask(tasks[0].id, { status });
+    test.each(['rate_limited', 'stopped', 'blocked'] as const)(
+      '%s canonical task stops before spawn work',
+      async (status) => {
+        let spawnCount = 0;
+        const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo, {
+          spawnWorkflowNodeAgentForExecution: async () => {
+            spawnCount++;
+            return 'session:unexpected';
+          },
+        });
+        const rt = new SpaceRuntime(buildConfig(tam));
+        const workflow = buildLinearWorkflow(SPACE_ID, workflowManager, [
+          { id: STEP_A, name: 'Plan', agentId: AGENT_PLANNER },
+        ]);
+        const { run, tasks } = await rt.startWorkflowRun(SPACE_ID, workflow.id, 'Run');
+        taskRepo.updateTask(tasks[0].id, { status });
 
-      await processRunTick(rt, run.id);
+        await processRunTick(rt, run.id);
 
-      expect(tam._spawned).toEqual([]);
-      expect(spawnCount).toBe(0);
-      expect(nodeExecutionRepo.listByWorkflowRun(run.id)[0]?.status).toBe('pending');
-    });
+        expect(tam._spawned).toEqual([]);
+        expect(spawnCount).toBe(0);
+        expect(nodeExecutionRepo.listByWorkflowRun(run.id)[0]?.status).toBe('pending');
+      }
+    );
 
     test('a run without executions stops before spawn work', async () => {
       const tam = makeMockTaskAgentManager(taskRepo, nodeExecutionRepo);

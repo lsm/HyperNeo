@@ -507,7 +507,9 @@ describe('AcpProvider', () => {
       };
       const probed = new AcpProvider(process.env, probe);
 
-      expect(probed.getModels()).rejects.toThrow("ACP command 'missing-binary' not found in PATH");
+      await expect(probed.getModels()).rejects.toThrow(
+        "ACP command 'missing-binary' not found in PATH"
+      );
     });
 
     it('caches successful probe so repeated calls do not re-spawn', async () => {

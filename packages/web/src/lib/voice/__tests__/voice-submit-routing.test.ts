@@ -83,24 +83,26 @@ describe('classifyVoiceSubmitError', () => {
     expect(classifyVoiceSubmitError(new Error(message))).toBe('retry');
   });
 
-  it.each([
-    400, 401, 403, 404, 405, 406, 410, 413, 414, 415, 422, 426, 451,
-  ])('discards deterministic client failures: failed with HTTP %i', (status) => {
-    expect(
-      classifyVoiceSubmitError(new Error(`Voice transcription failed with HTTP ${status}`))
-    ).toBe('discard');
-  });
+  it.each([400, 401, 403, 404, 405, 406, 410, 413, 414, 415, 422, 426, 451])(
+    'discards deterministic client failures: failed with HTTP %i',
+    (status) => {
+      expect(
+        classifyVoiceSubmitError(new Error(`Voice transcription failed with HTTP ${status}`))
+      ).toBe('discard');
+    }
+  );
 
-  it.each([
-    408, 409, 421, 423, 425, 429, 500, 502, 503, 504,
-  ])('retries transient statuses: failed with HTTP %i', (status) => {
-    expect(
-      classifyVoiceSubmitError(
-        new Error(`Voice transcription failed with HTTP ${status}`),
-        'transcribe'
-      )
-    ).toBe('retry');
-  });
+  it.each([408, 409, 421, 423, 425, 429, 500, 502, 503, 504])(
+    'retries transient statuses: failed with HTTP %i',
+    (status) => {
+      expect(
+        classifyVoiceSubmitError(
+          new Error(`Voice transcription failed with HTTP ${status}`),
+          'transcribe'
+        )
+      ).toBe('retry');
+    }
+  );
 
   it.each([
     ['Invalid model', 400, 'discard'],
@@ -148,14 +150,12 @@ describe('voiceRetryPolicy', () => {
     expect(VOICE_SUBMIT_MAX_RETRY_DELAY_MS).toBe(60_000);
   });
 
-  it.each([
-    -1,
-    -0.5,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-  ])('guards invalid attempt %s', (attempt) => {
-    expect(voiceRetryPolicy(attempt)).toBe(5_000);
-  });
+  it.each([-1, -0.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    'guards invalid attempt %s',
+    (attempt) => {
+      expect(voiceRetryPolicy(attempt)).toBe(5_000);
+    }
+  );
 });
 
 describe('routeVoiceOutcome', () => {
@@ -226,15 +226,14 @@ describe('routeVoiceOutcome', () => {
     ).toBe('insert');
   });
 
-  it.each([
-    'stay',
-    'send',
-    'queue',
-  ] as const)('delivers unmounted transcripts for %s mode', (mode) => {
-    expect(
-      routeVoiceOutcome({ transcript: 'hello', mounted: false, sessionChanged: false, mode })
-    ).toEqual({ kind: 'deliver-unmounted', transcript: 'hello', mode });
-  });
+  it.each(['stay', 'send', 'queue'] as const)(
+    'delivers unmounted transcripts for %s mode',
+    (mode) => {
+      expect(
+        routeVoiceOutcome({ transcript: 'hello', mounted: false, sessionChanged: false, mode })
+      ).toEqual({ kind: 'deliver-unmounted', transcript: 'hello', mode });
+    }
+  );
 
   it('defaults unmounted delivery to stay mode', () => {
     expect(

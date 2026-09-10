@@ -38,7 +38,7 @@ function getMermaidForTheme(theme: 'dark' | 'default') {
   }
   return mermaidModulePromise.then((mermaid) => {
     if (mermaidInitializedTheme !== theme) {
-      mermaid.initialize({ startOnLoad: false, theme });
+      mermaid.initialize({ startOnLoad: false, theme, layout: 'dagre', look: 'classic' });
       mermaidInitializedTheme = theme;
     }
     return mermaid;

@@ -306,21 +306,21 @@ describe('Space Export/Import RPC Handlers', () => {
   });
 
   describe('spaceId validation', () => {
-    it.each([
-      'spaceExport.workflows',
-      'spaceExport.bundle',
-    ])('%s: throws if spaceId missing', async (method) => {
-      await expect(call(handlers, method, {})).rejects.toThrow('spaceId is required');
-    });
+    it.each(['spaceExport.workflows', 'spaceExport.bundle'])(
+      '%s: throws if spaceId missing',
+      async (method) => {
+        await expect(call(handlers, method, {})).rejects.toThrow('spaceId is required');
+      }
+    );
 
-    it.each([
-      'spaceExport.workflows',
-      'spaceExport.bundle',
-    ])('%s: throws if space not found', async (method) => {
-      await expect(call(handlers, method, { spaceId: 'nonexistent' })).rejects.toThrow(
-        'Space not found: nonexistent'
-      );
-    });
+    it.each(['spaceExport.workflows', 'spaceExport.bundle'])(
+      '%s: throws if space not found',
+      async (method) => {
+        await expect(call(handlers, method, { spaceId: 'nonexistent' })).rejects.toThrow(
+          'Space not found: nonexistent'
+        );
+      }
+    );
 
     it('spaceImport.preview: throws if spaceId missing', async () => {
       await expect(call(handlers, 'spaceImport.preview', { bundle: {} })).rejects.toThrow(

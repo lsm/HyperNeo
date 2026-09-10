@@ -1095,7 +1095,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       ) as unknown as typeof fetch;
       provider = makeProvider({ OPENAI_API_KEY: 'bad-key' }, tmpDir, tmpDir, fetchImpl);
 
-      expect(provider.getModels()).rejects.toThrow('Codex credentials rejected (HTTP 401)');
+      await expect(provider.getModels()).rejects.toThrow('Codex credentials rejected (HTTP 401)');
     });
 
     it('throws when probe fails at the network layer', async () => {
@@ -1104,7 +1104,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
       }) as unknown as typeof fetch;
       provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fetchImpl);
 
-      expect(provider.getModels()).rejects.toThrow('Codex probe failed: ECONNREFUSED');
+      await expect(provider.getModels()).rejects.toThrow('Codex probe failed: ECONNREFUSED');
     });
 
     it('caches successful probe so repeated calls do not re-probe', async () => {

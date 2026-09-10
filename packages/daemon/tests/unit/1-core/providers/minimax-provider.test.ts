@@ -148,7 +148,7 @@ describe('MinimaxProvider', () => {
       ) as unknown as typeof fetch;
       provider = new MinimaxProvider(process.env, fetchImpl);
 
-      expect(provider.getModels()).rejects.toThrow('MiniMax API key rejected (HTTP 403)');
+      await expect(provider.getModels()).rejects.toThrow('MiniMax API key rejected (HTTP 403)');
     });
 
     it('throws when probe fails at the network layer', async () => {
@@ -158,7 +158,7 @@ describe('MinimaxProvider', () => {
       }) as unknown as typeof fetch;
       provider = new MinimaxProvider(process.env, fetchImpl);
 
-      expect(provider.getModels()).rejects.toThrow('MiniMax probe failed: ETIMEDOUT');
+      await expect(provider.getModels()).rejects.toThrow('MiniMax probe failed: ETIMEDOUT');
     });
 
     it('caches successful probe for 30s so repeated calls do not re-probe', async () => {

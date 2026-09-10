@@ -19,12 +19,12 @@
     "coverage": "vitest run --reporter dot --coverage"
   },
   "dependencies": {
-    "@preact/signals": "2.9.1",
+    "@preact/signals": "2.11.2",
     "clsx": "2.1.1",
-    "highlight.js": "11.11.1",
+    "highlight.js": "11.12.0",
     "katex": "0.16.47",
-    "mermaid": "11.15.0",
-    "preact": "10.29.2",
+    "mermaid": "12.0.0",
+    "preact": "10.29.8",
     "rehype-highlight": "7.0.2",
     "rehype-katex": "7.0.1",
     "rehype-stringify": "10.0.1",
@@ -37,18 +37,18 @@
     "unified": "11.0.5"
   },
   "devDependencies": {
-    "@preact/preset-vite": "2.10.5",
-    "@tailwindcss/vite": "4.3.0",
+    "@preact/preset-vite": "2.10.6",
+    "@tailwindcss/vite": "4.3.3",
     "@testing-library/preact": "3.2.4",
-    "@types/bun": "1.3.14",
-    "@vitest/coverage-v8": "4.1.5",
-    "@vitest/ui": "4.1.5",
+    "@types/bun": "1.4.2",
+    "@vitest/coverage-v8": "5.0.0",
+    "@vitest/ui": "5.0.0",
     "fake-indexeddb": "6.2.5",
-    "happy-dom": "20.9.0",
-    "tailwindcss": "4.2.4",
+    "happy-dom": "20.14.3",
+    "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
     "typescript7": "npm:typescript@7.0.2",
-    "vite": "8.0.10",
-    "vitest": "4.1.5"
+    "vite": "8.3.0",
+    "vitest": "5.0.0"
   }
 }

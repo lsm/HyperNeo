@@ -201,7 +201,7 @@ describe('GlmProvider', () => {
       ) as unknown as typeof fetch;
       provider = new GlmProvider(process.env, fetchImpl);
 
-      expect(provider.getModels()).rejects.toThrow('Z.ai API key rejected (HTTP 401)');
+      await expect(provider.getModels()).rejects.toThrow('Z.ai API key rejected (HTTP 401)');
     });
 
     it('throws when probe fails at the network layer', async () => {
@@ -211,7 +211,7 @@ describe('GlmProvider', () => {
       }) as unknown as typeof fetch;
       provider = new GlmProvider(process.env, fetchImpl);
 
-      expect(provider.getModels()).rejects.toThrow('Z.ai probe failed: ENOTFOUND');
+      await expect(provider.getModels()).rejects.toThrow('Z.ai probe failed: ENOTFOUND');
     });
 
     it('caches successful probe for 30s so repeated calls do not re-probe', async () => {

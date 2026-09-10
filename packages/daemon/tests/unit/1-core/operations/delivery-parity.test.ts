@@ -56,60 +56,62 @@ describe('shared operation delivery parity', () => {
     mailbox.close();
   });
 
-  test.each(cases)('delivers the same content through %j', async ({
-    source,
-    sourceType,
-    targetType,
-  }) => {
-    const sender = session('sender', sourceType, 'space-a');
-    const target = session('destination', targetType, 'space-b');
-    mailbox.db.prepare('INSERT INTO sessions (id) VALUES (?)').run(target.id);
-    const getSession = mock(async (id: string) => (id === target.id ? target : null));
-    const deliver = createMailboxDeliveryHandler({
-      ...mailbox,
-      getSession,
-      isSessionArchived: () => false,
-    });
-    const input = { sessionId: target.id, message };
-    let receipt: Receipt;
-    if (source === 'rpc') {
-      receipt = await client.request<Receipt>('operation.invoke', { name: 'message.send', input });
-    } else {
-      const mcp = createOperationMcpServer(
-        createDaemonOperationCatalog(mailbox.jobQueue, (taskId) =>
-          readTaskCore(mailbox.db, taskId)
-        ),
-        () => ({
-          sessionId: sender.id,
-        })
-      );
-      const result = await mcp.tools[0].handler({ name: 'message.send', input }, {});
-      expect(result.isError).not.toBe(true);
-      const content = result.content[0];
-      if (content.type !== 'text') throw new Error('Expected an MCP text receipt');
-      receipt = JSON.parse(content.text) as Receipt;
+  test.each(cases)(
+    'delivers the same content through %j',
+    async ({ source, sourceType, targetType }) => {
+      const sender = session('sender', sourceType, 'space-a');
+      const target = session('destination', targetType, 'space-b');
+      mailbox.db.prepare('INSERT INTO sessions (id) VALUES (?)').run(target.id);
+      const getSession = mock(async (id: string) => (id === target.id ? target : null));
+      const deliver = createMailboxDeliveryHandler({
+        ...mailbox,
+        getSession,
+        isSessionArchived: () => false,
+      });
+      const input = { sessionId: target.id, message };
+      let receipt: Receipt;
+      if (source === 'rpc') {
+        receipt = await client.request<Receipt>('operation.invoke', {
+          name: 'message.send',
+          input,
+        });
+      } else {
+        const mcp = createOperationMcpServer(
+          createDaemonOperationCatalog(mailbox.jobQueue, (taskId) =>
+            readTaskCore(mailbox.db, taskId)
+          ),
+          () => ({
+            sessionId: sender.id,
+          })
+        );
+        const result = await mcp.tools[0].handler({ name: 'message.send', input }, {});
+        expect(result.isError).not.toBe(true);
+        const content = result.content[0];
+        if (content.type !== 'text') throw new Error('Expected an MCP text receipt');
+        receipt = JSON.parse(content.text) as Receipt;
+      }
+      expect(receipt.kind).toBe('accepted');
+      expect(getSession).not.toHaveBeenCalled();
+      expect(mailbox.sdkRows()).toEqual([]);
+      const [job] = mailbox.jobQueue.dequeue(MAILBOX_LANE, 1);
+      expect(job.payload).toMatchObject({
+        id: receipt.mailboxId,
+        messageUuid: receipt.messageId,
+        to: { kind: 'session', sessionId: target.id },
+        origin: source === 'rpc' ? 'chat' : 'session:sender',
+      });
+      await deliver(job);
+      expect(getSession).toHaveBeenCalledWith(target.id);
+      const [row] = mailbox.sdkRows();
+      expect(mailbox.sdkRows()).toHaveLength(1);
+      expect(row.session_id).toBe(target.id);
+      expect(row.sdk_uuid).toBe(receipt.messageId);
+      expect(JSON.parse(row.sdk_message).message.content).toEqual(message.message.content);
+      expect(Boolean(JSON.parse(row.sdk_message).isSynthetic)).toBe(source === 'mcp');
+      expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(1);
+      await deliver(job);
+      expect(mailbox.sdkRows()).toHaveLength(1);
+      expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(1);
     }
-    expect(receipt.kind).toBe('accepted');
-    expect(getSession).not.toHaveBeenCalled();
-    expect(mailbox.sdkRows()).toEqual([]);
-    const [job] = mailbox.jobQueue.dequeue(MAILBOX_LANE, 1);
-    expect(job.payload).toMatchObject({
-      id: receipt.mailboxId,
-      messageUuid: receipt.messageId,
-      to: { kind: 'session', sessionId: target.id },
-      origin: source === 'rpc' ? 'chat' : 'session:sender',
-    });
-    await deliver(job);
-    expect(getSession).toHaveBeenCalledWith(target.id);
-    const [row] = mailbox.sdkRows();
-    expect(mailbox.sdkRows()).toHaveLength(1);
-    expect(row.session_id).toBe(target.id);
-    expect(row.sdk_uuid).toBe(receipt.messageId);
-    expect(JSON.parse(row.sdk_message).message.content).toEqual(message.message.content);
-    expect(Boolean(JSON.parse(row.sdk_message).isSynthetic)).toBe(source === 'mcp');
-    expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(1);
-    await deliver(job);
-    expect(mailbox.sdkRows()).toHaveLength(1);
-    expect(mailbox.jobsByQueue(MESSAGE_DELIVERY)).toHaveLength(1);
-  });
+  );
 });

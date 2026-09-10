@@ -286,7 +286,7 @@ describe('KimiProvider', () => {
       ) as unknown as typeof fetch;
       provider = new KimiProvider(process.env, undefined, fetchImpl);
 
-      expect(provider.getModels()).rejects.toThrow('Kimi API key rejected (HTTP 401)');
+      await expect(provider.getModels()).rejects.toThrow('Kimi API key rejected (HTTP 401)');
     });
 
     it('throws when probe times out / network fails', async () => {
@@ -296,7 +296,7 @@ describe('KimiProvider', () => {
       }) as unknown as typeof fetch;
       provider = new KimiProvider(process.env, undefined, fetchImpl);
 
-      expect(provider.getModels()).rejects.toThrow('Kimi probe failed: ECONNREFUSED');
+      await expect(provider.getModels()).rejects.toThrow('Kimi probe failed: ECONNREFUSED');
     });
 
     it('caches successful probe for 30s so repeated calls do not re-probe', async () => {

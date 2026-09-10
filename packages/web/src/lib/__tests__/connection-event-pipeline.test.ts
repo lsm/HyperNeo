@@ -76,9 +76,12 @@ describe('connection event stages', () => {
     ['error', undefined, false, 'normal'],
     ['error', new Error('network unavailable'), false, 'normal'],
     ['connecting', authError, true, 'normal'],
-  ] as const)('routes %s using existing precedence (case %#)', (state, error, resuming, expected) => {
-    expect(routeConnectionEvent(state, error, resuming)).toBe(expected);
-  });
+  ] as const)(
+    'routes %s using existing precedence (case %#)',
+    (state, error, resuming, expected) => {
+      expect(routeConnectionEvent(state, error, resuming)).toBe(expected);
+    }
+  );
 
   it('updates state before stopping services, closing transport and redirecting', () => {
     const { effects, calls } = fixture();

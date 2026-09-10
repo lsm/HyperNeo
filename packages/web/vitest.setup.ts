@@ -51,7 +51,11 @@ const localStorageMock = {
   length: 0,
   key: vi.fn(() => null),
 };
-global.localStorage = localStorageMock as unknown as Storage;
+Object.defineProperty(globalThis, 'localStorage', {
+  value: localStorageMock as unknown as Storage,
+  configurable: true,
+  writable: true,
+});
 
 type WebSocketCtor = typeof WebSocket;
 const RealWebSocket = globalThis.WebSocket as WebSocketCtor | undefined;

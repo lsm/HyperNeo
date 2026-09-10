@@ -26,7 +26,7 @@
     "./message-hub/router": "./src/message-hub/router.ts"
   },
   "devDependencies": {
-    "@types/bun": "1.3.14",
-    "vitest": "4.1.5"
+    "@types/bun": "1.4.2",
+    "vitest": "5.0.0"
   }
 }

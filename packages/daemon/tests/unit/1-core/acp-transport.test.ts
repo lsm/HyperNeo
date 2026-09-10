@@ -242,7 +242,7 @@ describe('AcpTransport', () => {
     expect((notifications[0] as { method: string }).method).toBe('session/update');
   });
 
-  test('isolates notification handler failures', () => {
+  test('isolates notification handler failures', async () => {
     const transport = new AcpTransport({
       command: 'acp-agent',
       onNotification: () => {
@@ -265,7 +265,7 @@ describe('AcpTransport', () => {
       Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 1, result: {} }) + '\n')
     );
 
-    expect(promise).resolves.toBeDefined();
+    await expect(promise).resolves.toBeDefined();
   });
 
   test('spawns process with correct stdio and options', () => {
@@ -470,7 +470,7 @@ describe('AcpTransport', () => {
     expect(stderrLines[0]).toBe('warning: deprecated\n');
   });
 
-  test('ignores empty lines and malformed JSON', () => {
+  test('ignores empty lines and malformed JSON', async () => {
     const transport = new AcpTransport({ command: 'acp-agent' });
     const proc = lastMockProcess!;
 
@@ -482,7 +482,7 @@ describe('AcpTransport', () => {
       Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 1, result: {} }) + '\n')
     );
 
-    expect(promise).resolves.toBeDefined();
+    await expect(promise).resolves.toBeDefined();
   });
 
   test('request timeout rejects after configured duration', async () => {

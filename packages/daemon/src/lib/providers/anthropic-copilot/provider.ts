@@ -11,7 +11,11 @@ import type {
   ListRemoteModelsOptions,
 } from '@hyperneo/shared/provider';
 import type { ModelInfo } from '@hyperneo/shared';
-import { CopilotClient, type ModelInfo as CopilotSdkModelInfo } from '@github/copilot-sdk';
+import {
+  CopilotClient,
+  RuntimeConnection,
+  type ModelInfo as CopilotSdkModelInfo,
+} from '@github/copilot-sdk';
 import { startEmbeddedServer, type EmbeddedServer } from './server.js';
 import { resolveCopilotCliPath } from './copilot-cli-resolver.ts';
 import { execFile } from 'node:child_process';
@@ -903,8 +907,7 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
       try {
         const cliPath = resolveCopilotCliPath(env);
         client = new CopilotClient({
-          ...(cliPath ? { cliPath } : {}),
-          useStdio: true,
+          ...(cliPath ? { connection: RuntimeConnection.forStdio({ path: cliPath }) } : {}),
           logLevel: 'error',
           env,
         });

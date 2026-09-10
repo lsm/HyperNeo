@@ -182,7 +182,9 @@ describe('CustomEndpointProvider', () => {
       { bridgeFactory: makeFakeBridge().factory, bridgeFetchImpl: fetchImpl }
     );
 
-    expect(p.getModels()).rejects.toThrow("Custom endpoint 'lmstudio' API key rejected (HTTP 401)");
+    await expect(p.getModels()).rejects.toThrow(
+      "Custom endpoint 'lmstudio' API key rejected (HTTP 401)"
+    );
   });
 
   it('throws when probe fails at the network layer', async () => {
@@ -194,7 +196,9 @@ describe('CustomEndpointProvider', () => {
       bridgeFetchImpl: fetchImpl,
     });
 
-    expect(p.getModels()).rejects.toThrow("Custom endpoint 'lmstudio' probe failed: ECONNREFUSED");
+    await expect(p.getModels()).rejects.toThrow(
+      "Custom endpoint 'lmstudio' probe failed: ECONNREFUSED"
+    );
   });
 
   it('uses /v1/models probe path for anthropic-messages type', async () => {

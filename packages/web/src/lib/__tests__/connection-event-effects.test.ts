@@ -125,13 +125,13 @@ describe('real ConnectionManager connection-event effects', () => {
     expect(fixture.attempts).toBe(7);
   });
 
-  it.each([
-    'connecting',
-    'reconnecting',
-  ])('updates state before reading attempts for %s', (state) => {
-    fixture.emit(state);
-    expect(fixture.effects).toEqual([`state:${state}`, 'read-attempts', 'attempts:3']);
-  });
+  it.each(['connecting', 'reconnecting'])(
+    'updates state before reading attempts for %s',
+    (state) => {
+      fixture.emit(state);
+      expect(fixture.effects).toEqual([`state:${state}`, 'read-attempts', 'attempts:3']);
+    }
+  );
 
   it.each(['disconnected', 'failed', 'error'])('only publishes state for ordinary %s', (state) => {
     fixture.emit(state, new Error('network unavailable'));

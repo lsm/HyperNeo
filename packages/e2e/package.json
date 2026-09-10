@@ -15,8 +15,8 @@
     "report:coverage": "open coverage/html/index.html"
   },
   "devDependencies": {
-    "@playwright/test": "1.59.1",
+    "@playwright/test": "1.63.0",
     "@types/node": "25.8.0",
-    "monocart-reporter": "2.11.2"
+    "monocart-reporter": "2.13.0"
   }
 }

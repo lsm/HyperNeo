@@ -331,20 +331,20 @@ describe('SpaceTaskManager.setTaskStatus — runtime-owned limited targets (task
     db.close();
   });
 
-  test.each([
-    'rate_limited',
-    'usage_limited',
-  ] as const)('rejects %s as a target even from in_progress and leaves the row unchanged', async (target) => {
-    const task = taskRepo.createTask({
-      spaceId: SPACE_ID,
-      title: 'T',
-      description: '',
-      status: 'in_progress',
-    });
-    await expect(taskManager.setTaskStatus(task.id, target)).rejects.toThrow('runtime-owned');
-    expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
-    expect(taskRepo.getTask(task.id)?.restrictions).toBeNull();
-  });
+  test.each(['rate_limited', 'usage_limited'] as const)(
+    'rejects %s as a target even from in_progress and leaves the row unchanged',
+    async (target) => {
+      const task = taskRepo.createTask({
+        spaceId: SPACE_ID,
+        title: 'T',
+        description: '',
+        status: 'in_progress',
+      });
+      await expect(taskManager.setTaskStatus(task.id, target)).rejects.toThrow('runtime-owned');
+      expect(taskRepo.getTask(task.id)?.status).toBe('in_progress');
+      expect(taskRepo.getTask(task.id)?.restrictions).toBeNull();
+    }
+  );
 
   test('still allows leaving the limited statuses back to in_progress', async () => {
     const task = taskRepo.createTask({
@@ -506,49 +506,37 @@ describe('SpaceTaskManager.setTaskStatus — matrix gap closures (task #849)', (
 });
 
 describe('stopped status — dormant park capability (task #1080)', () => {
-  test.each([
-    'in_progress',
-    'blocked',
-    'review',
-    'rate_limited',
-    'usage_limited',
-  ] as const)('%s → stopped is a valid transition', (from) => {
-    expect(VALID_SPACE_TASK_TRANSITIONS[from]).toContain('stopped');
-    expect(isValidSpaceTaskTransition(from, 'stopped')).toBe(true);
-  });
+  test.each(['in_progress', 'blocked', 'review', 'rate_limited', 'usage_limited'] as const)(
+    '%s → stopped is a valid transition',
+    (from) => {
+      expect(VALID_SPACE_TASK_TRANSITIONS[from]).toContain('stopped');
+      expect(isValidSpaceTaskTransition(from, 'stopped')).toBe(true);
+    }
+  );
 
-  test.each([
-    'draft',
-    'open',
-    'approved',
-    'done',
-    'cancelled',
-    'archived',
-  ] as const)('%s → stopped is rejected by the transition validator', (from) => {
-    expect(VALID_SPACE_TASK_TRANSITIONS[from]).not.toContain('stopped');
-    expect(isValidSpaceTaskTransition(from, 'stopped')).toBe(false);
-  });
+  test.each(['draft', 'open', 'approved', 'done', 'cancelled', 'archived'] as const)(
+    '%s → stopped is rejected by the transition validator',
+    (from) => {
+      expect(VALID_SPACE_TASK_TRANSITIONS[from]).not.toContain('stopped');
+      expect(isValidSpaceTaskTransition(from, 'stopped')).toBe(false);
+    }
+  );
 
-  test.each([
-    'in_progress',
-    'open',
-    'review',
-    'cancelled',
-    'archived',
-  ] as const)('stopped → %s is a valid transition', (to) => {
-    expect(VALID_SPACE_TASK_TRANSITIONS.stopped).toContain(to);
-    expect(isValidSpaceTaskTransition('stopped', to)).toBe(true);
-  });
+  test.each(['in_progress', 'open', 'review', 'cancelled', 'archived'] as const)(
+    'stopped → %s is a valid transition',
+    (to) => {
+      expect(VALID_SPACE_TASK_TRANSITIONS.stopped).toContain(to);
+      expect(isValidSpaceTaskTransition('stopped', to)).toBe(true);
+    }
+  );
 
-  test.each([
-    'done',
-    'blocked',
-    'approved',
-    'stopped',
-  ] as const)('stopped → %s is rejected by the transition validator', (to) => {
-    expect(VALID_SPACE_TASK_TRANSITIONS.stopped).not.toContain(to);
-    expect(isValidSpaceTaskTransition('stopped', to)).toBe(false);
-  });
+  test.each(['done', 'blocked', 'approved', 'stopped'] as const)(
+    'stopped → %s is rejected by the transition validator',
+    (to) => {
+      expect(VALID_SPACE_TASK_TRANSITIONS.stopped).not.toContain(to);
+      expect(isValidSpaceTaskTransition('stopped', to)).toBe(false);
+    }
+  );
 });
 
 describe('SpaceTaskManager.setTaskStatus — stopped preserves task provenance (task #1080)', () => {

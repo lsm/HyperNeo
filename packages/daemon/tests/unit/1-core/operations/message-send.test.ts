@@ -20,36 +20,35 @@ describe('shared message.send operation', () => {
   });
   afterEach(() => mailbox.close());
 
-  test.each([
-    'rpc',
-    'mcp',
-    'internal',
-  ] as const)('accepts persisted work from %s before SDK delivery', async (source) => {
-    const registry = createOperationRegistry([createSendMessageOperation(mailbox.jobQueue)]);
-    const outcome = await invokeOperation(
-      registry,
-      'message.send',
-      {
-        sessionId: 'destination',
-        message,
-      },
-      { source, sessionId: 'sender' }
-    );
-    const entry = parseMailboxEntry(JSON.parse(mailbox.rows()[0].payload));
-    expect(outcome).toEqual({
-      kind: 'completed',
-      value: {
-        kind: 'accepted',
-        mailboxId: entry?.id,
-        messageId: entry?.messageUuid,
-      },
-    });
-    expect(entry?.messageUuid).toBeString();
-    expect(entry?.to).toEqual({ kind: 'session', sessionId: 'destination' });
-    expect(entry?.origin).toBe('session:sender');
-    expect(entry?.message).toEqual(message);
-    expect(mailbox.sdkRows()).toEqual([]);
-  });
+  test.each(['rpc', 'mcp', 'internal'] as const)(
+    'accepts persisted work from %s before SDK delivery',
+    async (source) => {
+      const registry = createOperationRegistry([createSendMessageOperation(mailbox.jobQueue)]);
+      const outcome = await invokeOperation(
+        registry,
+        'message.send',
+        {
+          sessionId: 'destination',
+          message,
+        },
+        { source, sessionId: 'sender' }
+      );
+      const entry = parseMailboxEntry(JSON.parse(mailbox.rows()[0].payload));
+      expect(outcome).toEqual({
+        kind: 'completed',
+        value: {
+          kind: 'accepted',
+          mailboxId: entry?.id,
+          messageId: entry?.messageUuid,
+        },
+      });
+      expect(entry?.messageUuid).toBeString();
+      expect(entry?.to).toEqual({ kind: 'session', sessionId: 'destination' });
+      expect(entry?.origin).toBe('session:sender');
+      expect(entry?.message).toEqual(message);
+      expect(mailbox.sdkRows()).toEqual([]);
+    }
+  );
 
   test('preserves deferred delivery, images, and reference metadata', async () => {
     const registry = createOperationRegistry([createSendMessageOperation(mailbox.jobQueue)]);

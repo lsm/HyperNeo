@@ -589,14 +589,13 @@ describe('SDKUserMessage', () => {
       expect(container.querySelector('[title="Rewind to here"]')).toBeTruthy();
     });
 
-    it.each([
-      'queued',
-      'processing',
-      'retrying',
-    ])('hides the rewind button for nonterminal %s delivery', (status) => {
-      const { container } = renderWithRewind(status);
-      expect(container.querySelector('[title="Rewind to here"]')).toBeFalsy();
-    });
+    it.each(['queued', 'processing', 'retrying'])(
+      'hides the rewind button for nonterminal %s delivery',
+      (status) => {
+        const { container } = renderWithRewind(status);
+        expect(container.querySelector('[title="Rewind to here"]')).toBeFalsy();
+      }
+    );
   });
 
   describe('Styling', () => {

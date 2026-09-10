@@ -370,34 +370,33 @@ describe('Provider auth lifecycle regression matrix', () => {
   });
 
   describe('composed lifecycle walk (cross-stage state transitions)', () => {
-    it.each(
-      MODES
-    )('$label: login → authenticated call → logout → re-add → authenticated call', async ({
-      mode,
-    }) => {
-      const { hyperneo, codex } = newDirs();
-      const fetcher = createFetchImpl();
-      const provider = track(makeProvider({}, hyperneo, codex, fetcher.impl));
+    it.each(MODES)(
+      '$label: login → authenticated call → logout → re-add → authenticated call',
+      async ({ mode }) => {
+        const { hyperneo, codex } = newDirs();
+        const fetcher = createFetchImpl();
+        const provider = track(makeProvider({}, hyperneo, codex, fetcher.impl));
 
-      provider.setCredentials(loginCredsFor(mode, 1));
-      expect(await provider.isAvailable()).toBe(true);
-      expect((await provider.getModels()).length).toBeGreaterThan(0);
-      expect(fetcher.calls[0].url).toBe(probeUrlFor(mode));
+        provider.setCredentials(loginCredsFor(mode, 1));
+        expect(await provider.isAvailable()).toBe(true);
+        expect((await provider.getModels()).length).toBeGreaterThan(0);
+        expect(fetcher.calls[0].url).toBe(probeUrlFor(mode));
 
-      await provider.logout();
-      expect(await provider.isAvailable()).toBe(false);
-      expect(await provider.getModels()).toEqual([]);
+        await provider.logout();
+        expect(await provider.isAvailable()).toBe(false);
+        expect(await provider.getModels()).toEqual([]);
 
-      provider.setCredentials(loginCredsFor(mode, 2));
-      expect(await provider.isAvailable()).toBe(true);
-      expect((await provider.getModels()).length).toBeGreaterThan(0);
-      expect(fetcher.calls).toHaveLength(2);
-      expect(fetcher.calls[1].url).toBe(probeUrlFor(mode));
-      const readdedHeaders = new Headers(fetcher.calls[1].init.headers);
-      expect(readdedHeaders.get('authorization')).toBe(
-        mode === 'oauth' ? 'Bearer oauth-access-readded' : 'Bearer sk-readded-key'
-      );
-    });
+        provider.setCredentials(loginCredsFor(mode, 2));
+        expect(await provider.isAvailable()).toBe(true);
+        expect((await provider.getModels()).length).toBeGreaterThan(0);
+        expect(fetcher.calls).toHaveLength(2);
+        expect(fetcher.calls[1].url).toBe(probeUrlFor(mode));
+        const readdedHeaders = new Headers(fetcher.calls[1].init.headers);
+        expect(readdedHeaders.get('authorization')).toBe(
+          mode === 'oauth' ? 'Bearer oauth-access-readded' : 'Bearer sk-readded-key'
+        );
+      }
+    );
 
     it('OAuth: stale-token-cleanup then removal then re-add restores auth (regression target)', async () => {
       const { hyperneo, codex } = newDirs();

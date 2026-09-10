@@ -43,15 +43,12 @@
     "test:proxy:restart": "./scripts/dev-proxy.sh restart"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.16",
+    "@biomejs/biome": "2.5.13",
     "@testing-library/preact": "3.2.4",
-    "knip": "6.14.2",
-    "oxlint": "1.67.0",
+    "knip": "6.35.1",
+    "oxlint": "1.82.0",
     "typescript": "6.0.3",
     "typescript7": "npm:typescript@7.0.2",
-    "tsx": "4.20.3"
-  },
-  "resolutions": {
-    "@github/copilot": "1.0.59"
+    "tsx": "4.23.13"
   }
 }

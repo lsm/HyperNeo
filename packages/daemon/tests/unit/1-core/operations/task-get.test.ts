@@ -26,19 +26,18 @@ function fixture(value: TaskCore | null = task) {
 }
 
 describe('task.get operation', () => {
-  test.each([
-    'rpc',
-    'mcp',
-    'internal',
-  ] as const)('reads core data for %s callers', async (source) => {
-    const { read, registry } = fixture();
-    expect(await invokeOperation(registry, 'task.get', { taskId: task.id }, { source })).toEqual({
-      kind: 'completed',
-      value: task,
-    });
-    expect(read).toHaveBeenCalledTimes(1);
-    expect(read).toHaveBeenCalledWith(task.id);
-  });
+  test.each(['rpc', 'mcp', 'internal'] as const)(
+    'reads core data for %s callers',
+    async (source) => {
+      const { read, registry } = fixture();
+      expect(await invokeOperation(registry, 'task.get', { taskId: task.id }, { source })).toEqual({
+        kind: 'completed',
+        value: task,
+      });
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(read).toHaveBeenCalledWith(task.id);
+    }
+  );
 
   test('returns null for an absent task', async () => {
     const { registry } = fixture(null);
@@ -50,18 +49,17 @@ describe('task.get operation', () => {
     });
   });
 
-  test.each([
-    {},
-    { taskId: '' },
-    { taskId: 1 },
-  ])('rejects invalid task IDs before reading: %j', async (input) => {
-    const { read, registry } = fixture();
-    expect(await invokeOperation(registry, 'task.get', input, { source: 'mcp' })).toMatchObject({
-      kind: 'failed',
-      code: 'invalid_input',
-    });
-    expect(read).not.toHaveBeenCalled();
-  });
+  test.each([{}, { taskId: '' }, { taskId: 1 }])(
+    'rejects invalid task IDs before reading: %j',
+    async (input) => {
+      const { read, registry } = fixture();
+      expect(await invokeOperation(registry, 'task.get', input, { source: 'mcp' })).toMatchObject({
+        kind: 'failed',
+        code: 'invalid_input',
+      });
+      expect(read).not.toHaveBeenCalled();
+    }
+  );
 
   test('projects Space task data without exposing ownership or execution fields', async () => {
     const spaceTask = { ...task, spaceId: 'space', taskNumber: 3, taskAgentSessionId: 'session' };

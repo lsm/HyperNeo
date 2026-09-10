@@ -151,38 +151,37 @@ describe('real ConnectionManager startup and shutdown', () => {
     expect(fixture.listeners.size).toBe(1);
   });
 
-  it.each([
-    'initialization',
-    'connection-error',
-    'timeout',
-  ])('can retry after %s failure', async (failure) => {
-    if (failure === 'initialization') {
-      fixture.initialize = () => Promise.reject(new Error('initialize failed'));
+  it.each(['initialization', 'connection-error', 'timeout'])(
+    'can retry after %s failure',
+    async (failure) => {
+      if (failure === 'initialization') {
+        fixture.initialize = () => Promise.reject(new Error('initialize failed'));
+      }
+      if (failure === 'timeout') vi.useFakeTimers();
+      const pending = manager.getHub();
+      const rejected = expect(pending).rejects.toThrow(
+        failure === 'initialization'
+          ? 'initialize failed'
+          : failure === 'timeout'
+            ? 'WebSocket connection timeout'
+            : 'WebSocket connection error'
+      );
+      await setImmediate();
+      if (failure === 'connection-error') emit('error');
+      if (failure === 'timeout') await vi.advanceTimersByTimeAsync(5000);
+      await rejected;
+      expect(fixture.effects).not.toContain('join:global');
+      expect(fixture.effects).not.toContain('start-actions');
+      expect(window.__messageHubReady).toBe(false);
+      expect(fixture.listeners.size).toBe(1);
+      fixture.initialize = async () => {
+        fixture.connected = true;
+      };
+      await manager.getHub();
+      expect(fixture.effects.filter((entry) => entry === 'create-hub')).toHaveLength(2);
+      expect(fixture.effects.slice(-2)).toEqual(['join:global', 'start-actions']);
     }
-    if (failure === 'timeout') vi.useFakeTimers();
-    const pending = manager.getHub();
-    const rejected = expect(pending).rejects.toThrow(
-      failure === 'initialization'
-        ? 'initialize failed'
-        : failure === 'timeout'
-          ? 'WebSocket connection timeout'
-          : 'WebSocket connection error'
-    );
-    await setImmediate();
-    if (failure === 'connection-error') emit('error');
-    if (failure === 'timeout') await vi.advanceTimersByTimeAsync(5000);
-    await rejected;
-    expect(fixture.effects).not.toContain('join:global');
-    expect(fixture.effects).not.toContain('start-actions');
-    expect(window.__messageHubReady).toBe(false);
-    expect(fixture.listeners.size).toBe(1);
-    fixture.initialize = async () => {
-      fixture.connected = true;
-    };
-    await manager.getHub();
-    expect(fixture.effects.filter((entry) => entry === 'create-hub')).toHaveLength(2);
-    expect(fixture.effects.slice(-2)).toEqual(['join:global', 'start-actions']);
-  });
+  );
 
   it('stops queues and removes visibility handlers before closing the transport', async () => {
     fixture.connected = true;

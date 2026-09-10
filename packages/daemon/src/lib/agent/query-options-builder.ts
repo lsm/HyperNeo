@@ -584,7 +584,7 @@ export class QueryOptionsBuilder {
     }
 
     const cleanedOptions = Object.fromEntries(
-      Object.entries(queryOptions).filter(([_, v]) => v !== undefined)
+      Object.entries(queryOptions).filter(([, v]) => v !== undefined)
     ) as Options;
 
     return cleanedOptions;
