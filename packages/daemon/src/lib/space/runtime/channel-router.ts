@@ -177,7 +177,7 @@ export class ChannelRouter {
               workflowName: workflow.name,
               agentName: first.agentName,
               templateKey: first.templateKey,
-              snapshotOnly: runTemplateSnapshotRecord(workflow, run) !== null,
+              hasSnapshot: runTemplateSnapshotRecord(workflow, run) !== null,
             })
           : formatMissingAgentReference({
               runId,
