@@ -8,11 +8,19 @@ import type {
   CreateWorkflowRunParams,
   WorkflowRunFailureReason,
 } from '@hyperneo/shared';
-import { computeDefinitionVersion } from '../../lib/space/workflows/definition-version.ts';
+import {
+  computeDefinitionVersion,
+  verifyDefinitionVersion,
+} from '../../lib/space/workflows/definition-version.ts';
 import {
   withRunTemplateSnapshots,
   type AgentTemplateResolver,
 } from '../../lib/space/workflows/run-template-snapshot.ts';
+import {
+  buildPlanRunSnapshotMigration,
+  isRunSnapshotMigrationSkip,
+  type RunSnapshotMigrationPlan,
+} from '../../lib/space/workflows/plan-run-snapshot-migration.ts';
 import { SpaceWorkflowDefinitionVersionRepository } from './space-workflow-definition-version-repository.ts';
 import type { SQLiteValue } from '../types.ts';
 import { assertValidTransition } from '../../lib/space/runtime/workflow-run-status-machine.ts';
@@ -90,9 +98,14 @@ export class SpaceWorkflowRunRepository {
       .prepare(
         `SELECT r.id, r.workflow_id, r.space_id FROM space_workflow_runs r
          WHERE r.definition_version IS NULL
-           AND EXISTS (
-             SELECT 1 FROM space_tasks t
-             WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+           AND (
+             NOT EXISTS (
+               SELECT 1 FROM space_tasks t WHERE t.workflow_run_id = r.id
+             )
+             OR EXISTS (
+               SELECT 1 FROM space_tasks t
+               WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+             )
            )
          ORDER BY r.created_at ASC, r.rowid ASC`
       )
@@ -104,8 +117,15 @@ export class SpaceWorkflowRunRepository {
     }));
   }
 
-  pinExistingRun(runId: string, rawWorkflow: SpaceWorkflow): boolean {
-    const { versionHash, payload } = computeDefinitionVersion(rawWorkflow);
+  pinExistingRun(
+    runId: string,
+    rawWorkflow: SpaceWorkflow,
+    resolveTemplate?: AgentTemplateResolver
+  ): boolean {
+    const pinnedWorkflow = resolveTemplate
+      ? withRunTemplateSnapshots(rawWorkflow, resolveTemplate)
+      : rawWorkflow;
+    const { versionHash, payload } = computeDefinitionVersion(pinnedWorkflow);
     const appendVersion = new SpaceWorkflowDefinitionVersionRepository(this.db);
     return this.db.transaction(() => {
       appendVersion.appendVersion({
@@ -126,13 +146,109 @@ export class SpaceWorkflowRunRepository {
     })();
   }
 
-  backfillDefinitionPins(loadWorkflow: (workflowId: string) => SpaceWorkflow | null): number {
+  listSnapshotlessPinnedRuns(): Array<{
+    id: string;
+    workflowId: string;
+    payload: string;
+    versionHash: string;
+  }> {
+    const rows = this.db
+      .prepare(
+        `SELECT r.id, r.workflow_id, r.definition_version AS version_hash, v.payload
+         FROM space_workflow_runs r
+         JOIN space_workflow_definition_versions v
+           ON v.workflow_id = r.workflow_id AND v.version_hash = r.definition_version
+         WHERE r.definition_version IS NOT NULL
+           AND CASE
+                 WHEN json_valid(v.payload)
+                   THEN json_extract(v.payload, '$.templateSnapshots') IS NULL
+                 ELSE 1
+               END
+           AND (
+             NOT EXISTS (
+               SELECT 1 FROM space_tasks t WHERE t.workflow_run_id = r.id
+             )
+             OR EXISTS (
+               SELECT 1 FROM space_tasks t
+               WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+             )
+           )
+         ORDER BY r.created_at ASC, r.rowid ASC`
+      )
+      .all() as Array<{
+      id: string;
+      workflow_id: string;
+      payload: string;
+      version_hash: string;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      workflowId: r.workflow_id,
+      payload: r.payload,
+      versionHash: r.version_hash,
+    }));
+  }
+
+  migrateSnapshotlessPins(
+    resolveTemplate: AgentTemplateResolver,
+    loadWorkflow: (workflowId: string) => SpaceWorkflow | null
+  ): number {
+    const plan = buildPlanRunSnapshotMigration({
+      verifyVersion: verifyDefinitionVersion,
+      loadWorkflow,
+      resolveTemplate,
+      computeVersion: computeDefinitionVersion,
+    });
+    let count = 0;
+    for (const run of this.listSnapshotlessPinnedRuns()) {
+      try {
+        const outcome = plan(run);
+        if (isRunSnapshotMigrationSkip(outcome)) {
+          log.warn(`migrateSnapshotlessPins: ${outcome.message}`);
+          continue;
+        }
+        if (outcome.source === 'live') {
+          log.warn(
+            `migrateSnapshotlessPins: run ${outcome.runId} had an unverifiable pin; ` +
+              `snapshotting the live definition it was already resolving`
+          );
+        }
+        if (this.applyRunSnapshotMigration(outcome)) count += 1;
+      } catch (err) {
+        log.warn(`migrateSnapshotlessPins: skipped run ${run.id} (non-fatal):`, err);
+      }
+    }
+    return count;
+  }
+
+  private applyRunSnapshotMigration(plan: RunSnapshotMigrationPlan): boolean {
+    const appendVersion = new SpaceWorkflowDefinitionVersionRepository(this.db);
+    const migrated = this.db.transaction(() => {
+      appendVersion.appendVersion({
+        workflowId: plan.workflowId,
+        spaceId: plan.spaceId,
+        versionHash: plan.versionHash,
+        payload: plan.payload,
+        source: 'backfill',
+        createdAt: Date.now(),
+      });
+      return this.db
+        .prepare(`UPDATE space_workflow_runs SET definition_version = ? WHERE id = ?`)
+        .run(plan.versionHash, plan.runId).changes;
+    })();
+    return migrated > 0;
+  }
+
+  backfillDefinitionPins(
+    loadWorkflow: (workflowId: string) => SpaceWorkflow | null,
+    resolveTemplate?: AgentTemplateResolver
+  ): number {
     let count = 0;
     for (const run of this.listPinnableRuns()) {
       try {
         const workflow = loadWorkflow(run.workflowId);
         if (!workflow) continue;
-        if (this.pinExistingRun(run.id, workflow)) count += 1;
+        if (this.pinExistingRun(run.id, workflow, resolveTemplate)) count += 1;
       } catch (err) {
         log.warn(`backfillDefinitionPins: skipped run ${run.id} (non-fatal):`, err);
       }
