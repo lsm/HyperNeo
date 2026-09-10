@@ -1,6 +1,16 @@
 import type { ResolvedReference } from '@hyperneo/shared';
-import type { MissionMetric, NeoTask, RoomGoal } from '@hyperneo/shared/types/neo';
+import type { MissionMetric, RoomGoal } from '@hyperneo/shared/types/neo';
 import { Logger } from '../logger.ts';
+
+interface TaskReferenceDetails {
+  title: string;
+  status: string;
+  priority: string;
+  description: string;
+  shortId?: string | null;
+  progress?: number | null;
+  currentStep?: string | null;
+}
 
 const log = new Logger('reference-context-builder');
 
@@ -64,7 +74,7 @@ export function prependContextToMessage(userMessage: string, context: string): s
 function formatReference(ref: ResolvedReference): string {
   switch (ref.type) {
     case 'task':
-      return formatTask(ref.data as NeoTask, ref.id);
+      return formatTask(ref.data as TaskReferenceDetails, ref.id);
     case 'goal':
       return formatGoal(ref.data as RoomGoal, ref.id);
     case 'file':
@@ -88,7 +98,7 @@ function formatReference(ref: ResolvedReference): string {
   }
 }
 
-function formatTask(task: NeoTask, fallbackId: string): string {
+function formatTask(task: TaskReferenceDetails, fallbackId: string): string {
   const id = task.shortId ?? fallbackId;
   const lines: string[] = [`### Task: ${id}`];
   lines.push(`**Title:** ${task.title}`);
