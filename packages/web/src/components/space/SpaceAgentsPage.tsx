@@ -1,5 +1,6 @@
 import type { SpaceAgent } from '@hyperneo/shared';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
+import { connectionManager } from '../../lib/connection-manager';
 import { spaceAgentStore } from '../../lib/space-agent-store';
 import { spaceStore } from '../../lib/space-store';
 import { Button } from '../ui/Button';
@@ -34,6 +35,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
   const [deleting, setDeleting] = useState<SpaceAgent | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const activeSpaceRef = useRef(spaceId);
 
   function resetViewState() {
     setSelectedId(null);
@@ -47,10 +49,19 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
   }
 
   useEffect(() => {
+    activeSpaceRef.current = spaceId;
     resetViewState();
     void spaceAgentStore.selectSpace(spaceId);
-    spaceStore.fetchTemplates().catch(() => {});
+
+    let disposeTemplateRetry: (() => void) | undefined;
+    spaceStore.fetchTemplates().catch(() => {
+      disposeTemplateRetry = connectionManager.onceConnected(() => {
+        spaceStore.fetchTemplates().catch(() => {});
+      });
+    });
+
     return () => {
+      disposeTemplateRetry?.();
       spaceAgentStore.teardown();
     };
   }, [spaceId]);
@@ -85,6 +96,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
       return;
     }
 
+    const submittedFor = spaceId;
     setSaving(true);
     setFormError(null);
     try {
@@ -93,6 +105,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
           displayName: field('displayName'),
           instructions: field('instructions'),
         });
+        if (activeSpaceRef.current !== submittedFor) return;
       } else {
         const agent = await spaceAgentStore.create({
           spaceId,
@@ -101,28 +114,33 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
           instructions: field('instructions') || undefined,
           templateKey: field('templateKey') || undefined,
         });
+        if (activeSpaceRef.current !== submittedFor) return;
         setSelectedId(agent.id);
       }
       closeForm();
     } catch (err) {
+      if (activeSpaceRef.current !== submittedFor) return;
       setFormError(err instanceof Error ? err.message : 'Failed to save agent');
     } finally {
-      setSaving(false);
+      if (activeSpaceRef.current === submittedFor) setSaving(false);
     }
   }
 
   async function confirmDelete() {
     if (!deleting) return;
+    const submittedFor = spaceId;
     setDeleteBusy(true);
     setDeleteError(null);
     try {
       await spaceAgentStore.remove(deleting.id);
+      if (activeSpaceRef.current !== submittedFor) return;
       if (selectedId === deleting.id) setSelectedId(null);
       setDeleting(null);
     } catch (err) {
+      if (activeSpaceRef.current !== submittedFor) return;
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete agent');
     } finally {
-      setDeleteBusy(false);
+      if (activeSpaceRef.current === submittedFor) setDeleteBusy(false);
     }
   }
 

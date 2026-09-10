@@ -14,6 +14,8 @@ const {
   mockTeardown,
   mockTemplates,
   mockFetchTemplates,
+  mockOnceConnected,
+  mockDisposeOnceConnected,
 } = vi.hoisted(() => ({
   mockAgents: { value: [] as SpaceAgent[] },
   mockLoading: { value: false },
@@ -25,6 +27,8 @@ const {
   mockTeardown: vi.fn(),
   mockTemplates: { value: [] as Array<{ key: string; displayName: string }> },
   mockFetchTemplates: vi.fn().mockResolvedValue(undefined),
+  mockOnceConnected: vi.fn(),
+  mockDisposeOnceConnected: vi.fn(),
 }));
 
 vi.mock('../../../lib/space-agent-store', () => ({
@@ -42,6 +46,10 @@ vi.mock('../../../lib/space-agent-store', () => ({
 
 vi.mock('../../../lib/space-store', () => ({
   spaceStore: { agentTemplates: mockTemplates, fetchTemplates: mockFetchTemplates },
+}));
+
+vi.mock('../../../lib/connection-manager', () => ({
+  connectionManager: { onceConnected: mockOnceConnected },
 }));
 
 import { SpaceAgentsPage } from '../SpaceAgentsPage';
@@ -80,8 +88,14 @@ describe('SpaceAgentsPage', () => {
     mockUpdate.mockReset().mockResolvedValue(makeAgent('a'));
     mockRemove.mockReset().mockResolvedValue(undefined);
     mockTeardown.mockClear();
-    mockFetchTemplates.mockClear();
+    mockFetchTemplates.mockReset().mockResolvedValue(undefined);
+    mockDisposeOnceConnected.mockClear();
+    mockOnceConnected.mockReset().mockReturnValue(mockDisposeOnceConnected);
   });
+
+  function tick() {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
 
   it('selects the space on mount', () => {
     render(<SpaceAgentsPage spaceId="space-1" />);
@@ -106,6 +120,34 @@ describe('SpaceAgentsPage', () => {
     const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
 
     expect(getByTestId('space-agents-page')).toBeTruthy();
+  });
+
+  it('retries the template load once the connection comes back', async () => {
+    mockFetchTemplates.mockRejectedValueOnce(new Error('Not connected'));
+    render(<SpaceAgentsPage spaceId="space-1" />);
+    await tick();
+
+    expect(mockOnceConnected).toHaveBeenCalledTimes(1);
+    expect(mockFetchTemplates).toHaveBeenCalledTimes(1);
+
+    mockOnceConnected.mock.calls[0][0]();
+    expect(mockFetchTemplates).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not arm a reconnect retry when the template load succeeds', async () => {
+    render(<SpaceAgentsPage spaceId="space-1" />);
+    await tick();
+
+    expect(mockOnceConnected).not.toHaveBeenCalled();
+  });
+
+  it('drops the pending template retry on unmount', async () => {
+    mockFetchTemplates.mockRejectedValueOnce(new Error('Not connected'));
+    const { unmount } = render(<SpaceAgentsPage spaceId="space-1" />);
+    await tick();
+
+    unmount();
+    expect(mockDisposeOnceConnected).toHaveBeenCalled();
   });
 
   it('reselects and tears down when the space changes', () => {
@@ -294,6 +336,59 @@ describe('SpaceAgentsPage', () => {
     fireEvent.click(getByTestId(`agent-row-${handle}`));
     expect(getByTestId('agent-detail')).toBeTruthy();
     expect(queryByTestId('agent-delete-button')).toBeNull();
+  });
+
+  it('ignores a create that resolves after the space changed', async () => {
+    let resolveCreate: (agent: SpaceAgent) => void = () => {};
+    mockCreate.mockReturnValueOnce(
+      new Promise<SpaceAgent>((resolve) => {
+        resolveCreate = resolve;
+      })
+    );
+    const { getByTestId, queryByTestId, rerender } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Slow' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    rerender(<SpaceAgentsPage spaceId="space-2" />);
+    fireEvent.click(getByTestId('new-agent-button'));
+    expect(getByTestId('agent-form')).toBeTruthy();
+
+    resolveCreate(makeAgent('slow', { spaceId: 'space-1' }));
+    await tick();
+
+    expect(getByTestId('agent-form')).toBeTruthy();
+    expect(queryByTestId('agent-detail')).toBeNull();
+  });
+
+  it('does not write a stale save error into the new space form', async () => {
+    let rejectUpdate: (err: Error) => void = () => {};
+    mockAgents.value = [makeAgent('alpha')];
+    mockUpdate.mockReturnValueOnce(
+      new Promise<SpaceAgent>((_resolve, reject) => {
+        rejectUpdate = reject;
+      })
+    );
+    const { getByTestId, getByText, queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" />
+    );
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Renamed' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    mockAgents.value = [];
+    rerender(<SpaceAgentsPage spaceId="space-2" />);
+    fireEvent.click(getByTestId('new-agent-button'));
+    expect(getByTestId('agent-form')).toBeTruthy();
+
+    rejectUpdate(new Error('space-1 failure'));
+    await tick();
+
+    expect(getByTestId('agent-form')).toBeTruthy();
+    expect(queryByTestId('agent-form-error')).toBeNull();
   });
 
   it('deletes after confirmation', async () => {
