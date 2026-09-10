@@ -116,9 +116,49 @@ describe('SpaceAgentsPage', () => {
     expect(mockSelectSpace).toHaveBeenLastCalledWith('space-2');
   });
 
+  it('closes an open editor when the space changes, so it cannot save to the old space', () => {
+    mockAgents.value = [makeAgent('alpha')];
+    const { getByTestId, getByText, queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" />
+    );
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    expect(getByTestId('agent-form')).toBeTruthy();
+
+    mockAgents.value = [];
+    rerender(<SpaceAgentsPage spaceId="space-2" />);
+
+    expect(queryByTestId('agent-form')).toBeNull();
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it('dismisses a pending delete confirmation when the space changes', () => {
+    mockAgents.value = [makeAgent('alpha')];
+    const { getByTestId, queryByText, rerender } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByTestId('agent-delete-button'));
+    expect(queryByText('Delete agent')).toBeTruthy();
+
+    mockAgents.value = [];
+    rerender(<SpaceAgentsPage spaceId="space-2" />);
+
+    expect(queryByText('Delete agent')).toBeNull();
+    expect(mockRemove).not.toHaveBeenCalled();
+  });
+
   it('shows an empty state when there are no agents', () => {
     const { getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
     expect(getByText('No agents yet')).toBeTruthy();
+  });
+
+  it('does not claim the space is empty when the list failed to load', () => {
+    mockError.value = 'boom';
+    const { getByTestId, queryByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    expect(getByTestId('agents-load-error').textContent).toBe('boom');
+    expect(queryByText('No agents yet')).toBeNull();
   });
 
   it('surfaces a load error', () => {

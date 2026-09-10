@@ -35,7 +35,19 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  function resetViewState() {
+    setSelectedId(null);
+    setCreating(false);
+    setEditing(null);
+    setSaving(false);
+    setFormError(null);
+    setDeleting(null);
+    setDeleteBusy(false);
+    setDeleteError(null);
+  }
+
   useEffect(() => {
+    resetViewState();
     void spaceAgentStore.selectSpace(spaceId);
     spaceStore.fetchTemplates().catch(() => {});
     return () => {
@@ -129,7 +141,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
         </p>
       )}
 
-      {!loading && agents.length === 0 && !creating && (
+      {!loading && !loadError && agents.length === 0 && !creating && (
         <EmptyState
           title="No agents yet"
           description="Create an agent to start a conversation in this space."
