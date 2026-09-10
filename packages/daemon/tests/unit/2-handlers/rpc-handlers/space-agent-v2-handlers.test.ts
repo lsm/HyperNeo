@@ -59,6 +59,7 @@ describe('setupSpaceAgentV2Handlers', () => {
   let db: Database;
   let agents: SpaceAgentRepository;
   let legacyAgents: SpaceLongHorizonAgentRepository;
+  let removedSubscriptions: Array<{ spaceId: string; agentId: string }>;
   let templates: SpaceAgentTemplateRepository;
   let handlers: Map<string, RequestHandler>;
   let deps: SpaceAgentV2Deps;
@@ -79,6 +80,7 @@ describe('setupSpaceAgentV2Handlers', () => {
 
     agents = new SpaceAgentRepository(db);
     legacyAgents = new SpaceLongHorizonAgentRepository(db);
+    removedSubscriptions = [];
     templates = new SpaceAgentTemplateRepository(db);
     sessions = new Map([
       ['session-1', { type: 'space_chat', context: { spaceId: 'space-1' } }],
@@ -88,6 +90,9 @@ describe('setupSpaceAgentV2Handlers', () => {
     deps = {
       agents,
       legacyAgents,
+      removeAgentSubscriptions: (spaceId, agentId) => {
+        removedSubscriptions.push({ spaceId, agentId });
+      },
       templates,
       spaceExists: async (id) => id === 'space-1',
       getSession: (id) => sessions.get(id) ?? null,
@@ -569,6 +574,25 @@ describe('setupSpaceAgentV2Handlers', () => {
       await call(handlers, 'spaceAgentV2.delete', { id: created.id });
 
       expect(agents.getById(created.id)).toBeNull();
+    });
+
+    test('removes the agent event subscriptions before announcing the delete', async () => {
+      const created = agents.create({ spaceId: 'space-1', handle: 'a' });
+      published = [];
+
+      await call(handlers, 'spaceAgentV2.delete', { id: created.id });
+
+      expect(removedSubscriptions).toEqual([{ spaceId: 'space-1', agentId: created.id }]);
+    });
+
+    test('does not remove subscriptions when the delete is refused', async () => {
+      const coordinator = agents.create({ spaceId: 'space-1', handle: 'space-manager' });
+
+      await expect(call(handlers, 'spaceAgentV2.delete', { id: coordinator.id })).rejects.toThrow(
+        'cannot be deleted'
+      );
+
+      expect(removedSubscriptions).toEqual([]);
     });
 
     test('publishes spaceAgentV2.deleted with the agent space', async () => {
