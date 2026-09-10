@@ -517,7 +517,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     (id) => spaceWorkflowRepo.getWorkflow(id),
     agentTemplateResolver
   );
-  spaceWorkflowRunRepo.migrateSnapshotlessPins(agentTemplateResolver);
+  spaceWorkflowRunRepo.migrateSnapshotlessPins(agentTemplateResolver, (id) =>
+    spaceWorkflowRepo.getWorkflow(id)
+  );
   const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(longHorizonAgentRepo);
   const spaceWorkflowManager = new SpaceWorkflowManager(
     spaceWorkflowRepo,

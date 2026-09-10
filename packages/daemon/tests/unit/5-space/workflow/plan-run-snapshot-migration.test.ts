@@ -2,9 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import type { SpaceAgentTemplate, SpaceWorkflow } from '@hyperneo/shared';
 import {
   buildPlanRunSnapshotMigration,
-  gateIntegrity,
-  gateShape,
   gateSnapshots,
+  gateSource,
   isRunSnapshotMigrationSkip,
   type SnapshotlessPinnedRun,
 } from '../../../../src/lib/space/workflows/plan-run-snapshot-migration.ts';
@@ -62,6 +61,7 @@ function candidate(overrides: Partial<SnapshotlessPinnedRun> = {}): Snapshotless
 function run(deps: Partial<Parameters<typeof buildPlanRunSnapshotMigration>[0]> = {}) {
   return buildPlanRunSnapshotMigration({
     verifyVersion: () => true,
+    loadWorkflow: () => workflow('worker.custom'),
     resolveTemplate: (key) => (key === 'worker.custom' ? template() : null),
     computeVersion: () => ({ versionHash: 'vh-2', payload: 'migrated-payload' }),
     ...deps,
@@ -80,39 +80,36 @@ describe('planRunSnapshotMigration', () => {
       spaceId: 'space-1',
       versionHash: 'vh-2',
       payload: 'migrated-payload',
+      source: 'pinned',
     });
   });
 
-  test('skips a pin whose payload hash does not verify, before parsing it', () => {
-    let parsed = false;
-    const outcome = run({
-      verifyVersion: () => false,
-      resolveTemplate: () => {
-        parsed = true;
-        return null;
-      },
-    })(candidate());
+  test('migrates an unverifiable pin from the live definition it already resolves', () => {
+    const outcome = run({ verifyVersion: () => false })(candidate());
 
-    expect(isRunSnapshotMigrationSkip(outcome) && outcome.kind).toBe('hash_mismatch');
-    expect(parsed).toBe(false);
+    expect(isRunSnapshotMigrationSkip(outcome)).toBe(false);
+    if (isRunSnapshotMigrationSkip(outcome)) return;
+    expect(outcome.source).toBe('live');
   });
 
-  test('skips a pin whose payload is not valid JSON', () => {
+  test('migrates a pin whose payload is not valid JSON from the live definition', () => {
     const outcome = run()(candidate({ payload: 'not json' }));
 
-    expect(isRunSnapshotMigrationSkip(outcome) && outcome.kind).toBe('invalid_shape');
+    expect(isRunSnapshotMigrationSkip(outcome)).toBe(false);
+    if (isRunSnapshotMigrationSkip(outcome)) return;
+    expect(outcome.source).toBe('live');
   });
 
-  test('skips a pin whose payload has no nodes array', () => {
-    const outcome = run()(candidate({ payload: JSON.stringify({ id: 'wf-1' }) }));
+  test('skips only when neither the pin nor the live workflow is usable', () => {
+    const outcome = run({ verifyVersion: () => false, loadWorkflow: () => null })(candidate());
 
-    expect(isRunSnapshotMigrationSkip(outcome) && outcome.kind).toBe('invalid_shape');
+    expect(isRunSnapshotMigrationSkip(outcome) && outcome.kind).toBe('unusable_definition');
   });
 
-  test('skips a run that references no templates', () => {
+  test('stamps a record for a template-free run so it is not rescanned', () => {
     const outcome = run()(candidate({ payload: JSON.stringify(workflow()) }));
 
-    expect(isRunSnapshotMigrationSkip(outcome) && outcome.kind).toBe('already_snapshotted');
+    expect(isRunSnapshotMigrationSkip(outcome)).toBe(false);
   });
 
   test('still plans when the template does not resolve, pinning an empty record', () => {
@@ -123,23 +120,43 @@ describe('planRunSnapshotMigration', () => {
 });
 
 describe('planRunSnapshotMigration gates', () => {
-  test('gateIntegrity names the run and version in its skip reason', () => {
-    const outcome = gateIntegrity(candidate(), () => false);
+  test('gateSource prefers a verified pin over the live definition', () => {
+    const outcome = gateSource(
+      candidate(),
+      () => true,
+      () => workflow()
+    );
+
+    expect('value' in outcome && outcome.value.source).toBe('pinned');
+  });
+
+  test('gateSource falls back to live when the pin does not verify', () => {
+    const outcome = gateSource(
+      candidate(),
+      () => false,
+      () => workflow()
+    );
+
+    expect('value' in outcome && outcome.value.source).toBe('live');
+  });
+
+  test('gateSource names the run and version when nothing is usable', () => {
+    const outcome = gateSource(
+      candidate(),
+      () => false,
+      () => null
+    );
 
     expect('reason' in outcome && outcome.reason.message).toContain('run-1');
     expect('reason' in outcome && outcome.reason.message).toContain('vh-1');
   });
 
-  test('gateShape admits a valid payload', () => {
-    const outcome = gateShape({ run: candidate() });
+  test('gateSnapshots always attaches a record, even with no template slots', () => {
+    const outcome = gateSnapshots(
+      { run: candidate(), definition: workflow(), source: 'pinned' },
+      () => null
+    );
 
-    expect('value' in outcome && outcome.value.pinned.id).toBe('wf-1');
-  });
-
-  test('gateSnapshots rejects an unchanged workflow by identity', () => {
-    const parsed = { run: candidate(), pinned: workflow() };
-    const outcome = gateSnapshots(parsed, () => null);
-
-    expect('reason' in outcome && outcome.reason.kind).toBe('already_snapshotted');
+    expect('value' in outcome && outcome.value.withSnapshots.templateSnapshots).toEqual({});
   });
 });

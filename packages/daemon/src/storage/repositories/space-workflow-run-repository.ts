@@ -186,9 +186,13 @@ export class SpaceWorkflowRunRepository {
     }));
   }
 
-  migrateSnapshotlessPins(resolveTemplate: AgentTemplateResolver): number {
+  migrateSnapshotlessPins(
+    resolveTemplate: AgentTemplateResolver,
+    loadWorkflow: (workflowId: string) => SpaceWorkflow | null
+  ): number {
     const plan = buildPlanRunSnapshotMigration({
       verifyVersion: verifyDefinitionVersion,
+      loadWorkflow,
       resolveTemplate,
       computeVersion: computeDefinitionVersion,
     });
@@ -197,10 +201,14 @@ export class SpaceWorkflowRunRepository {
       try {
         const outcome = plan(run);
         if (isRunSnapshotMigrationSkip(outcome)) {
-          if (outcome.kind !== 'already_snapshotted') {
-            log.warn(`migrateSnapshotlessPins: ${outcome.message}`);
-          }
+          log.warn(`migrateSnapshotlessPins: ${outcome.message}`);
           continue;
+        }
+        if (outcome.source === 'live') {
+          log.warn(
+            `migrateSnapshotlessPins: run ${outcome.runId} had an unverifiable pin; ` +
+              `snapshotting the live definition it was already resolving`
+          );
         }
         if (this.applyRunSnapshotMigration(outcome)) count += 1;
       } catch (err) {

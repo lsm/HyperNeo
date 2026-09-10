@@ -660,26 +660,28 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(JSON.parse(pinnedPayload(before!)).templateSnapshots).toBeUndefined();
 
       expect(
-        repo.migrateSnapshotlessPins((key) =>
-          key === 'worker.custom'
-            ? ({
-                key: 'worker.custom',
-                handle: 'custom-worker',
-                displayName: 'Custom Worker',
-                description: null,
-                instructions: 'Frozen at migration.',
-                suggestedAutonomyLevel: 2,
-                model: null,
-                provider: null,
-                modelPool: null,
-                thinkingLevel: null,
-                settingSources: null,
-                tools: null,
-                labels: [],
-                createdAt: 1,
-                updatedAt: 1,
-              } as unknown as SpaceAgentTemplate)
-            : null
+        repo.migrateSnapshotlessPins(
+          (key) =>
+            key === 'worker.custom'
+              ? ({
+                  key: 'worker.custom',
+                  handle: 'custom-worker',
+                  displayName: 'Custom Worker',
+                  description: null,
+                  instructions: 'Frozen at migration.',
+                  suggestedAutonomyLevel: 2,
+                  model: null,
+                  provider: null,
+                  modelPool: null,
+                  thinkingLevel: null,
+                  settingSources: null,
+                  tools: null,
+                  labels: [],
+                  createdAt: 1,
+                  updatedAt: 1,
+                } as unknown as SpaceAgentTemplate)
+              : null,
+          () => wf
         )
       ).toBe(1);
 
@@ -708,7 +710,12 @@ describe('SpaceWorkflowRunRepository', () => {
       seedTaskForRun(run.id, spaceId);
       const before = repo.getRun(run.id)!.definitionVersion;
 
-      expect(repo.migrateSnapshotlessPins(() => null)).toBe(0);
+      expect(
+        repo.migrateSnapshotlessPins(
+          () => null,
+          () => wf
+        )
+      ).toBe(0);
       expect(repo.getRun(run.id)!.definitionVersion).toBe(before);
     });
 
@@ -730,7 +737,12 @@ describe('SpaceWorkflowRunRepository', () => {
       });
       const before = repo.getRun(run.id)!.definitionVersion;
 
-      expect(repo.migrateSnapshotlessPins(() => null)).toBe(1);
+      expect(
+        repo.migrateSnapshotlessPins(
+          () => null,
+          () => wf
+        )
+      ).toBe(1);
 
       const after = repo.getRun(run.id)!.definitionVersion;
       expect(after).not.toBe(before);
@@ -761,7 +773,46 @@ describe('SpaceWorkflowRunRepository', () => {
          WHERE workflow_id = ? AND version_hash = ?`
       ).run(tampered, WORKFLOW_ID, before);
 
-      expect(repo.migrateSnapshotlessPins(() => null)).toBe(0);
+      expect(
+        repo.migrateSnapshotlessPins(
+          () => null,
+          () => wf
+        )
+      ).toBe(1);
+      const after = repo.getRun(run.id)!.definitionVersion;
+      expect(after).not.toBe(before);
+      expect(JSON.parse(pinnedPayload(after!)).name).toBe('My Workflow');
+    });
+
+    it('migrateSnapshotlessPins leaves an unverifiable pin alone when the workflow is gone', () => {
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.custom', name: 'Worker' }],
+          },
+        ],
+      });
+      const run = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Tampered, workflow deleted',
+        rawWorkflow: wf,
+      });
+      seedTaskForRun(run.id, spaceId);
+      const before = repo.getRun(run.id)!.definitionVersion;
+      db.prepare(
+        `UPDATE space_workflow_definition_versions SET payload = ?
+         WHERE workflow_id = ? AND version_hash = ?`
+      ).run(JSON.stringify({ ...wf, name: 'Altered' }), WORKFLOW_ID, before);
+
+      expect(
+        repo.migrateSnapshotlessPins(
+          () => null,
+          () => null
+        )
+      ).toBe(0);
       expect(repo.getRun(run.id)!.definitionVersion).toBe(before);
     });
 
@@ -783,7 +834,12 @@ describe('SpaceWorkflowRunRepository', () => {
       });
       seedTaskForRun(run.id, spaceId, { archived: true });
 
-      expect(repo.migrateSnapshotlessPins(() => null)).toBe(0);
+      expect(
+        repo.migrateSnapshotlessPins(
+          () => null,
+          () => wf
+        )
+      ).toBe(0);
     });
 
     it('pinExistingRun is idempotent and never overwrites an existing pin', () => {

@@ -1,7 +1,7 @@
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import superpipe, { type Dependencies, type PipelineAPI } from 'superpipe';
 import type { AgentTemplateResolver } from './run-template-snapshot.ts';
-import { withRunTemplateSnapshots } from './run-template-snapshot.ts';
+import { buildRunTemplateSnapshots } from './run-template-snapshot.ts';
 
 export interface SnapshotlessPinnedRun {
   id: string;
@@ -10,15 +10,14 @@ export interface SnapshotlessPinnedRun {
   versionHash: string;
 }
 
-export type RunSnapshotMigrationSkipKind =
-  | 'hash_mismatch'
-  | 'invalid_shape'
-  | 'already_snapshotted';
+export type RunSnapshotMigrationSkipKind = 'unusable_definition';
 
 export interface RunSnapshotMigrationSkip {
   kind: RunSnapshotMigrationSkipKind;
   message: string;
 }
+
+export type RunSnapshotSource = 'pinned' | 'live';
 
 export interface RunSnapshotMigrationPlan {
   runId: string;
@@ -26,35 +25,26 @@ export interface RunSnapshotMigrationPlan {
   spaceId: string;
   versionHash: string;
   payload: string;
+  source: RunSnapshotSource;
 }
 
 export interface PlanRunSnapshotMigrationDeps extends Dependencies {
   verifyVersion(payload: string, versionHash: string): boolean;
+  loadWorkflow(workflowId: string): SpaceWorkflow | null;
   resolveTemplate: AgentTemplateResolver;
   computeVersion(workflow: SpaceWorkflow): { versionHash: string; payload: string };
 }
 
 type Gate<T> = { value: T } | { reason: RunSnapshotMigrationSkip };
 
-interface AdmittedRun {
+interface SourcedRun {
   run: SnapshotlessPinnedRun;
+  definition: SpaceWorkflow;
+  source: RunSnapshotSource;
 }
 
-interface ParsedRun extends AdmittedRun {
-  pinned: SpaceWorkflow;
-}
-
-interface SnapshottedRun extends ParsedRun {
+interface SnapshottedRun extends SourcedRun {
   withSnapshots: SpaceWorkflow;
-}
-
-function skip(
-  kind: RunSnapshotMigrationSkipKind,
-  message: string
-): {
-  reason: RunSnapshotMigrationSkip;
-} {
-  return { reason: { kind, message } };
 }
 
 export function isRunSnapshotMigrationSkip(
@@ -63,44 +53,44 @@ export function isRunSnapshotMigrationSkip(
   return 'kind' in outcome;
 }
 
-export function gateIntegrity(
-  run: SnapshotlessPinnedRun,
-  verifyVersion: PlanRunSnapshotMigrationDeps['verifyVersion']
-): Gate<AdmittedRun> {
-  if (!verifyVersion(run.payload, run.versionHash)) {
-    return skip(
-      'hash_mismatch',
-      `payload hash mismatch for run ${run.id} (version ${run.versionHash}); leaving it unmigrated`
-    );
+function parseWorkflow(payload: string): SpaceWorkflow | null {
+  try {
+    const parsed = JSON.parse(payload) as SpaceWorkflow;
+    return parsed && Array.isArray(parsed.nodes) ? parsed : null;
+  } catch {
+    return null;
   }
-  return { value: { run } };
 }
 
-export function gateShape(admitted: AdmittedRun): Gate<ParsedRun> {
-  let pinned: SpaceWorkflow;
-  try {
-    pinned = JSON.parse(admitted.run.payload) as SpaceWorkflow;
-  } catch {
-    return skip('invalid_shape', `pinned payload for run ${admitted.run.id} is not valid JSON`);
-  }
-  if (!pinned || !Array.isArray(pinned.nodes)) {
-    return skip('invalid_shape', `pinned payload for run ${admitted.run.id} has no nodes array`);
-  }
-  return { value: { ...admitted, pinned } };
+export function gateSource(
+  run: SnapshotlessPinnedRun,
+  verifyVersion: PlanRunSnapshotMigrationDeps['verifyVersion'],
+  loadWorkflow: PlanRunSnapshotMigrationDeps['loadWorkflow']
+): Gate<SourcedRun> {
+  const pinned = verifyVersion(run.payload, run.versionHash) ? parseWorkflow(run.payload) : null;
+  if (pinned) return { value: { run, definition: pinned, source: 'pinned' } };
+
+  const live = loadWorkflow(run.workflowId);
+  if (live) return { value: { run, definition: live, source: 'live' } };
+
+  return {
+    reason: {
+      kind: 'unusable_definition',
+      message:
+        `run ${run.id} has an unverifiable pinned payload (version ${run.versionHash}) ` +
+        `and workflow ${run.workflowId} no longer exists; leaving it unmigrated`,
+    },
+  };
 }
 
 export function gateSnapshots(
-  admitted: ParsedRun,
+  admitted: SourcedRun,
   resolveTemplate: PlanRunSnapshotMigrationDeps['resolveTemplate']
 ): Gate<SnapshottedRun> {
-  const withSnapshots = withRunTemplateSnapshots(admitted.pinned, resolveTemplate);
-  if (withSnapshots === admitted.pinned) {
-    return skip(
-      'already_snapshotted',
-      `run ${admitted.run.id} references no templates; nothing to migrate`
-    );
-  }
-  return { value: { ...admitted, withSnapshots } };
+  const snapshots = buildRunTemplateSnapshots(admitted.definition, resolveTemplate);
+  return {
+    value: { ...admitted, withSnapshots: { ...admitted.definition, templateSnapshots: snapshots } },
+  };
 }
 
 export function buildPlan(
@@ -111,10 +101,11 @@ export function buildPlan(
   return {
     value: {
       runId: admitted.run.id,
-      workflowId: admitted.pinned.id,
-      spaceId: admitted.pinned.spaceId,
+      workflowId: admitted.definition.id,
+      spaceId: admitted.definition.spaceId,
       versionHash,
       payload,
+      source: admitted.source,
     },
   };
 }
@@ -124,8 +115,7 @@ export function buildPlanRunSnapshotMigration(
 ): (run: SnapshotlessPinnedRun) => RunSnapshotMigrationPlan | RunSnapshotMigrationSkip {
   return (superpipe(deps)('planRunSnapshotMigration') as PipelineAPI)
     .input(['run'])
-    .pipe(gateIntegrity, ['run', 'verifyVersion'], 'result:admitted')
-    .pipe(gateShape, 'admitted', 'result:admitted')
+    .pipe(gateSource, ['run', 'verifyVersion', 'loadWorkflow'], 'result:admitted')
     .pipe(gateSnapshots, ['admitted', 'resolveTemplate'], 'result:admitted')
     .pipe(buildPlan, ['admitted', 'computeVersion'], 'result:admitted')
     .end('admitted') as (
