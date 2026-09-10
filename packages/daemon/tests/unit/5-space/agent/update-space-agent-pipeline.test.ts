@@ -407,6 +407,37 @@ describe('updateSpaceAgent', () => {
       expectKind(await run(h, { id: 'agent-1', ...changes }), 'invalid_request');
     });
 
+    test.each([
+      ['provider', { provider: 42 as never }],
+      ['model', { model: 7 as never }],
+      ['handle', { handle: 1 as never }],
+      ['displayName', { displayName: {} as never }],
+      ['sessionId', { sessionId: 5 as never }],
+      ['instructions', { instructions: [] as never }],
+    ])('rejects a non-string %s from the untrusted payload', async (field, changes) => {
+      const outcome = await run(h, { id: 'agent-1', ...changes });
+      expectKind(outcome, 'invalid_request', `${field} must be a string`);
+    });
+
+    test('rejects a non-string entry inside tools', async () => {
+      expectKind(
+        await run(h, { id: 'agent-1', tools: ['Read', 3] as never }),
+        'invalid_request',
+        'tools must be an array of strings'
+      );
+    });
+
+    test('still accepts null for nullable string fields', async () => {
+      const outcome = await run(h, {
+        id: 'agent-1',
+        provider: null,
+        model: null,
+        description: null,
+        sessionId: null,
+      });
+      expect(isRejection(outcome)).toBe(false);
+    });
+
     test('accepts valid enum values', async () => {
       const outcome = await run(h, {
         id: 'agent-1',

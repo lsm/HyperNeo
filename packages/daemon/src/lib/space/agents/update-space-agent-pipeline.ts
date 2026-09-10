@@ -43,6 +43,25 @@ function isBlankString(value: string | null | undefined): boolean {
   return typeof value === 'string' && value.trim() === '';
 }
 
+const STRING_FIELDS = [
+  'handle',
+  'displayName',
+  'description',
+  'instructions',
+  'model',
+  'provider',
+  'sessionId',
+] as const;
+
+function firstNonStringField(changes: UpdateSpaceAgentParams): string | null {
+  for (const field of STRING_FIELDS) {
+    const value = changes[field];
+    if (value === undefined || value === null) continue;
+    if (typeof value !== 'string') return field;
+  }
+  return null;
+}
+
 function isReservedHandle(handle: string): boolean {
   return (RESERVED_SPACE_AGENT_HANDLES as readonly string[]).includes(handle);
 }
@@ -60,6 +79,17 @@ export function gateTarget(
 
 export function gateChanges(admitted: AdmittedUpdate): Gate<AdmittedUpdate> {
   const { changes } = admitted;
+  const nonString = firstNonStringField(changes);
+  if (nonString) {
+    return reject('invalid_request', `${nonString} must be a string`);
+  }
+  if (
+    changes.tools !== undefined &&
+    changes.tools !== null &&
+    (!Array.isArray(changes.tools) || changes.tools.some((tool) => typeof tool !== 'string'))
+  ) {
+    return reject('invalid_request', 'tools must be an array of strings');
+  }
   if (isBlankString(changes.displayName)) {
     return reject('invalid_request', 'displayName cannot be blank');
   }
