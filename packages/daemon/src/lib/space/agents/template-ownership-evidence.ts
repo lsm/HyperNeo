@@ -17,10 +17,16 @@ export interface TemplateOwnershipAuditRow {
   spaceId: string | null;
   toolName: string;
   paramsSummary: string | null;
+  timestamp: number;
+}
+
+export interface TemplateOwnershipTemplateRow {
+  key: string;
+  createdAt: number;
 }
 
 export interface TemplateOwnershipInputs {
-  templateKeys: readonly string[];
+  templates: readonly TemplateOwnershipTemplateRow[];
   agents: readonly TemplateOwnershipAgentRow[];
   workflowSlots: readonly TemplateOwnershipSlotRow[];
   auditEntries: readonly TemplateOwnershipAuditRow[];
@@ -35,6 +41,7 @@ export interface TemplateOwnershipEvidence {
 
 const MIGRATED_KEY_PREFIX = `${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.`;
 const PROBE_SUFFIX = /\.m228(?:-\d+)?$/;
+const CREATE_AUDIT_FIELDS = new Set(['key', 'from_agent_id']);
 
 function emptyEvidence(): TemplateOwnershipEvidence {
   return {
@@ -75,7 +82,11 @@ export function auditedTemplateKey(entry: TemplateOwnershipAuditRow): string | n
     return null;
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-  const key = (parsed as Record<string, unknown>).key;
+  const record = parsed as Record<string, unknown>;
+  for (const field of Object.keys(record)) {
+    if (!CREATE_AUDIT_FIELDS.has(field)) return null;
+  }
+  const key = record.key;
   return typeof key === 'string' && key.trim() !== '' ? key.trim() : null;
 }
 
@@ -83,9 +94,12 @@ export function collectTemplateOwnershipEvidence(
   inputs: TemplateOwnershipInputs
 ): Map<string, TemplateOwnershipEvidence> {
   const evidence = new Map<string, TemplateOwnershipEvidence>();
-  for (const key of inputs.templateKeys) {
-    const trimmed = normalizeKey(key);
-    if (trimmed) evidence.set(trimmed, emptyEvidence());
+  const createdAtByKey = new Map<string, number>();
+  for (const template of inputs.templates) {
+    const trimmed = normalizeKey(template.key);
+    if (!trimmed) continue;
+    evidence.set(trimmed, emptyEvidence());
+    createdAtByKey.set(trimmed, template.createdAt);
   }
 
   const spaceByAgentId = new Map<string, string>();
@@ -98,10 +112,7 @@ export function collectTemplateOwnershipEvidence(
   for (const [key, entry] of evidence) {
     for (const candidate of migratedAgentIdCandidates(key)) {
       const space = spaceByAgentId.get(candidate);
-      if (space) {
-        addSpace(entry.migratedAgentSpaces, space);
-        break;
-      }
+      if (space) addSpace(entry.migratedAgentSpaces, space);
     }
   }
 
@@ -119,8 +130,12 @@ export function collectTemplateOwnershipEvidence(
 
   for (const audit of inputs.auditEntries) {
     const key = auditedTemplateKey(audit);
-    const entry = key ? evidence.get(key) : undefined;
-    if (entry) addSpace(entry.auditedSpaces, audit.spaceId);
+    if (!key) continue;
+    const entry = evidence.get(key);
+    const createdAt = createdAtByKey.get(key);
+    if (!entry || createdAt === undefined) continue;
+    if (audit.timestamp < createdAt) continue;
+    addSpace(entry.auditedSpaces, audit.spaceId);
   }
 
   return evidence;
