@@ -1,3 +1,4 @@
+export type { TaskCore, TaskLifecycleStatus } from './types/task-core.ts';
 export * from './types.ts';
 export * from './api.ts';
 export * from './message-hub/message-hub.ts';

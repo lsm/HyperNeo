@@ -21,7 +21,11 @@ import type {
   NodeAgentTemplateSource,
 } from '../../../../src/lib/space/runtime/spawn-slot-resolution.ts';
 import type { TaskAgentManagerConfig } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
-import { toRunTemplateSnapshot } from '../../../../src/lib/space/workflows/run-template-snapshot.ts';
+import {
+  createAgentTemplateResolver,
+  toRunTemplateSnapshot,
+  withRunTemplateSnapshots,
+} from '../../../../src/lib/space/workflows/run-template-snapshot.ts';
 import { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager.ts';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
 
@@ -375,6 +379,7 @@ describe('resolveSlotSpawnConfig branch selection (ATC-1 pin)', () => {
 });
 
 const PINNED_VERSION = 'version-pinned-3839';
+const DEFAULT_PINNED_VERSION = 'version-pinned-default';
 
 function makeSnapshot(
   template: SpaceAgentTemplate,
@@ -469,7 +474,7 @@ describe('resolveSlotSpawnConfig pinned snapshot consumption (ATC-8)', () => {
     expect(config?.agent.thinkingLevel).toBe('think32k');
   });
 
-  test('a pinned run predating snapshots falls back to live resolution', () => {
+  test('a pinned run predating snapshots refuses to resolve live', () => {
     const h = makeTemplateResolutionHarness({
       storedTemplates: [makeStoredTemplate({ instructions: 'Edited after run start' })],
       pinnedWorkflows: {
@@ -483,11 +488,11 @@ describe('resolveSlotSpawnConfig pinned snapshot consumption (ATC-8)', () => {
       pinnedRun()
     );
 
-    expect(config?.agent.instructions).toBe('Edited after run start');
-    expect(h.templateRepoCalls).toEqual(['custom.stored']);
+    expect(config).toBeNull();
+    expect(h.templateRepoCalls).toEqual([]);
   });
 
-  test('an unpinned run resolves live without consulting the pinned definition', () => {
+  test('an unpinned run refuses to resolve live', () => {
     const h = makeTemplateResolutionHarness({
       storedTemplates: [makeStoredTemplate()],
     });
@@ -498,8 +503,8 @@ describe('resolveSlotSpawnConfig pinned snapshot consumption (ATC-8)', () => {
       { workflowId: 'wf-3832', definitionVersion: null }
     );
 
-    expect(config?.agent.instructions).toBe('Stored template instructions');
-    expect(h.pinnedLookupCalls).toEqual([]);
+    expect(config).toBeNull();
+    expect(h.templateRepoCalls).toEqual([]);
   });
 
   test('a snapshot record missing the requested key never falls back to live resolution', () => {
@@ -523,7 +528,7 @@ describe('resolveSlotSpawnConfig pinned snapshot consumption (ATC-8)', () => {
     expect(h.templateRepoCalls).toEqual([]);
   });
 
-  test('an unresolvable pinned definition falls back to live resolution', () => {
+  test('an unresolvable pinned definition refuses to resolve live', () => {
     const h = makeTemplateResolutionHarness({
       storedTemplates: [makeStoredTemplate()],
       pinnedWorkflows: { [PINNED_VERSION]: null },
@@ -535,7 +540,8 @@ describe('resolveSlotSpawnConfig pinned snapshot consumption (ATC-8)', () => {
       pinnedRun()
     );
 
-    expect(config?.agent.instructions).toBe('Stored template instructions');
+    expect(config).toBeNull();
+    expect(h.templateRepoCalls).toEqual([]);
   });
 
   test('prototype-named keys on a rehydrated snapshot record never leak Object.prototype', () => {
@@ -559,6 +565,22 @@ describe('resolveSlotSpawnConfig pinned snapshot consumption (ATC-8)', () => {
     expect(h.templateRepoCalls).toEqual([]);
   });
 
+  test('a dual-reference slot in a run refuses to fall through to its live agentId', () => {
+    const h = makeTemplateResolutionHarness({
+      storedTemplates: [makeStoredTemplate()],
+      registryAgents: [makeRegistryAgent({ id: 'agent-live', displayName: 'Live Agent' })],
+    });
+
+    const config = h.internals.resolveSlotSpawnConfig(
+      SPACE_ID,
+      { agentId: 'agent-live', templateKey: 'custom.stored', name: 'stored' },
+      { workflowId: 'wf-3832', definitionVersion: null }
+    );
+
+    expect(config).toBeNull();
+    expect(h.templateRepoCalls).toEqual([]);
+  });
+
   test('a direct spawn without a run resolves live (send-to-agent path)', () => {
     const h = makeTemplateResolutionHarness({
       storedTemplates: [makeStoredTemplate()],
@@ -571,7 +593,7 @@ describe('resolveSlotSpawnConfig pinned snapshot consumption (ATC-8)', () => {
     });
 
     expect(config?.agent.instructions).toBe('Stored template instructions');
-    expect(h.pinnedLookupCalls).toEqual([]);
+    expect(h.templateRepoCalls).toEqual(['custom.stored']);
   });
 });
 
@@ -598,6 +620,10 @@ function makeSpawnPayloadHarness(
     pinnedWorkflow?: SpaceWorkflow | null;
   } = {}
 ): SpawnPayloadHarness {
+  const defaultPinnedWorkflow =
+    options.pinnedWorkflow !== undefined
+      ? options.pinnedWorkflow
+      : withRunTemplateSnapshots(workflow, createAgentTemplateResolver());
   const execution = makeExecution(agentName);
   const dbRow: NodeExecution = { ...execution };
   let capturedInit: AgentSessionInit | undefined;
@@ -635,7 +661,7 @@ function makeSpawnPayloadHarness(
     },
     spaceManager: { getSpace: async () => ({ id: SPACE_ID, workspacePath: '/tmp/ws' }) },
     spaceWorkflowManager: {
-      getWorkflowForRun: () => options.pinnedWorkflow ?? null,
+      getWorkflowForRun: () => defaultPinnedWorkflow,
     },
     longHorizonAgentRepo: { getById: () => null },
   } as unknown as TaskAgentManagerConfig);
@@ -675,9 +701,8 @@ function makeSpawnPayloadHarness(
     id: RUN_ID,
     workflowId: 'wf-3832',
     status: 'in_progress',
-    ...(options.definitionVersion !== undefined
-      ? { definitionVersion: options.definitionVersion }
-      : {}),
+    definitionVersion:
+      options.definitionVersion !== undefined ? options.definitionVersion : DEFAULT_PINNED_VERSION,
   } as unknown as SpaceWorkflowRun;
 
   return {
@@ -859,19 +884,29 @@ describe('worker-template spawn consumes the run-pinned snapshot (ATC-8)', () =>
     expect(init?.promptProvenance?.agentId).toBe('worker.swe');
   });
 
-  test('a run predating snapshots spawns from live built-in resolution', async () => {
+  test('a run predating snapshots refuses to spawn rather than resolving live', async () => {
     const h = makeSpawnPayloadHarness(makeWorkflow(makeTemplateWorkflowNode()), 'coder', {
       definitionVersion: 'version-pinned-3839',
       pinnedWorkflow: makeWorkflow(makeTemplateWorkflowNode()),
     });
 
-    await h.spawn();
+    await expect(h.spawn()).rejects.toThrow('no pinned template snapshot to resolve it from');
+    expect(h.capturedInit()).toBeUndefined();
+  });
 
-    const init = h.capturedInit();
-    expect(init?.systemPrompt).toEqual({
-      type: 'preset',
-      preset: 'claude_code',
-      append: PRESET_CODER_PROMPT,
+  test('a snapshot-less spawn failure names the run, key, and the only valid remediation', async () => {
+    const h = makeSpawnPayloadHarness(makeWorkflow(makeTemplateWorkflowNode()), 'coder', {
+      definitionVersion: 'version-pinned-3839',
+      pinnedWorkflow: makeWorkflow(makeTemplateWorkflowNode()),
     });
+
+    await expect(h.spawn()).rejects.toThrow(
+      expect.objectContaining({
+        name: 'MissingWorkflowAgentError',
+        permanent: true,
+      })
+    );
+    await expect(h.spawn()).rejects.toThrow('worker.swe');
+    await expect(h.spawn()).rejects.toThrow('start a new run');
   });
 });

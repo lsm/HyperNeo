@@ -5158,10 +5158,7 @@ export class SpaceRuntime {
           targetNode,
           (id) => this.agentRecordExists(id, run.spaceId),
           {
-            templateResolves: (key) =>
-              runTemplateResolves(workflow, run, key, (live) =>
-                this.config.spaceWorkflowManager.agentTemplateResolves(live)
-              ),
+            templateResolves: (key) => runTemplateResolves(workflow, run, key),
           }
         );
         if (missing.length > 0) {
@@ -5174,7 +5171,7 @@ export class SpaceRuntime {
                   workflowName: workflow.name,
                   agentName: first.agentName,
                   templateKey: first.templateKey,
-                  snapshotOnly: runTemplateSnapshotRecord(workflow, run) !== null,
+                  hasSnapshot: runTemplateSnapshotRecord(workflow, run) !== null,
                 })
               : formatMissingAgentReference({
                   runId: run.id,

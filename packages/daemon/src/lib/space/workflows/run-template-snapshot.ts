@@ -61,13 +61,12 @@ export function runTemplateSnapshotRecord(
 export function runTemplateResolves(
   workflow: Pick<SpaceWorkflow, 'templateSnapshots'> | null | undefined,
   run: { definitionVersion: string | null } | null | undefined,
-  key: string,
-  resolveLive: (key: string) => boolean
+  key: string
 ): boolean {
   const trimmed = key.trim();
   if (!trimmed) return false;
   const snapshots = runTemplateSnapshotRecord(workflow, run);
-  if (!snapshots) return resolveLive(trimmed);
+  if (!snapshots) return false;
   return Object.hasOwn(snapshots, trimmed);
 }
 
