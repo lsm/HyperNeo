@@ -1,3 +1,4 @@
+import { setImmediate } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConnectionManager } from '../connection-manager';
 
@@ -84,7 +85,10 @@ describe('real ConnectionManager resume recovery', () => {
     });
     Reflect.set(manager, 'transport', {
       isReady: () => fixture.ready,
-      forceReconnect: () => fixture.effects.push('force-reconnect'),
+      forceReconnect: () => {
+        fixture.effects.push('force-reconnect');
+        fixture.ready = false;
+      },
       close: () => {},
     });
   });
@@ -107,7 +111,10 @@ describe('real ConnectionManager resume recovery', () => {
         if (releases.length === 5) allStarted();
       });
     };
-    const pending = runResume();
+    let settled = false;
+    const pending = runResume().then(() => {
+      settled = true;
+    });
     expect(Reflect.get(manager, '_isResuming')).toBe(true);
     await started;
     expect(fixture.effects).toEqual([
@@ -118,7 +125,8 @@ describe('real ConnectionManager resume recovery', () => {
       ...refreshes,
     ]);
     for (const release of releases.slice(0, 4)) release();
-    await Promise.resolve();
+    await setImmediate();
+    expect(settled).toBe(false);
     expect(Reflect.get(manager, '_isResuming')).toBe(true);
     expect(fixture.effects).not.toContain('notify');
     releases[4]();
@@ -132,7 +140,7 @@ describe('real ConnectionManager resume recovery', () => {
     'join:global',
     'join:space:space-1',
     'refresh:app',
-  ])('reconnects on %s failure and still finalizes as connected when transport remains ready', async (failure) => {
+  ])('reconnects on %s failure without announcing connected', async (failure) => {
     fixture.failure = failure;
     await runResume();
     const beforeFailure = ['mark-recovering', 'health'];
@@ -140,12 +148,8 @@ describe('real ConnectionManager resume recovery', () => {
     if (failure === 'join:space:space-1' || failure === 'refresh:app')
       beforeFailure.push('join:space:space-1');
     if (failure === 'refresh:app') beforeFailure.push(...refreshes);
-    expect(fixture.effects).toEqual([
-      ...beforeFailure,
-      'force-reconnect',
-      'state:connected',
-      'notify',
-    ]);
+    expect(fixture.effects).toEqual([...beforeFailure, 'force-reconnect']);
+    expect(fixture.ready).toBe(false);
     expect(Reflect.get(manager, '_isResuming')).toBe(false);
   });
 
