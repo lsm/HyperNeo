@@ -5,7 +5,10 @@ import { createDeferred } from './timeout';
 import { currentSessionIdSignal, slashCommandsSignal } from './signals';
 import { runConnectionEvent } from './connection-event-pipeline';
 import { runConnectionResume } from './connection-resume-pipeline';
-import { createDefaultConnectionApplication } from './connection-application';
+import {
+  createDefaultConnectionApplication,
+  type ConnectionApplication,
+} from './connection-application';
 
 if (typeof window !== 'undefined') {
   (
@@ -41,7 +44,7 @@ export function getDaemonWsUrl(
 }
 
 export class ConnectionManager {
-  private readonly application = createDefaultConnectionApplication();
+  private readonly application: ConnectionApplication;
   private messageHub: MessageHub | null = null;
   private transport: WebSocketClientTransport | null = null;
   private baseUrl: string;
@@ -56,7 +59,11 @@ export class ConnectionManager {
 
   private _isResuming = false;
 
-  constructor(baseUrl?: string) {
+  constructor(
+    baseUrl?: string,
+    application: ConnectionApplication = createDefaultConnectionApplication()
+  ) {
+    this.application = application;
     this.baseUrl = baseUrl || getDaemonWsUrl();
     this.setupVisibilityHandlers();
   }
