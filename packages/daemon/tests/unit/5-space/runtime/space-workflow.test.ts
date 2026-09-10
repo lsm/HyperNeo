@@ -241,58 +241,6 @@ describe('SpaceWorkflowRepository', () => {
     expect(repo.deleteWorkflow('no-such-id')).toBe(false);
   });
 
-  test('getWorkflowsReferencingAgent returns workflows with matching agent', () => {
-    seedAgent(db, 'agent-1', 'space-1', 'Alpha');
-    const wf = repo.createWorkflow({
-      spaceId: 'space-1',
-      name: 'WF With Agent',
-      nodes: [{ id: 'step-1', name: 'Step', agentId: 'agent-1' }],
-      completionAutonomyLevel: 3,
-    });
-    const results = repo.getWorkflowsReferencingAgent('agent-1');
-    expect(results).toHaveLength(1);
-    expect(results[0].id).toBe(wf.id);
-  });
-
-  test('getWorkflowsReferencingAgent returns empty for unmatched agent', () => {
-    repo.createWorkflow({
-      spaceId: 'space-1',
-      name: 'WF',
-      nodes: [coderNode],
-      completionAutonomyLevel: 3,
-    });
-    expect(repo.getWorkflowsReferencingAgent('no-such-agent')).toHaveLength(0);
-  });
-
-  test('getWorkflowsReferencingAgent finds agent referenced via agents[] JSON config (multi-agent step)', () => {
-    seedAgent(db, 'agent-multi-1', 'space-1', 'Multi1');
-    seedAgent(db, 'agent-multi-2', 'space-1', 'Multi2');
-    const wf = repo.createWorkflow({
-      spaceId: 'space-1',
-      name: 'Multi-Agent WF',
-      nodes: [
-        {
-          id: 'step-multi',
-          name: 'Parallel Step',
-          agents: [
-            { agentId: 'agent-multi-1', name: 'multi-1' },
-            { agentId: 'agent-multi-2', name: 'multi-2' },
-          ],
-        },
-      ],
-      completionAutonomyLevel: 3,
-    });
-    const refs1 = repo.getWorkflowsReferencingAgent('agent-multi-1');
-    expect(refs1).toHaveLength(1);
-    expect(refs1[0].id).toBe(wf.id);
-
-    const refs2 = repo.getWorkflowsReferencingAgent('agent-multi-2');
-    expect(refs2).toHaveLength(1);
-    expect(refs2[0].id).toBe(wf.id);
-
-    expect(repo.getWorkflowsReferencingAgent('agent-coder')).toHaveLength(0);
-  });
-
   test('round-trip: step with agents[] is persisted and restored correctly', () => {
     seedAgent(db, 'agent-multi-1', 'space-1', 'Multi1');
     seedAgent(db, 'agent-multi-2', 'space-1', 'Multi2');
@@ -820,25 +768,6 @@ describe('SpaceWorkflowManager', () => {
     expect(wf.nodes[0].name).toBe('Plan');
     expect(wf.nodes[1].name).toBe('Code');
     expect(wf.nodes[2].name).toBe('Review');
-  });
-
-  test('getWorkflowsReferencingAgent returns workflows using given agent', () => {
-    seedAgent(db, 'agent-1', 'space-1', 'Alpha');
-    const wf = manager.createWorkflow({
-      spaceId: 'space-1',
-      name: 'Uses Alpha',
-      nodes: [{ id: 'step-1', name: 'Step', agentId: 'agent-1' }],
-      completionAutonomyLevel: 3,
-    });
-    manager.createWorkflow({
-      spaceId: 'space-1',
-      name: 'Uses Other',
-      nodes: [coderNode],
-      completionAutonomyLevel: 3,
-    });
-    const refs = manager.getWorkflowsReferencingAgent('agent-1');
-    expect(refs).toHaveLength(1);
-    expect(refs[0].id).toBe(wf.id);
   });
 
   test('createWorkflow rejects agents[] entry with empty agentId (no lookup)', () => {

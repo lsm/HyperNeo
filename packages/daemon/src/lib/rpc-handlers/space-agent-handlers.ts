@@ -15,7 +15,6 @@ import type {
 import { isKnownToolEntry, isScopedBashToolEntry } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../storage/index.ts';
-import type { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import {
   coordinatorLongHorizonAgentId,
   type SpaceLongHorizonAgentRepository,
@@ -63,10 +62,6 @@ interface UnifiedSpaceAgentMethodDeps {
   spaceManager: SpaceManager;
   repo: SpaceLongHorizonAgentRepository;
   templateManager?: SpaceAgentTemplateManager;
-  workflowRepo: Pick<
-    SpaceWorkflowRepository,
-    'getWorkflowsReferencingAgent' | 'getWorkflowsReferencingTemplate'
-  >;
   runtimeService?: UnifiedSpaceAgentRuntimeService;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
 }
@@ -588,16 +583,7 @@ function deleteResolveTargetStage(ctx: DeleteUnifiedAgentCtx): DeleteUnifiedAgen
 }
 
 function deleteAuthorizeStage(ctx: DeleteUnifiedAgentCtx): DeleteUnifiedAgentCtx {
-  const { agentId, existing, spaceId } = ctx;
-  const referencingWorkflows = ctx.workflowRepo.getWorkflowsReferencingAgent(agentId);
-  if (referencingWorkflows.length > 0) {
-    const displayName = existing?.displayName ?? agentId;
-    const workflowNames = referencingWorkflows.map((wf) => wf.name);
-    throw new Error(
-      `Cannot delete agent "${displayName}" - it is referenced by workflow nodes` +
-        workflowNames.map((n) => ` (Workflow: ${n})`).join('')
-    );
-  }
+  const { agentId, spaceId } = ctx;
   const coordinatorId =
     agentId === coordinatorLongHorizonAgentId(spaceId)
       ? agentId
@@ -1047,10 +1033,6 @@ export function setupSpaceAgentHandlers(
   spaceManager: SpaceManager,
   db: Database,
   longHorizonAgentRepo: SpaceLongHorizonAgentRepository,
-  workflowRepo: Pick<
-    SpaceWorkflowRepository,
-    'getWorkflowsReferencingAgent' | 'getWorkflowsReferencingTemplate'
-  >,
   runtimeService?: UnifiedSpaceAgentRuntimeService,
   templateManager?: SpaceAgentTemplateManager
 ): void {
@@ -1058,7 +1040,6 @@ export function setupSpaceAgentHandlers(
     spaceManager,
     repo: longHorizonAgentRepo,
     templateManager,
-    workflowRepo,
     runtimeService,
     internalEventBus,
   };

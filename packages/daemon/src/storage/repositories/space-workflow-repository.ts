@@ -554,22 +554,6 @@ export class SpaceWorkflowRepository {
     return rows.map((r) => r.handle);
   }
 
-  getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[] {
-    const nodeRows = this.db
-      .prepare(
-        `SELECT DISTINCT workflow_id FROM space_workflow_nodes
-	         WHERE config LIKE '%"agentId":"' || ? || '"%'`
-      )
-      .all(agentId) as Array<{ workflow_id: string }>;
-
-    const workflows: SpaceWorkflow[] = [];
-    for (const { workflow_id } of nodeRows) {
-      const wf = this.getWorkflow(workflow_id);
-      if (wf) workflows.push(wf);
-    }
-    return workflows;
-  }
-
   getWorkflowsReferencingTemplate(templateKey: string): SpaceWorkflow[] {
     const workflowIds = new Set<string>();
     const nodeRows = this.db

@@ -233,7 +233,6 @@ describe('Space Agent RPC Handlers', () => {
       spaceManagerData.spaceManager,
       createTestDatabaseFacade(db),
       longHorizonRepo,
-      workflowRepo,
       undefined,
       new SpaceAgentTemplateManager(
         new SpaceAgentTemplateRepository(db as any),
@@ -731,12 +730,12 @@ describe('Space Agent RPC Handlers', () => {
       expect(current.success).toBe(true);
     });
 
-    it('blocks deleting a template still used by agent instances', async () => {
+    it('deletes a template that live agent instances were created from', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
         key: 'guard.custom',
         handle: 'guard',
       });
-      longHorizonRepo.create({
+      const scribe = longHorizonRepo.create({
         spaceId: 'space-1',
         handle: 'scribe',
         displayName: 'Scribe',
@@ -744,15 +743,18 @@ describe('Space Agent RPC Handlers', () => {
         instructions: 'Take notes.',
       });
 
-      await expect(
-        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'guard.custom' })
-      ).rejects.toThrow(
-        'Template "guard.custom" is in use by 1 agent ("Scribe"). ' +
-          'Delete or re-point those agents before deleting the template.'
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'guard.custom' }
       );
+
+      expect(result.success).toBe(true);
+      expect(longHorizonRepo.getById(scribe.id)?.displayName).toBe('Scribe');
+      expect(longHorizonRepo.getById(scribe.id)?.instructions).toBe('Take notes.');
     });
 
-    it('ignores archived agents when checking template instance usage', async () => {
+    it('clears the template key on archived instances when the template is deleted', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
         key: 'guard.custom',
         handle: 'guard',
@@ -1284,7 +1286,6 @@ describe('Space Agent RPC Handlers', () => {
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
         longHorizonRepo,
-        workflowRepo,
         runtimeService,
         new SpaceAgentTemplateManager(new SpaceAgentTemplateRepository(db as any))
       );
@@ -1615,7 +1616,6 @@ describe('Space Agent RPC Handlers', () => {
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
         longHorizonRepo,
-        workflowRepo,
         runtimeService
       );
 
@@ -1639,7 +1639,6 @@ describe('Space Agent RPC Handlers', () => {
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
         longHorizonRepo,
-        workflowRepo,
         runtimeService
       );
 
@@ -1786,7 +1785,6 @@ describe('Space Agent RPC Handlers', () => {
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
         longHorizonRepo,
-        workflowRepo,
         runtimeService
       );
       const workerId = 'twin-refresh';
@@ -1901,7 +1899,6 @@ describe('Space Agent RPC Handlers', () => {
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
         longHorizonRepo,
-        workflowRepo,
         runtimeService
       );
 
@@ -1927,7 +1924,6 @@ describe('Space Agent RPC Handlers', () => {
         spaceManagerData.spaceManager,
         createTestDatabaseFacade(db),
         longHorizonRepo,
-        workflowRepo,
         runtimeService
       );
       const created = await call<{ agent: { id: string } }>(
@@ -1983,22 +1979,13 @@ describe('Space Agent RPC Handlers', () => {
       );
     });
 
-    it('throws clear error when agent is referenced by a workflow node', async () => {
+    it('deletes an agent that a workflow node still references', async () => {
       insertWorkflow(db, 'wf-1', 'space-1', 'My Workflow');
       insertWorkflowNode(db, 'node-1', 'wf-1', agentId);
 
-      await expect(call(hubData.handlers, 'spaceAgent.delete', { id: agentId })).rejects.toThrow(
-        /Cannot delete agent.*referenced by workflow nodes/
-      );
-    });
+      await call(hubData.handlers, 'spaceAgent.delete', { id: agentId });
 
-    it('throws and includes workflow names in error when referenced', async () => {
-      insertWorkflow(db, 'wf-2', 'space-1', 'Important Workflow');
-      insertWorkflowNode(db, 'node-2', 'wf-2', agentId);
-
-      await expect(call(hubData.handlers, 'spaceAgent.delete', { id: agentId })).rejects.toThrow(
-        'Important Workflow'
-      );
+      expect(longHorizonRepo.getById(agentId)).toBeNull();
     });
 
     it('allows deletion after the node reference is removed', async () => {

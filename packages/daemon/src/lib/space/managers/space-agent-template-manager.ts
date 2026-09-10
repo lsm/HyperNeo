@@ -64,7 +64,6 @@ export type TemplateReferenceScan = Pick<
 >;
 
 export interface TemplateInstanceScan {
-  listAgentDisplayNamesUsingTemplate(key: string): string[];
   clearArchivedInstances?(key: string): void;
 }
 
@@ -396,25 +395,6 @@ function deleteCheckWorkflowReferences(ctx: DeleteTemplateCtx): DeleteTemplateCt
   };
 }
 
-function deleteCheckInstances(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
-  if (!ctx.instanceScan) return ctx;
-  const agentNames = ctx.instanceScan.listAgentDisplayNamesUsingTemplate(ctx.key);
-  if (agentNames.length === 0) return ctx;
-  const shown = agentNames
-    .slice(0, 5)
-    .map((n) => `"${n}"`)
-    .join(', ');
-  const remaining = agentNames.length - Math.min(agentNames.length, 5);
-  return {
-    ...ctx,
-    error:
-      `Template "${ctx.key}" is in use by ${agentNames.length} agent` +
-      (agentNames.length === 1 ? '' : 's') +
-      ` (${shown}${remaining > 0 ? `, +${remaining} more` : ''}). ` +
-      'Delete or re-point those agents before deleting the template.',
-  };
-}
-
 function deletePersist(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
   const deleted = ctx.repo.delete(ctx.key, ctx.expectedVersion);
   if (deleted) {
@@ -482,8 +462,6 @@ export const runDeleteTemplate = (templatePipeline('delete-space-agent-template'
   .pipe(deleteCheckVersion, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
   .pipe(deleteCheckWorkflowReferences, 'ctx', 'ctx')
-  .pipe('!hasError', 'ctx')
-  .pipe(deleteCheckInstances, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
   .pipe(deletePersist, 'ctx', 'ctx')
   .end('ctx') as (input: DeleteTemplateCtx) => DeleteTemplateCtx;

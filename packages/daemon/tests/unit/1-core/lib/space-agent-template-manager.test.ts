@@ -1027,21 +1027,32 @@ describe('SpaceAgentTemplateManager', () => {
       }
       expect(manager.getByKey('release-readiness.custom')).not.toBeNull();
 
-      const managerWithInstances = new SpaceAgentTemplateManager(repo, () => [], undefined, {
-        listAgentDisplayNamesUsingTemplate: () => ['Scribe'],
-      });
-      const agentBlocked = managerWithInstances.delete('release-readiness.custom');
-      expect(agentBlocked.ok).toBe(false);
-      if (!agentBlocked.ok) {
-        expect(agentBlocked.error).toBe(
-          'Template "release-readiness.custom" is in use by 1 agent ("Scribe"). ' +
-            'Delete or re-point those agents before deleting the template.'
-        );
-      }
-
       const allowed = manager.delete('release-readiness.custom');
       expect(allowed.ok).toBe(true);
       expect(manager.getByKey('release-readiness.custom')).toBeNull();
+    });
+
+    test('deletes a template that agents were created from', async () => {
+      await manager.create(fullParams());
+      const withInstances = new SpaceAgentTemplateManager(repo, () => BUILT_INS, undefined, {
+        clearArchivedInstances: () => {},
+      });
+
+      const result = withInstances.delete('release-readiness.custom');
+
+      expect(result.ok).toBe(true);
+      expect(repo.getByKey('release-readiness.custom')).toBeNull();
+    });
+
+    test('clears the template key on archived instances after deleting', async () => {
+      await manager.create(fullParams());
+      const cleared: string[] = [];
+      const withInstances = new SpaceAgentTemplateManager(repo, () => BUILT_INS, undefined, {
+        clearArchivedInstances: (key) => cleared.push(key),
+      });
+
+      expect(withInstances.delete('release-readiness.custom').ok).toBe(true);
+      expect(cleared).toEqual(['release-readiness.custom']);
     });
   });
 
