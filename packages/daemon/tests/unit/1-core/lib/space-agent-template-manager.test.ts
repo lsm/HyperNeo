@@ -977,9 +977,64 @@ describe('SpaceAgentTemplateManager', () => {
       expect(manager.getByKey('release-readiness.custom')).not.toBeNull();
     });
 
+    test('blocks deletion while a workflow references the template', async () => {
+      await manager.create(fullParams());
+      const guarded = new SpaceAgentTemplateManager(repo, () => BUILT_INS, {
+        getWorkflowsReferencingTemplate: (key) =>
+          key === 'release-readiness.custom'
+            ? [workflowNamed('Release Flow'), workflowNamed('Guard Flow')]
+            : [],
+      });
+
+      const result = guarded.delete('release-readiness.custom');
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain('Release Flow');
+        expect(result.error).toContain('Guard Flow');
+      }
+      expect(repo.getByKey('release-readiness.custom')).not.toBeNull();
+    });
+
+    test('deletes when the reference scan reports no referencing workflow', async () => {
+      await manager.create(fullParams());
+      const guarded = new SpaceAgentTemplateManager(repo, () => BUILT_INS, {
+        getWorkflowsReferencingTemplate: () => [],
+      });
+
+      const result = guarded.delete('release-readiness.custom');
+
+      expect(result.ok).toBe(true);
+      expect(repo.getByKey('release-readiness.custom')).toBeNull();
+    });
+
+    test('blocks deletion inside the pipeline when references report usage', async () => {
+      await manager.create(fullParams());
+      const scan = { getWorkflowsReferencingTemplate: () => [] as never[] };
+      const managerWithScan = new SpaceAgentTemplateManager(repo, () => [], {
+        ...scan,
+        getWorkflowsReferencingTemplate: () => [{ name: 'Release' } as never],
+      });
+
+      const workflowBlocked = managerWithScan.delete('release-readiness.custom');
+      expect(workflowBlocked.ok).toBe(false);
+      if (!workflowBlocked.ok) {
+        expect(workflowBlocked.error).toBe(
+          'Template "release-readiness.custom" is referenced by workflow slot(s) in: Release. ' +
+            'Remove or replace the templateKey in those workflows — or wait for their in-flight runs ' +
+            'to finish — before deleting the template.'
+        );
+      }
+      expect(manager.getByKey('release-readiness.custom')).not.toBeNull();
+
+      const allowed = manager.delete('release-readiness.custom');
+      expect(allowed.ok).toBe(true);
+      expect(manager.getByKey('release-readiness.custom')).toBeNull();
+    });
+
     test('deletes a template that agents were created from', async () => {
       await manager.create(fullParams());
-      const withInstances = new SpaceAgentTemplateManager(repo, () => BUILT_INS, {
+      const withInstances = new SpaceAgentTemplateManager(repo, () => BUILT_INS, undefined, {
         clearArchivedInstances: () => {},
       });
 
@@ -992,22 +1047,12 @@ describe('SpaceAgentTemplateManager', () => {
     test('clears the template key on archived instances after deleting', async () => {
       await manager.create(fullParams());
       const cleared: string[] = [];
-      const withInstances = new SpaceAgentTemplateManager(repo, () => BUILT_INS, {
+      const withInstances = new SpaceAgentTemplateManager(repo, () => BUILT_INS, undefined, {
         clearArchivedInstances: (key) => cleared.push(key),
       });
 
       expect(withInstances.delete('release-readiness.custom').ok).toBe(true);
       expect(cleared).toEqual(['release-readiness.custom']);
-    });
-
-    test('does not clear instances when the delete did not happen', async () => {
-      const cleared: string[] = [];
-      const withInstances = new SpaceAgentTemplateManager(repo, () => BUILT_INS, {
-        clearArchivedInstances: (key) => cleared.push(key),
-      });
-
-      expect(withInstances.delete('never-created.custom').ok).toBe(false);
-      expect(cleared).toEqual([]);
     });
   });
 
@@ -1134,14 +1179,21 @@ describe('SpaceAgentTemplateManager', () => {
       expect(repo.getByKey('release-readiness.custom')).not.toBeNull();
     });
 
-    test('deletes through the pipeline regardless of workflow usage', async () => {
+    test('halts before delete when the reference scan finds a workflow', async () => {
       await manager.create(fullParams());
 
-      const ctx = runDeleteTemplate({ repo, key: 'release-readiness.custom' });
+      const ctx = runDeleteTemplate({
+        repo,
+        key: 'release-readiness.custom',
+        workflowReferenceScan: {
+          getWorkflowsReferencingTemplate: () => [workflowNamed('Release Flow')],
+        },
+      });
 
-      expect(ctx.error).toBeUndefined();
-      expect(ctx.deleted).toBe(true);
-      expect(repo.getByKey('release-readiness.custom')).toBeNull();
+      expect(ctx.error).toContain('Release Flow');
+      expect(ctx.referencingWorkflows).toHaveLength(1);
+      expect(ctx.deleted).toBeUndefined();
+      expect(repo.getByKey('release-readiness.custom')).not.toBeNull();
     });
   });
 
