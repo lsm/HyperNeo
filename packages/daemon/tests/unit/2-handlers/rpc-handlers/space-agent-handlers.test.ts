@@ -16,7 +16,6 @@ import {
   SpaceLongHorizonAgentRepository,
   templateInstanceScanFromRepo,
 } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
-import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
@@ -178,7 +177,6 @@ describe('Space Agent RPC Handlers', () => {
   let daemonData: ReturnType<typeof createMockInternalEventBus>;
   let spaceManagerData: ReturnType<typeof createMockSpaceManager>;
   let longHorizonRepo: SpaceLongHorizonAgentRepository;
-  let workflowRepo: SpaceWorkflowRepository;
 
   beforeEach(() => {
     db = new Database(':memory:');
@@ -221,7 +219,6 @@ describe('Space Agent RPC Handlers', () => {
     insertSpace(db, 'space-1');
 
     longHorizonRepo = new SpaceLongHorizonAgentRepository(db as any);
-    workflowRepo = new SpaceWorkflowRepository(db as any);
     hubData = createMockMessageHub();
     daemonData = createMockInternalEventBus();
     spaceManagerData = createMockSpaceManager();
