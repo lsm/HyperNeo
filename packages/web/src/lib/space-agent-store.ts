@@ -19,6 +19,7 @@ export class SpaceAgentStore {
 
   private cleanups: Array<() => void> = [];
   private subscribedSpaceId: string | null = null;
+  private generation = 0;
 
   private hub() {
     const hub = connectionManager.getHubIfConnected();
@@ -38,20 +39,25 @@ export class SpaceAgentStore {
   async refresh(): Promise<void> {
     const spaceId = this.spaceId.value;
     if (!spaceId) return;
+    const generation = ++this.generation;
     this.loading.value = true;
     this.error.value = null;
     try {
       const { agents } = await this.hub().request<{ agents: SpaceAgent[] }>('spaceAgentV2.list', {
         spaceId,
       });
-      if (this.spaceId.value !== spaceId) return;
+      if (!this.isCurrent(generation)) return;
       this.agents.value = sortAgents(agents);
     } catch (err) {
-      if (this.spaceId.value !== spaceId) return;
+      if (!this.isCurrent(generation)) return;
       this.error.value = err instanceof Error ? err.message : 'Failed to load agents';
     } finally {
-      if (this.spaceId.value === spaceId) this.loading.value = false;
+      if (this.isCurrent(generation)) this.loading.value = false;
     }
+  }
+
+  private isCurrent(generation: number): boolean {
+    return this.generation === generation;
   }
 
   async create(params: CreateSpaceAgentRequest): Promise<SpaceAgent> {
@@ -122,7 +128,11 @@ export class SpaceAgentStore {
     for (const cleanup of this.cleanups) cleanup();
     this.cleanups = [];
     this.subscribedSpaceId = null;
+    this.generation += 1;
     this.spaceId.value = null;
+    this.agents.value = [];
+    this.error.value = null;
+    this.loading.value = false;
   }
 }
 

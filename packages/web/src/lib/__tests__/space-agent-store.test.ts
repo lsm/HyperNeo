@@ -252,4 +252,67 @@ describe('SpaceAgentStore', () => {
       void second;
     });
   });
+  describe('generation guards', () => {
+    it('a stale request for the same space cannot overwrite the current one', async () => {
+      let resolveFirst: (value: { agents: SpaceAgent[] }) => void = () => {};
+      hub.request.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          })
+      );
+
+      const first = store.selectSpace('space-1');
+      await store.selectSpace('space-2');
+      listResult = [makeAgent('final')];
+      await store.selectSpace('space-1');
+
+      resolveFirst({ agents: [makeAgent('stale')] });
+      await first;
+
+      expect(store.agents.value.map((a) => a.id)).toEqual(['final']);
+    });
+
+    it('a stale failure for the same space does not clobber the current error', async () => {
+      let rejectFirst: (err: Error) => void = () => {};
+      hub.request.mockImplementationOnce(
+        () =>
+          new Promise((_res, reject) => {
+            rejectFirst = reject;
+          })
+      );
+
+      const first = store.selectSpace('space-1');
+      await store.selectSpace('space-2');
+      await store.selectSpace('space-1');
+
+      rejectFirst(new Error('stale failure'));
+      await first;
+
+      expect(store.error.value).toBeNull();
+    });
+
+    it('teardown clears agents, error and loading', async () => {
+      listResult = [makeAgent('a')];
+      await store.selectSpace('space-1');
+      store.error.value = 'something';
+
+      store.teardown();
+
+      expect(store.agents.value).toEqual([]);
+      expect(store.error.value).toBeNull();
+      expect(store.loading.value).toBe(false);
+      expect(store.spaceId.value).toBeNull();
+    });
+
+    it('teardown during a pending refresh does not leave the store loading', async () => {
+      hub.request.mockImplementationOnce(() => new Promise(() => {}));
+      const pending = store.selectSpace('space-1');
+
+      store.teardown();
+
+      expect(store.loading.value).toBe(false);
+      void pending;
+    });
+  });
 });
