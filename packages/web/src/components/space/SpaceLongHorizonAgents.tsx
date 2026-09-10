@@ -1529,7 +1529,7 @@ export function SpaceLongHorizonAgents({
           }}
           onConfirm={handleTemplateDeleteConfirm}
           title="Delete Template"
-          message={`Delete template "${deletingTemplate.displayName}"? This cannot be undone.`}
+          message={`Delete template "${deletingTemplate.displayName}"? This cannot be undone. Runs already in flight keep the copy they pinned, but saved workflows still using this template must be re-pointed or their future runs cannot start that agent.`}
           confirmText="Delete"
           confirmButtonVariant="danger"
           isLoading={deletingTemplateBusy}
