@@ -4773,7 +4773,7 @@ export function createSpaceAgentMcpServer(config: SpaceAgentToolsConfig) {
 
       tool(
         'delete_agent_template',
-        'Delete a user-authored agent template by key. Optional expected_version enables compare-and-swap (create/update results and list_agent_templates report the current version); the delete fails when the template changed since, and the error reports the current version. Built-in templates cannot be deleted. Workflow references do not block deletion: a run copies the templates it needs at creation time and resolves from that snapshot, so deleting a template never affects a run already in flight.',
+        'Delete a user-authored agent template by key. Optional expected_version enables compare-and-swap (create/update results and list_agent_templates report the current version); the delete fails when the template changed since, and the error reports the current version. Built-in templates cannot be deleted. Workflow references do not block deletion. A run that pinned a template snapshot at creation resolves from that copy and is unaffected; a run without one may fail to activate a later node, so prefer deleting templates no in-flight run still needs.',
         DeleteAgentTemplateSchema.shape,
         (args) => handlers.delete_agent_template(args)
       ),
