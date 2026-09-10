@@ -16,6 +16,11 @@ import {
   withRunTemplateSnapshots,
   type AgentTemplateResolver,
 } from '../../lib/space/workflows/run-template-snapshot.ts';
+import {
+  buildPlanRunSnapshotMigration,
+  isRunSnapshotMigrationSkip,
+  type RunSnapshotMigrationPlan,
+} from '../../lib/space/workflows/plan-run-snapshot-migration.ts';
 import { SpaceWorkflowDefinitionVersionRepository } from './space-workflow-definition-version-repository.ts';
 import type { SQLiteValue } from '../types.ts';
 import { assertValidTransition } from '../../lib/space/runtime/workflow-run-status-machine.ts';
@@ -182,41 +187,45 @@ export class SpaceWorkflowRunRepository {
   }
 
   migrateSnapshotlessPins(resolveTemplate: AgentTemplateResolver): number {
+    const plan = buildPlanRunSnapshotMigration({
+      verifyVersion: verifyDefinitionVersion,
+      resolveTemplate,
+      computeVersion: computeDefinitionVersion,
+    });
     let count = 0;
     for (const run of this.listSnapshotlessPinnedRuns()) {
       try {
-        if (!verifyDefinitionVersion(run.payload, run.versionHash)) {
-          log.warn(
-            `migrateSnapshotlessPins: payload hash mismatch for run ${run.id} ` +
-              `(version ${run.versionHash}); leaving it unmigrated`
-          );
+        const outcome = plan(run);
+        if (isRunSnapshotMigrationSkip(outcome)) {
+          if (outcome.kind !== 'already_snapshotted') {
+            log.warn(`migrateSnapshotlessPins: ${outcome.message}`);
+          }
           continue;
         }
-        const pinned = JSON.parse(run.payload) as SpaceWorkflow;
-        if (!pinned || !Array.isArray(pinned.nodes)) continue;
-        const withSnapshots = withRunTemplateSnapshots(pinned, resolveTemplate);
-        if (withSnapshots === pinned) continue;
-        const { versionHash, payload } = computeDefinitionVersion(withSnapshots);
-        const appendVersion = new SpaceWorkflowDefinitionVersionRepository(this.db);
-        const migrated = this.db.transaction(() => {
-          appendVersion.appendVersion({
-            workflowId: pinned.id,
-            spaceId: pinned.spaceId,
-            versionHash,
-            payload,
-            source: 'backfill',
-            createdAt: Date.now(),
-          });
-          return this.db
-            .prepare(`UPDATE space_workflow_runs SET definition_version = ? WHERE id = ?`)
-            .run(versionHash, run.id).changes;
-        })();
-        if (migrated > 0) count += 1;
+        if (this.applyRunSnapshotMigration(outcome)) count += 1;
       } catch (err) {
         log.warn(`migrateSnapshotlessPins: skipped run ${run.id} (non-fatal):`, err);
       }
     }
     return count;
+  }
+
+  private applyRunSnapshotMigration(plan: RunSnapshotMigrationPlan): boolean {
+    const appendVersion = new SpaceWorkflowDefinitionVersionRepository(this.db);
+    const migrated = this.db.transaction(() => {
+      appendVersion.appendVersion({
+        workflowId: plan.workflowId,
+        spaceId: plan.spaceId,
+        versionHash: plan.versionHash,
+        payload: plan.payload,
+        source: 'backfill',
+        createdAt: Date.now(),
+      });
+      return this.db
+        .prepare(`UPDATE space_workflow_runs SET definition_version = ? WHERE id = ?`)
+        .run(plan.versionHash, plan.runId).changes;
+    })();
+    return migrated > 0;
   }
 
   backfillDefinitionPins(
