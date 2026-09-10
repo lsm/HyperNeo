@@ -785,7 +785,7 @@ export class SpaceTaskRepository {
       .prepare(
         `UPDATE space_tasks
          SET spawn_reservation_token = ?
-         WHERE id = ?
+         WHERE space_id IS NOT NULL AND id = ?
            AND status IN (${placeholders})
            AND spawn_reservation_token IS NULL`
       )
@@ -795,12 +795,16 @@ export class SpaceTaskRepository {
 
   releaseSpawnReservation(taskId: string): void {
     this.db
-      .prepare(`UPDATE space_tasks SET spawn_reservation_token = NULL WHERE id = ?`)
+      .prepare(
+        `UPDATE space_tasks SET spawn_reservation_token = NULL WHERE space_id IS NOT NULL AND id = ?`
+      )
       .run(taskId);
   }
 
   clearAllSpawnReservations(): void {
-    this.db.prepare(`UPDATE space_tasks SET spawn_reservation_token = NULL`).run();
+    this.db
+      .prepare(`UPDATE space_tasks SET spawn_reservation_token = NULL WHERE space_id IS NOT NULL`)
+      .run();
   }
 
   markReconcileCheckedAt(workflowRunId: string, checkedAt: number): void {
