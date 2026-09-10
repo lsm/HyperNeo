@@ -653,7 +653,7 @@ export class SpaceTaskRepository {
     }
     const result = this.db
       .prepare(
-        `UPDATE space_tasks SET ${sets.join(', ')} WHERE id = ? AND status IN (${placeholders})`
+        `UPDATE space_tasks SET ${sets.join(', ')} WHERE space_id IS NOT NULL AND id = ? AND status IN (${placeholders})`
       )
       .run(...values, taskId, ...expectedStatuses);
     return result.changes > 0 ? 'won' : 'superseded';
@@ -687,7 +687,7 @@ export class SpaceTaskRepository {
     }
     const result = this.db
       .prepare(
-        `UPDATE space_tasks SET ${sets.join(', ')} WHERE id = ? AND status IN (${placeholders})`
+        `UPDATE space_tasks SET ${sets.join(', ')} WHERE space_id IS NOT NULL AND id = ? AND status IN (${placeholders})`
       )
       .run(...values, taskId, ...expectedStatuses);
     if (result.changes === 0) return 'superseded';
