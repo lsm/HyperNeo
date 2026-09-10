@@ -1091,6 +1091,7 @@ export interface AgentModelPoolEntry {
   provider?: string;
   maxConcurrent: number;
   weight: number;
+  thinkingLevel?: ThinkingLevel | null;
 }
 
 export interface WorkflowNodeAgent {

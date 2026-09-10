@@ -380,6 +380,9 @@ export const AgentModelPoolEntrySchema = z.object({
   provider: z.string().optional().describe('Provider identifier'),
   maxConcurrent: z.number().int().min(1).describe('Maximum concurrent requests'),
   weight: z.number().min(0).describe('Relative routing weight'),
+  thinkingLevel: ThinkingLevelSchema.nullish().describe(
+    'Thinking level applied when this entry is picked; overrides the agent-level thinking level'
+  ),
 });
 
 export const CreateAgentTemplateSchema = z.object({

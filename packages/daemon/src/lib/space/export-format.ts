@@ -246,6 +246,7 @@ const exportedAgentBaseSchema = z.object({
         provider: z.string().optional(),
         maxConcurrent: z.number().int().min(1),
         weight: z.number().min(0),
+        thinkingLevel: thinkingLevelSchema.nullish(),
       })
     )
     .refine((pool) => new Set(pool.map((entry) => entry.model)).size === pool.length, {
