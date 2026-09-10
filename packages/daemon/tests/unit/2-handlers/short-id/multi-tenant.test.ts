@@ -1,6 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { TaskRepository } from '../../../../src/storage/repositories/task-repository';
 import { GoalRepository } from '../../../../src/storage/repositories/goal-repository';
 import { ShortIdAllocator } from '../../../../src/lib/short-id-allocator';
 import { noOpReactiveDb } from '../../../helpers/reactive-database';
@@ -8,33 +7,6 @@ import { noOpReactiveDb } from '../../../helpers/reactive-database';
 function makeDb(): Database {
   const db = new Database(':memory:');
   db.exec(`
-		CREATE TABLE tasks (
-			id TEXT PRIMARY KEY,
-			room_id TEXT NOT NULL,
-			title TEXT NOT NULL,
-			description TEXT NOT NULL,
-			status TEXT NOT NULL DEFAULT 'pending',
-			priority TEXT NOT NULL DEFAULT 'normal',
-			task_type TEXT NOT NULL DEFAULT 'coding',
-			assigned_agent TEXT DEFAULT 'coder',
-			created_by_task_id TEXT,
-			progress INTEGER,
-			current_step TEXT,
-			result TEXT,
-			error TEXT,
-			depends_on TEXT NOT NULL DEFAULT '[]',
-			short_id TEXT,
-			created_at INTEGER NOT NULL,
-			started_at INTEGER,
-			completed_at INTEGER,
-			archived_at INTEGER,
-			active_session TEXT,
-			pr_url TEXT,
-			pr_number INTEGER,
-			pr_created_at INTEGER,
-			updated_at INTEGER
-		);
-
 		CREATE TABLE goals (
 			id TEXT PRIMARY KEY,
 			room_id TEXT NOT NULL,
@@ -70,7 +42,6 @@ function makeDb(): Database {
 			PRIMARY KEY (entity_type, scope_id)
 		);
 
-		CREATE INDEX idx_tasks_room ON tasks(room_id);
 		CREATE INDEX idx_goals_room ON goals(room_id);
 	`);
   return db;
@@ -79,7 +50,6 @@ function makeDb(): Database {
 describe('Multi-tenant short ID isolation', () => {
   let db: Database;
   let allocator: ShortIdAllocator;
-  let taskRepo: TaskRepository;
   let goalRepo: GoalRepository;
 
   const ROOM_A = 'room-a-uuid-0001';
@@ -88,91 +58,11 @@ describe('Multi-tenant short ID isolation', () => {
   beforeEach(() => {
     db = makeDb();
     allocator = new ShortIdAllocator(db);
-    taskRepo = new TaskRepository(db, noOpReactiveDb, allocator);
     goalRepo = new GoalRepository(db, noOpReactiveDb, allocator);
   });
 
   afterEach(() => {
     db.close();
-  });
-
-  describe('task short IDs are scoped per room', () => {
-    it('Room A and Room B both start their task counters at t-1', () => {
-      const tA1 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-1', description: 'D' });
-      const tB1 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-1', description: 'D' });
-
-      expect(tA1.shortId).toBe('t-1');
-      expect(tB1.shortId).toBe('t-1');
-    });
-
-    it('Room A and Room B have completely independent counters', () => {
-      const tA1 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-1', description: 'D' });
-      const tA2 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-2', description: 'D' });
-      const tA3 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-3', description: 'D' });
-
-      const tB1 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-1', description: 'D' });
-      const tB2 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-2', description: 'D' });
-
-      expect(tA1.shortId).toBe('t-1');
-      expect(tA2.shortId).toBe('t-2');
-      expect(tA3.shortId).toBe('t-3');
-
-      expect(tB1.shortId).toBe('t-1');
-      expect(tB2.shortId).toBe('t-2');
-    });
-
-    it('Room A t-1 and Room B t-1 have different UUIDs', () => {
-      const tA1 = taskRepo.createTask({ roomId: ROOM_A, title: 'A', description: 'D' });
-      const tB1 = taskRepo.createTask({ roomId: ROOM_B, title: 'B', description: 'D' });
-
-      expect(tA1.shortId).toBe('t-1');
-      expect(tB1.shortId).toBe('t-1');
-      expect(tA1.id).not.toBe(tB1.id);
-    });
-
-    it('cross-room lookup: Room B getTaskByShortId cannot find Room A t-1', () => {
-      taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-1', description: 'D' });
-
-      const result = taskRepo.getTaskByShortId(ROOM_B, 't-1');
-      expect(result).toBeNull();
-    });
-
-    it('cross-room lookup: Room A getTaskByShortId cannot find Room B tasks', () => {
-      const tA1 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-1', description: 'D' });
-      const tA2 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-2', description: 'D' });
-      const tA3 = taskRepo.createTask({ roomId: ROOM_A, title: 'A-Task-3', description: 'D' });
-
-      const tB1 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-1', description: 'D' });
-      const tB2 = taskRepo.createTask({ roomId: ROOM_B, title: 'B-Task-2', description: 'D' });
-
-      expect(taskRepo.getTaskByShortId(ROOM_A, 't-1')!.id).toBe(tA1.id);
-      expect(taskRepo.getTaskByShortId(ROOM_A, 't-2')!.id).toBe(tA2.id);
-      expect(taskRepo.getTaskByShortId(ROOM_A, 't-3')!.id).toBe(tA3.id);
-
-      expect(taskRepo.getTaskByShortId(ROOM_B, 't-1')!.id).toBe(tB1.id);
-      expect(taskRepo.getTaskByShortId(ROOM_B, 't-2')!.id).toBe(tB2.id);
-
-      expect(taskRepo.getTaskByShortId(ROOM_B, 't-1')!.id).not.toBe(tA1.id);
-
-      expect(taskRepo.getTaskByShortId(ROOM_A, 't-4')).toBeNull();
-    });
-
-    it('listTasks only returns tasks belonging to the queried room', () => {
-      taskRepo.createTask({ roomId: ROOM_A, title: 'A1', description: 'D' });
-      taskRepo.createTask({ roomId: ROOM_A, title: 'A2', description: 'D' });
-      taskRepo.createTask({ roomId: ROOM_A, title: 'A3', description: 'D' });
-      taskRepo.createTask({ roomId: ROOM_B, title: 'B1', description: 'D' });
-      taskRepo.createTask({ roomId: ROOM_B, title: 'B2', description: 'D' });
-
-      const roomATasks = taskRepo.listTasks(ROOM_A);
-      const roomBTasks = taskRepo.listTasks(ROOM_B);
-
-      expect(roomATasks.length).toBe(3);
-      expect(roomBTasks.length).toBe(2);
-
-      expect(roomATasks.every((t) => t.roomId === ROOM_A)).toBe(true);
-      expect(roomBTasks.every((t) => t.roomId === ROOM_B)).toBe(true);
-    });
   });
 
   describe('goal short IDs are scoped per room', () => {
@@ -218,28 +108,28 @@ describe('Multi-tenant short ID isolation', () => {
 
   describe('task and goal counters are independent within the same room', () => {
     it('task counter and goal counter do not interfere in the same room', () => {
-      const t1 = taskRepo.createTask({ roomId: ROOM_A, title: 'Task', description: 'D' });
+      const t1 = allocator.allocate('task', ROOM_A);
       const g1 = goalRepo.createGoal({ roomId: ROOM_A, title: 'Goal' });
 
-      expect(t1.shortId).toBe('t-1');
+      expect(t1).toBe('t-1');
       expect(g1.shortId).toBe('g-1');
 
-      const t2 = taskRepo.createTask({ roomId: ROOM_A, title: 'Task 2', description: 'D' });
+      const t2 = allocator.allocate('task', ROOM_A);
       const g2 = goalRepo.createGoal({ roomId: ROOM_A, title: 'Goal 2' });
 
-      expect(t2.shortId).toBe('t-2');
+      expect(t2).toBe('t-2');
       expect(g2.shortId).toBe('g-2');
     });
   });
 
   describe('short_id_counters table isolation', () => {
     it('each (entity_type, scope_id) pair gets its own counter row', () => {
-      taskRepo.createTask({ roomId: ROOM_A, title: 'T1', description: 'D' });
-      taskRepo.createTask({ roomId: ROOM_A, title: 'T2', description: 'D' });
-      taskRepo.createTask({ roomId: ROOM_A, title: 'T3', description: 'D' });
+      allocator.allocate('task', ROOM_A);
+      allocator.allocate('task', ROOM_A);
+      allocator.allocate('task', ROOM_A);
 
-      taskRepo.createTask({ roomId: ROOM_B, title: 'T1', description: 'D' });
-      taskRepo.createTask({ roomId: ROOM_B, title: 'T2', description: 'D' });
+      allocator.allocate('task', ROOM_B);
+      allocator.allocate('task', ROOM_B);
 
       goalRepo.createGoal({ roomId: ROOM_A, title: 'G1' });
       goalRepo.createGoal({ roomId: ROOM_B, title: 'G1' });
@@ -273,8 +163,8 @@ describe('Multi-tenant short ID isolation', () => {
     });
 
     it('counter rows have the correct primary key — no cross-room bleed possible', () => {
-      taskRepo.createTask({ roomId: ROOM_A, title: 'T', description: 'D' });
-      taskRepo.createTask({ roomId: ROOM_B, title: 'T', description: 'D' });
+      allocator.allocate('task', ROOM_A);
+      allocator.allocate('task', ROOM_B);
 
       expect(() => {
         db.prepare(
@@ -285,9 +175,9 @@ describe('Multi-tenant short ID isolation', () => {
     });
 
     it('getCounter reflects per-room state accurately', () => {
-      taskRepo.createTask({ roomId: ROOM_A, title: 'T1', description: 'D' });
-      taskRepo.createTask({ roomId: ROOM_A, title: 'T2', description: 'D' });
-      taskRepo.createTask({ roomId: ROOM_B, title: 'T1', description: 'D' });
+      allocator.allocate('task', ROOM_A);
+      allocator.allocate('task', ROOM_A);
+      allocator.allocate('task', ROOM_B);
 
       expect(allocator.getCounter('task', ROOM_A)).toBe(2);
       expect(allocator.getCounter('task', ROOM_B)).toBe(1);

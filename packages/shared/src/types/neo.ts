@@ -116,77 +116,12 @@ export interface UpdateRoomParams {
   config?: Record<string, unknown>;
 }
 
-export type TaskStatus =
-  | 'draft'
-  | 'pending'
-  | 'in_progress'
-  | 'review'
-  | 'completed'
-  | 'needs_attention'
-  | 'cancelled'
-  | 'archived'
-  | 'rate_limited'
-  | 'usage_limited';
-
 export interface TaskRestriction {
   type: 'rate_limit' | 'usage_limit';
   limit: string;
   resetAt: number;
   sessionRole: 'worker' | 'leader';
   retryAfter?: number;
-}
-
-export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
-
-export type TaskType = 'planning' | 'coding' | 'research' | 'design' | 'goal_review';
-
-export type AgentType = 'coder' | 'general' | 'planner';
-
-export interface NeoTask {
-  id: string;
-  shortId?: string;
-  roomId: string;
-  title: string;
-  description: string;
-  status: TaskStatus;
-  priority: TaskPriority;
-  taskType?: TaskType;
-  assignedAgent?: AgentType;
-  createdByTaskId?: string;
-  progress?: number | null;
-  currentStep?: string | null;
-  result?: string | null;
-  error?: string | null;
-  dependsOn: string[];
-  inputDraft?: string | null;
-  createdAt: number;
-  startedAt?: number;
-  completedAt?: number;
-  archivedAt?: number | null;
-  activeSession?: 'worker' | 'leader' | null;
-  prUrl?: string | null;
-  prNumber?: number | null;
-  prCreatedAt?: number | null;
-  restrictions?: TaskRestriction | null;
-  updatedAt: number;
-}
-
-export interface TaskFilter {
-  status?: TaskStatus;
-  priority?: TaskPriority;
-  includeArchived?: boolean;
-}
-
-export interface CreateTaskParams {
-  roomId: string;
-  title: string;
-  description: string;
-  priority?: TaskPriority;
-  dependsOn?: string[];
-  taskType?: TaskType;
-  assignedAgent?: AgentType;
-  status?: TaskStatus;
-  createdByTaskId?: string;
 }
 
 export interface SubagentConfig {
@@ -206,22 +141,6 @@ export interface SessionSummary {
   title: string;
   status: string;
   lastActiveAt: number;
-}
-
-export interface TaskSummary {
-  id: string;
-  shortId?: string;
-  title: string;
-  status: TaskStatus;
-  priority: TaskPriority;
-  progress?: number | null;
-  currentStep?: string | null;
-  dependsOn: string[];
-  error?: string | null;
-  activeSession?: 'worker' | 'leader' | null;
-  prUrl?: string | null;
-  prNumber?: number | null;
-  updatedAt: number;
 }
 
 export interface RoomOverview {

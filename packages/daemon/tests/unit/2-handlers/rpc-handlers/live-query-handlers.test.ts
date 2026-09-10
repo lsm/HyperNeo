@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { NeoTask, RoomGoal, Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
+import type { RoomGoal, Session, SessionConfig, SessionMetadata } from '@hyperneo/shared';
 import type { SDKMessage } from '@hyperneo/shared/sdk';
 import { NAMED_QUERY_REGISTRY } from '../../../../src/lib/rpc-handlers/live-query-handlers';
 import { Database } from '../../../../src/storage/index';
@@ -141,109 +141,6 @@ describe('NAMED_QUERY_REGISTRY', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toHaveProperty('lastActivityAt', expectedActivity);
     expect(rows[0]).toHaveProperty('updatedAt', now);
-  });
-
-  describe.skip('legacy tasks.byRoom registry shape (retired public query)', () => {
-    function insertTask(overrides: Record<string, unknown> = {}): string {
-      const id = `task-${Date.now()}-${Math.random()}`;
-      const status = (overrides.status as string) ?? 'pending';
-      db.exec(`
-				INSERT INTO tasks (
-					id, room_id, title, description, status, priority,
-					depends_on, created_at, updated_at
-				) VALUES (
-					'${id}', '${roomId}', 'Test Task', 'Desc', '${status}', 'normal',
-					'${JSON.stringify(overrides.dependsOn ?? [])}', ${now}, ${now}
-				)
-			`);
-      return id;
-    }
-
-    function queryAndMap(queryName = 'tasks.byRoom'): Record<string, unknown>[] {
-      const entry = NAMED_QUERY_REGISTRY.get(queryName)!;
-      const rows = db.prepare(entry.sql).all(roomId) as Record<string, unknown>[];
-      return entry.mapRow ? rows.map(entry.mapRow) : rows;
-    }
-
-    test('returns camelCase roomId column', () => {
-      insertTask();
-      const [row] = queryAndMap();
-      expect(row).toHaveProperty('roomId', roomId);
-      expect(row).not.toHaveProperty('room_id');
-    });
-
-    test('returns camelCase createdAt, updatedAt columns', () => {
-      insertTask();
-      const [row] = queryAndMap();
-      expect(row).toHaveProperty('createdAt');
-      expect(typeof row.createdAt).toBe('number');
-      expect(row).toHaveProperty('updatedAt');
-      expect(row).not.toHaveProperty('created_at');
-      expect(row).not.toHaveProperty('updated_at');
-    });
-
-    test('dependsOn is parsed as string[] (empty array by default)', () => {
-      insertTask();
-      const [row] = queryAndMap();
-      expect(Array.isArray(row.dependsOn)).toBe(true);
-      expect(row.dependsOn).toEqual([]);
-    });
-
-    test('dependsOn is parsed as string[] with values', () => {
-      insertTask({ dependsOn: ['task-a', 'task-b'] });
-      const [row] = queryAndMap();
-      expect(row.dependsOn).toEqual(['task-a', 'task-b']);
-    });
-
-    test('row shape matches NeoTask interface end-to-end', () => {
-      insertTask();
-      const [row] = queryAndMap();
-
-      const _typed = row as unknown as NeoTask;
-
-      expect(typeof _typed.id).toBe('string');
-      expect(typeof _typed.roomId).toBe('string');
-      expect(typeof _typed.title).toBe('string');
-      expect(typeof _typed.status).toBe('string');
-      expect(Array.isArray(_typed.dependsOn)).toBe(true);
-    });
-
-    test('ORDER BY is created_at DESC, id DESC (deterministic tiebreaker)', () => {
-      const sql = NAMED_QUERY_REGISTRY.get('tasks.byRoom')!.sql;
-      expect(sql).toContain('ORDER BY created_at DESC, id DESC');
-    });
-
-    test('excludes archived tasks by default', () => {
-      insertTask({ status: 'pending' });
-      insertTask({ status: 'in_progress' });
-      insertTask({ status: 'archived' });
-      insertTask({ status: 'completed' });
-
-      const rows = queryAndMap();
-      const statuses = rows.map((r) => r.status);
-      expect(statuses).not.toContain('archived');
-      expect(rows).toHaveLength(3);
-    });
-
-    test('tasks.byRoom.all includes archived tasks', () => {
-      insertTask({ status: 'pending' });
-      insertTask({ status: 'archived' });
-
-      const rows = queryAndMap('tasks.byRoom.all');
-      const statuses = rows.map((r) => r.status);
-      expect(statuses).toContain('archived');
-      expect(statuses).toContain('pending');
-      expect(rows).toHaveLength(2);
-    });
-
-    test('tasks.byRoom.all has same column shape as tasks.byRoom', () => {
-      insertTask();
-      const defaultRows = queryAndMap('tasks.byRoom');
-      const allRows = queryAndMap('tasks.byRoom.all');
-      const defaultKeys = Object.keys(defaultRows[0]).sort();
-      const allKeys = Object.keys(allRows[0]).sort();
-      expect(allKeys).toEqual(defaultKeys);
-    });
   });
 
   describe('spaceTaskActivity.byTask', () => {

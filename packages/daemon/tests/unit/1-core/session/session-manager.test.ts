@@ -54,10 +54,6 @@ describe('SessionManager', () => {
       countMessagesAfter: mock(() => 0),
       updateMessage: mock(() => {}),
       saveUserMessage: mock(() => {}),
-      getTaskRepo: mock(() => ({
-        getTask: mock(() => null),
-        getTaskByShortId: mock(() => null),
-      })),
       getGoalRepo: mock(() => ({
         getGoal: mock(() => null),
         getGoalByShortId: mock(() => null),
