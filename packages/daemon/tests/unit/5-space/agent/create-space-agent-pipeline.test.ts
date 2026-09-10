@@ -150,6 +150,62 @@ describe('createSpaceAgent', () => {
       h.spaceExists = false;
       expectRejection(await run(h, baseInput()), 'Space not found: space-1');
     });
+
+    test('rejects a non-string displayName instead of throwing', async () => {
+      expectRejection(
+        await run(h, baseInput({ displayName: 123 as unknown as string })),
+        'displayName must be a string'
+      );
+    });
+
+    test('rejects a non-string handle instead of throwing', async () => {
+      expectRejection(
+        await run(h, baseInput({ handle: 7 as unknown as string })),
+        'handle must be a string'
+      );
+    });
+
+    test('rejects a non-string provider instead of throwing', async () => {
+      expectRejection(
+        await run(h, baseInput({ provider: {} as unknown as string })),
+        'provider must be a string'
+      );
+    });
+
+    test('rejects tools that are not an array of strings', async () => {
+      expectRejection(
+        await run(h, baseInput({ tools: [1] as unknown as string[] })),
+        'tools must be an array of strings'
+      );
+    });
+
+    test('rejects an unknown thinkingLevel', async () => {
+      expectRejection(
+        await run(h, baseInput({ thinkingLevel: 'think999' as never })),
+        'Invalid thinkingLevel: think999'
+      );
+    });
+
+    test('rejects unknown settingSources', async () => {
+      expectRejection(
+        await run(h, baseInput({ settingSources: ['user', 'bogus'] as never })),
+        'Invalid settingSources: bogus'
+      );
+    });
+
+    test('rejects an unknown status', async () => {
+      expectRejection(
+        await run(h, baseInput({ status: 'retired' as never })),
+        'Invalid status: retired'
+      );
+    });
+
+    test('rejects an out-of-range autonomyLevel', async () => {
+      expectRejection(
+        await run(h, baseInput({ autonomyLevel: 9 as never })),
+        'Invalid autonomyLevel: 9'
+      );
+    });
   });
 
   describe('identity', () => {

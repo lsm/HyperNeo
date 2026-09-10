@@ -6,6 +6,7 @@ import type {
 } from '@hyperneo/shared';
 import superpipe, { type Dependencies, type PipelineAPI } from 'superpipe';
 import { RESERVED_SPACE_AGENT_HANDLES, slugifyWithinLimit, validateSlug } from '../slug.ts';
+import { firstAgentFieldError } from './agent-field-validation.ts';
 
 export interface CreateSpaceAgentInput extends Omit<CreateSpaceAgentParams, 'handle'> {
   handle?: string;
@@ -80,23 +81,9 @@ function isReservedHandle(handle: string): boolean {
 
 export function gateRequest(request: CreateSpaceAgentInput): Gate<AdmittedRequest> {
   if (!request.spaceId) return reject('invalid_request', 'spaceId is required');
-  if (request.displayName !== undefined && request.displayName.trim() === '') {
-    return reject('invalid_request', 'displayName cannot be blank');
-  }
-  if (request.handle !== undefined && request.handle.trim() === '') {
-    return reject('invalid_request', 'handle cannot be blank');
-  }
-  if (isBlankString(request.model)) {
-    return reject('invalid_request', 'model cannot be blank — use null to clear it');
-  }
-  if (isBlankString(request.provider)) {
-    return reject('invalid_request', 'provider cannot be blank — use null to clear it');
-  }
+  const fieldError = firstAgentFieldError(request);
+  if (fieldError) return reject('invalid_request', fieldError);
   return { value: { request } };
-}
-
-function isBlankString(value: string | null | undefined): boolean {
-  return typeof value === 'string' && value.trim() === '';
 }
 
 export async function gateSpace(
