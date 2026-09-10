@@ -1,3 +1,5 @@
+import { createDaemonOperationCatalog } from '../operations/catalog.ts';
+import { createOperationMcpServer } from '../operations/mcp-server.ts';
 import type {
   AgentProcessingState,
   ChatMessage,
@@ -240,6 +242,15 @@ export class AgentSession
   readonly lifecycleManager: QueryLifecycleManager;
   readonly modelSwitchHandler: ModelSwitchHandler;
   readonly askUserQuestionHandler: AskUserQuestionHandler;
+  private operationMcpServer?: ReturnType<typeof createOperationMcpServer>;
+
+  getOperationMcpServer(): ReturnType<typeof createOperationMcpServer> {
+    return (this.operationMcpServer ??= createOperationMcpServer(
+      createDaemonOperationCatalog(this.db.getJobQueueRepo()),
+      () => ({ sessionId: this.session.id })
+    ));
+  }
+
   readonly optionsBuilder: QueryOptionsBuilder;
   readonly attemptTokens = new QueryAttemptRegistry();
 
