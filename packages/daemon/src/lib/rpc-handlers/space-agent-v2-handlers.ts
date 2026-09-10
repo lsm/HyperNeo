@@ -29,7 +29,7 @@ import {
 const METHOD_PREFIX = 'spaceAgentV2';
 
 export interface SessionLookup {
-  type: string;
+  type?: string;
   context?: { spaceId?: string | null } | null;
 }
 
@@ -58,7 +58,7 @@ export function assertAgentDeletable(agent: SpaceAgent): void {
 
 export function toBindableSession(session: SessionLookup | null): BindableSession | null {
   if (!session) return null;
-  return { type: session.type, spaceId: session.context?.spaceId ?? null };
+  return { type: session.type ?? '', spaceId: session.context?.spaceId ?? null };
 }
 
 async function publishAgentEvent(
