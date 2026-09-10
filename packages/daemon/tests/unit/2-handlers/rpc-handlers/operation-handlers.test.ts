@@ -44,6 +44,44 @@ describe('operation.invoke RPC registration', () => {
     expect(mailbox.sdkRows()).toEqual([]);
   });
 
+  test('discovers the runtime catalog and send schema without creating mailbox jobs', async () => {
+    const listed = await client.request<{ name: string }[]>('operation.invoke', {
+      name: 'operations.list',
+    });
+    expect(listed.map(({ name }) => name)).toEqual([
+      'message.send',
+      'operations.list',
+      'operations.describe',
+    ]);
+    const described = await client.request<{
+      found: boolean;
+      inputSchema: { properties: Record<string, unknown> };
+      resultSchema: Record<string, unknown>;
+    }>('operation.invoke', {
+      name: 'operations.describe',
+      input: { name: 'message.send' },
+    });
+    expect(described.found).toBe(true);
+    expect(described.inputSchema.properties).toHaveProperty('sessionId');
+    expect(described.inputSchema.properties).toHaveProperty('message');
+    expect(JSON.stringify(described.resultSchema)).toContain('"accepted"');
+    for (const name of ['operations.list', 'operations.describe']) {
+      expect(
+        await client.request('operation.invoke', {
+          name: 'operations.describe',
+          input: { name },
+        })
+      ).toMatchObject({ found: true, name });
+    }
+    expect(
+      await client.request('operation.invoke', {
+        name: 'operations.describe',
+        input: { name: 'missing' },
+      })
+    ).toEqual({ found: false, name: 'missing' });
+    expect(mailbox.rows()).toEqual([]);
+  });
+
   test('rejects invalid operation input without persisting', async () => {
     await expect(
       client.request('operation.invoke', {
