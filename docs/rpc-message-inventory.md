@@ -6,10 +6,10 @@
 Sources of truth (all paths relative to repo root):
 
 - Protocol: `packages/shared/src/message-hub/protocol.ts`, `types.ts`, `message-hub.ts`
-- Handlers: `packages/daemon/src/lib/rpc-handlers/` (32 of 36 files carry registrations), `packages/daemon/src/lib/state-projection-service.ts`, `packages/daemon/src/lib/external-events/github/github-event-extension.ts`
+- Handlers: `packages/daemon/src/lib/rpc-handlers/` (33 of 36 files carry registrations — only `activity-preview.ts`, `provider-mutation-lock.ts`, and `voice-credential-lock.ts` have none; `index.ts` itself registers 4), `packages/daemon/src/lib/state-projection-service.ts`, `packages/daemon/src/lib/external-events/github/github-event-extension.ts`
 - Event emission: `messageHub.event(...)` call sites in `packages/daemon/src/` plus the internal-bus→client bridge `packages/daemon/src/lib/client-event-bridge.ts`
 - LiveQuery: `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts`
-- Client call sites: `hub.request(...)` / `callIfConnected(...)` across `packages/web/src/` (re-scanned 2026-09-09 against the post-cleanup surface: 223 distinct literal method strings plus the constant-indirected and dynamic sites listed in §7)
+- Client call sites: `hub.request(...)` / `callIfConnected(...)` across `packages/web/src/` (re-scanned 2026-09-10 against the post-cleanup surface, production code only: 222 distinct literal method strings plus the constant-indirected and dynamic sites listed in §7)
 
 **Auth model:** there is no transport-level or per-method authentication on this surface. The WebSocket (`packages/daemon/src/routes/setup-websocket.ts`) assigns a `clientId` on connect with no token handshake, and no handler performs caller-identity checks. The "gates" column in the tables below is therefore **validation and scope checking only** (existence checks, enum/range validation, message-size caps) — not authorization. Space-goal owner mutations are the one exception that inspects the caller's envelope `sessionId` — and the rule is inverted for RPC callers: global (non-`space:`) contexts are allowed while `space:`-scoped ones are denied (§ Space tasks, goals & schedules).
 
@@ -17,15 +17,15 @@ Sources of truth (all paths relative to repo root):
 
 | Surface | Count | Consumed by web | Dead |
 |---|---|---|---|
-| RPC methods (REQ→RSP) | **226** static registration sites (**211** in the default configuration — the 15 `space.github.*` handlers register only while the GitHub external-event extension is globally enabled and unregister on disable, `app.ts:791` / `extension-manager.ts:111`) | 225 (223 literal + 2 constant-indirect) | 1 (`spaceAgentV2.get`, added after the audit by #3937; §7) |
+| RPC methods (REQ→RSP) | **226** static registration sites (**211** in the default configuration — the 15 `space.github.*` handlers register only while the GitHub external-event extension is globally enabled and unregister on disable, `app.ts:791` / `extension-manager.ts:111`) | 224 (222 literal + 2 constant-indirect) | 2 (`spaceAgentV2.get`, added after the audit by #3937; `spaceAgent.listBuiltInTemplates`, superseded by `spaceWorkflow.listBuiltInTemplates`; §7) |
 | Protocol-level methods (`channel.join`/`channel.leave`) | 2 | 2 (`joinRoom`/`leaveRoom`) | 0 |
-| Event names emitted to clients | **34** statically named | 34 (32 literal + 2 constant-indirect) | 0 |
+| Event names emitted to clients | **34** statically named | 34 (30 literal + 4 constant/dynamic-indirect) | 0 |
 | LiveQuery named queries | **16** | 16 | 0 |
 | LiveQuery protocol events | 3 | 3 | 0 |
 
 Method families by prefix: `spaceAgent` 18 · `session` 16 (plus `session.messages` 5, `session.model` 2, `session.thinking` 2, `session.coordinator`/`session.mcp`/`session.sandbox` 1 each) · `space.github` 15 · `spaceGoal` 11 · `spaceWorkflow` 11 · `spaceAgentV2` 5 · `space` 10 (plus `space.workspace` 4, `space.externalEvents` 2, `space.mcp` 2, `space.task` 2) · `spaceWorkflowRun` 10 · `providers` 8 · `spaceTask` 8 · `taskSchedule` 6 · `agentMemory`/`auth`/`customEndpoints`/`mcp.registry`/`message`/`skill` 5 each · `evolution.scope` 4 · `rewind` 4 · three families at 3 (`git`, `question`, `workspace`) · `evolution.episode`/`evolution.evidence`/`evolution.lesson`/`evolution.metricSnapshot`/`evolution.taskProposal`/`externalEvents.extensions`/`liveQuery`/`mcp.enablement`/`reference`/`spaceExport`/`spaceImport`/`state`/`voice` 2 each · singles: `client.interrupt`, `dialog.pickFolder`, `evolution.review.get`, `evolution.rollup.apply`, `globalTools.getConfig`, `mcp.imports.refresh`, `models.list`, `nodeExecution.list`, `settings.global.update`, `state.global.snapshot`, `system.health`, `tools.save`, `usage.calculate`.
 
-Notable dead-surface findings: the audit's dead surface (97 unconsumed methods, 11 emitted-but-unsubscribed events, 1 never-emitted subscription) was fully removed across the slice series (#3885–#3942, #3890, #3933; §7). The one unconsumed method on today's surface — `spaceAgentV2.get` — postdates the audit.
+Notable dead-surface findings: the audit's dead surface (97 unconsumed methods, 11 emitted-but-unsubscribed events, 1 never-emitted subscription) was fully removed across the slice series (#3885–#3942, #3890, #3933; §7). Two unconsumed methods remain on today's surface: `spaceAgentV2.get` (added after the audit by #3937) and `spaceAgent.listBuiltInTemplates` (its consumer moved to `spaceWorkflow.listBuiltInTemplates` during the audit window; web tests now assert it is not called).
 
 ## 2. Wire protocol
 
@@ -504,7 +504,12 @@ All rows are **kind: request** (client `REQ` → server `RSP`). For requests tha
 
 **Cleared 2026-09-09.** The 2026-09-07 audit (issue #3824) found 97 unconsumed methods among 319 registrations; all were removed across the dead-surface slice series — `config.*` (24, #3885), `settings.*` (7, #3887), `evolution.*` dead 11 (#3889), dead client events + `workflowRunArtifacts.byRun` (#3890), `state.*` pull fallbacks (4, #3894), `mcp.*`/`skill.*`/`globalTools` (8, #3897), `space.*` (5, #3899), `spaceWorkflowRun.*` (5, #3900), `session`/`sdk`/`commands` (11, #3901), `test.*` + dev-only `nodeExecution.create/update` (5, #3933), and remaining singles + `file.*`/`providers.*`/`daemonConfig.*` families (16, #3942). The consumed `spaceAgent.reapplyTemplate` was later removed with the template re-apply feature (#3934).
 
-**Remaining unconsumed surface (1):** `spaceAgentV2.get` (`space-agent-v2-handlers.ts:160`) — added by #3937 *after* the audit and never picked up by the web, which reads agents via `spaceAgentV2.list`. It is the only registration on today's surface with no web call site.
+**Remaining unconsumed surface (2):**
+
+- `spaceAgentV2.get` (`space-agent-v2-handlers.ts:160`) — added by #3937 *after* the audit and never picked up by the web, which reads agents via `spaceAgentV2.list`.
+- `spaceAgent.listBuiltInTemplates` (`space-agent-handlers.ts:778`) — the web's built-in-template listing moved to `spaceWorkflow.listBuiltInTemplates` during the audit window; `space-store.test.ts` now asserts `spaceAgent.listBuiltInTemplates` is **not** called. Registers only when templateManager is present.
+
+Both are the only registrations on today's surface with no production web call site.
 
 Nuances — methods consumed **indirectly** (not visible to a literal-string scan; not counted as dead):
 
