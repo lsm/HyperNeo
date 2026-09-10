@@ -487,6 +487,72 @@ describe('SpaceAgentsPage', () => {
     );
   });
 
+  it('does not offer archived as an editable status', async () => {
+    mockAgents.value = [makeAgent('alpha')];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+
+    const options = [...getByTestId('agent-status-select').querySelectorAll('option')].map(
+      (option) => option.value
+    );
+    expect(options).toEqual(['active', 'paused', 'disabled']);
+  });
+
+  it('offers protected agents only the active status', async () => {
+    mockAgents.value = [makeAgent('space-manager')];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-space-manager'));
+    fireEvent.click(getByText('Edit'));
+
+    const options = [...getByTestId('agent-status-select').querySelectorAll('option')].map(
+      (option) => option.value
+    );
+    expect(options).toEqual(['active']);
+  });
+
+  it('separates template default from an explicit unset autonomy on create', async () => {
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    const options = [...getByTestId('agent-autonomy-select').querySelectorAll('option')].map(
+      (option) => option.value
+    );
+    expect(options).toEqual(['', 'none', '1', '2', '3', '4', '5']);
+
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Scribe' } });
+    fireEvent.change(getByTestId('agent-autonomy-select'), { target: { value: 'none' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].autonomyLevel).toBeNull();
+  });
+
+  it('offers only a plain unset autonomy option when editing', async () => {
+    mockAgents.value = [makeAgent('alpha', { autonomyLevel: 3 })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+
+    const options = [...getByTestId('agent-autonomy-select').querySelectorAll('option')].map(
+      (option) => option.value
+    );
+    expect(options).toEqual(['', '1', '2', '3', '4', '5']);
+
+    fireEvent.change(getByTestId('agent-autonomy-select'), { target: { value: '' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenCalledWith(
+        'alpha',
+        expect.objectContaining({ autonomyLevel: null })
+      )
+    );
+  });
+
   it('clears a description on edit rather than dropping the field', async () => {
     mockAgents.value = [makeAgent('alpha', { description: 'old' })];
     const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
