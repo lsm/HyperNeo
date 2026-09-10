@@ -83,6 +83,7 @@ import {
 import {
   createAgentTemplateResolver,
   runTemplateResolves,
+  runTemplateSnapshotRecord,
 } from '../workflows/run-template-snapshot.ts';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
 import type { WorkflowArtifactProfile } from './artifact-profile.ts';
@@ -5173,6 +5174,7 @@ export class SpaceRuntime {
                   workflowName: workflow.name,
                   agentName: first.agentName,
                   templateKey: first.templateKey,
+                  snapshotOnly: runTemplateSnapshotRecord(workflow, run) !== null,
                 })
               : formatMissingAgentReference({
                   runId: run.id,

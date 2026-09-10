@@ -5,6 +5,7 @@ import {
   createAgentTemplateResolver,
   runTemplateResolves,
   toRunTemplateSnapshot,
+  workflowReferencesTemplates,
   withRunTemplateSnapshots,
 } from '../../../../src/lib/space/workflows/run-template-snapshot.ts';
 
@@ -264,5 +265,47 @@ describe('runTemplateResolves', () => {
         () => false
       )
     ).toBe(true);
+  });
+});
+
+describe('empty snapshot marker', () => {
+  test('attaches an empty record when the workflow references templates none of which resolve', () => {
+    const wf = workflow([
+      {
+        id: 'n1',
+        name: 'Review',
+        agents: [slot({ name: 'Reviewer', templateKey: 'gone.custom' })],
+      },
+    ] as unknown as SpaceWorkflow['nodes']);
+
+    const pinned = withRunTemplateSnapshots(wf, () => null);
+
+    expect(pinned.templateSnapshots).toEqual({});
+    expect(
+      runTemplateResolves(pinned, { definitionVersion: 'vh-1' }, 'gone.custom', () => true)
+    ).toBe(false);
+  });
+
+  test('leaves a template-free workflow untouched so its definition hash is unchanged', () => {
+    const wf = workflow([
+      { id: 'n1', name: 'Review', agents: [slot({ agentId: 'agent-1', name: 'Reviewer' })] },
+    ] as unknown as SpaceWorkflow['nodes']);
+
+    const pinned = withRunTemplateSnapshots(wf, () => null);
+
+    expect(pinned).toBe(wf);
+    expect(pinned.templateSnapshots).toBeUndefined();
+  });
+
+  test('workflowReferencesTemplates ignores blank template keys', () => {
+    const withBlank = {
+      nodes: [{ agents: [{ agentId: 'a', name: 'x', templateKey: '   ' }] }],
+    } as unknown as SpaceWorkflow;
+    const withKey = {
+      nodes: [{ agents: [{ agentId: '', name: 'x', templateKey: 'k' }] }],
+    } as unknown as SpaceWorkflow;
+
+    expect(workflowReferencesTemplates(withBlank)).toBe(false);
+    expect(workflowReferencesTemplates(withKey)).toBe(true);
   });
 });

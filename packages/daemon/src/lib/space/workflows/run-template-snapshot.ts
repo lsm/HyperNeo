@@ -71,11 +71,17 @@ export function runTemplateResolves(
   return Object.hasOwn(snapshots, trimmed);
 }
 
+export function workflowReferencesTemplates(workflow: Pick<SpaceWorkflow, 'nodes'>): boolean {
+  return workflow.nodes.some((node) => node.agents.some((slot) => !!slot.templateKey?.trim()));
+}
+
 export function withRunTemplateSnapshots(
   workflow: SpaceWorkflow,
   resolveTemplate: AgentTemplateResolver
 ): SpaceWorkflow {
   const snapshots = buildRunTemplateSnapshots(workflow, resolveTemplate);
-  if (Object.keys(snapshots).length === 0) return workflow;
+  if (Object.keys(snapshots).length === 0 && !workflowReferencesTemplates(workflow)) {
+    return workflow;
+  }
   return { ...workflow, templateSnapshots: snapshots };
 }
