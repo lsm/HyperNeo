@@ -50,11 +50,38 @@ export function buildRunTemplateSnapshots(
   return snapshots;
 }
 
+export function runTemplateSnapshotRecord(
+  workflow: Pick<SpaceWorkflow, 'templateSnapshots'> | null | undefined,
+  run: { definitionVersion: string | null } | null | undefined
+): Record<string, WorkflowTemplateSnapshot> | null {
+  if (!run?.definitionVersion) return null;
+  return workflow?.templateSnapshots ?? null;
+}
+
+export function runTemplateResolves(
+  workflow: Pick<SpaceWorkflow, 'templateSnapshots'> | null | undefined,
+  run: { definitionVersion: string | null } | null | undefined,
+  key: string,
+  resolveLive: (key: string) => boolean
+): boolean {
+  const trimmed = key.trim();
+  if (!trimmed) return false;
+  const snapshots = runTemplateSnapshotRecord(workflow, run);
+  if (!snapshots) return resolveLive(trimmed);
+  return Object.hasOwn(snapshots, trimmed);
+}
+
+export function workflowReferencesTemplates(workflow: Pick<SpaceWorkflow, 'nodes'>): boolean {
+  return workflow.nodes.some((node) => node.agents.some((slot) => !!slot.templateKey?.trim()));
+}
+
 export function withRunTemplateSnapshots(
   workflow: SpaceWorkflow,
   resolveTemplate: AgentTemplateResolver
 ): SpaceWorkflow {
   const snapshots = buildRunTemplateSnapshots(workflow, resolveTemplate);
-  if (Object.keys(snapshots).length === 0) return workflow;
+  if (Object.keys(snapshots).length === 0 && !workflowReferencesTemplates(workflow)) {
+    return workflow;
+  }
   return { ...workflow, templateSnapshots: snapshots };
 }

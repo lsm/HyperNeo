@@ -145,14 +145,23 @@ export function formatMissingTemplateReference(params: {
   workflowName: string;
   agentName: string;
   templateKey: string;
+  snapshotOnly?: boolean;
 }): string {
-  return (
+  const preamble =
     `Workflow run "${params.runId}" cannot activate node "${params.nodeLabel}" of workflow ` +
     `"${params.workflowName}": agent slot "${params.agentName}" references agent template ` +
-    `key "${params.templateKey}", which resolves to neither a code built-in nor a user ` +
-    `template in this Space. Recreate a template with that key, or correct the slot's ` +
-    `templateKey on the workflow and start a new run — this run resolves a workflow ` +
-    `definition pinned at creation time.`
+    `key "${params.templateKey}", `;
+  if (params.snapshotOnly) {
+    return (
+      `${preamble}which is not in the template snapshot this run pinned at creation time. ` +
+      `Recreating the template will not repair this run — correct the slot's templateKey on ` +
+      `the workflow and start a new run.`
+    );
+  }
+  return (
+    `${preamble}which resolves to neither a code built-in nor a user template in this Space. ` +
+    `Recreate a template with that key, or correct the slot's templateKey on the workflow ` +
+    `and start a new run.`
   );
 }
 

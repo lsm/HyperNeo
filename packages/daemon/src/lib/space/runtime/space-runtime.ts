@@ -80,7 +80,11 @@ import {
   isReservedWorkflowAgentName,
   type SpaceWorkflowManager,
 } from '../managers/space-workflow-manager.ts';
-import { createAgentTemplateResolver } from '../workflows/run-template-snapshot.ts';
+import {
+  createAgentTemplateResolver,
+  runTemplateResolves,
+  runTemplateSnapshotRecord,
+} from '../workflows/run-template-snapshot.ts';
 import { normalizeMeaningfulTaskResult } from '../task-result-utils.ts';
 import type { WorkflowArtifactProfile } from './artifact-profile.ts';
 import { CompletionDetector } from './completion-detector.ts';
@@ -5154,7 +5158,10 @@ export class SpaceRuntime {
           targetNode,
           (id) => this.agentRecordExists(id, run.spaceId),
           {
-            templateResolves: (key) => this.config.spaceWorkflowManager.agentTemplateResolves(key),
+            templateResolves: (key) =>
+              runTemplateResolves(workflow, run, key, (live) =>
+                this.config.spaceWorkflowManager.agentTemplateResolves(live)
+              ),
           }
         );
         if (missing.length > 0) {
@@ -5167,6 +5174,7 @@ export class SpaceRuntime {
                   workflowName: workflow.name,
                   agentName: first.agentName,
                   templateKey: first.templateKey,
+                  snapshotOnly: runTemplateSnapshotRecord(workflow, run) !== null,
                 })
               : formatMissingAgentReference({
                   runId: run.id,

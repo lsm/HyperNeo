@@ -3,7 +3,9 @@ import type { SpaceAgentTemplate, SpaceWorkflow } from '@hyperneo/shared';
 import {
   buildRunTemplateSnapshots,
   createAgentTemplateResolver,
+  runTemplateResolves,
   toRunTemplateSnapshot,
+  workflowReferencesTemplates,
   withRunTemplateSnapshots,
 } from '../../../../src/lib/space/workflows/run-template-snapshot.ts';
 
@@ -185,5 +187,125 @@ describe('createAgentTemplateResolver', () => {
 
     expect(resolve('worker.swe')?.key).toBe('worker.swe');
     expect(resolve('worker.unheard-of')).toBeNull();
+  });
+});
+
+describe('runTemplateResolves', () => {
+  const pinned = { definitionVersion: 'vh-1' };
+  const unpinned = { definitionVersion: null };
+  const live = (key: string) => key === 'live.only';
+
+  test('resolves a key present in the run snapshot without consulting live templates', () => {
+    let liveCalls = 0;
+    const resolved = runTemplateResolves(
+      { templateSnapshots: { 'worker.custom': {} as never } },
+      pinned,
+      'worker.custom',
+      () => {
+        liveCalls += 1;
+        return true;
+      }
+    );
+
+    expect(resolved).toBe(true);
+    expect(liveCalls).toBe(0);
+  });
+
+  test('rejects a key absent from the run snapshot even when it resolves live', () => {
+    expect(
+      runTemplateResolves(
+        { templateSnapshots: { 'worker.custom': {} as never } },
+        pinned,
+        'live.only',
+        live
+      )
+    ).toBe(false);
+  });
+
+  test('falls back to live resolution for an unpinned run', () => {
+    expect(runTemplateResolves({}, unpinned, 'live.only', live)).toBe(true);
+  });
+
+  test('falls back to live resolution for a pinned run predating snapshots', () => {
+    expect(runTemplateResolves({}, pinned, 'live.only', live)).toBe(true);
+  });
+
+  test('falls back to live resolution when the pinned definition is unresolvable', () => {
+    expect(runTemplateResolves(null, pinned, 'live.only', live)).toBe(true);
+  });
+
+  test('does not treat prototype members as snapshot entries', () => {
+    expect(
+      runTemplateResolves(
+        { templateSnapshots: JSON.parse('{"worker.custom":{}}') },
+        pinned,
+        'toString',
+        () => true
+      )
+    ).toBe(false);
+  });
+
+  test('rejects a blank key without consulting anything', () => {
+    let liveCalls = 0;
+    const resolved = runTemplateResolves({}, unpinned, '   ', () => {
+      liveCalls += 1;
+      return true;
+    });
+
+    expect(resolved).toBe(false);
+    expect(liveCalls).toBe(0);
+  });
+
+  test('trims the key before matching the snapshot', () => {
+    expect(
+      runTemplateResolves(
+        { templateSnapshots: { 'worker.custom': {} as never } },
+        pinned,
+        '  worker.custom  ',
+        () => false
+      )
+    ).toBe(true);
+  });
+});
+
+describe('empty snapshot marker', () => {
+  test('attaches an empty record when the workflow references templates none of which resolve', () => {
+    const wf = workflow([
+      {
+        id: 'n1',
+        name: 'Review',
+        agents: [slot({ name: 'Reviewer', templateKey: 'gone.custom' })],
+      },
+    ] as unknown as SpaceWorkflow['nodes']);
+
+    const pinned = withRunTemplateSnapshots(wf, () => null);
+
+    expect(pinned.templateSnapshots).toEqual({});
+    expect(
+      runTemplateResolves(pinned, { definitionVersion: 'vh-1' }, 'gone.custom', () => true)
+    ).toBe(false);
+  });
+
+  test('leaves a template-free workflow untouched so its definition hash is unchanged', () => {
+    const wf = workflow([
+      { id: 'n1', name: 'Review', agents: [slot({ agentId: 'agent-1', name: 'Reviewer' })] },
+    ] as unknown as SpaceWorkflow['nodes']);
+
+    const pinned = withRunTemplateSnapshots(wf, () => null);
+
+    expect(pinned).toBe(wf);
+    expect(pinned.templateSnapshots).toBeUndefined();
+  });
+
+  test('workflowReferencesTemplates ignores blank template keys', () => {
+    const withBlank = {
+      nodes: [{ agents: [{ agentId: 'a', name: 'x', templateKey: '   ' }] }],
+    } as unknown as SpaceWorkflow;
+    const withKey = {
+      nodes: [{ agents: [{ agentId: '', name: 'x', templateKey: 'k' }] }],
+    } as unknown as SpaceWorkflow;
+
+    expect(workflowReferencesTemplates(withBlank)).toBe(false);
+    expect(workflowReferencesTemplates(withKey)).toBe(true);
   });
 });

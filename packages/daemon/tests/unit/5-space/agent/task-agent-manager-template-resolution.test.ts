@@ -502,7 +502,7 @@ describe('resolveSlotSpawnConfig pinned snapshot consumption (ATC-8)', () => {
     expect(h.pinnedLookupCalls).toEqual([]);
   });
 
-  test('a snapshot record missing the requested key falls back to live resolution', () => {
+  test('a snapshot record missing the requested key never falls back to live resolution', () => {
     const h = makeTemplateResolutionHarness({
       storedTemplates: [makeStoredTemplate()],
       pinnedWorkflows: {
@@ -519,8 +519,8 @@ describe('resolveSlotSpawnConfig pinned snapshot consumption (ATC-8)', () => {
       pinnedRun()
     );
 
-    expect(config?.agent.instructions).toBe('Stored template instructions');
-    expect(h.templateRepoCalls).toEqual(['custom.stored']);
+    expect(config).toBeNull();
+    expect(h.templateRepoCalls).toEqual([]);
   });
 
   test('an unresolvable pinned definition falls back to live resolution', () => {
@@ -556,7 +556,7 @@ describe('resolveSlotSpawnConfig pinned snapshot consumption (ATC-8)', () => {
     );
 
     expect(config).toBeNull();
-    expect(h.templateRepoCalls).toEqual(['toString']);
+    expect(h.templateRepoCalls).toEqual([]);
   });
 
   test('a direct spawn without a run resolves live (send-to-agent path)', () => {

@@ -162,6 +162,7 @@ import {
   resolveWorkflowNodeSlot,
   spaceAgentTemplateToNodeSource,
 } from './spawn-slot-resolution.ts';
+import { runTemplateSnapshotRecord } from '../workflows/run-template-snapshot.ts';
 import { stagedRun } from './staged-run.ts';
 import { runVerifiedStopFlow, type VerifiedStopFlowDeps } from './verified-stop-flow.ts';
 import {
@@ -3378,9 +3379,7 @@ export class TaskAgentManager {
   ): NodeAgentSpawnConfig | null {
     if (slot.templateKey?.trim()) {
       const templateKey = slot.templateKey.trim();
-      const template =
-        this.resolvePinnedTemplateSource(workflowRun, templateKey) ??
-        this.resolveNodeTemplateSource(templateKey);
+      const template = this.resolveSlotTemplateSource(workflowRun, templateKey);
       if (template) {
         return resolveNodeAgentConfig(
           template,
@@ -3411,14 +3410,18 @@ export class TaskAgentManager {
     return this.resolveUnifiedSlotAgent(spaceId, agentId) !== null;
   }
 
-  private resolvePinnedTemplateSource(
+  private resolveSlotTemplateSource(
     workflowRun: Pick<SpaceWorkflowRun, 'workflowId' | 'definitionVersion'> | null | undefined,
     key: string
   ): NodeAgentTemplateSource | null {
-    if (!workflowRun?.definitionVersion) return null;
-    const snapshots =
-      this.config.spaceWorkflowManager.getWorkflowForRun(workflowRun)?.templateSnapshots;
-    if (!snapshots || !Object.hasOwn(snapshots, key)) return null;
+    const snapshots = runTemplateSnapshotRecord(
+      workflowRun?.definitionVersion
+        ? this.config.spaceWorkflowManager.getWorkflowForRun(workflowRun)
+        : null,
+      workflowRun
+    );
+    if (!snapshots) return this.resolveNodeTemplateSource(key);
+    if (!Object.hasOwn(snapshots, key)) return null;
     return spaceAgentTemplateToNodeSource(snapshots[key]);
   }
 

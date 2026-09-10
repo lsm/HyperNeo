@@ -281,4 +281,31 @@ describe('formatMissingTemplateReference', () => {
     expect(message).toContain('Preview');
     expect(message).toContain('reviewer');
   });
+
+  test('offers recreating the template when the run still resolves live', () => {
+    const message = formatMissingTemplateReference({
+      runId: 'run-321',
+      nodeLabel: 'Preview',
+      workflowName: 'Release Flow',
+      agentName: 'reviewer',
+      templateKey: 'ghost.preview',
+    });
+
+    expect(message).toContain('Recreate a template with that key');
+  });
+
+  test('tells a snapshot-only run that recreating the template will not help', () => {
+    const message = formatMissingTemplateReference({
+      runId: 'run-321',
+      nodeLabel: 'Preview',
+      workflowName: 'Release Flow',
+      agentName: 'reviewer',
+      templateKey: 'ghost.preview',
+      snapshotOnly: true,
+    });
+
+    expect(message).toContain('will not repair this run');
+    expect(message).toContain('start a new run');
+    expect(message).not.toContain('Recreate a template with that key');
+  });
 });
