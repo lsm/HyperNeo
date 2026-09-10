@@ -526,6 +526,12 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(ids).not.toContain(pinned.id);
     });
 
+    it('listPinnableRuns includes a taskless run, which is still executable', () => {
+      const taskless = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'No task yet' });
+
+      expect(repo.listPinnableRuns().map((r) => r.id)).toContain(taskless.id);
+    });
+
     it('listPinnableRuns excludes runs whose canonical task is archived (tombstoned)', () => {
       const live = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Live' });
       seedTaskForRun(live.id, spaceId);

@@ -93,9 +93,14 @@ export class SpaceWorkflowRunRepository {
       .prepare(
         `SELECT r.id, r.workflow_id, r.space_id FROM space_workflow_runs r
          WHERE r.definition_version IS NULL
-           AND EXISTS (
-             SELECT 1 FROM space_tasks t
-             WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+           AND (
+             NOT EXISTS (
+               SELECT 1 FROM space_tasks t WHERE t.workflow_run_id = r.id
+             )
+             OR EXISTS (
+               SELECT 1 FROM space_tasks t
+               WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
+             )
            )
          ORDER BY r.created_at ASC, r.rowid ASC`
       )
