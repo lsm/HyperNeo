@@ -1,3 +1,4 @@
+import type { TaskCore, TaskLifecycleStatus, TaskPriority } from './task-core.ts';
 import type { ThinkingLevel } from '../types.ts';
 import type { TaskRestriction } from './neo.ts';
 import type { McpServerConfig } from './sdk-config.ts';
@@ -367,19 +368,7 @@ export interface SpaceWorkspaceUpdateLabelParams {
   label: string;
 }
 
-export type SpaceTaskStatus =
-  | 'draft'
-  | 'open'
-  | 'in_progress'
-  | 'review'
-  | 'approved'
-  | 'done'
-  | 'blocked'
-  | 'cancelled'
-  | 'archived'
-  | 'rate_limited'
-  | 'usage_limited'
-  | 'stopped';
+export type SpaceTaskStatus = TaskLifecycleStatus;
 
 export type SpaceReportedStatus = 'done' | 'blocked' | 'cancelled';
 
@@ -391,7 +380,7 @@ export type SpaceBlockReason =
   | 'dependency_failed'
   | 'dependency_added';
 
-export type SpaceTaskPriority = 'low' | 'normal' | 'high' | 'urgent';
+export type SpaceTaskPriority = TaskPriority;
 
 export type SpaceGoalStatus = 'active' | 'paused' | 'completed' | 'archived';
 export type SpaceGoalType = 'one_shot' | 'measurable' | 'recurring';
@@ -601,17 +590,9 @@ export type SpaceTaskActivityState =
   | 'failed'
   | 'interrupted';
 
-export interface SpaceTask {
-  id: string;
+export interface SpaceTask extends TaskCore {
   spaceId: string;
   taskNumber: number;
-  title: string;
-  description: string;
-  status: SpaceTaskStatus;
-  priority: SpaceTaskPriority;
-  labels: string[];
-  dependsOn: string[];
-  result: string | null;
   workflowRunId?: string | null;
   preferredWorkflowId?: string | null;
   createdByTaskId?: string | null;
@@ -624,10 +605,6 @@ export interface SpaceTask {
   workflowModelOverrides?: Record<string, string>;
   activeSession?: 'worker' | 'leader' | null;
   taskAgentSessionId?: string | null;
-  createdAt: number;
-  startedAt: number | null;
-  completedAt: number | null;
-  archivedAt: number | null;
   blockReason: SpaceBlockReason | null;
   approvalSource: SpaceApprovalSource | null;
   approvalReason: string | null;
@@ -643,7 +620,6 @@ export interface SpaceTask {
   postApprovalBlockedReason?: string | null;
   postApprovalSourceNodeId?: string | null;
   restrictions?: TaskRestriction | null;
-  updatedAt: number;
   terminalGeneration: number;
 }
 
