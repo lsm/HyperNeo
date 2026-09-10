@@ -890,7 +890,23 @@ describe('worker-template spawn consumes the run-pinned snapshot (ATC-8)', () =>
       pinnedWorkflow: makeWorkflow(makeTemplateWorkflowNode()),
     });
 
-    await expect(h.spawn()).rejects.toThrow('Agent not found: worker.swe');
+    await expect(h.spawn()).rejects.toThrow('no pinned template snapshot to resolve it from');
     expect(h.capturedInit()).toBeUndefined();
+  });
+
+  test('a snapshot-less spawn failure names the run, key, and the only valid remediation', async () => {
+    const h = makeSpawnPayloadHarness(makeWorkflow(makeTemplateWorkflowNode()), 'coder', {
+      definitionVersion: 'version-pinned-3839',
+      pinnedWorkflow: makeWorkflow(makeTemplateWorkflowNode()),
+    });
+
+    await expect(h.spawn()).rejects.toThrow(
+      expect.objectContaining({
+        name: 'MissingWorkflowAgentError',
+        permanent: true,
+      })
+    );
+    await expect(h.spawn()).rejects.toThrow('worker.swe');
+    await expect(h.spawn()).rejects.toThrow('start a new run');
   });
 });

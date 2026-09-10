@@ -172,7 +172,9 @@ import {
 } from './workflow-hook-engine.ts';
 import {
   assertExecutionValidAgainstWorkflow,
+  formatMissingTemplateReference,
   isSpawnSupersededError,
+  MissingWorkflowAgentError,
   PermanentSpawnError,
   SPAWN_BINDABLE_EXECUTION_STATUSES,
   SPAWN_RESERVABLE_TASK_STATUSES,
@@ -947,9 +949,7 @@ export class TaskAgentManager {
           };
 
           if (!customAgent) {
-            throw new PermanentSpawnError(
-              `Agent not found: ${slot.agentId || slot.templateKey} (task: ${request.task.id})`
-            );
+            throw this.missingSlotAgentError(request, slot);
           }
 
           let init = resolveAgentInit({
@@ -3409,6 +3409,39 @@ export class TaskAgentManager {
 
   private slotAgentExists(spaceId: string, agentId: string): boolean {
     return this.resolveUnifiedSlotAgent(spaceId, agentId) !== null;
+  }
+
+  private missingSlotAgentError(
+    request: {
+      task: { id: string };
+      node?: { name?: string } | null;
+      workflow?: { name?: string } | null;
+      workflowRun?: SpaceWorkflowRun | null;
+      execution?: { workflowNodeId?: string } | null;
+    },
+    slot: WorkflowNodeAgent
+  ): PermanentSpawnError {
+    const templateKey = slot.templateKey?.trim();
+    const run = request.workflowRun;
+    if (templateKey && run) {
+      const pinned = run.definitionVersion
+        ? this.config.spaceWorkflowManager.getWorkflowForRun(run)
+        : null;
+      return new MissingWorkflowAgentError(
+        formatMissingTemplateReference({
+          runId: run.id,
+          nodeLabel: request.node?.name ?? request.execution?.workflowNodeId ?? 'unknown node',
+          workflowName: request.workflow?.name ?? run.workflowId,
+          agentName: slot.name,
+          templateKey,
+          hasSnapshot: runTemplateSnapshotRecord(pinned, run) !== null,
+        }),
+        { agentName: slot.name, agentId: slot.agentId, templateKey }
+      );
+    }
+    return new PermanentSpawnError(
+      `Agent not found: ${slot.agentId || slot.templateKey} (task: ${request.task.id})`
+    );
   }
 
   private resolveSlotTemplateSource(
