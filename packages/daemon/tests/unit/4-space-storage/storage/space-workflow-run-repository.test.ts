@@ -816,6 +816,42 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(repo.getRun(run.id)!.definitionVersion).toBe(before);
     });
 
+    it('migrateSnapshotlessPins migrates a pin whose payload is malformed JSON', () => {
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.custom', name: 'Worker' }],
+          },
+        ],
+      });
+      const run = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Corrupt payload',
+        rawWorkflow: wf,
+      });
+      seedTaskForRun(run.id, spaceId);
+      const before = repo.getRun(run.id)!.definitionVersion;
+      db.prepare(
+        `UPDATE space_workflow_definition_versions SET payload = ?
+         WHERE workflow_id = ? AND version_hash = ?`
+      ).run('{not json', WORKFLOW_ID, before);
+
+      expect(repo.listSnapshotlessPinnedRuns().map((r) => r.id)).toContain(run.id);
+      expect(
+        repo.migrateSnapshotlessPins(
+          () => null,
+          () => wf
+        )
+      ).toBe(1);
+
+      const after = repo.getRun(run.id)!.definitionVersion;
+      expect(after).not.toBe(before);
+      expect(JSON.parse(pinnedPayload(after!)).templateSnapshots).toEqual({});
+    });
+
     it('migrateSnapshotlessPins skips runs whose task is archived', () => {
       const wf = rawWorkflow({
         nodes: [

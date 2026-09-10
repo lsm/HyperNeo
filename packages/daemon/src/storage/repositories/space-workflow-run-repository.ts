@@ -159,8 +159,11 @@ export class SpaceWorkflowRunRepository {
          JOIN space_workflow_definition_versions v
            ON v.workflow_id = r.workflow_id AND v.version_hash = r.definition_version
          WHERE r.definition_version IS NOT NULL
-           AND json_valid(v.payload)
-           AND json_extract(v.payload, '$.templateSnapshots') IS NULL
+           AND CASE
+                 WHEN json_valid(v.payload)
+                   THEN json_extract(v.payload, '$.templateSnapshots') IS NULL
+                 ELSE 1
+               END
            AND (
              NOT EXISTS (
                SELECT 1 FROM space_tasks t WHERE t.workflow_run_id = r.id
