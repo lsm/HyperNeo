@@ -64,8 +64,8 @@ export function collectTemplateOwnershipEvidence(
 
   const agentsById = new Map<string, TemplateOwnershipAgentRow>();
   for (const agent of inputs.agents) {
-    const id = normalizeKey(agent.id);
-    if (id && normalizeKey(agent.spaceId)) agentsById.set(id, agent);
+    if (agent.id === '' || normalizeKey(agent.spaceId) === '') continue;
+    agentsById.set(agent.id, agent);
   }
 
   for (const [key, entry] of evidence) {

@@ -136,4 +136,26 @@ describe('collectTemplateOwnershipEvidence', () => {
     );
     expect(evidence.get('custom.one')?.workflowSlotSpaces).toEqual(['sp1']);
   });
+  test('does not let a whitespace-bearing agent id stand in for the exact one', () => {
+    const evidence = collectTemplateOwnershipEvidence(
+      inputs({
+        templates: [{ key: 'migrated.agent.a1', createdAt: 5_000 }],
+        agents: [{ id: ' a1 ', spaceId: 'other-space', createdAt: 1_000 }],
+      })
+    );
+    expect(evidence.get('migrated.agent.a1')?.synthesizedFromSpaces).toEqual([]);
+  });
+
+  test('keeps the exact agent id when a whitespace variant also exists', () => {
+    const evidence = collectTemplateOwnershipEvidence(
+      inputs({
+        templates: [{ key: 'migrated.agent.a1', createdAt: 5_000 }],
+        agents: [
+          { id: ' a1 ', spaceId: 'whitespace-space', createdAt: 1_000 },
+          { id: 'a1', spaceId: 'exact-space', createdAt: 1_000 },
+        ],
+      })
+    );
+    expect(evidence.get('migrated.agent.a1')?.synthesizedFromSpaces).toEqual(['exact-space']);
+  });
 });
