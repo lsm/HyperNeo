@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { invokeOperation } from '../../../../src/lib/operations/invoke';
-import { createSendMessageOperation } from '../../../../src/lib/operations/message-send';
+import { z } from 'zod';
+import {
+  createSendMessageOperation,
+  SendMessageInputSchema,
+  selectMessageOrigin,
+  mapMessageReceipt,
+} from '../../../../src/lib/operations/message-send';
 import { createOperationRegistry } from '../../../../src/lib/operations/registry';
 import { parseMailboxEntry } from '../../../../src/lib/mailbox/entry';
 import { createMailboxTestDb, type MailboxTestDb } from '../../../helpers/mailbox-test-db';
@@ -83,6 +89,7 @@ describe('shared message.send operation', () => {
 
   test.each([
     { sessionId: '', message },
+    { sessionId: '\ud800', message },
     { sessionId: 'destination', message: { ...message, message: { content: '' } } },
     { sessionId: 'destination', message: { ...message, type: 'assistant' } },
     { sessionId: 'destination', message, deliveryMode: 'unknown' },
@@ -111,5 +118,29 @@ describe('shared message.send operation', () => {
         { source: 'mcp' }
       )
     ).toMatchObject({ kind: 'completed', value: { kind: 'rejected' } });
+  });
+  test('describes the message envelope and content blocks structurally', () => {
+    const schema = z.toJSONSchema(SendMessageInputSchema, { io: 'input' });
+    const serialized = JSON.stringify(schema);
+    expect(serialized).toContain('parent_tool_use_id');
+    expect(serialized).toContain('media_type');
+    expect(serialized).toContain('referenceMetadata');
+    expect(schema.properties?.message).toMatchObject({ type: 'object' });
+  });
+
+  test('origin and receipt stages preserve provenance and rejection details', () => {
+    expect(selectMessageOrigin({ source: 'mcp', sessionId: 'sender/one' })).toBe(
+      'session:sender%2Fone'
+    );
+    expect(selectMessageOrigin({ source: 'internal' })).toBe('system');
+    expect(mapMessageReceipt({ kind: 'enqueued', id: 'mailbox-1' }, 'message-1')).toEqual({
+      kind: 'accepted',
+      mailboxId: 'mailbox-1',
+      messageId: 'message-1',
+    });
+    expect(mapMessageReceipt({ kind: 'rejected', reason: 'unavailable' }, 'message-1')).toEqual({
+      kind: 'rejected',
+      reason: 'unavailable',
+    });
   });
 });
