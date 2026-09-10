@@ -12,6 +12,13 @@ import type { SQLiteValue } from '../types.ts';
 
 const AGENTS_TABLE = 'space_long_horizon_agents';
 
+export interface SpaceAgentIdentity {
+  id: string;
+  handle: string;
+  displayName: string;
+  status: SpaceAgentStatus;
+}
+
 export class SpaceAgentRepository {
   constructor(private db: BunDatabase) {}
 
@@ -84,11 +91,30 @@ export class SpaceAgentRepository {
     return row ? rowToSpaceAgent(row) : null;
   }
 
-  listBySpaceId(spaceId: string): SpaceAgent[] {
+  listOwnedBySpaceId(spaceId: string): SpaceAgent[] {
     const rows = this.db
-      .prepare(`SELECT * FROM ${AGENTS_TABLE} WHERE space_id = ? ORDER BY created_at ASC`)
-      .all(spaceId) as Record<string, unknown>[];
+      .prepare(
+        `SELECT * FROM ${AGENTS_TABLE}
+         WHERE space_id = ? AND (template_key IS NULL OR template_key != ?)
+         ORDER BY created_at ASC`
+      )
+      .all(spaceId, MIGRATED_WORKER_TEMPLATE_KEY) as Record<string, unknown>[];
     return rows.map(rowToSpaceAgent);
+  }
+
+  listIdentitiesBySpaceId(spaceId: string): SpaceAgentIdentity[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, handle, display_name, status FROM ${AGENTS_TABLE}
+         WHERE space_id = ? ORDER BY created_at ASC`
+      )
+      .all(spaceId) as Record<string, unknown>[];
+    return rows.map((row) => ({
+      id: row.id as string,
+      handle: row.handle as string,
+      displayName: row.display_name as string,
+      status: row.status as SpaceAgentStatus,
+    }));
   }
 
   update(id: string, params: UpdateSpaceAgentParams): SpaceAgent | null {

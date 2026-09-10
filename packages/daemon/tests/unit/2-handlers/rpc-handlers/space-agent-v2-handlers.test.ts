@@ -4,6 +4,7 @@ import {
   setupSpaceAgentV2Handlers,
   type SpaceAgentV2Deps,
 } from '../../../../src/lib/rpc-handlers/space-agent-v2-handlers';
+import { MIGRATED_WORKER_TEMPLATE_KEY } from '../../../../src/lib/space/agents/worker-long-horizon-mapper';
 import { SpaceAgentRepository } from '../../../../src/storage/repositories/space-agent-repository';
 import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositories/space-agent-template-repository';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
@@ -30,6 +31,27 @@ function call<T>(handlers: Map<string, RequestHandler>, methodName: string, data
   const handler = handlers.get(methodName);
   if (!handler) throw new Error(`no handler registered for ${methodName}`);
   return handler(data, {}) as Promise<T>;
+}
+
+function insertMirror(db: Database, id: string, handle: string, displayName: string): void {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO space_long_horizon_agents (
+       id, space_id, handle, display_name, template_key, status, instructions,
+       tool_permissions_json, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    'space-1',
+    handle,
+    displayName,
+    MIGRATED_WORKER_TEMPLATE_KEY,
+    'active',
+    '',
+    '{}',
+    now,
+    now
+  );
 }
 
 describe('setupSpaceAgentV2Handlers', () => {
@@ -271,6 +293,82 @@ describe('setupSpaceAgentV2Handlers', () => {
       await expect(call(handlers, 'spaceAgentV2.get', { id: 'ghost' })).rejects.toThrow(
         'Agent not found: ghost'
       );
+    });
+  });
+
+  describe('migrated worker mirrors', () => {
+    test('list omits the mirror rows update refuses to touch', async () => {
+      insertMirror(db, 'mirror-1', 'mirror', 'Legacy Worker');
+      agents.create({ spaceId: 'space-1', handle: 'owned' });
+
+      const { agents: listed } = await call<{ agents: SpaceAgent[] }>(
+        handlers,
+        'spaceAgentV2.list',
+        { spaceId: 'space-1' }
+      );
+
+      expect(listed.map((a) => a.handle)).toEqual(['owned']);
+    });
+
+    test('every listed agent accepts the edit the listing offers', async () => {
+      insertMirror(db, 'mirror-1', 'mirror', 'Legacy Worker');
+      agents.create({ spaceId: 'space-1', handle: 'owned' });
+
+      const { agents: listed } = await call<{ agents: SpaceAgent[] }>(
+        handlers,
+        'spaceAgentV2.list',
+        { spaceId: 'space-1' }
+      );
+      const renamed: string[] = [];
+      for (const agent of listed) {
+        const result = await call<{ agent: SpaceAgent }>(handlers, 'spaceAgentV2.update', {
+          id: agent.id,
+          displayName: `Renamed ${agent.handle}`,
+        });
+        renamed.push(result.agent.displayName);
+      }
+
+      expect(renamed).toEqual(['Renamed owned']);
+    });
+
+    test('create still rejects a handle a mirror holds', async () => {
+      insertMirror(db, 'mirror-1', 'mirror', 'Legacy Worker');
+
+      await expect(
+        call(handlers, 'spaceAgentV2.create', {
+          spaceId: 'space-1',
+          handle: 'mirror',
+          displayName: 'New Agent',
+        })
+      ).rejects.toThrow('Handle "mirror" is already in use in this space');
+    });
+
+    test('create derives a handle around one a mirror holds', async () => {
+      insertMirror(db, 'mirror-1', 'mirror-agent', 'Legacy Worker');
+
+      const { agent } = await call<{ agent: SpaceAgent }>(handlers, 'spaceAgentV2.create', {
+        spaceId: 'space-1',
+        displayName: 'Mirror Agent',
+      });
+
+      expect(agent.handle).toBe('mirror-agent-2');
+    });
+
+    test('create still rejects a display name a mirror holds', async () => {
+      insertMirror(db, 'mirror-1', 'mirror', 'Legacy Worker');
+
+      await expect(
+        call(handlers, 'spaceAgentV2.create', { spaceId: 'space-1', displayName: 'legacy worker' })
+      ).rejects.toThrow('is already used by another agent');
+    });
+
+    test('update still rejects a display name a mirror holds', async () => {
+      insertMirror(db, 'mirror-1', 'mirror', 'Legacy Worker');
+      const created = agents.create({ spaceId: 'space-1', handle: 'owned' });
+
+      await expect(
+        call(handlers, 'spaceAgentV2.update', { id: created.id, displayName: 'Legacy Worker' })
+      ).rejects.toThrow('is already used by another agent');
     });
   });
 
