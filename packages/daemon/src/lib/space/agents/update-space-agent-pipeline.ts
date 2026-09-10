@@ -1,6 +1,7 @@
 import type { AgentModelPoolEntry, SpaceAgent, UpdateSpaceAgentParams } from '@hyperneo/shared';
 import superpipe, { type Dependencies, type PipelineAPI } from 'superpipe';
 import { RESERVED_SPACE_AGENT_HANDLES, validateSlug } from '../slug.ts';
+import { firstAgentFieldError } from './agent-field-validation.ts';
 import {
   type BindableSession,
   type Gate,
@@ -33,34 +34,8 @@ export interface AdmittedUpdate {
   changes: UpdateSpaceAgentParams;
 }
 
-const THINKING_LEVELS = new Set(['off', 'think8k', 'think16k', 'think24k', 'think32k']);
-const SETTING_SOURCES = new Set(['user', 'project', 'local']);
-const AGENT_STATUSES = new Set(['active', 'paused', 'disabled', 'archived']);
 const COORDINATOR_HANDLES = new Set(['space-manager', 'coordinator']);
 const LOCKED_COORDINATOR_STATUSES = new Set(['paused', 'disabled', 'archived']);
-
-function isBlankString(value: string | null | undefined): boolean {
-  return typeof value === 'string' && value.trim() === '';
-}
-
-const STRING_FIELDS = [
-  'handle',
-  'displayName',
-  'description',
-  'instructions',
-  'model',
-  'provider',
-  'sessionId',
-] as const;
-
-function firstNonStringField(changes: UpdateSpaceAgentParams): string | null {
-  for (const field of STRING_FIELDS) {
-    const value = changes[field];
-    if (value === undefined || value === null) continue;
-    if (typeof value !== 'string') return field;
-  }
-  return null;
-}
 
 function isReservedHandle(handle: string): boolean {
   return (RESERVED_SPACE_AGENT_HANDLES as readonly string[]).includes(handle);
@@ -78,63 +53,8 @@ export function gateTarget(
 }
 
 export function gateChanges(admitted: AdmittedUpdate): Gate<AdmittedUpdate> {
-  const { changes } = admitted;
-  const nonString = firstNonStringField(changes);
-  if (nonString) {
-    return reject('invalid_request', `${nonString} must be a string`);
-  }
-  if (
-    changes.tools !== undefined &&
-    changes.tools !== null &&
-    (!Array.isArray(changes.tools) || changes.tools.some((tool) => typeof tool !== 'string'))
-  ) {
-    return reject('invalid_request', 'tools must be an array of strings');
-  }
-  if (isBlankString(changes.displayName)) {
-    return reject('invalid_request', 'displayName cannot be blank');
-  }
-  if (isBlankString(changes.handle)) {
-    return reject('invalid_request', 'handle cannot be blank');
-  }
-  if (isBlankString(changes.model)) {
-    return reject('invalid_request', 'model cannot be blank — use null to clear it');
-  }
-  if (isBlankString(changes.provider)) {
-    return reject('invalid_request', 'provider cannot be blank — use null to clear it');
-  }
-  if (
-    changes.thinkingLevel !== undefined &&
-    changes.thinkingLevel !== null &&
-    !THINKING_LEVELS.has(changes.thinkingLevel)
-  ) {
-    return reject('invalid_request', `Invalid thinkingLevel: ${String(changes.thinkingLevel)}`);
-  }
-  if (changes.settingSources !== undefined && changes.settingSources !== null) {
-    if (!Array.isArray(changes.settingSources)) {
-      return reject('invalid_request', 'settingSources must be an array');
-    }
-    const invalid = changes.settingSources.filter((source) => !SETTING_SOURCES.has(source));
-    if (invalid.length > 0) {
-      return reject('invalid_request', `Invalid settingSources: ${invalid.join(', ')}`);
-    }
-  }
-  if (
-    changes.status !== undefined &&
-    (typeof changes.status !== 'string' || !AGENT_STATUSES.has(changes.status))
-  ) {
-    return reject('invalid_request', `Invalid status: ${String(changes.status)}`);
-  }
-  if (
-    changes.autonomyLevel !== undefined &&
-    changes.autonomyLevel !== null &&
-    !(
-      Number.isInteger(changes.autonomyLevel) &&
-      changes.autonomyLevel >= 1 &&
-      changes.autonomyLevel <= 5
-    )
-  ) {
-    return reject('invalid_request', `Invalid autonomyLevel: ${String(changes.autonomyLevel)}`);
-  }
+  const fieldError = firstAgentFieldError(admitted.changes);
+  if (fieldError) return reject('invalid_request', fieldError);
   return { value: admitted };
 }
 
