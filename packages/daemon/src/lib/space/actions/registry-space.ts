@@ -306,7 +306,7 @@ export function createSpaceRegistryEntries(config: SpaceAgentToolsConfig): Actio
       family: 'agents',
       safetyClass: 'destructive',
       description:
-        'Permanently delete a user-authored agent template by key; optional CAS version fails the delete on concurrent modification; blocked while workflow slots reference the template — including definitions pinned by still-executable runs (the error lists them).',
+        'Permanently delete a user-authored agent template by key; optional CAS version fails the delete on concurrent modification; workflow references do not block deletion, since runs resolve from the template snapshot they pinned at creation time.',
       paramsDoc: 'key, expected_version?',
       paramsSchema: DeleteAgentTemplateSchema,
       autonomyRequirement: DESTRUCTIVE_ACTION_AUTONOMY_LEVEL,
