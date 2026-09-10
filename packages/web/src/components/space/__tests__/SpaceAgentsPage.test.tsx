@@ -11,6 +11,7 @@ const {
   mockCreate,
   mockUpdate,
   mockRemove,
+  mockTeardown,
   mockTemplates,
 } = vi.hoisted(() => ({
   mockAgents: { value: [] as SpaceAgent[] },
@@ -20,6 +21,7 @@ const {
   mockCreate: vi.fn(),
   mockUpdate: vi.fn(),
   mockRemove: vi.fn().mockResolvedValue(undefined),
+  mockTeardown: vi.fn(),
   mockTemplates: { value: [] as Array<{ key: string; displayName: string }> },
 }));
 
@@ -32,6 +34,7 @@ vi.mock('../../../lib/space-agent-store', () => ({
     create: mockCreate,
     update: mockUpdate,
     remove: mockRemove,
+    teardown: mockTeardown,
   },
 }));
 
@@ -74,11 +77,28 @@ describe('SpaceAgentsPage', () => {
     mockCreate.mockReset().mockResolvedValue(makeAgent('created'));
     mockUpdate.mockReset().mockResolvedValue(makeAgent('a'));
     mockRemove.mockReset().mockResolvedValue(undefined);
+    mockTeardown.mockClear();
   });
 
   it('selects the space on mount', () => {
     render(<SpaceAgentsPage spaceId="space-1" />);
     expect(mockSelectSpace).toHaveBeenCalledWith('space-1');
+  });
+
+  it('tears the store down on unmount so the space channel is released', () => {
+    const { unmount } = render(<SpaceAgentsPage spaceId="space-1" />);
+    expect(mockTeardown).not.toHaveBeenCalled();
+
+    unmount();
+    expect(mockTeardown).toHaveBeenCalled();
+  });
+
+  it('reselects and tears down when the space changes', () => {
+    const { rerender } = render(<SpaceAgentsPage spaceId="space-1" />);
+    rerender(<SpaceAgentsPage spaceId="space-2" />);
+
+    expect(mockTeardown).toHaveBeenCalled();
+    expect(mockSelectSpace).toHaveBeenLastCalledWith('space-2');
   });
 
   it('shows an empty state when there are no agents', () => {

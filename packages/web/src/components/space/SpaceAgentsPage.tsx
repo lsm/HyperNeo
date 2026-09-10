@@ -30,6 +30,9 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
 
   useEffect(() => {
     void spaceAgentStore.selectSpace(spaceId);
+    return () => {
+      spaceAgentStore.teardown();
+    };
   }, [spaceId]);
 
   const selected = agents.find((agent) => agent.id === selectedId) ?? null;
