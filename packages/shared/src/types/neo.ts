@@ -189,25 +189,6 @@ export interface CreateTaskParams {
   createdByTaskId?: string;
 }
 
-export interface UpdateTaskParams {
-  title?: string;
-  description?: string;
-  status?: TaskStatus;
-  priority?: TaskPriority;
-  progress?: number | null;
-  currentStep?: string | null;
-  result?: string | null;
-  error?: string | null;
-  dependsOn?: string[];
-  activeSession?: 'worker' | 'leader' | null;
-  prUrl?: string | null;
-  prNumber?: number | null;
-  prCreatedAt?: number | null;
-  inputDraft?: string | null;
-  archivedAt?: number | null;
-  restrictions?: TaskRestriction | null;
-}
-
 export interface SubagentConfig {
   model: string;
   provider?: string;

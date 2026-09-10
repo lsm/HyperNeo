@@ -192,40 +192,4 @@ describe('TaskRepository — short ID', () => {
       expect(tasks.find((t) => t.id === t2.id)!.shortId).toBe('t-2');
     });
   });
-
-  describe('lazy backfill in getDraftTasksByCreator', () => {
-    it('backfills short_id for legacy draft rows', () => {
-      db.prepare(
-        `INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_by_task_id, created_at, updated_at)
-				 VALUES ('draft-leg', 'room-1', 'Draft Legacy', 'D', 'draft', 'normal', '[]', 'planner-1', 1000, 1000)`
-      ).run();
-
-      const tasks = repo.getDraftTasksByCreator('planner-1');
-      expect(tasks.length).toBe(1);
-      expect(tasks[0].shortId).toBe('t-1');
-
-      const row = db.prepare(`SELECT short_id FROM tasks WHERE id = 'draft-leg'`).get() as {
-        short_id: string;
-      };
-      expect(row.short_id).toBe('t-1');
-    });
-
-    it('does not alter already-assigned short IDs in getDraftTasksByCreator', () => {
-      const task = repo.createTask({
-        roomId: 'room-1',
-        title: 'Draft',
-        description: 'D',
-        status: 'draft',
-        createdByTaskId: 'planner-2',
-      });
-      expect(task.shortId).toBe('t-1');
-
-      const beforeCounter = allocator.getCounter('task', 'room-1');
-      const tasks = repo.getDraftTasksByCreator('planner-2');
-      const afterCounter = allocator.getCounter('task', 'room-1');
-
-      expect(afterCounter).toBe(beforeCounter);
-      expect(tasks[0].shortId).toBe('t-1');
-    });
-  });
 });
