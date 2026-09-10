@@ -40,6 +40,7 @@ export interface SpaceAgentV2Deps {
   getSession(sessionId: string): SessionLookup | null;
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   legacyAgents?: Pick<SpaceLongHorizonAgentRepository, 'getById'>;
+  removeAgentSubscriptions?(spaceId: string, agentId: string): void;
 }
 
 const COORDINATOR_HANDLES = new Set([SPACE_MANAGER_HANDLE, 'coordinator']);
@@ -199,6 +200,7 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
     if (!existing) throw new Error(`Agent not found: ${id}`);
     assertAgentDeletable(existing);
     deps.agents.delete(id);
+    deps.removeAgentSubscriptions?.(existing.spaceId, id);
     await publishAgentDeleted(deps, existing.spaceId, id);
     return { id };
   });
