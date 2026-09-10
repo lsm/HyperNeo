@@ -323,6 +323,74 @@ describe('setupSpaceAgentV2Handlers', () => {
     });
   });
 
+  describe('update validation through the pipeline', () => {
+    test('rejects unknown tools', async () => {
+      const created = agents.create({ spaceId: 'space-1', handle: 'a' });
+      await expect(
+        call(handlers, 'spaceAgentV2.update', { id: created.id, tools: ['NotARealTool'] })
+      ).rejects.toThrow('Unknown tool');
+    });
+
+    test('rejects a duplicate display name', async () => {
+      agents.create({ spaceId: 'space-1', handle: 'a', displayName: 'Taken' });
+      const other = agents.create({ spaceId: 'space-1', handle: 'b', displayName: 'Other' });
+
+      await expect(
+        call(handlers, 'spaceAgentV2.update', { id: other.id, displayName: 'taken' })
+      ).rejects.toThrow('already used');
+    });
+
+    test('rejects a reserved handle', async () => {
+      const created = agents.create({ spaceId: 'space-1', handle: 'a' });
+      await expect(
+        call(handlers, 'spaceAgentV2.update', { id: created.id, handle: 'coordinator' })
+      ).rejects.toThrow('is reserved');
+    });
+
+    test('rejects a non-string provider from the payload', async () => {
+      const created = agents.create({ spaceId: 'space-1', handle: 'a' });
+      await expect(
+        call(handlers, 'spaceAgentV2.update', { id: created.id, provider: 42 })
+      ).rejects.toThrow('provider must be a string');
+    });
+
+    test('rejects an invalid thinkingLevel', async () => {
+      const created = agents.create({ spaceId: 'space-1', handle: 'a' });
+      await expect(
+        call(handlers, 'spaceAgentV2.update', { id: created.id, thinkingLevel: 'bogus' })
+      ).rejects.toThrow('Invalid thinkingLevel');
+    });
+
+    test('locks the Space Manager handle', async () => {
+      const coordinator = agents.create({ spaceId: 'space-1', handle: 'space-manager' });
+      await expect(
+        call(handlers, 'spaceAgentV2.update', { id: coordinator.id, handle: 'renamed' })
+      ).rejects.toThrow('locked');
+    });
+
+    test('rejects a session that belongs to another space', async () => {
+      const created = agents.create({ spaceId: 'space-1', handle: 'a' });
+      sessions.set('foreign', { type: 'space_chat', context: { spaceId: 'space-2' } });
+
+      await expect(
+        call(handlers, 'spaceAgentV2.update', { id: created.id, sessionId: 'foreign' })
+      ).rejects.toThrow('does not belong to space');
+    });
+
+    test('leaves the row untouched when a gate rejects', async () => {
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', instructions: 'Keep.' });
+      await expect(
+        call(handlers, 'spaceAgentV2.update', {
+          id: created.id,
+          instructions: 'Changed.',
+          tools: ['NotARealTool'],
+        })
+      ).rejects.toThrow();
+
+      expect(agents.getById(created.id)?.instructions).toBe('Keep.');
+    });
+  });
+
   describe('delete', () => {
     test('removes the agent', async () => {
       const created = agents.create({ spaceId: 'space-1', handle: 'a' });
