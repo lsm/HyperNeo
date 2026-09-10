@@ -788,18 +788,11 @@ function parseObject(value: unknown): Record<string, unknown> {
 }
 
 export function templateInstanceScanFromRepo(repo: {
-  listByTemplateKey: SpaceLongHorizonAgentRepository['listByTemplateKey'];
   clearTemplateKeyForArchivedAgents: SpaceLongHorizonAgentRepository['clearTemplateKeyForArchivedAgents'];
 }): {
-  listAgentDisplayNamesUsingTemplate(key: string): string[];
   clearArchivedInstances(key: string): void;
 } {
   return {
-    listAgentDisplayNamesUsingTemplate: (key) =>
-      repo
-        .listByTemplateKey(key)
-        .filter((agent) => agent.status !== 'archived')
-        .map((agent) => agent.displayName),
     clearArchivedInstances: (key) => {
       repo.clearTemplateKeyForArchivedAgents(key);
     },

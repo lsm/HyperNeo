@@ -1256,7 +1256,7 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
     expect(result.error).toContain('not found');
   });
 
-  test('blocks deletion while a workflow slot references the template', async () => {
+  test('deletes a template while a workflow slot still references it', async () => {
     const handlers = await createTemplate('reviewer.custom');
     makeWorkflowManager().createWorkflow({
       spaceId: ctx.spaceId,
@@ -1272,12 +1272,11 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
 
     const result = parseResult(await handlers.delete_agent_template({ key: 'reviewer.custom' }));
 
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('Release Flow');
-    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).not.toBeNull();
+    expect(result.success).toBe(true);
+    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).toBeNull();
   });
 
-  test('a run pinned to a definition that referenced the template blocks deletion', async () => {
+  test('deletes a template even when a pinned run still references it', async () => {
     const handlers = await createTemplate('reviewer.custom');
     const workflowManager = makeWorkflowManager();
     const workflow = workflowManager.createWorkflow({
@@ -1309,9 +1308,8 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
 
     const result = parseResult(await handlers.delete_agent_template({ key: 'reviewer.custom' }));
 
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('Guard Flow');
-    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).not.toBeNull();
+    expect(result.success).toBe(true);
+    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).toBeNull();
   });
 
   test('rejects a stale CAS version and reports the current one', async () => {

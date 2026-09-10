@@ -554,67 +554,6 @@ export class SpaceWorkflowRepository {
     return rows.map((r) => r.handle);
   }
 
-  getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[] {
-    const nodeRows = this.db
-      .prepare(
-        `SELECT DISTINCT workflow_id FROM space_workflow_nodes
-	         WHERE config LIKE '%"agentId":"' || ? || '"%'`
-      )
-      .all(agentId) as Array<{ workflow_id: string }>;
-
-    const workflows: SpaceWorkflow[] = [];
-    for (const { workflow_id } of nodeRows) {
-      const wf = this.getWorkflow(workflow_id);
-      if (wf) workflows.push(wf);
-    }
-    return workflows;
-  }
-
-  getWorkflowsReferencingTemplate(templateKey: string): SpaceWorkflow[] {
-    const workflowIds = new Set<string>();
-    const nodeRows = this.db
-      .prepare(
-        `SELECT DISTINCT workflow_id FROM space_workflow_nodes
-	         WHERE json_valid(config)
-	           AND EXISTS (
-	             SELECT 1 FROM json_each(COALESCE(json_extract(config, '$.agents'), '[]'))
-	             WHERE TRIM(json_extract(value, '$.templateKey')) = TRIM(?)
-	           )`
-      )
-      .all(templateKey) as Array<{ workflow_id: string }>;
-    for (const { workflow_id } of nodeRows) workflowIds.add(workflow_id);
-
-    const pinnedRows = this.db
-      .prepare(
-        `SELECT DISTINCT v.workflow_id AS workflow_id
-	         FROM space_workflow_definition_versions v
-	         JOIN space_workflow_runs r
-	           ON r.workflow_id = v.workflow_id AND r.definition_version = v.version_hash
-	         WHERE json_valid(v.payload)
-	           AND (
-	             NOT EXISTS (SELECT 1 FROM space_tasks t WHERE t.workflow_run_id = r.id)
-	             OR EXISTS (
-	               SELECT 1 FROM space_tasks t
-	               WHERE t.workflow_run_id = r.id AND t.archived_at IS NULL
-	             )
-	           )
-	           AND EXISTS (
-	             SELECT 1 FROM json_each(COALESCE(json_extract(v.payload, '$.nodes'), '[]')) n,
-	                  json_each(COALESCE(json_extract(n.value, '$.agents'), '[]')) a
-	             WHERE TRIM(json_extract(a.value, '$.templateKey')) = TRIM(?)
-	           )`
-      )
-      .all(templateKey) as Array<{ workflow_id: string }>;
-    for (const { workflow_id } of pinnedRows) workflowIds.add(workflow_id);
-
-    const workflows: SpaceWorkflow[] = [];
-    for (const workflowId of workflowIds) {
-      const wf = this.getWorkflow(workflowId);
-      if (wf) workflows.push(wf);
-    }
-    return workflows;
-  }
-
   private fetchNodes(workflowId: string, ctx?: NodeMigrationContext): WorkflowNode[] {
     const rows = this.db.prepare(LIST_SPACE_WORKFLOW_NODES_SQL).all(workflowId) as NodeRow[];
     return rows.map((r) => rowToNode(r, ctx));

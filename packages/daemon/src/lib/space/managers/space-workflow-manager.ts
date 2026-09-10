@@ -392,10 +392,6 @@ export class SpaceWorkflowManager {
     return this.repo.deleteWorkflow(id);
   }
 
-  getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[] {
-    return this.repo.getWorkflowsReferencingAgent(agentId);
-  }
-
   private validateName(spaceId: string, name: string, excludeId: string | null): void {
     if (!name) {
       throw new WorkflowValidationError('Workflow name must not be empty');

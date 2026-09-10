@@ -914,12 +914,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     deps.spaceManager,
     deps.db,
     longHorizonAgentRepo,
-    spaceWorkflowRepo,
     spaceRuntimeService,
     new SpaceAgentTemplateManager(
       spaceAgentTemplateRepo,
       undefined,
-      spaceWorkflowRepo,
       templateInstanceScanFromRepo(longHorizonAgentRepo)
     )
   );

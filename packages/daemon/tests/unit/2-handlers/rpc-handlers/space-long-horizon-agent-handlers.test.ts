@@ -49,10 +49,6 @@ describe('Space long-horizon agent handlers', () => {
     removeLongHorizonAgentSubscriptions: ReturnType<typeof mock>;
     clearLongTermAgentSessionProvider: ReturnType<typeof mock>;
   };
-  let workflowRepo: {
-    getWorkflowsReferencingAgent: ReturnType<typeof mock>;
-    getWorkflowsReferencingTemplate: ReturnType<typeof mock>;
-  };
   let internalEventBus: { publish: ReturnType<typeof mock> };
 
   beforeEach(() => {
@@ -110,10 +106,6 @@ describe('Space long-horizon agent handlers', () => {
       removeLongHorizonAgentSubscriptions: mock(() => {}),
       clearLongTermAgentSessionProvider: mock(async () => {}),
     };
-    workflowRepo = {
-      getWorkflowsReferencingAgent: mock(() => []),
-      getWorkflowsReferencingTemplate: mock(() => []),
-    };
     internalEventBus = { publish: mock(async () => {}) };
     setupSpaceAgentHandlers(
       hubData.hub,
@@ -124,7 +116,6 @@ describe('Space long-horizon agent handlers', () => {
         getRenderableTextMessages: () => [],
       } as never,
       repo,
-      workflowRepo,
       runtimeService
     );
   });
@@ -502,19 +493,6 @@ describe('Space long-horizon agent handlers', () => {
           spaceId: 'space-1',
         })
       ).rejects.toThrow('cannot be deleted');
-
-      expect(repo.delete).not.toHaveBeenCalled();
-    });
-
-    it('rejects deleting an agent referenced by workflow nodes', async () => {
-      workflowRepo.getWorkflowsReferencingAgent = mock(() => [{ id: 'wf-1', name: 'Pipe' }]);
-
-      await expect(
-        call(hubData.handlers, 'spaceAgent.delete', {
-          agentId: 'agent-1',
-          spaceId: 'space-1',
-        })
-      ).rejects.toThrow('referenced by workflow nodes');
 
       expect(repo.delete).not.toHaveBeenCalled();
     });
@@ -1441,8 +1419,7 @@ describe('spaceAgent.createReminder — nextRunAt seeding', () => {
         getSession: () => null,
         getRenderableTextMessages: () => [],
       } as never,
-      repo,
-      new SpaceWorkflowRepository(db)
+      repo
     );
   });
 
