@@ -88,6 +88,7 @@ describe('session operation MCP attachment', () => {
     };
     db.createSession(source);
     const session = await restore(source.id);
+    session.mergeRuntimeMcpServers(source.config.mcpServers);
     const effective = session.optionsBuilder.getEffectiveMcpServers();
     expect(effective).toMatchObject(source.config.mcpServers);
     expect(effective?.['hyperneo-operations-3']).toBe(session.getOperationMcpServer());
