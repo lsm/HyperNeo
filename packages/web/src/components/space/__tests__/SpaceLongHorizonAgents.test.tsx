@@ -584,28 +584,6 @@ describe('SpaceLongHorizonAgents', () => {
     await waitFor(() => expect(queryByTestId('confirm-modal')).toBeNull());
   });
 
-  it('surfaces the daemon reference-guard error and keeps the confirm dialog open', async () => {
-    mockTemplates.value = [makeTemplate({ key: 'scribe', displayName: 'Scribe', version: 4 })];
-    mockUserTemplateKeys.value = new Set(['scribe']);
-    mockDeleteTemplate.mockRejectedValueOnce(
-      new Error(
-        'Cannot delete template "scribe" - it is referenced by workflow nodes (Workflow: Release)'
-      )
-    );
-
-    const { getByRole, getByTestId } = render(<SpaceLongHorizonAgents spaceId="space-1" />);
-
-    fireEvent.click(getByRole('button', { name: 'Delete template Scribe' }));
-    fireEvent.click(getByTestId('confirm-delete-template'));
-
-    await waitFor(() =>
-      expect(getByTestId('confirm-modal-error').textContent).toBe(
-        'Cannot delete template "scribe" - it is referenced by workflow nodes (Workflow: Release)'
-      )
-    );
-    expect(getByTestId('confirm-modal')).toBeTruthy();
-  });
-
   it('surfaces the daemon RPC error and keeps the confirm dialog open', async () => {
     mockTemplates.value = [makeTemplate({ key: 'scribe', displayName: 'Scribe' })];
     mockUserTemplateKeys.value = new Set(['scribe']);

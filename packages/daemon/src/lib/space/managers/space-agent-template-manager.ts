@@ -3,7 +3,6 @@ import type {
   CreateSpaceAgentTemplateParams,
   SpaceAgentAutonomyLevel,
   SpaceAgentTemplate,
-  SpaceWorkflow,
   UpdateSpaceAgentTemplateParams,
 } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
@@ -11,7 +10,6 @@ import type {
   SpaceAgentTemplateRecord,
   SpaceAgentTemplateRepository,
 } from '../../../storage/repositories/space-agent-template-repository.ts';
-import type { SpaceWorkflowRepository } from '../../../storage/repositories/space-workflow-repository.ts';
 import { isReservedAgentHandle } from '../agent-handle.ts';
 import type { SpaceAgentResult } from '../agents/agent-validation.ts';
 import {
@@ -58,11 +56,6 @@ export interface UpdateTemplateCtx {
   template?: SpaceAgentTemplate | null;
 }
 
-export type TemplateReferenceScan = Pick<
-  SpaceWorkflowRepository,
-  'getWorkflowsReferencingTemplate'
->;
-
 export interface TemplateInstanceScan {
   clearArchivedInstances?(key: string): void;
 }
@@ -71,11 +64,9 @@ export interface DeleteTemplateCtx {
   repo: SpaceAgentTemplateRepository;
   key: string;
   expectedVersion?: number;
-  workflowReferenceScan?: TemplateReferenceScan;
   instanceScan?: TemplateInstanceScan;
   existing?: SpaceAgentTemplate;
   version?: number;
-  referencingWorkflows?: SpaceWorkflow[];
   error?: string;
   deleted?: boolean;
 }
@@ -380,21 +371,6 @@ function deleteCheckVersion(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
   };
 }
 
-function deleteCheckWorkflowReferences(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
-  if (!ctx.workflowReferenceScan) return ctx;
-  const referencingWorkflows = ctx.workflowReferenceScan.getWorkflowsReferencingTemplate(ctx.key);
-  if (referencingWorkflows.length === 0) return ctx;
-  const names = referencingWorkflows.map((workflow) => workflow.name).join(', ');
-  return {
-    ...ctx,
-    referencingWorkflows,
-    error:
-      `Template "${ctx.key}" is referenced by workflow slot(s) in: ${names}. ` +
-      'Remove or replace the templateKey in those workflows — or wait for their in-flight runs ' +
-      'to finish — before deleting the template.',
-  };
-}
-
 function deletePersist(ctx: DeleteTemplateCtx): DeleteTemplateCtx {
   const deleted = ctx.repo.delete(ctx.key, ctx.expectedVersion);
   if (deleted) {
@@ -461,8 +437,6 @@ export const runDeleteTemplate = (templatePipeline('delete-space-agent-template'
   .pipe('!hasError', 'ctx')
   .pipe(deleteCheckVersion, 'ctx', 'ctx')
   .pipe('!hasError', 'ctx')
-  .pipe(deleteCheckWorkflowReferences, 'ctx', 'ctx')
-  .pipe('!hasError', 'ctx')
   .pipe(deletePersist, 'ctx', 'ctx')
   .end('ctx') as (input: DeleteTemplateCtx) => DeleteTemplateCtx;
 
@@ -470,7 +444,6 @@ export class SpaceAgentTemplateManager {
   constructor(
     private repo: SpaceAgentTemplateRepository,
     private builtIns: BuiltInTemplateSource = getBuiltInSpaceAgentTemplates,
-    private workflowReferenceScan?: TemplateReferenceScan,
     private instanceScan?: TemplateInstanceScan
   ) {}
 
@@ -517,7 +490,6 @@ export class SpaceAgentTemplateManager {
       repo: this.repo,
       key,
       expectedVersion,
-      workflowReferenceScan: this.workflowReferenceScan,
       instanceScan: this.instanceScan,
     });
     if (ctx.error) return { ok: false, error: ctx.error };
