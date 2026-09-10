@@ -17,6 +17,7 @@ import {
   templateInstanceScanFromRepo,
 } from '../../../../src/storage/repositories/space-long-horizon-agent-repository';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
+import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
@@ -531,6 +532,30 @@ describe('Space Agent RPC Handlers', () => {
         now,
         now
       );
+      const runRepo = new SpaceWorkflowRunRepository(db as never);
+      const run = runRepo.createPinnedRun({
+        spaceId: 'space-1',
+        workflowId: 'wf-guard',
+        title: 'In-flight run',
+        rawWorkflow: {
+          id: 'wf-guard',
+          spaceId: 'space-1',
+          name: 'Release',
+          nodes: [
+            {
+              id: 'wf-guard-node',
+              name: 'Ship',
+              agents: [{ agentId: '', templateKey: 'guard.custom', name: 'Guard' }],
+            },
+          ],
+          startNodeId: 'wf-guard-node',
+          tags: [],
+          completionAutonomyLevel: 3,
+          createdAt: now,
+          updatedAt: now,
+        } as never,
+      });
+      expect(run.definitionVersion).not.toBeNull();
 
       const result = await call<{ success: boolean }>(
         hubData.handlers,
@@ -545,6 +570,7 @@ describe('Space Agent RPC Handlers', () => {
         {}
       );
       expect(list.templates.map((template) => template.key)).not.toContain('guard.custom');
+      expect(runRepo.getRun(run.id)?.definitionVersion).toBe(run.definitionVersion);
     });
     it('rejects a delete whose expected version is stale', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
