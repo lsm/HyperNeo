@@ -1,23 +1,14 @@
 import { MessageHub, WebSocketClientTransport } from '@hyperneo/shared';
-import { appState, connectionState, reconnectAttemptCount } from './state';
-import { globalStore } from './global-store';
-import {
-  markAllSessionStoresRecovering,
-  refreshAllSessionStores,
-  sessionStore,
-} from './session-store';
-import { spaceStore } from './space-store';
-import { spaceAgentStore } from './space-agent-store';
+import type { ConnectionState } from './state';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
 import { currentSessionIdSignal, slashCommandsSignal } from './signals';
-import { isAuthError } from './user-error';
-import { startAutoFlush, stopAutoFlush } from './outbound-queue';
-import { startVoiceAudioOutboxFlush, stopVoiceAudioOutboxFlush } from './voice/voice-audio-outbox';
+import { runConnectionEvent } from './connection-event-pipeline';
+import { runConnectionResume } from './connection-resume-pipeline';
 import {
-  startVoiceTranscriptOutboxFlush,
-  stopVoiceTranscriptOutboxFlush,
-} from './voice/voice-transcript-outbox';
+  createDefaultConnectionApplication,
+  type ConnectionApplication,
+} from './connection-application';
 
 if (typeof window !== 'undefined') {
   (
@@ -53,6 +44,7 @@ export function getDaemonWsUrl(
 }
 
 export class ConnectionManager {
+  private readonly application: ConnectionApplication;
   private messageHub: MessageHub | null = null;
   private transport: WebSocketClientTransport | null = null;
   private baseUrl: string;
@@ -67,7 +59,11 @@ export class ConnectionManager {
 
   private _isResuming = false;
 
-  constructor(baseUrl?: string) {
+  constructor(
+    baseUrl?: string,
+    application: ConnectionApplication = createDefaultConnectionApplication()
+  ) {
+    this.application = application;
     this.baseUrl = baseUrl || getDaemonWsUrl();
     this.setupVisibilityHandlers();
   }
@@ -151,65 +147,25 @@ export class ConnectionManager {
   }
 
   private async connect(): Promise<MessageHub> {
-    connectionState.value = 'connecting';
+    this.application.lifecycle.setState('connecting');
 
     this.messageHub = new MessageHub({
       defaultSessionId: 'global',
       debug: false,
     });
 
+    const eventEffects = this.application.createEventEffects({
+      closeTransport: () => {
+        this.transport?.close();
+      },
+      notifyConnected: () => this.notifyConnectionHandlers(),
+      getReconnectAttempts: () => this.transport?.getReconnectAttempts(),
+    });
     this.messageHub.onConnection((state, error) => {
-      if (state === 'connected' && this._isResuming) {
-        this.notifyConnectionHandlers();
-        return;
-      }
-
-      if (state === 'error' && error && isAuthError(error)) {
-        connectionState.value = 'error';
-        stopAutoFlush();
-        stopVoiceAudioOutboxFlush();
-        stopVoiceTranscriptOutboxFlush();
-        if (this.transport) {
-          this.transport.close();
-        }
-        if (
-          typeof window !== 'undefined' &&
-          !window.location.search.includes('reason=session_expired')
-        ) {
-          window.location.href = '/settings?tab=providers&reason=session_expired';
-        }
-        return;
-      }
-
-      connectionState.value = state;
-
-      if (state === 'connected') {
-        reconnectAttemptCount.value = 0;
-        startAutoFlush();
-        startVoiceAudioOutboxFlush();
-        startVoiceTranscriptOutboxFlush();
-        this.notifyConnectionHandlers();
-        void spaceAgentStore.recover();
-      }
-
-      if (state === 'reconnecting' || state === 'connecting') {
-        if (this.transport) {
-          reconnectAttemptCount.value = this.transport.getReconnectAttempts();
-        }
-      }
+      runConnectionEvent(eventEffects, state, error, this._isResuming);
     });
 
-    if (typeof window !== 'undefined') {
-      window.__messageHub = this.messageHub;
-      window.appState = appState;
-      window.__messageHubReady = false;
-      window.connectionManager = this;
-      window.globalStore = globalStore;
-      window.sessionStore = sessionStore;
-
-      window.currentSessionIdSignal = currentSessionIdSignal;
-      window.slashCommandsSignal = slashCommandsSignal;
-    }
+    this.application.lifecycle.exposeHub(this.messageHub, this);
 
     this.transport = new WebSocketClientTransport({
       url: `${this.baseUrl}/ws`,
@@ -221,8 +177,8 @@ export class ConnectionManager {
 
     this.messageHub.registerTransport(this.transport);
 
-    startVoiceAudioOutboxFlush();
-    startVoiceTranscriptOutboxFlush();
+    this.application.lifecycle.startAudio();
+    this.application.lifecycle.startTranscripts();
 
     await this.transport.initialize();
 
@@ -232,11 +188,9 @@ export class ConnectionManager {
 
     this.startPeriodicStateValidation();
 
-    startAutoFlush();
+    this.application.lifecycle.startActions();
 
-    if (typeof window !== 'undefined' && window.__messageHub) {
-      window.__messageHubReady = true;
-    }
+    this.application.lifecycle.markHubReady();
 
     return this.messageHub;
   }
@@ -278,11 +232,11 @@ export class ConnectionManager {
   async disconnect(): Promise<void> {
     this.stopPeriodicStateValidation();
 
-    stopAutoFlush();
-    stopVoiceAudioOutboxFlush();
-    stopVoiceTranscriptOutboxFlush();
+    this.application.lifecycle.stopActions();
+    this.application.lifecycle.stopAudio();
+    this.application.lifecycle.stopTranscripts();
 
-    connectionState.value = 'disconnected';
+    this.application.lifecycle.setState('disconnected');
 
     this.cleanupVisibilityHandlers();
 
@@ -301,8 +255,8 @@ export class ConnectionManager {
     return this.messageHub?.isConnected() || false;
   }
 
-  getConnectionState(): typeof connectionState.value {
-    return connectionState.value;
+  getConnectionState(): ConnectionState {
+    return this.application.lifecycle.getState();
   }
 
   private setupVisibilityHandlers(): void {
@@ -326,7 +280,7 @@ export class ConnectionManager {
 
   private async validateConnectionOnResume(): Promise<void> {
     this._isResuming = true;
-    markAllSessionStoresRecovering();
+    this.application.markSessionsRecovering();
 
     try {
       if (!this.messageHub || !this.transport) {
@@ -335,21 +289,12 @@ export class ConnectionManager {
       }
 
       try {
-        await this.messageHub.request('system.health', {}, { timeout: 3000 });
-
-        await this.messageHub.joinChannel('global');
-        const activeSpaceId = spaceStore.spaceId.value;
-        if (activeSpaceId) {
-          await this.messageHub.joinChannel(`space:${activeSpaceId}`);
-        }
-
-        await Promise.all([
-          refreshAllSessionStores(),
-          appState.refreshAll(),
-          globalStore.refresh(),
-          spaceStore.refresh(),
-          spaceAgentStore.recover(),
-        ]);
+        await runConnectionResume(
+          this.application.createResumeEffects({
+            checkHealth: () => this.messageHub!.request('system.health', {}, { timeout: 3000 }),
+            joinChannel: (channel) => this.messageHub!.joinChannel(channel),
+          })
+        );
       } catch {
         if (this.transport) {
           this.transport.forceReconnect();
@@ -358,7 +303,7 @@ export class ConnectionManager {
     } finally {
       this._isResuming = false;
       if (this.transport?.isReady()) {
-        connectionState.value = 'connected';
+        this.application.lifecycle.setState('connected');
         this.notifyConnectionHandlers();
       }
     }
@@ -404,12 +349,12 @@ export class ConnectionManager {
     this.messageHub = null;
     this.connectionPromise = null;
 
-    connectionState.value = 'connecting';
+    this.application.lifecycle.setState('connecting');
 
     try {
       await this.getHub();
     } catch {
-      connectionState.value = 'failed';
+      this.application.lifecycle.setState('failed');
     }
   }
 
@@ -439,7 +384,7 @@ export class ConnectionManager {
     if (this.transport) {
       this.transport.close();
     }
-    connectionState.value = 'disconnected';
+    this.application.lifecycle.setState('disconnected');
   }
 }
 

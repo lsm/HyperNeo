@@ -5,7 +5,7 @@ import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { createSpaceTables } from '../../helpers/space-test-db';
 import { computeDefinitionVersion } from '../../../../src/lib/space/workflows/definition-version';
-import type { SpaceWorkflow } from '@hyperneo/shared';
+import type { SpaceAgentTemplate, SpaceWorkflow } from '@hyperneo/shared';
 
 describe('SpaceWorkflowRunRepository', () => {
   let db: Database;
@@ -52,6 +52,17 @@ describe('SpaceWorkflowRunRepository', () => {
       updatedAt: 1,
       ...overrides,
     };
+  }
+
+  function pinnedPayload(versionHash: string): string {
+    return (
+      db
+        .prepare(
+          `SELECT payload FROM space_workflow_definition_versions
+           WHERE workflow_id = ? AND version_hash = ?`
+        )
+        .get(WORKFLOW_ID, versionHash) as { payload: string }
+    ).payload;
   }
 
   function seedTaskForRun(runId: string, sId: string, opts: { archived?: boolean } = {}): void {
@@ -515,6 +526,12 @@ describe('SpaceWorkflowRunRepository', () => {
       expect(ids).not.toContain(pinned.id);
     });
 
+    it('listPinnableRuns includes a taskless run, which is still executable', () => {
+      const taskless = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'No task yet' });
+
+      expect(repo.listPinnableRuns().map((r) => r.id)).toContain(taskless.id);
+    });
+
     it('listPinnableRuns excludes runs whose canonical task is archived (tombstoned)', () => {
       const live = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Live' });
       seedTaskForRun(live.id, spaceId);
@@ -543,6 +560,322 @@ describe('SpaceWorkflowRunRepository', () => {
         )
         .get(WORKFLOW_ID, stamped.definitionVersion) as { source: string };
       expect(row.source).toBe('backfill');
+    });
+
+    it('pinExistingRun embeds template snapshots so backfilled runs are not snapshot-less', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.custom', name: 'Worker' }],
+          },
+        ],
+      });
+
+      expect(
+        repo.pinExistingRun(run.id, wf, (key) =>
+          key === 'worker.custom'
+            ? ({
+                key: 'worker.custom',
+                handle: 'custom-worker',
+                displayName: 'Custom Worker',
+                description: null,
+                instructions: 'Frozen at backfill.',
+                suggestedAutonomyLevel: 2,
+                model: null,
+                provider: null,
+                modelPool: null,
+                thinkingLevel: null,
+                settingSources: null,
+                tools: null,
+                labels: [],
+                createdAt: 1,
+                updatedAt: 1,
+              } as unknown as SpaceAgentTemplate)
+            : null
+        )
+      ).toBe(true);
+
+      const stamped = repo.getRun(run.id)!;
+      const version = db
+        .prepare(
+          `SELECT payload FROM space_workflow_definition_versions
+           WHERE workflow_id = ? AND version_hash = ?`
+        )
+        .get(WORKFLOW_ID, stamped.definitionVersion) as { payload: string };
+      const pinned = JSON.parse(version.payload) as SpaceWorkflow;
+      expect(pinned.templateSnapshots?.['worker.custom']?.instructions).toBe('Frozen at backfill.');
+    });
+
+    it('backfillDefinitionPins passes the resolver through so pinned runs carry snapshots', () => {
+      const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'Legacy' });
+      seedTaskForRun(run.id, spaceId);
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.gone', name: 'Worker' }],
+          },
+        ],
+      });
+
+      expect(
+        repo.backfillDefinitionPins(
+          () => wf,
+          () => null
+        )
+      ).toBe(1);
+
+      const stamped = repo.getRun(run.id)!;
+      const version = db
+        .prepare(
+          `SELECT payload FROM space_workflow_definition_versions
+           WHERE workflow_id = ? AND version_hash = ?`
+        )
+        .get(WORKFLOW_ID, stamped.definitionVersion) as { payload: string };
+      expect(JSON.parse(version.payload).templateSnapshots).toEqual({});
+    });
+
+    it('migrateSnapshotlessPins upgrades a run pinned before snapshots existed', () => {
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.custom', name: 'Worker' }],
+          },
+        ],
+      });
+      const run = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Legacy pinned',
+        rawWorkflow: wf,
+      });
+      seedTaskForRun(run.id, spaceId);
+      const before = repo.getRun(run.id)!.definitionVersion;
+      expect(JSON.parse(pinnedPayload(before!)).templateSnapshots).toBeUndefined();
+
+      expect(
+        repo.migrateSnapshotlessPins(
+          (key) =>
+            key === 'worker.custom'
+              ? ({
+                  key: 'worker.custom',
+                  handle: 'custom-worker',
+                  displayName: 'Custom Worker',
+                  description: null,
+                  instructions: 'Frozen at migration.',
+                  suggestedAutonomyLevel: 2,
+                  model: null,
+                  provider: null,
+                  modelPool: null,
+                  thinkingLevel: null,
+                  settingSources: null,
+                  tools: null,
+                  labels: [],
+                  createdAt: 1,
+                  updatedAt: 1,
+                } as unknown as SpaceAgentTemplate)
+              : null,
+          () => wf
+        )
+      ).toBe(1);
+
+      const after = repo.getRun(run.id)!.definitionVersion;
+      expect(after).not.toBe(before);
+      const migrated = JSON.parse(pinnedPayload(after!)) as SpaceWorkflow;
+      expect(migrated.templateSnapshots?.['worker.custom']?.instructions).toBe(
+        'Frozen at migration.'
+      );
+    });
+
+    it('migrateSnapshotlessPins leaves runs that already carry a snapshot record alone', () => {
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.gone', name: 'Worker' }],
+          },
+        ],
+      });
+      const run = repo.createPinnedRun(
+        { spaceId, workflowId: WORKFLOW_ID, title: 'Already snapshotted', rawWorkflow: wf },
+        () => null
+      );
+      seedTaskForRun(run.id, spaceId);
+      const before = repo.getRun(run.id)!.definitionVersion;
+
+      expect(
+        repo.migrateSnapshotlessPins(
+          () => null,
+          () => wf
+        )
+      ).toBe(0);
+      expect(repo.getRun(run.id)!.definitionVersion).toBe(before);
+    });
+
+    it('migrateSnapshotlessPins includes a taskless run, which is still executable', () => {
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.gone', name: 'Worker' }],
+          },
+        ],
+      });
+      const run = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Crashed before task creation',
+        rawWorkflow: wf,
+      });
+      const before = repo.getRun(run.id)!.definitionVersion;
+
+      expect(
+        repo.migrateSnapshotlessPins(
+          () => null,
+          () => wf
+        )
+      ).toBe(1);
+
+      const after = repo.getRun(run.id)!.definitionVersion;
+      expect(after).not.toBe(before);
+      expect(JSON.parse(pinnedPayload(after!)).templateSnapshots).toEqual({});
+    });
+
+    it('migrateSnapshotlessPins refuses to rehash a pinned payload whose hash does not verify', () => {
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.gone', name: 'Worker' }],
+          },
+        ],
+      });
+      const run = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Tampered pin',
+        rawWorkflow: wf,
+      });
+      seedTaskForRun(run.id, spaceId);
+      const before = repo.getRun(run.id)!.definitionVersion;
+      const tampered = JSON.stringify({ ...wf, name: 'Altered after pinning' });
+      db.prepare(
+        `UPDATE space_workflow_definition_versions SET payload = ?
+         WHERE workflow_id = ? AND version_hash = ?`
+      ).run(tampered, WORKFLOW_ID, before);
+
+      expect(
+        repo.migrateSnapshotlessPins(
+          () => null,
+          () => wf
+        )
+      ).toBe(1);
+      const after = repo.getRun(run.id)!.definitionVersion;
+      expect(after).not.toBe(before);
+      expect(JSON.parse(pinnedPayload(after!)).name).toBe('My Workflow');
+    });
+
+    it('migrateSnapshotlessPins leaves an unverifiable pin alone when the workflow is gone', () => {
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.custom', name: 'Worker' }],
+          },
+        ],
+      });
+      const run = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Tampered, workflow deleted',
+        rawWorkflow: wf,
+      });
+      seedTaskForRun(run.id, spaceId);
+      const before = repo.getRun(run.id)!.definitionVersion;
+      db.prepare(
+        `UPDATE space_workflow_definition_versions SET payload = ?
+         WHERE workflow_id = ? AND version_hash = ?`
+      ).run(JSON.stringify({ ...wf, name: 'Altered' }), WORKFLOW_ID, before);
+
+      expect(
+        repo.migrateSnapshotlessPins(
+          () => null,
+          () => null
+        )
+      ).toBe(0);
+      expect(repo.getRun(run.id)!.definitionVersion).toBe(before);
+    });
+
+    it('migrateSnapshotlessPins migrates a pin whose payload is malformed JSON', () => {
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.custom', name: 'Worker' }],
+          },
+        ],
+      });
+      const run = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Corrupt payload',
+        rawWorkflow: wf,
+      });
+      seedTaskForRun(run.id, spaceId);
+      const before = repo.getRun(run.id)!.definitionVersion;
+      db.prepare(
+        `UPDATE space_workflow_definition_versions SET payload = ?
+         WHERE workflow_id = ? AND version_hash = ?`
+      ).run('{not json', WORKFLOW_ID, before);
+
+      expect(repo.listSnapshotlessPinnedRuns().map((r) => r.id)).toContain(run.id);
+      expect(
+        repo.migrateSnapshotlessPins(
+          () => null,
+          () => wf
+        )
+      ).toBe(1);
+
+      const after = repo.getRun(run.id)!.definitionVersion;
+      expect(after).not.toBe(before);
+      expect(JSON.parse(pinnedPayload(after!)).templateSnapshots).toEqual({});
+    });
+
+    it('migrateSnapshotlessPins skips runs whose task is archived', () => {
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.custom', name: 'Worker' }],
+          },
+        ],
+      });
+      const run = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Archived',
+        rawWorkflow: wf,
+      });
+      seedTaskForRun(run.id, spaceId, { archived: true });
+
+      expect(
+        repo.migrateSnapshotlessPins(
+          () => null,
+          () => wf
+        )
+      ).toBe(0);
     });
 
     it('pinExistingRun is idempotent and never overwrites an existing pin', () => {
