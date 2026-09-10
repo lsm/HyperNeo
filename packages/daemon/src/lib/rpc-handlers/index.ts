@@ -1,3 +1,4 @@
+import { setupOperationHandlers } from './operation-handlers.ts';
 import type { MessageHub } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import type { SpaceGoalOutcomeNotification } from '@hyperneo/shared';
@@ -315,6 +316,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   let inactivityRunNowCancelled = false;
   let inactivityAborted = false;
   setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
+  setupOperationHandlers(deps.messageHub, deps.jobQueue);
   setupSystemHandlers(deps.messageHub, deps.sessionManager);
   setupAuthHandlers(
     deps.messageHub,
