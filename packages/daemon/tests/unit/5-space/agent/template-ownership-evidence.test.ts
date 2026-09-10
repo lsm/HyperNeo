@@ -6,12 +6,7 @@ import {
 } from '../../../../src/lib/space/agents/template-ownership-evidence.ts';
 
 function inputs(overrides: Partial<TemplateOwnershipInputs> = {}): TemplateOwnershipInputs {
-  return {
-    templates: [],
-    agents: [],
-    workflowSlots: [],
-    ...overrides,
-  };
+  return { templates: [], agents: [], workflowSlots: [], ...overrides };
 }
 
 describe('migratedAgentIdCandidates', () => {
@@ -50,8 +45,7 @@ describe('collectTemplateOwnershipEvidence', () => {
     );
     expect([...evidence.keys()].sort()).toEqual(['custom.one', 'custom.two']);
     expect(evidence.get('custom.one')).toEqual({
-      migratedAgentSpaces: [],
-      agentReferenceSpaces: [],
+      synthesizedFromSpaces: [],
       workflowSlotSpaces: [],
     });
   });
@@ -60,66 +54,77 @@ describe('collectTemplateOwnershipEvidence', () => {
     const evidence = collectTemplateOwnershipEvidence(
       inputs({
         templates: [
-          { key: 'migrated.agent.a1', createdAt: 0 },
-          { key: 'migrated.agent.a2.m228-2', createdAt: 0 },
+          { key: 'migrated.agent.a1', createdAt: 5_000 },
+          { key: 'migrated.agent.a2.m228-2', createdAt: 5_000 },
         ],
         agents: [
-          { id: 'a1', spaceId: 'sp1', templateKey: null, createdAt: 0 },
-          { id: 'a2', spaceId: 'sp2', templateKey: null, createdAt: 0 },
+          { id: 'a1', spaceId: 'sp1', createdAt: 1_000 },
+          { id: 'a2', spaceId: 'sp2', createdAt: 1_000 },
         ],
       })
     );
-    expect(evidence.get('migrated.agent.a1')?.migratedAgentSpaces).toEqual(['sp1']);
-    expect(evidence.get('migrated.agent.a2.m228-2')?.migratedAgentSpaces).toEqual(['sp2']);
+    expect(evidence.get('migrated.agent.a1')?.synthesizedFromSpaces).toEqual(['sp1']);
+    expect(evidence.get('migrated.agent.a2.m228-2')?.synthesizedFromSpaces).toEqual(['sp2']);
   });
 
   test('keeps both Spaces when a collision key is ambiguous between two agents', () => {
     const evidence = collectTemplateOwnershipEvidence(
       inputs({
-        templates: [{ key: 'migrated.agent.a1.m228', createdAt: 0 }],
+        templates: [{ key: 'migrated.agent.a1.m228', createdAt: 5_000 }],
         agents: [
-          { id: 'a1.m228', spaceId: 'exact', templateKey: null, createdAt: 0 },
-          { id: 'a1', spaceId: 'stripped', templateKey: null, createdAt: 0 },
+          { id: 'a1.m228', spaceId: 'exact', createdAt: 1_000 },
+          { id: 'a1', spaceId: 'stripped', createdAt: 1_000 },
         ],
       })
     );
-    expect(evidence.get('migrated.agent.a1.m228')?.migratedAgentSpaces).toEqual([
+    expect(evidence.get('migrated.agent.a1.m228')?.synthesizedFromSpaces).toEqual([
       'exact',
       'stripped',
     ]);
   });
 
-  test('collects agent, workflow slot and audit references across Spaces', () => {
+  test('rejects a replacement agent created after the template it would claim', () => {
+    const evidence = collectTemplateOwnershipEvidence(
+      inputs({
+        templates: [{ key: 'migrated.agent.reused', createdAt: 1_000 }],
+        agents: [{ id: 'reused', spaceId: 'replacement', createdAt: 5_000 }],
+      })
+    );
+    expect(evidence.get('migrated.agent.reused')?.synthesizedFromSpaces).toEqual([]);
+  });
+
+  test('collects every Space whose workflow slots name the key', () => {
     const evidence = collectTemplateOwnershipEvidence(
       inputs({
         templates: [{ key: 'shared.one', createdAt: 0 }],
-        agents: [
-          { id: 'a1', spaceId: 'sp1', templateKey: 'shared.one', createdAt: 0 },
-          { id: 'a2', spaceId: 'sp2', templateKey: 'shared.one', createdAt: 0 },
-          { id: 'a3', spaceId: 'sp1', templateKey: 'shared.one', createdAt: 0 },
-        ],
         workflowSlots: [
           { spaceId: 'sp3', templateKey: 'shared.one' },
           { spaceId: 'sp3', templateKey: 'shared.one' },
+          { spaceId: 'sp4', templateKey: 'shared.one' },
         ],
       })
     );
-    const entry = evidence.get('shared.one');
-    expect(entry?.agentReferenceSpaces).toEqual(['sp1', 'sp2']);
-    expect(entry?.workflowSlotSpaces).toEqual(['sp3']);
+    expect(evidence.get('shared.one')?.workflowSlotSpaces).toEqual(['sp3', 'sp4']);
+  });
+
+  test('counts a slot reference regardless of which template generation it was written against', () => {
+    const evidence = collectTemplateOwnershipEvidence(
+      inputs({
+        templates: [{ key: 'shared.one', createdAt: 9_000 }],
+        workflowSlots: [{ spaceId: 'older-workflow', templateKey: 'shared.one' }],
+      })
+    );
+    expect(evidence.get('shared.one')?.workflowSlotSpaces).toEqual(['older-workflow']);
   });
 
   test('ignores blank Space ids and blank template references', () => {
     const evidence = collectTemplateOwnershipEvidence(
       inputs({
         templates: [{ key: 'custom.one', createdAt: 0 }],
-        agents: [{ id: 'a1', spaceId: '   ', templateKey: 'custom.one', createdAt: 0 }],
         workflowSlots: [{ spaceId: 'sp1', templateKey: '   ' }],
       })
     );
-    const entry = evidence.get('custom.one');
-    expect(entry?.agentReferenceSpaces).toEqual([]);
-    expect(entry?.workflowSlotSpaces).toEqual([]);
+    expect(evidence.get('custom.one')?.workflowSlotSpaces).toEqual([]);
   });
 
   test('trims keys and Space ids before matching', () => {
@@ -130,27 +135,5 @@ describe('collectTemplateOwnershipEvidence', () => {
       })
     );
     expect(evidence.get('custom.one')?.workflowSlotSpaces).toEqual(['sp1']);
-  });
-  test('rejects a replacement agent created after the template it would claim', () => {
-    const evidence = collectTemplateOwnershipEvidence(
-      inputs({
-        templates: [{ key: 'migrated.agent.reused', createdAt: 1_000 }],
-        agents: [{ id: 'reused', spaceId: 'replacement', templateKey: null, createdAt: 5_000 }],
-      })
-    );
-    expect(evidence.get('migrated.agent.reused')?.migratedAgentSpaces).toEqual([]);
-  });
-
-  test('rejects an agent reference that predates the current template row', () => {
-    const evidence = collectTemplateOwnershipEvidence(
-      inputs({
-        templates: [{ key: 'shared.one', createdAt: 5_000 }],
-        agents: [
-          { id: 'stale', spaceId: 'former', templateKey: 'shared.one', createdAt: 1_000 },
-          { id: 'fresh', spaceId: 'current', templateKey: 'shared.one', createdAt: 9_000 },
-        ],
-      })
-    );
-    expect(evidence.get('shared.one')?.agentReferenceSpaces).toEqual(['current']);
   });
 });

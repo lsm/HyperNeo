@@ -1,20 +1,19 @@
 import { MIGRATED_AGENT_TEMPLATE_KEY_PREFIX } from './agent-template-synthesis.ts';
 
+export interface TemplateOwnershipTemplateRow {
+  key: string;
+  createdAt: number;
+}
+
 export interface TemplateOwnershipAgentRow {
   id: string;
   spaceId: string;
-  templateKey: string | null;
   createdAt: number;
 }
 
 export interface TemplateOwnershipSlotRow {
   spaceId: string;
   templateKey: string | null;
-}
-
-export interface TemplateOwnershipTemplateRow {
-  key: string;
-  createdAt: number;
 }
 
 export interface TemplateOwnershipInputs {
@@ -24,21 +23,12 @@ export interface TemplateOwnershipInputs {
 }
 
 export interface TemplateOwnershipEvidence {
-  migratedAgentSpaces: string[];
-  agentReferenceSpaces: string[];
+  synthesizedFromSpaces: string[];
   workflowSlotSpaces: string[];
 }
 
 const MIGRATED_KEY_PREFIX = `${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.`;
 const PROBE_SUFFIX = /\.m228(?:-\d+)?$/;
-
-function emptyEvidence(): TemplateOwnershipEvidence {
-  return {
-    migratedAgentSpaces: [],
-    agentReferenceSpaces: [],
-    workflowSlotSpaces: [],
-  };
-}
 
 function addSpace(target: string[], spaceId: string | null | undefined): void {
   const trimmed = typeof spaceId === 'string' ? spaceId.trim() : '';
@@ -68,7 +58,7 @@ export function collectTemplateOwnershipEvidence(
   for (const template of inputs.templates) {
     const trimmed = normalizeKey(template.key);
     if (!trimmed) continue;
-    evidence.set(trimmed, emptyEvidence());
+    evidence.set(trimmed, { synthesizedFromSpaces: [], workflowSlotSpaces: [] });
     createdAtByKey.set(trimmed, template.createdAt);
   }
 
@@ -84,19 +74,9 @@ export function collectTemplateOwnershipEvidence(
     for (const candidate of migratedAgentIdCandidates(key)) {
       const agent = agentsById.get(candidate);
       if (agent && agent.createdAt <= createdAt) {
-        addSpace(entry.migratedAgentSpaces, agent.spaceId);
+        addSpace(entry.synthesizedFromSpaces, agent.spaceId);
       }
     }
-  }
-
-  for (const agent of inputs.agents) {
-    const referenced = normalizeKey(agent.templateKey);
-    if (!referenced) continue;
-    const entry = evidence.get(referenced);
-    const createdAt = createdAtByKey.get(referenced);
-    if (!entry || createdAt === undefined) continue;
-    if (agent.createdAt < createdAt) continue;
-    addSpace(entry.agentReferenceSpaces, agent.spaceId);
   }
 
   for (const slot of inputs.workflowSlots) {
