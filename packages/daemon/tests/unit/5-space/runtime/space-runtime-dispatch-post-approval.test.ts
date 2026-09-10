@@ -101,6 +101,7 @@ function buildRuntime(
         return { sessionId: 'stub-session' };
       },
       isSessionAlive: (sessionId: string) => liveSessions.has(sessionId),
+      isSessionInMemory: (sessionId: string) => liveSessions.has(sessionId),
       isSessionOnPostApprovalRoute: () => true,
       cancelBySessionId: (sessionId: string) => {
         cancelled.push(sessionId);

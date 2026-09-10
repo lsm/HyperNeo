@@ -96,6 +96,10 @@ import {
   MAX_BLOCKED_RUN_RETRIES,
   MAX_TASK_AGENT_CRASH_RETRIES,
   MAX_TERMINAL_ERROR_CONTINUE_RETRIES,
+  POST_APPROVAL_RECONCILE_RETRY_MS,
+  POST_APPROVAL_RECOVERY_AWAIT_MS,
+  POST_APPROVAL_DISPATCH_CLAIM_LEASE_MS,
+  POST_APPROVAL_UNRECORDED_DISPATCH_GRACE_MS,
 } from './constants.ts';
 import {
   createAgentStuckRecoveryState,
@@ -138,7 +142,9 @@ import {
   type PostApprovalRouteContext,
   type PostApprovalRouteResult,
   PostApprovalRouter,
+  selectFirstDispatchablePostApprovalRoute,
 } from './post-approval-router.ts';
+import { runPostApprovalRecoveryAdmission } from './post-approval-recovery-admission.ts';
 import { runPostApprovalRetry, TaskScopedRetrySerializer } from './post-approval-retry.ts';
 import {
   buildPromptTooLongContinueNag,
@@ -677,6 +683,38 @@ export class SpaceRuntime {
   private taskCrashCounts = new Map<string, number>();
 
   private blockedRetryCounts = new Map<string, number>();
+
+  private postApprovalReconcileNextAttempt = new Map<string, number>();
+
+  private postApprovalDispatchClaims = new Map<
+    string,
+    Array<{
+      generation: number;
+      approvedAt: number | null;
+      claimedAt: number;
+      fenced: boolean;
+    }>
+  >();
+
+  private postApprovalRecoveryInFlight = new Map<
+    string,
+    {
+      generation: number;
+      approvedAt: number | null;
+      postApprovalSessionId: string | null;
+    }
+  >();
+
+  private postApprovalRecoveryBypass = new Map<
+    string,
+    {
+      generation: number;
+      revive: boolean;
+      revivePointer: string | null;
+      adopt: boolean;
+      adoptApprovedAt: number | null;
+    }
+  >();
 
   private workflowChannelsMap = new Map<string, WorkflowChannel[]>();
 
@@ -2717,8 +2755,12 @@ export class SpaceRuntime {
     manager.attachToolContinuationRepo?.(this.toolContinuationRepo);
   }
 
+  getCurrentRuntimeGeneration(): number {
+    return this.runtimeGeneration;
+  }
+
   private postApprovalRouter: PostApprovalRouter | null = null;
-  private readonly postApprovalRetryQueue = new TaskScopedRetrySerializer();
+  private postApprovalRetryQueue = new TaskScopedRetrySerializer();
 
   async retryPostApprovalDispatch(taskId: string): Promise<PostApprovalRouteResult> {
     const manager = this.config.taskAgentManager;
@@ -2727,15 +2769,42 @@ export class SpaceRuntime {
       log.warn(`retryPostApprovalDispatch: ${reason}`);
       return { mode: 'skipped', reason };
     }
-    return this.postApprovalRetryQueue.run(taskId, () =>
-      runPostApprovalRetry({
+    const retryGeneration = this.runtimeGeneration;
+    const onlyFencedClaims = (() => {
+      const claims = this.postApprovalDispatchClaims.get(taskId) ?? [];
+      if (claims.length === 0) return false;
+      const now = Date.now();
+      const allExpired = claims.every(
+        (token) => now - token.claimedAt >= POST_APPROVAL_DISPATCH_CLAIM_LEASE_MS
+      );
+      if (allExpired) {
+        for (const token of claims) {
+          token.fenced = true;
+        }
+      }
+      return allExpired;
+    })();
+    const attempt = async (): Promise<PostApprovalRouteResult> => {
+      if (retryGeneration !== this.runtimeGeneration || this.isStopped) {
+        const reason = `post-approval retry for task ${taskId} discarded; the runtime generation changed while it was queued`;
+        log.warn(`retryPostApprovalDispatch: ${reason}`);
+        return { mode: 'skipped' as const, reason };
+      }
+      return runPostApprovalRetry({
         taskId,
         taskRepo: this.config.taskRepo,
         workflowRunRepo: this.config.workflowRunRepo,
         spaceManager: this.config.spaceManager,
-        isSessionAlive: (sessionId) => manager.isSessionAlive(sessionId),
-        dispatch: (id, approvalSource, dispatchOptions) =>
-          this.dispatchPostApproval(
+        isSessionAlive: (sessionId) => this.postApprovalWorkerLive(manager, sessionId),
+        isUnrecordedApprovalStale: (task) => this.isUnrecordedApprovalDispatchStale(task),
+        dispatch: (id, approvalSource, dispatchOptions) => {
+          if (retryGeneration !== this.runtimeGeneration || this.isStopped) {
+            return Promise.resolve({
+              mode: 'skipped' as const,
+              reason: `post-approval retry for task ${id} discarded; the runtime generation changed while its eligibility was awaited`,
+            });
+          }
+          return this.dispatchPostApproval(
             id,
             approvalSource,
             {},
@@ -2745,9 +2814,17 @@ export class SpaceRuntime {
               expectedApprovedAt: dispatchOptions?.expectedApprovedAt,
               requireSucceededRun: true,
             }
-          ),
-      })
-    );
+          );
+        },
+      });
+    };
+    if (onlyFencedClaims) {
+      log.warn(
+        `retryPostApprovalDispatch: bypassing the retry serializer for task ${taskId}; its prior attempt's claim lease expired`
+      );
+      return attempt();
+    }
+    return this.postApprovalRetryQueue.run(taskId, attempt);
   }
 
   private getPostApprovalRouter(): PostApprovalRouter | null {
@@ -2772,12 +2849,13 @@ export class SpaceRuntime {
         spawnPostApprovalSubSession: (args) => manager.spawnPostApprovalSubSession(args),
       },
       livenessProbe: {
-        isSessionAlive: (sessionId) => manager.isSessionAlive(sessionId),
+        isSessionAlive: (sessionId) => this.postApprovalWorkerLive(manager, sessionId),
       },
       validateRecordedPointer: (args) => manager.isSessionOnPostApprovalRoute(args),
       cancelSpawnedWorker: (sessionId) => manager.cancelBySessionId(sessionId),
       ownsRecordedPointer: ({ sessionId, taskId }) =>
         manager.isSessionWorkerForTask(sessionId, taskId),
+      runtimeGenerationProvider: () => this.getCurrentRuntimeGeneration(),
       goalService: this.config.goalService,
       evolutionScopeService: this.config.evolutionScopeService,
     });
@@ -2794,6 +2872,64 @@ export class SpaceRuntime {
       expectedApprovedAt?: number | null;
       requireSucceededRun?: boolean;
     } = {}
+  ): Promise<PostApprovalRouteResult> {
+    if (this.isStopped) {
+      const reason = `SpaceRuntime is stopped; refusing post-approval dispatch for task=${taskId}`;
+      log.warn(`dispatchPostApproval: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
+    const dispatchRuntimeGeneration = this.runtimeGeneration;
+    const claimTask = this.config.taskRepo.getTask(taskId);
+    const claimToken: {
+      generation: number;
+      approvedAt: number | null;
+      claimedAt: number;
+      fenced: boolean;
+    } = {
+      generation: dispatchRuntimeGeneration,
+      approvedAt: claimTask?.approvedAt ?? null,
+      claimedAt: Date.now(),
+      fenced: false,
+    };
+    const claimStack = this.postApprovalDispatchClaims.get(taskId) ?? [];
+    claimStack.push(claimToken);
+    this.postApprovalDispatchClaims.set(taskId, claimStack);
+    try {
+      return await this.dispatchPostApprovalClaimed(
+        taskId,
+        approvalSource,
+        contextExtras,
+        options,
+        dispatchRuntimeGeneration,
+        claimToken
+      );
+    } finally {
+      const outstanding = this.postApprovalDispatchClaims.get(taskId);
+      if (outstanding) {
+        const ownIndex = outstanding.indexOf(claimToken);
+        if (ownIndex >= 0) outstanding.splice(ownIndex, 1);
+        if (outstanding.length === 0) this.postApprovalDispatchClaims.delete(taskId);
+      }
+    }
+  }
+
+  private async dispatchPostApprovalClaimed(
+    taskId: string,
+    approvalSource: SpaceApprovalSource,
+    contextExtras: Omit<PostApprovalRouteContext, 'approvalSource'>,
+    options: {
+      requireAlreadyApproved?: boolean;
+      expectedWorkflowRunId?: string | null;
+      expectedApprovedAt?: number | null;
+      requireSucceededRun?: boolean;
+    },
+    dispatchRuntimeGeneration: number,
+    claimToken: {
+      generation: number;
+      approvedAt: number | null;
+      claimedAt: number;
+      fenced: boolean;
+    }
   ): Promise<PostApprovalRouteResult> {
     const router = this.getPostApprovalRouter();
     if (!router) {
@@ -2880,6 +3016,7 @@ export class SpaceRuntime {
         approvalSource,
         approvalReason: resolvedApprovalReason,
       });
+      claimToken.approvedAt = approvedTask.approvedAt ?? null;
       await this.safeOnTaskUpdated(spaceId, approvedTask);
       log.info(
         `task.status-transition: taskId=${taskId} from=${current.status} to=approved source=${approvalSource}`
@@ -2920,12 +3057,19 @@ export class SpaceRuntime {
       workspace_path: space?.workspacePath,
       ...(approvalAuthorityName ? { approval_authority: approvalAuthorityName } : {}),
     };
+    if (claimToken.fenced) {
+      const reason = `post-approval dispatch for task ${taskId} expired its claim lease; refusing to continue the stalled dispatch`;
+      log.warn(`dispatchPostApproval: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
     let routeResult: PostApprovalRouteResult;
     try {
       routeResult = await router.route(approvedTask, workflow, routeContext, {
         requireSucceededRun: options.requireSucceededRun,
         expectedApprovedAt: options.expectedApprovedAt,
         expectedWorkflowRunId: options.expectedWorkflowRunId,
+        expectedRuntimeGeneration: dispatchRuntimeGeneration,
+        claimFence: () => claimToken.fenced,
       });
     } finally {
       const latest = this.config.taskRepo.getTask(taskId);
@@ -3670,6 +3814,9 @@ export class SpaceRuntime {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
     }
+    this.postApprovalDispatchClaims.clear();
+    this.postApprovalRecoveryInFlight.clear();
+    this.postApprovalRetryQueue = new TaskScopedRetrySerializer();
     this.settleCurrentReconciliation(false);
     this.retainedEventRedispatchPending = false;
     this.unsubscribeExternalEventPublished?.();
@@ -3823,6 +3970,8 @@ export class SpaceRuntime {
 
       let activationError: unknown = null;
       const failedActivationSpaceIds = new Set<string>();
+      await this.reconcileStalledPostApprovalTasks();
+      if (generation !== this.runtimeGeneration || this.isStopped) return;
       try {
         await this.processCompletedTasks(failedActivationSpaceIds);
       } catch (err) {
@@ -7862,6 +8011,676 @@ export class SpaceRuntime {
             `SpaceRuntime: failed to auto-resume paused task ${task.id}: ${err instanceof Error ? err.message : String(err)}`
           );
         }
+      }
+    }
+  }
+
+  private hasLeasedPostApprovalClaim(task: SpaceTask): boolean {
+    const now = Date.now();
+    for (const token of this.postApprovalDispatchClaims.get(task.id) ?? []) {
+      if (token.approvedAt !== task.approvedAt) continue;
+      if (now - token.claimedAt < POST_APPROVAL_DISPATCH_CLAIM_LEASE_MS) {
+        return true;
+      }
+      token.fenced = true;
+    }
+    return false;
+  }
+
+  private isUnrecordedApprovalDispatchStale(task: SpaceTask): boolean {
+    if (task.postApprovalSessionId !== null || task.postApprovalBlockedReason) return false;
+    const claimCheckNow = Date.now();
+    for (const token of this.postApprovalDispatchClaims.get(task.id) ?? []) {
+      if (token.approvedAt !== task.approvedAt) continue;
+      if (claimCheckNow - token.claimedAt < POST_APPROVAL_DISPATCH_CLAIM_LEASE_MS) {
+        return false;
+      }
+      token.fenced = true;
+    }
+    const approvalBoundary = task.approvedAt ?? task.updatedAt;
+    return Date.now() - approvalBoundary > POST_APPROVAL_UNRECORDED_DISPATCH_GRACE_MS;
+  }
+
+  private postApprovalWorkerLive(manager: TaskAgentManager, sessionId: string): boolean {
+    if (manager.isSessionInMemory(sessionId)) return true;
+    return manager.hasPendingRateLimitCooldown?.(sessionId) ?? false;
+  }
+
+  private postApprovalShutdownFenceTripped(manager: TaskAgentManager, generation: number): boolean {
+    return (
+      generation !== this.runtimeGeneration || this.isStopped || manager.isDisposed?.() === true
+    );
+  }
+
+  private async adoptDurablePostApprovalOrphan(
+    manager: TaskAgentManager,
+    task: SpaceTask,
+    generation: number
+  ): Promise<boolean> {
+    const orphan = manager.getPostApprovalWorkerSession?.(task.id);
+    if (!orphan) return false;
+    const orphanRun = task.workflowRunId
+      ? this.config.workflowRunRepo.getRun(task.workflowRunId)
+      : null;
+    const orphanWorkflow = orphanRun?.workflowId
+      ? (this.config.spaceWorkflowManager.getWorkflowForRun(orphanRun) ?? null)
+      : null;
+    const orphanRoute = orphanWorkflow
+      ? selectFirstDispatchablePostApprovalRoute(orphanWorkflow)
+      : null;
+    const rejectedOrphanStopped = async (): Promise<boolean> => {
+      try {
+        const results = await manager.stopSessionsVerified([orphan.sessionId]);
+        return results[0]?.stopped === true;
+      } catch {
+        return false;
+      }
+    };
+    if (!orphanRoute) {
+      if (!(await rejectedOrphanStopped())) {
+        log.warn(
+          `SpaceRuntime: rejected post-approval orphan ${orphan.sessionId} for task ${task.id} (no dispatchable route) could not be stopped; deferring redispatch`
+        );
+        await this.annotateRecoveryTimeout(
+          task,
+          'post-approval orphan rejected but could not be stopped; re-dispatch deferred',
+          generation
+        );
+        return true;
+      }
+      return false;
+    }
+    if (
+      manager.isSessionOnPostApprovalRoute &&
+      !manager.isSessionOnPostApprovalRoute({
+        sessionId: orphan.sessionId,
+        taskId: task.id,
+        routeNodeId: orphanRoute.nodeId,
+        routeAgentName: orphanRoute.agentName,
+        workflowRunId: task.workflowRunId ?? null,
+      })
+    ) {
+      if (!(await rejectedOrphanStopped())) {
+        log.warn(
+          `SpaceRuntime: off-route post-approval orphan ${orphan.sessionId} for task ${task.id} could not be stopped; deferring redispatch`
+        );
+        await this.annotateRecoveryTimeout(
+          task,
+          'post-approval orphan rejected but could not be stopped; re-dispatch deferred',
+          generation
+        );
+        return true;
+      }
+      return false;
+    }
+    if (this.postApprovalShutdownFenceTripped(manager, generation)) return true;
+    let restoredId: string | null = null;
+    try {
+      restoredId =
+        (await manager.restorePostApprovalWorkerSession?.(task.id, orphan.sessionId, undefined, {
+          startQuery: false,
+          expectedApproval: {
+            approvedAt: task.approvedAt ?? null,
+            workflowRunId: task.workflowRunId ?? null,
+            postApprovalSessionId: null,
+          },
+        })) ?? null;
+    } catch {
+      restoredId = null;
+    }
+    if (this.postApprovalShutdownFenceTripped(manager, generation)) {
+      log.warn(
+        `SpaceRuntime: discarding post-approval orphan adoption for task ${task.id}; the runtime is stopping or the task agent manager is disposed`
+      );
+      if (restoredId) manager.cancelBySessionId(restoredId);
+      return true;
+    }
+    if (!restoredId || !manager.isSessionAlive(restoredId)) return false;
+    const recorded = this.config.taskRepo.casPostApprovalRouting(
+      task.id,
+      {
+        workflowRunId: task.workflowRunId ?? null,
+        approvedAt: task.approvedAt ?? null,
+        priorPostApprovalSessionId: null,
+      },
+      { postApprovalSessionId: orphan.sessionId, postApprovalStartedAt: Date.now() },
+      { requireSucceededRun: true }
+    );
+    if (recorded !== 'won') {
+      const winner = this.config.taskRepo.getTask(task.id)?.postApprovalSessionId ?? null;
+      if (winner !== restoredId) {
+        manager.cancelBySessionId(restoredId);
+      }
+      return false;
+    }
+    log.info(
+      `SpaceRuntime: adopted durable post-approval worker ${orphan.sessionId} for task ${task.id} instead of redispatching`
+    );
+    if (manager.hasPendingRateLimitCooldown?.(orphan.sessionId)) {
+      log.info(
+        `SpaceRuntime: adopted post-approval worker ${orphan.sessionId} for task ${task.id} is in a persisted rate-limit cooldown; leaving its query stopped until the cooldown expires`
+      );
+      const adoptedCooldown = this.config.taskRepo.getTask(task.id);
+      if (adoptedCooldown) await this.safeOnTaskUpdated(task.spaceId, adoptedCooldown);
+      return true;
+    }
+    let resumedId: string | null = null;
+    try {
+      resumedId =
+        (await manager.restorePostApprovalWorkerSession?.(task.id, orphan.sessionId, undefined, {
+          expectedApproval: {
+            approvedAt: task.approvedAt ?? null,
+            workflowRunId: task.workflowRunId ?? null,
+            postApprovalSessionId: orphan.sessionId,
+          },
+          expectedRuntimeGeneration: generation,
+        })) ?? null;
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: failed to resume adopted post-approval worker ${orphan.sessionId} for task ${task.id}: ${formatCommandError(err)}`
+      );
+    }
+    if (
+      this.postApprovalShutdownFenceTripped(manager, generation) ||
+      !resumedId ||
+      !(
+        manager.isSessionAlive(orphan.sessionId) &&
+        this.postApprovalWorkerResumed(manager, orphan.sessionId)
+      )
+    ) {
+      let stopConfirmed = false;
+      try {
+        const results = await manager.stopSessionsVerified([orphan.sessionId]);
+        stopConfirmed = results[0]?.stopped === true;
+      } catch {
+        stopConfirmed = false;
+      }
+      const fresh = this.config.taskRepo.getTask(task.id);
+      const ownsPointer =
+        fresh &&
+        fresh.status === 'approved' &&
+        fresh.approvedAt === task.approvedAt &&
+        fresh.postApprovalSessionId === orphan.sessionId;
+      if (!stopConfirmed) {
+        log.warn(
+          `SpaceRuntime: adopted post-approval worker ${orphan.sessionId} for task ${task.id} could not be resumed or stopped; deferring replacement`
+        );
+        if (ownsPointer) {
+          this.config.taskRepo.updateTask(task.id, {
+            postApprovalBlockedReason: `post-approval worker ${orphan.sessionId} was adopted but could not be resumed or stopped; replacement deferred`,
+          });
+          const blocked = this.config.taskRepo.getTask(task.id);
+          if (blocked) await this.safeOnTaskUpdated(task.spaceId, blocked);
+        }
+        return true;
+      }
+      if (ownsPointer) {
+        this.config.taskRepo.updateTask(task.id, {
+          postApprovalSessionId: null,
+          postApprovalBlockedReason: `post-approval worker ${orphan.sessionId} was adopted but could not be resumed; re-dispatch required`,
+        });
+        const blocked = this.config.taskRepo.getTask(task.id);
+        if (blocked) await this.safeOnTaskUpdated(task.spaceId, blocked);
+      }
+      return true;
+    }
+    const adopted = this.config.taskRepo.getTask(task.id);
+    if (adopted) await this.safeOnTaskUpdated(task.spaceId, adopted);
+    return true;
+  }
+
+  private postApprovalWorkerResumed(manager: TaskAgentManager, sessionId: string): boolean {
+    return manager.isSessionQueryActiveOrStarting?.(sessionId) ?? true;
+  }
+
+  private async reviveRecordedPostApprovalWorker(
+    manager: TaskAgentManager,
+    task: SpaceTask,
+    generation: number
+  ): Promise<'revived' | 'skip' | 'replace'> {
+    if (!task.postApprovalSessionId) return 'replace';
+    if (this.postApprovalShutdownFenceTripped(manager, generation)) return 'skip';
+    const run = task.workflowRunId ? this.config.workflowRunRepo.getRun(task.workflowRunId) : null;
+    if (!run || !isWorkflowRunSucceeded(run.status)) return 'replace';
+    const workflow = run.workflowId
+      ? (this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null)
+      : null;
+    const route = workflow ? selectFirstDispatchablePostApprovalRoute(workflow) : null;
+    if (!route) return 'replace';
+    if (
+      manager.isSessionOnPostApprovalRoute &&
+      !manager.isSessionOnPostApprovalRoute({
+        sessionId: task.postApprovalSessionId,
+        taskId: task.id,
+        routeNodeId: route.nodeId,
+        routeAgentName: route.agentName,
+        workflowRunId: task.workflowRunId ?? null,
+      })
+    ) {
+      return 'replace';
+    }
+    let restoredId: string | null = null;
+    try {
+      restoredId =
+        (await manager.restorePostApprovalWorkerSession?.(
+          task.id,
+          task.postApprovalSessionId,
+          undefined,
+          {
+            expectedApproval: {
+              approvedAt: task.approvedAt ?? null,
+              workflowRunId: task.workflowRunId ?? null,
+              postApprovalSessionId: task.postApprovalSessionId ?? null,
+            },
+            expectedRuntimeGeneration: generation,
+          }
+        )) ?? null;
+    } catch {
+      let stopConfirmed = false;
+      try {
+        const results = await manager.stopSessionsVerified([task.postApprovalSessionId]);
+        stopConfirmed = results[0]?.stopped === true;
+      } catch {
+        stopConfirmed = false;
+      }
+      if (!stopConfirmed) {
+        log.warn(
+          `SpaceRuntime: failed post-approval revival for task ${task.id} could not stop session ${task.postApprovalSessionId}; deferring replacement`
+        );
+        await this.annotateRecoveryTimeout(
+          task,
+          'post-approval revival failed and the worker could not be stopped; replacement deferred',
+          generation
+        );
+        return 'skip';
+      }
+      restoredId = null;
+    }
+    if (this.postApprovalShutdownFenceTripped(manager, generation)) {
+      if (restoredId) manager.cancelBySessionId(restoredId);
+      return 'skip';
+    }
+    if (!restoredId || !manager.isSessionAlive(restoredId)) return 'replace';
+    const fresh = this.config.taskRepo.getTask(task.id);
+    if (
+      !fresh ||
+      fresh.status !== 'approved' ||
+      fresh.approvedAt !== task.approvedAt ||
+      fresh.workflowRunId !== task.workflowRunId ||
+      fresh.postApprovalSessionId !== task.postApprovalSessionId
+    ) {
+      if ((fresh?.postApprovalSessionId ?? null) !== restoredId) {
+        manager.cancelBySessionId(restoredId);
+      }
+      return 'skip';
+    }
+    if (!this.postApprovalWorkerResumed(manager, restoredId)) {
+      let stopConfirmed = false;
+      try {
+        const results = await manager.stopSessionsVerified([restoredId]);
+        stopConfirmed = results[0]?.stopped === true;
+      } catch {
+        stopConfirmed = false;
+      }
+      if (!stopConfirmed) {
+        log.warn(
+          `SpaceRuntime: restored post-approval worker ${restoredId} for task ${task.id} was not admitted and could not be stopped; deferring replacement`
+        );
+        await this.annotateRecoveryTimeout(
+          task,
+          'post-approval worker restored but not admitted and could not be stopped; replacement deferred',
+          generation
+        );
+        return 'skip';
+      }
+      const afterStop = this.config.taskRepo.getTask(task.id);
+      if (
+        afterStop &&
+        afterStop.status === 'approved' &&
+        afterStop.approvedAt === task.approvedAt &&
+        afterStop.workflowRunId === task.workflowRunId &&
+        (afterStop.postApprovalSessionId ?? null) === (task.postApprovalSessionId ?? null)
+      ) {
+        this.config.taskRepo.updateTask(task.id, {
+          postApprovalSessionId: null,
+          postApprovalBlockedReason: `post-approval worker ${restoredId} restored but its query was not admitted; re-dispatch required`,
+        });
+        const blocked = this.config.taskRepo.getTask(task.id);
+        if (blocked) await this.safeOnTaskUpdated(task.spaceId, blocked);
+      }
+      return 'skip';
+    }
+    log.info(
+      `SpaceRuntime: resumed recorded post-approval worker ${restoredId} for task ${task.id} instead of replacing it`
+    );
+    return 'revived';
+  }
+
+  private async publishPostApprovalRecoveryUpdate(before: SpaceTask): Promise<void> {
+    const after = this.config.taskRepo.getTask(before.id);
+    if (!after) return;
+    if (
+      after.status === before.status &&
+      after.postApprovalSessionId === before.postApprovalSessionId &&
+      after.postApprovalBlockedReason === before.postApprovalBlockedReason
+    ) {
+      return;
+    }
+    await this.safeOnTaskUpdated(after.spaceId, after);
+  }
+
+  private boundPostApprovalRecoveryAwait<T>(
+    promise: Promise<T>,
+    timeoutMs: number = POST_APPROVAL_RECOVERY_AWAIT_MS
+  ): Promise<T | 'timeout'> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), timeoutMs);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+      if (timer !== undefined) clearTimeout(timer);
+    }) as Promise<T | 'timeout'>;
+  }
+
+  private currentPostApprovalBypass(
+    taskId: string,
+    generation: number
+  ):
+    | {
+        generation: number;
+        revive: boolean;
+        revivePointer: string | null;
+        adopt: boolean;
+        adoptApprovedAt: number | null;
+      }
+    | undefined {
+    const entry = this.postApprovalRecoveryBypass.get(taskId);
+    if (entry && entry.generation !== generation) {
+      this.postApprovalRecoveryBypass.delete(taskId);
+      return undefined;
+    }
+    return entry;
+  }
+
+  private readonly postApprovalTimeoutAnnotation = new Map<string, number>();
+
+  private async annotateRecoveryTimeout(
+    task: SpaceTask,
+    blockedReason: string,
+    generation: number,
+    opts?: { allowAdoptedPointerChange?: boolean }
+  ): Promise<void> {
+    const fresh = this.config.taskRepo.getTask(task.id);
+    const snapshotPointer = task.postApprovalSessionId ?? null;
+    const freshPointer = fresh?.postApprovalSessionId ?? null;
+    const pointerMatches =
+      freshPointer === snapshotPointer ||
+      (opts?.allowAdoptedPointerChange === true &&
+        snapshotPointer === null &&
+        freshPointer !== null);
+    if (
+      fresh?.status === 'approved' &&
+      !fresh.postApprovalBlockedReason &&
+      fresh.approvedAt === task.approvedAt &&
+      pointerMatches
+    ) {
+      this.config.taskRepo.updateTask(task.id, { postApprovalBlockedReason: blockedReason });
+      this.postApprovalTimeoutAnnotation.set(task.id, generation);
+      const blocked = this.config.taskRepo.getTask(task.id);
+      if (blocked) await this.safeOnTaskUpdated(task.spaceId, blocked);
+    }
+  }
+
+  private async clearRecoveryTimeout(
+    task: SpaceTask,
+    blockedReason: string,
+    generation: number
+  ): Promise<void> {
+    if (this.postApprovalTimeoutAnnotation.get(task.id) !== generation) return;
+    const settled = this.config.taskRepo.getTask(task.id);
+    if (
+      settled?.status === 'approved' &&
+      settled.approvedAt === task.approvedAt &&
+      settled.postApprovalBlockedReason === blockedReason
+    ) {
+      this.config.taskRepo.updateTask(task.id, { postApprovalBlockedReason: null });
+      this.postApprovalTimeoutAnnotation.delete(task.id);
+      const cleared = this.config.taskRepo.getTask(task.id);
+      if (cleared) await this.safeOnTaskUpdated(task.spaceId, cleared);
+    }
+  }
+
+  private async recoverPostApprovalWorkerBounded(
+    manager: TaskAgentManager,
+    task: SpaceTask,
+    generation: number,
+    awaitBudgetMs: number = POST_APPROVAL_RECOVERY_AWAIT_MS
+  ): Promise<'revived' | 'skip' | 'replace' | 'timeout'> {
+    const revivePromise = this.reviveRecordedPostApprovalWorker(manager, task, generation);
+    const marker = {
+      generation,
+      approvedAt: task.approvedAt ?? null,
+      postApprovalSessionId: task.postApprovalSessionId ?? null,
+    };
+    this.postApprovalRecoveryInFlight.set(task.id, marker);
+    revivePromise
+      .catch(() => undefined)
+      .then(async (outcome) => {
+        if (outcome === 'revived') {
+          await this.clearRecoveryTimeout(
+            task,
+            'post-approval worker revival timed out; settlement still pending',
+            generation
+          );
+        }
+        if (outcome === 'replace' && generation === this.runtimeGeneration) {
+          const existing = this.postApprovalRecoveryBypass.get(task.id) ?? {
+            generation,
+            revive: false,
+            revivePointer: null,
+            adopt: false,
+            adoptApprovedAt: null,
+          };
+          this.postApprovalRecoveryBypass.set(task.id, {
+            ...existing,
+            generation,
+            revive: true,
+            revivePointer: task.postApprovalSessionId ?? null,
+          });
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.postApprovalRecoveryInFlight.get(task.id) === marker) {
+          this.postApprovalRecoveryInFlight.delete(task.id);
+        }
+      })
+      .catch(() => undefined);
+    const revive = await this.boundPostApprovalRecoveryAwait(revivePromise, awaitBudgetMs);
+    if (revive === 'timeout') {
+      log.warn(
+        `SpaceRuntime: post-approval worker revival for task ${task.id} did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while it runs single-flight fenced`
+      );
+      await this.annotateRecoveryTimeout(
+        task,
+        'post-approval worker revival timed out; settlement still pending',
+        generation
+      );
+      return 'timeout';
+    }
+    return revive;
+  }
+
+  private async adoptPostApprovalOrphanBounded(
+    manager: TaskAgentManager,
+    task: SpaceTask,
+    generation: number,
+    awaitBudgetMs: number = POST_APPROVAL_RECOVERY_AWAIT_MS
+  ): Promise<boolean | 'timeout'> {
+    const adoptPromise = this.adoptDurablePostApprovalOrphan(manager, task, generation);
+    const marker = {
+      generation,
+      approvedAt: task.approvedAt ?? null,
+      postApprovalSessionId: task.postApprovalSessionId ?? null,
+    };
+    this.postApprovalRecoveryInFlight.set(task.id, marker);
+    adoptPromise
+      .catch(() => undefined)
+      .then(async (outcome) => {
+        if (outcome === true) {
+          await this.clearRecoveryTimeout(
+            task,
+            'post-approval worker adoption timed out; settlement still pending',
+            generation
+          );
+        }
+        if (outcome === false && generation === this.runtimeGeneration) {
+          const existing = this.postApprovalRecoveryBypass.get(task.id) ?? {
+            generation,
+            revive: false,
+            revivePointer: null,
+            adopt: false,
+            adoptApprovedAt: null,
+          };
+          this.postApprovalRecoveryBypass.set(task.id, {
+            ...existing,
+            generation,
+            adopt: true,
+            adoptApprovedAt: task.approvedAt ?? null,
+          });
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.postApprovalRecoveryInFlight.get(task.id) === marker) {
+          this.postApprovalRecoveryInFlight.delete(task.id);
+        }
+      })
+      .catch(() => undefined);
+    const adopted = await this.boundPostApprovalRecoveryAwait(adoptPromise, awaitBudgetMs);
+    if (adopted === 'timeout') {
+      log.warn(
+        `SpaceRuntime: post-approval orphan adoption for task ${task.id} did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while it runs single-flight fenced`
+      );
+      await this.annotateRecoveryTimeout(
+        task,
+        'post-approval worker adoption timed out; settlement still pending',
+        generation,
+        { allowAdoptedPointerChange: true }
+      );
+      return 'timeout';
+    }
+    return adopted;
+  }
+
+  private async reconcileStalledPostApprovalTasks(): Promise<void> {
+    const manager = this.config.taskAgentManager;
+    if (!manager) return;
+    const generation = this.runtimeGeneration;
+    const now = Date.now();
+    const scanDeadline = now + POST_APPROVAL_RECOVERY_AWAIT_MS;
+    const retries: Array<Promise<void>> = [];
+    const approvedTaskIds = new Set<string>();
+    try {
+      for (const space of await this.listActiveSpaces()) {
+        if (generation !== this.runtimeGeneration || this.isStopped) return;
+        for (const task of this.config.taskRepo.listByStatus(space.id, 'approved')) {
+          approvedTaskIds.add(task.id);
+          if (Date.now() > scanDeadline) continue;
+          const admission = await runPostApprovalRecoveryAdmission({
+            task,
+            generation,
+            now,
+            scanDeadline,
+            isDispatchDead: (candidate) =>
+              !!candidate.postApprovalSessionId &&
+              !this.postApprovalWorkerLive(manager, candidate.postApprovalSessionId),
+            isUnrecordedStale: (candidate) => this.isUnrecordedApprovalDispatchStale(candidate),
+            cadencePending: (taskId, at) => {
+              const nextAttempt = this.postApprovalReconcileNextAttempt.get(taskId);
+              return nextAttempt !== undefined && nextAttempt > at;
+            },
+            markCadence: (taskId, at) => {
+              this.postApprovalReconcileNextAttempt.set(
+                taskId,
+                at + POST_APPROVAL_RECONCILE_RETRY_MS
+              );
+            },
+            recoveryInFlight: (candidate, gen) => {
+              const marker = this.postApprovalRecoveryInFlight.get(candidate.id);
+              if (marker?.generation !== gen) return false;
+              if (marker.approvedAt !== (candidate.approvedAt ?? null)) return false;
+              const markerPointer = marker.postApprovalSessionId;
+              const candidatePointer = candidate.postApprovalSessionId ?? null;
+              return (
+                markerPointer === candidatePointer ||
+                (markerPointer === null &&
+                  candidatePointer !== null &&
+                  candidate.postApprovalBlockedReason ===
+                    'post-approval worker adoption timed out; settlement still pending')
+              );
+            },
+            hasLeasedClaim: (candidate) => this.hasLeasedPostApprovalClaim(candidate),
+            isReviveBypassed: (candidate, gen) => {
+              const entry = this.currentPostApprovalBypass(candidate.id, gen);
+              return (
+                !!entry?.revive && entry.revivePointer === (candidate.postApprovalSessionId ?? null)
+              );
+            },
+            adoptBypassed: (candidate, gen) => {
+              const entry = this.currentPostApprovalBypass(candidate.id, gen);
+              return !!entry?.adopt && entry.adoptApprovedAt === (candidate.approvedAt ?? null);
+            },
+            revive: (candidate, gen, awaitBudgetMs) =>
+              this.recoverPostApprovalWorkerBounded(
+                manager,
+                candidate,
+                gen,
+                awaitBudgetMs ?? POST_APPROVAL_RECOVERY_AWAIT_MS
+              ),
+            adopt: (candidate, gen, awaitBudgetMs) =>
+              this.adoptPostApprovalOrphanBounded(
+                manager,
+                candidate,
+                gen,
+                awaitBudgetMs ?? POST_APPROVAL_RECOVERY_AWAIT_MS
+              ),
+            clearBypass: (taskId) => {
+              this.postApprovalRecoveryBypass.delete(taskId);
+            },
+          });
+          if ('value' in admission) {
+            retries.push(
+              this.retryPostApprovalDispatch(task.id).then(
+                () => this.publishPostApprovalRecoveryUpdate(task),
+                (err: unknown) => {
+                  log.warn(
+                    `SpaceRuntime: post-approval restart reconcile failed for task ${task.id}: ${formatCommandError(err)}`
+                  );
+                  return this.publishPostApprovalRecoveryUpdate(task);
+                }
+              )
+            );
+          }
+        }
+      }
+      for (const taskId of this.postApprovalReconcileNextAttempt.keys()) {
+        if (!approvedTaskIds.has(taskId)) this.postApprovalReconcileNextAttempt.delete(taskId);
+      }
+      for (const taskId of this.postApprovalRecoveryBypass.keys()) {
+        if (!approvedTaskIds.has(taskId)) this.postApprovalRecoveryBypass.delete(taskId);
+      }
+    } catch (err) {
+      log.warn(
+        `SpaceRuntime: post-approval restart reconcile scan failed: ${formatCommandError(err)}`
+      );
+    } finally {
+      const drainBudget = Math.max(1_000, scanDeadline - Date.now());
+      const drained = await this.boundPostApprovalRecoveryAwait(Promise.all(retries), drainBudget);
+      if (drained === 'timeout') {
+        log.warn(
+          `SpaceRuntime: post-approval recovery redispatches did not settle within ${POST_APPROVAL_RECOVERY_AWAIT_MS}ms; continuing the tick while they run fenced`
+        );
       }
     }
   }

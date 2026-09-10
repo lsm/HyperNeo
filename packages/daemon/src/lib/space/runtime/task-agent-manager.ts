@@ -136,6 +136,9 @@ import {
   reopenFailedDeliveryRow,
   settleDeliveryRowStatus,
 } from './injection-delivery-steps.ts';
+import { POST_APPROVAL_COMPLETION_INSTRUCTIONS } from '@hyperneo/prompts';
+import { runDurableKickoffReuseAdmission } from './durable-kickoff-reuse-admission.ts';
+import { MAILBOX_LANE } from '../../mailbox/enqueue.ts';
 import { collectDispatchablePostApprovalRoutes } from './post-approval-router.ts';
 import {
   deliverAgentMessageToTarget,
@@ -1956,6 +1959,7 @@ export class TaskAgentManager {
         )
         .all(task.id) as Array<{ id: string }>;
       return rows.find((row) => {
+        if (this.hasDurablePostApprovalKickoff(row.id, task.id, approvedAt)) return true;
         if (!sdkMessageRepo.hasConsumedTaskInputForSession(row.id, task.id)) return false;
         return this.hasConsumedTaskInputSince(row.id, task.id, approvedAt);
       })?.id;
@@ -1968,34 +1972,116 @@ export class TaskAgentManager {
     taskId: string,
     approvedAt: number
   ): boolean {
-    const db = this.config.db.getDatabase();
-    const legacyPendingTableExists =
-      (db
+    try {
+      const db = this.config.db.getDatabase();
+      const legacyPendingTableExists = Boolean(
+        db
+          .prepare(
+            `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pending_agent_messages'`
+          )
+          .get()
+      );
+      const legacyDrainExclusion = legacyPendingTableExists
+        ? ` AND NOT EXISTS (SELECT 1 FROM pending_agent_messages p WHERE p.id = sdk_messages.sdk_uuid)`
+        : '';
+      const row = db
         .prepare(
-          `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pending_agent_messages'`
-        )
-        .get() as unknown) !== null;
-    const legacyDrainExclusion = legacyPendingTableExists
-      ? ` AND NOT EXISTS (SELECT 1 FROM pending_agent_messages p WHERE p.id = sdk_messages.sdk_uuid)`
-      : '';
-    const row = db
-      .prepare(
-        `SELECT 1 FROM sdk_messages
-          WHERE session_id = ? AND task_id = ? AND message_type = 'user'
-            AND consumed_seq IS NOT NULL AND timestamp >= ?${legacyDrainExclusion}
-            AND json_valid(sdk_message)
-            AND json_extract(sdk_message, '$.type') = 'user'
-            AND (
-              json_extract(sdk_message, '$.inputKind') = 'task'
-              OR (
-                json_type(sdk_message, '$.inputKind') IS NULL
-                AND COALESCE(CAST(json_extract(sdk_message, '$.isSynthetic') AS INTEGER), 0) = 1
+          `SELECT 1 FROM sdk_messages
+            WHERE session_id = ? AND task_id = ? AND message_type = 'user'
+              AND consumed_seq IS NOT NULL AND timestamp >= ?${legacyDrainExclusion}
+              AND json_valid(sdk_message)
+              AND json_extract(sdk_message, '$.type') = 'user'
+              AND (
+                json_extract(sdk_message, '$.inputKind') = 'task'
+                OR (
+                  json_type(sdk_message, '$.inputKind') IS NULL
+                  AND COALESCE(CAST(json_extract(sdk_message, '$.isSynthetic') AS INTEGER), 0) = 1
+                )
               )
-            )
-          LIMIT 1`
-      )
-      .get(sessionId, taskId, new Date(approvedAt).toISOString());
-    return row !== null && row !== undefined;
+            LIMIT 1`
+        )
+        .get(sessionId, taskId, new Date(approvedAt).toISOString());
+      return row !== null && row !== undefined;
+    } catch {
+      return false;
+    }
+  }
+
+  private approvalGenerationMatches(
+    taskId: string,
+    expected?: {
+      approvedAt: number | null;
+      workflowRunId: string | null;
+      postApprovalSessionId?: string | null;
+    }
+  ): boolean {
+    if (!expected) return true;
+    const task = this.config.taskRepo.getTask(taskId);
+    return (
+      !!task &&
+      task.status === 'approved' &&
+      task.approvedAt === expected.approvedAt &&
+      (task.workflowRunId ?? null) === expected.workflowRunId &&
+      (expected.postApprovalSessionId === undefined ||
+        (task.postApprovalSessionId ?? null) === expected.postApprovalSessionId)
+    );
+  }
+
+  private hasPendingPostApprovalKickoffJob(sessionId: string, approvedAt: number | null): boolean {
+    const marker = POST_APPROVAL_COMPLETION_INSTRUCTIONS.split('\n')[0] ?? '';
+    try {
+      const jobs = this.config.db
+        .getJobQueueRepo()
+        .listActiveByPayload(MAILBOX_LANE, { 'to.sessionId': sessionId });
+      return jobs.some(
+        (job) =>
+          (approvedAt === null || job.createdAt >= approvedAt) &&
+          JSON.stringify(job.payload ?? {}).includes(marker)
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private hasConsumedPostApprovalKickoffSince(
+    sessionId: string,
+    taskId: string,
+    approvedAt: number
+  ): boolean {
+    const marker = POST_APPROVAL_COMPLETION_INSTRUCTIONS.split('\n')[0] ?? '';
+    const escaped = marker.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+    try {
+      const row = this.config.db
+        .getDatabase()
+        .prepare(
+          `SELECT 1 FROM sdk_messages
+            WHERE session_id = ? AND task_id = ? AND message_type = 'user'
+              AND (consumed_seq IS NOT NULL OR send_status IN ('enqueued', 'deferred', 'submitted'))
+              AND timestamp >= ?
+              AND json_valid(sdk_message)
+              AND json_extract(sdk_message, '$.type') = 'user'
+              AND sdk_message LIKE ? ESCAPE '\\' COLLATE NOCASE
+            LIMIT 1`
+        )
+        .get(sessionId, taskId, new Date(approvedAt).toISOString(), `%${escaped}%`);
+      return row !== null && row !== undefined;
+    } catch {
+      return false;
+    }
+  }
+
+  private hasDurablePostApprovalKickoff(
+    sessionId: string,
+    taskId: string,
+    approvedAt: number | null
+  ): boolean {
+    if (
+      approvedAt !== null &&
+      this.hasConsumedPostApprovalKickoffSince(sessionId, taskId, approvedAt)
+    ) {
+      return true;
+    }
+    return this.hasPendingPostApprovalKickoffJob(sessionId, approvedAt);
   }
 
   private readPersistedRateLimitCooldown(sessionId: string): { retryAt: number } | null {
@@ -2099,10 +2185,21 @@ export class TaskAgentManager {
       startQuery?: boolean;
       replayPendingMessages?: boolean;
       onReplaySettled?: (succeeded: boolean) => void;
+      expectedApproval?: {
+        approvedAt: number | null;
+        workflowRunId: string | null;
+        postApprovalSessionId?: string | null;
+      };
+      expectedRuntimeGeneration?: number;
     } = {}
   ): Promise<string | null> {
     const identity = this.readPostApprovalWorkerIdentity(taskId, hintSessionId);
     if (!identity) return null;
+
+    const runtimeGenerationCurrent = (): boolean =>
+      options.expectedRuntimeGeneration === undefined ||
+      this.config.spaceRuntimeService.getCurrentRuntimeGeneration() ===
+        options.expectedRuntimeGeneration;
 
     return this.withSessionRestoreLock(identity.sessionId, async () => {
       const indexed = this.agentSessionIndex.get(identity.sessionId);
@@ -2112,15 +2209,21 @@ export class TaskAgentManager {
         if (
           options.startQuery !== false &&
           !indexed.isQueryActiveOrStarting() &&
-          (await this.restoredWorkerStartAdmitted(indexed, taskId))
+          runtimeGenerationCurrent() &&
+          (await this.restoredWorkerStartAdmitted(indexed, taskId)) &&
+          this.approvalGenerationMatches(taskId, options.expectedApproval) &&
+          runtimeGenerationCurrent()
         ) {
           await indexed.startStreamingQuery();
         }
         if (
           shouldReplayPendingMessages &&
+          runtimeGenerationCurrent() &&
           (await this.restoredWorkerStartAdmitted(indexed, taskId, {
             settleReplayProvisioning: true,
-          }))
+          })) &&
+          this.approvalGenerationMatches(taskId, options.expectedApproval) &&
+          runtimeGenerationCurrent()
         ) {
           const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(indexed);
           options.onReplaySettled?.(replayed);
@@ -2146,9 +2249,19 @@ export class TaskAgentManager {
       startQuery?: boolean;
       replayPendingMessages?: boolean;
       onReplaySettled?: (succeeded: boolean) => void;
+      expectedApproval?: {
+        approvedAt: number | null;
+        workflowRunId: string | null;
+        postApprovalSessionId?: string | null;
+      };
+      expectedRuntimeGeneration?: number;
     } = {}
   ): Promise<string | null> {
     const { sessionId, agentName, nodeId, agentId } = identity;
+    const runtimeGenerationCurrent = (): boolean =>
+      options.expectedRuntimeGeneration === undefined ||
+      this.config.spaceRuntimeService.getCurrentRuntimeGeneration() ===
+        options.expectedRuntimeGeneration;
 
     const indexed = this.agentSessionIndex.get(sessionId);
     if (indexed && (indexed === suppliedSession || !suppliedSession)) return sessionId;
@@ -2298,20 +2411,27 @@ export class TaskAgentManager {
       }
       if (
         options.startQuery !== false &&
-        (await this.restoredWorkerStartAdmitted(agentSession, taskId))
+        runtimeGenerationCurrent() &&
+        (await this.restoredWorkerStartAdmitted(agentSession, taskId)) &&
+        this.approvalGenerationMatches(taskId, options.expectedApproval) &&
+        runtimeGenerationCurrent()
       ) {
         await agentSession.startStreamingQuery();
       }
       if (
         shouldReplayPendingMessages &&
+        runtimeGenerationCurrent() &&
         (await this.restoredWorkerStartAdmitted(agentSession, taskId, {
           settleReplayProvisioning: true,
-        }))
+        })) &&
+        this.approvalGenerationMatches(taskId, options.expectedApproval) &&
+        runtimeGenerationCurrent()
       ) {
         const replayed = await this.replayPendingMessagesAfterRuntimeProvisioning(agentSession);
         options.onReplaySettled?.(replayed);
       }
     } catch (err) {
+      this.cancelBySessionId(sessionId);
       this.subSessions.get(taskId)?.delete(sessionId);
       this.agentSessionIndex.delete(sessionId);
       if (createdNow) {
@@ -2541,6 +2661,29 @@ export class TaskAgentManager {
     if (indexed) return this.isAgentSessionAlive(indexed);
     const cached = this.config.sessionManager.getCachedSession?.(sessionId);
     return cached ? this.isAgentSessionAlive(cached) : false;
+  }
+
+  isDisposed(): boolean {
+    return this.disposed;
+  }
+
+  isSessionQueryActiveOrStarting(sessionId: string): boolean {
+    const indexed = this.agentSessionIndex.get(sessionId);
+    return indexed ? indexed.isQueryActiveOrStarting() : false;
+  }
+
+  hasPendingRateLimitCooldown(sessionId: string): boolean {
+    if (this.readPersistedRateLimitCooldown(sessionId) === null) return false;
+    try {
+      const row = this.config.db
+        .getDatabase()
+        .prepare('SELECT status FROM sessions WHERE id = ?')
+        .get(sessionId) as { status?: string | null } | undefined;
+      if (row?.status === 'ended' || row?.status === 'archived') return false;
+    } catch {
+      return false;
+    }
+    return true;
   }
 
   isSessionInMemory(sessionId: string): boolean {
@@ -5372,12 +5515,16 @@ export class TaskAgentManager {
     requireSucceededRun?: boolean;
     expectedApprovedAt?: number | null;
     expectedWorkflowRunId?: string | null;
+    expectedRuntimeGeneration?: number;
+    claimFence?: () => boolean;
   }): Promise<{ sessionId: string }> {
     const { task, workflow, targetAgent, kickoffMessage } = args;
     const admission = {
       requireSucceededRun: args.requireSucceededRun,
       expectedApprovedAt: args.expectedApprovedAt,
       expectedWorkflowRunId: args.expectedWorkflowRunId,
+      expectedRuntimeGeneration: args.expectedRuntimeGeneration,
+      claimFence: args.claimFence,
     };
     const taskId = task.id;
     const spaceId = task.spaceId;
@@ -5473,6 +5620,40 @@ export class TaskAgentManager {
             throw err;
           }
         }
+        const kickoffReuse = await runDurableKickoffReuseAdmission({
+          task,
+          sessionId: existing.session.id,
+          hasDurableKickoff: (owner, sessionId) =>
+            this.hasDurablePostApprovalKickoff(sessionId, owner.id, owner.approvedAt ?? null),
+          isQueryActive: (sessionId) => {
+            const session = this.getSubSession(sessionId);
+            return session ? session.isQueryActiveOrStarting() : false;
+          },
+          admitResume: async (owner) => {
+            await this.assertPostApprovalSpawnAdmissible(spaceId, owner.id, {
+              expectedApprovedAt: owner.approvedAt ?? null,
+              expectedWorkflowRunId: owner.workflowRunId ?? null,
+              expectedRuntimeGeneration: admission.expectedRuntimeGeneration,
+              requireSucceededRun: admission.requireSucceededRun,
+              claimFence: admission.claimFence,
+            });
+          },
+          startQuery: async (sessionId) => {
+            const session = this.getSubSession(sessionId);
+            if (session) await session.startStreamingQuery();
+          },
+        });
+        if ('value' in kickoffReuse && kickoffReuse.value.action === 'refuse') {
+          throw new Error(`spawnPostApprovalSubSession: ${kickoffReuse.value.reason}`);
+        }
+        if ('reason' in kickoffReuse) {
+          log.info(
+            `TaskAgentManager.spawnPostApprovalSubSession: skipping kickoff inject to live session ` +
+              `${existingSessionId} — this approval generation's post-approval kickoff was already delivered (${kickoffReuse.reason})`
+          );
+          return;
+        }
+        await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, admission);
         await this.injectMessageIntoSession(existing, kickoffMessage);
       });
       log.info(
@@ -5612,6 +5793,7 @@ export class TaskAgentManager {
           await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, admission);
           await this.injectMessageIntoSession(spawned, kickoffMessage);
         });
+        await this.assertPostApprovalSpawnAdmissible(spaceId, taskId, admission);
       } catch (err) {
         this.cancelBySessionId(actualSessionId);
         throw err;
@@ -5635,9 +5817,32 @@ export class TaskAgentManager {
       requireSucceededRun?: boolean;
       expectedApprovedAt?: number | null;
       expectedWorkflowRunId?: string | null;
+      expectedRuntimeGeneration?: number;
+      claimFence?: () => boolean;
     } = {}
   ): Promise<void> {
     const freshSpace = await this.config.spaceManager.getSpace(spaceId);
+    if (
+      options.expectedRuntimeGeneration !== undefined &&
+      this.config.spaceRuntimeService.getCurrentRuntimeGeneration() !==
+        options.expectedRuntimeGeneration
+    ) {
+      throw new SpawnSupersededError(
+        `post-approval-retry-${taskId}`,
+        'runtime-generation-changed-before-kickoff'
+      );
+    }
+    if (this.disposed) {
+      throw new Error(
+        `TaskAgentManager is disposed; refusing post-approval spawn for task ${taskId}`
+      );
+    }
+    if (options.claimFence?.() === true) {
+      throw new SpawnSupersededError(
+        `post-approval-retry-${taskId}`,
+        'dispatch-claim-lease-expired'
+      );
+    }
     if (
       !freshSpace ||
       freshSpace.paused ||
