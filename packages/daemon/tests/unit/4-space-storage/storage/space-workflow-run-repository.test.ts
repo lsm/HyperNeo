@@ -54,6 +54,17 @@ describe('SpaceWorkflowRunRepository', () => {
     };
   }
 
+  function pinnedPayload(versionHash: string): string {
+    return (
+      db
+        .prepare(
+          `SELECT payload FROM space_workflow_definition_versions
+           WHERE workflow_id = ? AND version_hash = ?`
+        )
+        .get(WORKFLOW_ID, versionHash) as { payload: string }
+    ).payload;
+  }
+
   function seedTaskForRun(runId: string, sId: string, opts: { archived?: boolean } = {}): void {
     const now = Date.now();
     db.prepare(
@@ -620,6 +631,100 @@ describe('SpaceWorkflowRunRepository', () => {
         )
         .get(WORKFLOW_ID, stamped.definitionVersion) as { payload: string };
       expect(JSON.parse(version.payload).templateSnapshots).toEqual({});
+    });
+
+    it('migrateSnapshotlessPins upgrades a run pinned before snapshots existed', () => {
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.custom', name: 'Worker' }],
+          },
+        ],
+      });
+      const run = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Legacy pinned',
+        rawWorkflow: wf,
+      });
+      seedTaskForRun(run.id, spaceId);
+      const before = repo.getRun(run.id)!.definitionVersion;
+      expect(JSON.parse(pinnedPayload(before!)).templateSnapshots).toBeUndefined();
+
+      expect(
+        repo.migrateSnapshotlessPins((key) =>
+          key === 'worker.custom'
+            ? ({
+                key: 'worker.custom',
+                handle: 'custom-worker',
+                displayName: 'Custom Worker',
+                description: null,
+                instructions: 'Frozen at migration.',
+                suggestedAutonomyLevel: 2,
+                model: null,
+                provider: null,
+                modelPool: null,
+                thinkingLevel: null,
+                settingSources: null,
+                tools: null,
+                labels: [],
+                createdAt: 1,
+                updatedAt: 1,
+              } as unknown as SpaceAgentTemplate)
+            : null
+        )
+      ).toBe(1);
+
+      const after = repo.getRun(run.id)!.definitionVersion;
+      expect(after).not.toBe(before);
+      const migrated = JSON.parse(pinnedPayload(after!)) as SpaceWorkflow;
+      expect(migrated.templateSnapshots?.['worker.custom']?.instructions).toBe(
+        'Frozen at migration.'
+      );
+    });
+
+    it('migrateSnapshotlessPins leaves runs that already carry a snapshot record alone', () => {
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.gone', name: 'Worker' }],
+          },
+        ],
+      });
+      const run = repo.createPinnedRun(
+        { spaceId, workflowId: WORKFLOW_ID, title: 'Already snapshotted', rawWorkflow: wf },
+        () => null
+      );
+      seedTaskForRun(run.id, spaceId);
+      const before = repo.getRun(run.id)!.definitionVersion;
+
+      expect(repo.migrateSnapshotlessPins(() => null)).toBe(0);
+      expect(repo.getRun(run.id)!.definitionVersion).toBe(before);
+    });
+
+    it('migrateSnapshotlessPins skips runs whose task is archived', () => {
+      const wf = rawWorkflow({
+        nodes: [
+          {
+            id: 'n1',
+            name: 'Build',
+            agents: [{ agentId: '', templateKey: 'worker.custom', name: 'Worker' }],
+          },
+        ],
+      });
+      const run = repo.createPinnedRun({
+        spaceId,
+        workflowId: WORKFLOW_ID,
+        title: 'Archived',
+        rawWorkflow: wf,
+      });
+      seedTaskForRun(run.id, spaceId, { archived: true });
+
+      expect(repo.migrateSnapshotlessPins(() => null)).toBe(0);
     });
 
     it('pinExistingRun is idempotent and never overwrites an existing pin', () => {
