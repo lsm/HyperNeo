@@ -135,6 +135,7 @@ import { classifyLastMessageForIdleAgent } from './last-message-classifier.ts';
 import type { SelectWorkflowWithLlm } from './llm-workflow-selector.ts';
 import {
   clearPendingCompletionState,
+  mapPostApprovalDispatchWarning,
   type PostApprovalRouteContext,
   type PostApprovalRouteResult,
   PostApprovalRouter,
@@ -2793,6 +2794,8 @@ export class SpaceRuntime {
       expectedWorkflowRunId?: string | null;
       expectedApprovedAt?: number | null;
       requireSucceededRun?: boolean;
+      expectedStatus?: SpaceTaskStatus;
+      expectedCheckpointAt?: number | null;
     } = {}
   ): Promise<PostApprovalRouteResult> {
     const router = this.getPostApprovalRouter();
@@ -2839,6 +2842,26 @@ export class SpaceRuntime {
       return { mode: 'skipped', reason };
     }
 
+    if (
+      options.expectedStatus !== undefined &&
+      current.status !== 'approved' &&
+      current.status !== options.expectedStatus
+    ) {
+      const reason = `task ${taskId} is '${current.status}' but the dispatch admitted '${options.expectedStatus}'; refusing the stale dispatch`;
+      log.warn(`dispatchPostApproval: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
+
+    if (
+      options.expectedCheckpointAt !== undefined &&
+      current.status !== 'approved' &&
+      (current.pendingCompletionSubmittedAt ?? null) !== options.expectedCheckpointAt
+    ) {
+      const reason = `task ${taskId} changed its review checkpoint since dispatch admission; refusing the stale dispatch`;
+      log.warn(`dispatchPostApproval: ${reason}`);
+      return { mode: 'skipped', reason };
+    }
+
     const spaceId = current.spaceId;
     const space = await this.config.spaceManager.getSpace(spaceId);
     const run = current.workflowRunId
@@ -2846,11 +2869,21 @@ export class SpaceRuntime {
       : null;
     const workflow = run ? (this.config.spaceWorkflowManager.getWorkflowForRun(run) ?? null) : null;
 
-    if (options.expectedApprovedAt !== undefined || options.expectedWorkflowRunId !== undefined) {
+    const generationFenced =
+      options.expectedApprovedAt !== undefined ||
+      options.expectedWorkflowRunId !== undefined ||
+      options.expectedStatus !== undefined ||
+      options.expectedCheckpointAt !== undefined;
+    if (generationFenced) {
       const rechecked = this.config.taskRepo.getTask(taskId);
       if (
         !rechecked ||
-        rechecked.status !== 'approved' ||
+        (options.requireAlreadyApproved && rechecked.status !== 'approved') ||
+        (rechecked.status !== 'approved' &&
+          ((options.expectedStatus !== undefined && rechecked.status !== options.expectedStatus) ||
+            (options.expectedCheckpointAt !== undefined &&
+              (rechecked.pendingCompletionSubmittedAt ?? null) !==
+                options.expectedCheckpointAt))) ||
         (options.expectedWorkflowRunId !== undefined &&
           (rechecked.workflowRunId ?? null) !== options.expectedWorkflowRunId) ||
         (options.expectedApprovedAt !== undefined &&
@@ -2953,6 +2986,69 @@ export class SpaceRuntime {
       }
     }
     return routeResult;
+  }
+
+  private async dispatchAgentApprovalRecordingFailure(
+    spaceId: string,
+    taskId: string,
+    admitted: { status: SpaceTaskStatus; checkpointAt: number | null }
+  ): Promise<PostApprovalRouteResult | null> {
+    const preDispatch = this.config.taskRepo.getTask(taskId);
+    try {
+      const result = await this.dispatchPostApproval(
+        taskId,
+        'agent',
+        {},
+        {
+          expectedStatus: admitted.status,
+          expectedCheckpointAt: admitted.checkpointAt,
+        }
+      );
+      if (result.mode === 'skipped') {
+        this.recordBlockedApprovalDispatchIfUnrecorded(spaceId, taskId, preDispatch, result.reason);
+      }
+      return result;
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      this.recordBlockedApprovalDispatchIfUnrecorded(spaceId, taskId, preDispatch, detail);
+      const afterCommit = this.config.taskRepo.getTask(taskId);
+      log.warn(
+        `SpaceRuntime: agent post-approval dispatch failed for task ${taskId} ` +
+          `(status=${afterCommit?.status ?? 'missing'}): ${detail}`
+      );
+      return null;
+    }
+  }
+
+  private recordBlockedApprovalDispatchIfUnrecorded(
+    spaceId: string,
+    taskId: string,
+    preDispatch: SpaceTask | null,
+    reason: string
+  ): void {
+    const fresh = this.config.taskRepo.getTask(taskId);
+    if (!fresh || fresh.status !== 'approved') return;
+    if (fresh.postApprovalSessionId != null) return;
+    if (fresh.postApprovalBlockedReason != null) return;
+    if (
+      preDispatch?.status === 'approved' &&
+      (fresh.approvedAt !== preDispatch.approvedAt ||
+        fresh.workflowRunId !== preDispatch.workflowRunId)
+    ) {
+      return;
+    }
+    this.config.taskRepo.updateTask(taskId, {
+      postApprovalBlockedReason: mapPostApprovalDispatchWarning(reason),
+    });
+    void this.safeOnTaskUpdated(spaceId, this.config.taskRepo.getTask(taskId) ?? fresh).catch(
+      (err: unknown) => {
+        log.warn(
+          `SpaceRuntime: failed to emit task update after recording blocked dispatch for ${taskId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+    );
   }
 
   private async safeNotify(event: SpaceNotificationEvent): Promise<void> {
@@ -3530,7 +3626,12 @@ export class SpaceRuntime {
         freshSummary ?? existingResult ?? reportedSummary ?? summaryFromSibling ?? null;
       const nextReportedSummary = freshSummary ?? reportedSummary ?? summaryFromSibling ?? null;
 
-      if (!TERMINAL_RUN_RECONCILE_SETTLED_TASK_STATUSES.includes(canonicalTask.status)) {
+      const orphanedReviewApproval =
+        canonicalTask.status === 'review' && canonicalTask.reportedStatus === 'done';
+      if (
+        orphanedReviewApproval ||
+        !TERMINAL_RUN_RECONCILE_SETTLED_TASK_STATUSES.includes(canonicalTask.status)
+      ) {
         const updates = this.buildTaskOutcomeUpdates(
           canonicalTask,
           nextResult,
@@ -3539,7 +3640,10 @@ export class SpaceRuntime {
         if (updates) {
           await this.updateTaskAndEmit(run.spaceId, canonicalTask.id, updates);
         }
-        await this.dispatchPostApproval(canonicalTask.id, 'agent');
+        await this.dispatchAgentApprovalRecordingFailure(run.spaceId, canonicalTask.id, {
+          status: canonicalTask.status,
+          checkpointAt: canonicalTask.pendingCompletionSubmittedAt ?? null,
+        });
       } else {
         const updates = this.buildTaskOutcomeUpdates(
           canonicalTask,
@@ -5943,10 +6047,12 @@ export class SpaceRuntime {
     });
 
     const alreadyResolved = isTaskAlreadyResolved(canonicalTask.status);
+    const agentSelfApprovedReview =
+      canonicalTask.status === 'review' && canonicalTask.reportedStatus === 'done';
     let finalTaskStatus: SpaceTask['status'] = canonicalTask.status;
     let spawnedPostApprovalSessionId: string | undefined;
 
-    if (!alreadyResolved) {
+    if (!alreadyResolved || agentSelfApprovedReview) {
       const updates = this.buildTaskOutcomeUpdates(
         canonicalTask,
         nextTaskResult,
@@ -5955,16 +6061,28 @@ export class SpaceRuntime {
       if (updates) {
         await this.updateTaskAndEmit(meta.spaceId, canonicalTask.id, updates);
       }
-      const result = await this.dispatchPostApproval(canonicalTask.id, 'agent');
-      const postApprovalSessionId =
-        result.mode === 'spawn' || result.mode === 'already-routed'
-          ? result.postApprovalSessionId
-          : undefined;
-      spawnedPostApprovalSessionId = resolveSpawnedPostApprovalSession(
-        result.mode,
-        postApprovalSessionId
+      const result = await this.dispatchAgentApprovalRecordingFailure(
+        meta.spaceId,
+        canonicalTask.id,
+        {
+          status: canonicalTask.status,
+          checkpointAt: canonicalTask.pendingCompletionSubmittedAt ?? null,
+        }
       );
-      finalTaskStatus = mapFinalTaskStatus(result.mode, canonicalTask.status);
+      if (result && result.mode !== 'skipped') {
+        const postApprovalSessionId =
+          result.mode === 'spawn' || result.mode === 'already-routed'
+            ? result.postApprovalSessionId
+            : undefined;
+        spawnedPostApprovalSessionId = resolveSpawnedPostApprovalSession(
+          result.mode,
+          postApprovalSessionId
+        );
+        finalTaskStatus = mapFinalTaskStatus(result.mode, canonicalTask.status);
+      } else {
+        const freshFailureState = this.config.taskRepo.getTask(canonicalTask.id);
+        finalTaskStatus = freshFailureState?.status ?? canonicalTask.status;
+      }
     } else {
       const updates = this.buildTaskOutcomeUpdates(
         canonicalTask,
@@ -5978,9 +6096,14 @@ export class SpaceRuntime {
 
     if (isSettlementTerminal(finalTaskStatus)) {
       const sourceNodeId = resolveQuiesceSourceNodeId(canonicalTask, meta.workflow.endNodeId);
+      const freshTask = this.config.taskRepo.getTask(canonicalTask.id);
+      const routedSessionId =
+        freshTask?.status === 'approved' && freshTask.postApprovalSessionId
+          ? freshTask.postApprovalSessionId
+          : spawnedPostApprovalSessionId;
       const siblingsToQuiesce = selectSiblingsToQuiesce(
         this.config.nodeExecutionRepo.listByWorkflowRun(runId),
-        spawnedPostApprovalSessionId,
+        routedSessionId,
         sourceNodeId
       );
       for (const sibling of siblingsToQuiesce) {

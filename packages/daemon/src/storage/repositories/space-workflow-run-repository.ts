@@ -325,6 +325,15 @@ export class SpaceWorkflowRunRepository {
              )
            )
            OR (
+             run.status = 'done'
+             AND EXISTS (
+               SELECT 1 FROM space_tasks t
+                WHERE t.workflow_run_id = run.id
+                  AND t.status = 'review'
+                  AND t.reported_status = 'done'
+             )
+           )
+           OR (
              run.status = 'cancelled'
              AND EXISTS (
                SELECT 1 FROM space_tasks t

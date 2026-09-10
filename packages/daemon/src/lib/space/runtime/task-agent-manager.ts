@@ -5064,6 +5064,17 @@ export class TaskAgentManager {
           taskManager: boundTaskManager,
           spaceManager: this.config.spaceManager,
           internalEventBus: this.config.internalEventBus,
+          dispatchApproval: (fence) =>
+            this.config.spaceRuntimeService.dispatchPostApproval(
+              spaceId,
+              taskId,
+              'agent',
+              undefined,
+              {
+                expectedStatus: fence.expectedStatus,
+                expectedCheckpointAt: fence.expectedCheckpointAt,
+              }
+            ),
         })
       : undefined;
     const onApproveTask = endNodeHandlers?.onApproveTask;
