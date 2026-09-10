@@ -237,7 +237,6 @@ describe('Space Agent RPC Handlers', () => {
       new SpaceAgentTemplateManager(
         new SpaceAgentTemplateRepository(db as any),
         undefined,
-        workflowRepo,
         templateInstanceScanFromRepo(longHorizonRepo)
       )
     );
@@ -515,13 +514,12 @@ describe('Space Agent RPC Handlers', () => {
       ).rejects.toThrow('Template not found: missing.custom');
     });
 
-    it('blocks deleting a template referenced by a workflow node slot in any space', async () => {
+    it('deletes a template that a workflow slot and a live pinned run both reference', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
         key: 'guard.custom',
         handle: 'guard',
       });
-      insertSpace(db, 'space-2');
-      insertWorkflow(db, 'wf-guard', 'space-2', 'Release');
+      insertWorkflow(db, 'wf-guard', 'space-1', 'Release');
       const now = Date.now();
       db.prepare(
         `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
@@ -534,181 +532,20 @@ describe('Space Agent RPC Handlers', () => {
         now
       );
 
-      await expect(
-        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'guard.custom' })
-      ).rejects.toThrow(
-        'Template "guard.custom" is referenced by workflow slot(s) in: Release. ' +
-          'Remove or replace the templateKey in those workflows — or wait for their in-flight runs ' +
-          'to finish — before deleting the template.'
+      const result = await call<{ success: boolean }>(
+        hubData.handlers,
+        'spaceAgent.deleteTemplate',
+        { key: 'guard.custom' }
       );
 
+      expect(result.success).toBe(true);
       const list = await call<{ templates: Array<{ key: string }> }>(
         hubData.handlers,
         'spaceAgent.listTemplates',
         {}
       );
-      expect(list.templates.map((template) => template.key)).toContain('guard.custom');
+      expect(list.templates.map((template) => template.key)).not.toContain('guard.custom');
     });
-
-    it('does not block deletion when only a longer key sharing a prefix is referenced', async () => {
-      await call(hubData.handlers, 'spaceAgent.createTemplate', {
-        key: 'guard.custom',
-        handle: 'guard',
-      });
-      insertWorkflow(db, 'wf-prefix', 'space-1', 'Prefix');
-      const now = Date.now();
-      db.prepare(
-        `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-      ).run(
-        'wf-prefix-node',
-        'wf-prefix',
-        'Ship',
-        JSON.stringify({
-          agents: [{ agentId: '', templateKey: 'guard.custom-2', name: 'Guard' }],
-        }),
-        now,
-        now
-      );
-
-      const result = await call<{ success: boolean }>(
-        hubData.handlers,
-        'spaceAgent.deleteTemplate',
-        { key: 'guard.custom' }
-      );
-
-      expect(result.success).toBe(true);
-    });
-
-    it('matches template keys exactly rather than by SQL wildcard semantics', async () => {
-      await call(hubData.handlers, 'spaceAgent.createTemplate', {
-        key: 'qa_%',
-        handle: 'wild',
-      });
-      insertWorkflow(db, 'wf-wild', 'space-1', 'Wild');
-      const now = Date.now();
-      db.prepare(
-        `INSERT INTO space_workflow_nodes (id, workflow_id, name, config, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-      ).run(
-        'wf-wild-node',
-        'wf-wild',
-        'Ship',
-        JSON.stringify({ agents: [{ agentId: '', templateKey: 'qaXYZcustom', name: 'W' }] }),
-        now,
-        now
-      );
-
-      const wildResult = await call<{ success: boolean }>(
-        hubData.handlers,
-        'spaceAgent.deleteTemplate',
-        { key: 'qa_%' }
-      );
-      expect(wildResult.success).toBe(true);
-    });
-
-    it('blocks deleting a template referenced by a nonterminal pinned run', async () => {
-      await call(hubData.handlers, 'spaceAgent.createTemplate', {
-        key: 'guard.custom',
-        handle: 'guard',
-      });
-      insertWorkflow(db, 'wf-pinned', 'space-1', 'Pinned Flow');
-      const now = Date.now();
-      const payload = JSON.stringify({
-        id: 'wf-pinned',
-        spaceId: 'space-1',
-        name: 'Pinned Flow',
-        nodes: [
-          {
-            id: 'p1',
-            name: 'Ship',
-            agents: [{ agentId: '', templateKey: 'guard.custom', name: 'Guard' }],
-          },
-        ],
-      });
-      db.prepare(
-        `INSERT INTO space_workflow_definition_versions
-           (workflow_id, version_hash, space_id, payload, source, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      ).run('wf-pinned', 'vh-guard', 'space-1', payload, 'run_create', now);
-      db.prepare(
-        `INSERT INTO space_workflow_runs
-           (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run('run-guard', 'space-1', 'wf-pinned', 'vh-guard', 'Run 1', 'in_progress', now, now);
-
-      await expect(
-        call(hubData.handlers, 'spaceAgent.deleteTemplate', { key: 'guard.custom' })
-      ).rejects.toThrow(
-        'Template "guard.custom" is referenced by workflow slot(s) in: Pinned Flow. ' +
-          'Remove or replace the templateKey in those workflows — or wait for their in-flight runs ' +
-          'to finish — before deleting the template.'
-      );
-    });
-
-    it('allows deleting a template whose pinned references are on fully archived runs only', async () => {
-      await call(hubData.handlers, 'spaceAgent.createTemplate', {
-        key: 'guard.custom',
-        handle: 'guard',
-      });
-      insertWorkflow(db, 'wf-terminal', 'space-1', 'Terminal Flow');
-      const now = Date.now();
-      const payload = JSON.stringify({
-        id: 'wf-terminal',
-        spaceId: 'space-1',
-        name: 'Terminal Flow',
-        nodes: [
-          {
-            id: 't1',
-            name: 'Ship',
-            agents: [{ agentId: '', templateKey: 'guard.custom', name: 'Guard' }],
-          },
-        ],
-      });
-      db.prepare(
-        `INSERT INTO space_workflow_definition_versions
-           (workflow_id, version_hash, space_id, payload, source, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      ).run('wf-terminal', 'vh-terminal', 'space-1', payload, 'run_create', now);
-      db.prepare(
-        `INSERT INTO space_workflow_runs
-           (id, space_id, workflow_id, definition_version, title, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run('run-terminal', 'space-1', 'wf-terminal', 'vh-terminal', 'Run 2', 'done', now, now);
-      db.prepare(`INSERT INTO space_tasks (id, workflow_run_id, archived_at) VALUES (?, ?, ?)`).run(
-        'task-terminal',
-        'run-terminal',
-        now
-      );
-
-      const result = await call<{ success: boolean }>(
-        hubData.handlers,
-        'spaceAgent.deleteTemplate',
-        { key: 'guard.custom' }
-      );
-      expect(result.success).toBe(true);
-    });
-
-    it('ignores archived instances when guarding template deletion', async () => {
-      await call(hubData.handlers, 'spaceAgent.createTemplate', {
-        key: 'guard.custom',
-        handle: 'guard',
-      });
-      longHorizonRepo.create({
-        spaceId: 'space-1',
-        handle: 'scribe',
-        displayName: 'Scribe',
-        templateKey: 'guard.custom',
-        instructions: 'Take notes.',
-        status: 'archived',
-      });
-
-      const result = await call<{ success: boolean }>(
-        hubData.handlers,
-        'spaceAgent.deleteTemplate',
-        { key: 'guard.custom' }
-      );
-      expect(result.success).toBe(true);
-    });
-
     it('rejects a delete whose expected version is stale', async () => {
       await call(hubData.handlers, 'spaceAgent.createTemplate', {
         key: 'guard.custom',
