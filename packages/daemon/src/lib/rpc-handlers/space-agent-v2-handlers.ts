@@ -193,6 +193,7 @@ export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAge
   messageHub.onRequest(method('list'), async (data) => {
     const params = data as { spaceId?: string };
     const spaceId = requireString(params.spaceId, 'spaceId');
+    if (!(await deps.spaceExists(spaceId))) throw new Error(`Space not found: ${spaceId}`);
     return { agents: deps.agents.listOwnedBySpaceId(spaceId) };
   });
 

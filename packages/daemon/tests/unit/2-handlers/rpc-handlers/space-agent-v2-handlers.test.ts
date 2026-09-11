@@ -469,6 +469,12 @@ describe('setupSpaceAgentV2Handlers', () => {
       await expect(call(handlers, 'spaceAgentV2.list', {})).rejects.toThrow('spaceId is required');
     });
 
+    test('list rejects an unknown space', async () => {
+      await expect(call(handlers, 'spaceAgentV2.list', { spaceId: 'ghost-space' })).rejects.toThrow(
+        'Space not found: ghost-space'
+      );
+    });
+
     test('get returns the agent', async () => {
       const created = agents.create({ spaceId: 'space-1', handle: 'a' });
       const { agent } = await call<{ agent: SpaceAgent }>(handlers, 'spaceAgentV2.get', {

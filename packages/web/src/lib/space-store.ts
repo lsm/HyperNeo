@@ -957,11 +957,16 @@ class SpaceStore {
     spaceId: string
   ): Promise<void> {
     try {
-      const result = await hub.request<{ agents: SpaceLongHorizonAgent[] }>('spaceAgent.list', {
+      const result = await hub.request<{ agents: SpaceAgent[] }>('spaceAgentV2.list', {
         spaceId,
       });
       if (this.spaceId.value !== spaceId) return;
-      this.agents.value = (result?.agents ?? []).filter((agent) => agent.spaceId === spaceId);
+      const cachedTemplateKeys = new Map(
+        this.agents.value.map((agent) => [agent.id, agent.templateKey])
+      );
+      this.agents.value = (result?.agents ?? [])
+        .filter((agent) => agent.spaceId === spaceId)
+        .map((agent) => this.fromSpaceAgentV2(agent, cachedTemplateKeys.get(agent.id) ?? null));
     } catch (err) {
       logger.error('Failed to fetch agents (keeping cached list):', err);
     }
