@@ -1,4 +1,4 @@
-import { decideTaskPublication } from '../../tasks/publication.ts';
+import { publishTask } from '../../tasks/publication.ts';
 import {
   VALID_TASK_TRANSITIONS as VALID_SPACE_TASK_TRANSITIONS,
   isValidTaskTransition as isValidSpaceTaskTransition,
@@ -321,11 +321,14 @@ export class SpaceTaskManager {
   }
 
   async publishTask(taskId: string): Promise<SpaceTask> {
-    const task = await this.getTask(taskId);
-    if (decideTaskPublication(task?.status) === 'not_draft') {
+    const task = await publishTask(
+      async () => (await this.getTask(taskId))?.status,
+      () => this.setTaskStatus(taskId, 'open')
+    );
+    if (task === 'not_draft') {
       throw new Error('Only draft tasks can be published');
     }
-    return this.setTaskStatus(taskId, 'open');
+    return task;
   }
 
   async submitTaskForReview(

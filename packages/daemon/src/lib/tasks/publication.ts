@@ -6,7 +6,12 @@ export function requireDraftTask(
   return status === 'draft' ? { value: 'publish' } : { reason: 'not_draft' };
 }
 
-export const decideTaskPublication = (superpipe({})('decide-task-publication') as PipelineAPI)
-  .input('status')
-  .pipe(requireDraftTask, 'status', 'result:publication')
-  .end('publication') as (status: string | undefined) => 'publish' | 'not_draft';
+export const publishTask = (superpipe({})('publish-task') as PipelineAPI)
+  .input(['readStatus', 'publish'])
+  .pipe((readStatus: () => Promise<string | undefined>) => readStatus(), 'readStatus', 'status')
+  .pipe(requireDraftTask, 'status', 'result:task')
+  .pipe((publish: () => Promise<unknown>) => publish(), 'publish', 'task')
+  .end('task') as <T>(
+  readStatus: () => Promise<string | undefined>,
+  publish: () => Promise<T>
+) => Promise<T | 'not_draft'>;
