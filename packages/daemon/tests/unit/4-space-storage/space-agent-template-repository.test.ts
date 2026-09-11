@@ -383,4 +383,11 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
     expect(repo.casUpdateOwned('space-a', 'missing', { displayName: 'X' })).toBeNull();
     expect(repo.deleteOwned('space-a', 'missing')).toBe(false);
   });
+  test('dedupe keeps creation order when an owned row replaces an older sentinel', () => {
+    repo.create({ key: 'shadowed', handle: 'sentinel' });
+    repo.createOwned('space-a', { key: 'middle', handle: 'mid' });
+    repo.createOwned('space-a', { key: 'shadowed', handle: 'owned' });
+
+    expect(repo.listOwned('space-a').map((t) => t.key)).toEqual(['middle', 'shadowed']);
+  });
 });
