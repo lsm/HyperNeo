@@ -955,6 +955,65 @@ describe('SpaceAgentsPage', () => {
     expect(mockUpdate.mock.calls[0][1].settingSources).toEqual(['project', 'local']);
   });
 
+  it('selects the deep-linked agent by handle', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+    expect(getByTestId('agent-detail').textContent).toContain('beta');
+  });
+
+  it('resolves the coordinator alias to the space manager', async () => {
+    mockAgents.value = [makeAgent('space-manager'), makeAgent('alpha')];
+    const { getByTestId } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="coordinator" />
+    );
+
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+    expect(getByTestId('agent-detail').textContent).toContain('space-manager');
+  });
+
+  it('reports a handle that matches no agent', async () => {
+    mockAgents.value = [makeAgent('alpha')];
+    const { getByTestId, queryByTestId } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="ghost" />
+    );
+
+    await waitFor(() => expect(getByTestId('agent-deep-link-missing')).toBeTruthy());
+    expect(getByTestId('agent-deep-link-missing').textContent).toContain('@ghost');
+    expect(queryByTestId('agent-detail')).toBeNull();
+  });
+
+  it('follows the deep link when the handle changes', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    const { getByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('alpha'));
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('beta'));
+  });
+
+  it('does not fight a manual selection made after the deep link', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('alpha'));
+    expect(getByTestId('agent-detail').textContent).not.toContain('@beta');
+  });
+
+  it('ignores deep linking when no handle is given', async () => {
+    mockAgents.value = [makeAgent('alpha')];
+    const { queryByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    await waitFor(() => expect(queryByTestId('agent-list')).toBeTruthy());
+    expect(queryByTestId('agent-detail')).toBeNull();
+    expect(queryByTestId('agent-deep-link-missing')).toBeNull();
+  });
+
   it('clears a description on edit rather than dropping the field', async () => {
     mockAgents.value = [makeAgent('alpha', { description: 'old' })];
     const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);

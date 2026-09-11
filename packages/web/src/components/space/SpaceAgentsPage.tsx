@@ -20,6 +20,7 @@ import { EmptyState } from '../ui/EmptyState';
 
 export interface SpaceAgentsPageProps {
   spaceId: string;
+  selectedHandle?: string | null;
 }
 
 const PROTECTED_HANDLES = new Set(['space-manager', 'coordinator']);
@@ -48,6 +49,11 @@ function scopedToolEntries(tools: string[]): string[] {
   return tools.filter((tool) => !KNOWN_TOOL_SET.has(tool));
 }
 
+function matchesSelectedHandle(agent: SpaceAgent, handle: string): boolean {
+  if (agent.handle === handle) return true;
+  return handle === 'coordinator' && PROTECTED_HANDLES.has(agent.handle);
+}
+
 function statusOptions(handle: string): SpaceAgentStatus[] {
   return PROTECTED_HANDLES.has(handle) ? ['active'] : EDITABLE_STATUSES;
 }
@@ -56,7 +62,7 @@ function templateOptions(): TemplateOption[] {
   return spaceStore.agentTemplates.value;
 }
 
-export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
+export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProps) {
   const agents = spaceAgentStore.agents.value.filter((agent) => agent.status !== 'archived');
   const loading = spaceAgentStore.loading.value;
   const loadError = spaceAgentStore.error.value;
@@ -115,6 +121,15 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
   }, [spaceId]);
 
   const selected = agents.find((agent) => agent.id === selectedId) ?? null;
+  const deepLinked = selectedHandle
+    ? (agents.find((agent) => matchesSelectedHandle(agent, selectedHandle)) ?? null)
+    : null;
+  const agentSignature = agents.map((agent) => `${agent.id}:${agent.handle}`).join('|');
+
+  useEffect(() => {
+    if (!selectedHandle || !deepLinked) return;
+    setSelectedId(deepLinked.id);
+  }, [selectedHandle, agentSignature]);
   const selectedTemplateSources = formTemplateKey
     ? (templateOptions().find((template) => template.key === formTemplateKey)?.settingSources ??
       null)
@@ -245,6 +260,12 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
       {loadError && (
         <p class="text-xs text-danger" data-testid="agents-load-error">
           {loadError}
+        </p>
+      )}
+
+      {selectedHandle && !deepLinked && !loading && !loadError && agents.length > 0 && (
+        <p class="text-xs text-fg-muted" data-testid="agent-deep-link-missing">
+          No agent found for @{selectedHandle}.
         </p>
       )}
 
