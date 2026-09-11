@@ -20,6 +20,8 @@ export class SpaceAgentStore {
 
   private cleanups: Array<() => void> = [];
   private subscribedSpaceId: string | null = null;
+  private countsRefreshing = false;
+  private countsQueued = false;
   private generation = 0;
 
   private hub() {
@@ -59,6 +61,22 @@ export class SpaceAgentStore {
   }
 
   private async refreshReminderCounts(generation: number): Promise<void> {
+    if (this.countsRefreshing) {
+      this.countsQueued = true;
+      return;
+    }
+    this.countsRefreshing = true;
+    try {
+      do {
+        this.countsQueued = false;
+        await this.fetchReminderCounts(generation);
+      } while (this.countsQueued);
+    } finally {
+      this.countsRefreshing = false;
+    }
+  }
+
+  private async fetchReminderCounts(generation: number): Promise<void> {
     const spaceId = this.spaceId.value;
     if (!spaceId) return;
     try {

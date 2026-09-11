@@ -245,6 +245,24 @@ describe('SpaceAgentStore', () => {
       ).toBe(before);
     });
 
+    it('coalesces a burst of created agents into two count requests', async () => {
+      await store.selectSpace('space-1');
+      const before = requests.filter(
+        (entry) => entry.method === 'spaceAgentV2.listReminderCounts'
+      ).length;
+
+      for (const id of ['one', 'two', 'three', 'four', 'five']) {
+        fire('spaceAgentV2.created', { spaceId: 'space-1', agent: makeAgent(id) });
+      }
+      await vi.waitFor(() => expect(store.agents.value).toHaveLength(5));
+      await tick();
+
+      const issued =
+        requests.filter((entry) => entry.method === 'spaceAgentV2.listReminderCounts').length -
+        before;
+      expect(issued).toBe(2);
+    });
+
     it('clears counts on teardown', async () => {
       listResult = [makeAgent('a')];
       reminderCountsResult = { a: 2 };
