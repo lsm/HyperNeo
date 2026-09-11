@@ -1,8 +1,14 @@
-import type { SpaceAgent, SpaceAgentAutonomyLevel, SpaceAgentStatus } from '@hyperneo/shared';
+import type {
+  AgentModelPoolEntry,
+  SpaceAgent,
+  SpaceAgentAutonomyLevel,
+  SpaceAgentStatus,
+} from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
 import { spaceAgentStore } from '../../lib/space-agent-store';
 import { spaceStore } from '../../lib/space-store';
+import { ModelPoolEditor } from './ModelPoolEditor';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { EmptyState } from '../ui/EmptyState';
@@ -19,6 +25,19 @@ const AUTONOMY_LEVELS = [1, 2, 3, 4, 5] as const;
 interface TemplateOption {
   key: string;
   displayName: string;
+}
+
+function poolFromAgent(agent: SpaceAgent): AgentModelPoolEntry[] {
+  if (agent.modelPool && agent.modelPool.length > 0) return agent.modelPool;
+  if (!agent.model) return [];
+  return [
+    {
+      model: agent.model,
+      provider: agent.provider ?? undefined,
+      maxConcurrent: 1,
+      weight: 100,
+    },
+  ];
 }
 
 function statusOptions(handle: string): SpaceAgentStatus[] {
@@ -44,6 +63,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [formStatus, setFormStatus] = useState<SpaceAgentStatus>('active');
   const [formAutonomy, setFormAutonomy] = useState<string>('');
+  const [formModelPool, setFormModelPool] = useState<AgentModelPoolEntry[]>([]);
   const activeSpaceRef = useRef(spaceId);
   const formGenerationRef = useRef(0);
 
@@ -59,6 +79,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     setDeleteError(null);
     setFormStatus('active');
     setFormAutonomy('');
+    setFormModelPool([]);
   }
 
   useEffect(() => {
@@ -88,6 +109,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     setCreating(true);
     setFormStatus('active');
     setFormAutonomy('');
+    setFormModelPool([]);
   }
 
   function openEdit(agent: SpaceAgent) {
@@ -97,6 +119,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     setEditing(agent);
     setFormStatus(agent.status);
     setFormAutonomy(agent.autonomyLevel ? String(agent.autonomyLevel) : '');
+    setFormModelPool(poolFromAgent(agent));
   }
 
   function closeForm() {
@@ -135,6 +158,9 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
           description: field('description') || null,
           status: formStatus,
           autonomyLevel,
+          modelPool: formModelPool.length > 0 ? formModelPool : null,
+          model: null,
+          provider: null,
         });
         if (!isCurrentSubmission()) return;
       } else {
@@ -145,6 +171,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
           instructions: field('instructions') || undefined,
           description: field('description') || undefined,
           autonomyLevel: autonomyChoice === '' ? undefined : autonomyLevel,
+          modelPool: formModelPool.length > 0 ? formModelPool : undefined,
           templateKey: field('templateKey') || undefined,
         });
         if (!isCurrentSubmission()) return;
@@ -316,6 +343,17 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
                   ))}
                 </select>
               </label>
+
+              <div class="block text-xs text-fg-soft" data-testid="agent-model-pool-field">
+                Models
+                <div class="mt-1">
+                  <ModelPoolEditor
+                    mode="pool"
+                    modelPool={formModelPool}
+                    onModelPoolChange={setFormModelPool}
+                  />
+                </div>
+              </div>
 
               <label class="block text-xs text-fg-soft">
                 Instructions
