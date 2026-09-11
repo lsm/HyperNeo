@@ -575,3 +575,57 @@ describe('adding scoped tool entries', () => {
     expect(queryByTestId('tools-editor-scoped-input')).toBeNull();
   });
 });
+
+describe('scoped entries on an inherited profile', () => {
+  it('offers the add control while tools are inherited', () => {
+    const { getByTestId } = render(
+      <ToolsEditor tools={[]} toolsOverridden={false} onChange={vi.fn()} manageScopedEntries />
+    );
+    expect(getByTestId('tools-editor-scoped-input')).toBeTruthy();
+  });
+
+  it('turns an inherited profile into an override when the first entry is added', () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <ToolsEditor tools={[]} toolsOverridden={false} onChange={onChange} manageScopedEntries />
+    );
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), {
+      target: { value: 'Bash(ls:*)' },
+    });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    expect(onChange).toHaveBeenCalledWith({ tools: ['Bash(ls:*)'], toolsOverridden: true });
+  });
+
+  it('commits a typed entry on blur so saving does not discard it', () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <ToolsEditor
+        tools={['Read']}
+        toolsOverridden={true}
+        onChange={onChange}
+        manageScopedEntries
+      />
+    );
+    const input = getByTestId('tools-editor-scoped-input');
+    fireEvent.input(input, { target: { value: 'Bash(ls:*)' } });
+    fireEvent.blur(input);
+    expect(onChange).toHaveBeenCalledWith({
+      tools: ['Read', 'Bash(ls:*)'],
+      toolsOverridden: true,
+    });
+  });
+
+  it('does not emit on blur when the draft is empty', () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <ToolsEditor
+        tools={['Read']}
+        toolsOverridden={true}
+        onChange={onChange}
+        manageScopedEntries
+      />
+    );
+    fireEvent.blur(getByTestId('tools-editor-scoped-input'));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});

@@ -206,7 +206,7 @@ export function ToolsEditor({
         })}
       </div>
 
-      {manageScopedEntries && toolsOverridden && (
+      {manageScopedEntries && (
         <div class="mt-3" data-testid="tools-editor-scoped">
           <p class="mb-1.5 text-xs text-fg-faint">Scoped entries</p>
           <div class="flex flex-wrap gap-1.5">
@@ -242,6 +242,10 @@ export function ToolsEditor({
               onKeyDown={(event) => {
                 if (event.key !== 'Enter') return;
                 event.preventDefault();
+                submitScopedDraft();
+              }}
+              onBlur={() => {
+                if (scopedDraft.trim() === '') return;
                 submitScopedDraft();
               }}
               class="w-full rounded border border-line-strong bg-surface px-2 py-1 font-mono text-xs text-fg placeholder:text-fg-faint focus:border-accent focus:outline-none"
