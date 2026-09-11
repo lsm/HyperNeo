@@ -544,6 +544,17 @@ interface ClientForwardingEvents {
     workflow: import('@hyperneo/shared').SpaceWorkflow;
   };
   'spaceWorkflow.deleted': { sessionId: string; spaceId: string; workflowId: string };
+  'spaceAgentTemplate.created': {
+    sessionId: string;
+    spaceId: string;
+    template: import('@hyperneo/shared').SpaceAgentTemplate;
+  };
+  'spaceAgentTemplate.updated': {
+    sessionId: string;
+    spaceId: string;
+    template: import('@hyperneo/shared').SpaceAgentTemplate;
+  };
+  'spaceAgentTemplate.deleted': { sessionId: string; spaceId: string; key: string };
   'providers.changed': { sessionId: string };
 }
 

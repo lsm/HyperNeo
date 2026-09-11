@@ -124,6 +124,24 @@ const SPACE_BRIDGE_MAPPINGS: BridgeMapping[] = [
     clientEvent: 'spaceWorkflow.deleted',
     channel: () => Channels.global(),
   },
+  {
+    event: 'spaceAgentTemplate.created',
+    clientEvent: 'spaceAgentTemplate.created',
+    channel: (p) =>
+      Channels.space((p as DaemonInternalEventMap['spaceAgentTemplate.created']).spaceId),
+  },
+  {
+    event: 'spaceAgentTemplate.updated',
+    clientEvent: 'spaceAgentTemplate.updated',
+    channel: (p) =>
+      Channels.space((p as DaemonInternalEventMap['spaceAgentTemplate.updated']).spaceId),
+  },
+  {
+    event: 'spaceAgentTemplate.deleted',
+    clientEvent: 'spaceAgentTemplate.deleted',
+    channel: (p) =>
+      Channels.space((p as DaemonInternalEventMap['spaceAgentTemplate.deleted']).spaceId),
+  },
 ];
 
 const SESSION_BRIDGE_MAPPINGS: BridgeMapping[] = [

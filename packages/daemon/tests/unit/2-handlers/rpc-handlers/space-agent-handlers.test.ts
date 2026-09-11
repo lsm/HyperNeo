@@ -381,6 +381,74 @@ describe('Space Agent RPC Handlers', () => {
     });
   });
 
+  describe('template change events', () => {
+    const templateEvents = (): Array<[string, Record<string, unknown>]> =>
+      daemonData.publishMock.mock.calls.filter((c: unknown[]) =>
+        String(c[0]).startsWith('spaceAgentTemplate.')
+      ) as Array<[string, Record<string, unknown>]>;
+
+    const createRelease = () =>
+      call(hubData.handlers, 'spaceAgent.createTemplate', {
+        spaceId: 'space-1',
+        key: 'release.custom',
+        handle: 'release',
+        displayName: 'Release',
+      });
+
+    it('publishes created with the space and the new template', async () => {
+      await createRelease();
+
+      const events = templateEvents();
+      expect(events).toHaveLength(1);
+      expect(events[0][0]).toBe('spaceAgentTemplate.created');
+      expect(events[0][1].spaceId).toBe('space-1');
+      expect((events[0][1].template as { key: string }).key).toBe('release.custom');
+    });
+
+    it('publishes updated carrying the new definition', async () => {
+      await createRelease();
+      await call(hubData.handlers, 'spaceAgent.updateTemplate', {
+        spaceId: 'space-1',
+        key: 'release.custom',
+        displayName: 'Shipped',
+      });
+
+      const events = templateEvents();
+      expect(events.map((e) => e[0])).toEqual([
+        'spaceAgentTemplate.created',
+        'spaceAgentTemplate.updated',
+      ]);
+      expect((events[1][1].template as { displayName: string }).displayName).toBe('Shipped');
+    });
+
+    it('publishes deleted carrying the key', async () => {
+      await createRelease();
+      await call(hubData.handlers, 'spaceAgent.deleteTemplate', {
+        spaceId: 'space-1',
+        key: 'release.custom',
+      });
+
+      const events = templateEvents();
+      expect(events.map((e) => e[0])).toEqual([
+        'spaceAgentTemplate.created',
+        'spaceAgentTemplate.deleted',
+      ]);
+      expect(events[1][1].key).toBe('release.custom');
+      expect(events[1][1].spaceId).toBe('space-1');
+    });
+
+    it('publishes nothing when the mutation is rejected', async () => {
+      await expect(
+        call(hubData.handlers, 'spaceAgent.deleteTemplate', {
+          spaceId: 'space-1',
+          key: 'never.existed',
+        })
+      ).rejects.toThrow();
+
+      expect(templateEvents()).toHaveLength(0);
+    });
+  });
+
   describe('spaceAgent.createTemplate', () => {
     it('creates a custom template and returns it', async () => {
       const result = await call<{

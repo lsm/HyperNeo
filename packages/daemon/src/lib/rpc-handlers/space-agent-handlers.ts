@@ -35,6 +35,11 @@ import {
   publishUnifiedAgentDeleted,
   publishUnifiedAgentUpdated,
 } from '../space/agents/unified-agent-events.ts';
+import {
+  publishTemplateCreated,
+  publishTemplateDeleted,
+  publishTemplateUpdated,
+} from '../space/agents/template-events.ts';
 import { MIGRATED_WORKER_TEMPLATE_KEY } from '../space/agents/worker-long-horizon-mapper.ts';
 import {
   validateAgentModel,
@@ -817,6 +822,7 @@ export function registerUnifiedSpaceAgentMethods(
       if (!params.handle) throw new Error('handle is required');
       const result = await templateManager.createIn(spaceId, params);
       if (!result.ok) throw new Error(result.error);
+      await publishTemplateCreated(deps.internalEventBus, spaceId, result.value);
       return { template: result.value };
     });
 
@@ -827,6 +833,7 @@ export function registerUnifiedSpaceAgentMethods(
       const { key, spaceId: _spaceId, ...updates } = params;
       const result = await templateManager.updateIn(spaceId, key, updates);
       if (!result.ok) throw new Error(result.error);
+      if (result.value) await publishTemplateUpdated(deps.internalEventBus, spaceId, result.value);
       return { template: result.value };
     });
 
@@ -836,6 +843,7 @@ export function registerUnifiedSpaceAgentMethods(
       if (!params.key) throw new Error('key is required');
       const result = templateManager.deleteIn(spaceId, params.key, params.expectedVersion);
       if (!result.ok) throw new Error(result.error);
+      await publishTemplateDeleted(deps.internalEventBus, spaceId, params.key);
       return { success: true };
     });
   }
