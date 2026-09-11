@@ -345,6 +345,16 @@ describe('SpaceAgentRepository', () => {
       );
     });
 
+    test('refuses to delete a migrated worker mirror', () => {
+      makeMirror('mirror-del');
+
+      expect(() => repo.delete('mirror-del')).toThrow('not owned by SpaceAgentRepository');
+      const row = db
+        .prepare(`SELECT id FROM space_long_horizon_agents WHERE id = ?`)
+        .get('mirror-del');
+      expect(row).toBeTruthy();
+    });
+
     test('leaves the mirror row untouched when it refuses', () => {
       makeMirror('mirror-2');
 

@@ -75,12 +75,15 @@ import {
 import { ChannelCycleRepository } from '../../storage/repositories/channel-cycle-repository.ts';
 import { SessionRepository } from '../../storage/repositories/session-repository.ts';
 import { setupSpaceAgentHandlers } from './space-agent-handlers.ts';
+import { setupSpaceAgentV2Handlers } from './space-agent-v2-handlers.ts';
+import { buildTemplateExtrasSeeder } from '../space/agents/template-extras-seeding.ts';
 import { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository.ts';
 import {
   SpaceLongHorizonAgentRepository,
   templateInstanceScanFromRepo,
 } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
+import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import { SpaceAgentTemplateManager } from '../space/managers/space-agent-template-manager.ts';
 import { createAgentTemplateResolver } from '../space/workflows/run-template-snapshot.ts';
 import {
@@ -941,6 +944,26 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       templateInstanceScanFromRepo(longHorizonAgentRepo)
     )
   );
+
+  setupSpaceAgentV2Handlers(deps.messageHub, {
+    agents: new SpaceAgentRepository(deps.db.getDatabase()),
+    templates: spaceAgentTemplateRepo,
+    spaceExists: async (spaceId) => (await deps.spaceManager.getSpace(spaceId)) !== null,
+    getSession: (sessionId) => deps.db.getSession(sessionId),
+    internalEventBus: deps.internalEventBus,
+    legacyAgents: longHorizonAgentRepo,
+    removeAgentSubscriptions: (spaceId, agentId) =>
+      spaceRuntimeService.removeLongHorizonAgentSubscriptions(spaceId, agentId),
+    refreshAgentSubscriptions: (spaceId, agentId) =>
+      spaceRuntimeService.refreshLongHorizonAgentSubscriptions(spaceId, agentId),
+    clearSessionProvider: (spaceId, agentId) =>
+      spaceRuntimeService.clearLongTermAgentSessionProvider(spaceId, agentId),
+    seedTemplateExtras: buildTemplateExtrasSeeder({
+      store: longHorizonAgentRepo,
+      refreshSubscription: (spaceId, subscriptionId) =>
+        spaceRuntimeService.refreshLongHorizonSubscription(spaceId, subscriptionId),
+    }),
+  });
 
   setupSessionHandlers(
     deps.messageHub,

@@ -1,4 +1,4 @@
-import type { MessageHub, SpaceAgent } from '@hyperneo/shared';
+import type { MessageHub, SpaceAgent, SpaceAgentTemplate } from '@hyperneo/shared';
 import type { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import type { SpaceLongHorizonAgentRepository } from '../../storage/repositories/space-long-horizon-agent-repository.ts';
 import type { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
@@ -29,7 +29,7 @@ import {
 const METHOD_PREFIX = 'spaceAgentV2';
 
 export interface SessionLookup {
-  type: string;
+  type?: string;
   context?: { spaceId?: string | null } | null;
 }
 
@@ -46,6 +46,7 @@ export interface SpaceAgentV2Deps {
     agentId: string
   ): { success: boolean; error?: string };
   clearSessionProvider?(spaceId: string, agentId: string): Promise<void>;
+  seedTemplateExtras?(agent: SpaceAgent, template: SpaceAgentTemplate): void;
 }
 
 const COORDINATOR_HANDLES = new Set([SPACE_MANAGER_HANDLE, 'coordinator']);
@@ -58,7 +59,7 @@ export function assertAgentDeletable(agent: SpaceAgent): void {
 
 export function toBindableSession(session: SessionLookup | null): BindableSession | null {
   if (!session) return null;
-  return { type: session.type, spaceId: session.context?.spaceId ?? null };
+  return { type: session.type ?? '', spaceId: session.context?.spaceId ?? null };
 }
 
 async function publishAgentEvent(
@@ -128,6 +129,7 @@ export function buildAgentCreate(
         .map((agent) => agent.displayName),
     createAgent: (params) => deps.agents.create(params),
     publishCreated: (agent) => publishAgentEvent(deps, 'spaceAgentV2.created', agent),
+    seedTemplateExtras: deps.seedTemplateExtras,
     validateTools: validateSpaceAgentTools,
     validateModel: (model, provider) => validateAgentModel(model, provider),
     validateModelPool: validateAgentModelPool,
