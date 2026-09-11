@@ -168,114 +168,133 @@ test('pruned job receipt is not silently recreated by duplicate request', () => 
   expect(jobs.getJob(job.id)).toBeNull();
   expect(count()).toBe(1);
 });
-test.each(['request', 'shared-rejection', 'paused-rejection'] as const)(
-  'review rejection via %s retains frozen feedback',
-  async (route) => {
-    const initial = await start({ taskId, requestKey: 'initial' });
-    if (!initial.started) throw new Error(initial.reason);
-    let cached = {
-      getSessionData: () => sessions.getSession(initial.attempt.sessionId)!,
-      getProcessingState: () => ({ status: 'idle' }),
-      isInterruptInProgress: () => false,
-      getTrackedAgentRootPidsSplit: () => ({ live: [], exited: [] }),
-      handleInterrupt: async () => {},
-      cleanup: async () => {},
-    } as unknown as AgentSession | null;
-    const owner = Object.assign(Object.create(SessionManager.prototype), {
-      directStopVerificationJobs: new Map(),
-    }) as SessionManager;
-    const done = await createDirectTaskFinalizer({
-      db,
-      sessionManager: {
-        coalesceDirectStopVerification: owner.coalesceDirectStopVerification.bind(owner),
-        getCachedSession: () => cached,
-        isSessionLoading: () => false,
-        unregisterSession: async () => {
-          cached = null;
-        },
+test.each([
+  'request',
+  'shared-rejection',
+  'paused-rejection',
+  'manual-review',
+  'manual-review-stale',
+] as const)('review rejection via %s retains frozen feedback', async (route) => {
+  const initial = await start({ taskId, requestKey: 'initial' });
+  if (!initial.started) throw new Error(initial.reason);
+  let cached = {
+    getSessionData: () => sessions.getSession(initial.attempt.sessionId)!,
+    getProcessingState: () => ({ status: 'idle' }),
+    isInterruptInProgress: () => false,
+    getTrackedAgentRootPidsSplit: () => ({ live: [], exited: [] }),
+    handleInterrupt: async () => {},
+    cleanup: async () => {},
+  } as unknown as AgentSession | null;
+  const owner = Object.assign(Object.create(SessionManager.prototype), {
+    directStopVerificationJobs: new Map(),
+  }) as SessionManager;
+  const done = await createDirectTaskFinalizer({
+    db,
+    sessionManager: {
+      coalesceDirectStopVerification: owner.coalesceDirectStopVerification.bind(owner),
+      getCachedSession: () => cached,
+      isSessionLoading: () => false,
+      unregisterSession: async () => {
+        cached = null;
       },
-    })({
-      attemptId: initial.attempt.id,
-      sessionId: initial.attempt.sessionId,
-      generation: initial.attempt.generation,
-      status: 'review',
-    });
-    expect(done.finalized).toBe(true);
-    const generation = tasks.getTask(taskId)!.pendingCompletionGeneration!;
-    const spaces = new SpaceRepository(db);
-    const spaceId = tasks.getTask(taskId)!.spaceId;
-    if (route === 'paused-rejection') spaces.pauseSpace(spaceId);
-    const ack =
-      route === 'request'
-        ? request({
-            taskId,
-            requestKey: 'rejected',
-            retryFrom: { attemptId: initial.attempt.id, generation: initial.attempt.generation },
-            reviewRejection: {
-              expectedPendingCompletionGeneration:
-                tasks.getTask(taskId)!.pendingCompletionGeneration!,
-              reason: '  Fix edge case  ',
-            },
-          })
-        : await (async () => {
-            const manager = new SpaceTaskManager(db, tasks.getTask(taskId)!.spaceId);
-            const update = mock(async () => {
-              throw new Error('atomic rejection must not write twice');
-            });
-            const rejected = await createPendingCompletionOperation({
-              getTask: (id) => manager.getTask(id),
-              reopenTask: (id, reason) =>
-                manager.reopenPendingCompletion(id, reason, {
-                  expectedPendingCompletionGeneration: generation,
-                }),
-              updateTask: update,
-              dispatchApproval: async () => {
-                throw new Error('not approval');
-              },
-              warn: () => {},
-            })({ taskId, approved: false, reason: '  Fix edge case  ' });
-            expect(rejected.status).toBe('open');
-            expect(rejected.approvalReason).toBe('  Fix edge case  ');
-            expect(update).not.toHaveBeenCalled();
-            const next = attempts.getActive(taskId)!;
-            const receipt = readDirectStartRequest(db, next.id)!;
-            await expect(
-              manager.reopenPendingCompletion(taskId, 'different', {
-                expectedPendingCompletionGeneration: generation,
-              })
-            ).rejects.toThrow('superseded');
-            expect(attempts.getActive(taskId)?.id).toBe(next.id);
-            return { accepted: true as const, jobId: receipt.jobId };
-          })();
-    if (!ack.accepted || !ack.jobId) throw new Error('expected retry receipt');
-    expect(tasks.getTask(taskId)?.pendingCheckpointType).toBeNull();
-    if (route === 'paused-rejection') {
-      const reserved = attempts.getActive(taskId)!;
-      const [claimed] = jobs.dequeue(DIRECT_TASK_START, 1);
-      expect(await createDirectStartJobHandler(db, start, jobs, control)(claimed)).toMatchObject({
-        parked: 'direct_start_not_ready',
-      });
-      expect(attempts.getActive(taskId)?.phase).toBe('reserved');
-      expect(readDirectKickoffIntent(db, reserved.id)).toBeNull();
-      expect(readDirectStartRequest(db, reserved.id)?.input.reviewRejection?.reason).toBe(
-        '  Fix edge case  '
-      );
-      spaces.resumeSpace(spaceId);
+    },
+  })({
+    attemptId: initial.attempt.id,
+    sessionId: initial.attempt.sessionId,
+    generation: initial.attempt.generation,
+    status: route.startsWith('manual-review') ? 'blocked' : 'review',
+  });
+  expect(done.finalized).toBe(true);
+  if (route.startsWith('manual-review')) {
+    const manager = new SpaceTaskManager(db, tasks.getTask(taskId)!.spaceId);
+    await manager.submitTaskForReview(taskId, { reason: 'manual review', submittedByNodeId: null });
+    if (route === 'manual-review-stale') {
+      tasks.updateTask(taskId, { status: 'in_progress' });
+      tasks.updateTask(taskId, { status: 'review' });
+      await expect(
+        manager.reopenPendingCompletion(taskId, 'stale', {
+          expectedPendingCompletionGeneration: tasks.getTask(taskId)!.pendingCompletionGeneration!,
+        })
+      ).rejects.toThrow('superseded');
+      expect(attempts.getActive(taskId)).toBeNull();
+      expect(count()).toBe(0);
+      return;
     }
-    tasks.updateTask(taskId, { approvalReason: 'Mutated note' });
-    const result = await createDirectStartJobHandler(
-      db,
-      start,
-      jobs,
-      control
-    )(jobs.getJob(ack.jobId)!);
-    expect(result).toMatchObject({ started: true });
-    const current = attempts.getActive(taskId)!;
-    expect(readDirectKickoffIntent(db, current.id)?.message.message.content).toContain(
+  }
+  const generation = tasks.getTask(taskId)!.pendingCompletionGeneration!;
+  const spaces = new SpaceRepository(db);
+  const spaceId = tasks.getTask(taskId)!.spaceId;
+  if (route === 'paused-rejection') spaces.pauseSpace(spaceId);
+  const ack =
+    route === 'request'
+      ? request({
+          taskId,
+          requestKey: 'rejected',
+          retryFrom: { attemptId: initial.attempt.id, generation: initial.attempt.generation },
+          reviewRejection: {
+            expectedPendingCompletionGeneration:
+              tasks.getTask(taskId)!.pendingCompletionGeneration!,
+            reason: '  Fix edge case  ',
+          },
+        })
+      : await (async () => {
+          const manager = new SpaceTaskManager(db, tasks.getTask(taskId)!.spaceId);
+          const update = mock(async () => {
+            throw new Error('atomic rejection must not write twice');
+          });
+          const rejected = await createPendingCompletionOperation({
+            getTask: (id) => manager.getTask(id),
+            reopenTask: (id, reason) =>
+              manager.reopenPendingCompletion(id, reason, {
+                expectedPendingCompletionGeneration: generation,
+              }),
+            updateTask: update,
+            dispatchApproval: async () => {
+              throw new Error('not approval');
+            },
+            warn: () => {},
+          })({ taskId, approved: false, reason: '  Fix edge case  ' });
+          expect(rejected.status).toBe('open');
+          expect(rejected.approvalReason).toBe('  Fix edge case  ');
+          expect(update).not.toHaveBeenCalled();
+          const next = attempts.getActive(taskId)!;
+          const receipt = readDirectStartRequest(db, next.id)!;
+          await expect(
+            manager.reopenPendingCompletion(taskId, 'different', {
+              expectedPendingCompletionGeneration: generation,
+            })
+          ).rejects.toThrow('superseded');
+          expect(attempts.getActive(taskId)?.id).toBe(next.id);
+          return { accepted: true as const, jobId: receipt.jobId };
+        })();
+  if (!ack.accepted || !ack.jobId) throw new Error('expected retry receipt');
+  expect(tasks.getTask(taskId)?.pendingCheckpointType).toBeNull();
+  if (route === 'paused-rejection') {
+    const reserved = attempts.getActive(taskId)!;
+    const [claimed] = jobs.dequeue(DIRECT_TASK_START, 1);
+    expect(await createDirectStartJobHandler(db, start, jobs, control)(claimed)).toMatchObject({
+      parked: 'direct_start_not_ready',
+    });
+    expect(attempts.getActive(taskId)?.phase).toBe('reserved');
+    expect(readDirectKickoffIntent(db, reserved.id)).toBeNull();
+    expect(readDirectStartRequest(db, reserved.id)?.input.reviewRejection?.reason).toBe(
       '  Fix edge case  '
     );
+    spaces.resumeSpace(spaceId);
   }
-);
+  tasks.updateTask(taskId, { approvalReason: 'Mutated note' });
+  const result = await createDirectStartJobHandler(
+    db,
+    start,
+    jobs,
+    control
+  )(jobs.getJob(ack.jobId)!);
+  expect(result).toMatchObject({ started: true });
+  const current = attempts.getActive(taskId)!;
+  expect(readDirectKickoffIntent(db, current.id)?.message.message.content).toContain(
+    '  Fix edge case  '
+  );
+});
 
 async function waitForIdle(processor: JobQueueProcessor) {
   for (let i = 0; i < 100 && processor.snapshot().inFlightTotal > 0; i++)

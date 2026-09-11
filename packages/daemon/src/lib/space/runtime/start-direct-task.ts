@@ -132,18 +132,23 @@ export function claimDirectStart(
                 generation: number;
               })
             : null;
+          const manualReview =
+            !!input.reviewRejection &&
+            finalization?.status === 'blocked' &&
+            task.status === 'review';
           if (
             row?.state !== 'completed' ||
             !finalization ||
             finalization.generation !== previous.generation ||
-            finalization.status !== task.status ||
+            (!manualReview && finalization.status !== task.status) ||
             !(input.reviewRejection
               ? task.status === 'review' &&
                 task.pendingCheckpointType === 'task_completion' &&
                 task.pendingCompletionGeneration ===
                   input.reviewRejection.expectedPendingCompletionGeneration
               : ['blocked', 'cancelled', 'stopped'].includes(task.status)) ||
-            tasks.getLifecycleGeneration(task.id) !== finalization.lifecycleGeneration + 1 ||
+            tasks.getLifecycleGeneration(task.id) !==
+              finalization.lifecycleGeneration + (manualReview ? 2 : 1) ||
             task.taskAgentSessionId !== previous.sessionId
           )
             return unavailable;
