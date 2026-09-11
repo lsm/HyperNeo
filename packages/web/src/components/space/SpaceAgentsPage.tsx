@@ -14,11 +14,10 @@ import { ModelPoolEditor } from './ModelPoolEditor';
 import { type ToolsSelection, ToolsEditor } from './ToolsEditor';
 import { SettingSourcesEditor } from './SettingSourcesEditor';
 import {
+  decideToolsChange,
   differsFromBaseline,
   rebaseTemplateTools,
   templateToolsList,
-  trackAddedTools,
-  trackRemovedTools,
 } from './template-tools';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
@@ -508,57 +507,23 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
                   tools={formTools.tools}
                   toolsOverridden={formTools.toolsOverridden}
                   onChange={(next, origin) => {
-                    if (origin === 'preset') {
-                      if (!next.toolsOverridden) {
-                        setToolsExplicit(false);
-                        toolsRemovedRef.current = [];
-                        toolsAddedRef.current = [];
-                        setFormTools({ tools: toolsBaselineRef.current, toolsOverridden: false });
-                        return;
-                      }
-                      setToolsExplicit(true);
-                      setFormTools(next);
-                      return;
-                    }
-                    if (toolsExplicit) {
-                      toolsAddedRef.current = trackAddedTools(
-                        toolsAddedRef.current,
-                        [],
-                        next.tools
-                      );
-                      if (!differsFromBaseline(next.tools, toolsBaselineRef.current)) {
-                        setToolsExplicit(false);
-                        toolsRemovedRef.current = [];
-                        toolsAddedRef.current = [];
-                        setFormTools({
-                          tools: toolsBaselineRef.current,
-                          toolsOverridden: false,
-                        });
-                        return;
-                      }
-                      setFormTools({ tools: next.tools, toolsOverridden: true });
-                      return;
-                    }
-                    toolsRemovedRef.current = trackRemovedTools(
-                      toolsRemovedRef.current,
+                    const decided = decideToolsChange(
+                      origin,
+                      next.tools,
+                      next.toolsOverridden,
                       toolsBaselineRef.current,
-                      next.tools
+                      {
+                        tools: formTools.tools,
+                        overridden: formTools.toolsOverridden,
+                        explicit: toolsExplicit,
+                        added: toolsAddedRef.current,
+                        removed: toolsRemovedRef.current,
+                      }
                     );
-                    toolsAddedRef.current = trackAddedTools(
-                      toolsAddedRef.current,
-                      toolsBaselineRef.current,
-                      next.tools
-                    );
-                    if (
-                      toolsAddedRef.current.length === 0 &&
-                      toolsRemovedRef.current.length === 0 &&
-                      !differsFromBaseline(next.tools, toolsBaselineRef.current)
-                    ) {
-                      setToolsExplicit(false);
-                      setFormTools({ tools: toolsBaselineRef.current, toolsOverridden: false });
-                      return;
-                    }
-                    setFormTools({ tools: next.tools, toolsOverridden: true });
+                    toolsAddedRef.current = decided.added;
+                    toolsRemovedRef.current = decided.removed;
+                    setToolsExplicit(decided.explicit);
+                    setFormTools({ tools: decided.tools, toolsOverridden: decided.overridden });
                   }}
                   manageScopedEntries
                   preservedScopedEntries={toolsAddedRef.current}
