@@ -1,3 +1,5 @@
+import { createOperationRpcHandler } from '../../../../src/lib/operations/rpc-adapter';
+import type { CallContext } from '@hyperneo/shared';
 import { z } from 'zod';
 import { SessionManager } from '../../../../src/lib/session/session-manager';
 import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
@@ -6,7 +8,7 @@ import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-
 import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
 import { AcpMcpProxyBridge } from '../../../../src/lib/acp/mcp-proxy-bridge';
 import { convertMcpServersForAcp } from '../../../../src/lib/acp/acp-query-runner';
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { MessageHub, type Session } from '@hyperneo/shared';
 import { AgentSession } from '../../../../src/lib/agent/agent-session';
 import type { Database } from '../../../../src/storage/database';
@@ -75,6 +77,26 @@ describe('session operation MCP attachment', () => {
       const existing = await restore('existing');
       const cachedServer = existing.getOperationMcpServer();
       manager.registerSession(existing);
+      const defaultRegistry = manager.getOperationRegistry();
+      expect(manager.getOperationRegistry()).toBe(defaultRegistry);
+      const lookup = spyOn(defaultRegistry, 'get');
+      const rpc = createOperationRpcHandler(
+        () => manager.getOperationRegistry(),
+        () => ({})
+      );
+      const input = { name: 'task.get', input: { taskId: 'missing' } };
+      const context = {
+        messageId: 'id',
+        sessionId: 'global',
+        method: 'operation.invoke',
+        timestamp: 'now',
+      } as CallContext;
+      expect(await rpc(input, context)).toBeNull();
+      expect(await cachedServer.tools[0].handler(input, {})).toMatchObject({
+        content: [{ text: 'null' }],
+      });
+      expect(lookup).toHaveBeenCalledTimes(2);
+      lookup.mockRestore();
       db.createSession(createTestSession('initial-load'));
       const initialLoad = manager.getSessionAsync('initial-load');
       expect(manager.getCachedSession('initial-load')).toBeNull();
