@@ -203,9 +203,9 @@ const exportedWorkflowNodeSchema = z.object({
     .optional(),
 });
 
-export const CURRENT_EXPORT_VERSION = 5 as const;
-const SUPPORTED_EXPORT_VERSIONS: ReadonlySet<number> = new Set<number>([1, 2, 3, 4, 5]);
-export type ExportVersion = 1 | 2 | 3 | 4 | 5;
+export const CURRENT_EXPORT_VERSION = 6 as const;
+const SUPPORTED_EXPORT_VERSIONS: ReadonlySet<number> = new Set<number>([1, 2, 3, 4, 5, 6]);
+export type ExportVersion = 1 | 2 | 3 | 4 | 5 | 6;
 
 function asSupportedVersion(version: unknown): ExportVersion {
   return version as ExportVersion;
@@ -448,6 +448,12 @@ export function validateExportedAgent(data: unknown): ValidationResult<ExportedS
   }
   if (version < 4 && result.data.modelPool !== undefined) {
     return { ok: false, error: 'invalid: modelPool requires export version 4 or newer' };
+  }
+  if (version < 6 && result.data.modelPool?.some((entry) => entry.thinkingLevel != null)) {
+    return {
+      ok: false,
+      error: 'invalid: modelPool thinkingLevel requires export version 6 or newer',
+    };
   }
   return { ok: true, value: { version, ...result.data } };
 }

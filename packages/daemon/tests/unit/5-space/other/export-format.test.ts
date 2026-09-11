@@ -115,7 +115,7 @@ describe('exportAgent', () => {
     const agent = makeAgent();
     const exported = exportAgent(agent);
 
-    expect(exported.version).toBe(5);
+    expect(exported.version).toBe(6);
     expect(exported.type).toBe('agent');
     expect(exported.name).toBe('My Coder');
     expect((exported as Record<string, unknown>).role).toBeUndefined();
@@ -332,7 +332,7 @@ describe('exportWorkflow', () => {
 
   test('has version 1 and type workflow', () => {
     const exported = exportWorkflow(makeWorkflow(), []);
-    expect(exported.version).toBe(5);
+    expect(exported.version).toBe(6);
     expect(exported.type).toBe('workflow');
   });
 });
@@ -346,7 +346,7 @@ describe('exportBundle', () => {
       exportedFrom: '/workspace/foo',
     });
 
-    expect(bundle.version).toBe(5);
+    expect(bundle.version).toBe(6);
     expect(bundle.type).toBe('bundle');
     expect(bundle.name).toBe('My Bundle');
     expect(bundle.description).toBe('A test bundle');
@@ -378,7 +378,7 @@ describe('validateExportedAgent', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('My Coder');
-      expect(result.value.version).toBe(5);
+      expect(result.value.version).toBe(6);
     }
   });
 
@@ -446,6 +446,47 @@ describe('validateExportedAgent', () => {
     }
   });
 
+  test('rejects a modelPool thinkingLevel before version 6', () => {
+    const data = {
+      version: 5,
+      type: 'agent',
+      name: 'Bot',
+      role: 'general',
+      modelPool: [{ model: 'sonnet', maxConcurrent: 2, weight: 50, thinkingLevel: 'think16k' }],
+    };
+    const result = validateExportedAgent(data);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('modelPool thinkingLevel requires export version 6');
+    }
+  });
+
+  test('accepts a version 5 modelPool that omits thinkingLevel', () => {
+    const data = {
+      version: 5,
+      type: 'agent',
+      name: 'Bot',
+      role: 'general',
+      modelPool: [{ model: 'sonnet', maxConcurrent: 2, weight: 50 }],
+    };
+    expect(validateExportedAgent(data).ok).toBe(true);
+  });
+
+  test('round-trips a modelPool thinkingLevel at version 6', () => {
+    const data = {
+      version: 6,
+      type: 'agent',
+      name: 'Bot',
+      role: 'general',
+      modelPool: [{ model: 'sonnet', maxConcurrent: 2, weight: 50, thinkingLevel: 'think16k' }],
+    };
+    const result = validateExportedAgent(data);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.modelPool?.[0]?.thinkingLevel).toBe('think16k');
+    }
+  });
+
   test('accepts modelPool in version 4 agents', () => {
     const exported = exportAgent({
       ...makeAgent(),
@@ -458,8 +499,8 @@ describe('validateExportedAgent', () => {
     }
   });
 
-  test('rejects version > 4 with "requires newer version" message', () => {
-    const data = { version: 6, type: 'agent', name: 'Bot', role: 'general' };
+  test('rejects version > 6 with "requires newer version" message', () => {
+    const data = { version: 7, type: 'agent', name: 'Bot', role: 'general' };
     const result = validateExportedAgent(data);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -514,7 +555,7 @@ describe('validateExportedWorkflow', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('CI Workflow');
-      expect(result.value.version).toBe(5);
+      expect(result.value.version).toBe(6);
       expect(result.value.startNode).toBe('Code step');
     }
   });
@@ -563,7 +604,7 @@ describe('validateExportedWorkflow', () => {
 
   test('accepts templateKey in place of agentRef', () => {
     const data = {
-      version: 5,
+      version: 6,
       type: 'workflow',
       name: 'Good',
       nodes: [{ agents: [{ templateKey: 'coder.default', name: 'slot' }], name: 'Step' }],
@@ -640,9 +681,9 @@ describe('validateExportedWorkflow', () => {
     }
   });
 
-  test('rejects version > 4 with "requires newer version"', () => {
+  test('rejects version > 6 with "requires newer version"', () => {
     const data = {
-      version: 6,
+      version: 7,
       type: 'workflow',
       name: 'Simple',
       nodes: [],
@@ -799,14 +840,14 @@ describe('validateExportBundle', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.name).toBe('Bundle');
-      expect(result.value.version).toBe(5);
+      expect(result.value.version).toBe(6);
       expect(result.value.agents).toHaveLength(3);
       expect(result.value.workflows).toHaveLength(1);
     }
   });
 
   test('rejects version > 1', () => {
-    const bundle = { ...exportBundle([], [], 'B'), version: 6 };
+    const bundle = { ...exportBundle([], [], 'B'), version: 7 };
     const result = validateExportBundle(bundle);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -826,10 +867,10 @@ describe('validateExportBundle', () => {
     expect(validateExportBundle([]).ok).toBe(false);
   });
 
-  test('rejects bundle whose nested agent has version > 4', () => {
+  test('rejects bundle whose nested agent has version > 6', () => {
     const bundle = exportBundle([makeAgent()], [], 'B') as Record<string, unknown>;
     const agents = bundle.agents as Array<Record<string, unknown>>;
-    agents[0] = { ...agents[0], version: 6 };
+    agents[0] = { ...agents[0], version: 7 };
     const result = validateExportBundle(bundle);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -838,10 +879,10 @@ describe('validateExportBundle', () => {
     }
   });
 
-  test('rejects bundle whose nested workflow has version > 4', () => {
+  test('rejects bundle whose nested workflow has version > 6', () => {
     const bundle = exportBundle([], [makeWorkflow()], 'B') as Record<string, unknown>;
     const workflows = bundle.workflows as Array<Record<string, unknown>>;
-    workflows[0] = { ...workflows[0], version: 6 };
+    workflows[0] = { ...workflows[0], version: 7 };
     const result = validateExportBundle(bundle);
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -954,11 +995,11 @@ describe('round-trip: export → JSON → validate', () => {
     const agents = [makeAgent()];
 
     const exported = exportWorkflow(workflow, agents);
-    expect(exported.version).toBe(5);
+    expect(exported.version).toBe(6);
     const result = validateExportedWorkflow(JSON.parse(JSON.stringify(exported)) as unknown);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.version).toBe(5);
+      expect(result.value.version).toBe(6);
       expect(result.value.nodes[0].agents[0].eventInterests?.[0]?.topicFrom).toEqual({
         source: 'primaryLink',
         pattern: 'github/{owner}/{repo}/pull_request/{number}.*',
@@ -969,7 +1010,7 @@ describe('round-trip: export → JSON → validate', () => {
     const bundleResult = validateExportBundle(JSON.parse(JSON.stringify(bundle)) as unknown);
     expect(bundleResult.ok).toBe(true);
     if (bundleResult.ok) {
-      expect(bundleResult.value.version).toBe(5);
+      expect(bundleResult.value.version).toBe(6);
       expect(
         bundleResult.value.workflows[0].nodes[0].agents[0].eventInterests?.[0]?.topicFrom
       ).toBeDefined();
