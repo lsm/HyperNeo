@@ -655,6 +655,27 @@ describe('Space Export/Import RPC Handlers', () => {
       };
     }
 
+    it('does not copy a template referenced only by a skipped workflow', async () => {
+      const repo = new SpaceAgentTemplateRepository(db);
+      repo.createOwned(OTHER_SPACE_ID, {
+        key: 'team.auditor',
+        handle: 'auditor',
+        displayName: 'Auditor',
+      });
+      const bundle = templateBundle(OTHER_SPACE_ID);
+      await call(handlers, 'spaceImport.execute', { spaceId: SPACE_ID, bundle });
+      repo.deleteOwned(SPACE_ID, 'team.auditor');
+
+      const result = await call<{ workflows: Array<{ action: string }> }>(
+        handlers,
+        'spaceImport.execute',
+        { spaceId: SPACE_ID, bundle, conflictResolution: { workflows: { 'Copied Pipe': 'skip' } } }
+      );
+
+      expect(result.workflows[0].action).toBe('skipped');
+      expect(repo.getOwned(SPACE_ID, 'team.auditor')).toBeNull();
+    });
+
     it('rejects a stored-template slot the destination Space does not own', async () => {
       new SpaceAgentTemplateRepository(db).createOwned(OTHER_SPACE_ID, {
         key: 'team.auditor',

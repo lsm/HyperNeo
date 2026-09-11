@@ -978,8 +978,6 @@ export function setupSpaceExportImportHandlers(
     const deferredUnifiedUpdates: Array<{ spaceId: string; agentId: string }> = [];
     const executeImport = db.transaction(
       (spaceId: string, res: ImportConflictResolution): ImportExecuteResult => {
-        copyReferencedTemplates(spaceId, bundle.exportedFrom, bundle.workflows);
-
         const coordinatorByHandle = longHorizonAgentRepo.getCoordinator(spaceId);
         const existingAgents = longHorizonAgentRepo
           .listBySpaceId(spaceId)
@@ -1183,6 +1181,20 @@ export function setupSpaceExportImportHandlers(
         }
 
         const workflowResults: ImportedItem[] = [];
+
+        copyReferencedTemplates(
+          spaceId,
+          bundle.exportedFrom,
+          bundle.workflows.filter((exportedWorkflow) => {
+            const existing = existingWorkflowByName.get(exportedWorkflow.name);
+            if (!existing) return true;
+            const strategy: ConflictResolutionStrategy =
+              res.workflows?.[exportedWorkflow.name] ?? 'skip';
+            if (strategy === 'skip') return false;
+            if (strategy === 'replace') return replacedIdByName.has(exportedWorkflow.name);
+            return true;
+          })
+        );
 
         for (const exportedWorkflow of bundle.workflows) {
           const existing = existingWorkflowByName.get(exportedWorkflow.name);
