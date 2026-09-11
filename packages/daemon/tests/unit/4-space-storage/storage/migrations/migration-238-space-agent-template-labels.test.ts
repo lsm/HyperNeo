@@ -43,7 +43,7 @@ describe('migration 238: space_agent_templates labels column', () => {
 
     const repo = new SpaceAgentTemplateRepository(db);
     expect(repo.getByKey('pre.custom')?.labels).toEqual([]);
-    const created = repo.create({ key: 'post.custom', handle: 'post', labels: ['quality'] });
+    const created = repo.create('', { key: 'post.custom', handle: 'post', labels: ['quality'] });
     expect(created.labels).toEqual(['quality']);
     expect(repo.getByKey('post.custom')?.labels).toEqual(['quality']);
     db.close();
@@ -58,7 +58,7 @@ describe('migration 238: space_agent_templates labels column', () => {
     runMigration238(db);
 
     const repo = new SpaceAgentTemplateRepository(db);
-    repo.create({ key: 'idempotent.custom', handle: 'idempotent' });
+    repo.create('', { key: 'idempotent.custom', handle: 'idempotent' });
 
     expect(repo.getByKey('idempotent.custom')?.labels).toEqual([]);
     db.close();
@@ -69,7 +69,7 @@ describe('migration 238: space_agent_templates labels column', () => {
     runMigrations(db, () => {});
 
     const repo = new SpaceAgentTemplateRepository(db);
-    const created = repo.create({ key: 'registered.custom', handle: 'registered' });
+    const created = repo.create('', { key: 'registered.custom', handle: 'registered' });
 
     expect(created.labels).toEqual([]);
     const updated = repo.update('registered.custom', { labels: ['release'] });

@@ -109,7 +109,7 @@ function readVersionPayload(
 describe('migration 231 — clear slot.agentId where templateKey resolves', () => {
   test('clears agentId on slots bound to a stored library template or a code built-in', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
+    new SpaceAgentTemplateRepository(db).create('', {
       key: 'migrated.agent.agent-1',
       handle: 'coder',
       displayName: 'Coder',
@@ -209,7 +209,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
 
   test('resolves templateKeys case-sensitively through the same seams as spawn', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
+    new SpaceAgentTemplateRepository(db).create('', {
       key: 'migrated.agent.agent-1',
       handle: 'coder',
       displayName: 'Coder',
@@ -229,7 +229,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
 
   test('rewrites post-approval targetAgent UUIDs to the cleared slot name', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
+    new SpaceAgentTemplateRepository(db).create('', {
       key: 'migrated.agent.agent-1',
       handle: 'coder',
       displayName: 'Coder',
@@ -262,7 +262,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
 
   test('rewrites a post-approval target on a node with no cleared slots', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
+    new SpaceAgentTemplateRepository(db).create('', {
       key: 'migrated.agent.agent-1',
       handle: 'coder',
       displayName: 'Coder',
@@ -293,7 +293,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
 
   test('materializes a missing slot name from agentId before clearing', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
+    new SpaceAgentTemplateRepository(db).create('', {
       key: 'migrated.agent.agent-1',
       handle: 'coder',
       displayName: 'Coder',
@@ -325,7 +325,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
 
   test('does not redirect a post-approval target when an earlier slot keeps its agentId', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
+    new SpaceAgentTemplateRepository(db).create('', {
       key: 'migrated.agent.agent-1',
       handle: 'coder',
       displayName: 'Coder',
@@ -360,7 +360,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
 
   test('keeps an agentId when rewriting to the slot name would be ambiguous', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
+    new SpaceAgentTemplateRepository(db).create('', {
       key: 'migrated.agent.agent-1',
       handle: 'coder',
       displayName: 'Coder',
@@ -395,7 +395,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
 
   test('keeps an agentId when its replacement name collides with a retained agentId', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
+    new SpaceAgentTemplateRepository(db).create('', {
       key: 'migrated.agent.agent-b',
       handle: 'coder',
       displayName: 'Coder',
@@ -430,7 +430,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
 
   test('leaves a UUID targetAgent alone when it matches no cleared slot', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
+    new SpaceAgentTemplateRepository(db).create('', {
       key: 'migrated.agent.agent-1',
       handle: 'coder',
       displayName: 'Coder',
@@ -627,7 +627,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
     const db = createMigrationDb();
     createRunTables(db);
     insertWorkflow(db, 'wf-pin', 'space-1', 'Pinned Flow');
-    new SpaceAgentTemplateRepository(db).create({
+    new SpaceAgentTemplateRepository(db).create('', {
       key: 'migrated.agent.agent-p',
       handle: 'coder',
       displayName: 'Coder',
@@ -728,7 +728,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
     const db = createMigrationDb();
     createRunTables(db);
     insertWorkflow(db, 'wf-pin', 'space-1', 'Pinned Flow');
-    new SpaceAgentTemplateRepository(db).create({
+    new SpaceAgentTemplateRepository(db).create('', {
       key: 'migrated.agent.agent-b',
       handle: 'coder',
       displayName: 'Coder',

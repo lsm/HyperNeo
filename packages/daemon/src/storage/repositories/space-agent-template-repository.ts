@@ -45,7 +45,23 @@ export class SpaceAgentTemplateRepository {
         now,
         version
       );
-    return this.getByKey(params.key) as SpaceAgentTemplate;
+    return this.getOwned(spaceId, params.key) as SpaceAgentTemplate;
+  }
+
+  private getOwnedRow(spaceId: string, key: string): Record<string, unknown> | undefined {
+    return this.db
+      .prepare(`SELECT * FROM space_agent_templates WHERE space_id = ? AND key = ?`)
+      .get(spaceId, key) as Record<string, unknown> | undefined;
+  }
+
+  private getOwned(spaceId: string, key: string): SpaceAgentTemplate | null {
+    const row = this.getOwnedRow(spaceId, key);
+    return row ? rowToTemplate(row) : null;
+  }
+
+  private getOwnedWithVersion(spaceId: string, key: string): SpaceAgentTemplateRecord | null {
+    const row = this.getOwnedRow(spaceId, key);
+    return row ? rowToTemplateRecord(row) : null;
   }
 
   getByKey(key: string): SpaceAgentTemplate | null {
@@ -143,9 +159,11 @@ export class SpaceAgentTemplateRepository {
     }
 
     if (fields.length === 0) {
-      if (expectedVersion === undefined) return this.getByKey(key);
-      const current = this.getByKeyWithVersion(key);
-      return current !== null && current.version === expectedVersion ? this.getByKey(key) : null;
+      if (expectedVersion === undefined) return this.getOwned(spaceId, key);
+      const current = this.getOwnedWithVersion(spaceId, key);
+      return current !== null && current.version === expectedVersion
+        ? this.getOwned(spaceId, key)
+        : null;
     }
 
     const nextVersion = this.nextVersionFor(key);
@@ -166,7 +184,7 @@ export class SpaceAgentTemplateRepository {
       .prepare(`UPDATE space_agent_templates SET ${fields.join(', ')} ${where}`)
       .run(...values);
     if (result.changes === 0) return null;
-    return this.getByKey(key);
+    return this.getOwned(spaceId, key);
   }
 
   delete(spaceId: string, key: string, expectedVersion?: number): boolean {

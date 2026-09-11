@@ -78,7 +78,7 @@ describe('SpaceRuntime startWorkflowRun template snapshot pinning', () => {
   }
 
   test('pins resolved template snapshots into the run definition version', async () => {
-    templateRepo.create({
+    templateRepo.create(SPACE_ID, {
       key: 'worker.custom',
       handle: 'custom-worker',
       displayName: 'Custom Worker',
@@ -119,7 +119,7 @@ describe('SpaceRuntime startWorkflowRun template snapshot pinning', () => {
   });
 
   test('prefers built-in templates over stored templates with colliding keys', async () => {
-    templateRepo.create({
+    templateRepo.create(SPACE_ID, {
       key: 'worker.swe',
       handle: 'swe',
       displayName: 'Stored SWE',
@@ -151,7 +151,7 @@ describe('SpaceRuntime startWorkflowRun template snapshot pinning', () => {
   });
 
   test('keeps the pinned snapshot frozen across later template edits', async () => {
-    templateRepo.create({
+    templateRepo.create(SPACE_ID, {
       key: 'worker.custom',
       handle: 'custom-worker',
       displayName: 'Custom Worker',

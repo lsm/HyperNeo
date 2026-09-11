@@ -39,7 +39,7 @@ describe('migration 226: space_agent_templates version column', () => {
     expect(after).toContain('version');
 
     const repo = new SpaceAgentTemplateRepository(db);
-    const created = repo.create({ key: 'post.custom', handle: 'post' });
+    const created = repo.create('', { key: 'post.custom', handle: 'post' });
     const existing = repo.getByKeyWithVersion('pre.custom');
     expect(created.key).toBe('post.custom');
     expect(existing?.version).toBe(1);
@@ -61,7 +61,7 @@ describe('migration 226: space_agent_templates version column', () => {
     runMigration238(db);
 
     const repo = new SpaceAgentTemplateRepository(db);
-    repo.create({ key: 'idempotent.custom', handle: 'idempotent' });
+    repo.create('', { key: 'idempotent.custom', handle: 'idempotent' });
 
     expect(repo.getByKey('idempotent.custom')).toEqual(
       expect.objectContaining({
@@ -76,7 +76,7 @@ describe('migration 226: space_agent_templates version column', () => {
     runMigrations(db, () => {});
 
     const repo = new SpaceAgentTemplateRepository(db);
-    const created = repo.create({ key: 'registered.custom', handle: 'registered' });
+    const created = repo.create('', { key: 'registered.custom', handle: 'registered' });
 
     expect(created.key).toBe('registered.custom');
     expect(repo.getByKeyWithVersion('registered.custom')?.version).toBe(1);
