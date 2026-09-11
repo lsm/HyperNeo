@@ -94,7 +94,7 @@ function getSdkVersion(): string {
     }
   } catch {}
 
-  return '0.3.233';
+  return '0.3.268';
 }
 
 function getCachePath(): string {

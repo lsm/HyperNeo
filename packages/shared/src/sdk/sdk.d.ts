@@ -11,7 +11,7 @@ import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import type { UUID } from 'crypto';
 import type { Writable } from 'stream';
 import * as z from 'zod/v4';
-import type { ZodRawShape } from 'zod';
+import type { ZodRawShape } from 'zod/v3';
 import type { ZodRawShape as ZodRawShape_2 } from 'zod/v4';
 
 export declare class AbortError extends Error {
@@ -55,7 +55,7 @@ export declare type AgentMcpServerSpec = string | Record<string, McpServerConfig
 
 export declare type AnyZodRawShape = ZodRawShape | ZodRawShape_2;
 
-export declare type ApiKeySource = 'user' | 'project' | 'org' | 'temporary' | 'oauth';
+export declare type ApiKeySource = 'ANTHROPIC_API_KEY' | 'apiKeyHelper' | '/login managed key' | 'none' | 'user' | 'project' | 'org' | 'temporary' | 'oauth';
 
 export declare type AsyncHookJSONOutput = {
     async: true;
@@ -99,6 +99,8 @@ export declare type CanUseTool = (toolName: string, input: Record<string, unknow
     title?: string;
     displayName?: string;
     description?: string;
+    defaultToNo?: boolean;
+    suppressAlwaysAllowRule?: boolean;
     toolUseID: string;
     agentID?: string;
     requestId: string;
@@ -203,6 +205,8 @@ declare namespace coreTypes {
         PermissionUpdateDestination,
         PermissionUpdate,
         PostCompactHookInput,
+        PostModelSwitchHookInput,
+        PostModelSwitchHookSpecificOutput,
         PostToolBatchHookInput,
         PostToolBatchHookSpecificOutput,
         PostToolBatchToolCall,
@@ -211,6 +215,8 @@ declare namespace coreTypes {
         PostToolUseHookInput,
         PostToolUseHookSpecificOutput,
         PreCompactHookInput,
+        PreModelSwitchHookInput,
+        PreModelSwitchHookSpecificOutput,
         PreToolUseHookInput,
         PreToolUseHookSpecificOutput,
         RewindFilesResult,
@@ -234,6 +240,7 @@ declare namespace coreTypes {
         SDKHookStartedMessage,
         SDKInformationalMessage,
         SDKLocalCommandOutputMessage,
+        SDKMcpResourceLink,
         SDKMemoryRecallMessage,
         SDKMessageOrigin,
         SDKMessage,
@@ -311,6 +318,7 @@ declare type CreateSdkMcpServerOptions = {
     instructions?: string;
     tools?: Array<SdkMcpToolDefinition<any>>;
     alwaysLoad?: boolean;
+    timeout?: number;
 };
 
 export declare type CwdChangedHookInput = BaseHookInput & {
@@ -379,9 +387,9 @@ export declare type ElicitationResultHookSpecificOutput = {
     content?: Record<string, unknown>;
 };
 
-export declare const EXIT_REASONS: readonly ['clear', 'resume', 'logout', 'prompt_input_exit', 'other', 'bypass_permissions_disabled'];
+export declare const EXIT_REASONS: readonly ['clear', 'resume', 'logout', 'prompt_input_exit', 'other'];
 
-export declare type ExitReason = 'clear' | 'resume' | 'logout' | 'prompt_input_exit' | 'other' | 'bypass_permissions_disabled';
+export declare type ExitReason = 'clear' | 'resume' | 'logout' | 'prompt_input_exit' | 'other';
 
 export declare type FastModeDisabledReason = 'free' | 'preference' | 'extra_usage_disabled' | 'network_error' | 'unknown' | 'not_first_party' | 'disabled_by_env' | 'model_not_allowed' | 'sdk_opt_in_required' | 'pending';
 
@@ -441,7 +449,7 @@ export declare type GetSubagentMessagesOptions = {
     sessionStore?: SessionStore;
 };
 
-export declare const HOOK_EVENTS: readonly ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PostToolBatch', 'Notification', 'UserPromptSubmit', 'UserPromptExpansion', 'SessionStart', 'SessionEnd', 'Stop', 'StopFailure', 'SubagentStart', 'SubagentStop', 'PreCompact', 'PostCompact', 'PermissionRequest', 'PermissionDenied', 'Setup', 'TeammateIdle', 'TaskCreated', 'TaskCompleted', 'Elicitation', 'ElicitationResult', 'ConfigChange', 'WorktreeCreate', 'WorktreeRemove', 'InstructionsLoaded', 'CwdChanged', 'FileChanged', 'DirectoryAdded', 'MessageDisplay'];
+export declare const HOOK_EVENTS: readonly ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PostToolBatch', 'Notification', 'UserPromptSubmit', 'UserPromptExpansion', 'SessionStart', 'SessionEnd', 'Stop', 'StopFailure', 'SubagentStart', 'SubagentStop', 'PreCompact', 'PostCompact', 'PreModelSwitch', 'PostModelSwitch', 'PermissionRequest', 'PermissionDenied', 'Setup', 'TeammateIdle', 'TaskCreated', 'TaskCompleted', 'Elicitation', 'ElicitationResult', 'ConfigChange', 'WorktreeCreate', 'WorktreeRemove', 'InstructionsLoaded', 'CwdChanged', 'FileChanged', 'DirectoryAdded', 'MessageDisplay'];
 
 export declare type HookCallback = (input: HookInput, toolUseID: string | undefined, options: {
     signal: AbortSignal;
@@ -453,9 +461,9 @@ export declare interface HookCallbackMatcher {
     timeout?: number;
 }
 
-export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'PostToolBatch' | 'Notification' | 'UserPromptSubmit' | 'UserPromptExpansion' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'StopFailure' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PostCompact' | 'PermissionRequest' | 'PermissionDenied' | 'Setup' | 'TeammateIdle' | 'TaskCreated' | 'TaskCompleted' | 'Elicitation' | 'ElicitationResult' | 'ConfigChange' | 'WorktreeCreate' | 'WorktreeRemove' | 'InstructionsLoaded' | 'CwdChanged' | 'FileChanged' | 'DirectoryAdded' | 'MessageDisplay';
+export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'PostToolBatch' | 'Notification' | 'UserPromptSubmit' | 'UserPromptExpansion' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'StopFailure' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PostCompact' | 'PreModelSwitch' | 'PostModelSwitch' | 'PermissionRequest' | 'PermissionDenied' | 'Setup' | 'TeammateIdle' | 'TaskCreated' | 'TaskCompleted' | 'Elicitation' | 'ElicitationResult' | 'ConfigChange' | 'WorktreeCreate' | 'WorktreeRemove' | 'InstructionsLoaded' | 'CwdChanged' | 'FileChanged' | 'DirectoryAdded' | 'MessageDisplay';
 
-export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | PostToolBatchHookInput | PermissionDeniedHookInput | NotificationHookInput | UserPromptSubmitHookInput | UserPromptExpansionHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | StopFailureHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PostCompactHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCreatedHookInput | TaskCompletedHookInput | ElicitationHookInput | ElicitationResultHookInput | ConfigChangeHookInput | InstructionsLoadedHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput | CwdChangedHookInput | FileChangedHookInput | DirectoryAddedHookInput | MessageDisplayHookInput;
+export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | PostToolBatchHookInput | PermissionDeniedHookInput | NotificationHookInput | UserPromptSubmitHookInput | UserPromptExpansionHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | StopFailureHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PostCompactHookInput | PreModelSwitchHookInput | PostModelSwitchHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCreatedHookInput | TaskCompletedHookInput | ElicitationHookInput | ElicitationResultHookInput | ConfigChangeHookInput | InstructionsLoadedHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput | CwdChangedHookInput | FileChangedHookInput | DirectoryAddedHookInput | MessageDisplayHookInput;
 
 export declare type HookJSONOutput = AsyncHookJSONOutput | SyncHookJSONOutput;
 
@@ -552,6 +560,7 @@ export declare type McpHttpServerConfig = {
 export declare type McpSdkServerConfig = {
     type: 'sdk';
     name: string;
+    timeout?: number;
 };
 
 export declare type McpSdkServerConfigWithInstance = McpSdkServerConfig & {
@@ -650,6 +659,7 @@ export declare type ModelInfo = {
 export declare type ModelUsage = {
     inputTokens: number;
     outputTokens: number;
+    thinkingTokens?: number;
     cacheReadInputTokens: number;
     cacheCreationInputTokens: number;
     webSearchRequests: number;
@@ -658,6 +668,7 @@ export declare type ModelUsage = {
     maxOutputTokens: number;
     canonicalModel?: string;
     provider?: string;
+    costBasis?: 'list' | 'managed' | 'unknown';
 };
 
 export declare type NonNullableUsage = {
@@ -716,6 +727,8 @@ export declare type Options = {
     onElicitation?: OnElicitation;
     onUserDialog?: OnUserDialog;
     supportedDialogKinds?: string[];
+    perTaskStopAffordance?: boolean;
+
     persistSession?: boolean;
     sessionStore?: SessionStore;
     sessionStoreFlush?: SessionStoreFlush;
@@ -739,13 +752,16 @@ export declare type Options = {
     planModeInstructions?: string;
     allowDangerouslySkipPermissions?: boolean;
     permissionPromptToolName?: string;
+    permissionPrompts?: 'host' | 'none';
     plugins?: SdkPluginConfig[];
+    pluginDelivery?: 'argv' | 'initialize';
 
 
 
 
     promptSuggestions?: boolean;
     agentProgressSummaries?: boolean;
+
     resume?: string;
     sessionId?: string;
     resumeSessionAt?: string;
@@ -760,10 +776,15 @@ export declare type Options = {
     stderr?: (data: string) => void;
     strictMcpConfig?: boolean;
     systemPrompt?: string | string[] | {
+        type: 'custom';
+        prompt: string | string[];
+        snapshot?: boolean;
+    } | {
         type: 'preset';
         preset: 'claude_code';
         append?: string;
         excludeDynamicSections?: boolean;
+        snapshot?: boolean;
     };
     title?: string;
 
@@ -874,6 +895,25 @@ export declare type PostCompactHookInput = BaseHookInput & {
     compact_summary: string;
 };
 
+export declare type PostModelSwitchHookInput = (BaseHookInput & {
+    hook_event_name: 'PostModelSwitch';
+}) & {
+    from_model: string;
+    to_model: string;
+    requested_model: string | null;
+    source: 'command' | 'picker' | 'sdk' | 'auto' | 'resume';
+    context_tokens: number;
+    prompt_cache_warm: boolean;
+    cache_ttl: '5m' | '1h';
+    estimated_cache_write_usd: number;
+    pricing: 'configured' | 'catalog' | 'default';
+};
+
+export declare type PostModelSwitchHookSpecificOutput = {
+    hookEventName: 'PostModelSwitch';
+    additionalContext?: string;
+};
+
 export declare type PostToolBatchHookInput = BaseHookInput & {
     hook_event_name: 'PostToolBatch';
     tool_calls: PostToolBatchToolCall[];
@@ -918,6 +958,7 @@ export declare type PostToolUseHookInput = BaseHookInput & {
 export declare type PostToolUseHookSpecificOutput = {
     hookEventName: 'PostToolUse';
     additionalContext?: string;
+    classifierContext?: string;
     updatedToolOutput?: unknown;
     updatedMCPToolOutput?: unknown;
 };
@@ -926,6 +967,26 @@ export declare type PreCompactHookInput = BaseHookInput & {
     hook_event_name: 'PreCompact';
     trigger: 'manual' | 'auto';
     custom_instructions: string | null;
+};
+
+export declare type PreModelSwitchHookInput = (BaseHookInput & {
+    hook_event_name: 'PreModelSwitch';
+}) & {
+    from_model: string;
+    to_model: string;
+    requested_model: string | null;
+    source: 'command' | 'picker' | 'sdk';
+    context_tokens: number;
+    prompt_cache_warm: boolean;
+    cache_ttl: '5m' | '1h';
+    estimated_cache_write_usd: number;
+    pricing: 'configured' | 'catalog' | 'default';
+};
+
+export declare type PreModelSwitchHookSpecificOutput = {
+    hookEventName: 'PreModelSwitch';
+    permissionDecision?: 'allow' | 'deny' | 'ask';
+    permissionDecisionReason?: string;
 };
 
 export declare type PreToolUseHookInput = BaseHookInput & {
@@ -962,20 +1023,28 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
     applyFlagSettings(settings: {
         [K in keyof Settings]?: K extends 'effortLevel' ? EffortLevel | null : Settings[K] | null;
     }): Promise<void>;
+    updateSettings(source: 'localSettings', settings: Record<string, unknown>): Promise<void>;
     initializationResult(): Promise<SDKControlInitializeResponse>;
     reinitialize(): Promise<SDKControlInitializeResponse>;
     supportedCommands(): Promise<SlashCommand[]>;
     supportedModels(): Promise<ModelInfo[]>;
     supportedAgents(): Promise<AgentInfo[]>;
     mcpServerStatus(): Promise<McpServerStatus[]>;
-    getContextUsage(): Promise<SDKControlGetContextUsageResponse>;
-    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(): Promise<SDKControlGetUsageResponse>;
+    getContextUsage(opts?: {
+        detail?: 'summary' | 'full';
+    }): Promise<SDKControlGetContextUsageResponse>;
+    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(opts?: {
+        skipBehaviors?: boolean;
+    }): Promise<SDKControlGetUsageResponse>;
     readFile(path: string, options?: {
         maxBytes?: number;
         encoding?: 'utf-8' | 'base64';
     }): Promise<SDKControlReadFileResponse | null>;
-    reloadPlugins(): Promise<SDKControlReloadPluginsResponse>;
+    reloadPlugins(options?: {
+        holdOnCacheImpact?: boolean;
+    }): Promise<SDKControlReloadPluginsResponse>;
     reloadSkills(): Promise<SDKControlReloadSkillsResponse>;
+    reloadOutputStyles(): Promise<SDKControlReloadOutputStylesResponse>;
     accountInfo(): Promise<AccountInfo>;
     rewindFiles(userMessageId: string, options?: {
         dryRun?: boolean;
@@ -1044,7 +1113,7 @@ export declare type RewindFilesResult = {
 export declare type SandboxCredentialsConfig = NonNullable<z.infer<ReturnType<typeof SandboxCredentialsConfigSchema>>>;
 
 declare const SandboxCredentialsConfigSchema: () => z.ZodOptional<z.ZodObject<{
-    files: z.ZodOptional<z.ZodArray<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+    files: z.ZodOptional<z.ZodArray<z.ZodPreprocess<z.ZodObject<{
         path: z.ZodString;
         mode: z.ZodEnum<{
             deny: "deny";
@@ -1063,7 +1132,7 @@ declare const SandboxCredentialsConfigSchema: () => z.ZodOptional<z.ZodObject<{
         maskDuplicates: z.ZodOptional<z.ZodBoolean>;
         injectHosts: z.ZodOptional<z.ZodArray<z.ZodString>>;
     }, z.core.$strip>>>>;
-    envVars: z.ZodOptional<z.ZodArray<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+    envVars: z.ZodOptional<z.ZodArray<z.ZodPreprocess<z.ZodObject<{
         name: z.ZodString;
         mode: z.ZodEnum<{
             deny: "deny";
@@ -1167,7 +1236,7 @@ declare const SandboxSettingsSchema: () => z.ZodObject<{
         disabled: z.ZodOptional<z.ZodBoolean>;
     }, z.core.$strip>>;
     credentials: z.ZodOptional<z.ZodObject<{
-        files: z.ZodOptional<z.ZodArray<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+        files: z.ZodOptional<z.ZodArray<z.ZodPreprocess<z.ZodObject<{
             path: z.ZodString;
             mode: z.ZodEnum<{
                 deny: "deny";
@@ -1186,7 +1255,7 @@ declare const SandboxSettingsSchema: () => z.ZodObject<{
             maskDuplicates: z.ZodOptional<z.ZodBoolean>;
             injectHosts: z.ZodOptional<z.ZodArray<z.ZodString>>;
         }, z.core.$strip>>>>;
-        envVars: z.ZodOptional<z.ZodArray<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+        envVars: z.ZodOptional<z.ZodArray<z.ZodPreprocess<z.ZodObject<{
             name: z.ZodString;
             mode: z.ZodEnum<{
                 deny: "deny";
@@ -1234,8 +1303,8 @@ declare const SandboxSettingsSchema: () => z.ZodObject<{
         command: z.ZodString;
         args: z.ZodOptional<z.ZodArray<z.ZodString>>;
     }, z.core.$strip>>;
-    bwrapPath: z.ZodCatch<z.ZodOptional<z.ZodPipe<z.ZodTransform<string | undefined, unknown>, z.ZodString>>>;
-    socatPath: z.ZodCatch<z.ZodOptional<z.ZodPipe<z.ZodTransform<string | undefined, unknown>, z.ZodString>>>;
+    bwrapPath: z.ZodCatch<z.ZodOptional<z.ZodPreprocess<z.ZodString>>>;
+    socatPath: z.ZodCatch<z.ZodOptional<z.ZodPreprocess<z.ZodString>>>;
 }, z.core.$loose>;
 
 export declare type SDKActiveGoalMessage = {
@@ -1259,6 +1328,10 @@ export declare type SDKAPIRetryMessage = {
     retry_delay_ms: number;
     error_status: number | null;
     error: SDKAssistantMessageError;
+    no_response?: {
+        waited_ms: number;
+        retry_wait_ms: number;
+    };
     uuid: UUID;
     session_id: string;
 };
@@ -1269,13 +1342,18 @@ export declare type SDKAssistantMessage = {
     parent_tool_use_id: string | null;
     error?: SDKAssistantMessageError;
     uuid: UUID;
+
     session_id: string;
     request_id?: string;
+    user_message_uuid?: string;
+    user_message_uuids?: string[];
+    resume_reason?: string;
     resumed_from_incomplete_thinking?: true;
     supersedes?: UUID[];
     aborted?: true;
     subagent_type?: string;
     task_description?: string;
+
 
     timestamp?: string;
 
@@ -1291,9 +1369,13 @@ export declare type SDKAssistantMessage = {
 
 
 
+
+
+
+
 };
 
-export declare type SDKAssistantMessageError = 'authentication_failed' | 'oauth_org_not_allowed' | 'billing_error' | 'rate_limit' | 'overloaded' | 'invalid_request' | 'model_not_found' | 'server_error' | 'unknown' | 'max_output_tokens';
+export declare type SDKAssistantMessageError = 'authentication_failed' | 'oauth_org_not_allowed' | 'account_on_hold' | 'verification_required' | 'billing_error' | 'rate_limit' | 'overloaded' | 'invalid_request' | 'model_not_found' | 'server_error' | 'unknown' | 'max_output_tokens' | 'cloud_credential_error';
 
 export declare type SDKAuthStatusMessage = {
     type: 'auth_status';
@@ -1311,6 +1393,7 @@ export declare type SDKBackgroundTasksChangedMessage = {
         task_id: string;
         task_type: string;
         description: string;
+        ambient?: boolean;
     }[];
     uuid: UUID;
     session_id: string;
@@ -1353,6 +1436,7 @@ export declare type SDKCompactBoundaryMessage = {
 
     uuid: UUID;
     session_id: string;
+
 };
 
 export declare type SDKContextUsage = {
@@ -1438,6 +1522,7 @@ declare type SDKControlGetBinaryVersionRequest = {
 
 declare type SDKControlGetContextUsageRequest = {
     subtype: 'get_context_usage';
+    detail?: 'summary' | 'full';
 };
 
 export declare type SDKControlGetContextUsageResponse = {
@@ -1446,6 +1531,7 @@ export declare type SDKControlGetContextUsageResponse = {
         tokens: number;
         color: string;
         isDeferred?: boolean;
+        kind: 'used' | 'free' | 'buffer' | 'deferred';
     }[];
     totalTokens: number;
     maxTokens: number;
@@ -1532,10 +1618,6 @@ export declare type SDKControlGetContextUsageResponse = {
     } | null;
 };
 
-declare type SDKControlGetPlanRequest = {
-    subtype: 'get_plan';
-};
-
 declare type SDKControlGetSessionCostRequest = {
     subtype: 'get_session_cost';
 };
@@ -1546,6 +1628,7 @@ declare type SDKControlGetSettingsRequest = {
 
 declare type SDKControlGetUsageRequest = {
     subtype: 'get_usage';
+    skip_behaviors?: boolean;
 };
 
 export declare type SDKControlGetUsageResponse = {
@@ -1647,17 +1730,21 @@ export declare type SDKControlGetUsageResponse = {
     } | null;
 };
 
-declare type SDKControlGetWorkspaceDiffRequest = {
-    subtype: 'get_workspace_diff';
-};
-
 declare type SDKControlInitializeRequest = {
     subtype: 'initialize';
     hooks?: Partial<Record<coreTypes.HookEvent, SDKHookCallbackMatcher[]>>;
     sdkMcpServers?: string[];
+    sdkMcpServerConfigs?: Record<string, {
+        timeout?: number;
+    }>;
+    sdkMcpServerManifests?: Record<string, {
+        initializeResult: Record<string, unknown>;
+        toolsListResult?: Record<string, unknown>;
+    }>;
     jsonSchema?: Record<string, unknown>;
     systemPrompt?: string[];
     appendSystemPrompt?: string;
+    systemPromptSnapshot?: boolean;
     planModeInstructions?: string;
 
     toolAliases?: Record<string, string>;
@@ -1670,6 +1757,10 @@ declare type SDKControlInitializeRequest = {
     agentProgressSummaries?: boolean;
     forwardSubagentText?: boolean;
     supportedDialogKinds?: string[];
+    perTaskStopAffordance?: boolean;
+    plugins?: coreTypes.SdkPluginConfig[];
+
+
 };
 
 export declare type SDKControlInitializeResponse = {
@@ -1677,16 +1768,25 @@ export declare type SDKControlInitializeResponse = {
     agents: coreTypes.AgentInfo[];
     output_style: string;
     available_output_styles: string[];
+
     models: coreTypes.ModelInfo[];
 
     account: coreTypes.AccountInfo;
 
 
 
+    hooks_applied?: boolean;
+    plugins_applied?: boolean;
+
+
 
 
     fast_mode_state?: coreTypes.FastModeState;
     fast_mode_disabled_reason?: coreTypes.FastModeDisabledReason;
+
+
+
+
 
 
 
@@ -1739,6 +1839,9 @@ declare type SDKControlMcpReconnectRequest = {
 declare type SDKControlMcpSetServersRequest = {
     subtype: 'mcp_set_servers';
     servers: Record<string, coreTypes.McpServerConfigForProcessTransport>;
+
+
+
 };
 
 declare type SDKControlMcpStatusRequest = {
@@ -1761,6 +1864,7 @@ declare type SDKControlPermissionRequest = {
     decision_reason_type?: 'rule' | 'mode' | 'subcommandResults' | 'permissionPromptTool' | 'hook' | 'asyncAgent' | 'sandboxOverride' | 'workingDir' | 'safetyCheck' | 'classifier' | 'other';
     classifier_approvable?: boolean;
     suppress_always_allow_rule?: boolean;
+    default_to_no?: boolean;
     matched_ask_rule?: {
         source: string;
         tool_name: string;
@@ -1772,6 +1876,7 @@ declare type SDKControlPermissionRequest = {
     agent_id?: string;
     description?: string;
     requires_user_interaction?: boolean;
+
 };
 
 declare type SDKControlReadFileRequest = {
@@ -1796,8 +1901,17 @@ declare type SDKControlRegisterRepoRootRequest = {
     reload_skills?: boolean;
 };
 
+declare type SDKControlReloadOutputStylesRequest = {
+    subtype: 'reload_output_styles';
+};
+
+export declare type SDKControlReloadOutputStylesResponse = {
+    available_output_styles: string[];
+};
+
 declare type SDKControlReloadPluginsRequest = {
     subtype: 'reload_plugins';
+    hold_on_cache_impact?: boolean;
 };
 
 export declare type SDKControlReloadPluginsResponse = {
@@ -1811,6 +1925,12 @@ export declare type SDKControlReloadPluginsResponse = {
     }[];
     mcpServers: coreTypes.McpServerStatus[];
     error_count: number;
+    held?: boolean;
+    cache_impact?: {
+        mcp_servers_added: string[];
+        mcp_servers_removed: string[];
+        lsp_tool_change: ('adds' | 'may-add' | 'removes' | 'may-remove') | null;
+    };
 };
 
 declare type SDKControlReloadSkillsRequest = {
@@ -1830,9 +1950,11 @@ export declare type SDKControlRequest = {
     type: 'control_request';
     request_id: string;
     request: SDKControlRequestInner;
+
+
 };
 
-declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlRenameSessionRequest | SDKControlSetColorRequest | SDKControlMcpStatusRequest | SDKControlGetContextUsageRequest | SDKControlGetSessionCostRequest | SDKControlListModelsRequest | SDKControlGetUsageRequest | SDKControlGetBinaryVersionRequest | SDKControlMcpCallRequest | SDKControlFileSuggestionsRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlReadFileRequest | SDKControlGetWorkspaceDiffRequest | SDKControlGetPlanRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlRegisterRepoRootRequest | SDKControlReloadPluginsRequest | SDKControlReloadSkillsRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlStopTaskRequest | SDKControlBackgroundTasksRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest | SDKControlRequestUserDialogRequest;
+declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlRenameSessionRequest | SDKControlSetColorRequest | SDKControlMcpStatusRequest | SDKControlGetContextUsageRequest | SDKControlGetSessionCostRequest | SDKControlListModelsRequest | SDKControlGetUsageRequest | SDKControlGetBinaryVersionRequest | SDKControlMcpCallRequest | SDKControlFileSuggestionsRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlReadFileRequest | SDKControlSeedReadStateRequest | SDKControlMcpSetServersRequest | SDKControlRegisterRepoRootRequest | SDKControlReloadPluginsRequest | SDKControlReloadSkillsRequest | SDKControlReloadOutputStylesRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlStopTaskRequest | SDKControlBackgroundTasksRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlUpdateSettingsRequest | SDKControlElicitationRequest | SDKControlRequestUserDialogRequest;
 
 export declare type SDKControlRequestProgressMessage = {
     type: 'system';
@@ -1857,6 +1979,9 @@ declare type SDKControlRequestUserDialogRequest = {
 export declare type SDKControlResponse = {
     type: 'control_response';
     response: ControlResponse | ControlErrorResponse;
+
+
+
 };
 
 declare type SDKControlRewindFilesRequest = {
@@ -1897,6 +2022,12 @@ declare type SDKControlSetPermissionModeRequest = {
 declare type SDKControlStopTaskRequest = {
     subtype: 'stop_task';
     task_id: string;
+};
+
+declare type SDKControlUpdateSettingsRequest = {
+    subtype: 'update_settings';
+    source: 'localSettings';
+    settings: Record<string, unknown>;
 };
 
 export declare type SDKConversationResetMessage = {
@@ -1948,6 +2079,8 @@ declare type SDKHookCallbackRequest = {
     callback_id: string;
     input: coreTypes.HookInput;
     tool_use_id?: string;
+
+
 };
 
 export declare type SDKHookProgressMessage = {
@@ -2011,6 +2144,16 @@ export declare type SDKLocalCommandOutputMessage = {
     session_id: string;
 };
 
+export declare type SDKMcpResourceLink = {
+    uri: string;
+    name: string;
+    title?: string;
+    description?: string;
+    mimeType?: string;
+    size?: number;
+    annotations?: Record<string, unknown>;
+};
+
 export declare type SdkMcpToolDefinition<Schema extends AnyZodRawShape = AnyZodRawShape> = {
     name: string;
     description: string;
@@ -2043,6 +2186,7 @@ export declare type SDKMessageOrigin = {
 } | {
     kind: 'peer';
     from: string;
+    fromMode?: 'bypass' | 'prompting';
     name?: string;
     fromSession?: string;
 
@@ -2051,7 +2195,7 @@ export declare type SDKMessageOrigin = {
     verifiedPeerPid?: number;
 } | {
     kind: 'task-notification';
-    subkind?: 'scheduled-trigger' | 'peer-send-message';
+    subkind?: 'scheduled-trigger' | 'peer-send-message' | 'projects-relay';
 } | {
     kind: 'coordinator';
 } | {
@@ -2089,6 +2233,7 @@ export declare type SDKModelRefusalFallbackMessage = {
     fallback_model: string;
     request_id: string | null;
     api_refusal_category?: string | null;
+
     api_refusal_explanation?: string | null;
     retracted_message_uuids?: string[];
     refused_user_message_uuid?: string | null;
@@ -2129,6 +2274,9 @@ export declare type SDKPartialAssistantMessage = {
     uuid: UUID;
     session_id: string;
     ttft_ms?: number;
+    user_message_uuid?: string;
+    user_message_uuids?: string[];
+    resume_reason?: string;
 };
 
 export declare type SDKPermissionDenial = {
@@ -2185,6 +2333,7 @@ export declare type SDKRateLimitInfo = {
     resetsAt?: number;
     rateLimitType?: 'five_hour' | 'seven_day' | 'seven_day_opus' | 'seven_day_sonnet' | 'seven_day_overage_included' | 'overage';
     utilization?: number;
+
     overageStatus?: 'allowed' | 'allowed_warning' | 'rejected';
     overageResetsAt?: number;
     overageDisabledReason?: 'overage_not_provisioned' | 'org_level_disabled' | 'org_level_disabled_until' | 'out_of_credits' | 'seat_tier_level_disabled' | 'member_level_disabled' | 'seat_tier_zero_credit_limit' | 'group_zero_credit_limit' | 'member_zero_credit_limit' | 'org_service_level_disabled' | 'no_limits_configured' | 'fetch_error' | 'unknown';
@@ -2194,6 +2343,7 @@ export declare type SDKRateLimitInfo = {
 
 
 
+    limitScope?: 'service' | 'channel' | 'group_pool';
     errorCode?: 'credits_required';
     canUserPurchaseCredits?: boolean;
     hasChargeableSavedPaymentMethod?: boolean;
@@ -2210,9 +2360,16 @@ export declare type SDKResultError = {
     total_cost_usd: number;
     usage: NonNullableUsage;
     modelUsage: Record<string, ModelUsage>;
+
     permission_denials: SDKPermissionDenial[];
+    queued_turn_count?: number;
     errors: string[];
+
+    user_message_uuid?: string;
+    user_message_uuids?: string[];
+    resume_reason?: string;
     terminal_reason?: TerminalReason;
+    result_index?: number;
     fast_mode_state?: FastModeState;
     fast_mode_disabled_reason?: FastModeDisabledReason;
     origin?: SDKMessageOrigin;
@@ -2231,7 +2388,14 @@ export declare type SDKResultSuccess = {
     ttft_stream_ms?: number;
     time_to_request_ms?: number;
     user_message_uuid?: string;
+    user_message_uuids?: string[];
+    resume_reason?: string;
+    local_command?: string;
     request_sent_wall_ms?: number;
+    first_content_frame_ms?: number;
+    first_stream_post_ms?: number;
+    first_stream_post_ack_ms?: number;
+    first_stream_post_wall_ms?: number;
     time_to_request_from_spawn_ms?: number;
     warm_spare_claimed?: boolean;
     time_origin_ms?: number;
@@ -2243,10 +2407,13 @@ export declare type SDKResultSuccess = {
     total_cost_usd: number;
     usage: NonNullableUsage;
     modelUsage: Record<string, ModelUsage>;
+
     permission_denials: SDKPermissionDenial[];
+    queued_turn_count?: number;
     structured_output?: unknown;
     deferred_tool_use?: SDKDeferredToolUse;
     terminal_reason?: TerminalReason;
+    result_index?: number;
     fast_mode_state?: FastModeState;
     fast_mode_disabled_reason?: FastModeDisabledReason;
     origin?: SDKMessageOrigin;
@@ -2290,6 +2457,7 @@ export declare type SDKStatusMessage = {
     permissionMode?: PermissionMode;
     compact_result?: 'success' | 'failed';
     compact_error?: string;
+
     uuid: UUID;
     session_id: string;
 };
@@ -2299,6 +2467,7 @@ export declare type SDKSystemMessage = {
     subtype: 'init';
     agents?: string[];
     apiKeySource: ApiKeySource;
+
     betas?: string[];
     claude_code_version: string;
     cwd: string;
@@ -2324,7 +2493,13 @@ export declare type SDKSystemMessage = {
 
     fast_mode_state?: FastModeState;
     fast_mode_disabled_reason?: FastModeDisabledReason;
+
+    effort?: ('low' | 'medium' | 'high' | 'xhigh' | 'max') | null;
     capabilities?: string[];
+
+
+
+
 
 
 
@@ -2345,7 +2520,9 @@ export declare type SDKTaskNotificationMessage = {
         tool_uses: number;
         duration_ms: number;
     };
+    resource_links?: SDKMcpResourceLink[];
     skip_transcript?: boolean;
+    ambient?: boolean;
     uuid: UUID;
     session_id: string;
 };
@@ -2376,10 +2553,13 @@ export declare type SDKTaskStartedMessage = {
     tool_use_id?: string;
     description: string;
     subagent_type?: string;
+    is_backgrounded?: boolean;
+    spawn_depth?: number;
     task_type?: string;
     workflow_name?: string;
     prompt?: string;
     skip_transcript?: boolean;
+    ambient?: boolean;
     uuid: UUID;
     session_id: string;
 };
@@ -2405,6 +2585,7 @@ export declare type SDKThinkingTokensMessage = {
     subtype: 'thinking_tokens';
     estimated_tokens: number;
     estimated_tokens_delta: number;
+    user_message_uuid?: string;
     uuid: UUID;
     session_id: string;
 };
@@ -2449,8 +2630,34 @@ export declare type SDKUserMessage = {
     origin?: SDKMessageOrigin;
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     shouldQuery?: boolean;
     timestamp?: string;
+
+
 
 
 
@@ -2468,6 +2675,7 @@ export declare type SDKUserMessage = {
     session_id?: string;
     subagent_type?: string;
     task_description?: string;
+
 };
 
 export declare type SDKUserMessageReplay = {
@@ -2480,8 +2688,34 @@ export declare type SDKUserMessageReplay = {
     origin?: SDKMessageOrigin;
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     shouldQuery?: boolean;
     timestamp?: string;
+
+
 
 
 
@@ -2547,6 +2781,10 @@ export declare type SessionStartHookInput = BaseHookInput & {
     agent_type?: string;
     model?: string;
     session_title?: string;
+    seconds_since_last_response?: number;
+    context_tokens?: number;
+    prompt_cache_likely_expired?: boolean;
+    estimated_cache_write_usd?: number;
 };
 
 export declare type SessionStartHookSpecificOutput = {
@@ -2610,6 +2848,9 @@ export declare interface Settings {
 
 
     cleanupPeriodDays?: number;
+    desktopSessionCleanupPeriodDays?: number;
+    syncClaudeAiSkills?: boolean;
+    syncClaudeAiPlugins?: boolean;
     skillListingMaxDescChars?: number;
     skillListingBudgetFraction?: number;
     wslInheritsWindowsSettings?: boolean;
@@ -2630,6 +2871,7 @@ export declare interface Settings {
         ask?: string[];
         defaultMode?: 'acceptEdits' | 'auto' | 'bypassPermissions' | 'default' | 'dontAsk' | 'plan';
         disableBypassPermissionsMode?: 'disable';
+        blockReadsOutsideWorkingDirectories?: boolean;
         additionalDirectories?: string[];
         [k: string]: unknown;
     };
@@ -2640,6 +2882,26 @@ export declare interface Settings {
     modelOverrides?: {
         [k: string]: string;
     };
+    modelPicker?: {
+        options: {
+            model: string;
+            label?: string;
+            description?: string;
+            behavesAs?: string;
+        }[];
+        replaceBuiltInOptions?: boolean;
+    };
+    modelPricing?: {
+        multiplier?: number;
+        overrides?: {
+            [k: string]: {
+                input: number;
+                output: number;
+                cacheRead: number;
+                cacheWrite: number;
+            };
+        };
+    };
     enableAllProjectMcpServers?: boolean;
     enabledMcpjsonServers?: string[];
     disabledMcpjsonServers?: string[];
@@ -2648,6 +2910,11 @@ export declare interface Settings {
         [k: string]: 'on' | 'name-only' | 'user-invocable-only' | 'off';
     };
     disableBundledSkills?: boolean;
+    managedMcpServers?: {
+        [k: string]: {
+            [k: string]: unknown;
+        };
+    };
     allowedMcpServers?: {
         serverName?: string;
         serverCommand?: [string, ...string[]];
@@ -2672,6 +2939,7 @@ export declare interface Settings {
                 once?: boolean;
                 async?: boolean;
                 asyncRewake?: boolean;
+
 
 
             } | {
@@ -2702,6 +2970,7 @@ export declare interface Settings {
                 allowedEnvVars?: string[];
                 statusMessage?: string;
                 once?: boolean;
+
             } | {
                 type: 'mcp_tool';
                 server: string;
@@ -2721,6 +2990,7 @@ export declare interface Settings {
         sparsePaths?: string[];
         baseRef?: 'fresh' | 'head';
         bgIsolation?: 'worktree' | 'none';
+        location?: string;
     };
     disableAllHooks?: boolean;
     disableAgentView?: boolean;
@@ -2733,6 +3003,8 @@ export declare interface Settings {
     workflowKeywordTriggerEnabled?: boolean;
     disableSkillShellExecution?: boolean;
     defaultShell?: 'bash' | 'powershell';
+    bashOutputMaxChars?: number;
+    taskOutputMaxChars?: number;
     respondToBashCommands?: boolean;
     allowManagedHooksOnly?: boolean;
     allowedHttpHookUrls?: string[];
@@ -2768,6 +3040,8 @@ export declare interface Settings {
             [k: string]: unknown;
         };
     };
+    prependPlugins?: string[];
+    appendPlugins?: string[];
     extraKnownMarketplaces?: {
         [k: string]: {
             source: {
@@ -2776,6 +3050,7 @@ export declare interface Settings {
                 headers?: {
                     [k: string]: string;
                 };
+                headersHelper?: string;
             } | {
                 source: 'github';
                 repo: string;
@@ -2849,6 +3124,10 @@ export declare interface Settings {
                     description?: string;
                     version?: string;
                     strict?: boolean;
+                    headers?: {
+                        [k: string]: string;
+                    };
+                    headersHelper?: string;
                 }[];
                 owner?: {
                     name: string;
@@ -2868,6 +3147,7 @@ export declare interface Settings {
                 headers?: {
                     [k: string]: string;
                 };
+                headersHelper?: string;
             } | {
                 source: 'github';
                 repo: string;
@@ -2941,6 +3221,10 @@ export declare interface Settings {
                     description?: string;
                     version?: string;
                     strict?: boolean;
+                    headers?: {
+                        [k: string]: string;
+                    };
+                    headersHelper?: string;
                 }[];
                 owner?: {
                     name: string;
@@ -2958,6 +3242,7 @@ export declare interface Settings {
         headers?: {
             [k: string]: string;
         };
+        headersHelper?: string;
     } | {
         source: 'github';
         repo: string;
@@ -3031,6 +3316,10 @@ export declare interface Settings {
             description?: string;
             version?: string;
             strict?: boolean;
+            headers?: {
+                [k: string]: string;
+            };
+            headersHelper?: string;
         }[];
         owner?: {
             name: string;
@@ -3044,6 +3333,7 @@ export declare interface Settings {
         headers?: {
             [k: string]: string;
         };
+        headersHelper?: string;
     } | {
         source: 'github';
         repo: string;
@@ -3117,6 +3407,10 @@ export declare interface Settings {
             description?: string;
             version?: string;
             strict?: boolean;
+            headers?: {
+                [k: string]: string;
+            };
+            headersHelper?: string;
         }[];
         owner?: {
             name: string;
@@ -3130,6 +3424,7 @@ export declare interface Settings {
         headers?: {
             [k: string]: string;
         };
+        headersHelper?: string;
     } | {
         source: 'github';
         repo: string;
@@ -3203,6 +3498,10 @@ export declare interface Settings {
             description?: string;
             version?: string;
             strict?: boolean;
+            headers?: {
+                [k: string]: string;
+            };
+            headersHelper?: string;
         }[];
         owner?: {
             name: string;
@@ -3215,7 +3514,9 @@ export declare interface Settings {
     pluginSuggestionMarketplaces?: string[];
     forceLoginMethod?: 'claudeai' | 'console' | 'gateway';
     forceLoginGatewayUrl?: string;
+    gatewayInternalNetworks?: string[];
     parentSettingsBehavior?: 'first-wins' | 'merge';
+    managedSourcesBehavior?: 'first-wins' | 'merge';
     forceLoginOrgUUID?: string | string[];
     forceRemoteSettingsRefresh?: boolean;
     otelHeadersHelper?: string;
@@ -3308,12 +3609,34 @@ export declare interface Settings {
     };
     spinnerTipsOverride?: {
         excludeDefault?: boolean;
-        tips: string[];
+        tips?: (string | {
+            [k: string]: unknown;
+        })[];
+        tipsFile?: string;
+        label?: string;
+        [k: string]: unknown;
     };
     syntaxHighlightingDisabled?: boolean;
+    spellcheck?: {
+        enabled?: boolean;
+        checker?: string;
+        language?: string;
+        color?: string;
+        [k: string]: unknown;
+    };
     terminalTitleFromRename?: boolean;
+    promptCacheTtl?: '5m' | '1h';
+    subagentPromptCacheTtl?: '5m' | '1h';
     alwaysThinkingEnabled?: boolean;
     effortLevel?: 'low' | 'medium' | 'high' | 'xhigh';
+    maxEffortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+    modelSettings?: {
+        [k: string]: {
+            effortLevel?: 'low' | 'medium' | 'high' | 'xhigh';
+            maxEffortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+            [k: string]: unknown;
+        };
+    };
     ultracode?: boolean;
     autoCompactWindow?: number;
     advisorModel?: string;
@@ -3362,6 +3685,8 @@ export declare interface Settings {
         plugin: string;
     }[];
     prefersReducedMotion?: boolean;
+    timeFormat?: ('auto' | '12-hour' | '24-hour' | '24-hour-utc') | string;
+    timeZone?: string;
 
 
 
@@ -3373,6 +3698,7 @@ export declare interface Settings {
     skipDangerousModePermissionPrompt?: boolean;
 
     disableAutoMode?: 'disable';
+
     sshConfigs?: {
         id: string;
         name: string;
@@ -3386,6 +3712,7 @@ export declare interface Settings {
     pluginTrustMessage?: string;
     theme?: ('auto' | 'dark' | 'light' | 'light-daltonized' | 'dark-daltonized' | 'light-ansi' | 'dark-ansi') | string;
     editorMode?: 'normal' | 'vim';
+    keybindingFlavor?: 'classic' | 'readline';
     vimInsertModeRemaps?: {
         [k: string]: unknown;
     };
@@ -3394,6 +3721,7 @@ export declare interface Settings {
     autoCompactEnabled?: boolean;
     precomputeCompactionEnabled?: boolean;
     switchModelsOnFlag?: boolean;
+    autoContinueAtUsageLimit?: boolean;
     autoScrollEnabled?: boolean;
     wheelScrollAccelerationEnabled?: boolean;
     fileCheckpointingEnabled?: boolean;
@@ -3403,6 +3731,7 @@ export declare interface Settings {
     todoFeatureEnabled?: boolean;
     teammateMode?: 'auto' | 'tmux' | 'iterm2' | 'in-process';
     remoteControlAtStartup?: boolean;
+
     isolatePeerMachines?: boolean;
     daemonColdStart?: 'transient' | 'ask';
     crossSessionInbound?: 'accept' | 'hold' | 'refuse';
@@ -3527,7 +3856,7 @@ export declare type SyncHookJSONOutput = {
     reason?: string;
 
 
-    hookSpecificOutput?: PreToolUseHookSpecificOutput | UserPromptSubmitHookSpecificOutput | UserPromptExpansionHookSpecificOutput | SessionStartHookSpecificOutput | SetupHookSpecificOutput | SubagentStartHookSpecificOutput | PostToolUseHookSpecificOutput | PostToolUseFailureHookSpecificOutput | PostToolBatchHookSpecificOutput | StopHookSpecificOutput | SubagentStopHookSpecificOutput | PermissionDeniedHookSpecificOutput | NotificationHookSpecificOutput | PermissionRequestHookSpecificOutput | ElicitationHookSpecificOutput | ElicitationResultHookSpecificOutput | CwdChangedHookSpecificOutput | FileChangedHookSpecificOutput | WorktreeCreateHookSpecificOutput | MessageDisplayHookSpecificOutput;
+    hookSpecificOutput?: PreToolUseHookSpecificOutput | UserPromptSubmitHookSpecificOutput | UserPromptExpansionHookSpecificOutput | SessionStartHookSpecificOutput | SetupHookSpecificOutput | PreModelSwitchHookSpecificOutput | PostModelSwitchHookSpecificOutput | SubagentStartHookSpecificOutput | PostToolUseHookSpecificOutput | PostToolUseFailureHookSpecificOutput | PostToolBatchHookSpecificOutput | StopHookSpecificOutput | SubagentStopHookSpecificOutput | PermissionDeniedHookSpecificOutput | NotificationHookSpecificOutput | PermissionRequestHookSpecificOutput | ElicitationHookSpecificOutput | ElicitationResultHookSpecificOutput | CwdChangedHookSpecificOutput | FileChangedHookSpecificOutput | WorktreeCreateHookSpecificOutput | MessageDisplayHookSpecificOutput;
 };
 
 export declare const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
@@ -3586,6 +3915,8 @@ export declare function tool<Schema extends AnyZodRawShape>(_name: string, _desc
 export declare type ToolConfig = {
     askUserQuestion?: {
         previewFormat?: 'markdown' | 'html';
+
+
     };
 };
 
@@ -3595,6 +3926,7 @@ export declare interface Transport {
     isReady(): boolean;
     readMessages(): AsyncGenerator<StdoutMessage, void, unknown>;
     expectControlResponse?(requestId: string): void;
+    markDelivered?(message: object): void;
     endInput(): void;
     waitForExit?(): Promise<void>;
     [Symbol.dispose]?(): void;
@@ -3631,12 +3963,13 @@ export declare type UserPromptExpansionHookInput = BaseHookInput & {
 export declare type UserPromptExpansionHookSpecificOutput = {
     hookEventName: 'UserPromptExpansion';
     additionalContext?: string;
+    suppressOriginalPrompt?: boolean;
 };
 
 export declare type UserPromptSubmitHookInput = BaseHookInput & {
     hook_event_name: 'UserPromptSubmit';
     prompt: string;
-    source?: 'user' | 'sdk' | 'system' | 'loop_wakeup' | 'schedule_wakeup';
+    source?: 'user' | 'sdk' | 'system' | 'loop_wakeup' | 'schedule_wakeup' | 'poll_event';
     session_title?: string;
 };
 
