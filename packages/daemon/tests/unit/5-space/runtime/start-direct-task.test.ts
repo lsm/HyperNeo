@@ -418,6 +418,11 @@ test('review rejection consumes exact checkpoint, preserves raw reason and start
   });
   const result = await start(request);
   expect(result.started).toBe(true);
+  if (!result.started) throw new Error(result.reason);
+  const frozen = readDirectKickoffIntent(db, result.attempt.id)!;
+  expect(frozen.message.message.content).toContain('## Requested Revisions\n\n  Please revise  ');
+  const dispatched = new JobQueueRepository(db).getLatestByPayload('mailbox', { id: frozen.id });
+  expect(dispatched?.payload).toEqual(frozen);
   expect(tasks.getTask(taskId)).toMatchObject({
     status: 'in_progress',
     pendingCheckpointType: null,
@@ -430,7 +435,9 @@ test('review rejection consumes exact checkpoint, preserves raw reason and start
     approvedAt: null,
     postApprovalSourceNodeId: null,
   });
+  tasks.updateTask(taskId, { approvalReason: 'Unrelated later metadata' });
   expect(await start(request)).toEqual(result);
+  expect(readDirectKickoffIntent(db, result.attempt.id)).toEqual(frozen);
   expect(
     (
       await start({
@@ -512,4 +519,20 @@ test('review rejection retry after a failed load resumes reserved ownership and 
   });
   expect(await start(request)).toMatchObject({ started: true, attempt: { id: reserved.id } });
   expect(tasks.getTask(taskId)?.pendingCompletionGeneration).toBe(generation);
+});
+
+test('kickoff feedback uses admitted review reason despite metadata changing during preparation', async () => {
+  const request = await reviewRetryRequest('Fix the requested edge case');
+  getSessionForControl.mockImplementationOnce(async (id: string) => {
+    tasks.updateTask(taskId, { approvalReason: 'Concurrent unrelated note' });
+    return {
+      getSessionData: () => sessions.getSession(id)!,
+      isQueryActiveOrStarting: () => false,
+    } as AgentSession;
+  });
+  const result = await start(request);
+  if (!result.started) throw new Error(result.reason);
+  const content = readDirectKickoffIntent(db, result.attempt.id)!.message.message.content;
+  expect(content).toContain('Fix the requested edge case');
+  expect(content).not.toContain('Concurrent unrelated note');
 });

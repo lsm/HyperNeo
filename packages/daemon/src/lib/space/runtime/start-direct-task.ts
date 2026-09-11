@@ -224,7 +224,7 @@ function alreadyStarted(db: Database, input: DirectTaskStartInput): DirectTaskSt
   return 'reason' in outcome && outcome.reason.started ? outcome.reason : null;
 }
 
-function kickoffInput(db: Database, prepared: PreparedDirectSession) {
+function kickoffInput(db: Database, prepared: PreparedDirectSession, input: DirectTaskStartInput) {
   const { attempt } = prepared;
   const existing = readDirectKickoffIntent(db, attempt.id);
   const tasks = new SpaceTaskRepository(db);
@@ -240,6 +240,7 @@ function kickoffInput(db: Database, prepared: PreparedDirectSession) {
         content: buildCustomAgentTaskMessage({
           task,
           space,
+          reviewFeedback: input.reviewRejection?.reason,
           workspacePath: resolveTaskWorkspace(space, task),
         }),
       },
@@ -293,7 +294,7 @@ export function createDirectTaskStarter(dependencies: {
       'preparation'
     )
     .pipe(requireStartStage, ['preparation', 'db', 'input'], 'result:start')
-    .pipe(kickoffInput, ['db', 'start'], 'kickoff')
+    .pipe(kickoffInput, ['db', 'start', 'input'], 'kickoff')
     .pipe((kickoff: { message: unknown }) => kickoff.message, 'kickoff', 'message')
     .pipe(activateDirectAttemptAtomically, ['db', 'reactiveDb', 'kickoff', 'message'], 'activation')
     .pipe(startResult, ['activation', 'db', 'input'], 'start')
