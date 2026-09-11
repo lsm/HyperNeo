@@ -853,6 +853,9 @@ class SpaceStore {
           this.workflows.value = [...this.workflows.value, workflowToSummary(event.workflow)];
         }
         this.workflowDetails.value = [...this.workflowDetails.value, event.workflow];
+        if (this.referencesUncachedTemplate(event.workflow)) {
+          void this.fetchTemplates().catch(() => {});
+        }
       }
     });
     this.cleanupFunctions.push(unsubWorkflowCreated);
@@ -2425,6 +2428,16 @@ class SpaceStore {
     );
     if (this.spaceId.value !== spaceId) return;
     this.applyTemplateLibrary(result?.templates ?? []);
+  }
+
+  private referencesUncachedTemplate(workflow: SpaceWorkflow): boolean {
+    const cached = new Set(this.agentTemplates.value.map((template) => template.key));
+    return (workflow.nodes ?? []).some((node) =>
+      (node.agents ?? []).some((slot) => {
+        const key = slot.templateKey?.trim();
+        return !!key && !cached.has(key);
+      })
+    );
   }
 
   private applyTemplateLibrary(templates: SpaceAgentTemplate[]): void {

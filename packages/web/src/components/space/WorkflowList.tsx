@@ -608,7 +608,12 @@ export function WorkflowList({
         agents: Array<{ name: string; id: string; action: string }>;
         workflows: Array<{ name: string; id: string; action: string }>;
         warnings: string[];
+        copiedTemplateKeys?: string[];
       }>('spaceImport.execute', { spaceId, bundle: importBundle, conflictResolution: resolution });
+
+      if (result.copiedTemplateKeys && result.copiedTemplateKeys.length > 0) {
+        await spaceStore.fetchTemplates();
+      }
 
       const createdWorkflows = result.workflows.filter((w) => w.action !== 'skipped').length;
       toast.success(

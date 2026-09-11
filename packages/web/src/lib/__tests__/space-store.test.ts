@@ -1453,6 +1453,57 @@ describe('SpaceStore — spaceWorkflow events', () => {
     );
   });
 
+  it('refreshes the template library when a created workflow references an uncached template', async () => {
+    await spaceStore.selectSpace('space-1');
+    spaceStore.agentTemplates.value = [];
+    const wf = makeWorkflow('wf-tpl');
+    wf.nodes = [
+      {
+        id: 'n1',
+        name: 'Audit',
+        agents: [{ agentId: '', templateKey: 'team.auditor', name: 'auditor' }],
+      },
+    ];
+    templateListResult = [makeAgentTemplate({ key: 'team.auditor' })];
+    mockHub.request.mockClear();
+
+    mockEventHandlers.get('spaceWorkflow.created')?.({
+      sessionId: 'global',
+      spaceId: 'space-1',
+      workflow: wf,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mockHub.request).toHaveBeenCalledWith('spaceAgent.listTemplates', {
+      spaceId: 'space-1',
+    });
+  });
+
+  it('does not refetch templates when every referenced template is cached', async () => {
+    await spaceStore.selectSpace('space-1');
+    templateListResult = [makeAgentTemplate({ key: 'team.auditor' })];
+    await spaceStore.fetchTemplates();
+    const wf = makeWorkflow('wf-tpl2');
+    wf.nodes = [
+      {
+        id: 'n1',
+        name: 'Audit',
+        agents: [{ agentId: '', templateKey: 'team.auditor', name: 'auditor' }],
+      },
+    ];
+    mockHub.request.mockClear();
+
+    mockEventHandlers.get('spaceWorkflow.created')?.({
+      sessionId: 'global',
+      spaceId: 'space-1',
+      workflow: wf,
+    });
+    await Promise.resolve();
+
+    expect(mockHub.request).not.toHaveBeenCalledWith('spaceAgent.listTemplates', expect.anything());
+  });
+
   it('replaces workflow on updated event', async () => {
     await spaceStore.selectSpace('space-1');
     spaceStore.workflows.value = [makeWorkflowSummary('wf1')];

@@ -71,6 +71,7 @@ export interface ImportExecuteResult {
   agents: ImportedItem[];
   workflows: ImportedItem[];
   warnings: string[];
+  copiedTemplateKeys?: string[];
   deferredUnifiedUpdates?: Array<{ spaceId: string; agentId: string }>;
 }
 
@@ -546,6 +547,27 @@ export function buildWorkflowCreateParams(
   return { params, nodeNameToId, warnings };
 }
 
+function referencedStoredTemplateKeys(
+  workflows: ExportedSpaceWorkflow[],
+  resolveAgentId: (agentRef: string) => string | null
+): string[] {
+  const keys = new Set<string>();
+  for (const workflow of workflows) {
+    for (const node of workflow.nodes) {
+      for (const slot of node.agents) {
+        const raw = slot.templateKey?.trim();
+        if (!raw) continue;
+        const key = normalizeLegacyWorkerTemplateKey(raw);
+        if (getLongHorizonAgentTemplate(key)) continue;
+        const agentRef = slot.agentRef?.trim() ?? '';
+        if (agentRef && resolveAgentId(agentRef)) continue;
+        keys.add(key);
+      }
+    }
+  }
+  return [...keys];
+}
+
 function validateWorkflowForPreview(
   exported: ExportedSpaceWorkflow,
   importedAgentNames: Set<string>,
@@ -668,7 +690,56 @@ export function setupSpaceExportImportHandlers(
 ): void {
   const templateRepo = new SpaceAgentTemplateRepository(db);
   const ownedAgents = new SpaceAgentRepository(db);
-  const storedTemplateExists = (key: string): boolean => templateRepo.getByKey(key) != null;
+  const ownsTemplate = (spaceId: string, key: string): boolean =>
+    templateRepo.getOwned(spaceId, key) != null;
+  const importableTemplate = (
+    destinationSpaceId: string,
+    sourceSpaceId: string | undefined
+  ): ((key: string) => boolean) => {
+    return (key) =>
+      ownsTemplate(destinationSpaceId, key) ||
+      (sourceSpaceId !== undefined &&
+        sourceSpaceId !== destinationSpaceId &&
+        ownsTemplate(sourceSpaceId, key));
+  };
+  const copyReferencedTemplates = (
+    destinationSpaceId: string,
+    sourceSpaceId: string | undefined,
+    workflows: ExportedSpaceWorkflow[],
+    resolveAgentId: (agentRef: string) => string | null
+  ): string[] => {
+    const copied: string[] = [];
+    for (const key of referencedStoredTemplateKeys(workflows, resolveAgentId)) {
+      if (ownsTemplate(destinationSpaceId, key)) continue;
+      const source =
+        sourceSpaceId && sourceSpaceId !== destinationSpaceId
+          ? templateRepo.getOwned(sourceSpaceId, key)
+          : null;
+      if (!source) {
+        throw new Error(
+          `Cannot import: template "${key}" is not available to this space; ` +
+            `re-export the bundle from the space that owns it and retry`
+        );
+      }
+      templateRepo.createOwned(destinationSpaceId, {
+        key: source.key,
+        handle: source.handle,
+        displayName: source.displayName,
+        description: source.description,
+        instructions: source.instructions,
+        suggestedAutonomyLevel: source.suggestedAutonomyLevel,
+        model: source.model,
+        provider: source.provider,
+        modelPool: source.modelPool,
+        thinkingLevel: source.thinkingLevel,
+        settingSources: source.settingSources,
+        tools: source.tools,
+        labels: source.labels.filter((label) => !isRelocationMarkerLabel(label)),
+      });
+      copied.push(source.key);
+    }
+    return copied;
+  };
 
   messageHub.onRequest('spaceExport.workflows', async (data) => {
     const params = data as { spaceId: string; workflowIds?: string[] };
@@ -874,7 +945,7 @@ export function setupSpaceExportImportHandlers(
         importedAgentNames,
         existingAgentNameToId,
         agentNameToRole,
-        storedTemplateExists,
+        importableTemplate(params.spaceId, bundle.exportedFrom),
         relocatedTemplateKey
       );
       for (const err of errors) {
@@ -920,6 +991,7 @@ export function setupSpaceExportImportHandlers(
     const bundle = validation.value;
     const resolution = params.conflictResolution ?? {};
 
+    let copiedTemplateKeys: string[] = [];
     const providerClearedAgentIds: string[] = [];
     const deferredUnifiedUpdates: Array<{ spaceId: string; agentId: string }> = [];
     const executeImport = db.transaction(
@@ -1128,6 +1200,25 @@ export function setupSpaceExportImportHandlers(
 
         const workflowResults: ImportedItem[] = [];
 
+        const resolveImportedAgentId = (agentRef: string): string | null =>
+          importedAgentNameToId.get(nameKey(agentRef)) ??
+          existingAgentNameToId.get(nameKey(agentRef)) ??
+          null;
+        copiedTemplateKeys = copyReferencedTemplates(
+          spaceId,
+          bundle.exportedFrom,
+          bundle.workflows.filter((exportedWorkflow) => {
+            const existing = existingWorkflowByName.get(exportedWorkflow.name);
+            if (!existing) return true;
+            const strategy: ConflictResolutionStrategy =
+              res.workflows?.[exportedWorkflow.name] ?? 'skip';
+            if (strategy === 'skip') return false;
+            if (strategy === 'replace') return replacedIdByName.has(exportedWorkflow.name);
+            return true;
+          }),
+          resolveImportedAgentId
+        );
+
         for (const exportedWorkflow of bundle.workflows) {
           const existing = existingWorkflowByName.get(exportedWorkflow.name);
 
@@ -1301,6 +1392,6 @@ export function setupSpaceExportImportHandlers(
       }
     }
 
-    return importResult;
+    return copiedTemplateKeys.length > 0 ? { ...importResult, copiedTemplateKeys } : importResult;
   });
 }
