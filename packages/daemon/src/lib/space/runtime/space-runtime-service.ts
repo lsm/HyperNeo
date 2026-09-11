@@ -1,3 +1,5 @@
+import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
+import { createDatabaseDirectTaskWorkerResolver } from './direct-task-worker-identity.ts';
 import type { OwnedAgentLookup } from '../agents/unified-agent-events.ts';
 import type {
   McpServerConfig,
@@ -260,6 +262,9 @@ export class SpaceRuntimeService {
 
   private resolveMcpSessionPolicy(session: Session): SpaceMcpSessionPolicy {
     return resolveSpaceMcpSessionPolicy(session, {
+      hasDirectWorkerProvenance: (id) =>
+        new DirectTaskExecutionRepository(this.config.db).hasSessionProvenance(id),
+      resolveDirectWorker: (id) => createDatabaseDirectTaskWorkerResolver(this.config.db)(id),
       nodeExecutionRepo: this.nodeExecutionRepo,
       taskRepo: this.config.taskRepo,
     });
@@ -1414,6 +1419,7 @@ export class SpaceRuntimeService {
     session: Session,
     options: { replayPendingMessages: boolean }
   ): Promise<void> {
+    if (this.resolveMcpSessionPolicy(session).role === 'direct_task_worker') return;
     const isWorkflowSubSession =
       session.id.includes(':task:') &&
       (session.id.includes(':exec:') || session.id.includes(':post-approval:'));
@@ -1693,6 +1699,8 @@ export class SpaceRuntimeService {
   }
 
   async reattachWorkflowMcpServers(session: AgentSession, missing: string[]): Promise<void> {
+    if (this.resolveMcpSessionPolicy(session.getSessionData()).role === 'direct_task_worker')
+      return;
     if (!this.taskAgentManager) {
       log.warn(
         `reattachWorkflowMcpServers: TaskAgentManager unavailable; cannot heal session ${session.getSessionData().id} missing [${missing.join(', ')}]`
@@ -1710,6 +1718,8 @@ export class SpaceRuntimeService {
       onReplaySettled?: (succeeded: boolean) => void;
     } = {}
   ): Promise<void> {
+    if (this.resolveMcpSessionPolicy(session.getSessionData()).role === 'direct_task_worker')
+      return;
     if (!this.taskAgentManager) return;
     await this.taskAgentManager.provisionWorkflowSession(session, options);
   }
@@ -1722,6 +1732,7 @@ export class SpaceRuntimeService {
     if (!sessionManager) return;
 
     const spaceChatSessionId = `space:chat:${space.id}`;
+    if (new DirectTaskExecutionRepository(db).hasSessionProvenance(spaceChatSessionId)) return;
     const session = await sessionManager.getSessionAsync(spaceChatSessionId);
     if (!session) {
       log.warn(`Space chat session not found for space ${space.id} (${spaceChatSessionId})`);

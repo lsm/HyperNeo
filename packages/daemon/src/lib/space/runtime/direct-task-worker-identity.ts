@@ -1,3 +1,7 @@
+import type { Database } from '../../../storage/sqlite-compat.ts';
+import { SessionRepository } from '../../../storage/repositories/session-repository.ts';
+import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
+import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import type { Session, SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { DirectTaskAttempt } from '../../../storage/repositories/direct-task-execution-repository.ts';
@@ -86,4 +90,15 @@ export function createDirectTaskWorkerResolver(lookups: DirectTaskWorkerLookups)
     )
     .pipe(requireDirectTaskWorkerIdentity, ['sessionId', 'evidence'], 'result:identity')
     .end('identity') as (sessionId: string) => DirectTaskWorkerIdentity | null;
+}
+
+export function createDatabaseDirectTaskWorkerResolver(db: Database) {
+  const sessions = new SessionRepository(db);
+  const tasks = new SpaceTaskRepository(db);
+  const attempts = new DirectTaskExecutionRepository(db);
+  return createDirectTaskWorkerResolver({
+    getSession: (id) => sessions.getSession(id),
+    getTask: (id) => tasks.getTask(id),
+    getActiveAttempt: (id) => attempts.getActive(id),
+  });
 }

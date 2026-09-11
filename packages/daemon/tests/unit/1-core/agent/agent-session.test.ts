@@ -2658,6 +2658,7 @@ describe('AgentSession', () => {
       } as Session;
 
       mockDb = {
+        getDatabase: mock(() => ({ prepare: mock(() => ({ get: mock(() => null) })) })),
         getSession: mock(() => mockSession),
         updateSession: mock(() => {}),
         getUserMessagesByStatus: mock(() => ({ messages: [], total: 0 })),
