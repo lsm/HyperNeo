@@ -322,14 +322,52 @@ export interface TableRefSpan {
   end: number;
 }
 
-function maskComments(sql: string): string {
-  return sql
-    .replace(/\/\*[\s\S]*?\*\//g, (match) => ' '.repeat(match.length))
-    .replace(/--[^\n]*/g, (match) => ' '.repeat(match.length));
+function maskCommentsAndStrings(sql: string): string {
+  const out = sql.split('');
+  const len = sql.length;
+  let i = 0;
+
+  while (i < len) {
+    if (sql[i] === "'") {
+      i++;
+      while (i < len) {
+        if (sql[i] === "'" && sql[i + 1] === "'") {
+          out[i] = ' ';
+          out[i + 1] = ' ';
+          i += 2;
+        } else if (sql[i] === "'") {
+          i++;
+          break;
+        } else {
+          out[i] = ' ';
+          i++;
+        }
+      }
+    } else if (sql[i] === '-' && sql[i + 1] === '-') {
+      while (i < len && sql[i] !== '\n') {
+        out[i] = ' ';
+        i++;
+      }
+    } else if (sql[i] === '/' && sql[i + 1] === '*') {
+      while (i < len && !(sql[i] === '*' && sql[i + 1] === '/')) {
+        out[i] = ' ';
+        i++;
+      }
+      if (i < len) {
+        out[i] = ' ';
+        out[i + 1] = ' ';
+        i += 2;
+      }
+    } else {
+      i++;
+    }
+  }
+
+  return out.join('');
 }
 
 export function extractTableRefSpans(sql: string): TableRefSpan[] {
-  const positional = stripStringContents(maskComments(sql));
+  const positional = maskCommentsAndStrings(sql);
   const { cteNames } = extractCtes(normalizeWhitespace(positional));
   const spans: TableRefSpan[] = [];
   extractTableRefs(positional, cteNames, spans);

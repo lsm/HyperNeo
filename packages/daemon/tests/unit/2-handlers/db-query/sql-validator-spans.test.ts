@@ -51,6 +51,29 @@ describe('extractTableRefSpans', () => {
     ]);
   });
 
+  test('does not treat a comment marker inside a string literal as a comment', () => {
+    const sql =
+      "SELECT * FROM space_tasks WHERE title = '-- marker'\nJOIN space_workflows ON 1 = 1";
+    expect(extractTableRefSpans(sql).map((span) => span.name)).toEqual([
+      'space_tasks',
+      'space_workflows',
+    ]);
+    expect(sliced(sql)).toEqual(['space_tasks', 'space_workflows']);
+  });
+
+  test('does not treat a quote inside a comment as opening a string', () => {
+    const sql = "SELECT * FROM space_tasks -- it's fine\nJOIN space_workflows ON 1 = 1";
+    expect(extractTableRefSpans(sql).map((span) => span.name)).toEqual([
+      'space_tasks',
+      'space_workflows',
+    ]);
+    const sql2 = "SELECT * FROM space_tasks /* it's fine */ JOIN space_workflows ON 1 = 1";
+    expect(extractTableRefSpans(sql2).map((span) => span.name)).toEqual([
+      'space_tasks',
+      'space_workflows',
+    ]);
+  });
+
   test('skips CTE names the way the reference list does', () => {
     const sql = 'WITH active AS (SELECT * FROM space_tasks) SELECT * FROM active';
     expect(extractTableRefSpans(sql).map((span) => span.name)).toEqual(['space_tasks']);
