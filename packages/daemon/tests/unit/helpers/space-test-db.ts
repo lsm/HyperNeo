@@ -1,3 +1,4 @@
+import { runMigration256 } from '../../../src/storage/schema/m256-direct-finalization';
 import { runMigration255 } from '../../../src/storage/schema/m255-task-lifecycle-generation';
 import { runMigration253 } from '../../../src/storage/schema/m253-direct-kickoff-dispatches';
 import { runMigration254 } from '../../../src/storage/schema/m254-direct-stop-verification';
@@ -900,4 +901,5 @@ export function createSpaceTables(db: BunDatabase): void {
     `CREATE INDEX IF NOT EXISTS idx_space_goal_events_source_task ON space_goal_events(source_task_id, created_at DESC)`
   );
   runMigration255(db);
+  runMigration256(db);
 }
