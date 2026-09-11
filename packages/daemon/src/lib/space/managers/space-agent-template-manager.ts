@@ -17,6 +17,7 @@ import {
   validateAgentModelPool,
   validateSpaceAgentTools,
 } from '../agents/agent-validation.ts';
+import { MIGRATED_AGENT_TEMPLATE_KEY_PREFIX } from '../agents/agent-template-synthesis.ts';
 import {
   getLongHorizonAgentTemplate,
   getLongHorizonAgentTemplates,
@@ -110,6 +111,12 @@ function validateTemplateKey(key: string): string | null {
   }
   if (getLongHorizonAgentTemplate(key) || isLegacyWorkerTemplateKey(key)) {
     return `Template key "${key}" is reserved for a built-in agent template`;
+  }
+  if (
+    key === MIGRATED_AGENT_TEMPLATE_KEY_PREFIX ||
+    key.startsWith(`${MIGRATED_AGENT_TEMPLATE_KEY_PREFIX}.`)
+  ) {
+    return `Template key "${key}" is reserved for templates migration 228 synthesized from agents`;
   }
   return null;
 }
