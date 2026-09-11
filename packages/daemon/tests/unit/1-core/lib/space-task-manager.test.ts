@@ -107,6 +107,24 @@ describe('SpaceTaskManager', () => {
     });
   });
 
+  describe('publishTask', () => {
+    it('publishes a draft task', async () => {
+      const task = await manager.createTask({ title: 'Draft', description: '', status: 'draft' });
+      expect((await manager.publishTask(task.id)).status).toBe('open');
+    });
+
+    it.each(['open', 'done', 'cancelled'] as const)(
+      'rejects publishing a %s task',
+      async (status) => {
+        const task = await manager.createTask({ title: 'Existing', description: '' });
+        if (status !== 'open') await manager.setTaskStatus(task.id, status);
+        const before = await manager.getTask(task.id);
+        await expect(manager.publishTask(task.id)).rejects.toThrow('Only draft');
+        expect(await manager.getTask(task.id)).toEqual(before);
+      }
+    );
+  });
+
   describe('setTaskStatus', () => {
     it('transitions open -> in_progress', async () => {
       const task = await manager.createTask({ title: 'T', description: '' });
@@ -749,7 +767,7 @@ describe('SpaceTaskManager', () => {
 
   describe('VALID_SPACE_TASK_TRANSITIONS', () => {
     it('done allows reactivation and archival', () => {
-      expect(VALID_SPACE_TASK_TRANSITIONS.done).toEqual(['in_progress', 'archived']);
+      expect(VALID_SPACE_TASK_TRANSITIONS.done).toEqual(['open', 'in_progress', 'archived']);
     });
 
     it('cancelled allows restart, reactivation, done, and archival', () => {

@@ -46,8 +46,8 @@ describe('VALID_TASK_TRANSITIONS', () => {
     ]);
   });
 
-  it('done can transition to in_progress and archived', () => {
-    expect(VALID_TASK_TRANSITIONS.done).toEqual(['in_progress', 'archived']);
+  it('done can transition to open, in_progress and archived', () => {
+    expect(VALID_TASK_TRANSITIONS.done).toEqual(['open', 'in_progress', 'archived']);
   });
 
   it('blocked adds stopped to its existing transition targets', () => {
@@ -128,9 +128,17 @@ describe('getTransitionActions', () => {
     ]);
   });
 
+  it('dispatches reopening a completed task as open', () => {
+    const onTransition = vi.fn();
+    const { getByTestId } = render(<TaskStatusActions status="done" onTransition={onTransition} />);
+    fireEvent.click(getByTestId('task-action-open'));
+    expect(onTransition).toHaveBeenCalledWith('open');
+  });
+
   it('returns correct actions for done status', () => {
     const actions = getTransitionActions('done');
     expect(actions).toEqual([
+      { target: 'open', label: 'Reopen as Open' },
       { target: 'in_progress', label: 'Reopen' },
       { target: 'archived', label: 'Archive' },
     ]);

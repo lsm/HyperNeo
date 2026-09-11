@@ -320,6 +320,10 @@ export class SpaceTaskManager {
   }
 
   async publishTask(taskId: string): Promise<SpaceTask> {
+    const task = await this.getTask(taskId);
+    if (task?.status !== 'draft') {
+      throw new Error('Only draft tasks can be published');
+    }
     return this.setTaskStatus(taskId, 'open');
   }
 
