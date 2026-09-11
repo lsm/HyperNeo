@@ -231,8 +231,8 @@ vi.mock('../../components/space/SpaceSessionsPage', () => ({
   ),
 }));
 
-vi.mock('../../components/space/SpaceAgentsView', () => ({
-  SpaceAgentsView: (props: { spaceId: string; selectedHandle?: string | null }) => {
+vi.mock('../../components/space/SpaceLongHorizonAgents', () => ({
+  SpaceLongHorizonAgents: (props: { spaceId: string; selectedHandle?: string | null }) => {
     const spaceAgent = mockAgents.value.find((agent) => agent.handle === props.selectedHandle);
     return (
       <div
@@ -356,7 +356,7 @@ beforeAll(async () => {
     import('../../components/space/SpaceTaskPane'),
     import('../../components/space/SpaceTasks'),
     import('../../components/space/SpaceSessionsPage'),
-    import('../../components/space/SpaceAgentsView'),
+    import('../../components/space/SpaceLongHorizonAgents'),
   ]);
 });
 

@@ -355,6 +355,10 @@
       "maxLines": 704,
       "followUp": "M10 cleanup split when touched"
     },
+    "packages/web/src/components/space/SpaceLongHorizonAgents.tsx": {
+      "maxLines": 702,
+      "followUp": "M8/UI focused view split"
+    },
     "packages/web/src/components/SessionStatusBar.tsx": {
       "maxLines": 697,
       "followUp": "M10 cleanup split when touched"
