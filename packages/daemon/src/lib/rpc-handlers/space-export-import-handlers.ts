@@ -12,6 +12,7 @@ import type {
 } from '@hyperneo/shared';
 import { generateUUID } from '@hyperneo/shared';
 import { SpaceAgentTemplateRepository } from '../../storage/repositories/space-agent-template-repository.ts';
+import { SpaceAgentRepository } from '../../storage/repositories/space-agent-repository.ts';
 import {
   coordinatorLongHorizonAgentId,
   type SpaceLongHorizonAgentRepository,
@@ -27,6 +28,7 @@ import {
   RELOCATED_FROM_LABEL_PREFIX,
 } from '../space/agents/long-horizon-agent-templates.ts';
 import {
+  publishSpaceAgentV2Mirror,
   publishUnifiedAgentCreated,
   publishUnifiedAgentUpdated,
 } from '../space/agents/unified-agent-events.ts';
@@ -663,6 +665,7 @@ export function setupSpaceExportImportHandlers(
   }
 ): void {
   const templateRepo = new SpaceAgentTemplateRepository(db);
+  const ownedAgents = new SpaceAgentRepository(db);
   const storedTemplateExists = (key: string): boolean => templateRepo.getByKey(key) != null;
 
   messageHub.onRequest('spaceExport.workflows', async (data) => {
@@ -1214,6 +1217,13 @@ export function setupSpaceExportImportHandlers(
       const unified = longHorizonAgentRepo.getById(ref.agentId);
       if (unified) {
         void publishUnifiedAgentUpdated(internalEventBus, unified, `space:${ref.spaceId}`);
+        void publishSpaceAgentV2Mirror(
+          internalEventBus,
+          ownedAgents,
+          ref.spaceId,
+          ref.agentId,
+          'updated'
+        );
       }
     }
 
@@ -1236,8 +1246,10 @@ export function setupSpaceExportImportHandlers(
       }
       if (item.action === 'replaced') {
         void publishUnifiedAgentUpdated(internalEventBus, mirror, `space:${spaceId}`);
+        void publishSpaceAgentV2Mirror(internalEventBus, ownedAgents, spaceId, item.id, 'updated');
       } else {
         void publishUnifiedAgentCreated(internalEventBus, mirror, `space:${spaceId}`);
+        void publishSpaceAgentV2Mirror(internalEventBus, ownedAgents, spaceId, item.id, 'created');
       }
     }
 
