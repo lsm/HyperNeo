@@ -16,6 +16,7 @@ export class SpaceAgentStore {
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
   readonly spaceId = signal<string | null>(null);
+  readonly reminderCounts = signal<Record<string, number>>({});
 
   private cleanups: Array<() => void> = [];
   private subscribedSpaceId: string | null = null;
@@ -48,11 +49,28 @@ export class SpaceAgentStore {
       });
       if (!this.isCurrent(generation)) return;
       this.agents.value = sortAgents(agents);
+      await this.refreshReminderCounts(generation);
     } catch (err) {
       if (!this.isCurrent(generation)) return;
       this.error.value = err instanceof Error ? err.message : 'Failed to load agents';
     } finally {
       if (this.isCurrent(generation)) this.loading.value = false;
+    }
+  }
+
+  private async refreshReminderCounts(generation: number): Promise<void> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) return;
+    try {
+      const { counts } = await this.hub().request<{ counts: Record<string, number> }>(
+        'spaceAgentV2.listReminderCounts',
+        { spaceId }
+      );
+      if (!this.isCurrent(generation)) return;
+      this.reminderCounts.value = counts;
+    } catch {
+      if (!this.isCurrent(generation)) return;
+      this.reminderCounts.value = {};
     }
   }
 
@@ -155,6 +173,7 @@ export class SpaceAgentStore {
     this.generation += 1;
     this.spaceId.value = null;
     this.agents.value = [];
+    this.reminderCounts.value = {};
     this.error.value = null;
     this.loading.value = false;
   }
