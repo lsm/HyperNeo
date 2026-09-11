@@ -407,7 +407,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [changes]
     if: always() && needs.changes.result != 'failure' && (github.event_name != 'pull_request' || needs.changes.outputs.daemon == 'true') && github.event.inputs.run_e2e_only != 'true'
-    timeout-minutes: 12
+    timeout-minutes: 14
     strategy:
       fail-fast: false
       matrix:
@@ -430,6 +430,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run daemon + shared unit tests (${{ matrix.shard }})
+        timeout-minutes: 12
         run: >-
           bun run scripts/flaky-test-runner.ts
           --suite daemon-unit
