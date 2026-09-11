@@ -10251,6 +10251,77 @@ describe('createSpaceAgentToolHandlers — update_task', () => {
     );
   });
 
+  test.each(['', '  raw title  '])(
+    'metadata edit preserves legacy title %j and envelope',
+    async (title) => {
+      const created = await ctx.taskManager.createTask({ title: 'Task', description: 'Keep' });
+      const auditLogRepo = new McpAuditLogRepository(ctx.db);
+      const publish = mock(async () => {});
+      const update = spyOn(ctx.taskManager, 'updateTask');
+      const handlers = makeHandlers(ctx, {
+        auditLogRepo,
+        internalEventBus: { publish } as unknown as NonNullable<
+          Parameters<typeof createSpaceAgentToolHandlers>[0]['internalEventBus']
+        >,
+      });
+      const response = await handlers.update_task({
+        task_id: created.id,
+        title,
+        description: undefined,
+      });
+      const parsed = JSON.parse(response.content[0].text);
+      expect(parsed).toEqual({
+        success: true,
+        task: JSON.parse(JSON.stringify(ctx.taskRepo.getTask(created.id))),
+      });
+      expect(parsed.task.title).toBe(title);
+      expect(parsed.task.description).toBe('Keep');
+      expect(parsed.task.spaceId).toBe(ctx.spaceId);
+      expect(parsed.task.taskNumber).toBe(created.taskNumber);
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(update).toHaveBeenCalledWith(
+        created.id,
+        { title },
+        expect.objectContaining({ onCascadedTasks: expect.any(Function) })
+      );
+      expect(publish).toHaveBeenCalledTimes(1);
+      expect(publish).toHaveBeenCalledWith(
+        'space.task.updated',
+        expect.objectContaining({ taskId: created.id, task: expect.objectContaining({ title }) })
+      );
+      const audit = auditLogRepo.listByTask(created.id);
+      expect(audit).toHaveLength(1);
+      expect(JSON.parse(audit[0].paramsSummary ?? '{}')).toEqual({ title });
+    }
+  );
+
+  test('metadata admission rejects foreign tasks before mutation, audit or event', async () => {
+    seedSpaceRow(ctx.db, 'foreign-metadata-space', '/tmp/foreign');
+    const foreign = ctx.taskRepo.createTask({
+      spaceId: 'foreign-metadata-space',
+      title: 'Foreign',
+      description: '',
+    });
+    const auditLogRepo = new McpAuditLogRepository(ctx.db);
+    const publish = mock(async () => {});
+    const update = spyOn(ctx.taskManager, 'updateTask');
+    const handlers = makeHandlers(ctx, {
+      auditLogRepo,
+      internalEventBus: { publish } as unknown as NonNullable<
+        Parameters<typeof createSpaceAgentToolHandlers>[0]['internalEventBus']
+      >,
+    });
+    const parsed = JSON.parse(
+      (await handlers.update_task({ task_id: foreign.id, title: 'Wrong' })).content[0].text
+    );
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('does not belong to this space');
+    expect(update).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(auditLogRepo.listByTask(foreign.id)).toHaveLength(0);
+    expect(ctx.taskRepo.getTask(foreign.id)?.title).toBe('Foreign');
+  });
+
   test('fields-only audit omits previousStatus — unlike transition audits', async () => {
     const auditLogRepo = new McpAuditLogRepository(ctx.db);
     const created = await ctx.taskManager.createTask({
