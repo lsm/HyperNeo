@@ -9,13 +9,16 @@ import {
   createTaskDependencyEditor,
   type TaskDependencyOwner,
 } from '../../operations/task-dependency-editor.ts';
-import { Logger } from '../../logger.ts';
 import type { SpaceTaskManager } from '../managers/space-task-manager.ts';
 import type { SpaceMcpSessionPolicyContext } from '../runtime/space-mcp-session-policy.ts';
 import { requireDependencyExecutionBlock } from '../tools/update-task-fields.ts';
 import { requireMetadataCallerScope, resolveMetadataSessionSpace } from './task-metadata.ts';
 
-const log = new Logger('SpaceTaskDependencies');
+import {
+  persistSpaceTaskFields,
+  publishSpaceTaskFieldUpdate,
+  blockSpaceTaskForDependency,
+} from './task-field-effects.ts';
 type DependencyState = { previous: SpaceTask | null; task: SpaceTask };
 
 export interface BoundSpaceTaskDependencyDependencies {
@@ -43,33 +46,9 @@ export async function persistSpaceDependencies(
   spaceId: string,
   input: SetTaskDependenciesInput
 ): Promise<DependencyState> {
-  const manager = getTaskManager(spaceId);
-  const previous = await manager.getTask(input.taskId);
-  await manager.updateTask(
-    input.taskId,
-    { dependsOn: input.dependsOn },
-    {
-      onCascadedTasks: async (tasks) => {
-        for (const task of tasks) await publishSpaceDependencyTask(emitTaskUpdated, spaceId, task);
-      },
-    }
-  );
-  const task = await manager.getTask(input.taskId);
-  if (!task) throw new Error(`Task not found: ${input.taskId}`);
-  return { previous, task };
-}
-
-export async function publishSpaceDependencyTask(
-  emit: BoundSpaceTaskDependencyDependencies['emitTaskUpdated'],
-  spaceId: string,
-  task: SpaceTask
-): Promise<SpaceTask> {
-  try {
-    await emit(spaceId, task);
-  } catch (error) {
-    log.warn('Failed to emit space.task.updated:', error);
-  }
-  return task;
+  return persistSpaceTaskFields(getTaskManager, emitTaskUpdated, undefined, spaceId, input.taskId, {
+    dependsOn: input.dependsOn,
+  });
 }
 
 export function selectSpaceDependencyCompletion(
@@ -79,17 +58,8 @@ export function selectSpaceDependencyCompletion(
 ): (spaceId: string, task: SpaceTask) => Promise<SpaceTask> {
   const blocked = requireDependencyExecutionBlock(state.previous, state.task);
   return blockExecution && 'value' in blocked
-    ? async (spaceId, task) => {
-        const updated = await blockExecution(spaceId, task.id, {
-          status: 'blocked',
-          blockReason: 'dependency_added',
-          result: 'Dependency added while task was in progress',
-          completedAt: null,
-        });
-        if (!updated) throw new Error(`Failed to block workflow-backed task ${task.id}`);
-        return updated;
-      }
-    : (spaceId, task) => publishSpaceDependencyTask(emit, spaceId, task);
+    ? (spaceId, task) => blockSpaceTaskForDependency(blockExecution, spaceId, task)
+    : (spaceId, task) => publishSpaceTaskFieldUpdate(emit, spaceId, task);
 }
 
 export function createSpaceDependencyReplacer(dependencies: BoundSpaceTaskDependencyDependencies) {
