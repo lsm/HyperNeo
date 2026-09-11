@@ -23,7 +23,7 @@ get_installed_version() {
 resolve_version() {
     local version="$1"
     if [[ "$version" == "latest" ]]; then
-        curl -fsSL "https://api.github.com/repos/oven-sh/bun/releases/latest" | grep -oP '"tag_name":\s*"bun-v\K[^"]+' || echo ""
+        curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 120 "https://api.github.com/repos/oven-sh/bun/releases/latest" | grep -oP '"tag_name":\s*"bun-v\K[^"]+' || echo ""
     else
         echo "$version"
     fi
@@ -73,7 +73,7 @@ install_bun() {
     local zipfile="${tmpdir}/bun.zip"
 
     echo "Downloading from: $url"
-    curl -fsSL -o "$zipfile" "$url"
+    curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 120 -o "$zipfile" "$url"
 
     mkdir -p "$BUN_BIN"
     unzip -o -q "$zipfile" -d "$tmpdir"
