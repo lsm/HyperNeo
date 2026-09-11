@@ -26,7 +26,7 @@ import { resolveTaskWorkspace } from './spawn-slot-resolution.ts';
 type BoundStart = Pick<
   DirectTaskWorkerIdentity,
   'sessionId' | 'attemptId' | 'generation' | 'taskId' | 'spaceId'
-> & { entryId: string; messageUuid: string; workspacePath: string };
+> & { kickoff: string; workspacePath: string };
 interface KickoffProof {
   entry: MailboxEntry | null;
   receipt: boolean;
@@ -89,8 +89,7 @@ function requireBoundStart(
     generation: identity.generation,
     taskId: identity.taskId,
     spaceId: identity.spaceId,
-    entryId: entry.id,
-    messageUuid: entry.messageUuid,
+    kickoff: canonicalJson(entry),
     workspacePath,
   };
   return expected && canonicalJson(expected) !== canonicalJson(bound)

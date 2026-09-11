@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
@@ -144,4 +144,23 @@ test('expired unconsumed kickoff is blocked but consumed kickoff can resume the 
     "UPDATE sdk_messages SET send_status = 'consumed' WHERE session_id = ? AND sdk_uuid = ?"
   ).run(input.sessionId, entry.messageUuid!);
   expect(guard()!).not.toThrow();
+});
+
+test('extending the same kickoff TTL cannot renew captured admission', () => {
+  activate();
+  materialize();
+  const clock = spyOn(Date, 'now').mockReturnValue(Date.now());
+  try {
+    const check = guard()!;
+    expect(check).not.toThrow();
+    db.prepare('UPDATE direct_task_kickoff_intents SET entry = ? WHERE attempt_id = ?').run(
+      JSON.stringify({ ...entry, policy: { ...entry.policy, ttlMs: entry.policy.ttlMs * 3 } }),
+      input.attemptId
+    );
+    clock.mockReturnValue(Date.now() + entry.policy.ttlMs + 1000);
+    expect(guard()!).not.toThrow();
+    expect(check).toThrow('executor activation admission');
+  } finally {
+    clock.mockRestore();
+  }
 });
