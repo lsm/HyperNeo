@@ -229,8 +229,8 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec(`
 		CREATE TABLE IF NOT EXISTS space_tasks (
 			id TEXT PRIMARY KEY,
-			space_id TEXT NOT NULL,
-			task_number INTEGER NOT NULL,
+			space_id TEXT,
+			task_number INTEGER,
 			title TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'open'
@@ -279,7 +279,9 @@ export function createSpaceTables(db: BunDatabase): void {
 			terminal_generation INTEGER NOT NULL DEFAULT 0,
 			reconcile_checked_at INTEGER,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL
+			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL,
+      CHECK ((space_id IS NULL AND task_number IS NULL) OR (space_id IS NOT NULL AND task_number IS NOT NULL)),
+      CHECK (space_id IS NOT NULL OR (workflow_run_id IS NULL AND preferred_workflow_id IS NULL AND goal_id IS NULL AND evolution_scope_id IS NULL AND workspace_path IS NULL AND task_agent_session_id IS NULL AND post_approval_session_id IS NULL))
 		)
 	`);
 
