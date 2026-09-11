@@ -19,6 +19,14 @@ export function reopenDirectCompletion(
   if (!task) throw new Error(`Task not found: ${taskId}`);
   const attempts = new DirectTaskExecutionRepository(db);
   if (!attempts.isSelected(task.id)) return { value: task };
+  const active = attempts.getActive(task.id);
+  if (
+    active?.phase === 'running' &&
+    active.sessionId === task.taskAgentSessionId &&
+    !task.workflowRunId &&
+    !attempts.isStopRequested(active.id, active.sessionId)
+  )
+    return { value: task };
   const previous = db
     .prepare(
       'SELECT id, generation FROM direct_task_execution_attempts WHERE task_id = ? AND session_id = ? AND phase = ?'

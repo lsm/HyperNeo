@@ -84,7 +84,7 @@ export function claimDirectStart(
         task.workflowRunId ||
         task.archivedAt ||
         space?.status !== 'active' ||
-        space.paused ||
+        (space.paused && !(startJobs && input.reviewRejection)) ||
         space.stopped
       )
         return unavailable;
