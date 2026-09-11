@@ -117,15 +117,18 @@ export async function verifyDirectAttemptStop(
       if (!attempts.recordStopVerification(attempt.id, attempt.sessionId, attempt.generation))
         return { reason: { stopped: false, reason: 'unavailable' } };
       await sessionManager.unregisterSession(attempt.sessionId, session);
+      if (
+        !directSessionIsDown(session) ||
+        sessionManager.isSessionLoading(attempt.sessionId) ||
+        sessionManager.getCachedSession(attempt.sessionId)
+      ) {
+        attempts.clearStopVerification(attempt.id, attempt.sessionId);
+        return { reason: { stopped: false, reason: 'unverified' } };
+      }
     } catch {
+      attempts.clearStopVerification(attempt.id, attempt.sessionId);
       return { reason: { stopped: false, reason: 'unverified' } };
     }
-    if (
-      !directSessionIsDown(session) ||
-      sessionManager.isSessionLoading(attempt.sessionId) ||
-      sessionManager.getCachedSession(attempt.sessionId)
-    )
-      return { reason: { stopped: false, reason: 'unverified' } };
   }
   return { value: { attempt, session } };
 }
@@ -135,11 +138,16 @@ function finishVerifiedDirectStop(
   sessionManager: DirectAttemptStopDependencies['sessionManager'],
   { attempt, session }: VerifiedDirectStop
 ): DirectAttemptStopResult {
-  if (
-    sessionManager.isSessionLoading(attempt.sessionId) ||
-    sessionManager.getCachedSession(attempt.sessionId) ||
-    (session && !directSessionIsDown(session))
-  ) {
+  try {
+    if (
+      sessionManager.isSessionLoading(attempt.sessionId) ||
+      sessionManager.getCachedSession(attempt.sessionId) ||
+      (session && !directSessionIsDown(session))
+    ) {
+      attempts.clearStopVerification(attempt.id, attempt.sessionId);
+      return { stopped: false, reason: 'unverified' };
+    }
+  } catch {
     attempts.clearStopVerification(attempt.id, attempt.sessionId);
     return { stopped: false, reason: 'unverified' };
   }

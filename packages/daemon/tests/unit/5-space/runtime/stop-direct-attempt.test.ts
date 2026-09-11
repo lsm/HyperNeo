@@ -379,3 +379,39 @@ test('successful verification survives database reopen without trusting arbitrar
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test.each(['replacement', 'loading', 'live', 'throw', 'probe-throw'] as const)(
+  'failed post-unregister verification %s invalidates durable proof before a missing-cache retry',
+  async (failure) => {
+    attempts.activate('attempt', 'session');
+    attempts.requestStop('attempt', 'session', 'cancelled');
+    cached = agent();
+    const stoppedSession = cached;
+    unregister.mockImplementation(async () => {
+      await Promise.resolve();
+      if (failure === 'replacement') cached = agent();
+      else cached = null;
+      if (failure === 'loading') loading = true;
+      if (failure === 'live') live = [999];
+      if (failure === 'throw') throw new Error('unregister failed');
+      if (failure === 'probe-throw')
+        stoppedSession.getProcessingState = () => {
+          throw new Error('probe failed');
+        };
+    });
+    const manager = {
+      getCachedSession: () => cached,
+      isSessionLoading: () => loading,
+      unregisterSession: unregister,
+    };
+    expect(
+      await verifyDirectAttemptStop(attempts, tasks, manager, attempts.get('attempt')!)
+    ).toHaveProperty('reason');
+    expect(attempts.hasStopVerification('attempt', 'session', 1)).toBe(false);
+    cached = null;
+    loading = false;
+    live = [];
+    expect(await stopper()(input)).toEqual({ stopped: false, reason: 'unverified' });
+    expect(attempts.getActive(taskId)?.id).toBe('attempt');
+  }
+);
