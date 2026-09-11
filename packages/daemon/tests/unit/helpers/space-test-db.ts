@@ -1,3 +1,4 @@
+import { runMigration251 } from '../../../src/storage/schema/m251-direct-session-provenance';
 import { runMigration250 } from '../../../src/storage/schema/m250-direct-stop-requests';
 import { runMigration248 } from '../../../src/storage/schema/m248-direct-task-execution';
 import { createEvolutionTables } from '../../../src/storage/schema/evolution';
@@ -10,6 +11,7 @@ export function createSpaceTables(db: BunDatabase): void {
   db.exec('PRAGMA foreign_keys = ON');
   runMigration248(db);
   runMigration250(db);
+  runMigration251(db);
 
   db.exec(`
 		CREATE TABLE IF NOT EXISTS spaces (
