@@ -372,6 +372,25 @@ describe('SpaceAgentTemplateManager', () => {
       if (!result.ok) expect(result.error).toContain('strings');
     });
 
+    test('rejects keys inside the migrated.agent namespace', async () => {
+      const result = await manager.create({
+        key: 'migrated.agent.some-agent-id',
+        handle: 'impostor',
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('reserved');
+    });
+
+    test('rejects the bare migrated.agent prefix', async () => {
+      const result = await manager.create({ key: 'migrated.agent', handle: 'impostor' });
+      expect(result.ok).toBe(false);
+    });
+
+    test('allows a key that merely starts with the same letters', async () => {
+      const result = await manager.create({ key: 'migrated.agentry', handle: 'agentry' });
+      expect(result.ok).toBe(true);
+    });
+
     test('rejects the reserved migration template key', async () => {
       const result = await manager.create({
         ...fullParams(),
