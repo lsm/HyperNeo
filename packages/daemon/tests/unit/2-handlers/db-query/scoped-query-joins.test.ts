@@ -58,6 +58,17 @@ describe('runScopedQuery — joins of two Space-scoped tables (#4163)', () => {
     db.close();
   });
 
+  test('refuses the query rather than running it unscoped when the column is absent', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE space_workflows (id TEXT, name TEXT);
+             INSERT INTO space_workflows VALUES ('w1', 'Workflow A');`);
+
+    expect(() =>
+      runScopedQuery(db, 'space', 'space-a', { sql: 'SELECT * FROM space_workflows' })
+    ).toThrow(/Cannot scope "space_workflows"/);
+    db.close();
+  });
+
   test('user placeholders keep their positions alongside the scope predicates', () => {
     const db = seededDb();
     const result = runScopedQuery(db, 'space', 'space-a', {

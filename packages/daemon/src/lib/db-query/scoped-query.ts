@@ -365,10 +365,9 @@ function scopeColumnFor(config: ScopeTableConfig): string | null {
 }
 
 function projectionsOf(column: string, projected: string[]): string[] {
-  const matches = projected.filter(
+  return projected.filter(
     (name) => name === column || new RegExp(`^${escapeRegExp(column)}:\\d+$`).test(name)
   );
-  return matches.length > 0 ? matches : [column];
 }
 
 function escapeRegExp(value: string): string {
@@ -507,7 +506,13 @@ function rewriteScopedQuery(
   for (const config of tableConfigs.values()) {
     const column = scopeColumnFor(config);
     if (!column) continue;
-    for (const projectedColumn of projectionsOf(column, projected)) {
+    const targets = projectionsOf(column, projected);
+    if (targets.length === 0) {
+      throw new Error(
+        `Cannot scope "${config.tableName}": no "${column}" column is projected by this query`
+      );
+    }
+    for (const projectedColumn of targets) {
       const filter = buildPrefixedScopeFilter(config, scopeValue, projectedColumn);
       if (filter.whereClause && !perProjection.has(filter.whereClause)) {
         perProjection.set(filter.whereClause, filter.params);
@@ -587,11 +592,7 @@ export function runScopedQuery(
     params: allParams,
     cappedLimit,
   } = rewriteScopedQuery(sql, params, scopeType, scopeValue, tableConfigs, limit, (innerSql) => {
-    try {
-      return db.query(`SELECT * FROM (${innerSql}) AS _dbq LIMIT 0`).columnNames;
-    } catch {
-      return [];
-    }
+    return db.query(`SELECT * FROM (${innerSql}) AS _dbq LIMIT 0`).columnNames;
   });
 
   try {
