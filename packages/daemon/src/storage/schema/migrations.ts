@@ -1,3 +1,4 @@
+import { runMigration242 } from './m242-task-list-indexes.ts';
 import { migrateStandaloneTaskOwnership } from '../tasks/ownership-migration.ts';
 import {
   type ArtifactShape,
@@ -553,6 +554,8 @@ export function runMigrations(
   run(migrationMarkerKey(240), () => runMigration240(db));
 
   run(migrationMarkerKey(241), () => migrateStandaloneTaskOwnership(db));
+
+  run(migrationMarkerKey(242), () => runMigration242(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
