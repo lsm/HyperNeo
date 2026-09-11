@@ -171,7 +171,7 @@ describe('migration 228: workflow agentId refs to templateKey', () => {
     const repo = new SpaceAgentTemplateRepository(db);
     runMigration243(db);
     runMigration246(db);
-    const template = repo.getByKey(migratedAgentTemplateKey('agent-live'));
+    const template = repo.getOwned('', migratedAgentTemplateKey('agent-live'));
     expect(template).not.toBeNull();
     expect(template?.handle).toBe('researcher');
     expect(template?.displayName).toBe('Researcher');
@@ -220,7 +220,7 @@ describe('migration 228: workflow agentId refs to templateKey', () => {
     const repo = new SpaceAgentTemplateRepository(db);
     runMigration243(db);
     runMigration246(db);
-    const stored = repo.getByKey(migratedAgentTemplateKey('agent-equiv'));
+    const stored = repo.getOwned('', migratedAgentTemplateKey('agent-equiv'));
     expect(stored).not.toBeNull();
     const viaTemplate = resolveNodeAgentConfig(
       spaceAgentTemplateToNodeSource(stored!),
@@ -290,7 +290,7 @@ describe('migration 228: workflow agentId refs to templateKey', () => {
     const repo = new SpaceAgentTemplateRepository(db);
     runMigration243(db);
     runMigration246(db);
-    const template = repo.getByKey(migratedAgentTemplateKey('agent-gone'));
+    const template = repo.getOwned('', migratedAgentTemplateKey('agent-gone'));
     expect(template).not.toBeNull();
     expect(template?.displayName).toBe('ghost');
     expect(template?.handle).toBe('ghost');
@@ -393,7 +393,7 @@ describe('migration 228: workflow agentId refs to templateKey', () => {
     const repo = new SpaceAgentTemplateRepository(db);
     runMigration243(db);
     runMigration246(db);
-    expect(repo.getByKey(migratedAgentTemplateKey('agent-paused'))).toBeNull();
+    expect(repo.getOwned('', migratedAgentTemplateKey('agent-paused'))).toBeNull();
     expect(readNodeConfig(db, 'node-paused').agents).toEqual([
       { agentId: 'agent-paused', name: 'paused' },
     ]);
@@ -420,7 +420,7 @@ describe('migration 228: workflow agentId refs to templateKey', () => {
     const repo = new SpaceAgentTemplateRepository(db);
     runMigration243(db);
     runMigration246(db);
-    const template = repo.getByKey(migratedAgentTemplateKey('agent-legacy-worker'));
+    const template = repo.getOwned('', migratedAgentTemplateKey('agent-legacy-worker'));
     expect(template?.displayName).toBe('Legacy Archived Worker');
     expect(readNodeConfig(db, 'node-legacy').agents).toEqual([
       {
@@ -454,7 +454,7 @@ describe('migration 228: workflow agentId refs to templateKey', () => {
     const repo = new SpaceAgentTemplateRepository(db);
     runMigration243(db);
     runMigration246(db);
-    expect(repo.getByKey(migratedAgentTemplateKey('agent-foreign'))).toBeNull();
+    expect(repo.getOwned('', migratedAgentTemplateKey('agent-foreign'))).toBeNull();
     expect(readNodeConfig(db, 'node-foreign').agents).toEqual([
       { agentId: 'agent-foreign', name: 'foreign', customPrompt: { value: 'Slot prompt' } },
     ]);
@@ -480,9 +480,9 @@ describe('migration 228: workflow agentId refs to templateKey', () => {
     const repo = new SpaceAgentTemplateRepository(db);
     runMigration243(db);
     runMigration246(db);
-    expect(repo.getByKey(migratedAgentTemplateKey('agent-empty-sources'))?.settingSources).toEqual(
-      []
-    );
+    expect(
+      repo.getOwned('', migratedAgentTemplateKey('agent-empty-sources'))?.settingSources
+    ).toEqual([]);
     db.close();
   });
 
@@ -623,9 +623,9 @@ describe('migration 228: workflow agentId refs to templateKey', () => {
 
     runMigration243(db);
     runMigration246(db);
-    const userTemplate = repo.getByKey(migratedAgentTemplateKey('agent-collide'));
+    const userTemplate = repo.getOwned('', migratedAgentTemplateKey('agent-collide'));
     expect(userTemplate?.instructions).toBe('User authored content');
-    const synthesized = repo.getByKey(`${migratedAgentTemplateKey('agent-collide')}.m228`);
+    const synthesized = repo.getOwned('', `${migratedAgentTemplateKey('agent-collide')}.m228`);
     expect(synthesized?.displayName).toBe('Real Agent');
     expect(synthesized?.instructions).toBe('Real agent contract');
     expect(readNodeConfig(db, 'node-collide').agents).toEqual([
@@ -671,7 +671,7 @@ describe('migration 228: workflow agentId refs to templateKey', () => {
 
     runMigration243(db);
     runMigration246(db);
-    const synthesized = repo.getByKey(`${migratedAgentTemplateKey('agent-collide')}.m228-2`);
+    const synthesized = repo.getOwned('', `${migratedAgentTemplateKey('agent-collide')}.m228-2`);
     expect(synthesized?.displayName).toBe('Real Agent');
     expect(readNodeConfig(db, 'node-collide-2').agents).toEqual([
       {

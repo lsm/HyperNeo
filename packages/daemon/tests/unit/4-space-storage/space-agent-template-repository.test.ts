@@ -37,6 +37,9 @@ function fullParams(): CreateSpaceAgentTemplateParams {
   };
 }
 
+const OWNER = 'space-owner';
+const SENTINEL = '';
+
 describe('SpaceAgentTemplateRepository', () => {
   let repo: SpaceAgentTemplateRepository;
   let db: BunDatabase;
@@ -53,7 +56,7 @@ describe('SpaceAgentTemplateRepository', () => {
   });
 
   test('create persists the full column set and getByKey round-trips it', () => {
-    const created = repo.create(fullParams());
+    const created = repo.createOwned(OWNER, fullParams());
 
     expect(created).toEqual({
       key: 'release-readiness.custom',
@@ -73,11 +76,11 @@ describe('SpaceAgentTemplateRepository', () => {
       updatedAt: expect.any(Number),
       version: 1,
     } satisfies SpaceAgentTemplate);
-    expect(repo.getByKey('release-readiness.custom')).toEqual(created);
+    expect(repo.getOwned(OWNER, 'release-readiness.custom')).toEqual(created);
   });
 
   test('create applies defaults for omitted optional fields', () => {
-    const created = repo.create({ key: 'notes.custom', handle: 'notes' });
+    const created = repo.createOwned(OWNER, { key: 'notes.custom', handle: 'notes' });
 
     expect(created.displayName).toBe('notes');
     expect(created.description).toBe('');
@@ -93,7 +96,7 @@ describe('SpaceAgentTemplateRepository', () => {
   });
 
   test('create normalizes empty modelPool and tools to null but preserves empty settingSources', () => {
-    const created = repo.create({
+    const created = repo.createOwned(OWNER, {
       key: 'empty.custom',
       handle: 'empty',
       modelPool: [],
@@ -107,52 +110,54 @@ describe('SpaceAgentTemplateRepository', () => {
   });
 
   test('duplicate key violates the primary key constraint', () => {
-    repo.create({ key: 'dup.custom', handle: 'dup' });
-    expect(() => repo.create({ key: 'dup.custom', handle: 'other' })).toThrow(/UNIQUE constraint/i);
-    expect(repo.list()).toHaveLength(1);
+    repo.createOwned(OWNER, { key: 'dup.custom', handle: 'dup' });
+    expect(() => repo.createOwned(OWNER, { key: 'dup.custom', handle: 'other' })).toThrow(
+      /UNIQUE constraint/i
+    );
+    expect(repo.listOwned(OWNER)).toHaveLength(1);
   });
 
   test('suggested autonomy outside 1-5 violates the CHECK constraint', () => {
     expect(() =>
-      repo.create({
+      repo.createOwned(OWNER, {
         key: 'low.custom',
         handle: 'low',
         suggestedAutonomyLevel: 0 as unknown as SpaceAgentAutonomyLevel,
       })
     ).toThrow(/CHECK constraint/i);
     expect(() =>
-      repo.create({
+      repo.createOwned(OWNER, {
         key: 'high.custom',
         handle: 'high',
         suggestedAutonomyLevel: 6 as unknown as SpaceAgentAutonomyLevel,
       })
     ).toThrow(/CHECK constraint/i);
-    expect(repo.list()).toHaveLength(0);
+    expect(repo.listOwned(OWNER)).toHaveLength(0);
   });
 
   test('getByKey returns null for unknown keys', () => {
-    expect(repo.getByKey('missing.custom')).toBeNull();
+    expect(repo.getOwned(OWNER, 'missing.custom')).toBeNull();
   });
 
   test('list orders by created_at and breaks ties on key', () => {
-    repo.create({ key: 'b.custom', handle: 'b' });
-    repo.create({ key: 'a.custom', handle: 'a' });
-    repo.create({ key: 'c.custom', handle: 'c' });
+    repo.createOwned(OWNER, { key: 'b.custom', handle: 'b' });
+    repo.createOwned(OWNER, { key: 'a.custom', handle: 'a' });
+    repo.createOwned(OWNER, { key: 'c.custom', handle: 'c' });
     db.prepare(`UPDATE space_agent_templates SET created_at = ?`).run(1000);
 
-    expect(repo.list().map((t) => t.key)).toEqual(['a.custom', 'b.custom', 'c.custom']);
+    expect(repo.listOwned(OWNER).map((t) => t.key)).toEqual(['a.custom', 'b.custom', 'c.custom']);
 
     db.prepare(`UPDATE space_agent_templates SET created_at = ? WHERE key = ?`).run(
       2000,
       'a.custom'
     );
-    expect(repo.list().map((t) => t.key)).toEqual(['b.custom', 'c.custom', 'a.custom']);
+    expect(repo.listOwned(OWNER).map((t) => t.key)).toEqual(['b.custom', 'c.custom', 'a.custom']);
   });
 
   test('update changes only the provided fields and bumps updated_at', () => {
-    const created = repo.create(fullParams());
+    const created = repo.createOwned(OWNER, fullParams());
 
-    const updated = repo.update('release-readiness.custom', {
+    const updated = repo.casUpdateOwned(OWNER, 'release-readiness.custom', {
       handle: 'release-readiness-v2',
       instructions: 'New instructions.',
       suggestedAutonomyLevel: 4,
@@ -170,9 +175,9 @@ describe('SpaceAgentTemplateRepository', () => {
   });
 
   test('update replaces and clears JSON columns', () => {
-    repo.create(fullParams());
+    repo.createOwned(OWNER, fullParams());
 
-    const updated = repo.update('release-readiness.custom', {
+    const updated = repo.casUpdateOwned(OWNER, 'release-readiness.custom', {
       modelPool: [{ model: 'claude-haiku-4-5', maxConcurrent: 1, weight: 1 }],
       settingSources: ['local'],
       tools: ['Bash'],
@@ -183,7 +188,7 @@ describe('SpaceAgentTemplateRepository', () => {
     expect(updated!.settingSources).toEqual(['local']);
     expect(updated!.tools).toEqual(['Bash']);
 
-    const cleared = repo.update('release-readiness.custom', {
+    const cleared = repo.casUpdateOwned(OWNER, 'release-readiness.custom', {
       modelPool: null,
       settingSources: null,
       tools: null,
@@ -194,9 +199,9 @@ describe('SpaceAgentTemplateRepository', () => {
   });
 
   test('update keeps the null-versus-empty contract per JSON column', () => {
-    repo.create(fullParams());
+    repo.createOwned(OWNER, fullParams());
 
-    const emptied = repo.update('release-readiness.custom', {
+    const emptied = repo.casUpdateOwned(OWNER, 'release-readiness.custom', {
       settingSources: [],
       modelPool: [],
       tools: [],
@@ -207,65 +212,76 @@ describe('SpaceAgentTemplateRepository', () => {
     expect(emptied!.tools).toBeNull();
     expect(emptied!.labels).toEqual([]);
 
-    const inherited = repo.update('release-readiness.custom', { settingSources: null });
+    const inherited = repo.casUpdateOwned(OWNER, 'release-readiness.custom', {
+      settingSources: null,
+    });
     expect(inherited!.settingSources).toBeNull();
   });
 
   test('update replaces and clears labels and leaves them untouched when omitted', () => {
-    repo.create(fullParams());
+    repo.createOwned(OWNER, fullParams());
 
-    const replaced = repo.update('release-readiness.custom', { labels: ['infra'] });
+    const replaced = repo.casUpdateOwned(OWNER, 'release-readiness.custom', { labels: ['infra'] });
     expect(replaced!.labels).toEqual(['infra']);
 
-    const untouched = repo.update('release-readiness.custom', { handle: 'release-readiness-v2' });
+    const untouched = repo.casUpdateOwned(OWNER, 'release-readiness.custom', {
+      handle: 'release-readiness-v2',
+    });
     expect(untouched!.labels).toEqual(['infra']);
 
-    const cleared = repo.update('release-readiness.custom', { labels: null });
+    const cleared = repo.casUpdateOwned(OWNER, 'release-readiness.custom', { labels: null });
     expect(cleared!.labels).toEqual([]);
   });
 
   test('update with no fields returns the current row unchanged', () => {
-    const created = repo.create(fullParams());
-    expect(repo.update('release-readiness.custom', {})).toEqual(created);
+    const created = repo.createOwned(OWNER, fullParams());
+    expect(repo.casUpdateOwned(OWNER, 'release-readiness.custom', {})).toEqual(created);
   });
 
   test('casUpdate with no fields honors the expected version', () => {
-    repo.create(fullParams());
+    repo.createOwned(OWNER, fullParams());
 
-    expect(repo.casUpdate('release-readiness.custom', {}, 999)).toBeNull();
-    expect(repo.casUpdate('release-readiness.custom', {}, 1)?.key).toBe('release-readiness.custom');
-    expect(repo.casUpdate('release-readiness.custom', {})).not.toBeNull();
+    expect(repo.casUpdateOwned(OWNER, 'release-readiness.custom', {}, 999)).toBeNull();
+    expect(repo.casUpdateOwned(OWNER, 'release-readiness.custom', {}, 1)?.key).toBe(
+      'release-readiness.custom'
+    );
+    expect(repo.casUpdateOwned(OWNER, 'release-readiness.custom', {})).not.toBeNull();
   });
 
   test('update on an unknown key returns null', () => {
-    expect(repo.update('missing.custom', { handle: 'x' })).toBeNull();
+    expect(repo.casUpdateOwned(OWNER, 'missing.custom', { handle: 'x' })).toBeNull();
   });
 
   test('delete removes the row and frees the key for reuse', () => {
-    repo.create({ key: 'gone.custom', handle: 'gone' });
+    repo.createOwned(OWNER, { key: 'gone.custom', handle: 'gone' });
 
-    expect(repo.delete('missing.custom')).toBe(false);
-    expect(repo.delete('gone.custom')).toBe(true);
-    expect(repo.getByKey('gone.custom')).toBeNull();
-    expect(repo.delete('gone.custom')).toBe(false);
+    expect(repo.deleteOwned(OWNER, 'missing.custom')).toBe(false);
+    expect(repo.deleteOwned(OWNER, 'gone.custom')).toBe(true);
+    expect(repo.getOwned(OWNER, 'gone.custom')).toBeNull();
+    expect(repo.deleteOwned(OWNER, 'gone.custom')).toBe(false);
 
-    const recreated = repo.create({ key: 'gone.custom', handle: 'back' });
+    const recreated = repo.createOwned(OWNER, { key: 'gone.custom', handle: 'back' });
     expect(recreated.handle).toBe('back');
-    expect(repo.list()).toHaveLength(1);
+    expect(repo.listOwned(OWNER)).toHaveLength(1);
   });
 
   test('prevents a stale CAS update after delete and recreate', () => {
-    repo.create({ key: 'reuse.custom', handle: 'reuse' });
-    const before = repo.getByKeyWithVersion('reuse.custom')!;
+    repo.createOwned(OWNER, { key: 'reuse.custom', handle: 'reuse' });
+    const before = repo.getOwnedWithVersion(OWNER, 'reuse.custom')!;
 
-    repo.delete('reuse.custom');
-    repo.create({ key: 'reuse.custom', handle: 'reincarnated' });
-    const after = repo.getByKeyWithVersion('reuse.custom')!;
+    repo.deleteOwned(OWNER, 'reuse.custom');
+    repo.createOwned(OWNER, { key: 'reuse.custom', handle: 'reincarnated' });
+    const after = repo.getOwnedWithVersion(OWNER, 'reuse.custom')!;
 
     expect(after.version).not.toBe(before.version);
-    const result = repo.casUpdate('reuse.custom', { displayName: 'Stale' }, before.version);
+    const result = repo.casUpdateOwned(
+      OWNER,
+      'reuse.custom',
+      { displayName: 'Stale' },
+      before.version
+    );
     expect(result).toBeNull();
-    expect(repo.getByKey('reuse.custom')?.displayName).not.toBe('Stale');
+    expect(repo.getOwned(OWNER, 'reuse.custom')?.displayName).not.toBe('Stale');
   });
 });
 
@@ -309,7 +325,7 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
   });
 
   test('a stale owned version cannot overwrite the sentinel row it falls back to', () => {
-    repo.create({ key: 'shared', handle: 'h' });
+    repo.createOwned(SENTINEL, { key: 'shared', handle: 'h' });
     repo.createOwned('space-a', { key: 'shared', handle: 'h' });
     const staleOwnedVersion = repo.getOwnedWithVersion('space-a', 'shared')!.version;
     repo.deleteOwned('space-a', 'shared');
@@ -347,9 +363,9 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
   });
 
   test('a key entering a Space namespace never reuses a version the sentinel handed out', () => {
-    const legacy = repo.create({ key: 'moving', handle: 'h' });
-    const legacyVersion = repo.getByKeyWithVersion(legacy.key)!.version;
-    repo.delete('moving');
+    const legacy = repo.createOwned(OWNER, { key: 'moving', handle: 'h' });
+    const legacyVersion = repo.getOwnedWithVersion(OWNER, legacy.key)!.version;
+    repo.deleteOwned(OWNER, 'moving');
 
     repo.createOwned('space-a', { key: 'moving', handle: 'h' });
 
@@ -387,7 +403,7 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
   });
 
   test('unmigrated rows at the sentinel stay visible to every Space', () => {
-    repo.create({ key: 'legacy', handle: 'old' });
+    repo.createOwned(SENTINEL, { key: 'legacy', handle: 'old' });
 
     expect(repo.getOwned('space-a', 'legacy')?.handle).toBe('old');
     expect(repo.getOwned('space-b', 'legacy')?.handle).toBe('old');
@@ -395,7 +411,7 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
   });
 
   test('an owned row wins over a sentinel row with the same key', () => {
-    repo.create({ key: 'k', handle: 'sentinel' });
+    repo.createOwned(SENTINEL, { key: 'k', handle: 'sentinel' });
     repo.createOwned('space-a', { key: 'k', handle: 'owned' });
 
     expect(repo.getOwned('space-a', 'k')?.handle).toBe('owned');
@@ -405,7 +421,7 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
   test('listOwned returns the Space own rows plus unmigrated ones', () => {
     repo.createOwned('space-a', { key: 'mine', handle: 'a' });
     repo.createOwned('space-b', { key: 'theirs', handle: 'b' });
-    repo.create({ key: 'legacy', handle: 'old' });
+    repo.createOwned(SENTINEL, { key: 'legacy', handle: 'old' });
 
     expect(
       repo
@@ -415,7 +431,7 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
     ).toEqual(['legacy', 'mine']);
   });
   test('an update from one Space never rewrites the shared sentinel row', () => {
-    repo.create({ key: 'k', handle: 'sentinel' });
+    repo.createOwned(OWNER, { key: 'k', handle: 'sentinel' });
     repo.createOwned('space-a', { key: 'k', handle: 'owned' });
 
     repo.casUpdateOwned('space-a', 'k', { displayName: 'Changed' });
@@ -425,7 +441,7 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
   });
 
   test('deleting an owned row leaves the sentinel other Spaces still use', () => {
-    repo.create({ key: 'k', handle: 'sentinel' });
+    repo.createOwned(SENTINEL, { key: 'k', handle: 'sentinel' });
     repo.createOwned('space-a', { key: 'k', handle: 'owned' });
 
     expect(repo.deleteOwned('space-a', 'k')).toBe(true);
@@ -435,7 +451,7 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
   });
 
   test('a versioned write refuses when the version belongs to the shadowed row', () => {
-    repo.create({ key: 'k', handle: 'sentinel' });
+    repo.createOwned(OWNER, { key: 'k', handle: 'sentinel' });
     const owned = repo.createOwned('space-a', { key: 'k', handle: 'owned' });
     const sentinelVersion = (owned.version ?? 1) + 99;
 
@@ -444,7 +460,7 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
   });
 
   test('listOwned reports one row per key when a sentinel is shadowed', () => {
-    repo.create({ key: 'k', handle: 'sentinel' });
+    repo.createOwned(OWNER, { key: 'k', handle: 'sentinel' });
     repo.createOwned('space-a', { key: 'k', handle: 'owned' });
 
     const listed = repo.listOwned('space-a').filter((t) => t.key === 'k');
@@ -457,7 +473,7 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
     expect(repo.deleteOwned('space-a', 'missing')).toBe(false);
   });
   test('dedupe keeps creation order when an owned row replaces an older sentinel', () => {
-    repo.create({ key: 'shadowed', handle: 'sentinel' });
+    repo.createOwned(OWNER, { key: 'shadowed', handle: 'sentinel' });
     repo.createOwned('space-a', { key: 'middle', handle: 'mid' });
     repo.createOwned('space-a', { key: 'shadowed', handle: 'owned' });
 
