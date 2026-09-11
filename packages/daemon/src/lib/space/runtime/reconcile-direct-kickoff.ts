@@ -11,8 +11,7 @@ import { SpaceRepository } from '../../../storage/repositories/space-repository.
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import { canonicalJson } from '../../agent/prompt-comparison.ts';
 import { enqueueMailboxEntry, MAILBOX_LANE } from '../../mailbox/enqueue.ts';
-import { parseMailboxEntry, type MailboxEntry } from '../../mailbox/entry.ts';
-import { decodeUlidTimestamp } from '../../mailbox/ulid.ts';
+import { mailboxEntryExpired, parseMailboxEntry, type MailboxEntry } from '../../mailbox/entry.ts';
 import { readDirectKickoffIntent } from './direct-kickoff-intent.ts';
 import {
   loadDirectTaskWorkerEvidence,
@@ -85,8 +84,7 @@ export function decideDirectKickoffDispatch(
       state.receipt?.job_id !== state.job.id)
   )
     return { reason: { kind: 'blocked', reason: 'conflict' } };
-  if (now - decodeUlidTimestamp(entry.id) > entry.policy.ttlMs)
-    return { reason: { kind: 'blocked', reason: 'expired' } };
+  if (mailboxEntryExpired(entry, now)) return { reason: { kind: 'blocked', reason: 'expired' } };
   if (state.job)
     return { reason: { kind: 'existing', jobId: state.job.id, status: state.job.status } };
   if (state.receipt) return { reason: { kind: 'blocked', reason: 'missing_job' } };

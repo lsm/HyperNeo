@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Database } from '../../../../src/storage/sqlite-compat';
-import { runMigrations } from '../../../../src/storage/schema';
+import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
 import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
 import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
@@ -31,6 +31,7 @@ beforeEach(() => {
   db = new Database(join(directory, 'db.sqlite'));
   db.exec('PRAGMA foreign_keys = ON');
   runMigrations(db, () => {});
+  createTables(db);
   spaceId = new SpaceRepository(db).createSpace({
     name: 'Space',
     slug: 'space',
