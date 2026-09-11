@@ -112,6 +112,7 @@ describe('setupSpaceAgentV2Handlers', () => {
         seededExtras.push({ agentId: agent.id, templateKey: template.key });
       },
       templates,
+      reminders: legacyAgents,
       spaceExists: async (id) => id === 'space-1',
       getSession: (id) => sessions.get(id) ?? null,
       internalEventBus: {
@@ -127,18 +128,107 @@ describe('setupSpaceAgentV2Handlers', () => {
   });
 
   describe('registration', () => {
-    test('registers the five agent methods under spaceAgentV2', () => {
+    test('registers the six agent methods under spaceAgentV2', () => {
       expect([...handlers.keys()].sort()).toEqual([
         'spaceAgentV2.create',
         'spaceAgentV2.delete',
         'spaceAgentV2.get',
         'spaceAgentV2.list',
+        'spaceAgentV2.listReminderCounts',
         'spaceAgentV2.update',
       ]);
     });
 
     test('does not shadow any spaceAgent method', () => {
       for (const key of handlers.keys()) expect(key.startsWith('spaceAgentV2.')).toBe(true);
+    });
+  });
+
+  describe('listReminderCounts', () => {
+    async function makeAgent(displayName: string): Promise<SpaceAgent> {
+      const { agent } = await call<{ agent: SpaceAgent }>(handlers, 'spaceAgentV2.create', {
+        spaceId: 'space-1',
+        displayName,
+      });
+      return agent;
+    }
+
+    function addReminder(
+      agentId: string,
+      status: 'active' | 'paused' | 'fired' | 'cancelled'
+    ): void {
+      legacyAgents.createReminder({
+        spaceId: 'space-1',
+        agentId,
+        title: `reminder ${status}`,
+        status,
+        triggerType: 'at',
+        runAt: Date.now() + 60_000,
+      });
+    }
+
+    test('counts active reminders per owned agent', async () => {
+      const first = await makeAgent('First');
+      const second = await makeAgent('Second');
+      addReminder(first.id, 'active');
+      addReminder(first.id, 'active');
+      addReminder(second.id, 'active');
+
+      const { counts } = await call<{ counts: Record<string, number> }>(
+        handlers,
+        'spaceAgentV2.listReminderCounts',
+        { spaceId: 'space-1' }
+      );
+
+      expect(counts[first.id]).toBe(2);
+      expect(counts[second.id]).toBe(1);
+    });
+
+    test('reports zero for an agent with no reminders', async () => {
+      const agent = await makeAgent('Quiet');
+
+      const { counts } = await call<{ counts: Record<string, number> }>(
+        handlers,
+        'spaceAgentV2.listReminderCounts',
+        { spaceId: 'space-1' }
+      );
+
+      expect(counts[agent.id]).toBe(0);
+    });
+
+    test('ignores reminders that are not active', async () => {
+      const agent = await makeAgent('Mixed');
+      addReminder(agent.id, 'active');
+      addReminder(agent.id, 'paused');
+      addReminder(agent.id, 'fired');
+      addReminder(agent.id, 'cancelled');
+
+      const { counts } = await call<{ counts: Record<string, number> }>(
+        handlers,
+        'spaceAgentV2.listReminderCounts',
+        { spaceId: 'space-1' }
+      );
+
+      expect(counts[agent.id]).toBe(1);
+    });
+
+    test('omits migrated worker mirrors', async () => {
+      insertMirror(db, 'mirror-1', 'mirror', 'Legacy Worker');
+      addReminder('mirror-1', 'active');
+
+      const { counts } = await call<{ counts: Record<string, number> }>(
+        handlers,
+        'spaceAgentV2.listReminderCounts',
+        { spaceId: 'space-1' }
+      );
+
+      expect(counts['mirror-1']).toBeUndefined();
+    });
+
+    test('rejects a request without a spaceId', async () => {
+      await expect(call(handlers, 'spaceAgentV2.listReminderCounts', {})).rejects.toThrow(
+        'spaceId is required'
+      );
     });
   });
 
