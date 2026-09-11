@@ -84,6 +84,10 @@ import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types
 import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
 import { stopTaskExecution } from '../../tasks/stop-task-execution.ts';
 import { createWorkflowTaskStoppingExecutor } from '../runtime/task-stopping-executor.ts';
+import {
+  createBoundSpaceTaskMetadataEditor,
+  isTaskMetadataOnlyUpdate,
+} from '../operations/bound-task-metadata.ts';
 import { updateTaskFields } from './update-task-fields.ts';
 import { parkTaskExecution } from '../../tasks/park-task-execution.ts';
 import { createWorkflowTaskParkingExecutor } from '../runtime/task-parking-executor.ts';
@@ -2762,12 +2766,20 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         const applyFieldUpdates = async (): Promise<SpaceTask> => {
           const result = await updateTaskFields(
             taskRepo.getTask(args.task_id),
-            () =>
-              taskManager.updateTask(args.task_id, fieldParams, {
-                onCascadedTasks: async (cascadedTasks) => {
+            () => {
+              const options = {
+                onCascadedTasks: async (cascadedTasks: SpaceTask[]) => {
                   for (const cascadedTask of cascadedTasks) emitTaskUpdated(cascadedTask);
                 },
-              }),
+              };
+              return args.status === undefined && isTaskMetadataOnlyUpdate(fieldParams)
+                ? createBoundSpaceTaskMetadataEditor(
+                    spaceId,
+                    taskManager,
+                    options
+                  )({ taskId: args.task_id, ...fieldParams }, { source: 'mcp' })
+                : taskManager.updateTask(args.task_id, fieldParams, options);
+            },
             (taskId) =>
               runtime.blockWorkflowBackedTask(spaceId, taskId, {
                 ...fieldParams,
