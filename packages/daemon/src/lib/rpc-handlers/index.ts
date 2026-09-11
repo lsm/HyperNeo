@@ -535,12 +535,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   const spaceWorkflowRepo = new SpaceWorkflowRepository(deps.db.getDatabase());
   spaceWorkflowRepo.backfillExistingDefinitionVersions();
   const spaceAgentTemplateRepo = new SpaceAgentTemplateRepository(deps.db.getDatabase());
-  const agentTemplateResolver = createAgentTemplateResolver(spaceAgentTemplateRepo);
+  const agentTemplateResolverFor = (spaceId: string) =>
+    createAgentTemplateResolver(spaceId, spaceAgentTemplateRepo);
   spaceWorkflowRunRepo.backfillDefinitionPins(
     (id) => spaceWorkflowRepo.getWorkflow(id),
-    agentTemplateResolver
+    agentTemplateResolverFor
   );
-  spaceWorkflowRunRepo.migrateSnapshotlessPins(agentTemplateResolver, (id) =>
+  spaceWorkflowRunRepo.migrateSnapshotlessPins(agentTemplateResolverFor, (id) =>
     spaceWorkflowRepo.getWorkflow(id)
   );
   const agentLookup: SpaceAgentLookup = createSpaceAgentLookup(longHorizonAgentRepo);

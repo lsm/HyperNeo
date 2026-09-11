@@ -105,11 +105,11 @@ function requireString(value: unknown, field: string): string {
 
 export function resolveTemplate(
   deps: SpaceAgentV2Deps
-): (key: string) => ReturnType<SpaceAgentTemplateRepository['getByKey']> {
+): (spaceId: string, key: string) => ReturnType<SpaceAgentTemplateRepository['getByKey']> {
   const builtIns = new Map(
     getBuiltInSpaceAgentTemplates().map((template) => [template.key, template])
   );
-  return (key) => builtIns.get(key) ?? deps.templates.getByKey(key);
+  return (spaceId, key) => builtIns.get(key) ?? deps.templates.getByKey(spaceId, key);
 }
 
 export function buildAgentCreate(

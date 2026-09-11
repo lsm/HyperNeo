@@ -64,31 +64,29 @@ export class SpaceAgentTemplateRepository {
     return row ? rowToTemplateRecord(row) : null;
   }
 
-  getByKey(key: string): SpaceAgentTemplate | null {
-    const row = this.db.prepare(`SELECT * FROM space_agent_templates WHERE key = ?`).get(key) as
-      | Record<string, unknown>
-      | undefined;
-    return row ? rowToTemplate(row) : null;
+  getByKey(spaceId: string, key: string): SpaceAgentTemplate | null {
+    return this.getOwned(spaceId, key);
   }
 
-  getByKeyWithVersion(key: string): SpaceAgentTemplateRecord | null {
-    const row = this.db.prepare(`SELECT * FROM space_agent_templates WHERE key = ?`).get(key) as
-      | Record<string, unknown>
-      | undefined;
-    return row ? rowToTemplateRecord(row) : null;
+  getByKeyWithVersion(spaceId: string, key: string): SpaceAgentTemplateRecord | null {
+    return this.getOwnedWithVersion(spaceId, key);
   }
 
-  list(): SpaceAgentTemplate[] {
+  list(spaceId: string): SpaceAgentTemplate[] {
     const rows = this.db
-      .prepare(`SELECT * FROM space_agent_templates ORDER BY created_at ASC, key ASC`)
-      .all() as Record<string, unknown>[];
+      .prepare(
+        `SELECT * FROM space_agent_templates WHERE space_id = ? ORDER BY created_at ASC, key ASC`
+      )
+      .all(spaceId) as Record<string, unknown>[];
     return rows.map(rowToTemplate);
   }
 
-  listWithVersions(): SpaceAgentTemplateRecord[] {
+  listWithVersions(spaceId: string): SpaceAgentTemplateRecord[] {
     const rows = this.db
-      .prepare(`SELECT * FROM space_agent_templates ORDER BY created_at ASC, key ASC`)
-      .all() as Record<string, unknown>[];
+      .prepare(
+        `SELECT * FROM space_agent_templates WHERE space_id = ? ORDER BY created_at ASC, key ASC`
+      )
+      .all(spaceId) as Record<string, unknown>[];
     return rows.map(rowToTemplateRecord);
   }
 

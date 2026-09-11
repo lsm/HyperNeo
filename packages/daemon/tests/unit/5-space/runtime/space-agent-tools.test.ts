@@ -879,7 +879,10 @@ describe('createSpaceAgentToolHandlers — create_agent_template', () => {
     expect(template.thinkingLevel).toBe('think16k');
     expect(template.settingSources).toEqual(['user', 'project']);
     expect(template.tools).toEqual(['Read', 'Bash']);
-    const stored = new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom');
+    const stored = new SpaceAgentTemplateRepository(ctx.db).getByKey(
+      'space-tools-test',
+      'reviewer.custom'
+    );
     expect(stored?.instructions).toBe('You review code.');
   });
 
@@ -1102,9 +1105,10 @@ describe('createSpaceAgentToolHandlers — update_agent_template', () => {
     );
     expect(stale.success).toBe(false);
     expect(stale.error).toContain('modified concurrently');
-    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')?.displayName).toBe(
-      'Reviewer'
-    );
+    expect(
+      new SpaceAgentTemplateRepository(ctx.db).getByKey('space-tools-test', 'reviewer.custom')
+        ?.displayName
+    ).toBe('Reviewer');
 
     const current = new SpaceAgentTemplateRepository(ctx.db).getByKeyWithVersion('reviewer.custom');
     expect(current?.version).toBe(1);
@@ -1202,7 +1206,9 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
     const result = parseResult(await handlers.delete_agent_template({ key: 'reviewer.custom' }));
 
     expect(result.success).toBe(true);
-    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).toBeNull();
+    expect(
+      new SpaceAgentTemplateRepository(ctx.db).getByKey('space-tools-test', 'reviewer.custom')
+    ).toBeNull();
   });
 
   test('denies deletion below the destructive autonomy level', async () => {
@@ -1216,7 +1222,9 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('not permitted');
-    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).not.toBeNull();
+    expect(
+      new SpaceAgentTemplateRepository(ctx.db).getByKey('space-tools-test', 'reviewer.custom')
+    ).not.toBeNull();
   });
 
   test('create and list expose the current template version', async () => {
@@ -1269,7 +1277,9 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
     const result = parseResult(await handlers.delete_agent_template({ key: 'reviewer.custom' }));
 
     expect(result.success).toBe(true);
-    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).toBeNull();
+    expect(
+      new SpaceAgentTemplateRepository(ctx.db).getByKey('space-tools-test', 'reviewer.custom')
+    ).toBeNull();
   });
 
   test('deletes a template even when a pinned run still references it', async () => {
@@ -1305,7 +1315,9 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
     const result = parseResult(await handlers.delete_agent_template({ key: 'reviewer.custom' }));
 
     expect(result.success).toBe(true);
-    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).toBeNull();
+    expect(
+      new SpaceAgentTemplateRepository(ctx.db).getByKey('space-tools-test', 'reviewer.custom')
+    ).toBeNull();
   });
 
   test('rejects a stale CAS version and reports the current one', async () => {
@@ -1322,7 +1334,9 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('current version 2');
-    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).not.toBeNull();
+    expect(
+      new SpaceAgentTemplateRepository(ctx.db).getByKey('space-tools-test', 'reviewer.custom')
+    ).not.toBeNull();
   });
 
   test('deletes with the current CAS version', async () => {
@@ -1338,7 +1352,9 @@ describe('createSpaceAgentToolHandlers — delete_agent_template', () => {
     );
 
     expect(result.success).toBe(true);
-    expect(new SpaceAgentTemplateRepository(ctx.db).getByKey('reviewer.custom')).toBeNull();
+    expect(
+      new SpaceAgentTemplateRepository(ctx.db).getByKey('space-tools-test', 'reviewer.custom')
+    ).toBeNull();
   });
 
   test('reports unavailable template management without a templateManager', async () => {

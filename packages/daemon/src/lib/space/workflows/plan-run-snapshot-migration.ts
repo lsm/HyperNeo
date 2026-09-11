@@ -31,7 +31,7 @@ export interface RunSnapshotMigrationPlan {
 export interface PlanRunSnapshotMigrationDeps extends Dependencies {
   verifyVersion(payload: string, versionHash: string): boolean;
   loadWorkflow(workflowId: string): SpaceWorkflow | null;
-  resolveTemplate: AgentTemplateResolver;
+  resolveTemplateFor: (spaceId: string) => AgentTemplateResolver;
   computeVersion(workflow: SpaceWorkflow): { versionHash: string; payload: string };
 }
 
@@ -85,9 +85,12 @@ export function gateSource(
 
 export function gateSnapshots(
   admitted: SourcedRun,
-  resolveTemplate: PlanRunSnapshotMigrationDeps['resolveTemplate']
+  resolveTemplateFor: PlanRunSnapshotMigrationDeps['resolveTemplateFor']
 ): Gate<SnapshottedRun> {
-  const snapshots = buildRunTemplateSnapshots(admitted.definition, resolveTemplate);
+  const snapshots = buildRunTemplateSnapshots(
+    admitted.definition,
+    resolveTemplateFor(admitted.definition.spaceId)
+  );
   return {
     value: { ...admitted, withSnapshots: { ...admitted.definition, templateSnapshots: snapshots } },
   };
@@ -116,7 +119,7 @@ export function buildPlanRunSnapshotMigration(
   return (superpipe(deps)('planRunSnapshotMigration') as PipelineAPI)
     .input(['run'])
     .pipe(gateSource, ['run', 'verifyVersion', 'loadWorkflow'], 'result:admitted')
-    .pipe(gateSnapshots, ['admitted', 'resolveTemplate'], 'result:admitted')
+    .pipe(gateSnapshots, ['admitted', 'resolveTemplateFor'], 'result:admitted')
     .pipe(buildPlan, ['admitted', 'computeVersion'], 'result:admitted')
     .end('admitted') as (
     run: SnapshotlessPinnedRun

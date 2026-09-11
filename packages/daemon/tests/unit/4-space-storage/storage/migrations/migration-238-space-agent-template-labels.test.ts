@@ -30,7 +30,6 @@ describe('migration 238: space_agent_templates labels column', () => {
     runMigration225(db);
     runMigration226(db);
     runMigration227(db);
-    runMigration243(db);
 
     expect(columnNames(db, 'space_agent_templates')).not.toContain('labels');
 
@@ -46,10 +45,10 @@ describe('migration 238: space_agent_templates labels column', () => {
     expect(columnNames(db, 'space_agent_templates')).toContain('labels');
 
     const repo = new SpaceAgentTemplateRepository(db);
-    expect(repo.getByKey('pre.custom')?.labels).toEqual([]);
+    expect(repo.getByKey('', 'pre.custom')?.labels).toEqual([]);
     const created = repo.create('', { key: 'post.custom', handle: 'post', labels: ['quality'] });
     expect(created.labels).toEqual(['quality']);
-    expect(repo.getByKey('post.custom')?.labels).toEqual(['quality']);
+    expect(repo.getByKey('', 'post.custom')?.labels).toEqual(['quality']);
     db.close();
   });
 
@@ -59,14 +58,12 @@ describe('migration 238: space_agent_templates labels column', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
-    runMigration243(db);
     runMigration238(db);
-    runMigration243(db);
 
     const repo = new SpaceAgentTemplateRepository(db);
     repo.create('', { key: 'idempotent.custom', handle: 'idempotent' });
 
-    expect(repo.getByKey('idempotent.custom')?.labels).toEqual([]);
+    expect(repo.getByKey('', 'idempotent.custom')?.labels).toEqual([]);
     db.close();
   });
 
@@ -90,7 +87,6 @@ describe('migration 238: space_agent_templates labels column', () => {
     runMigration225(db);
     runMigration226(db);
     runMigration227(db);
-    runMigration243(db);
     db.prepare(
       `INSERT INTO space_long_horizon_agents (
          id, space_id, handle, display_name, template_key, status, session_id, instructions,
@@ -131,7 +127,7 @@ describe('migration 238: space_agent_templates labels column', () => {
     runMigrations(db, () => {});
 
     const repo = new SpaceAgentTemplateRepository(db);
-    const template = repo.getByKey('migrated.agent.agent-upgrade');
+    const template = repo.getByKey('', 'migrated.agent.agent-upgrade');
     expect(template?.labels).toEqual([]);
     db.close();
   });

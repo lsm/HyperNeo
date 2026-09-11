@@ -91,13 +91,13 @@ describe('SpaceAgentTemplateManager', () => {
 
   describe('list', () => {
     test('includes built-in templates', () => {
-      expect(manager.list().some((template) => template.key === 'builtin.default')).toBe(true);
+      expect(manager.list(SPACE).some((template) => template.key === 'builtin.default')).toBe(true);
     });
 
     test('merges custom templates with built-ins by key', () => {
       const created = repo.create(SPACE, fullParams());
 
-      const templates = manager.list();
+      const templates = manager.list(SPACE);
       expect(templates.some((template) => template.key === 'release-readiness.custom')).toBe(true);
       expect(templates.some((template) => template.key === 'builtin.default')).toBe(true);
 
@@ -112,7 +112,9 @@ describe('SpaceAgentTemplateManager', () => {
         displayName: 'Override',
       });
 
-      const templates = manager.list().filter((template) => template.key === 'builtin.default');
+      const templates = manager
+        .list(SPACE)
+        .filter((template) => template.key === 'builtin.default');
       expect(templates).toHaveLength(1);
       expect(templates[0]?.displayName).toBe('Built-in');
     });
@@ -126,7 +128,7 @@ describe('SpaceAgentTemplateManager', () => {
         'b.custom'
       );
 
-      const keys = manager.list().map((template) => template.key);
+      const keys = manager.list(SPACE).map((template) => template.key);
       const aIndex = keys.indexOf('a.custom');
       const bIndex = keys.indexOf('b.custom');
       expect(aIndex).toBeLessThan(bIndex);
@@ -143,11 +145,11 @@ describe('SpaceAgentTemplateManager', () => {
         displayName: 'Custom Coord',
       });
 
-      const keys = withReserved.list().map((template) => template.key);
+      const keys = withReserved.list(SPACE).map((template) => template.key);
 
       expect(keys).not.toContain('coordinator.default');
       expect(keys).toContain('custom.coordinator');
-      expect(withReserved.getByKey('coordinator.default')?.key).toBe('coordinator.default');
+      expect(withReserved.getByKey(SPACE, 'coordinator.default')?.key).toBe('coordinator.default');
     });
   });
 
@@ -159,7 +161,7 @@ describe('SpaceAgentTemplateManager', () => {
       if (!result.ok) throw new Error('expected ok');
       expect(result.value.key).toBe('release-readiness.custom');
       expect(result.value.version).toBe(1);
-      expect(manager.getByKey('release-readiness.custom')).not.toBeNull();
+      expect(manager.getByKey(SPACE, 'release-readiness.custom')).not.toBeNull();
     });
 
     test('rejects a duplicate key', async () => {
@@ -842,7 +844,7 @@ describe('SpaceAgentTemplateManager', () => {
         expect(providerResult.value).toBeNull();
       }
 
-      const final = manager.getByKey('release-readiness.custom');
+      const final = manager.getByKey(SPACE, 'release-readiness.custom');
       expect(final?.model).toBe('glm-4-flash');
       expect(final?.provider).toBe('glm');
     });
@@ -878,7 +880,9 @@ describe('SpaceAgentTemplateManager', () => {
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('expected ok');
       expect(result.value).toBeNull();
-      expect(repo.getByKey('release-readiness.custom')?.displayName).toBe('Release Readiness');
+      expect(repo.getByKey(SPACE, 'release-readiness.custom')?.displayName).toBe(
+        'Release Readiness'
+      );
     });
 
     test('omitting expectedVersion validates against the current version', async () => {
@@ -944,7 +948,7 @@ describe('SpaceAgentTemplateManager', () => {
       const result = manager.delete(SPACE, 'release-readiness.custom');
 
       expect(result.ok).toBe(true);
-      expect(manager.getByKey('release-readiness.custom')).toBeNull();
+      expect(manager.getByKey(SPACE, 'release-readiness.custom')).toBeNull();
     });
 
     test('returns an error for an unknown key', () => {
@@ -967,7 +971,7 @@ describe('SpaceAgentTemplateManager', () => {
       const result = manager.delete(SPACE, 'release-readiness.custom', 1);
 
       expect(result.ok).toBe(true);
-      expect(manager.getByKey('release-readiness.custom')).toBeNull();
+      expect(manager.getByKey(SPACE, 'release-readiness.custom')).toBeNull();
     });
 
     test('rejects a stale CAS version and reports the current one', async () => {
@@ -981,7 +985,7 @@ describe('SpaceAgentTemplateManager', () => {
         expect(result.error).toContain('expected version 1');
         expect(result.error).toContain('current version 2');
       }
-      expect(manager.getByKey('release-readiness.custom')).not.toBeNull();
+      expect(manager.getByKey(SPACE, 'release-readiness.custom')).not.toBeNull();
     });
 
     test('deletes a template that workflow slots still reference', async () => {
@@ -990,7 +994,7 @@ describe('SpaceAgentTemplateManager', () => {
       const result = manager.delete(SPACE, 'release-readiness.custom');
 
       expect(result.ok).toBe(true);
-      expect(repo.getByKey('release-readiness.custom')).toBeNull();
+      expect(repo.getByKey(SPACE, 'release-readiness.custom')).toBeNull();
     });
 
     test('deletes a template that agents were created from', async () => {
@@ -1002,7 +1006,7 @@ describe('SpaceAgentTemplateManager', () => {
       const result = withInstances.delete(SPACE, 'release-readiness.custom');
 
       expect(result.ok).toBe(true);
-      expect(repo.getByKey('release-readiness.custom')).toBeNull();
+      expect(repo.getByKey(SPACE, 'release-readiness.custom')).toBeNull();
     });
 
     test('clears the template key on archived instances after deleting', async () => {
@@ -1055,7 +1059,7 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(ctx.error).toMatch(/anthropic/);
       expect(ctx.template).toBeUndefined();
-      expect(repo.getByKey('release-readiness.custom')).toBeNull();
+      expect(repo.getByKey(SPACE, 'release-readiness.custom')).toBeNull();
     });
   });
 
@@ -1131,7 +1135,7 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(ctx.error).toBeUndefined();
       expect(ctx.deleted).toBe(true);
-      expect(repo.getByKey('release-readiness.custom')).toBeNull();
+      expect(repo.getByKey(SPACE, 'release-readiness.custom')).toBeNull();
     });
 
     test('halts before delete on a stale expected version', async () => {
@@ -1147,7 +1151,7 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(ctx.error).toContain('current version 2');
       expect(ctx.deleted).toBeUndefined();
-      expect(repo.getByKey('release-readiness.custom')).not.toBeNull();
+      expect(repo.getByKey(SPACE, 'release-readiness.custom')).not.toBeNull();
     });
 
     test('deletes through the pipeline regardless of workflow usage', async () => {
@@ -1157,20 +1161,20 @@ describe('SpaceAgentTemplateManager', () => {
 
       expect(ctx.error).toBeUndefined();
       expect(ctx.deleted).toBe(true);
-      expect(repo.getByKey('release-readiness.custom')).toBeNull();
+      expect(repo.getByKey(SPACE, 'release-readiness.custom')).toBeNull();
     });
   });
 
   describe('getByKey', () => {
     test('returns a built-in template by key', () => {
-      const template = manager.getByKey('builtin.default');
+      const template = manager.getByKey(SPACE, 'builtin.default');
       expect(template?.displayName).toBe('Built-in');
     });
 
     test('returns a custom template by key', async () => {
       await manager.create(SPACE, fullParams());
 
-      const template = manager.getByKey('release-readiness.custom');
+      const template = manager.getByKey(SPACE, 'release-readiness.custom');
       expect(template?.displayName).toBe('Release Readiness');
     });
 
@@ -1181,29 +1185,29 @@ describe('SpaceAgentTemplateManager', () => {
         displayName: 'Override',
       });
 
-      const template = manager.getByKey('builtin.default');
+      const template = manager.getByKey(SPACE, 'builtin.default');
       expect(template?.displayName).toBe('Built-in');
     });
 
     test('worker built-ins keep their tool policy through the template view', () => {
       const defaultManager = new SpaceAgentTemplateManager(repo);
-      const template = defaultManager.getByKey('worker.reviewer');
+      const template = defaultManager.getByKey(SPACE, 'worker.reviewer');
       expect(template?.tools).toContain('Read');
       expect(template?.tools).toContain('Bash(gh pr view:*)');
       expect(template?.tools).not.toContain('Bash');
 
-      const coder = defaultManager.getByKey('worker.swe');
+      const coder = defaultManager.getByKey(SPACE, 'worker.swe');
       expect(coder?.tools).toBeNull();
     });
 
     test('long-horizon built-ins still expose no tools', () => {
       const defaultManager = new SpaceAgentTemplateManager(repo);
-      const template = defaultManager.getByKey('coordinator.default');
+      const template = defaultManager.getByKey(SPACE, 'coordinator.default');
       expect(template?.tools).toBeNull();
     });
 
     test('returns null for an unknown key', () => {
-      expect(manager.getByKey('missing.custom')).toBeNull();
+      expect(manager.getByKey(SPACE, 'missing.custom')).toBeNull();
     });
   });
   describe('cross-Space isolation', () => {
@@ -1244,8 +1248,9 @@ describe('SpaceAgentTemplateManager', () => {
 
       const result = await manager.casUpdate('space-b', 'shared.key', { displayName: 'Hijacked' });
 
-      expect(result.ok && result.value === null).toBe(true);
-      expect(repo.getByKey('shared.key')?.displayName).not.toBe('Hijacked');
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain('Template not found');
+      expect(repo.getByKey(SPACE, 'shared.key')?.displayName).not.toBe('Hijacked');
     });
 
     test('clearing archived instances does not cross into another Space', () => {

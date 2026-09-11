@@ -273,7 +273,7 @@ async function createValidateModelPool(ctx: CreateTemplateCtx): Promise<CreateTe
 }
 
 function createCheckKeyAvailable(ctx: CreateTemplateCtx): CreateTemplateCtx {
-  if (ctx.repo.getByKey(ctx.params.key)) {
+  if (ctx.repo.getOwned(ctx.spaceId, ctx.params.key)) {
     return { ...ctx, error: `Template key already exists: ${ctx.params.key}` };
   }
   return ctx;
@@ -515,21 +515,23 @@ export class SpaceAgentTemplateManager {
     return { ok: true, value: undefined };
   }
 
-  list(): SpaceAgentTemplate[] {
+  list(spaceId: string): SpaceAgentTemplate[] {
     const byKey = new Map<string, SpaceAgentTemplate>();
     for (const template of this.builtIns()) {
       if (isReservedAgentHandle(template.handle)) continue;
       byKey.set(template.key, template);
     }
-    for (const template of this.repo.list()) {
+    for (const template of this.repo.list(spaceId)) {
       if (!byKey.has(template.key)) byKey.set(template.key, template);
     }
     return [...byKey.values()].sort(compareByCreatedAtAndKey);
   }
 
-  getByKey(key: string): SpaceAgentTemplate | null {
+  getByKey(spaceId: string, key: string): SpaceAgentTemplate | null {
     return (
-      this.builtIns().find((template) => template.key === key) ?? this.repo.getByKey(key) ?? null
+      this.builtIns().find((template) => template.key === key) ??
+      this.repo.getOwned(spaceId, key) ??
+      null
     );
   }
 }

@@ -335,7 +335,7 @@ describe('Space Agent RPC Handlers', () => {
 
   describe('spaceAgent.listTemplates', () => {
     it('registers the handler', () => {
-      expect(hubData.handlers.has('spaceAgent.listTemplates')).toBe(true);
+      expect(hubData.handlers.has('spaceAgent.listTemplates', { spaceId: 'space-1' })).toBe(true);
     });
 
     it('returns built-in templates in the unified template shape', async () => {

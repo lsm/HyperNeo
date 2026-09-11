@@ -980,7 +980,8 @@ class SpaceStore {
   ): Promise<void> {
     try {
       const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
-        'spaceAgent.listTemplates'
+        'spaceAgent.listTemplates',
+        { spaceId }
       );
       if (this.spaceId.value !== spaceId) return;
       this.applyTemplateLibrary(result?.templates ?? []);
@@ -2414,8 +2415,14 @@ class SpaceStore {
   private async refreshTemplateLibrary(
     hub: Awaited<ReturnType<typeof connectionManager.getHub>>
   ): Promise<void> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) {
+      this.applyTemplateLibrary([]);
+      return;
+    }
     const result = await hub.request<{ templates: SpaceAgentTemplate[] }>(
-      'spaceAgent.listTemplates'
+      'spaceAgent.listTemplates',
+      { spaceId }
     );
     this.applyTemplateLibrary(result?.templates ?? []);
   }

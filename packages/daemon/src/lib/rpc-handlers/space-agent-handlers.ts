@@ -805,8 +805,10 @@ export function registerUnifiedSpaceAgentMethods(
   };
 
   if (templateManager) {
-    messageHub.onRequest(method('listTemplates'), async () => {
-      return { templates: templateManager.list() };
+    messageHub.onRequest(method('listTemplates'), async (data) => {
+      const params = data as { spaceId: string };
+      const spaceId = await requireTemplateSpace(params.spaceId);
+      return { templates: templateManager.list(spaceId) };
     });
 
     messageHub.onRequest(method('createTemplate'), async (data) => {

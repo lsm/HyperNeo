@@ -666,7 +666,10 @@ export function setupSpaceExportImportHandlers(
 ): void {
   const templateRepo = new SpaceAgentTemplateRepository(db);
   const ownedAgents = new SpaceAgentRepository(db);
-  const storedTemplateExists = (key: string): boolean => templateRepo.getByKey(key) != null;
+  const storedTemplateExistsIn =
+    (spaceId: string) =>
+    (key: string): boolean =>
+      templateRepo.getByKey(spaceId, key) != null;
 
   messageHub.onRequest('spaceExport.workflows', async (data) => {
     const params = data as { spaceId: string; workflowIds?: string[] };
@@ -872,7 +875,7 @@ export function setupSpaceExportImportHandlers(
         importedAgentNames,
         existingAgentNameToId,
         agentNameToRole,
-        storedTemplateExists,
+        storedTemplateExistsIn(params.spaceId),
         relocatedTemplateKey
       );
       for (const err of errors) {

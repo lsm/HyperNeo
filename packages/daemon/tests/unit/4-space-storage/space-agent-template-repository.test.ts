@@ -73,7 +73,7 @@ describe('SpaceAgentTemplateRepository', () => {
       updatedAt: expect.any(Number),
       version: 1,
     } satisfies SpaceAgentTemplate);
-    expect(repo.getByKey('release-readiness.custom')).toEqual(created);
+    expect(repo.getByKey(SPACE, 'release-readiness.custom')).toEqual(created);
   });
 
   test('create applies defaults for omitted optional fields', () => {
@@ -111,7 +111,7 @@ describe('SpaceAgentTemplateRepository', () => {
     expect(() => repo.create(SPACE, { key: 'dup.custom', handle: 'other' })).toThrow(
       /UNIQUE constraint/i
     );
-    expect(repo.list()).toHaveLength(1);
+    expect(repo.list(SPACE)).toHaveLength(1);
   });
 
   test('suggested autonomy outside 1-5 violates the CHECK constraint', () => {
@@ -129,11 +129,11 @@ describe('SpaceAgentTemplateRepository', () => {
         suggestedAutonomyLevel: 6 as unknown as SpaceAgentAutonomyLevel,
       })
     ).toThrow(/CHECK constraint/i);
-    expect(repo.list()).toHaveLength(0);
+    expect(repo.list(SPACE)).toHaveLength(0);
   });
 
   test('getByKey returns null for unknown keys', () => {
-    expect(repo.getByKey('missing.custom')).toBeNull();
+    expect(repo.getByKey(SPACE, 'missing.custom')).toBeNull();
   });
 
   test('list orders by created_at and breaks ties on key', () => {
@@ -142,13 +142,13 @@ describe('SpaceAgentTemplateRepository', () => {
     repo.create(SPACE, { key: 'c.custom', handle: 'c' });
     db.prepare(`UPDATE space_agent_templates SET created_at = ?`).run(1000);
 
-    expect(repo.list().map((t) => t.key)).toEqual(['a.custom', 'b.custom', 'c.custom']);
+    expect(repo.list(SPACE).map((t) => t.key)).toEqual(['a.custom', 'b.custom', 'c.custom']);
 
     db.prepare(`UPDATE space_agent_templates SET created_at = ? WHERE key = ?`).run(
       2000,
       'a.custom'
     );
-    expect(repo.list().map((t) => t.key)).toEqual(['b.custom', 'c.custom', 'a.custom']);
+    expect(repo.list(SPACE).map((t) => t.key)).toEqual(['b.custom', 'c.custom', 'a.custom']);
   });
 
   test('update changes only the provided fields and bumps updated_at', () => {
@@ -252,25 +252,25 @@ describe('SpaceAgentTemplateRepository', () => {
 
     expect(repo.delete(SPACE, 'missing.custom')).toBe(false);
     expect(repo.delete(SPACE, 'gone.custom')).toBe(true);
-    expect(repo.getByKey('gone.custom')).toBeNull();
+    expect(repo.getByKey(SPACE, 'gone.custom')).toBeNull();
     expect(repo.delete(SPACE, 'gone.custom')).toBe(false);
 
     const recreated = repo.create(SPACE, { key: 'gone.custom', handle: 'back' });
     expect(recreated.handle).toBe('back');
-    expect(repo.list()).toHaveLength(1);
+    expect(repo.list(SPACE)).toHaveLength(1);
   });
 
   test('prevents a stale CAS update after delete and recreate', () => {
     repo.create(SPACE, { key: 'reuse.custom', handle: 'reuse' });
-    const before = repo.getByKeyWithVersion('reuse.custom')!;
+    const before = repo.getByKeyWithVersion(SPACE, 'reuse.custom')!;
 
     repo.delete(SPACE, 'reuse.custom');
     repo.create(SPACE, { key: 'reuse.custom', handle: 'reincarnated' });
-    const after = repo.getByKeyWithVersion('reuse.custom')!;
+    const after = repo.getByKeyWithVersion(SPACE, 'reuse.custom')!;
 
     expect(after.version).not.toBe(before.version);
     const result = repo.casUpdate(SPACE, 'reuse.custom', { displayName: 'Stale' }, before.version);
     expect(result).toBeNull();
-    expect(repo.getByKey('reuse.custom')?.displayName).not.toBe('Stale');
+    expect(repo.getByKey(SPACE, 'reuse.custom')?.displayName).not.toBe('Stale');
   });
 });
