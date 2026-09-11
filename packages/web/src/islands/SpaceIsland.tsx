@@ -56,7 +56,7 @@ const SpaceOverview = lazy(() =>
 const SpaceTaskPane = lazy(() =>
   import('../components/space/SpaceTaskPane').then((m) => ({ default: m.SpaceTaskPane }))
 );
-const SpaceAgentsView = lazy(() =>
+const SpaceLongHorizonAgents = lazy(() =>
   import('../components/space/SpaceLongHorizonAgents').then((m) => ({
     default: m.SpaceLongHorizonAgents,
   }))
@@ -469,7 +469,7 @@ export default function SpaceIsland({
           baseLayerProps={baseLayerProps}
           fallback={lazyFallback}
         >
-          <SpaceAgentsView
+          <SpaceLongHorizonAgents
             spaceId={spaceId}
             navigationSpaceId={navigationSpaceId}
             selectedHandle={selectedAgentHandle}
