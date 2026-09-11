@@ -11,6 +11,7 @@ import { runMigration226 } from '../../../src/storage/schema/m226-space-agent-te
 import { runMigration227 } from '../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../src/storage/schema/m238-space-agent-template-labels';
 import { runMigration243 } from '../../../src/storage/schema/m243-space-agent-template-space-key';
+import { runMigration246 } from '../../../src/storage/schema/m246-template-version-seq-space-key';
 import { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 
 const MODEL_POOL: AgentModelPoolEntry[] = [
@@ -46,6 +47,8 @@ describe('SpaceAgentTemplateRepository', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
+    runMigration243(db);
+    runMigration246(db);
     repo = new SpaceAgentTemplateRepository(db);
   });
 
@@ -277,12 +280,83 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
     runMigration227(db);
     runMigration238(db);
     runMigration243(db);
+    runMigration246(db);
     repo = new SpaceAgentTemplateRepository(db);
   });
 
   test('createOwned records the Space and getOwned reads it back', () => {
     repo.createOwned('space-a', { key: 'k', handle: 'h' });
     expect(repo.getOwned('space-a', 'k')?.handle).toBe('h');
+  });
+
+  test('version tokens never repeat for a key across namespaces', () => {
+    const seen = new Set<number>();
+    const record = (version: number | undefined): void => {
+      expect(version).toBeDefined();
+      expect(seen.has(version!)).toBe(false);
+      seen.add(version!);
+    };
+
+    repo.createOwned('space-a', { key: 'shared', handle: 'h' });
+    record(repo.getOwnedWithVersion('space-a', 'shared')?.version);
+    repo.createOwned('space-b', { key: 'shared', handle: 'h' });
+    record(repo.getOwnedWithVersion('space-b', 'shared')?.version);
+
+    for (const spaceId of ['space-a', 'space-b', 'space-a', 'space-a', 'space-b']) {
+      repo.casUpdateOwned(spaceId, 'shared', { displayName: spaceId });
+      record(repo.getOwnedWithVersion(spaceId, 'shared')?.version);
+    }
+  });
+
+  test('a stale owned version cannot overwrite the sentinel row it falls back to', () => {
+    repo.create({ key: 'shared', handle: 'h' });
+    repo.createOwned('space-a', { key: 'shared', handle: 'h' });
+    const staleOwnedVersion = repo.getOwnedWithVersion('space-a', 'shared')!.version;
+    repo.deleteOwned('space-a', 'shared');
+
+    expect(repo.getOwned('space-a', 'shared')).not.toBeNull();
+    expect(
+      repo.casUpdateOwned('space-a', 'shared', { displayName: 'Hijacked' }, staleOwnedVersion)
+    ).toBeNull();
+  });
+
+  test('two Spaces can hold the same key, each tracking its own row version', () => {
+    const a = repo.createOwned('space-a', { key: 'shared', handle: 'h' });
+    const b = repo.createOwned('space-b', { key: 'shared', handle: 'h' });
+
+    expect(a.key).toBe(b.key);
+    const versionA = repo.getOwnedWithVersion('space-a', 'shared')!.version;
+    const versionB = repo.getOwnedWithVersion('space-b', 'shared')!.version;
+    expect(versionB).toBeGreaterThan(versionA);
+
+    repo.casUpdateOwned('space-b', 'shared', { displayName: 'B2' });
+    expect(repo.getOwnedWithVersion('space-a', 'shared')?.version).toBe(versionA);
+  });
+
+  test('an update in one Space does not invalidate the other Space expected version', () => {
+    repo.createOwned('space-a', { key: 'shared', handle: 'h' });
+    repo.createOwned('space-b', { key: 'shared', handle: 'h' });
+    const versionB = repo.getOwnedWithVersion('space-b', 'shared')!.version;
+
+    repo.casUpdateOwned('space-a', 'shared', { displayName: 'A2' });
+    repo.casUpdateOwned('space-a', 'shared', { displayName: 'A3' });
+
+    expect(
+      repo.casUpdateOwned('space-b', 'shared', { displayName: 'B2' }, versionB)?.displayName
+    ).toBe('B2');
+  });
+
+  test('a key entering a Space namespace never reuses a version the sentinel handed out', () => {
+    const legacy = repo.create({ key: 'moving', handle: 'h' });
+    const legacyVersion = repo.getByKeyWithVersion(legacy.key)!.version;
+    repo.delete('moving');
+
+    repo.createOwned('space-a', { key: 'moving', handle: 'h' });
+
+    expect(repo.getOwnedWithVersion('space-a', 'moving')!.version).toBeGreaterThan(legacyVersion);
+    expect(
+      repo.casUpdateOwned('space-a', 'moving', { displayName: 'X' }, legacyVersion)
+    ).toBeNull();
   });
 
   test('a Space cannot see, update or delete another Space own row', () => {

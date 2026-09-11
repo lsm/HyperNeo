@@ -4,6 +4,8 @@ import { runMigration225 } from '../../../../../src/storage/schema/m225-space-ag
 import { runMigration226 } from '../../../../../src/storage/schema/m226-space-agent-templates-version.ts';
 import { runMigration227 } from '../../../../../src/storage/schema/m227-space-agent-template-version-seq.ts';
 import { runMigration238 } from '../../../../../src/storage/schema/m238-space-agent-template-labels.ts';
+import { runMigration243 } from '../../../../../src/storage/schema/m243-space-agent-template-space-key.ts';
+import { runMigration246 } from '../../../../../src/storage/schema/m246-template-version-seq-space-key.ts';
 import { SpaceAgentTemplateRepository } from '../../../../../src/storage/repositories/space-agent-template-repository';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 
@@ -38,6 +40,8 @@ describe('migration 226: space_agent_templates version column', () => {
     const after = columnNames(db, 'space_agent_templates');
     expect(after).toContain('version');
 
+    runMigration243(db);
+    runMigration246(db);
     const repo = new SpaceAgentTemplateRepository(db);
     const created = repo.create({ key: 'post.custom', handle: 'post' });
     const existing = repo.getByKeyWithVersion('pre.custom');
@@ -60,6 +64,8 @@ describe('migration 226: space_agent_templates version column', () => {
     runMigration227(db);
     runMigration238(db);
 
+    runMigration243(db);
+    runMigration246(db);
     const repo = new SpaceAgentTemplateRepository(db);
     repo.create({ key: 'idempotent.custom', handle: 'idempotent' });
 
@@ -75,6 +81,8 @@ describe('migration 226: space_agent_templates version column', () => {
     const db = new BunDatabase(':memory:');
     runMigrations(db, () => {});
 
+    runMigration243(db);
+    runMigration246(db);
     const repo = new SpaceAgentTemplateRepository(db);
     const created = repo.create({ key: 'registered.custom', handle: 'registered' });
 

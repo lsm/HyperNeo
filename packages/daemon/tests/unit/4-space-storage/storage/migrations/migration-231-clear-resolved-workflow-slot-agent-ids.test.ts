@@ -6,7 +6,6 @@ import { runMigration227 } from '../../../../../src/storage/schema/m227-space-ag
 import { runMigration238 } from '../../../../../src/storage/schema/m238-space-agent-template-labels.ts';
 import { runMigration231 } from '../../../../../src/storage/schema/m231-clear-resolved-workflow-slot-agent-ids.ts';
 import { computeDefinitionVersion } from '../../../../../src/lib/space/workflows/definition-version.ts';
-import { SpaceAgentTemplateRepository } from '../../../../../src/storage/repositories/space-agent-template-repository.ts';
 import type { SpaceWorkflow } from '@hyperneo/shared';
 import {
   createSpaceAgentSchema,
@@ -106,14 +105,29 @@ function readVersionPayload(
   return JSON.parse(row.payload) as Record<string, unknown>;
 }
 
+function seedTemplate(db: BunDatabase, key: string, handle: string, displayName: string): void {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO space_agent_templates
+       (key, handle, display_name, description, instructions, suggested_autonomy_level,
+        created_at, updated_at, version)
+     VALUES (?, ?, ?, '', '', 2, ?, ?, 1)`
+  ).run(key, handle, displayName, now, now);
+}
+
+function storedTemplate(db: BunDatabase, key: string): Record<string, unknown> | null {
+  return (
+    (db.prepare(`SELECT * FROM space_agent_templates WHERE key = ?`).get(key) as Record<
+      string,
+      unknown
+    > | null) ?? null
+  );
+}
+
 describe('migration 231 — clear slot.agentId where templateKey resolves', () => {
   test('clears agentId on slots bound to a stored library template or a code built-in', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
-      key: 'migrated.agent.agent-1',
-      handle: 'coder',
-      displayName: 'Coder',
-    });
+    seedTemplate(db, 'migrated.agent.agent-1', 'coder', 'Coder');
     insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
     insertNodeWithSlots(db, 'node-1', 'wf-1', [
       { agentId: 'agent-1', templateKey: 'migrated.agent.agent-1', name: 'coder' },
@@ -209,11 +223,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
 
   test('resolves templateKeys case-sensitively through the same seams as spawn', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
-      key: 'migrated.agent.agent-1',
-      handle: 'coder',
-      displayName: 'Coder',
-    });
+    seedTemplate(db, 'migrated.agent.agent-1', 'coder', 'Coder');
     insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
     insertNodeWithSlots(db, 'node-1', 'wf-1', [
       { agentId: 'agent-1', templateKey: 'MIGRATED.AGENT.AGENT-1', name: 'coder' },
@@ -229,11 +239,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
 
   test('rewrites post-approval targetAgent UUIDs to the cleared slot name', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
-      key: 'migrated.agent.agent-1',
-      handle: 'coder',
-      displayName: 'Coder',
-    });
+    seedTemplate(db, 'migrated.agent.agent-1', 'coder', 'Coder');
     insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
     db.prepare(`UPDATE space_workflows SET post_approval = ? WHERE id = 'wf-1'`).run(
       JSON.stringify({ targetAgent: 'agent-1', instructions: 'merge the PR' })
@@ -262,11 +268,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
 
   test('rewrites a post-approval target on a node with no cleared slots', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
-      key: 'migrated.agent.agent-1',
-      handle: 'coder',
-      displayName: 'Coder',
-    });
+    seedTemplate(db, 'migrated.agent.agent-1', 'coder', 'Coder');
     insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
     insertNodeWithSlots(
       db,
@@ -293,11 +295,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
 
   test('materializes a missing slot name from agentId before clearing', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
-      key: 'migrated.agent.agent-1',
-      handle: 'coder',
-      displayName: 'Coder',
-    });
+    seedTemplate(db, 'migrated.agent.agent-1', 'coder', 'Coder');
     insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
     db.prepare(`UPDATE space_workflows SET post_approval = ? WHERE id = 'wf-1'`).run(
       JSON.stringify({ targetAgent: 'agent-1', instructions: 'merge the PR' })
@@ -325,11 +323,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
 
   test('does not redirect a post-approval target when an earlier slot keeps its agentId', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
-      key: 'migrated.agent.agent-1',
-      handle: 'coder',
-      displayName: 'Coder',
-    });
+    seedTemplate(db, 'migrated.agent.agent-1', 'coder', 'Coder');
     insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
     db.prepare(`UPDATE space_workflows SET post_approval = ? WHERE id = 'wf-1'`).run(
       JSON.stringify({ targetAgent: 'agent-1', instructions: 'merge the PR' })
@@ -360,11 +354,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
 
   test('keeps an agentId when rewriting to the slot name would be ambiguous', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
-      key: 'migrated.agent.agent-1',
-      handle: 'coder',
-      displayName: 'Coder',
-    });
+    seedTemplate(db, 'migrated.agent.agent-1', 'coder', 'Coder');
     insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
     db.prepare(`UPDATE space_workflows SET post_approval = ? WHERE id = 'wf-1'`).run(
       JSON.stringify({ targetAgent: 'agent-1', instructions: 'merge the PR' })
@@ -395,11 +385,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
 
   test('keeps an agentId when its replacement name collides with a retained agentId', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
-      key: 'migrated.agent.agent-b',
-      handle: 'coder',
-      displayName: 'Coder',
-    });
+    seedTemplate(db, 'migrated.agent.agent-b', 'coder', 'Coder');
     insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
     db.prepare(`UPDATE space_workflows SET post_approval = ? WHERE id = 'wf-1'`).run(
       JSON.stringify({ targetAgent: 'agent-b', instructions: 'merge the PR' })
@@ -430,11 +416,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
 
   test('leaves a UUID targetAgent alone when it matches no cleared slot', () => {
     const db = createMigrationDb();
-    new SpaceAgentTemplateRepository(db).create({
-      key: 'migrated.agent.agent-1',
-      handle: 'coder',
-      displayName: 'Coder',
-    });
+    seedTemplate(db, 'migrated.agent.agent-1', 'coder', 'Coder');
     insertWorkflow(db, 'wf-1', 'space-1', 'Flow');
     db.prepare(`UPDATE space_workflows SET post_approval = ? WHERE id = 'wf-1'`).run(
       JSON.stringify({ targetAgent: 'agent-unrelated', instructions: 'merge the PR' })
@@ -513,9 +495,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
       .prepare(`SELECT agent_id FROM node_executions WHERE id = 'exec-1'`)
       .get() as { agent_id: string | null };
     expect(execution.agent_id).toBe('agent-pin');
-    expect(
-      new SpaceAgentTemplateRepository(db).getByKey('migrated.agent.agent-pin')
-    ).not.toBeNull();
+    expect(storedTemplate(db, 'migrated.agent.agent-pin')).not.toBeNull();
     db.close();
   });
 
@@ -567,7 +547,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
       templateKey: 'migrated.agent.agent-x',
       name: 'writer',
     });
-    expect(new SpaceAgentTemplateRepository(db).getByKey('migrated.agent.agent-x')).not.toBeNull();
+    expect(storedTemplate(db, 'migrated.agent.agent-x')).not.toBeNull();
     db.close();
   });
 
@@ -627,11 +607,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
     const db = createMigrationDb();
     createRunTables(db);
     insertWorkflow(db, 'wf-pin', 'space-1', 'Pinned Flow');
-    new SpaceAgentTemplateRepository(db).create({
-      key: 'migrated.agent.agent-p',
-      handle: 'coder',
-      displayName: 'Coder',
-    });
+    seedTemplate(db, 'migrated.agent.agent-p', 'coder', 'Coder');
     insertPinnedRun(db, {
       runId: 'run-1',
       workflowId: 'wf-pin',
@@ -718,9 +694,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
       .prepare(`SELECT agent_id FROM node_executions WHERE id = 'exec-1'`)
       .get() as { agent_id: string | null };
     expect(execution.agent_id).toBe('agent-foreign');
-    expect(
-      new SpaceAgentTemplateRepository(db).getByKey('migrated.agent.agent-foreign')
-    ).toBeNull();
+    expect(storedTemplate(db, 'migrated.agent.agent-foreign')).toBeNull();
     db.close();
   });
 
@@ -728,11 +702,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
     const db = createMigrationDb();
     createRunTables(db);
     insertWorkflow(db, 'wf-pin', 'space-1', 'Pinned Flow');
-    new SpaceAgentTemplateRepository(db).create({
-      key: 'migrated.agent.agent-b',
-      handle: 'coder',
-      displayName: 'Coder',
-    });
+    seedTemplate(db, 'migrated.agent.agent-b', 'coder', 'Coder');
     const oldHash = insertPinnedRun(db, {
       runId: 'run-1',
       workflowId: 'wf-pin',
@@ -827,7 +797,7 @@ describe('migration 231 — clear slot.agentId where templateKey resolves', () =
       )
       .get() as { count: number };
     expect(versions.count).toBe(1);
-    expect(new SpaceAgentTemplateRepository(db).getByKey('migrated.agent.agent-pin')).toBeNull();
+    expect(storedTemplate(db, 'migrated.agent.agent-pin')).toBeNull();
     db.close();
   });
 });

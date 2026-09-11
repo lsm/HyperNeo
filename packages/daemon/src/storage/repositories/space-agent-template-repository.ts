@@ -19,7 +19,7 @@ export class SpaceAgentTemplateRepository {
 
   create(params: CreateSpaceAgentTemplateParams): SpaceAgentTemplate {
     const now = Date.now();
-    const version = this.nextVersionFor(params.key);
+    const version = this.nextVersionFor(OWNERSHIP_MIGRATION_SENTINEL, params.key);
     this.db
       .prepare(
         `INSERT INTO space_agent_templates (
@@ -94,7 +94,7 @@ export class SpaceAgentTemplateRepository {
       return current !== null && current.version === expectedVersion ? this.getByKey(key) : null;
     }
 
-    const nextVersion = this.nextVersionFor(key);
+    const nextVersion = this.nextVersionFor(OWNERSHIP_MIGRATION_SENTINEL, key);
     fields.push('updated_at = ?');
     fields.push('version = ?');
     values.push(Date.now());
@@ -123,7 +123,7 @@ export class SpaceAgentTemplateRepository {
 
   createOwned(spaceId: string, params: CreateSpaceAgentTemplateParams): SpaceAgentTemplate {
     const now = Date.now();
-    const version = this.nextVersionFor(params.key);
+    const version = this.nextVersionFor(spaceId, params.key);
     this.db
       .prepare(
         `INSERT INTO space_agent_templates (
@@ -191,7 +191,7 @@ export class SpaceAgentTemplateRepository {
     fields.push('updated_at = ?');
     fields.push('version = ?');
     values.push(Date.now());
-    values.push(this.nextVersionFor(key));
+    values.push(this.nextVersionFor(owner, key));
     values.push(owner);
     values.push(key);
     let where = `WHERE space_id = ? AND key = ?`;
@@ -251,14 +251,27 @@ export class SpaceAgentTemplateRepository {
       .all(spaceId, OWNERSHIP_MIGRATION_SENTINEL) as Record<string, unknown>[];
   }
 
-  private nextVersionFor(key: string): number {
+  private nextVersionFor(spaceId: string, key: string): number {
     const row = this.db
       .prepare(
-        `INSERT INTO space_agent_template_version_seq (key, next_version) VALUES (?, 1)
-					 ON CONFLICT(key) DO UPDATE SET next_version = next_version + 1
+        `INSERT INTO space_agent_template_version_seq (space_id, key, next_version)
+					 VALUES (
+						 ?1,
+						 ?2,
+						 COALESCE(
+							 (SELECT MAX(next_version) FROM space_agent_template_version_seq WHERE key = ?2),
+							 0
+						 ) + 1
+					 )
+					 ON CONFLICT(space_id, key) DO UPDATE SET next_version =
+						 COALESCE(
+							 (SELECT MAX(seq.next_version) FROM space_agent_template_version_seq seq
+								 WHERE seq.key = ?2),
+							 0
+						 ) + 1
 					 RETURNING next_version`
       )
-      .get(key) as { next_version: number } | undefined;
+      .get(spaceId, key) as { next_version: number } | undefined;
     return row?.next_version ?? 1;
   }
 }
