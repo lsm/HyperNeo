@@ -1,3 +1,4 @@
+import { createDirectKickoffReconciler } from './reconcile-direct-kickoff.ts';
 import { DirectTaskExecutionRepository } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import { createDatabaseDirectTaskWorkerResolver } from './direct-task-worker-identity.ts';
 import type { OwnedAgentLookup } from '../agents/unified-agent-events.ts';
@@ -1163,10 +1164,31 @@ export class SpaceRuntimeService {
       await this.provisionExistingSpaces();
       await this.recoverPendingOutcomeNotifications();
       await this.recoverStalledWorkflowRuns();
+      this.recoverDirectKickoffs();
     })().catch((err) => {
       log.error('Failed to provision existing spaces during startup:', err);
     });
     log.info('SpaceRuntimeService started');
+  }
+
+  recoverDirectKickoffs(spaceId?: string): void {
+    try {
+      const attempts = new DirectTaskExecutionRepository(this.config.db).listRunning(spaceId);
+      const reconcile = createDirectKickoffReconciler(this.config.db);
+      for (const attempt of attempts) {
+        try {
+          reconcile({
+            sessionId: attempt.sessionId,
+            attemptId: attempt.id,
+            generation: attempt.generation,
+          });
+        } catch (err) {
+          log.warn(`Direct kickoff recovery failed for attempt ${attempt.id}:`, err);
+        }
+      }
+    } catch (err) {
+      log.error('SpaceRuntimeService: recoverDirectKickoffs failed:', err);
+    }
   }
 
   async recoverStalledWorkflowRuns(): Promise<void> {
@@ -1189,6 +1211,7 @@ export class SpaceRuntimeService {
             err
           );
         }
+        this.recoverDirectKickoffs(spaceId);
       });
   }
 
