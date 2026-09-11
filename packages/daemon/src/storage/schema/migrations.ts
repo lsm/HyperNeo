@@ -1,3 +1,4 @@
+import { runMigration244 } from './m244-backfill-template-ownership.ts';
 import { runMigration243 } from './m243-space-agent-template-space-key.ts';
 import { runMigration242 } from './m242-task-list-indexes.ts';
 import { migrateStandaloneTaskOwnership } from '../tasks/ownership-migration.ts';
@@ -559,6 +560,8 @@ export function runMigrations(
   run(migrationMarkerKey(242), () => runMigration242(db));
 
   rewrite(migrationMarkerKey(243), () => runMigration243(db));
+
+  run(migrationMarkerKey(244), () => runMigration244(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
