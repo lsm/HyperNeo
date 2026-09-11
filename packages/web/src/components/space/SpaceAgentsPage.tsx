@@ -90,7 +90,9 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
   const [formTemplateKey, setFormTemplateKey] = useState<string>('');
   const activeSpaceRef = useRef(spaceId);
   const formGenerationRef = useRef(0);
-  const appliedHandleRef = useRef<string | null>(null);
+  const appliedLinkRef = useRef<string | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  selectedIdRef.current = selectedId;
 
   function resetViewState() {
     formGenerationRef.current += 1;
@@ -108,6 +110,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     setFormTools({ tools: [], toolsOverridden: false });
     setFormSettingSources(null);
     setFormTemplateKey('');
+    appliedLinkRef.current = null;
   }
 
   useEffect(() => {
@@ -136,20 +139,27 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
 
   useEffect(() => {
     if (!selectedHandle) {
-      appliedHandleRef.current = null;
+      appliedLinkRef.current = null;
       return;
     }
-    if (appliedHandleRef.current === selectedHandle) return;
+    const link = `${spaceId}\u0000${selectedHandle}`;
+    if (appliedLinkRef.current === link) return;
     if (!deepLinked) {
+      appliedLinkRef.current = null;
       setSelectedId(null);
       return;
     }
-    appliedHandleRef.current = selectedHandle;
+    const isNavigation = appliedLinkRef.current !== null;
+    appliedLinkRef.current = link;
     setSelectedId(deepLinked.id);
+    if (!isNavigation) return;
+    formGenerationRef.current += 1;
     closeForm();
+    setSaving(false);
     setDeleting(null);
+    setDeleteBusy(false);
     setDeleteError(null);
-  }, [selectedHandle, agentSignature]);
+  }, [spaceId, selectedHandle, agentSignature]);
   const selectedTemplateSources = formTemplateKey
     ? (templateOptions().find((template) => template.key === formTemplateKey)?.settingSources ??
       null)
@@ -260,7 +270,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     try {
       await spaceAgentStore.remove(deleting.id);
       if (activeSpaceRef.current !== submittedFor) return;
-      if (selectedId === deleting.id) setSelectedId(null);
+      if (selectedIdRef.current === deleting.id) setSelectedId(null);
       setDeleting(null);
     } catch (err) {
       if (activeSpaceRef.current !== submittedFor) return;

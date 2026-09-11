@@ -1135,6 +1135,98 @@ describe('SpaceAgentsPage', () => {
     await waitFor(() => expect(queryByTestId('confirm-delete-agent')).toBeNull());
   });
 
+  it('follows the same handle again after switching spaces', async () => {
+    mockAgents.value = [makeAgent('reviewer')];
+    const { getByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="reviewer" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+
+    rerender(<SpaceAgentsPage spaceId="space-2" selectedHandle="reviewer" />);
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+    expect(getByTestId('agent-detail').textContent).toContain('reviewer');
+  });
+
+  it('follows a handle again after visiting an unmatched one', async () => {
+    mockAgents.value = [makeAgent('alpha')];
+    const { getByTestId, queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="ghost" />);
+    await waitFor(() => expect(queryByTestId('agent-detail')).toBeNull());
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />);
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+    expect(getByTestId('agent-detail').textContent).toContain('alpha');
+  });
+
+  it('keeps a form open while the first deep link resolves', async () => {
+    mockAgents.value = [];
+    const { getByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="late" />
+    );
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Draft' } });
+
+    mockAgents.value = [makeAgent('late')];
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="late" />);
+
+    await waitFor(() => expect(getByTestId('agent-list')).toBeTruthy());
+    expect(getByTestId('agent-form')).toBeTruthy();
+    expect((getByTestId('agent-name-input') as HTMLInputElement).value).toBe('Draft');
+  });
+
+  it('ignores a create that resolves after the URL moved on', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    let resolveCreate: (agent: SpaceAgent) => void = () => {};
+    mockCreate.mockReturnValueOnce(
+      new Promise<SpaceAgent>((resolve) => {
+        resolveCreate = resolve;
+      })
+    );
+    const { getByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Late' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('beta'));
+
+    resolveCreate(makeAgent('late'));
+    await tick();
+    expect(getByTestId('agent-detail').textContent).toContain('beta');
+  });
+
+  it('does not clear a newly linked agent when an earlier delete resolves', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    let resolveRemove: () => void = () => {};
+    mockRemove.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveRemove = () => resolve();
+      })
+    );
+    const { getByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+
+    fireEvent.click(getByTestId('agent-delete-button'));
+    fireEvent.click(getByTestId('confirm-delete-agent'));
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('beta'));
+
+    resolveRemove();
+    await tick();
+    expect(getByTestId('agent-detail').textContent).toContain('beta');
+  });
+
   it('clears a description on edit rather than dropping the field', async () => {
     mockAgents.value = [makeAgent('alpha', { description: 'old' })];
     const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
