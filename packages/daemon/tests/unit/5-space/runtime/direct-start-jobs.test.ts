@@ -174,6 +174,8 @@ test.each([
   'paused-rejection',
   'manual-review',
   'manual-review-stale',
+  'manual-review-stopped',
+  'manual-review-stopped-stale',
 ] as const)('review rejection via %s retains frozen feedback', async (route) => {
   const initial = await start({ taskId, requestKey: 'initial' });
   if (!initial.started) throw new Error(initial.reason);
@@ -202,13 +204,17 @@ test.each([
     attemptId: initial.attempt.id,
     sessionId: initial.attempt.sessionId,
     generation: initial.attempt.generation,
-    status: route.startsWith('manual-review') ? 'blocked' : 'review',
+    status: route.includes('stopped')
+      ? 'stopped'
+      : route.startsWith('manual-review')
+        ? 'blocked'
+        : 'review',
   });
   expect(done.finalized).toBe(true);
   if (route.startsWith('manual-review')) {
     const manager = new SpaceTaskManager(db, tasks.getTask(taskId)!.spaceId);
     await manager.submitTaskForReview(taskId, { reason: 'manual review', submittedByNodeId: null });
-    if (route === 'manual-review-stale') {
+    if (route.endsWith('-stale')) {
       tasks.updateTask(taskId, { status: 'in_progress' });
       tasks.updateTask(taskId, { status: 'review' });
       await expect(

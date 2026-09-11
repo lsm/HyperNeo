@@ -1,3 +1,4 @@
+import type { TaskLifecycleStatus } from '@hyperneo/shared/types/task-core';
 import type { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import { enqueueDirectStartRequest, readDirectStartRequest } from './direct-start-request.ts';
 import { SessionRepository } from '../../../storage/repositories/session-repository.ts';
@@ -15,6 +16,7 @@ import { SpaceTaskRepository } from '../../../storage/repositories/space-task-re
 import { SpaceRepository } from '../../../storage/repositories/space-repository.ts';
 import { prepareSpaceTaskStatusUpdate } from '../managers/task-status-preparation.ts';
 import {
+  isValidTaskTransition,
   assertValidTaskTransition,
   assertQueuedTaskRetryTransition,
 } from '../../tasks/transitions.ts';
@@ -127,14 +129,15 @@ export function claimDirectStart(
           } | null;
           const finalization = row?.payload
             ? (JSON.parse(row.payload) as {
-                status: string;
+                status: TaskLifecycleStatus;
                 lifecycleGeneration: number;
                 generation: number;
               })
             : null;
           const manualReview =
             !!input.reviewRejection &&
-            finalization?.status === 'blocked' &&
+            !!finalization &&
+            isValidTaskTransition(finalization.status, 'review') &&
             task.status === 'review';
           if (
             row?.state !== 'completed' ||
