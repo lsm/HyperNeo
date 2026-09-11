@@ -32,7 +32,7 @@ describe('core task list indexes', () => {
       expect(details).toContain(
         filtered ? 'idx_space_tasks_owner_status_created' : 'idx_space_tasks_owner_created'
       );
-      expect(details).toContain('created_at<?');
+      expect(details).toMatch(/created_at<\?|\(created_at,id\)<\(\?,\?\)/);
       expect(details).not.toContain('TEMP B-TREE');
     }
   });
