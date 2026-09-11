@@ -1,21 +1,25 @@
 import type { SpaceLongHorizonAgentTemplate } from '@hyperneo/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockDeleteTemplate, mockSuccess } = vi.hoisted(() => ({
+const { mockDeleteTemplate, mockSuccess, mockError } = vi.hoisted(() => ({
   mockDeleteTemplate: vi.fn(),
   mockSuccess: vi.fn(),
+  mockError: vi.fn(),
 }));
 
 vi.mock('../../../lib/space-store', () => ({
-  spaceStore: { deleteTemplate: mockDeleteTemplate },
+  spaceStore: { deleteTemplate: mockDeleteTemplate, spaceId: { value: 'space-1' } },
 }));
 
 vi.mock('../../../lib/toast', () => ({
-  toast: { success: mockSuccess, error: vi.fn() },
+  toast: { success: mockSuccess, error: mockError },
 }));
 
+import { spaceStore } from '../../../lib/space-store';
 import {
+  abandonIdleTemplateDelete,
   closeTemplateDelete,
+  decideTemplateDelete,
   openTemplateDelete,
   runTemplateDelete,
   templateDeleteRequest,
@@ -30,6 +34,8 @@ describe('template delete request', () => {
     templateDeleteRequest.value = null;
     mockDeleteTemplate.mockReset().mockResolvedValue(undefined);
     mockSuccess.mockReset();
+    mockError.mockReset();
+    (spaceStore as unknown as { spaceId: { value: string | null } }).spaceId.value = 'space-1';
   });
 
   it('deletes at the pinned version and clears the request', async () => {
@@ -86,6 +92,86 @@ describe('template delete request', () => {
     expect(templateDeleteRequest.value?.template.key).toBe('first.v1');
     release();
     await running;
+  });
+
+  describe('decideTemplateDelete', () => {
+    const request = { spaceId: 'space-1', template: makeTemplate('a'), busy: false, error: null };
+
+    it('runs when a request is idle and its Space is active', () => {
+      expect(decideTemplateDelete(request, 'space-1')).toEqual({ kind: 'run', request });
+    });
+
+    it('skips when there is no request', () => {
+      expect(decideTemplateDelete(null, 'space-1')).toEqual({
+        kind: 'skip',
+        reason: 'no-request',
+      });
+    });
+
+    it('skips when one is already running', () => {
+      expect(decideTemplateDelete({ ...request, busy: true }, 'space-1')).toEqual({
+        kind: 'skip',
+        reason: 'already-running',
+      });
+    });
+
+    it('skips when the active Space is no longer the pinned one', () => {
+      expect(decideTemplateDelete(request, 'space-2')).toEqual({
+        kind: 'skip',
+        reason: 'space-changed',
+      });
+    });
+  });
+
+  it('does not delete against a Space the user has navigated away from', async () => {
+    openTemplateDelete('space-1', makeTemplate('researcher.v1'));
+    (spaceStore as unknown as { spaceId: { value: string | null } }).spaceId.value = 'space-2';
+
+    await runTemplateDelete();
+
+    expect(mockDeleteTemplate).not.toHaveBeenCalled();
+  });
+
+  it('reports a failure through the toast so an unmounted dialog cannot hide it', async () => {
+    mockDeleteTemplate.mockRejectedValue(new Error('still referenced'));
+    openTemplateDelete('space-1', makeTemplate('researcher.v1'));
+
+    await runTemplateDelete();
+
+    expect(mockError).toHaveBeenCalledWith(expect.stringContaining('still referenced'));
+  });
+
+  it('abandons an idle request for the Space being left', () => {
+    openTemplateDelete('space-1', makeTemplate('researcher.v1'));
+
+    abandonIdleTemplateDelete('space-1');
+
+    expect(templateDeleteRequest.value).toBeNull();
+  });
+
+  it('keeps an in-flight request when its Space is left', async () => {
+    let release = (): void => {};
+    mockDeleteTemplate.mockReturnValue(
+      new Promise<void>((resolve) => {
+        release = () => resolve();
+      })
+    );
+    openTemplateDelete('space-1', makeTemplate('researcher.v1'));
+    const running = runTemplateDelete();
+
+    abandonIdleTemplateDelete('space-1');
+
+    expect(templateDeleteRequest.value?.busy).toBe(true);
+    release();
+    await running;
+  });
+
+  it('leaves an idle request from a different Space alone', () => {
+    openTemplateDelete('space-2', makeTemplate('researcher.v1'));
+
+    abandonIdleTemplateDelete('space-1');
+
+    expect(templateDeleteRequest.value?.spaceId).toBe('space-2');
   });
 
   it('records the Space the request belongs to', () => {

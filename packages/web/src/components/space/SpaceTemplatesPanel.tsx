@@ -1,10 +1,11 @@
 import type { SpaceLongHorizonAgentTemplate } from '@hyperneo/shared';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { groupTemplatesByLabel } from './template-grouping';
 import { TemplateCard } from './TemplateCard';
 import { TemplateDeleteDialog } from './TemplateDeleteDialog';
 import { TemplateEditor } from './TemplateEditor';
 import {
+  abandonIdleTemplateDelete,
   closeTemplateDelete,
   openTemplateDelete,
   runTemplateDelete,
@@ -30,6 +31,10 @@ export function SpaceTemplatesPanel({
   );
   const templateGroups = groupTemplatesByLabel(templates);
   const pendingDelete = templateDeleteRequest.value;
+
+  useEffect(() => {
+    return () => abandonIdleTemplateDelete(spaceId);
+  }, [spaceId]);
 
   return (
     <>
