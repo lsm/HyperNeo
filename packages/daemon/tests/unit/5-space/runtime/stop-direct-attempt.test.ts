@@ -18,13 +18,19 @@ let taskId: string;
 let spaceId: string;
 let cached: AgentSession | null;
 let live: number[];
+let loading: boolean;
 let cleanup: ReturnType<typeof mock>;
 let interrupt: ReturnType<typeof mock>;
 let unregister: ReturnType<typeof mock>;
 const input = { attemptId: 'attempt', sessionId: 'session', outcome: 'cancelled' };
 function agent(owner = taskId): AgentSession {
   return {
-    getSessionData: () => ({ id: 'session', type: 'worker', context: { taskId: owner, spaceId } }),
+    getSessionData: () => ({
+      id: 'session',
+      type: 'worker',
+      status: 'active',
+      context: { taskId: owner, spaceId },
+    }),
     getProcessingState: () => ({ status: 'idle' }),
     isInterruptInProgress: () => false,
     getTrackedAgentRootPidsSplit: () => ({ live, exited: [] }),
@@ -36,7 +42,11 @@ function stopper(repository = attempts) {
   return createDirectAttemptStopper({
     attempts: repository,
     tasks,
-    sessionManager: { getCachedSession: () => cached, unregisterSession: unregister },
+    sessionManager: {
+      getCachedSession: () => cached,
+      isSessionLoading: () => loading,
+      unregisterSession: unregister,
+    },
   });
 }
 beforeEach(() => {
@@ -54,6 +64,7 @@ beforeEach(() => {
   attempts.claim(taskId, 'attempt', 'session');
   cached = null;
   live = [];
+  loading = false;
   cleanup = mock(async () => {});
   interrupt = mock(async () => {});
   unregister = mock(async (_id: string, expected: AgentSession) => {
@@ -139,6 +150,7 @@ test('live processes and failed cleanup retain ownership for a safe retry', asyn
   expect(await stopper()(input)).toEqual({ stopped: false, reason: 'unverified' });
   expect(unregister).not.toHaveBeenCalled();
   live = [];
+  loading = false;
   cleanup.mockRejectedValueOnce(new Error('cleanup failed'));
   expect(await stopper()(input)).toEqual({ stopped: false, reason: 'unverified' });
   expect(attempts.getActive(taskId)?.id).toBe('attempt');
@@ -159,3 +171,41 @@ test('foreign session and replacement during unregister are not released as veri
   expect(cached).toBe(replacement);
   expect(attempts.getActive(taskId)?.id).toBe('attempt');
 });
+
+test('reserved load retains claim until its late object is cleaned and verified', async () => {
+  loading = true;
+  expect(await stopper()(input)).toEqual({ stopped: false, reason: 'unverified' });
+  expect(attempts.claim(taskId, 'next', 'next-session')).toBeNull();
+  cached = agent();
+  loading = false;
+  expect(await stopper()(input)).toHaveProperty('stopped', true);
+  expect(cleanup).toHaveBeenCalledTimes(1);
+  expect(attempts.claim(taskId, 'next', 'next-session')).not.toBeNull();
+});
+
+test.each(['inactive', 'workflow', 'pointer'] as const)(
+  'trusted identity rejects %s ownership before interruption',
+  async (state) => {
+    cached = agent();
+    if (state === 'inactive') {
+      const row = cached.getSessionData();
+      cached.getSessionData = () => ({ ...row, status: 'archived' });
+    } else {
+      const task = tasks.getTask(taskId)!;
+      const getTask = tasks.getTask.bind(tasks);
+      tasks.getTask = (id) =>
+        id === taskId
+          ? {
+              ...task,
+              ...(state === 'workflow'
+                ? { workflowRunId: 'run' }
+                : { taskAgentSessionId: 'other' }),
+            }
+          : getTask(id);
+    }
+    expect(await stopper()(input)).toEqual({ stopped: false, reason: 'unverified' });
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(attempts.getActive(taskId)?.id).toBe('attempt');
+  }
+);

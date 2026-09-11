@@ -6,6 +6,7 @@ import type {
 } from '../../../storage/repositories/direct-task-execution-repository.ts';
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 import superpipe, { type PipelineAPI } from 'superpipe';
+import { requireDirectTaskWorkerIdentity } from './direct-task-worker-identity.ts';
 import { inspectSessionLiveness } from './stop-verification-gates.ts';
 
 export interface DirectAttemptStopInput {
@@ -17,9 +18,15 @@ export type DirectAttemptStopResult =
   | { stopped: true; attempt: DirectTaskAttempt }
   | { stopped: false; reason: 'unavailable' | 'unverified' };
 export interface DirectAttemptStopDependencies {
-  attempts: Pick<DirectTaskExecutionRepository, 'get' | 'requestStop' | 'finishRequestedStop'>;
+  attempts: Pick<
+    DirectTaskExecutionRepository,
+    'get' | 'getActive' | 'requestStop' | 'finishRequestedStop'
+  >;
   tasks: Pick<SpaceTaskRepository, 'getTask'>;
-  sessionManager: Pick<SessionManager, 'getCachedSession' | 'unregisterSession'>;
+  sessionManager: Pick<
+    SessionManager,
+    'getCachedSession' | 'isSessionLoading' | 'unregisterSession'
+  >;
 }
 
 export function requireDirectStopTarget(
@@ -57,17 +64,17 @@ async function stopAndFinish(
   sessionManager: DirectAttemptStopDependencies['sessionManager'],
   attempt: DirectTaskAttempt
 ): Promise<DirectAttemptStopResult> {
+  if (sessionManager.isSessionLoading(attempt.sessionId))
+    return { stopped: false, reason: 'unverified' };
   const session = sessionManager.getCachedSession(attempt.sessionId);
   if (!session && attempt.phase === 'running') return { stopped: false, reason: 'unverified' };
   if (session) {
-    const row = session.getSessionData();
-    const task = tasks.getTask(attempt.taskId);
-    if (
-      row.id !== attempt.sessionId ||
-      row.type !== 'worker' ||
-      row.context?.taskId !== attempt.taskId ||
-      row.context.spaceId !== task?.spaceId
-    )
+    const identity = requireDirectTaskWorkerIdentity(attempt.sessionId, {
+      session: session.getSessionData(),
+      task: tasks.getTask(attempt.taskId),
+      attempt: attempts.getActive(attempt.taskId),
+    });
+    if ('reason' in identity || identity.value.attemptId !== attempt.id)
       return { stopped: false, reason: 'unverified' };
     try {
       try {
@@ -80,7 +87,11 @@ async function stopAndFinish(
     } catch {
       return { stopped: false, reason: 'unverified' };
     }
-    if (!directSessionIsDown(session) || sessionManager.getCachedSession(attempt.sessionId))
+    if (
+      !directSessionIsDown(session) ||
+      sessionManager.isSessionLoading(attempt.sessionId) ||
+      sessionManager.getCachedSession(attempt.sessionId)
+    )
       return { stopped: false, reason: 'unverified' };
   }
   const stopped = attempts.finishRequestedStop(attempt.id, attempt.sessionId);

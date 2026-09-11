@@ -14,6 +14,16 @@ describe('SessionCache', () => {
   let mockAgentSession: AgentSession;
   let mockSession: Session;
 
+  it('reports pending async publication until the session reaches the cache', async () => {
+    expect(cache.isLoading('test-session-id')).toBe(false);
+    const pending = cache.getAsync('test-session-id');
+    expect(cache.isLoading('test-session-id')).toBe(true);
+    expect(cache.has('test-session-id')).toBe(false);
+    expect(await pending).toBe(mockAgentSession);
+    expect(cache.isLoading('test-session-id')).toBe(false);
+    expect(cache.has('test-session-id')).toBe(true);
+  });
+
   beforeEach(() => {
     mockSession = {
       id: 'test-session-id',
