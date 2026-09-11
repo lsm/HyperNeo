@@ -1,4 +1,8 @@
-import { prepareSpaceTaskStatusUpdate, isTerminalTaskStatus } from './task-status-preparation.ts';
+import {
+  prepareSpaceTaskStatusUpdate,
+  prepareSpaceTaskReviewUpdate,
+  isTerminalTaskStatus,
+} from './task-status-preparation.ts';
 import { PendingCompletionSupersededError } from '../operations/pending-completion-guard.ts';
 import { publishTask } from '../../tasks/publication.ts';
 import {
@@ -278,15 +282,10 @@ export class SpaceTaskManager {
       );
     }
 
-    const updated = this.taskRepo.updateTask(taskId, {
-      status: 'review',
-      pendingCheckpointType: 'task_completion',
-      pendingCompletionSubmittedByNodeId: opts.submittedByNodeId,
-      pendingCompletionSubmittedAt: Date.now(),
-      pendingCompletionReason: opts.reason,
-      blockReason: null,
-      postApprovalSourceNodeId: opts.submittedByNodeId,
-    });
+    const updated = this.taskRepo.updateTask(
+      taskId,
+      prepareSpaceTaskReviewUpdate(opts, Date.now())
+    );
     if (!updated) {
       throw new Error(`Failed to submit task for review: ${taskId}`);
     }

@@ -123,3 +123,23 @@ export function isTerminalTaskStatus(status: SpaceTaskStatus): boolean {
     status === 'done' || status === 'blocked' || status === 'cancelled' || status === 'archived'
   );
 }
+
+export function prepareSpaceTaskReviewUpdate(
+  options: {
+    submittedByNodeId: string | null;
+    reason: string | null;
+    reportedSummary?: string | null;
+  },
+  now: number
+): Parameters<SpaceTaskRepository['updateTask']>[1] {
+  return {
+    status: 'review',
+    pendingCheckpointType: 'task_completion',
+    pendingCompletionSubmittedByNodeId: options.submittedByNodeId,
+    pendingCompletionSubmittedAt: now,
+    pendingCompletionReason: options.reason,
+    blockReason: null,
+    postApprovalSourceNodeId: options.submittedByNodeId,
+    ...(options.reportedSummary !== undefined ? { reportedSummary: options.reportedSummary } : {}),
+  };
+}
