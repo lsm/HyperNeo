@@ -50,7 +50,10 @@ export function readDirectKickoffIntent(db: Database, attemptId: string): Mailbo
   return entry;
 }
 
-function recordAtomically(db: Database, input: DirectKickoffInput): DirectKickoffResult {
+export function recordDirectKickoffAtomically(
+  db: Database,
+  input: DirectKickoffInput
+): DirectKickoffResult {
   const projected = toMailboxMessage(input.message);
   if ('reason' in projected) return { recorded: false, reason: 'invalid_message' };
   return db.transaction((): DirectKickoffResult => {
@@ -87,6 +90,6 @@ function recordAtomically(db: Database, input: DirectKickoffInput): DirectKickof
 export function createDirectKickoffRecorder(db: Database) {
   return (superpipe({ db })('record-direct-task-kickoff') as PipelineAPI)
     .input('input')
-    .pipe(recordAtomically, ['db', 'input'], 'result')
+    .pipe(recordDirectKickoffAtomically, ['db', 'input'], 'result')
     .end('result') as (input: DirectKickoffInput) => DirectKickoffResult;
 }

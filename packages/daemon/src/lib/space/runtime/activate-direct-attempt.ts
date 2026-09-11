@@ -1,3 +1,5 @@
+import { enqueueFrozenKickoff } from './reconcile-direct-kickoff.ts';
+import { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import { readDirectKickoffIntent } from './direct-kickoff-intent.ts';
 import { mailboxEntryExpired, type MailboxEntry } from '../../mailbox/entry.ts';
 import type { Session, Space, SpaceTask } from '@hyperneo/shared';
@@ -80,10 +82,11 @@ export function requireDirectActivation(
   return { value: { attempt, task: prepared.value.task } };
 }
 
-function activateAtomically(
+export function activateDirectAttemptAtomically(
   db: Database,
   reactiveDb: ReactiveDatabase | undefined,
-  input: DirectAttemptActivationInput
+  input: DirectAttemptActivationInput,
+  enqueueKickoff = false
 ): DirectAttemptActivationResult {
   reactiveDb?.beginTransaction();
   try {
@@ -120,6 +123,16 @@ function activateAtomically(
       const activated = attempts.activate(input.attemptId, input.sessionId);
       if (!updated || !activated)
         throw new Error('Direct activation lost its transaction admission');
+      if (enqueueKickoff)
+        enqueueFrozenKickoff(
+          db,
+          new JobQueueRepository(db),
+          {
+            ...input,
+            generation: activated.generation,
+          },
+          readDirectKickoffIntent(db, activated.id)!
+        );
       return { activated: true, attempt: activated, task: updated };
     }, 'immediate')();
     reactiveDb?.commitTransaction();
@@ -140,6 +153,6 @@ export function createDirectAttemptActivator(dependencies: {
     ) as PipelineAPI
   )
     .input('input')
-    .pipe(activateAtomically, ['db', 'reactiveDb', 'input'], 'result')
+    .pipe(activateDirectAttemptAtomically, ['db', 'reactiveDb', 'input'], 'result')
     .end('result') as (input: DirectAttemptActivationInput) => DirectAttemptActivationResult;
 }
