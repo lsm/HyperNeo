@@ -16,9 +16,12 @@ export class SpaceAgentStore {
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
   readonly spaceId = signal<string | null>(null);
+  readonly reminderCounts = signal<Record<string, number>>({});
 
   private cleanups: Array<() => void> = [];
   private subscribedSpaceId: string | null = null;
+  private countsRefreshing = false;
+  private countsQueuedGeneration: number | null = null;
   private generation = 0;
 
   private hub() {
@@ -48,11 +51,46 @@ export class SpaceAgentStore {
       });
       if (!this.isCurrent(generation)) return;
       this.agents.value = sortAgents(agents);
+      void this.refreshReminderCounts(generation);
     } catch (err) {
       if (!this.isCurrent(generation)) return;
       this.error.value = err instanceof Error ? err.message : 'Failed to load agents';
     } finally {
       if (this.isCurrent(generation)) this.loading.value = false;
+    }
+  }
+
+  private async refreshReminderCounts(generation: number): Promise<void> {
+    if (this.countsRefreshing) {
+      this.countsQueuedGeneration = generation;
+      return;
+    }
+    this.countsRefreshing = true;
+    try {
+      let pending: number | null = generation;
+      while (pending !== null) {
+        this.countsQueuedGeneration = null;
+        await this.fetchReminderCounts(pending);
+        pending = this.countsQueuedGeneration;
+      }
+    } finally {
+      this.countsRefreshing = false;
+    }
+  }
+
+  private async fetchReminderCounts(generation: number): Promise<void> {
+    const spaceId = this.spaceId.value;
+    if (!spaceId) return;
+    try {
+      const { counts } = await this.hub().request<{ counts: Record<string, number> }>(
+        'spaceAgentV2.listReminderCounts',
+        { spaceId }
+      );
+      if (!this.isCurrent(generation)) return;
+      this.reminderCounts.value = counts;
+    } catch {
+      if (!this.isCurrent(generation)) return;
+      this.reminderCounts.value = {};
     }
   }
 
@@ -101,6 +139,7 @@ export class SpaceAgentStore {
     const index = current.findIndex((a) => a.id === agent.id);
     if (index === -1) {
       this.agents.value = sortAgents([...current, agent]);
+      void this.refreshReminderCounts(this.generation);
       return;
     }
     const next = [...current];
@@ -155,6 +194,7 @@ export class SpaceAgentStore {
     this.generation += 1;
     this.spaceId.value = null;
     this.agents.value = [];
+    this.reminderCounts.value = {};
     this.error.value = null;
     this.loading.value = false;
   }

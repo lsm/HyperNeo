@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   mockAgents,
+  mockReminderCounts,
   mockLoading,
   mockError,
   mockSelectSpace,
@@ -18,6 +19,7 @@ const {
   mockDisposeOnceConnected,
 } = vi.hoisted(() => ({
   mockAgents: { value: [] as SpaceAgent[] },
+  mockReminderCounts: { value: {} as Record<string, number> },
   mockLoading: { value: false },
   mockError: { value: null as string | null },
   mockSelectSpace: vi.fn().mockResolvedValue(undefined),
@@ -42,6 +44,7 @@ const {
 vi.mock('../../../lib/space-agent-store', () => ({
   spaceAgentStore: {
     agents: mockAgents,
+    reminderCounts: mockReminderCounts,
     loading: mockLoading,
     error: mockError,
     selectSpace: mockSelectSpace,
@@ -88,6 +91,7 @@ function makeAgent(id: string, overrides: Partial<SpaceAgent> = {}): SpaceAgent 
 describe('SpaceAgentsPage', () => {
   beforeEach(() => {
     mockAgents.value = [];
+    mockReminderCounts.value = {};
     mockLoading.value = false;
     mockError.value = null;
     mockTemplates.value = [];
@@ -223,6 +227,31 @@ describe('SpaceAgentsPage', () => {
 
     expect(getByTestId('agent-row-alpha')).toBeTruthy();
     expect(getByTestId('agent-row-beta')).toBeTruthy();
+  });
+
+  it('badges an agent with its active reminder count', () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    mockReminderCounts.value = { alpha: 2 };
+    const { getByTestId, queryByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    expect(getByTestId('agent-reminder-count-alpha').textContent).toBe('2 reminders');
+    expect(queryByTestId('agent-reminder-count-beta')).toBeNull();
+  });
+
+  it('singularises a lone reminder', () => {
+    mockAgents.value = [makeAgent('alpha')];
+    mockReminderCounts.value = { alpha: 1 };
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    expect(getByTestId('agent-reminder-count-alpha').textContent).toBe('1 reminder');
+  });
+
+  it('shows no badge when an agent has no active reminders', () => {
+    mockAgents.value = [makeAgent('alpha')];
+    mockReminderCounts.value = { alpha: 0 };
+    const { queryByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    expect(queryByTestId('agent-reminder-count-alpha')).toBeNull();
   });
 
   it('hides archived agents from the list', () => {

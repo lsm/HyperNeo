@@ -5,6 +5,7 @@ import { SpaceAgentStore } from '../space-agent-store.ts';
 
 let eventHandlers: Map<string, Set<(event: unknown) => void>>;
 let listResult: SpaceAgent[];
+let reminderCountsResult: Record<string, number>;
 let requests: Array<{ method: string; params: unknown }>;
 let failNextRequest: string | null;
 let joinedChannels: string[];
@@ -52,6 +53,7 @@ function makeMockHub() {
         throw new Error('boom');
       }
       if (method === 'spaceAgentV2.list') return { agents: listResult };
+      if (method === 'spaceAgentV2.listReminderCounts') return { counts: reminderCountsResult };
       if (method === 'spaceAgentV2.create') {
         const p = params as { displayName?: string };
         return { agent: makeAgent('created', { displayName: p.displayName ?? 'created' }) };
@@ -88,6 +90,7 @@ describe('SpaceAgentStore', () => {
     joinedChannels = [];
     leftChannels = [];
     listResult = [];
+    reminderCountsResult = {};
     hub = makeMockHub();
     vi.spyOn(connectionManager, 'getHubIfConnected').mockReturnValue(
       hub as unknown as ReturnType<typeof connectionManager.getHubIfConnected>
@@ -162,7 +165,9 @@ describe('SpaceAgentStore', () => {
     it('create sends the active spaceId and inserts the result', async () => {
       const agent = await store.create({ spaceId: 'ignored', displayName: 'New' });
 
-      expect(requests.at(-1)?.params).toMatchObject({ spaceId: 'space-1', displayName: 'New' });
+      expect(
+        requests.find((entry) => entry.method === 'spaceAgentV2.create')?.params
+      ).toMatchObject({ spaceId: 'space-1', displayName: 'New' });
       expect(store.agents.value.map((a) => a.id)).toContain(agent.id);
     });
 
@@ -183,6 +188,137 @@ describe('SpaceAgentStore', () => {
       await store.remove('a');
 
       expect(store.agents.value).toHaveLength(0);
+    });
+  });
+
+  describe('reminder counts', () => {
+    it('loads counts alongside the agent list', async () => {
+      listResult = [makeAgent('a')];
+      reminderCountsResult = { a: 2 };
+
+      await store.selectSpace('space-1');
+
+      await vi.waitFor(() => expect(store.reminderCounts.value).toEqual({ a: 2 }));
+    });
+
+    it('keeps the agent list when the count request fails', async () => {
+      listResult = [makeAgent('a')];
+      failNextRequest = 'spaceAgentV2.listReminderCounts';
+
+      await store.selectSpace('space-1');
+
+      expect(store.agents.value.map((agent) => agent.id)).toEqual(['a']);
+      expect(store.error.value).toBeNull();
+      expect(store.loading.value).toBe(false);
+      await vi.waitFor(() => expect(store.reminderCounts.value).toEqual({}));
+    });
+
+    it('refetches counts when a created agent arrives, so seeded reminders show', async () => {
+      await store.selectSpace('space-1');
+      reminderCountsResult = { remote: 3 };
+
+      fire('spaceAgentV2.created', { spaceId: 'space-1', agent: makeAgent('remote') });
+      await vi.waitFor(() => expect(store.reminderCounts.value).toEqual({ remote: 3 }));
+    });
+
+    it('refetches counts for an agent created through this client', async () => {
+      await store.selectSpace('space-1');
+      reminderCountsResult = { created: 1 };
+
+      await store.create({ spaceId: 'space-1', displayName: 'New' });
+      await vi.waitFor(() => expect(store.reminderCounts.value).toEqual({ created: 1 }));
+    });
+
+    it('does not refetch counts when an existing agent is merely updated', async () => {
+      listResult = [makeAgent('a')];
+      await store.selectSpace('space-1');
+      const before = requests.filter(
+        (entry) => entry.method === 'spaceAgentV2.listReminderCounts'
+      ).length;
+
+      fire('spaceAgentV2.updated', {
+        spaceId: 'space-1',
+        agent: makeAgent('a', { displayName: 'renamed' }),
+      });
+
+      expect(
+        requests.filter((entry) => entry.method === 'spaceAgentV2.listReminderCounts').length
+      ).toBe(before);
+    });
+
+    it('does not hold the loading flag for the count request', async () => {
+      listResult = [makeAgent('a')];
+      let releaseCounts = (): void => {};
+      const blocked = new Promise<void>((resolve) => {
+        releaseCounts = () => resolve();
+      });
+      const original = hub.request;
+      hub.request = vi.fn(async (method: string, params: unknown) => {
+        if (method === 'spaceAgentV2.listReminderCounts') {
+          await blocked;
+        }
+        return original(method, params);
+      }) as typeof hub.request;
+
+      await store.selectSpace('space-1');
+
+      expect(store.loading.value).toBe(false);
+      expect(store.agents.value.map((agent) => agent.id)).toEqual(['a']);
+      releaseCounts();
+    });
+
+    it('runs the queued refresh against the newest generation', async () => {
+      let releaseFirst = (): void => {};
+      const blocked = new Promise<void>((resolve) => {
+        releaseFirst = () => resolve();
+      });
+      let blockNext = true;
+      const original = hub.request;
+      hub.request = vi.fn(async (method: string, params: unknown) => {
+        if (method === 'spaceAgentV2.listReminderCounts' && blockNext) {
+          blockNext = false;
+          await blocked;
+        }
+        return original(method, params);
+      }) as typeof hub.request;
+
+      await store.selectSpace('space-1');
+      listResult = [makeAgent('b')];
+      reminderCountsResult = { b: 7 };
+      await store.selectSpace('space-2');
+      expect(store.reminderCounts.value).toEqual({});
+
+      releaseFirst();
+
+      await vi.waitFor(() => expect(store.reminderCounts.value).toEqual({ b: 7 }));
+    });
+
+    it('coalesces a burst of created agents into two count requests', async () => {
+      await store.selectSpace('space-1');
+      const before = requests.filter(
+        (entry) => entry.method === 'spaceAgentV2.listReminderCounts'
+      ).length;
+
+      for (const id of ['one', 'two', 'three', 'four', 'five']) {
+        fire('spaceAgentV2.created', { spaceId: 'space-1', agent: makeAgent(id) });
+      }
+      await vi.waitFor(() => expect(store.agents.value).toHaveLength(5));
+      await tick();
+
+      const issued =
+        requests.filter((entry) => entry.method === 'spaceAgentV2.listReminderCounts').length -
+        before;
+      expect(issued).toBe(2);
+    });
+
+    it('clears counts on teardown', async () => {
+      listResult = [makeAgent('a')];
+      reminderCountsResult = { a: 2 };
+      await store.selectSpace('space-1');
+
+      store.teardown();
+
+      expect(store.reminderCounts.value).toEqual({});
     });
   });
 

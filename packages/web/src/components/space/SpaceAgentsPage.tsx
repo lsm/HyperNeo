@@ -16,6 +16,7 @@ import { ModelPoolEditor } from './ModelPoolEditor';
 import { type ToolsSelection, ToolsEditor } from './ToolsEditor';
 import { SettingSourcesEditor } from './SettingSourcesEditor';
 import { agentFormFrom, type AgentFormFields, blankAgentForm } from './agent-form-state';
+import { reminderLabel, toReminderCounts } from './agent-reminder-counts';
 import {
   decideToolsChange,
   differsFromBaseline,
@@ -67,6 +68,7 @@ function templateOptions(): TemplateOption[] {
 
 export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProps) {
   const agents = spaceAgentStore.agents.value.filter((agent) => agent.status !== 'archived');
+  const reminderCounts = toReminderCounts(spaceAgentStore.reminderCounts.value);
   const loading = spaceAgentStore.loading.value;
   const loadError = spaceAgentStore.error.value;
 
@@ -351,6 +353,14 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
               >
                 <span class="block truncate">{agent.displayName}</span>
                 <span class="block truncate text-[11px] text-fg-faint">@{agent.handle}</span>
+                {reminderLabel(reminderCounts.get(agent.id)) && (
+                  <span
+                    class="mt-0.5 block text-[11px] text-fg-muted"
+                    data-testid={`agent-reminder-count-${agent.handle}`}
+                  >
+                    {reminderLabel(reminderCounts.get(agent.id))}
+                  </span>
+                )}
               </button>
             </li>
           ))}
