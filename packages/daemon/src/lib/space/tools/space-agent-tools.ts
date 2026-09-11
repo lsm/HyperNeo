@@ -82,6 +82,8 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts
 import type { ReplyRoutingRegistry } from '../runtime/reply-routing-registry.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
+import { parkTaskExecution } from '../../tasks/park-task-execution.ts';
+import { createWorkflowTaskParkingExecutor } from '../runtime/task-parking-executor.ts';
 import { recoverTaskExecution } from '../../tasks/recover-task-execution.ts';
 import { createWorkflowTaskRecoveryExecutor } from '../runtime/task-recovery-executor.ts';
 import type { SpaceRuntime } from '../runtime/space-runtime.ts';
@@ -2799,7 +2801,11 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
         switch (plan.action) {
           case 'park_stopped': {
-            const parked = await runtime.parkStoppedWorkflowTask(spaceId, args.task_id);
+            const parked = await parkTaskExecution(
+              createWorkflowTaskParkingExecutor(spaceId, runtime),
+              args.task_id
+            );
+            if (typeof parked === 'string') throw new Error(parked);
             if (!parked) {
               return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
             }
