@@ -3377,7 +3377,7 @@ export class TaskAgentManager {
   ): NodeAgentSpawnConfig | null {
     if (slot.templateKey?.trim()) {
       const templateKey = slot.templateKey.trim();
-      const template = this.resolveSlotTemplateSource(workflowRun, templateKey);
+      const template = this.resolveSlotTemplateSource(spaceId, workflowRun, templateKey);
       if (template) {
         return resolveNodeAgentConfig(
           template,
@@ -3443,10 +3443,11 @@ export class TaskAgentManager {
   }
 
   private resolveSlotTemplateSource(
+    spaceId: string,
     workflowRun: Pick<SpaceWorkflowRun, 'workflowId' | 'definitionVersion'> | null | undefined,
     key: string
   ): NodeAgentTemplateSource | null {
-    if (!workflowRun) return this.resolveNodeTemplateSource(key);
+    if (!workflowRun) return this.resolveNodeTemplateSource(spaceId, key);
     const snapshots = runTemplateSnapshotRecord(
       workflowRun.definitionVersion
         ? this.config.spaceWorkflowManager.getWorkflowForRun(workflowRun)
@@ -3457,10 +3458,10 @@ export class TaskAgentManager {
     return spaceAgentTemplateToNodeSource(snapshots[key]);
   }
 
-  private resolveNodeTemplateSource(key: string): NodeAgentTemplateSource | null {
+  private resolveNodeTemplateSource(spaceId: string, key: string): NodeAgentTemplateSource | null {
     const builtIn = getLongHorizonAgentTemplate(key) as NodeAgentTemplateSource | undefined;
     if (builtIn) return builtIn;
-    const stored = this.config.templateRepo?.getByKey(key);
+    const stored = this.config.templateRepo?.getOwned(spaceId, key);
     return stored ? spaceAgentTemplateToNodeSource(stored) : null;
   }
 

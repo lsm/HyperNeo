@@ -17,7 +17,7 @@ export interface CreateSpaceAgentDeps extends Dependencies {
   spaceExists(spaceId: string): Promise<boolean>;
   sessionOwner(sessionId: string): string | null;
   getSession(sessionId: string): BindableSession | null;
-  getTemplate(key: string): SpaceAgentTemplate | null;
+  getTemplate(spaceId: string, key: string): SpaceAgentTemplate | null;
   listHandles(spaceId: string): string[];
   listDisplayNames(spaceId: string): string[];
   createAgent(params: CreateSpaceAgentParams): SpaceAgent;
@@ -128,7 +128,7 @@ export function gateTemplate(
 ): Gate<AdmittedTemplate> {
   const key = admitted.request.templateKey;
   if (!key) return { value: { ...admitted, template: null } };
-  const template = getTemplate(key);
+  const template = getTemplate(admitted.request.spaceId, key);
   if (!template) return reject('template_not_found', `Template not found: ${key}`);
   return { value: { ...admitted, template } };
 }
