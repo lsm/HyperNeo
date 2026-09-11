@@ -19,7 +19,7 @@ export class SpaceAgentTemplateRepository {
 
   create(params: CreateSpaceAgentTemplateParams): SpaceAgentTemplate {
     const now = Date.now();
-    const version = this.nextVersionFor(params.key);
+    const version = this.nextVersionFor(OWNERSHIP_MIGRATION_SENTINEL, params.key);
     this.db
       .prepare(
         `INSERT INTO space_agent_templates (
@@ -94,7 +94,7 @@ export class SpaceAgentTemplateRepository {
       return current !== null && current.version === expectedVersion ? this.getByKey(key) : null;
     }
 
-    const nextVersion = this.nextVersionFor(key);
+    const nextVersion = this.nextVersionFor(this.versionNamespaceForKey(key), key);
     fields.push('updated_at = ?');
     fields.push('version = ?');
     values.push(Date.now());
@@ -123,7 +123,7 @@ export class SpaceAgentTemplateRepository {
 
   createOwned(spaceId: string, params: CreateSpaceAgentTemplateParams): SpaceAgentTemplate {
     const now = Date.now();
-    const version = this.nextVersionFor(params.key);
+    const version = this.nextVersionFor(spaceId, params.key);
     this.db
       .prepare(
         `INSERT INTO space_agent_templates (
@@ -191,7 +191,7 @@ export class SpaceAgentTemplateRepository {
     fields.push('updated_at = ?');
     fields.push('version = ?');
     values.push(Date.now());
-    values.push(this.nextVersionFor(key));
+    values.push(this.nextVersionFor(owner, key));
     values.push(owner);
     values.push(key);
     let where = `WHERE space_id = ? AND key = ?`;
@@ -251,14 +251,21 @@ export class SpaceAgentTemplateRepository {
       .all(spaceId, OWNERSHIP_MIGRATION_SENTINEL) as Record<string, unknown>[];
   }
 
-  private nextVersionFor(key: string): number {
+  private versionNamespaceForKey(key: string): string {
+    const row = this.db
+      .prepare(`SELECT space_id FROM space_agent_templates WHERE key = ? ORDER BY space_id LIMIT 1`)
+      .get(key) as { space_id: string } | undefined;
+    return row?.space_id ?? OWNERSHIP_MIGRATION_SENTINEL;
+  }
+
+  private nextVersionFor(spaceId: string, key: string): number {
     const row = this.db
       .prepare(
-        `INSERT INTO space_agent_template_version_seq (key, next_version) VALUES (?, 1)
-					 ON CONFLICT(key) DO UPDATE SET next_version = next_version + 1
+        `INSERT INTO space_agent_template_version_seq (space_id, key, next_version) VALUES (?, ?, 1)
+					 ON CONFLICT(space_id, key) DO UPDATE SET next_version = next_version + 1
 					 RETURNING next_version`
       )
-      .get(key) as { next_version: number } | undefined;
+      .get(spaceId, key) as { next_version: number } | undefined;
     return row?.next_version ?? 1;
   }
 }

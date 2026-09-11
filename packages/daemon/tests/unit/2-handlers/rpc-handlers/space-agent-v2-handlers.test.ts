@@ -11,6 +11,8 @@ import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositori
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
+import { runMigration243 } from '../../../../src/storage/schema/m243-space-agent-template-space-key';
+import { runMigration246 } from '../../../../src/storage/schema/m246-template-version-seq-space-key';
 import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createSpaceTables } from '../../helpers/space-test-db';
@@ -77,6 +79,8 @@ describe('setupSpaceAgentV2Handlers', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
+    runMigration243(db);
+    runMigration246(db);
     db.prepare(
       `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)`

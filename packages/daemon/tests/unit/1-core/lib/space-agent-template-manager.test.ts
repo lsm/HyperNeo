@@ -16,6 +16,7 @@ import { SpaceAgentTemplateRepository } from '../../../../src/storage/repositori
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
+import { runMigration246 } from '../../../../src/storage/schema/m246-template-version-seq-space-key';
 import { runMigration243 } from '../../../../src/storage/schema/m243-space-agent-template-space-key';
 import { createSpaceAgentTemplatesTable } from '../../../../src/storage/schema/space-agent-templates';
 import { Database as BunDatabase } from '../../../../src/storage/sqlite-compat';
@@ -82,6 +83,8 @@ describe('SpaceAgentTemplateManager', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
+    runMigration243(db);
+    runMigration246(db);
     repo = new SpaceAgentTemplateRepository(db);
     manager = new SpaceAgentTemplateManager(repo, () => BUILT_INS);
     setModelsCache(new Map());
@@ -1208,6 +1211,7 @@ describe('SpaceAgentTemplateManager — Space-scoped methods', () => {
     runMigration227(db);
     runMigration238(db);
     runMigration243(db);
+    runMigration246(db);
     repo = new SpaceAgentTemplateRepository(db);
     manager = new SpaceAgentTemplateManager(repo, () => BUILT_INS);
   });

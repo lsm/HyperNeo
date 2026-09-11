@@ -26,6 +26,7 @@ import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
 import { runMigration243 } from '../../../../src/storage/schema/m243-space-agent-template-space-key';
+import { runMigration246 } from '../../../../src/storage/schema/m246-template-version-seq-space-key';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 
@@ -267,6 +268,7 @@ describe('Space Export/Import RPC Handlers', () => {
     runMigration227(db);
     runMigration238(db);
     runMigration243(db);
+    runMigration246(db);
     insertSpace(db, SPACE_ID, 'My Space');
     insertSpace(db, OTHER_SPACE_ID, 'Other Space');
 

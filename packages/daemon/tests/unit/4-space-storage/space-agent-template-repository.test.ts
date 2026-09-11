@@ -11,6 +11,7 @@ import { runMigration226 } from '../../../src/storage/schema/m226-space-agent-te
 import { runMigration227 } from '../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../src/storage/schema/m238-space-agent-template-labels';
 import { runMigration243 } from '../../../src/storage/schema/m243-space-agent-template-space-key';
+import { runMigration246 } from '../../../src/storage/schema/m246-template-version-seq-space-key';
 import { Database as BunDatabase } from '../../../src/storage/sqlite-compat';
 
 const MODEL_POOL: AgentModelPoolEntry[] = [
@@ -46,6 +47,8 @@ describe('SpaceAgentTemplateRepository', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
+    runMigration243(db);
+    runMigration246(db);
     repo = new SpaceAgentTemplateRepository(db);
   });
 
@@ -277,12 +280,35 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
     runMigration227(db);
     runMigration238(db);
     runMigration243(db);
+    runMigration246(db);
     repo = new SpaceAgentTemplateRepository(db);
   });
 
   test('createOwned records the Space and getOwned reads it back', () => {
     repo.createOwned('space-a', { key: 'k', handle: 'h' });
     expect(repo.getOwned('space-a', 'k')?.handle).toBe('h');
+  });
+
+  test('two Spaces holding the same key keep independent version counters', () => {
+    const a = repo.createOwned('space-a', { key: 'shared', handle: 'h' });
+    const b = repo.createOwned('space-b', { key: 'shared', handle: 'h' });
+
+    expect(repo.getOwnedWithVersion('space-a', 'shared')?.version).toBe(1);
+    expect(repo.getOwnedWithVersion('space-b', 'shared')?.version).toBe(1);
+    expect(a.key).toBe(b.key);
+  });
+
+  test('an update in one Space does not invalidate the other Space expected version', () => {
+    repo.createOwned('space-a', { key: 'shared', handle: 'h' });
+    repo.createOwned('space-b', { key: 'shared', handle: 'h' });
+
+    repo.casUpdateOwned('space-a', 'shared', { displayName: 'A2' });
+    repo.casUpdateOwned('space-a', 'shared', { displayName: 'A3' });
+
+    expect(repo.casUpdateOwned('space-b', 'shared', { displayName: 'B2' }, 1)?.displayName).toBe(
+      'B2'
+    );
+    expect(repo.getOwnedWithVersion('space-b', 'shared')?.version).toBe(2);
   });
 
   test('a Space cannot see, update or delete another Space own row', () => {
