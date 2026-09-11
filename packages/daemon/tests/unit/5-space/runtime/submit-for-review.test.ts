@@ -1,0 +1,190 @@
+import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { Database } from '../../../../src/storage/sqlite-compat';
+import { createTables, runMigrations } from '../../../../src/storage/schema';
+import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
+import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
+import { SessionRepository } from '../../../../src/storage/repositories/session-repository';
+import { DirectTaskExecutionRepository } from '../../../../src/storage/repositories/direct-task-execution-repository';
+import { JobQueueRepository } from '../../../../src/storage/repositories/job-queue-repository';
+import { createDirectTaskStarter } from '../../../../src/lib/space/runtime/start-direct-task';
+import { createSubmitTaskForReviewOperation } from '../../../../src/lib/space/operations/submit-for-review';
+import { createOperationRegistry } from '../../../../src/lib/operations/registry';
+import { readDirectFinalizationRequest } from '../../../../src/lib/space/runtime/finalize-direct-attempt';
+import { SessionManager } from '../../../../src/lib/session/session-manager';
+import { createDirectOutcomeHandler } from '../../../../src/lib/space/runtime/direct-outcome-jobs';
+import type { AgentSession } from '../../../../src/lib/agent/agent-session';
+
+let db: Database;
+let jobs: JobQueueRepository;
+let tasks: SpaceTaskRepository;
+let sessions: SessionRepository;
+let attempts: DirectTaskExecutionRepository;
+let taskId: string;
+let sessionId: string;
+let attemptId: string;
+let operation: ReturnType<typeof createSubmitTaskForReviewOperation>;
+beforeEach(async () => {
+  db = new Database(':memory:');
+  runMigrations(db, () => {});
+  createTables(db);
+  jobs = new JobQueueRepository(db);
+  tasks = new SpaceTaskRepository(db);
+  sessions = new SessionRepository(db);
+  attempts = new DirectTaskExecutionRepository(db);
+  const spaceId = new SpaceRepository(db).createSpace({
+    name: 'Space',
+    slug: 'space',
+    workspacePath: '/repo',
+  }).id;
+  taskId = tasks.createTask({ spaceId, title: 'Task', description: '' }).id;
+  const started = await createDirectTaskStarter({
+    db,
+    defaultModel: 'claude-sonnet-4-6',
+    sessionDb: {
+      getSession: (id) => sessions.getSession(id),
+      createSession: (session) =>
+        sessions.createSession(session, { enforceWorkspaceOwnership: false }),
+    },
+    sessionManager: {
+      getCachedSession: () => undefined,
+      getSessionForControl: async (id) =>
+        ({
+          getSessionData: () => sessions.getSession(id)!,
+          isQueryActiveOrStarting: () => false,
+        }) as AgentSession,
+      unregisterSession: async () => {},
+    },
+  })({ taskId, requestKey: 'start' });
+  if (!started.started) throw new Error(started.reason);
+  sessionId = started.attempt.sessionId;
+  attemptId = started.attempt.id;
+  operation = createSubmitTaskForReviewOperation(db, jobs);
+});
+afterEach(() => db.close());
+function outcomeCount() {
+  return (
+    db.prepare("SELECT COUNT(*) AS n FROM job_queue WHERE queue='direct_task_outcome'").get() as {
+      n: number;
+    }
+  ).n;
+}
+
+test.each(['rpc', 'internal', 'mcp'] as const)(
+  '%s invocation returns durable acknowledgement before shutdown/status changes',
+  async (source) => {
+    const registry = createOperationRegistry([operation]);
+    const result = await registry
+      .get('task.submitForReview')!
+      .execute({ taskId, reason: '  Ready  ' }, { source, sessionId });
+    expect(result).toMatchObject({ accepted: true, jobId: expect.any(String) });
+    expect(tasks.getTask(taskId)?.status).toBe('in_progress');
+    expect(attempts.getActive(taskId)?.phase).toBe('running');
+    expect(attempts.isStopRequested(attemptId, sessionId)).toBe(true);
+    expect(readDirectFinalizationRequest(db, { attemptId, sessionId })).toMatchObject({
+      status: 'review',
+      reviewReason: '  Ready  ',
+    });
+    expect(await operation.execute({ taskId, reason: '  Ready  ' }, { source, sessionId })).toEqual(
+      result
+    );
+    expect(outcomeCount()).toBe(1);
+  }
+);
+test.each(['missing', 'different', 'wrong-context', 'wrong-type', 'ended'] as const)(
+  'MCP %s caller cannot submit or create a stop fence',
+  async (kind) => {
+    if (kind === 'wrong-context')
+      db.prepare('UPDATE sessions SET session_context = ? WHERE id = ?').run(
+        JSON.stringify({ taskId: 'foreign', spaceId: 'foreign' }),
+        sessionId
+      );
+    if (kind === 'wrong-type')
+      db.prepare("UPDATE sessions SET type='general' WHERE id=?").run(sessionId);
+    if (kind === 'ended')
+      db.prepare("UPDATE sessions SET status='ended' WHERE id=?").run(sessionId);
+    expect(
+      await operation.execute(
+        { taskId },
+        {
+          source: 'mcp',
+          sessionId: kind === 'missing' ? undefined : kind === 'different' ? 'another' : sessionId,
+        }
+      )
+    ).toMatchObject({ accepted: false });
+    expect(outcomeCount()).toBe(0);
+    expect(attempts.isStopRequested(attemptId, sessionId)).toBe(false);
+  }
+);
+test('changed reason cannot overwrite frozen outcome or duplicate its job', async () => {
+  await operation.execute({ taskId, reason: 'first' }, { source: 'mcp', sessionId });
+  expect(
+    await operation.execute({ taskId, reason: 'second' }, { source: 'mcp', sessionId })
+  ).toMatchObject({ accepted: false });
+  expect(readDirectFinalizationRequest(db, { attemptId, sessionId })?.reviewReason).toBe('first');
+  expect(outcomeCount()).toBe(1);
+});
+test('a replacement task pointer cannot be submitted by the earlier worker', async () => {
+  tasks.updateTask(taskId, { taskAgentSessionId: 'replacement' });
+  expect(await operation.execute({ taskId }, { source: 'mcp', sessionId })).toMatchObject({
+    accepted: false,
+  });
+  expect(outcomeCount()).toBe(0);
+});
+test('missing task rejects and schema does not accept caller-owned execution identity', async () => {
+  expect(await operation.execute({ taskId: 'missing' }, { source: 'rpc' })).toMatchObject({
+    accepted: false,
+  });
+  expect(operation.inputSchema.safeParse({ taskId, attemptId, sessionId }).success).toBe(false);
+  expect(outcomeCount()).toBe(0);
+});
+test('enqueue failure rolls back stop request and later submission can succeed', async () => {
+  db.exec(
+    "CREATE TRIGGER fail_outcome BEFORE INSERT ON job_queue WHEN NEW.queue='direct_task_outcome' BEGIN SELECT RAISE(ABORT,'queue failed'); END"
+  );
+  await expect(operation.execute({ taskId }, { source: 'rpc' })).rejects.toThrow('queue failed');
+  expect(attempts.isStopRequested(attemptId, sessionId)).toBe(false);
+  expect(outcomeCount()).toBe(0);
+  db.exec('DROP TRIGGER fail_outcome');
+  expect(await operation.execute({ taskId }, { source: 'rpc' })).toMatchObject({ accepted: true });
+});
+
+test('completed frozen submission acknowledges again without granting execution authority', async () => {
+  const accepted = (await operation.execute(
+    { taskId, reason: 'Ready' },
+    { source: 'mcp', sessionId }
+  )) as { accepted: true; jobId: string };
+  let cached = {
+    getSessionData: () => sessions.getSession(sessionId)!,
+    getProcessingState: () => ({ status: 'idle' }),
+    isInterruptInProgress: () => false,
+    getTrackedAgentRootPidsSplit: () => ({ live: [], exited: [] }),
+    handleInterrupt: async () => {},
+    cleanup: async () => {},
+  } as unknown as AgentSession | null;
+  const owner = Object.assign(Object.create(SessionManager.prototype), {
+    directStopVerificationJobs: new Map(),
+  }) as SessionManager;
+  const result = await createDirectOutcomeHandler({
+    db,
+    jobQueue: jobs,
+    sessionManager: {
+      coalesceDirectStopVerification: owner.coalesceDirectStopVerification.bind(owner),
+      getCachedSession: () => cached,
+      isSessionLoading: () => false,
+      unregisterSession: async () => {
+        cached = null;
+      },
+    },
+  })(jobs.getJob(accepted.jobId)!);
+  expect(result).toMatchObject({ finalized: true });
+  expect(attempts.getActive(taskId)).toBeNull();
+  expect(tasks.getTask(taskId)?.status).toBe('review');
+  db.prepare("UPDATE sessions SET status='ended' WHERE id=?").run(sessionId);
+  expect(
+    await operation.execute({ taskId, reason: 'Ready' }, { source: 'mcp', sessionId })
+  ).toEqual(accepted);
+  expect(
+    await operation.execute({ taskId, reason: 'Changed' }, { source: 'mcp', sessionId })
+  ).toMatchObject({ accepted: false });
+  expect(outcomeCount()).toBe(1);
+});
