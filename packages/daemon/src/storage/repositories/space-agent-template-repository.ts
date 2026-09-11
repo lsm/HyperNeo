@@ -18,7 +18,35 @@ export class SpaceAgentTemplateRepository {
   constructor(private db: BunDatabase) {}
 
   create(params: CreateSpaceAgentTemplateParams): SpaceAgentTemplate {
-    return this.createOwned(OWNERSHIP_MIGRATION_SENTINEL, params);
+    const now = Date.now();
+    const version = this.nextVersionFor(params.key);
+    this.db
+      .prepare(
+        `INSERT INTO space_agent_templates (
+						key, handle, display_name, description, instructions, suggested_autonomy_level,
+						model, provider, model_pool, thinking_level, setting_sources, tools, labels,
+						created_at, updated_at, version
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        params.key,
+        params.handle,
+        params.displayName ?? params.handle,
+        params.description ?? '',
+        params.instructions ?? '',
+        params.suggestedAutonomyLevel ?? 2,
+        params.model ?? null,
+        params.provider ?? null,
+        encodeJsonArray(params.modelPool),
+        params.thinkingLevel ?? null,
+        params.settingSources === undefined ? null : JSON.stringify(params.settingSources),
+        encodeJsonArray(params.tools),
+        encodeJsonArray(params.labels),
+        now,
+        now,
+        version
+      );
+    return this.getByKey(params.key) as SpaceAgentTemplate;
   }
 
   getByKey(key: string): SpaceAgentTemplate | null {

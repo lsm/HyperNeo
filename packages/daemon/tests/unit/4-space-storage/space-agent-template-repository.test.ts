@@ -46,7 +46,6 @@ describe('SpaceAgentTemplateRepository', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
-    runMigration243(db);
     repo = new SpaceAgentTemplateRepository(db);
   });
 
