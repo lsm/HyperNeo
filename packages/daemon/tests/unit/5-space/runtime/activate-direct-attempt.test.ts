@@ -63,19 +63,10 @@ test('factory is inert and activation preserves repository timestamps and full t
   expect(start(input)).toEqual({ activated: false, reason: 'unavailable' });
 });
 
-test.each([
-  'cancelled',
-  'archived',
-  'stopped',
-  'unselected',
-  'space-archived',
-  'stop-requested',
-] as const)(
+test.each(['cancelled', 'archived', 'stopped', 'space-archived', 'stop-requested'] as const)(
   'current %s state rejects activation without changing claim or session pointer',
   (state) => {
-    if (state === 'unselected')
-      db.prepare('DELETE FROM direct_task_execution_selection WHERE task_id = ?').run(taskId);
-    else if (state === 'space-archived')
+    if (state === 'space-archived')
       db.prepare("UPDATE spaces SET status = 'archived' WHERE id = ?").run(spaceId);
     else if (state === 'stop-requested') attempts.requestStop('attempt', 'worker', 'cancelled');
     else tasks.updateTask(taskId, { status: state });
@@ -181,7 +172,8 @@ test('notifications commit only once both persisted states are visible', () => {
   const commitTransaction = mock(() => {
     expect(tasks.getTask(taskId)?.status).toBe('in_progress');
     expect(attempts.get('attempt')?.phase).toBe('running');
-    expect(db.inTransaction).toBe(false);
+    db.exec('BEGIN');
+    db.exec('ROLLBACK');
   });
   const reactiveDb = {
     beginTransaction: mock(() => {}),
@@ -209,4 +201,14 @@ test('workflow attachment committed before activation is preserved', () => {
   expect(tasks.getTask(taskId)?.workflowRunId).toBe(run.id);
   expect(tasks.getTask(taskId)?.status).toBe('open');
   expect(attempts.get('attempt')?.phase).toBe('reserved');
+});
+
+test('deleted selection cascades its claim and activation cannot reconstruct either', () => {
+  db.prepare('DELETE FROM direct_task_execution_selection WHERE task_id = ?').run(taskId);
+  expect(attempts.get('attempt')).toBeNull();
+  expect(activate()).toEqual({ activated: false, reason: 'unavailable' });
+  expect(attempts.get('attempt')).toBeNull();
+  expect(attempts.isSelected(taskId)).toBe(false);
+  expect(tasks.getTask(taskId)?.status).toBe('open');
+  expect(tasks.getTask(taskId)?.taskAgentSessionId).toBeFalsy();
 });
