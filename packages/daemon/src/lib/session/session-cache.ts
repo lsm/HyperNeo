@@ -17,6 +17,10 @@ export class SessionCache {
     private loadFromDB: SessionLoader
   ) {}
 
+  isLoading(sessionId: string): boolean {
+    return this.sessionLoadLocks.has(sessionId);
+  }
+
   get(sessionId: string): AgentSession | null {
     if (this.sessions.has(sessionId)) {
       return this.sessions.get(sessionId)!;

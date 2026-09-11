@@ -11,7 +11,10 @@ import type {
 import type { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository.ts';
 
 export interface DirectSessionPreparationDependencies {
-  attempts: Pick<DirectTaskExecutionRepository, 'get' | 'getActive' | 'isSelected'>;
+  attempts: Pick<
+    DirectTaskExecutionRepository,
+    'get' | 'getActive' | 'isSelected' | 'isStopRequested'
+  >;
   tasks: Pick<SpaceTaskRepository, 'getTask'>;
   getSpace: (spaceId: string) => Space | null;
   db: Pick<Database, 'getSession' | 'createSession'>;
@@ -37,7 +40,8 @@ export function requireReservedDirectTask(
   active: DirectTaskAttempt | null,
   selected: boolean,
   task: SpaceTask | null,
-  space: Space | null
+  space: Space | null,
+  stopRequested = false
 ): { value: DirectPreparation } | { reason: PreparationFailure } {
   return attempt &&
     attempt.phase === 'reserved' &&
@@ -45,6 +49,7 @@ export function requireReservedDirectTask(
     active.sessionId === attempt.sessionId &&
     active.generation === attempt.generation &&
     selected &&
+    !stopRequested &&
     task?.id === attempt.taskId &&
     task.status === 'open' &&
     !task.archivedAt &&
@@ -85,7 +90,8 @@ function readPreparation(
     attempt ? attempts.getActive(attempt.taskId) : null,
     !!attempt && attempts.isSelected(attempt.taskId),
     task,
-    task?.spaceId ? getSpace(task.spaceId) : null
+    task?.spaceId ? getSpace(task.spaceId) : null,
+    !!attempt && attempts.isStopRequested(attempt.id, attempt.sessionId)
   );
 }
 
@@ -98,6 +104,8 @@ async function prepareDormantSession(
   defaultModel: string,
   candidate: DirectPreparation
 ): Promise<{ value: PreparedDirectSession } | { reason: PreparationFailure }> {
+  const admission = readPreparation(attempts, tasks, getSpace, candidate.attempt.id);
+  if ('reason' in admission) return admission;
   const id = candidate.attempt.sessionId;
   const existing = db.getSession(id);
   if (existing && !matchesDirectPreparedSession(existing, candidate))

@@ -75,11 +75,36 @@ export class DirectTaskExecutionRepository {
       : null;
   }
 
+  requestStop(id: string, sessionId: string, outcome: string): DirectTaskAttempt | null {
+    this.db
+      .prepare(`INSERT INTO direct_task_stop_requests(attempt_id, session_id, outcome, requested_at)
+      SELECT id, session_id, ?, ? FROM direct_task_execution_attempts
+      WHERE id = ? AND session_id = ? AND phase <> 'stopped'
+      ON CONFLICT(attempt_id) DO NOTHING`)
+      .run(outcome, Date.now(), id, sessionId);
+    return this.isStopRequested(id, sessionId) ? this.get(id) : null;
+  }
+
+  isStopRequested(id: string, sessionId: string): boolean {
+    return !!this.db
+      .prepare('SELECT 1 FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ?')
+      .get(id, sessionId);
+  }
+
+  finishRequestedStop(id: string, sessionId: string): DirectTaskAttempt | null {
+    return this.db
+      .prepare(`UPDATE direct_task_execution_attempts
+      SET phase = 'stopped', outcome = (SELECT outcome FROM direct_task_stop_requests WHERE attempt_id = ?), updated_at = ?
+      WHERE id = ? AND session_id = ? AND EXISTS (SELECT 1 FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ?)
+      RETURNING ${columns}`)
+      .get(id, Date.now(), id, sessionId, id, sessionId) as DirectTaskAttempt | null;
+  }
+
   activate(id: string, sessionId: string): DirectTaskAttempt | null {
     return this.db
       .prepare(`UPDATE direct_task_execution_attempts SET phase = 'running', updated_at = ?
-      WHERE id = ? AND session_id = ? AND phase = 'reserved' RETURNING ${columns}`)
-      .get(Date.now(), id, sessionId) as DirectTaskAttempt | null;
+      WHERE id = ? AND session_id = ? AND phase = 'reserved' AND NOT EXISTS (SELECT 1 FROM direct_task_stop_requests WHERE attempt_id = ?) RETURNING ${columns}`)
+      .get(Date.now(), id, sessionId, id) as DirectTaskAttempt | null;
   }
 
   stop(id: string, sessionId: string, outcome: string): DirectTaskAttempt | null {

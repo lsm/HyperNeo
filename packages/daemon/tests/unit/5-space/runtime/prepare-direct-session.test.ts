@@ -104,7 +104,7 @@ test('foreign persisted session is neither overwritten nor loaded', async () => 
   expect(load).not.toHaveBeenCalled();
 });
 
-test.each(['cancelled', 'archived', 'stopped', 'foreign'] as const)(
+test.each(['cancelled', 'archived', 'stopped', 'stop-requested', 'foreign'] as const)(
   'loss during control load: %s cleans only new dormant object',
   async (loss) => {
     let release!: () => void;
@@ -123,7 +123,8 @@ test.each(['cancelled', 'archived', 'stopped', 'foreign'] as const)(
     });
     const result = preparer()('attempt');
     await started;
-    if (loss === 'stopped') attempts.stop('attempt', 'direct-session', 'cancelled');
+    if (loss === 'stop-requested') attempts.requestStop('attempt', 'direct-session', 'cancelled');
+    else if (loss === 'stopped') attempts.stop('attempt', 'direct-session', 'cancelled');
     else if (loss === 'foreign')
       cached = makeAgent({ ...records.get('direct-session')!, context: { taskId: 'foreign' } });
     else tasks.updateTask(task.id, { status: loss });
@@ -194,3 +195,24 @@ test.each(['archived', 'ended'] as const)(
     expect(records.get(row.id)?.status).toBe(status);
   }
 );
+
+test('durable stop fence rejects preparation before creating or loading a session', async () => {
+  attempts.requestStop('attempt', 'direct-session', 'cancelled');
+  expect(await preparer()('attempt')).toBe('direct_attempt_unavailable');
+  expect(persist).not.toHaveBeenCalled();
+  expect(load).not.toHaveBeenCalled();
+  expect(attempts.activate('attempt', 'direct-session')).toBeNull();
+});
+
+test('stop between pipeline admission and create prevents late object construction', async () => {
+  const get = attempts.get.bind(attempts);
+  let reads = 0;
+  attempts.get = (id) => {
+    const attempt = get(id);
+    if (++reads === 2) attempts.requestStop(id, 'direct-session', 'cancelled');
+    return attempt;
+  };
+  expect(await preparer()('attempt')).toBe('direct_attempt_unavailable');
+  expect(persist).not.toHaveBeenCalled();
+  expect(load).not.toHaveBeenCalled();
+});

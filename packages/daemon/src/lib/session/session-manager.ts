@@ -459,6 +459,10 @@ export class SessionManager {
     return this.sessionCache.get(sessionId);
   }
 
+  isSessionLoading(sessionId: string): boolean {
+    return this.sessionCache.isLoading(sessionId);
+  }
+
   getCachedSession(sessionId: string): AgentSession | null {
     return this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
   }
