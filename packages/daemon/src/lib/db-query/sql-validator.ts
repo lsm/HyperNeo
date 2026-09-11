@@ -322,7 +322,7 @@ export interface TableRefSpan {
   end: number;
 }
 
-function maskCommentsAndStrings(sql: string): string {
+export function maskCommentsAndStrings(sql: string): string {
   const out = sql.split('');
   const len = sql.length;
   let i = 0;
