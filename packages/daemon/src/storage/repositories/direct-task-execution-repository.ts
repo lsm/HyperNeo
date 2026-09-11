@@ -97,6 +97,32 @@ export class DirectTaskExecutionRepository {
       .get(id, sessionId);
   }
 
+  recordStopVerification(id: string, sessionId: string, generation: number): boolean {
+    return (
+      this.db
+        .prepare(`UPDATE direct_task_stop_requests SET verified_generation = ?
+      WHERE attempt_id = ? AND session_id = ? AND EXISTS (
+        SELECT 1 FROM direct_task_execution_attempts WHERE id = ? AND session_id = ?
+          AND generation = ? AND phase <> 'stopped')`)
+        .run(generation, id, sessionId, id, sessionId, generation).changes === 1
+    );
+  }
+
+  hasStopVerification(id: string, sessionId: string, generation: number): boolean {
+    return !!this.db
+      .prepare(`SELECT 1 FROM direct_task_stop_requests
+      WHERE attempt_id = ? AND session_id = ? AND verified_generation = ?`)
+      .get(id, sessionId, generation);
+  }
+
+  clearStopVerification(id: string, sessionId: string): void {
+    this.db
+      .prepare(
+        'UPDATE direct_task_stop_requests SET verified_generation = NULL WHERE attempt_id = ? AND session_id = ?'
+      )
+      .run(id, sessionId);
+  }
+
   finishRequestedStop(id: string, sessionId: string): DirectTaskAttempt | null {
     return this.db
       .prepare(`UPDATE direct_task_execution_attempts

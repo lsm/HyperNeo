@@ -20,7 +20,14 @@ export type DirectAttemptStopResult =
 export interface DirectAttemptStopDependencies {
   attempts: Pick<
     DirectTaskExecutionRepository,
-    'get' | 'getActive' | 'requestStop' | 'finishRequestedStop' | 'isStopRequested'
+    | 'get'
+    | 'getActive'
+    | 'requestStop'
+    | 'finishRequestedStop'
+    | 'isStopRequested'
+    | 'recordStopVerification'
+    | 'hasStopVerification'
+    | 'clearStopVerification'
   >;
   tasks: Pick<SpaceTaskRepository, 'getTask'>;
   sessionManager: Pick<
@@ -79,12 +86,19 @@ export async function verifyDirectAttemptStop(
   )
     return { reason: { stopped: false, reason: 'unavailable' } };
   attempt = current;
-  if (sessionManager.isSessionLoading(attempt.sessionId))
+  if (sessionManager.isSessionLoading(attempt.sessionId)) {
+    attempts.clearStopVerification(attempt.id, attempt.sessionId);
     return { reason: { stopped: false, reason: 'unverified' } };
+  }
   const session = sessionManager.getCachedSession(attempt.sessionId);
-  if (!session && attempt.phase === 'running')
+  if (
+    !session &&
+    attempt.phase === 'running' &&
+    !attempts.hasStopVerification(attempt.id, attempt.sessionId, attempt.generation)
+  )
     return { reason: { stopped: false, reason: 'unverified' } };
   if (session) {
+    attempts.clearStopVerification(attempt.id, attempt.sessionId);
     const identity = requireDirectTaskWorkerIdentity(attempt.sessionId, {
       session: session.getSessionData(),
       task: tasks.getTask(attempt.taskId),
@@ -100,6 +114,8 @@ export async function verifyDirectAttemptStop(
       }
       if (!directSessionIsDown(session))
         return { reason: { stopped: false, reason: 'unverified' } };
+      if (!attempts.recordStopVerification(attempt.id, attempt.sessionId, attempt.generation))
+        return { reason: { stopped: false, reason: 'unavailable' } };
       await sessionManager.unregisterSession(attempt.sessionId, session);
     } catch {
       return { reason: { stopped: false, reason: 'unverified' } };
@@ -123,8 +139,10 @@ function finishVerifiedDirectStop(
     sessionManager.isSessionLoading(attempt.sessionId) ||
     sessionManager.getCachedSession(attempt.sessionId) ||
     (session && !directSessionIsDown(session))
-  )
+  ) {
+    attempts.clearStopVerification(attempt.id, attempt.sessionId);
     return { stopped: false, reason: 'unverified' };
+  }
   const stopped = attempts.finishRequestedStop(attempt.id, attempt.sessionId);
   return stopped ? { stopped: true, attempt: stopped } : { stopped: false, reason: 'unavailable' };
 }

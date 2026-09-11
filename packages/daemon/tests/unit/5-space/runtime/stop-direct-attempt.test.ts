@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { Database } from '../../../../src/storage/sqlite-compat';
@@ -223,6 +226,7 @@ test('verification requires a durable fence and retains ownership after exact se
   const attempt = attempts.get('attempt')!;
   expect(await verifyDirectAttemptStop(attempts, tasks, manager, attempt)).toHaveProperty('reason');
   expect(interrupt).not.toHaveBeenCalled();
+  expect(attempts.recordStopVerification('attempt', 'session', attempt.generation)).toBe(false);
   attempts.requestStop('attempt', 'session', 'cancelled');
   const verified = await verifyDirectAttemptStop(attempts, tasks, manager, attempt);
   expect(verified).toEqual({ value: { attempt: attempts.get('attempt'), session: expected } });
@@ -269,4 +273,109 @@ test('release rechecks cache after verification yields to the next pipeline stag
   expect(await stop(input)).toEqual({ stopped: false, reason: 'unverified' });
   expect(cached).toBe(replacement);
   expect(attempts.getActive(taskId)?.id).toBe('attempt');
+});
+
+test('a finalization failure retries from durable exact verification without a cached session', async () => {
+  attempts.activate('attempt', 'session');
+  cached = agent();
+  const finish = attempts.finishRequestedStop.bind(attempts);
+  attempts.finishRequestedStop = () => {
+    throw new Error('finalization failed');
+  };
+  await expect(stopper()(input)).rejects.toThrow('finalization failed');
+  expect(cached).toBeNull();
+  expect(attempts.getActive(taskId)?.phase).toBe('running');
+  expect(attempts.hasStopVerification('attempt', 'session', 1)).toBe(true);
+  expect(attempts.hasStopVerification('attempt', 'session', 2)).toBe(false);
+  attempts.finishRequestedStop = finish;
+  expect(await stopper()(input)).toHaveProperty('stopped', true);
+});
+
+test('a reloaded live session invalidates prior proof before failed verification', async () => {
+  attempts.activate('attempt', 'session');
+  attempts.requestStop('attempt', 'session', 'cancelled');
+  cached = agent();
+  const manager = {
+    getCachedSession: () => cached,
+    isSessionLoading: () => loading,
+    unregisterSession: unregister,
+  };
+  expect(
+    await verifyDirectAttemptStop(attempts, tasks, manager, attempts.get('attempt')!)
+  ).toHaveProperty('value');
+  cached = agent();
+  live = [999];
+  expect(
+    await verifyDirectAttemptStop(attempts, tasks, manager, attempts.get('attempt')!)
+  ).toHaveProperty('reason');
+  expect(attempts.hasStopVerification('attempt', 'session', 1)).toBe(false);
+  cached = null;
+  expect(await stopper()(input)).toEqual({ stopped: false, reason: 'unverified' });
+});
+
+test('successful verification survives database reopen without trusting arbitrary missing sessions', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'verified-stop-'));
+  const path = join(directory, 'test.db');
+  let disk = new Database(path);
+  try {
+    createSpaceTables(disk);
+    const owner = new SpaceRepository(disk).createSpace({
+      name: 'Owner',
+      slug: 'owner',
+      workspacePath: '/repo',
+    });
+    let diskTasks = new SpaceTaskRepository(disk);
+    const task = diskTasks.createTask({ spaceId: owner.id, title: 'Task', description: '' });
+    let diskAttempts = new DirectTaskExecutionRepository(disk);
+    diskAttempts.select(task.id);
+    diskAttempts.claim(task.id, 'disk-attempt', 'disk-session');
+    diskAttempts.activate('disk-attempt', 'disk-session');
+    diskAttempts.requestStop('disk-attempt', 'disk-session', 'cancelled');
+    const session = agent();
+    session.getSessionData = () =>
+      ({
+        id: 'disk-session',
+        type: 'worker',
+        status: 'active',
+        context: { taskId: task.id, spaceId: owner.id },
+      }) as ReturnType<AgentSession['getSessionData']>;
+    let loaded: AgentSession | null = session;
+    const manager = {
+      getCachedSession: () => loaded,
+      isSessionLoading: () => false,
+      unregisterSession: async () => {
+        loaded = null;
+      },
+    };
+    expect(
+      await verifyDirectAttemptStop(
+        diskAttempts,
+        diskTasks,
+        manager,
+        diskAttempts.get('disk-attempt')!
+      )
+    ).toHaveProperty('value');
+    disk.close();
+    disk = new Database(path);
+    diskAttempts = new DirectTaskExecutionRepository(disk);
+    diskTasks = new SpaceTaskRepository(disk);
+    expect(
+      await verifyDirectAttemptStop(
+        diskAttempts,
+        diskTasks,
+        manager,
+        diskAttempts.get('disk-attempt')!
+      )
+    ).toHaveProperty('value');
+    expect(
+      await createDirectAttemptStopper({
+        attempts: diskAttempts,
+        tasks: diskTasks,
+        sessionManager: manager,
+      })({ attemptId: 'disk-attempt', sessionId: 'disk-session', outcome: 'cancelled' })
+    ).toHaveProperty('stopped', true);
+  } finally {
+    disk.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
