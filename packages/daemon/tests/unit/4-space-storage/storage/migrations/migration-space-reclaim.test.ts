@@ -142,6 +142,7 @@ describe('migration space reclaim', () => {
       { migrationKey: 'migration_211' },
       { migrationKey: 'migration_212' },
       { migrationKey: 'migration_243' },
+      { migrationKey: 'migration_245' },
     ]);
     const afterRewrite = db
       .prepare(`
@@ -168,7 +169,7 @@ describe('migration space reclaim', () => {
     expect(reclaim).toEqual({
       kind: 'reclaimed',
       freelistBefore: freelistBefore.freelist_count,
-      reclaimedMigrations: 4,
+      reclaimedMigrations: 5,
     });
     expect(db.prepare('PRAGMA main.freelist_count').get()).toEqual(freelistBefore);
     expect(

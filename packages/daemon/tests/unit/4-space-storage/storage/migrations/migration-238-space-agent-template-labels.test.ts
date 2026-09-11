@@ -4,6 +4,8 @@ import { runMigration225 } from '../../../../../src/storage/schema/m225-space-ag
 import { runMigration226 } from '../../../../../src/storage/schema/m226-space-agent-templates-version.ts';
 import { runMigration227 } from '../../../../../src/storage/schema/m227-space-agent-template-version-seq.ts';
 import { runMigration238 } from '../../../../../src/storage/schema/m238-space-agent-template-labels.ts';
+import { runMigration243 } from '../../../../../src/storage/schema/m243-space-agent-template-space-key.ts';
+import { runMigration245 } from '../../../../../src/storage/schema/m245-template-version-seq-space-key.ts';
 import { SpaceAgentTemplateRepository } from '../../../../../src/storage/repositories/space-agent-template-repository.ts';
 import { Database as BunDatabase } from '../../../../../src/storage/sqlite-compat';
 import {
@@ -41,6 +43,8 @@ describe('migration 238: space_agent_templates labels column', () => {
 
     expect(columnNames(db, 'space_agent_templates')).toContain('labels');
 
+    runMigration243(db);
+    runMigration245(db);
     const repo = new SpaceAgentTemplateRepository(db);
     expect(repo.getByKey('pre.custom')?.labels).toEqual([]);
     const created = repo.create({ key: 'post.custom', handle: 'post', labels: ['quality'] });
@@ -57,6 +61,8 @@ describe('migration 238: space_agent_templates labels column', () => {
     runMigration238(db);
     runMigration238(db);
 
+    runMigration243(db);
+    runMigration245(db);
     const repo = new SpaceAgentTemplateRepository(db);
     repo.create({ key: 'idempotent.custom', handle: 'idempotent' });
 
@@ -68,6 +74,8 @@ describe('migration 238: space_agent_templates labels column', () => {
     const db = new BunDatabase(':memory:');
     runMigrations(db, () => {});
 
+    runMigration243(db);
+    runMigration245(db);
     const repo = new SpaceAgentTemplateRepository(db);
     const created = repo.create({ key: 'registered.custom', handle: 'registered' });
 
@@ -123,6 +131,8 @@ describe('migration 238: space_agent_templates labels column', () => {
 
     runMigrations(db, () => {});
 
+    runMigration243(db);
+    runMigration245(db);
     const repo = new SpaceAgentTemplateRepository(db);
     const template = repo.getByKey('migrated.agent.agent-upgrade');
     expect(template?.labels).toEqual([]);
