@@ -88,6 +88,10 @@ import {
   isTaskMetadataOnlyUpdate,
 } from '../operations/bound-task-metadata.ts';
 import { updateTaskFields } from './update-task-fields.ts';
+import {
+  createBoundSpaceTaskDependencyEditor,
+  isTaskDependenciesOnlyUpdate,
+} from '../operations/task-dependencies.ts';
 import { parkTaskExecution } from '../../tasks/park-task-execution.ts';
 import { createWorkflowTaskParkingExecutor } from '../runtime/task-parking-executor.ts';
 import { recoverTaskExecution } from '../../tasks/recover-task-execution.ts';
@@ -2884,7 +2888,21 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             return jsonResult({ success: true, task: updated });
           }
           case 'fields_only': {
-            const updated = await applyFieldUpdates();
+            const dependenciesOnly =
+              args.status === undefined && isTaskDependenciesOnlyUpdate(fieldParams);
+            let dependencyPrimaryPending = false;
+            const updated = dependenciesOnly
+              ? await createBoundSpaceTaskDependencyEditor(spaceId, {
+                  getTaskManager: () => taskManager,
+                  blockExecution: (ownerId, taskId, params) =>
+                    runtime.blockWorkflowBackedTask(ownerId, taskId, params),
+                  emitTaskUpdated: (_ownerId, changed) => {
+                    if (changed.id === args.task_id) dependencyPrimaryPending = true;
+                    else emitTaskUpdated(changed);
+                  },
+                })({ taskId: args.task_id, dependsOn: args.depends_on! })
+              : await applyFieldUpdates();
+            if (dependenciesOnly) fieldUpdateHandledByRuntime = !dependencyPrimaryPending;
             logAudit(
               'update_task',
               {
