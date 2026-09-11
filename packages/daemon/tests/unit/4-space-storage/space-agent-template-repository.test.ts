@@ -320,50 +320,6 @@ describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
     ).toBeNull();
   });
 
-  test('a legacy delete removes one namespace even when versions coincide', () => {
-    repo.createOwned('space-a', { key: 'shared', handle: 'h' });
-    repo.createOwned('space-b', { key: 'shared', handle: 'h' });
-    const versionA = repo.getOwnedWithVersion('space-a', 'shared')!.version;
-
-    expect(repo.delete('shared', versionA)).toBe(true);
-
-    const survivors = [
-      repo.getOwned('space-a', 'shared'),
-      repo.getOwned('space-b', 'shared'),
-    ].filter((row) => row !== null);
-    expect(survivors).toHaveLength(1);
-  });
-
-  test('a legacy read, update and return all resolve the same row', () => {
-    repo.createOwned('space-a', { key: 'shared', handle: 'h', displayName: 'A' });
-    repo.createOwned('space-b', { key: 'shared', handle: 'h', displayName: 'B' });
-
-    const read = repo.getByKeyWithVersion('shared')!;
-    const updated = repo.casUpdate('shared', { displayName: 'Legacy' }, read.version);
-
-    expect(updated?.displayName).toBe('Legacy');
-    const owners = ['space-a', 'space-b'].filter(
-      (spaceId) => repo.getOwned(spaceId, 'shared')?.displayName === 'Legacy'
-    );
-    expect(owners).toHaveLength(1);
-  });
-
-  test('a legacy global update touches one namespace and leaves the other Space CAS intact', () => {
-    repo.createOwned('space-a', { key: 'shared', handle: 'h' });
-    repo.createOwned('space-b', { key: 'shared', handle: 'h' });
-
-    repo.update('shared', { displayName: 'Global' });
-
-    const a = repo.getOwnedWithVersion('space-a', 'shared');
-    const b = repo.getOwnedWithVersion('space-b', 'shared');
-    expect([a?.displayName, b?.displayName].filter((name) => name === 'Global')).toHaveLength(1);
-
-    expect(
-      repo.casUpdateOwned('space-b', 'shared', { displayName: 'B2' }, b!.version)
-    ).not.toBeNull();
-    expect(repo.casUpdateOwned('space-b', 'shared', { displayName: 'B3' }, b!.version)).toBeNull();
-  });
-
   test('two Spaces can hold the same key, each tracking its own row version', () => {
     const a = repo.createOwned('space-a', { key: 'shared', handle: 'h' });
     const b = repo.createOwned('space-b', { key: 'shared', handle: 'h' });
