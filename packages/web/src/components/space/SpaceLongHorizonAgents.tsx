@@ -677,6 +677,8 @@ export function SpaceLongHorizonAgents({
   const [deletingTemplate, setDeletingTemplate] = useState<SpaceLongHorizonAgentTemplate | null>(
     null
   );
+  const [deletingTemplateBusy, setDeletingTemplateBusy] = useState(false);
+  const [deleteTemplateError, setDeleteTemplateError] = useState<string | null>(null);
   const [deletingAgent, setDeletingAgent] = useState<SpaceLongHorizonAgent | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -719,6 +721,21 @@ export function SpaceLongHorizonAgents({
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete agent');
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleTemplateDeleteConfirm = async () => {
+    if (!deletingTemplate) return;
+    setDeletingTemplateBusy(true);
+    setDeleteTemplateError(null);
+    try {
+      await spaceStore.deleteTemplate(deletingTemplate.key, deletingTemplate.version);
+      toast.success(`"${deletingTemplate.displayName}" deleted`);
+      setDeletingTemplate(null);
+    } catch (err) {
+      setDeleteTemplateError(err instanceof Error ? err.message : 'Failed to delete template');
+    } finally {
+      setDeletingTemplateBusy(false);
     }
   };
 
@@ -885,7 +902,10 @@ export function SpaceLongHorizonAgents({
                         setEditingTemplate(t);
                         setShowTemplateEditor(true);
                       }}
-                      onDelete={() => setDeletingTemplate(t)}
+                      onDelete={() => {
+                        setDeletingTemplate(t);
+                        setDeleteTemplateError(null);
+                      }}
                     />
                   ))}
                 </div>
@@ -963,7 +983,13 @@ export function SpaceLongHorizonAgents({
       {deletingTemplate && (
         <TemplateDeleteDialog
           template={deletingTemplate}
-          onClose={() => setDeletingTemplate(null)}
+          busy={deletingTemplateBusy}
+          error={deleteTemplateError}
+          onConfirm={handleTemplateDeleteConfirm}
+          onClose={() => {
+            setDeletingTemplate(null);
+            setDeleteTemplateError(null);
+          }}
         />
       )}
 
