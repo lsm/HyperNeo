@@ -324,26 +324,24 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
   let inactivityRunNowCancelled = false;
   let inactivityAborted = false;
   setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
-  setupOperationHandlers(
-    deps.messageHub,
-    deps.jobQueue,
-    (taskId) => readTaskCore(deps.db.getDatabase(), taskId),
-    (input, creatorSessionId) =>
+  setupOperationHandlers(deps.messageHub, deps.jobQueue, {
+    readTask: (taskId) => readTaskCore(deps.db.getDatabase(), taskId),
+    createTask: (input, creatorSessionId) =>
       createStandaloneTask(deps.db.getDatabase(), input, creatorSessionId, () =>
         deps.db.notifyChange('space_tasks')
       ),
-    (input) => listTaskCores(deps.db.getDatabase(), input),
-    (input) =>
+    listTasks: (input) => listTaskCores(deps.db.getDatabase(), input),
+    editTask: (input) =>
       editStandaloneTask(deps.db.getDatabase(), input, () => deps.db.notifyChange('space_tasks')),
-    (input) =>
+    transitionTask: (input) =>
       transitionStandaloneTask(deps.db.getDatabase(), input, () =>
         deps.db.notifyChange('space_tasks')
       ),
-    (input) =>
+    setDependencies: (input) =>
       setStandaloneTaskDependencies(deps.db.getDatabase(), input, () =>
         deps.db.notifyChange('space_tasks')
-      )
-  );
+      ),
+  });
   setupSystemHandlers(deps.messageHub, deps.sessionManager);
   setupAuthHandlers(
     deps.messageHub,

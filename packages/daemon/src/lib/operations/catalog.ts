@@ -10,23 +10,27 @@ import { createDiscoveryOperations } from './discovery.ts';
 import { createSendMessageOperation } from './message-send.ts';
 import { createOperationRegistry, type OperationRegistry } from './registry.ts';
 
+export interface TaskOperationDependencies {
+  readTask: (taskId: string) => TaskCore | null;
+  createTask: Parameters<typeof createCreateTaskOperation>[0];
+  listTasks: Parameters<typeof createListTasksOperation>[0];
+  editTask: Parameters<typeof createUpdateTaskOperation>[0];
+  transitionTask: Parameters<typeof createTransitionTaskOperation>[0];
+  setDependencies: Parameters<typeof createSetTaskDependenciesOperation>[0];
+}
+
 export function createDaemonOperationCatalog(
   jobQueue: JobQueueRepository,
-  readTask: (taskId: string) => TaskCore | null,
-  createTask: Parameters<typeof createCreateTaskOperation>[0],
-  listTasks: Parameters<typeof createListTasksOperation>[0],
-  editTask: Parameters<typeof createUpdateTaskOperation>[0],
-  transitionTask: Parameters<typeof createTransitionTaskOperation>[0],
-  setDependencies: Parameters<typeof createSetTaskDependenciesOperation>[0]
+  tasks: TaskOperationDependencies
 ): OperationRegistry {
   const registry: OperationRegistry = createOperationRegistry([
     createSendMessageOperation(jobQueue),
-    createGetTaskOperation(readTask),
-    createCreateTaskOperation(createTask),
-    createListTasksOperation(listTasks),
-    createUpdateTaskOperation(editTask),
-    createTransitionTaskOperation(transitionTask),
-    createSetTaskDependenciesOperation(setDependencies),
+    createGetTaskOperation(tasks.readTask),
+    createCreateTaskOperation(tasks.createTask),
+    createListTasksOperation(tasks.listTasks),
+    createUpdateTaskOperation(tasks.editTask),
+    createTransitionTaskOperation(tasks.transitionTask),
+    createSetTaskDependenciesOperation(tasks.setDependencies),
     ...createDiscoveryOperations(() => registry),
   ]);
   return registry;

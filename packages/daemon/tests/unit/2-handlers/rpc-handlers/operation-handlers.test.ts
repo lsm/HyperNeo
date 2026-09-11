@@ -32,16 +32,15 @@ describe('operation.invoke RPC registration', () => {
     transports = InProcessTransport.createPair();
     client.registerTransport(transports[0]);
     server.registerTransport(transports[1]);
-    unregister = setupOperationHandlers(
-      server,
-      mailbox.jobQueue,
-      (taskId) => readTaskCore(taskDb, taskId),
-      (input, creatorSessionId) => createStandaloneTask(taskDb, input, creatorSessionId, () => {}),
-      (input) => listTaskCores(taskDb, input),
-      (input) => editStandaloneTask(taskDb, input, () => {}),
-      (input) => transitionStandaloneTask(taskDb, input, () => {}),
-      (input) => setStandaloneTaskDependencies(taskDb, input, () => {})
-    );
+    unregister = setupOperationHandlers(server, mailbox.jobQueue, {
+      readTask: (taskId) => readTaskCore(taskDb, taskId),
+      createTask: (input, creatorSessionId) =>
+        createStandaloneTask(taskDb, input, creatorSessionId, () => {}),
+      listTasks: (input) => listTaskCores(taskDb, input),
+      editTask: (input) => editStandaloneTask(taskDb, input, () => {}),
+      transitionTask: (input) => transitionStandaloneTask(taskDb, input, () => {}),
+      setDependencies: (input) => setStandaloneTaskDependencies(taskDb, input, () => {}),
+    });
     await Promise.all(transports.map((transport) => transport.initialize()));
   });
   afterEach(async () => {
