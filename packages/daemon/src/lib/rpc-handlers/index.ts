@@ -539,6 +539,16 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     sessionManager: deps.sessionManager,
     jobQueue: deps.jobQueue,
     jobProcessor: deps.jobProcessor,
+    onTaskUpdated: (task) => {
+      void deps.internalEventBus
+        .publish('space.task.updated', {
+          sessionId: 'global',
+          spaceId: task.spaceId,
+          taskId: task.id,
+          task,
+        })
+        .catch((error) => log.warn('Failed to emit direct outcome task update:', error));
+    },
     onTaskReopened: (taskId) => spaceGoalService.supersedeOutcomeNotificationsForTask(taskId),
     onTerminalTransition: (taskId, fromStatus) =>
       spaceGoalService.handleTaskTerminal(taskId, { fromStatus, deferPostCommitEffects: true }),

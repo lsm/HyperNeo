@@ -98,6 +98,12 @@ afterEach(() => db.close());
 
 test('durable acknowledgement leaves caller running until the linked worker processes frozen input', async () => {
   const job = acceptedJob();
+  const onTaskUpdated = mock(() => {
+    expect(attempts.get('attempt')?.phase).toBe('stopped');
+    expect(tasks.getTask(taskId)?.status).toBe('blocked');
+  });
+  deps.onTaskUpdated = onTaskUpdated;
+  expect(onTaskUpdated).not.toHaveBeenCalled();
   expect(cleanup).not.toHaveBeenCalled();
   expect(tasks.getTask(taskId)?.status).toBe('in_progress');
   expect(attempts.isStopRequested('attempt', 'worker')).toBe(true);
@@ -107,6 +113,9 @@ test('durable acknowledgement leaves caller running until the linked worker proc
     task: { status: 'blocked', result: 'Frozen outcome' },
   });
   expect(terminal).toHaveBeenCalledWith(taskId, 'in_progress');
+  expect(onTaskUpdated).toHaveBeenCalledWith(
+    expect.objectContaining({ id: taskId, status: 'blocked' })
+  );
   expect(await createDirectOutcomeHandler(deps)(job)).toHaveProperty('finalized', true);
   expect(cleanup).toHaveBeenCalledTimes(1);
   expect(terminal).toHaveBeenCalledTimes(1);

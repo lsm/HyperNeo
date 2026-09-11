@@ -1,3 +1,4 @@
+import type { SpaceTask } from '@hyperneo/shared';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import type { Database } from '../../../storage/sqlite-compat.ts';
 import type { JobQueueProcessor } from '../../../storage/job-queue-processor.ts';
@@ -20,6 +21,10 @@ import {
   type DirectTaskFinalizerDependencies,
 } from './finalize-direct-attempt.ts';
 import { verifyDirectAttemptStop } from './stop-direct-attempt.ts';
+
+interface DirectOutcomeDependencies extends DirectTaskFinalizerDependencies {
+  onTaskUpdated?: (task: SpaceTask) => void;
+}
 
 export const DIRECT_TASK_OUTCOME = 'direct_task_outcome';
 export type DirectOutcomeAcknowledgement =
@@ -104,7 +109,7 @@ function loadLinkedOutcome(
     : unavailable;
 }
 
-export function createDirectOutcomeHandler(deps: DirectTaskFinalizerDependencies) {
+export function createDirectOutcomeHandler(deps: DirectOutcomeDependencies) {
   const run = (
     superpipe({
       ...deps,
@@ -141,12 +146,13 @@ export function createDirectOutcomeHandler(deps: DirectTaskFinalizerDependencies
     const result = await run(job);
     if (!result.finalized && result.reason === 'unverified')
       throw new Error('Direct outcome shutdown remains unverified');
+    if (result.finalized) deps.onTaskUpdated?.(result.task);
     return result;
   };
 }
 
 export function registerDirectOutcomeJobs(
-  deps: DirectTaskFinalizerDependencies & {
+  deps: DirectOutcomeDependencies & {
     jobQueue: JobQueueRepository;
     jobProcessor: Pick<JobQueueProcessor, 'register'>;
   }
