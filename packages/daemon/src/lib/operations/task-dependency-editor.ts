@@ -34,37 +34,38 @@ export function requireReplacedTaskDependencies(result: TaskDependencyResult) {
   return result === null || typeof result === 'string' ? { reason: result } : { value: result };
 }
 
-export function resolveTaskDependencyOwner(
+export async function resolveTaskDependencyOwner(
   resolveOwner: TaskDependencyEditorDependencies['resolveOwner'],
   input: SetTaskDependenciesInput
 ) {
-  return resolveOwner(input.taskId);
+  return requireTaskDependencyOwner(await resolveOwner(input.taskId));
 }
 
-export function replaceOwnedTaskDependencies(
+export async function replaceOwnedTaskDependencies(
   replaceStandalone: TaskDependencyEditorDependencies['replaceStandalone'],
   replaceSpace: TaskDependencyEditorDependencies['replaceSpace'],
   owner: TaskDependencyOwner,
   input: SetTaskDependenciesInput
 ) {
-  return owner.kind === 'standalone'
-    ? replaceStandalone(input)
-    : replaceSpace(owner.spaceId, input);
+  return requireReplacedTaskDependencies(
+    await (owner.kind === 'standalone'
+      ? replaceStandalone(input)
+      : replaceSpace(owner.spaceId, input))
+  );
 }
 
 export function createTaskDependencyEditor(dependencies: TaskDependencyEditorDependencies) {
   return (superpipe({ ...dependencies })('replace-task-dependencies') as PipelineAPI)
     .input(['input', 'caller'])
     .pipe(selectTaskDependencies, 'input', 'replacement')
-    .pipe(resolveTaskDependencyOwner, ['resolveOwner', 'replacement'], 'owner')
-    .pipe(requireTaskDependencyOwner, 'owner', 'result:task')
+    .pipe(resolveTaskDependencyOwner, ['resolveOwner', 'replacement'], 'result:task')
+    .pipe((owner: TaskDependencyOwner) => owner, 'task', 'owner')
     .pipe('admit', ['task', 'caller'])
     .pipe(
       replaceOwnedTaskDependencies,
       ['replaceStandalone', 'replaceSpace', 'task', 'replacement'],
-      'replaced'
+      'result:task'
     )
-    .pipe(requireReplacedTaskDependencies, 'replaced', 'result:task')
     .pipe('?afterReplace', ['owner', 'task'])
     .endAsync('task') as (
     input: SetTaskDependenciesInput,
