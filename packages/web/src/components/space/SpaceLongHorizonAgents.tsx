@@ -11,6 +11,7 @@ import { navigateToSpaceSession } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
 import { AUTONOMY_LABELS, toolPermissionsToolsList } from './agent-page-labels';
 import { TemplateEditor } from './TemplateEditor';
+import { TemplateDeleteDialog } from './TemplateDeleteDialog';
 import { groupTemplatesByLabel } from './template-grouping';
 import { TemplateCard } from './TemplateCard';
 import { extraToolsOf, withExtraTool, withoutExtraTool } from './template-extra-tools';
@@ -676,8 +677,6 @@ export function SpaceLongHorizonAgents({
   const [deletingTemplate, setDeletingTemplate] = useState<SpaceLongHorizonAgentTemplate | null>(
     null
   );
-  const [deletingTemplateBusy, setDeletingTemplateBusy] = useState(false);
-  const [deleteTemplateError, setDeleteTemplateError] = useState<string | null>(null);
   const [deletingAgent, setDeletingAgent] = useState<SpaceLongHorizonAgent | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -720,21 +719,6 @@ export function SpaceLongHorizonAgents({
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete agent');
     } finally {
       setDeleting(false);
-    }
-  };
-
-  const handleTemplateDeleteConfirm = async () => {
-    if (!deletingTemplate) return;
-    setDeletingTemplateBusy(true);
-    setDeleteTemplateError(null);
-    try {
-      await spaceStore.deleteTemplate(deletingTemplate.key, deletingTemplate.version);
-      toast.success(`"${deletingTemplate.displayName}" deleted`);
-      setDeletingTemplate(null);
-    } catch (err) {
-      setDeleteTemplateError(err instanceof Error ? err.message : 'Failed to delete template');
-    } finally {
-      setDeletingTemplateBusy(false);
     }
   };
 
@@ -901,10 +885,7 @@ export function SpaceLongHorizonAgents({
                         setEditingTemplate(t);
                         setShowTemplateEditor(true);
                       }}
-                      onDelete={() => {
-                        setDeletingTemplate(t);
-                        setDeleteTemplateError(null);
-                      }}
+                      onDelete={() => setDeletingTemplate(t)}
                     />
                   ))}
                 </div>
@@ -980,20 +961,9 @@ export function SpaceLongHorizonAgents({
       )}
 
       {deletingTemplate && (
-        <ConfirmModal
-          isOpen
-          onClose={() => {
-            setDeletingTemplate(null);
-            setDeleteTemplateError(null);
-          }}
-          onConfirm={handleTemplateDeleteConfirm}
-          title="Delete Template"
-          message={`Delete template "${deletingTemplate.displayName}"? This cannot be undone. Runs that pinned a template snapshot keep their copy. Older in-flight runs cannot be repaired by editing a workflow — let them finish or restart them first. Saved workflows still naming this template must be re-pointed, or their future runs cannot start that agent.`}
-          confirmText="Delete"
-          confirmButtonVariant="danger"
-          isLoading={deletingTemplateBusy}
-          error={deleteTemplateError}
-          confirmTestId="confirm-delete-template"
+        <TemplateDeleteDialog
+          template={deletingTemplate}
+          onClose={() => setDeletingTemplate(null)}
         />
       )}
 
