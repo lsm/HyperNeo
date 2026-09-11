@@ -90,6 +90,13 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
   const [formTemplateKey, setFormTemplateKey] = useState<string>('');
   const activeSpaceRef = useRef(spaceId);
   const formGenerationRef = useRef(0);
+  const appliedLinkRef = useRef<string | null>(null);
+  const handledLinkRef = useRef<string | null>(null);
+  const lastLinkRef = useRef<string | null>(null);
+  const sawFirstLinkRef = useRef(false);
+  const deleteGenerationRef = useRef(0);
+  const selectedIdRef = useRef<string | null>(null);
+  selectedIdRef.current = selectedId;
 
   function resetViewState() {
     formGenerationRef.current += 1;
@@ -107,6 +114,9 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
     setFormTools({ tools: [], toolsOverridden: false });
     setFormSettingSources(null);
     setFormTemplateKey('');
+    appliedLinkRef.current = null;
+    handledLinkRef.current = null;
+    deleteGenerationRef.current += 1;
   }
 
   useEffect(() => {
@@ -134,9 +144,40 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
   const agentSignature = agents.map((agent) => `${agent.id}:${agent.handle}`).join('|');
 
   useEffect(() => {
-    if (!selectedHandle || !deepLinked) return;
-    setSelectedId(deepLinked.id);
-  }, [selectedHandle, agentSignature]);
+    const link = selectedHandle ? `${spaceId}\u0000${selectedHandle}` : null;
+    const previousLink = lastLinkRef.current;
+    lastLinkRef.current = link;
+    if (!sawFirstLinkRef.current) sawFirstLinkRef.current = true;
+    else if (previousLink !== link) {
+      formGenerationRef.current += 1;
+      deleteGenerationRef.current += 1;
+      closeForm();
+      setSaving(false);
+      setDeleting(null);
+      setDeleteBusy(false);
+      setDeleteError(null);
+    }
+
+    if (!link) {
+      appliedLinkRef.current = null;
+      handledLinkRef.current = null;
+      return;
+    }
+
+    const matched = deepLinked && deepLinked.spaceId === spaceId ? deepLinked : null;
+    if (!matched) {
+      if (handledLinkRef.current === link) return;
+      handledLinkRef.current = link;
+      appliedLinkRef.current = null;
+      setSelectedId(null);
+      return;
+    }
+
+    if (appliedLinkRef.current === link) return;
+    appliedLinkRef.current = link;
+    handledLinkRef.current = link;
+    setSelectedId(matched.id);
+  }, [spaceId, selectedHandle, agentSignature]);
   const selectedTemplateSources = formTemplateKey
     ? (templateOptions().find((template) => template.key === formTemplateKey)?.settingSources ??
       null)
@@ -242,18 +283,22 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
   async function confirmDelete() {
     if (!deleting) return;
     const submittedFor = spaceId;
+    const submittedGeneration = deleteGenerationRef.current;
+    const isCurrentDelete = () =>
+      activeSpaceRef.current === submittedFor &&
+      deleteGenerationRef.current === submittedGeneration;
     setDeleteBusy(true);
     setDeleteError(null);
     try {
       await spaceAgentStore.remove(deleting.id);
-      if (activeSpaceRef.current !== submittedFor) return;
-      if (selectedId === deleting.id) setSelectedId(null);
+      if (!isCurrentDelete()) return;
+      if (selectedIdRef.current === deleting.id) setSelectedId(null);
       setDeleting(null);
     } catch (err) {
-      if (activeSpaceRef.current !== submittedFor) return;
+      if (!isCurrentDelete()) return;
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete agent');
     } finally {
-      if (activeSpaceRef.current === submittedFor) setDeleteBusy(false);
+      if (isCurrentDelete()) setDeleteBusy(false);
     }
   }
 
@@ -496,6 +541,7 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
                     variant="ghost"
                     data-testid="agent-delete-button"
                     onClick={() => {
+                      deleteGenerationRef.current += 1;
                       setDeleting(selected);
                       setDeleteError(null);
                     }}

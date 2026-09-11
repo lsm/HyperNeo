@@ -1062,6 +1062,275 @@ describe('SpaceAgentsPage', () => {
     ]);
   });
 
+  it('clears a stale selection when the new handle matches nothing', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    const { getByTestId, queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('alpha'));
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="ghost" />);
+
+    await waitFor(() => expect(getByTestId('agent-deep-link-missing')).toBeTruthy());
+    expect(queryByTestId('agent-detail')).toBeNull();
+  });
+
+  it('keeps a manual selection when the agent list changes', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    const { getByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('beta'));
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('alpha'));
+
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta'), makeAgent('gamma')];
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+
+    await waitFor(() => expect(getByTestId('agent-list')).toBeTruthy());
+    expect(getByTestId('agent-detail').textContent).toContain('alpha');
+  });
+
+  it('still follows a genuinely new handle after a manual selection', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    const { getByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('alpha'));
+
+    fireEvent.click(getByTestId('agent-row-beta'));
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />);
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('beta'));
+  });
+
+  it('closes an open edit form when following a changed handle', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    const { getByTestId, getByText, queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+    fireEvent.click(getByText('Edit'));
+    expect(getByTestId('agent-form')).toBeTruthy();
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+
+    await waitFor(() => expect(queryByTestId('agent-form')).toBeNull());
+    expect(getByTestId('agent-detail').textContent).toContain('beta');
+  });
+
+  it('dismisses a delete confirmation when following a changed handle', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    const { getByTestId, queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+    fireEvent.click(getByTestId('agent-delete-button'));
+    expect(getByTestId('confirm-delete-agent')).toBeTruthy();
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+
+    await waitFor(() => expect(queryByTestId('confirm-delete-agent')).toBeNull());
+  });
+
+  it('closes a form when a deep link is entered from the plain agents route', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    const { getByTestId, queryByTestId, rerender } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    expect(getByTestId('agent-form')).toBeTruthy();
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+
+    await waitFor(() => expect(queryByTestId('agent-form')).toBeNull());
+    expect(getByTestId('agent-detail').textContent).toContain('beta');
+  });
+
+  it('keeps a manual selection while the URL handle stays unmatched', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    const { getByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="ghost" />
+    );
+    await waitFor(() => expect(getByTestId('agent-deep-link-missing')).toBeTruthy());
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('alpha'));
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="ghost" />);
+
+    await waitFor(() => expect(getByTestId('agent-list')).toBeTruthy());
+    expect(getByTestId('agent-detail').textContent).toContain('alpha');
+  });
+
+  it('ignores a delete that resolves after the dialog was dismissed by navigation', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    let rejectRemove: (err: Error) => void = () => {};
+    mockRemove.mockReturnValueOnce(
+      new Promise<void>((_resolve, reject) => {
+        rejectRemove = reject;
+      })
+    );
+    const { getByTestId, queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+
+    fireEvent.click(getByTestId('agent-delete-button'));
+    fireEvent.click(getByTestId('confirm-delete-agent'));
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+    await waitFor(() => expect(queryByTestId('confirm-delete-agent')).toBeNull());
+
+    rejectRemove(new Error('delete failed'));
+    await tick();
+    expect(queryByTestId('confirm-delete-agent')).toBeNull();
+    expect(getByTestId('agent-detail').textContent).toContain('beta');
+  });
+
+  it('ignores a create that resolves after navigating to an unmatched handle', async () => {
+    mockAgents.value = [makeAgent('alpha')];
+    let resolveCreate: (agent: SpaceAgent) => void = () => {};
+    mockCreate.mockReturnValueOnce(
+      new Promise<SpaceAgent>((resolve) => {
+        resolveCreate = resolve;
+      })
+    );
+    const { getByTestId, queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Late' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="ghost" />);
+    await waitFor(() => expect(getByTestId('agent-deep-link-missing')).toBeTruthy());
+
+    resolveCreate(makeAgent('late'));
+    await tick();
+    expect(queryByTestId('agent-detail')).toBeNull();
+    expect(getByTestId('agent-deep-link-missing')).toBeTruthy();
+  });
+
+  it('ignores a delete that resolves after navigating to an unmatched handle', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    let rejectRemove: (err: Error) => void = () => {};
+    mockRemove.mockReturnValueOnce(
+      new Promise<void>((_resolve, reject) => {
+        rejectRemove = reject;
+      })
+    );
+    const { getByTestId, queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+
+    fireEvent.click(getByTestId('agent-delete-button'));
+    fireEvent.click(getByTestId('confirm-delete-agent'));
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="ghost" />);
+    await waitFor(() => expect(getByTestId('agent-deep-link-missing')).toBeTruthy());
+
+    rejectRemove(new Error('delete failed'));
+    await tick();
+    expect(queryByTestId('confirm-delete-agent')).toBeNull();
+  });
+
+  it('ignores an agent from the previous space while the store still holds it', async () => {
+    mockAgents.value = [makeAgent('a-reviewer', { handle: 'reviewer' })];
+    const { queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="reviewer" />
+    );
+    await waitFor(() => expect(queryByTestId('agent-detail')).toBeTruthy());
+
+    rerender(<SpaceAgentsPage spaceId="space-2" selectedHandle="reviewer" />);
+
+    await waitFor(() => expect(queryByTestId('agent-detail')).toBeNull());
+  });
+
+  it('follows a handle again after visiting an unmatched one', async () => {
+    mockAgents.value = [makeAgent('alpha')];
+    const { getByTestId, queryByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="ghost" />);
+    await waitFor(() => expect(queryByTestId('agent-detail')).toBeNull());
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />);
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+    expect(getByTestId('agent-detail').textContent).toContain('alpha');
+  });
+
+  it('keeps a form open while the first deep link resolves', async () => {
+    mockAgents.value = [];
+    const { getByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="late" />
+    );
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Draft' } });
+
+    mockAgents.value = [makeAgent('late')];
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="late" />);
+
+    await waitFor(() => expect(getByTestId('agent-list')).toBeTruthy());
+    expect(getByTestId('agent-form')).toBeTruthy();
+    expect((getByTestId('agent-name-input') as HTMLInputElement).value).toBe('Draft');
+  });
+
+  it('ignores a create that resolves after the URL moved on', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    let resolveCreate: (agent: SpaceAgent) => void = () => {};
+    mockCreate.mockReturnValueOnce(
+      new Promise<SpaceAgent>((resolve) => {
+        resolveCreate = resolve;
+      })
+    );
+    const { getByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Late' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('beta'));
+
+    resolveCreate(makeAgent('late'));
+    await tick();
+    expect(getByTestId('agent-detail').textContent).toContain('beta');
+  });
+
+  it('does not clear a newly linked agent when an earlier delete resolves', async () => {
+    mockAgents.value = [makeAgent('alpha'), makeAgent('beta')];
+    let resolveRemove: () => void = () => {};
+    mockRemove.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveRemove = () => resolve();
+      })
+    );
+    const { getByTestId, rerender } = render(
+      <SpaceAgentsPage spaceId="space-1" selectedHandle="alpha" />
+    );
+    await waitFor(() => expect(getByTestId('agent-detail')).toBeTruthy());
+
+    fireEvent.click(getByTestId('agent-delete-button'));
+    fireEvent.click(getByTestId('confirm-delete-agent'));
+
+    rerender(<SpaceAgentsPage spaceId="space-1" selectedHandle="beta" />);
+    await waitFor(() => expect(getByTestId('agent-detail').textContent).toContain('beta'));
+
+    resolveRemove();
+    await tick();
+    expect(getByTestId('agent-detail').textContent).toContain('beta');
+  });
+
   it('clears a description on edit rather than dropping the field', async () => {
     mockAgents.value = [makeAgent('alpha', { description: 'old' })];
     const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
