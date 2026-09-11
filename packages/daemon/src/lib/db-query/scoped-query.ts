@@ -329,6 +329,10 @@ const UNSUPPORTED_CONSTRUCTS: Array<[RegExp, string]> = [
   ],
   [/\b(?:indexed\s+by|not\s+indexed)\b/i, 'index hints are not supported in scoped queries'],
   [/\b(?:rowid|oid|_rowid_)\b/i, 'row identifier columns are not available in scoped queries'],
+  [
+    /\b(?:from|join)\s+[\p{L}_][\p{L}\p{N}_$]*\s*\./iu,
+    'schema-qualified table references are not supported in scoped queries',
+  ],
 ];
 
 function assertRewritableSql(sql: string): void {
@@ -339,7 +343,7 @@ function assertRewritableSql(sql: string): void {
 }
 
 const ALIAS_STOP_WORDS = new Set(
-  'join left right inner outer cross natural on using where group order limit having window union except intersect'.split(
+  'join left right full inner outer cross natural on using where group order limit having window union except intersect'.split(
     ' '
   )
 );
@@ -393,7 +397,8 @@ function applyTableScopeFilters(
   tableConfigs: Map<string, ScopeTableConfig>,
   scopeValue: string
 ): { sql: string; params: unknown[]; applied: boolean } {
-  const masked = maskQuotedIdentifiers(maskCommentsAndStrings(sql));
+  const visible = maskCommentsAndStrings(sql);
+  const masked = maskQuotedIdentifiers(visible);
   let out = '';
   let cursor = 0;
   let paramCursor = 0;
@@ -409,7 +414,7 @@ function applyTableScopeFilters(
     params.push(...userParams.slice(paramCursor, paramCursor + consumed));
     paramCursor += consumed;
 
-    const alias = hasFollowingAlias(masked, span.end) ? '' : ` ${span.name}`;
+    const alias = hasFollowingAlias(visible, span.end) ? '' : ` ${span.name}`;
     out += sql.slice(cursor, span.start);
     out += `(SELECT * FROM ${sql.slice(span.start, span.end)} WHERE ${filter.whereClause})${alias}`;
     params.push(...filter.params);
@@ -504,8 +509,6 @@ export function runScopedQuery(
     throw new Error(validation.error ?? 'Invalid SQL');
   }
 
-  assertRewritableSql(sql);
-
   const configMap = new Map<string, ScopeTableConfig>();
   for (const tc of getScopeConfig(scopeType)) {
     configMap.set(tc.tableName, tc);
@@ -516,6 +519,8 @@ export function runScopedQuery(
       throw new Error(`Table "${tableRef}" is not accessible in ${scopeType} scope`);
     }
   }
+
+  assertRewritableSql(sql);
 
   const tableConfigs = new Map<string, ScopeTableConfig>();
   for (const tableRef of validation.tableRefs) {

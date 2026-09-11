@@ -74,6 +74,17 @@ describe('extractTableRefSpans', () => {
     ]);
   });
 
+  test('records tables inside a parenthesized join, which the allowlist depends on', () => {
+    expect(extractTableRefSpans('SELECT * FROM (a JOIN b ON 1 = 1)').map((s) => s.name)).toEqual([
+      'a',
+      'b',
+    ]);
+    expect(extractTableRefSpans('SELECT * FROM ( a , b )').map((s) => s.name)).toEqual(['a', 'b']);
+    expect(extractTableRefSpans('SELECT * FROM (SELECT * FROM a)').map((s) => s.name)).toEqual([
+      'a',
+    ]);
+  });
+
   test('skips CTE names the way the reference list does', () => {
     const sql = 'WITH active AS (SELECT * FROM space_tasks) SELECT * FROM active';
     expect(extractTableRefSpans(sql).map((span) => span.name)).toEqual(['space_tasks']);

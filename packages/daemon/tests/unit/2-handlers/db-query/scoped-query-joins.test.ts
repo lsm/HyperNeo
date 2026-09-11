@@ -69,12 +69,41 @@ describe('runScopedQuery — every referenced table is scoped', () => {
     db.close();
   });
 
+  it('scopes the first relation inside a parenthesized join', () => {
+    const db = makeDb();
+    const rows = run(db, 'SELECT * FROM (tasks JOIN goals ON goals.task_id = tasks.id)').rows;
+
+    expect(rows.every((r) => r.room_id === 'room-1')).toBe(true);
+    expect(rows.every((r) => r['room_id:1'] === 'room-1')).toBe(true);
+    db.close();
+  });
+
+  it('scopes both sides of a FULL JOIN', () => {
+    const db = makeDb();
+    const rows = run(db, 'SELECT * FROM tasks FULL JOIN goals ON goals.task_id = tasks.id').rows;
+
+    for (const row of rows) {
+      expect([null, 'room-1']).toContain(row.room_id);
+      expect([null, 'room-1']).toContain(row['room_id:1']);
+    }
+    db.close();
+  });
+
+  it('keeps a bracket-quoted alias instead of emitting two aliases', () => {
+    const db = makeDb();
+    const rows = run(db, 'SELECT * FROM tasks [t]').rows;
+
+    expect(rows).toEqual([{ id: 't1', room_id: 'room-1', title: 'Mine' }]);
+    db.close();
+  });
+
   it('rejects constructs it cannot rewrite safely', () => {
     const db = makeDb();
 
     expect(() => run(db, 'SELECT * FROM tasks WHERE title = ?1', ['Mine'])).toThrow(/numbered/);
     expect(() => run(db, 'SELECT * FROM tasks INDEXED BY idx')).toThrow(/index hints/);
     expect(() => run(db, 'SELECT MAX(rowid) FROM tasks')).toThrow(/row identifier/);
+    expect(() => run(db, 'SELECT * FROM main.tasks')).toThrow(/schema-qualified/);
     db.close();
   });
 });
