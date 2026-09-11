@@ -82,6 +82,8 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts
 import type { ReplyRoutingRegistry } from '../runtime/reply-routing-registry.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
+import { stopTaskExecution } from '../../tasks/stop-task-execution.ts';
+import { createWorkflowTaskStoppingExecutor } from '../runtime/task-stopping-executor.ts';
 import { parkTaskExecution } from '../../tasks/park-task-execution.ts';
 import { createWorkflowTaskParkingExecutor } from '../runtime/task-parking-executor.ts';
 import { recoverTaskExecution } from '../../tasks/recover-task-execution.ts';
@@ -2827,11 +2829,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             return jsonResult({ success: true, task: updated });
           }
           case 'stop_for_status': {
-            const stopped =
-              (await runtime.stopWorkflowBackedTaskForStatus(spaceId, args.task_id, {
-                ...fieldParams,
-                status: args.status!,
-              })) ?? taskRepo.getTask(args.task_id);
+            const result = await stopTaskExecution(
+              createWorkflowTaskStoppingExecutor(spaceId, runtime, fieldParams),
+              args.task_id,
+              args.status!
+            );
+            if (typeof result === 'string') throw new Error(result);
+            const stopped = result ?? taskRepo.getTask(args.task_id);
             if (!stopped) {
               return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
             }
