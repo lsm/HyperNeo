@@ -1,3 +1,4 @@
+import { readDirectStartRequest } from './direct-start-request.ts';
 import { enqueueFrozenKickoff } from './reconcile-direct-kickoff.ts';
 import { JobQueueRepository } from '../../../storage/repositories/job-queue-repository.ts';
 import { readDirectKickoffIntent, recordDirectKickoffAtomically } from './direct-kickoff-intent.ts';
@@ -100,6 +101,12 @@ export function activateDirectAttemptAtomically(
       const tasks = new SpaceTaskRepository(db, reactiveDb);
       const attempt = attempts.get(input.attemptId);
       const task = attempt ? tasks.getTask(attempt.taskId) : null;
+      const admitted = readDirectStartRequest(db, input.attemptId);
+      if (
+        admitted &&
+        (!task || tasks.getLifecycleGeneration(task.id) !== admitted.lifecycleGeneration)
+      )
+        return rejected;
       if (
         kickoffMessage &&
         !recordDirectKickoffAtomically(db, { ...input, message: kickoffMessage }).recorded
