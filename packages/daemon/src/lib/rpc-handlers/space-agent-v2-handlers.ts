@@ -41,6 +41,11 @@ export interface SpaceAgentV2Deps {
   internalEventBus?: InternalEventBus<DaemonInternalEventMap>;
   legacyAgents?: Pick<SpaceLongHorizonAgentRepository, 'getById'>;
   removeAgentSubscriptions?(spaceId: string, agentId: string): void;
+  refreshAgentSubscriptions?(
+    spaceId: string,
+    agentId: string
+  ): { success: boolean; error?: string };
+  clearSessionProvider?(spaceId: string, agentId: string): Promise<void>;
 }
 
 const COORDINATOR_HANDLES = new Set([SPACE_MANAGER_HANDLE, 'coordinator']);
@@ -151,6 +156,7 @@ export function buildAgentUpdate(
         .map((agent) => agent.displayName),
     applyUpdate: (id, changes) => deps.agents.update(id, changes),
     publishUpdated: (agent) => publishAgentEvent(deps, 'spaceAgentV2.updated', agent),
+    applyRuntimeEffects: (agent, input) => applyUpdateRuntimeEffects(deps, agent, input),
     validateTools: validateSpaceAgentTools,
     validateModel: (model, provider) => validateAgentModel(model, provider),
     validateModelPool: validateAgentModelPool,
@@ -161,6 +167,20 @@ export function buildAgentUpdate(
     if (isCreateSpaceAgentRejection(outcome)) throw new Error(outcome.message);
     return outcome;
   };
+}
+
+export async function applyUpdateRuntimeEffects(
+  deps: SpaceAgentV2Deps,
+  agent: SpaceAgent,
+  input: UpdateSpaceAgentInput
+): Promise<void> {
+  if (input.provider === null) {
+    await deps.clearSessionProvider?.(agent.spaceId, agent.id);
+  }
+  const refresh = deps.refreshAgentSubscriptions?.(agent.spaceId, agent.id);
+  if (refresh && !refresh.success) {
+    throw new Error(refresh.error ?? 'Failed to refresh subscriptions');
+  }
 }
 
 export function setupSpaceAgentV2Handlers(messageHub: MessageHub, deps: SpaceAgentV2Deps): void {
