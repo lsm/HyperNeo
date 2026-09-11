@@ -8,9 +8,14 @@ import type { JobQueueRepository } from '../../storage/repositories/job-queue-re
 import { createGetTaskOperation } from './task-get.ts';
 import { createDiscoveryOperations } from './discovery.ts';
 import { createSendMessageOperation } from './message-send.ts';
-import { createOperationRegistry, type OperationRegistry } from './registry.ts';
+import {
+  createOperationRegistry,
+  type OperationRegistry,
+  type OperationDefinition,
+} from './registry.ts';
 
 export interface TaskOperationDependencies {
+  pendingCompletion?: OperationDefinition;
   readTask: (taskId: string) => TaskCore | null;
   createTask: Parameters<typeof createCreateTaskOperation>[0];
   listTasks: Parameters<typeof createListTasksOperation>[0];
@@ -31,6 +36,7 @@ export function createDaemonOperationCatalog(
     createUpdateTaskOperation(tasks.editTask),
     createTransitionTaskOperation(tasks.transitionTask),
     createSetTaskDependenciesOperation(tasks.setDependencies),
+    ...(tasks.pendingCompletion ? [tasks.pendingCompletion] : []),
     ...createDiscoveryOperations(() => registry),
   ]);
   return registry;

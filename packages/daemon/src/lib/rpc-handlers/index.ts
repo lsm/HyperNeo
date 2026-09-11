@@ -1,3 +1,4 @@
+import { McpAuditLogRepository } from '../../storage/repositories/mcp-audit-log-repository.ts';
 import { createSpaceOperationRegistryProvider } from '../space/operations/registry.ts';
 import { setupOperationHandlers } from './operation-handlers.ts';
 import type { MessageHub } from '@hyperneo/shared';
@@ -572,8 +573,48 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
     });
 
   const nodeExecutionRepo = new NodeExecutionRepository(deps.db.getDatabase(), deps.reactiveDb);
-  deps.sessionManager.setDefaultOperationRegistryProvider(
-    createSpaceOperationRegistryProvider(deps.db, deps.jobQueue, {
+  const pendingCompletion: Parameters<typeof createSpaceOperationRegistryProvider>[3] = {
+    getSession: (id) => deps.db.getSession(id),
+    getTask: (id) => spaceTaskRepo.getTask(id),
+    getTaskManager: spaceTaskManagerFactory,
+    coordinatorLookup: longHorizonAgentRepo,
+    policyContext: { taskRepo: spaceTaskRepo, nodeExecutionRepo },
+    dispatchApproval: (spaceId, taskId, source, approvalReason, guard) =>
+      spaceRuntimeService.dispatchPostApproval(spaceId, taskId, source, { approvalReason }, guard),
+    warn: (taskId, detail) =>
+      log.warn(
+        `task.resolvePendingCompletion: dispatch failed after approval for ${taskId}: ${detail}`
+      ),
+    emitTaskUpdated: async (spaceId, task) => {
+      await deps.internalEventBus.publish('space.task.updated', {
+        sessionId: 'global',
+        spaceId,
+        taskId: task.id,
+        task,
+      });
+    },
+    audit: (session, previous, input) => {
+      new McpAuditLogRepository(deps.db.getDatabase()).createEntry({
+        sessionId: session.id,
+        agentName:
+          session.type === 'space_chat'
+            ? 'space-agent'
+            : session.metadata.promptProvenance?.agentName,
+        toolName: 'task.resolvePendingCompletion',
+        spaceId: previous.spaceId,
+        taskId: input.taskId,
+        paramsSummary: JSON.stringify({
+          approved: input.approved,
+          reason: input.reason,
+          previousStatus: previous.status,
+        }),
+      });
+    },
+  };
+  const spaceOperationRegistryProvider = createSpaceOperationRegistryProvider(
+    deps.db,
+    deps.jobQueue,
+    {
       blockExecution: (spaceId, taskId, params) =>
         spaceRuntimeService.stopWorkflowBackedTask(spaceId, taskId, params),
       getSession: (sessionId) => deps.db.getSession(sessionId),
@@ -589,7 +630,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
           task,
         });
       },
-    })
+    },
+    pendingCompletion
   );
   const replyRoutingRegistry = new ReplyRoutingRegistry();
   const artifactProfile = new CodingArtifactProfile({
@@ -786,6 +828,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerSetupR
       return Promise.resolve();
     },
   });
+
+  deps.sessionManager.setDefaultOperationRegistryProvider(spaceOperationRegistryProvider);
 
   const spaceAgentInactivityWatchdog: SpaceAgentInactivityWatchdogService =
     new SpaceAgentInactivityWatchdogService({

@@ -1,3 +1,4 @@
+import type { OwnedPendingCompletionDependencies } from '../../../../src/lib/space/operations/owned-pending-completion';
 import { SpaceWorkflowRepository } from '../../../../src/storage/repositories/space-workflow-repository';
 import { SpaceWorkflowRunRepository } from '../../../../src/storage/repositories/space-workflow-run-repository';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
@@ -45,18 +46,23 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
-function provider(extra = {}) {
-  return createSpaceOperationRegistryProvider(database, jobQueue, {
-    getSession: (id) => sessions.getSession(id),
-    getTaskManager: (id) => new SpaceTaskManager(db, id),
-    taskRepo: tasks,
-    notifyStandalone: () => database.notifyChange('space_tasks'),
-    emitTaskUpdated: emit,
-    blockExecution: async () => {
-      throw new Error('Unexpected workflow cleanup');
+function provider(extra = {}, pendingCompletion?: OwnedPendingCompletionDependencies) {
+  return createSpaceOperationRegistryProvider(
+    database,
+    jobQueue,
+    {
+      getSession: (id) => sessions.getSession(id),
+      getTaskManager: (id) => new SpaceTaskManager(db, id),
+      taskRepo: tasks,
+      notifyStandalone: () => database.notifyChange('space_tasks'),
+      emitTaskUpdated: emit,
+      blockExecution: async () => {
+        throw new Error('Unexpected workflow cleanup');
+      },
+      ...extra,
     },
-    ...extra,
-  });
+    pendingCompletion
+  );
 }
 function member(id: string, owner?: string) {
   sessions.createSession(
@@ -244,3 +250,123 @@ test.each(['rpc', 'mcp'] as const)(
     expect(emit).toHaveBeenCalledTimes(1);
   }
 );
+
+function completionDependencies(): OwnedPendingCompletionDependencies {
+  return {
+    getSession: (id) => sessions.getSession(id),
+    getTask: (id) => tasks.getTask(id),
+    getTaskManager: (id) => new SpaceTaskManager(db, id),
+    coordinatorLookup: { getCoordinator: () => null },
+    dispatchApproval: mock(async (owner, id, source, reason, guard) => {
+      await new SpaceTaskManager(db, owner).setTaskStatus(id, 'approved', {
+        ...guard,
+        approvalSource: source,
+        approvalReason: reason,
+      });
+      throw new Error('Dispatcher unavailable');
+    }),
+    emitTaskUpdated: emit,
+    warn: mock(() => {}),
+    audit: mock(() => {}),
+  };
+}
+const completionName = 'task.resolvePendingCompletion';
+function reviewTask() {
+  return tasks.updateTask(taskId, { status: 'review', pendingCheckpointType: 'task_completion' })!;
+}
+
+test('pending completion discovery is configured only and remains lazy', async () => {
+  expect(createDatabaseOperationCatalog(database, jobQueue).get(completionName)).toBeUndefined();
+  expect(provider()().get(completionName)).toBeUndefined();
+  const deps = completionDependencies();
+  deps.getTask = mock(deps.getTask);
+  deps.getSession = mock(deps.getSession);
+  const getRegistry = provider({}, deps);
+  const rpc = createOperationRpcHandler(getRegistry, () => ({}));
+  const description = await rpc(
+    { name: 'operations.describe', input: { name: completionName } },
+    context
+  );
+  expect(description).toMatchObject({
+    found: true,
+    resultSchema: {
+      properties: {
+        postApprovalBlockedReason: expect.anything(),
+        approvalSource: expect.anything(),
+      },
+    },
+  });
+  const mcp = createOperationMcpHandler(getRegistry, () => ({ sessionId: 'unbound' }));
+  const list = JSON.parse((await mcp({ name: 'operations.list', input: {} })).content[0].text);
+  expect(list).toContainEqual(expect.objectContaining({ name: completionName }));
+  expect(getRegistry()).toBe(getRegistry());
+  expect(getDatabase).not.toHaveBeenCalled();
+  expect(deps.getTask).not.toHaveBeenCalled();
+  expect(deps.getSession).not.toHaveBeenCalled();
+});
+
+test('cached and future MCP use the same pending completion operation as RPC', async () => {
+  sessions.createSession(
+    {
+      ...createTestSession('reviewer'),
+      workspacePath: '/repo',
+      type: 'space_task_agent',
+      context: { spaceId },
+    },
+    { enforceWorkspaceOwnership: false }
+  );
+  let registry = createDatabaseOperationCatalog(database, jobQueue);
+  const getRegistry = () => registry;
+  const mcp = createOperationMcpHandler(getRegistry, () => ({ sessionId: 'reviewer' }));
+  const request = {
+    name: completionName,
+    input: { taskId, approved: true, reason: '  accepted  ' },
+  };
+  expect((await mcp(request)).isError).toBe(true);
+  const deps = completionDependencies();
+  registry = provider({}, deps)();
+  const later = createOperationMcpHandler(getRegistry, () => ({ sessionId: 'reviewer' }));
+  const rpc = createOperationRpcHandler(getRegistry, () => ({}));
+  for (const invoke of [
+    () => rpc(request, context),
+    async () => JSON.parse((await mcp(request)).content[0].text),
+    async () => JSON.parse((await later(request)).content[0].text),
+  ]) {
+    const previous = reviewTask();
+    expect(await invoke()).toMatchObject({
+      id: taskId,
+      status: 'approved',
+      approvalSource: 'human',
+      approvalReason: '  accepted  ',
+      postApprovalBlockedReason: expect.stringContaining('Dispatcher unavailable'),
+    });
+    expect(deps.dispatchApproval).toHaveBeenLastCalledWith(
+      spaceId,
+      taskId,
+      'human',
+      '  accepted  ',
+      { expectedPendingCompletionGeneration: previous.pendingCompletionGeneration }
+    );
+  }
+  expect(emit).toHaveBeenCalledTimes(3);
+  expect(deps.warn).toHaveBeenCalledTimes(3);
+  expect(deps.audit).toHaveBeenCalledTimes(2);
+});
+
+test('discovered pending completion rejects an ordinary Space member before effects', async () => {
+  const caller = member('ordinary-member', spaceId);
+  const previous = reviewTask();
+  const deps = completionDependencies();
+  const mcp = createOperationMcpHandler(provider({}, deps), () => caller);
+  const result = await mcp({ name: completionName, input: { taskId, approved: false } });
+  expect(result.isError).toBe(true);
+  expect(JSON.parse(result.content[0].text)).toMatchObject({
+    code: 'execution_failed',
+    message: expect.stringContaining('coordinator or task-agent'),
+  });
+  expect(tasks.getTask(taskId)).toEqual(previous);
+  expect(deps.dispatchApproval).not.toHaveBeenCalled();
+  expect(deps.audit).not.toHaveBeenCalled();
+  expect(deps.warn).not.toHaveBeenCalled();
+  expect(emit).not.toHaveBeenCalled();
+});
