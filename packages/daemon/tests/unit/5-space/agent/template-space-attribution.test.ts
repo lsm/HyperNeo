@@ -34,16 +34,23 @@ describe('rung stages', () => {
     expect(claimBySynthesis(input)).toEqual({ value: input });
   });
 
-  test('claimBySynthesis claims the template when provenance exists', () => {
-    expect(claimBySynthesis(unclaimed({ synthesizedFromSpaces: ['sp1'] }))).toEqual({
-      reason: { spaceIds: ['sp1'], rung: 'synthesized-from-agent' },
-    });
+  test('claimBySynthesis claims the template when provenance names a live Space', () => {
+    expect(
+      claimBySynthesis(unclaimed({ synthesizedFromSpaces: ['sp1'], spaceIds: ['sp1'] }))
+    ).toEqual({ reason: { spaceIds: ['sp1'], rung: 'synthesized-from-agent' } });
   });
 
-  test('claimByWorkflowSlot claims every referencing Space', () => {
-    expect(claimByWorkflowSlot(unclaimed({ workflowSlotSpaces: ['sp1', 'sp2'] }))).toEqual({
-      reason: { spaceIds: ['sp1', 'sp2'], rung: 'workflow-slot-reference' },
-    });
+  test('claimBySynthesis passes through when its only target Space is gone', () => {
+    const input = unclaimed({ synthesizedFromSpaces: ['gone'], spaceIds: ['alive'] });
+    expect(claimBySynthesis(input)).toEqual({ value: input });
+  });
+
+  test('claimByWorkflowSlot claims every live referencing Space', () => {
+    expect(
+      claimByWorkflowSlot(
+        unclaimed({ workflowSlotSpaces: ['sp1', 'sp2', 'gone'], spaceIds: ['sp1', 'sp2'] })
+      )
+    ).toEqual({ reason: { spaceIds: ['sp1', 'sp2'], rung: 'workflow-slot-reference' } });
   });
 
   test('claimBySoleSpace claims only when exactly one Space exists', () => {
@@ -206,6 +213,33 @@ describe('planTemplateSpaceAssignments', () => {
     );
     expect(plan.assignments).toEqual([
       { key: 'orphan.one', spaceIds: ['only'], rung: 'sole-space' },
+    ]);
+  });
+  test('a live workflow slot rescues a template whose provenance Space is gone', () => {
+    const plan = planTemplateSpaceAssignments(
+      inputs({
+        templates: [{ key: 'migrated.agent.a1', createdAt: 5_000 }],
+        agents: [{ id: 'a1', spaceId: 'deleted-space', createdAt: 1_000 }],
+        workflowSlots: [{ spaceId: 'live-space', templateKey: 'migrated.agent.a1' }],
+        spaceIds: ['live-space', 'other'],
+      })
+    );
+    expect(plan.assignments).toEqual([
+      { key: 'migrated.agent.a1', spaceIds: ['live-space'], rung: 'workflow-slot-reference' },
+    ]);
+    expect(plan.deletions).toEqual([]);
+  });
+
+  test('the sole-Space fallback also rescues a template with only stale provenance', () => {
+    const plan = planTemplateSpaceAssignments(
+      inputs({
+        templates: [{ key: 'migrated.agent.a1', createdAt: 5_000 }],
+        agents: [{ id: 'a1', spaceId: 'deleted-space', createdAt: 1_000 }],
+        spaceIds: ['only'],
+      })
+    );
+    expect(plan.assignments).toEqual([
+      { key: 'migrated.agent.a1', spaceIds: ['only'], rung: 'sole-space' },
     ]);
   });
 });

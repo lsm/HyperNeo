@@ -36,16 +36,21 @@ export interface TemplateAttributionInputs extends TemplateOwnershipInputs {
 
 type RungGate = { value: UnclaimedTemplate } | { reason: TemplateRungClaim };
 
+function liveSpaces(candidates: readonly string[], spaceIds: readonly string[]): string[] {
+  const known = new Set(spaceIds);
+  return candidates.filter((spaceId) => known.has(spaceId));
+}
+
 export function claimBySynthesis(unclaimed: UnclaimedTemplate): RungGate {
-  const spaces = unclaimed.evidence.synthesizedFromSpaces;
+  const spaces = liveSpaces(unclaimed.evidence.synthesizedFromSpaces, unclaimed.spaceIds);
   if (spaces.length === 0) return { value: unclaimed };
-  return { reason: { spaceIds: [...spaces], rung: 'synthesized-from-agent' } };
+  return { reason: { spaceIds: spaces, rung: 'synthesized-from-agent' } };
 }
 
 export function claimByWorkflowSlot(unclaimed: UnclaimedTemplate): RungGate {
-  const spaces = unclaimed.evidence.workflowSlotSpaces;
+  const spaces = liveSpaces(unclaimed.evidence.workflowSlotSpaces, unclaimed.spaceIds);
   if (spaces.length === 0) return { value: unclaimed };
-  return { reason: { spaceIds: [...spaces], rung: 'workflow-slot-reference' } };
+  return { reason: { spaceIds: spaces, rung: 'workflow-slot-reference' } };
 }
 
 export function claimBySoleSpace(unclaimed: UnclaimedTemplate): RungGate {
@@ -75,19 +80,17 @@ export function planTemplateSpaceAssignments(
         .filter((spaceId) => spaceId !== '')
     ),
   ];
-  const known = new Set(spaceIds);
   const evidence = collectTemplateOwnershipEvidence(inputs);
   const assignments: TemplateAssignment[] = [];
   const deletions: string[] = [];
 
   for (const [key, entry] of evidence) {
     const claim = attributeTemplate({ evidence: entry, spaceIds });
-    const live = claim.spaceIds.filter((spaceId) => known.has(spaceId));
-    if (live.length === 0) {
+    if (claim.spaceIds.length === 0) {
       deletions.push(key);
       continue;
     }
-    assignments.push({ key, spaceIds: live, rung: claim.rung });
+    assignments.push({ key, spaceIds: claim.spaceIds, rung: claim.rung });
   }
 
   return { assignments, deletions };
