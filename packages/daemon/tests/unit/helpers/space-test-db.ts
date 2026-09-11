@@ -1,3 +1,4 @@
+import { runMigration257 } from '../../../src/storage/schema/m257-direct-outcome-job';
 import { runMigration256 } from '../../../src/storage/schema/m256-direct-finalization';
 import { runMigration255 } from '../../../src/storage/schema/m255-task-lifecycle-generation';
 import { runMigration253 } from '../../../src/storage/schema/m253-direct-kickoff-dispatches';
@@ -902,4 +903,5 @@ export function createSpaceTables(db: BunDatabase): void {
   );
   runMigration255(db);
   runMigration256(db);
+  runMigration257(db);
 }
