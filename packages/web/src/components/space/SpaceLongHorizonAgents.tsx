@@ -9,6 +9,7 @@ import { useEffect, useState } from 'preact/hooks';
 import superpipe, { type PipelineAPI } from 'superpipe';
 import { navigateToSpaceSession } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
+import { AUTONOMY_LABELS, toolPermissionsToolsList } from './agent-page-labels';
 import { TemplateCard } from './TemplateCard';
 import { extraToolsOf, withExtraTool, withoutExtraTool } from './template-extra-tools';
 import { runTemplateSave } from './template-save-pipeline';
@@ -30,26 +31,12 @@ const THINKING_LEVEL_OPTIONS: Array<{ value: '' | ThinkingLevel; label: string }
   { value: 'think32k', label: 'Think 32k' },
 ];
 
-const AUTONOMY_LABELS: Record<number, string> = {
-  1: 'Supervised',
-  2: 'Semi-auto',
-  3: 'Autonomous',
-  4: 'Full auto',
-  5: 'Unrestricted',
-};
-
 const MIGRATED_WORKER_TEMPLATE_KEY = 'migration.legacy_space_agent';
 
 const COORDINATOR_AGENT_HANDLES = new Set(['coordinator', 'space-manager']);
 
 function isCoordinator(agent: SpaceLongHorizonAgent): boolean {
   return COORDINATOR_AGENT_HANDLES.has(agent.handle);
-}
-
-function toolPermissionsToolsList(owner: { toolPermissions: Record<string, unknown> }): string[] {
-  const tools = owner.toolPermissions?.tools;
-  if (!Array.isArray(tools)) return [];
-  return tools.filter((tool): tool is string => typeof tool === 'string');
 }
 
 function agentToolsList(agent: SpaceLongHorizonAgent): string[] {
