@@ -623,7 +623,7 @@ function makeSpawnPayloadHarness(
   const defaultPinnedWorkflow =
     options.pinnedWorkflow !== undefined
       ? options.pinnedWorkflow
-      : withRunTemplateSnapshots(workflow, createAgentTemplateResolver());
+      : withRunTemplateSnapshots(workflow, createAgentTemplateResolver('space-1'));
   const execution = makeExecution(agentName);
   const dbRow: NodeExecution = { ...execution };
   let capturedInit: AgentSessionInit | undefined;

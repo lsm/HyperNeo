@@ -3887,7 +3887,7 @@ export class SpaceRuntime {
         description,
         rawWorkflow,
       },
-      createAgentTemplateResolver(this.config.templateRepo)
+      createAgentTemplateResolver(spaceId, this.config.templateRepo)
     );
 
     const run = this.config.workflowRunRepo.transitionStatus(pendingRun.id, 'in_progress');
