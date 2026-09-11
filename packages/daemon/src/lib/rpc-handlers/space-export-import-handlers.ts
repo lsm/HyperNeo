@@ -191,12 +191,14 @@ function parseStoredLabels(raw: unknown): string[] {
   }
 }
 
-function loadRelocatedTemplateIndex(db: BunDatabase): Map<string, string> {
-  const tableExists = db
-    .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'space_agent_templates'`)
+function loadRelocatedTemplateIndex(db: BunDatabase, spaceId: string): Map<string, string> {
+  const scoped = db
+    .prepare(`SELECT 1 FROM pragma_table_info('space_agent_templates') WHERE name = 'space_id'`)
     .get();
-  if (!tableExists) return new Map();
-  const rows = db.prepare(`SELECT key, labels FROM space_agent_templates`).all() as Array<{
+  if (!scoped) return new Map();
+  const rows = db
+    .prepare(`SELECT key, labels FROM space_agent_templates WHERE space_id IN (?1, '')`)
+    .all(spaceId) as Array<{
     key: string;
     labels: string | null;
   }>;
@@ -802,7 +804,7 @@ export function setupSpaceExportImportHandlers(
     const params = data as { bundle: unknown; spaceId: string };
     await requireSpace(spaceManager, params.spaceId);
 
-    const relocatedIndex = loadRelocatedTemplateIndex(db);
+    const relocatedIndex = loadRelocatedTemplateIndex(db, params.spaceId);
     const relocatedTemplateKey = (fromKey: string): string | null =>
       relocatedIndex.get(fromKey) ?? null;
     const validation = validateExportBundle(params.bundle);
@@ -908,7 +910,7 @@ export function setupSpaceExportImportHandlers(
     };
     await requireSpace(spaceManager, params.spaceId);
 
-    const relocatedIndex = loadRelocatedTemplateIndex(db);
+    const relocatedIndex = loadRelocatedTemplateIndex(db, params.spaceId);
     const relocatedTemplateKey = (fromKey: string): string | null =>
       relocatedIndex.get(fromKey) ?? null;
     const validation = validateExportBundle(params.bundle);
