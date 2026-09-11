@@ -106,22 +106,26 @@ export function expandPrompt(
   return `${trimmedBase}\n\n${trimmedExpansion}`;
 }
 
-export interface CustomAgentConfig {
-  customAgent: UnifiedSpaceAgent;
+export interface TaskMessageContext {
   task: SpaceTask;
-  workflowRun: SpaceWorkflowRun | null;
+  workflowRun?: SpaceWorkflowRun | null;
   workflow?: SpaceWorkflow | null;
   space: Space;
-  sessionId: string;
   workspacePath: string;
   goal?: SpaceGoal | null;
   relevantScopeLessons?: EvolutionLesson[];
   previousTaskSummaries?: string[];
-  slotOverrides?: SlotOverrides;
   nodeId?: string;
   agentSlotName?: string;
   coreMemories?: AgentMemoryCoreEntry[];
   relevantMemories?: AgentMemorySearchResult[];
+}
+
+export interface CustomAgentConfig extends TaskMessageContext {
+  customAgent: UnifiedSpaceAgent;
+  workflowRun: SpaceWorkflowRun | null;
+  sessionId: string;
+  slotOverrides?: SlotOverrides;
 }
 
 export function buildCustomAgentSystemPrompt(
@@ -176,7 +180,9 @@ function hashPrompt(prompt: string): string {
   return createHash('sha256').update(prompt).digest('hex');
 }
 
-export function buildCustomAgentTaskMessage(config: CustomAgentConfig): string {
+export function buildCustomAgentTaskMessage(
+  config: TaskMessageContext | CustomAgentConfig
+): string {
   const {
     task,
     workflowRun,
