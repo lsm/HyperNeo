@@ -1,3 +1,4 @@
+import { runMigration250 } from './m250-direct-stop-requests.ts';
 import { runMigration248 } from './m248-direct-task-execution.ts';
 import { runMigration249 } from './m249-resolve-template-sentinel-rows.ts';
 import { runMigration247 } from './m247-pending-completion-generation.ts';
@@ -576,6 +577,7 @@ export function runMigrations(
   run(migrationMarkerKey(248), () => runMigration248(db));
 
   run(migrationMarkerKey(249), () => runMigration249(db));
+  run(migrationMarkerKey(250), () => runMigration250(db));
 
   return findPendingMigrationSpaceReclaims(db, [...rewriteMigrationKeys]);
 }
