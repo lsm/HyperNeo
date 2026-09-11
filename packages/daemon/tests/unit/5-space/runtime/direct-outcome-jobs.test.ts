@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { createTables, runMigrations } from '../../../../src/storage/schema';
 import { SessionManager } from '../../../../src/lib/session/session-manager';
+import { JobQueueProcessor } from '../../../../src/storage/job-queue-processor';
 import type { AgentSession } from '../../../../src/lib/agent/agent-session';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
@@ -83,6 +84,7 @@ beforeEach(() => {
   }) as SessionManager;
   deps = {
     db,
+    jobQueue: jobs,
     onTerminalTransition: terminal,
     sessionManager: {
       coalesceDirectStopVerification: owner.coalesceDirectStopVerification.bind(owner),
@@ -172,15 +174,125 @@ test('registration recovers unlinked requests and safely repeats startup recover
 });
 
 test('unverified shutdown is retryable without dropping the durable request', async () => {
-  const job = acceptedJob();
+  acceptedJob();
+  const [job] = jobs.dequeue(DIRECT_TASK_OUTCOME, 1);
   cleanup.mockImplementation(async () => {
     throw new Error('process still live');
   });
-  await expect(createDirectOutcomeHandler(deps)(job)).rejects.toThrow('remains unverified');
+  expect(await createDirectOutcomeHandler(deps)(job)).toMatchObject({
+    finalized: false,
+    parked: 'direct_stop_unverified',
+  });
+  expect(jobs.getJob(job.id)).toMatchObject({ status: 'pending', retryCount: 0 });
   expect(attempts.getActive(taskId)?.phase).toBe('running');
   expect(request()).toEqual({ accepted: true, jobId: job.id });
   cleanup.mockImplementation(async () => {});
-  expect(await createDirectOutcomeHandler(deps)(job)).toHaveProperty('finalized', true);
+  jobs.reschedulePending(job.id, Date.now() - 1);
+  const [retry] = jobs.dequeue(DIRECT_TASK_OUTCOME, 1);
+  expect(await createDirectOutcomeHandler(deps)(retry)).toHaveProperty('finalized', true);
+});
+
+function freshUncachedManager(processor: JobQueueProcessor): SessionManager {
+  type Args = ConstructorParameters<typeof SessionManager>;
+  return new SessionManager(
+    { getGoalRepo: () => ({}) } as Args[0],
+    {} as Args[1],
+    {} as Args[2],
+    {} as Args[3],
+    { subscribe: () => () => {} } as unknown as Args[4],
+    { defaultModel: 'test', maxTokens: 100, temperature: 0 },
+    jobs,
+    processor
+  );
+}
+
+async function waitForIdle(processor: JobQueueProcessor) {
+  for (let i = 0; i < 1000 && processor.snapshot().inFlightTotal > 0; i++)
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  expect(processor.snapshot().inFlightTotal).toBe(0);
+}
+
+test('uncached retries preserve the same job beyond its budget and settle once after valid proof', async () => {
+  const job = acceptedJob();
+  const processor = new JobQueueProcessor(jobs, { maxConcurrent: 1 });
+  const manager = freshUncachedManager(processor);
+  const onTaskUpdated = mock(() => {});
+  registerDirectOutcomeJobs({
+    ...deps,
+    sessionManager: manager,
+    jobProcessor: processor,
+    jobQueue: jobs,
+    onTaskUpdated,
+  });
+  try {
+    expect(manager.getCachedSession('worker')).toBeNull();
+    for (let i = 0; i < job.maxRetries + 3; i++) {
+      expect(jobs.reschedulePending(job.id, Date.now() - 1)).toBe(true);
+      expect(await processor.tick()).toBe(1);
+      await waitForIdle(processor);
+      expect(jobs.getJob(job.id)).toMatchObject({ status: 'pending', retryCount: 0 });
+      expect(jobs.getJob(job.id)!.runAt).toBeGreaterThan(Date.now());
+      expect(attempts.getActive(taskId)?.phase).toBe('running');
+      expect(attempts.isStopRequested('attempt', 'worker')).toBe(true);
+      expect(request()).toEqual({ accepted: true, jobId: job.id });
+    }
+    expect(terminal).not.toHaveBeenCalled();
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(attempts.beginStopVerification('attempt', 'worker', 1, 'valid-proof')).toBe(true);
+    expect(attempts.recordStopVerification('attempt', 'worker', 1, 'valid-proof')).toBe(true);
+    jobs.reschedulePending(job.id, Date.now() - 1);
+    expect(await processor.tick()).toBe(1);
+    await waitForIdle(processor);
+    expect(jobs.getJob(job.id)).toMatchObject({ status: 'completed', retryCount: 0 });
+    expect(attempts.get('attempt')?.phase).toBe('stopped');
+    expect(tasks.getTask(taskId)?.status).toBe('blocked');
+    expect(terminal).toHaveBeenCalledTimes(1);
+    expect(onTaskUpdated).toHaveBeenCalledTimes(1);
+    expect(await processor.tick()).toBe(0);
+  } finally {
+    await processor.stop();
+    await manager.cleanup();
+  }
+});
+
+test('stale unverified handler cannot requeue or complete a replacement claim', async () => {
+  const job = acceptedJob();
+  const processor = new JobQueueProcessor(jobs);
+  const manager = freshUncachedManager(processor);
+  let release!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let original: Job | undefined;
+  const handler = createDirectOutcomeHandler({ ...deps, sessionManager: manager });
+  processor.register(DIRECT_TASK_OUTCOME, async (claimed) => {
+    original = claimed;
+    await paused;
+    return handler(claimed);
+  });
+  try {
+    expect(await processor.tick()).toBe(1);
+    expect(original?.claimToken).toBeTruthy();
+    expect(jobs.requeue(job.id, Date.now() - 1, original!.claimToken)).not.toBeNull();
+    const [replacement] = jobs.dequeue(DIRECT_TASK_OUTCOME, 1);
+    expect(replacement.claimToken).not.toBe(original!.claimToken);
+    release();
+    await waitForIdle(processor);
+    expect(jobs.getJob(job.id)).toEqual(replacement);
+    expect(terminal).not.toHaveBeenCalled();
+    expect(attempts.getActive(taskId)?.phase).toBe('running');
+  } finally {
+    release();
+    await processor.stop();
+    await manager.cleanup();
+  }
+});
+
+test('unclaimed unverified handler cannot use an unfenced requeue', async () => {
+  const job = acceptedJob();
+  cached = null;
+  await expect(createDirectOutcomeHandler(deps)(job)).rejects.toThrow('remains unverified');
+  expect(jobs.getJob(job.id)).toEqual(job);
 });
 
 test('receipt persistence failure rolls back both queued job and accepted stop intent', () => {
