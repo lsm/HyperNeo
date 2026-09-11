@@ -14,10 +14,7 @@ import { SpaceManager } from '../../../../src/lib/space/managers/space-manager';
 import { SpaceWorkflowManager } from '../../../../src/lib/space/managers/space-workflow-manager';
 import { SpaceRuntime } from '../../../../src/lib/space/runtime/space-runtime';
 import type { TaskAgentManager } from '../../../../src/lib/space/runtime/task-agent-manager';
-import {
-  createSpaceTaskDependencyEditor,
-  dependencyUpdateEmittedByRuntime,
-} from '../../../../src/lib/space/operations/task-dependencies';
+import { createSpaceTaskDependencyEditor } from '../../../../src/lib/space/operations/task-dependencies';
 
 let db: Database;
 let spaceId: string;
@@ -58,12 +55,6 @@ function dependency(status: SpaceTask['status'] = 'open') {
   return tasks.createTask({ spaceId, title: 'Dependency', description: '', status });
 }
 const rpc = { source: 'rpc' } as const;
-
-test.each([false, true])('event ownership gate preserves runtime flag %s', (handledByRuntime) => {
-  expect(dependencyUpdateEmittedByRuntime({ task: target, handledByRuntime })).toBe(
-    handledByRuntime
-  );
-});
 
 test('Space duplicates remain accepted while standalone duplicates retain rejection codes', async () => {
   const dep = dependency();
