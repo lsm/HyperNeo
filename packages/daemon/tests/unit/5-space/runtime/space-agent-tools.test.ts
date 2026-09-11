@@ -7025,6 +7025,54 @@ describe('createSpaceAgentToolHandlers — approve_pending_completion', () => {
     return task.id;
   }
 
+  test.each([true, false])(
+    'decision %s emits once before auditing the raw reason',
+    async (approved) => {
+      const taskId = await createReviewTask();
+      const auditLogRepo = new McpAuditLogRepository(ctx.db);
+      const events: string[] = [];
+      const bus = {
+        publish: mock(async (event: string, payload: { task: SpaceTask }) => {
+          if (event !== 'space.task.updated') return;
+          expect(auditLogRepo.listByTask(taskId)).toHaveLength(0);
+          expect(payload.task.id).toBe(taskId);
+          events.push(event);
+        }),
+      };
+      const dispatchSpy = spyOn(ctx.runtime, 'dispatchPostApproval').mockImplementation(
+        async (id, source, extras) => {
+          ctx.taskRepo.updateTask(id, {
+            status: 'approved',
+            approvalReason: extras?.approvalReason,
+          });
+        }
+      );
+      const result = await makeHandlers(ctx, {
+        isDefaultAgent: true,
+        auditLogRepo,
+        internalEventBus:
+          bus as unknown as import('../../../../src/lib/internal-event-bus').InternalEventBus<
+            import('../../../../src/lib/internal-event-bus').DaemonInternalEventMap
+          >,
+      }).approve_pending_completion({ task_id: taskId, approved, reason: '  raw reason  ' });
+      dispatchSpy.mockRestore();
+
+      expect(JSON.parse(result.content[0].text)).toEqual({
+        success: true,
+        task: ctx.taskRepo.getTask(taskId),
+      });
+      expect(events).toEqual(['space.task.updated']);
+      const entries = auditLogRepo.listByTask(taskId);
+      expect(entries).toHaveLength(1);
+      expect(entries[0].toolName).toBe('approve_pending_completion');
+      expect(JSON.parse(entries[0].paramsSummary ?? '{}')).toEqual({
+        approved,
+        reason: '  raw reason  ',
+        previousStatus: 'review',
+      });
+    }
+  );
+
   test('approve: transitions review → approved and dispatches post-approval with the human source', async () => {
     const taskId = await createReviewTask();
 
