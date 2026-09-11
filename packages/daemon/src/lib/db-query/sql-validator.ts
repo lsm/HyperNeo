@@ -148,6 +148,72 @@ function matchIdentifier(sql: string, pos: number): { ident: string; end: number
   return { ident: sql.slice(start, pos).toLowerCase(), end: pos };
 }
 
+const TABLE_LIST_STOP_WORDS = new Set([
+  'as',
+  'on',
+  'using',
+  'where',
+  'group',
+  'order',
+  'limit',
+  'having',
+  'join',
+  'left',
+  'right',
+  'inner',
+  'outer',
+  'full',
+  'cross',
+  'natural',
+  'union',
+  'except',
+  'intersect',
+  'window',
+]);
+
+function consumeCommaTableList(
+  sql: string,
+  from: number,
+  exclude: Set<string>,
+  refs: string[]
+): number {
+  let pos = from;
+  for (;;) {
+    let probe = pos;
+    while (probe < sql.length && /\s/.test(sql[probe])) probe++;
+    const alias = matchIdentifier(sql, probe);
+    if (alias && alias.ident === 'as') {
+      probe = alias.end;
+      while (probe < sql.length && /\s/.test(sql[probe])) probe++;
+      const named = matchIdentifier(sql, probe);
+      if (named) {
+        pos = named.end;
+        continue;
+      }
+    } else if (alias && !TABLE_LIST_STOP_WORDS.has(alias.ident)) {
+      pos = alias.end;
+      continue;
+    }
+    while (probe < sql.length && /\s/.test(sql[probe])) probe++;
+    if (sql[probe] !== ',') return pos;
+    probe++;
+    while (probe < sql.length && /\s/.test(sql[probe])) probe++;
+    const next = matchIdentifier(sql, probe);
+    if (!next) return pos;
+    let end = next.end;
+    let name = next.ident;
+    if (end < sql.length && sql[end] === '.') {
+      const qualified = matchIdentifier(sql, end + 1);
+      if (qualified) {
+        name = qualified.ident;
+        end = qualified.end;
+      }
+    }
+    if (!exclude.has(name) && !refs.includes(name)) refs.push(name);
+    pos = end;
+  }
+}
+
 function extractTableRefs(sql: string, exclude: Set<string>): string[] {
   const refs: string[] = [];
 
@@ -178,14 +244,14 @@ function extractTableRefs(sql: string, exclude: Set<string>): string[] {
             if (!exclude.has(tableName) && !refs.includes(tableName)) {
               refs.push(tableName);
             }
-            i = second.end;
+            i = consumeCommaTableList(sql, second.end, exclude, refs);
             continue;
           }
         }
         if (!exclude.has(first.ident) && !refs.includes(first.ident)) {
           refs.push(first.ident);
         }
-        i = first.end;
+        i = consumeCommaTableList(sql, first.end, exclude, refs);
         continue;
       }
     }
