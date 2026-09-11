@@ -1,3 +1,4 @@
+import { createSubmitTaskForReviewOperation } from './submit-for-review.ts';
 import {
   createOwnedPendingCompletionOperation,
   type OwnedPendingCompletionDependencies,
@@ -24,6 +25,7 @@ export function createSpaceOperationRegistryProvider(
   let registry: OperationRegistry | undefined;
   return () =>
     (registry ??= createDatabaseOperationCatalog(database, jobQueue, {
+      submitForReview: createSubmitTaskForReviewOperation(() => database.getDatabase(), jobQueue),
       pendingCompletion: pendingCompletion
         ? createOwnedPendingCompletionOperation(pendingCompletion)
         : undefined,
