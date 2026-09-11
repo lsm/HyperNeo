@@ -507,19 +507,19 @@ export function SpaceAgentsPage({ spaceId, selectedHandle }: SpaceAgentsPageProp
                   tools={formTools.tools}
                   toolsOverridden={formTools.toolsOverridden}
                   onChange={(next, origin) => {
-                    const decided = decideToolsChange({
+                    const decided = decideToolsChange(
                       origin,
-                      tools: next.tools,
-                      overridden: next.toolsOverridden,
-                      baseline: toolsBaselineRef.current,
-                      state: {
+                      next.tools,
+                      next.toolsOverridden,
+                      toolsBaselineRef.current,
+                      {
                         tools: formTools.tools,
                         overridden: formTools.toolsOverridden,
                         explicit: toolsExplicit,
                         added: toolsAddedRef.current,
                         removed: toolsRemovedRef.current,
-                      },
-                    });
+                      }
+                    );
                     toolsAddedRef.current = decided.added;
                     toolsRemovedRef.current = decided.removed;
                     setToolsExplicit(decided.explicit);

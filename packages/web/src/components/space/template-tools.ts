@@ -52,71 +52,81 @@ export interface ToolsFormState {
   removed: string[];
 }
 
-export interface ToolsChangeInput {
-  origin: 'preset' | 'edit';
-  tools: string[];
-  overridden: boolean;
-  baseline: string[];
-  state: ToolsFormState;
-}
+export type ToolsChangeOriginKind = 'preset' | 'edit';
 
-export type ToolsGate<T> = { value: T } | { reason: ToolsFormState };
+export type ToolsGate = { value: null } | { reason: ToolsFormState };
 
 function inherited(baseline: string[]): ToolsFormState {
   return { tools: baseline, overridden: false, explicit: false, added: [], removed: [] };
 }
 
-export function gateInheritPreset(input: ToolsChangeInput): ToolsGate<ToolsChangeInput> {
-  if (input.origin !== 'preset' || input.overridden) return { value: input };
-  return { reason: inherited(input.baseline) };
+export function gateInheritPreset(
+  origin: ToolsChangeOriginKind,
+  overridden: boolean,
+  baseline: string[]
+): ToolsGate {
+  if (origin !== 'preset' || overridden) return { value: null };
+  return { reason: inherited(baseline) };
 }
 
-export function gatePresetChoice(input: ToolsChangeInput): ToolsGate<ToolsChangeInput> {
-  if (input.origin !== 'preset') return { value: input };
+export function gatePresetChoice(
+  origin: ToolsChangeOriginKind,
+  tools: string[],
+  state: ToolsFormState
+): ToolsGate {
+  if (origin !== 'preset') return { value: null };
   return {
     reason: {
-      tools: input.tools,
+      tools,
       overridden: true,
       explicit: true,
-      added: input.state.added,
-      removed: input.state.removed,
+      added: state.added,
+      removed: state.removed,
     },
   };
 }
 
-export function gateExplicitEdit(input: ToolsChangeInput): ToolsGate<ToolsChangeInput> {
-  if (!input.state.explicit) return { value: input };
-  const added = trackAddedTools(input.state.added, [], input.tools);
-  if (!differsFromBaseline(input.tools, input.baseline))
-    return { reason: inherited(input.baseline) };
+export function gateExplicitEdit(
+  tools: string[],
+  baseline: string[],
+  state: ToolsFormState
+): ToolsGate {
+  if (!state.explicit) return { value: null };
+  if (!differsFromBaseline(tools, baseline)) return { reason: inherited(baseline) };
   return {
     reason: {
-      tools: input.tools,
+      tools,
       overridden: true,
       explicit: true,
-      added,
-      removed: input.state.removed,
+      added: trackAddedTools(state.added, [], tools),
+      removed: state.removed,
     },
   };
 }
 
-export function applyBaselineEdit(input: ToolsChangeInput): ToolsFormState {
-  const removed = trackRemovedTools(input.state.removed, input.baseline, input.tools);
-  const added = trackAddedTools(input.state.added, input.baseline, input.tools);
-  if (
-    added.length === 0 &&
-    removed.length === 0 &&
-    !differsFromBaseline(input.tools, input.baseline)
-  ) {
-    return inherited(input.baseline);
+export function applyBaselineEdit(
+  tools: string[],
+  baseline: string[],
+  state: ToolsFormState
+): ToolsFormState {
+  const removed = trackRemovedTools(state.removed, baseline, tools);
+  const added = trackAddedTools(state.added, baseline, tools);
+  if (added.length === 0 && removed.length === 0 && !differsFromBaseline(tools, baseline)) {
+    return inherited(baseline);
   }
-  return { tools: input.tools, overridden: true, explicit: false, added, removed };
+  return { tools, overridden: true, explicit: false, added, removed };
 }
 
 export const decideToolsChange = (superpipe({})('agent-tools-change') as PipelineAPI)
-  .input(['input'])
-  .pipe(gateInheritPreset, 'input', 'result:decided')
-  .pipe(gatePresetChoice, 'decided', 'result:decided')
-  .pipe(gateExplicitEdit, 'decided', 'result:decided')
-  .pipe(applyBaselineEdit, 'decided', 'decided')
-  .end('decided') as (input: ToolsChangeInput) => ToolsFormState;
+  .input(['origin', 'tools', 'overridden', 'baseline', 'state'])
+  .pipe(gateInheritPreset, ['origin', 'overridden', 'baseline'], 'result:decided')
+  .pipe(gatePresetChoice, ['origin', 'tools', 'state'], 'result:decided')
+  .pipe(gateExplicitEdit, ['tools', 'baseline', 'state'], 'result:decided')
+  .pipe(applyBaselineEdit, ['tools', 'baseline', 'state'], 'decided')
+  .end('decided') as (
+  origin: ToolsChangeOriginKind,
+  tools: string[],
+  overridden: boolean,
+  baseline: string[],
+  state: ToolsFormState
+) => ToolsFormState;

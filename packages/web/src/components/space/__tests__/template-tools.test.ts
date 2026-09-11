@@ -4,7 +4,11 @@ import {
   differsFromBaseline,
   rebaseTemplateTools,
   trackAddedTools,
-  type ToolsChangeInput,
+  type ToolsFormState,
+  applyBaselineEdit,
+  gateExplicitEdit,
+  gateInheritPreset,
+  gatePresetChoice,
   trackRemovedTools,
 } from '../template-tools';
 
@@ -86,97 +90,106 @@ describe('differsFromBaseline', () => {
   });
 });
 
-describe('agent tools change pipeline', () => {
-  const base = (over: Partial<ToolsChangeInput> = {}): ToolsChangeInput => ({
-    origin: 'edit',
-    tools: ['Read'],
-    overridden: true,
-    baseline: ['Read'],
-    state: { tools: ['Read'], overridden: false, explicit: false, added: [], removed: [] },
-    ...over,
+const st = (over: Partial<ToolsFormState> = {}): ToolsFormState => ({
+  tools: ['Read'],
+  overridden: false,
+  explicit: false,
+  added: [],
+  removed: [],
+  ...over,
+});
+
+describe('gateInheritPreset', () => {
+  it.each([
+    ['an Inherit defaults preset', 'preset', false, 'reason'],
+    ['a preset that sets an override', 'preset', true, 'value'],
+    ['an ordinary edit that clears tools', 'edit', false, 'value'],
+  ])('takes the %s arm for %s', (_label, origin, overridden, arm) => {
+    const out = gateInheritPreset(origin as 'preset' | 'edit', overridden as boolean, ['Read']);
+    expect(arm in out).toBe(true);
+    if ('reason' in out) expect(out.reason).toEqual(st({ tools: ['Read'] }));
+  });
+});
+
+describe('gatePresetChoice', () => {
+  it('terminates as an explicit override for a preset', () => {
+    const out = gatePresetChoice('preset', ['Read', 'Grep'], st({ removed: ['Bash'] }));
+    expect('reason' in out).toBe(true);
+    if ('reason' in out) {
+      expect(out.reason.explicit).toBe(true);
+      expect(out.reason.overridden).toBe(true);
+      expect(out.reason.removed).toEqual(['Bash']);
+    }
   });
 
-  it('returns to inherited when a preset clears the override', () => {
-    const out = decideToolsChange(
-      base({ origin: 'preset', overridden: false, baseline: ['Read', 'Bash'] })
-    );
-    expect(out).toEqual({
-      tools: ['Read', 'Bash'],
-      overridden: false,
-      explicit: false,
-      added: [],
-      removed: [],
-    });
+  it('continues for an ordinary edit', () => {
+    expect(gatePresetChoice('edit', ['Read'], st())).toEqual({ value: null });
+  });
+});
+
+describe('gateExplicitEdit', () => {
+  it('continues when no preset is active', () => {
+    expect(gateExplicitEdit(['Read'], ['Read'], st({ explicit: false }))).toEqual({ value: null });
   });
 
-  it('marks a preset choice explicit and overridden', () => {
-    const out = decideToolsChange(base({ origin: 'preset', tools: ['Read', 'Grep', 'Glob'] }));
-    expect(out.explicit).toBe(true);
-    expect(out.overridden).toBe(true);
+  it('returns to inherited when the edit restores the baseline', () => {
+    const out = gateExplicitEdit(['Read'], ['Read'], st({ explicit: true, removed: ['Bash'] }));
+    expect('reason' in out).toBe(true);
+    if ('reason' in out) expect(out.reason).toEqual(st({ tools: ['Read'] }));
   });
 
-  it('keeps an emptied explicit preset overridden', () => {
-    const out = decideToolsChange(
-      base({
-        tools: [],
-        overridden: false,
-        baseline: ['Bash'],
-        state: { tools: ['Read'], overridden: true, explicit: true, added: [], removed: [] },
-      })
-    );
-    expect(out.overridden).toBe(true);
-    expect(out.tools).toEqual([]);
+  it('stays overridden and tracks the addition otherwise', () => {
+    const out = gateExplicitEdit(['Read', 'Bash(x:*)'], ['Bash'], st({ explicit: true }));
+    expect('reason' in out).toBe(true);
+    if ('reason' in out) {
+      expect(out.reason.overridden).toBe(true);
+      expect(out.reason.added).toContain('Bash(x:*)');
+    }
   });
 
-  it('tracks a scoped add made under an explicit preset', () => {
-    const out = decideToolsChange(
-      base({
-        tools: ['Read', 'Bash(gh:*)'],
-        baseline: ['Bash(gh:*)'],
-        state: { tools: ['Read'], overridden: true, explicit: true, added: [], removed: [] },
-      })
-    );
-    expect(out.added).toContain('Bash(gh:*)');
+  it('keeps an emptied explicit selection overridden', () => {
+    const out = gateExplicitEdit([], ['Bash'], st({ explicit: true }));
+    if ('reason' in out) expect(out.reason.overridden).toBe(true);
+  });
+});
+
+describe('applyBaselineEdit', () => {
+  it('returns to inherited when nothing was added or removed', () => {
+    expect(applyBaselineEdit(['Read'], ['Read'], st())).toEqual(st({ tools: ['Read'] }));
   });
 
-  it('clears provenance when an explicit edit restores the baseline', () => {
-    const out = decideToolsChange(
-      base({
-        tools: ['Read'],
-        baseline: ['Read'],
-        state: { tools: ['Grep'], overridden: true, explicit: true, added: [], removed: ['Bash'] },
-      })
-    );
-    expect(out).toEqual({
-      tools: ['Read'],
-      overridden: false,
-      explicit: false,
-      added: [],
-      removed: [],
-    });
-  });
-
-  it('records a removal on a baseline edit and stays overridden', () => {
-    const out = decideToolsChange(base({ tools: [], overridden: false, baseline: ['Bash'] }));
+  it('records a removal and stays overridden', () => {
+    const out = applyBaselineEdit([], ['Bash'], st());
     expect(out.removed).toEqual(['Bash']);
     expect(out.overridden).toBe(true);
   });
 
-  it('returns to inherited when a baseline edit restores it', () => {
-    const out = decideToolsChange(
-      base({
-        tools: ['Read'],
-        baseline: ['Read'],
-        state: {
-          tools: ['Read', 'Bash(x:*)'],
-          overridden: true,
-          explicit: false,
-          added: ['Bash(x:*)'],
-          removed: [],
-        },
-      })
+  it('records an addition and stays overridden', () => {
+    const out = applyBaselineEdit(['Read', 'Bash(x:*)'], ['Read'], st());
+    expect(out.added).toEqual(['Bash(x:*)']);
+    expect(out.overridden).toBe(true);
+  });
+
+  it('never reports explicit intent', () => {
+    expect(applyBaselineEdit(['Read', 'Grep'], ['Read'], st()).explicit).toBe(false);
+  });
+});
+
+describe('decideToolsChange precedence', () => {
+  it('prefers the inherit-preset arm over later gates', () => {
+    expect(decideToolsChange('preset', [], false, ['Read'], st({ explicit: true }))).toEqual(
+      st({ tools: ['Read'] })
     );
-    expect(out.overridden).toBe(false);
-    expect(out.added).toEqual([]);
+  });
+
+  it('prefers the preset arm over the explicit-edit gate', () => {
+    const out = decideToolsChange('preset', ['Grep'], true, ['Read'], st({ explicit: true }));
+    expect(out.tools).toEqual(['Grep']);
+    expect(out.explicit).toBe(true);
+  });
+
+  it('falls through to the baseline edit when nothing terminates earlier', () => {
+    const out = decideToolsChange('edit', [], true, ['Bash'], st());
+    expect(out.removed).toEqual(['Bash']);
   });
 });
