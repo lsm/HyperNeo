@@ -2444,7 +2444,7 @@ class SpaceStore {
       'spaceAgent.createTemplate',
       { spaceId, ...params }
     );
-    this.upsertAgentTemplate(template);
+    if (this.spaceId.value === spaceId) this.upsertAgentTemplate(template);
     return template;
   }
 
@@ -2462,7 +2462,7 @@ class SpaceStore {
       { spaceId, key, ...params }
     );
     if (!template) throw new Error(`Template ${key} was modified concurrently`);
-    this.upsertAgentTemplate(template);
+    if (this.spaceId.value === spaceId) this.upsertAgentTemplate(template);
     return template;
   }
 
@@ -2476,6 +2476,7 @@ class SpaceStore {
       'spaceAgent.deleteTemplate',
       expectedVersion === undefined ? { spaceId, key } : { spaceId, key, expectedVersion }
     );
+    if (this.spaceId.value !== spaceId) return;
     this.agentTemplates.value = this.agentTemplates.value.filter((t) => t.key !== key);
     this.userTemplateKeys.value = new Set(
       [...this.userTemplateKeys.value].filter((existing) => existing !== key)

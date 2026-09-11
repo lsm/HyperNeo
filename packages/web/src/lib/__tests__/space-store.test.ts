@@ -3214,6 +3214,42 @@ describe('SpaceStore — template CRUD methods', () => {
     expect(mockHub.request).not.toHaveBeenCalled();
   });
 
+  it('createTemplate() discards the response when the Space changed while it was in flight', async () => {
+    let resolveCreate: (value: { template: SpaceAgentTemplate }) => void = () => {};
+    mockHub.request.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        })
+    );
+
+    const pending = spaceStore.createTemplate({ key: 'scribe', handle: 'scribe-agent' });
+    spaceStore.spaceId.value = 'space-2';
+    resolveCreate({ template: makeAgentTemplate({ key: 'scribe' }) });
+    await pending;
+
+    expect(spaceStore.agentTemplates.value).toEqual([]);
+  });
+
+  it('deleteTemplate() leaves the cache alone when the Space changed while it was in flight', async () => {
+    templateListResult = [makeAgentTemplate({ key: 'scribe' })];
+    await spaceStore.fetchTemplates();
+    let resolveDelete: (value: { success: boolean }) => void = () => {};
+    mockHub.request.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveDelete = resolve;
+        })
+    );
+
+    const pending = spaceStore.deleteTemplate('scribe');
+    spaceStore.spaceId.value = 'space-2';
+    resolveDelete({ success: true });
+    await pending;
+
+    expect(spaceStore.agentTemplates.value.map((t) => t.key)).toEqual(['scribe']);
+  });
+
   it('createTemplate() calls the RPC and appends the mapped template to agentTemplates', async () => {
     const template = await spaceStore.createTemplate({
       key: 'scribe',
