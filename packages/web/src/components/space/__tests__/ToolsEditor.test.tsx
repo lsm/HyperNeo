@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  addScopedTool,
   applyToolsPreset,
   detectToolsPreset,
   removeScopedTool,
@@ -489,5 +490,88 @@ describe('preset detection with scoped entries', () => {
       />
     );
     expect(getByTestId('tools-editor-preset-read-only').className).toContain('bg-accent/20');
+  });
+});
+
+describe('adding scoped tool entries', () => {
+  it('accepts a valid scoped Bash entry', () => {
+    expect(addScopedTool(['Read'], 'Bash(gh pr view:*)')).toEqual({
+      tools: ['Read', 'Bash(gh pr view:*)'],
+      toolsOverridden: true,
+    });
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(addScopedTool([], '  Bash(ls:*)  ')).toEqual({
+      tools: ['Bash(ls:*)'],
+      toolsOverridden: true,
+    });
+  });
+
+  it('rejects an empty entry', () => {
+    expect(addScopedTool([], '   ')).toEqual({ error: 'Enter a tool entry' });
+  });
+
+  it('rejects something that is not a tool entry', () => {
+    expect(addScopedTool([], 'rm -rf /')).toEqual({
+      error: 'Not a valid tool entry: rm -rf /',
+    });
+  });
+
+  it('rejects a duplicate', () => {
+    expect(addScopedTool(['Bash(ls:*)'], 'Bash(ls:*)')).toEqual({
+      error: 'Already on this profile: Bash(ls:*)',
+    });
+  });
+
+  it('adds an entry through the input and clears the draft', () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <ToolsEditor
+        tools={['Read']}
+        toolsOverridden={true}
+        onChange={onChange}
+        manageScopedEntries
+      />
+    );
+    const input = getByTestId('tools-editor-scoped-input') as HTMLInputElement;
+    fireEvent.input(input, { target: { value: 'Bash(ls:*)' } });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    expect(onChange).toHaveBeenCalledWith({
+      tools: ['Read', 'Bash(ls:*)'],
+      toolsOverridden: true,
+    });
+  });
+
+  it('shows an error instead of emitting for an invalid entry', () => {
+    const onChange = vi.fn();
+    const { getByTestId } = render(
+      <ToolsEditor
+        tools={['Read']}
+        toolsOverridden={true}
+        onChange={onChange}
+        manageScopedEntries
+      />
+    );
+    fireEvent.input(getByTestId('tools-editor-scoped-input'), { target: { value: 'nope' } });
+    fireEvent.click(getByTestId('tools-editor-scoped-add'));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(getByTestId('tools-editor-scoped-error').textContent).toContain(
+      'Not a valid tool entry'
+    );
+  });
+
+  it('offers the input even when no scoped entry exists yet', () => {
+    const { getByTestId } = render(
+      <ToolsEditor tools={['Read']} toolsOverridden={true} onChange={vi.fn()} manageScopedEntries />
+    );
+    expect(getByTestId('tools-editor-scoped-input')).toBeTruthy();
+  });
+
+  it('stays hidden for consumers that do not opt in', () => {
+    const { queryByTestId } = render(
+      <ToolsEditor tools={['Read']} toolsOverridden={true} onChange={vi.fn()} />
+    );
+    expect(queryByTestId('tools-editor-scoped-input')).toBeNull();
   });
 });
