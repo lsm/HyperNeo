@@ -1,3 +1,4 @@
+import type { OperationRegistryProvider } from '../operations/registry.ts';
 import type {
   ImageContent,
   MessageDeliveryMode,
@@ -78,6 +79,7 @@ export class SessionManager {
   private toolsConfigManager: ToolsConfigManager;
   private messagePersistence: MessagePersistence;
   private spaceRuntimeMcpProvider?: SpaceRuntimeMcpProvider;
+  private operationRegistryProvider?: OperationRegistryProvider;
   private mailboxDeferredReplaySuppressor?: (sessionId: string) => void;
   private workflowMcpProvisioning = new Map<
     string,
@@ -160,6 +162,7 @@ export class SessionManager {
       {
         autoReplayPendingMessages: !this.needsSpaceRuntimeProvisioning(session),
         ...runtimeOptions,
+        operationRegistryProvider: this.operationRegistryProvider,
         hardReset: (agentSession, options) => this.hardResetAgentSession(agentSession, options),
       }
     );
@@ -465,6 +468,11 @@ export class SessionManager {
     return sessions;
   }
 
+  setOperationRegistryProvider(provider: OperationRegistryProvider): void {
+    this.operationRegistryProvider = provider;
+    for (const session of this.getCachedSessions()) session.setOperationRegistryProvider(provider);
+  }
+
   setSpaceRuntimeMcpProvider(provider: SpaceRuntimeMcpProvider): void {
     this.spaceRuntimeMcpProvider = provider;
   }
@@ -610,6 +618,9 @@ export class SessionManager {
   }
 
   registerSession(agentSession: AgentSession): void {
+    if (this.operationRegistryProvider) {
+      agentSession.setOperationRegistryProvider(this.operationRegistryProvider);
+    }
     if (this.mailboxDeferredReplaySuppressor) {
       const suppressor = this.mailboxDeferredReplaySuppressor;
       agentSession.suppressDeferredReplay = (sessionId) => suppressor(sessionId);

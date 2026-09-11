@@ -1,3 +1,4 @@
+import { resolveOperationRegistry } from './registry.ts';
 import {
   ErrorCode,
   MessageHubHandlerError,
@@ -6,12 +7,12 @@ import {
 } from '@hyperneo/shared';
 import { z } from 'zod';
 import { invokeOperation } from './invoke.ts';
-import type { OperationCaller, OperationRegistry } from './registry.ts';
+import type { OperationCaller, OperationRegistrySource } from './registry.ts';
 
 const InvocationSchema = z.object({ name: z.string().min(1), input: z.unknown().optional() });
 
 export function createOperationRpcHandler(
-  registry: OperationRegistry,
+  registry: OperationRegistrySource,
   resolveCaller: (
     context: CallContext
   ) => Omit<OperationCaller, 'source'> | Promise<Omit<OperationCaller, 'source'>>
@@ -22,10 +23,15 @@ export function createOperationRpcHandler(
       throw new MessageHubHandlerError(parsed.error.message, ErrorCode.INVALID_PARAMS);
     }
     const caller = await resolveCaller(context);
-    const outcome = await invokeOperation(registry, parsed.data.name, parsed.data.input, {
-      ...caller,
-      source: 'rpc',
-    });
+    const outcome = await invokeOperation(
+      resolveOperationRegistry(registry),
+      parsed.data.name,
+      parsed.data.input,
+      {
+        ...caller,
+        source: 'rpc',
+      }
+    );
     if (outcome.kind === 'completed') return outcome.value;
     const code =
       outcome.code === 'unknown_operation'

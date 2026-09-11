@@ -1,3 +1,6 @@
+import { z } from 'zod';
+import { SessionManager } from '../../../../src/lib/session/session-manager';
+import { createOperationRegistry, defineOperation } from '../../../../src/lib/operations/registry';
 import { SpaceRepository } from '../../../../src/storage/repositories/space-repository';
 import { SpaceTaskRepository } from '../../../../src/storage/repositories/space-task-repository';
 import { readTaskCore } from '../../../../src/storage/tasks/task-reader';
@@ -45,6 +48,63 @@ describe('session operation MCP attachment', () => {
     sessions.push(session);
     return session;
   }
+
+  test('manager provider adoption reaches cached, restored, new and registered session servers', async () => {
+    const manager = new SessionManager(
+      db,
+      hub,
+      { getCurrentApiKey: async () => null } as ConstructorParameters<typeof SessionManager>[2],
+      {} as ConstructorParameters<typeof SessionManager>[3],
+      await createTestInternalEventBus(),
+      { defaultModel: 'claude-sonnet-4-20250514', disableWorktrees: true },
+      db.getJobQueueRepo(),
+      {} as ConstructorParameters<typeof SessionManager>[7]
+    );
+    const catalog = (name: string) =>
+      createOperationRegistry([
+        defineOperation({
+          name,
+          description: name,
+          inputSchema: z.unknown(),
+          resultSchema: z.unknown(),
+          execute: async (_input, caller) => caller,
+        }),
+      ]);
+    try {
+      db.createSession(createTestSession('existing'));
+      const existing = await restore('existing');
+      const cachedServer = existing.getOperationMcpServer();
+      manager.registerSession(existing);
+      manager.setOperationRegistryProvider(() => catalog('first'));
+      expect(existing.getOperationMcpServer()).toBe(cachedServer);
+      expect(await cachedServer.tools[0].handler({ name: 'first' }, {})).toMatchObject({
+        content: [{ text: JSON.stringify({ sessionId: 'existing', source: 'mcp' }) }],
+      });
+      db.createSession(createTestSession('resumed'));
+      const resumed = manager.getSession('resumed')!;
+      const createdId = await manager.createSession({ title: 'New provider session' });
+      const created = manager.getSession(createdId)!;
+      db.createSession({ ...createTestSession('workflow'), type: 'space_task_agent' });
+      const workflow = await restore('workflow');
+      const workflowServer = workflow.getOperationMcpServer();
+      manager.registerSession(workflow);
+      for (const session of [resumed, created, workflow]) {
+        expect(
+          (await session.getOperationMcpServer().tools[0].handler({ name: 'first' }, {})).isError
+        ).not.toBe(true);
+      }
+      manager.setOperationRegistryProvider(() => catalog('second'));
+      for (const session of [existing, resumed, created, workflow]) {
+        const handler = session.getOperationMcpServer().tools[0].handler;
+        expect((await handler({ name: 'second' }, {})).isError).not.toBe(true);
+        expect((await handler({ name: 'first' }, {})).isError).toBe(true);
+      }
+      expect(workflow.getOperationMcpServer()).toBe(workflowServer);
+    } finally {
+      await manager.cleanup();
+      sessions = [];
+    }
+  });
 
   test('ordinary chat sessions create independent tasks through the shared MCP operation', async () => {
     db.createSession(createTestSession('creator'));
