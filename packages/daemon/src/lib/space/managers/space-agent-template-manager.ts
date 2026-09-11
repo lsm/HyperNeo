@@ -273,7 +273,7 @@ async function createValidateModelPool(ctx: CreateTemplateCtx): Promise<CreateTe
 }
 
 function createCheckKeyAvailable(ctx: CreateTemplateCtx): CreateTemplateCtx {
-  if (ctx.repo.getOwned(ctx.spaceId, ctx.params.key)) {
+  if (ctx.repo.getByKey(ctx.params.key)) {
     return { ...ctx, error: `Template key already exists: ${ctx.params.key}` };
   }
   return ctx;
