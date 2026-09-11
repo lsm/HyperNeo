@@ -1,6 +1,11 @@
 import type { SpaceAgentStatus } from '@hyperneo/shared';
 
 const THINKING_LEVELS = new Set(['off', 'think8k', 'think16k', 'think24k', 'think32k']);
+
+export function isValidThinkingLevel(value: unknown): boolean {
+  return typeof value === 'string' && THINKING_LEVELS.has(value);
+}
+
 const SETTING_SOURCES = new Set(['user', 'project', 'local']);
 const AGENT_STATUSES = new Set(['active', 'paused', 'disabled', 'archived']);
 
@@ -62,7 +67,7 @@ export function firstAgentFieldError(fields: AgentFieldValues): string | null {
   if (
     fields.thinkingLevel !== undefined &&
     fields.thinkingLevel !== null &&
-    !THINKING_LEVELS.has(fields.thinkingLevel)
+    !isValidThinkingLevel(fields.thinkingLevel)
   ) {
     return `Invalid thinkingLevel: ${String(fields.thinkingLevel)}`;
   }

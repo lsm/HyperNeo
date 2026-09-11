@@ -1091,6 +1091,7 @@ export interface AgentModelPoolEntry {
   provider?: string;
   maxConcurrent: number;
   weight: number;
+  thinkingLevel?: ThinkingLevel | null;
 }
 
 export interface WorkflowNodeAgent {
@@ -1285,7 +1286,7 @@ export interface ExportedWorkflowNode {
 }
 
 export interface ExportedSpaceAgent {
-  version: 1 | 2 | 3 | 4 | 5;
+  version: 1 | 2 | 3 | 4 | 5 | 6;
   type: 'agent';
   name: string;
   handle?: string;
@@ -1301,7 +1302,7 @@ export interface ExportedSpaceAgent {
 }
 
 export interface ExportedSpaceWorkflow {
-  version: 1 | 2 | 3 | 4 | 5;
+  version: 1 | 2 | 3 | 4 | 5 | 6;
   type: 'workflow';
   name: string;
   description?: string;
@@ -1318,7 +1319,7 @@ export interface ExportedSpaceWorkflow {
 }
 
 export interface SpaceExportBundle {
-  version: 1 | 2 | 3 | 4 | 5;
+  version: 1 | 2 | 3 | 4 | 5 | 6;
   type: 'bundle';
   name: string;
   description?: string;

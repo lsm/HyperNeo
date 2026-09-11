@@ -583,14 +583,14 @@ describe('Space Export/Import RPC Handlers', () => {
 
     it('imports migrated template slots through their agent fallback', async () => {
       const bundle = {
-        version: 5,
+        version: 6,
         type: 'bundle',
         name: 'Test Bundle',
         exportedAt: 1000,
         agents: [{ version: 1, type: 'agent', name: 'Coder' }],
         workflows: [
           {
-            version: 5,
+            version: 6,
             type: 'workflow',
             name: 'Migrated Pipe',
             nodes: [
@@ -634,14 +634,14 @@ describe('Space Export/Import RPC Handlers', () => {
         displayName: 'Reviewer',
       });
       const bundle = {
-        version: 5,
+        version: 6,
         type: 'bundle',
         name: 'Test Bundle',
         exportedAt: 1000,
         agents: [],
         workflows: [
           {
-            version: 5,
+            version: 6,
             type: 'workflow',
             name: 'Template Pipe',
             nodes: [
@@ -680,14 +680,14 @@ describe('Space Export/Import RPC Handlers', () => {
         labels: ['relocated-from:worker.swe'],
       });
       const bundle = {
-        version: 5,
+        version: 6,
         type: 'bundle',
         name: 'Test Bundle',
         exportedAt: 1000,
         agents: [],
         workflows: [
           {
-            version: 5,
+            version: 6,
             type: 'workflow',
             name: 'Legacy Coder Pipe',
             nodes: [
@@ -722,14 +722,14 @@ describe('Space Export/Import RPC Handlers', () => {
 
     it('rejects a legacy route whose slot name matches an earlier slot template key', async () => {
       const bundle = {
-        version: 5,
+        version: 6,
         type: 'bundle',
         name: 'Test Bundle',
         exportedAt: 1000,
         agents: [],
         workflows: [
           {
-            version: 5,
+            version: 6,
             type: 'workflow',
             name: 'Key Shadow Pipe',
             nodes: [
@@ -756,14 +756,14 @@ describe('Space Export/Import RPC Handlers', () => {
 
     it('resolves a legacy route to the original worker.coder slot, not a literal worker.swe slot', async () => {
       const bundle = {
-        version: 5,
+        version: 6,
         type: 'bundle',
         name: 'Test Bundle',
         exportedAt: 1000,
         agents: [],
         workflows: [
           {
-            version: 5,
+            version: 6,
             type: 'workflow',
             name: 'Collision Pipe',
             nodes: [
@@ -794,14 +794,14 @@ describe('Space Export/Import RPC Handlers', () => {
 
     it('preserves a route that exactly matches a whitespace-suffixed slot name', async () => {
       const bundle = {
-        version: 5,
+        version: 6,
         type: 'bundle',
         name: 'Test Bundle',
         exportedAt: 1000,
         agents: [],
         workflows: [
           {
-            version: 5,
+            version: 6,
             type: 'workflow',
             name: 'Whitespace Pipe',
             nodes: [
@@ -832,14 +832,14 @@ describe('Space Export/Import RPC Handlers', () => {
 
     it('selects legacy routes by raw keys so padded keys never capture them', async () => {
       const bundle = {
-        version: 5,
+        version: 6,
         type: 'bundle',
         name: 'Test Bundle',
         exportedAt: 1000,
         agents: [],
         workflows: [
           {
-            version: 5,
+            version: 6,
             type: 'workflow',
             name: 'Padded Key Pipe',
             nodes: [
@@ -872,14 +872,14 @@ describe('Space Export/Import RPC Handlers', () => {
 
     it('rejects a worker.swe route whose selection changes after legacy-key normalization', async () => {
       const bundle = {
-        version: 5,
+        version: 6,
         type: 'bundle',
         name: 'Test Bundle',
         exportedAt: 1000,
         agents: [],
         workflows: [
           {
-            version: 5,
+            version: 6,
             type: 'workflow',
             name: 'Reselect Pipe',
             nodes: [
@@ -906,14 +906,14 @@ describe('Space Export/Import RPC Handlers', () => {
 
     it('rejects a legacy route whose resolved slot name is shadowed by an earlier slot', async () => {
       const bundle = {
-        version: 5,
+        version: 6,
         type: 'bundle',
         name: 'Test Bundle',
         exportedAt: 1000,
         agents: [],
         workflows: [
           {
-            version: 5,
+            version: 6,
             type: 'workflow',
             name: 'Shadowed Pipe',
             nodes: [
@@ -946,14 +946,14 @@ describe('Space Export/Import RPC Handlers', () => {
         labels: ['relocated-from:worker.swe'],
       });
       const bundle = {
-        version: 5,
+        version: 6,
         type: 'bundle',
         name: 'Test Bundle',
         exportedAt: 1000,
         agents: [],
         workflows: [
           {
-            version: 5,
+            version: 6,
             type: 'workflow',
             name: 'Ambiguous Pipe',
             nodes: [
@@ -983,14 +983,14 @@ describe('Space Export/Import RPC Handlers', () => {
         displayName: 'Unrelated',
       });
       const bundle = {
-        version: 5,
+        version: 6,
         type: 'bundle',
         name: 'Test Bundle',
         exportedAt: 1000,
         agents: [],
         workflows: [
           {
-            version: 5,
+            version: 6,
             type: 'workflow',
             name: 'Plain Pipe',
             nodes: [
@@ -1014,14 +1014,14 @@ describe('Space Export/Import RPC Handlers', () => {
 
     it('normalizes legacy routes declared on a different node than the template slot', async () => {
       const bundle = {
-        version: 5,
+        version: 6,
         type: 'bundle',
         name: 'Test Bundle',
         exportedAt: 1000,
         agents: [],
         workflows: [
           {
-            version: 5,
+            version: 6,
             type: 'workflow',
             name: 'Cross Node Pipe',
             nodes: [
@@ -1059,14 +1059,14 @@ describe('Space Export/Import RPC Handlers', () => {
         instructions: 'Unrelated content',
       });
       const bundle = {
-        version: 5,
+        version: 6,
         type: 'bundle',
         name: 'Test Bundle',
         exportedAt: 1000,
         agents: [{ version: 1, type: 'agent', name: 'Coder' }],
         workflows: [
           {
-            version: 5,
+            version: 6,
             type: 'workflow',
             name: 'Migrated Pipe',
             nodes: [
@@ -1099,14 +1099,14 @@ describe('Space Export/Import RPC Handlers', () => {
 
     it('flags migrated template slots with no resolvable agent fallback', async () => {
       const bundle = {
-        version: 5,
+        version: 6,
         type: 'bundle',
         name: 'Test Bundle',
         exportedAt: 1000,
         agents: [],
         workflows: [
           {
-            version: 5,
+            version: 6,
             type: 'workflow',
             name: 'Migrated Pipe',
             nodes: [
@@ -3337,9 +3337,9 @@ describe('full export→import round-trip', () => {
     };
 
     const bundle = exportBundle([workerAgent], [workflow], 'V4 Export');
-    expect(bundle.version).toBe(5);
+    expect(bundle.version).toBe(6);
     expect(bundle.agents[0]).toMatchObject({
-      version: 5,
+      version: 6,
       type: 'agent',
       name: 'V4 Worker',
       handle: 'legacy-handle',

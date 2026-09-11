@@ -5,6 +5,7 @@ import {
   getModelInfoUnfiltered,
   isValidModel,
 } from '../../model-service.ts';
+import { isValidThinkingLevel } from './agent-field-validation.ts';
 
 export type SpaceAgentResult<T> =
   | { ok: true; value: T }
@@ -33,7 +34,12 @@ export async function validateAgentModel(
 }
 
 export async function validateAgentModelPool(
-  pool: { model: string; maxConcurrent: number; weight: number }[]
+  pool: {
+    model: string;
+    maxConcurrent: number;
+    weight: number;
+    thinkingLevel?: string | null;
+  }[]
 ): Promise<string | null> {
   const seen = new Set<string>();
   for (const entry of pool) {
@@ -47,6 +53,13 @@ export async function validateAgentModelPool(
     }
     if (!Number.isFinite(entry.weight) || entry.weight < 0) {
       return `Model pool entry for "${entry.model}" must have weight >= 0`;
+    }
+    if (
+      entry.thinkingLevel !== undefined &&
+      entry.thinkingLevel !== null &&
+      !isValidThinkingLevel(entry.thinkingLevel)
+    ) {
+      return `Model pool entry for "${entry.model}" has an invalid thinkingLevel: ${String(entry.thinkingLevel)}`;
     }
     const modelError = await validateAgentModel(entry.model);
     if (modelError) return modelError;
