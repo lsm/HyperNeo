@@ -791,6 +791,77 @@ describe('SpaceAgentsPage', () => {
     expect(new Set(sent).size).toBe(sent.length);
   });
 
+  it('omits setting sources on create while inherited', async () => {
+    const { getByTestId, queryByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    expect(getByTestId('agent-setting-sources-field')).toBeTruthy();
+    expect(queryByTestId('agent-setting-sources-reset')).toBeNull();
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Scribe' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].settingSources).toBeUndefined();
+  });
+
+  it('sends an override once a source is toggled', async () => {
+    const { getByTestId, getByLabelText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Scribe' } });
+    const field = getByTestId('agent-setting-sources-field');
+    const boxes = [...field.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[];
+    fireEvent.click(boxes[0]);
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(Array.isArray(mockCreate.mock.calls[0][0].settingSources)).toBe(true);
+    expect(mockCreate.mock.calls[0][0].settingSources).not.toContain('user');
+  });
+
+  it('shows an agent with stored sources as overridden and round-trips them', async () => {
+    mockAgents.value = [makeAgent('alpha', { settingSources: ['project'] })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    expect(getByTestId('agent-setting-sources-reset')).toBeTruthy();
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].settingSources).toEqual(['project']);
+  });
+
+  it('resets an override back to inherited', async () => {
+    mockAgents.value = [makeAgent('alpha', { settingSources: ['project'] })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    fireEvent.click(getByTestId('agent-setting-sources-reset'));
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].settingSources).toBeNull();
+  });
+
+  it('keeps an empty override distinct from inherited', async () => {
+    mockAgents.value = [makeAgent('alpha', { settingSources: ['project'] })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Edit'));
+    const field = getByTestId('agent-setting-sources-field');
+    const checked = [...field.querySelectorAll('input[type="checkbox"]')].filter(
+      (box) => (box as HTMLInputElement).checked
+    ) as HTMLInputElement[];
+    for (const box of checked) fireEvent.click(box);
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].settingSources).toEqual([]);
+  });
+
   it('clears a description on edit rather than dropping the field', async () => {
     mockAgents.value = [makeAgent('alpha', { description: 'old' })];
     const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);

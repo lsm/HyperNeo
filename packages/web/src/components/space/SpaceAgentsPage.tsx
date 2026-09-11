@@ -2,6 +2,7 @@ import type {
   AgentModelPoolEntry,
   SpaceAgent,
   SpaceAgentAutonomyLevel,
+  SettingSource,
   SpaceAgentStatus,
 } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
@@ -10,6 +11,7 @@ import { spaceAgentStore } from '../../lib/space-agent-store';
 import { spaceStore } from '../../lib/space-store';
 import { ModelPoolEditor } from './ModelPoolEditor';
 import { type ToolsSelection, ToolsEditor } from './ToolsEditor';
+import { SettingSourcesEditor } from './SettingSourcesEditor';
 import { KNOWN_TOOLS } from '@hyperneo/shared';
 import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
@@ -73,6 +75,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
   const [formAutonomy, setFormAutonomy] = useState<string>('');
   const [formModelPool, setFormModelPool] = useState<AgentModelPoolEntry[]>([]);
   const [formTools, setFormTools] = useState<ToolsSelection>({ tools: [], toolsOverridden: false });
+  const [formSettingSources, setFormSettingSources] = useState<SettingSource[] | null>(null);
   const activeSpaceRef = useRef(spaceId);
   const formGenerationRef = useRef(0);
 
@@ -90,6 +93,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     setFormAutonomy('');
     setFormModelPool([]);
     setFormTools({ tools: [], toolsOverridden: false });
+    setFormSettingSources(null);
   }
 
   useEffect(() => {
@@ -121,6 +125,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     setFormAutonomy('');
     setFormModelPool([]);
     setFormTools({ tools: [], toolsOverridden: false });
+    setFormSettingSources(null);
   }
 
   function openEdit(agent: SpaceAgent) {
@@ -132,6 +137,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     setFormAutonomy(agent.autonomyLevel ? String(agent.autonomyLevel) : '');
     setFormModelPool(poolFromAgent(agent));
     setFormTools({ tools: agent.tools ?? [], toolsOverridden: agent.tools !== null });
+    setFormSettingSources(agent.settingSources ?? null);
   }
 
   function closeForm() {
@@ -174,6 +180,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
           model: null,
           provider: null,
           tools: formTools.toolsOverridden ? formTools.tools : null,
+          settingSources: formSettingSources,
         });
         if (!isCurrentSubmission()) return;
       } else {
@@ -186,6 +193,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
           autonomyLevel: autonomyChoice === '' ? undefined : autonomyLevel,
           modelPool: formModelPool.length > 0 ? formModelPool : undefined,
           tools: formTools.toolsOverridden ? formTools.tools : undefined,
+          settingSources: formSettingSources ?? undefined,
           templateKey: field('templateKey') || undefined,
         });
         if (!isCurrentSubmission()) return;
@@ -383,6 +391,31 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
                     );
                     setFormTools({ ...next, tools: [...next.tools, ...scoped] });
                   }}
+                />
+              </div>
+
+              <div data-testid="agent-setting-sources-field">
+                <div class="mb-1 flex items-center justify-between">
+                  <span class="text-xs text-fg-soft">
+                    Setting sources
+                    {formSettingSources === null && (
+                      <span class="ml-2 text-fg-muted">(inherited)</span>
+                    )}
+                  </span>
+                  {formSettingSources !== null && (
+                    <button
+                      type="button"
+                      class="text-xs text-fg-muted hover:text-fg-soft"
+                      data-testid="agent-setting-sources-reset"
+                      onClick={() => setFormSettingSources(null)}
+                    >
+                      Reset to inherited
+                    </button>
+                  )}
+                </div>
+                <SettingSourcesEditor
+                  value={formSettingSources}
+                  onChange={(next) => setFormSettingSources(next)}
                 />
               </div>
 
