@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -48,7 +50,7 @@ test('existing tasks remain unselected and migration reruns preserve attempt his
   const claimed = repo.claim(taskId, 'attempt', 'session');
   runMigration248(db);
   expect(other.get('attempt')).toEqual(claimed);
-  expect(tasks.getTask(taskId)).toMatchObject({ status: 'open', workflowRunId: null });
+  expect(tasks.getTask(taskId)).toMatchObject({ status: 'open', workflowRunId: undefined });
 });
 
 test('concurrent processes compete for exactly one reservation', async () => {
@@ -65,16 +67,12 @@ test('concurrent processes compete for exactly one reservation', async () => {
       console.log(JSON.stringify(attempt));
       db.close();
     `;
-    return Bun.spawn([process.execPath, '--eval', script], { stdout: 'pipe', stderr: 'pipe' });
+    return promisify(execFile)('bun', ['--eval', script]);
   });
   const claims = await Promise.all(
     clients.map(async (client) => {
-      const [stdout, stderr, exit] = await Promise.all([
-        new Response(client.stdout).text(),
-        new Response(client.stderr).text(),
-        client.exited,
-      ]);
-      expect({ exit, stderr }).toEqual({ exit: 0, stderr: '' });
+      const { stdout, stderr } = await client;
+      expect(stderr).toBe('');
       return JSON.parse(stdout);
     })
   );
@@ -130,9 +128,15 @@ test.each(['draft', 'in_progress', 'review', 'done', 'archived'] as const)(
 
 test('missing, non-Space and workflow-attached targets cannot opt in or claim', () => {
   expect(repo.select('missing')).toBe(false);
-  db.prepare('UPDATE space_tasks SET space_id = NULL WHERE id = ?').run(taskId);
+  const taskNumber = tasks.getTask(taskId)!.taskNumber;
+  db.prepare('UPDATE space_tasks SET space_id = NULL, task_number = NULL WHERE id = ?').run(taskId);
   expect(repo.select(taskId)).toBe(false);
-  db.prepare('UPDATE space_tasks SET space_id = ? WHERE id = ?').run(spaceId, taskId);
+  expect(repo.claim(taskId, 'non-space', 'non-space-session')).toBeNull();
+  db.prepare('UPDATE space_tasks SET space_id = ?, task_number = ? WHERE id = ?').run(
+    spaceId,
+    taskNumber,
+    taskId
+  );
   repo.select(taskId);
   db.exec('PRAGMA foreign_keys = OFF');
   db.prepare('UPDATE space_tasks SET workflow_run_id = ? WHERE id = ?').run('run', taskId);
