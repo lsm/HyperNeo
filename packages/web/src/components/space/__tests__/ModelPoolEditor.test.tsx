@@ -5,10 +5,16 @@ import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { useState } from 'preact/hooks';
 import type { AgentModelPoolEntry } from '@hyperneo/shared';
 
+const mockLoadedModels = [
+  { id: 'kimi-k3', provider: 'kimi', thinkingModes: 'granular' },
+  { id: 'kimi-k2', provider: 'kimi', thinkingModes: 'on' },
+];
+
 vi.mock('../visual-editor/WorkflowModelSelect', () => ({
   WorkflowModelSelect: ({
     value,
     onChange,
+    onModelsLoad,
     testId,
     className,
   }: {
@@ -17,15 +23,21 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
       value: string | undefined,
       selection?: { provider: string; modelId: string }
     ) => void;
+    onModelsLoad?: (models: unknown[]) => void;
     testId: string;
     className?: string;
   }) => (
     <select
       data-testid={testId}
       value={value ?? ''}
+      ref={() => onModelsLoad?.(mockLoadedModels)}
       onChange={(e) => {
         const value = (e.target as HTMLSelectElement).value || undefined;
-        onChange(value, value ? { provider: 'anthropic', modelId: value } : undefined);
+        const loaded = mockLoadedModels.find((m) => m.id === value);
+        onChange(
+          value,
+          value ? { provider: loaded?.provider ?? 'anthropic', modelId: value } : undefined
+        );
       }}
       class={className}
     >
@@ -33,6 +45,8 @@ vi.mock('../visual-editor/WorkflowModelSelect', () => ({
       <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
       <option value="claude-haiku-4-5">Claude Haiku 4.5</option>
       <option value="gpt-5.4">GPT-5.4</option>
+      <option value="kimi-k3">Kimi K3</option>
+      <option value="kimi-k2">Kimi K2</option>
     </select>
   ),
 }));
@@ -338,5 +352,188 @@ describe('ModelPoolEditor', () => {
       />
     );
     expect(getByText('Model is required')).toBeTruthy();
+  });
+  it('defaults a pool entry to the agent thinking level', () => {
+    const onModelPoolChange = vi.fn();
+    const { getAllByTestId } = render(
+      <ModelPoolEditor
+        mode="pool"
+        modelPool={[{ model: 'claude-opus-5', maxConcurrent: 1, weight: 100 }]}
+        onModelPoolChange={onModelPoolChange}
+      />
+    );
+    const select = getAllByTestId('pool-entry-thinking-select')[0] as HTMLSelectElement;
+    expect(select.value).toBe('');
+    expect(select.options[0].textContent).toBe('Agent default');
+  });
+
+  it('shows the stored thinking level for an entry', () => {
+    const { getAllByTestId } = render(
+      <ModelPoolEditor
+        mode="pool"
+        modelPool={[
+          { model: 'claude-opus-5', maxConcurrent: 1, weight: 100, thinkingLevel: 'think16k' },
+        ]}
+        onModelPoolChange={vi.fn()}
+      />
+    );
+    expect((getAllByTestId('pool-entry-thinking-select')[0] as HTMLSelectElement).value).toBe(
+      'think16k'
+    );
+  });
+
+  it('emits a thinking level for the edited entry only', () => {
+    const onModelPoolChange = vi.fn();
+    const { getAllByTestId } = render(
+      <ModelPoolEditor
+        mode="pool"
+        modelPool={[
+          { model: 'claude-opus-5', maxConcurrent: 1, weight: 100 },
+          { model: 'claude-sonnet-5', maxConcurrent: 2, weight: 50 },
+        ]}
+        onModelPoolChange={onModelPoolChange}
+      />
+    );
+    const select = getAllByTestId('pool-entry-thinking-select')[1] as HTMLSelectElement;
+    fireEvent.input(select, { target: { value: 'think32k' } });
+    expect(onModelPoolChange).toHaveBeenCalledWith([
+      { model: 'claude-opus-5', maxConcurrent: 1, weight: 100 },
+      { model: 'claude-sonnet-5', maxConcurrent: 2, weight: 50, thinkingLevel: 'think32k' },
+    ]);
+  });
+
+  it('clears the thinking level back to the agent default', () => {
+    const onModelPoolChange = vi.fn();
+    const { getAllByTestId } = render(
+      <ModelPoolEditor
+        mode="pool"
+        modelPool={[
+          { model: 'claude-opus-5', maxConcurrent: 1, weight: 100, thinkingLevel: 'think8k' },
+        ]}
+        onModelPoolChange={onModelPoolChange}
+      />
+    );
+    const select = getAllByTestId('pool-entry-thinking-select')[0] as HTMLSelectElement;
+    fireEvent.input(select, { target: { value: '' } });
+    expect(onModelPoolChange).toHaveBeenCalledWith([
+      { model: 'claude-opus-5', maxConcurrent: 1, weight: 100, thinkingLevel: null },
+    ]);
+  });
+  it("uses the selected model's own thinking modes, not the provider default", () => {
+    const { getAllByTestId } = render(
+      <ModelPoolEditor
+        mode="pool"
+        modelPool={[{ model: 'kimi-k3', provider: 'kimi', maxConcurrent: 1, weight: 100 }]}
+        onModelPoolChange={vi.fn()}
+      />
+    );
+    const values = [
+      ...(getAllByTestId('pool-entry-thinking-select')[0] as HTMLSelectElement).options,
+    ].map((option) => option.value);
+    expect(values).toContain('think16k');
+    expect(values).toContain('think24k');
+  });
+
+  it('falls back to the provider default for a model with no granular modes', () => {
+    const { getAllByTestId } = render(
+      <ModelPoolEditor
+        mode="pool"
+        modelPool={[{ model: 'kimi-k2', provider: 'kimi', maxConcurrent: 1, weight: 100 }]}
+        onModelPoolChange={vi.fn()}
+      />
+    );
+    const values = [
+      ...(getAllByTestId('pool-entry-thinking-select')[0] as HTMLSelectElement).options,
+    ].map((option) => option.value);
+    expect(values).not.toContain('think16k');
+  });
+
+  it('retains a stored level the current model no longer offers', () => {
+    const { getAllByTestId } = render(
+      <ModelPoolEditor
+        mode="pool"
+        modelPool={[
+          {
+            model: 'kimi-k2',
+            provider: 'kimi',
+            maxConcurrent: 1,
+            weight: 100,
+            thinkingLevel: 'think24k',
+          },
+        ]}
+        onModelPoolChange={vi.fn()}
+      />
+    );
+    const select = getAllByTestId('pool-entry-thinking-select')[0] as HTMLSelectElement;
+    expect([...select.options].map((o) => o.value)).toContain('think24k');
+    expect(select.value).toBe('think24k');
+  });
+  it('clears a granular level when switching to an on/off-only model', () => {
+    const onModelPoolChange = vi.fn();
+    const { getAllByTestId } = render(
+      <ModelPoolEditor
+        mode="pool"
+        modelPool={[
+          {
+            model: 'kimi-k3',
+            provider: 'kimi',
+            maxConcurrent: 1,
+            weight: 100,
+            thinkingLevel: 'think24k',
+          },
+        ]}
+        onModelPoolChange={onModelPoolChange}
+      />
+    );
+    const modelSelect = getAllByTestId('pool-entry-model-select')[0] as HTMLSelectElement;
+    modelSelect.value = 'kimi-k2';
+    fireEvent.change(modelSelect);
+    expect(onModelPoolChange).toHaveBeenCalledWith([
+      {
+        model: 'kimi-k2',
+        provider: 'kimi',
+        maxConcurrent: 1,
+        weight: 100,
+        thinkingLevel: null,
+      },
+    ]);
+  });
+
+  it('keeps a level the newly chosen model still supports', () => {
+    const onModelPoolChange = vi.fn();
+    const { getAllByTestId } = render(
+      <ModelPoolEditor
+        mode="pool"
+        modelPool={[
+          {
+            model: 'kimi-k2',
+            provider: 'kimi',
+            maxConcurrent: 1,
+            weight: 100,
+            thinkingLevel: 'off',
+          },
+        ]}
+        onModelPoolChange={onModelPoolChange}
+      />
+    );
+    const modelSelect = getAllByTestId('pool-entry-model-select')[0] as HTMLSelectElement;
+    modelSelect.value = 'kimi-k3';
+    fireEvent.change(modelSelect);
+    expect(onModelPoolChange.mock.calls[0][0][0].thinkingLevel).toBe('off');
+  });
+
+  it('leaves an entry without a level alone when the model changes', () => {
+    const onModelPoolChange = vi.fn();
+    const { getAllByTestId } = render(
+      <ModelPoolEditor
+        mode="pool"
+        modelPool={[{ model: 'kimi-k3', provider: 'kimi', maxConcurrent: 1, weight: 100 }]}
+        onModelPoolChange={onModelPoolChange}
+      />
+    );
+    const modelSelect = getAllByTestId('pool-entry-model-select')[0] as HTMLSelectElement;
+    modelSelect.value = 'kimi-k2';
+    fireEvent.change(modelSelect);
+    expect(onModelPoolChange.mock.calls[0][0][0].thinkingLevel).toBeUndefined();
   });
 });
