@@ -25,7 +25,9 @@ const {
   mockUpdate: vi.fn(),
   mockRemove: vi.fn().mockResolvedValue(undefined),
   mockTeardown: vi.fn(),
-  mockTemplates: { value: [] as Array<{ key: string; displayName: string }> },
+  mockTemplates: {
+    value: [] as Array<{ key: string; displayName: string; settingSources?: string[] | null }>,
+  },
   mockFetchTemplates: vi.fn().mockResolvedValue(undefined),
   mockOnceConnected: vi.fn(),
   mockDisposeOnceConnected: vi.fn(),
@@ -860,6 +862,56 @@ describe('SpaceAgentsPage', () => {
 
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
     expect(mockUpdate.mock.calls[0][1].settingSources).toEqual([]);
+  });
+
+  it("shows the selected template's setting sources as the baseline", async () => {
+    mockTemplates.value = [
+      { key: 'scoped.v1', displayName: 'Scoped', settingSources: ['project'] },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    const select = getByTestId('agent-template-select') as HTMLSelectElement;
+    fireEvent.input(select, { target: { value: 'scoped.v1' } });
+
+    const field = getByTestId('agent-setting-sources-field');
+    const boxes = [...field.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[];
+    expect(boxes.filter((box) => box.checked)).toHaveLength(1);
+    expect(getByTestId('agent-setting-sources-field').textContent).toContain('inherited');
+  });
+
+  it('builds an override from the template baseline, not the space default', async () => {
+    mockTemplates.value = [
+      { key: 'scoped.v1', displayName: 'Scoped', settingSources: ['project'] },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Scribe' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'scoped.v1' } });
+    const field = getByTestId('agent-setting-sources-field');
+    const boxes = [...field.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[];
+    fireEvent.click(boxes[2]);
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].settingSources).toEqual(['project', 'local']);
+  });
+
+  it('still omits setting sources when a template is chosen but untouched', async () => {
+    mockTemplates.value = [
+      { key: 'scoped.v1', displayName: 'Scoped', settingSources: ['project'] },
+    ];
+    const { getByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('new-agent-button'));
+    fireEvent.input(getByTestId('agent-name-input'), { target: { value: 'Scribe' } });
+    fireEvent.input(getByTestId('agent-template-select'), { target: { value: 'scoped.v1' } });
+    fireEvent.submit(getByTestId('agent-form'));
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].settingSources).toBeUndefined();
+    expect(mockCreate.mock.calls[0][0].templateKey).toBe('scoped.v1');
   });
 
   it('clears a description on edit rather than dropping the field', async () => {

@@ -4,6 +4,7 @@ import type {
   SpaceAgentAutonomyLevel,
   SettingSource,
   SpaceAgentStatus,
+  SpaceLongHorizonAgentTemplate,
 } from '@hyperneo/shared';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { connectionManager } from '../../lib/connection-manager';
@@ -26,10 +27,7 @@ const EDITABLE_STATUSES: SpaceAgentStatus[] = ['active', 'paused', 'disabled'];
 const UNSET_AUTONOMY = 'none';
 const AUTONOMY_LEVELS = [1, 2, 3, 4, 5] as const;
 
-interface TemplateOption {
-  key: string;
-  displayName: string;
-}
+type TemplateOption = SpaceLongHorizonAgentTemplate;
 
 function poolFromAgent(agent: SpaceAgent): AgentModelPoolEntry[] {
   if (agent.modelPool && agent.modelPool.length > 0) return agent.modelPool;
@@ -76,6 +74,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
   const [formModelPool, setFormModelPool] = useState<AgentModelPoolEntry[]>([]);
   const [formTools, setFormTools] = useState<ToolsSelection>({ tools: [], toolsOverridden: false });
   const [formSettingSources, setFormSettingSources] = useState<SettingSource[] | null>(null);
+  const [formTemplateKey, setFormTemplateKey] = useState<string>('');
   const activeSpaceRef = useRef(spaceId);
   const formGenerationRef = useRef(0);
 
@@ -94,6 +93,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     setFormModelPool([]);
     setFormTools({ tools: [], toolsOverridden: false });
     setFormSettingSources(null);
+    setFormTemplateKey('');
   }
 
   useEffect(() => {
@@ -115,6 +115,10 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
   }, [spaceId]);
 
   const selected = agents.find((agent) => agent.id === selectedId) ?? null;
+  const selectedTemplateSources = formTemplateKey
+    ? (templateOptions().find((template) => template.key === formTemplateKey)?.settingSources ??
+      null)
+    : null;
 
   function openCreate() {
     formGenerationRef.current += 1;
@@ -126,6 +130,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
     setFormModelPool([]);
     setFormTools({ tools: [], toolsOverridden: false });
     setFormSettingSources(null);
+    setFormTemplateKey('');
   }
 
   function openEdit(agent: SpaceAgent) {
@@ -303,6 +308,8 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
                     <select
                       class="mt-1 w-full rounded border border-border bg-bg px-2 py-1 text-xs text-fg"
                       name="templateKey"
+                      value={formTemplateKey}
+                      onInput={(event) => setFormTemplateKey(event.currentTarget.value)}
                       data-testid="agent-template-select"
                     >
                       <option value="">Blank agent</option>
@@ -414,7 +421,7 @@ export function SpaceAgentsPage({ spaceId }: SpaceAgentsPageProps) {
                   )}
                 </div>
                 <SettingSourcesEditor
-                  value={formSettingSources}
+                  value={formSettingSources ?? selectedTemplateSources}
                   onChange={(next) => setFormSettingSources(next)}
                 />
               </div>
