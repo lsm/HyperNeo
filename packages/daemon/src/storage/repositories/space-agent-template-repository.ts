@@ -12,39 +12,13 @@ import type { SQLiteValue } from '../types.ts';
 
 export type SpaceAgentTemplateRecord = SpaceAgentTemplate & { version: number };
 
+const OWNERSHIP_MIGRATION_SENTINEL = '';
+
 export class SpaceAgentTemplateRepository {
   constructor(private db: BunDatabase) {}
 
   create(params: CreateSpaceAgentTemplateParams): SpaceAgentTemplate {
-    const now = Date.now();
-    const version = this.nextVersionFor(params.key);
-    this.db
-      .prepare(
-        `INSERT INTO space_agent_templates (
-						key, handle, display_name, description, instructions, suggested_autonomy_level,
-						model, provider, model_pool, thinking_level, setting_sources, tools, labels,
-						created_at, updated_at, version
-					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        params.key,
-        params.handle,
-        params.displayName ?? params.handle,
-        params.description ?? '',
-        params.instructions ?? '',
-        params.suggestedAutonomyLevel ?? 2,
-        params.model ?? null,
-        params.provider ?? null,
-        encodeJsonArray(params.modelPool),
-        params.thinkingLevel ?? null,
-        params.settingSources === undefined ? null : JSON.stringify(params.settingSources),
-        encodeJsonArray(params.tools),
-        encodeJsonArray(params.labels),
-        now,
-        now,
-        version
-      );
-    return this.getByKey(params.key) as SpaceAgentTemplate;
+    return this.createOwned(OWNERSHIP_MIGRATION_SENTINEL, params);
   }
 
   getByKey(key: string): SpaceAgentTemplate | null {
@@ -84,57 +58,7 @@ export class SpaceAgentTemplateRepository {
     params: UpdateSpaceAgentTemplateParams,
     expectedVersion?: number
   ): SpaceAgentTemplate | null {
-    const fields: string[] = [];
-    const values: SQLiteValue[] = [];
-
-    if (params.handle !== undefined) {
-      fields.push('handle = ?');
-      values.push(params.handle);
-    }
-    if (params.displayName !== undefined) {
-      fields.push('display_name = ?');
-      values.push(params.displayName);
-    }
-    if (params.description !== undefined) {
-      fields.push('description = ?');
-      values.push(params.description);
-    }
-    if (params.instructions !== undefined) {
-      fields.push('instructions = ?');
-      values.push(params.instructions);
-    }
-    if (params.suggestedAutonomyLevel !== undefined) {
-      fields.push('suggested_autonomy_level = ?');
-      values.push(params.suggestedAutonomyLevel);
-    }
-    if (params.model !== undefined) {
-      fields.push('model = ?');
-      values.push(params.model ?? null);
-    }
-    if (params.provider !== undefined) {
-      fields.push('provider = ?');
-      values.push(params.provider ?? null);
-    }
-    if (params.modelPool !== undefined) {
-      fields.push('model_pool = ?');
-      values.push(encodeJsonArray(params.modelPool));
-    }
-    if (params.thinkingLevel !== undefined) {
-      fields.push('thinking_level = ?');
-      values.push(params.thinkingLevel ?? null);
-    }
-    if (params.settingSources !== undefined) {
-      fields.push('setting_sources = ?');
-      values.push(params.settingSources === null ? null : JSON.stringify(params.settingSources));
-    }
-    if (params.tools !== undefined) {
-      fields.push('tools = ?');
-      values.push(encodeJsonArray(params.tools));
-    }
-    if (params.labels !== undefined) {
-      fields.push('labels = ?');
-      values.push(encodeJsonArray(params.labels));
-    }
+    const { fields, values } = updateAssignments(params);
 
     if (fields.length === 0) {
       if (expectedVersion === undefined) return this.getByKey(key);
@@ -167,6 +91,116 @@ export class SpaceAgentTemplateRepository {
             .prepare(`DELETE FROM space_agent_templates WHERE key = ? AND version = ?`)
             .run(key, expectedVersion);
     return result.changes > 0;
+  }
+
+  createOwned(spaceId: string, params: CreateSpaceAgentTemplateParams): SpaceAgentTemplate {
+    const now = Date.now();
+    const version = this.nextVersionFor(params.key);
+    this.db
+      .prepare(
+        `INSERT INTO space_agent_templates (
+						space_id, key, handle, display_name, description, instructions,
+						suggested_autonomy_level, model, provider, model_pool, thinking_level,
+						setting_sources, tools, labels, created_at, updated_at, version
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        spaceId,
+        params.key,
+        params.handle,
+        params.displayName ?? params.handle,
+        params.description ?? '',
+        params.instructions ?? '',
+        params.suggestedAutonomyLevel ?? 2,
+        params.model ?? null,
+        params.provider ?? null,
+        encodeJsonArray(params.modelPool),
+        params.thinkingLevel ?? null,
+        params.settingSources === undefined ? null : JSON.stringify(params.settingSources),
+        encodeJsonArray(params.tools),
+        encodeJsonArray(params.labels),
+        now,
+        now,
+        version
+      );
+    return this.getOwned(spaceId, params.key) as SpaceAgentTemplate;
+  }
+
+  getOwned(spaceId: string, key: string): SpaceAgentTemplate | null {
+    const row = this.ownedRow(spaceId, key);
+    return row ? rowToTemplate(row) : null;
+  }
+
+  getOwnedWithVersion(spaceId: string, key: string): SpaceAgentTemplateRecord | null {
+    const row = this.ownedRow(spaceId, key);
+    return row ? rowToTemplateRecord(row) : null;
+  }
+
+  listOwned(spaceId: string): SpaceAgentTemplate[] {
+    return this.ownedRows(spaceId).map(rowToTemplate);
+  }
+
+  listOwnedWithVersions(spaceId: string): SpaceAgentTemplateRecord[] {
+    return this.ownedRows(spaceId).map(rowToTemplateRecord);
+  }
+
+  casUpdateOwned(
+    spaceId: string,
+    key: string,
+    params: UpdateSpaceAgentTemplateParams,
+    expectedVersion?: number
+  ): SpaceAgentTemplate | null {
+    const { fields, values } = updateAssignments(params);
+    if (fields.length === 0) {
+      if (expectedVersion === undefined) return this.getOwned(spaceId, key);
+      const current = this.getOwnedWithVersion(spaceId, key);
+      return current !== null && current.version === expectedVersion
+        ? this.getOwned(spaceId, key)
+        : null;
+    }
+    fields.push('updated_at = ?');
+    fields.push('version = ?');
+    values.push(Date.now());
+    values.push(this.nextVersionFor(key));
+    values.push(spaceId);
+    values.push(OWNERSHIP_MIGRATION_SENTINEL);
+    values.push(key);
+    let where = `WHERE space_id IN (?, ?) AND key = ?`;
+    if (expectedVersion !== undefined) {
+      where += ' AND version = ?';
+      values.push(expectedVersion);
+    }
+    const result = this.db
+      .prepare(`UPDATE space_agent_templates SET ${fields.join(', ')} ${where}`)
+      .run(...values);
+    if (result.changes === 0) return null;
+    return this.getOwned(spaceId, key);
+  }
+
+  deleteOwned(spaceId: string, key: string, expectedVersion?: number): boolean {
+    const params: SQLiteValue[] = [spaceId, OWNERSHIP_MIGRATION_SENTINEL, key];
+    let sql = `DELETE FROM space_agent_templates WHERE space_id IN (?, ?) AND key = ?`;
+    if (expectedVersion !== undefined) {
+      sql += ' AND version = ?';
+      params.push(expectedVersion);
+    }
+    return this.db.prepare(sql).run(...params).changes > 0;
+  }
+
+  private ownedRow(spaceId: string, key: string): Record<string, unknown> | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM space_agent_templates WHERE space_id IN (?, ?) AND key = ? ORDER BY space_id DESC LIMIT 1`
+      )
+      .get(spaceId, OWNERSHIP_MIGRATION_SENTINEL, key) as Record<string, unknown> | undefined;
+  }
+
+  private ownedRows(spaceId: string): Record<string, unknown>[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM space_agent_templates WHERE space_id IN (?, ?) ORDER BY created_at ASC, key ASC`
+      )
+      .all(spaceId, OWNERSHIP_MIGRATION_SENTINEL) as Record<string, unknown>[];
   }
 
   private nextVersionFor(key: string): number {
@@ -216,4 +250,63 @@ function encodeJsonArray<T>(value: T[] | null | undefined): string | null {
 function decodeJsonArray<T>(value: unknown): T[] | null {
   if (typeof value !== 'string' || value.length === 0) return null;
   return JSON.parse(value) as T[];
+}
+
+function updateAssignments(params: UpdateSpaceAgentTemplateParams): {
+  fields: string[];
+  values: SQLiteValue[];
+} {
+  const fields: string[] = [];
+  const values: SQLiteValue[] = [];
+
+  if (params.handle !== undefined) {
+    fields.push('handle = ?');
+    values.push(params.handle);
+  }
+  if (params.displayName !== undefined) {
+    fields.push('display_name = ?');
+    values.push(params.displayName);
+  }
+  if (params.description !== undefined) {
+    fields.push('description = ?');
+    values.push(params.description);
+  }
+  if (params.instructions !== undefined) {
+    fields.push('instructions = ?');
+    values.push(params.instructions);
+  }
+  if (params.suggestedAutonomyLevel !== undefined) {
+    fields.push('suggested_autonomy_level = ?');
+    values.push(params.suggestedAutonomyLevel);
+  }
+  if (params.model !== undefined) {
+    fields.push('model = ?');
+    values.push(params.model ?? null);
+  }
+  if (params.provider !== undefined) {
+    fields.push('provider = ?');
+    values.push(params.provider ?? null);
+  }
+  if (params.modelPool !== undefined) {
+    fields.push('model_pool = ?');
+    values.push(encodeJsonArray(params.modelPool));
+  }
+  if (params.thinkingLevel !== undefined) {
+    fields.push('thinking_level = ?');
+    values.push(params.thinkingLevel ?? null);
+  }
+  if (params.settingSources !== undefined) {
+    fields.push('setting_sources = ?');
+    values.push(params.settingSources === null ? null : JSON.stringify(params.settingSources));
+  }
+  if (params.tools !== undefined) {
+    fields.push('tools = ?');
+    values.push(encodeJsonArray(params.tools));
+  }
+  if (params.labels !== undefined) {
+    fields.push('labels = ?');
+    values.push(encodeJsonArray(params.labels));
+  }
+
+  return { fields, values };
 }

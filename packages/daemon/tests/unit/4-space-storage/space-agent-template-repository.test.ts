@@ -264,3 +264,78 @@ describe('SpaceAgentTemplateRepository', () => {
     expect(repo.getByKey('reuse.custom')?.displayName).not.toBe('Stale');
   });
 });
+
+describe('SpaceAgentTemplateRepository — Space-scoped methods', () => {
+  let repo: SpaceAgentTemplateRepository;
+  let db: BunDatabase;
+
+  beforeEach(() => {
+    db = new BunDatabase(':memory:');
+    createSpaceAgentTemplatesTable(db);
+    runMigration226(db);
+    runMigration227(db);
+    runMigration238(db);
+    repo = new SpaceAgentTemplateRepository(db);
+  });
+
+  test('createOwned records the Space and getOwned reads it back', () => {
+    repo.createOwned('space-a', { key: 'k', handle: 'h' });
+    expect(repo.getOwned('space-a', 'k')?.handle).toBe('h');
+  });
+
+  test('a Space cannot see, update or delete another Space own row', () => {
+    repo.createOwned('space-a', { key: 'k', handle: 'h' });
+
+    expect(repo.getOwned('space-b', 'k')).toBeNull();
+    expect(repo.casUpdateOwned('space-b', 'k', { displayName: 'X' })).toBeNull();
+    expect(repo.deleteOwned('space-b', 'k')).toBe(false);
+    expect(repo.getOwned('space-a', 'k')).not.toBeNull();
+  });
+
+  test('the owning Space can update and delete its own row', () => {
+    repo.createOwned('space-a', { key: 'k', handle: 'h' });
+
+    expect(repo.casUpdateOwned('space-a', 'k', { displayName: 'X' })?.displayName).toBe('X');
+    expect(repo.deleteOwned('space-a', 'k')).toBe(true);
+    expect(repo.getOwned('space-a', 'k')).toBeNull();
+  });
+
+  test('one key can exist in two Spaces independently', () => {
+    repo.createOwned('space-a', { key: 'k', handle: 'a' });
+    repo.createOwned('space-b', { key: 'k', handle: 'b' });
+
+    expect(repo.getOwned('space-a', 'k')?.handle).toBe('a');
+    expect(repo.getOwned('space-b', 'k')?.handle).toBe('b');
+    expect(repo.deleteOwned('space-a', 'k')).toBe(true);
+    expect(repo.getOwned('space-b', 'k')?.handle).toBe('b');
+  });
+
+  test('unmigrated rows at the sentinel stay visible to every Space', () => {
+    repo.create({ key: 'legacy', handle: 'old' });
+
+    expect(repo.getOwned('space-a', 'legacy')?.handle).toBe('old');
+    expect(repo.getOwned('space-b', 'legacy')?.handle).toBe('old');
+    expect(repo.listOwned('space-a').map((t) => t.key)).toContain('legacy');
+  });
+
+  test('an owned row wins over a sentinel row with the same key', () => {
+    repo.create({ key: 'k', handle: 'sentinel' });
+    repo.createOwned('space-a', { key: 'k', handle: 'owned' });
+
+    expect(repo.getOwned('space-a', 'k')?.handle).toBe('owned');
+    expect(repo.getOwned('space-b', 'k')?.handle).toBe('sentinel');
+  });
+
+  test('listOwned returns the Space own rows plus unmigrated ones', () => {
+    repo.createOwned('space-a', { key: 'mine', handle: 'a' });
+    repo.createOwned('space-b', { key: 'theirs', handle: 'b' });
+    repo.create({ key: 'legacy', handle: 'old' });
+
+    expect(
+      repo
+        .listOwned('space-a')
+        .map((t) => t.key)
+        .sort()
+    ).toEqual(['legacy', 'mine']);
+  });
+});
