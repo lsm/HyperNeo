@@ -177,6 +177,8 @@ function skipWhitespace(sql: string, pos: number): number {
   return i;
 }
 
+const SUBQUERY_START_WORDS = new Set(['select', 'with', 'values']);
+
 function recordTableRef(
   sql: string,
   pos: number,
@@ -185,6 +187,11 @@ function recordTableRef(
   spans?: TableRefSpan[]
 ): number | null {
   const start = skipWhitespace(sql, pos);
+  if (sql[start] === '(') {
+    const inner = matchIdentifier(sql, skipWhitespace(sql, start + 1));
+    if (!inner || SUBQUERY_START_WORDS.has(inner.ident)) return null;
+    return recordTableRef(sql, start + 1, exclude, refs);
+  }
   const first = matchIdentifier(sql, start);
   if (!first) return null;
 

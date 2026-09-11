@@ -1016,7 +1016,7 @@ describe('db-query tools', () => {
         expect(parsed.rowCount).toBe(2);
       });
 
-      it('fails with clear error when CTE omits scope column', async () => {
+      it('still scopes a CTE that omits the scope column from its projection', async () => {
         seedTasks(db);
         const handlers = createDbQueryToolHandlers(
           { dbPath: ':memory:', scopeType: 'room', scopeValue: 'room-1' },
@@ -1025,8 +1025,10 @@ describe('db-query tools', () => {
         const result = await handlers.db_query({
           sql: 'WITH active(id, title) AS (SELECT id, title FROM tasks) SELECT * FROM active',
         });
-        expect(result.isError).toBe(true);
-        expect(parseResult(result).raw).toContain('room_id');
+        const parsed = parseResult(result);
+
+        expect(parsed.isError).toBeFalsy();
+        expect(parsed.rowCount).toBe(2);
       });
 
       it('rewrites CTE without column list (backward compat)', async () => {

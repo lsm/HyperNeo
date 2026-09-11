@@ -1,4 +1,4 @@
-import type { Database } from '../../storage/sqlite-compat.ts';
+import { Database } from '../../storage/sqlite-compat.ts';
 import { type DbScopeType, type ScopeTableConfig, getScopeConfig } from './scope-config.ts';
 import { validateSql } from './sql-validator.ts';
 
@@ -60,228 +60,6 @@ function findTopLevelKeyword(sql: string, keyword: string): number {
 
   return -1;
 }
-
-function getCteColumnListRanges(sql: string): Array<[number, number]> {
-  const ranges: Array<[number, number]> = [];
-  const upper = sql.toUpperCase();
-  const len = sql.length;
-
-  if (!/^\s*WITH\b/i.test(sql)) return ranges;
-
-  let pos = sql.search(/\bWITH\b/i) + 4;
-
-  while (pos < len && /\s/.test(sql[pos])) pos++;
-
-  if (pos + 8 <= len && upper.slice(pos, pos + 9) === 'RECURSIVE') {
-    pos += 9;
-    while (pos < len && /\s/.test(sql[pos])) pos++;
-  }
-
-  while (pos < len) {
-    const nameStart = pos;
-    while (pos < len && /[\p{L}\p{N}_]/u.test(sql[pos])) pos++;
-    if (pos === nameStart) break;
-
-    while (pos < len && /\s/.test(sql[pos])) pos++;
-
-    let hasColumnList = false;
-    if (pos < len && sql[pos] === '(') {
-      const savedPos = pos;
-      let depth = 1;
-      pos++;
-      while (pos < len && depth > 0) {
-        if (sql[pos] === '(') depth++;
-        else if (sql[pos] === ')') depth--;
-        pos++;
-      }
-      while (pos < len && /\s/.test(sql[pos])) pos++;
-      if (pos + 1 < len && upper.slice(pos, pos + 2) === 'AS') {
-        hasColumnList = true;
-      } else {
-        pos = savedPos;
-      }
-    }
-
-    while (pos < len && /\s/.test(sql[pos])) pos++;
-
-    if (pos + 1 < len && upper.slice(pos, pos + 2) === 'AS') {
-      pos += 2;
-    } else {
-      break;
-    }
-
-    while (pos < len && /\s/.test(sql[pos])) pos++;
-
-    if (pos < len && sql[pos] === '(') {
-      const bodyStart = pos;
-      let depth = 1;
-      pos++;
-      while (pos < len && depth > 0) {
-        if (sql[pos] === "'") {
-          pos++;
-          while (pos < len) {
-            if (sql[pos] === "'" && pos + 1 < len && sql[pos + 1] === "'") {
-              pos += 2;
-            } else if (sql[pos] === "'") {
-              pos++;
-              break;
-            } else {
-              pos++;
-            }
-          }
-        } else if (sql[pos] === '(') {
-          depth++;
-          pos++;
-        } else if (sql[pos] === ')') {
-          depth--;
-          pos++;
-        } else {
-          pos++;
-        }
-      }
-      const bodyEnd = pos;
-
-      if (hasColumnList) {
-        ranges.push([bodyStart, bodyEnd]);
-      }
-    }
-
-    while (pos < len && /\s/.test(sql[pos])) pos++;
-
-    if (pos < len && sql[pos] === ',') {
-      pos++;
-      while (pos < len && /\s/.test(sql[pos])) pos++;
-    } else {
-      break;
-    }
-  }
-
-  return ranges;
-}
-
-function rewriteSelectToStar(sql: string, options?: { skipOutermost?: boolean }): string {
-  const cteRanges = getCteColumnListRanges(sql);
-
-  const { skipOutermost = false } = options ?? {};
-
-  const pairs: Array<{
-    selectStart: number;
-    fromStart: number;
-    hasDistinct: boolean;
-    depth: number;
-  }> = [];
-  const upper = sql.toUpperCase();
-  let depth = 0;
-  let inString = false;
-
-  function isInCteRange(pos: number): boolean {
-    return cteRanges.some(([start, end]) => pos >= start && pos < end);
-  }
-
-  for (let i = 0; i < sql.length; i++) {
-    const ch = sql[i];
-
-    if (inString) {
-      if (ch === "'" && i + 1 < sql.length && sql[i + 1] === "'") {
-        i++;
-        continue;
-      }
-      if (ch === "'") {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (ch === "'") {
-      inString = true;
-      continue;
-    }
-    if (ch === '(') {
-      depth++;
-      continue;
-    }
-    if (ch === ')') {
-      depth--;
-      continue;
-    }
-
-    if (
-      upper.slice(i, i + 6) === 'SELECT' &&
-      (i === 0 || /\s/.test(sql[i - 1]) || sql[i - 1] === '(')
-    ) {
-      const afterChar = i + 6 < sql.length ? sql[i + 6] : ' ';
-      if (/\s/.test(afterChar) || afterChar === '(') {
-        const selectEnd = i + 6;
-        const targetDepth = depth;
-
-        const afterSelect = sql.slice(selectEnd).trimStart();
-        const hasDistinct = /^DISTINCT\b/i.test(afterSelect);
-
-        let fDepth = depth;
-        let fInString = false;
-        let fromStart = -1;
-        for (let j = selectEnd; j < sql.length; j++) {
-          const c = sql[j];
-          if (fInString) {
-            if (c === "'" && j + 1 < sql.length && sql[j + 1] === "'") {
-              j++;
-              continue;
-            }
-            if (c === "'") fInString = false;
-            continue;
-          }
-          if (c === "'") {
-            fInString = true;
-            continue;
-          }
-          if (c === '(') fDepth++;
-          if (c === ')') fDepth--;
-          if (fDepth !== targetDepth) continue;
-          if (
-            upper.slice(j, j + 4) === 'FROM' &&
-            (j === 0 || /\s/.test(sql[j - 1])) &&
-            (j + 4 >= sql.length || /\s/.test(sql[j + 4]))
-          ) {
-            fromStart = j;
-            break;
-          }
-        }
-        if (fromStart !== -1 && !isInCteRange(i)) {
-          pairs.push({ selectStart: i, fromStart, hasDistinct, depth: targetDepth });
-        }
-      }
-    }
-  }
-
-  const nonSubqueryPairs = pairs.filter((pair) => {
-    for (const other of pairs) {
-      if (other === pair) continue;
-      if (
-        other.depth < pair.depth &&
-        pair.selectStart > other.selectStart &&
-        pair.selectStart < other.fromStart
-      ) {
-        return false;
-      }
-    }
-    return true;
-  });
-
-  const activePairs = skipOutermost
-    ? nonSubqueryPairs.filter((p) => p.depth > 0)
-    : nonSubqueryPairs;
-  if (activePairs.length === 0) return sql;
-
-  let result = sql;
-  for (let p = activePairs.length - 1; p >= 0; p--) {
-    const { selectStart, fromStart, hasDistinct } = activePairs[p];
-    const replacement = hasDistinct ? 'SELECT DISTINCT * ' : 'SELECT * ';
-    result = `${result.slice(0, selectStart)}${replacement}${result.slice(fromStart)}`;
-  }
-
-  return result;
-}
-
 function stripLimit(sql: string): { sql: string; userLimit?: number } {
   const limitPos = findTopLevelKeyword(sql, 'LIMIT');
   if (limitPos === -1) return { sql };
@@ -292,226 +70,92 @@ function stripLimit(sql: string): { sql: string; userLimit?: number } {
 
   return { sql: sql.slice(0, limitPos).trimEnd(), userLimit };
 }
+const MAX_MATERIALIZED_ROWS = 50000;
 
-function stripOrderBy(sql: string): { sql: string; orderBy?: string } {
-  const pos = findTopLevelKeyword(sql, 'ORDER BY');
-  if (pos === -1) return { sql };
-
-  const orderBy = sql.slice(pos).trimEnd();
-  return { sql: sql.slice(0, pos).trimEnd(), orderBy };
+function quoteIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
 }
 
-function isAggregateOrDistinctQuery(sql: string): boolean {
-  if (findTopLevelKeyword(sql, 'GROUP BY') !== -1) return true;
-
-  if (findTopLevelKeyword(sql, 'HAVING') !== -1) return true;
-
-  const selectPos = findTopLevelKeyword(sql, 'SELECT');
-  if (selectPos !== -1) {
-    const afterSelect = sql.slice(selectPos + 6).trimStart();
-    if (/^DISTINCT\b/i.test(afterSelect)) return true;
-  }
-
-  const fromPos = findTopLevelKeyword(sql, 'FROM');
-
-  if (selectPos !== -1 && fromPos !== -1) {
-    const columnList = sql.slice(selectPos + 6, fromPos);
-    if (/\(\s*SELECT\b/i.test(columnList)) return true;
-  }
-
-  if (selectPos === -1 || fromPos === -1 || fromPos <= selectPos) return false;
-
-  const aggColumnList = sql.slice(selectPos + 6, fromPos).toUpperCase();
-  const aggFunctions = ['COUNT(', 'SUM(', 'AVG(', 'MIN(', 'MAX(', 'GROUP_CONCAT(', 'TOTAL('];
-  return aggFunctions.some((fn) => aggColumnList.includes(fn));
-}
-
-function findTopLevelBoundary(sql: string): number {
-  const keywords = ['GROUP BY', 'HAVING', 'ORDER BY'];
-  let earliest = sql.length;
-
-  for (const kw of keywords) {
-    const pos = findTopLevelKeyword(sql, kw);
-    if (pos !== -1 && pos < earliest) {
-      earliest = pos;
-    }
-  }
-
-  return earliest;
-}
-
-function injectWhereClause(sql: string, whereClause: string): string {
-  const wherePos = findTopLevelKeyword(sql, 'WHERE');
-
-  if (wherePos !== -1) {
-    const boundary = findTopLevelBoundary(sql);
-    return `${sql.slice(0, boundary)} AND ${whereClause}${sql.slice(boundary)}`;
-  }
-
-  const insertPos = findTopLevelBoundary(sql);
-
-  if (insertPos < sql.length) {
-    return `${sql.slice(0, insertPos)} WHERE ${whereClause} ${sql.slice(insertPos)}`;
-  }
-
-  return `${sql} WHERE ${whereClause}`;
-}
-
-function buildPrefixedScopeFilter(
+function buildTableScopeFilter(
   config: ScopeTableConfig,
   scopeValue: string
 ): { whereClause: string; params: unknown[] } {
-  if (!config.scopeColumn && !config.scopeJoin && !config.scopeLike) {
-    return { whereClause: '', params: [] };
-  }
-
   if (config.scopeColumn) {
-    return {
-      whereClause: `_dbq.${config.scopeColumn} = ?`,
-      params: [scopeValue],
-    };
+    return { whereClause: `${quoteIdent(config.scopeColumn)} = ?`, params: [scopeValue] };
   }
 
   if (config.scopeLike) {
     const { column, patternPrefix, patternSuffix } = config.scopeLike;
     return {
-      whereClause: `_dbq.${column} LIKE ?`,
+      whereClause: `${quoteIdent(column)} LIKE ?`,
       params: [`${patternPrefix}${scopeValue}${patternSuffix}`],
     };
   }
 
   if (config.scopeJoin) {
     const join = config.scopeJoin;
+    const inner = `${quoteIdent(join.localColumn)} IN (SELECT ${quoteIdent(join.joinPkColumn)} FROM ${quoteIdent(join.joinTable)} WHERE ${quoteIdent(join.scopeColumn)}`;
     if (join.likePrefix !== undefined) {
       return {
-        whereClause: `_dbq.${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} LIKE ?)`,
+        whereClause: `${inner} LIKE ?)`,
         params: [`${join.likePrefix}${scopeValue}${join.likeSuffix ?? ''}`],
       };
     }
-    return {
-      whereClause: `_dbq.${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} = ?)`,
-      params: [scopeValue],
-    };
+    return { whereClause: `${inner} = ?)`, params: [scopeValue] };
   }
 
   return { whereClause: '', params: [] };
 }
 
-function rewriteScopedQuery(
-  sql: string,
-  userParams: unknown[],
-  scopeType: DbScopeType,
-  scopeValue: string,
-  tableConfigs: Map<string, ScopeTableConfig>,
-  userLimit?: number
-): { sql: string; params: unknown[]; cappedLimit: number } {
-  const cappedLimit = Math.min(userLimit ?? DEFAULT_LIMIT, MAX_LIMIT);
-
-  const scopeFilterSet = new Map<string, unknown[]>();
-  for (const config of tableConfigs.values()) {
-    const filter = buildPrefixedScopeFilter(config, scopeValue);
-    if (filter.whereClause && !scopeFilterSet.has(filter.whereClause)) {
-      scopeFilterSet.set(filter.whereClause, filter.params);
-    }
-  }
-
-  if (scopeFilterSet.size === 0) {
-    const { sql: strippedSql, userLimit: existingLimit } = stripLimit(sql);
-    const effectiveLimit = Math.min(cappedLimit, existingLimit ?? MAX_LIMIT);
-    return {
-      sql: `${strippedSql} LIMIT ${effectiveLimit}`,
-      params: userParams,
-      cappedLimit: effectiveLimit,
-    };
-  }
-
-  const { sql: strippedSql, userLimit: existingLimit } = stripLimit(sql);
-  const effectiveLimit = Math.min(cappedLimit, existingLimit ?? MAX_LIMIT);
-  const scopeParams = [...scopeFilterSet.values()].flat();
-
-  if (isAggregateOrDistinctQuery(strippedSql)) {
-    const innerRewritten = rewriteSelectToStar(strippedSql, { skipOutermost: true });
-
-    const directFilters = new Map<string, unknown[]>();
-    for (const config of tableConfigs.values()) {
-      if (config.scopeColumn) {
-        const clause = `${config.scopeColumn} = ?`;
-        if (!directFilters.has(clause)) {
-          directFilters.set(clause, [scopeValue]);
-        }
-      }
-      if (config.scopeLike) {
-        const { column, patternPrefix, patternSuffix } = config.scopeLike;
-        const clause = `${column} LIKE ?`;
-        if (!directFilters.has(clause)) {
-          directFilters.set(clause, [`${patternPrefix}${scopeValue}${patternSuffix}`]);
-        }
-      }
-      if (config.scopeJoin) {
-        const join = config.scopeJoin;
-        if (join.likePrefix !== undefined) {
-          const clause = `${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} LIKE ?)`;
-          if (!directFilters.has(clause)) {
-            directFilters.set(clause, [`${join.likePrefix}${scopeValue}${join.likeSuffix ?? ''}`]);
-          }
-        } else {
-          const clause = `${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} = ?)`;
-          if (!directFilters.has(clause)) {
-            directFilters.set(clause, [scopeValue]);
-          }
-        }
-      }
-    }
-
-    let filteredSql = innerRewritten;
-    const directParams: unknown[] = [];
-    if (directFilters.size > 0) {
-      const combinedClause = [...directFilters.keys()].join(' AND ');
-      filteredSql = injectWhereClause(innerRewritten, combinedClause);
-      directParams.push(...[...directFilters.values()].flat());
-    }
-
-    return {
-      sql: `${filteredSql} LIMIT ${effectiveLimit}`,
-      params: [...userParams, ...directParams],
-      cappedLimit: effectiveLimit,
-    };
-  }
-
-  const combinedWhere = [...scopeFilterSet.keys()].join(' AND ');
-
-  const { sql: noOrderBy, orderBy } = stripOrderBy(strippedSql);
-
-  const innerSql = rewriteSelectToStar(noOrderBy);
-
-  const orderClause = orderBy ? ` ${orderBy}` : '';
-  const wrappedSql = `SELECT * FROM (${innerSql}) AS _dbq WHERE ${combinedWhere}${orderClause} LIMIT ${effectiveLimit}`;
-
-  return { sql: wrappedSql, params: [...userParams, ...scopeParams], cappedLimit: effectiveLimit };
+function readableColumns(db: Database, config: ScopeTableConfig): string[] {
+  const info = db.query(`PRAGMA table_info(${quoteIdent(config.tableName)})`).all() as Array<{
+    name: string;
+  }>;
+  const blacklisted = new Set(config.blacklistedColumns);
+  return info.map((c) => c.name).filter((name) => !blacklisted.has(name));
 }
 
-function removeBlacklistedColumns(
-  rows: Record<string, unknown>[],
-  tableConfigs: Map<string, ScopeTableConfig>
-): Record<string, unknown>[] {
-  const blacklisted = new Set<string>();
-  for (const config of tableConfigs.values()) {
-    for (const col of config.blacklistedColumns) {
-      blacklisted.add(col);
-    }
+function materializeScopedTable(
+  source: Database,
+  scratch: Database,
+  config: ScopeTableConfig,
+  scopeValue: string
+): void {
+  const columns = readableColumns(source, config);
+  if (columns.length === 0) return;
+
+  const filter = buildTableScopeFilter(config, scopeValue);
+  const where = filter.whereClause ? ` WHERE ${filter.whereClause}` : '';
+  const projection = columns.map(quoteIdent).join(', ');
+  const rows = source
+    .query(
+      `SELECT ${projection} FROM ${quoteIdent(config.tableName)}${where} LIMIT ${MAX_MATERIALIZED_ROWS + 1}`
+    )
+    .all(...(filter.params as [])) as Record<string, unknown>[];
+
+  if (rows.length > MAX_MATERIALIZED_ROWS) {
+    throw new Error(
+      `Table "${config.tableName}" holds more than ${MAX_MATERIALIZED_ROWS} rows in this scope; narrow the query`
+    );
   }
 
-  if (blacklisted.size === 0) return rows;
+  scratch.exec(`CREATE TABLE ${quoteIdent(config.tableName)} (${projection})`);
+  if (rows.length === 0) return;
 
-  return rows.map((row) => {
-    const filtered: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(row)) {
-      if (!blacklisted.has(key)) {
-        filtered[key] = value;
-      }
+  const placeholders = columns.map(() => '?').join(', ');
+  const insert = scratch.query(
+    `INSERT INTO ${quoteIdent(config.tableName)} VALUES (${placeholders})`
+  );
+  scratch.exec('BEGIN');
+  try {
+    for (const row of rows) {
+      insert.run(...(columns.map((c) => row[c]) as []));
     }
-    return filtered;
-  });
+    scratch.exec('COMMIT');
+  } catch (err) {
+    scratch.exec('ROLLBACK');
+    throw err;
+  }
 }
 
 export function runScopedQuery(
@@ -527,10 +171,8 @@ export function runScopedQuery(
     throw new Error(validation.error ?? 'Invalid SQL');
   }
 
-  const configMap = new Map<string, ScopeTableConfig>();
-  for (const tc of getScopeConfig(scopeType)) {
-    configMap.set(tc.tableName, tc);
-  }
+  const configs = getScopeConfig(scopeType);
+  const configMap = new Map(configs.map((tc) => [tc.tableName, tc]));
 
   for (const tableRef of validation.tableRefs) {
     if (!configMap.has(tableRef)) {
@@ -538,33 +180,26 @@ export function runScopedQuery(
     }
   }
 
-  const tableConfigs = new Map<string, ScopeTableConfig>();
-  for (const tableRef of validation.tableRefs) {
-    const tc = configMap.get(tableRef);
-    if (tc) tableConfigs.set(tableRef, tc);
-  }
+  const cappedLimit = Math.min(limit ?? DEFAULT_LIMIT, MAX_LIMIT);
+  const { sql: strippedSql, userLimit: existingLimit } = stripLimit(sql);
+  const effectiveLimit = Math.min(cappedLimit, existingLimit ?? MAX_LIMIT);
 
-  const {
-    sql: wrappedSql,
-    params: allParams,
-    cappedLimit,
-  } = rewriteScopedQuery(sql, params, scopeType, scopeValue, tableConfigs, limit);
-
+  const scratch = new Database(':memory:');
   try {
-    const stmt = db.query(wrappedSql);
-    const rows = stmt.all(...(allParams as [])) as Record<string, unknown>[];
+    for (const tableRef of new Set(validation.tableRefs)) {
+      const config = configMap.get(tableRef);
+      if (config) materializeScopedTable(db, scratch, config, scopeValue);
+    }
 
-    const filteredRows = removeBlacklistedColumns(rows, tableConfigs);
+    const rows = scratch
+      .query(`SELECT * FROM (${strippedSql}) LIMIT ${effectiveLimit}`)
+      .all(...(params as [])) as Record<string, unknown>[];
 
-    const truncated = rows.length >= cappedLimit;
-
-    return {
-      rows: filteredRows,
-      rowCount: filteredRows.length,
-      truncated,
-    };
+    return { rows, rowCount: rows.length, truncated: rows.length >= effectiveLimit };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`Query execution error: ${message}`);
+  } finally {
+    scratch.close();
   }
 }
