@@ -25,6 +25,7 @@ import { runMigration225 } from '../../../../src/storage/schema/m225-space-agent
 import { runMigration226 } from '../../../../src/storage/schema/m226-space-agent-templates-version';
 import { runMigration227 } from '../../../../src/storage/schema/m227-space-agent-template-version-seq';
 import { runMigration238 } from '../../../../src/storage/schema/m238-space-agent-template-labels';
+import { runMigration243 } from '../../../../src/storage/schema/m243-space-agent-template-space-key';
 import { Database } from '../../../../src/storage/sqlite-compat';
 import { seedWorkerMirror } from '../../helpers/seed-worker-mirror';
 
@@ -265,6 +266,7 @@ describe('Space Export/Import RPC Handlers', () => {
     runMigration226(db);
     runMigration227(db);
     runMigration238(db);
+    runMigration243(db);
     insertSpace(db, SPACE_ID, 'My Space');
     insertSpace(db, OTHER_SPACE_ID, 'Other Space');
 
@@ -974,6 +976,43 @@ describe('Space Export/Import RPC Handlers', () => {
       });
       expect(preview.validationErrors.some((e) => e.includes('ambiguous'))).toBe(true);
       expect(preview.validationErrors.some((e) => e.includes('worker.swe.migrated-2'))).toBe(true);
+    });
+
+    it('ignores a relocation marker another Space owns', async () => {
+      new SpaceAgentTemplateRepository(db).createOwned('other-space', {
+        key: 'worker.swe.foreign',
+        handle: 'foreign-swe',
+        displayName: 'Foreign SWE',
+        labels: ['relocated-from:worker.swe'],
+      });
+      const bundle = {
+        version: 6,
+        type: 'bundle',
+        name: 'Test Bundle',
+        exportedAt: 1000,
+        agents: [],
+        workflows: [
+          {
+            version: 6,
+            type: 'workflow',
+            name: 'Foreign Pipe',
+            nodes: [
+              {
+                agents: [{ templateKey: 'worker.swe', name: 'coder' }],
+                name: 'Coding',
+              },
+            ],
+            startNode: 'Coding',
+            tags: [],
+          },
+        ],
+      };
+
+      const preview = await call<ImportPreviewResult>(handlers, 'spaceImport.preview', {
+        spaceId: SPACE_ID,
+        bundle,
+      });
+      expect(preview.validationErrors.some((e) => e.includes('worker.swe.foreign'))).toBe(false);
     });
 
     it('does not flag worker.swe when an unrelated template merely holds the migrated key', async () => {
