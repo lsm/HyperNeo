@@ -72,6 +72,10 @@ class CompatStatement<TRow = unknown, TParams extends unknown[] = unknown[]> {
     );
   }
 
+  get columnNames(): string[] {
+    return this.stmt.columns().map((column) => column.name);
+  }
+
   get sourceSQL(): string {
     return this.stmt.sourceSQL;
   }

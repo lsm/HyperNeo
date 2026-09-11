@@ -357,17 +357,37 @@ function injectWhereClause(sql: string, whereClause: string): string {
   return `${sql} WHERE ${whereClause}`;
 }
 
+function scopeColumnFor(config: ScopeTableConfig): string | null {
+  if (config.scopeColumn) return config.scopeColumn;
+  if (config.scopeLike) return config.scopeLike.column;
+  if (config.scopeJoin) return config.scopeJoin.localColumn;
+  return null;
+}
+
+function projectionsOf(column: string, projected: string[]): string[] {
+  const matches = projected.filter(
+    (name) => name === column || new RegExp(`^${escapeRegExp(column)}:\\d+$`).test(name)
+  );
+  return matches.length > 0 ? matches : [column];
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function buildPrefixedScopeFilter(
   config: ScopeTableConfig,
-  scopeValue: string
+  scopeValue: string,
+  projectedColumn?: string
 ): { whereClause: string; params: unknown[] } {
+  const col = (fallback: string): string => JSON.stringify(projectedColumn ?? fallback);
   if (!config.scopeColumn && !config.scopeJoin && !config.scopeLike) {
     return { whereClause: '', params: [] };
   }
 
   if (config.scopeColumn) {
     return {
-      whereClause: `_dbq.${config.scopeColumn} = ?`,
+      whereClause: `_dbq.${col(config.scopeColumn)} = ?`,
       params: [scopeValue],
     };
   }
@@ -375,7 +395,7 @@ function buildPrefixedScopeFilter(
   if (config.scopeLike) {
     const { column, patternPrefix, patternSuffix } = config.scopeLike;
     return {
-      whereClause: `_dbq.${column} LIKE ?`,
+      whereClause: `_dbq.${col(column)} LIKE ?`,
       params: [`${patternPrefix}${scopeValue}${patternSuffix}`],
     };
   }
@@ -384,12 +404,12 @@ function buildPrefixedScopeFilter(
     const join = config.scopeJoin;
     if (join.likePrefix !== undefined) {
       return {
-        whereClause: `_dbq.${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} LIKE ?)`,
+        whereClause: `_dbq.${col(join.localColumn)} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} LIKE ?)`,
         params: [`${join.likePrefix}${scopeValue}${join.likeSuffix ?? ''}`],
       };
     }
     return {
-      whereClause: `_dbq.${join.localColumn} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} = ?)`,
+      whereClause: `_dbq.${col(join.localColumn)} IN (SELECT ${join.joinPkColumn} FROM ${join.joinTable} WHERE ${join.scopeColumn} = ?)`,
       params: [scopeValue],
     };
   }
@@ -403,7 +423,8 @@ function rewriteScopedQuery(
   scopeType: DbScopeType,
   scopeValue: string,
   tableConfigs: Map<string, ScopeTableConfig>,
-  userLimit?: number
+  userLimit?: number,
+  projectedColumns?: (innerSql: string) => string[]
 ): { sql: string; params: unknown[]; cappedLimit: number } {
   const cappedLimit = Math.min(userLimit ?? DEFAULT_LIMIT, MAX_LIMIT);
 
@@ -427,7 +448,6 @@ function rewriteScopedQuery(
 
   const { sql: strippedSql, userLimit: existingLimit } = stripLimit(sql);
   const effectiveLimit = Math.min(cappedLimit, existingLimit ?? MAX_LIMIT);
-  const scopeParams = [...scopeFilterSet.values()].flat();
 
   if (isAggregateOrDistinctQuery(strippedSql)) {
     const innerRewritten = rewriteSelectToStar(strippedSql, { skipOutermost: true });
@@ -478,16 +498,34 @@ function rewriteScopedQuery(
     };
   }
 
-  const combinedWhere = [...scopeFilterSet.keys()].join(' AND ');
-
   const { sql: noOrderBy, orderBy } = stripOrderBy(strippedSql);
 
   const innerSql = rewriteSelectToStar(noOrderBy);
+  const projected = projectedColumns?.(innerSql) ?? [];
+
+  const perProjection = new Map<string, unknown[]>();
+  for (const config of tableConfigs.values()) {
+    const column = scopeColumnFor(config);
+    if (!column) continue;
+    for (const projectedColumn of projectionsOf(column, projected)) {
+      const filter = buildPrefixedScopeFilter(config, scopeValue, projectedColumn);
+      if (filter.whereClause && !perProjection.has(filter.whereClause)) {
+        perProjection.set(filter.whereClause, filter.params);
+      }
+    }
+  }
+
+  const combinedWhere = [...perProjection.keys()].join(' AND ');
+  const perProjectionParams = [...perProjection.values()].flat();
 
   const orderClause = orderBy ? ` ${orderBy}` : '';
   const wrappedSql = `SELECT * FROM (${innerSql}) AS _dbq WHERE ${combinedWhere}${orderClause} LIMIT ${effectiveLimit}`;
 
-  return { sql: wrappedSql, params: [...userParams, ...scopeParams], cappedLimit: effectiveLimit };
+  return {
+    sql: wrappedSql,
+    params: [...userParams, ...perProjectionParams],
+    cappedLimit: effectiveLimit,
+  };
 }
 
 function removeBlacklistedColumns(
@@ -548,7 +586,13 @@ export function runScopedQuery(
     sql: wrappedSql,
     params: allParams,
     cappedLimit,
-  } = rewriteScopedQuery(sql, params, scopeType, scopeValue, tableConfigs, limit);
+  } = rewriteScopedQuery(sql, params, scopeType, scopeValue, tableConfigs, limit, (innerSql) => {
+    try {
+      return db.query(`SELECT * FROM (${innerSql}) AS _dbq LIMIT 0`).columnNames;
+    } catch {
+      return [];
+    }
+  });
 
   try {
     const stmt = db.query(wrappedSql);
