@@ -151,7 +151,7 @@ function finishVerifiedDirectStop(
     attempts.clearStopVerification(attempt.id, attempt.sessionId);
     return { stopped: false, reason: 'unverified' };
   }
-  const stopped = attempts.finishRequestedStop(attempt.id, attempt.sessionId);
+  const stopped = attempts.finishRequestedStop(attempt.id, attempt.sessionId, attempt.generation);
   return stopped ? { stopped: true, attempt: stopped } : { stopped: false, reason: 'unavailable' };
 }
 

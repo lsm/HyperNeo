@@ -104,8 +104,8 @@ test('durable request blocks activation and replacement without releasing owners
   expect(attempts.activate('attempt', 'session')).toBeNull();
   expect(attempts.claim(taskId, 'next', 'next-session')).toBeNull();
   attempts.requestStop('attempt', 'session', 'other');
-  expect(attempts.finishRequestedStop('attempt', 'foreign')).toBeNull();
-  expect(attempts.finishRequestedStop('attempt', 'session')?.outcome).toBe('cancelled');
+  expect(attempts.finishRequestedStop('attempt', 'foreign', 1)).toBeNull();
+  expect(attempts.finishRequestedStop('attempt', 'session', 1)?.outcome).toBe('cancelled');
 });
 
 test('activation between initial read and fence is treated as running, never absent-reserved', async () => {
@@ -415,3 +415,37 @@ test.each(['replacement', 'loading', 'live', 'throw', 'probe-throw'] as const)(
     expect(attempts.getActive(taskId)?.id).toBe('attempt');
   }
 );
+
+test('SQL release requires exact generation proof for running attempts', () => {
+  attempts.activate('attempt', 'session');
+  attempts.requestStop('attempt', 'session', 'cancelled');
+  expect(attempts.finishRequestedStop('attempt', 'session', 1)).toBeNull();
+  expect(attempts.recordStopVerification('attempt', 'session', 1)).toBe(true);
+  expect(attempts.finishRequestedStop('attempt', 'session', 2)).toBeNull();
+  attempts.clearStopVerification('attempt', 'session');
+  expect(attempts.finishRequestedStop('attempt', 'session', 1)).toBeNull();
+  expect(attempts.getActive(taskId)?.phase).toBe('running');
+});
+
+test('proof invalidated between verification and release prevents empty-cache finalization', async () => {
+  attempts.activate('attempt', 'session');
+  cached = agent();
+  let reads = 0;
+  const stop = createDirectAttemptStopper({
+    attempts,
+    tasks,
+    sessionManager: {
+      getCachedSession: () => {
+        if (++reads === 2)
+          queueMicrotask(() => attempts.clearStopVerification('attempt', 'session'));
+        return cached;
+      },
+      isSessionLoading: () => loading,
+      unregisterSession: unregister,
+    },
+  });
+  expect(await stop(input)).toEqual({ stopped: false, reason: 'unavailable' });
+  expect(cached).toBeNull();
+  expect(attempts.getActive(taskId)?.phase).toBe('running');
+  expect(attempts.claim(taskId, 'next', 'next-session')).toBeNull();
+});

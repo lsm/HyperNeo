@@ -123,13 +123,25 @@ export class DirectTaskExecutionRepository {
       .run(id, sessionId);
   }
 
-  finishRequestedStop(id: string, sessionId: string): DirectTaskAttempt | null {
+  finishRequestedStop(id: string, sessionId: string, generation: number): DirectTaskAttempt | null {
     return this.db
       .prepare(`UPDATE direct_task_execution_attempts
       SET phase = 'stopped', outcome = (SELECT outcome FROM direct_task_stop_requests WHERE attempt_id = ?), updated_at = ?
-      WHERE id = ? AND session_id = ? AND EXISTS (SELECT 1 FROM direct_task_stop_requests WHERE attempt_id = ? AND session_id = ?)
+      WHERE id = ? AND session_id = ? AND generation = ? AND phase <> 'stopped'
+        AND EXISTS (SELECT 1 FROM direct_task_stop_requests
+          WHERE attempt_id = ? AND session_id = ?
+            AND (direct_task_execution_attempts.phase = 'reserved' OR verified_generation = ?))
       RETURNING ${columns}`)
-      .get(id, Date.now(), id, sessionId, id, sessionId) as DirectTaskAttempt | null;
+      .get(
+        id,
+        Date.now(),
+        id,
+        sessionId,
+        generation,
+        id,
+        sessionId,
+        generation
+      ) as DirectTaskAttempt | null;
   }
 
   activate(id: string, sessionId: string): DirectTaskAttempt | null {
