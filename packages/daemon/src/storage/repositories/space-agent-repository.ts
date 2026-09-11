@@ -231,6 +231,7 @@ function rowToSpaceAgent(row: Record<string, unknown>): SpaceAgent {
     spaceId: row.space_id as string,
     handle: row.handle as string,
     displayName: row.display_name as string,
+    templateKey: (row.template_key as string | null) ?? null,
     description: (row.description as string | null) ?? null,
     instructions: (row.instructions as string | null) ?? '',
     status: row.status as SpaceAgentStatus,

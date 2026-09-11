@@ -163,6 +163,35 @@ describe('SpaceAgentRepository', () => {
       expect(repo.listOwnedBySpaceId('space-1').map((a) => a.id)).toEqual(['templated-1']);
     });
 
+    test('reads the stored template key back onto the agent', () => {
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO space_long_horizon_agents (
+           id, space_id, handle, display_name, template_key, status, instructions,
+           tool_permissions_json, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        'templated-2',
+        'space-1',
+        'from-template',
+        'From Template',
+        'coder.v1',
+        'active',
+        '',
+        '{}',
+        now,
+        now
+      );
+
+      expect(repo.getById('templated-2')?.templateKey).toBe('coder.v1');
+    });
+
+    test('reports a null template key for an agent created without one', () => {
+      const agent = repo.create({ spaceId: 'space-1', handle: 'no-template' });
+
+      expect(repo.getById(agent.id)?.templateKey).toBeNull();
+    });
+
     test('listIdentitiesBySpaceId returns only that space, oldest first', () => {
       db.prepare(
         `INSERT INTO spaces (id, slug, workspace_path, name, created_at, updated_at)
