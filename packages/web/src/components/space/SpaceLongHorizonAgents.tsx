@@ -1,5 +1,4 @@
 import {
-  KNOWN_TOOLS,
   type SettingSource,
   type SpaceLongHorizonAgent,
   type SpaceLongHorizonAgentTemplate,
@@ -11,6 +10,7 @@ import superpipe, { type PipelineAPI } from 'superpipe';
 import { navigateToSpaceSession } from '../../lib/router';
 import { spaceStore } from '../../lib/space-store';
 import { TemplateCard } from './TemplateCard';
+import { extraToolsOf, withExtraTool, withoutExtraTool } from './template-extra-tools';
 import { runTemplateSave } from './template-save-pipeline';
 import { toast } from '../../lib/toast';
 import { Button } from '../ui/Button';
@@ -261,25 +261,16 @@ function AgentEditor({
   const [error, setError] = useState<string | null>(null);
   const migratedWorkerMirror = isEdit && agent ? isMigratedWorkerMirror(agent) : false;
   const [extraToolDraft, setExtraToolDraft] = useState('');
-  const extraTools = toolsSelection.tools.filter(
-    (tool) => !(KNOWN_TOOLS as readonly string[]).includes(tool)
-  );
+  const extraTools = extraToolsOf(toolsSelection.tools);
 
   const removeExtraTool = (tool: string) => {
-    setToolsSelection((selection) => {
-      const tools = selection.tools.filter((t) => t !== tool);
-      return { tools, toolsOverridden: tools.length > 0 };
-    });
+    setToolsSelection((selection) => withoutExtraTool(selection, tool));
   };
 
   const addExtraTool = () => {
     const entry = extraToolDraft.trim();
     if (!entry) return;
-    setToolsSelection((selection) =>
-      selection.tools.includes(entry)
-        ? selection
-        : { tools: [...selection.tools, entry], toolsOverridden: true }
-    );
+    setToolsSelection((selection) => withExtraTool(selection, entry));
     setExtraToolDraft('');
   };
 
@@ -569,25 +560,16 @@ function TemplateEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [extraToolDraft, setExtraToolDraft] = useState('');
-  const extraTools = toolsSelection.tools.filter(
-    (tool) => !(KNOWN_TOOLS as readonly string[]).includes(tool)
-  );
+  const extraTools = extraToolsOf(toolsSelection.tools);
 
   const removeExtraTool = (tool: string) => {
-    setToolsSelection((selection) => {
-      const tools = selection.tools.filter((t) => t !== tool);
-      return { tools, toolsOverridden: tools.length > 0 };
-    });
+    setToolsSelection((selection) => withoutExtraTool(selection, tool));
   };
 
   const addExtraTool = () => {
     const entry = extraToolDraft.trim();
     if (!entry) return;
-    setToolsSelection((selection) =>
-      selection.tools.includes(entry)
-        ? selection
-        : { tools: [...selection.tools, entry], toolsOverridden: true }
-    );
+    setToolsSelection((selection) => withExtraTool(selection, entry));
     setExtraToolDraft('');
   };
 
