@@ -82,6 +82,8 @@ import type { SpaceWorkflowManager } from '../managers/space-workflow-manager.ts
 import type { ReplyRoutingRegistry } from '../runtime/reply-routing-registry.ts';
 import type { ActorRef, MessageRecord } from '../../../../../messaging/src/types.ts';
 import type { ActorResolver } from '../../../../../messaging/src/contracts.ts';
+import { recoverTaskExecution } from '../../tasks/recover-task-execution.ts';
+import { createWorkflowTaskRecoveryExecutor } from '../runtime/task-recovery-executor.ts';
 import type { SpaceRuntime } from '../runtime/space-runtime.ts';
 import type { TaskAgentManager } from '../runtime/task-agent-manager.ts';
 import { mapPostApprovalDispatchWarning } from '../runtime/post-approval-router.ts';
@@ -2796,11 +2798,12 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
             return jsonResult({ success: true, task: updated });
           }
           case 'recover_transition': {
-            const { task: recovered } = await runtime.recoverWorkflowBackedTask(
-              spaceId,
+            const recovered = await recoverTaskExecution(
+              createWorkflowTaskRecoveryExecutor(spaceId, runtime),
               args.task_id,
               args.status as 'open' | 'in_progress'
             );
+            if (typeof recovered === 'string') throw new Error(recovered);
             const updated = hasFieldUpdates ? await applyFieldUpdates() : recovered;
             logAudit('update_task', transitionAuditParams, args.task_id);
             if (hasFieldUpdates) emitTaskUpdated(updated);
@@ -2887,11 +2890,13 @@ export function createSpaceAgentToolHandlers(config: SpaceAgentToolsConfig) {
         }
         let task: SpaceTask;
         if (plan.action === 'recover_workflow_task') {
-          task = (
-            await runtime.recoverWorkflowBackedTask(spaceId, args.task_id, plan.targetStatus, {
-              description: args.description,
-            })
-          ).task;
+          const recovered = await recoverTaskExecution(
+            createWorkflowTaskRecoveryExecutor(spaceId, runtime, { description: args.description }),
+            args.task_id,
+            plan.targetStatus
+          );
+          if (typeof recovered === 'string') throw new Error(recovered);
+          task = recovered;
         } else {
           task = await taskManager.retryTask(args.task_id, { description: args.description });
         }
