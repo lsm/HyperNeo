@@ -12,8 +12,6 @@ import type { SQLiteValue } from '../types.ts';
 
 export type SpaceAgentTemplateRecord = SpaceAgentTemplate & { version: number };
 
-const OWNERSHIP_MIGRATION_SENTINEL = '';
-
 export class SpaceAgentTemplateRepository {
   constructor(private db: BunDatabase) {}
 
@@ -116,35 +114,25 @@ export class SpaceAgentTemplateRepository {
 
   private effectiveOwner(spaceId: string, key: string): string | null {
     const row = this.db
-      .prepare(
-        `SELECT space_id FROM space_agent_templates
-          WHERE space_id IN (?, ?) AND key = ?
-          ORDER BY space_id DESC LIMIT 1`
-      )
-      .get(spaceId, OWNERSHIP_MIGRATION_SENTINEL, key) as { space_id: string } | undefined;
+      .prepare(`SELECT space_id FROM space_agent_templates WHERE space_id = ? AND key = ?`)
+      .get(spaceId, key) as { space_id: string } | undefined;
     return row ? row.space_id : null;
   }
 
   private ownedRow(spaceId: string, key: string): Record<string, unknown> | undefined {
     return this.db
-      .prepare(
-        `SELECT * FROM space_agent_templates WHERE space_id IN (?, ?) AND key = ? ORDER BY space_id DESC LIMIT 1`
-      )
-      .get(spaceId, OWNERSHIP_MIGRATION_SENTINEL, key) as Record<string, unknown> | undefined;
+      .prepare(`SELECT * FROM space_agent_templates WHERE space_id = ? AND key = ?`)
+      .get(spaceId, key) as Record<string, unknown> | undefined;
   }
 
   private ownedRows(spaceId: string): Record<string, unknown>[] {
     return this.db
       .prepare(
-        `SELECT t.* FROM space_agent_templates t
-          WHERE t.space_id IN (?1, ?2)
-            AND t.space_id = (
-              SELECT MAX(shadow.space_id) FROM space_agent_templates shadow
-               WHERE shadow.key = t.key AND shadow.space_id IN (?1, ?2)
-            )
-          ORDER BY t.created_at ASC, t.key ASC`
+        `SELECT * FROM space_agent_templates
+          WHERE space_id = ?
+          ORDER BY created_at ASC, key ASC`
       )
-      .all(spaceId, OWNERSHIP_MIGRATION_SENTINEL) as Record<string, unknown>[];
+      .all(spaceId) as Record<string, unknown>[];
   }
 
   private nextVersionFor(spaceId: string, key: string): number {
