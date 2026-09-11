@@ -24,6 +24,7 @@ export interface UpdateSpaceAgentDeps extends Dependencies {
   listDisplayNames(spaceId: string, excludeAgentId: string): string[];
   applyUpdate(id: string, changes: UpdateSpaceAgentParams): SpaceAgent | null;
   publishUpdated(agent: SpaceAgent): Promise<void>;
+  applyRuntimeEffects(agent: SpaceAgent, input: UpdateSpaceAgentInput): Promise<void>;
   validateTools(tools: string[]): string | null;
   validateModel(model: string, provider: string | null): Promise<string | null>;
   validateModelPool(pool: AgentModelPoolEntry[]): Promise<string | null>;
@@ -205,6 +206,15 @@ function classifyUpdateCollision(error: unknown): { reason: SpaceAgentRejection 
   return null;
 }
 
+export async function runRuntimeEffects(
+  agent: SpaceAgent,
+  input: UpdateSpaceAgentInput,
+  applyRuntimeEffects: UpdateSpaceAgentDeps['applyRuntimeEffects']
+): Promise<SpaceAgent> {
+  await applyRuntimeEffects(agent, input);
+  return agent;
+}
+
 export async function publishUpdated(
   agent: SpaceAgent,
   publish: UpdateSpaceAgentDeps['publishUpdated']
@@ -227,6 +237,7 @@ export function buildUpdateSpaceAgentPipeline(
     .pipe(gateUpdateModel, ['admitted', 'validateModel'], 'result:admitted')
     .pipe(gateUpdateModelPool, ['admitted', 'validateModelPool'], 'result:admitted')
     .pipe(applyUpdate, ['admitted', 'applyUpdate'], 'result:admitted')
+    .pipe(runRuntimeEffects, ['admitted', 'input', 'applyRuntimeEffects'], 'admitted')
     .pipe(publishUpdated, ['admitted', 'publishUpdated'], 'admitted')
     .endAsync('admitted') as (
     input: UpdateSpaceAgentInput

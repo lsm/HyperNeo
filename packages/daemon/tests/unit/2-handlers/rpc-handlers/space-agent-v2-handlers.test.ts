@@ -444,6 +444,29 @@ describe('setupSpaceAgentV2Handlers', () => {
       ).rejects.toThrow('trie rebuild failed');
     });
 
+    test('does not publish an updated event when the refresh fails', async () => {
+      const created = agents.create({ spaceId: 'space-1', handle: 'a' });
+      published.length = 0;
+      refreshResult = { success: false, error: 'trie rebuild failed' };
+      await expect(
+        handlers.get('spaceAgentV2.update')!({ id: created.id, status: 'disabled' })
+      ).rejects.toThrow();
+      expect(published.filter((e) => e.topic === 'spaceAgentV2.updated')).toEqual([]);
+    });
+
+    test('clears the provider before the updated event is published', async () => {
+      const created = agents.create({ spaceId: 'space-1', handle: 'a', provider: 'anthropic' });
+      published.length = 0;
+      clearedProviders.length = 0;
+      let clearedBeforePublish = false;
+      deps.clearSessionProvider = async () => {
+        clearedBeforePublish =
+          published.filter((e) => e.topic === 'spaceAgentV2.updated').length === 0;
+      };
+      await handlers.get('spaceAgentV2.update')!({ id: created.id, provider: null });
+      expect(clearedBeforePublish).toBe(true);
+    });
+
     test('clears the live session provider when provider is set to null', async () => {
       const created = agents.create({ spaceId: 'space-1', handle: 'a', provider: 'anthropic' });
       await handlers.get('spaceAgentV2.update')!({ id: created.id, provider: null });

@@ -73,6 +73,7 @@ function makeHarness(agent = makeAgent()): Harness {
     publishUpdated: async (a) => {
       h.published.push(a);
     },
+    applyRuntimeEffects: async () => {},
     validateTools: () => null,
     validateModel: async () => null,
     validateModelPool: async () => null,

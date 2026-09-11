@@ -156,6 +156,7 @@ export function buildAgentUpdate(
         .map((agent) => agent.displayName),
     applyUpdate: (id, changes) => deps.agents.update(id, changes),
     publishUpdated: (agent) => publishAgentEvent(deps, 'spaceAgentV2.updated', agent),
+    applyRuntimeEffects: (agent, input) => applyUpdateRuntimeEffects(deps, agent, input),
     validateTools: validateSpaceAgentTools,
     validateModel: (model, provider) => validateAgentModel(model, provider),
     validateModelPool: validateAgentModelPool,
@@ -164,7 +165,6 @@ export function buildAgentUpdate(
   return async (input) => {
     const outcome = await run(input);
     if (isCreateSpaceAgentRejection(outcome)) throw new Error(outcome.message);
-    await applyUpdateRuntimeEffects(deps, outcome, input);
     return outcome;
   };
 }
