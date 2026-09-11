@@ -5,9 +5,11 @@ import { SpaceTemplatesPanel } from './SpaceTemplatesPanel';
 
 export function SpaceAgentsView({
   spaceId,
+  navigationSpaceId,
   selectedHandle,
 }: {
   spaceId: string;
+  navigationSpaceId?: string;
   selectedHandle?: string | null;
 }) {
   return (
@@ -19,7 +21,11 @@ export function SpaceAgentsView({
           userTemplateKeys={spaceStore.userTemplateKeys.value}
           onUseTemplate={(template) => requestAgentFromTemplate(spaceId, template.key)}
         />
-        <SpaceAgentsPage spaceId={spaceId} selectedHandle={selectedHandle} />
+        <SpaceAgentsPage
+          spaceId={spaceId}
+          navigationSpaceId={navigationSpaceId}
+          selectedHandle={selectedHandle}
+        />
       </div>
     </div>
   );

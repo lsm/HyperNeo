@@ -469,7 +469,11 @@ export default function SpaceIsland({
           baseLayerProps={baseLayerProps}
           fallback={lazyFallback}
         >
-          <SpaceAgentsView spaceId={spaceId} selectedHandle={selectedAgentHandle} />
+          <SpaceAgentsView
+            spaceId={spaceId}
+            navigationSpaceId={navigationSpaceId}
+            selectedHandle={selectedAgentHandle}
+          />
         </GlassRouteShell>
         {overlay}
       </>

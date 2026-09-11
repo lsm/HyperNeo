@@ -16,6 +16,7 @@ const {
   mockTemplates,
   mockFetchTemplates,
   mockOnceConnected,
+  mockNavigate,
   mockDisposeOnceConnected,
 } = vi.hoisted(() => ({
   mockAgents: { value: [] as SpaceAgent[] },
@@ -38,6 +39,7 @@ const {
   },
   mockFetchTemplates: vi.fn().mockResolvedValue(undefined),
   mockOnceConnected: vi.fn(),
+  mockNavigate: vi.fn(),
   mockDisposeOnceConnected: vi.fn(),
 }));
 
@@ -57,6 +59,10 @@ vi.mock('../../../lib/space-agent-store', () => ({
 
 vi.mock('../../../lib/space-store', () => ({
   spaceStore: { agentTemplates: mockTemplates, fetchTemplates: mockFetchTemplates },
+}));
+
+vi.mock('../../../lib/router', () => ({
+  navigateToSpaceSession: mockNavigate,
 }));
 
 vi.mock('../../../lib/connection-manager', () => ({
@@ -92,6 +98,7 @@ function makeAgent(id: string, overrides: Partial<SpaceAgent> = {}): SpaceAgent 
 describe('SpaceAgentsPage', () => {
   beforeEach(() => {
     mockAgents.value = [];
+    mockNavigate.mockReset();
     agentCreateRequest.value = null;
     mockReminderCounts.value = {};
     mockLoading.value = false;
@@ -290,6 +297,37 @@ describe('SpaceAgentsPage', () => {
     );
 
     expect((getByTestId('agent-name-input') as HTMLInputElement).value).toBe('');
+  });
+
+  it('opens the session for an agent that has one', () => {
+    mockAgents.value = [makeAgent('alpha', { sessionId: 'session-alpha' })];
+    const { getByTestId, getByText } = render(
+      <SpaceAgentsPage spaceId="space-1" navigationSpaceId="space-slug" />
+    );
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+    fireEvent.click(getByText('Open session'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('space-slug', 'session-alpha');
+  });
+
+  it('routes the coordinator to the space chat when it has no session', () => {
+    mockAgents.value = [makeAgent('coordinator', { sessionId: null })];
+    const { getByTestId, getByText } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-coordinator'));
+    fireEvent.click(getByText('Open session'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('space-1', 'space:chat:space-1');
+  });
+
+  it('offers no session link for a sessionless agent', () => {
+    mockAgents.value = [makeAgent('alpha', { sessionId: null })];
+    const { getByTestId, queryByTestId } = render(<SpaceAgentsPage spaceId="space-1" />);
+
+    fireEvent.click(getByTestId('agent-row-alpha'));
+
+    expect(queryByTestId('agent-open-session-button')).toBeNull();
   });
 
   it('lists agents by handle', () => {
