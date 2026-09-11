@@ -2,25 +2,17 @@ import type { SpaceLongHorizonAgentTemplate } from '@hyperneo/shared';
 
 export function TemplateCard({
   template,
-  addedCount,
   isUserTemplate,
   onClick,
   onEdit,
   onDelete,
 }: {
   template: SpaceLongHorizonAgentTemplate;
-  addedCount: number;
   isUserTemplate: boolean;
   onClick: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const addedCountBadge =
-    addedCount > 0 ? (
-      <span class="flex-shrink-0 rounded bg-fill-soft px-1.5 py-0.5 text-xs text-fg-muted">
-        ×{addedCount}
-      </span>
-    ) : null;
   return (
     <div class="group flex min-h-28 items-start gap-2 rounded-xl border border-line bg-surface-overlay/85 px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all hover:-translate-y-0.5 hover:border-blue-400/30 hover:bg-surface-raised/95">
       <button
@@ -42,7 +34,6 @@ export function TemplateCard({
       </button>
       {isUserTemplate ? (
         <div class="flex flex-shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
-          {addedCountBadge}
           <button
             type="button"
             onClick={onEdit}
@@ -77,21 +68,19 @@ export function TemplateCard({
           </button>
         </div>
       ) : (
-        (addedCountBadge ?? (
-          <svg
-            class="w-3.5 h-3.5 flex-shrink-0 text-fg-muted"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width={2}
-              d="M12 4v16m8-8H4"
-            />
-          </svg>
-        ))
+        <svg
+          class="w-3.5 h-3.5 flex-shrink-0 text-fg-muted"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width={2}
+            d="M12 4v16m8-8H4"
+          />
+        </svg>
       )}
     </div>
   );

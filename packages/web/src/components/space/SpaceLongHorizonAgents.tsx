@@ -725,15 +725,6 @@ export function SpaceLongHorizonAgents({
   const existingHandles = new Set(agents.map((a) => a.handle));
   const existingNames = new Set(agents.map((a) => a.displayName));
 
-  const templateInstanceCounts = new Map<string, number>();
-  for (const agent of agents.filter((agent) => agent.status !== 'archived')) {
-    if (!agent.templateKey) continue;
-    templateInstanceCounts.set(
-      agent.templateKey,
-      (templateInstanceCounts.get(agent.templateKey) ?? 0) + 1
-    );
-  }
-
   if (loading) {
     return (
       <div class="flex-1 flex items-center justify-center">
@@ -833,7 +824,6 @@ export function SpaceLongHorizonAgents({
         <SpaceTemplatesPanel
           spaceId={spaceId}
           templates={templates}
-          templateInstanceCounts={templateInstanceCounts}
           userTemplateKeys={userTemplateKeys}
           onUseTemplate={(template) => {
             setSelectedTemplate(template);
